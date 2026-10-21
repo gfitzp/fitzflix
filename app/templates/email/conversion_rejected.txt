@@ -1,0 +1,9 @@
+Hello,
+
+The file '{{ basename }}' needs a conversion to 1080p SDR, but the conversion is not possible:
+
+  {{ reason }}
+
+The file is in {{ rejects_directory }}. Correct the cause, then put the file in the import directory again.
+
+- Fitzflix

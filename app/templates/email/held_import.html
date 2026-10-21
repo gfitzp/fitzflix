@@ -1,0 +1,29 @@
+<p>Hello,</p>
+<p/>
+<p>The file '{{ basename }}' ({{ source_format }}) waits for your decision. The library already has a real rip of this title:</p>
+<p/>
+<table style="border-spacing: 10px;">
+	<thead>
+		<tr>
+			<th style="text-align: left;">Quality</th>
+			<th style="text-align: left;">File</th>
+		</tr>
+	</thead>
+	<tbody>
+		{% for file in blockers %}
+		<tr>
+			<th style="text-align: left;">{{ file.quality.quality_title }}</th>
+			<td style="text-align: left;">{{ file.basename }}</td>
+		</tr>
+		{% endfor %}
+	</tbody>
+</table>
+<p/>
+<p>Open Library Maintenance &gt; Held imports to choose:</p>
+<ul>
+	<li>Import: convert the file to 1080p SDR and replace the library file.</li>
+	<li>Archive only: archive the original to S3. The library does not change.</li>
+	<li>Discard: move the file to the rejects directory.</li>
+</ul>
+<p/>
+<p>- Fitzflix</p>

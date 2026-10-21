@@ -146,6 +146,10 @@ STAGES = {
         "Moving into the library",
         _basename_from_details,
     ),
+    "app.videos.convert_localized_file": (
+        "Converting to SDR",
+        _basename_from_details,
+    ),
     "app.videos.finalize_localization": ("Cataloging", _basename_from_details),
     "app.videos.upload_task": ("Archiving to S3", _basename_from_file_id),
     "app.videos.rearchive_untouched_object": (

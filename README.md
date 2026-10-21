@@ -114,6 +114,27 @@ Fitzflix records the quality of each file. Thus, the library pages show the best
 
 On the file detail page, you can set the default audio track and the default subtitle track. You can also remove unwanted tracks, transcode the file with HandBrake, and manage the AWS archive copy. The track scan also records the video format, the bitrate, and the HDR format of each file. The HDR format includes the Dolby Vision profile (profile 5, 7, 8.1, and so on), which Fitzflix reads from MediaInfo. The file page shows the profile as a badge.
 
+### HDR and BT.2020 imports
+
+The library holds only Rec.709 SDR files. Thus, each file plays on the least capable equipment of the Fitzflix users. An import with HDR10, HDR10+, HLG, Dolby Vision, or BT.2020 colors becomes a 1080p SDR conversion:
+
+1. Fitzflix archives the untouched original to S3, as for each import. The archive key keeps the name of the original, for example `[Bluray-2160p]`.
+2. HandBrake converts the video to 1080p (or to the source size if it is smaller), tone-mapped to Rec.709. The preset is `CONVERSION_PRESET` in `handbrake_presets.json` (x264, RF 15). Each audio track, subtitle track, and chapter of the localized file stays, unchanged. The conversion runs on the transcode queue, on the local staging disk. A 2.5-hour film takes approximately 4.5 hours.
+3. The conversion goes into the library with the quality of the original at 1080p. For example, `Bluray-2160p` becomes `[Bluray-1080p]`, and `WEBDL-2160p` becomes `[WEBDL-1080p]`. The file page shows the quality and the color format of the original.
+
+A 4K file with Rec.709 SDR colors is not converted. A Dolby Vision Profile 5 file has no HDR10 base layer. It needs an ffmpeg build with libplacebo (`FFMPEG_PLACEBO_BIN`). Without it, Fitzflix rejects the file and sends an email. A conversion also needs `ARCHIVE_ORIGINAL_MEDIA`. Without the archive, the original would be lost.
+
+The ranking rules:
+
+- At the same quality, a real rip ranks above a conversion. A real rip replaces a conversion. Then the original of the conversion stays in S3 as an archived original.
+- A later conversion replaces an earlier conversion of the same quality or lower.
+- A conversion replaces a library file that has HDR or BT.2020 colors, of any quality.
+- The library can already have a real rip of the title at the quality of the conversion or better. Then the original waits in `HELD_DIR` for a decision. Fitzflix sends an email. On the **Held imports** page (Library Maintenance), **Import** converts the file and replaces the library file. **Archive only** archives the original to S3, and the library does not change. **Discard** moves the original to the rejects directory.
+
+The **Held imports** page also lists the archived originals that have no library file. A restore of one imports it again, through the same rules. The S3 sync never prunes an archived original. The library file of a conversion never replaces its archive.
+
+To import HDR files as they are, turn off **Convert HDR to SDR** on the Settings page (`CONVERT_HDR_TO_SDR`).
+
 ### Using Fitzflix on a phone
 
 Fitzflix follows the light or dark appearance of the system automatically (Bootstrap 5.3 color modes). The installed app has a pull-to-refresh function. Pull down from the top of a page to load the page again.
@@ -395,6 +416,7 @@ TMDB_API_KEY=<your TMDB API key>
 | `ARCHIVE_ORIGINAL_MEDIA` | Uploads each imported original file to AWS S3 for archival. It is on by default when `AWS_BUCKET`, `AWS_ACCESS_KEY`, and `AWS_SECRET_KEY` are set. To turn it off, set it to `0`. |
 | `AWS_BUCKET`, `AWS_ACCESS_KEY`, `AWS_SECRET_KEY` | The credentials for the archival bucket. Uploads need all three. |
 | `AWS_DOWNLOAD_VIA_CDN`, `CDN_DOMAIN`, `CDN_KEY_PAIR_ID`, `CDN_PRIVATE_KEY` | The CloudFront download path for a library rebuild. The flag turns it on. The other three name the distribution, the CloudFront key pair, and the local private key file (refer to [Downloading through CloudFront](#downloading-through-cloudfront)). |
+| `CONVERT_HDR_TO_SDR`, `CONVERSION_PRESET`, `HELD_DIR`, `FFMPEG_PLACEBO_BIN` | The conversion of HDR and BT.2020 imports to 1080p SDR (refer to [HDR and BT.2020 imports](#hdr-and-bt2020-imports)). The flag is on by default. `CONVERSION_PRESET` names the preset in the preset file (default `HDR to 1080p SDR`). `HELD_DIR` holds the originals that wait for a decision (default `held` in `MEDIA_LOCATION`). `FFMPEG_PLACEBO_BIN` is an ffmpeg build with libplacebo, for Dolby Vision Profile 5. It is empty by default. |
 | `CREATE_FLAC_TWINS`, `CREATE_ATMOS_TWINS` | The import adds audio twins. Each lossless track gets a FLAC twin, and each TrueHD Atmos track gets an E-AC-3 Atmos twin from MediaConvert. Both are on by default. The twins are for players that cannot pass the original audio through. With a passthrough player, the twins have no use. To turn one off, set it to `0`. The `flask audio atmos` command still adds an Atmos twin on request. |
 | `MAIL_SERVER`, `MAIL_PORT`, `MAIL_USERNAME`, `MAIL_PASSWORD`, `MAIL_USE_TLS` | The SMTP server for error notifications and password-reset emails. Fitzflix sends them from `SERVER_EMAIL` to `ADMIN_EMAIL`. Both default to `MAIL_USERNAME`. |
 | `ARR_DOWNLOAD_FOLDERS` | The completed-download folders that the [Manual imports](#manual-imports) page may copy from and delete, separated by colons. Empty by default, so the page can list but not act. |
@@ -408,13 +430,13 @@ TMDB_API_KEY=<your TMDB API key>
 | `LOG_FILE`, `LOG_RETENTION_DAYS` | The location of the application log (default `logs/fitzflix.log`) and the number of days of rotated archives to keep (default 14) |
 | `*_TASK_TIMEOUT` | The job timeouts for each queue, in seconds (`LOCALIZATION_TASK_TIMEOUT`, `SQL_TASK_TIMEOUT`, `UPLOAD_TASK_TIMEOUT`, `TRANSCODE_TASK_TIMEOUT`, `MKVPROPEDIT_TASK_TIMEOUT`) |
 
-The on/off settings that are off by default are `PREVENT_ACCOUNT_CREATION`, `AWS_DOWNLOAD_VIA_CDN`, `MAIL_USE_TLS`, `IGNORE_ETAGS`, and `FORCE_UPLOAD`. Such a setting is on when it is in `.env` with a value of any kind. To turn it off, remove it from `.env`. The on/off settings that are on by default are `CREATE_FLAC_TWINS`, `CREATE_ATMOS_TWINS`, and `ARCHIVE_ORIGINAL_MEDIA`. Such a setting is off when its value in `.env` is `0`, `false`, `no`, or `off`. Each other value turns it on. Refer to [System requirements](#system-requirements) for the binary paths.
+The on/off settings that are off by default are `PREVENT_ACCOUNT_CREATION`, `AWS_DOWNLOAD_VIA_CDN`, `MAIL_USE_TLS`, `IGNORE_ETAGS`, and `FORCE_UPLOAD`. Such a setting is on when it is in `.env` with a value of any kind. To turn it off, remove it from `.env`. The on/off settings that are on by default are `CREATE_FLAC_TWINS`, `CREATE_ATMOS_TWINS`, `CONVERT_HDR_TO_SDR`, and `ARCHIVE_ORIGINAL_MEDIA`. Such a setting is off when its value in `.env` is `0`, `false`, `no`, or `off`. Each other value turns it on. Refer to [System requirements](#system-requirements) for the binary paths.
 
 #### The Settings page
 
 Some settings can also change on the **Admin > Settings** page, without a restart. Each web and worker process gets a saved value in approximately 5 seconds. The page settings are:
 
-- The on/off settings `PREVENT_ACCOUNT_CREATION`, `ARCHIVE_ORIGINAL_MEDIA`, `AWS_DOWNLOAD_VIA_CDN`, `CREATE_FLAC_TWINS`, and `CREATE_ATMOS_TWINS`.
+- The on/off settings `PREVENT_ACCOUNT_CREATION`, `ARCHIVE_ORIGINAL_MEDIA`, `AWS_DOWNLOAD_VIA_CDN`, `CREATE_FLAC_TWINS`, `CREATE_ATMOS_TWINS`, and `CONVERT_HDR_TO_SDR`.
 - The health and log alerts `DISK_ALERT_FREE_GB`, `LOG_DIGEST_THRESHOLD`, and `LOG_DIGEST_IGNORE`.
 - The Plex trash limit `PLEX_TRASH_LIMIT`.
 - The download labels `RADARR_WEBDL_MIN_SCORE` and `SONARR_WEBDL_MIN_SCORE`.

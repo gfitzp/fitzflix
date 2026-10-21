@@ -19,6 +19,14 @@
 <p class="small text-muted mb-0">Nothing waits. <a href="{{ url_for('main.manual_imports') }}">Check the live queues</a>.</p>
 {% endif %}
 <hr>
+<h4 class="mt-3 mb-2">Held imports</h4>
+<p class="small text-muted">The HDR or BT.2020 imports that wait for a decision, because the library already has a real rip of the title. The page also lists the originals in S3 that have no library file.</p>
+{% if held_import_count %}
+<a class="btn btn-sm btn-warning" href="{{ url_for('main.held_imports') }}" role="button">Decide held imports <span class="badge text-bg-light">{{ held_import_count }}</span></a>
+{% else %}
+<p class="small text-muted mb-0">Nothing waits. <a href="{{ url_for('main.held_imports') }}">View the archived originals</a> ({{ archived_original_count }}).</p>
+{% endif %}
+<hr>
 <h4 class="mt-3 mb-2">Pipeline activity</h4>
 <p class="small text-muted">The path of each recent file through the import, as a status chip for each stage. The chips show the current stage of each file, the scheduled retries, and the failures.</p>
 <a class="btn btn-sm btn-secondary" href="{{ url_for('main.file_activity') }}" role="button">View file activity</a>

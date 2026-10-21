@@ -1911,6 +1911,22 @@ class File(db.Model):
     # target. This feeds the future P7 to 8.1 conversion targeting.
 
     dolby_vision_profile = db.Column(db.String(8))
+
+    # The color tags of the video track, from MediaInfo. An SDR file can
+    # have BT.2020 colors. hdr_format does not show that (#292). None
+    # when the file has no tag.
+
+    color_primaries = db.Column(db.String(64))
+    transfer_characteristics = db.Column(db.String(64))
+
+    # Set when this file is a 1080p SDR conversion (#292). It is the
+    # quality of the original, for example "Bluray-2160p". The import
+    # archived that original untouched in S3. Thus, the archive is NOT
+    # a copy of this file. converted_from_format names the color of the
+    # original, for example "Dolby Vision Profile 7".
+
+    converted_from_quality = db.Column(db.String(32))
+    converted_from_format = db.Column(db.String(255))
     video_bitrate_kbps = db.Column(db.Integer)
     filesize_bytes = db.Column(db.BigInteger)
     date_added = db.Column(
@@ -1988,10 +2004,33 @@ class File(db.Model):
         # (#155). finalize_localization reads it to route the metadata
         # fetch.
         "tmdb_id",
+        # An admin chose "Import" for a held conversion (#292). The
+        # conversion then replaces the real rip of the title.
+        "replace_existing",
     }
 
     def __repr__(self):
         return f"<File '{self.plex_title}'>"
+
+    @property
+    def needs_sdr_conversion(self):
+        """Return True if this file has HDR or BT.2020 colors (#292)."""
+
+        from app.sdr_conversion import needs_conversion
+
+        return needs_conversion(
+            self.hdr_format, self.color_primaries, self.transfer_characteristics
+        )
+
+    @property
+    def archive_is_library_copy(self):
+        """Return True if the S3 archive of this file can follow its library copy.
+
+        Fitzflix replaces the archive with the library file after a remux
+        or an Atmos twin. The archive of a conversion is the original
+        (#292). The library file must never replace it."""
+
+        return not self.converted_from_quality
 
     def __init__(self, **kwargs):
         # Route the mapped columns and relationships through the real
@@ -2317,13 +2356,88 @@ class File(db.Model):
                     .all()
                 )
 
+        # A conversion to 1080p SDR (#292) has 2 more rules. An admin who
+        # chose "Import" for a held conversion replaces the existing file,
+        # whatever its quality. A file with HDR or BT.2020 colors never
+        # blocks a conversion. The conversion replaces it.
+
+        if self.converted_from_quality:
+            if getattr(self, "replace_existing", False):
+                return []
+            better_files = [f for f in better_files if not f.needs_sdr_conversion]
+
         return better_files
+
+    def same_identity_files(self):
+        """Return the other files of this title, edition, or episode span, in any quality.
+
+        A TV file includes the files with a narrower episode span. These
+        are the files that find_worse_files can remove, before its
+        quality rule."""
+
+        query = (
+            File.query.join(RefQuality, (RefQuality.id == File.quality_id))
+            .options(joinedload(File.quality, innerjoin=True))
+            .filter(
+                db.or_(File.fullscreen == self.fullscreen, File.fullscreen == True),
+                File.id != self.id,
+            )
+        )
+        if self.media_library == "Movies":
+            query = query.filter(
+                File.movie_id == self.movie_id,
+                File.feature_type_id == self.feature_type_id,
+                File.plex_title == self.plex_title,
+                File.edition == self.edition,
+            )
+        elif self.media_library == "TV Shows":
+            query = query.filter(
+                File.series_id == self.series_id,
+                File.season == self.season,
+                File.episode == self.episode,
+                File.last_episode <= self.last_episode,
+            )
+        else:
+            return []
+        return query.all()
 
     def find_worse_files(self):
         """Return the same-title files that this file outranks.
 
-        These are the candidates for removal after an upgrade.
+        These are the candidates for removal after an upgrade. A
+        conversion to 1080p SDR (#292) also outranks the files with HDR
+        or BT.2020 colors, in any quality. After an admin chose "Import"
+        for a held conversion, it outranks every file of its title.
         """
+
+        worse_files = self._worse_by_quality()
+        if self.converted_from_quality:
+            replace_all = getattr(self, "replace_existing", False)
+
+            # A real rip of the same quality outranks a conversion. Only
+            # the "Import" choice of an admin lets the conversion replace it.
+
+            if not replace_all:
+                worse_files = [
+                    f
+                    for f in worse_files
+                    if f.converted_from_quality
+                    or f.needs_sdr_conversion
+                    or f.quality.preference < self.quality.preference
+                    or (
+                        self.media_library == "TV Shows"
+                        and f.last_episode < self.last_episode
+                    )
+                ]
+            worse_files += [
+                f
+                for f in self.same_identity_files()
+                if f not in worse_files and (replace_all or f.needs_sdr_conversion)
+            ]
+        return worse_files
+
+    def _worse_by_quality(self):
+        """Return the same-title files of the same or a lower quality."""
 
         worse_files = []
 
@@ -2409,6 +2523,77 @@ class DerivedFile(db.Model):
         """Return the path of the derived copy, marked by kind."""
 
         return f"<DerivedFile {self.kind} '{self.file_path}'>"
+
+
+class ArchivedOriginal(db.Model):
+    """An original in S3 with no library file of its own (#292).
+
+    Fitzflix makes one in 2 cases. An admin chose "Archive only" for a
+    held conversion. Or a real rip replaced a conversion, and the
+    original of the conversion stays in S3. The S3 sync counts these
+    keys as claimed. Thus, the sync does not prune them. A restore of
+    one imports the original again, through the conversion flow."""
+
+    id = db.Column(db.Integer, primary_key=True)
+    media_library = db.Column(db.String(32), nullable=False)
+    movie_id = db.Column(
+        db.Integer, db.ForeignKey("movie.id", ondelete="SET NULL"), index=True
+    )
+    series_id = db.Column(
+        db.Integer, db.ForeignKey("tv_series.id", ondelete="SET NULL"), index=True
+    )
+    season = db.Column(db.Integer)
+    episode = db.Column(db.Integer)
+    plex_title = db.Column(db.String(255))
+    edition = db.Column(db.String(219))
+    quality_title = db.Column(db.String(32), nullable=False)
+    hdr_format = db.Column(db.String(255))
+    untouched_basename = db.Column(db.String(255), nullable=False)
+    aws_untouched_key = db.Column(db.String(255), nullable=False, unique=True)
+    aws_untouched_filesize_bytes = db.Column(db.BigInteger)
+    aws_untouched_date_uploaded = db.Column(db.DateTime)
+    reason = db.Column(db.String(64), nullable=False)
+    date_added = db.Column(db.DateTime, nullable=False, default=db.func.utc_timestamp())
+    movie = db.relationship("Movie")
+    tv_series = db.relationship("TVSeries")
+
+    def __repr__(self):
+        return f"<ArchivedOriginal '{self.aws_untouched_key}'>"
+
+
+class HeldImport(db.Model):
+    """A conversion candidate that waits for an admin decision (#292).
+
+    The library already has a real rip of the title. The original file
+    waits in HELD_DIR. The admin chooses "Import", "Archive only", or
+    "Discard" on the Held imports page. file_details is the JSON of the
+    parsed filename, with the conversion fields."""
+
+    id = db.Column(db.Integer, primary_key=True)
+    held_path = db.Column(db.String(512), nullable=False, unique=True)
+    untouched_basename = db.Column(db.String(255), nullable=False)
+    file_details = db.Column(db.Text, nullable=False)
+    source_format = db.Column(db.String(255))
+    filesize_bytes = db.Column(db.BigInteger)
+    existing_file_id = db.Column(
+        db.Integer, db.ForeignKey("file.id", ondelete="SET NULL")
+    )
+
+    # None while the item waits. "import" or "archive" after the admin
+    # chose. The import reads it when the file comes back.
+
+    decision = db.Column(db.String(16))
+    date_held = db.Column(db.DateTime, nullable=False, default=db.func.utc_timestamp())
+    date_decided = db.Column(db.DateTime)
+    existing_file = db.relationship("File")
+
+    def details(self):
+        """Return the parsed file details as a dict."""
+
+        return json.loads(self.file_details)
+
+    def __repr__(self):
+        return f"<HeldImport '{self.untouched_basename}'>"
 
 
 class FileAudioTrack(db.Model):
@@ -2931,8 +3116,9 @@ class DVRChannel(db.Model):
 def movie_file_rank():
     """Rank each movie file in its title/feature/edition group by quality.
 
-    A tie goes to the lowest file id. Thus, the winner is always the same.
-    The ranked_files reporting view uses the same rule (#273)."""
+    At the same quality, a real rip ranks above a 1080p SDR conversion
+    (#292). A tie goes to the lowest file id. Thus, the winner is always
+    the same. The ranked_files reporting view uses the same rule (#273)."""
 
     return (
         db.func.row_number()
@@ -2946,6 +3132,7 @@ def movie_file_rank():
             order_by=(
                 File.fullscreen.asc(),
                 RefQuality.preference.desc(),
+                File.converted_from_quality.isnot(None).asc(),
                 File.id.asc(),
             ),
         )
@@ -2959,8 +3146,9 @@ def tv_file_rank():
     The edition is not part of the group. That is intentional. For a TV
     file, it only carries the optional episode title. Thus, 2 copies of
     the same episode compete, with or without a title in their
-    filenames. A tie goes to the lowest file id. The ranked_files
-    reporting view uses the same rule (#273).
+    filenames. At the same quality and span, a real rip ranks above a
+    1080p SDR conversion (#292). A tie goes to the lowest file id. The
+    ranked_files reporting view uses the same rule (#273).
     """
 
     return (
@@ -2971,6 +3159,7 @@ def tv_file_rank():
                 File.fullscreen.asc(),
                 RefQuality.preference.desc(),
                 File.last_episode.desc(),
+                File.converted_from_quality.isnot(None).asc(),
                 File.id.asc(),
             ),
         )

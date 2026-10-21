@@ -25,9 +25,11 @@ from flask_login import current_user, login_required
 
 from app import db, enqueue_import_scan, safe_job_id
 from app.main.forms import (
+    ArchivedRestoreForm,
     CriterionRefreshForm,
     FailedJobForm,
     FilenameTestForm,
+    HeldImportForm,
     LossyAudioTriageForm,
     ManualImportForm,
     QueueFrontForm,
@@ -48,9 +50,11 @@ from app.main.forms import (
     TrackMetadataScanForm,
 )
 from app.models import (
+    ArchivedOriginal,
     File,
     FileAudioTrack,
     FileSubtitleTrack,
+    HeldImport,
     Movie,
     RefFeatureType,
     RefQuality,
@@ -813,6 +817,8 @@ def maintenance():
         runtime_mismatch_count=len(runtime_mismatch_candidates()),
         missing_best=missing_best_summary(current_app.redis),
         manual_import_count=pending_count(current_app.redis),
+        held_import_count=HeldImport.query.count(),
+        archived_original_count=ArchivedOriginal.query.count(),
         duplicate_groups=_duplicate_movie_groups(),
         movie_merge_form=movie_merge_form,
         filename_test_form=filename_test_form,
@@ -896,6 +902,111 @@ def missing_files():
         restore_estimate=restore_cost_estimate(archived),
         scan_form=scan_form,
         restore_form=MissingRestoreForm(),
+    )
+
+
+@bp.route("/maintenance/held-imports", methods=["GET", "POST"])
+@login_required
+@admin_required
+def held_imports():
+    """Decide the conversions that wait because a real rip exists (#292).
+
+    Import sends the original back through the import. Its conversion
+    then replaces the library file. Archive only uploads the original
+    to S3 and leaves the library alone. Discard moves the original to
+    the rejects directory. The page also lists the archive-only
+    originals in S3. A restore of one imports it again. If a real rip
+    still exists, the import waits here again."""
+
+    from app.importing import enqueue_localization
+    from app.sdr_conversion import prune_held_imports
+    from app.videos import move_to_rejects
+
+    form = HeldImportForm()
+    if (
+        form.import_submit.data or form.archive_submit.data or form.discard_submit.data
+    ) and form.validate_on_submit():
+        held = (
+            db.session.get(HeldImport, int(form.held_id.data))
+            if form.held_id.data.isdigit()
+            else None
+        )
+        if held is None or not os.path.exists(held.held_path):
+            flash("That file no longer waits for a decision.", "warning")
+            return redirect(url_for("main.held_imports"))
+        if held.decision:
+            flash(f"'{held.untouched_basename}' is already in progress.", "info")
+            return redirect(url_for("main.held_imports"))
+
+        name = held.untouched_basename
+        if form.discard_submit.data:
+            move_to_rejects(held.held_path, "discarded")
+            db.session.delete(held)
+            db.session.commit()
+            current_app.logger.info(
+                f"'{name}' Held conversion discarded by {current_user.email}"
+            )
+            flash(f"Moved '{name}' to the rejects directory.", "success")
+            return redirect(url_for("main.held_imports"))
+
+        held.decision = "import" if form.import_submit.data else "archive"
+        held.date_decided = datetime.now(timezone.utc)
+        db.session.commit()
+        if held.decision == "import":
+            enqueue_localization(held.held_path, at_front=True)
+            flash(
+                f"Importing '{name}'. Its conversion replaces the library file.",
+                "info",
+            )
+        else:
+            current_app.file_queue.enqueue(
+                "app.videos.archive_held_task",
+                args=(held.id,),
+                job_timeout=current_app.config["UPLOAD_TASK_TIMEOUT"],
+                description=f"'{name}'",
+            )
+            flash(f"Archiving '{name}' to S3. The library does not change.", "info")
+        current_app.logger.info(
+            f"'{name}' Held conversion: {held.decision} chosen by {current_user.email}"
+        )
+        return redirect(url_for("main.held_imports"))
+
+    restore_form = ArchivedRestoreForm()
+    if restore_form.restore_submit.data and restore_form.validate_on_submit():
+        if not current_user.check_password(restore_form.password.data):
+            flash("Incorrect password provided!", "danger")
+            return redirect(url_for("main.held_imports"))
+        archived = (
+            db.session.get(ArchivedOriginal, int(restore_form.archived_id.data))
+            if restore_form.archived_id.data.isdigit()
+            else None
+        )
+        if archived is None:
+            flash("That original is no longer archived.", "warning")
+            return redirect(url_for("main.held_imports"))
+        current_app.request_queue.enqueue(
+            "app.videos.aws_restore",
+            args=(archived.aws_untouched_key,),
+            job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
+            description=f"'{archived.untouched_basename}'",
+        )
+        flash(
+            f"Requesting a restore of '{archived.untouched_basename}' from AWS. "
+            f"It goes through the import when it arrives.",
+            "info",
+        )
+        return redirect(url_for("main.held_imports"))
+
+    prune_held_imports()
+    return render_template(
+        "held_imports.html",
+        title="Held imports",
+        held=HeldImport.query.order_by(HeldImport.date_held.asc()).all(),
+        archived=ArchivedOriginal.query.order_by(
+            ArchivedOriginal.date_added.desc()
+        ).all(),
+        form=form,
+        restore_form=restore_form,
     )
 
 

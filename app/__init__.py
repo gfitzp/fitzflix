@@ -883,7 +883,13 @@ def create_app(config_class=Config, watch_import_dir=False):
     # that the health checks report, and an empty library folder would
     # hide it.
 
-    for key in ("IMPORT_DIR", "STAGING_DIR", "REJECTS_DIR", "TRANSCODES_DIR"):
+    for key in (
+        "IMPORT_DIR",
+        "STAGING_DIR",
+        "REJECTS_DIR",
+        "TRANSCODES_DIR",
+        "HELD_DIR",
+    ):
         create_work_directory(app, key)
 
     # Warn about the configuration problems that would make tasks fail

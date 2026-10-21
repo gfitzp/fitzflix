@@ -83,6 +83,7 @@ class TestConfig(Config):
     REJECTS_DIR = os.path.join(MEDIA_LOCATION, "rejects")
     TRANSCODES_DIR = os.path.join(MEDIA_LOCATION, "transcoded")
     STAGING_DIR = os.path.join(_TMP, "staging")
+    HELD_DIR = os.path.join(MEDIA_LOCATION, "held")
     TRIAGE_SNAPSHOT_DIR = os.path.join(_TMP, "triage")
     FRAME_POOL_DIR = os.path.join(_TMP, "frame_pool")
     MOUNT_URLS = {}
@@ -201,6 +202,7 @@ def app():
         TestConfig.REJECTS_DIR,
         TestConfig.TRANSCODES_DIR,
         TestConfig.STAGING_DIR,
+        TestConfig.HELD_DIR,
         TestConfig.DB_BACKUP_DIR,
         os.path.dirname(TestConfig.LOG_FILE),
         os.path.join(_TMP, "incoming"),

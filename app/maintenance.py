@@ -686,6 +686,7 @@ def system_health(flask_app):
 
     from app.manual_imports import pending_count
     from app.missing_files import missing_best_summary
+    from app.models import HeldImport
 
     started = time.perf_counter()
     flask_app.redis.ping()
@@ -707,6 +708,7 @@ def system_health(flask_app):
         "probes": probe_health(flask_app.redis),
         "missing_best": missing_best_summary(flask_app.redis),
         "manual_imports": pending_count(flask_app.redis),
+        "held_imports": HeldImport.query.count(),
     }
 
 

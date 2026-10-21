@@ -667,6 +667,23 @@ class ManualImportForm(FlaskForm):
     discard_submit = SubmitField("Discard download")
 
 
+class HeldImportForm(FlaskForm):
+    """Decide a held conversion: import it, archive it only, or discard it (#292)."""
+
+    held_id = HiddenField(validators=[DataRequired()])
+    import_submit = SubmitField("Import")
+    archive_submit = SubmitField("Archive only")
+    discard_submit = SubmitField("Discard")
+
+
+class ArchivedRestoreForm(FlaskForm):
+    """Request a restore of an archive-only original after a password check (#292)."""
+
+    archived_id = HiddenField(validators=[DataRequired()])
+    password = PasswordField("Password", validators=[DataRequired()])
+    restore_submit = SubmitField("Restore")
+
+
 class MissingScanForm(FlaskForm):
     """Run the scan for best files with no local copy again (missing files page)."""
 

@@ -128,6 +128,16 @@ def _extract_media_details(file_path):
                 break
     video["dolby_vision_profile"] = parse_dolby_vision_profile(video["hdr_format"])
 
+    # The color tags tell an SDR file with BT.2020 colors (#292).
+
+    video["color_primaries"] = None
+    video["transfer_characteristics"] = None
+    for track in media_info.tracks:
+        if track.track_type == "Video":
+            video["color_primaries"] = track.color_primaries
+            video["transfer_characteristics"] = track.transfer_characteristics
+            break
+
     return {
         "video": video,
         "audio_tracks": get_audio_tracks_from_file(file_path),
@@ -1006,7 +1016,9 @@ def mkvpropedit_unlocked(
 
             enqueue_plex_analyze(file_path)
 
-        if get_setting("ARCHIVE_ORIGINAL_MEDIA"):
+        # The archive of a conversion is its original (#292). Keep it.
+
+        if get_setting("ARCHIVE_ORIGINAL_MEDIA") and file.archive_is_library_copy:
             try:
                 (
                     file.aws_untouched_key,
@@ -1887,7 +1899,9 @@ def _remux_audio_plan_unlocked(file_id, plan):
 
             enqueue_plex_analyze(file_path)
 
-            if get_setting("ARCHIVE_ORIGINAL_MEDIA"):
+            # The archive of a conversion is its original (#292). Keep it.
+
+            if get_setting("ARCHIVE_ORIGINAL_MEDIA") and file.archive_is_library_copy:
                 try:
                     (
                         file.aws_untouched_key,

@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% from "_page_header.html" import page_header, breadcrumb %}
+
+{% block app_content %}
+{{ breadcrumb([("Library Maintenance", url_for('main.maintenance')), (title, none)]) }}
+{{ page_header(title) }}
+<p class="text-muted">Fitzflix converts each HDR or BT.2020 import to 1080p SDR. When the library already has a real rip of the title, the original waits here for your decision.</p>
+<ul class="small text-muted">
+	<li><strong>Import</strong> converts the original and replaces the library file.</li>
+	<li><strong>Archive only</strong> archives the original to S3. The library does not change.</li>
+	<li><strong>Discard</strong> moves the original to the rejects directory.</li>
+</ul>
+{% if held %}
+<div class="list-group mb-4">
+	{% for item in held %}
+	{% set details = item.details() %}
+	<div class="list-group-item">
+		<h6 class="mb-1 text-break">{{ item.untouched_basename }}</h6>
+		<p class="mb-1 small">
+			<span class="badge text-bg-secondary">{{ item.source_format }}</span>
+			<span class="badge text-bg-light">to {{ details.quality_title }} SDR</span>
+			<span class="text-muted">{{ item.filesize_bytes|filesizeformat }}</span>
+		</p>
+		{% if item.existing_file %}
+		<p class="mb-1 small">In the library: <a href="{{ url_for('main.file', file_id=item.existing_file.id) }}">{{ item.existing_file.basename }}</a></p>
+		{% endif %}
+		{% if item.decision == "import" %}
+		<span class="badge text-bg-info">Import in progress</span>
+		{% elif item.decision == "archive" %}
+		<span class="badge text-bg-info">Archive in progress</span>
+		{% else %}
+		<form action="" method="post">
+			{{ form.csrf_token() }}
+			<input type="hidden" name="held_id" value="{{ item.id }}">
+			{# One flex-wrap row with a gap. Thus, the buttons keep a gap
+			   when a narrow screen wraps them. #}
+			<div class="d-flex flex-wrap gap-2">
+			<button class="btn btn-sm btn-primary" name="import_submit" value="Import" type="submit" onclick="return confirm('Convert this file and replace the library file?');">Import</button>
+			<button class="btn btn-sm btn-secondary" name="archive_submit" value="Archive only" type="submit">Archive only</button>
+			<button class="btn btn-sm btn-danger" name="discard_submit" value="Discard" type="submit" onclick="return confirm('Move this file to the rejects directory?');">Discard</button>
+			</div>
+		</form>
+		{% endif %}
+	</div>
+	{% endfor %}
+</div>
+{% else %}
+<p class="lead">Nothing waits for a decision.</p>
+{% endif %}
+
+<h4 class="mt-4 mb-2">Archived originals</h4>
+<p class="small text-muted">The originals in S3 that have no library file. Each one is an "Archive only" choice, or the original of a conversion that a real rip replaced. A restore imports the original again.</p>
+{% if archived %}
+<div class="list-group">
+	{% for item in archived %}
+	<div class="list-group-item">
+		<h6 class="mb-1 text-break">
+			{% if item.movie %}<a href="{{ url_for('main.movie', movie_id=item.movie.id) }}">{{ item.untouched_basename }}</a>
+			{% elif item.tv_series %}<a href="{{ url_for('main.tv', series_id=item.tv_series.id) }}">{{ item.untouched_basename }}</a>
+			{% else %}{{ item.untouched_basename }}{% endif %}
+		</h6>
+		<p class="mb-1 small">
+			<span class="badge text-bg-light">{{ item.quality_title }}</span>
+			{% if item.hdr_format %}<span class="badge text-bg-secondary">{{ item.hdr_format }}</span>{% endif %}
+			{% if item.aws_untouched_filesize_bytes %}<span class="text-muted">{{ item.aws_untouched_filesize_bytes|filesizeformat }}</span>{% endif %}
+			<span class="text-muted">&middot; {{ item.reason }}</span>
+		</p>
+		<form action="" method="post" class="d-flex flex-wrap gap-2 align-items-center">
+			{{ restore_form.csrf_token() }}
+			<input type="hidden" name="archived_id" value="{{ item.id }}">
+			<input type="password" class="form-control form-control-sm w-auto" name="password" placeholder="Password" aria-label="Password" autocomplete="current-password" required>
+			<button class="btn btn-sm btn-outline-primary" name="restore_submit" value="Restore" type="submit">Restore</button>
+		</form>
+	</div>
+	{% endfor %}
+</div>
+{% else %}
+<p class="small text-muted">No archived originals.</p>
+{% endif %}
+{% endblock %}

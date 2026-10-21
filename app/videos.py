@@ -101,6 +101,7 @@ from app.importing import (
     sanitize_string,
     transcode_task,
 )
+from app.sdr_conversion import archive_held_task, convert_localized_file
 from app.tmdb_refresh import (
     apply_tmdb_refresh,
     find_or_create_tmdb_movie,
@@ -211,6 +212,8 @@ __all__ = [
     "convert_to_matroska",
     "evaluate_filename",
     "finalize_localization",
+    "archive_held_task",
+    "convert_localized_file",
     "finalize_transcoding",
     "inspect_localized_file",
     "iso_639_3_native_language",

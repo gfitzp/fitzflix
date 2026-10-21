@@ -53,9 +53,11 @@ from app.criterion_catalog import (
 from app.email import send_email as send_email_async
 from app.email import task_send_email as send_email
 from app.models import (
+    ArchivedOriginal,
     File,
     FileAudioTrack,
     FileSubtitleTrack,
+    HeldImport,
     Movie,
     RefFeatureType,
     RefQuality,
@@ -64,6 +66,16 @@ from app.models import (
     tmdb_get,
 )
 from app.pipeline import migrate_trail, record_task_stage
+from app.sdr_conversion import (
+    archived_original_from_file,
+    converted_file_details,
+    held_decision,
+    hold_import,
+    needs_placebo,
+    notify_admin,
+    plan_conversion,
+    real_rips_blocking,
+)
 from app.tracks import (
     _extract_media_details,
     flag_possibly_forced_subtitles,
@@ -570,6 +582,23 @@ def localization_task(
                 move_to_rejects(file_path, reason or "incorrect filename")
                 return False
 
+            # An HDR or BT.2020 import becomes a 1080p SDR conversion (#292).
+            # The plan renames it to its 1080p quality now. Thus, the
+            # quality checks below compare the conversion, not the original.
+
+            conversion = None
+            if get_setting("CONVERT_HDR_TO_SDR"):
+                conversion = _plan_conversion_or_reject(file_path, file_details)
+                if conversion is False:
+                    return False
+                if conversion:
+                    file_details = converted_file_details(file_details, conversion)
+                    current_app.logger.info(
+                        f"'{basename}' {conversion['source_format']} "
+                        f"{conversion['source_quality']}. Importing as a "
+                        f"{conversion['target_quality']} SDR conversion"
+                    )
+
             # Fitzflix must not process a different version of this video at
             # the same time. Thus, this task makes an identifier from specific
             # movie or TV show fields and uses it for the lock. If a different
@@ -615,6 +644,21 @@ def localization_task(
             )
             if not lock:
                 return False
+
+            # A conversion waits for an admin when the library has a real rip
+            # of the title at its quality or better. "Import" sends the file
+            # back here with replace_existing.
+
+            if conversion:
+                if held_decision(file_path):
+                    file_details["replace_existing"] = True
+                else:
+                    blockers = real_rips_blocking(file_details)
+                    if blockers:
+                        hold_import(file_path, file_details, conversion, blockers)
+                        current_app.lock_manager.unlock(lock)
+                        current_app.logger.info(f"Removed lock {lock}")
+                        return False
 
             # Look for better-quality versions of this file that already exist.
 
@@ -1241,14 +1285,70 @@ def localization_task(
             if file_details.get("basename") != basename:
                 migrate_trail(current_app.redis, basename, file_details.get("basename"))
 
-            current_app.handoff_queue.enqueue(
-                "app.videos.move_localized_file",
-                args=(source_path, file_details, lock, hidden_output_file),
-                job_timeout=current_app.config["MOVE_TASK_TIMEOUT"],
-                description=f"'{basename}'",
-            )
+            # A conversion first goes to the transcode queue. That task
+            # gives the file to move_localized_file after the encode.
+
+            if conversion:
+                current_app.transcode_queue.enqueue(
+                    "app.videos.convert_localized_file",
+                    args=(
+                        source_path,
+                        file_details,
+                        lock,
+                        hidden_output_file,
+                        conversion,
+                    ),
+                    job_timeout=current_app.config["TRANSCODE_TASK_TIMEOUT"],
+                    description=f"'{file_details.get('basename')}'",
+                )
+            else:
+                current_app.handoff_queue.enqueue(
+                    "app.videos.move_localized_file",
+                    args=(source_path, file_details, lock, hidden_output_file),
+                    job_timeout=current_app.config["MOVE_TASK_TIMEOUT"],
+                    description=f"'{basename}'",
+                )
 
         return True
+
+
+def _plan_conversion_or_reject(file_path, file_details):
+    """Return the conversion plan of an import, None, or False after a reject (#292).
+
+    A conversion needs ARCHIVE_ORIGINAL_MEDIA. The library gets only the
+    conversion. Thus, without the archive, Fitzflix would lose the only
+    copy of the original. A Dolby Vision Profile 5 file needs
+    FFMPEG_PLACEBO_BIN. Each of these rejects the file and tells the admin."""
+
+    basename = os.path.basename(file_path)
+    try:
+        plan = plan_conversion(file_path, file_details)
+    except ValueError as e:
+        reason = str(e)
+        plan = None
+    else:
+        if not plan:
+            return None
+        if not get_setting("ARCHIVE_ORIGINAL_MEDIA"):
+            reason = (
+                "A conversion needs ARCHIVE_ORIGINAL_MEDIA. Without the archive, "
+                "the original would be lost"
+            )
+        elif needs_placebo(plan) and not current_app.config["FFMPEG_PLACEBO_BIN"]:
+            reason = "A Dolby Vision Profile 5 conversion needs FFMPEG_PLACEBO_BIN"
+        else:
+            return plan
+
+    current_app.logger.error(f"'{basename}' rejected: {reason}")
+    move_to_rejects(file_path, "conversion not possible")
+    notify_admin(
+        "A conversion is not possible",
+        "conversion_rejected",
+        basename=basename,
+        reason=reason,
+        rejects_directory=current_app.config["REJECTS_DIR"],
+    )
+    return False
 
 
 def inspect_localized_file(file_path, container, job=None):
@@ -1786,6 +1886,11 @@ def finalize_localization(
             # make a new one. If it exists, update that record.
 
             file = File.query.filter_by(file_path=file_details.get("file_path")).first()
+
+            # A real rip that replaces a conversion keeps the original of
+            # the conversion in S3, as an archive-only original (#292).
+
+            kept_archives = []
             if not file:
                 file = File(**file_details)
                 current_app.logger.debug(vars(file))
@@ -1794,6 +1899,15 @@ def finalize_localization(
 
             else:
                 current_app.logger.info(f"{file} Existing File record found")
+                if (
+                    file.converted_from_quality
+                    and not file_details.get("converted_from_quality")
+                    and file.aws_untouched_key
+                    and file.aws_untouched_date_uploaded
+                ):
+                    kept_archives.append(
+                        archived_original_from_file(file, "replaced by a real rip")
+                    )
 
                 # Clear the metadata of the existing File record.
 
@@ -1870,6 +1984,14 @@ def finalize_localization(
             ).first()
             file.quality = quality
             current_app.logger.info(f"{file} Setting file_quality {quality}")
+
+            # The conversion fields (#292). A real rip clears them on a
+            # reused record. replace_existing is the "Import" choice of an
+            # admin. find_worse_files reads it.
+
+            file.converted_from_quality = file_details.get("converted_from_quality")
+            file.converted_from_format = file_details.get("converted_from_format")
+            file.replace_existing = file_details.get("replace_existing", False)
 
             # The media details arrive precomputed from move_localized_file.
             # The fallback inspection covers a job from before the split
@@ -1982,6 +2104,16 @@ def finalize_localization(
             for worse in worse_files:
                 worse.delete_local_file()
 
+                if (
+                    worse.converted_from_quality
+                    and not file.converted_from_quality
+                    and worse.aws_untouched_key
+                    and worse.aws_untouched_date_uploaded
+                ):
+                    kept_archives.append(
+                        archived_original_from_file(worse, "replaced by a real rip")
+                    )
+
                 # If the new file is from digital media, delete only the worse
                 # digital-media files. Fitzflix always keeps the best
                 # physical-media file.
@@ -2008,9 +2140,15 @@ def finalize_localization(
                     worse_derived_paths += derived_paths_for(worse)
                     db.session.delete(worse)
 
+                # The disc of a converted original stays on the shelf
+                # (#292). Thus, Fitzflix sends no disposal email when a
+                # conversion replaces a file or a file replaces a conversion.
+
                 if (
                     worse.quality.physical_media == True
                     and file.quality.physical_media == True
+                    and not worse.converted_from_quality
+                    and not file.converted_from_quality
                 ):
                     admin_user = User.query.filter(User.admin == True).first()
                     send_email_async(
@@ -2113,6 +2251,20 @@ def finalize_localization(
                     description=f"'{file_details.get('basename')}'",
                 )
                 return False
+
+            # The archive-only originals commit with the import. Their
+            # rows claim the keys. Thus, the delete of the worse keys below
+            # skips them. An archive-only row for the key of the new file
+            # is no longer necessary. The held row of an "Import" choice is
+            # done.
+
+            for archived in kept_archives:
+                db.session.add(archived)
+            if file.aws_untouched_key:
+                ArchivedOriginal.query.filter_by(
+                    aws_untouched_key=file.aws_untouched_key
+                ).delete()
+            HeldImport.query.filter_by(held_path=file_path).delete()
 
             db.session.commit()
 

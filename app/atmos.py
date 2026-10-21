@@ -1159,7 +1159,9 @@ def _atmos_finish(state, phases):
     # committed. Thus, an upload failure fails the job, and the S3 sync
     # task repairs it.
 
-    if get_setting("ARCHIVE_ORIGINAL_MEDIA"):
+    # The archive of a conversion is its original (#292). Keep it.
+
+    if get_setting("ARCHIVE_ORIGINAL_MEDIA") and file.archive_is_library_copy:
         phases.enter("Archiving to S3")
         try:
             (

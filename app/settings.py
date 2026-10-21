@@ -80,6 +80,14 @@ SETTINGS = {
             "flag",
         ),
         Setting(
+            "CONVERT_HDR_TO_SDR",
+            "Convert HDR to SDR",
+            "The import archives each HDR or BT.2020 original to S3 and puts a "
+            "1080p SDR conversion into the library. Turn this off to import "
+            "HDR files as they are. The conversion needs Archive original media.",
+            "flag",
+        ),
+        Setting(
             "CREATE_ATMOS_TWINS",
             "Create E-AC-3 Atmos twins",
             "The import adds an E-AC-3 Atmos twin to each TrueHD Atmos track, "

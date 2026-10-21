@@ -44,6 +44,7 @@ from app import db, get_app, retry_job_id, safe_job_id
 from app.email import task_send_email as send_email
 from app.settings import get_setting
 from app.models import (
+    ArchivedOriginal,
     File,
     Movie,
     RefQuality,
@@ -354,8 +355,25 @@ def sync_aws_s3_storage_task():
 
                 # The next branches test the state of the file.
 
-                # The file is not in S3 but exists in the filesystem.
+                # The file is not in S3 but exists in the filesystem. The
+                # library file of a conversion is not its original (#292).
+                # Never archive it under the key of the original.
                 if (
+                    (
+                        file.aws_untouched_key not in s3_keys
+                        or file.aws_untouched_date_uploaded == None
+                        or file.aws_untouched_stale
+                    )
+                    and os.path.isfile(file_path)
+                    and not file.archive_is_library_copy
+                ):
+                    current_app.logger.warning(
+                        f"'{file.aws_untouched_key}' The original of this "
+                        f"conversion is not in AWS S3. The library file is not "
+                        f"the original. Thus, it is not uploaded"
+                    )
+
+                elif (
                     file.aws_untouched_key not in s3_keys
                     or file.aws_untouched_date_uploaded == None
                     or file.aws_untouched_stale
@@ -446,11 +464,17 @@ def sync_aws_s3_storage_task():
 
             # Delete the remote S3 files that are not in Fitzflix.
 
+            # The archive-only originals (#292) have no File row. Their
+            # keys are claimed too.
+
             aws_untouched_keys = {
                 aws_untouched_key
                 for (aws_untouched_key,) in db.session.query(
                     File.aws_untouched_key
                 ).all()
+            } | {
+                key
+                for (key,) in db.session.query(ArchivedOriginal.aws_untouched_key).all()
             }
 
             # This is the rename-skew tripwire. An ACTIVE claim with no
@@ -465,6 +489,7 @@ def sync_aws_s3_storage_task():
                 for (key,) in db.session.query(File.aws_untouched_key)
                 .filter(File.aws_untouched_key.isnot(None))
                 .filter(File.aws_untouched_date_deleted.is_(None))
+                .union(db.session.query(ArchivedOriginal.aws_untouched_key))
                 if key not in s3_key_set
             )
             if dangling_claims:
@@ -602,6 +627,12 @@ def download_task(key, basename, sqs_receipt_handle=None, transient_retries=0):
         file = File.query.filter_by(aws_untouched_key=key).first()
         if file:
             basename = file.untouched_basename
+        else:
+            # An archive-only original (#292) keeps its untouched name. The
+            # key is sanitized. Thus, it can differ from the name.
+            archived = ArchivedOriginal.query.filter_by(aws_untouched_key=key).first()
+            if archived:
+                basename = archived.untouched_basename
 
         # An import replaced the file after the restore request. The
         # download would replace the new file with the old one, and an
@@ -773,6 +804,16 @@ def upload_task(
             file = File.query.filter_by(id=file_id).first()
             file_path = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
 
+            # The archive of a conversion is its original (#292). The
+            # library file must not replace it.
+
+            if not file.archive_is_library_copy:
+                current_app.logger.warning(
+                    f"'{file.basename}' is a conversion. Its archive is the "
+                    f"original. Not uploading the library file"
+                )
+                return False
+
             # Pass the file to aws_upload() for the upload. Then update the
             # File record with the remote key and the upload date.
 
@@ -827,7 +868,7 @@ def untouched_key_still_claimed(key):
     claimed key would strand the archive of the survivor behind a
     delete marker (the Bambi II incident, 2026-08). The caller must
     check AFTER its own deletes commit. Thus, the purged rows no longer
-    count."""
+    count. An archive-only original (#292) claims its key too."""
 
     return (
         db.session.query(File.id)
@@ -835,6 +876,10 @@ def untouched_key_still_claimed(key):
             File.aws_untouched_key == key,
             File.aws_untouched_date_deleted.is_(None),
         )
+        .first()
+        is not None
+        or db.session.query(ArchivedOriginal.id)
+        .filter(ArchivedOriginal.aws_untouched_key == key)
         .first()
         is not None
     )
@@ -903,6 +948,17 @@ def rename_untouched_object(file, new_key, defer_upload=False):
         s3_client.delete_object(Bucket=bucket, Key=old_key)
         file.aws_untouched_key = new_key
         return True
+
+    # The library file of a conversion is not its original (#292). Keep
+    # the old key. It still names the real original.
+
+    if not file.archive_is_library_copy:
+        current_app.logger.warning(
+            f"'{basename}' archive can't be copied "
+            f"({storage_class if head else 'missing'}). The file is a "
+            f"conversion. Thus, it keeps the key '{old_key}'"
+        )
+        return False
 
     if defer_upload:
         current_app.logger.info(

@@ -14,6 +14,9 @@
 	{% if health.manual_imports %}
 	<a class="badge text-bg-warning text-decoration-none me-1 mb-1" href="{{ url_for('main.manual_imports') }}" title="Downloads that Sonarr or Radarr cannot import">{{ health.manual_imports }} manual import{{ 's' if health.manual_imports != 1 }}</a>
 	{% endif %}
+	{% if health.held_imports %}
+	<a class="badge text-bg-warning text-decoration-none me-1 mb-1" href="{{ url_for('main.held_imports') }}" title="HDR imports that wait because a real rip exists">{{ health.held_imports }} held import{{ 's' if health.held_imports != 1 }}</a>
+	{% endif %}
 	{% for mount in health.missing_mounts %}
 	<span class="badge text-bg-danger me-1 mb-1">{{ mount }} not mounted</span>
 	{% endfor %}

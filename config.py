@@ -47,6 +47,7 @@ PAGE_FLAGS = (
     "ARCHIVE_ORIGINAL_MEDIA",
     "PREVENT_ACCOUNT_CREATION",
     "AWS_DOWNLOAD_VIA_CDN",
+    "CONVERT_HDR_TO_SDR",
 )
 PAGE_TUNABLES = (
     "DISK_ALERT_FREE_GB",
@@ -167,6 +168,10 @@ class Config(object):
     # SMB.
     STAGING_DIR                         = os.environ.get("STAGING_DIR") or os.path.join(MEDIA_LOCATION, "staging")
 
+    # A conversion candidate waits here for an admin decision when the
+    # library already has a real rip of the title (#292).
+    HELD_DIR                            = os.environ.get("HELD_DIR") or os.path.join(MEDIA_LOCATION, "held")
+
     LIBRARY_DIR                         = os.environ.get("LIBRARY_DIR") or os.path.join(MEDIA_LOCATION, "library")
     MOVIE_LIBRARY                       = os.environ.get("MOVIE_LIBRARY") or os.path.join(LIBRARY_DIR, "Movies")
     TV_LIBRARY                          = os.environ.get("TV_LIBRARY") or os.path.join(LIBRARY_DIR, "TV Shows")
@@ -184,6 +189,11 @@ class Config(object):
     MKVPROPEDIT_BIN                     = os.environ.get("MKVPROPEDIT_LOCATION") or "/opt/homebrew/bin/mkvpropedit"
     FFMPEG_BIN                          = os.environ.get("FFMPEG_BIN") or "/opt/homebrew/bin/ffmpeg"
     FFPROBE_BIN                         = os.environ.get("FFPROBE_BIN") or "/opt/homebrew/bin/ffprobe"
+
+    # An ffmpeg build with libplacebo. Only a Dolby Vision Profile 5
+    # conversion needs it (#292). Homebrew's core ffmpeg does not have
+    # libplacebo. Without this setting, Fitzflix rejects a Profile 5 file.
+    FFMPEG_PLACEBO_BIN                  = os.environ.get("FFMPEG_PLACEBO_BIN") or None
     MKVEXTRACT_BIN                      = os.environ.get("MKVEXTRACT_BIN") or "/opt/homebrew/bin/mkvextract"
     TRUEHDD_BIN                         = os.environ.get("TRUEHDD_BIN") or "/Users/server/bin/truehdd"
 
@@ -218,6 +228,12 @@ class Config(object):
     # on by default. With a passthrough player, turn them off.
     CREATE_FLAC_TWINS                   = _on_by_default("CREATE_FLAC_TWINS")
     CREATE_ATMOS_TWINS                  = _on_by_default("CREATE_ATMOS_TWINS")
+
+    # Convert each HDR or BT.2020 import to 1080p SDR (#292). The import
+    # archives the original to S3 untouched. Only the conversion goes
+    # into the library. On by default. When it is off, an HDR file goes
+    # into the library as it is.
+    CONVERT_HDR_TO_SDR                  = _on_by_default("CONVERT_HDR_TO_SDR")
 
     # MediaConvert (TrueHD Atmos -> E-AC-3 Atmos supplement pipeline)
     AWS_MEDIACONVERT_PREFIX             = os.environ.get("AWS_MEDIACONVERT_PREFIX") or "mediaconvert-scratch"
@@ -319,6 +335,10 @@ class Config(object):
     HANDBRAKE_PRESET                    = os.environ.get("HANDBRAKE_PRESET") or "Apple 1080p60 Surround"
     HANDBRAKE_PRESET_FILE               = os.environ.get("HANDBRAKE_PRESET_FILE") or _default_preset_file()
     HANDBRAKE_EXTENSION                 = os.environ.get("HANDBRAKE_EXTENSION") or "mp4"
+
+    # The preset in HANDBRAKE_PRESET_FILE that makes the SDR video of a
+    # conversion (#292).
+    CONVERSION_PRESET                   = os.environ.get("CONVERSION_PRESET") or "HDR to 1080p SDR"
 
     # Sonarr configuration
     SONARR_API_KEY                      = os.environ.get("SONARR_API_KEY") or None

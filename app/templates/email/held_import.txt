@@ -1,0 +1,15 @@
+Hello,
+
+The file '{{ basename }}' ({{ source_format }}) waits for your decision. The library already has a real rip of this title:
+
+{% for file in blockers %}
+  {{ file.quality.quality_title }}	- {{ file.basename }}
+{% endfor %}
+
+Open Library Maintenance > Held imports to choose:
+
+- Import: convert the file to 1080p SDR and replace the library file.
+- Archive only: archive the original to S3. The library does not change.
+- Discard: move the file to the rejects directory.
+
+- Fitzflix
