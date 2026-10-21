@@ -19,7 +19,9 @@
 	</tbody>
 </table>
 <p/>
-<p>Open Library Maintenance &gt; Held imports to choose:</p>
+<p>Go <a href="{{ url_for('main.held_imports', _external=True) }}">here</a> to choose:</p>
+<p/>
+<p>{{ url_for('main.held_imports', _external=True) }}</p>
 <ul>
 	<li>Import: convert the file to 1080p SDR and replace the library file.</li>
 	<li>Archive only: archive the original to S3. The library does not change.</li>

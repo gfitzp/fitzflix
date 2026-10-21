@@ -450,8 +450,13 @@ def test_an_hdr_import_becomes_a_1080p_sdr_conversion(
 
 
 def test_an_hdr_import_waits_when_a_real_rip_exists(
-    app, hdr10_mkv, incoming_dir, archive_on
+    app, hdr10_mkv, incoming_dir, archive_on, monkeypatch
 ):
+    import app.email as email_module
+
+    sent = []
+    monkeypatch.setattr(email_module, "send_email", lambda *a, **k: sent.append(k))
+    monkeypatch.setitem(app.config, "SERVER_NAME", "fitzflix.example")
     basename = "Held Test (2020) - [Bluray-2160p].mkv"
     with app.app_context():
         movie = make_movie("Held Test", 2020)
@@ -471,6 +476,12 @@ def test_an_hdr_import_waits_when_a_real_rip_exists(
         assert held.existing_file_id == real.id
         assert held.source_format == "HDR10"
         assert held.details()["quality_title"] == "Bluray-1080p"
+
+        # The email links to the decision page.
+        (email,) = sent
+        link = "http://fitzflix.example/maintenance/held-imports"
+        assert link in email["text_body"]
+        assert f'href="{link}"' in email["html_body"]
 
         # The "Import" choice sends the file through with replace_existing.
         held.decision = "import"
