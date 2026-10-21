@@ -8,6 +8,8 @@ file, or a visible file.
 import os
 import time
 
+from datetime import datetime
+
 import pytest
 
 import app.maintenance as maintenance
@@ -631,14 +633,13 @@ def test_rearchive_waits_for_the_path_commit(app, monkeypatch):
         )
 
 
-def test_rearchive_keeps_webdl_scaffold_keys(app, monkeypatch):
-    """Make sure the re-archive keeps a WEBDL scaffold key.
+def test_rearchive_replaces_a_webdl_named_key_with_the_library_file(app, monkeypatch):
+    """The WEBDL rebuild is complete (#158). A WEBRip row with a WEBDL key re-archives.
 
-    This is the WEBDL-rebuild scaffold (#158). A WEBRip row keeps its
-    WEBDL-named archive key on purpose until a real WEB-DL replaces it.
-    The deferred re-archive refuses that trade. It does not upload
-    gigabytes again and retire the scaffold key. The genre backfill of
-    2026-08-29 started to do exactly that."""
+    The rebuild left WEBRip rows with WEBDL-named archive keys, and most
+    of those objects were the downloads that the rebuild replaced. The
+    re-archive uploads the library file under the WEBRip name. Then it
+    deletes the old key and points the record at the new one."""
 
     from app import aws_storage
 
@@ -648,32 +649,43 @@ def test_rearchive_keeps_webdl_scaffold_keys(app, monkeypatch):
     from tests.factories import make_movie, make_movie_file
 
     with app.app_context():
-        file = make_movie_file(make_movie("Scaffold Subject", 1964), "WEBRip-1080p")
-        file.aws_untouched_key = "untouched/Scaffold Subject (1964) - [WEBDL-1080p].mkv"
-        file.untouched_basename = "Scaffold Subject (1964) - [WEBRip-1080p].mkv"
+        file = make_movie_file(make_movie("Rebuilt Subject", 1964), "WEBRip-1080p")
+        file.aws_untouched_key = "untouched/Rebuilt Subject (1964) - [WEBDL-1080p].mkv"
+        file.untouched_basename = "Rebuilt Subject (1964) - [WEBRip-1080p].mkv"
         db.session.commit()
         file_id = file.id
+        local = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
+        os.makedirs(os.path.dirname(local), exist_ok=True)
+        with open(local, "wb") as f:
+            f.write(b"rebuilt library file")
 
         new_key = os.path.join(
             app.config["AWS_UNTOUCHED_PREFIX"],
-            "Scaffold Subject (1964) - [WEBRip-1080p].mkv",
+            "Rebuilt Subject (1964) - [WEBRip-1080p].mkv",
         )
+        uploads, deletes = [], []
+
+        class FakeS3:
+            def head_object(self, Bucket, Key):
+                return {"StorageClass": "DEEP_ARCHIVE", "ContentLength": 5}
+
+            def delete_object(self, Bucket, Key):
+                deletes.append(Key)
+
+        monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kw: FakeS3())
         monkeypatch.setattr(
             aws_storage,
             "aws_upload",
-            lambda *a, **kw: pytest.fail("the scaffold re-upload must not run"),
-        )
-        monkeypatch.setattr(
-            aws_storage,
-            "aws_s3_client",
-            lambda **kw: pytest.fail("no S3 calls for a scaffold key"),
+            lambda path, prefix="", key_name=None, **kw: uploads.append(
+                (path, key_name)
+            )
+            or (f"{prefix}/{key_name}", datetime.utcnow(), os.path.getsize(path)),
         )
 
-        assert videos.rearchive_untouched_object(file_id, new_key) is False
+        assert videos.rearchive_untouched_object(file_id, new_key) is True
 
+        assert uploads == [(local, "Rebuilt Subject (1964) - [WEBRip-1080p].mkv")]
+        assert deletes == ["untouched/Rebuilt Subject (1964) - [WEBDL-1080p].mkv"]
         db.session.expire_all()
-        file = db.session.get(File, file_id)
-        assert (
-            file.aws_untouched_key
-            == "untouched/Scaffold Subject (1964) - [WEBDL-1080p].mkv"
-        )
+        assert db.session.get(File, file_id).aws_untouched_key == new_key
+        os.remove(local)

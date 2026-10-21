@@ -173,6 +173,17 @@ def cron_table(config):
             3600,
             "Cleaning up orphaned partial files",
         ),
+        # Sync the library with the S3 archive weekly (#158). The task
+        # uploads the missing archives, restores the missing best files,
+        # reports the claims with no object, and prunes the objects that
+        # no record claims. It waits until every queue is idle. It was out
+        # of the table during the WEBDL rebuild.
+        (
+            "0 2 * * 0",
+            "app.videos.sync_aws_s3_storage_task",
+            86400,
+            "Syncing files with AWS S3 storage",
+        ),
         # Ask every library file if the NAS still holds its handle. The
         # state is invisible until the close of an upload fails. Thus,
         # the sweep asks nightly instead of waiting for a surprise. 05:00

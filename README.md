@@ -559,7 +559,7 @@ Run these commands from the project root, with the venv active. Each command put
 | Command | Function |
 | --- | --- |
 | `flask scan` | Scans the import directory for files to import. Fitzflix also monitors the directory continuously. This command starts a scan now. |
-| `flask sync` | Removes the files from AWS S3 storage that are no longer in the library |
+| `flask sync` | Runs the S3 sync now. The sync also runs weekly, on Sunday at 2:00 AM. It uploads the missing archives, restores the best files that are not on the local disk, and removes the archives that no record claims. It waits until every queue is idle |
 | `flask sqs` | Polls AWS SQS for completed Glacier restores and downloads them |
 | `flask refresh tmdb` | Refreshes the TMDB metadata for each matched movie and TV series |
 | `flask refresh tmdb movie <tmdb_id>` / `flask refresh tmdb tv <tmdb_id>` | Refreshes the TMDB metadata for one title |
