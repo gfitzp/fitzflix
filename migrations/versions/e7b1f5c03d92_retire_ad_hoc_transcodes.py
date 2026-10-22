@@ -22,12 +22,27 @@ depends_on = None
 
 
 def upgrade():
-    op.drop_index("ix_derived_file_file_path", table_name="derived_file")
-    op.drop_index("ix_derived_file_source_file_id", table_name="derived_file")
-    op.drop_table("derived_file")
-    with op.batch_alter_table("file", schema=None) as batch_op:
-        batch_op.drop_index("ix_file_date_transcoded")
-        batch_op.drop_column("date_transcoded")
+    # MySQL has no transactional DDL. The first run on 2026-10-21 dropped
+    # 1 index and then stopped: MySQL refuses to drop the index of a
+    # foreign key. Thus, each step checks what is there. drop_table also
+    # drops the indexes and the foreign key of the table.
+
+    # A running job can hold a transaction on file. Then an ALTER waits,
+    # and every new query on file waits behind it. Fail after 10 s instead
+    # (2026-10-22). Run the migration when the queues are idle.
+
+    bind = op.get_bind()
+    if bind.dialect.name == "mysql":
+        op.execute("SET SESSION lock_wait_timeout = 10")
+    inspector = sa.inspect(bind)
+    if inspector.has_table("derived_file"):
+        op.drop_table("derived_file")
+    if "date_transcoded" in [c["name"] for c in inspector.get_columns("file")]:
+        indexes = [i["name"] for i in inspector.get_indexes("file")]
+        with op.batch_alter_table("file", schema=None) as batch_op:
+            if "ix_file_date_transcoded" in indexes:
+                batch_op.drop_index("ix_file_date_transcoded")
+            batch_op.drop_column("date_transcoded")
     op.execute("DELETE FROM app_setting WHERE name = 'HANDBRAKE_PRESET'")
 
 
