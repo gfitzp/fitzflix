@@ -38,6 +38,105 @@ from app.settings import get_setting
 from app.plex_library import enqueue_plex_analyze
 from app.smb_probe import library_path, probe_and_record
 
+# A staged remux holds the staged source and the output on the local
+# disk at the same time (#298).
+
+STAGED_REMUX_FACTOR = 2.2
+
+
+def _on_volume_of(path, directory):
+    """Return True if path is on the same volume as directory."""
+
+    try:
+        return os.stat(os.path.dirname(path)).st_dev == os.stat(directory).st_dev
+    except OSError:
+        return False
+
+
+def _run_mkvmerge(command, job, name, activity):
+    """Run an mkvmerge command, show its progress, and raise if it fails."""
+
+    from app.videos import wait_for_subprocess
+
+    current_app.logger.info(f"'{name}' Running mkvmerge: {command}")
+    process = subprocess.Popen(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        universal_newlines=True,
+        bufsize=1,
+    )
+    watch_mkvmerge_progress(process, job, name, activity)
+    wait_for_subprocess(process, ok_returncodes=(0, 1))
+
+
+def remux_file(file_path, build_command, job, name, activity):
+    """Remux a Matroska file and replace it with the result (#298).
+
+    build_command(source, output) returns the mkvmerge command. A file on
+    another volume (a library file on the NAS) is copied to staging. The
+    remux runs on the local disk. The result is copied back to a hidden
+    name and renamed over the file. Thus, the NAS sees 1 read and then 1
+    write, and the file does not change until the rename. A stopped
+    remux leaves its partial on staging.
+
+    A file that is already on staging is remuxed in place. Without
+    staging space, the remux also runs in place, as before."""
+
+    from app.importing import release_staging_reservation, reserve_staging
+    from app.videos import copy_with_progress
+
+    directory, basename = os.path.split(file_path)
+    staging_dir = current_app.config["STAGING_DIR"]
+    reservation = f"remux:{basename}"
+    staged = not _on_volume_of(file_path, staging_dir)
+    if staged:
+        status = reserve_staging(
+            reservation,
+            int(os.path.getsize(file_path) * STAGED_REMUX_FACTOR),
+            [f"src-{basename}", f"remux-{basename}"],
+            staging_dir,
+        )
+        if status != "ok":
+            current_app.logger.warning(
+                f"'{name}' Staging has no space for the remux. Remuxing in place"
+            )
+            staged = False
+
+    if not staged:
+        hidden_output = os.path.join(directory, f".{basename}.remux.mkv")
+        try:
+            _run_mkvmerge(build_command(file_path, hidden_output), job, name, activity)
+            os.replace(hidden_output, file_path)
+        except BaseException:
+            if os.path.exists(hidden_output):
+                os.remove(hidden_output)
+            raise
+        return
+
+    staged_source = os.path.join(staging_dir, f".src-{basename}")
+    staged_output = os.path.join(staging_dir, f".remux-{basename}")
+    hidden_library = os.path.join(directory, f".{basename}")
+    try:
+        copy_with_progress(
+            file_path, staged_source, job, name, "Copying to local staging"
+        )
+        _run_mkvmerge(build_command(staged_source, staged_output), job, name, activity)
+        os.remove(staged_source)
+        copy_with_progress(
+            staged_output, hidden_library, job, name, "Moving into the library"
+        )
+        os.replace(hidden_library, file_path)
+    except BaseException:
+        if os.path.exists(hidden_library):
+            os.remove(hidden_library)
+        raise
+    finally:
+        for path in (staged_source, staged_output):
+            if os.path.exists(path):
+                os.remove(path)
+        release_staging_reservation(reservation)
+
 
 def watch_mkvmerge_progress(process, job, name, activity):
     """Stream the output of a process. Log its progress and update the job meta."""
@@ -918,43 +1017,23 @@ def mkvpropedit_unlocked(
                         f"{file.basename} new_track_order: {new_track_order}"
                     )
 
-                    output_directory = os.path.join(
-                        current_app.config["LIBRARY_DIR"], file.dirname
-                    )
-                    hidden_output_file = os.path.join(
-                        output_directory, f".{file.basename}"
-                    )
+                    # The remux runs on staging and replaces the file at
+                    # the end (#298).
 
-                    command = [
-                        current_app.config["MKVMERGE_BIN"],
-                        "--track-order",
-                        new_track_order,
-                        "-o",
-                        hidden_output_file,
+                    remux_file(
                         file_path,
-                    ]
-
-                    current_app.logger.info(
-                        f"'{file.basename}' Running mkvmerge: {command}"
+                        lambda source, output: [
+                            current_app.config["MKVMERGE_BIN"],
+                            "--track-order",
+                            new_track_order,
+                            "-o",
+                            output,
+                            source,
+                        ],
+                        job,
+                        file.basename,
+                        "Remuxing",
                     )
-
-                    mkvmerge_process = subprocess.Popen(
-                        command,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.STDOUT,
-                        universal_newlines=True,
-                        bufsize=1,
-                    )
-
-                    watch_mkvmerge_progress(
-                        mkvmerge_process, job, file.basename, "Remuxing"
-                    )
-
-                    wait_for_subprocess(mkvmerge_process, ok_returncodes=(0, 1))
-
-                    # Move the new file into place
-
-                    os.rename(hidden_output_file, file_path)
                     reordered = True
 
             # Remove the subtitle tracks that have zero elements
@@ -1095,8 +1174,6 @@ def mkvmerge_task(file_id, audio_tracks, subtitle_tracks):
 def mkvmerge_unlocked(file_id, audio_tracks, subtitle_tracks):
     """Remux an MKV file. The caller must hold the lock of the title."""
 
-    from app.videos import wait_for_subprocess
-
     with app.app_context():
         try:
             job = get_current_job()
@@ -1106,11 +1183,6 @@ def mkvmerge_unlocked(file_id, audio_tracks, subtitle_tracks):
 
             FileAudioTrack.query.filter_by(file_id=file.id).delete()
             FileSubtitleTrack.query.filter_by(file_id=file.id).delete()
-
-            output_directory = os.path.join(
-                current_app.config["LIBRARY_DIR"], file.dirname
-            )
-            hidden_output_file = os.path.join(output_directory, f".{file.basename}")
 
             audio_start = None
             subtitle_start = None
@@ -1145,47 +1217,36 @@ def mkvmerge_unlocked(file_id, audio_tracks, subtitle_tracks):
             current_app.logger.info(f"Modified audio tracks: {audio_tracks}")
             current_app.logger.info(f"Modified subtitle tracks: {subtitle_tracks}")
 
-            command = [
-                current_app.config["MKVMERGE_BIN"],
-                "-o",
-                hidden_output_file,
-                "--title",
-                "",
-                "--track-name",
-                "-1:",
-            ]
-
+            track_args = []
             if len(audio_tracks) >= 1:
-                output_audio_tracks = ",".join(map(str, audio_tracks))
-                command.extend(["-a", output_audio_tracks])
+                track_args.extend(["-a", ",".join(map(str, audio_tracks))])
             else:
-                command.append("--no-audio")
-
+                track_args.append("--no-audio")
             if len(subtitle_tracks) >= 1:
-                output_subtitle_tracks = ",".join(map(str, subtitle_tracks))
-                command.extend(["-s", output_subtitle_tracks])
+                track_args.extend(["-s", ",".join(map(str, subtitle_tracks))])
             else:
-                command.append("--no-subtitles")
+                track_args.append("--no-subtitles")
 
-            command.append(file_path)
+            # The remux runs on staging and replaces the file at the end
+            # (#298).
 
-            current_app.logger.info(f"'{file.basename}' Running mkvmerge: {command}")
-
-            mkvmerge_process = subprocess.Popen(
-                command,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                universal_newlines=True,
-                bufsize=1,
+            remux_file(
+                file_path,
+                lambda source, output: [
+                    current_app.config["MKVMERGE_BIN"],
+                    "-o",
+                    output,
+                    "--title",
+                    "",
+                    "--track-name",
+                    "-1:",
+                ]
+                + track_args
+                + [source],
+                job,
+                file.basename,
+                "Remuxing",
             )
-
-            watch_mkvmerge_progress(mkvmerge_process, job, file.basename, "Remuxing")
-
-            wait_for_subprocess(mkvmerge_process, ok_returncodes=(0, 1))
-
-            # Move the new file into place
-
-            os.rename(hidden_output_file, file_path)
 
             # Remove the subtitle tracks that have zero elements
 
@@ -1443,8 +1504,6 @@ def remove_empty_subtitle_tracks(file_path):
     was nothing to remove.
     """
 
-    from app.videos import wait_for_subprocess
-
     basename = os.path.basename(file_path)
     job = get_current_job()
     media_info = MediaInfo.parse(file_path)
@@ -1480,40 +1539,24 @@ def remove_empty_subtitle_tracks(file_path):
         f"'{basename}' Removing zero-element subtitle track id(s) {empty_track_ids}"
     )
 
-    hidden_output_file = os.path.join(
-        os.path.dirname(file_path), f".{basename}.remove-empty-subs.mkv"
+    subtitle_args = (
+        ["-s", ",".join(str(id) for id in keep_track_ids)]
+        if keep_track_ids
+        else ["--no-subtitles"]
     )
 
-    command = [
-        current_app.config["MKVMERGE_BIN"],
-        "-o",
-        hidden_output_file,
-    ]
+    # A library file is remuxed on staging. A file that is already on
+    # staging (the import) is remuxed in place (#298).
 
-    if keep_track_ids:
-        command.extend(["-s", ",".join(str(id) for id in keep_track_ids)])
-    else:
-        command.append("--no-subtitles")
-
-    command.append(file_path)
-    current_app.logger.info(f"'{basename}' Running mkvmerge: {command}")
-
-    mkvmerge_process = subprocess.Popen(
-        command,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        universal_newlines=True,
-        bufsize=1,
+    remux_file(
+        file_path,
+        lambda source, output: [current_app.config["MKVMERGE_BIN"], "-o", output]
+        + subtitle_args
+        + [source],
+        job,
+        basename,
+        "Removing empty subtitle tracks",
     )
-    watch_mkvmerge_progress(
-        mkvmerge_process, job, basename, "Removing empty subtitle tracks"
-    )
-
-    wait_for_subprocess(mkvmerge_process, ok_returncodes=(0, 1))
-
-    # Move the new file into place
-
-    os.rename(hidden_output_file, file_path)
     return True
 
 
