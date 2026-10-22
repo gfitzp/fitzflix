@@ -404,7 +404,9 @@ def _write_trail_entry(
 
                     if rerun:
                         fresh_journey = True
-                    elif status in ("queued", "scheduled") and not before_job:
+                    elif status in ("queued", "scheduled", "started") and not (
+                        before_job
+                    ):
                         fresh_journey = not trail or all(
                             existing.get("status") in ("done", "deferred")
                             for existing in trail
@@ -446,10 +448,20 @@ def _write_trail_entry(
                             ):
                                 index = position
                                 break
-                    trail.insert(
-                        index,
-                        {"stage": stage, "status": status, "at": now, "job": job_id},
-                    )
+                    new_entry = {
+                        "stage": stage,
+                        "status": status,
+                        "at": now,
+                        "job": job_id,
+                    }
+
+                    # The first entry of a new journey carries a mark. The
+                    # Queue table shows the trail from the last mark only.
+                    # The File Activity page shows the full history (#297).
+
+                    if fresh_journey:
+                        new_entry["journey"] = True
+                    trail.insert(index, new_entry)
 
                 # A sub-stage event can change the own entry of its job in
                 # the same atomic write. Thus, only 1 chip reads "running"
@@ -1030,13 +1042,28 @@ def queue_rows(tasks, trails):
     return rows
 
 
-def pipeline_trails(connection, limit=25):
+def current_journey(entries):
+    """Return the entries of the newest journey of a trail (#297).
+
+    A journey starts at the last entry with the journey mark. The
+    sub-stages of that job sit directly before it. Thus, they belong to
+    the journey too. A trail with no mark is 1 journey."""
+
+    for position in range(len(entries) - 1, -1, -1):
+        if entries[position].get("journey"):
+            return entries[_rerun_start(entries, position) :]
+    return entries
+
+
+def pipeline_trails(connection, limit=25, journey_only=False):
     """Return the newest file trails for the queue page, most recent
     first: [{basename, updated, entries: [{stage, status, at, job}, ...]}, ...].
 
     Each entry carries the rq job id that stamped it. A queue-page row
     finds the trail of its own file by this id. The match is exact. No
-    basename-versus-description match can become stale."""
+    basename-versus-description match can become stale. With
+    journey_only, each trail has only its newest journey. The Queue
+    table uses that. The File Activity page uses the full history."""
 
     trails = []
     try:
@@ -1058,6 +1085,8 @@ def pipeline_trails(connection, limit=25):
             )
             if raw_entries is None:
                 continue
+            if journey_only:
+                raw_entries = current_journey(raw_entries)
             # A deferred attempt does not show. Its retry chip stands for
             # the stage. The done own chip of a phased job does not show
             # when the job has phase chips. A job with no phase chips

@@ -1445,3 +1445,65 @@ def test_a_library_copy_that_books_a_retry_shows_only_the_retry(app):
         ("Localizing", "done"),
         ("Moving into the library", "scheduled"),
     ]
+
+
+def test_the_queue_shows_only_the_newest_journey_of_a_file(app):
+    """A later task on a settled file starts a new journey (#297).
+
+    The Queue table shows that journey only. The File Activity page keeps
+    the full history of the file."""
+
+    from app import db
+    from app.pipeline import pipeline_trails, record_job_event
+
+    basename = "Two Journeys (2026) - [WEBRip-1080p].mkv"
+    with app.app_context():
+        file = make_movie_file(make_movie("Two Journeys", 2026), "WEBRip-1080p")
+        db.session.commit()
+        assert file.basename == basename
+        archive = app.file_queue.enqueue(
+            "app.videos.rearchive_untouched_object", args=(file.id, "untouched/x")
+        )
+        record_job_event(app.redis, archive, "started")
+        record_job_event(app.redis, archive, "done")
+
+        flags = app.file_queue.enqueue("app.videos.mkvpropedit_task", args=(file.id,))
+
+        def stages(trails):
+            (trail,) = [t for t in trails if t["basename"] == basename]
+            return [entry["stage"] for entry in trail["entries"]]
+
+        assert stages(pipeline_trails(app.redis)) == [
+            "Re-archiving to S3",
+            "Setting track flags",
+        ]
+        assert stages(pipeline_trails(app.redis, journey_only=True)) == [
+            "Setting track flags"
+        ]
+
+        # A retry after a failure continues the same journey.
+
+        record_job_event(app.redis, flags, "started")
+        record_job_event(app.redis, flags, "failed")
+        app.file_queue.enqueue("app.videos.mkvpropedit_task", args=(file.id,))
+        assert stages(pipeline_trails(app.redis, journey_only=True)) == [
+            "Setting track flags",
+            "Setting track flags",
+        ]
+
+
+def test_a_journey_keeps_the_sub_stages_before_its_first_job(app):
+    """The sub-stages of the first job sit before its marked entry."""
+
+    from app.pipeline import current_journey
+
+    entries = [
+        {"stage": "Re-archiving to S3", "status": "done", "job": "old"},
+        {"stage": "Copying to staging", "status": "done", "job": "new"},
+        {"stage": "Localizing", "status": "started", "job": "new", "journey": True},
+    ]
+    assert [e["stage"] for e in current_journey(entries)] == [
+        "Copying to staging",
+        "Localizing",
+    ]
+    assert current_journey(entries[:1]) == entries[:1]

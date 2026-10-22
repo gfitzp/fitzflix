@@ -1713,7 +1713,7 @@ def queue():
     from app.pipeline import pipeline_trails, queue_rows
 
     details = current_user.get_queue_details()
-    trails = pipeline_trails(current_app.redis, limit=100)
+    trails = pipeline_trails(current_app.redis, limit=100, journey_only=True)
     return render_template(
         "queue.html",
         title="Queue",

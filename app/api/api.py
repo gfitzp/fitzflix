@@ -27,14 +27,17 @@ def queue_details():
 
         # The per-file pipeline trails show where each recent file is in
         # the import pipeline. The poll of the queue page uses the default
-        # of 25. The dedicated pipeline page asks for the full retained set
-        # with ?files=. Fitzflix clamps that number to what Redis keeps.
+        # of 25. The queue page asks for the full retained set with
+        # ?files=. Fitzflix clamps that number to what Redis keeps. The
+        # Queue table shows the newest journey of each file only (#297).
 
         from app.pipeline import ACTIVE_LIMIT, pipeline_trails
 
         limit = request.args.get("files", 25, type=int) or 25
         details["files"] = pipeline_trails(
-            current_app.redis, limit=max(1, min(limit, ACTIVE_LIMIT))
+            current_app.redis,
+            limit=max(1, min(limit, ACTIVE_LIMIT)),
+            journey_only=True,
         )
         return jsonify(details)
 
