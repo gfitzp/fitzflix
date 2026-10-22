@@ -2288,16 +2288,17 @@ def restore_cost_estimate(files, bulk=False):
             current_app.config["AWS_RESTORE_PER_1K_REQUEST_COST"] / 1000
         )
         restore_per_gb_cost = current_app.config["AWS_RESTORE_PER_GB_COST"]
-    gigabytes = (
-        sum(
-            (
-                file.aws_untouched_filesize_bytes
-                if file.aws_untouched_filesize_bytes
-                else file.filesize_bytes * 1.25 if file.filesize_bytes else 0
-            )
-            for file in files
-        )
-    ) / 1024**3
+    # A conversion restores its smaller transcoded/ copy (#299).
+
+    def restore_bytes(file):
+        transcoded_key = getattr(file, "aws_transcoded_key", None)
+        if transcoded_key and getattr(file, "restore_key", None) == transcoded_key:
+            return file.aws_transcoded_filesize_bytes or file.filesize_bytes or 0
+        if file.aws_untouched_filesize_bytes:
+            return file.aws_untouched_filesize_bytes
+        return file.filesize_bytes * 1.25 if file.filesize_bytes else 0
+
+    gigabytes = sum(restore_bytes(file) for file in files) / 1024**3
     cost = (len(files) * restore_request_cost) + (
         gigabytes
         * (restore_per_gb_cost + current_app.config["AWS_DOWNLOAD_PER_GB_COST"])
@@ -2364,7 +2365,7 @@ def tv(series_id):
             for file in series_restorable:
                 current_app.request_queue.enqueue(
                     "app.videos.aws_restore",
-                    args=(file.aws_untouched_key,),
+                    args=(file.restore_key,),
                     kwargs={"tier": "Bulk"},
                     job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
                     description=f"'{file.untouched_basename}'",
@@ -2670,7 +2671,7 @@ def season(series_id, season):
             for file in restorable:
                 current_app.request_queue.enqueue(
                     "app.videos.aws_restore",
-                    args=(file.aws_untouched_key,),
+                    args=(file.restore_key,),
                     kwargs={"tier": "Bulk"},
                     job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
                     description=f"'{file.untouched_basename}'",
@@ -3106,7 +3107,7 @@ def file(file_id):
 
         current_app.request_queue.enqueue(
             "app.videos.aws_restore",
-            args=(file.aws_untouched_key,),
+            args=(file.restore_key,),
             job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
             description=f"'{file.untouched_basename}'",
         )

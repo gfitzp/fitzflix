@@ -181,70 +181,96 @@ def provision(config, s3, sqs, echo=print, force=False):
         changed = True
         report("lifecycle: bucket-wide incomplete-multipart abort", "created")
 
-    # 3b. Move the archived originals to Glacier Deep Archive on arrival.
-    # Fitzflix detects the rule by content, not by rule id. Thus, an
-    # existing hand-made rule counts
+    # 3b. Move the archives to Glacier Deep Archive on arrival, for each
+    # archive prefix: untouched/ (the rips), modified/, and transcoded/
+    # (#299). Fitzflix detects a rule by content, not by rule id. Thus,
+    # an existing hand-made rule counts
+
+    changes = []
+
+    def ensure_archive_rules(prefix, rule_id):
+        """Make sure that 1 archive prefix has its transition and retention rules."""
+
+        def transitions_prefix(rule):
+            if rule.get("Status") != "Enabled":
+                return False
+            rule_prefix = rule.get("Filter", {}).get("Prefix", rule.get("Prefix", ""))
+            return rule_prefix == prefix and any(
+                transition.get("StorageClass") == "DEEP_ARCHIVE"
+                for transition in rule.get("Transitions", [])
+            )
+
+        rule_for_prefix = next(
+            (rule for rule in rules if transitions_prefix(rule)), None
+        )
+        if rule_for_prefix is not None:
+            report(f"lifecycle: {prefix} Deep Archive transition", "present")
+        else:
+            rule_for_prefix = {
+                "ID": rule_id,
+                "Status": "Enabled",
+                "Filter": {"Prefix": prefix},
+                "Transitions": [{"Days": 0, "StorageClass": "DEEP_ARCHIVE"}],
+                "Expiration": {"ExpiredObjectDeleteMarker": True},
+            }
+            rules.append(rule_for_prefix)
+            changes.append(prefix)
+            report(f"lifecycle: {prefix} Deep Archive transition", "created")
+
+        # After the noncurrent versions of a deleted object expire, only its
+        # delete marker remains. The expired-marker cleanup removes those
+        # markers. Set it only where it does not conflict. AWS does not permit
+        # it together with a Days/Date expiration in the same rule
+
+        marker_label = f"lifecycle: {prefix} expired delete-marker cleanup"
+        expiration = rule_for_prefix.get("Expiration", {})
+        if expiration.get("ExpiredObjectDeleteMarker") is True:
+            report(marker_label, "present")
+        elif "Days" in expiration or "Date" in expiration:
+            report(marker_label, "present")
+        else:
+            rule_for_prefix["Expiration"] = {"ExpiredObjectDeleteMarker": True}
+            changes.append(prefix)
+            report(marker_label, "updated")
+
+        # The noncurrent-version retention on that rule. Versioning makes
+        # a deleted or replaced archive recoverable. This value is the time
+        # that the recovery window stays open. Fitzflix increases it if it is
+        # shorter. It does not change it if a person configured a longer time
+
+        retention_label = (
+            f"lifecycle: {prefix} noncurrent-version retention "
+            f"({UNTOUCHED_NONCURRENT_RETENTION_DAYS} days)"
+        )
+        noncurrent = dict(rule_for_prefix.get("NoncurrentVersionExpiration", {}))
+        current_days = noncurrent.get("NoncurrentDays")
+        if (
+            current_days is not None
+            and current_days >= UNTOUCHED_NONCURRENT_RETENTION_DAYS
+        ):
+            report(retention_label, "present")
+        else:
+            noncurrent["NoncurrentDays"] = UNTOUCHED_NONCURRENT_RETENTION_DAYS
+            rule_for_prefix["NoncurrentVersionExpiration"] = noncurrent
+            changes.append(prefix)
+            report(retention_label, "created" if current_days is None else "updated")
 
     untouched_prefix = f"{config['AWS_UNTOUCHED_PREFIX']}/"
-
-    def transitions_untouched(rule):
-        if rule.get("Status") != "Enabled":
-            return False
-        prefix = rule.get("Filter", {}).get("Prefix", rule.get("Prefix", ""))
-        return prefix == untouched_prefix and any(
-            transition.get("StorageClass") == "DEEP_ARCHIVE"
-            for transition in rule.get("Transitions", [])
-        )
-
-    untouched_rule = next((rule for rule in rules if transitions_untouched(rule)), None)
-    if untouched_rule is not None:
-        report(f"lifecycle: {untouched_prefix} Deep Archive transition", "present")
-    else:
-        untouched_rule = {
-            "ID": TRANSITION_RULE_ID,
-            "Status": "Enabled",
-            "Filter": {"Prefix": untouched_prefix},
-            "Transitions": [{"Days": 0, "StorageClass": "DEEP_ARCHIVE"}],
-            "Expiration": {"ExpiredObjectDeleteMarker": True},
-        }
-        rules.append(untouched_rule)
+    archive_prefixes = [
+        (untouched_prefix, TRANSITION_RULE_ID),
+        (
+            f"{config['AWS_MODIFIED_PREFIX']}/",
+            f"fitzflix-{config['AWS_MODIFIED_PREFIX']}-to-deep-archive",
+        ),
+        (
+            f"{config['AWS_TRANSCODED_PREFIX']}/",
+            f"fitzflix-{config['AWS_TRANSCODED_PREFIX']}-to-deep-archive",
+        ),
+    ]
+    for prefix, rule_id in archive_prefixes:
+        ensure_archive_rules(prefix, rule_id)
+    if changes:
         changed = True
-        report(f"lifecycle: {untouched_prefix} Deep Archive transition", "created")
-
-    # After the noncurrent versions of a deleted object expire, only its
-    # delete marker remains. The expired-marker cleanup removes those
-    # markers. Set it only where it does not conflict. AWS does not permit
-    # it together with a Days/Date expiration in the same rule
-
-    marker_label = f"lifecycle: {untouched_prefix} expired delete-marker cleanup"
-    expiration = untouched_rule.get("Expiration", {})
-    if expiration.get("ExpiredObjectDeleteMarker") is True:
-        report(marker_label, "present")
-    elif "Days" in expiration or "Date" in expiration:
-        report(marker_label, "present")
-    else:
-        untouched_rule["Expiration"] = {"ExpiredObjectDeleteMarker": True}
-        changed = True
-        report(marker_label, "updated")
-
-    # 3c. The noncurrent-version retention on that rule. Versioning makes
-    # a deleted or replaced original recoverable. This value is the time
-    # that the recovery window stays open. Fitzflix increases it if it is
-    # shorter. It does not change it if a person configured a longer time
-
-    retention_label = (
-        f"lifecycle: {untouched_prefix} noncurrent-version retention "
-        f"({UNTOUCHED_NONCURRENT_RETENTION_DAYS} days)"
-    )
-    noncurrent = dict(untouched_rule.get("NoncurrentVersionExpiration", {}))
-    current_days = noncurrent.get("NoncurrentDays")
-    if current_days is not None and current_days >= UNTOUCHED_NONCURRENT_RETENTION_DAYS:
-        report(retention_label, "present")
-    else:
-        noncurrent["NoncurrentDays"] = UNTOUCHED_NONCURRENT_RETENTION_DAYS
-        untouched_rule["NoncurrentVersionExpiration"] = noncurrent
-        changed = True
-        report(retention_label, "created" if current_days is None else "updated")
 
     # 3d. The noncurrent-version retention for the custom posters mirror.
     # Fitzflix detects it by content. Thus, a hand-made rule counts
@@ -338,30 +364,41 @@ def provision(config, s3, sqs, echo=print, force=False):
     notification.pop("ResponseMetadata", None)
     queue_configurations = notification.get("QueueConfigurations", [])
 
-    def notifies_restore(entry):
-        return entry.get(
-            "QueueArn"
-        ) == queue_arn and "s3:ObjectRestore:Completed" in entry.get("Events", [])
+    def notifies_restore(entry, prefix):
+        rules = entry.get("Filter", {}).get("Key", {}).get("FilterRules", [])
+        return (
+            entry.get("QueueArn") == queue_arn
+            and "s3:ObjectRestore:Completed" in entry.get("Events", [])
+            and {"Name": "Prefix", "Value": prefix} in rules
+        )
 
-    if any(notifies_restore(entry) for entry in queue_configurations):
-        report("bucket restore-completed notification", "present")
-    else:
+    added = False
+    for prefix, _rule_id in archive_prefixes:
+        label = f"bucket restore-completed notification for {prefix}"
+        if any(notifies_restore(entry, prefix) for entry in queue_configurations):
+            report(label, "present")
+            continue
+        notification_id = (
+            NOTIFICATION_ID
+            if prefix == untouched_prefix
+            else f"{NOTIFICATION_ID}-{prefix.rstrip('/')}"
+        )
         queue_configurations.append(
             {
-                "Id": NOTIFICATION_ID,
+                "Id": notification_id,
                 "QueueArn": queue_arn,
                 "Events": ["s3:ObjectRestore:Completed"],
                 "Filter": {
-                    "Key": {
-                        "FilterRules": [{"Name": "Prefix", "Value": untouched_prefix}]
-                    }
+                    "Key": {"FilterRules": [{"Name": "Prefix", "Value": prefix}]}
                 },
             }
         )
+        added = True
+        report(label, "created")
+    if added:
         notification["QueueConfigurations"] = queue_configurations
         s3.put_bucket_notification_configuration(
             Bucket=bucket, NotificationConfiguration=notification
         )
-        report("bucket restore-completed notification", "created")
 
     return results

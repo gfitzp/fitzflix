@@ -32,7 +32,7 @@ from flask import current_app
 from werkzeug.local import LocalProxy
 
 from app import db, get_app, retry_job_id, safe_job_id
-from app.aws_storage import aws_upload, mark_archive_stale
+from app.aws_storage import archive_library_file, mark_archive_stale
 from app.models import File, FileAudioTrack, FileSubtitleTrack
 from app.settings import get_setting
 from app.plex_library import enqueue_plex_analyze
@@ -253,12 +253,15 @@ def extract_track_metadata(file_path):
     """
 
     media_info = MediaInfo.parse(file_path)
+    rewritten = False
     for track in media_info.tracks:
         if track.track_type == "General" and track.format == "Matroska":
-            remove_empty_subtitle_tracks(file_path)
+            rewritten = remove_empty_subtitle_tracks(file_path)
             break
 
-    return _extract_media_details(file_path)
+    details = _extract_media_details(file_path)
+    details["rewritten"] = bool(rewritten)
+    return details
 
 
 def track_metadata_scan_library():
@@ -328,6 +331,19 @@ def track_metadata_scan_task(file_id):
             except Exception:
                 current_app.lock_manager.unlock(lock)
                 raise
+
+            # The scan removed empty subtitle tracks. Thus, the library file
+            # changed, and its archive must follow (#299).
+
+            if details.pop("rewritten", False) and get_setting(
+                "ARCHIVE_ORIGINAL_MEDIA"
+            ):
+                current_app.file_queue.enqueue(
+                    "app.videos.upload_task",
+                    args=(file_id,),
+                    job_timeout=current_app.config["UPLOAD_TASK_TIMEOUT"],
+                    description=f"'{file.basename}'",
+                )
 
             current_app.sql_queue.enqueue(
                 "app.videos.save_track_metadata",
@@ -456,6 +472,15 @@ def track_metadata_scan(file_id):
         current_app.lock_manager.unlock(lock)
         raise
 
+    # A rewritten file needs its archive to follow (#299).
+
+    if details.pop("rewritten", False) and get_setting("ARCHIVE_ORIGINAL_MEDIA"):
+        current_app.file_queue.enqueue(
+            "app.videos.upload_task",
+            args=(file_id,),
+            job_timeout=current_app.config["UPLOAD_TASK_TIMEOUT"],
+            description=f"'{file.basename}'",
+        )
     return save_track_metadata(file_id, details, lock=lock)
 
 
@@ -1095,21 +1120,12 @@ def mkvpropedit_unlocked(
 
             enqueue_plex_analyze(file_path)
 
-        # The archive of a conversion is its original (#292). Keep it.
+        # The edited library file goes to modified/, or to transcoded/
+        # for a conversion (#299). The rip in untouched/ never changes.
 
-        if get_setting("ARCHIVE_ORIGINAL_MEDIA") and file.archive_is_library_copy:
+        if get_setting("ARCHIVE_ORIGINAL_MEDIA"):
             try:
-                (
-                    file.aws_untouched_key,
-                    file.aws_untouched_date_uploaded,
-                    file.aws_untouched_filesize_bytes,
-                ) = aws_upload(
-                    file_path,
-                    current_app.config["AWS_UNTOUCHED_PREFIX"],
-                    force_upload=True,
-                    ignore_etag=True,
-                )
-                file.aws_untouched_stale = False
+                archive_library_file(file, file_path)
 
             except OSError as e:
                 # The edit already succeeded and committed. Thus, a retry
@@ -1942,21 +1958,12 @@ def _remux_audio_plan_unlocked(file_id, plan):
 
             enqueue_plex_analyze(file_path)
 
-            # The archive of a conversion is its original (#292). Keep it.
+            # The rebuilt library file goes to modified/, or to transcoded/
+            # for a conversion (#299). The upload reads the staging copy.
 
-            if get_setting("ARCHIVE_ORIGINAL_MEDIA") and file.archive_is_library_copy:
+            if get_setting("ARCHIVE_ORIGINAL_MEDIA"):
                 try:
-                    (
-                        file.aws_untouched_key,
-                        file.aws_untouched_date_uploaded,
-                        file.aws_untouched_filesize_bytes,
-                    ) = aws_upload(
-                        final_staging,
-                        current_app.config["AWS_UNTOUCHED_PREFIX"],
-                        force_upload=True,
-                        ignore_etag=True,
-                    )
-                    db.session.commit()
+                    archive_library_file(file, final_staging)
                 except Exception:
                     current_app.logger.error(traceback.format_exc())
                     db.session.rollback()

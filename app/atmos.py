@@ -938,9 +938,9 @@ def _atmos_finish(state, phases):
 
     The library share carries 1 write here: the verified result."""
 
+    from app.aws_storage import archive_library_file
     from app.videos import (
         aws_s3_client,
-        aws_upload,
         copy_with_progress,
         flag_possibly_forced_subtitles,
         get_audio_tracks_from_file,
@@ -1151,30 +1151,18 @@ def _atmos_finish(state, phases):
 
     enqueue_plex_analyze(file_path)
 
-    # The supplemented file replaces the untouched S3 archive. Glenn
-    # decided this. The file is a strict superset of the rip. A
-    # re-download must never pay for a second MediaConvert run. The
-    # pipeline uploads from the staging copy. Thus, the library share is
-    # not read again. The library replacement above is already
-    # committed. Thus, an upload failure fails the job, and the S3 sync
-    # task repairs it.
+    # The supplemented library file goes to modified/, or to transcoded/
+    # for a conversion (#299). The rip in untouched/ never changes. A
+    # restore from modified/ goes straight into the library. Thus, it never
+    # pays for a second MediaConvert run (Glenn). The upload reads the
+    # staging copy, not the library share. The library replacement above
+    # is already committed. Thus, an upload failure fails the job, and the
+    # S3 sync repairs it.
 
-    # The archive of a conversion is its original (#292). Keep it.
-
-    if get_setting("ARCHIVE_ORIGINAL_MEDIA") and file.archive_is_library_copy:
+    if get_setting("ARCHIVE_ORIGINAL_MEDIA"):
         phases.enter("Archiving to S3")
         try:
-            (
-                file.aws_untouched_key,
-                file.aws_untouched_date_uploaded,
-                file.aws_untouched_filesize_bytes,
-            ) = aws_upload(
-                final_staging,
-                current_app.config["AWS_UNTOUCHED_PREFIX"],
-                force_upload=True,
-                ignore_etag=True,
-            )
-            db.session.commit()
+            archive_library_file(file, final_staging)
         except Exception:
             current_app.logger.error(traceback.format_exc())
             db.session.rollback()

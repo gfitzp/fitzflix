@@ -1923,6 +1923,15 @@ class File(db.Model):
 
     converted_from_quality = db.Column(db.String(32))
     converted_from_format = db.Column(db.String(255))
+
+    # The second archive of a conversion: its current 1080p library file,
+    # in transcoded/ (#299). The untouched archive keeps the original. A
+    # restore of a missing conversion uses this copy first, straight into
+    # the library path.
+
+    aws_transcoded_key = db.Column(db.String(255), index=True)
+    aws_transcoded_filesize_bytes = db.Column(db.BigInteger)
+    aws_transcoded_date_uploaded = db.Column(db.DateTime)
     video_bitrate_kbps = db.Column(db.Integer)
     filesize_bytes = db.Column(db.BigInteger)
     date_added = db.Column(
@@ -1951,6 +1960,12 @@ class File(db.Model):
     # worklist. A new import resets it, the same as the other verdicts.
 
     lossy_audio_reviewed = db.Column(db.DateTime)
+
+    # The archive of the file (#299). The key is in untouched/ (the rip,
+    # as it arrived) until the first change of the library file. Then it
+    # is in modified/ (the current library file). A conversion keeps its
+    # original here and its library file in aws_transcoded_key.
+
     aws_untouched_key = db.Column(db.String(255), index=True)
     aws_untouched_filesize_bytes = db.Column(db.BigInteger)
     aws_untouched_date_uploaded = db.Column(db.DateTime)
@@ -2005,6 +2020,22 @@ class File(db.Model):
         return needs_conversion(
             self.hdr_format, self.color_primaries, self.transfer_characteristics
         )
+
+    @property
+    def restore_key(self):
+        """Return the S3 key that restores the library file of this record (#299).
+
+        A conversion with an uploaded transcoded/ copy restores that copy.
+        Each other record restores its archive: untouched/ (the rip) or
+        modified/ (the library file after a change)."""
+
+        if (
+            self.converted_from_quality
+            and self.aws_transcoded_key
+            and self.aws_transcoded_date_uploaded
+        ):
+            return self.aws_transcoded_key
+        return self.aws_untouched_key
 
     @property
     def archive_is_library_copy(self):

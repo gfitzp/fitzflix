@@ -522,7 +522,7 @@ def test_download_transient_error_defers(app, monkeypatch):
 
     from app import aws_storage
 
-    def flaky_download(key, basename, sqs_receipt_handle=None):
+    def flaky_download(key, basename, sqs_receipt_handle=None, place_at=None):
         raise OSError(errno.EBADF, "Bad file descriptor")
 
     monkeypatch.setattr(aws_storage, "aws_download", flaky_download)
@@ -565,7 +565,7 @@ def test_download_gives_up_after_max_retries(app, monkeypatch):
 
     from app import aws_storage
 
-    def flaky_download(key, basename, sqs_receipt_handle=None):
+    def flaky_download(key, basename, sqs_receipt_handle=None, place_at=None):
         raise OSError(errno.EBADF, "Bad file descriptor")
 
     monkeypatch.setattr(aws_storage, "aws_download", flaky_download)

@@ -2204,6 +2204,14 @@ def finalize_localization(
             file.converted_from_quality = file_details.get("converted_from_quality")
             file.converted_from_format = file_details.get("converted_from_format")
 
+            # A file that is not a conversion has no transcoded/ copy. The
+            # weekly S3 sync prunes the copy of a reused record (#299).
+
+            if not file.converted_from_quality:
+                file.aws_transcoded_key = None
+                file.aws_transcoded_date_uploaded = None
+                file.aws_transcoded_filesize_bytes = None
+
             # A reused record gets the untouched name of the new source.
             # A conversion that reuses the record of a real rip must not
             # keep the name of the rip (#292).
@@ -2573,17 +2581,36 @@ def finalize_localization(
 
             from app.atmos import maybe_enqueue_atmos_supplement
 
+            atmos_queued = False
             if not get_setting("CREATE_ATMOS_TWINS"):
                 current_app.logger.info(
                     f"'{file.basename}' CREATE_ATMOS_TWINS is off. No E-AC-3 Atmos twins"
                 )
                 _remove_staged_output(staged_output)
-            elif not maybe_enqueue_atmos_supplement(
+            elif maybe_enqueue_atmos_supplement(
                 file.id,
                 staged_source=atmos_handoff,
                 queue=current_app.handoff_queue,
             ):
+                atmos_queued = True
+            else:
                 _remove_staged_output(staged_output)
+
+            # A conversion archives its 1080p library file in transcoded/
+            # (#299). An Atmos job archives it when it finishes. Thus, the
+            # upload waits for that job.
+
+            if (
+                file.converted_from_quality
+                and get_setting("ARCHIVE_ORIGINAL_MEDIA")
+                and not atmos_queued
+            ):
+                current_app.file_queue.enqueue(
+                    "app.videos.upload_task",
+                    args=(file.id,),
+                    job_timeout=current_app.config["UPLOAD_TASK_TIMEOUT"],
+                    description=f"'{file.basename}'",
+                )
 
             if possibly_foreign_language == True and len(output_audio_tracks) > 1:
                 admin_user = User.query.filter(User.admin == True).first()

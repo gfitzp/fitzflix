@@ -585,13 +585,17 @@ Fitzflix keeps all its AWS data in one S3 bucket (`AWS_BUCKET`). The bucket has 
 
 | Prefix | Contents | Lifecycle |
 | --- | --- | --- |
-| `untouched/` (`AWS_UNTOUCHED_PREFIX`) | The archived original media. Fitzflix uploads each file at import when `ARCHIVE_ORIGINAL_MEDIA` is set. | Fitzflix uploads the objects as `STANDARD`. A day-0 lifecycle rule moves them to **Glacier Deep Archive**. |
+| `untouched/` (`AWS_UNTOUCHED_PREFIX`) | The rips, as they arrived. Fitzflix uploads each file at import when `ARCHIVE_ORIGINAL_MEDIA` is set. Fitzflix never overwrites them. | Fitzflix uploads the objects as `STANDARD`. A day-0 lifecycle rule moves them to **Glacier Deep Archive**. |
+| `modified/` (`AWS_MODIFIED_PREFIX`) | The current library file of a file that changed after import. The first change moves the archive of the file from `untouched/` to here. | The same rules as `untouched/` |
+| `transcoded/` (`AWS_TRANSCODED_PREFIX`) | The current 1080p library file of each [HDR conversion](#hdr-and-bt2020-imports). Its original stays in `untouched/`. | The same rules as `untouched/` |
 | `backup/` (`AWS_BACKUP_PREFIX`) | The nightly database dumps and the encrypted copy of `.env` | The backup task removes the old objects after its own retention period |
 | `custom-posters/` (`AWS_CUSTOM_POSTERS_PREFIX`) | A mirror of the custom artwork tree. The nightly backup syncs it, and deletions propagate. | The noncurrent versions expire after 30 days |
 
 **Bucket versioning** stays on. It is the recovery layer for deleted or replaced objects, and the [disaster recovery](#disaster-recovery) procedure depends on it. Versioning applies to the full bucket, because S3 has no versioning for one prefix. The retention period of the noncurrent versions is different for each prefix. For `untouched/`, the previous version of a deleted or replaced original stays available for **180 days**. This period matches the minimum storage duration of Deep Archive, which is 180 days. Thus, the period has no cost. If the noncurrent versions expired sooner, the early-deletion fees would cost the same. A lifecycle rule for the full bucket also stops **incomplete multipart uploads** after one day. Thus, an interrupted archive upload or backup upload cannot collect invisible parts that have a cost.
 
-**Restore notifications**: the bucket sends the `s3:ObjectRestore:Completed` events for `untouched/` to an SQS queue (`AWS_SQS_URL`). The hourly poll reads the queue and downloads each completed restore. Refer to [Restoring files from AWS](#restoring-files-from-aws).
+**One archive for each file.** A file has its archive in `untouched/` or in `modified/`, never both. A conversion keeps its original in `untouched/` and adds its library file in `transcoded/`. A change is a track edit, a reorder, or a track removal. The removal of empty subtitle tracks, an Atmos twin, a rebuild of the audio, and a manual upload are changes too. After the first change of a normal file, Fitzflix uploads the library file to `modified/`. Then it deletes the rip in `untouched/`, which versioning keeps for 180 days. Later changes overwrite `modified/`. A change of a conversion goes to `transcoded/`.
+
+**Restore notifications**: the bucket sends the `s3:ObjectRestore:Completed` events for `untouched/`, `modified/`, and `transcoded/` to an SQS queue (`AWS_SQS_URL`). The hourly poll reads the queue and downloads each completed restore. Refer to [Restoring files from AWS](#restoring-files-from-aws).
 
 ### Provisioning
 
@@ -637,7 +641,7 @@ The command `flask aws provision` also needs `s3:CreateBucket`, `s3:PutBucketVer
 
 ## Restoring files from AWS
 
-The archived originals are in S3 Glacier Deep Archive. Thus, a restore has two steps:
+The archives are in S3 Glacier Deep Archive. Thus, a restore has two steps. A restore uses the `transcoded/` copy of a conversion, or the archive of the file. An object from `modified/` or `transcoded/` is the library file. It goes straight to its place in the library, with its track edits, and the track records do not change. An object from `untouched/` is a rip. It goes through the import, as a new file does.
 
 1. On the detail page of the file, request the download. Fitzflix asks AWS to restore the object from Glacier. A restore from Deep Archive usually takes some hours. To restore many files, use the **Restore series from AWS** button on a TV series page. A season page has the **Restore season from AWS** button. Each button requests each best-ranked archived file at the same time. A restore has a cost. Thus, each restore button shows an estimated cost, and you must enter your account password to confirm. The estimate includes the fee for each request, the retrieval fee for each GB, and the transfer fee for each GB. A season or series restore uses the cheaper Bulk retrieval tier. A single file uses the Standard tier. Set the values `AWS_RESTORE_PER_1K_REQUEST_COST`, `AWS_RESTORE_PER_1K_REQUEST_BULK_COST`, `AWS_RESTORE_PER_GB_COST`, `AWS_RESTORE_PER_GB_BULK_COST`, and `AWS_DOWNLOAD_PER_GB_COST` in `.env` to match the current AWS prices.
 2. When AWS completes the restore, it sends a notification to the SQS queue (`AWS_SQS_URL`). Configure the S3 bucket to send its restore-completed event notifications to that queue. Fitzflix polls the queue each hour and downloads each completed restore into the library. To poll now, run `flask sqs`.
@@ -682,7 +686,7 @@ You can rebuild Fitzflix on a new machine from three items that you keep away fr
 5. **Restore the custom posters.** Copy the `custom-posters/` prefix of the bucket back to `app/static/custom/`. For example, run `aws s3 sync s3://<bucket>/custom-posters/ app/static/custom/`. The TMDB artwork does not need a restore. The pages link to the TMDB image CDN, and Fitzflix never stores the artwork locally.
 6. **Mount the NAS volumes.** Refer to the SMB notes: put the NAS hostname in `/etc/hosts`, and set `protocol_vers_map` and the signing settings in `/etc/nsmb.conf`. Fitzflix makes the import, staging, rejects, and held directories again at the next startup.
 7. **Start the workers** with supervisor. Make sure that the health card on the System page is green. The scheduled jobs register themselves again at startup. Redis needs no restore. The only important data in Redis is the recommendation rankings and the availability caches. This data rebuilds itself in one day, or immediately with the `flask recs` commands.
-8. **Only if the NAS is also lost:** you can rebuild the localized library from the untouched archives. The S3 sync task queues a Bulk restore for each rank-1 file that is not on the local disk. The file `inventory/rank_1.csv` in the bucket supports an S3 Batch Operations restore of all files at the same time.
+8. **Only if the NAS is also lost:** you can rebuild the library from the archives. The `modified/` and `transcoded/` objects go straight into place. The `untouched/` rips go through the import. The S3 sync task queues a Bulk restore for each rank-1 file that is not on the local disk. The file `inventory/rank_1.csv` in the bucket supports an S3 Batch Operations restore of all files at the same time.
 
 ## Logs and maintenance
 

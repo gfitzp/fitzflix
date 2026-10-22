@@ -292,14 +292,26 @@ def sync_aws_s3_storage_task():
             # Map each remote key to its object size. Thus, the file records
             # can get the exact size that AWS bills for a restore.
 
+            # The archives live in 3 prefixes (#299): untouched/ (the
+            # rips), modified/ (library files after a change), and
+            # transcoded/ (the 1080p copies of the conversions).
+
+            archive_prefixes = [
+                f"{app.config[name]}/"
+                for name in (
+                    "AWS_UNTOUCHED_PREFIX",
+                    "AWS_MODIFIED_PREFIX",
+                    "AWS_TRANSCODED_PREFIX",
+                )
+            ]
             s3_objects = {
                 object["Key"]: object["Size"]
+                for prefix in archive_prefixes
                 for object in get_matching_s3_objects(
-                    app.config["AWS_BUCKET"],
-                    prefix=f"{app.config['AWS_UNTOUCHED_PREFIX']}/",
+                    app.config["AWS_BUCKET"], prefix=prefix
                 )
             }
-            s3_keys = list(s3_objects)
+            s3_keys = set(s3_objects)
 
             files = File.query.all()
 
@@ -353,11 +365,48 @@ def sync_aws_s3_storage_task():
                     current_app.config["LIBRARY_DIR"], file.file_path
                 )
 
-                # The next branches test the state of the file.
+                # The transcoded/ copy of a conversion (#299). Upload it when
+                # it is missing. When the library file is missing, restore
+                # this copy, not the original. It goes straight into the
+                # library, with its track edits and no new conversion.
 
-                # The file is not in S3 but exists in the filesystem. The
-                # library file of a conversion is not its original (#292).
-                # Never archive it under the key of the original.
+                local = os.path.isfile(file_path)
+                use_transcoded = bool(
+                    file.converted_from_quality
+                    and file.aws_transcoded_key in s3_keys
+                    and file.aws_transcoded_date_uploaded
+                )
+                if file.converted_from_quality and not use_transcoded and local:
+                    current_app.logger.info(
+                        f"'{file.basename}' Queuing the transcoded copy for upload"
+                    )
+                    current_app.file_queue.enqueue(
+                        "app.videos.upload_task",
+                        args=(file.id,),
+                        job_timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
+                        description=f"'{file.basename}'",
+                    )
+                if use_transcoded:
+                    remote_size = s3_objects[file.aws_transcoded_key]
+                    if file.aws_transcoded_filesize_bytes != remote_size:
+                        file.aws_transcoded_filesize_bytes = remote_size
+                    if rank == 1:
+                        inventory_export.append(
+                            [current_app.config["AWS_BUCKET"], file.aws_transcoded_key]
+                        )
+                        if not local:
+                            current_app.logger.info(
+                                f"'{file.aws_transcoded_key}' does not exist in "
+                                f"the local library"
+                            )
+                            aws_restore(file.aws_transcoded_key, tier="Bulk")
+
+                # The next branches test the state of the archive of the file.
+
+                # The archive is not in S3, but the library file exists. The
+                # archive of a conversion is its original (#292). The library
+                # file cannot take its place. For a normal file, the upload
+                # puts the library file in modified/ (#299).
                 if (
                     (
                         file.aws_untouched_key not in s3_keys
@@ -412,7 +461,7 @@ def sync_aws_s3_storage_task():
                     if file.aws_untouched_filesize_bytes != remote_size:
                         file.aws_untouched_filesize_bytes = remote_size
 
-                    if rank == 1:
+                    if rank == 1 and not use_transcoded:
                         inventory_export.append(
                             [current_app.config["AWS_BUCKET"], file.aws_untouched_key]
                         )
@@ -420,7 +469,7 @@ def sync_aws_s3_storage_task():
                         # Queue the file for a restore if it does not exist
                         # locally.
 
-                        if not os.path.isfile(file_path):
+                        if not local:
                             current_app.logger.info(
                                 f"'{file.aws_untouched_key}' does not exist in the local library"
                             )
@@ -467,15 +516,26 @@ def sync_aws_s3_storage_task():
             # The archive-only originals (#292) have no File row. Their
             # keys are claimed too.
 
-            aws_untouched_keys = {
-                aws_untouched_key
-                for (aws_untouched_key,) in db.session.query(
-                    File.aws_untouched_key
-                ).all()
-            } | {
-                key
-                for (key,) in db.session.query(ArchivedOriginal.aws_untouched_key).all()
-            }
+            aws_untouched_keys = (
+                {
+                    aws_untouched_key
+                    for (aws_untouched_key,) in db.session.query(
+                        File.aws_untouched_key
+                    ).all()
+                }
+                | {
+                    key
+                    for (key,) in db.session.query(
+                        ArchivedOriginal.aws_untouched_key
+                    ).all()
+                }
+                | {
+                    key
+                    for (key,) in db.session.query(File.aws_transcoded_key)
+                    .filter(File.aws_transcoded_key.isnot(None))
+                    .all()
+                }
+            )
 
             # This is the rename-skew tripwire. An ACTIVE claim with no
             # matching object means that a restore would return a 404.
@@ -490,6 +550,12 @@ def sync_aws_s3_storage_task():
                 .filter(File.aws_untouched_key.isnot(None))
                 .filter(File.aws_untouched_date_deleted.is_(None))
                 .union(db.session.query(ArchivedOriginal.aws_untouched_key))
+                .union(
+                    db.session.query(File.aws_transcoded_key).filter(
+                        File.aws_transcoded_key.isnot(None),
+                        File.aws_transcoded_date_uploaded.isnot(None),
+                    )
+                )
                 if key not in s3_key_set
             )
             if dangling_claims:
@@ -520,7 +586,7 @@ def sync_aws_s3_storage_task():
 
                 if (
                     remote_key not in aws_untouched_keys
-                    and remote_key != f"{app.config['AWS_UNTOUCHED_PREFIX']}/"
+                    and remote_key not in archive_prefixes
                 ):
                     unreferenced_files.append(remote_key)
                     aws_delete(remote_key)
@@ -624,8 +690,17 @@ def download_task(key, basename, sqs_receipt_handle=None, transient_retries=0):
     with app.app_context():
         job = get_current_job()
 
+        # A modified/ or transcoded/ object is a library file (#299). It
+        # goes straight to the library path of its record, with no import.
+
         file = File.query.filter_by(aws_untouched_key=key).first()
-        if file:
+        if file is None:
+            file = File.query.filter_by(aws_transcoded_key=key).first()
+        place_at = None
+        if file is not None and restores_directly(key):
+            basename = file.basename
+            place_at = os.path.join(current_app.config["LIBRARY_DIR"], file.file_path)
+        elif file:
             basename = file.untouched_basename
         else:
             # An archive-only original (#292) keeps its untouched name. The
@@ -658,7 +733,9 @@ def download_task(key, basename, sqs_receipt_handle=None, transient_retries=0):
             current_app.logger.info(
                 f"Starting download of '{basename}' from AWS S3 storage"
             )
-            downloaded = aws_download(key, basename, sqs_receipt_handle)
+            downloaded = aws_download(
+                key, basename, sqs_receipt_handle, place_at=place_at
+            )
 
         except OSError as e:
             if (
@@ -804,48 +881,16 @@ def upload_task(
             file = File.query.filter_by(id=file_id).first()
             file_path = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
 
-            # The archive of a conversion is its original (#292). The
-            # library file must not replace it.
+            # The library file goes to the archive of the record: modified/
+            # for a normal file, transcoded/ for a conversion (#299). A rip
+            # in untouched/ is never overwritten.
 
-            if not file.archive_is_library_copy:
-                current_app.logger.warning(
-                    f"'{file.basename}' is a conversion. Its archive is the "
-                    f"original. Not uploading the library file"
-                )
-                return False
-
-            # Pass the file to aws_upload() for the upload. Then update the
-            # File record with the remote key and the upload date.
-
-            if file.aws_untouched_key:
-                (
-                    file.aws_untouched_key,
-                    file.aws_untouched_date_uploaded,
-                    file.aws_untouched_filesize_bytes,
-                ) = aws_upload(
-                    file_path=file_path,
-                    key_name=file.aws_untouched_key,
-                    force_upload=force_upload,
-                    ignore_etag=ignore_etag,
-                    storage_class=storage_class,
-                )
-
-            else:
-                (
-                    file.aws_untouched_key,
-                    file.aws_untouched_date_uploaded,
-                    file.aws_untouched_filesize_bytes,
-                ) = aws_upload(
-                    file_path=file_path,
-                    key_prefix=key_prefix,
-                    force_upload=force_upload,
-                    ignore_etag=ignore_etag,
-                    storage_class=storage_class,
-                )
-
-            file.date_updated = file.aws_untouched_date_uploaded
-            file.aws_untouched_stale = False
-
+            archive_library_file(file, file_path)
+            file.date_updated = (
+                file.aws_transcoded_date_uploaded
+                if file.converted_from_quality
+                else file.aws_untouched_date_uploaded
+            )
             db.session.commit()
 
         except Exception:
@@ -857,6 +902,122 @@ def upload_task(
 
 
 # Supporting functions
+
+
+def _in_prefix(key, prefix):
+    """Return True if an S3 key is below a prefix such as "modified"."""
+
+    return bool(key) and key.startswith(f"{prefix}/")
+
+
+def restores_directly(key):
+    """Return True if a restore of this key goes straight into the library (#299).
+
+    A modified/ or transcoded/ object is a library file. An untouched/
+    object is a rip, and it goes through the import."""
+
+    config = current_app.config
+    return _in_prefix(key, config["AWS_MODIFIED_PREFIX"]) or _in_prefix(
+        key, config["AWS_TRANSCODED_PREFIX"]
+    )
+
+
+def archive_library_file(file, path, delete_replaced=True):
+    """Archive the current library file of a record, and commit (#299).
+
+    path holds the bytes of the library file: the library file itself,
+    or the same file on staging. A conversion uploads to transcoded/. Its
+    original in untouched/ never changes. A normal file uploads to
+    modified/. The first time, the untouched/ rip is deleted after the
+    commit. Versioning keeps it for 180 days. Later changes overwrite the
+    modified/ object. Return the new key."""
+
+    config = current_app.config
+    converted = bool(file.converted_from_quality)
+    if converted:
+        prefix = config["AWS_TRANSCODED_PREFIX"]
+        existing = file.aws_transcoded_key
+    else:
+        prefix = config["AWS_MODIFIED_PREFIX"]
+        existing = (
+            file.aws_untouched_key
+            if _in_prefix(file.aws_untouched_key, prefix)
+            else None
+        )
+    if existing:
+        key_prefix, key_name = os.path.split(existing)
+    else:
+        key_prefix, key_name = prefix, file.basename
+
+    key, uploaded, size = aws_upload(
+        path, key_prefix, key_name=key_name, force_upload=True, ignore_etag=True
+    )
+
+    replaced = None
+    if converted:
+        file.aws_transcoded_key = key
+        file.aws_transcoded_date_uploaded = uploaded
+        file.aws_transcoded_filesize_bytes = size
+    else:
+        if file.aws_untouched_key and file.aws_untouched_key != key:
+            replaced = file.aws_untouched_key
+        file.aws_untouched_key = key
+        file.aws_untouched_date_uploaded = uploaded
+        file.aws_untouched_filesize_bytes = size
+        file.aws_untouched_stale = False
+    db.session.commit()
+    current_app.logger.info(f"'{file.basename}' Archived the library file as '{key}'")
+
+    if replaced and delete_replaced and not untouched_key_still_claimed(replaced):
+        current_app.handoff_queue.enqueue(
+            "app.videos.aws_delete",
+            args=(replaced,),
+            job_timeout=config["FILE_TASK_TIMEOUT"],
+            description=f"Deleting '{replaced}' from AWS",
+        )
+    return key
+
+
+def move_archive_to_modified_task(file_id):
+    """Move the replaced untouched/ archive of a normal file to modified/ (#299 backfill).
+
+    Before #299, a change of the library file uploaded it over the rip in
+    untouched/. Thus, these untouched/ objects hold library files, not
+    rips. This task uploads the current library file to modified/. Then
+    it deletes the old object permanently, by its version id. Its version
+    is a library copy, not a rip. Thus, the 180-day retention of the
+    delete marker would only cost money. An older version of the key (a
+    rip within its 180 days) stays."""
+
+    with app.app_context():
+        file = db.session.get(File, int(file_id))
+        if file is None or file.converted_from_quality:
+            return False
+        old_key = file.aws_untouched_key
+        if not _in_prefix(old_key, current_app.config["AWS_UNTOUCHED_PREFIX"]):
+            return True
+        path = os.path.join(current_app.config["LIBRARY_DIR"], file.file_path)
+        if not os.path.isfile(path):
+            current_app.logger.warning(
+                f"'{file.basename}' No local file. Its archive stays in untouched/"
+            )
+            return False
+
+        s3_client = aws_s3_client(with_retries=True)
+        bucket = current_app.config["AWS_BUCKET"]
+        version_id = s3_client.head_object(Bucket=bucket, Key=old_key).get("VersionId")
+        archive_library_file(file, path, delete_replaced=False)
+        if untouched_key_still_claimed(old_key):
+            return True
+        if version_id:
+            s3_client.delete_object(Bucket=bucket, Key=old_key, VersionId=version_id)
+        else:
+            s3_client.delete_object(Bucket=bucket, Key=old_key)
+        current_app.logger.info(
+            f"'{file.basename}' Moved the archive to '{file.aws_untouched_key}' "
+            f"and deleted '{old_key}'"
+        )
+        return True
 
 
 def untouched_key_still_claimed(key):
@@ -882,6 +1043,8 @@ def untouched_key_still_claimed(key):
         .filter(ArchivedOriginal.aws_untouched_key == key)
         .first()
         is not None
+        or db.session.query(File.id).filter(File.aws_transcoded_key == key).first()
+        is not None
     )
 
 
@@ -892,33 +1055,27 @@ def rename_untouched_object(file, new_key, defer_upload=False):
     object. The old flow rewrote the database field and moved nothing.
     That stranded the 1,184 keys that the 2026-08-17 audit found.
 
-    A STANDARD (or restored) object is copied on the server side, with
-    multipart support. Then the copy is verified, and the old key is
-    deleted. Only then does the field change. Some objects CANNOT be
-    copied: a Deep Archive object without a completed restore, or a
-    missing object. Then the LOCAL library file force-uploads under the
-    new key instead (decided by Glenn, 2026-08-18). This closes the
-    invariant now. It does not hope that a future upload repairs it.
-    The archive-replace convention already trades the pristine original
-    for the current library file on each remux. The original survives
-    as a noncurrent version.
+    Only a rip in untouched/ moves. A modified/ or transcoded/ object
+    keeps its key. A direct restore uses the path of the record, not the
+    key (#299). A STANDARD (or restored) rip is copied on the server
+    side. Then the copy is verified, and the old key is deleted. Only
+    then does the field change.
 
-    That force-upload is multi-gigabyte. Thus, a caller on a queue with
-    a short budget passes defer_upload. Then rearchive_untouched_object
-    on the file queue does the upload instead. In #231, a 43.9 GB upload
-    died at SQL_TASK_TIMEOUT. That left the movie record renamed, and
-    its archive key not renamed.
+    A Deep Archive rip without a completed restore cannot be copied.
+    Before #299, the library file was uploaded under the new key. But
+    the library file is not the rip. Thus, the rip keeps its old key,
+    and the record keeps naming it. A restore imports it under the
+    untouched name of the record. defer_upload is no longer used.
 
-    Return True if the field now matches new_key. A deferred upload
-    returns False, because the field only changes after the object
-    really arrives.
+    Return True if the field now matches new_key.
     """
 
     old_key = file.aws_untouched_key
     if not old_key or old_key == new_key:
         return old_key == new_key
+    if not _in_prefix(old_key, current_app.config["AWS_UNTOUCHED_PREFIX"]):
+        return False
     basename = file.basename
-    local_path = os.path.join(current_app.config["LIBRARY_DIR"], file.file_path)
     s3_client = aws_s3_client(with_retries=True)
     bucket = current_app.config["AWS_BUCKET"]
 
@@ -927,71 +1084,28 @@ def rename_untouched_object(file, new_key, defer_upload=False):
         head = s3_client.head_object(Bucket=bucket, Key=old_key)
     except Exception:
         current_app.logger.warning(
-            f"'{basename}' archive object '{old_key}' not found; "
-            f"re-archiving the library copy under '{new_key}'"
-        )
-
-    storage_class = (head or {}).get("StorageClass") or "STANDARD"
-    copyable = head is not None and _object_is_readable(head)
-
-    if copyable:
-        current_app.logger.info(
-            f"'{basename}' moving archive '{old_key}' -> '{new_key}'"
-        )
-        s3_client.copy({"Bucket": bucket, "Key": old_key}, bucket, new_key)
-        verify = s3_client.head_object(Bucket=bucket, Key=new_key)
-        if verify["ContentLength"] != head["ContentLength"]:
-            raise RuntimeError(
-                f"'{basename}' archive copy size mismatch: "
-                f"{verify['ContentLength']} vs {head['ContentLength']}"
-            )
-        s3_client.delete_object(Bucket=bucket, Key=old_key)
-        file.aws_untouched_key = new_key
-        return True
-
-    # The library file of a conversion is not its original (#292). Keep
-    # the old key. It still names the real original.
-
-    if not file.archive_is_library_copy:
-        current_app.logger.warning(
-            f"'{basename}' archive can't be copied "
-            f"({storage_class if head else 'missing'}). The file is a "
-            f"conversion. Thus, it keeps the key '{old_key}'"
+            f"'{basename}' archive object '{old_key}' not found. The S3 sync "
+            f"reports it"
         )
         return False
 
-    if defer_upload:
+    if not _object_is_readable(head):
         current_app.logger.info(
-            f"'{basename}' archive can't be copied "
-            f"({storage_class if head else 'missing'}); queuing a re-archive "
-            f"of the library copy as '{new_key}'"
-        )
-        current_app.file_queue.enqueue(
-            "app.videos.rearchive_untouched_object",
-            args=(file.id, new_key),
-            job_timeout=current_app.config["UPLOAD_TASK_TIMEOUT"],
-            description=f"'{basename}'",
+            f"'{basename}' archive '{old_key}' can't be copied "
+            f"({head.get('StorageClass') or 'STANDARD'}). It keeps its key"
         )
         return False
 
-    current_app.logger.info(
-        f"'{basename}' archive can't be copied "
-        f"({storage_class if head else 'missing'}); force-uploading the "
-        f"library copy as '{new_key}'"
-    )
-    (
-        file.aws_untouched_key,
-        file.aws_untouched_date_uploaded,
-        file.aws_untouched_filesize_bytes,
-    ) = aws_upload(
-        local_path,
-        current_app.config["AWS_UNTOUCHED_PREFIX"],
-        key_name=os.path.basename(new_key),
-        force_upload=True,
-        ignore_etag=True,
-    )
-    if head is not None:
-        s3_client.delete_object(Bucket=bucket, Key=old_key)
+    current_app.logger.info(f"'{basename}' moving archive '{old_key}' -> '{new_key}'")
+    s3_client.copy({"Bucket": bucket, "Key": old_key}, bucket, new_key)
+    verify = s3_client.head_object(Bucket=bucket, Key=new_key)
+    if verify["ContentLength"] != head["ContentLength"]:
+        raise RuntimeError(
+            f"'{basename}' archive copy size mismatch: "
+            f"{verify['ContentLength']} vs {head['ContentLength']}"
+        )
+    s3_client.delete_object(Bucket=bucket, Key=old_key)
+    file.aws_untouched_key = new_key
     return True
 
 
@@ -1448,7 +1562,40 @@ def _defer_to_restore(sqs_client, key, basename, sqs_receipt_handle, head_respon
     return DOWNLOAD_RESTORE_PENDING
 
 
-def aws_download(key, basename, sqs_receipt_handle=None):
+def place_in_library(downloaded, library_path, expected_size, name):
+    """Move a restored library file from the import directory into the library (#299).
+
+    The download is a modified/ or transcoded/ object: the library file
+    itself. It needs no import. Its size must match the S3 object. The
+    copy goes to a hidden name beside the library file. Then 1 rename
+    puts it in place. The track rows and the triage verdicts of the
+    record stay."""
+
+    from app.plex_library import enqueue_plex_analyze
+    from app.videos import copy_with_progress
+
+    size = os.path.getsize(downloaded)
+    if expected_size is not None and size != expected_size:
+        os.remove(downloaded)
+        raise OSError(
+            f"'{name}' restored {size} bytes, but the S3 object has {expected_size}"
+        )
+    directory = os.path.dirname(library_path)
+    os.makedirs(directory, exist_ok=True)
+    hidden = os.path.join(directory, f".{os.path.basename(library_path)}")
+    try:
+        copy_with_progress(downloaded, hidden, None, name, "Moving into the library")
+        os.replace(hidden, library_path)
+    except BaseException:
+        if os.path.exists(hidden):
+            os.remove(hidden)
+        raise
+    os.remove(downloaded)
+    current_app.logger.info(f"'{name}' Restored straight into the library")
+    enqueue_plex_analyze(library_path)
+
+
+def aws_download(key, basename, sqs_receipt_handle=None, place_at=None):
     """Download an object from AWS S3 storage.
 
     Return DOWNLOAD_COMPLETE if the file arrived in the import directory.
@@ -1632,10 +1779,13 @@ def aws_download(key, basename, sqs_receipt_handle=None):
         else:
             current_app.logger.info(f"'{basename}' downloaded from {source}")
 
-            os.rename(
-                destination,
-                os.path.join(current_app.config["IMPORT_DIR"], f"{basename}"),
-            )
+            if place_at:
+                place_in_library(destination, place_at, progress.size, basename)
+            else:
+                os.rename(
+                    destination,
+                    os.path.join(current_app.config["IMPORT_DIR"], f"{basename}"),
+                )
 
             if sqs_receipt_handle:
                 if not delete_sqs_message(sqs_client, sqs_receipt_handle):

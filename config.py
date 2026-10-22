@@ -203,6 +203,10 @@ class Config(object):
     AWS_ACCESS_KEY                      = os.environ.get("AWS_ACCESS_KEY") or None
     AWS_SECRET_KEY                      = os.environ.get("AWS_SECRET_KEY") or None
     AWS_UNTOUCHED_PREFIX                = os.environ.get("AWS_UNTOUCHED_PREFIX") or "untouched"
+    # The archive of a library file after a change, and the 1080p copy of
+    # a conversion (#299). A restore from these goes straight to the library.
+    AWS_MODIFIED_PREFIX                 = os.environ.get("AWS_MODIFIED_PREFIX") or "modified"
+    AWS_TRANSCODED_PREFIX               = os.environ.get("AWS_TRANSCODED_PREFIX") or "transcoded"
     AWS_BACKUP_PREFIX                   = os.environ.get("AWS_BACKUP_PREFIX") or "backup"
     AWS_CUSTOM_POSTERS_PREFIX           = os.environ.get("AWS_CUSTOM_POSTERS_PREFIX") or "custom-posters"
     IGNORE_ETAGS                        = os.environ.get("IGNORE_ETAGS") is not None

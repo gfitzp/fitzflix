@@ -478,8 +478,8 @@ def test_a_successful_upload_clears_the_stale_mark(app, monkeypatch):
         monkeypatch.setattr(
             aws_storage,
             "aws_upload",
-            lambda **kwargs: (
-                "untouched/repaired.mkv",
+            lambda *args, **kwargs: (
+                "modified/repaired.mkv",
                 datetime.now(timezone.utc),
                 123,
             ),

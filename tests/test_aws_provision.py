@@ -86,6 +86,8 @@ class FakeSQS:
 CONFIG = {
     "AWS_BUCKET": "test-bucket",
     "AWS_UNTOUCHED_PREFIX": "untouched",
+    "AWS_MODIFIED_PREFIX": "modified",
+    "AWS_TRANSCODED_PREFIX": "transcoded",
     "AWS_CUSTOM_POSTERS_PREFIX": "custom-posters",
     "AWS_SQS_URL": "https://sqs.test/existing",
 }
@@ -131,15 +133,29 @@ def test_provision_creates_everything_from_nothing(tmp_path):
         statement.get("Principal", {}).get("Service") == "s3.amazonaws.com"
         for statement in sqs.policy["Statement"]
     )
-    assert s3.notification["QueueConfigurations"][0]["Events"] == [
-        "s3:ObjectRestore:Completed"
+    # Each archive prefix (#299) gets the same rules and its own restore
+    # notification.
+    for prefix in ("modified/", "transcoded/"):
+        rule = next(
+            rule for rule in s3.rules if rule.get("Filter", {}).get("Prefix") == prefix
+        )
+        assert rule["Transitions"][0]["StorageClass"] == "DEEP_ARCHIVE"
+        assert rule["NoncurrentVersionExpiration"]["NoncurrentDays"] == 180
+        assert rule["Expiration"] == {"ExpiredObjectDeleteMarker": True}
+    notified = [
+        entry["Filter"]["Key"]["FilterRules"][0]["Value"]
+        for entry in s3.notification["QueueConfigurations"]
+        if entry["Events"] == ["s3:ObjectRestore:Completed"]
     ]
-    # The untouched/ rule itself creates the delete-marker cleanup. Thus,
+    assert notified == ["untouched/", "modified/", "transcoded/"]
+    # Each archive rule itself creates the delete-marker cleanup. Thus,
     # the cleanup step finds that the cleanup is already present
     statuses = dict(results)
-    assert (
-        statuses.pop("lifecycle: untouched/ expired delete-marker cleanup") == "present"
-    )
+    for prefix in ("untouched/", "modified/", "transcoded/"):
+        assert (
+            statuses.pop(f"lifecycle: {prefix} expired delete-marker cleanup")
+            == "present"
+        )
     assert all(status in ("created", "updated") for status in statuses.values())
 
 
@@ -199,6 +215,12 @@ def test_provision_preserves_existing_hand_made_configuration(tmp_path):
     assert changed == {
         "lifecycle: bucket-wide incomplete-multipart abort": "created",
         "lifecycle: untouched/ noncurrent-version retention (180 days)": "updated",
+        "lifecycle: modified/ Deep Archive transition": "created",
+        "lifecycle: transcoded/ Deep Archive transition": "created",
+        "lifecycle: modified/ noncurrent-version retention (180 days)": "created",
+        "lifecycle: transcoded/ noncurrent-version retention (180 days)": "created",
+        "bucket restore-completed notification for modified/": "created",
+        "bucket restore-completed notification for transcoded/": "created",
     }
 
     # The hand-made untouched/ rule keeps every field except the increased
@@ -212,8 +234,19 @@ def test_provision_preserves_existing_hand_made_configuration(tmp_path):
     assert s3.rules[2]["ID"] == ABORT_RULE_ID
     assert s3.rules[2]["Filter"] == {}
 
-    # No notification write and no queue write occurred
-    assert "put_notification" not in s3.writes
+    # The new prefixes (#299) got their rules after the abort rule. The
+    # hand-made notification stays, and 2 notifications follow it. No
+    # queue write occurred
+    assert [rule["Filter"].get("Prefix") for rule in s3.rules[3:]] == [
+        "modified/",
+        "transcoded/",
+    ]
+    queue_configurations = s3.notification["QueueConfigurations"]
+    assert queue_configurations[0] == notification["QueueConfigurations"][0]
+    assert [entry["Id"] for entry in queue_configurations[1:]] == [
+        "fitzflix-restore-completed-modified",
+        "fitzflix-restore-completed-transcoded",
+    ]
     assert sqs.writes == []
 
 

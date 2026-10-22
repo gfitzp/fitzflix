@@ -8,8 +8,6 @@ file, or a visible file.
 import os
 import time
 
-from datetime import datetime
-
 import pytest
 
 import app.maintenance as maintenance
@@ -338,15 +336,14 @@ def test_shared_untouched_key_is_never_deleted(app):
         assert untouched_key_still_claimed(shared) is False
 
 
-def test_rename_untouched_object_moves_or_reuploads(app, monkeypatch):
-    """Make sure the rename moves the object or uploads it again.
+def test_rename_untouched_object_moves_or_keeps(app, monkeypatch):
+    """Make sure the rename moves a readable rip, and keeps every other key (#299).
 
     The archive key changes only when a real object is at the new key.
-    A STANDARD object goes through copy, verify, and delete. Fitzflix
-    cannot copy a Deep Archive object or a missing object. Thus, the
-    LOCAL library file force-uploads under the new key (decision by
-    Glenn: close the invariant now, and do not hope that a later
-    re-upload heals it)."""
+    A STANDARD object goes through copy, verify, and delete. A Deep
+    Archive rip cannot be copied. The library file is not the rip. Thus,
+    nothing takes its place, and the rip keeps its old key. A modified/
+    key never moves. A direct restore uses the path of the record."""
 
     from app import aws_storage
 
@@ -372,6 +369,11 @@ def test_rename_untouched_object_moves_or_reuploads(app, monkeypatch):
         def delete_object(self, Bucket, Key):
             self.deleted = Key
 
+    monkeypatch.setattr(
+        aws_storage,
+        "aws_upload",
+        lambda *a, **kw: pytest.fail("a rename never uploads the library file"),
+    )
     with app.app_context():
         file = make_movie_file(make_movie("Rename Subject", 2020), "DVD")
         file.aws_untouched_key = "untouched/old.mkv"
@@ -384,108 +386,50 @@ def test_rename_untouched_object_moves_or_reuploads(app, monkeypatch):
         assert fake.copied == ("untouched/old.mkv", "untouched/new.mkv")
         assert fake.deleted == "untouched/old.mkv"
 
-        # Deep Archive: a server-side copy is not possible. The library
-        # copy force-uploads under the new key. The old object goes.
-
-        from datetime import datetime
-
-        uploads = []
-
-        def fake_upload(path, prefix, key_name=None, **kw):
-            uploads.append((path, prefix, key_name))
-            return (f"{prefix}/{key_name}", datetime(2026, 8, 18), 999)
+        # Deep Archive: no server-side copy. The rip keeps its key.
 
         file.aws_untouched_key = "untouched/frozen.mkv"
         fake = FakeS3(storage_class="DEEP_ARCHIVE")
         monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kw: fake)
-        monkeypatch.setattr(aws_storage, "aws_upload", fake_upload)
-        assert videos.rename_untouched_object(file, "untouched/thawed.mkv") is True
-        assert file.aws_untouched_key == "untouched/thawed.mkv"
-        assert file.aws_untouched_filesize_bytes == 999
-        assert uploads[-1][2] == "thawed.mkv"
-        assert fake.copied is None
-        assert fake.deleted == "untouched/frozen.mkv"
-
-        # Missing object: there is nothing to copy or delete. The upload
-        # heals it.
-
-        file.aws_untouched_key = "untouched/gone.mkv"
-        fake = FakeS3(exists=False)
-        monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kw: fake)
-        assert videos.rename_untouched_object(file, "untouched/found.mkv") is True
-        assert file.aws_untouched_key == "untouched/found.mkv"
-        assert fake.deleted is None
-
-
-def test_rename_untouched_object_defers_the_upload(app, monkeypatch):
-    """Make sure rename_untouched_object can defer the upload.
-
-    A caller on a queue with a short budget passes defer_upload. An
-    object that Fitzflix cannot copy hands its multi-gigabyte re-upload
-    to the file queue. The key does not change until that job
-    completes. This is #231: the 10-minute limit of the sql queue killed
-    a 43.9 GB upload at 84%."""
-
-    from app import aws_storage
-
-    from app import db
-    from app import videos
-    from tests.factories import make_movie, make_movie_file
-
-    class FrozenS3:
-        def __init__(self):
-            self.deleted = None
-
-        def head_object(self, Bucket, Key):
-            return {"ContentLength": 123, "StorageClass": "DEEP_ARCHIVE"}
-
-        def delete_object(self, Bucket, Key):
-            self.deleted = Key
-
-    with app.app_context():
-        file = make_movie_file(make_movie("Deferred Subject", 2021), "Bluray-1080p")
-        file.aws_untouched_key = "untouched/frozen.mkv"
-        db.session.commit()
-
-        fake = FrozenS3()
-        monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kw: fake)
-        monkeypatch.setattr(
-            aws_storage,
-            "aws_upload",
-            lambda *a, **kw: pytest.fail("the upload should not run inline"),
-        )
-
         assert (
             videos.rename_untouched_object(
                 file, "untouched/thawed.mkv", defer_upload=True
             )
             is False
         )
-
-        # Nothing changed yet. The key still names the real object. The
-        # old object is still there. The deferred job deletes it.
-
         assert file.aws_untouched_key == "untouched/frozen.mkv"
-        assert fake.deleted is None
-
-        jobs = [
+        assert fake.copied is None and fake.deleted is None
+        assert not [
             job
             for job in app.file_queue.jobs
             if job.func_name == "app.videos.rearchive_untouched_object"
         ]
-        assert len(jobs) == 1
-        assert jobs[0].args == (file.id, "untouched/thawed.mkv")
-        assert jobs[0].timeout == app.config["UPLOAD_TASK_TIMEOUT"]
+
+        # A missing object: nothing to copy. The S3 sync reports it.
+
+        file.aws_untouched_key = "untouched/gone.mkv"
+        fake = FakeS3(exists=False)
+        monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kw: fake)
+        assert videos.rename_untouched_object(file, "untouched/found.mkv") is False
+        assert file.aws_untouched_key == "untouched/gone.mkv"
+
+        # A modified/ key never moves, and S3 is not asked.
+
+        file.aws_untouched_key = "modified/Rename Subject (2020) - [DVD].mkv"
+        monkeypatch.setattr(
+            aws_storage,
+            "aws_s3_client",
+            lambda **kw: pytest.fail("no S3 call for a modified/ key"),
+        )
+        assert videos.rename_untouched_object(file, "untouched/new.mkv") is False
+        assert file.aws_untouched_key == "modified/Rename Subject (2020) - [DVD].mkv"
 
 
-def test_rearchive_untouched_object_uploads_or_skips(app, monkeypatch):
-    """Make sure the re-archive uploads the object or skips it.
+def test_rearchive_untouched_object_keeps_a_deep_archive_rip(app, monkeypatch):
+    """Make sure the re-archive never uploads the library file as a rip (#299).
 
-    The deferred half runs the force-upload in the 6-hour budget of the
-    file queue. It skips a key that the record no longer wants. It does
-    not spend tens of gigabytes on a stale name."""
-
-    from datetime import datetime
+    A queued re-archive moves a readable rip. It keeps a Deep Archive rip
+    under its key. It skips a key that the record no longer wants."""
 
     from app import aws_storage
 
@@ -515,61 +459,26 @@ def test_rearchive_untouched_object_uploads_or_skips(app, monkeypatch):
         os.makedirs(os.path.dirname(local_path), exist_ok=True)
         with open(local_path, "wb") as handle:
             handle.write(b"payload")
-
         new_key = os.path.join(app.config["AWS_UNTOUCHED_PREFIX"], "thawed.mkv")
-
-        uploads = []
-
-        def fake_upload(path, prefix, key_name=None, **kw):
-            uploads.append((path, prefix, key_name))
-            return (os.path.join(prefix, key_name), datetime(2026, 8, 25), 999)
 
         fake = FrozenS3()
         monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kw: fake)
-        monkeypatch.setattr(aws_storage, "aws_upload", fake_upload)
+        monkeypatch.setattr(
+            aws_storage,
+            "aws_upload",
+            lambda *a, **kw: pytest.fail("the library file is not the rip"),
+        )
 
-        assert videos.rearchive_untouched_object(file_id, new_key) is True
-
-        # The task commits in the session of its own app context.
-
+        assert videos.rearchive_untouched_object(file_id, new_key) is False
         db.session.expire_all()
-        file = db.session.get(File, file_id)
-        assert file.aws_untouched_key == new_key
-        assert file.aws_untouched_filesize_bytes == 999
-        assert uploads[-1][0] == local_path
-        assert fake.deleted == "untouched/frozen.mkv"
+        assert db.session.get(File, file_id).aws_untouched_key == "untouched/frozen.mkv"
+        assert fake.deleted is None
 
-        # This is a key that the record no longer wants. A later refresh
-        # renamed it again, or the refresh that queued this job rolled
-        # back.
+        # A key that the record no longer wants is skipped.
 
-        file.aws_untouched_key = "untouched/current.mkv"
-        file.untouched_basename = "current.mkv"
-        db.session.commit()
-
-        uploads.clear()
         stale_key = os.path.join(app.config["AWS_UNTOUCHED_PREFIX"], "stale.mkv")
         assert videos.rearchive_untouched_object(file_id, stale_key) is False
-        db.session.expire_all()
-        assert file.aws_untouched_key == "untouched/current.mkv"
-        assert uploads == []
-
-        # A record with a local file that the user deleted on purpose has
-        # nothing to upload again. It keeps the old key that still names
-        # an object.
-
         os.remove(local_path)
-        file.untouched_basename = "thawed.mkv"
-        db.session.commit()
-        assert (
-            videos.rearchive_untouched_object(
-                file_id, new_key, path_retries=aws_storage.MAX_REARCHIVE_PATH_RETRIES
-            )
-            is False
-        )
-        db.session.expire_all()
-        assert file.aws_untouched_key == "untouched/current.mkv"
-        assert uploads == []
 
 
 def test_rearchive_waits_for_the_path_commit(app, monkeypatch):
@@ -631,61 +540,3 @@ def test_rearchive_waits_for_the_path_commit(app, monkeypatch):
             for job in scheduled_jobs(app.file_queue)
             if job.func_name == "app.videos.rearchive_untouched_object"
         )
-
-
-def test_rearchive_replaces_a_webdl_named_key_with_the_library_file(app, monkeypatch):
-    """The WEBDL rebuild is complete (#158). A WEBRip row with a WEBDL key re-archives.
-
-    The rebuild left WEBRip rows with WEBDL-named archive keys, and most
-    of those objects were the downloads that the rebuild replaced. The
-    re-archive uploads the library file under the WEBRip name. Then it
-    deletes the old key and points the record at the new one."""
-
-    from app import aws_storage
-
-    from app import db
-    from app import videos
-    from app.models import File
-    from tests.factories import make_movie, make_movie_file
-
-    with app.app_context():
-        file = make_movie_file(make_movie("Rebuilt Subject", 1964), "WEBRip-1080p")
-        file.aws_untouched_key = "untouched/Rebuilt Subject (1964) - [WEBDL-1080p].mkv"
-        file.untouched_basename = "Rebuilt Subject (1964) - [WEBRip-1080p].mkv"
-        db.session.commit()
-        file_id = file.id
-        local = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
-        os.makedirs(os.path.dirname(local), exist_ok=True)
-        with open(local, "wb") as f:
-            f.write(b"rebuilt library file")
-
-        new_key = os.path.join(
-            app.config["AWS_UNTOUCHED_PREFIX"],
-            "Rebuilt Subject (1964) - [WEBRip-1080p].mkv",
-        )
-        uploads, deletes = [], []
-
-        class FakeS3:
-            def head_object(self, Bucket, Key):
-                return {"StorageClass": "DEEP_ARCHIVE", "ContentLength": 5}
-
-            def delete_object(self, Bucket, Key):
-                deletes.append(Key)
-
-        monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kw: FakeS3())
-        monkeypatch.setattr(
-            aws_storage,
-            "aws_upload",
-            lambda path, prefix="", key_name=None, **kw: uploads.append(
-                (path, key_name)
-            )
-            or (f"{prefix}/{key_name}", datetime.utcnow(), os.path.getsize(path)),
-        )
-
-        assert videos.rearchive_untouched_object(file_id, new_key) is True
-
-        assert uploads == [(local, "Rebuilt Subject (1964) - [WEBRip-1080p].mkv")]
-        assert deletes == ["untouched/Rebuilt Subject (1964) - [WEBDL-1080p].mkv"]
-        db.session.expire_all()
-        assert db.session.get(File, file_id).aws_untouched_key == new_key
-        os.remove(local)

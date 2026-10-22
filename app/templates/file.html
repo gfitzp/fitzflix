@@ -11,6 +11,7 @@
 <p>
 	<em>Originally imported as '{{ file.untouched_basename }}'</em><br>
 	<em>{% if file.aws_untouched_date_uploaded %}Archived offsite {{ moment(file.aws_untouched_date_uploaded).format("LLL") }} as '{{ file.aws_untouched_key }}'{% else %}Not uploaded to AWS.{% endif %}</em><br>
+	{% if file.aws_transcoded_date_uploaded %}<em>Transcoded copy archived {{ moment(file.aws_transcoded_date_uploaded).format("LLL") }} as '{{ file.aws_transcoded_key }}'</em><br>{% endif %}
 	<em>Added {{ moment(file.date_added).format("LLL") }}{% if file.date_updated %}, file details last updated {{ moment(file.date_updated).format("LLL") }}{% endif %}</em>
 </p>
 {% if file.media_library == "Movies" %}
@@ -187,10 +188,11 @@
    stacks them. Thus, the buttons never touch. #}
 <div class="row g-3">
 	<div class="col-sm-6">
-		{# The archive of a conversion is its original (#292). The library
-		   file must not replace it. Thus, the upload is off for it. #}
+		{# The upload archives the library file: in modified/, or in
+		   transcoded/ for a conversion. The rip in untouched/ never
+		   changes (#299). #}
 		<form action="" method="post">
-			<fieldset {% if not file_exists_locally or not best_file or not file.archive_is_library_copy %}disabled{% endif %}>
+			<fieldset {% if not file_exists_locally or not best_file %}disabled{% endif %}>
 				{{ upload_form.hidden_tag() }}
 				{{ upload_form.s3_upload_submit(class_="btn btn-sm btn-success") }}
 			</fieldset>

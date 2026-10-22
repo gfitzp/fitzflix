@@ -877,7 +877,7 @@ def missing_files():
         for file in files:
             current_app.request_queue.enqueue(
                 "app.videos.aws_restore",
-                args=(file.aws_untouched_key,),
+                args=(file.restore_key,),
                 job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
                 description=f"'{file.untouched_basename}'",
             )

@@ -299,9 +299,20 @@ def test_archive_only_originals_claim_their_keys(app):
         assert untouched_key_still_claimed("untouched/Amadeus.mkv")
 
 
-def test_the_library_file_of_a_conversion_never_replaces_its_archive(app):
-    from app.aws_storage import upload_task
+def test_the_library_file_of_a_conversion_goes_to_transcoded(app, monkeypatch):
+    """The upload of a conversion archives its 1080p file in transcoded/ (#299).
 
+    The original in untouched/ never changes."""
+
+    import app.aws_storage as aws_storage
+
+    uploads = []
+
+    def fake_upload(path, key_prefix="", key_name=None, **kwargs):
+        uploads.append((key_prefix, key_name))
+        return f"{key_prefix}/{key_name}", datetime.utcnow(), 5
+
+    monkeypatch.setattr(aws_storage, "aws_upload", fake_upload)
     with app.app_context():
         movie = make_movie("Amadeus", 1984)
         conversion = make_movie_file(
@@ -311,12 +322,17 @@ def test_the_library_file_of_a_conversion_never_replaces_its_archive(app):
             aws_untouched_key="untouched/Amadeus (1984) - [Bluray-2160p].mkv",
         )
         db.session.commit()
-        assert conversion.archive_is_library_copy is False
-        assert upload_task(conversion.id, "untouched", True) is False
-        db.session.refresh(conversion)
+        assert aws_storage.upload_task(conversion.id, "untouched", True) is True
+        db.session.expire_all()
+        conversion = db.session.get(File, conversion.id)
         assert conversion.aws_untouched_key == (
             "untouched/Amadeus (1984) - [Bluray-2160p].mkv"
         )
+        assert conversion.aws_transcoded_key == (
+            "transcoded/Amadeus (1984) - [Bluray-1080p].mkv"
+        )
+        assert conversion.restore_key == conversion.aws_transcoded_key
+        assert uploads == [("transcoded", "Amadeus (1984) - [Bluray-1080p].mkv")]
 
 
 # The import chain, with the real tools
