@@ -465,6 +465,26 @@
 			// cells do not show. The queue-times line in the File cell
 			// (phoneTimes) shows the same times.
 
+			// A relative time ("3 minutes ago") keeps its stamp and its
+			// prefix on the element. The table repaints only when a row
+			// changes. Thus, a minute timer writes the text again from the
+			// stamp, and the rows stay in place.
+
+			function relativeTime(element, stamp, prefix) {
+				element.setAttribute("data-stamp", stamp);
+				element.setAttribute("data-prefix", prefix || "");
+				element.textContent = (prefix || "") + moment(stamp).fromNow();
+				return element;
+			}
+
+			setInterval(function() {
+				if (document.hidden) return;
+				document.querySelectorAll("#all-tasks [data-stamp]").forEach(function(element) {
+					element.textContent = element.getAttribute("data-prefix")
+						+ moment(element.getAttribute("data-stamp")).fromNow();
+				});
+			}, 60000);
+
 			function timeCell(stamp, prefix, kind) {
 				var cell = document.createElement("td");
 				cell.className = "col-3 col-sm-3 col-lg-2 " + kind;
@@ -473,8 +493,7 @@
 					// the raw GMT timestamp that the API serves
 					var when = document.createElement("abbr");
 					when.setAttribute("title", moment(stamp).format("LLL"));
-					when.textContent = (prefix || "") + moment(stamp).fromNow();
-					cell.appendChild(when);
+					cell.appendChild(relativeTime(when, stamp, prefix));
 				}
 				return cell;
 			}
@@ -492,23 +511,19 @@
 					return line;
 				}
 				var phrases = [];
-				if (task.enqueued_at) {
-					phrases.push("Enqueued " + moment(task.enqueued_at).fromNow());
-				}
+				if (task.enqueued_at) phrases.push(["Enqueued ", task.enqueued_at]);
 				if (task.status === "scheduled") {
 					if (task.scheduled_for) {
-						phrases.push((task.scheduled_word || "retries") + " "
-							+ moment(task.scheduled_for).fromNow());
+						phrases.push([(task.scheduled_word || "retries") + " ", task.scheduled_for]);
 					}
 				} else if (task.started_at) {
-					phrases.push("started " + moment(task.started_at).fromNow());
+					phrases.push(["started ", task.started_at]);
 				}
-				phrases.forEach(function(text, index) {
+				phrases.forEach(function(pair, index) {
 					if (index) line.appendChild(document.createTextNode(" · "));
 					var phrase = document.createElement("span");
 					phrase.className = "text-nowrap";
-					phrase.textContent = text;
-					line.appendChild(phrase);
+					line.appendChild(relativeTime(phrase, pair[1], pair[0]));
 				});
 				return line;
 			}
