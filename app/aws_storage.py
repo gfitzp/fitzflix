@@ -159,14 +159,10 @@ def overtaken_by_import(redis, file, key):
 
 
 class UploadProgressPercentage(object):
-    """Report the upload progress as a callback during an upload to AWS S3.
+    """Report the upload progress as a callback during an upload to AWS S3."""
 
-    The label is the S3 key. The basename of an extra is not unique
-    ("Trailer.mkv"). The key holds the title of the film or series."""
-
-    def __init__(self, file_path, key=None):
+    def __init__(self, file_path):
         self._file_path = file_path
-        self._label = key or os.path.basename(file_path)
         self._size = float(os.path.getsize(file_path))
         self._seen_so_far = 0
         self._previous_percent = None
@@ -189,9 +185,13 @@ class UploadProgressPercentage(object):
                 return
             self._previous_percent = percent
 
-            app.logger.info(f"'{self._label}' Uploading to AWS: {percent}%")
+            app.logger.info(
+                f"'{os.path.basename(self._file_path)}' Uploading to AWS: {percent}%"
+            )
             if self._job:
-                self._job.meta["description"] = f"'{self._label}' — Uploading to AWS"
+                self._job.meta["description"] = (
+                    f"'{os.path.basename(self._file_path)}' — Uploading to AWS"
+                )
                 self._job.meta["progress"] = percent
                 self._job.save_meta()
 
@@ -2067,7 +2067,7 @@ def aws_upload(
                 current_app.config["AWS_BUCKET"],
                 key,
                 ExtraArgs={"StorageClass": storage_class},
-                Callback=UploadProgressPercentage(file_path, key),
+                Callback=UploadProgressPercentage(file_path),
             )
             retry = 0
 
