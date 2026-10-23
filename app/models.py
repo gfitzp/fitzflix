@@ -1925,9 +1925,9 @@ class File(db.Model):
     converted_from_format = db.Column(db.String(255))
 
     # The second archive of a conversion: its current 1080p library file,
-    # in transcoded/ (#299). The untouched archive keeps the original. A
-    # restore of a missing conversion uses this copy first, straight into
-    # the library path.
+    # in transcoded/ (#299). aws_key keeps the original. A restore of a
+    # missing conversion uses this copy first, straight into the library
+    # path.
 
     aws_transcoded_key = db.Column(db.String(255), index=True)
     aws_transcoded_filesize_bytes = db.Column(db.BigInteger)
@@ -1966,19 +1966,17 @@ class File(db.Model):
     # is in modified/ (the current library file). A conversion keeps its
     # original here and its library file in aws_transcoded_key.
 
-    aws_untouched_key = db.Column(db.String(255), index=True)
-    aws_untouched_filesize_bytes = db.Column(db.BigInteger)
-    aws_untouched_date_uploaded = db.Column(db.DateTime)
-    aws_untouched_date_deleted = db.Column(db.DateTime)
+    aws_key = db.Column(db.String(255), index=True)
+    aws_filesize_bytes = db.Column(db.BigInteger)
+    aws_date_uploaded = db.Column(db.DateTime)
+    aws_date_deleted = db.Column(db.DateTime)
 
     # Set when an archive upload was lost and the S3 object is known to be
     # older than the local file. No other field can tell. The key still
     # exists and the date is from the old upload. Thus, every existing
     # check reads the row as consistent. A successful upload clears it.
 
-    aws_untouched_stale = db.Column(
-        db.Boolean, nullable=False, server_default="0", default=False
-    )
+    aws_stale = db.Column(db.Boolean, nullable=False, server_default="0", default=False)
     subtrack = db.relationship(
         "FileSubtitleTrack", backref="file", lazy="select", cascade="all,delete"
     )
@@ -2035,7 +2033,7 @@ class File(db.Model):
             and self.aws_transcoded_date_uploaded
         ):
             return self.aws_transcoded_key
-        return self.aws_untouched_key
+        return self.aws_key
 
     @property
     def archive_is_library_copy(self):
@@ -2509,16 +2507,16 @@ class ArchivedOriginal(db.Model):
     quality_title = db.Column(db.String(32), nullable=False)
     hdr_format = db.Column(db.String(255))
     untouched_basename = db.Column(db.String(255), nullable=False)
-    aws_untouched_key = db.Column(db.String(255), nullable=False, unique=True)
-    aws_untouched_filesize_bytes = db.Column(db.BigInteger)
-    aws_untouched_date_uploaded = db.Column(db.DateTime)
+    aws_key = db.Column(db.String(255), nullable=False, unique=True)
+    aws_filesize_bytes = db.Column(db.BigInteger)
+    aws_date_uploaded = db.Column(db.DateTime)
     reason = db.Column(db.String(64), nullable=False)
     date_added = db.Column(db.DateTime, nullable=False, default=db.func.utc_timestamp())
     movie = db.relationship("Movie")
     tv_series = db.relationship("TVSeries")
 
     def __repr__(self):
-        return f"<ArchivedOriginal '{self.aws_untouched_key}'>"
+        return f"<ArchivedOriginal '{self.aws_key}'>"
 
 
 class HeldImport(db.Model):

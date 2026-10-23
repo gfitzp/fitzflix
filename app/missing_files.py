@@ -237,7 +237,7 @@ def missing_best_report(redis):
                 "title": title,
                 "quality": file.quality.quality_title,
                 "fallback": result["fallbacks"].get(str(file.id)),
-                "archived": bool(file.aws_untouched_key),
+                "archived": bool(file.aws_key),
                 "sort_key": sort_key,
             }
         )

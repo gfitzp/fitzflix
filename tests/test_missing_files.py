@@ -41,7 +41,7 @@ def test_scan_reports_absent_best_files_with_fallbacks(app, monkeypatch):
         # The best copy is absent, and the DVD copy is present. The DVD
         # is the fallback
         served = make_movie("Are You Being Served", 1977)
-        best = make_movie_file(served, "WEBRip-1080p", aws_untouched_key="a.mkv")
+        best = make_movie_file(served, "WEBRip-1080p", aws_key="a.mkv")
         touch(app, make_movie_file(served, "DVD"))
 
         # The best copy is present. Nothing to report, and the absent DVD
@@ -94,7 +94,7 @@ def test_task_stores_the_result_and_the_report_loads_the_rows(app, monkeypatch):
         assert missing_files.missing_best_report(app.redis) is None
 
         movie = make_movie("Way Out West", 1937)
-        absent = make_movie_file(movie, "WEBRip-1080p", aws_untouched_key="w.mkv")
+        absent = make_movie_file(movie, "WEBRip-1080p", aws_key="w.mkv")
         gone = make_movie_file(make_movie("Deleted Later", 1950), "DVD")
         db.session.commit()
 
@@ -130,9 +130,7 @@ def test_maintenance_pages_show_the_stored_scan(app, admin_client, monkeypatch):
 
     with app.app_context():
         movie = make_movie("Way Out West", 1937)
-        make_movie_file(
-            movie, "WEBRip-1080p", aws_untouched_key="w.mkv", filesize_bytes=2**30
-        )
+        make_movie_file(movie, "WEBRip-1080p", aws_key="w.mkv", filesize_bytes=2**30)
         unarchived = make_movie_file(make_movie("Local Only", 1960), "DVD")
         db.session.commit()
         unarchived_id = unarchived.id
@@ -162,12 +160,12 @@ def test_restore_button_enqueues_a_restore_per_selected_archived_file(
     monkeypatch.setattr(missing_files, "missing_volumes", lambda config: [])
     with app.app_context():
         first = make_movie_file(
-            make_movie("Way Out West", 1937), "WEBRip-1080p", aws_untouched_key="w.mkv"
+            make_movie("Way Out West", 1937), "WEBRip-1080p", aws_key="w.mkv"
         )
         second = make_movie_file(
             make_movie("Sons of the Desert", 1933),
             "WEBRip-1080p",
-            aws_untouched_key="s.mkv",
+            aws_key="s.mkv",
         )
         unarchived = make_movie_file(make_movie("Local Only", 1960), "DVD")
         db.session.commit()

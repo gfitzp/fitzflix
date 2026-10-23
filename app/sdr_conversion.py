@@ -589,10 +589,8 @@ def archived_original_from_file(file, reason):
 
     from app.models import ArchivedOriginal
 
-    existing = ArchivedOriginal.query.filter_by(
-        aws_untouched_key=file.aws_untouched_key
-    ).first()
-    archived = existing or ArchivedOriginal(aws_untouched_key=file.aws_untouched_key)
+    existing = ArchivedOriginal.query.filter_by(aws_key=file.aws_key).first()
+    archived = existing or ArchivedOriginal(aws_key=file.aws_key)
     archived.media_library = file.media_library
     archived.movie_id = file.movie_id
     archived.series_id = file.series_id
@@ -603,10 +601,10 @@ def archived_original_from_file(file, reason):
     archived.quality_title = file.converted_from_quality or file.quality.quality_title
     archived.hdr_format = file.converted_from_format or file.hdr_format
     archived.untouched_basename = file.untouched_basename or os.path.basename(
-        file.aws_untouched_key
+        file.aws_key
     )
-    archived.aws_untouched_filesize_bytes = file.aws_untouched_filesize_bytes
-    archived.aws_untouched_date_uploaded = file.aws_untouched_date_uploaded
+    archived.aws_filesize_bytes = file.aws_filesize_bytes
+    archived.aws_date_uploaded = file.aws_date_uploaded
     archived.reason = reason
     return archived
 
@@ -629,9 +627,9 @@ def archive_held_task(held_id):
             key, uploaded, size = aws_upload(
                 held.held_path, current_app.config["AWS_UNTOUCHED_PREFIX"]
             )
-            archived = ArchivedOriginal.query.filter_by(aws_untouched_key=key).first()
+            archived = ArchivedOriginal.query.filter_by(aws_key=key).first()
             if archived is None:
-                archived = ArchivedOriginal(aws_untouched_key=key)
+                archived = ArchivedOriginal(aws_key=key)
             archived.media_library = details["media_library"]
             if details["media_library"] == "Movies":
                 movie = Movie.query.filter_by(
@@ -650,8 +648,8 @@ def archive_held_task(held_id):
             ) or details.get("quality_title")
             archived.hdr_format = held.source_format
             archived.untouched_basename = held.untouched_basename
-            archived.aws_untouched_filesize_bytes = size
-            archived.aws_untouched_date_uploaded = uploaded
+            archived.aws_filesize_bytes = size
+            archived.aws_date_uploaded = uploaded
             archived.reason = "archive only"
             db.session.add(archived)
             held_path = held.held_path

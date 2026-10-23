@@ -10,7 +10,7 @@
 {{ page_header(file.basename, hr=false) }}
 <p>
 	<em>Originally imported as '{{ file.untouched_basename }}'</em><br>
-	<em>{% if file.aws_untouched_date_uploaded %}Archived offsite {{ moment(file.aws_untouched_date_uploaded).format("LLL") }} as '{{ file.aws_untouched_key }}'{% else %}Not uploaded to AWS.{% endif %}</em><br>
+	<em>{% if file.aws_date_uploaded %}Archived offsite {{ moment(file.aws_date_uploaded).format("LLL") }} as '{{ file.aws_key }}'{% else %}Not uploaded to AWS.{% endif %}</em><br>
 	{% if file.aws_transcoded_date_uploaded %}<em>Transcoded copy archived {{ moment(file.aws_transcoded_date_uploaded).format("LLL") }} as '{{ file.aws_transcoded_key }}'</em><br>{% endif %}
 	<em>Added {{ moment(file.date_added).format("LLL") }}{% if file.date_updated %}, file details last updated {{ moment(file.date_updated).format("LLL") }}{% endif %}</em>
 </p>
@@ -197,7 +197,7 @@
 				{{ upload_form.s3_upload_submit(class_="btn btn-sm btn-success") }}
 			</fieldset>
 		</form>
-		<em class="small">{% if file.aws_untouched_date_uploaded %}Archived offsite {{ moment(file.aws_untouched_date_uploaded).format("LLL") }}{% else %}Not uploaded to AWS.{% endif %}</em>
+		<em class="small">{% if file.aws_date_uploaded %}Archived offsite {{ moment(file.aws_date_uploaded).format("LLL") }}{% else %}Not uploaded to AWS.{% endif %}</em>
 		<form action="" method="post" class="mt-3">
 			<fieldset {% if not best_file %}disabled{% endif %}>
 				{{ download_form.hidden_tag() }}

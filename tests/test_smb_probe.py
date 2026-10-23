@@ -451,7 +451,7 @@ def test_the_stale_mark_survives_the_rollback_that_follows_it(app):
         db.session.rollback()
 
         db.session.expire_all()
-        assert File.query.get(file_id).aws_untouched_stale is True
+        assert File.query.get(file_id).aws_stale is True
 
 
 def test_a_successful_upload_clears_the_stale_mark(app, monkeypatch):
@@ -470,8 +470,8 @@ def test_a_successful_upload_clears_the_stale_mark(app, monkeypatch):
     with app.app_context():
         movie = make_movie("Repaired", 2021)
         file = make_movie_file(movie, "Bluray-1080p")
-        file.aws_untouched_key = "untouched/repaired.mkv"
-        file.aws_untouched_stale = True
+        file.aws_key = "untouched/repaired.mkv"
+        file.aws_stale = True
         db.session.commit()
         file_id = file.id
 
@@ -488,7 +488,7 @@ def test_a_successful_upload_clears_the_stale_mark(app, monkeypatch):
         assert aws_storage.upload_task(file_id) is True
 
         db.session.expire_all()
-        assert File.query.get(file_id).aws_untouched_stale is False
+        assert File.query.get(file_id).aws_stale is False
 
 
 def test_a_transient_mount_error_does_not_reject_the_file(app, tmp_path, monkeypatch):
@@ -545,8 +545,8 @@ def test_repair_will_not_queue_a_file_whose_handle_is_still_lost(app, monkeypatc
     with app.app_context():
         movie = make_movie("Still Stuck", 2021)
         file = make_movie_file(movie, "Bluray-1080p")
-        file.aws_untouched_key = "untouched/still-stuck.mkv"
-        file.aws_untouched_stale = True
+        file.aws_key = "untouched/still-stuck.mkv"
+        file.aws_stale = True
         db.session.commit()
 
         queued = []
@@ -566,7 +566,7 @@ def test_repair_will_not_queue_a_file_whose_handle_is_still_lost(app, monkeypatc
         # repair.
 
         db.session.expire_all()
-        assert File.query.filter_by(aws_untouched_stale=True).count() == 1
+        assert File.query.filter_by(aws_stale=True).count() == 1
 
 
 def test_the_nightly_sweep_records_what_it_finds(app, monkeypatch):

@@ -25,7 +25,7 @@ def test_rename_moves_files_and_rewrites_rows(app):
         series = make_tv_series("Batman", tmdb_id=2287)
         one = make_tv_file(series, 1, 1, "Bluray-1080p")
         two = make_tv_file(series, 2, 3, "Bluray-1080p")
-        one.aws_untouched_key = "untouched/Batman - S01E01 - [Bluray-1080p].mkv"
+        one.aws_key = "untouched/Batman - S01E01 - [Bluray-1080p].mkv"
         db.session.commit()
         old_paths = [_materialize(app, f) for f in (one, two)]
         series_id = series.id
@@ -45,9 +45,7 @@ def test_rename_moves_files_and_rewrites_rows(app):
         assert one.plex_title == "Batman (1966) - S01E01"
 
         # The task intentionally does not change the S3 key
-        assert one.aws_untouched_key == (
-            "untouched/Batman - S01E01 - [Bluray-1080p].mkv"
-        )
+        assert one.aws_key == ("untouched/Batman - S01E01 - [Bluray-1080p].mkv")
 
         for old in old_paths:
             assert not os.path.exists(old)

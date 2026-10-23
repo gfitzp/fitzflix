@@ -315,8 +315,8 @@ def test_shared_untouched_key_is_never_deleted(app):
         keeper = make_movie_file(movie, "Bluray-1080p")
         goner = make_movie_file(movie, "DVD")
         shared = "untouched/Shared Key Film (2006) - [WEBDL-1080p].mkv"
-        keeper.aws_untouched_key = shared
-        goner.aws_untouched_key = shared
+        keeper.aws_key = shared
+        goner.aws_key = shared
         db.session.commit()
 
         assert untouched_key_still_claimed(shared) is True
@@ -331,7 +331,7 @@ def test_shared_untouched_key_is_never_deleted(app):
         # The purge can delete the key only when no active record holds
         # it.
 
-        keeper.aws_untouched_date_deleted = datetime.now()
+        keeper.aws_date_deleted = datetime.now()
         db.session.commit()
         assert untouched_key_still_claimed(shared) is False
 
@@ -376,19 +376,19 @@ def test_rename_untouched_object_moves_or_keeps(app, monkeypatch):
     )
     with app.app_context():
         file = make_movie_file(make_movie("Rename Subject", 2020), "DVD")
-        file.aws_untouched_key = "untouched/old.mkv"
+        file.aws_key = "untouched/old.mkv"
         db.session.commit()
 
         fake = FakeS3()
         monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kw: fake)
         assert videos.rename_untouched_object(file, "untouched/new.mkv") is True
-        assert file.aws_untouched_key == "untouched/new.mkv"
+        assert file.aws_key == "untouched/new.mkv"
         assert fake.copied == ("untouched/old.mkv", "untouched/new.mkv")
         assert fake.deleted == "untouched/old.mkv"
 
         # Deep Archive: no server-side copy. The rip keeps its key.
 
-        file.aws_untouched_key = "untouched/frozen.mkv"
+        file.aws_key = "untouched/frozen.mkv"
         fake = FakeS3(storage_class="DEEP_ARCHIVE")
         monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kw: fake)
         assert (
@@ -397,7 +397,7 @@ def test_rename_untouched_object_moves_or_keeps(app, monkeypatch):
             )
             is False
         )
-        assert file.aws_untouched_key == "untouched/frozen.mkv"
+        assert file.aws_key == "untouched/frozen.mkv"
         assert fake.copied is None and fake.deleted is None
         assert not [
             job
@@ -407,22 +407,22 @@ def test_rename_untouched_object_moves_or_keeps(app, monkeypatch):
 
         # A missing object: nothing to copy. The S3 sync reports it.
 
-        file.aws_untouched_key = "untouched/gone.mkv"
+        file.aws_key = "untouched/gone.mkv"
         fake = FakeS3(exists=False)
         monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kw: fake)
         assert videos.rename_untouched_object(file, "untouched/found.mkv") is False
-        assert file.aws_untouched_key == "untouched/gone.mkv"
+        assert file.aws_key == "untouched/gone.mkv"
 
         # A modified/ key never moves, and S3 is not asked.
 
-        file.aws_untouched_key = "modified/Rename Subject (2020) - [DVD].mkv"
+        file.aws_key = "modified/Rename Subject (2020) - [DVD].mkv"
         monkeypatch.setattr(
             aws_storage,
             "aws_s3_client",
             lambda **kw: pytest.fail("no S3 call for a modified/ key"),
         )
         assert videos.rename_untouched_object(file, "untouched/new.mkv") is False
-        assert file.aws_untouched_key == "modified/Rename Subject (2020) - [DVD].mkv"
+        assert file.aws_key == "modified/Rename Subject (2020) - [DVD].mkv"
 
 
 def test_rearchive_untouched_object_keeps_a_deep_archive_rip(app, monkeypatch):
@@ -450,7 +450,7 @@ def test_rearchive_untouched_object_keeps_a_deep_archive_rip(app, monkeypatch):
 
     with app.app_context():
         file = make_movie_file(make_movie("Deferred Subject II", 2022), "Bluray-1080p")
-        file.aws_untouched_key = "untouched/frozen.mkv"
+        file.aws_key = "untouched/frozen.mkv"
         file.untouched_basename = "thawed.mkv"
         db.session.commit()
         file_id = file.id
@@ -471,7 +471,7 @@ def test_rearchive_untouched_object_keeps_a_deep_archive_rip(app, monkeypatch):
 
         assert videos.rearchive_untouched_object(file_id, new_key) is False
         db.session.expire_all()
-        assert db.session.get(File, file_id).aws_untouched_key == "untouched/frozen.mkv"
+        assert db.session.get(File, file_id).aws_key == "untouched/frozen.mkv"
         assert fake.deleted is None
 
         # A key that the record no longer wants is skipped.
@@ -497,7 +497,7 @@ def test_rearchive_waits_for_the_path_commit(app, monkeypatch):
 
     with app.app_context():
         file = make_movie_file(make_movie("Deferred Subject III", 1943), "HDTV-720p")
-        file.aws_untouched_key = "untouched/old.mkv"
+        file.aws_key = "untouched/old.mkv"
         file.untouched_basename = "new.mkv"
         db.session.commit()
         file_id = file.id
@@ -534,7 +534,7 @@ def test_rearchive_waits_for_the_path_commit(app, monkeypatch):
             is False
         )
         db.session.expire_all()
-        assert db.session.get(File, file_id).aws_untouched_key == "untouched/old.mkv"
+        assert db.session.get(File, file_id).aws_key == "untouched/old.mkv"
         assert not any(
             job.args[0] == file_id and job.kwargs.get("path_retries", 0) > 1
             for job in scheduled_jobs(app.file_queue)

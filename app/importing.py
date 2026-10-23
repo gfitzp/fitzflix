@@ -1027,9 +1027,9 @@ def localization_task(
 
             if get_setting("ARCHIVE_ORIGINAL_MEDIA"):
                 (
-                    file_details["aws_untouched_key"],
-                    file_details["aws_untouched_date_uploaded"],
-                    file_details["aws_untouched_filesize_bytes"],
+                    file_details["aws_key"],
+                    file_details["aws_date_uploaded"],
+                    file_details["aws_filesize_bytes"],
                 ) = aws_upload(
                     file_path,
                     current_app.config["AWS_UNTOUCHED_PREFIX"],
@@ -2115,8 +2115,8 @@ def finalize_localization(
                 if (
                     file.converted_from_quality
                     and not file_details.get("converted_from_quality")
-                    and file.aws_untouched_key
-                    and file.aws_untouched_date_uploaded
+                    and file.aws_key
+                    and file.aws_date_uploaded
                 ):
                     kept_archives.append(
                         archived_original_from_file(file, "replaced by a real rip")
@@ -2299,19 +2299,15 @@ def finalize_localization(
 
             replaced_key = None
             if (
-                file.aws_untouched_date_uploaded
-                and file.aws_untouched_key
-                and file.aws_untouched_key != file_details.get("aws_untouched_key")
+                file.aws_date_uploaded
+                and file.aws_key
+                and file.aws_key != file_details.get("aws_key")
             ):
-                replaced_key = file.aws_untouched_key
+                replaced_key = file.aws_key
 
-            file.aws_untouched_key = file_details.get("aws_untouched_key")
-            file.aws_untouched_date_uploaded = file_details.get(
-                "aws_untouched_date_uploaded"
-            )
-            file.aws_untouched_filesize_bytes = file_details.get(
-                "aws_untouched_filesize_bytes"
-            )
+            file.aws_key = file_details.get("aws_key")
+            file.aws_date_uploaded = file_details.get("aws_date_uploaded")
+            file.aws_filesize_bytes = file_details.get("aws_filesize_bytes")
 
             record_filesize(file, inspection["filesize_bytes"])
             current_app.logger.info(
@@ -2333,8 +2329,8 @@ def finalize_localization(
                 if (
                     worse.converted_from_quality
                     and not file.converted_from_quality
-                    and worse.aws_untouched_key
-                    and worse.aws_untouched_date_uploaded
+                    and worse.aws_key
+                    and worse.aws_date_uploaded
                 ):
                     kept_archives.append(
                         archived_original_from_file(worse, "replaced by a real rip")
@@ -2351,11 +2347,11 @@ def finalize_localization(
                     worse.quality.physical_media == file.quality.physical_media
                     or file.quality.physical_media == True
                 ):
-                    if worse.aws_untouched_date_uploaded:
+                    if worse.aws_date_uploaded:
                         # Record the key now. Delete it from AWS only after the
                         # database commit succeeds. Then a failed commit cannot
                         # cost the backup of a record that rolled back.
-                        worse_aws_keys.append(worse.aws_untouched_key)
+                        worse_aws_keys.append(worse.aws_key)
 
                     db.session.delete(worse)
 
@@ -2479,10 +2475,8 @@ def finalize_localization(
 
             for archived in kept_archives:
                 db.session.add(archived)
-            if file.aws_untouched_key:
-                ArchivedOriginal.query.filter_by(
-                    aws_untouched_key=file.aws_untouched_key
-                ).delete()
+            if file.aws_key:
+                ArchivedOriginal.query.filter_by(aws_key=file.aws_key).delete()
             HeldImport.query.filter_by(held_path=file_path).delete()
 
             db.session.commit()

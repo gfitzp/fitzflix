@@ -1024,7 +1024,7 @@ def test_tmdb_apply_queues_the_archive_rename_after_the_path_commit(app, monkeyp
         movie = make_movie("Desert Tune", 1943)
         file = make_movie_file(movie, "HDTV-720p")
         file.untouched_basename = file.basename
-        file.aws_untouched_key = f"untouched/{file.basename}"
+        file.aws_key = f"untouched/{file.basename}"
         movie.tmdb_title = "Desert Tune"
         movie.tmdb_release_date = date(1944, 1, 1)
         db.session.commit()
@@ -1214,7 +1214,7 @@ def _overtaken_fixture(app, title, localized, present=True):
     file = make_movie_file(
         make_movie(title, 1950),
         "WEBDL-1080p",
-        aws_untouched_key=key,
+        aws_key=key,
         date_localized=localized,
     )
     db.session.commit()

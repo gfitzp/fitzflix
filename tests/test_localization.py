@@ -1755,8 +1755,8 @@ def test_a_replaced_files_archive_is_deleted_from_the_handoff_queue(
         make_movie_file(
             movie,
             "SDTV",
-            aws_untouched_key=key,
-            aws_untouched_date_uploaded=datetime.now(timezone.utc),
+            aws_key=key,
+            aws_date_uploaded=datetime.now(timezone.utc),
         )
         db.session.commit()
 
@@ -1816,8 +1816,8 @@ def test_a_reused_records_old_archive_key_is_deleted(
         row = make_movie_file(
             movie,
             "DVD",
-            aws_untouched_key=old_key,
-            aws_untouched_date_uploaded=datetime.now(timezone.utc),
+            aws_key=old_key,
+            aws_date_uploaded=datetime.now(timezone.utc),
         )
         db.session.commit()
         row_id = row.id
@@ -1851,7 +1851,7 @@ def test_a_reused_records_old_archive_key_is_deleted(
         )
         finalize_localization(*finalize.args, **finalize.kwargs)
 
-        assert db.session.get(File, row_id).aws_untouched_key == new_key
+        assert db.session.get(File, row_id).aws_key == new_key
         deletes = [
             job.args
             for job in app.handoff_queue.jobs

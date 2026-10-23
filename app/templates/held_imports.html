@@ -62,7 +62,7 @@
 		<p class="mb-1 small">
 			<span class="badge text-bg-light">{{ item.quality_title }}</span>
 			{% if item.hdr_format %}<span class="badge text-bg-secondary">{{ item.hdr_format }}</span>{% endif %}
-			{% if item.aws_untouched_filesize_bytes %}<span class="text-muted">{{ item.aws_untouched_filesize_bytes|filesizeformat }}</span>{% endif %}
+			{% if item.aws_filesize_bytes %}<span class="text-muted">{{ item.aws_filesize_bytes|filesizeformat }}</span>{% endif %}
 			<span class="text-muted">&middot; {{ item.reason }}</span>
 		</p>
 		<form action="" method="post" class="d-flex flex-wrap gap-2 align-items-center">

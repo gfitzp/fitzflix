@@ -291,7 +291,7 @@ def test_archive_only_originals_claim_their_keys(app):
                 media_library="Movies",
                 quality_title="Bluray-2160p",
                 untouched_basename="Amadeus (1984) - [Bluray-2160p].mkv",
-                aws_untouched_key="untouched/Amadeus.mkv",
+                aws_key="untouched/Amadeus.mkv",
                 reason="archive only",
             )
         )
@@ -319,15 +319,13 @@ def test_the_library_file_of_a_conversion_goes_to_transcoded(app, monkeypatch):
             movie,
             "Bluray-1080p",
             converted_from_quality="Bluray-2160p",
-            aws_untouched_key="untouched/Amadeus (1984) - [Bluray-2160p].mkv",
+            aws_key="untouched/Amadeus (1984) - [Bluray-2160p].mkv",
         )
         db.session.commit()
         assert aws_storage.upload_task(conversion.id, "untouched", True) is True
         db.session.expire_all()
         conversion = db.session.get(File, conversion.id)
-        assert conversion.aws_untouched_key == (
-            "untouched/Amadeus (1984) - [Bluray-2160p].mkv"
-        )
+        assert conversion.aws_key == ("untouched/Amadeus (1984) - [Bluray-2160p].mkv")
         assert conversion.aws_transcoded_key == (
             "transcoded/Amadeus (1984) - [Bluray-1080p].mkv"
         )
@@ -464,7 +462,7 @@ def test_an_hdr_import_becomes_a_1080p_sdr_conversion(
         assert file.color_primaries == "BT.709"
         assert file.transfer_characteristics == "BT.709"
         assert file.hdr_format is None
-        assert file.aws_untouched_key == f"untouched/{basename}"
+        assert file.aws_key == f"untouched/{basename}"
         assert [t.language for t in file.audiotrack] == ["eng"]
 
         output = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
@@ -585,8 +583,8 @@ def test_a_real_rip_keeps_the_original_of_the_conversion(app, monkeypatch):
             converted_from_quality="Bluray-2160p",
             converted_from_format="Dolby Vision Profile 7",
             untouched_basename="Kept Original (1998) - [Bluray-2160p].mkv",
-            aws_untouched_key="untouched/Kept Original (1998) - [Bluray-2160p].mkv",
-            aws_untouched_date_uploaded=datetime.utcnow(),
+            aws_key="untouched/Kept Original (1998) - [Bluray-2160p].mkv",
+            aws_date_uploaded=datetime.utcnow(),
         )
         db.session.commit()
 
@@ -613,9 +611,9 @@ def test_a_real_rip_keeps_the_original_of_the_conversion(app, monkeypatch):
             "fullscreen": False,
             "extension": "mkv",
             "untouched_basename": conversion.basename,
-            "aws_untouched_key": f"untouched/{conversion.basename}",
-            "aws_untouched_date_uploaded": datetime.utcnow(),
-            "aws_untouched_filesize_bytes": 8,
+            "aws_key": f"untouched/{conversion.basename}",
+            "aws_date_uploaded": datetime.utcnow(),
+            "aws_filesize_bytes": 8,
         }
         inspection = {
             "video": {"format": "AVC", "color_primaries": "BT.709"},
@@ -629,10 +627,10 @@ def test_a_real_rip_keeps_the_original_of_the_conversion(app, monkeypatch):
         db.session.expire_all()
         file = File.query.filter_by(file_path=conversion.file_path).one()
         assert file.converted_from_quality is None
-        assert file.aws_untouched_key == f"untouched/{conversion.basename}"
+        assert file.aws_key == f"untouched/{conversion.basename}"
 
         archived = ArchivedOriginal.query.one()
-        assert archived.aws_untouched_key == (
+        assert archived.aws_key == (
             "untouched/Kept Original (1998) - [Bluray-2160p].mkv"
         )
         assert archived.quality_title == "Bluray-2160p"
@@ -723,7 +721,7 @@ def test_the_page_lists_held_imports_and_archived_originals(app, admin_client):
                 media_library="Movies",
                 quality_title="Bluray-2160p",
                 untouched_basename="Archived Test (1984) - [Bluray-2160p].mkv",
-                aws_untouched_key="untouched/Archived Test (1984) - [Bluray-2160p].mkv",
+                aws_key="untouched/Archived Test (1984) - [Bluray-2160p].mkv",
                 reason="archive only",
             )
         )
@@ -812,7 +810,7 @@ def test_a_restore_needs_the_password(app, admin_client):
             media_library="Movies",
             quality_title="Bluray-2160p",
             untouched_basename="Restore Test (1984) - [Bluray-2160p].mkv",
-            aws_untouched_key="untouched/Restore Test (1984) - [Bluray-2160p].mkv",
+            aws_key="untouched/Restore Test (1984) - [Bluray-2160p].mkv",
             reason="archive only",
         )
         db.session.add(archived)
@@ -879,8 +877,8 @@ def test_a_conversion_that_reuses_a_record_takes_the_untouched_name(app):
             movie,
             "Bluray-1080p",
             untouched_basename="Reused Record (1984) - [Bluray-1080p].mkv",
-            aws_untouched_key="untouched/Reused Record (1984) - [Bluray-1080p].mkv",
-            aws_untouched_date_uploaded=datetime.utcnow(),
+            aws_key="untouched/Reused Record (1984) - [Bluray-1080p].mkv",
+            aws_date_uploaded=datetime.utcnow(),
         )
         db.session.commit()
 
@@ -912,9 +910,9 @@ def test_a_conversion_that_reuses_a_record_takes_the_untouched_name(app):
             "converted_from_format": "HDR10",
             "replace_existing": True,
             "untouched_basename": "Reused Record (1984) - [Bluray-2160p].mkv",
-            "aws_untouched_key": "untouched/Reused Record (1984) - [Bluray-2160p].mkv",
-            "aws_untouched_date_uploaded": datetime.utcnow(),
-            "aws_untouched_filesize_bytes": 11,
+            "aws_key": "untouched/Reused Record (1984) - [Bluray-2160p].mkv",
+            "aws_date_uploaded": datetime.utcnow(),
+            "aws_filesize_bytes": 11,
         }
         inspection = {
             "video": {"format": "AVC", "color_primaries": "BT.709"},
@@ -929,7 +927,5 @@ def test_a_conversion_that_reuses_a_record_takes_the_untouched_name(app):
         file = File.query.filter_by(file_path=real.file_path).one()
         assert file.converted_from_quality == "Bluray-2160p"
         assert file.untouched_basename == "Reused Record (1984) - [Bluray-2160p].mkv"
-        assert file.aws_untouched_key == (
-            "untouched/Reused Record (1984) - [Bluray-2160p].mkv"
-        )
+        assert file.aws_key == ("untouched/Reused Record (1984) - [Bluray-2160p].mkv")
         os.remove(os.path.join(app.config["LIBRARY_DIR"], file.file_path))

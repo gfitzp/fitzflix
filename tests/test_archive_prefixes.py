@@ -39,14 +39,12 @@ def test_the_first_change_moves_the_archive_to_modified(app, uploads):
         file = make_movie_file(
             make_movie("Moved Archive", 1999),
             "Bluray-1080p",
-            aws_untouched_key="untouched/Moved Archive (1999) - [Bluray-1080p].mkv",
+            aws_key="untouched/Moved Archive (1999) - [Bluray-1080p].mkv",
         )
         db.session.commit()
 
         aws_storage.archive_library_file(file, "/library/file.mkv")
-        assert file.aws_untouched_key == (
-            "modified/Moved Archive (1999) - [Bluray-1080p].mkv"
-        )
+        assert file.aws_key == ("modified/Moved Archive (1999) - [Bluray-1080p].mkv")
         assert _deletes(app) == ["untouched/Moved Archive (1999) - [Bluray-1080p].mkv"]
 
         # A later change overwrites the modified/ object. Nothing is deleted.
@@ -56,10 +54,60 @@ def test_the_first_change_moves_the_archive_to_modified(app, uploads):
             "modified",
             "Moved Archive (1999) - [Bluray-1080p].mkv",
         )
-        assert file.aws_untouched_key == (
-            "modified/Moved Archive (1999) - [Bluray-1080p].mkv"
-        )
+        assert file.aws_key == ("modified/Moved Archive (1999) - [Bluray-1080p].mkv")
         assert len(_deletes(app)) == 1
+
+
+def test_an_extra_keeps_the_title_of_its_film_in_modified(app, uploads):
+    """The basename of an extra is not unique. Its modified/ key keeps the
+    untouched/ name, with the title of the film."""
+
+    with app.app_context():
+        movie = make_movie("Extra Archive", 1955)
+        first = make_movie_file(
+            movie,
+            "Bluray-1080p",
+            "Trailers",
+            plex_title="Trailer",
+            aws_key="untouched/Extra Archive (1955) - Trailers - Trailer [Bluray-1080p].mkv",
+        )
+        second = make_movie_file(
+            make_movie("Other Archive", 1956),
+            "DVD",
+            "Trailers",
+            plex_title="Trailer",
+            untouched_basename="Other Archive (1956) - Trailers - Trailer [DVD].mkv",
+        )
+        db.session.commit()
+        assert first.basename == second.basename == "Trailer.mkv"
+
+        aws_storage.archive_library_file(first, "/library/first.mkv")
+        aws_storage.archive_library_file(second, "/library/second.mkv")
+        assert first.aws_key == (
+            "modified/Extra Archive (1955) - Trailers - Trailer [Bluray-1080p].mkv"
+        )
+        assert second.aws_key == (
+            "modified/Other Archive (1956) - Trailers - Trailer [DVD].mkv"
+        )
+
+
+def test_a_claimed_modified_key_gets_the_record_id(app, uploads):
+    with app.app_context():
+        name = "Shared Archive (1957) - [DVD].mkv"
+        movie = make_movie("Shared Archive", 1957)
+        make_movie_file(movie, "DVD", aws_key=f"modified/{name}")
+        other = make_movie_file(
+            movie,
+            "DVD",
+            plex_title="Shared Archive (1957) - copy",
+            aws_key=f"untouched/{name}",
+        )
+        db.session.commit()
+
+        aws_storage.archive_library_file(other, "/library/other.mkv", False)
+        assert (
+            other.aws_key == f"modified/Shared Archive (1957) - [DVD] ({other.id}).mkv"
+        )
 
 
 def test_a_change_of_a_conversion_goes_to_transcoded(app, uploads):
@@ -68,12 +116,12 @@ def test_a_change_of_a_conversion_goes_to_transcoded(app, uploads):
             make_movie("Converted Archive", 2001),
             "Bluray-1080p",
             converted_from_quality="Bluray-2160p",
-            aws_untouched_key="untouched/Converted Archive (2001) - [Bluray-2160p].mkv",
+            aws_key="untouched/Converted Archive (2001) - [Bluray-2160p].mkv",
         )
         db.session.commit()
 
         aws_storage.archive_library_file(file, "/library/file.mkv")
-        assert file.aws_untouched_key == (
+        assert file.aws_key == (
             "untouched/Converted Archive (2001) - [Bluray-2160p].mkv"
         )
         assert file.aws_transcoded_key == (
@@ -123,7 +171,7 @@ def test_download_task_routes_by_prefix(app, monkeypatch, key, direct):
         or aws_storage.DOWNLOAD_COMPLETE,
     )
     with app.app_context():
-        file = make_movie_file(make_movie("Routed", 2003), "DVD", aws_untouched_key=key)
+        file = make_movie_file(make_movie("Routed", 2003), "DVD", aws_key=key)
         db.session.commit()
         expected = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
 
@@ -171,8 +219,8 @@ def test_the_sync_restores_the_transcoded_copy_and_prunes_all_prefixes(
             make_movie("Synced", 2004),
             "Bluray-1080p",
             converted_from_quality="Bluray-2160p",
-            aws_untouched_key="untouched/Synced (2004) - [Bluray-2160p].mkv",
-            aws_untouched_date_uploaded=datetime.utcnow(),
+            aws_key="untouched/Synced (2004) - [Bluray-2160p].mkv",
+            aws_date_uploaded=datetime.utcnow(),
             aws_transcoded_key="transcoded/Synced (2004) - [Bluray-1080p].mkv",
             aws_transcoded_date_uploaded=datetime.utcnow(),
         )
@@ -207,7 +255,7 @@ def test_the_backfill_moves_a_replaced_archive_and_deletes_its_version(
         file = make_movie_file(
             make_movie("Backfilled", 2005),
             "DVD",
-            aws_untouched_key="untouched/Backfilled (2005) - [DVD].mkv",
+            aws_key="untouched/Backfilled (2005) - [DVD].mkv",
         )
         db.session.commit()
         path = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
@@ -219,7 +267,7 @@ def test_the_backfill_moves_a_replaced_archive_and_deletes_its_version(
     assert aws_storage.move_archive_to_modified_task(file_id) is True
     with app.app_context():
         file = db.session.get(File, file_id)
-        assert file.aws_untouched_key == "modified/Backfilled (2005) - [DVD].mkv"
+        assert file.aws_key == "modified/Backfilled (2005) - [DVD].mkv"
         # The version is deleted outright. No delete marker job is queued.
         assert deleted == [
             ("untouched/Backfilled (2005) - [DVD].mkv", "v-library-copy")

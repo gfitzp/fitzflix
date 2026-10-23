@@ -864,9 +864,7 @@ def missing_files():
             int(value) for value in request.form.getlist("file_id") if value.isdigit()
         ]
         files = (
-            File.query.filter(
-                File.id.in_(selected), File.aws_untouched_key.isnot(None)
-            ).all()
+            File.query.filter(File.id.in_(selected), File.aws_key.isnot(None)).all()
             if selected
             else []
         )
@@ -984,7 +982,7 @@ def held_imports():
             return redirect(url_for("main.held_imports"))
         current_app.request_queue.enqueue(
             "app.videos.aws_restore",
-            args=(archived.aws_untouched_key,),
+            args=(archived.aws_key,),
             job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
             description=f"'{archived.untouched_basename}'",
         )

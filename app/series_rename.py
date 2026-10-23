@@ -3,7 +3,7 @@
 This is the fix for Plex disambiguation (Batman becomes Batman (1966)).
 
 This task does NOT touch S3. This is intentional. A series rename
-changes the display name, not the identity. The aws_untouched_key
+changes the display name, not the identity. The aws_key
 column is the authoritative pointer to a real archived object. A rename
 of the archived keys would force a new upload of every Deep Archive
 file (the fallback of rename_untouched_object). The weekly S3 sync

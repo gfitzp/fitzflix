@@ -24,16 +24,16 @@ def build_series(app):
     series = make_tv_series("Restore Test (2020)")
 
     # S01E01: 2 copies. Fitzflix must restore only the best-ranked Bluray.
-    make_tv_file(series, 1, 1, "DVD", aws_untouched_key="untouched/e1-dvd.mkv")
+    make_tv_file(series, 1, 1, "DVD", aws_key="untouched/e1-dvd.mkv")
     best_e1 = make_tv_file(
-        series, 1, 1, "Bluray-1080p", aws_untouched_key="untouched/e1-bluray.mkv"
+        series, 1, 1, "Bluray-1080p", aws_key="untouched/e1-bluray.mkv"
     )
 
     # S01E02: the best copy was never archived. Fitzflix skips it.
     make_tv_file(series, 1, 2, "DVD")
 
     # S02E01: archived, in a different season.
-    best_s2 = make_tv_file(series, 2, 1, "DVD", aws_untouched_key="untouched/s2e1.mkv")
+    best_s2 = make_tv_file(series, 2, 1, "DVD", aws_key="untouched/s2e1.mkv")
 
     db.session.commit()
     return series, best_e1, best_s2
@@ -179,13 +179,11 @@ def test_estimate_prefers_recorded_aws_size_over_padded_local_size(app):
     files = [
         # The exact AWS size is recorded. Fitzflix uses it as it is and
         # ignores the local size and the pad.
-        SimpleNamespace(
-            aws_untouched_filesize_bytes=4 * 1024**3, filesize_bytes=1 * 1024**3
-        ),
+        SimpleNamespace(aws_filesize_bytes=4 * 1024**3, filesize_bytes=1 * 1024**3),
         # No AWS size yet: Fitzflix pads the local size by 1.25.
-        SimpleNamespace(aws_untouched_filesize_bytes=None, filesize_bytes=2 * 1024**3),
+        SimpleNamespace(aws_filesize_bytes=None, filesize_bytes=2 * 1024**3),
         # No size at all: this file contributes nothing.
-        SimpleNamespace(aws_untouched_filesize_bytes=None, filesize_bytes=None),
+        SimpleNamespace(aws_filesize_bytes=None, filesize_bytes=None),
     ]
 
     with app.app_context():

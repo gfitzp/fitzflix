@@ -693,7 +693,7 @@ def register(app):
                 f"run 'flask smb recheck' to see how long they were stuck"
             )
 
-        stale = File.query.filter_by(aws_untouched_stale=True).count()
+        stale = File.query.filter_by(aws_stale=True).count()
         if stale:
             click.echo(
                 f"{stale} file(s) have a stale S3 archive; "
@@ -721,11 +721,7 @@ def register(app):
         from app.models import File
         from app.smb_probe import library_path, lost_handle, probe_path, unmounted
 
-        files = (
-            File.query.filter_by(aws_untouched_stale=True)
-            .order_by(File.file_path)
-            .all()
-        )
+        files = File.query.filter_by(aws_stale=True).order_by(File.file_path).all()
         if not files:
             click.echo("No archives are marked stale")
             return

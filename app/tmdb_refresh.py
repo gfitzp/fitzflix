@@ -717,12 +717,12 @@ def apply_tmdb_refresh(
                 # path commit above.
 
                 for f in files:
-                    aws_untouched_key = os.path.join(
+                    aws_key = os.path.join(
                         current_app.config["AWS_UNTOUCHED_PREFIX"],
                         sanitize_s3_key(f.untouched_basename),
                     )
 
-                    if f.aws_untouched_key != aws_untouched_key and os.path.exists(
+                    if f.aws_key != aws_key and os.path.exists(
                         os.path.join(current_app.config["LIBRARY_DIR"], f.file_path)
                     ):
                         # This moves the S3 object. The field changes only
@@ -732,9 +732,7 @@ def apply_tmdb_refresh(
                         # too big for the budget of this queue. Thus,
                         # defer_upload gives that to the file queue (#231).
                         try:
-                            rename_untouched_object(
-                                f, aws_untouched_key, defer_upload=True
-                            )
+                            rename_untouched_object(f, aws_key, defer_upload=True)
                         except Exception:
                             current_app.logger.error(traceback.format_exc())
 

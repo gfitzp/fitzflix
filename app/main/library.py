@@ -2294,8 +2294,8 @@ def restore_cost_estimate(files, bulk=False):
         transcoded_key = getattr(file, "aws_transcoded_key", None)
         if transcoded_key and getattr(file, "restore_key", None) == transcoded_key:
             return file.aws_transcoded_filesize_bytes or file.filesize_bytes or 0
-        if file.aws_untouched_filesize_bytes:
-            return file.aws_untouched_filesize_bytes
+        if file.aws_filesize_bytes:
+            return file.aws_filesize_bytes
         return file.filesize_bytes * 1.25 if file.filesize_bytes else 0
 
     gigabytes = sum(restore_bytes(file) for file in files) / 1024**3
@@ -2344,7 +2344,7 @@ def tv(series_id):
         File.query.join(restore_ranked_files, (restore_ranked_files.c.id == File.id))
         .filter(File.series_id == series_id)
         .filter(restore_ranked_files.c.rank == 1)
-        .filter(File.aws_untouched_key != None)
+        .filter(File.aws_key != None)
         .order_by(File.season.asc(), File.episode.asc())
         .all()
     )
@@ -2390,14 +2390,14 @@ def tv(series_id):
         if not current_user.admin:
             flash("Need to be an admin user to do that!", "danger")
             return redirect(url_for("main.tv", series_id=tv.id))
-        aws_untouched_keys = []
+        aws_keys = []
         leftover_dirs = set()
 
         try:
             files = File.query.filter(File.series_id == series_id).all()
             for file in files:
-                if file.aws_untouched_key:
-                    aws_untouched_keys.append(file.aws_untouched_key)
+                if file.aws_key:
+                    aws_keys.append(file.aws_key)
                 leftover_dirs.add(
                     os.path.join(current_app.config["LIBRARY_DIR"], file.dirname)
                 )
@@ -2416,12 +2416,12 @@ def tv(series_id):
         # Thus, a failed commit cannot leave database records whose backups
         # are gone.
 
-        for aws_untouched_key in aws_untouched_keys:
-            if untouched_key_still_claimed(aws_untouched_key):
+        for aws_key in aws_keys:
+            if untouched_key_still_claimed(aws_key):
                 continue
             current_app.request_queue.enqueue(
                 "app.videos.aws_delete",
-                args=(aws_untouched_key,),
+                args=(aws_key,),
                 job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
             )
 
@@ -2648,9 +2648,7 @@ def season(series_id, season):
     # when it is ready. A restore costs real money. Thus, show an estimate
     # and require the password of the user before the request.
 
-    restorable = [
-        file for file, _, _, rank in files if rank == 1 and file.aws_untouched_key
-    ]
+    restorable = [file for file, _, _, rank in files if rank == 1 and file.aws_key]
     season_restore_estimate = restore_cost_estimate(restorable, bulk=True)
 
     season_restore_form = SeasonRestoreForm()
@@ -3093,9 +3091,7 @@ def file(file_id):
         flash(f"Uploading '{file.basename}' to AWS S3 storage", "info")
         return redirect(url_for("main.file", file_id=file.id))
 
-    file_restore_estimate = restore_cost_estimate(
-        [file] if file.aws_untouched_key else []
-    )
+    file_restore_estimate = restore_cost_estimate([file] if file.aws_key else [])
 
     download_form = S3DownloadForm()
     if download_form.s3_download_submit.data and download_form.validate_on_submit():
@@ -3122,7 +3118,7 @@ def file(file_id):
 
     delete_form = FileDeleteForm()
     if delete_form.delete_submit.data and delete_form.validate_on_submit():
-        aws_untouched_key = file.aws_untouched_key
+        aws_key = file.aws_key
         leftover_dir = os.path.join(current_app.config["LIBRARY_DIR"], file.dirname)
 
         try:
@@ -3139,10 +3135,10 @@ def file(file_id):
         # Thus, a failed commit cannot leave a database record whose backup is
         # gone.
 
-        if aws_untouched_key and not untouched_key_still_claimed(aws_untouched_key):
+        if aws_key and not untouched_key_still_claimed(aws_key):
             current_app.request_queue.enqueue(
                 "app.videos.aws_delete",
-                args=(aws_untouched_key,),
+                args=(aws_key,),
                 job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
             )
 
