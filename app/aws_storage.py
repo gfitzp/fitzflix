@@ -988,42 +988,112 @@ def move_archive_to_modified_task(file_id):
     """Move the replaced untouched/ archive of a normal file to modified/ (#299 backfill).
 
     Before #299, a change of the library file uploaded it over the rip in
-    untouched/. Thus, these untouched/ objects hold library files, not
-    rips. This task uploads the current library file to modified/. Then
-    it deletes the old object permanently, by its version id. Its version
-    is a library copy, not a rip. Thus, the 180-day retention of the
-    delete marker would only cost money. An older version of the key (a
-    rip within its 180 days) stays."""
+    untouched/. Fitzflix selects these files by date and size. But a TMDb
+    rename before 2026 also reset the upload date of a rip. Thus, the task
+    deletes the old object only when the S3 objects prove that it is a
+    copy of the library file:
+
+    1. The size of the library file must equal the size of the old
+       object. If not, the task changes nothing.
+    2. The task uploads the library file to modified/, with the name of
+       the untouched/ key. The ETags of the old and the new object must
+       be equal. If not, the task deletes the new object and changes
+       nothing else.
+    3. Then the record points to modified/, and the old version is
+       deleted permanently. A delete marker would keep a copy of the
+       library file for 180 days, for no use.
+
+    The task holds the lock of the title. Thus, a track edit cannot change
+    the file during the upload. Return True when the archive is in
+    modified/."""
+
+    from app.videos import acquire_lock_or_defer
 
     with app.app_context():
+        config = current_app.config
         file = db.session.get(File, int(file_id))
         if file is None or file.converted_from_quality:
             return False
-        old_key = file.aws_key
-        if not _in_prefix(old_key, current_app.config["AWS_UNTOUCHED_PREFIX"]):
-            return True
-        path = os.path.join(current_app.config["LIBRARY_DIR"], file.file_path)
-        if not os.path.isfile(path):
-            current_app.logger.warning(
-                f"'{file.basename}' No local file. Its archive stays in untouched/"
-            )
+        if not _in_prefix(file.aws_key, config["AWS_UNTOUCHED_PREFIX"]):
+            return _in_prefix(file.aws_key, config["AWS_MODIFIED_PREFIX"])
+
+        lock = acquire_lock_or_defer(
+            file.file_identifier(),
+            config["UPLOAD_TASK_TIMEOUT"] * 1000,
+            current_app.file_queue,
+            "app.aws_storage.move_archive_to_modified_task",
+            minutes=(5, 15),
+            timeout=config["UPLOAD_TASK_TIMEOUT"],
+            description=f"Move the archive of {file.basename} to modified/ (#299)",
+            args=(file_id,),
+        )
+        if not lock:
             return False
 
-        s3_client = aws_s3_client(with_retries=True)
-        bucket = current_app.config["AWS_BUCKET"]
-        version_id = s3_client.head_object(Bucket=bucket, Key=old_key).get("VersionId")
-        archive_library_file(file, path, delete_replaced=False)
-        if untouched_key_still_claimed(old_key):
+        try:
+            db.session.refresh(file)
+            old_key = file.aws_key
+            if not _in_prefix(old_key, config["AWS_UNTOUCHED_PREFIX"]):
+                return _in_prefix(old_key, config["AWS_MODIFIED_PREFIX"])
+            path = os.path.join(config["LIBRARY_DIR"], file.file_path)
+            if not os.path.isfile(path):
+                current_app.logger.warning(
+                    f"'{file.basename}' No local file. The archive stays in "
+                    f"'{old_key}'"
+                )
+                return False
+
+            s3_client = aws_s3_client(with_retries=True)
+            bucket = config["AWS_BUCKET"]
+            old = s3_client.head_object(Bucket=bucket, Key=old_key)
+            local_size = os.path.getsize(path)
+            if local_size != old["ContentLength"]:
+                current_app.logger.warning(
+                    f"'{file.basename}' The library file has {local_size} bytes "
+                    f"and '{old_key}' has {old['ContentLength']}. The sizes "
+                    f"differ. Thus, the archive stays in untouched/"
+                )
+                return False
+
+            prefix = config["AWS_MODIFIED_PREFIX"]
+            key, uploaded, size = aws_upload(
+                path,
+                prefix,
+                key_name=archive_key_name(file, prefix),
+                force_upload=True,
+                ignore_etag=True,
+            )
+            new = s3_client.head_object(Bucket=bucket, Key=key)
+            if new["ETag"] != old["ETag"]:
+                current_app.logger.warning(
+                    f"'{file.basename}' The ETag of '{key}' ({new['ETag']}) "
+                    f"differs from the ETag of '{old_key}' ({old['ETag']}). The "
+                    f"bytes differ. Thus, the archive stays in untouched/, and "
+                    f"the new object is deleted"
+                )
+                version = (
+                    {"VersionId": new["VersionId"]} if new.get("VersionId") else {}
+                )
+                s3_client.delete_object(Bucket=bucket, Key=key, **version)
+                return False
+
+            file.aws_key = key
+            file.aws_date_uploaded = uploaded
+            file.aws_filesize_bytes = size
+            file.aws_stale = False
+            db.session.commit()
+            if not untouched_key_still_claimed(old_key):
+                version = (
+                    {"VersionId": old["VersionId"]} if old.get("VersionId") else {}
+                )
+                s3_client.delete_object(Bucket=bucket, Key=old_key, **version)
+            current_app.logger.info(
+                f"'{file.basename}' Moved the archive to '{key}' and deleted "
+                f"'{old_key}'. The ETags are equal"
+            )
             return True
-        if version_id:
-            s3_client.delete_object(Bucket=bucket, Key=old_key, VersionId=version_id)
-        else:
-            s3_client.delete_object(Bucket=bucket, Key=old_key)
-        current_app.logger.info(
-            f"'{file.basename}' Moved the archive to '{file.aws_key}' "
-            f"and deleted '{old_key}'"
-        )
-        return True
+        finally:
+            current_app.lock_manager.unlock(lock)
 
 
 def untouched_key_still_claimed(key):

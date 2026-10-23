@@ -238,45 +238,99 @@ def test_the_sync_restores_the_transcoded_copy_and_prunes_all_prefixes(
         assert file.aws_transcoded_filesize_bytes == 30
 
 
-def test_the_backfill_moves_a_replaced_archive_and_deletes_its_version(
-    app, uploads, monkeypatch
-):
-    deleted = []
+class FakeArchiveS3:
+    """Fake S3 for the backfill. Hold the ETag of each key."""
 
-    class FakeS3:
-        def head_object(self, Bucket, Key):
-            return {"VersionId": "v-library-copy"}
+    def __init__(self, old_size, old_etag, new_etag):
+        self.objects = {}
+        self.old_size, self.old_etag, self.new_etag = old_size, old_etag, new_etag
+        self.deleted = []
 
-        def delete_object(self, Bucket, Key, VersionId=None):
-            deleted.append((Key, VersionId))
+    def head_object(self, Bucket, Key):
+        if Key.startswith("untouched/"):
+            return {
+                "ContentLength": self.old_size,
+                "ETag": self.old_etag,
+                "VersionId": "v-old",
+            }
+        return {
+            "ContentLength": self.old_size,
+            "ETag": self.new_etag,
+            "VersionId": "v-new",
+        }
 
-    monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kw: FakeS3())
+    def delete_object(self, Bucket, Key, VersionId=None):
+        self.deleted.append((Key, VersionId))
+
+
+@pytest.fixture
+def backfill_file(app, monkeypatch):
+    """A replaced untouched/ archive with a 12-byte library file."""
+
+    import app.videos as videos
+
+    monkeypatch.setattr(videos, "acquire_lock_or_defer", lambda *a, **k: "lock")
+    monkeypatch.setattr(app.lock_manager, "unlock", lambda lock: None)
     with app.app_context():
         file = make_movie_file(
             make_movie("Backfilled", 2005),
             "DVD",
             aws_key="untouched/Backfilled (2005) - [DVD].mkv",
+            aws_filesize_bytes=12,
         )
         db.session.commit()
         path = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "wb") as f:
             f.write(b"library file")
-        file_id = file.id
-
-    assert aws_storage.move_archive_to_modified_task(file_id) is True
-    with app.app_context():
-        file = db.session.get(File, file_id)
-        assert file.aws_key == "modified/Backfilled (2005) - [DVD].mkv"
-        # The version is deleted outright. No delete marker job is queued.
-        assert deleted == [
-            ("untouched/Backfilled (2005) - [DVD].mkv", "v-library-copy")
-        ]
-        assert _deletes(app) == []
-        # A second run finds the archive already in modified/.
-        assert aws_storage.move_archive_to_modified_task(file_id) is True
-        assert len(uploads) == 1
+        yield file.id
     os.remove(path)
+
+
+def _run_backfill(app, monkeypatch, file_id, fake):
+    monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kw: fake)
+    result = aws_storage.move_archive_to_modified_task(file_id)
+    with app.app_context():
+        return result, db.session.get(File, file_id).aws_key
+
+
+def test_the_backfill_moves_a_copy_of_the_library_file(
+    app, uploads, monkeypatch, backfill_file
+):
+    fake = FakeArchiveS3(12, '"same"', '"same"')
+    result, key = _run_backfill(app, monkeypatch, backfill_file, fake)
+    assert result is True
+    assert key == "modified/Backfilled (2005) - [DVD].mkv"
+    # The old version is deleted outright. No delete marker job is queued.
+    assert fake.deleted == [("untouched/Backfilled (2005) - [DVD].mkv", "v-old")]
+    assert _deletes(app) == []
+    # A second run finds the archive already in modified/.
+    assert aws_storage.move_archive_to_modified_task(backfill_file) is True
+    assert len(uploads) == 1
+
+
+def test_the_backfill_keeps_an_archive_of_a_different_size(
+    app, uploads, monkeypatch, backfill_file
+):
+    fake = FakeArchiveS3(99, '"rip"', '"library"')
+    result, key = _run_backfill(app, monkeypatch, backfill_file, fake)
+    assert result is False
+    assert key == "untouched/Backfilled (2005) - [DVD].mkv"
+    assert uploads == [] and fake.deleted == []
+
+
+def test_the_backfill_keeps_an_archive_with_different_bytes(
+    app, uploads, monkeypatch, backfill_file
+):
+    """The sizes are equal, but the ETags are not. The task deletes its
+    new upload and keeps the old archive."""
+
+    fake = FakeArchiveS3(12, '"rip"', '"library"')
+    result, key = _run_backfill(app, monkeypatch, backfill_file, fake)
+    assert result is False
+    assert key == "untouched/Backfilled (2005) - [DVD].mkv"
+    assert len(uploads) == 1
+    assert fake.deleted == [("modified/Backfilled (2005) - [DVD].mkv", "v-new")]
 
 
 def test_a_scan_that_rewrites_the_file_queues_its_archive(app, monkeypatch):
