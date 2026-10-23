@@ -974,6 +974,22 @@ def test_upload_progress_callback_dedupes_by_percent(app, tmp_path, log_capture)
     assert 90 <= len(messages) <= 101
 
 
+def test_upload_progress_names_the_s3_key(app, tmp_path, log_capture):
+    """The label of an upload is the S3 key, not the local basename."""
+
+    source = tmp_path / "Trailer.mkv"
+    source.write_bytes(b"x" * 10)
+    key = "modified/Rififi (1955) - Trailers - Trailer [Bluray-1080p].mkv"
+
+    with app.app_context():
+        videos.UploadProgressPercentage(str(source), key)(10)
+
+    messages = [
+        r.getMessage() for r in log_capture if "Uploading to AWS" in r.getMessage()
+    ]
+    assert messages == [f"'{key}' Uploading to AWS: 100%"]
+
+
 def test_move_localized_file_defers_when_volumes_dead(app, tmp_path, monkeypatch):
     monkeypatch.setattr(videos, "_dead_volumes", lambda paths: ["/Volumes/Movies"])
 
