@@ -115,3 +115,31 @@ def test_a_message_that_comes_back_gets_no_second_download(app, monkeypatch):
     with app.app_context():
         assert downloads(app) == [key]
         assert aws_storage._latest_receipt_handle("old-handle", job_id=job.id) == "r0"
+
+
+def test_an_expired_restore_is_requested_again_not_downloaded(app, monkeypatch):
+    """S3 keeps the Restore header after the copy expires. That is not readable."""
+
+    key = "untouched/Expired (1999) - [DVD].mkv"
+    restored = []
+
+    class ColdS3:
+        def list_objects(self, **kwargs):
+            return {"Contents": [{"Key": key, "StorageClass": "DEEP_ARCHIVE"}]}
+
+        def head_object(self, **kwargs):
+            return {
+                "StorageClass": "DEEP_ARCHIVE",
+                "Restore": 'ongoing-request="false", '
+                'expiry-date="Fri, 01 Jan 2021 00:00:00 GMT"',
+            }
+
+        def restore_object(self, **kwargs):
+            restored.append(kwargs["Key"])
+
+    monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kw: ColdS3())
+    aws_storage.aws_restore(key)
+
+    assert restored == [key]
+    with app.app_context():
+        assert downloads(app) == []

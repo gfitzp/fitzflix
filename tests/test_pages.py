@@ -647,3 +647,20 @@ def test_tv_shopping_grades_a_season_by_its_best_copies(app, admin_client):
     page = admin_client.get("/shopping-list/tv").get_data(as_text=True)
     start = page.index(">Settled Show</a>")
     assert "Already owned" in page[start : start + 600]
+
+
+def test_tv_shopping_sees_episodes_only_a_wider_worse_file_holds(app, admin_client):
+    """A Bluray S13E01 must not hide that E02-E06 exist only on DVD."""
+
+    from app import db
+    from tests.factories import make_tv_file, make_tv_series
+
+    with app.app_context():
+        series = make_tv_series("Overlap Show")
+        make_tv_file(series, 13, 1, "Bluray-1080p")
+        make_tv_file(series, 13, 1, "DVD", last_episode=6)
+        db.session.commit()
+
+    page = admin_client.get("/shopping-list/tv").get_data(as_text=True)
+    start = page.index(">Overlap Show</a>")
+    assert "Buy on Blu-Ray" in page[start : start + 600]

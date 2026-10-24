@@ -331,6 +331,31 @@ def _ingest_entry(user_id, entry, created_movies):
     existing = UserMovieReview.query.filter_by(
         user_id=user_id, letterboxd_guid=entry["guid"]
     ).first()
+
+    # The guid of an entry changes from "letterboxd-watch-N" to
+    # "letterboxd-review-N" when the entry gets review text, and back when
+    # the text goes. N is the same viewing. Thus, find the row by N, and
+    # store the current guid.
+
+    if existing is None:
+        number = re.fullmatch(r"letterboxd-(?:watch|review)-(\d+)", entry["guid"] or "")
+        if number:
+            existing = (
+                UserMovieReview.query.filter_by(user_id=user_id)
+                .filter(
+                    UserMovieReview.letterboxd_guid.in_(
+                        [
+                            f"letterboxd-watch-{number.group(1)}",
+                            f"letterboxd-review-{number.group(1)}",
+                        ]
+                    )
+                )
+                .first()
+            )
+            if existing is not None:
+                existing.letterboxd_guid = entry["guid"]
+                _apply_entry_fields(existing, entry)
+                return "updated"
     if existing is not None:
         return "updated" if _apply_entry_fields(existing, entry) else "skipped"
 

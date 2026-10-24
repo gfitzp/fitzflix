@@ -846,3 +846,69 @@ def test_recheck_skips_a_wedged_share_without_probing(app, monkeypatch, tmp_path
         # The record, and the first_seen that it carries, must survive.
 
         assert path in smb_probe.recorded_state()
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        "s3_failed",
+        "connection",
+    ],
+)
+def test_a_failed_upload_never_moves_the_file(app, monkeypatch, tmp_path, error):
+    """An S3 error or a lost connection must not move a library file to rejects."""
+
+    import boto3
+    import botocore.exceptions
+
+    import app.aws_storage as aws_storage
+
+    path = tmp_path / "library.mkv"
+    path.write_bytes(b"x")
+
+    class FailingClient:
+        def list_objects(self, **kwargs):
+            return {}
+
+        def upload_file(self, *args, **kwargs):
+            if error == "s3_failed":
+                raise boto3.exceptions.S3UploadFailedError("RequestTimeout")
+            raise botocore.exceptions.EndpointConnectionError(endpoint_url="s3")
+
+    monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kw: FailingClient())
+    monkeypatch.setitem(app.config, "AWS_BUCKET", "test-bucket")
+
+    with app.app_context():
+        with pytest.raises(Exception):
+            aws_storage.aws_upload(str(path), "modified")
+
+    assert path.exists()
+
+
+def test_the_etag_uses_the_part_size_of_the_upload(app, monkeypatch, tmp_path):
+    """s3transfer doubles the part size above its part limit. The ETag must too."""
+
+    import hashlib
+
+    from s3transfer.utils import ChunksizeAdjuster
+
+    import app.aws_storage as aws_storage
+
+    mib = 1024 * 1024
+    path = tmp_path / "large.mkv"
+    path.write_bytes(bytes(range(256)) * (24 * mib // 256))
+
+    # A limit of 2 parts makes 24 MiB need 16 MiB parts, as 10,000 parts
+    # does for a file of more than 78 GiB.
+
+    monkeypatch.setattr(
+        aws_storage, "ChunksizeAdjuster", lambda: ChunksizeAdjuster(max_parts=2)
+    )
+    data = path.read_bytes()
+    parts = [data[: 16 * mib], data[16 * mib :]]
+    expected = (
+        hashlib.md5(b"".join(hashlib.md5(part).digest() for part in parts)).hexdigest()
+        + "-2"
+    )
+    with app.app_context():
+        assert aws_storage.calculate_etag(str(path)) == expected

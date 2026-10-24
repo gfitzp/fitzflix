@@ -2548,6 +2548,12 @@ def finalize_localization(
                     current_app.logger.info(f"Deleted local file '{worse_path}'")
                 except FileNotFoundError:
                     pass
+                except OSError as e:
+                    # A share that remounts must not stop the rest of the
+                    # follow-up work. The orphan is visible on the share.
+                    current_app.logger.warning(
+                        f"'{worse_path}' Couldn't delete the replaced file: {e}"
+                    )
                 remove_triage_snapshots(worse_id)
             for send in pending_emails:
                 send()

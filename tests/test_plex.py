@@ -301,6 +301,37 @@ def plex_server(app, monkeypatch):
     return server
 
 
+def test_a_failed_lookup_holds_the_cursor_for_the_next_poll(
+    app, plex_server, monkeypatch
+):
+    """A timeout on the metadata lookup must not lose the watch."""
+
+    cursor = int(time.time()) - 3600
+    app.redis.set("fitzflix:plex:history-cursor", cursor)
+    plex_server.history = [
+        {"type": "movie", "viewedAt": cursor + 100, "accountID": 1, "ratingKey": "50"},
+        {"type": "movie", "viewedAt": cursor + 200, "accountID": 1, "ratingKey": "51"},
+    ]
+    plex_server.accounts = [{"id": 1, "name": "glenn-plex"}]
+    plex_server.guids = {"51": "tmdb://12"}
+    real_get = plex_server.get
+
+    def flaky_get(url, *args, **kwargs):
+        if url.endswith("/library/metadata/50"):
+            raise TimeoutError("Plex is busy")
+        return real_get(url, *args, **kwargs)
+
+    from app import diary
+
+    monkeypatch.setattr(diary.requests, "get", flaky_get)
+
+    with app.app_context():
+        assert plex_history_poll() is True
+
+    # The cursor stays before the failed entry. The next poll reads it.
+    assert int(app.redis.get("fitzflix:plex:history-cursor")) == cursor + 99
+
+
 def test_poller_first_run_only_plants_the_cursor(app, plex_server):
     with app.app_context():
         assert plex_history_poll() is True

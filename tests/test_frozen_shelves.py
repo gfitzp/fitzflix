@@ -131,6 +131,35 @@ def test_daily_shelf_late_urgent_row_leads_a_frozen_shelf(app):
     assert again == late
 
 
+def test_a_late_urgent_row_leads_a_short_shelf(app):
+    """The empty slots of a short shelf must not take an urgent row at the end."""
+
+    rows = [{"id": f"r{n}"} for n in range(3)]
+
+    def shelf(urgent):
+        return [
+            card["id"]
+            for card in daily_shelf(
+                app.redis,
+                1,
+                "unit-short-urgent",
+                rows,
+                set(),
+                key=lambda row: row["id"],
+                urgent=urgent,
+                day=date(2026, 8, 31),
+                count=6,
+            )
+        ]
+
+    with app.app_context():
+        frozen = shelf([])
+        late = shelf([{"id": "u1"}])
+
+    assert len(frozen) == 3
+    assert late == ["u1"] + frozen
+
+
 def test_daily_shelf_never_repeats_across_the_page(app):
     """Test that 2 shelves with the same candidates claim different films.
 

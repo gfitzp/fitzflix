@@ -449,3 +449,37 @@ def test_a_letterboxd_username_maps_to_1_account(app, admin_client):
         assert (
             User.query.filter_by(email=MEMBER_EMAIL).one().letterboxd_username is None
         )
+
+
+def test_a_review_added_later_updates_the_same_row(app, monkeypatch):
+    """The guid flips from letterboxd-watch-N to letterboxd-review-N."""
+
+    with app.app_context():
+        user = User.query.first()
+        user.letterboxd_username = "test"
+        make_movie("Flipped Entry", 1968, tmdb_id=88430)
+        db.session.commit()
+
+        run_sync(
+            app,
+            build_feed(feed_item("letterboxd-watch-77", 88430, rating="4")),
+            monkeypatch,
+        )
+        run_sync(
+            app,
+            build_feed(
+                feed_item(
+                    "letterboxd-review-77",
+                    88430,
+                    rating="4",
+                    body="<p>Added later.</p>",
+                )
+            ),
+            monkeypatch,
+        )
+
+        (row,) = UserMovieReview.query.filter(
+            UserMovieReview.letterboxd_guid.like("letterboxd-%-77")
+        ).all()
+        assert row.letterboxd_guid == "letterboxd-review-77"
+        assert "Added later." in row.review

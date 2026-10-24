@@ -34,7 +34,6 @@ from app.models import (
     UserMovieReview,
     UserWatchlist,
     movie_file_rank,
-    tv_file_rank,
 )
 from app.streaming import (
     batch_title_availability,
@@ -1169,56 +1168,66 @@ def tv_shopping():
         .scalar()
     )
 
-    # This subquery gets the worst quality of each TV show season, over
-    # the best copy of each episode. An old copy kept next to a better
-    # one must not make a settled season look like an upgrade. The TV
-    # library page and the search use the same rule.
+    # Grade each season by its episodes. The quality of an episode is the
+    # best quality of the files that hold it, a multi-episode file
+    # included. The grade of the season is the worst episode quality. An
+    # old copy next to a better one does not lower the grade. A Bluray
+    # "S13E01" does not hide that E02-E06 exist only in a DVD "S13E01-E06"
+    # (tv_file_rank groups by the first episode, and would hide them).
 
-    ranked_files = (
-        db.session.query(File.id, tv_file_rank())
-        .join(TVSeries, (TVSeries.id == File.series_id))
-        .join(RefQuality, (RefQuality.id == File.quality_id))
-        .subquery()
-    )
-    subquery = (
+    episode_quality = {}
+    for series_id, season, episode, last_episode, preference in (
         db.session.query(
             File.series_id,
             File.season,
-            db.func.count(db.func.distinct(File.episode)).label("episodes"),
-            db.func.min(RefQuality.preference).label("preference"),
+            File.episode,
+            File.last_episode,
+            RefQuality.preference,
         )
-        .group_by(File.series_id, File.season)
         .join(RefQuality, (RefQuality.id == File.quality_id))
-        .join(ranked_files, (ranked_files.c.id == File.id))
-        .filter(ranked_files.c.rank == 1)
-        .subquery()
-    )
-
-    # Run the season aggregate 1 time for the whole library. Then group
-    # the rows by series. Do not run the subquery 1 time per series.
-
-    season_rows = (
-        db.session.query(
-            subquery.c.series_id,
-            subquery.c.season,
-            subquery.c.episodes,
-            RefQuality.quality_title,
-            db.case(
-                (RefQuality.preference < dvd_quality, "Buy on DVD or Blu-Ray"),
-                (RefQuality.preference < bluray_quality, "Buy on Blu-Ray"),
-                else_="Already owned",
-            ).label("instruction"),
-        )
-        .join(RefQuality, (RefQuality.preference == subquery.c.preference))
-        .filter(RefQuality.preference >= min_preference)
-        .filter(RefQuality.preference <= max_preference)
-        .order_by(
-            subquery.c.series_id,
-            db.case((subquery.c.season == 0, 1), else_=0).asc(),
-            subquery.c.season.asc(),
-        )
+        .filter(File.series_id.isnot(None), File.episode.isnot(None))
         .all()
+    ):
+        last = last_episode if last_episode is not None else episode
+        if last < episode or last - episode > 500:
+            last = episode
+        for number in range(episode, last + 1):
+            slot = (series_id, season, number)
+            episode_quality[slot] = max(
+                episode_quality.get(slot, preference), preference
+            )
+
+    season_grades = {}
+    for (series_id, season, _number), preference in episode_quality.items():
+        grade = season_grades.setdefault((series_id, season), [preference, 0])
+        grade[0] = min(grade[0], preference)
+        grade[1] += 1
+
+    quality_titles = dict(
+        db.session.query(RefQuality.preference, RefQuality.quality_title).all()
     )
+
+    def instruction_for(preference):
+        if preference < dvd_quality:
+            return "Buy on DVD or Blu-Ray"
+        if preference < bluray_quality:
+            return "Buy on Blu-Ray"
+        return "Already owned"
+
+    season_rows = [
+        (
+            series_id,
+            season,
+            episodes,
+            quality_titles.get(preference),
+            instruction_for(preference),
+        )
+        for (series_id, season), (preference, episodes) in sorted(
+            season_grades.items(),
+            key=lambda item: (item[0][0], item[0][1] == 0, item[0][1]),
+        )
+        if min_preference <= preference <= max_preference
+    ]
 
     seasons_by_series = {}
     for series_id, season, num_episodes, min_quality, instruction in season_rows:

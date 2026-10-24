@@ -490,3 +490,69 @@ def test_a_scan_that_rewrites_the_file_queues_its_archive(app, monkeypatch):
     with app.app_context():
         assert uploads() == [(file_id,)]
     os.remove(path)
+
+
+def test_the_prune_keeps_a_recent_unclaimed_upload(app, monkeypatch):
+    """An import uploads its rip before its File row exists. The prune waits."""
+
+    from datetime import timedelta, timezone
+
+    now = datetime.now(timezone.utc)
+    objects = {
+        "untouched/": [
+            {
+                "Key": "untouched/In Flight (2024) - [DVD].mkv",
+                "Size": 5,
+                "LastModified": now - timedelta(days=1),
+            },
+            {
+                "Key": "untouched/Old Stray (2020) - [DVD].mkv",
+                "Size": 5,
+                "LastModified": now - timedelta(days=30),
+            },
+        ],
+    }
+    monkeypatch.setattr(
+        aws_storage,
+        "get_matching_s3_objects",
+        lambda bucket, prefix="": objects.get(prefix, []),
+    )
+    deletes = []
+    monkeypatch.setattr(aws_storage, "aws_delete", lambda key: deletes.append(key))
+    monkeypatch.setattr(aws_storage, "aws_restore", lambda key, **kw: None)
+    monkeypatch.setattr(aws_storage, "send_email", lambda *a, **k: None)
+
+    class FakeClient:
+        def put_object(self, **kwargs):
+            pass
+
+    monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kw: FakeClient())
+
+    aws_storage.sync_aws_s3_storage_task()
+
+    assert deletes == ["untouched/Old Stray (2020) - [DVD].mkv"]
+
+
+def test_the_sync_waits_while_a_library_volume_is_dead(app, monkeypatch):
+    """A dead share makes every file look missing. The sync must not restore them."""
+
+    import app.videos as videos
+
+    monkeypatch.setattr(videos, "_dead_volumes", lambda paths: ["/Volumes/Movies"])
+    listed = []
+    monkeypatch.setattr(
+        aws_storage,
+        "get_matching_s3_objects",
+        lambda bucket, prefix="": listed.append(prefix) or [],
+    )
+
+    assert aws_storage.sync_aws_s3_storage_task() is True
+    assert listed == []
+    with app.app_context():
+        from tests.test_scheduling import scheduled_jobs
+
+        assert [
+            job.id
+            for job in scheduled_jobs(app.request_queue)
+            if job.func_name == "app.videos.sync_aws_s3_storage_task"
+        ]

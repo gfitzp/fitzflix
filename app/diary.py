@@ -605,10 +605,12 @@ def apply_plex_watch(tmdb_id, plex_username, viewed_at, source):
             return True
 
 
-def _plex_tmdb_id(entry, headers):
+def _plex_tmdb_id(entry, headers, failures=None):
     """Resolve a Plex history entry to a TMDB id through its Guid list.
 
-    Redis caches the result, because the rating keys are stable."""
+    Redis caches the result, because the rating keys are stable. A
+    failed lookup appends the entry to failures, if given. Thus, the
+    caller can tell a failure from an entry with no TMDB guid."""
 
     rating_key = entry.get("ratingKey")
     if not rating_key:
@@ -642,6 +644,8 @@ def _plex_tmdb_id(entry, headers):
     except Exception:
         # Do not cache a transient failure.
         current_app.logger.warning(traceback.format_exc())
+        if failures is not None:
+            failures.append(entry)
         return None
 
     current_app.redis.set(cache_key, str(tmdb_id) if tmdb_id else "", ex=604800)
@@ -705,7 +709,12 @@ def plex_history_poll():
         except Exception:
             current_app.logger.warning(traceback.format_exc())
 
+        # The cursor never passes an entry whose lookup failed. The next
+        # poll reads it again. The entries after it are read again too.
+        # The dedup marker of apply_plex_watch makes that safe.
+
         newest = cursor
+        failed_at = None
         queued = 0
         for entry in entries:
             viewed_at = int(entry.get("viewedAt") or 0)
@@ -718,7 +727,13 @@ def plex_history_poll():
 
             if entry.get("live"):
                 continue
-            tmdb_id = _plex_tmdb_id(entry, headers)
+            failures = []
+            tmdb_id = _plex_tmdb_id(entry, headers, failures)
+            if failures:
+                failed_at = (
+                    viewed_at if failed_at is None else min(failed_at, viewed_at)
+                )
+                continue
             if tmdb_id is None:
                 current_app.logger.info(
                     f"Plex history entry '{entry.get('title')}' has no TMDB "
@@ -740,6 +755,12 @@ def plex_history_poll():
             )
             queued += 1
 
+        if failed_at is not None:
+            newest = min(newest, failed_at - 1)
+            current_app.logger.info(
+                "Plex history poll: a TMDB lookup failed. The next poll reads "
+                "that watch again"
+            )
         redis_conn.set(cursor_key, newest)
         if queued:
             current_app.logger.info(f"Plex history poll: {queued} new watch(es)")

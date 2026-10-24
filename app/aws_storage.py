@@ -36,6 +36,7 @@ import rq
 from botocore.client import Config
 from rq import get_current_job
 from rq.registry import ScheduledJobRegistry, StartedJobRegistry
+from s3transfer.utils import ChunksizeAdjuster
 
 from flask import current_app, render_template
 from werkzeug.local import LocalProxy
@@ -310,6 +311,31 @@ def sync_aws_s3_storage_task():
             )
             return True
 
+        # A dead library volume makes every one of its files look missing.
+        # The sync would then request a paid restore of each, and the
+        # direct restores would overwrite the files after the remount.
+
+        from app.videos import _dead_volumes
+
+        dead = _dead_volumes(
+            [current_app.config["MOVIE_LIBRARY"], current_app.config["TV_LIBRARY"]]
+        )
+        if dead:
+            current_app.request_queue.enqueue_in(
+                timedelta(minutes=30),
+                "app.videos.sync_aws_s3_storage_task",
+                job_timeout="24h",
+                job_id=safe_job_id("retry:sync_aws_s3_storage_task"),
+                result_ttl=86400,
+                description="Syncing files with AWS S3 storage",
+                at_front=True,
+            )
+            current_app.logger.warning(
+                f"Library volume(s) unavailable ({', '.join(dead)}); "
+                f"trying the S3 sync again in 30 minutes"
+            )
+            return True
+
         try:
             job = get_current_job()
 
@@ -328,12 +354,16 @@ def sync_aws_s3_storage_task():
                     "AWS_TRANSCODED_PREFIX",
                 )
             ]
-            s3_objects = {
-                object["Key"]: object["Size"]
+            listed = [
+                object
                 for prefix in archive_prefixes
                 for object in get_matching_s3_objects(
                     app.config["AWS_BUCKET"], prefix=prefix
                 )
+            ]
+            s3_objects = {object["Key"]: object["Size"] for object in listed}
+            s3_modified = {
+                object["Key"]: object.get("LastModified") for object in listed
             }
             s3_keys = set(s3_objects)
 
@@ -594,6 +624,17 @@ def sync_aws_s3_storage_task():
                     job.meta["description"] = "Pruning extra files from AWS S3 storage"
                     job.meta["progress"] = int((i / len(s3_keys)) * 100)
                     job.save_meta()
+
+                # An import uploads its rip to untouched/ long before its
+                # File row exists. A wait for library space has no limit.
+                # Thus, a recent object is never pruned. A real leftover
+                # goes at a later weekly sync.
+
+                modified = s3_modified.get(remote_key)
+                if modified is not None and modified > datetime.now(
+                    timezone.utc
+                ) - timedelta(days=PRUNE_GRACE_DAYS):
+                    continue
 
                 if remote_key not in aws_keys and remote_key not in archive_prefixes:
                     unreferenced_files.append(remote_key)
@@ -1410,6 +1451,11 @@ MAX_DOWNLOAD_RETRIES = 10
 
 SQS_VISIBILITY_SECONDS = 7200
 
+# The weekly S3 sync does not prune an object younger than this. The
+# untouched/ upload of an import has no claim until the import finishes.
+
+PRUNE_GRACE_DAYS = 8
+
 # These client errors fail in the same way on each attempt (credentials,
 # permissions, a missing bucket). Thus, a retry only delays the failure
 # report.
@@ -2061,10 +2107,21 @@ def aws_restore(key, days=2, tier="Standard", record_request=True):
                     Bucket=current_app.config["AWS_BUCKET"], Key=key
                 )
 
-                if contents[0].get(
-                    "StorageClass"
-                ) == "STANDARD" or 'ongoing-request="false"' in head_response.get(
-                    "Restore", 'ongoing-request="true"'
+                # S3 keeps the Restore header for a while after the
+                # restored copy expires. A test of the header alone sent
+                # an expired copy to a download that failed and asked for
+                # a restore again, without a delay.
+
+                # S3 leaves StorageClass out of a HEAD for some objects.
+                # The listing has it.
+
+                head_response = {
+                    **head_response,
+                    "StorageClass": head_response.get("StorageClass")
+                    or contents[0].get("StorageClass"),
+                }
+                if contents[0].get("StorageClass") == "STANDARD" or (
+                    _object_is_readable(head_response)
                 ):
                     current_app.logger.info(
                         f"'{key}' doesn't need to be restored; attempting to download"
@@ -2125,7 +2182,7 @@ def aws_upload(
 ):
     """Search for a file in AWS S3. Upload it if it is missing or different."""
 
-    from app.videos import TRANSIENT_COPY_ERRNOS, move_to_rejects
+    from app.videos import TRANSIENT_COPY_ERRNOS
 
     if not os.path.isfile(file_path):
         current_app.logger.error(
@@ -2236,28 +2293,22 @@ def aws_upload(
                 )
 
             else:
-                move_to_rejects(file_path, "upload error")
                 current_app.logger.error(e)
                 raise
 
-        except OSError as e:
-            # A mount that dropped out is not a bad file. A reject would
-            # move a library file out of the library for a problem that
-            # clears by itself. This is exactly how the lost-handle state
-            # of the NAS occurs: inside the close() call of s3transfer.
+        # A failed upload never moves the file. Many callers pass the
+        # library file itself (an archive of a changed file, the #299
+        # backfill). A network fault, an S3 error, or a job timeout would
+        # move a film out of the library. The import catches the error
+        # and rejects its own source. The archive callers mark the archive
+        # stale for the S3 sync.
 
+        except OSError as e:
             if e.errno in TRANSIENT_COPY_ERRNOS:
                 current_app.logger.error(
                     f"'{file_path}' upload failed on a transient filesystem "
                     f"error ({e.strerror}); leaving the file where it is"
                 )
-                raise
-
-            move_to_rejects(file_path, "upload error")
-            raise
-
-        except:
-            move_to_rejects(file_path, "upload error")
             raise
 
         else:
@@ -2267,7 +2318,6 @@ def aws_upload(
     current_app.logger.error(
         f"Tried to upload '{file_path}' {str(MAX_RETRY_COUNT)} times but couldn't!"
     )
-    move_to_rejects(file_path, "upload error")
 
     # Raise an error at the end. Do not return None. Each caller unpacks
     # the return value as a (key, date_uploaded, filesize_bytes) tuple.
@@ -2329,11 +2379,15 @@ def calculate_etag(file_path):
     else:
         md5_digests = []
 
-        # Read the file in 8 MB chunks. Get the MD5 hash of each chunk.
+        # Read the file in the part size of the upload. That is 8 MB, but
+        # s3transfer doubles it for a file of more than 10,000 parts (78
+        # GiB). With 8 MB parts, the ETag of such a file never matched, and
+        # each check uploaded the whole file again.
 
+        part_size = ChunksizeAdjuster().adjust_chunksize(EIGHT_MEGABYTES, file_size)
         with open(file_path, "rb") as f:
             previous_percent = None
-            for chunk in iter(lambda: f.read(EIGHT_MEGABYTES), b""):
+            for chunk in iter(lambda: f.read(part_size), b""):
                 # Collect the MD5 hashes.
                 md5_digests.append(hashlib.md5(chunk).digest())
                 percent = int((f.tell() / file_size) * 100)
