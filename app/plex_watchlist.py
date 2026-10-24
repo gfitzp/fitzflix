@@ -380,6 +380,12 @@ def sync_plex_watchlist():
                 current_app.logger.warning(
                     f"Plex watchlist: couldn't remove tmdb {tmdb_id}: {e}"
                 )
+                # The film stays in the snapshot. Thus, the next run tries
+                # the removal again. Out of the snapshot, the film on Plex
+                # would read as a new Plex add and go back on the Fitzflix
+                # watchlist.
+
+                synced.add(tmdb_id)
                 failed += 1
 
         # Make sure that the pushes arrived. Plex answers 200 for some

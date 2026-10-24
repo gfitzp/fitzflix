@@ -19,15 +19,14 @@ import signal
 import sys
 import time
 
-from datetime import datetime, timezone
+from datetime import datetime
 
-from croniter import croniter
 from rq import Queue
 from rq.cron import CronJob, CronScheduler, cron_scheduler_registry
 from rq.scheduler import RQScheduler
 from rq.utils import now
 
-from app import cron_table, get_app
+from app import cron_table, get_app, next_cron_time
 
 
 class LocalTimeCronJob(CronJob):
@@ -38,12 +37,11 @@ class LocalTimeCronJob(CronJob):
     shift each job by the UTC offset. For example, the nightly backup
     would run at 8:30 PM, not at 12:30 AM. This class always computes
     the next time from now, never from the last run. Thus, a restart
-    never replays a missed occurrence. The old scheduler did the same."""
+    never replays a missed occurrence. The old scheduler did the same.
+    next_cron_time applies the daylight saving rules of the local zone."""
 
     def get_next_enqueue_time(self):
-        local_now = now().astimezone()
-        next_local = croniter(self.cron, local_now).get_next(datetime)
-        return next_local.astimezone(timezone.utc)
+        return next_cron_time(self.cron, now())
 
 
 # This key holds the last-enqueued times. They live outside the

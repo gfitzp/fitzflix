@@ -111,9 +111,11 @@ def test_a_library_file_is_remuxed_on_staging(app, library_file, staging, monkey
         assert os.listdir(os.path.dirname(library_file)) == [
             os.path.basename(library_file)
         ]
-        assert not app.redis.hexists(
-            STAGING_RESERVED_KEY, f"remux:{os.path.basename(library_file)}"
-        )
+        assert not [
+            field
+            for field in app.redis.hkeys(STAGING_RESERVED_KEY)
+            if field.startswith(b"remux:")
+        ]
 
 
 def test_a_failed_remux_leaves_the_library_file_alone(
@@ -142,9 +144,11 @@ def test_a_failed_remux_leaves_the_library_file_alone(
         assert os.listdir(os.path.dirname(library_file)) == [
             os.path.basename(library_file)
         ]
-        assert not app.redis.hexists(
-            STAGING_RESERVED_KEY, f"remux:{os.path.basename(library_file)}"
-        )
+        assert not [
+            field
+            for field in app.redis.hkeys(STAGING_RESERVED_KEY)
+            if field.startswith(b"remux:")
+        ]
 
 
 def test_without_staging_space_the_remux_runs_in_place(
@@ -175,3 +179,33 @@ def test_a_file_on_staging_is_remuxed_in_place(app, two_audio_mkv, staging):
     assert os.path.dirname(output) == staging
     assert _audio_count(app, path) == 1
     assert os.listdir(staging) == [os.path.basename(path)]
+
+
+def test_extras_with_the_same_name_get_their_own_staging_files(
+    app, two_audio_mkv, staging, monkeypatch
+):
+    """Many films have a "Trailer.mkv". Their remuxes must not share files."""
+
+    monkeypatch.setattr(tracks, "_on_volume_of", lambda path, directory: False)
+    paths = []
+    for film in ("First Film (2001)", "Second Film (2002)"):
+        directory = os.path.join(app.config["MOVIE_LIBRARY"], film, "Trailers")
+        os.makedirs(directory, exist_ok=True)
+        path = os.path.join(directory, "Trailer.mkv")
+        shutil.copy(two_audio_mkv, path)
+        paths.append(path)
+    seen = []
+    try:
+        with app.app_context():
+            for path in paths:
+                tracks.remux_file(
+                    path, _drop_second_audio(app, seen), None, "x", "Remuxing"
+                )
+        (first_source, first_output), (second_source, second_output) = seen
+        assert first_source != second_source and first_output != second_output
+        assert all(_audio_count(app, path) == 1 for path in paths)
+    finally:
+        for film in ("First Film (2001)", "Second Film (2002)"):
+            shutil.rmtree(
+                os.path.join(app.config["MOVIE_LIBRARY"], film), ignore_errors=True
+            )

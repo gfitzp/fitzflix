@@ -238,6 +238,106 @@ def test_the_sync_restores_the_transcoded_copy_and_prunes_all_prefixes(
         assert file.aws_transcoded_filesize_bytes == 30
 
 
+def test_the_sync_uploads_the_stale_transcoded_copy_again(app, monkeypatch):
+    """The stale flag of a conversion is about its transcoded/ copy."""
+
+    objects = {
+        "untouched/": [
+            {"Key": "untouched/Stale (2005) - [Bluray-2160p].mkv", "Size": 9}
+        ],
+        "transcoded/": [
+            {"Key": "transcoded/Stale (2005) - [Bluray-1080p].mkv", "Size": 3}
+        ],
+    }
+    monkeypatch.setattr(
+        aws_storage,
+        "get_matching_s3_objects",
+        lambda bucket, prefix="": objects.get(prefix, []),
+    )
+    restores = []
+    monkeypatch.setattr(
+        aws_storage, "aws_restore", lambda key, **kw: restores.append(key)
+    )
+    monkeypatch.setattr(aws_storage, "aws_delete", lambda key: None)
+    monkeypatch.setattr(aws_storage, "send_email", lambda *a, **k: None)
+
+    class FakeClient:
+        def put_object(self, **kwargs):
+            pass
+
+    monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kw: FakeClient())
+
+    with app.app_context():
+        file = make_movie_file(
+            make_movie("Stale", 2005),
+            "Bluray-1080p",
+            converted_from_quality="Bluray-2160p",
+            aws_key="untouched/Stale (2005) - [Bluray-2160p].mkv",
+            aws_date_uploaded=datetime.utcnow(),
+            aws_transcoded_key="transcoded/Stale (2005) - [Bluray-1080p].mkv",
+            aws_transcoded_date_uploaded=datetime.utcnow(),
+            aws_stale=True,
+        )
+        db.session.commit()
+        file_id = file.id
+        path = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    open(path, "wb").close()
+
+    try:
+        aws_storage.sync_aws_s3_storage_task()
+    finally:
+        os.remove(path)
+
+    assert restores == []
+    with app.app_context():
+        uploads = [
+            job.args
+            for job in app.file_queue.jobs
+            if job.func_name == "app.videos.upload_task"
+        ]
+        assert uploads == [(file_id,)]
+
+
+def test_the_archive_of_a_conversion_clears_the_stale_flag(app, uploads):
+    with app.app_context():
+        file = make_movie_file(
+            make_movie("Cleared", 2007),
+            "Bluray-1080p",
+            converted_from_quality="Bluray-2160p",
+            aws_key="untouched/Cleared (2007) - [Bluray-2160p].mkv",
+            aws_transcoded_key="transcoded/Cleared (2007) - [Bluray-1080p].mkv",
+            aws_stale=True,
+        )
+        db.session.commit()
+        aws_storage.archive_library_file(file, "/tmp/staged.mkv")
+        db.session.refresh(file)
+        assert file.aws_stale is False
+        assert file.aws_key == "untouched/Cleared (2007) - [Bluray-2160p].mkv"
+
+
+def test_a_failed_upload_marks_the_archive_stale(app, monkeypatch):
+    """The old key still has a date. Only the stale flag shows the loss."""
+
+    def failing_upload(*args, **kwargs):
+        raise OSError("drill")
+
+    monkeypatch.setattr(aws_storage, "aws_upload", failing_upload)
+    with app.app_context():
+        file = make_movie_file(
+            make_movie("Failed Upload", 2008),
+            "DVD",
+            aws_key="modified/Failed Upload (2008) - [DVD].mkv",
+            aws_date_uploaded=datetime.utcnow(),
+        )
+        db.session.commit()
+        file_id = file.id
+
+    assert aws_storage.upload_task(file_id) is None
+    with app.app_context():
+        assert db.session.get(File, file_id).aws_stale is True
+
+
 class FakeArchiveS3:
     """Fake S3 for the backfill. Hold the ETag of each key."""
 
@@ -363,12 +463,26 @@ def test_a_scan_that_rewrites_the_file_queues_its_archive(app, monkeypatch):
         open(path, "wb").close()
         file_id = file.id
 
-    tracks.track_metadata_scan_task(file_id)
-    with app.app_context():
-        jobs = [
+    def uploads():
+        return [
             job.args
             for job in app.file_queue.jobs
             if job.func_name == "app.videos.upload_task"
         ]
-        assert jobs == [(file_id,)]
+
+    # The upload waits for the save. Both write the same row. An upload
+    # that starts first loses its commit to MariaDB error 1020.
+
+    tracks.track_metadata_scan_task(file_id)
+    with app.app_context():
+        assert uploads() == []
+        (save,) = [
+            job
+            for job in app.sql_queue.jobs
+            if job.func_name == "app.videos.save_track_metadata"
+        ]
+        assert save.args[0] == file_id and save.args[3] is True
+    assert tracks.save_track_metadata(*save.args) is True
+    with app.app_context():
+        assert uploads() == [(file_id,)]
     os.remove(path)

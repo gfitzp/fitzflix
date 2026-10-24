@@ -258,6 +258,40 @@ def test_push_failures_retry_instead_of_reading_as_removals(app, monkeypatch):
         assert json.loads(app.redis.get(plex_watchlist.SNAPSHOT_KEY)) == [105]
 
 
+def test_a_failed_removal_retries_instead_of_coming_back(app, monkeypatch):
+    """A Fitzflix removal that Plex refuses once must not undo the removal."""
+
+    import app.plex_watchlist as plex_watchlist
+
+    with app.app_context():
+        user_id = setup_user(app)
+        make_movie("Removed Here", 2004, tmdb_id=106)
+        db.session.commit()
+        app.redis.set(plex_watchlist.SNAPSHOT_KEY, json.dumps([106]))
+
+        fake = FakePlex({106: ("Removed Here", 2004)})
+        put = fake.put
+
+        def failing_put(path, rating_key):
+            if path == "removeFromWatchlist":
+                raise requests.ConnectionError("503")
+            return put(path, rating_key)
+
+        monkeypatch.setattr(fake, "put", failing_put)
+        wire(app, monkeypatch, fake)
+        assert plex_watchlist.sync_plex_watchlist() is True
+        assert fitzflix_watchlist_tmdb_ids(user_id) == set()
+        assert json.loads(app.redis.get(plex_watchlist.SNAPSHOT_KEY)) == [106]
+
+        # The next run tries the removal again. The film stays off Fitzflix.
+        monkeypatch.setattr(fake, "put", put)
+        wire(app, monkeypatch, fake)
+        assert plex_watchlist.sync_plex_watchlist() is True
+        assert fake.removes == [106]
+        assert fitzflix_watchlist_tmdb_ids(user_id) == set()
+        assert json.loads(app.redis.get(plex_watchlist.SNAPSHOT_KEY)) == []
+
+
 def test_composite_item_syncs_by_its_tracked_id_only(app, monkeypatch):
     """Test that a composite item syncs by its tracked id only.
 

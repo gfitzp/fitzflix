@@ -101,6 +101,23 @@ def enqueue_import_scan(
     )
 
 
+def next_cron_time(cron, utc_now):
+    """Return the next run of a cron string on the local clock, in UTC.
+
+    The local zone has the daylight saving rules. The astimezone()
+    function with no argument gives a fixed offset. That offset moved the
+    first run of each job after a change of the clock by 1 hour."""
+
+    from datetime import datetime, timezone
+
+    from croniter import croniter
+    from dateutil import tz
+
+    local_now = utc_now.astimezone(tz.tzlocal())
+    next_local = croniter(cron, local_now).get_next(datetime)
+    return next_local.astimezone(timezone.utc)
+
+
 def cron_table(config):
     """Return the table of recurring jobs, with every scheduled task as a row.
 

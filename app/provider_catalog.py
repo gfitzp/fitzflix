@@ -261,6 +261,8 @@ def _process_pending(subscribed):
         movie, was_created = find_or_create_tmdb_movie(
             tmdb_id, payload["title"], int(payload["year"])
         )
+        if movie is None:
+            continue
         created += was_created
         if movie.tmdb_data_as_of is None:
             to_refresh.append(movie)

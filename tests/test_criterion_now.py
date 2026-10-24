@@ -293,7 +293,9 @@ def test_poller_stores_film_and_reschedules(app, monkeypatch):
 
     monkeypatch.setattr(criterion_now.requests, "get", fake_requests_get)
     monkeypatch.setattr(
-        criterion_now, "match_tmdb_id", lambda title, year, director=None: 33667
+        criterion_now,
+        "match_tmdb_id",
+        lambda title, year, director=None, failures=None: 33667,
     )
     monkeypatch.setattr(
         criterion_now,
@@ -432,7 +434,9 @@ def test_director_mismatch_degrades_to_a_plain_card(app, monkeypatch):
     import app.criterion_now as criterion_now
 
     monkeypatch.setattr(
-        criterion_now, "match_tmdb_id", lambda title, year, director=None: 99999
+        criterion_now,
+        "match_tmdb_id",
+        lambda title, year, director=None, failures=None: 99999,
     )
     monkeypatch.setattr(
         criterion_now,
@@ -464,7 +468,9 @@ def test_director_match_survives_romanization_differences(app, monkeypatch):
     import app.criterion_now as criterion_now
 
     monkeypatch.setattr(
-        criterion_now, "match_tmdb_id", lambda title, year, director=None: 64015
+        criterion_now,
+        "match_tmdb_id",
+        lambda title, year, director=None, failures=None: 64015,
     )
     monkeypatch.setattr(
         criterion_now,
@@ -509,7 +515,9 @@ def test_starring_line_verifies_when_no_director_is_known(app, monkeypatch):
         ],
     }
     monkeypatch.setattr(
-        criterion_now, "match_tmdb_id", lambda title, year, director=None: 64015
+        criterion_now,
+        "match_tmdb_id",
+        lambda title, year, director=None, failures=None: 64015,
     )
     monkeypatch.setattr(criterion_now, "enriched_movie", lambda tmdb_id: payload)
 
@@ -1047,7 +1055,9 @@ def fake_feed(monkeypatch, criterion_now, fetched):
 
     monkeypatch.setattr(criterion_now.requests, "get", fake_requests_get)
     monkeypatch.setattr(
-        criterion_now, "match_tmdb_id", lambda title, year, director=None: 33667
+        criterion_now,
+        "match_tmdb_id",
+        lambda title, year, director=None, failures=None: 33667,
     )
     monkeypatch.setattr(
         criterion_now,

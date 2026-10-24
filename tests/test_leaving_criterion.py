@@ -533,6 +533,55 @@ def test_refresh_task_retries_once_stored_set_has_departed(app, monkeypatch):
     assert calls  # the set departed, so the scrape ran
 
 
+def test_a_tmdb_failure_is_not_cached_as_a_miss(app, monkeypatch):
+    """A timeout must not hide the film for the 2 months of the match cache."""
+
+    import app.leaving_criterion as leaving_criterion
+
+    down = [True]
+
+    def fake_tmdb_get(url, params=None, **kwargs):
+        if down[0]:
+            raise leaving_criterion.requests.ConnectionError("timeout")
+        return FakeResponse(payload={"results": [{"id": 3110}]})
+
+    monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
+    monkeypatch.setattr(leaving_criterion, "tmdb_get", fake_tmdb_get)
+
+    with app.app_context():
+        failures = []
+        assert (
+            leaving_criterion.match_tmdb_id("The Searchers", 1956, None, failures)
+            is None
+        )
+        assert failures == ["tmdb"]
+        down[0] = False
+        assert leaving_criterion.match_tmdb_id("The Searchers", 1956) == 3110
+
+
+def test_refresh_task_retries_an_incomplete_set(app, monkeypatch):
+    """A set that a TMDB failure left incomplete is matched again."""
+
+    import app.leaving_criterion as leaving_criterion
+
+    app.redis.set(
+        leaving_criterion.LEAVING_KEY,
+        json.dumps(
+            {"departs": date.today().isoformat(), "items": [], "incomplete": True}
+        ),
+    )
+    calls = []
+
+    def fake_requests_get(url, params=None, timeout=None):
+        calls.append(url)
+        return FakeResponse(text="<html>empty</html>")
+
+    monkeypatch.setattr(leaving_criterion.requests, "get", fake_requests_get)
+
+    assert leaving_criterion.refresh_leaving_criterion() is True
+    assert calls
+
+
 def shelf_item(tmdb_id, title, runtime=100, genre=(37, "Western")):
     """Return a stored leaving-set item, the trimmed enriched payload."""
 

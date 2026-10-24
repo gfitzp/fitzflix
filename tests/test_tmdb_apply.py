@@ -251,3 +251,21 @@ def test_the_clear_out_does_not_scan_unrelated_rows(app):
         stored = db.session.get(Movie, movie.id)
         assert [g.name for g in stored.genres] == ["Drama"]
         assert [k.name for k in stored.keywords] == ["remake"]
+
+
+def test_a_namesake_with_another_tmdb_id_is_not_adopted(app):
+    """A review or a watchlist row must never go to a different film."""
+
+    from app.tmdb_refresh import find_or_create_tmdb_movie
+
+    with app.app_context():
+        namesake = make_movie("Same Name", 1999, tmdb_id=501)
+        unmatched = make_movie("Unmatched Name", 1999)
+        db.session.commit()
+
+        assert find_or_create_tmdb_movie(502, "Same Name", 1999) == (None, False)
+        assert namesake.tmdb_id == 501
+
+        movie, created = find_or_create_tmdb_movie(503, "Unmatched Name", 1999)
+        assert (movie, created) == (unmatched, False)
+        assert movie.tmdb_id == 503

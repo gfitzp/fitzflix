@@ -14,6 +14,7 @@ app.videos. The functions here import it lazily. Thus, the module
 import direction stays one-way.
 """
 
+import hashlib
 import json
 import os
 import random
@@ -88,13 +89,19 @@ def remux_file(file_path, build_command, job, name, activity):
 
     directory, basename = os.path.split(file_path)
     staging_dir = current_app.config["STAGING_DIR"]
-    reservation = f"remux:{basename}"
+
+    # The staging names hold a digest of the library path. The basename
+    # of an extra is not unique. For example, many films have a
+    # "Trailer.mkv", and 2 workers can remux 2 of them at the same time.
+
+    staged_name = f"{hashlib.sha1(file_path.encode()).hexdigest()[:8]}-{basename}"
+    reservation = f"remux:{staged_name}"
     staged = not _on_volume_of(file_path, staging_dir)
     if staged:
         status = reserve_staging(
             reservation,
             int(os.path.getsize(file_path) * STAGED_REMUX_FACTOR),
-            [f"src-{basename}", f"remux-{basename}"],
+            [f"src-{staged_name}", f"remux-{staged_name}"],
             staging_dir,
         )
         if status != "ok":
@@ -114,8 +121,8 @@ def remux_file(file_path, build_command, job, name, activity):
             raise
         return
 
-    staged_source = os.path.join(staging_dir, f".src-{basename}")
-    staged_output = os.path.join(staging_dir, f".remux-{basename}")
+    staged_source = os.path.join(staging_dir, f".src-{staged_name}")
+    staged_output = os.path.join(staging_dir, f".remux-{staged_name}")
     hidden_library = os.path.join(directory, f".{basename}")
     try:
         copy_with_progress(
@@ -333,21 +340,18 @@ def track_metadata_scan_task(file_id):
                 raise
 
             # The scan removed empty subtitle tracks. Thus, the library file
-            # changed, and its archive must follow (#299).
+            # changed, and its archive must follow (#299). The save queues
+            # the upload after its commit. Both write the same row. An
+            # upload that starts first fails its commit with MariaDB error
+            # 1020 (Oktapodi, 2026-10-24).
 
-            if details.pop("rewritten", False) and get_setting(
+            archive = bool(details.pop("rewritten", False)) and get_setting(
                 "ARCHIVE_ORIGINAL_MEDIA"
-            ):
-                current_app.file_queue.enqueue(
-                    "app.videos.upload_task",
-                    args=(file_id,),
-                    job_timeout=current_app.config["UPLOAD_TASK_TIMEOUT"],
-                    description=f"'{file.basename}'",
-                )
+            )
 
             current_app.sql_queue.enqueue(
                 "app.videos.save_track_metadata",
-                args=(file_id, details, lock),
+                args=(file_id, details, lock, archive),
                 job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
                 description=f"{file.basename} – Saving track metadata",
             )
@@ -380,12 +384,13 @@ def record_filesize(file, size_bytes):
     file.filesize_bytes = size_bytes
 
 
-def save_track_metadata(file_id, details, lock=None):
+def save_track_metadata(file_id, details, lock=None, archive=False):
     """Write the extracted track metadata to the database.
 
     This is the sql half of a track scan. All work here is session
     work from the details dict. This function releases the given title
-    lock when it is done.
+    lock when it is done. If archive is True, it queues the upload of
+    the rewritten library file after its commit.
     """
 
     with app.app_context():
@@ -437,6 +442,13 @@ def save_track_metadata(file_id, details, lock=None):
 
         else:
             db.session.commit()
+            if archive:
+                current_app.file_queue.enqueue(
+                    "app.videos.upload_task",
+                    args=(file_id,),
+                    job_timeout=current_app.config["UPLOAD_TASK_TIMEOUT"],
+                    description=f"'{file.basename}'",
+                )
             return True
 
         finally:
@@ -472,16 +484,13 @@ def track_metadata_scan(file_id):
         current_app.lock_manager.unlock(lock)
         raise
 
-    # A rewritten file needs its archive to follow (#299).
+    # A rewritten file needs its archive to follow (#299). The save
+    # queues the upload after its commit.
 
-    if details.pop("rewritten", False) and get_setting("ARCHIVE_ORIGINAL_MEDIA"):
-        current_app.file_queue.enqueue(
-            "app.videos.upload_task",
-            args=(file_id,),
-            job_timeout=current_app.config["UPLOAD_TASK_TIMEOUT"],
-            description=f"'{file.basename}'",
-        )
-    return save_track_metadata(file_id, details, lock=lock)
+    archive = bool(details.pop("rewritten", False)) and get_setting(
+        "ARCHIVE_ORIGINAL_MEDIA"
+    )
+    return save_track_metadata(file_id, details, lock=lock, archive=archive)
 
 
 # These are the languages that a track can have. Fitzflix reads them
@@ -1149,6 +1158,7 @@ def mkvpropedit_unlocked(
             except Exception:
                 current_app.logger.error(traceback.format_exc())
                 db.session.rollback()
+                mark_archive_stale(file_id, reason="re-archive after a track edit")
                 raise
 
             else:
@@ -1960,6 +1970,8 @@ def _remux_audio_plan_unlocked(file_id, plan):
 
             # The rebuilt library file goes to modified/, or to transcoded/
             # for a conversion (#299). The upload reads the staging copy.
+            # A failure marks the archive stale. Then the S3 sync uploads
+            # it again.
 
             if get_setting("ARCHIVE_ORIGINAL_MEDIA"):
                 try:
@@ -1967,6 +1979,9 @@ def _remux_audio_plan_unlocked(file_id, plan):
                 except Exception:
                     current_app.logger.error(traceback.format_exc())
                     db.session.rollback()
+                    mark_archive_stale(
+                        int(file_id), reason="re-archive after an audio remux"
+                    )
                     raise
             return True
 

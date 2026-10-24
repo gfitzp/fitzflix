@@ -370,11 +370,16 @@ def sync_aws_s3_storage_task():
                 # this copy, not the original. It goes straight into the
                 # library, with its track edits and no new conversion.
 
+                # The stale flag of a conversion is about this copy. The
+                # original in untouched/ never changes. Thus, a stale copy
+                # uploads again, and the sync never restores it.
+
                 local = os.path.isfile(file_path)
                 use_transcoded = bool(
                     file.converted_from_quality
                     and file.aws_transcoded_key in s3_keys
                     and file.aws_transcoded_date_uploaded
+                    and not file.aws_stale
                 )
                 if file.converted_from_quality and not use_transcoded and local:
                     current_app.logger.info(
@@ -408,11 +413,7 @@ def sync_aws_s3_storage_task():
                 # file cannot take its place. For a normal file, the upload
                 # puts the library file in modified/ (#299).
                 if (
-                    (
-                        file.aws_key not in s3_keys
-                        or file.aws_date_uploaded == None
-                        or file.aws_stale
-                    )
+                    (file.aws_key not in s3_keys or file.aws_date_uploaded == None)
                     and os.path.isfile(file_path)
                     and not file.archive_is_library_copy
                 ):
@@ -425,7 +426,7 @@ def sync_aws_s3_storage_task():
                 elif (
                     file.aws_key not in s3_keys
                     or file.aws_date_uploaded == None
-                    or file.aws_stale
+                    or (file.aws_stale and file.archive_is_library_copy)
                 ) and os.path.isfile(file_path):
 
                     # Queue the file for an upload to S3.
@@ -880,6 +881,11 @@ def upload_task(
             current_app.logger.error(traceback.format_exc())
             db.session.rollback()
 
+            # The library file changed, and its archive did not follow.
+            # The sync uploads a stale archive again.
+
+            mark_archive_stale(file_id, reason="failed upload")
+
         else:
             return True
 
@@ -959,11 +965,20 @@ def archive_library_file(file, path, delete_replaced=True):
         path, key_prefix, key_name=key_name, force_upload=True, ignore_etag=True
     )
 
+    # The upload can take an hour. The transaction of this session started
+    # before it. MariaDB refuses an UPDATE of a row that a different worker
+    # changed after that start (error 1020). Thus, end the old transaction
+    # here. The record then loads again from a new snapshot. Each caller
+    # commits its own changes before this function.
+
+    db.session.commit()
+
     replaced = None
     if converted:
         file.aws_transcoded_key = key
         file.aws_transcoded_date_uploaded = uploaded
         file.aws_transcoded_filesize_bytes = size
+        file.aws_stale = False
     else:
         if file.aws_key and file.aws_key != key:
             replaced = file.aws_key

@@ -434,7 +434,7 @@ def matched_film(title, info, failures=None):
 
     if not info["year"]:
         return None, None
-    tmdb_id = match_tmdb_id(title, info["year"], info["director"])
+    tmdb_id = match_tmdb_id(title, info["year"], info["director"], failures=failures)
     if not tmdb_id:
         return None, None
     payload = enriched_movie(tmdb_id)

@@ -279,7 +279,7 @@ def _tmdb_json(path, params):
         return None
 
 
-def match_tmdb_id(title, year, director=None):
+def match_tmdb_id(title, year, director=None, failures=None):
     """Return the TMDB id for a leaving film, or None if TMDB has no match.
 
     This searches by title and year. It caches the result for 2
@@ -301,7 +301,8 @@ def match_tmdb_id(title, year, director=None):
     there is none, the first result wins (the behaviour before
     2026-08). The cache key carries the director. Thus, a
     director-aware lookup never reads an entry that the older
-    title-only matcher wrote.
+    title-only matcher wrote. If a TMDB call fails and nothing matches,
+    the miss is not cached, and "tmdb" goes into failures, if given.
     """
 
     slug = re.sub(r"[^a-z0-9]+", "-", f"{title}-{year}-{director or ''}".lower()).strip(
@@ -316,6 +317,17 @@ def match_tmdb_id(title, year, director=None):
     wanted_title = _normalize(title)
     wanted_director = _normalize(director) if director else None
 
+    # A failed TMDB call must not read as "TMDB has no such film". The
+    # cache keeps a miss for 2 months.
+
+    failed = []
+
+    def tmdb_json(path, params):
+        body = _tmdb_json(path, params)
+        if body is None:
+            failed.append(path)
+        return body
+
     def candidates(params, pages):
         """Return the search results that are worth a look.
 
@@ -329,7 +341,7 @@ def match_tmdb_id(title, year, director=None):
 
         results = []
         for page in range(1, pages + 1):
-            body = _tmdb_json("/search/movie", {"query": title, "page": page, **params})
+            body = tmdb_json("/search/movie", {"query": title, "page": page, **params})
             page_results = (body or {}).get("results") or []
             results.extend(page_results)
             if len(page_results) < 20:
@@ -361,7 +373,7 @@ def match_tmdb_id(title, year, director=None):
         contain the other. The loose test is _same_person."""
 
         if result["id"] not in credited:
-            body = _tmdb_json(f"/movie/{result['id']}/credits", {})
+            body = tmdb_json(f"/movie/{result['id']}/credits", {})
             credited[result["id"]] = (
                 None
                 if body is None
@@ -443,14 +455,14 @@ def match_tmdb_id(title, year, director=None):
             wanted_name = _normalize(name)
             if not wanted_name:
                 continue
-            body = _tmdb_json("/search/person", {"query": name.strip()})
+            body = tmdb_json("/search/person", {"query": name.strip()})
             people = [
                 person
                 for person in (body or {}).get("results") or []
                 if _normalize(person.get("name")) == wanted_name
             ]
             for person in people[:2]:
-                body = _tmdb_json(f"/person/{person['id']}/movie_credits", {})
+                body = tmdb_json(f"/person/{person['id']}/movie_credits", {})
                 for credit in (body or {}).get("crew") or []:
                     released = (credit.get("release_date") or "")[:4]
                     if credit.get("job") != "Director" or not released.isdigit():
@@ -480,6 +492,10 @@ def match_tmdb_id(title, year, director=None):
         tmdb_id = pick({})
     if tmdb_id is None:
         tmdb_id = by_filmography()
+    if tmdb_id is None and failed:
+        if failures is not None:
+            failures.append("tmdb")
+        return None
     current_app.redis.set(cache_key, json.dumps(tmdb_id), ex=MATCH_CACHE_SECONDS)
     return tmdb_id
 
@@ -490,7 +506,8 @@ def refresh_leaving_criterion():
 
     This is a daily task. It matches each film to TMDB. It embeds the
     enriched payloads. It does nothing while the departure of the
-    stored set is in the future. The daily cadence exists to retry
+    stored set is in the future, unless a TMDB failure left the set
+    incomplete. The daily cadence exists to retry
     until Criterion publishes the page of the new month. That page
     appears at some time after the old set departs. The schedule is
     not known. The stored set has no TTL. The shelf hides after the
@@ -498,8 +515,12 @@ def refresh_leaving_criterion():
 
     with app.app_context():
         stored = current_app.redis.get(LEAVING_KEY)
-        if stored and date.fromisoformat(json.loads(stored)["departs"]) >= date.today():
-            return True
+        if stored:
+            stored = json.loads(stored)
+            if date.fromisoformat(stored["departs"]) >= date.today() and not stored.get(
+                "incomplete"
+            ):
+                return True
 
         departs, source, films = fetch_leaving_films()
         if not films:
@@ -514,13 +535,22 @@ def refresh_leaving_criterion():
         # departure inventory stays complete. The home shelf skips them.
         # Its cards need posters and taste features.
 
+        # A TMDB failure marks the set incomplete. Then the next daily run
+        # matches the set again. Else the films stay unmatched until the
+        # set departs.
+
         items = []
+        failures = []
         for film in films:
-            tmdb_id = match_tmdb_id(film["title"], film["year"], film["director"])
+            tmdb_id = match_tmdb_id(
+                film["title"], film["year"], film["director"], failures=failures
+            )
             payload = enriched_movie(tmdb_id) if tmdb_id is not None else None
             if payload:
                 items.append({**payload, "tmdb_id": tmdb_id})
             else:
+                if tmdb_id is not None:
+                    failures.append("tmdb")
                 items.append({**film, "tmdb_id": None})
 
         current_app.redis.set(
@@ -531,12 +561,18 @@ def refresh_leaving_criterion():
                     "departs": departs.isoformat(),
                     "source": source,
                     "items": items,
+                    "incomplete": bool(failures),
                 }
             ),
         )
         current_app.logger.info(
             f"Leaving-Criterion: stored {len(items)} of {len(films)} films "
             f"departing {departs.isoformat()}"
+            + (
+                f" ({len(failures)} TMDB failure(s), retrying tomorrow)"
+                if failures
+                else ""
+            )
         )
         # The Leaving Soon channel of the dial reads this set. Rebuild
         # the same day when an owned film is on it. The Channel

@@ -333,6 +333,19 @@ def _name_stem(name):
     return os.path.splitext(name)[0]
 
 
+def staged_output_path(staging_dir, source_basename, library_basename):
+    """Return the staging path of the localized output of an import.
+
+    The name has the stem of the source file. The import directory holds
+    each source name only once. The extension is the extension of the
+    library file."""
+
+    extension = os.path.splitext(library_basename or "")[1] or ".mkv"
+    return os.path.join(
+        staging_dir, f".{_name_stem(source_basename)}.localized{extension}"
+    )
+
+
 def _staging_bytes(staging_dir, stems):
     """Return the bytes of the staging files whose names start with one of the stems."""
 
@@ -917,12 +930,7 @@ def localization_task(
 
             staging_dir = current_app.config["STAGING_DIR"]
             staging_needed = int(os.path.getsize(file_path) * STAGING_FACTOR)
-            staging = reserve_staging(
-                basename,
-                staging_needed,
-                [basename, file_details["basename"]],
-                staging_dir,
-            )
+            staging = reserve_staging(basename, staging_needed, [basename], staging_dir)
             if staging == "wait":
                 current_app.logger.info(
                     f"'{basename}' Needs {_gigabytes(staging_needed)} on staging. "
@@ -1099,12 +1107,19 @@ def localization_task(
             # the staged copy. Thus, only the complete file goes to the
             # library.
 
-            hidden_output_file = os.path.join(
-                staging_dir if staged else output_directory,
-                f".{file_details.get('basename')}",
-            )
+            # On staging, the name comes from the source. The library name of
+            # an extra is only the extra, for example "Trailer.mkv". The
+            # extras of 2 films would then write the same staging file.
+
             if staged:
+                hidden_output_file = staged_output_path(
+                    staging_dir, basename, file_details.get("basename")
+                )
                 staging_paths.append(hidden_output_file)
+            else:
+                hidden_output_file = os.path.join(
+                    output_directory, f".{file_details.get('basename')}"
+                )
 
             # Export a localized version of the incoming file.
 

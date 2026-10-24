@@ -1140,8 +1140,10 @@ def test_completeness_budget_exhausted_imports_anyway(app, incoming_dir):
         # Remove the staged working copy and the hidden output of the aborted
         # chain
 
+        hidden = f".{os.path.splitext(basename)[0]}.localized.dat"
+        assert move_jobs[0].args[3] == os.path.join(app.config["STAGING_DIR"], hidden)
         for _, _, files in os.walk(app.config["STAGING_DIR"]):
-            assert files == [f".{basename}"] or files == []
+            assert files == [hidden] or files == []
         for stray in move_jobs[0].args[3], source:
             if os.path.exists(stray):
                 os.remove(stray)

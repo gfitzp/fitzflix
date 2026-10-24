@@ -1349,3 +1349,27 @@ def test_download_task_keeps_a_restore_of_an_absent_file(app, monkeypatch):
         assert videos.download_task(key, os.path.basename(key), "receipt-3") is True
 
     assert len(downloads) == 1
+
+
+@pytest.mark.parametrize(
+    "utc_now,expected",
+    [
+        # 2026-11-01: the clock goes back 1 hour. 05:00 EST is 10:00 UTC.
+        ("2026-10-31T09:00:01", "2026-11-01T10:00:00"),
+        # 2027-03-14: the clock goes forward 1 hour. 05:00 EDT is 09:00 UTC.
+        ("2027-03-13T10:00:01", "2027-03-14T09:00:00"),
+    ],
+)
+def test_cron_fields_follow_daylight_saving_time(monkeypatch, utc_now, expected):
+    """The first run after a change of the clock must not move by 1 hour."""
+
+    from datetime import datetime
+
+    from dateutil import tz
+
+    from app import next_cron_time
+
+    monkeypatch.setattr(tz, "tzlocal", lambda: tz.gettz("America/New_York"))
+    assert next_cron_time(
+        "0 5 * * *", datetime.fromisoformat(utc_now + "+00:00")
+    ) == datetime.fromisoformat(expected + "+00:00")

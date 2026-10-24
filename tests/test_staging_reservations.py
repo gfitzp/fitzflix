@@ -232,3 +232,19 @@ def test_localization_waits_for_staging_space(
     finally:
         if os.path.exists(source):
             os.remove(source)
+
+
+def test_the_extras_of_2_films_get_their_own_staged_output():
+    """The library name of an extra is only the extra, for example "Trailer.mkv"."""
+
+    first = importing.staged_output_path(
+        "/staging", "First Film (2001) - Trailer - Trailer [DVD].mkv", "Trailer.mkv"
+    )
+    second = importing.staged_output_path(
+        "/staging", "Second Film (2002) - Trailer - Trailer [DVD].mp4", "Trailer.mkv"
+    )
+    assert first != second
+    assert (
+        first == "/staging/.First Film (2001) - Trailer - Trailer [DVD].localized.mkv"
+    )
+    assert second.endswith(".localized.mkv")

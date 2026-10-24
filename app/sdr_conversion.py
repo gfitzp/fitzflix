@@ -486,9 +486,11 @@ def convert_localized_file(source_path, file_details, lock, hidden_output_file, 
         source_name = file_details.get("untouched_basename") or os.path.basename(
             source_path
         )
-        work_dir = os.path.dirname(hidden_output_file)
-        video_only = os.path.join(work_dir, f".{basename}.sdr-video.mkv")
-        muxed = os.path.join(work_dir, f".{basename}.sdr.mkv")
+        # The work files take the name of the localized file. That name is
+        # unique on staging. The basename of an extra is not.
+
+        video_only = f"{hidden_output_file}.sdr-video.mkv"
+        muxed = f"{hidden_output_file}.sdr.mkv"
 
         try:
             _hold_title_lock(lock, basename)
@@ -553,7 +555,9 @@ def convert_localized_file(source_path, file_details, lock, hidden_output_file, 
             # Only the converted file stays on staging now (#294).
 
             set_staging_reservation(
-                source_name, os.path.getsize(hidden_output_file), [basename]
+                source_name,
+                os.path.getsize(hidden_output_file),
+                [os.path.basename(hidden_output_file).lstrip(".")],
             )
 
         except Exception:

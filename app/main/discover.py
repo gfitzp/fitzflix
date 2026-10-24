@@ -2114,6 +2114,22 @@ def recommendations_tile():
     )
 
 
+def _namesake_refusal(film_title, year, tmdb_id):
+    """Refuse a TMDB film whose title and year belong to a different film.
+
+    The title and the year of a movie record are unique. A review or a
+    watchlist row must not go to the other film."""
+
+    message = (
+        f"Fitzflix already has a different film named '{film_title} ({year})'. "
+        f"It cannot add this one."
+    )
+    if _ladder_fetch() or _card_fetch():
+        return jsonify({"error": message}), 409
+    flash(message, "warning")
+    return redirect(url_for("main.review_tmdb", tmdb_id=tmdb_id))
+
+
 @bp.route("/review/tmdb/<int:tmdb_id>", methods=["GET", "POST"])
 @login_required
 def review_tmdb(tmdb_id):
@@ -2225,6 +2241,8 @@ def review_tmdb(tmdb_id):
         movie, created = find_or_create_tmdb_movie(
             tmdb_id, film_title, year, details=details
         )
+        if movie is None:
+            return _namesake_refusal(film_title, year, tmdb_id)
         listed = UserWatchlist.query.filter_by(
             user_id=int(current_user.id), movie_id=movie.id
         ).first()
@@ -2260,6 +2278,8 @@ def review_tmdb(tmdb_id):
         movie, created = find_or_create_tmdb_movie(
             tmdb_id, film_title, year, details=details
         )
+        if movie is None:
+            return _namesake_refusal(film_title, year, tmdb_id)
 
         # The ✕ of the ladder is the not-interested flag, never a
         # review. This is the same flow as the dedicated button below.

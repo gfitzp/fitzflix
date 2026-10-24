@@ -33,12 +33,40 @@ from app.email import send_email as send_email_async
 from app.models import File, Movie, TVSeries, User, UserMovieReview
 
 
+def library_name_details(file, file_details):
+    """Return the file details of the library name of a record.
+
+    The rename after a TMDB refresh evaluates the untouched name. That
+    is the name of the original. The library file can have a different
+    name. A conversion (#292) has the quality of its 1080p library file,
+    not the quality of its original. A remux to Matroska has the "mkv"
+    extension, not the extension of the original. The library name
+    keeps both."""
+
+    details = dict(file_details)
+    basename = details["basename"]
+    if file.converted_from_quality and file.quality:
+        basename = basename.replace(
+            f"[{file.converted_from_quality}]", f"[{file.quality.quality_title}]"
+        )
+    stem, extension = os.path.splitext(basename)
+    library_extension = os.path.splitext(file.basename or "")[1]
+    if library_extension and extension != library_extension:
+        basename = f"{stem}{library_extension}"
+        details["extension"] = library_extension.lstrip(".")
+    details["basename"] = basename
+    details["file_path"] = os.path.join(details["dirname"], basename)
+    return details
+
+
 def find_or_create_tmdb_movie(tmdb_id, film_title, year, details=None):
     """Return (movie, created), the record for a TMDB film.
 
     This function first uses an existing row with the tmdb id. Then it
-    uses a record with the same canonical title and year. Only then
-    does it create a review-only record. The movie can appear after the
+    uses a record with the same canonical title and year, if that
+    record has no tmdb id. Only then does it create a review-only
+    record. If a different film has the title and the year, it returns
+    (None, False). The movie can appear after the
     redirect check of the caller (an import or a concurrent log). The
     caller must commit the session. If the record is new, the caller
     must enqueue the standard TMDB refresh.
@@ -55,6 +83,15 @@ def find_or_create_tmdb_movie(tmdb_id, film_title, year, details=None):
         movie = Movie.query.filter_by(title=film_title, year=year).first()
         if movie is not None and movie.tmdb_id is None:
             movie.tmdb_id = tmdb_id
+        elif movie is not None:
+            # A different film has this title and year. The title and the
+            # year are unique. Thus, Fitzflix cannot hold this film. A
+            # review or a watchlist row must not go to the wrong film.
+            current_app.logger.warning(
+                f"TMDB {tmdb_id} '{film_title} ({year})': {movie} has the same "
+                f"title and year but TMDB {movie.tmdb_id}; not using it"
+            )
+            return None, False
     created = movie is None
     if created:
         movie = Movie(title=film_title, year=year, tmdb_id=tmdb_id)
@@ -555,6 +592,7 @@ def apply_tmdb_refresh(
                             f"skipping its rename"
                         )
                         continue
+                    file_details = library_name_details(f, file_details)
 
                     new_relative = file_details.get("file_path")
                     old_file = os.path.join(

@@ -367,6 +367,8 @@ def create_criterion_catalog_records(criterion_collection, by_tmdb_id, by_title_
         existing.add(tmdb_id)
         title = release.get("label") or release.get("title")
         movie, created = find_or_create_tmdb_movie(tmdb_id, title, release["year"])
+        if movie is None:
+            continue
         assign_criterion_release(movie, by_tmdb_id, by_title_year)
         created_count += created
         # An adopted title and year record, with the TMDB id attached

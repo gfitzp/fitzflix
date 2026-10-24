@@ -868,6 +868,35 @@ def test_the_untouched_name_of_a_conversion_keeps_the_original_quality(app):
         assert reconstruct_filename(real.id) == "Renamed Original (1941) - [DVD].mkv"
 
 
+def test_a_tmdb_rename_keeps_the_library_name_of_a_conversion(app):
+    """The library file of a conversion keeps its 1080p tag and its extension.
+
+    On 2026-10-24 a TMDB refresh renamed the 1080p conversion of The
+    Maltese Falcon to the 2160p name of its original."""
+
+    from app.importing import evaluate_filename, reconstruct_filename
+    from app.tmdb_refresh import library_name_details
+
+    with app.app_context():
+        movie = make_movie("Renamed Library", 1941)
+        conversion = make_movie_file(
+            movie,
+            "Bluray-1080p",
+            converted_from_quality="Bluray-2160p",
+            untouched_basename="Renamed Library (1941) - [Bluray-2160p].m2ts",
+        )
+        db.session.commit()
+        conversion.untouched_basename = reconstruct_filename(conversion.id)
+        details = library_name_details(
+            conversion, evaluate_filename(conversion.untouched_basename)
+        )
+        assert details["basename"] == "Renamed Library (1941) - [Bluray-1080p].mkv"
+        assert details["file_path"] == (
+            "Movies/Renamed Library (1941)/Renamed Library (1941) - [Bluray-1080p].mkv"
+        )
+        assert details["extension"] == "mkv"
+
+
 def test_a_conversion_that_reuses_a_record_takes_the_untouched_name(app):
     """The Import choice reuses the record of the real rip at the same path."""
 

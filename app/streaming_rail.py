@@ -540,6 +540,8 @@ def ensure_rail_records(items):
         if not item.get("title") or not year.isdigit():
             continue
         movie, _ = find_or_create_tmdb_movie(item["tmdb_id"], item["title"], int(year))
+        if movie is None:
+            continue
         if movie.tmdb_data_as_of is None:
             to_refresh[movie.id] = movie
     db.session.commit()

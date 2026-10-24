@@ -938,7 +938,7 @@ def _atmos_finish(state, phases):
 
     The library share carries 1 write here: the verified result."""
 
-    from app.aws_storage import archive_library_file
+    from app.aws_storage import archive_library_file, mark_archive_stale
     from app.videos import (
         aws_s3_client,
         copy_with_progress,
@@ -1156,8 +1156,9 @@ def _atmos_finish(state, phases):
     # restore from modified/ goes straight into the library. Thus, it never
     # pays for a second MediaConvert run (Glenn). The upload reads the
     # staging copy, not the library share. The library replacement above
-    # is already committed. Thus, an upload failure fails the job, and the
-    # S3 sync repairs it.
+    # is already committed. Thus, an upload failure fails the job. The old
+    # key still has a date, and the S3 sync cannot see that it is behind.
+    # Thus, the failure marks the archive stale, and the sync uploads it.
 
     if get_setting("ARCHIVE_ORIGINAL_MEDIA"):
         phases.enter("Archiving to S3")
@@ -1166,5 +1167,8 @@ def _atmos_finish(state, phases):
         except Exception:
             current_app.logger.error(traceback.format_exc())
             db.session.rollback()
+            mark_archive_stale(
+                int(state["file_id"]), reason="re-archive after an Atmos supplement"
+            )
             raise
     return True
