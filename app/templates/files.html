@@ -8,7 +8,7 @@
 	{{ library_search(library_search_form) }}
 {% endcall %}
 {% if files %}
-	{{ pagination_pair(pages, 'main.files', {'quality': request.args.get('quality'), 'q': request.args.get('q')}, prev_url, next_url) }}
+	{{ pagination_pair(pages, 'main.files', {'quality': request.args.get('quality'), 'q': request.args.get('q'), 'audio': request.args.get('audio')}, prev_url, next_url) }}
 	<div class="table-responsive">
 		<table class="table table-striped">
 			<thead class="table-light">
@@ -39,6 +39,6 @@
 			</tbody>
 		</table>
 	</div>
-	{{ pagination_pair(pages, 'main.files', {'quality': request.args.get('quality'), 'q': request.args.get('q')}, prev_url, next_url) }}
+	{{ pagination_pair(pages, 'main.files', {'quality': request.args.get('quality'), 'q': request.args.get('q'), 'audio': request.args.get('audio')}, prev_url, next_url) }}
 {% endif %}
 {% endblock %}

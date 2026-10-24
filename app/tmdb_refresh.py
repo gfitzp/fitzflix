@@ -273,7 +273,15 @@ def tmdb_refresh_pending(library, id):
     return tmdb_refresh_status(library, id) is not None
 
 
-def refresh_tmdb_info(library, id, tmdb_id=None, notify_if_missing=False):
+# refresh_tmdb_info returns this when TMDB sent nothing for the id. The
+# apply still runs. It handles a missing match.
+
+TMDB_NO_MATCH = "no-match"
+
+
+def refresh_tmdb_info(
+    library, id, tmdb_id=None, notify_if_missing=False, apply_at_front=False
+):
     """Run the network phase of a TMDB refresh.
 
     This phase queries TMDB. Then it gives the payload to
@@ -283,6 +291,10 @@ def refresh_tmdb_info(library, id, tmdb_id=None, notify_if_missing=False):
     run at the same time. This is safe, because the phase writes nothing
     to the database. Every database and library-file change occurs in
     apply_tmdb_refresh. The single sql worker serializes those changes.
+
+    Return True when TMDB sent data, TMDB_NO_MATCH when it sent nothing,
+    and False on a failure. A page that waits for the refresh puts the
+    apply at the front of the sql queue (apply_at_front).
     """
 
     with app.app_context():
@@ -358,6 +370,7 @@ def refresh_tmdb_info(library, id, tmdb_id=None, notify_if_missing=False):
                 },
                 job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
                 description=description,
+                at_front=apply_at_front,
             )
 
         except Exception:
@@ -365,7 +378,7 @@ def refresh_tmdb_info(library, id, tmdb_id=None, notify_if_missing=False):
             return False
 
         else:
-            return True
+            return True if tmdb_payload else TMDB_NO_MATCH
 
 
 def save_failed_payload(library, id, tmdb_payload):

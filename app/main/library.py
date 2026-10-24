@@ -791,17 +791,22 @@ def movie_library():
             .paginate(page=page, per_page=120, error_out=False)
         )
 
+    # The arrows keep each filter of the page. The search text comes from
+    # the request, because the query above changed its spaces to "%".
+
+    filters = {
+        "quality": quality,
+        "genre": genre,
+        "credit": credit,
+        "q": request.args.get("q"),
+    }
     next_url = (
-        url_for(
-            "main.movie_library", page=movies.next_num, quality=quality, genre=genre
-        )
+        url_for("main.movie_library", page=movies.next_num, **filters)
         if movies.has_next
         else None
     )
     prev_url = (
-        url_for(
-            "main.movie_library", page=movies.prev_num, quality=quality, genre=genre
-        )
+        url_for("main.movie_library", page=movies.prev_num, **filters)
         if movies.has_prev
         else None
     )
@@ -1256,13 +1261,41 @@ def criterion_collection():
     )
 
 
+def _flash_tmdb_refresh(result, title, reload_url):
+    """Flash the state of an interactive TMDB refresh.
+
+    The refresh job only fetches. The apply runs next on the sql queue.
+    Thus, a fetched result does not say that the page has the new data."""
+
+    from app.tmdb_refresh import TMDB_NO_MATCH
+
+    if result == TMDB_NO_MATCH:
+        flash(f"TMDB has no data for '{title}' with that ID.", "warning")
+    elif result:
+        flash(
+            Markup(
+                "Fetched TMDB data for '{}'. Fitzflix applies it next. "
+                "<a href='{}'>Reload this page</a>"
+            ).format(title, reload_url),
+            "success",
+        )
+    else:
+        flash(
+            Markup(
+                "Fitzflix is refreshing TMDB data for '{}'. "
+                "<a href='{}'>Reload this page</a>"
+            ).format(title, reload_url),
+            "info",
+        )
+
+
 @bp.route("/movie/<int:movie_id>", methods=["GET", "POST"])
 @login_required
 def movie(movie_id):
     """Show details for a particular movie."""
 
     movie = Movie.query.filter_by(id=movie_id).first_or_404()
-    title = f"{movie.tmdb_title if movie.tmdb_title else movie.title} ({movie.tmdb_release_date.strftime('%Y') if movie.tmdb_title else movie.year})"
+    title = f"{movie.tmdb_title if movie.tmdb_title else movie.title} ({movie.tmdb_release_date.strftime('%Y') if movie.tmdb_title and movie.tmdb_release_date else movie.year})"
     # Each credited actor in billing order, for the cast scroller
 
     cast = [
@@ -1433,6 +1466,14 @@ def movie(movie_id):
                     for field, value in star_rating_fields(None).items():
                         setattr(current_row, field, value)
                     current_row.liked = False
+                    current_row.date_updated = datetime.now()
+
+                    # A watched row with no stars and no text is a bare
+                    # watch again, the same as on the History page. A
+                    # review date would make it outrank an older review.
+
+                    if not (current_row.review or "").strip():
+                        current_row.date_reviewed = None
                 db.session.commit()
                 _enqueue_profile_recompute()
                 if _ladder_fetch():
@@ -1652,6 +1693,7 @@ def movie(movie_id):
             refresh_job = current_app.sql_queue.enqueue(
                 "app.videos.refresh_tmdb_info",
                 args=("Movies", movie.id, movie.tmdb_id),
+                kwargs={"apply_at_front": True},
                 job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
                 description=f"Refreshing TMDB data for '{movie.title} ({movie.year})'",
                 at_front=True,
@@ -1660,22 +1702,11 @@ def movie(movie_id):
             while refresh_job.result == None and waited_seconds < 10:
                 time.sleep(1)
                 waited_seconds = waited_seconds + 1
-            if refresh_job.result:
-                flash(
-                    f"Refreshed TMDB data for '{movie.title} ({movie.year})'",
-                    "success",
-                )
-            else:
-                flash(
-                    Markup(
-                        "Fitzflix is refreshing TMDB data for '{}' ({}). <a href='{}'>Reload this page</a>"
-                    ).format(
-                        movie.title,
-                        movie.year,
-                        url_for("main.movie", movie_id=movie.id),
-                    ),
-                    "info",
-                )
+            _flash_tmdb_refresh(
+                refresh_job.result,
+                f"{movie.title} ({movie.year})",
+                url_for("main.movie", movie_id=movie.id),
+            )
             return redirect(url_for("main.movie", movie_id=movie.id))
 
         # A blank id asks TMDB to search by title, and takes the first
@@ -1710,6 +1741,7 @@ def movie(movie_id):
         refresh_job = current_app.sql_queue.enqueue(
             "app.videos.refresh_tmdb_info",
             args=("Movies", movie.id, tmdb_lookup_form.tmdb_id.data),
+            kwargs={"apply_at_front": True},
             job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
             description=f"Refreshing TMDB data for '{movie.title} ({movie.year})'",
             at_front=True,
@@ -1719,9 +1751,14 @@ def movie(movie_id):
         # If it does, redirect to the info page of that movie, because this
         # movie gets the TMDB data of that movie.
 
-        existing_tmdb_movie = Movie.query.filter_by(
-            tmdb_id=tmdb_lookup_form.tmdb_id.data
-        ).first()
+        # A blank ID refreshes this movie. filter_by(tmdb_id=None) would
+        # match any unmatched movie.
+
+        existing_tmdb_movie = (
+            Movie.query.filter_by(tmdb_id=tmdb_lookup_form.tmdb_id.data).first()
+            if tmdb_lookup_form.tmdb_id.data is not None
+            else None
+        )
         if existing_tmdb_movie:
             movie_id = existing_tmdb_movie.id
 
@@ -1737,18 +1774,11 @@ def movie(movie_id):
             time.sleep(1)
             waited_seconds = waited_seconds + 1
 
-        if refresh_job.result:
-            flash(f"Refreshed TMDB data for '{movie.title} ({movie.year})'", "success")
-
-        else:
-            flash(
-                Markup(
-                    "Fitzflix is refreshing TMDB data for '{}' ({}). <a href='{}'>Reload this page</a>"
-                ).format(
-                    movie.title, movie.year, url_for("main.movie", movie_id=movie_id)
-                ),
-                "info",
-            )
+        _flash_tmdb_refresh(
+            refresh_job.result,
+            f"{movie.title} ({movie.year})",
+            url_for("main.movie", movie_id=movie_id),
+        )
 
         return redirect(url_for("main.movie", movie_id=movie_id))
 
@@ -2102,7 +2132,7 @@ def movie_files(movie_id):
     file management pages. Those pages are admin tools."""
 
     movie = Movie.query.filter_by(id=movie_id).first_or_404()
-    title = f"Files for \"{movie.tmdb_title if movie.tmdb_title else movie.title} ({movie.tmdb_release_date.strftime('%Y') if movie.tmdb_title else movie.year})\""
+    title = f"Files for \"{movie.tmdb_title if movie.tmdb_title else movie.title} ({movie.tmdb_release_date.strftime('%Y') if movie.tmdb_title and movie.tmdb_release_date else movie.year})\""
 
     # This subquery gets the ranking of each file of this movie.
 
@@ -2498,6 +2528,7 @@ def tv(series_id):
         refresh_job = current_app.sql_queue.enqueue(
             "app.videos.refresh_tmdb_info",
             args=("TV Shows", tv.id, tmdb_lookup_form.tmdb_id.data),
+            kwargs={"apply_at_front": True},
             job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
             description=f"Refreshing TMDB data for '{tv.title}'",
             at_front=True,
@@ -2507,9 +2538,14 @@ def tv(series_id):
         # If it does, redirect to the info page of that show, because this
         # TV series gets the TMDB data of that show.
 
-        existing_tmdb_tv = TVSeries.query.filter_by(
-            tmdb_id=tmdb_lookup_form.tmdb_id.data
-        ).first()
+        # A blank ID refreshes this series. filter_by(tmdb_id=None) would
+        # match any unmatched series.
+
+        existing_tmdb_tv = (
+            TVSeries.query.filter_by(tmdb_id=tmdb_lookup_form.tmdb_id.data).first()
+            if tmdb_lookup_form.tmdb_id.data is not None
+            else None
+        )
         if existing_tmdb_tv:
             tv_id = existing_tmdb_tv.id
 
@@ -2525,16 +2561,9 @@ def tv(series_id):
             time.sleep(1)
             waited_seconds = waited_seconds + 1
 
-        if refresh_job.result:
-            flash(f"Refreshed TMDB data for '{tv.title}'", "success")
-
-        else:
-            flash(
-                Markup(
-                    "Fitzflix is refreshing TMDB data for '{}'. <a href='{}'>Reload this page</a>"
-                ).format(tv.title, url_for("main.tv", series_id=tv_id)),
-                "info",
-            )
+        _flash_tmdb_refresh(
+            refresh_job.result, tv.title, url_for("main.tv", series_id=tv_id)
+        )
 
         return redirect(url_for("main.tv", series_id=tv_id))
 
@@ -3099,6 +3128,10 @@ def file(file_id):
             flash("Incorrect password provided!", "danger")
             return redirect(url_for("main.file", file_id=file.id))
 
+        if not file.restore_key:
+            flash(f"'{file.basename}' has no archive in AWS to restore.", "warning")
+            return redirect(url_for("main.file", file_id=file.id))
+
         # Enqueue a restore task for this file
 
         current_app.request_queue.enqueue(
@@ -3155,7 +3188,9 @@ def file(file_id):
         if file.movie_id:
             return redirect(url_for("main.movie_files", movie_id=file.movie_id))
 
-        elif file.series_id and file.season:
+        # Season 0 holds the specials. It is a real season page.
+
+        elif file.series_id and file.season is not None:
             return redirect(
                 url_for("main.season", series_id=file.series_id, season=file.season)
             )

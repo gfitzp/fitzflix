@@ -9,7 +9,7 @@
 	{{ library_search(library_search_form) }}
 {% endcall %}
 {% if movies %}
-{{ pagination_pair(pages, 'main.movie_library', {'quality': request.args.get('quality'), 'credit': request.args.get('credit'), 'q': request.args.get('q')}, prev_url, next_url) }}
+{{ pagination_pair(pages, 'main.movie_library', {'quality': request.args.get('quality'), 'credit': request.args.get('credit'), 'q': request.args.get('q'), 'genre': request.args.get('genre')}, prev_url, next_url) }}
 {# One gallery serves every breakpoint (#45d, the separate mobile list
    is gone). The posters carry the popover. The tiles keep the edition
    and the actions. The green/amber shopping answer moved into the
@@ -26,6 +26,6 @@
 	</div>
 	{% endfor %}
 </div>
-{{ pagination_pair(pages, 'main.movie_library', {'quality': request.args.get('quality'), 'credit': request.args.get('credit'), 'q': request.args.get('q')}, prev_url, next_url) }}
+{{ pagination_pair(pages, 'main.movie_library', {'quality': request.args.get('quality'), 'credit': request.args.get('credit'), 'q': request.args.get('q'), 'genre': request.args.get('genre')}, prev_url, next_url) }}
 {% endif %}
 {% endblock %}

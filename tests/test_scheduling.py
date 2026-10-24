@@ -958,10 +958,13 @@ def test_tmdb_refresh_hands_off_to_sql_queue(app):
         db.session.commit()
         movie_id = movie.id
 
-        # With no TMDB_API_KEY, the fetch finds nothing. But the task must
-        # still enqueue the apply job. That job also rewrites file paths
+        # With no TMDB_API_KEY, the fetch finds nothing. The result says
+        # so. But the task must still enqueue the apply job. That job also
+        # rewrites file paths
 
-        assert refresh_tmdb_info("Movies", movie_id) is True
+        from app.tmdb_refresh import TMDB_NO_MATCH
+
+        assert refresh_tmdb_info("Movies", movie_id) == TMDB_NO_MATCH
 
         jobs = [
             job

@@ -568,6 +568,10 @@ def test_same_star_tap_removes_the_rating(app, admin_client):
         assert row.rating is None
         assert row.liked is False
         assert row.date_watched is not None
+        # A bare watch again: no review date to outrank an older review,
+        # and an edit stamp for the export
+        assert row.date_reviewed is None
+        assert row.date_updated is not None
 
 
 def test_ladder_fetch_returns_state_without_redirect(app, admin_client):

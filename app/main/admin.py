@@ -869,6 +869,26 @@ def missing_files():
             if selected
             else []
         )
+
+        # The list comes from the last nightly scan. A file can be back
+        # since then. A second restore pays again, and it can overwrite or
+        # import the file again. Thus, only a file that is still missing
+        # is restored.
+
+        present = [
+            file
+            for file in files
+            if os.path.isfile(
+                os.path.join(current_app.config["LIBRARY_DIR"], file.file_path)
+            )
+        ]
+        files = [file for file in files if file not in present]
+        if present:
+            flash(
+                f"Skipped {len(present)} file{'s' if len(present) != 1 else ''} "
+                f"that {'are' if len(present) != 1 else 'is'} in the library again.",
+                "info",
+            )
         if not files:
             flash("No archived files were selected.", "warning")
             return redirect(url_for("main.missing_files"))
@@ -1227,6 +1247,7 @@ def tmdb_triage():
         refresh_job = current_app.sql_queue.enqueue(
             "app.videos.refresh_tmdb_info",
             args=(library, record.id, form.tmdb_id.data),
+            kwargs={"apply_at_front": True},
             job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
             description=f"Refreshing TMDB data for '{display}'",
             at_front=True,
@@ -1235,8 +1256,23 @@ def tmdb_triage():
         while refresh_job.result is None and waited_seconds < 10:
             time.sleep(1)
             waited_seconds = waited_seconds + 1
-        if refresh_job.result:
-            flash(f"Matched '{display}' to TMDB id {form.tmdb_id.data}", "success")
+        # The refresh job only fetches. The apply runs next, at the front
+        # of the sql queue.
+
+        from app.tmdb_refresh import TMDB_NO_MATCH
+
+        if refresh_job.result == TMDB_NO_MATCH:
+            flash(
+                f"TMDB has no data for id {form.tmdb_id.data}. '{display}' is "
+                f"not matched",
+                "warning",
+            )
+        elif refresh_job.result:
+            flash(
+                f"Fetched TMDB id {form.tmdb_id.data} for '{display}'. Fitzflix "
+                f"applies the match next",
+                "success",
+            )
         else:
             flash(
                 f"Still refreshing TMDB data for '{display}'. Reload in a moment",
@@ -2121,25 +2157,31 @@ def files():
             .paginate(page=page, per_page=1000, error_out=False)
         )
 
+    # The links keep each filter. The search text comes from the request,
+    # because the queries above changed its spaces to "%".
+
+    search_text = request.args.get("q")
+    filters = {"quality": quality, "q": search_text, "audio": audio}
     next_url = (
-        url_for("main.files", page=files.next_num, quality=quality)
+        url_for("main.files", page=files.next_num, **filters)
         if files.has_next
         else None
     )
     prev_url = (
-        url_for("main.files", page=files.prev_num, quality=quality)
+        url_for("main.files", page=files.prev_num, **filters)
         if files.has_prev
         else None
     )
 
     filter_form = QualityFilterForm()
 
+    # This page lists every file: movies, TV episodes, and extras. Thus,
+    # the choices are the qualities of all files.
+
     qualities = (
         db.session.query(RefQuality.id, RefQuality.quality_title)
         .join(File, (File.quality_id == RefQuality.id))
         .distinct()
-        .filter(File.movie_id != None)
-        .filter(File.feature_type_id == None)
         .order_by(RefQuality.preference.asc())
         .all()
     )
@@ -2150,7 +2192,9 @@ def files():
     filter_form.quality.default = quality
 
     if filter_form.validate_on_submit():
-        return redirect(url_for("main.files", q=q, quality=filter_form.quality.data))
+        return redirect(
+            url_for("main.files", q=search_text, quality=filter_form.quality.data)
+        )
 
     filter_form.process()
 

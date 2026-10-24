@@ -346,3 +346,27 @@ def test_a_merge_moves_the_watchlist_status_and_award_rows(app):
         assert UserMovieStatus.query.filter_by(movie_id=new.id).count() == 1
         assert ArchivedOriginal.query.filter_by(movie_id=new.id).count() == 1
         assert channel.movies.all() == [new]
+
+
+def test_a_refresh_that_tmdb_answers_with_nothing_says_so(app, monkeypatch):
+    """The page must not report a match when TMDB sent no data."""
+
+    from app.models import Movie
+    from app.tmdb_refresh import TMDB_NO_MATCH, refresh_tmdb_info
+
+    with app.app_context():
+        movie = make_movie("No Such Film", 1999)
+        db.session.commit()
+        movie_id = movie.id
+
+    monkeypatch.setattr(Movie, "tmdb_movie_fetch", lambda self, tmdb_id=None: None)
+    assert refresh_tmdb_info("Movies", movie_id, 999999, apply_at_front=True) == (
+        TMDB_NO_MATCH
+    )
+    with app.app_context():
+        (apply_job,) = [
+            job
+            for job in app.sql_queue.jobs
+            if job.func_name == "app.videos.apply_tmdb_refresh"
+        ]
+        assert apply_job.kwargs["tmdb_payload"] is None

@@ -274,6 +274,29 @@ def test_file_delete_clears_a_movie_poster_husk(app, admin_client):
     assert not os.path.exists(movie_dir)
 
 
+def test_deleting_a_special_returns_to_season_0(app, admin_client):
+    """Season 0 holds the specials. The delete returns to its season page."""
+
+    from app import db
+    from tests.factories import make_tv_file, make_tv_series
+
+    with app.app_context():
+        series = make_tv_series("Special Show")
+        file = make_tv_file(series, 0, 1, "DVD")
+        db.session.commit()
+        file_id, series_id = file.id, series.id
+        file_path = file.file_path
+
+    plant(os.path.join(app.config["LIBRARY_DIR"], file_path))
+    token = _admin_csrf_token(admin_client, f"/file/{file_id}")
+    response = admin_client.post(
+        f"/file/{file_id}",
+        data={"csrf_token": token, "delete_submit": "Delete File"},
+    )
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith(f"/tv/{series_id}/0")
+
+
 def test_cleanup_stays_quiet_when_nothing_is_stranded(app, monkeypatch):
     sent = []
     monkeypatch.setattr(

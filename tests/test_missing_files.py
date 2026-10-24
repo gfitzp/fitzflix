@@ -217,3 +217,47 @@ def test_scan_button_enqueues_the_scan_task(app, admin_client):
     assert [job.func_name for job in jobs] == [
         "app.missing_files.missing_best_files_task"
     ]
+
+
+def test_restore_skips_a_file_that_is_back_since_the_scan(
+    app, admin_client, monkeypatch
+):
+    """The list comes from the last scan. A file that is back is not restored again."""
+
+    import os
+
+    from app import missing_files
+
+    monkeypatch.setattr(missing_files, "missing_volumes", lambda config: [])
+    with app.app_context():
+        back = make_movie_file(
+            make_movie("Back Again", 1940), "WEBRip-1080p", aws_key="b.mkv"
+        )
+        gone = make_movie_file(
+            make_movie("Still Gone", 1941), "WEBRip-1080p", aws_key="g.mkv"
+        )
+        db.session.commit()
+        ids = [str(back.id), str(gone.id)]
+        missing_files.missing_best_files_task()
+        path = os.path.join(app.config["LIBRARY_DIR"], back.file_path)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    open(path, "wb").close()
+
+    page = admin_client.get("/maintenance/missing").get_data(as_text=True)
+    try:
+        response = admin_client.post(
+            "/maintenance/missing",
+            data={
+                "csrf_token": csrf_token_from(page),
+                "password": ADMIN_PASSWORD,
+                "file_id": ids,
+                "missing_restore_submit": "Request restore of selected files",
+            },
+            follow_redirects=True,
+        )
+    finally:
+        os.remove(path)
+    assert "Skipped 1 file that is in the library again." in response.get_data(
+        as_text=True
+    )
+    assert [job.args[0] for job in app.request_queue.jobs] == ["g.mkv"]

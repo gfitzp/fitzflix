@@ -193,6 +193,12 @@ def test_match_enqueues_the_refresh(app, admin_client, monkeypatch):
     ]
     assert ("Movies", movie_id, 265216) in jobs
     assert ("TV Shows", series_id, 13911) in jobs
+    # The page waits for the result. Thus, the apply runs at the front.
+    assert all(
+        job.kwargs.get("apply_at_front")
+        for job in app.sql_queue.jobs
+        if job.func_name == "app.videos.refresh_tmdb_info"
+    )
 
 
 def test_match_without_an_id_is_refused(app, admin_client):

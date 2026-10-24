@@ -565,3 +565,68 @@ def test_every_render_template_target_exists(app):
         except Exception:
             unresolved.append(f"{path.relative_to(root)} -> {name}")
     assert not unresolved, f"missing render_template targets: {unresolved}"
+
+
+def test_a_film_with_a_tmdb_title_and_no_date_renders(app, admin_client):
+    """TMDB can send a title with an empty release date (an announced film)."""
+
+    from app import db
+    from tests.factories import make_movie
+
+    with app.app_context():
+        movie = make_movie("Announced Film", 2027)
+        movie.tmdb_title = "Announced Film"
+        db.session.commit()
+        movie_id = movie.id
+
+    for path in (f"/movie/{movie_id}", f"/movie/{movie_id}/files"):
+        response = admin_client.get(path)
+        assert response.status_code == 200
+        assert "Announced Film (2027)" in response.get_data(as_text=True)
+
+
+def test_library_pages_keep_the_search_and_the_genre(app, admin_client):
+    """Page 2 of a search or a genre is page 2 of that list, not of the library."""
+
+    from app import db
+    from app.models import TMDBGenre
+    from tests.factories import make_movie, make_movie_file
+
+    with app.app_context():
+        drama = TMDBGenre(id=18, name="Drama")
+        db.session.add(drama)
+        for n in range(121):
+            movie = make_movie(f"Paged Star {n:03d}", 1950)
+            movie.genres.append(drama)
+            make_movie_file(movie, "DVD")
+        db.session.commit()
+
+    search = admin_client.get("/library/movie?q=paged star").get_data(as_text=True)
+    search_links = re.findall(r'href="([^"]*page=2[^"]*)"', search)
+    assert search_links and all("q=paged" in link for link in search_links)
+    by_genre = admin_client.get("/library/movie?genre=18").get_data(as_text=True)
+    page_two_links = re.findall(r'href="([^"]*page=2[^"]*)"', by_genre)
+    assert page_two_links and all("genre=18" in link for link in page_two_links)
+
+
+def test_all_files_offers_the_qualities_of_tv_files(app, admin_client):
+    """The page lists every file. A quality of TV episodes only is a choice too."""
+
+    from app import db
+    from tests.factories import make_tv_file, make_tv_series
+
+    with app.app_context():
+        make_tv_file(make_tv_series("Quality Show"), 1, 1, "HDTV-720p")
+        db.session.commit()
+
+    page = admin_client.get("/library/files").get_data(as_text=True)
+    assert ">HDTV-720p</option>" in page
+
+    # A filter change keeps the search text as typed, with its spaces.
+
+    response = admin_client.post(
+        "/library/files?q=quality show",
+        data={"csrf_token": csrf_token_from(page), "quality": "0"},
+    )
+    assert response.status_code == 302
+    assert "q=quality+show" in response.headers["Location"]

@@ -201,7 +201,9 @@ class DownloadProgressPercentage(object):
 
     def __init__(self, client, bucket, key, basename):
         self._file_path = basename
-        self.size = client.head_object(Bucket=bucket, Key=key).get("ContentLength", 0)
+        head = client.head_object(Bucket=bucket, Key=key)
+        self.size = head.get("ContentLength", 0)
+        self.etag = head.get("ETag")
         app.logger.info(f"'{basename}' Download size: {self.size} bytes")
         self._seen_so_far = 0
         self._previous_percent = None
@@ -787,20 +789,26 @@ def sqs_retrieve_task():
         download_job_ids = file_operations.get_job_ids() + list(
             current_app.file_queue.job_ids
         )
+        # The message stays hidden for SQS_VISIBILITY_SECONDS. That is
+        # longer than the hourly poll. Thus, a message is still in flight
+        # here, and the change succeeds. A failure on 1 message must not
+        # stop the poll (MessageNotInflight, an expired receipt handle).
+
         for job_id in download_job_ids:
             job = current_app.file_queue.fetch_job(job_id)
-            if job:
-                if job.meta.get("sqs_receipt_handle"):
-                    response = sqs_client.change_message_visibility(
+            if job and job.meta.get("sqs_receipt_handle"):
+                job_description = job.meta.get("description", job.description)
+                try:
+                    sqs_client.change_message_visibility(
                         QueueUrl=current_app.config["AWS_SQS_URL"],
                         ReceiptHandle=job.meta.get("sqs_receipt_handle"),
-                        VisibilityTimeout=600,
+                        VisibilityTimeout=SQS_VISIBILITY_SECONDS,
                     )
-                    job_description = job.meta.get("description", job.description)
                     current_app.logger.info(
-                        f"'{job_description}' Extending SQS message timeout by 600 seconds"
+                        f"'{job_description}' Extending SQS message timeout by "
+                        f"{SQS_VISIBILITY_SECONDS} seconds"
                     )
-                    response = s3_client.restore_object(
+                    s3_client.restore_object(
                         Bucket=current_app.config["AWS_BUCKET"],
                         Key=job.args[0],
                         RestoreRequest={
@@ -811,38 +819,56 @@ def sqs_retrieve_task():
                     current_app.logger.info(
                         f"'{job.args[0]}' Extending restoration period by 1 day"
                     )
+                except botocore.exceptions.ClientError as error:
+                    current_app.logger.warning(
+                        f"'{job_description}' Could not extend the SQS message "
+                        f"or the restore: {error}"
+                    )
 
         response = sqs_client.receive_message(
             QueueUrl=current_app.config["AWS_SQS_URL"],
             AttributeNames=["SentTimestamp"],
             MaxNumberOfMessages=1,
             MessageAttributeNames=["All"],
-            VisibilityTimeout=600,
+            VisibilityTimeout=SQS_VISIBILITY_SECONDS,
             WaitTimeSeconds=0,
         )
 
         while response.get("Messages"):
             response_body = json.loads(response["Messages"][0]["Body"])
-
             receipt_handle = response["Messages"][0]["ReceiptHandle"]
-            key = urllib.parse.unquote_plus(
-                response_body["Records"][0]["s3"]["object"]["key"]
-            )
 
-            current_app.file_queue.enqueue(
-                "app.videos.download_task",
-                args=(key, os.path.basename(key), receipt_handle),
-                job_timeout=current_app.config["TRANSCODE_TASK_TIMEOUT"],
-                description=f"'{os.path.basename(key)}' — Downloading from AWS",
-                meta={"sqs_receipt_handle": receipt_handle},
-            )
+            # S3 sends an s3:TestEvent with no Records each time a bucket
+            # notification is written. On 2026-10-22, 3 of them stopped
+            # this poll for 2 days. A message that is not a restore event
+            # is deleted.
+
+            records = response_body.get("Records") or []
+            if not records or "s3" not in records[0]:
+                current_app.logger.info(
+                    f"Deleting an SQS message that is not a restore event: "
+                    f"{response_body.get('Event') or list(response_body)[:3]}"
+                )
+                sqs_client.delete_message(
+                    QueueUrl=current_app.config["AWS_SQS_URL"],
+                    ReceiptHandle=receipt_handle,
+                )
+            else:
+                key = urllib.parse.unquote_plus(records[0]["s3"]["object"]["key"])
+                current_app.file_queue.enqueue(
+                    "app.videos.download_task",
+                    args=(key, os.path.basename(key), receipt_handle),
+                    job_timeout=current_app.config["TRANSCODE_TASK_TIMEOUT"],
+                    description=f"'{os.path.basename(key)}' — Downloading from AWS",
+                    meta={"sqs_receipt_handle": receipt_handle},
+                )
 
             response = sqs_client.receive_message(
                 QueueUrl=current_app.config["AWS_SQS_URL"],
                 AttributeNames=["SentTimestamp"],
                 MaxNumberOfMessages=1,
                 MessageAttributeNames=["All"],
-                VisibilityTimeout=600,
+                VisibilityTimeout=SQS_VISIBILITY_SECONDS,
                 WaitTimeSeconds=0,
             )
 
@@ -1326,6 +1352,13 @@ DOWNLOAD_RESTORE_PENDING = "restore-pending"
 
 MAX_DOWNLOAD_RETRIES = 10
 
+# The hourly SQS poll hides a restore message for 2 hours, and each poll
+# extends it while its download waits or runs. With 10 minutes, the
+# message was visible again before the next poll. Then the extension
+# failed (MessageNotInflight), and the poll received it a second time.
+
+SQS_VISIBILITY_SECONDS = 7200
+
 # These client errors fail in the same way on each attempt (credentials,
 # permissions, a missing bucket). Thus, a retry only delays the failure
 # report.
@@ -1478,13 +1511,15 @@ def cdn_signed_url(key, expires_in=None):
     )
 
 
-def cdn_download(key, destination, progress, expected_size=0):
+def cdn_download(key, destination, progress, expected_size=0, etag=None):
     """Fetch one object through CloudFront, and write it to destination.
 
     The progress callback gets the size of each chunk, as the boto3
     transfer callback does. A partial file at the destination from an
     earlier attempt is resumed with a Range request when the S3 size is
     known. Thus, a transport fault does not restart a large object from
+    byte zero. The resume sends If-Range with the ETag of the object.
+    Thus, a partial file of an older version of the key starts again from
     byte zero. Raise CdnDownloadError for an HTTP error status. Raise
     RuntimeError if the body length differs from the Content-Length
     header or from expected_size (the object size from the S3 API).
@@ -1497,6 +1532,8 @@ def cdn_download(key, destination, progress, expected_size=0):
     headers = {}
     if have and expected_size and have < expected_size:
         headers["Range"] = f"bytes={have}-"
+        if etag:
+            headers["If-Range"] = etag
     else:
         have = 0
 
@@ -1734,7 +1771,17 @@ def aws_download(key, basename, sqs_receipt_handle=None, place_at=None):
     current_app.logger.info(f"'{basename}' downloading from {source}")
 
     bucket = current_app.config["AWS_BUCKET"]
-    destination = os.path.join(current_app.config["IMPORT_DIR"], f".{basename}")
+    # A restore into the library is not imported. Its library basename is
+    # not unique: many films have a "Restoration Demonstration.mkv". Thus,
+    # its staging name holds a digest of the key. An import download keeps
+    # its name. The rename to that name starts the import.
+
+    if place_at:
+        digest = hashlib.sha1(key.encode()).hexdigest()[:8]
+        staged_name = f".restore-{digest}-{basename}"
+    else:
+        staged_name = f".{basename}"
+    destination = os.path.join(current_app.config["IMPORT_DIR"], staged_name)
     s3_client = aws_s3_client()
     sqs_client = aws_sqs_client()
 
@@ -1742,7 +1789,13 @@ def aws_download(key, basename, sqs_receipt_handle=None, place_at=None):
         try:
             progress = DownloadProgressPercentage(s3_client, bucket, key, basename)
             if via_cdn:
-                cdn_download(key, destination, progress, expected_size=progress.size)
+                cdn_download(
+                    key,
+                    destination,
+                    progress,
+                    expected_size=progress.size,
+                    etag=progress.etag,
+                )
             else:
                 s3_client.download_file(bucket, key, destination, Callback=progress)
 

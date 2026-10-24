@@ -394,7 +394,7 @@ def movie_poster(movie_id):
     it."""
 
     movie = Movie.query.filter_by(id=movie_id).first_or_404()
-    title = f"{movie.tmdb_title if movie.tmdb_title else movie.title} ({movie.tmdb_release_date.strftime('%Y') if movie.tmdb_title else movie.year})"
+    title = f"{movie.tmdb_title if movie.tmdb_title else movie.title} ({movie.tmdb_release_date.strftime('%Y') if movie.tmdb_title and movie.tmdb_release_date else movie.year})"
     if File.query.filter_by(movie_id=movie.id).first() is None:
         flash(
             f"'{title}' has no local files. Its poster follows TMDB.",

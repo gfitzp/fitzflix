@@ -647,6 +647,61 @@ def test_cdn_resumes_a_dropped_download_with_a_range(app, monkeypatch, cdn):
     assert len(cdn["signed"]) == 2
 
 
+def test_a_resume_names_the_version_it_continues(app, monkeypatch, cdn):
+    """The resume sends If-Range. A partial of an older version restarts."""
+
+    from app import aws_storage
+
+    cdn["responses"] = [
+        _FakeResponse(200, b"cdn", fail_after=2),
+        _FakeResponse(206, b"n"),
+    ]
+    _wire(monkeypatch, _FakeS3({"ContentLength": 3, "ETag": '"abc"'}), _FakeSQS())
+
+    with app.app_context():
+        assert (
+            aws_storage.aws_download("untouched/x.mkv", "x.mkv")
+            == aws_storage.DOWNLOAD_COMPLETE
+        )
+
+    assert cdn["headers"] == [{}, {"Range": "bytes=2-", "If-Range": '"abc"'}]
+
+
+def test_a_direct_restore_stages_under_a_name_of_its_key(app, monkeypatch, cdn):
+    """Many films have an extra with the same name. Their restores must not share a file."""
+
+    from app import aws_storage
+
+    staged = []
+    real_cdn_download = aws_storage.cdn_download
+
+    def recording(key, destination, *args, **kwargs):
+        staged.append(os.path.basename(destination))
+        return real_cdn_download(key, destination, *args, **kwargs)
+
+    monkeypatch.setattr(aws_storage, "cdn_download", recording)
+    monkeypatch.setattr(aws_storage, "place_in_library", lambda *a, **k: None)
+    cdn["responses"] = [_FakeResponse(200, b"cdn"), _FakeResponse(200, b"cdn")]
+    _wire(monkeypatch, _FakeS3(), _FakeSQS())
+
+    with app.app_context():
+        for key in (
+            "modified/Shadows (1958) - Restoration Demonstration.mkv",
+            "modified/Cherbourg (1964) - Restoration Demonstration.mkv",
+        ):
+            aws_storage.aws_download(
+                key, "Restoration Demonstration.mkv", place_at="/library/x.mkv"
+            )
+
+        for name in staged:
+            path = os.path.join(app.config["IMPORT_DIR"], name)
+            if os.path.exists(path):
+                os.remove(path)
+
+    assert len(set(staged)) == 2
+    assert all(name.startswith(".restore-") for name in staged)
+
+
 def test_cdn_body_with_no_known_size_is_not_trusted(app, monkeypatch, cdn):
     """Test that a body with no Content-Length and no S3 size fails.
 

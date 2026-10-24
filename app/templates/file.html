@@ -199,7 +199,7 @@
 		</form>
 		<em class="small">{% if file.aws_date_uploaded %}Archived offsite {{ moment(file.aws_date_uploaded).format("LLL") }}{% else %}Not uploaded to AWS.{% endif %}</em>
 		<form action="" method="post" class="mt-3">
-			<fieldset {% if not best_file %}disabled{% endif %}>
+			<fieldset {% if not best_file or not file.restore_key %}disabled{% endif %}>
 				{{ download_form.hidden_tag() }}
 				{{ download_form.password(class_="form-control form-control-sm mb-1", placeholder="Password") }}
 				{{ download_form.s3_download_submit(class_="btn btn-sm btn-success") }}
