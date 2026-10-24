@@ -209,3 +209,28 @@ def test_extras_with_the_same_name_get_their_own_staging_files(
             shutil.rmtree(
                 os.path.join(app.config["MOVIE_LIBRARY"], film), ignore_errors=True
             )
+
+
+def test_an_in_place_remux_checks_the_space_first(app, library_file, monkeypatch):
+    """A remux that runs out of space fills the shared SSD. Check before writing."""
+
+    import errno
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(tracks, "_on_volume_of", lambda path, directory: True)
+    monkeypatch.setattr(
+        tracks.shutil, "disk_usage", lambda path: SimpleNamespace(free=0)
+    )
+    ran = []
+    with app.app_context():
+        with pytest.raises(OSError) as raised:
+            tracks.remux_file(
+                library_file,
+                lambda source, output: ran.append(output) or ["true"],
+                None,
+                "x",
+                "Remuxing",
+            )
+    assert raised.value.errno == errno.ENOSPC
+    assert ran == []
+    assert _audio_count(app, library_file) == 2

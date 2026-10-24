@@ -2017,6 +2017,17 @@ def test_a_tmdb_outage_retries_instead_of_rejecting(
         with app.app_context():
             assert localization_task(source) is True
             assert localization_pending(app.import_queue, basename)
+
+            # The TMDB tries have their own count. The transient count of
+            # the staging copy stays at 0.
+
+            (retry,) = [
+                job
+                for job in scheduled_jobs(app.import_queue)
+                if job.func_name == "app.videos.localization_task"
+            ]
+            assert retry.kwargs["tmdb_retries"] == 1
+            assert retry.kwargs["transient_retries"] == 0
         assert os.path.exists(source)
         assert basename not in rejected_files(app)
     finally:

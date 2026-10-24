@@ -137,3 +137,23 @@ def test_adopt_task_falls_back_to_a_fitzflix_rename(app, monkeypatch, tmp_path):
     assert (season / RENAMED).exists() and not (season / ORIGINAL).exists()
     assert refreshes == [{"name": "RescanSeries", "seriesId": 4}]
     assert app.import_queue.fetch_job(safe_job_id(RENAMED)) is not None
+
+
+def test_a_local_rename_without_a_sonarr_address_does_not_crash(
+    app, monkeypatch, tmp_path
+):
+    """With no Sonarr address, the rename must not try to send a rescan."""
+
+    import app.api.arr as arr
+    from app.sonarr_push import rename_download_locally
+
+    monkeypatch.setitem(app.config, "SONARR_URL", "")
+    sent = []
+    monkeypatch.setattr(arr, "send_arr_command", lambda *args: sent.append(args))
+    (tmp_path / "a.mkv").write_bytes(b"episode")
+
+    with app.app_context():
+        rename_download_locally(str(tmp_path / "a.mkv"), str(tmp_path / "b.mkv"), 5)
+
+    assert (tmp_path / "b.mkv").exists()
+    assert sent == []

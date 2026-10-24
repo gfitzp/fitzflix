@@ -14,6 +14,7 @@ app.videos. The functions here import it lazily. Thus, the module
 import direction stays one-way.
 """
 
+import errno
 import hashlib
 import json
 import os
@@ -43,6 +44,10 @@ from app.smb_probe import library_path, probe_and_record
 # disk at the same time (#298).
 
 STAGED_REMUX_FACTOR = 2.2
+
+# The free space that an in-place remux keeps beyond its second copy.
+
+IN_PLACE_REMUX_MARGIN = 1024**3
 
 
 def _on_volume_of(path, directory):
@@ -111,6 +116,18 @@ def remux_file(file_path, build_command, job, name, activity):
             staged = False
 
     if not staged:
+        # The in-place remux writes a second copy next to the file. Check
+        # the space first. A remux that fails with a full disk fills the
+        # shared SSD to 0 bytes for a moment, and the other imports fail
+        # (#262). A caller that waits for space retries.
+
+        needed = os.path.getsize(file_path) + IN_PLACE_REMUX_MARGIN
+        free = shutil.disk_usage(directory).free
+        if free < needed:
+            raise OSError(
+                errno.ENOSPC,
+                f"'{name}' needs {needed} bytes for an in-place remux, {free} are free",
+            )
         hidden_output = os.path.join(directory, f".{basename}.remux.mkv")
         try:
             _run_mkvmerge(build_command(file_path, hidden_output), job, name, activity)
@@ -386,6 +403,18 @@ def record_filesize(file, size_bytes):
     file.filesize_bytes = size_bytes
 
 
+def _fresh_file(file_id):
+    """Return the File row of a task in a new transaction, after slow file work.
+
+    The task read the row before the work. MariaDB refuses an UPDATE of a
+    row that a different worker changed after that read (error 1020).
+    The rollback ends the old read view. The caller must have no pending
+    changes."""
+
+    db.session.rollback()
+    return db.session.get(File, file_id)
+
+
 def _flag_rewritten_archive(file_id):
     """Mark the archive of a rewritten library file as stale.
 
@@ -582,11 +611,14 @@ def _language_table():
     for line in listing.splitlines():
         # The format is "English language name | ISO 639-3 | ISO 639-2 |
         # ISO 639-1". The header and rule rows fail the 3-character check.
-        # The 639-3-only languages also fail it. They have no code that
-        # the records can hold
+        # A 639-3-only language (Cantonese "yue", Mandarin "cmn") keeps an
+        # empty 639-2 column. The dropdowns leave it out, but a track can
+        # hold its code, and mkvpropedit sets it
 
         columns = [column.strip() for column in line.split("|")]
-        if len(columns) < 4 or len(columns[2]) != 3:
+        if len(columns) < 4:
+            continue
+        if len(columns[2]) != 3 and not (not columns[2] and len(columns[1]) == 3):
             continue
 
         rows.append(tuple(columns[:4]))
@@ -607,10 +639,20 @@ def iso_639_2_languages():
 
     return tuple(
         sorted(
-            ((iso_639_2, name) for name, _, iso_639_2, _ in rows),
+            ((iso_639_2, name) for name, _, iso_639_2, _ in rows if iso_639_2),
             key=lambda language: language[1].lower(),
         )
     )
+
+
+@lru_cache(maxsize=1)
+def _code_names():
+    """Map each code that a track can hold to its name: 639-2, or 639-3 with no 639-2."""
+
+    return {
+        iso_639_2 or iso_639_3: name
+        for name, iso_639_3, iso_639_2, _ in _language_table()
+    }
 
 
 @lru_cache(maxsize=1)
@@ -623,10 +665,16 @@ def _language_aliases():
     """
 
     aliases = {}
-    for name, iso_639_3, iso_639_2, iso_639_1 in _language_table():
+
+    # The 639-2 rows come first. Thus, a name that a 639-3-only language
+    # shares maps to the 639-2 code.
+
+    rows = sorted(_language_table(), key=lambda row: not row[2])
+    for name, iso_639_3, iso_639_2, iso_639_1 in rows:
+        code = iso_639_2 or iso_639_3
         for alias in (name, iso_639_3, iso_639_2, iso_639_1):
             if alias:
-                aliases.setdefault(alias.lower(), iso_639_2)
+                aliases.setdefault(alias.lower(), code)
 
     for terminologic, bibliographic in ISO_639_2_TERMINOLOGIC.items():
         if bibliographic in aliases:
@@ -648,7 +696,7 @@ def language_names():
     track stored as "deu" still shows as German.
     """
 
-    names = dict(iso_639_2_languages())
+    names = _code_names() or dict(iso_639_2_languages())
     return {
         alias: names[code]
         for alias, code in _language_aliases().items()
@@ -707,7 +755,7 @@ def library_language_choices():
     codes |= {
         iso_639_2
         for name, iso_639_3, iso_639_2, iso_639_1 in _language_table()
-        if iso_639_1
+        if iso_639_1 and iso_639_2
     }
     codes |= {
         "und",
@@ -716,7 +764,7 @@ def library_language_choices():
     }
     codes.discard(None)
 
-    names = dict(iso_639_2_languages())
+    names = _code_names() or dict(iso_639_2_languages())
     choices = tuple(
         sorted(
             ((code, names.get(code, code)) for code in codes),
@@ -893,9 +941,6 @@ def mkvpropedit_unlocked(
                 job.meta["description"] = f"'{file.basename}' — Updating MKV properties"
                 job.meta["progress"] = -1
                 job.save_meta()
-
-            FileAudioTrack.query.filter_by(file_id=file.id).delete()
-            FileSubtitleTrack.query.filter_by(file_id=file.id).delete()
 
             media_info = MediaInfo.parse(file_path)
             audio_tracks = get_audio_tracks_from_file(file_path)
@@ -1100,6 +1145,17 @@ def mkvpropedit_unlocked(
             output_audio_tracks = get_audio_tracks_from_file(file_path)
             output_subtitle_tracks = get_subtitle_tracks_from_file(file_path)
 
+            # The file work can take 30 minutes (a remux). A transaction
+            # from before it fails its writes with MariaDB error 1020 if a
+            # triage click or an upload changed the row. A delete of the
+            # track rows before it held their locks for the whole remux,
+            # and a new import waited past the lock timeout. Thus, the
+            # writes start a new transaction here.
+
+            file = _fresh_file(file.id)
+            FileAudioTrack.query.filter_by(file_id=file.id).delete()
+            FileSubtitleTrack.query.filter_by(file_id=file.id).delete()
+
             # Set the audio track info of the file
 
             for i, track in enumerate(output_audio_tracks):
@@ -1228,9 +1284,6 @@ def mkvmerge_unlocked(file_id, audio_tracks, subtitle_tracks):
             file = File.query.filter_by(id=file_id).first()
             file_path = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
 
-            FileAudioTrack.query.filter_by(file_id=file.id).delete()
-            FileSubtitleTrack.query.filter_by(file_id=file.id).delete()
-
             audio_start = None
             subtitle_start = None
 
@@ -1303,6 +1356,17 @@ def mkvmerge_unlocked(file_id, audio_tracks, subtitle_tracks):
 
             output_audio_tracks = get_audio_tracks_from_file(file_path)
             output_subtitle_tracks = get_subtitle_tracks_from_file(file_path)
+
+            # The file work can take 30 minutes (a remux). A transaction
+            # from before it fails its writes with MariaDB error 1020 if a
+            # triage click or an upload changed the row. A delete of the
+            # track rows before it held their locks for the whole remux,
+            # and a new import waited past the lock timeout. Thus, the
+            # writes start a new transaction here.
+
+            file = _fresh_file(file.id)
+            FileAudioTrack.query.filter_by(file_id=file.id).delete()
+            FileSubtitleTrack.query.filter_by(file_id=file.id).delete()
 
             # Set the audio track info of the file
 
@@ -1761,8 +1825,12 @@ def supplement_lossless_tracks(file_path, file_id=None):
                     "-y",
                     "-i",
                     file_path,
+                    # "V" is each video track, but not an attached
+                    # picture. ffmpeg shows a cover-art attachment as a
+                    # video stream. With "v", it became a second video
+                    # track.
                     "-map",
-                    "0:v",
+                    "0:V",
                     "-c:v",
                     "copy",
                 ]
@@ -1935,7 +2003,7 @@ def _remux_audio_plan_unlocked(file_id, plan):
                     "-i",
                     staging_source,
                     "-map",
-                    "0:v",
+                    "0:V",
                     "-c:v",
                     "copy",
                 ]
@@ -2012,8 +2080,10 @@ def _remux_audio_plan_unlocked(file_id, plan):
                     os.remove(hidden_library)
                 raise
 
-            # Build the track records again because the file changed
+            # Build the track records again because the file changed. A new
+            # transaction avoids MariaDB error 1020 after the long remux.
 
+            file = _fresh_file(file.id)
             FileAudioTrack.query.filter_by(file_id=file.id).delete()
             FileSubtitleTrack.query.filter_by(file_id=file.id).delete()
             for i, track in enumerate(new_audio_tracks):

@@ -7,6 +7,11 @@ maintenance page works end-to-end and writes no log lines.
 import logging
 import re
 
+import pytest
+from wtforms.validators import ValidationError
+
+from tests.conftest import ADMIN_EMAIL
+
 
 def csrf_token_from(page_html):
     match = re.search(r'name="csrf_token"[^>]*value="([^"]+)"', page_html)
@@ -664,3 +669,42 @@ def test_tv_shopping_sees_episodes_only_a_wider_worse_file_holds(app, admin_clie
     page = admin_client.get("/shopping-list/tv").get_data(as_text=True)
     start = page.index(">Overlap Show</a>")
     assert "Buy on Blu-Ray" in page[start : start + 600]
+
+
+def test_a_case_only_email_change_is_not_a_different_account(app, monkeypatch):
+    """The email collation finds the account of the user for a case change.
+
+    The test DB compares with case. The fake lookup compares without case,
+    as the MariaDB collation does."""
+
+    from types import SimpleNamespace
+
+    import app.main.forms as forms
+    from app.main.forms import EditProfileForm
+
+    accounts = [SimpleNamespace(email=ADMIN_EMAIL)]
+
+    def filter_by(email):
+        """Return the accounts that match the email without case."""
+
+        found = [a for a in accounts if a.email.casefold() == email.casefold()]
+        return SimpleNamespace(first=lambda: found[0] if found else None)
+
+    monkeypatch.setattr(
+        forms, "User", SimpleNamespace(query=SimpleNamespace(filter_by=filter_by))
+    )
+
+    with app.test_request_context(method="POST"):
+        form = EditProfileForm(
+            ADMIN_EMAIL, meta={"csrf": False}, data={"email": ADMIN_EMAIL.upper()}
+        )
+        form.validate_email(form.email)
+
+        # A different account still blocks the change.
+        other = EditProfileForm(
+            "someone@example.test",
+            meta={"csrf": False},
+            data={"email": ADMIN_EMAIL.upper()},
+        )
+        with pytest.raises(ValidationError, match="different email"):
+            other.validate_email(other.email)

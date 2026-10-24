@@ -440,7 +440,10 @@ def rename_download_locally(downloaded_path, new_path, movie_id):
     if downloaded_path != new_path:
         shutil.move(downloaded_path, new_path)
         current_app.logger.info(f"'{downloaded_path}' renamed as '{new_path}'")
-    if movie_id:
+    # Radarr can send a webhook when Fitzflix has no Radarr address. The
+    # rename is done, so the caller must still get to the localization.
+
+    if movie_id and radarr_configured():
         current_app.logger.info(
             f"Rescanning movie '{os.path.dirname(downloaded_path)}'"
         )

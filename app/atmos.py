@@ -1150,8 +1150,12 @@ def _atmos_finish(state, phases):
                 pass
             raise
 
-        # Rebuild the track records because the file changed.
+        # Rebuild the track records because the file changed. The run took
+        # minutes since the File row was read. A new transaction avoids
+        # MariaDB error 1020 when a triage click or an upload changed it.
 
+        db.session.rollback()
+        file = db.session.get(File, file.id)
         FileAudioTrack.query.filter_by(file_id=file.id).delete()
         FileSubtitleTrack.query.filter_by(file_id=file.id).delete()
 

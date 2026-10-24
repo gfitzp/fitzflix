@@ -107,7 +107,10 @@ def rename_download_locally(downloaded_path, new_path, series_id, series_title=N
     if downloaded_path != new_path:
         shutil.move(downloaded_path, new_path)
         current_app.logger.info(f"'{downloaded_path}' renamed as '{new_path}'")
-    if series_id:
+    # Sonarr can send a webhook when Fitzflix has no Sonarr address. The
+    # rename is done, so the caller must still get to the localization.
+
+    if series_id and sonarr_configured():
         current_app.logger.info(f"Rescanning series '{series_title or series_id}'")
         send_arr_command(
             "Sonarr",

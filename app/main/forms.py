@@ -57,9 +57,13 @@ class EditProfileForm(FlaskForm):
     def validate_email(self, email):
         """Reject an address that a different account already uses."""
 
+        # The email collation ignores case and accents. A change of only
+        # case or accents finds the account of the user. That match is not
+        # a different account.
+
         if email.data != self.original_email:
             user = User.query.filter_by(email=self.email.data).first()
-            if user is not None:
+            if user is not None and user.email != self.original_email:
                 raise ValidationError("Please use a different email address.")
 
 

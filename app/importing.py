@@ -575,6 +575,7 @@ def localization_task(
     transient_retries=0,
     completeness_retries=0,
     space_waits=0,
+    tmdb_retries=0,
 ):
     """Archive an untouched file and remove the unnecessary language tracks.
 
@@ -766,22 +767,27 @@ def localization_task(
             current_app.logger.info(f"'{basename}' File details: {file_details}")
             if not file_details:
                 reason = getattr(file_details, "reason", None)
-                if reason == TMDB_UNREACHABLE and transient_retries < TMDB_RETRIES:
+                # The TMDB tries have their own count. The transient count
+                # limits the retries of an I/O error in the staging copy.
+
+                if reason == TMDB_UNREACHABLE and tmdb_retries < TMDB_RETRIES:
                     current_app.import_queue.enqueue_in(
                         timedelta(minutes=30),
                         "app.videos.localization_task",
                         file_path=file_path,
                         force_upload=force_upload,
                         ignore_etag=ignore_etag,
-                        transient_retries=transient_retries + 1,
+                        transient_retries=transient_retries,
                         completeness_retries=completeness_retries,
+                        space_waits=space_waits,
+                        tmdb_retries=tmdb_retries + 1,
                         job_timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
                         job_id=retry_job_id(
                             "localization_task",
                             f"'{basename}'",
-                            transient_retries + 1,
+                            transient_retries,
                             completeness_retries,
-                            "tmdb",
+                            f"tmdb{tmdb_retries + 1}",
                         ),
                         result_ttl=86400,
                         description=f"'{basename}'",
@@ -1824,10 +1830,12 @@ def move_localized_file(
 
         destination_hidden = os.path.join(output_directory, f".{basename}")
 
-        def wait_for_space(needed, shortfall):
+        def wait_for_space(needed, shortfall, directory=None):
             """Book the copy again after SPACE_WAIT. Keep the title lock."""
 
-            _log_space_wait(basename, output_directory, needed, shortfall, space_waits)
+            _log_space_wait(
+                basename, directory or output_directory, needed, shortfall, space_waits
+            )
             mark_space_wait(os.path.basename(source_path))
             _hold_title_lock(lock, basename)
 
@@ -1909,7 +1917,7 @@ def move_localized_file(
                 needed = os.path.getsize(hidden_output_file) + SPACE_RESERVE
                 free = shutil.disk_usage(work_dir).free
                 if free < needed:
-                    return wait_for_space(needed, needed - free)
+                    return wait_for_space(needed, needed - free, directory=work_dir)
                 raise
 
             try:

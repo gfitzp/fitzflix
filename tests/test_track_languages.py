@@ -341,7 +341,7 @@ def test_the_dropdown_offers_the_639_1_set_not_the_whole_iso_table(app, admin_cl
             major = {
                 iso_639_2
                 for name, iso_639_3, iso_639_2, iso_639_1 in _language_table()
-                if iso_639_1
+                if iso_639_1 and iso_639_2
             }
             assert major and major <= codes
 
@@ -611,3 +611,15 @@ def test_a_terminologic_code_reads_as_a_name_and_is_not_a_change(app, admin_clie
         assert jobs[0].args[4] is None, "an untouched box rewrote the language"
     finally:
         os.remove(library_path)
+
+
+def test_a_639_3_only_language_resolves(app):
+    """Cantonese and Mandarin have no 639-2 code. A track can still hold them."""
+
+    from app.tracks import iso_639_2_languages, language_names, resolve_language_code
+
+    with app.app_context():
+        assert resolve_language_code("yue") == "yue"
+        assert resolve_language_code("cmn") == "cmn"
+        assert language_names()["yue"] == "Yue Chinese"
+        assert "yue" not in dict(iso_639_2_languages())

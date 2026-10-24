@@ -476,4 +476,4 @@ def test_the_flac_pass_keeps_the_attachments(app, monkeypatch, tmp_path):
     (command,) = commands
     pairs = list(zip(command, command[1:]))
     assert ("-map", "0:t?") in pairs
-    assert ("-map", "0:v") in pairs
+    assert ("-map", "0:V") in pairs
