@@ -562,6 +562,32 @@
 				return form;
 			}
 
+			// An admin can remove a "no job in queue" row. queue.html sets
+			// window.queueDismiss for an admin only. This is the twin of
+			// the queue-dismiss form in queue.html.
+
+			function dismissForm(trail) {
+				var form = document.createElement("form");
+				form.method = "post";
+				form.action = window.queueDismiss.url;
+				form.className = "queue-dismiss";
+				[["csrf_token", window.queueDismiss.token], ["digest", trail.digest]].forEach(function(pair) {
+					var input = document.createElement("input");
+					input.type = "hidden";
+					input.name = pair[0];
+					input.value = pair[1];
+					form.appendChild(input);
+				});
+				var button = document.createElement("button");
+				button.type = "submit";
+				button.className = "btn btn-sm btn-outline-secondary";
+				button.title = "Remove this row";
+				button.setAttribute("aria-label", "Dismiss");
+				button.textContent = "\u00d7";
+				form.appendChild(button);
+				return form;
+			}
+
 			function trailSettled(trail) {
 				var last = trail.entries[trail.entries.length - 1];
 				return !last || last.status === "done";
@@ -622,7 +648,9 @@
 				orphans.forEach(function(trail) {
 					var row = document.createElement("tr");
 					row.className = "d-flex";
-					row.appendChild(positionCell("—"));
+					var position = positionCell("—");
+					if (window.queueDismiss && trail.digest) position.appendChild(dismissForm(trail));
+					row.appendChild(position);
 					var orphanCell = trailCell(null, trail);
 					orphanCell.appendChild(phoneTimes(null, trail));
 					row.appendChild(orphanCell);

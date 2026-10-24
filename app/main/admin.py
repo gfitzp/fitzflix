@@ -32,6 +32,7 @@ from app.main.forms import (
     HeldImportForm,
     LossyAudioTriageForm,
     ManualImportForm,
+    QueueDismissForm,
     QueueFrontForm,
     MissingRestoreForm,
     MissingScanForm,
@@ -1717,7 +1718,28 @@ def queue():
         title="Queue",
         rows=queue_rows(details["all"], trails),
         front_form=QueueFrontForm() if current_user.admin else None,
+        dismiss_form=QueueDismissForm() if current_user.admin else None,
     )
+
+
+@bp.route("/queue/dismiss", methods=["POST"])
+@login_required
+@admin_required
+def queue_dismiss():
+    """Remove a "no job in queue" row from the Queue page.
+
+    The row is the pipeline trail of a file with no job left to list
+    under. A trail with a live waiting job stays."""
+
+    from app.pipeline import dismiss_trail
+
+    form = QueueDismissForm()
+    if not form.validate_on_submit():
+        flash("The form is not valid. Load the page again.", "danger")
+        return redirect(url_for("main.queue"))
+    if not dismiss_trail(current_app.redis, form.digest.data):
+        flash("That file has a job in a queue now. Its row stays.", "warning")
+    return redirect(url_for("main.queue"))
 
 
 @bp.route("/queue/front", methods=["POST"])

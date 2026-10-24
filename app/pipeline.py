@@ -812,13 +812,32 @@ def close_trail(connection, job_id):
         connection.delete(CONTINUES_KEY.format(job_id=job_id))
 
 
-def _job_alive(connection, job_id):
-    """Return True if rq knows the job, or a later job continues its chips."""
+# The status of an ended rq job, and the chip status that settles it.
 
-    return bool(
-        connection.exists(f"rq:job:{job_id}")
-        or connection.exists(CONTINUES_KEY.format(job_id=job_id))
-    )
+SETTLED_STATUS = {
+    "finished": "done",
+    "failed": "failed",
+    "stopped": "failed",
+    "canceled": "failed",
+}
+
+
+def _waiting_chip_fate(connection, job_id):
+    """Return what happens to a waiting chip of a job.
+
+    None keeps the chip. "gone" removes it, because rq does not know
+    the job. "done" or "failed" settles it, because the job ended and
+    its own stamp was lost. On 2026-10-22, 6 track jobs failed before
+    the failure stamp could find their file. Their chips stayed
+    "queued" for 7 days."""
+
+    if connection.exists(CONTINUES_KEY.format(job_id=job_id)):
+        return None
+    status = connection.hget(f"rq:job:{job_id}", "status")
+    if status is None:
+        return None if connection.exists(f"rq:job:{job_id}") else "gone"
+    status = status.decode() if isinstance(status, bytes) else status
+    return SETTLED_STATUS.get(status)
 
 
 def trail_continues(job):
@@ -884,7 +903,7 @@ def first_enqueued(connection, job):
 
 
 def _heal_orphaned_entries(connection, digest, entries):
-    """Remove the trail entries of jobs that rq does not know.
+    """Remove or settle the waiting chips of jobs that are not waiting.
 
     A queued job that is cancelled and deleted outside the pipeline
     leaves its "queued" stamp on the trail for ever. Nothing advances
@@ -893,13 +912,16 @@ def _heal_orphaned_entries(connection, digest, entries):
     re-archives of 2026-08-29, and the tenth one found on 2026-08-31.
     Fitzflix writes the stamp only after the own job hash of rq exists.
     Thus, a waiting or running chip with no job hash is orphaned. It is
-    not early.
+    not early. This removes those entries.
 
-    This removes those entries. Terminal chips (done, failed) are
-    history and always stay. This returns the entries that remain, or
-    None if the full trail was orphaned and deleted. This is advisory,
-    like each trail write. On a failure, it returns the entries as they
-    were.
+    A job that ended can also keep a waiting chip, when its own stamp
+    was lost. This settles that chip to "done" or "failed", from the
+    status of the job in rq.
+
+    Terminal chips (done, failed) are history and always stay. This
+    returns the entries that remain, or None if the full trail was
+    orphaned and deleted. This is advisory, like each trail write. On a
+    failure, it returns the entries as they were.
     """
 
     from redis import WatchError
@@ -912,7 +934,7 @@ def _heal_orphaned_entries(connection, digest, entries):
             if entry.get("status") in waiting and entry.get("job")
         }
         if not candidates or all(
-            _job_alive(connection, job_id) for job_id in candidates
+            _waiting_chip_fate(connection, job_id) is None for job_id in candidates
         ):
             return entries
 
@@ -927,16 +949,23 @@ def _heal_orphaned_entries(connection, digest, entries):
                 # keeps the chip of a job that was just revived.
 
                 trail = _decode_trail(pipe.hget(key, "trail"))
-                kept = [
-                    entry
-                    for entry in trail
-                    if not (
+                kept = []
+                changed = False
+                for entry in trail:
+                    fate = None
+                    if (
                         entry.get("status") in waiting
                         and entry.get("job") in candidates
-                        and not _job_alive(pipe, entry.get("job"))
-                    )
-                ]
-                if len(kept) == len(trail):
+                    ):
+                        fate = _waiting_chip_fate(pipe, entry.get("job"))
+                    if fate == "gone":
+                        changed = True
+                        continue
+                    if fate in ("done", "failed"):
+                        entry = dict(entry, status=fate)
+                        changed = True
+                    kept.append(entry)
+                if not changed:
                     return kept
                 pipe.multi()
                 if kept:
@@ -960,6 +989,38 @@ def _heal_orphaned_entries(connection, digest, entries):
         except Exception:
             pass
         return entries
+
+
+def dismiss_trail(connection, digest):
+    """Delete the trail of 1 file from the queue page (an admin Dismiss).
+
+    The button shows only on a "no job in queue" row. A trail with a
+    waiting chip of a live job is still work in line. Thus, it stays,
+    and this returns False. Otherwise, this deletes the trail and
+    returns True. A trail that is already gone also returns True."""
+
+    from redis import WatchError
+
+    key = FILE_KEY.format(digest=digest)
+    waiting = ("queued", "scheduled", "started")
+    with connection.pipeline() as pipe:
+        try:
+            pipe.watch(key)
+            for entry in _decode_trail(pipe.hget(key, "trail")):
+                if (
+                    entry.get("status") in waiting
+                    and entry.get("job")
+                    and _waiting_chip_fate(pipe, entry.get("job")) is None
+                ):
+                    return False
+            pipe.multi()
+            pipe.delete(key)
+            pipe.delete(ALIAS_KEY.format(digest=digest))
+            pipe.zrem(ACTIVE_KEY, digest)
+            pipe.execute()
+            return True
+        except WatchError:
+            return False
 
 
 def _stem(name):
@@ -1115,6 +1176,7 @@ def pipeline_trails(connection, limit=25, journey_only=False):
             trails.append(
                 {
                     "basename": decoded.get("basename"),
+                    "digest": digest,
                     "updated": decoded.get("updated"),
                     "entries": entries,
                 }

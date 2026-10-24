@@ -23,6 +23,14 @@
 		token: {{ csrf_token()|tojson }}
 	};
 	{% endif %}
+	{% if dismiss_form %}
+	{# An admin can remove a "no job in queue" row. renderAll in
+	   base.html builds the same form on each repaint. #}
+	window.queueDismiss = {
+		url: {{ url_for('main.queue_dismiss')|tojson }},
+		token: {{ csrf_token()|tojson }}
+	};
+	{% endif %}
 </script>
 <div class="table-responsive">
 {# On a phone, the 2 time columns do not show (the queue-table rules in
@@ -47,6 +55,13 @@
 					<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 					<input type="hidden" name="job_id" value="{{ row.task.id }}">
 					<button type="submit" class="btn btn-sm btn-outline-secondary" title="Move to the front of its queue" aria-label="Move to front">&#x2912;</button>
+				</form>
+				{%- endif %}
+				{%- if dismiss_form and not row.task and row.trail %}
+				<form method="post" action="{{ url_for('main.queue_dismiss') }}" class="queue-dismiss">
+					<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+					<input type="hidden" name="digest" value="{{ row.trail.digest }}">
+					<button type="submit" class="btn btn-sm btn-outline-secondary" title="Remove this row" aria-label="Dismiss">&times;</button>
 				</form>
 				{%- endif %}</th>
 			<td class="col-5 col-sm-5 col-lg-7 queue-file">

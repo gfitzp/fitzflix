@@ -6,6 +6,8 @@ the queue page."""
 
 from datetime import timedelta
 
+import pytest
+
 from tests.factories import make_movie, make_movie_file
 
 
@@ -785,6 +787,47 @@ def test_healing_keeps_terminal_history(app):
     trails = pipeline_trails(app.redis)
     assert len(trails) == 1
     assert [entry["status"] for entry in trails[0]["entries"]] == ["done"]
+
+
+@pytest.mark.parametrize(
+    "rq_status,chip",
+    [("failed", "failed"), ("finished", "done"), ("stopped", "failed")],
+)
+def test_an_ended_jobs_waiting_chip_settles(app, rq_status, chip):
+    """Settle the waiting chip of a job that ended without its stamp.
+
+    On 2026-10-22, 6 track jobs failed before the failure stamp could
+    find their file. rq keeps a failed job for a year. Thus, the chips
+    stayed "queued" until the trail expired."""
+
+    from app.pipeline import pipeline_trails
+
+    with app.app_context():
+        job = app.import_queue.enqueue(
+            "app.videos.localization_task",
+            args=("/import/Trail Ended (2025) - [DVD].mkv",),
+        )
+    app.redis.hset(f"rq:job:{job.id}", "status", rq_status)
+
+    trails = pipeline_trails(app.redis)
+    assert [entry["status"] for entry in trails[0]["entries"]] == [chip]
+
+
+def test_a_continued_jobs_chip_does_not_settle(app):
+    """A finished job whose run a later job continues keeps its chip."""
+
+    from app.pipeline import keep_trail_open, pipeline_trails
+
+    with app.app_context():
+        job = app.import_queue.enqueue(
+            "app.videos.localization_task",
+            args=("/import/Trail Continued (2025) - [DVD].mkv",),
+        )
+    app.redis.hset(f"rq:job:{job.id}", "status", "finished")
+    keep_trail_open(app.redis, job.id, 600)
+
+    trails = pipeline_trails(app.redis)
+    assert [entry["status"] for entry in trails[0]["entries"]] == ["queued"]
 
 
 def test_a_live_waiting_chip_never_heals(app):

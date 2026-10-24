@@ -24,6 +24,7 @@ from wtforms.validators import (
     Length,
     NumberRange,
     Optional,
+    Regexp,
     ValidationError,
 )
 from wtforms.widgets import HiddenInput
@@ -481,6 +482,13 @@ class QueueFrontForm(FlaskForm):
 
     job_id = HiddenField(validators=[DataRequired()])
     front_submit = SubmitField("Move to front")
+
+
+class QueueDismissForm(FlaskForm):
+    """Remove a "no job in queue" row from the Queue page."""
+
+    digest = HiddenField(validators=[DataRequired(), Regexp(r"^[0-9a-f]{16}$")])
+    dismiss_submit = SubmitField("Dismiss")
 
 
 class SettingsForm(FlaskForm):
