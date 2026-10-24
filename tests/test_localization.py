@@ -1954,3 +1954,85 @@ def test_a_failure_after_the_commit_keeps_the_imported_file(
     assert basename not in rejected_files(app)
     assert not os.path.exists(source)
     os.remove(output)
+
+
+def test_a_staging_remux_short_of_space_waits_instead_of_rejecting(
+    app, incoming_dir, monkeypatch
+):
+    """The inspection remux needs a second copy on staging. A shortage waits (#262)."""
+
+    import subprocess
+    from types import SimpleNamespace
+
+    from app import importing
+
+    basename = "Short Staging (2021) - [DVD].mkv"
+    source, hidden, details = space_move_fixture(app, incoming_dir, basename)
+
+    def failing_inspection(*args, **kwargs):
+        raise subprocess.CalledProcessError(2, "mkvmerge")
+
+    monkeypatch.setattr(videos, "inspect_localized_file", failing_inspection)
+    monkeypatch.setattr(importing, "inspect_localized_file", failing_inspection)
+    monkeypatch.setattr(
+        importing.shutil, "disk_usage", lambda path: SimpleNamespace(free=0)
+    )
+    try:
+        with app.app_context():
+            result = videos.move_localized_file(
+                source, details, "lock-sentinel", hidden
+            )
+        assert result is False
+        waits = [
+            job.id
+            for job in scheduled_jobs(app.handoff_queue)
+            if job.id.startswith("retry_")
+        ]
+        assert waits == [
+            retry_job_id("move_localized_file", f"'{basename}'", 0, "space1")
+        ]
+        assert os.path.exists(hidden) and os.path.exists(source)
+        assert basename not in rejected_files(app)
+    finally:
+        os.remove(source)
+        os.remove(hidden)
+
+
+def test_a_tmdb_outage_retries_instead_of_rejecting(
+    app, sample_mkv, incoming_dir, monkeypatch
+):
+    from app import importing
+    from app.importing import localization_pending
+
+    monkeypatch.setattr(
+        importing,
+        "evaluate_filename",
+        lambda path, **kw: importing.FilenameRejection(importing.TMDB_UNREACHABLE),
+    )
+    basename = "Unseen Film {tmdb-999123} - [DVD].mkv"
+    source = os.path.join(incoming_dir, basename)
+    with open(sample_mkv, "rb") as f_in, open(source, "wb") as f_out:
+        f_out.write(f_in.read())
+    try:
+        with app.app_context():
+            assert localization_task(source) is True
+            assert localization_pending(app.import_queue, basename)
+        assert os.path.exists(source)
+        assert basename not in rejected_files(app)
+    finally:
+        os.remove(source)
+
+
+def test_a_name_too_long_for_the_work_files_is_rejected_clearly(app, incoming_dir):
+    """The work files add bytes to the name. A name system allows 255 bytes."""
+
+    from app import importing
+
+    basename = ("Very Long Title " * 14).strip() + " (2001) - [DVD].mkv"
+    assert importing.MAX_NAME_BYTES < len(basename.encode()) <= 255
+    source = os.path.join(incoming_dir, basename)
+    with open(source, "wb") as f:
+        f.write(b"x")
+    with app.app_context():
+        assert localization_task(source) is False
+    assert basename in rejected_files(app)

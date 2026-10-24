@@ -1373,8 +1373,19 @@ def get_audio_tracks_from_file(file_path):
                 audio_track["language_name"] = language[0]
 
             else:
+                # A language with no 2-letter code (Cantonese "yue",
+                # Mandarin "cmn", Filipino "fil") has only 3 elements. The
+                # 3-letter code is among them. As "und", the track did not
+                # match its own language. The import dropped it, and a film
+                # with only that audio came in silent.
+
                 audio_track["language"] = "und"
                 audio_track["language_name"] = "Undetermined"
+                for element in language:
+                    if len(element) == 3:
+                        audio_track["language"] = element
+                        audio_track["language_name"] = language[0]
+                        break
 
             audio_track["streamorder"] = (
                 int(track.to_data().get("streamorder"))
@@ -1695,6 +1706,8 @@ def supplement_lossless_tracks(file_path, file_id=None):
     from app.videos import wait_for_subprocess
 
     with app.app_context():
+        temp_flac_file = None
+        flac_track_process = None
         try:
             job = get_current_job()
 
@@ -1749,8 +1762,8 @@ def supplement_lossless_tracks(file_path, file_id=None):
                     "-i",
                     file_path,
                     "-map",
-                    "0:v:0",
-                    "-c:v:0",
+                    "0:v",
+                    "-c:v",
                     "copy",
                 ]
                 + audio_args
@@ -1758,6 +1771,12 @@ def supplement_lossless_tracks(file_path, file_id=None):
                     "-map",
                     "0:s:?",
                     "-c:s",
+                    "copy",
+                    # The attachments: the fonts of styled ASS subtitles.
+                    # Without this map, ffmpeg dropped them.
+                    "-map",
+                    "0:t?",
+                    "-c:t",
                     "copy",
                     temp_flac_file,
                 ],
@@ -1802,8 +1821,20 @@ def supplement_lossless_tracks(file_path, file_id=None):
             if file_id:
                 track_metadata_scan_task(file_id)
 
-        except Exception:
+        except BaseException:
             current_app.logger.error(traceback.format_exc())
+
+            # The partial output is as large as the file. The cleanup of the
+            # import does not know its name. A job timeout leaves ffmpeg
+            # writing, so stop it first.
+
+            if flac_track_process is not None and flac_track_process.poll() is None:
+                flac_track_process.kill()
+            if temp_flac_file and os.path.exists(temp_flac_file):
+                try:
+                    os.remove(temp_flac_file)
+                except OSError:
+                    pass
             raise
 
         else:
@@ -1904,12 +1935,14 @@ def _remux_audio_plan_unlocked(file_id, plan):
                     "-i",
                     staging_source,
                     "-map",
-                    "0:v:0",
-                    "-c:v:0",
+                    "0:v",
+                    "-c:v",
                     "copy",
                 ]
                 + audio_args
-                + ["-map", "0:s:?", "-c:s", "copy", staging_output],
+                # The attachments (subtitle fonts) stay, as in the import pass.
+                + ["-map", "0:s:?", "-c:s", "copy", "-map", "0:t?", "-c:t", "copy"]
+                + [staging_output],
                 capture_output=True,
                 text=True,
             )

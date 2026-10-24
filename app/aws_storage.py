@@ -619,7 +619,24 @@ def sync_aws_s3_storage_task():
                     ),
                 )
 
+            # An import that waits for library space has no File row yet.
+            # Its wait has no limit. Its marker names its source. The key of
+            # its untouched/ upload comes from that name.
+
+            from app.importing import SPACE_WAIT_KEY
+
+            marker_prefix = SPACE_WAIT_KEY.format("")
+            waiting_keys = {
+                os.path.join(
+                    current_app.config["AWS_UNTOUCHED_PREFIX"],
+                    sanitize_s3_key(marker.decode()[len(marker_prefix) :]),
+                )
+                for marker in current_app.redis.scan_iter(f"{marker_prefix}*")
+            }
+
             for i, remote_key in enumerate(s3_keys):
+                if remote_key in waiting_keys:
+                    continue
                 if job:
                     job.meta["description"] = "Pruning extra files from AWS S3 storage"
                     job.meta["progress"] = int((i / len(s3_keys)) * 100)

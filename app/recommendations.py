@@ -1196,13 +1196,19 @@ def daily_shelf(
         # provider. Such a row still takes a leading slot. The frozen
         # cards keep their order behind the urgent rows, and the last
         # cards drop off to keep the size of the shelf.
-        # The test is the position, not the presence. The fill of empty
-        # slots and the slot replacement of frozen_shelf can put an urgent
-        # row in a later slot.
+        # The test is the leading slots as a set. The fill of empty slots
+        # and the slot replacement of frozen_shelf can put an urgent row in
+        # a later slot. The urgent rows follow the live scores. A new
+        # score order alone must not reorder the frozen shelf. Thus, the
+        # urgent rows that already lead keep their frozen order, and a
+        # late urgent row comes after them.
         urgent_ids = [key(row) for row in urgent if key(row) not in shown]
         lead = urgent_ids[:count]
-        if ids[: len(lead)] != lead:
-            ids = lead + [row_key for row_key in ids if row_key not in lead]
+        leading = ids[: len(lead)]
+        if set(leading) != set(lead):
+            kept = [row_key for row_key in leading if row_key in lead]
+            head = kept + [row_key for row_key in lead if row_key not in kept]
+            ids = head + [row_key for row_key in ids if row_key not in head]
             ids = ids[:count]
             redis_client.set(
                 SHELF_SNAPSHOT_KEY.format(

@@ -34,10 +34,12 @@ import array
 import json
 import math
 import os
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
+import textwrap
 import traceback
 
 from flask import current_app
@@ -291,10 +293,58 @@ def _hms(seconds):
     return f"{seconds // 3600}:{seconds % 3600 // 60:02d}:{seconds % 60:02d}"
 
 
-def _probe_cue_times(file_path, streamorder):
+# The bitmap subtitle codecs. ffmpeg overlays these on the picture. The
+# overlay cannot render text. The ffmpeg of this host has no libass, so it
+# has no subtitles filter either. Thus, a text track gets its caption drawn
+# with Pillow (_probe_text_cues and _render_snapshot).
+
+BITMAP_SUBTITLE_CODECS = {"hdmv_pgs_subtitle", "dvd_subtitle", "dvb_subtitle"}
+
+# A PGS caption is a show packet and then a small clear packet (30 bytes
+# on the library files). A clear packet is not a cue. A snapshot at its
+# time shows no subtitle.
+
+CLEAR_PACKET_BYTES = 64
+
+
+def _subtitle_stream(file_path, streamorder):
+    """Return (codec name, index among the subtitle streams) of 1 stream.
+
+    Return (None, None) if the probe fails."""
+
+    try:
+        result = subprocess.run(
+            [
+                current_app.config["FFPROBE_BIN"],
+                "-v",
+                "error",
+                "-select_streams",
+                "s",
+                "-show_entries",
+                "stream=index,codec_name",
+                "-of",
+                "json",
+                file_path,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+        streams = json.loads(result.stdout or "{}").get("streams") or []
+    except Exception:
+        current_app.logger.warning(traceback.format_exc())
+        return None, None
+    for position, stream in enumerate(streams):
+        if stream.get("index") == int(streamorder):
+            return stream.get("codec_name"), position
+    return None, None
+
+
+def _probe_cue_times(file_path, streamorder, bitmap=False):
     """Return the sorted cue start times for 1 subtitle stream.
 
-    This is the single full container read per track."""
+    This is the single full container read per track. For a bitmap
+    track, the small clear packets are not cues."""
 
     try:
         result = subprocess.run(
@@ -305,7 +355,7 @@ def _probe_cue_times(file_path, streamorder):
                 "-select_streams",
                 str(int(streamorder)),
                 "-show_entries",
-                "packet=pts_time",
+                "packet=pts_time,size",
                 "-of",
                 "csv=p=0",
                 file_path,
@@ -319,11 +369,63 @@ def _probe_cue_times(file_path, streamorder):
         return []
     cues = []
     for line in result.stdout.splitlines():
-        value = line.strip().rstrip(",")
+        fields = [field for field in line.strip().split(",") if field]
         try:
-            cues.append(float(value))
-        except ValueError:
+            time_value = float(fields[0])
+            size = int(fields[1]) if len(fields) > 1 else None
+        except (IndexError, ValueError):
             continue
+        if bitmap and size is not None and size < CLEAR_PACKET_BYTES:
+            continue
+        cues.append(time_value)
+    return sorted(cues)
+
+
+SRT_TIME = re.compile(r"(\d+):(\d{2}):(\d{2})[,.](\d{3}) -->")
+MARKUP = re.compile(r"<[^>]*>|\{[^}]*\}")
+
+
+def _probe_text_cues(file_path, streamorder):
+    """Return the sorted (start seconds, caption) pairs of 1 text subtitle stream.
+
+    ffmpeg converts the track to SubRip text with its own encoder. That
+    needs no libass, and it also reads ASS tracks. This is the single
+    full container read of a text track."""
+
+    try:
+        result = subprocess.run(
+            [
+                current_app.config["FFMPEG_BIN"],
+                "-v",
+                "error",
+                "-i",
+                file_path,
+                "-map",
+                f"0:{int(streamorder)}",
+                "-f",
+                "srt",
+                "-",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=3600,
+        )
+    except Exception:
+        current_app.logger.warning(traceback.format_exc())
+        return []
+    cues = []
+    for block in re.split(r"\n\s*\n", result.stdout.replace("\r", "")):
+        lines = block.strip().splitlines()
+        for position, line in enumerate(lines):
+            match = SRT_TIME.match(line.strip())
+            if match:
+                hours, minutes, seconds, millis = (int(part) for part in match.groups())
+                start = hours * 3600 + minutes * 60 + seconds + millis / 1000
+                caption = " ".join(
+                    MARKUP.sub("", text).strip() for text in lines[position + 1 :]
+                )
+                cues.append((start, caption.strip()))
+                break
     return sorted(cues)
 
 
@@ -373,8 +475,12 @@ def _build_timeline(cues, duration):
     }
 
 
-def _render_snapshot(file_path, streamorder, at, out_path):
+def _render_snapshot(file_path, streamorder, at, out_path, caption=None):
     """Render 1 frame with the subtitle burned in.
+
+    A bitmap track is overlaid. The overlay renders only bitmaps. For a
+    text track, the caller gives the caption text. ffmpeg renders the
+    plain frame, and Pillow draws the caption at the bottom.
 
     This function seeks the input to a point just before the cue and
     keeps the timestamps. It overlays the subtitle stream. Then it
@@ -395,6 +501,10 @@ def _render_snapshot(file_path, streamorder, at, out_path):
 
     seek = max(0.0, at - 0.4)
     try:
+        if caption is None:
+            graph = f"[0:v][0:{int(streamorder)}]overlay,scale=480:-2"
+        else:
+            graph = "[0:v]scale=480:-2"
         subprocess.run(
             [
                 current_app.config["FFMPEG_BIN"],
@@ -407,7 +517,7 @@ def _render_snapshot(file_path, streamorder, at, out_path):
                 "-i",
                 file_path,
                 "-filter_complex",
-                f"[0:v][0:{int(streamorder)}]overlay,scale=480:-2",
+                graph,
                 "-ss",
                 f"{at:.3f}",
                 "-frames:v",
@@ -419,9 +529,33 @@ def _render_snapshot(file_path, streamorder, at, out_path):
             capture_output=True,
             timeout=300,
         )
+        if caption and os.path.isfile(out_path):
+            _draw_caption(out_path, caption)
     except Exception:
         current_app.logger.warning(traceback.format_exc())
     return os.path.isfile(out_path)
+
+
+def _draw_caption(image_path, caption):
+    """Draw a subtitle caption at the bottom of a frame, white on a black outline."""
+
+    from PIL import Image, ImageDraw, ImageFont
+
+    image = Image.open(image_path).convert("RGB")
+    draw = ImageDraw.Draw(image)
+    font = ImageFont.load_default(size=max(12, image.height // 14))
+    lines = textwrap.wrap(caption, width=42)[:3]
+    y = image.height - 8
+    for line in reversed(lines):
+        left, top, right, bottom = draw.textbbox(
+            (0, 0), line, font=font, stroke_width=2
+        )
+        y -= bottom - top + 2
+        x = (image.width - (right - left)) // 2
+        draw.text(
+            (x, y), line, font=font, fill="white", stroke_width=2, stroke_fill="black"
+        )
+    image.save(image_path, quality=85)
 
 
 def generate_triage_snapshots(file_id):
@@ -453,7 +587,15 @@ def generate_triage_snapshots(file_id):
             out_dir = os.path.join(triage_snapshot_dir(file_id), str(track.track))
             if os.path.isfile(os.path.join(out_dir, "timeline.json")):
                 continue
-            cues = _probe_cue_times(file_path, track.streamorder)
+            codec, _position = _subtitle_stream(file_path, track.streamorder)
+            bitmap = codec in BITMAP_SUBTITLE_CODECS
+            captions = {}
+            if codec is not None and not bitmap:
+                text_cues = _probe_text_cues(file_path, track.streamorder)
+                cues = [start for start, _caption in text_cues]
+                captions = dict(text_cues)
+            else:
+                cues = _probe_cue_times(file_path, track.streamorder, bitmap=bitmap)
             if not cues:
                 continue
             os.makedirs(out_dir, exist_ok=True)
@@ -466,6 +608,7 @@ def generate_triage_snapshots(file_id):
                     track.streamorder,
                     cue + 0.3,
                     os.path.join(out_dir, f"snap-{number}.jpg"),
+                    caption=captions.get(cue) if captions else None,
                 )
             generated += 1
         current_app.logger.info(

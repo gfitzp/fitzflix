@@ -324,3 +324,32 @@ def test_a_new_eligible_film_fills_an_empty_slot_at_the_end(app):
         assert frozen_shelf(
             redis, 1, "watch", [6, 9, 8, 7], lambda: [], day=day, size=3
         ) == [7, 9, 8]
+
+
+def test_a_new_score_order_does_not_reorder_the_urgent_rows(app):
+    """The urgent rows follow live scores. The frozen shelf keeps its order."""
+
+    rows = [{"id": f"r{n}"} for n in range(6)]
+
+    def shelf(urgent):
+        return [
+            card["id"]
+            for card in daily_shelf(
+                app.redis,
+                1,
+                "unit-urgent-order",
+                rows,
+                set(),
+                key=lambda row: row["id"],
+                urgent=urgent,
+                day=date(2026, 9, 1),
+                count=6,
+            )
+        ]
+
+    with app.app_context():
+        first = shelf([{"id": "u1"}, {"id": "u2"}])
+        reordered = shelf([{"id": "u2"}, {"id": "u1"}])
+
+    assert first[:2] == ["u1", "u2"]
+    assert reordered == first

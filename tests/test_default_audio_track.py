@@ -175,3 +175,50 @@ def test_the_stored_track_rows_follow_the_reordered_file(app, three_audio_mkv):
             (2, "eng", False),
             (3, "fra", False),
         ]
+
+
+def test_audio_in_a_language_with_no_2_letter_code_keeps_its_code(app, tmp_path):
+    """Cantonese has no ISO 639-1 code. MediaInfo gives it 3 language elements."""
+
+    import subprocess
+
+    source = tmp_path / "source.mkv"
+    tagged = tmp_path / "cantonese.mkv"
+    subprocess.run(
+        [
+            app.config["FFMPEG_BIN"],
+            "-loglevel",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=duration=1:size=160x120:rate=10",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=duration=1",
+            "-c:v",
+            "libx264",
+            "-c:a",
+            "aac",
+            "-shortest",
+            str(source),
+        ],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        [
+            app.config["MKVMERGE_BIN"],
+            "-q",
+            "-o",
+            str(tagged),
+            "--language",
+            "1:yue",
+            str(source),
+        ],
+        check=True,
+        capture_output=True,
+    )
+    assert [language for language, _default in _audio(app, str(tagged))] == ["yue"]

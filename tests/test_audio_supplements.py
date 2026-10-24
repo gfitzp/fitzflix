@@ -352,3 +352,128 @@ def test_non_adjacent_flac_is_not_a_twin(app):
         ("flac", 2),
         ("copy", 2),
     ]
+
+
+def test_a_failed_flac_pass_removes_its_partial_output(app, monkeypatch, tmp_path):
+    """The import cleanup does not know the name of the partial FLAC output."""
+
+    import subprocess
+
+    import app.tracks as tracks
+    import app.videos as videos
+
+    source = tmp_path / "film.mkv"
+    source.write_bytes(b"source")
+    partial = tmp_path / ".film.mkv"
+
+    class General:
+        track_type = "General"
+        format = "Matroska"
+        duration = 1000
+
+    class Info:
+        tracks = [General()]
+
+        def to_json(self):
+            return "{}"
+
+    class FakeProcess:
+        stdout = []
+        returncode = 1
+
+        def __init__(self, command, **kwargs):
+            partial.write_bytes(b"half a film")
+
+        def poll(self):
+            return 1
+
+        def kill(self):
+            pass
+
+    def failing_wait(process, *args, **kwargs):
+        raise subprocess.CalledProcessError(1, "ffmpeg")
+
+    monkeypatch.setattr(
+        tracks,
+        "get_audio_tracks_from_file",
+        lambda path: [
+            {"streamorder": 1, "format": "MLP FBA", "compression_mode": "Lossless"}
+        ],
+    )
+    monkeypatch.setattr(tracks, "plan_audio_supplements", lambda audio: [("flac", 1)])
+    monkeypatch.setattr(tracks, "build_supplement_args", lambda plan: [])
+    monkeypatch.setattr(tracks.MediaInfo, "parse", lambda path: Info())
+    monkeypatch.setattr(tracks.subprocess, "Popen", FakeProcess)
+    monkeypatch.setattr(videos, "wait_for_subprocess", failing_wait)
+
+    with app.app_context():
+        try:
+            tracks.supplement_lossless_tracks(str(source))
+        except subprocess.CalledProcessError:
+            pass
+
+    assert not partial.exists()
+    assert source.exists()
+
+
+def test_the_flac_pass_keeps_the_attachments(app, monkeypatch, tmp_path):
+    """The fonts of styled ASS subtitles are attachments. ffmpeg needs a map for them."""
+
+    import subprocess
+
+    import app.tracks as tracks
+    import app.videos as videos
+
+    source = tmp_path / "anime.mkv"
+    source.write_bytes(b"source")
+    commands = []
+
+    class General:
+        track_type = "General"
+        format = "Matroska"
+        duration = 1000
+
+    class Info:
+        tracks = [General()]
+
+        def to_json(self):
+            return "{}"
+
+    class FakeProcess:
+        stdout = []
+
+        def __init__(self, command, **kwargs):
+            commands.append(command)
+
+        def poll(self):
+            return 1
+
+        def kill(self):
+            pass
+
+    def failing_wait(process, *args, **kwargs):
+        raise subprocess.CalledProcessError(1, "ffmpeg")
+
+    monkeypatch.setattr(
+        tracks,
+        "get_audio_tracks_from_file",
+        lambda path: [
+            {"streamorder": 1, "format": "MLP FBA", "compression_mode": "Lossless"}
+        ],
+    )
+    monkeypatch.setattr(tracks, "plan_audio_supplements", lambda audio: [("flac", 1)])
+    monkeypatch.setattr(tracks, "build_supplement_args", lambda plan: [])
+    monkeypatch.setattr(tracks.MediaInfo, "parse", lambda path: Info())
+    monkeypatch.setattr(tracks.subprocess, "Popen", FakeProcess)
+    monkeypatch.setattr(videos, "wait_for_subprocess", failing_wait)
+
+    with app.app_context():
+        try:
+            tracks.supplement_lossless_tracks(str(source))
+        except subprocess.CalledProcessError:
+            pass
+
+    (command,) = commands
+    pairs = list(zip(command, command[1:]))
+    assert ("-map", "0:t?") in pairs
+    assert ("-map", "0:v") in pairs

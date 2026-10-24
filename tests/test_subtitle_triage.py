@@ -386,10 +386,13 @@ def test_generate_snapshots_and_render_the_aids(app, admin_client, monkeypatch):
     monkeypatch.setattr(
         triage,
         "_probe_cue_times",
-        lambda path, streamorder: [10.0, 12.0, 15.0, 2500.0, 5900.0],
+        lambda path, streamorder, bitmap=False: [10.0, 12.0, 15.0, 2500.0, 5900.0],
+    )
+    monkeypatch.setattr(
+        triage, "_subtitle_stream", lambda path, streamorder: ("hdmv_pgs_subtitle", 0)
     )
 
-    def fake_render(path, streamorder, at, out_path):
+    def fake_render(path, streamorder, at, out_path, caption=None):
         """Write a placeholder frame."""
 
         with open(out_path, "wb") as handle:
@@ -522,3 +525,65 @@ def test_reset_triage_state_clears_verdict_and_aids(app):
 
         assert file.subtitle_triage_reviewed is None
         assert not os.path.isdir(triage_snapshot_dir(file.id))
+
+
+def test_a_text_track_snapshot_shows_its_caption(app, tmp_path):
+    """ffmpeg cannot overlay text. Pillow draws the caption on the frame."""
+
+    import subprocess
+
+    from PIL import Image
+
+    from app import triage
+
+    srt = tmp_path / "subs.srt"
+    srt.write_text("1\n00:00:01,000 --> 00:00:03,000\n<i>Hello there</i>\n\n")
+    video = tmp_path / "film.mkv"
+    subprocess.run(
+        [
+            app.config["FFMPEG_BIN"],
+            "-v",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=black:size=640x360:duration=4:rate=10",
+            "-i",
+            str(srt),
+            "-c:v",
+            "libx264",
+            "-c:s",
+            "srt",
+            str(video),
+        ],
+        check=True,
+        capture_output=True,
+    )
+    with app.app_context():
+        codec, _position = triage._subtitle_stream(str(video), 1)
+        assert codec == "subrip"
+        assert triage._probe_text_cues(str(video), 1) == [(1.0, "Hello there")]
+        out = tmp_path / "snap.jpg"
+        assert triage._render_snapshot(
+            str(video), 1, 1.3, str(out), caption="Hello there"
+        )
+
+    pixels = Image.open(out).convert("L").getextrema()
+    assert pixels[1] > 200
+
+
+def test_the_clear_packets_of_a_pgs_track_are_not_cues(app, monkeypatch):
+    """A PGS caption is a show packet and a 30-byte clear packet."""
+
+    from types import SimpleNamespace
+
+    from app import triage
+
+    output = "37.955,14687\n41.625,30\n42.626,25274\n45.587,30\n"
+    monkeypatch.setattr(
+        triage.subprocess, "run", lambda *a, **k: SimpleNamespace(stdout=output)
+    )
+    with app.app_context():
+        assert triage._probe_cue_times("x.mkv", 3, bitmap=True) == [37.955, 42.626]
+        assert len(triage._probe_cue_times("x.mkv", 3)) == 4

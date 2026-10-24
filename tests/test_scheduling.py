@@ -182,6 +182,13 @@ def test_localization_defers_while_title_is_locked(app, held_lock, incoming_dir)
             ]
             assert retries == [safe_job_id(f"retry:localization_task:'{basename}'")]
             assert_binds(Job.fetch(retries[0], connection=app.redis))
+
+            # The waiting retry counts as pending. A sweep must not queue
+            # the file again next to it.
+
+            from app.importing import localization_pending
+
+            assert localization_pending(app.import_queue, basename)
     finally:
         os.remove(file_path)
 

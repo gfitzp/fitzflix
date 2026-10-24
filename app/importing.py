@@ -165,11 +165,17 @@ def localization_pending(queue, basename):
     # the counters. Thus, it is the prefix of each retry id of the file.
 
     retry_prefix = retry_job_id("localization_task", f"'{basename}'")
+
+    # A wait for the title lock has its own id (schedule_retry in
+    # app.videos). It has no counter separator. Thus, the prefix above
+    # misses it, and each sweep queued the file again.
+
+    lock_retry_id = safe_job_id(f"retry:localization_task:'{basename}'")
     ids = set(queue.job_ids)
     ids.update(queue.intermediate_queue.get_job_ids())
     ids.update(StartedJobRegistry(queue=queue).get_job_ids())
     ids.update(ScheduledJobRegistry(queue=queue).get_job_ids())
-    return any(i == job_id or i.startswith(retry_prefix) for i in ids)
+    return any(i in (job_id, lock_retry_id) or i.startswith(retry_prefix) for i in ids)
 
 
 # The stages after the localization. Each one has the source path as its
@@ -658,6 +664,18 @@ def localization_task(
                 )
                 return False
 
+            # The work files add up to 22 bytes to the name ("." and
+            # ".localized", ".remux.mkv", and others). A name system allows 255
+            # bytes. A longer name made mkvmerge fail with no clear reason.
+
+            if len(basename.encode("utf-8")) > MAX_NAME_BYTES:
+                current_app.logger.error(
+                    f"'{basename}' has a name of more than {MAX_NAME_BYTES} bytes. "
+                    f"Rename it shorter"
+                )
+                move_to_rejects(file_path, "name too long")
+                return False
+
             # If the file name contains "temp-1234.", ignore the file.
             if re.search(r"\-temp\-\d+\.", basename):
                 return False
@@ -748,6 +766,30 @@ def localization_task(
             current_app.logger.info(f"'{basename}' File details: {file_details}")
             if not file_details:
                 reason = getattr(file_details, "reason", None)
+                if reason == TMDB_UNREACHABLE and transient_retries < TMDB_RETRIES:
+                    current_app.import_queue.enqueue_in(
+                        timedelta(minutes=30),
+                        "app.videos.localization_task",
+                        file_path=file_path,
+                        force_upload=force_upload,
+                        ignore_etag=ignore_etag,
+                        transient_retries=transient_retries + 1,
+                        completeness_retries=completeness_retries,
+                        job_timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
+                        job_id=retry_job_id(
+                            "localization_task",
+                            f"'{basename}'",
+                            transient_retries + 1,
+                            completeness_retries,
+                            "tmdb",
+                        ),
+                        result_ttl=86400,
+                        description=f"'{basename}'",
+                    )
+                    current_app.logger.warning(
+                        f"'{basename}' TMDB is unreachable. Trying again in 30 minutes"
+                    )
+                    return True
                 current_app.logger.error(
                     f"'{basename}' rejected: {reason}!"
                     if reason
@@ -814,6 +856,9 @@ def localization_task(
                     "file_path": file_path,
                     "force_upload": force_upload,
                     "ignore_etag": ignore_etag,
+                    "transient_retries": transient_retries,
+                    "completeness_retries": completeness_retries,
+                    "space_waits": space_waits,
                 },
             )
             if not lock:
@@ -1848,9 +1893,24 @@ def move_localized_file(
             # while the file is still on local staging. Thus, the sql queue
             # never opens the file.
 
-            inspection = inspect_localized_file(
-                hidden_output_file, file_details.get("container"), job
-            )
+            # The removal of an empty subtitle track remuxes the output in
+            # place. That needs a second copy on staging, outside the
+            # reservation. An import must never go to rejects for space
+            # (#262). Thus, a failure with too little free space for that
+            # copy waits like a copy into a full library. The failed remux
+            # removes its partial file before this check.
+
+            try:
+                inspection = inspect_localized_file(
+                    hidden_output_file, file_details.get("container"), job
+                )
+            except (subprocess.CalledProcessError, OSError):
+                work_dir = os.path.dirname(hidden_output_file)
+                needed = os.path.getsize(hidden_output_file) + SPACE_RESERVE
+                free = shutil.disk_usage(work_dir).free
+                if free < needed:
+                    return wait_for_space(needed, needed - free)
+                raise
 
             try:
                 os.makedirs(output_directory, exist_ok=True)
@@ -2912,6 +2972,17 @@ def resolve_external_id_tag(source, value, kind, log=True):
     return results[0].get("id") or False
 
 
+# The rejection reason of a yearless name whose id tag needs TMDB while
+# TMDB cannot be reached. The import tries again. It does not reject.
+
+TMDB_UNREACHABLE = "tmdb unreachable"
+TMDB_RETRIES = 48
+
+# The longest source name that leaves room for the names of the work files.
+
+MAX_NAME_BYTES = 230
+
+
 class FilenameRejection:
     """A falsy evaluate_filename result that names the reason for the
     rejection.
@@ -3191,6 +3262,7 @@ def evaluate_filename(file_path, tmdb_id=None, log=True):
 
         id_tags, edition = parse_name_tags(movie.group("tags"))
         id_tag = preferred_id_tag(id_tags)
+        tmdb_unreachable = False
 
         # The yearless Plex form has meaning only with an id tag. An edition
         # tag alone does not identify the film.
@@ -3237,6 +3309,8 @@ def evaluate_filename(file_path, tmdb_id=None, log=True):
                                 f"but TMDB knows no movie under that id"
                             )
                         return FilenameRejection("id not found")
+                    if resolved is None:
+                        tmdb_unreachable = bool(current_app.config.get("TMDB_API_KEY"))
                     tmdb_id = resolved
 
         # Name the film as TMDB names it, because a film can have alternate
@@ -3301,6 +3375,10 @@ def evaluate_filename(file_path, tmdb_id=None, log=True):
                 current_app.logger.warning(traceback.format_exc())
                 tmdb_result = None
 
+                # With no API key, a later try cannot do better.
+
+                tmdb_unreachable = bool(current_app.config.get("TMDB_API_KEY"))
+
             else:
                 tmdb_result = r.json()
 
@@ -3346,6 +3424,16 @@ def evaluate_filename(file_path, tmdb_id=None, log=True):
 
         # The yearless form has no fallback. Without a library record or a
         # reachable TMDB, there is no year to file the movie under.
+
+        # A TMDB outage is not a bad name. The import tries again later.
+
+        if year is None and tmdb_unreachable:
+            if log:
+                current_app.logger.warning(
+                    f"'{basename}' has no year, and TMDB could not be reached "
+                    f"to resolve its id tag"
+                )
+            return FilenameRejection(TMDB_UNREACHABLE)
 
         if year is None:
             if log:

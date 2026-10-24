@@ -556,3 +556,47 @@ def test_the_sync_waits_while_a_library_volume_is_dead(app, monkeypatch):
             for job in scheduled_jobs(app.request_queue)
             if job.func_name == "app.videos.sync_aws_s3_storage_task"
         ]
+
+
+def test_the_prune_keeps_the_upload_of_an_import_that_waits_for_space(app, monkeypatch):
+    """A wait for library space has no limit. Its marker protects its upload."""
+
+    from datetime import timedelta, timezone
+
+    from app.importing import SPACE_WAIT_KEY
+
+    old = datetime.now(timezone.utc) - timedelta(days=30)
+    objects = {
+        "untouched/": [
+            {
+                "Key": "untouched/Long Wait (2024) - [DVD].mkv",
+                "Size": 5,
+                "LastModified": old,
+            },
+            {
+                "Key": "untouched/Old Stray (2020) - [DVD].mkv",
+                "Size": 5,
+                "LastModified": old,
+            },
+        ],
+    }
+    monkeypatch.setattr(
+        aws_storage,
+        "get_matching_s3_objects",
+        lambda bucket, prefix="": objects.get(prefix, []),
+    )
+    deletes = []
+    monkeypatch.setattr(aws_storage, "aws_delete", lambda key: deletes.append(key))
+    monkeypatch.setattr(aws_storage, "aws_restore", lambda key, **kw: None)
+    monkeypatch.setattr(aws_storage, "send_email", lambda *a, **k: None)
+
+    class FakeClient:
+        def put_object(self, **kwargs):
+            pass
+
+    monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kw: FakeClient())
+    app.redis.set(SPACE_WAIT_KEY.format("Long Wait (2024) - [DVD].mkv"), "1")
+
+    aws_storage.sync_aws_s3_storage_task()
+
+    assert deletes == ["untouched/Old Stray (2020) - [DVD].mkv"]

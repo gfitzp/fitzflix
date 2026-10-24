@@ -666,3 +666,21 @@ def test_reconstruct_filename_of_a_film_with_no_tmdb_date(app):
         )
         db.session.commit()
         assert reconstruct_filename(file.id) == "Dateless Film (2027) - [DVD].mkv"
+
+
+def test_a_yearless_tagged_name_waits_out_a_tmdb_outage(app, monkeypatch):
+    """A TMDB timeout is not a bad name. The import tries again."""
+
+    import requests
+
+    import app.importing as importing
+
+    def unreachable(*args, **kwargs):
+        raise requests.ConnectionError("TMDB is down")
+
+    monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
+    monkeypatch.setattr(importing, "tmdb_get", unreachable)
+    with app.app_context():
+        details = evaluate_filename("Unseen Film {tmdb-999123} - [DVD].mkv", log=False)
+        assert not details
+        assert details.reason == importing.TMDB_UNREACHABLE
