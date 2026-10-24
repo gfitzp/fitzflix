@@ -1108,3 +1108,38 @@ def test_a_film_that_tmdb_deleted_does_not_keep_the_set_incomplete(app, monkeypa
     assert leaving_criterion.refresh_leaving_criterion() is True
     stored = json.loads(app.redis.get(leaving_criterion.LEAVING_KEY))
     assert stored["incomplete"] is False
+
+
+def test_a_film_leaving_criterion_is_not_urgent_for_a_non_subscriber(app):
+    """The film streams on Max for this user. Criterion is not their service."""
+
+    from app import db
+    from app.main.discover import watchlist_shelf_rows
+    from app.models import User, UserStreamingProvider, UserWatchlist
+    from app.streaming import AVAILABILITY_KEY
+
+    max_provider = {"provider_id": 1899, "provider_name": "Max", "logo_path": "/m.jpg"}
+    with app.app_context():
+        user = User.query.filter_by(admin=True).first()
+        db.session.add(UserStreamingProvider(user_id=user.id, provider_id=1899))
+        film = make_movie("Leaving Elsewhere", 1956, tmdb_id=8401)
+        db.session.add(UserWatchlist(user_id=user.id, movie_id=film.id))
+        db.session.commit()
+        app.redis.set(
+            AVAILABILITY_KEY.format(tmdb_id=8401),
+            json.dumps(
+                {
+                    "link": None,
+                    "flatrate": [max_provider],
+                    "ads": [],
+                    "rent": [],
+                    "buy": [],
+                }
+            ),
+        )
+        plant_shelf(app, [shelf_item(8401, "Leaving Elsewhere")])
+
+        urgent, rows = watchlist_shelf_rows(user)
+        assert urgent == []
+        assert [row["movie"].id for row in rows] == [film.id]
+        assert rows[0]["leaving"] is None

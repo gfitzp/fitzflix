@@ -575,18 +575,25 @@ def test_finalize_defers_when_volumes_dead(app, monkeypatch):
     }
     with app.app_context():
         result = finalize_localization(
-            "/nonexistent/source.mkv", file_details, None, "/tmp/.hidden.mkv"
+            "/nonexistent/source.mkv",
+            file_details,
+            None,
+            "/tmp/.hidden.mkv",
+            inspection={"filesize_bytes": 5},
         )
     assert result is False
 
     retries = [
-        job.id
+        job
         for job in scheduled_jobs(app.sql_queue)
         if job.id.startswith("retry_finalize")
     ]
-    assert retries == [
+    assert [job.id for job in retries] == [
         safe_job_id("retry:finalize_localization:'Deferred (2021) - [DVD].mkv'")
     ]
+    # The retry keeps the inspection. It must not inspect again on the sql
+    # worker.
+    assert retries[0].kwargs["inspection"] == {"filesize_bytes": 5}
 
 
 def test_move_to_rejects_survives_dead_volume(app, incoming_dir, monkeypatch):
@@ -1865,3 +1872,85 @@ def test_a_reused_records_old_archive_key_is_deleted(
             if job.func_name == "app.videos.aws_delete"
         ]
         assert deletes == [(old_key,)]
+
+
+def test_a_lost_copy_keeps_the_file_of_the_worse_record(
+    app, sample_mkv, incoming_dir, monkeypatch
+):
+    """A hand-off rolls back. The worse record stays, and so must its file.
+
+    Before, the worse file was deleted before the rename (the Fort Apache
+    shape). The title could end with no library file."""
+
+    from app import db
+    from tests.factories import make_movie, make_movie_file
+
+    _separate_library_volume(app, monkeypatch)
+    with app.app_context():
+        movie = make_movie("Kept Worse", 2021)
+        worse = make_movie_file(movie, "SDTV")
+        db.session.commit()
+        worse_path = os.path.join(app.config["LIBRARY_DIR"], worse.file_path)
+    os.makedirs(os.path.dirname(worse_path), exist_ok=True)
+    with open(worse_path, "wb") as f:
+        f.write(b"old copy")
+
+    basename = "Kept Worse (2021) - [DVD].mkv"
+    source = os.path.join(incoming_dir, basename)
+    with open(sample_mkv, "rb") as f_in, open(source, "wb") as f_out:
+        f_out.write(f_in.read())
+
+    with app.app_context():
+        assert localization_task(source) is True
+        move = next(
+            job
+            for job in app.handoff_queue.jobs
+            if job.func_name == "app.videos.move_localized_file"
+        )
+        assert videos.move_localized_file(*move.args) is True
+        (first,) = _finalize_jobs(app, 0)
+        os.remove(first.args[3])
+        assert finalize_localization(*first.args, **first.kwargs) is False
+
+    assert os.path.exists(worse_path)
+    os.remove(worse_path)
+    for path in (source, first.kwargs["staged_output"]):
+        if path and os.path.exists(path):
+            os.remove(path)
+
+
+def test_a_failure_after_the_commit_keeps_the_imported_file(
+    app, sample_mkv, incoming_dir, monkeypatch
+):
+    """The record is committed. A follow-up failure must not reject the file."""
+
+    import app.atmos as atmos
+
+    def broken(*args, **kwargs):
+        raise RuntimeError("Redis is not reachable")
+
+    # The first follow-up step after the commit. The source still exists.
+
+    monkeypatch.setattr(atmos, "staged_handoff", broken)
+    basename = "Late Failure (2021) - [DVD].mkv"
+    source = os.path.join(incoming_dir, basename)
+    with open(sample_mkv, "rb") as f_in, open(source, "wb") as f_out:
+        f_out.write(f_in.read())
+
+    with app.app_context():
+        assert localization_task(source) is True
+        move = next(
+            job
+            for job in app.handoff_queue.jobs
+            if job.func_name == "app.videos.move_localized_file"
+        )
+        videos.move_localized_file(*move.args)
+        (finalize,) = _finalize_jobs(app, 0)
+        finalize_localization(*finalize.args, **finalize.kwargs)
+        record = File.query.filter_by(basename=basename).one()
+        output = os.path.join(app.config["LIBRARY_DIR"], record.file_path)
+
+    assert os.path.exists(output)
+    assert basename not in rejected_files(app)
+    assert not os.path.exists(source)
+    os.remove(output)

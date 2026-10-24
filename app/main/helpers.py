@@ -4,7 +4,7 @@ This is slice f of the routes.py split. It holds the verdict and ladder
 plumbing that every rating surface uses, the admin gate, and the read of
 the quality threshold."""
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from flask import (
     current_app,
@@ -47,12 +47,24 @@ def _enqueue_profile_recompute():
 
     The recompute occurs within minutes. The user does not wait for the
     1:45 AM run. The Redis key is set with NX. Thus, a rating session
-    enqueues a maximum of 1 recompute per 5 minutes."""
+    enqueues a maximum of 1 recompute per 5 minutes. A rating inside the
+    5 minutes books 1 trailing recompute at their end. Without it, the
+    later ratings of a session waited for the nightly run."""
 
+    user_id = int(current_user.id)
     if current_app.redis.set(
-        f"fitzflix:elicit:recompute:{int(current_user.id)}", "1", nx=True, ex=300
+        f"fitzflix:elicit:recompute:{user_id}", "1", nx=True, ex=300
     ):
         current_app.maintenance_queue.enqueue(
+            "app.recommendations.recompute_recommendations",
+            job_timeout="1h",
+            description="Recomputing film recommendations",
+        )
+    elif current_app.redis.set(
+        f"fitzflix:elicit:recompute:trailing:{user_id}", "1", nx=True, ex=300
+    ):
+        current_app.maintenance_queue.enqueue_in(
+            timedelta(seconds=300),
             "app.recommendations.recompute_recommendations",
             job_timeout="1h",
             description="Recomputing film recommendations",

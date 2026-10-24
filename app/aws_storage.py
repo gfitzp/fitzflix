@@ -35,7 +35,7 @@ import rq
 
 from botocore.client import Config
 from rq import get_current_job
-from rq.registry import StartedJobRegistry
+from rq.registry import ScheduledJobRegistry, StartedJobRegistry
 
 from flask import current_app, render_template
 from werkzeug.local import LocalProxy
@@ -86,9 +86,31 @@ def aws_sqs_client():
     )
 
 
+# A second receive of a message gives it a new receipt handle. The poll
+# records it here for the download job of the key. A running job saves its
+# own meta for its progress. Thus, the handle has its own key.
+
+SQS_HANDLE_KEY = "fitzflix:sqs:handle:{job_id}"
+
+
+def _latest_receipt_handle(receipt_handle, job_id=None):
+    """Return the newest receipt handle of the message of a download job.
+
+    SQS can ignore a delete with an older handle."""
+
+    if job_id is None:
+        job = rq.get_current_job()
+        job_id = job.id if job else None
+    if job_id is None:
+        return receipt_handle
+    latest = current_app.redis.get(SQS_HANDLE_KEY.format(job_id=job_id))
+    return latest.decode() if latest else receipt_handle
+
+
 def delete_sqs_message(sqs_client, receipt_handle, note="message"):
     """Delete a message from the SQS queue. Return False if the delete fails."""
 
+    receipt_handle = _latest_receipt_handle(receipt_handle)
     try:
         response = sqs_client.delete_message(
             QueueUrl=current_app.config["AWS_SQS_URL"],
@@ -738,6 +760,9 @@ def download_task(key, basename, sqs_receipt_handle=None, transient_retries=0):
                     f"minutes (attempt {transient_retries + 1} of "
                     f"{MAX_TRANSIENT_RETRIES})"
                 )
+                # The retry is a new job. It carries the newest handle.
+
+                sqs_receipt_handle = _latest_receipt_handle(sqs_receipt_handle)
                 current_app.file_queue.enqueue_in(
                     timedelta(minutes=5),
                     "app.videos.download_task",
@@ -751,6 +776,7 @@ def download_task(key, basename, sqs_receipt_handle=None, transient_retries=0):
                     ),
                     result_ttl=86400,
                     description=f"'{basename}' — Downloading from AWS",
+                    meta={"sqs_receipt_handle": sqs_receipt_handle},
                 )
                 return False
             current_app.logger.error(traceback.format_exc())
@@ -786,9 +812,17 @@ def sqs_retrieve_task():
         file_operations = StartedJobRegistry(
             "fitzflix-file-operation", connection=current_app.redis
         )
-        download_job_ids = file_operations.get_job_ids() + list(
-            current_app.file_queue.job_ids
+        download_job_ids = (
+            file_operations.get_job_ids()
+            + list(current_app.file_queue.job_ids)
+            + ScheduledJobRegistry(queue=current_app.file_queue).get_job_ids()
         )
+
+        # The download job of each key that waits, runs, or waits for a
+        # retry. A message that comes back for such a key gets no second
+        # download. Its new receipt handle goes to that job.
+
+        downloads_by_key = {}
         # The message stays hidden for SQS_VISIBILITY_SECONDS. That is
         # longer than the hourly poll. Thus, a message is still in flight
         # here, and the change succeeds. A failure on 1 message must not
@@ -796,12 +830,16 @@ def sqs_retrieve_task():
 
         for job_id in download_job_ids:
             job = current_app.file_queue.fetch_job(job_id)
+            if job and job.func_name == "app.videos.download_task" and job.args:
+                downloads_by_key[job.args[0]] = job
             if job and job.meta.get("sqs_receipt_handle"):
                 job_description = job.meta.get("description", job.description)
                 try:
                     sqs_client.change_message_visibility(
                         QueueUrl=current_app.config["AWS_SQS_URL"],
-                        ReceiptHandle=job.meta.get("sqs_receipt_handle"),
+                        ReceiptHandle=_latest_receipt_handle(
+                            job.meta.get("sqs_receipt_handle"), job_id=job.id
+                        ),
                         VisibilityTimeout=SQS_VISIBILITY_SECONDS,
                     )
                     current_app.logger.info(
@@ -844,7 +882,10 @@ def sqs_retrieve_task():
             # is deleted.
 
             records = response_body.get("Records") or []
-            if not records or "s3" not in records[0]:
+            key = None
+            if records and "s3" in records[0]:
+                key = urllib.parse.unquote_plus(records[0]["s3"]["object"]["key"])
+            if key is None:
                 current_app.logger.info(
                     f"Deleting an SQS message that is not a restore event: "
                     f"{response_body.get('Event') or list(response_body)[:3]}"
@@ -853,15 +894,25 @@ def sqs_retrieve_task():
                     QueueUrl=current_app.config["AWS_SQS_URL"],
                     ReceiptHandle=receipt_handle,
                 )
+            elif key in downloads_by_key:
+                current_app.redis.set(
+                    SQS_HANDLE_KEY.format(job_id=downloads_by_key[key].id),
+                    receipt_handle,
+                    ex=86400 * 14,
+                )
+                current_app.logger.info(
+                    f"'{key}' Already has a download job. Recorded the new "
+                    f"receipt handle of its message"
+                )
             else:
-                key = urllib.parse.unquote_plus(records[0]["s3"]["object"]["key"])
-                current_app.file_queue.enqueue(
+                job = current_app.file_queue.enqueue(
                     "app.videos.download_task",
                     args=(key, os.path.basename(key), receipt_handle),
                     job_timeout=current_app.config["TRANSCODE_TASK_TIMEOUT"],
                     description=f"'{os.path.basename(key)}' — Downloading from AWS",
                     meta={"sqs_receipt_handle": receipt_handle},
                 )
+                downloads_by_key[key] = job
 
             response = sqs_client.receive_message(
                 QueueUrl=current_app.config["AWS_SQS_URL"],
@@ -1518,9 +1569,10 @@ def cdn_download(key, destination, progress, expected_size=0, etag=None):
     transfer callback does. A partial file at the destination from an
     earlier attempt is resumed with a Range request when the S3 size is
     known. Thus, a transport fault does not restart a large object from
-    byte zero. The resume sends If-Range with the ETag of the object.
-    Thus, a partial file of an older version of the key starts again from
-    byte zero. Raise CdnDownloadError for an HTTP error status. Raise
+    byte zero. A sidecar file holds the ETag of the object that the
+    partial file came from. A resume needs the same ETag. Thus, a partial
+    file of an older version of the key starts again from byte zero.
+    Raise CdnDownloadError for an HTTP error status. Raise
     RuntimeError if the body length differs from the Content-Length
     header or from expected_size (the object size from the S3 API).
     Raise RuntimeError if neither size is known. The requests transport
@@ -1530,10 +1582,9 @@ def cdn_download(key, destination, progress, expected_size=0, etag=None):
     url = cdn_signed_url(key)
     have = _partial_size(destination)
     headers = {}
-    if have and expected_size and have < expected_size:
+    same_object = bool(etag) and _partial_etag(destination) == etag
+    if have and expected_size and have < expected_size and same_object:
         headers["Range"] = f"bytes={have}-"
-        if etag:
-            headers["If-Range"] = etag
     else:
         have = 0
 
@@ -1550,6 +1601,7 @@ def cdn_download(key, destination, progress, expected_size=0, etag=None):
             progress(have)
         elif response.status_code == 200:
             mode, written, have = "wb", 0, 0
+            _write_partial_etag(destination, etag)
         else:
             raise CdnDownloadError(response.status_code)
         content_length = int(response.headers.get("Content-Length") or 0)
@@ -1572,6 +1624,7 @@ def cdn_download(key, destination, progress, expected_size=0, etag=None):
             raise RuntimeError(
                 f"CloudFront sent {written} bytes for '{key}', {label} says {size}"
             )
+    _remove_partial_etag(destination)
 
 
 def _partial_size(destination):
@@ -1583,6 +1636,38 @@ def _partial_size(destination):
         return 0
 
 
+def _partial_etag(destination):
+    """Return the ETag of the object that a partial download came from, or None."""
+
+    try:
+        with open(f"{destination}.etag") as sidecar:
+            return sidecar.read().strip() or None
+    except OSError:
+        return None
+
+
+def _write_partial_etag(destination, etag):
+    """Record the ETag of the object that a download writes to destination."""
+
+    if not etag:
+        _remove_partial_etag(destination)
+        return
+    try:
+        with open(f"{destination}.etag", "w") as sidecar:
+            sidecar.write(etag)
+    except OSError:
+        pass
+
+
+def _remove_partial_etag(destination):
+    """Remove the ETag sidecar of a download, if there is one."""
+
+    try:
+        os.remove(f"{destination}.etag")
+    except OSError:
+        pass
+
+
 def _discard_partial(destination):
     """Remove a partial download. The import scan skips dotfiles, so an
     abandoned partial would stay invisible in the import directory."""
@@ -1591,6 +1676,7 @@ def _discard_partial(destination):
         os.remove(destination)
     except OSError:
         pass
+    _remove_partial_etag(destination)
 
 
 def _object_is_readable(head_response):

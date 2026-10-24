@@ -49,7 +49,7 @@ class _FakeS3:
     """Answer head_object with a fixed response. Record download_file."""
 
     def __init__(self, head=None):
-        self.head = head if head is not None else {"ContentLength": 3}
+        self.head = head if head is not None else {"ContentLength": 3, "ETag": '"v1"'}
         self.downloads = []
 
     def head_object(self, Bucket, Key):
@@ -647,24 +647,38 @@ def test_cdn_resumes_a_dropped_download_with_a_range(app, monkeypatch, cdn):
     assert len(cdn["signed"]) == 2
 
 
-def test_a_resume_names_the_version_it_continues(app, monkeypatch, cdn):
-    """The resume sends If-Range. A partial of an older version restarts."""
+def test_a_partial_of_an_older_version_starts_again(app, monkeypatch, cdn):
+    """The partial file came from version 1. The key now holds version 2.
+
+    A Range request would append the tail of version 2 to the head of
+    version 1, at exactly the right size. The sidecar ETag stops it."""
 
     from app import aws_storage
 
+    s3 = _FakeS3({"ContentLength": 3, "ETag": '"v1"'})
     cdn["responses"] = [
-        _FakeResponse(200, b"cdn", fail_after=2),
-        _FakeResponse(206, b"n"),
+        _FakeResponse(200, b"old", fail_after=2),
+        _FakeResponse(200, b"new"),
     ]
-    _wire(monkeypatch, _FakeS3({"ContentLength": 3, "ETag": '"abc"'}), _FakeSQS())
+
+    def head_object(Bucket, Key):
+        head = dict(s3.head)
+        s3.head = {"ContentLength": 3, "ETag": '"v2"'}
+        return head
+
+    s3.head_object = head_object
+    _wire(monkeypatch, s3, _FakeSQS())
 
     with app.app_context():
         assert (
             aws_storage.aws_download("untouched/x.mkv", "x.mkv")
             == aws_storage.DOWNLOAD_COMPLETE
         )
+        landed = os.path.join(app.config["IMPORT_DIR"], "x.mkv")
+        assert open(landed, "rb").read() == b"new"
+        assert not os.path.exists(os.path.join(app.config["IMPORT_DIR"], ".x.mkv.etag"))
 
-    assert cdn["headers"] == [{}, {"Range": "bytes=2-", "If-Range": '"abc"'}]
+    assert cdn["headers"] == [{}, {}]
 
 
 def test_a_direct_restore_stages_under_its_key(app, monkeypatch, cdn):

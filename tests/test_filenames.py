@@ -446,6 +446,28 @@ def test_tv_tag_adopts_existing_series_record(app):
         )
 
 
+def test_a_tv_tag_never_joins_a_different_series_of_the_same_title(app):
+    """The US "The Office" must not join the UK "The Office"."""
+
+    from tests.factories import make_tv_series
+
+    with app.app_context():
+        make_tv_series("The Office", tmdb_id=2996)
+        details = evaluate_filename(
+            "The Office {tmdb-2316} - S01E01 - Pilot [Bluray-1080p].mkv", log=False
+        )
+        assert not details
+        assert details.reason == "title of another series"
+
+        # With its own record, the tagged file goes there.
+
+        make_tv_series("The Office (2005)", tmdb_id=2316)
+        details = evaluate_filename(
+            "The Office {tmdb-2316} - S01E01 - Pilot [Bluray-1080p].mkv", log=False
+        )
+        assert details["title"] == "The Office (2005)"
+
+
 def test_reconstruct_filename_carries_id_tag(app):
     """Test that a reconstructed filename keeps its id tag.
 
@@ -574,3 +596,73 @@ def test_importable_basename_skips_hidden_and_transient_names():
     assert not importable_basename("Jaws (1975) - [Bluray-1080p].mkv.tmp")
     assert not importable_basename("Jaws (1975) - [Bluray-1080p].mkv.filepart")
     assert not importable_basename("Jaws (1975) - [Bluray-1080p].mkv.crdownload")
+
+
+def test_an_extra_of_an_edition_keeps_the_edition(app):
+    """The Redux trailer must not replace the theatrical trailer, or leave its folder."""
+
+    from app import db
+    from app.importing import reconstruct_filename
+    from tests.factories import feature_type, make_file, make_movie
+
+    name = (
+        "Apocalypse Now (1979) {edition-Redux} - Trailers - Theatrical Trailer "
+        "[Bluray-1080p].mkv"
+    )
+    with app.app_context():
+        details = evaluate_filename(name, log=False)
+        assert details["edition"] == "Redux"
+        assert details["dirname"] == (
+            "Movies/Apocalypse Now (1979) {edition-Redux}/Trailers"
+        )
+
+        movie = make_movie("Apocalypse Now", 1979)
+        extra = make_file(
+            details["basename"],
+            details["dirname"],
+            details["plex_title"],
+            "Movies",
+            "Bluray-1080p",
+            movie_id=movie.id,
+            edition=details["edition"],
+            feature_type_id=feature_type("Trailers").id,
+            untouched_basename=name,
+        )
+        db.session.commit()
+        assert reconstruct_filename(extra.id) == name
+
+
+def test_a_year_in_the_name_of_an_extra_is_not_the_year_of_the_film(app):
+    with app.app_context():
+        details = evaluate_filename(
+            "Star Wars (1977) - Featurettes - Star Wars (1977) - Original Trailer "
+            "[DVD].mkv",
+            log=False,
+        )
+        assert details["title"] == "Star Wars"
+        assert details["year"] == 1977
+        assert details["feature_type_name"] == "Featurettes"
+        assert details["plex_title"] == "Star Wars (1977) - Original Trailer"
+        assert (
+            evaluate_filename(
+                "2001 - A Space Odyssey (1968) - [Bluray-1080p].mkv", log=False
+            )["title"]
+            == "2001 - A Space Odyssey"
+        )
+
+
+def test_reconstruct_filename_of_a_film_with_no_tmdb_date(app):
+    """TMDB can send a title with no release date. The refresh must not crash."""
+
+    from app import db
+    from app.importing import reconstruct_filename
+    from tests.factories import make_movie, make_movie_file
+
+    with app.app_context():
+        movie = make_movie("Dateless", 2027)
+        movie.tmdb_title = "Dateless Film"
+        file = make_movie_file(
+            movie, "DVD", untouched_basename="Dateless (2027) - [DVD].mkv"
+        )
+        db.session.commit()
+        assert reconstruct_filename(file.id) == "Dateless Film (2027) - [DVD].mkv"

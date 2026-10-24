@@ -673,3 +673,39 @@ def test_half_star_ratings_render_a_partial_fill(app, admin_client):
     assert page.count("filled fill-partial") == 1
     assert "fill-50" in page
     assert "star estimated" not in page
+
+
+def test_a_rating_inside_the_recompute_window_books_a_trailing_recompute(
+    app, admin_client
+):
+    """The later ratings of a session must not wait for the nightly run."""
+
+    from rq.registry import ScheduledJobRegistry
+
+    with app.app_context():
+        first = make_candidate("Window First", 1990)
+        second = make_candidate("Window Second", 1991)
+        db.session.commit()
+        ids = (first.id, second.id)
+
+    page = admin_client.get(f"/movie/{ids[0]}").get_data(as_text=True)
+    token = csrf_token_from(page)
+    for movie_id in ids:
+        admin_client.post(
+            f"/movie/{movie_id}",
+            data={"csrf_token": token, "review_submit": "y", "quick_rating": "4"},
+        )
+
+    def recomputes(jobs):
+        return [
+            job
+            for job in jobs
+            if job and job.func_name == "app.recommendations.recompute_recommendations"
+        ]
+
+    with app.app_context():
+        assert len(recomputes(app.maintenance_queue.jobs)) == 1
+        scheduled = ScheduledJobRegistry(queue=app.maintenance_queue).get_job_ids()
+        assert (
+            len(recomputes(app.maintenance_queue.fetch_job(i) for i in scheduled)) == 1
+        )

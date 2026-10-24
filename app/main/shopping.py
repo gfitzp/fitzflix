@@ -34,6 +34,7 @@ from app.models import (
     UserMovieReview,
     UserWatchlist,
     movie_file_rank,
+    tv_file_rank,
 )
 from app.streaming import (
     batch_title_availability,
@@ -743,6 +744,11 @@ def movie_shopping():
 
         else:
             title = f"Movies to upgrade matching '{q}'"
+
+            # A space matches any run of characters, as in the other
+            # searches. Thus, "spider man" finds "Spider-Man".
+
+            pattern = q.replace(" ", "%")
             owned_matches = (
                 db.session.query(
                     File,
@@ -772,12 +778,16 @@ def movie_shopping():
                 .filter(RefQuality.preference <= max_preference)
                 .filter(
                     db.or_(
-                        Movie.title.ilike(f"%{q}%"), Movie.tmdb_title.ilike(f"%{q}%")
+                        Movie.title.ilike(f"%{pattern}%"),
+                        Movie.tmdb_title.ilike(f"%{pattern}%"),
                     )
                 )
             )
             liked_matches = liked_unowned_query().filter(
-                db.or_(Movie.title.ilike(f"%{q}%"), Movie.tmdb_title.ilike(f"%{q}%"))
+                db.or_(
+                    Movie.title.ilike(f"%{pattern}%"),
+                    Movie.tmdb_title.ilike(f"%{pattern}%"),
+                )
             )
 
             # A film with no local copy counts as the virtual bottom
@@ -1159,8 +1169,17 @@ def tv_shopping():
         .scalar()
     )
 
-    # This subquery gets the worst quality of each TV show season.
+    # This subquery gets the worst quality of each TV show season, over
+    # the best copy of each episode. An old copy kept next to a better
+    # one must not make a settled season look like an upgrade. The TV
+    # library page and the search use the same rule.
 
+    ranked_files = (
+        db.session.query(File.id, tv_file_rank())
+        .join(TVSeries, (TVSeries.id == File.series_id))
+        .join(RefQuality, (RefQuality.id == File.quality_id))
+        .subquery()
+    )
     subquery = (
         db.session.query(
             File.series_id,
@@ -1170,6 +1189,8 @@ def tv_shopping():
         )
         .group_by(File.series_id, File.season)
         .join(RefQuality, (RefQuality.id == File.quality_id))
+        .join(ranked_files, (ranked_files.c.id == File.id))
+        .filter(ranked_files.c.rank == 1)
         .subquery()
     )
 

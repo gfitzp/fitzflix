@@ -94,3 +94,24 @@ def test_a_failed_extension_does_not_stop_the_poll(app, monkeypatch):
     assert aws_storage.sqs_retrieve_task() is True
     with app.app_context():
         assert "untouched/New Film (2002) - [DVD].mkv" in downloads(app)
+
+
+def test_a_message_that_comes_back_gets_no_second_download(app, monkeypatch):
+    """The key already has a download job. The new handle goes to that job."""
+
+    key = "untouched/Busy Film (2003) - [DVD].mkv"
+    sqs = FakeSQS([restore_event(key)])
+    monkeypatch.setattr(aws_storage, "aws_sqs_client", lambda: sqs)
+    monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kw: FakeS3())
+
+    with app.app_context():
+        job = app.file_queue.enqueue(
+            "app.videos.download_task",
+            args=(key, "Busy Film (2003) - [DVD].mkv", "old-handle"),
+            meta={"sqs_receipt_handle": "old-handle"},
+        )
+
+    assert aws_storage.sqs_retrieve_task() is True
+    with app.app_context():
+        assert downloads(app) == [key]
+        assert aws_storage._latest_receipt_handle("old-handle", job_id=job.id) == "r0"

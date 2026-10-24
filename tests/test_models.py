@@ -99,6 +99,20 @@ def test_tv_multi_episode_file_wins_quality_ties(app):
         assert ranks[single.id] == 2
 
 
+def test_a_wider_span_replaces_a_narrower_file_only_at_the_same_quality(app):
+    """A DVD of episodes 1-6 must not delete a Bluray of episode 1."""
+
+    with app.app_context():
+        series = make_tv_series("Doctor Who (1975)")
+        bluray_single = make_tv_file(series, 13, 1, "Bluray-1080p")
+        dvd_single = make_tv_file(series, 13, 1, "SDTV")
+        dvd_span = make_tv_file(series, 13, 1, "DVD", last_episode=6)
+
+        worse = dvd_span.find_worse_files()
+        assert dvd_single in worse
+        assert bluray_single not in worse
+
+
 def test_tv_replacement_ignores_the_edition_title(app):
     """Identify a TV episode by series, season, and episode span, not by edition.
 
@@ -192,3 +206,19 @@ def test_a_tie_goes_to_the_lowest_file_id(app):
         )
         tv_ranks = ranked_tv_files(db.session)
         assert (tv_ranks[episode.id], tv_ranks[copy.id]) == (1, 2)
+
+
+def test_a_widescreen_copy_blocks_a_full_screen_import(app):
+    """A full screen file has the plex title and the edition of its widescreen copy."""
+
+    from app.models import File
+    from app.videos import evaluate_filename
+
+    with app.app_context():
+        movie = make_movie("Kept Wide", 2001)
+        widescreen = make_movie_file(movie, "SDTV")
+        db.session.commit()
+        details = evaluate_filename(
+            "Kept Wide (2001) - Full Screen [DVD].mkv", log=False
+        )
+        assert File(**details).find_better_files() == [widescreen]

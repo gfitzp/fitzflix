@@ -27,6 +27,7 @@ import time
 import traceback
 
 from datetime import datetime, timedelta, timezone
+from functools import partial
 
 from pathvalidate import sanitize_filename
 from pymediainfo import MediaInfo
@@ -2094,6 +2095,7 @@ def finalize_localization(
                 file_details,
                 lock,
                 hidden_output_file,
+                inspection=inspection,
                 staged_output=staged_output,
                 vanished_retries=vanished_retries,
                 job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
@@ -2110,6 +2112,16 @@ def finalize_localization(
         # release it.
 
         handed_off = False
+
+        # After the commit, the new file is the library file of its record.
+        # A later failure (a Redis enqueue, an email) must not move it to
+        # rejects. For an in-place import, file_path is that library file.
+
+        committed = False
+        atmos_handoff = None
+        atmos_queued = False
+        worse_local_copies = []
+        pending_emails = []
 
         try:
 
@@ -2338,9 +2350,11 @@ def finalize_localization(
                 f"'{os.path.basename(hidden_output_file)}' {file.filesize_bytes} bytes"
             )
 
-            # Find and remove the worse-quality files before the move of the
-            # new file into place. Then Fitzflix does not delete a special
-            # feature whose old and new filenames are the same.
+            # Find the worse-quality files. Their library copies are deleted
+            # only after the new file is in place and the commit succeeds.
+            # A rollback (an NFS hand-off, a lost copy, a failed rename)
+            # keeps their rows. Their files must still be there. The
+            # disposal emails also wait for the commit.
 
             worse_files = file.find_worse_files()
             current_app.logger.info(f"{file} worse files: {worse_files}")
@@ -2348,7 +2362,14 @@ def finalize_localization(
             worse_aws_keys = [replaced_key] if replaced_key else []
 
             for worse in worse_files:
-                worse.delete_local_file()
+                worse_local_copies.append(
+                    (
+                        os.path.join(
+                            current_app.config["LIBRARY_DIR"], worse.file_path
+                        ),
+                        worse.id,
+                    )
+                )
 
                 if (
                     worse.converted_from_quality
@@ -2390,29 +2411,12 @@ def finalize_localization(
                     and not file.converted_from_quality
                 ):
                     admin_user = User.query.filter(User.admin == True).first()
-                    send_email_async(
-                        "Fitzflix - Replaced a physical media file",
-                        sender=("Fitzflix", current_app.config["SERVER_EMAIL"]),
-                        recipients=[admin_user.email],
-                        text_body=render_template(
-                            "email/replaced_physical_media.txt",
-                            user=admin_user.email,
-                            file=file,
-                            worse=worse,
-                        ),
-                        html_body=render_template(
-                            "email/replaced_physical_media.html",
-                            user=admin_user.email,
-                            file=file,
-                            worse=worse,
-                        ),
-                    )
-
-                    if current_app.config["TODO_EMAIL"]:
-                        send_email_async(
-                            f"Find and dispose of the media for '{worse.untouched_basename}'",
+                    pending_emails.append(
+                        partial(
+                            send_email_async,
+                            "Fitzflix - Replaced a physical media file",
                             sender=("Fitzflix", current_app.config["SERVER_EMAIL"]),
-                            recipients=[current_app.config["TODO_EMAIL"]],
+                            recipients=[admin_user.email],
                             text_body=render_template(
                                 "email/replaced_physical_media.txt",
                                 user=admin_user.email,
@@ -2425,6 +2429,29 @@ def finalize_localization(
                                 file=file,
                                 worse=worse,
                             ),
+                        )
+                    )
+
+                    if current_app.config["TODO_EMAIL"]:
+                        pending_emails.append(
+                            partial(
+                                send_email_async,
+                                f"Find and dispose of the media for '{worse.untouched_basename}'",
+                                sender=("Fitzflix", current_app.config["SERVER_EMAIL"]),
+                                recipients=[current_app.config["TODO_EMAIL"]],
+                                text_body=render_template(
+                                    "email/replaced_physical_media.txt",
+                                    user=admin_user.email,
+                                    file=file,
+                                    worse=worse,
+                                ),
+                                html_body=render_template(
+                                    "email/replaced_physical_media.html",
+                                    user=admin_user.email,
+                                    file=file,
+                                    worse=worse,
+                                ),
+                            )
                         )
 
             # Move the new file into place. move_localized_file already put it
@@ -2504,6 +2531,26 @@ def finalize_localization(
             HeldImport.query.filter_by(held_path=file_path).delete()
 
             db.session.commit()
+            committed = True
+
+            # The new file is in place, and its record is committed. Now
+            # delete the library copies of the worse files and send their
+            # emails. The new file never has the path of a worse file. The
+            # check is a guard.
+
+            from app.triage import remove_triage_snapshots
+
+            for worse_path, worse_id in worse_local_copies:
+                if worse_path == output_file:
+                    continue
+                try:
+                    os.remove(worse_path)
+                    current_app.logger.info(f"Deleted local file '{worse_path}'")
+                except FileNotFoundError:
+                    pass
+                remove_triage_snapshots(worse_id)
+            for send in pending_emails:
+                send()
 
             # The staged copy can go to the Atmos job of this file. Then
             # that job does not read the file back from the NAS. The
@@ -2599,7 +2646,6 @@ def finalize_localization(
 
             from app.atmos import maybe_enqueue_atmos_supplement
 
-            atmos_queued = False
             if not get_setting("CREATE_ATMOS_TWINS"):
                 current_app.logger.info(
                     f"'{file.basename}' CREATE_ATMOS_TWINS is off. No E-AC-3 Atmos twins"
@@ -2704,9 +2750,24 @@ def finalize_localization(
 
         except Exception:
             current_app.logger.error(traceback.format_exc())
-            move_to_rejects(file_path, "exception")
             db.session.rollback()
-            _remove_staged_output(staged_output)
+            if committed:
+                # The import itself succeeded. Only a follow-up step
+                # failed. Keep the file. Remove a staged copy that no
+                # Atmos job took.
+                current_app.logger.warning(
+                    f"'{output_file}' Was imported, but a follow-up step failed"
+                )
+                if not atmos_queued:
+                    _remove_staged_output(staged_output)
+                if file_path != output_file:
+                    try:
+                        os.remove(file_path)
+                    except FileNotFoundError:
+                        pass
+            else:
+                move_to_rejects(file_path, "exception")
+                _remove_staged_output(staged_output)
 
         else:
             current_app.logger.info(f"'{file_path}' processed as '{output_file}'")
@@ -2875,8 +2936,12 @@ def evaluate_filename(file_path, tmdb_id=None, log=True):
     # (#155). The yearless Plex form "Title {tmdb-NNN}" is also accepted,
     # but only with an id tag. Thus, "Title - [Quality].ext" stays rejected.
 
+    # The title is lazy. The first "(YYYY)" is the year of the film. An
+    # extra can carry a year in its own name: "Star Wars (1977) -
+    # Featurettes - Star Wars (1977) - Original Trailer".
+
     movie_match = re.match(
-        r"(?P<title>.+) \((?P<year>\d{4})\)"
+        r"(?P<title>.+?) \((?P<year>\d{4})\)"
         rf"(?P<tags>(?: {NAME_TAG_BLOCK})*)"
         r" \-(?: (?P<version>.+) | )\[(?P<quality_title>.+)\]\.(?P<extension>.+)",
         basename,
@@ -2990,6 +3055,24 @@ def evaluate_filename(file_path, tmdb_id=None, log=True):
                 ]
                 if len(candidates) == 1:
                     title = candidates[0].title
+
+        # A tag names the series exactly. When no record has its id yet,
+        # the title can belong to a different series. "The Office
+        # {tmdb-2316}" must not join the UK "The Office". There, its
+        # episodes could also delete the episodes of that series as worse.
+        # Series titles are unique. Thus, the file waits in rejects for a
+        # name with the year of the series.
+
+        if series_tmdb_id:
+            holder = TVSeries.query.filter_by(title=title).first()
+            if holder is not None and holder.tmdb_id not in (None, series_tmdb_id):
+                if log:
+                    current_app.logger.error(
+                        f"'{basename}' names TMDB series {series_tmdb_id}, but "
+                        f"'{title}' is TMDB series {holder.tmdb_id}. Rename the "
+                        f"file with the year of its series"
+                    )
+                return FilenameRejection("title of another series")
 
         season = int(tv.group("season"))
         episode = int(tv.group("episode"))
@@ -3367,8 +3450,12 @@ def evaluate_filename(file_path, tmdb_id=None, log=True):
             # It has no movie title, year, or version. The version string is
             # now the name.
 
+            # An extra of an edition keeps the edition. Else the extras of
+            # 2 editions with the same name replace each other, and a TMDB
+            # rename moves the extra out of its edition folder.
+
             if special_feature:
-                version = None
+                version = edition
                 plex_title = special_feature
                 basename = f"{special_feature}.{extension}"
 
@@ -3644,10 +3731,14 @@ def reconstruct_filename(file_id):
 
     _, ext = os.path.splitext(f.untouched_basename)
 
+    # TMDB can send a title with an empty release date. Then the year of
+    # the record stands in.
+
     if m.tmdb_title == None:
         beginning = f"{m.title} ({m.year})"
     else:
-        beginning = f"{m.tmdb_title} ({m.tmdb_release_date.year})"
+        year = m.tmdb_release_date.year if m.tmdb_release_date else m.year
+        beginning = f"{m.tmdb_title} ({year})"
 
     # Tag in, tag out (#155). An untouched name that had a Plex id tag
     # keeps one. If the current tmdb id of the record is known, the tag

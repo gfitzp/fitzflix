@@ -1264,3 +1264,26 @@ def test_watchlist_remove_in_place(app, admin_client):
     assert response.status_code == 200
     assert response.get_json() == {"on_watchlist": False}
     assert entries_for(app, user_id) == []
+
+
+def test_watchlist_search_ignores_accents_and_word_gaps(app, admin_client):
+    """ "amelie" finds "Amélie", and "spider man" finds "Spider-Man"."""
+
+    from app import db
+    from app.models import UserWatchlist
+
+    user_id = admin_id(app)
+    with app.app_context():
+        for title, year in (
+            ("Amélie", 2001),
+            ("Spider-Man", 2002),
+            ("Other Film", 2003),
+        ):
+            movie = make_movie(title, year)
+            db.session.add(UserWatchlist(user_id=user_id, movie_id=movie.id))
+        db.session.commit()
+
+    page = admin_client.get("/watchlist?q=amelie").get_data(as_text=True)
+    assert "Amélie" in page and "Other Film" not in page
+    page = admin_client.get("/watchlist?q=spider man").get_data(as_text=True)
+    assert "Spider-Man" in page and "Other Film" not in page

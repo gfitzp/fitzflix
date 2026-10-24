@@ -72,6 +72,19 @@ def test_liked_unowned_movie_matches_shopping_search(app, admin_client):
     assert "Searchable Unowned Favorite" in page
 
 
+def test_shopping_search_treats_spaces_as_wildcards(app, admin_client):
+    """ "spider man" finds "Spider-Man", as in the other searches."""
+
+    with app.app_context():
+        user_id = User.query.first().id
+        wanted = make_movie("Spider-Man", 2002)
+        make_liked_review(user_id, wanted)
+        db.session.commit()
+
+    page = admin_client.get("/shopping-list/movie?q=spider+man").get_data(as_text=True)
+    assert "Spider-Man (2002)" in page
+
+
 def test_liked_unowned_movie_stays_off_digital_list(app, admin_client):
     """Test that the digital view lists only owned digital-only titles.
 

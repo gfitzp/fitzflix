@@ -28,6 +28,7 @@ from flask import (
 # Flask 2.4 removed flask.Markup. Import it from its actual home.
 from flask_login import current_user, login_required
 from sqlalchemy.orm import contains_eager, selectinload
+from unidecode import unidecode
 
 from app import db
 from app.main.forms import (
@@ -246,18 +247,26 @@ def watchlist_shelf_rows(user):
             fetch_limit=0,
         )
 
+    # A film is leaving only if the Criterion Channel of the user is its
+    # only streaming match. streaming_matches marks only a Criterion match
+    # with "leaving", and only for a subscriber. A film that is also on
+    # another service of the user stays watchable after the departure.
+
     watchable = []
     for movie in movies:
         owned = movie.id in owned_ids
-        streaming = bool(
-            provider_ids
-            and movie.tmdb_id
-            and streaming_matches(
+        matches = (
+            streaming_matches(
                 availability.get(movie.tmdb_id), provider_ids, tmdb_id=movie.tmdb_id
             )
+            if provider_ids and movie.tmdb_id
+            else []
         )
-        if owned or streaming:
-            watchable.append((movie, owned, streaming))
+        leaving = None
+        if matches and not owned and all(match.get("leaving") for match in matches):
+            leaving = matches[0]["leaving"]
+        if owned or matches:
+            watchable.append((movie, owned, leaving))
     if not watchable:
         return [], []
 
@@ -270,7 +279,7 @@ def watchlist_shelf_rows(user):
     profile = stored_profile(current_app.redis, user_id)
     scores = stored_scores(current_app.redis, user_id) if profile else {}
     rows = []
-    for movie, owned, streaming in watchable:
+    for movie, owned, leaving in watchable:
         score = (
             resolved_score(current_app.redis, user_id, movie, profile, scores=scores)
             if profile
@@ -280,11 +289,7 @@ def watchlist_shelf_rows(user):
             {
                 "movie": movie,
                 "owned": owned,
-                "leaving": (
-                    leaving_departure(movie.tmdb_id)
-                    if streaming and not owned
-                    else None
-                ),
+                "leaving": leaving,
                 "score": score if score is not None else 0.0,
             }
         )
@@ -1874,14 +1879,28 @@ def watchlist():
     # views. A film with no genre data hides from a genre view in the
     # same way.
 
+    # The filter works like the SQL searches: it ignores accents and case,
+    # and a space matches any run of characters. Thus, "amelie" finds
+    # "Amélie", and "spider man" finds "Spider-Man".
+
     total = len(rows)
     if q:
-        needle = q.lower()
+        words = unidecode(q).lower().split()
+
+        def matches(text):
+            text = unidecode(text or "").lower()
+            position = 0
+            for word in words:
+                found = text.find(word, position)
+                if found < 0:
+                    return False
+                position = found + len(word)
+            return True
+
         rows = [
             row
             for row in rows
-            if needle in (row["movie"].tmdb_title or "").lower()
-            or needle in (row["movie"].title or "").lower()
+            if matches(row["movie"].tmdb_title) or matches(row["movie"].title)
         ]
     if minutes:
         rows = [

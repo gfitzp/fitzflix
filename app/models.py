@@ -2224,16 +2224,17 @@ class File(db.Model):
                                 File.fullscreen == True,
                                 RefQuality.preference > source_quality.preference,
                             ).self_group(),
+                            # The parser gives a full screen file the plex
+                            # title and the edition of its widescreen copy.
+                            # Only the flag differs. Any widescreen copy
+                            # blocks it.
                             db.and_(
-                                db.func.concat(File.plex_title, " - Full Screen")
-                                == self.plex_title,
+                                File.plex_title == self.plex_title,
+                                File.edition == self.edition,
                                 db.or_(
-                                    db.func.concat("Full Screen") == self.edition,
-                                    db.func.concat(File.edition, " - Full Screen")
-                                    == self.edition,
+                                    File.fullscreen == False,
+                                    File.fullscreen.is_(None),
                                 ).self_group(),
-                                File.fullscreen == False,
-                                # RefQuality.preference >= source_quality.preference
                             ).self_group(),
                         ),
                     )
@@ -2453,7 +2454,10 @@ class File(db.Model):
             # episode-title segment of the filename. Two releases of the
             # same episode can give it different titles. The episode span
             # is the identity. Thus, an upgrade with a new title still
-            # removes its predecessor.
+            # removes its predecessor. A wider span replaces a narrower
+            # file only at the same or a better quality, the rule of
+            # find_better_files and tv_file_rank. A DVD "S13E01-E06" must
+            # not delete a Bluray "S13E01".
 
             worse_files = (
                 File.query.join(RefQuality, (RefQuality.id == File.quality_id))
@@ -2462,13 +2466,8 @@ class File(db.Model):
                     File.series_id == self.series_id,
                     File.season == self.season,
                     File.episode == self.episode,
-                    db.or_(
-                        File.last_episode < self.last_episode,
-                        db.and_(
-                            File.last_episode == self.last_episode,
-                            RefQuality.preference <= self.quality.preference,
-                        ).self_group(),
-                    ),
+                    File.last_episode <= self.last_episode,
+                    RefQuality.preference <= self.quality.preference,
                     db.or_(File.fullscreen == self.fullscreen, File.fullscreen == True),
                     File.id != self.id,
                 )

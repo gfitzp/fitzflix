@@ -630,3 +630,20 @@ def test_all_files_offers_the_qualities_of_tv_files(app, admin_client):
     )
     assert response.status_code == 302
     assert "q=quality+show" in response.headers["Location"]
+
+
+def test_tv_shopping_grades_a_season_by_its_best_copies(app, admin_client):
+    """An old WEBDL-720p copy next to a Bluray does not make the season an upgrade."""
+
+    from app import db
+    from tests.factories import make_tv_file, make_tv_series
+
+    with app.app_context():
+        series = make_tv_series("Settled Show")
+        make_tv_file(series, 2, 1, "Bluray-1080p")
+        make_tv_file(series, 2, 1, "WEBDL-720p", edition="Old Copy")
+        db.session.commit()
+
+    page = admin_client.get("/shopping-list/tv").get_data(as_text=True)
+    start = page.index(">Settled Show</a>")
+    assert "Already owned" in page[start : start + 600]

@@ -1057,7 +1057,7 @@ SHELF_SNAPSHOT_KEY = "fitzflix:shelf:{shelf}:{user_id}:{day}"
 SHELF_SNAPSHOT_TTL = 2 * 86400
 
 
-def frozen_shelf(redis_client, user_id, shelf, eligible_ids, pick, day=None):
+def frozen_shelf(redis_client, user_id, shelf, eligible_ids, pick, day=None, size=None):
     """Return the stable ordered card ids of the day for 1 shelf.
 
     The first render of the day calls pick() for the baseline and
@@ -1069,6 +1069,12 @@ def frozen_shelf(redis_client, user_id, shelf, eligible_ids, pick, day=None):
     rest must never move. eligible_ids carries each id that can show
     now, in replacement-priority order. A slot with no remaining
     replacement closes.
+
+    A shelf with fewer cards than `size` takes new eligible ids at the
+    end. Thus, a film that became eligible during the day (a new
+    watchlist entry) shows in an empty slot, and no other card moves. A
+    first render with nothing to show does not keep the shelf empty for
+    the day.
     """
 
     day = day or date.today().isoformat()
@@ -1102,6 +1108,13 @@ def frozen_shelf(redis_client, user_id, shelf, eligible_ids, pick, day=None):
         if replacement is not None:
             cards.append(replacement)
             showing.add(replacement)
+    while size and len(cards) < size:
+        addition = next(replacements, None)
+        if addition is None:
+            break
+        cards.append(addition)
+        showing.add(addition)
+        changed = True
     if changed:
         redis_client.set(key, json.dumps(cards), ex=SHELF_SNAPSHOT_TTL)
     return cards
@@ -1176,6 +1189,7 @@ def daily_shelf(
                 if row_key not in shown
             ],
             pick=pick,
+            size=count,
         )
         # An urgent row can appear after the first render of the day. The
         # leaving set of a new month is published on the clock of the

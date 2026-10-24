@@ -271,3 +271,27 @@ def test_landing_rail_is_stable_and_replaces_only_the_watched_slot(app, admin_cl
     # The replacement stays on the next render
 
     assert shown_titles() == second
+
+
+def test_a_new_eligible_film_fills_an_empty_slot_at_the_end(app):
+    """No card moves, but an empty slot takes a film that became eligible."""
+
+    with app.app_context():
+        redis = app.redis
+        day = "2026-10-24"
+
+        # The first visit of the day finds nothing to show.
+        assert frozen_shelf(redis, 1, "watch", [], lambda: [], day=day, size=3) == []
+
+        # A watchlist add makes a film eligible. It shows at once.
+        assert frozen_shelf(redis, 1, "watch", [7], lambda: [], day=day, size=3) == [7]
+
+        # 2 more films. The first card keeps its slot. The others follow.
+        assert frozen_shelf(
+            redis, 1, "watch", [9, 8, 7], lambda: [], day=day, size=3
+        ) == [7, 9, 8]
+
+        # A full shelf takes no more.
+        assert frozen_shelf(
+            redis, 1, "watch", [6, 9, 8, 7], lambda: [], day=day, size=3
+        ) == [7, 9, 8]
