@@ -1772,13 +1772,14 @@ def aws_download(key, basename, sqs_receipt_handle=None, place_at=None):
 
     bucket = current_app.config["AWS_BUCKET"]
     # A restore into the library is not imported. Its library basename is
-    # not unique: many films have a "Restoration Demonstration.mkv". Thus,
-    # its staging name holds a digest of the key. An import download keeps
+    # not unique: many films have a "Restoration Demonstration.mkv". The
+    # untouched name is not sufficient either. The 2 archives of a
+    # conversion share it. Thus, the staging name is the downloaded key,
+    # with its prefix: 1 file for each object. An import download keeps
     # its name. The rename to that name starts the import.
 
     if place_at:
-        digest = hashlib.sha1(key.encode()).hexdigest()[:8]
-        staged_name = f".restore-{digest}-{basename}"
+        staged_name = f".restore-{key.replace('/', '-')}"
     else:
         staged_name = f".{basename}"
     destination = os.path.join(current_app.config["IMPORT_DIR"], staged_name)

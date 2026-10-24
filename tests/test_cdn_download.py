@@ -667,8 +667,12 @@ def test_a_resume_names_the_version_it_continues(app, monkeypatch, cdn):
     assert cdn["headers"] == [{}, {"Range": "bytes=2-", "If-Range": '"abc"'}]
 
 
-def test_a_direct_restore_stages_under_a_name_of_its_key(app, monkeypatch, cdn):
-    """Many films have an extra with the same name. Their restores must not share a file."""
+def test_a_direct_restore_stages_under_its_key(app, monkeypatch, cdn):
+    """Many films have an extra with the same name. Their restores must not share a file.
+
+    The staging name is the downloaded key with its prefix. Thus, the 2
+    archives of a conversion, which share an untouched name, also get 2
+    files."""
 
     from app import aws_storage
 
@@ -698,8 +702,10 @@ def test_a_direct_restore_stages_under_a_name_of_its_key(app, monkeypatch, cdn):
             if os.path.exists(path):
                 os.remove(path)
 
-    assert len(set(staged)) == 2
-    assert all(name.startswith(".restore-") for name in staged)
+    assert staged == [
+        ".restore-modified-Shadows (1958) - Restoration Demonstration.mkv",
+        ".restore-modified-Cherbourg (1964) - Restoration Demonstration.mkv",
+    ]
 
 
 def test_cdn_body_with_no_known_size_is_not_trusted(app, monkeypatch, cdn):
