@@ -47,6 +47,16 @@ class TestWebhookAuth:
         )
         assert response.status_code == 401
 
+    def test_rejects_a_non_ascii_key(self, client, endpoint):
+        # compare_digest raises on a non-ASCII str. That was a 500 and an
+        # error email for each request.
+        response = client.post(
+            endpoint,
+            json={"eventType": "Test"},
+            headers=auth_header(key="\u00e9"),
+        )
+        assert response.status_code == 401
+
     def test_rejects_unknown_user(self, client, endpoint):
         response = client.post(
             endpoint,

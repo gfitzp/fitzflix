@@ -89,6 +89,7 @@ CONFIG = {
     "AWS_MODIFIED_PREFIX": "modified",
     "AWS_TRANSCODED_PREFIX": "transcoded",
     "AWS_CUSTOM_POSTERS_PREFIX": "custom-posters",
+    "AWS_MEDIACONVERT_PREFIX": "mediaconvert-scratch",
     "AWS_SQS_URL": "https://sqs.test/existing",
 }
 
@@ -128,6 +129,17 @@ def test_provision_creates_everything_from_nothing(tmp_path):
         if rule.get("Filter", {}).get("Prefix") == "custom-posters/"
     )
     assert posters_rule["NoncurrentVersionExpiration"]["NoncurrentDays"] == 30
+    # The Atmos scratch area expires. Its deletes leave noncurrent versions
+    scratch_rules = [
+        rule
+        for rule in s3.rules
+        if rule.get("Filter", {}).get("Prefix") == "mediaconvert-scratch/"
+    ]
+    assert [rule["Expiration"] for rule in scratch_rules] == [
+        {"Days": 7},
+        {"ExpiredObjectDeleteMarker": True},
+    ]
+    assert scratch_rules[0]["NoncurrentVersionExpiration"] == {"NoncurrentDays": 1}
     assert "create_queue" in sqs.writes
     assert any(
         statement.get("Principal", {}).get("Service") == "s3.amazonaws.com"
@@ -221,6 +233,8 @@ def test_provision_preserves_existing_hand_made_configuration(tmp_path):
         "lifecycle: transcoded/ noncurrent-version retention (180 days)": "created",
         "bucket restore-completed notification for modified/": "created",
         "bucket restore-completed notification for transcoded/": "created",
+        "lifecycle: mediaconvert-scratch/ expiry (7 days, noncurrent 1 day)": "created",
+        "lifecycle: mediaconvert-scratch/ expired delete markers": "created",
     }
 
     # The hand-made untouched/ rule keeps every field except the increased
@@ -240,6 +254,8 @@ def test_provision_preserves_existing_hand_made_configuration(tmp_path):
     assert [rule["Filter"].get("Prefix") for rule in s3.rules[3:]] == [
         "modified/",
         "transcoded/",
+        "mediaconvert-scratch/",
+        "mediaconvert-scratch/",
     ]
     queue_configurations = s3.notification["QueueConfigurations"]
     assert queue_configurations[0] == notification["QueueConfigurations"][0]

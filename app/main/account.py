@@ -155,6 +155,12 @@ def review_edit(review_id):
                 for field, value in star_rating_fields(None).items():
                     setattr(user_review, field, value)
                 user_review.liked = False
+
+                # A row with no stars and no text is a bare watch again.
+                # A review date would make it outrank an older review.
+
+                if not (user_review.review or "").strip():
+                    user_review.date_reviewed = None
             else:
                 for field, value in star_rating_fields(quick_rating).items():
                     setattr(user_review, field, value)

@@ -117,6 +117,15 @@ def next_cron_time(cron, utc_now):
     from croniter import croniter
     from dateutil import tz
 
+    # A job that runs each hour (an hour field of "*") follows the UTC
+    # clock. Its minutes are the same in each zone of a whole-hour
+    # offset. Thus, it also runs in the repeated hour, and it loses no
+    # run.
+
+    fields = cron.split()
+    if len(fields) == 5 and fields[1] == "*" and fields[2:] == ["*", "*", "*"]:
+        return croniter(cron, utc_now).get_next(datetime).astimezone(timezone.utc)
+
     local_now = utc_now.astimezone(tz.tzlocal())
     next_local = croniter(cron, local_now).get_next(datetime)
     if tz.datetime_ambiguous(next_local):

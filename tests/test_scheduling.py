@@ -1391,3 +1391,22 @@ def test_a_job_in_the_repeated_hour_runs_once(monkeypatch):
     assert first == datetime.fromisoformat("2026-11-01T05:15:00+00:00")
     second = next_cron_time("15 1 * * *", first + timedelta(seconds=1))
     assert second == datetime.fromisoformat("2026-11-02T06:15:00+00:00")
+
+
+def test_an_hourly_job_keeps_its_runs_in_the_repeated_hour(monkeypatch):
+    """A job that runs each hour also runs in the second 1:00 to 1:59."""
+
+    from datetime import datetime, timedelta
+
+    from dateutil import tz
+
+    from app import next_cron_time
+
+    monkeypatch.setattr(tz, "tzlocal", lambda: tz.gettz("America/New_York"))
+    t = datetime.fromisoformat("2026-11-01T04:55:00+00:00")
+    runs = []
+    for _ in range(4):
+        t = next_cron_time("0 * * * *", t)
+        runs.append(t.strftime("%H:%M"))
+        t += timedelta(seconds=1)
+    assert runs == ["05:00", "06:00", "07:00", "08:00"]

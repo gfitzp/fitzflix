@@ -74,6 +74,10 @@ class TestDvrGate:
     def test_rejects_wrong_token(self, client, endpoint):
         assert client.get(endpoint.format(token="0" * 24)).status_code == 404
 
+    def test_rejects_a_non_ascii_token(self, client, endpoint):
+        # compare_digest raises on a non-ASCII str: a 500 and an email.
+        assert client.get(endpoint.format(token="%C3%A9")).status_code == 404
+
     def test_rejects_when_unconfigured(self, app, client, monkeypatch, endpoint):
         monkeypatch.setitem(app.config, "DVR_TOKEN", None)
         assert client.get(endpoint.format(token=TOKEN)).status_code == 404

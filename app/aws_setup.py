@@ -48,6 +48,19 @@ CUSTOM_POSTERS_NONCURRENT_RETENTION_DAYS = 30
 
 CUSTOM_POSTERS_RULE_ID = "fitzflix-custom-posters-noncurrent"
 
+# The Atmos pipeline writes its DAMF masters and the .ec3 twins under a
+# scratch prefix and deletes them when the run ends. The bucket keeps
+# versions. Thus, a delete leaves a noncurrent version (1.6 TB on
+# 2026-10-24). These rules remove what a run leaves: current objects
+# after 1 week, noncurrent versions after 1 day, and then the delete
+# markers. S3 does not accept the delete-marker setting in a rule that
+# has a number of days.
+
+SCRATCH_RULE_ID = "fitzflix-mediaconvert-scratch-expire"
+SCRATCH_MARKERS_RULE_ID = "fitzflix-mediaconvert-scratch-markers"
+SCRATCH_CURRENT_DAYS = 7
+SCRATCH_NONCURRENT_DAYS = 1
+
 
 class StaleReadSuspected(Exception):
     """The bucket reported fewer lifecycle rules than the newest snapshot.
@@ -305,6 +318,42 @@ def provision(config, s3, sqs, echo=print, force=False):
         )
         changed = True
         report(posters_label, "created")
+
+    # 3e. The expiry of the MediaConvert scratch area of the Atmos pipeline
+
+    scratch_prefix = f"{config['AWS_MEDIACONVERT_PREFIX']}/"
+    scratch_rules = (
+        (
+            SCRATCH_RULE_ID,
+            f"lifecycle: {scratch_prefix} expiry ({SCRATCH_CURRENT_DAYS} days, "
+            f"noncurrent {SCRATCH_NONCURRENT_DAYS} day)",
+            {
+                "Expiration": {"Days": SCRATCH_CURRENT_DAYS},
+                "NoncurrentVersionExpiration": {
+                    "NoncurrentDays": SCRATCH_NONCURRENT_DAYS
+                },
+            },
+        ),
+        (
+            SCRATCH_MARKERS_RULE_ID,
+            f"lifecycle: {scratch_prefix} expired delete markers",
+            {"Expiration": {"ExpiredObjectDeleteMarker": True}},
+        ),
+    )
+    for rule_id, label, actions in scratch_rules:
+        if any(rule.get("ID") == rule_id for rule in rules):
+            report(label, "present")
+            continue
+        rules.append(
+            {
+                "ID": rule_id,
+                "Status": "Enabled",
+                "Filter": {"Prefix": scratch_prefix},
+                **actions,
+            }
+        )
+        changed = True
+        report(label, "created")
 
     if changed:
         s3.put_bucket_lifecycle_configuration(

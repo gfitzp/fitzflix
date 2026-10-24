@@ -145,7 +145,8 @@ def _same_day_rerate(user_id, movie_id, rating):
     A second star tap on the same calendar day does not log a rewatch.
     It writes the new stars and derives liked again. Only a new day
     makes the next tap a new diary entry (rule from Glenn, 2026-08).
-    This function returns the edited row. It returns None if today has
+    The edit stamps date_updated for the export. This function returns
+    the edited row. It returns None if today has
     no review to edit."""
 
     row = _latest_review_row(user_id, movie_id)
@@ -159,6 +160,11 @@ def _same_day_rerate(user_id, movie_id, rating):
         setattr(row, field, value)
     row.liked = rating >= 3
     row.date_reviewed = datetime.now()
+
+    # The incremental Letterboxd export selects edited rows by this time.
+    # An export earlier today already sent the old stars.
+
+    row.date_updated = row.date_reviewed
     return row
 
 

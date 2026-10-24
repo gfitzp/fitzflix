@@ -1961,11 +1961,23 @@ def _remux_audio_plan_unlocked(file_id, plan):
             os.remove(staging_source)
             final_staging = staging_output
 
+            # A failed copy leaves a partial hidden file next to the
+            # library file. Remove it, as the other write-backs do.
+
             hidden_library = os.path.join(os.path.dirname(file_path), f".{basename}")
-            copy_with_progress(
-                final_staging, hidden_library, job, basename, "Moving into the library"
-            )
-            os.replace(hidden_library, file_path)
+            try:
+                copy_with_progress(
+                    final_staging,
+                    hidden_library,
+                    job,
+                    basename,
+                    "Moving into the library",
+                )
+                os.replace(hidden_library, file_path)
+            except BaseException:
+                if os.path.exists(hidden_library):
+                    os.remove(hidden_library)
+                raise
 
             # Build the track records again because the file changed
 

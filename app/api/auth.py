@@ -24,8 +24,10 @@ def authenticate_api_request():
     user = User.query.filter_by(email=auth.get("username")).first()
     presented = auth.get("password")
 
+    # The compare is on bytes. A non-ASCII str makes compare_digest raise.
+
     expected = user.api_key if user and user.api_key else _DUMMY_KEY
-    if secrets.compare_digest(expected, presented) and user:
+    if secrets.compare_digest(expected.encode(), presented.encode()) and user:
         return user
 
     return None

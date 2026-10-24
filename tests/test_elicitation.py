@@ -466,6 +466,8 @@ def test_same_day_retap_edits_todays_review(app, admin_client):
         assert float(row.rating) == 4.0
         assert row.liked is True
         assert row.rewatch is False
+        # The edit stamp lets the incremental export send the new stars
+        assert row.date_updated is not None
 
     # The user likes the film less in the evening. The correction can go
     # down too.

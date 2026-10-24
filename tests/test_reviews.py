@@ -1267,6 +1267,19 @@ def test_stars_on_a_bare_rewatch_become_the_current_verdict(app, admin_client):
         assert row.date_reviewed is not None and row.date_updated is not None
         assert _latest_review_row(user_id, movie_id).id == row_id
 
+    # A tap on the same star clears it. The row is a bare watch again, and
+    # the older review is the verdict again.
+
+    response = admin_client.post(
+        f"/review/{row_id}/edit",
+        data={"csrf_token": csrf_token_from(page), "quick_rating": "5"},
+        headers={"X-Requested-With": "ladder"},
+    )
+    with app.app_context():
+        row = db.session.get(UserMovieReview, row_id)
+        assert row.rating is None and row.date_reviewed is None
+        assert float(_latest_review_row(user_id, movie_id).rating) == 3.0
+
 
 def test_review_edit_accepts_clearing_to_a_bare_watch(app, admin_client):
     from app import db

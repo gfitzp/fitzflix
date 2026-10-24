@@ -1,5 +1,7 @@
 """Test the throttle of failed sign-ins and password-reset requests (#263)."""
 
+import pytest
+
 from tests.conftest import ADMIN_EMAIL, ADMIN_PASSWORD, page_csrf_token
 
 # The address of the second CloudFront layer. It is the last entry of
@@ -232,3 +234,31 @@ def test_counter_without_expiry_heals(app):
     with app.app_context():
         assert throttle._count(key, throttle.RESET_WINDOW) == 8
     assert 0 < app.redis.ttl(key) <= throttle.RESET_WINDOW.total_seconds()
+
+
+@pytest.mark.parametrize(
+    "target,expected",
+    [
+        ("/movies?page=2", "/movies?page=2"),
+        ("/\\evil.example", "/index"),
+        ("\\\\evil.example", "/index"),
+        ("http:evil.example", "/index"),
+        ("//evil.example", "/index"),
+        ("https://evil.example/", "/index"),
+        ("/\t/evil.example", "/index"),
+    ],
+)
+def test_sign_in_follows_only_a_local_next_path(app, target, expected):
+    """A browser reads "\\" as "/". The next path must never leave the site."""
+
+    from urllib.parse import quote
+
+    client = app.test_client()
+    token = page_csrf_token(client, "/auth/login")
+    response = client.post(
+        f"/auth/login?next={quote(target, safe='')}",
+        data={"csrf_token": token, "email": ADMIN_EMAIL, "password": ADMIN_PASSWORD},
+    )
+    assert response.status_code == 302
+    location = response.headers["Location"]
+    assert location == expected or location.endswith(f"//localhost{expected}")

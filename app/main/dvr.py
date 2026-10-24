@@ -56,8 +56,12 @@ def _authorized(token):
     The result is always False while the feature is not configured.
     Thus, every route returns a 404."""
 
+    # The compare is on bytes. A str with a non-ASCII character makes
+    # compare_digest raise TypeError: a 500 and an error email for each
+    # request of an unauthenticated client.
+
     expected = current_app.config["DVR_TOKEN"]
-    return bool(expected) and secrets.compare_digest(token, expected)
+    return bool(expected) and secrets.compare_digest(token.encode(), expected.encode())
 
 
 def _absolute(endpoint, **values):

@@ -297,15 +297,33 @@ def test_a_movie_delete_keeps_the_shared_tmdb_rows(app):
 def test_a_merge_moves_the_watchlist_status_and_award_rows(app):
     """The survivor keeps the user rows of the merged record."""
 
-    from app.models import MovieAward, User, UserMovieStatus, UserWatchlist
+    from app.models import (
+        ArchivedOriginal,
+        DVRChannel,
+        MovieAward,
+        User,
+        UserMovieStatus,
+        UserWatchlist,
+    )
     from app.tmdb_refresh import move_movie_rows
 
     with app.app_context():
         user = User.query.first()
         old = make_movie("Old Record", 2003)
         new = make_movie("New Record", 2003, tmdb_id=900)
+        channel = DVRChannel(number=310, name="Picks", slug="picks")
+        channel.movies.append(old)
         db.session.add_all(
             [
+                channel,
+                ArchivedOriginal(
+                    media_library="Movies",
+                    movie_id=old.id,
+                    quality_title="Bluray-2160p",
+                    untouched_basename="Old Record (2003) - [Bluray-2160p].mkv",
+                    aws_key="untouched/Old Record (2003) - [Bluray-2160p].mkv",
+                    reason="archive only",
+                ),
                 UserWatchlist(user_id=user.id, movie_id=old.id),
                 UserWatchlist(user_id=user.id, movie_id=new.id),
                 UserMovieStatus(
@@ -326,3 +344,5 @@ def test_a_merge_moves_the_watchlist_status_and_award_rows(app):
         db.session.commit()
         assert UserWatchlist.query.filter_by(movie_id=new.id).count() == 1
         assert UserMovieStatus.query.filter_by(movie_id=new.id).count() == 1
+        assert ArchivedOriginal.query.filter_by(movie_id=new.id).count() == 1
+        assert channel.movies.all() == [new]

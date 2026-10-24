@@ -348,18 +348,46 @@ def _run_step(command, job, basename, description, ok_returncodes=(0,)):
 
 
 def _cleanup_s3_prefix(s3_client, bucket, prefix):
-    """Try to remove the S3 scratch objects of the pipeline."""
+    """Try to remove the S3 scratch objects of the pipeline, with all versions.
+
+    The bucket keeps versions. A delete without a version id only adds a
+    delete marker, and the old version stays in S3 Standard. On
+    2026-10-24, 1.6 TB of masters stayed that way. Thus, this deletes
+    each version and each delete marker. The lifecycle rule of the
+    scratch prefix (aws_setup) removes what a failed cleanup leaves."""
 
     try:
-        listed = s3_client.list_objects_v2(Bucket=bucket, Prefix=f"{prefix}/")
-        keys = [{"Key": obj["Key"]} for obj in listed.get("Contents", [])]
-        if keys:
-            s3_client.delete_objects(Bucket=bucket, Delete={"Objects": keys})
+        doomed = []
+        paginator = s3_client.get_paginator("list_object_versions")
+        for page in paginator.paginate(Bucket=bucket, Prefix=f"{prefix}/"):
+            for entry in page.get("Versions", []) + page.get("DeleteMarkers", []):
+                doomed.append({"Key": entry["Key"], "VersionId": entry["VersionId"]})
+        for start in range(0, len(doomed), 1000):
+            s3_client.delete_objects(
+                Bucket=bucket,
+                Delete={"Objects": doomed[start : start + 1000], "Quiet": True},
+            )
+        if doomed:
             current_app.logger.info(
-                f"Removed {len(keys)} scratch object(s) under '{prefix}/'"
+                f"Removed {len(doomed)} scratch object version(s) under '{prefix}/'"
             )
     except Exception:
         current_app.logger.error(traceback.format_exc())
+
+
+def _cancel_encodes(job_ids):
+    """Cancel the MediaConvert encodes of a failed run.
+
+    Else they continue to bill, and they write their outputs after the
+    cleanup. A finished or failed encode refuses the cancel. That is
+    not an error."""
+
+    for job_id in job_ids:
+        try:
+            mediaconvert_client().cancel_job(Id=job_id)
+            current_app.logger.info(f"Canceled MediaConvert job {job_id}")
+        except Exception as e:
+            current_app.logger.info(f"MediaConvert job {job_id} not canceled: {e}")
 
 
 # The Atmos run is 3 jobs. While MediaConvert encodes, no job runs, and
@@ -734,6 +762,7 @@ def _atmos_prepare(file_id, phases, staged_source=None):
     except BaseException:
         current_app.logger.error(traceback.format_exc())
         shutil.rmtree(workspace, ignore_errors=True)
+        _cancel_encodes([track["mc_job_id"] for track in tracks])
         _cleanup_s3_prefix(s3_client, bucket, prefix)
         raise
 
@@ -865,6 +894,13 @@ def atmos_check_task(state, lock, checks=0):
             if failed:
                 _trail_phases(state, "Encoding E-AC-3 Atmos").fail()
                 _trail_phases(state, None).close("failed")
+                _cancel_encodes(
+                    [
+                        result.get("Id")
+                        for result in results
+                        if result.get("Status") not in ("COMPLETE", "ERROR", "CANCELED")
+                    ]
+                )
                 _close_run(state, lock)
                 raise RuntimeError(
                     "; ".join(
@@ -902,6 +938,7 @@ def atmos_check_task(state, lock, checks=0):
         if checks + 1 >= MEDIACONVERT_CHECK_LIMIT:
             _trail_phases(state, "Encoding E-AC-3 Atmos").fail()
             _trail_phases(state, None).close("failed")
+            _cancel_encodes([track["mc_job_id"] for track in state["tracks"]])
             _close_run(state, lock)
             raise RuntimeError(
                 f"MediaConvert did not finish the encode of '{basename}' "

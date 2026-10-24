@@ -329,6 +329,58 @@ def test_refresh_merge_withdraws_the_old_radarr_entry(app, monkeypatch):
     assert fake.commands == [{"name": "RefreshMovie", "movieIds": [9]}]
 
 
+def test_a_merge_stops_when_the_files_do_not_move(app, monkeypatch):
+    """A failed commit of the file move must not delete the files with the record.
+
+    The delete of the old record would delete its File rows with it."""
+
+    import os
+    from datetime import date
+
+    from sqlalchemy import inspect as sa_inspect
+
+    from app import tmdb_refresh
+    from app.models import File, Movie
+    from app.videos import apply_tmdb_refresh
+    from tests.factories import make_movie, make_movie_file
+
+    wire(app, monkeypatch)
+    monkeypatch.setattr(tmdb_refresh, "rename_untouched_object", lambda *a, **k: False)
+    with app.app_context():
+        source = make_movie("Stuck Entry", 2002, tmdb_id=1112)
+        file = make_movie_file(source, "DVD")
+        file.untouched_basename = file.basename
+        target = make_movie("Target Entry", 2002, tmdb_id=4243)
+        target.tmdb_title = "Target Entry"
+        target.tmdb_release_date = date(2002, 6, 1)
+        db.session.commit()
+        source_id, file_id = source.id, file.id
+        old_path = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
+        os.makedirs(os.path.dirname(old_path), exist_ok=True)
+        with open(old_path, "wb") as handle:
+            handle.write(b"payload")
+
+        real_commit = db.session.commit
+
+        def failing_commit():
+            for obj in db.session.dirty:
+                if (
+                    isinstance(obj, File)
+                    and sa_inspect(obj).attrs.movie_id.history.added
+                ):
+                    raise RuntimeError("Record has changed since last read (1020)")
+            return real_commit()
+
+        monkeypatch.setattr(db.session, "commit", failing_commit)
+        assert apply_tmdb_refresh("Movies", source_id, tmdb_id=4243) is False
+        monkeypatch.setattr(db.session, "commit", real_commit)
+
+        db.session.expire_all()
+        assert db.session.get(File, file_id).movie_id == source_id
+        assert db.session.get(Movie, source_id) is not None
+    os.remove(old_path)
+
+
 def test_refresh_rename_skips_a_film_radarr_lacks(app, monkeypatch):
     from app.videos import apply_tmdb_refresh
 

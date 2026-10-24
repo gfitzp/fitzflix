@@ -57,8 +57,10 @@ def plex_webhook(token):
     double count from the two sources.
     """
 
+    # The compare is on bytes. A non-ASCII str makes compare_digest raise.
+
     expected = current_app.config["PLEX_WEBHOOK_TOKEN"]
-    if not expected or not secrets.compare_digest(token, expected):
+    if not expected or not secrets.compare_digest(token.encode(), expected.encode()):
         return jsonify({}), 404
 
     # Plex posts multipart form data with the JSON in a "payload" field

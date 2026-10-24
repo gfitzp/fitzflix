@@ -105,6 +105,12 @@ def test_webhook_rejects_bad_token(app, client):
     assert plex_jobs(app) == []
 
 
+def test_webhook_rejects_a_non_ascii_token(app, client):
+    response = post_webhook(client, scrobble_payload(), url="/api/plex/webhook/%C3%A9")
+    assert response.status_code == 404
+    assert plex_jobs(app) == []
+
+
 def test_webhook_ignores_non_scrobbles_and_tv(app, client):
     assert post_webhook(client, scrobble_payload(event="media.play")).status_code == 204
     assert (

@@ -31,6 +31,15 @@ class _FakeS3:
     def delete_objects(self, Bucket, Delete):
         pass
 
+    def get_paginator(self, name):
+        assert name == "list_object_versions"
+        return _FakePaginator()
+
+
+class _FakePaginator:
+    def paginate(self, Bucket, Prefix):
+        return [{"Versions": [], "DeleteMarkers": []}]
+
 
 class _FakeMediaConvert:
     """Stand in for MediaConvert. The test sets the status of the encode."""
@@ -41,6 +50,9 @@ class _FakeMediaConvert:
 
     def create_job(self, Role, Settings):
         return {"Job": {"Id": "mc-1"}}
+
+    def cancel_job(self, Id):
+        self.canceled = getattr(self, "canceled", []) + [Id]
 
     def get_job(self, Id):
         if self.fail_next_get:
@@ -306,3 +318,81 @@ def test_the_import_queues_the_twin_on_the_handoff_queue(app, monkeypatch):
         assert atmos.maybe_enqueue_atmos_supplement(file.id) is False
         assert not [j for j in app.import_queue.jobs if j.args == (file.id,)]
         handoff.delete()
+
+
+def test_the_scratch_cleanup_deletes_every_version(app):
+    """The bucket keeps versions. A plain delete only adds a delete marker."""
+
+    import app.atmos as atmos
+
+    class VersionedS3:
+        def __init__(self):
+            self.deleted = []
+
+        def get_paginator(self, name):
+            assert name == "list_object_versions"
+
+            class Pages:
+                def paginate(self, Bucket, Prefix):
+                    assert Prefix == "mediaconvert-scratch/7/"
+                    return [
+                        {
+                            "Versions": [
+                                {"Key": f"{Prefix}x.atmos", "VersionId": "v1"},
+                                {"Key": f"{Prefix}out1/twin.ec3", "VersionId": "v2"},
+                            ],
+                            "DeleteMarkers": [
+                                {"Key": f"{Prefix}old.atmos", "VersionId": "m1"}
+                            ],
+                        }
+                    ]
+
+            return Pages()
+
+        def delete_objects(self, Bucket, Delete):
+            self.deleted.extend(Delete["Objects"])
+
+    s3 = VersionedS3()
+    with app.app_context():
+        atmos._cleanup_s3_prefix(s3, "bucket", "mediaconvert-scratch/7")
+    assert {entry["VersionId"] for entry in s3.deleted} == {"v1", "v2", "m1"}
+
+
+def test_a_failed_encode_cancels_the_other_encodes(app, monkeypatch):
+    """The other encodes of a failed run must not continue to bill."""
+
+    import app.atmos as atmos
+
+    class TwoJobs:
+        canceled = []
+
+        def get_job(self, Id):
+            status = "ERROR" if Id == "mc-1" else "PROGRESSING"
+            return {"Job": {"Id": Id, "Status": status}}
+
+        def cancel_job(self, Id):
+            self.canceled.append(Id)
+
+    mediaconvert = TwoJobs()
+    monkeypatch.setattr(atmos, "mediaconvert_client", lambda: mediaconvert)
+    monkeypatch.setattr(atmos, "_close_run", lambda state, lock: None)
+    monkeypatch.setattr(atmos, "_trail_phases", lambda state, current: _NoPhases())
+    state = {
+        "basename": "Two Tracks (2001) - [Bluray-1080p].mkv",
+        "tracks": [{"mc_job_id": "mc-1"}, {"mc_job_id": "mc-2"}],
+        "file_id": 1,
+        "chain": "c",
+    }
+    try:
+        atmos.atmos_check_task(state, None)
+    except RuntimeError:
+        pass
+    assert mediaconvert.canceled == ["mc-2"]
+
+
+class _NoPhases:
+    def fail(self):
+        pass
+
+    def close(self, status):
+        pass

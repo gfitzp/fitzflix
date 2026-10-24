@@ -31,6 +31,7 @@ from app import db, get_app, safe_job_id
 from app.aws_storage import rename_untouched_object, sanitize_s3_key
 from app.email import send_email as send_email_async
 from app.models import (
+    ArchivedOriginal,
     File,
     Movie,
     MovieAward,
@@ -69,16 +70,18 @@ def library_name_details(file, file_details):
 
 
 def move_movie_rows(old_movie_id, new_movie_id):
-    """Move the per-movie user rows of a merged movie record to the survivor.
+    """Move the per-movie rows of a merged movie record to the survivor.
 
-    These are the watchlist rows, the status flags, and the awards. A
-    row that the survivor already has stays behind. The delete of the
+    These are the watchlist rows, the status flags, the awards, the
+    archive-only originals, and the DVR channel picks. A row that the
+    survivor already has stays behind. The delete of the
     old record removes it. Thus, no unique key fails."""
 
     keys = (
         (UserWatchlist, ("user_id",)),
         (UserMovieStatus, ("user_id", "kind")),
         (MovieAward, ("award_id", "win", "year")),
+        (ArchivedOriginal, ("id",)),
     )
     for model, fields in keys:
         kept = {
@@ -90,6 +93,16 @@ def move_movie_rows(old_movie_id, new_movie_id):
             if key not in kept:
                 row.movie_id = new_movie_id
                 kept.add(key)
+
+    # The DVR channel picks are link rows. The delete of the old record
+    # removes them.
+
+    old_movie = db.session.get(Movie, old_movie_id)
+    new_movie = db.session.get(Movie, new_movie_id)
+    if old_movie is not None and new_movie is not None:
+        for channel in old_movie.dvr_channels.all():
+            if channel.movies.filter(Movie.id == new_movie_id).first() is None:
+                channel.movies.append(new_movie)
 
 
 def find_or_create_tmdb_movie(tmdb_id, film_title, year, details=None):
@@ -574,12 +587,18 @@ def apply_tmdb_refresh(
                 for old_record in old_files:
                     old_record.movie_id = updated_movie_id
 
+                # The merge below deletes the old record, and the files of
+                # a record go with it. Thus, stop if the files did not move.
+                # The next refresh tries again.
+
                 try:
                     db.session.commit()
 
                 except Exception:
                     current_app.logger.error(traceback.format_exc())
                     db.session.rollback()
+                    if updated_movie_id != original_movie_id:
+                        return False
 
                 # Reconstruct the untouched filenames with the new movie details.
 
