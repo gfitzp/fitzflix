@@ -106,7 +106,11 @@ def next_cron_time(cron, utc_now):
 
     The local zone has the daylight saving rules. The astimezone()
     function with no argument gives a fixed offset. That offset moved the
-    first run of each job after a change of the clock by 1 hour."""
+    first run of each job after a change of the clock by 1 hour.
+
+    When the clock goes back, the times from 1:00 to 1:59 occur 2
+    times. A job runs only at the first of them. Else a job at 1:15 ran
+    at 1:15 EDT and again at 1:15 EST."""
 
     from datetime import datetime, timezone
 
@@ -115,6 +119,12 @@ def next_cron_time(cron, utc_now):
 
     local_now = utc_now.astimezone(tz.tzlocal())
     next_local = croniter(cron, local_now).get_next(datetime)
+    if tz.datetime_ambiguous(next_local):
+        first = next_local.replace(fold=0)
+        if first.astimezone(timezone.utc) <= utc_now:
+            next_local = croniter(cron, next_local).get_next(datetime)
+        else:
+            next_local = first
     return next_local.astimezone(timezone.utc)
 
 
@@ -981,13 +991,33 @@ def create_app(config_class=Config, watch_import_dir=False):
                             observer.stop()
                         except Exception:
                             pass
-                        observer = start_observer()
+                        try:
+                            observer = start_observer()
+                        except OSError as e:
+                            # The import directory is still missing. Try
+                            # again at the next check.
+                            app.logger.warning(
+                                f"Import directory observer did not start: {e}"
+                            )
+                            observer = PollingObserver()
+                            continue
                         enqueue_import_sweep()
                     write_observer_heartbeat()
                 except Exception:
                     app.logger.error(traceback.format_exc())
 
-        observer = start_observer()
+        # A missing import directory (the SSD is not mounted) makes the
+        # first start fail. The worker must still start and serve its
+        # queues. Thus, the keeper thread starts the observer later.
+
+        try:
+            observer = start_observer()
+        except Exception:
+            app.logger.warning(
+                f"Import directory observer did not start "
+                f"({app.config['IMPORT_DIR']}); trying again every minute"
+            )
+            observer = PollingObserver()
         write_observer_heartbeat()
         threading.Thread(
             target=keep_observer_alive,

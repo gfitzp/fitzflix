@@ -30,7 +30,16 @@ from werkzeug.local import LocalProxy
 from app import db, get_app, safe_job_id
 from app.aws_storage import rename_untouched_object, sanitize_s3_key
 from app.email import send_email as send_email_async
-from app.models import File, Movie, TVSeries, User, UserMovieReview
+from app.models import (
+    File,
+    Movie,
+    MovieAward,
+    TVSeries,
+    User,
+    UserMovieReview,
+    UserMovieStatus,
+    UserWatchlist,
+)
 
 
 def library_name_details(file, file_details):
@@ -57,6 +66,30 @@ def library_name_details(file, file_details):
     details["basename"] = basename
     details["file_path"] = os.path.join(details["dirname"], basename)
     return details
+
+
+def move_movie_rows(old_movie_id, new_movie_id):
+    """Move the per-movie user rows of a merged movie record to the survivor.
+
+    These are the watchlist rows, the status flags, and the awards. A
+    row that the survivor already has stays behind. The delete of the
+    old record removes it. Thus, no unique key fails."""
+
+    keys = (
+        (UserWatchlist, ("user_id",)),
+        (UserMovieStatus, ("user_id", "kind")),
+        (MovieAward, ("award_id", "win", "year")),
+    )
+    for model, fields in keys:
+        kept = {
+            tuple(getattr(row, field) for field in fields)
+            for row in model.query.filter_by(movie_id=new_movie_id)
+        }
+        for row in model.query.filter_by(movie_id=old_movie_id).all():
+            key = tuple(getattr(row, field) for field in fields)
+            if key not in kept:
+                row.movie_id = new_movie_id
+                kept.add(key)
 
 
 def find_or_create_tmdb_movie(tmdb_id, film_title, year, details=None):
@@ -798,6 +831,13 @@ def apply_tmdb_refresh(
                     ).all()
                     for review in reviews:
                         review.movie_id = movie.id
+
+                    # The watchlist rows, the status flags, and the awards
+                    # move too. The delete of the old record would delete
+                    # them with it.
+
+                    move_movie_rows(original_movie_id, movie.id)
+                    db.session.flush()
 
                     # Delete the old movie record from the database.
 

@@ -108,6 +108,14 @@ LAST_DIFFICULTY_KEY = "fitzflix:frames:difficulty:{user_id}"
 BRAG_KEY = "fitzflix:frames:brag:{token}"
 BRAG_TTL = 3600
 
+# A round of Easy, Medium, or Hard is graded 1 time. A reload of the
+# reveal page posts the guess again. Without this marker, each post
+# added to the streak and queued another frame replacement. A new deal
+# of the frame clears the marker.
+
+GRADED_KEY = "fitzflix:frames:graded:{user_id}:{token}"
+GRADED_TTL = 86400
+
 # The distractors stay in the era of the answer (requested by Glenn,
 # 2026-08-20). An option that is decades away gives the round away by
 # deduction. Each difficulty tries its tight window first, then its
@@ -828,6 +836,10 @@ def name_that_frame():
         if difficulty == "extra":
             return _extra_post(form, token, movie)
 
+        graded_key = GRADED_KEY.format(user_id=int(current_user.id), token=token)
+        if not current_app.redis.set(graded_key, "1", nx=True, ex=GRADED_TTL):
+            return redirect(url_for("main.name_that_frame", difficulty=difficulty))
+
         if DIFFICULTIES[difficulty] is None:
             guessed = (form.guess.data or "").strip()
             correct = _fuzzy_match(guessed, movie)
@@ -926,6 +938,10 @@ def name_that_frame():
     else:
         token = _deal_token(tokens)
         dealt = token is not None
+        if token:
+            current_app.redis.delete(
+                GRADED_KEY.format(user_id=int(current_user.id), token=token)
+            )
     options = None
     if token and DIFFICULTIES[difficulty] is not None:
         options = _build_options(tokens[token]["movie_id"], difficulty, rated_only)

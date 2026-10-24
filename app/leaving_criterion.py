@@ -38,7 +38,7 @@ from werkzeug.local import LocalProxy
 from app import db, get_app
 from app.models import File, Movie, UserMovieReview, UserMovieStatus, UserWatchlist
 from app.recommendations import score_movie, stored_profile
-from app.streaming_rail import _payload_features, enriched_movie
+from app.streaming_rail import _payload_features, enriched_movie, movie_gone
 from app.models import tmdb_get
 
 # The app instance of this process. Fitzflix resolves it lazily. Thus,
@@ -549,7 +549,7 @@ def refresh_leaving_criterion():
             if payload:
                 items.append({**payload, "tmdb_id": tmdb_id})
             else:
-                if tmdb_id is not None:
+                if tmdb_id is not None and not movie_gone(tmdb_id):
                     failures.append("tmdb")
                 items.append({**film, "tmdb_id": None})
 

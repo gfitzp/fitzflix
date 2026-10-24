@@ -125,6 +125,42 @@ def test_webhook_ignores_live_tv_scrobbles(app, client):
     assert plex_jobs(app) == []
 
 
+def test_a_failed_watch_write_lets_the_other_source_record_it(
+    app, mapped_admin, monkeypatch
+):
+    """A failed commit releases the dedup marker. The poller then records it."""
+
+    import app.diary as diary
+
+    with app.app_context():
+        movie = make_movie("Failed Write", 1976, tmdb_id=579)
+        db.session.commit()
+        movie_id = movie.id
+
+    watched = "2026-08-02T21:15:00+00:00"
+    real_commit = db.session.commit
+    calls = []
+
+    def failing_commit():
+        calls.append(1)
+        if len(calls) == 1:
+            raise RuntimeError("database restarting")
+        return real_commit()
+
+    with app.app_context():
+        monkeypatch.setattr(diary.db.session, "commit", failing_commit)
+        assert apply_plex_watch(579, "glenn-plex", watched, "webhook") is False
+        monkeypatch.undo()
+        assert apply_plex_watch(579, "glenn-plex", watched, "history") is True
+        db.session.expire_all()
+        assert (
+            UserMovieReview.query.filter_by(
+                user_id=mapped_admin, movie_id=movie_id
+            ).count()
+            == 1
+        )
+
+
 def test_apply_watch_increments_and_records_diary(app, mapped_admin):
     with app.app_context():
         movie = make_movie("Watched on Plex", 1975, tmdb_id=578)

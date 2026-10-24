@@ -48,6 +48,17 @@ def seed_frame(app, movie_id, token=None, extracted_at=None):
     return token
 
 
+def reopen_rounds(app):
+    """Open the graded rounds again, as a new deal of the frame does.
+
+    These tests grade many guesses against 1 dealt frame. The game
+    grades a round only 1 time."""
+
+    keys = app.redis.keys("fitzflix:frames:graded:*")
+    if keys:
+        app.redis.delete(*keys)
+
+
 def test_refresh_prunes_and_tops_up(app):
     """Prune and top up the pool in the nightly pass.
 
@@ -225,6 +236,34 @@ def test_game_round_and_choice_guessing(app, admin_client):
     assert "Correct" in body
     assert f'href="/movie/{answer_id}"' in body
 
+    # A reload of the reveal posts the guess again. The round is graded
+    # only 1 time
+
+    resubmit = admin_client.post(
+        "/game",
+        data={
+            "csrf_token": csrf,
+            "token": token,
+            "difficulty": "difficult",
+            "choice": str(answer_id),
+            "guess_submit": "y",
+        },
+    )
+    assert resubmit.status_code == 302
+
+    from app.models import UserFrameScore
+
+    with app.app_context():
+        score = UserFrameScore.query.filter_by(difficulty="difficult").one()
+        assert score.current_streak == 1 and score.rounds_won == 1
+
+    # A new deal of the frame opens a new round
+
+    page = admin_client.get("/game?difficulty=difficult&unrated=1").get_data(
+        as_text=True
+    )
+    assert f'src="/game/frame/{token}"' in page
+
     wrong = admin_client.post(
         "/game",
         data={
@@ -240,8 +279,6 @@ def test_game_round_and_choice_guessing(app, admin_client):
 
     # The standings are in the DB now. The miss reset the run. The best
     # from the earlier hit survives
-
-    from app.models import UserFrameScore
 
     with app.app_context():
         score = UserFrameScore.query.filter_by(difficulty="difficult").one()
@@ -317,6 +354,7 @@ def test_siracusa_fuzzy_matching(app, admin_client):
     csrf = re.search(r'name="csrf_token"[^>]*value="([^"]+)"', page).group(1)
 
     def guess(text):
+        reopen_rounds(app)
         return admin_client.post(
             "/game",
             data={
@@ -429,6 +467,7 @@ def test_high_scores_persist_per_difficulty(app, admin_client):
     csrf = re.search(r'name="csrf_token"[^>]*value="([^"]+)"', page).group(1)
 
     def guess(difficulty, choice):
+        reopen_rounds(app)
         return admin_client.post(
             "/game",
             data={
@@ -1317,6 +1356,7 @@ def test_win_rate_counts_skips_as_frames_seen(app, admin_client):
     csrf = re.search(r'name="csrf_token"[^>]*value="([^"]+)"', page).group(1)
 
     def guess(choice):
+        reopen_rounds(app)
         return admin_client.post(
             "/game",
             data={
@@ -1635,6 +1675,7 @@ def test_fuzzy_matching_disregards_punctuation(app, admin_client):
     csrf = re.search(r'name="csrf_token"[^>]*value="([^"]+)"', page).group(1)
 
     def guess(text):
+        reopen_rounds(app)
         return admin_client.post(
             "/game",
             data={
@@ -1838,6 +1879,7 @@ def test_fuzzy_matching_accepts_the_pre_subtitle_title(app, admin_client):
     csrf = re.search(r'name="csrf_token"[^>]*value="([^"]+)"', page).group(1)
 
     def guess(text):
+        reopen_rounds(app)
         return admin_client.post(
             "/game",
             data={
@@ -1879,6 +1921,7 @@ def test_fuzzy_matching_accepts_the_subtitle_alone(app, admin_client):
     csrf = re.search(r'name="csrf_token"[^>]*value="([^"]+)"', page).group(1)
 
     def guess(text):
+        reopen_rounds(app)
         return admin_client.post(
             "/game",
             data={
@@ -1923,6 +1966,7 @@ def test_fuzzy_matching_folds_spelled_numbers_to_digits(app, admin_client):
     csrf = re.search(r'name="csrf_token"[^>]*value="([^"]+)"', page).group(1)
 
     def guess(token, text):
+        reopen_rounds(app)
         return admin_client.post(
             "/game",
             data={

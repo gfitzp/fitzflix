@@ -269,3 +269,60 @@ def test_a_namesake_with_another_tmdb_id_is_not_adopted(app):
         movie, created = find_or_create_tmdb_movie(503, "Unmatched Name", 1999)
         assert (movie, created) == (unmatched, False)
         assert movie.tmdb_id == 503
+
+
+def test_a_movie_delete_keeps_the_shared_tmdb_rows(app):
+    """A delete removes only the link rows of the film, never a shared genre."""
+
+    with app.app_context():
+        drama = TMDBGenre(id=18, name="Drama")
+        doomed = make_movie("Doomed", 2001)
+        kept = make_movie("Kept", 2002)
+        series = make_tv_series("Kept Series")
+        db.session.add(drama)
+        doomed.genres.append(drama)
+        kept.genres.append(drama)
+        series.genres.append(drama)
+        db.session.commit()
+        kept_id, series_id = kept.id, series.id
+
+        db.session.delete(doomed)
+        db.session.commit()
+
+        assert db.session.get(TMDBGenre, 18) is not None
+        assert db.session.get(Movie, kept_id).genres.all() == [drama]
+        assert db.session.get(TVSeries, series_id).genres.all() == [drama]
+
+
+def test_a_merge_moves_the_watchlist_status_and_award_rows(app):
+    """The survivor keeps the user rows of the merged record."""
+
+    from app.models import MovieAward, User, UserMovieStatus, UserWatchlist
+    from app.tmdb_refresh import move_movie_rows
+
+    with app.app_context():
+        user = User.query.first()
+        old = make_movie("Old Record", 2003)
+        new = make_movie("New Record", 2003, tmdb_id=900)
+        db.session.add_all(
+            [
+                UserWatchlist(user_id=user.id, movie_id=old.id),
+                UserWatchlist(user_id=user.id, movie_id=new.id),
+                UserMovieStatus(
+                    user_id=user.id, movie_id=old.id, kind="not_interested"
+                ),
+                MovieAward(movie_id=old.id, award_id="oscar", win=True, year=2004),
+            ]
+        )
+        db.session.commit()
+
+        move_movie_rows(old.id, new.id)
+        db.session.flush()
+
+        assert UserWatchlist.query.filter_by(movie_id=new.id).count() == 1
+        assert UserMovieStatus.query.filter_by(movie_id=new.id).count() == 1
+        assert MovieAward.query.filter_by(movie_id=new.id).count() == 1
+        db.session.delete(old)
+        db.session.commit()
+        assert UserWatchlist.query.filter_by(movie_id=new.id).count() == 1
+        assert UserMovieStatus.query.filter_by(movie_id=new.id).count() == 1

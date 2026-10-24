@@ -510,6 +510,7 @@ def apply_plex_watch(tmdb_id, plex_username, viewed_at, source):
     """
 
     with app.app_context():
+        marker = None
         try:
             # This is the full timestamp in local wall-clock time, as in
             # each other diary writer. The calendar day for dedup and
@@ -528,6 +529,7 @@ def apply_plex_watch(tmdb_id, plex_username, viewed_at, source):
                 current_app.logger.debug(
                     f"Plex watch already recorded ({marker}); skipping"
                 )
+                marker = None
                 return True
 
             movie = Movie.query.filter_by(tmdb_id=int(tmdb_id)).first()
@@ -587,6 +589,16 @@ def apply_plex_watch(tmdb_id, plex_username, viewed_at, source):
         except Exception:
             current_app.logger.error(traceback.format_exc())
             db.session.rollback()
+
+            # The watch is not recorded. Thus, release the marker. Then
+            # the other source (the webhook or the history poll) records
+            # the watch. Else the marker blocks it for 2 days.
+
+            if marker:
+                try:
+                    current_app.redis.delete(marker)
+                except Exception:
+                    pass
             return False
 
         else:

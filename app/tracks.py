@@ -348,6 +348,8 @@ def track_metadata_scan_task(file_id):
             archive = bool(details.pop("rewritten", False)) and get_setting(
                 "ARCHIVE_ORIGINAL_MEDIA"
             )
+            if archive:
+                _flag_rewritten_archive(file_id)
 
             current_app.sql_queue.enqueue(
                 "app.videos.save_track_metadata",
@@ -382,6 +384,23 @@ def record_filesize(file, size_bytes):
     """
 
     file.filesize_bytes = size_bytes
+
+
+def _flag_rewritten_archive(file_id):
+    """Mark the archive of a rewritten library file as stale.
+
+    The upload after the save clears the flag. If the save or the
+    upload fails, the flag stays, and the weekly S3 sync uploads the
+    file. The scan read the row before its long rewrite. Thus, a new
+    transaction makes the change (MariaDB error 1020)."""
+
+    try:
+        db.session.rollback()
+        File.query.filter_by(id=file_id).update({"aws_stale": True})
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        current_app.logger.warning(traceback.format_exc())
 
 
 def save_track_metadata(file_id, details, lock=None, archive=False):
@@ -490,6 +509,8 @@ def track_metadata_scan(file_id):
     archive = bool(details.pop("rewritten", False)) and get_setting(
         "ARCHIVE_ORIGINAL_MEDIA"
     )
+    if archive:
+        _flag_rewritten_archive(file_id)
     return save_track_metadata(file_id, details, lock=lock, archive=archive)
 
 

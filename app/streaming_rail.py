@@ -296,6 +296,16 @@ def _discover_features(item):
     return features
 
 
+def movie_gone(tmdb_id):
+    """Return True if TMDB answered 404 for this film, and the miss is cached.
+
+    A caller that retries after a TMDB failure must not retry a film
+    that TMDB deleted. That is not a failure."""
+
+    cached = current_app.redis.get(ENRICHED_KEY.format(tmdb_id=int(tmdb_id)))
+    return cached is not None and json.loads(cached) is None
+
+
 def enriched_movie(tmdb_id):
     """Return the trimmed movie payload that the rail scores and displays.
 

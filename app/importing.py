@@ -1510,7 +1510,7 @@ def localization_task(
                 set_staging_reservation(
                     basename,
                     output_size * (CONVERSION_STAGING_FACTOR if conversion else 1),
-                    [basename, file_details["basename"]],
+                    [basename],
                 )
 
             # A conversion first goes to the transcode queue. That task
@@ -1784,6 +1784,15 @@ def move_localized_file(
             _log_space_wait(basename, output_directory, needed, shortfall, space_waits)
             mark_space_wait(os.path.basename(source_path))
             _hold_title_lock(lock, basename)
+
+            # The weekly sweep deletes a hidden staging file that is 1 week
+            # old. A wait for space has no limit. Thus, each wait touches
+            # the localized file, and the sweep keeps it.
+
+            try:
+                os.utime(hidden_output_file)
+            except OSError:
+                pass
             current_app.handoff_queue.enqueue_in(
                 SPACE_WAIT,
                 "app.videos.move_localized_file",

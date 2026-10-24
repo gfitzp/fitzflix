@@ -1257,6 +1257,10 @@ def test_library_copy_waits_for_space_before_copying(app, incoming_dir, monkeypa
     basename = "Full Volume (2021) - [DVD].mkv"
     source, hidden, details = space_move_fixture(app, incoming_dir, basename)
 
+    # The output is 8 days old. The weekly sweep would delete it.
+    old = time.time() - 8 * 86400
+    os.utime(hidden, (old, old))
+
     inspected = []
     monkeypatch.setattr(
         videos, "inspect_localized_file", lambda *a, **k: inspected.append(a) or {}
@@ -1289,6 +1293,7 @@ def test_library_copy_waits_for_space_before_copying(app, incoming_dir, monkeypa
             *(waits[0].args or ()), **(waits[0].kwargs or {})
         )
         assert os.path.exists(hidden) and os.path.exists(source)
+        assert os.path.getmtime(hidden) > old + 86400
         assert basename not in rejected_files(app)
         assert len(app.sql_queue) == 0
     finally:

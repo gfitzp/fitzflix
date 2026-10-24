@@ -141,7 +141,14 @@ def review_edit(review_id):
         # clears the stars instead. The viewing itself stays. This never
         # deletes an explicit diary entry that the user edits.
 
+        # Each change stamps date_updated. The incremental Letterboxd
+        # export selects the changed rows by it. The first stars or the
+        # first text of a bare watch also set date_reviewed. The movie
+        # page and the engine select the current verdict by that date.
+
+        changed = False
         if quick_rating is not None:
+            changed = True
             if user_review.rating is not None and float(user_review.rating) == float(
                 quick_rating
             ):
@@ -152,6 +159,8 @@ def review_edit(review_id):
                 for field, value in star_rating_fields(quick_rating).items():
                     setattr(user_review, field, value)
                 user_review.liked = quick_rating >= 3
+                if user_review.date_reviewed is None:
+                    user_review.date_reviewed = datetime.now()
 
         # The date and the text change only if their fields ARRIVED IN
         # THE POST. The per-row forms of the history page and the
@@ -164,26 +173,29 @@ def review_edit(review_id):
             # Thus, replace the value only if the calendar date changed.
             new_date = movie_review_form.date_watched.data
             if new_date is None:
+                changed = changed or user_review.date_watched is not None
                 user_review.date_watched = None
             elif (
                 user_review.date_watched is None
                 or user_review.date_watched.date() != new_date
             ):
                 user_review.date_watched = _watched_timestamp(new_date)
+                changed = True
 
         # A text change on a row that already has a review keeps the
-        # original review date. It stamps date_updated instead. A first
-        # review (no date_reviewed yet) sets the review date.
+        # original review date. A first review (no date_reviewed yet)
+        # sets the review date.
 
         if "review" in request.form:
             new_text = movie_review_form.review.data or ""
             if new_text != (user_review.review or ""):
                 user_review.review = new_text
-                if user_review.date_reviewed:
-                    user_review.date_updated = datetime.now()
-                else:
+                changed = True
+                if not user_review.date_reviewed:
                     user_review.date_reviewed = datetime.now()
 
+        if changed:
+            user_review.date_updated = datetime.now()
         db.session.commit()
         if _ladder_fetch():
             # This page edits 1 viewing. Thus, the state of the row comes
@@ -633,6 +645,23 @@ def profile():
     letterboxd_form = LetterboxdUsernameForm()
     if letterboxd_form.letterboxd_submit.data and letterboxd_form.validate_on_submit():
         username = (letterboxd_form.letterboxd_username.data or "").strip() or None
+
+        # The guid of a Letterboxd entry is unique in the whole diary. A
+        # second account on the same feed would fail each sync on that
+        # key. The match ignores case, as Letterboxd usernames do.
+
+        taken = (
+            User.query.filter(
+                db.func.lower(User.letterboxd_username) == username.lower()
+            )
+            .filter(User.id != current_user.id)
+            .first()
+            if username
+            else None
+        )
+        if taken:
+            flash(f"'{username}' is already mapped to another user.", "danger")
+            return redirect(url_for("main.profile"))
         current_user.letterboxd_username = username
         db.session.commit()
         if username:

@@ -548,3 +548,19 @@ def test_health_probe_alerts_on_old_criterion_releases(health_env):
     recoveries = health_env.run()
     assert len(recoveries) == 1
     assert "Recovered:" in recoveries[0]["body"]
+
+
+def test_an_import_worker_starts_without_the_import_directory(app, caplog):
+    """A missing SSD must not stop the import workers from serving queues."""
+
+    from app import create_app
+    from tests.conftest import TestConfig
+
+    # Startup never creates a directory on a volume that is not mounted.
+
+    class MissingImportDir(TestConfig):
+        IMPORT_DIR = "/Volumes/fitzflix-test-not-mounted/import"
+
+    second = create_app(MissingImportDir, watch_import_dir=True)
+    assert second is not app
+    assert "Import directory observer did not start" in caplog.text

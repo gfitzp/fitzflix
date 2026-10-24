@@ -418,3 +418,34 @@ def test_feed_logged_at_is_local_wall_clock(app):
         .replace(tzinfo=None)
     )
     assert entries[0]["logged_at"] == expected
+
+
+def test_a_letterboxd_username_maps_to_1_account(app, admin_client):
+    """The guid of a feed entry is unique. 2 accounts cannot share a feed."""
+
+    import re
+
+    from app.models import User
+    from tests.conftest import ADMIN_EMAIL, MEMBER_EMAIL, _signed_in_client
+
+    with app.app_context():
+        User.query.filter_by(email=ADMIN_EMAIL).one().letterboxd_username = "Gfitzp"
+        db.session.commit()
+
+    member_client = _signed_in_client(app, MEMBER_EMAIL)
+    page = member_client.get("/profile").get_data(as_text=True)
+    token = re.search(r'name="csrf_token"[^>]*value="([^"]+)"', page).group(1)
+    response = member_client.post(
+        "/profile",
+        data={
+            "csrf_token": token,
+            "letterboxd_username": "gfitzp",
+            "letterboxd_submit": "Update Letterboxd Sync",
+        },
+        follow_redirects=True,
+    )
+    assert "already mapped to another user" in response.get_data(as_text=True)
+    with app.app_context():
+        assert (
+            User.query.filter_by(email=MEMBER_EMAIL).one().letterboxd_username is None
+        )

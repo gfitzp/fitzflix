@@ -415,3 +415,26 @@ def test_system_health_counts_manual_imports(app, admin_client):
     page = admin_client.get("/system").get_data(as_text=True)
     assert "1 manual import" in page
     app.redis.delete(manual_imports.PENDING_KEY)
+
+
+def test_a_single_file_download_imports(app, downloads, fake_queues):
+    """A download that is 1 file is its own only candidate, and it imports."""
+
+    output_path = os.path.join(downloads, "M.Eine.Stadt.1931.mkv")
+    with open(output_path, "wb") as f:
+        f.write(b"m" * 4096)
+    fake_queues["Radarr"] = [radarr_item(output_path)]
+
+    with app.app_context():
+        (candidate,) = manual_imports.video_candidates(output_path)
+    manual_imports.manual_import_task(
+        "Radarr",
+        DOWNLOAD_ID,
+        output_path,
+        candidate["relative"],
+        "M (1931) - [WEBDL-1080p].mkv",
+    )
+
+    final = os.path.join(app.config["IMPORT_DIR"], "M (1931) - [WEBDL-1080p].mkv")
+    assert os.path.getsize(final) == 4096
+    assert not os.path.exists(output_path)

@@ -516,7 +516,16 @@ def manual_import_task(service, download_id, output_path, relative, new_basename
         redis = current_app.redis
         marker = STARTED_KEY.format(download_id=download_id)
         folder = fenced_path(output_path)
-        source = fenced_path(os.path.join(output_path, relative)) if folder else None
+
+        # A download can be 1 file. Then the file is its own only
+        # candidate (video_candidates), and the source is that file.
+
+        if folder and os.path.isfile(folder):
+            source = folder if os.path.basename(folder) == relative else None
+        else:
+            source = (
+                fenced_path(os.path.join(output_path, relative)) if folder else None
+            )
         import_dir = current_app.config["IMPORT_DIR"]
         hidden = os.path.join(import_dir, f".{new_basename}")
         final = os.path.join(import_dir, new_basename)

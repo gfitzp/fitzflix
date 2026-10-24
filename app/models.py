@@ -1595,8 +1595,9 @@ class UserMovieReview(db.Model):
     date_watched = db.Column(db.DateTime)
     date_reviewed = db.Column(db.DateTime)
 
-    # The time of the last edit of the review text. date_reviewed keeps
-    # the original review date.
+    # The time of the last edit of the row: the stars, the text, or the
+    # watch date. date_reviewed keeps the original review date. The
+    # incremental Letterboxd export selects the edited rows by this time.
 
     date_updated = db.Column(db.DateTime)
 
@@ -1717,54 +1718,52 @@ class Movie(db.Model, TMDBMixin, Utilities):
         "MovieCrew", backref="movie", lazy="dynamic", cascade="all,delete,delete-orphan"
     )
 
+    # The TMDB rows of these relations are shared by many films and
+    # series. A delete of a movie removes only its link rows. A delete
+    # cascade removed the genre, the certification, and so on from the
+    # whole library (Oct 24 2026 review).
+
     collections = db.relationship(
         "TMDBMovieCollection",
         secondary=movie_collections,
         backref=db.backref("movies", lazy="dynamic"),
         lazy="dynamic",
-        cascade="all,delete",
     )
     genres = db.relationship(
         "TMDBGenre",
         secondary=movie_genres,
         backref=db.backref("movies", lazy="dynamic"),
         lazy="dynamic",
-        cascade="all,delete",
     )
     keywords = db.relationship(
         "TMDBKeyword",
         secondary=movie_keywords,
         backref=db.backref("movies", lazy="dynamic"),
         lazy="dynamic",
-        cascade="all,delete",
     )
     production_companies = db.relationship(
         "TMDBProductionCompany",
         secondary=movie_production_companies,
         backref=db.backref("movies", lazy="dynamic"),
         lazy="dynamic",
-        cascade="all,delete",
     )
     production_countries = db.relationship(
         "TMDBProductionCountry",
         secondary=movie_production_countries,
         backref=db.backref("movies", lazy="dynamic"),
         lazy="dynamic",
-        cascade="all,delete",
     )
     spoken_languages = db.relationship(
         "TMDBSpokenLanguage",
         secondary=movie_spoken_languages,
         backref=db.backref("movies", lazy="dynamic"),
         lazy="dynamic",
-        cascade="all,delete",
     )
     certifications = db.relationship(
         "RefTMDBCertification",
         secondary=movie_certifications,
         backref=db.backref("movies", lazy="dynamic"),
         lazy="dynamic",
-        cascade="all,delete",
     )
 
     __table_args__ = (db.UniqueConstraint("title", "year"),)
@@ -1838,28 +1837,24 @@ class TVSeries(db.Model, TMDBMixin):
         secondary=tv_genres,
         backref=db.backref("tv_series", lazy="dynamic"),
         lazy="dynamic",
-        cascade="all,delete",
     )
     keywords = db.relationship(
         "TMDBKeyword",
         secondary=tv_keywords,
         backref=db.backref("tv_series", lazy="dynamic"),
         lazy="dynamic",
-        cascade="all,delete",
     )
     networks = db.relationship(
         "TMDBNetwork",
         secondary=tv_networks,
         backref=db.backref("tv_series", lazy="dynamic"),
         lazy="dynamic",
-        cascade="all,delete",
     )
     production_companies = db.relationship(
         "TMDBProductionCompany",
         secondary=tv_production_companies,
         backref=db.backref("tv_series", lazy="dynamic"),
         lazy="dynamic",
-        cascade="all,delete",
     )
     seasons = db.relationship(
         "TMDBSeason",

@@ -473,8 +473,12 @@ def test_a_scan_that_rewrites_the_file_queues_its_archive(app, monkeypatch):
     # The upload waits for the save. Both write the same row. An upload
     # that starts first loses its commit to MariaDB error 1020.
 
+    # The rewrite marks the archive stale at once. Thus, a failed save
+    # or upload leaves the repair to the weekly sync.
+
     tracks.track_metadata_scan_task(file_id)
     with app.app_context():
+        assert db.session.get(File, file_id).aws_stale is True
         assert uploads() == []
         (save,) = [
             job

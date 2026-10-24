@@ -1373,3 +1373,21 @@ def test_cron_fields_follow_daylight_saving_time(monkeypatch, utc_now, expected)
     assert next_cron_time(
         "0 5 * * *", datetime.fromisoformat(utc_now + "+00:00")
     ) == datetime.fromisoformat(expected + "+00:00")
+
+
+def test_a_job_in_the_repeated_hour_runs_once(monkeypatch):
+    """When the clock goes back, 1:15 occurs 2 times. The job runs at the first."""
+
+    from datetime import datetime, timedelta
+
+    from dateutil import tz
+
+    from app import next_cron_time
+
+    monkeypatch.setattr(tz, "tzlocal", lambda: tz.gettz("America/New_York"))
+    first = next_cron_time(
+        "15 1 * * *", datetime.fromisoformat("2026-10-31T12:00:00+00:00")
+    )
+    assert first == datetime.fromisoformat("2026-11-01T05:15:00+00:00")
+    second = next_cron_time("15 1 * * *", first + timedelta(seconds=1))
+    assert second == datetime.fromisoformat("2026-11-02T06:15:00+00:00")

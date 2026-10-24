@@ -1147,9 +1147,10 @@ def test_review_edit_updates_the_viewing_in_place(app, admin_client):
         assert float(row.rating) == 3.0
         assert row.review == "On reflection, better than I thought."
         # The row had no review date. Thus, the text change set one (a
-        # first review, not an update)
+        # first review). The edit stamp lets the incremental export see
+        # a row that an earlier export already sent
         assert row.date_reviewed is not None
-        assert row.date_updated is None
+        assert row.date_updated is not None
         # Still 1 row: edited in place, not logged as a new viewing
         assert (
             UserMovieReview.query.filter_by(user_id=user_id, movie_id=movie_id).count()
@@ -1216,6 +1217,55 @@ def test_review_edit_adds_review_to_bare_plex_viewing(app, admin_client):
         assert row.review == "Watched on Plex, loved it."
         assert row.rating is None
         assert row.rewatch is False  # the edit did not change it
+
+
+def test_stars_on_a_bare_rewatch_become_the_current_verdict(app, admin_client):
+    """A ladder tap on a bare Plex rewatch outranks an older review.
+
+    The tap also stamps the edit. Thus, the incremental export sends the
+    row again after an export sent it bare."""
+
+    from app import db
+    from app.main.helpers import _latest_review_row
+    from app.models import User, UserMovieReview
+    from app.videos import star_rating_fields
+
+    with app.app_context():
+        user_id = User.query.first().id
+        movie = make_movie("Rewatched Film", 1977)
+        db.session.add(
+            UserMovieReview(
+                user_id=user_id,
+                movie_id=movie.id,
+                date_watched=datetime(2020, 5, 1),
+                date_reviewed=datetime(2020, 5, 1),
+                **star_rating_fields(3.0),
+            )
+        )
+        rewatch = UserMovieReview(
+            user_id=user_id,
+            movie_id=movie.id,
+            review="",
+            date_watched=datetime(2026, 8, 1),
+            rewatch=True,
+            **star_rating_fields(None),
+        )
+        db.session.add(rewatch)
+        db.session.commit()
+        row_id, movie_id = rewatch.id, movie.id
+
+    page = admin_client.get(f"/review/{row_id}/edit").get_data(as_text=True)
+    response = admin_client.post(
+        f"/review/{row_id}/edit",
+        data={"csrf_token": csrf_token_from(page), "quick_rating": "5"},
+        headers={"X-Requested-With": "ladder"},
+    )
+    assert response.get_json()["rating"] == 5.0
+
+    with app.app_context():
+        row = db.session.get(UserMovieReview, row_id)
+        assert row.date_reviewed is not None and row.date_updated is not None
+        assert _latest_review_row(user_id, movie_id).id == row_id
 
 
 def test_review_edit_accepts_clearing_to_a_bare_watch(app, admin_client):

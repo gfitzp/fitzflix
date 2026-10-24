@@ -1085,3 +1085,26 @@ def test_leaving_film_lights_its_criterion_badge(app, admin_client, monkeypatch)
     page = admin_client.get(f"/movie/{leaving_id}").get_data(as_text=True)
     assert 'title="Streaming on Criterion Channel"' in page
     assert "badge text-bg-danger" not in page
+
+
+def test_a_film_that_tmdb_deleted_does_not_keep_the_set_incomplete(app, monkeypatch):
+    """A cached 404 is not a failure. The set does not retry every day."""
+
+    import app.leaving_criterion as leaving_criterion
+    from app.streaming_rail import ENRICHED_KEY
+
+    monkeypatch.setattr(
+        leaving_criterion,
+        "fetch_leaving_films",
+        lambda: (
+            date.today() + timedelta(days=5),
+            "https://example.test/leaving",
+            [{"title": "Gone Film", "year": 1960, "director": None}],
+        ),
+    )
+    monkeypatch.setattr(leaving_criterion, "match_tmdb_id", lambda *a, **k: 4040)
+    app.redis.set(ENRICHED_KEY.format(tmdb_id=4040), json.dumps(None))
+
+    assert leaving_criterion.refresh_leaving_criterion() is True
+    stored = json.loads(app.redis.get(leaving_criterion.LEAVING_KEY))
+    assert stored["incomplete"] is False

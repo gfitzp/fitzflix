@@ -13,6 +13,7 @@ viewing stays one row when each system reports it.
 
 import html
 import re
+import traceback
 import xml.etree.ElementTree as ET
 
 from datetime import datetime, timedelta
@@ -253,7 +254,7 @@ def sync_letterboxd_feeds():
     with app.app_context():
         for user in User.query.filter(
             User.letterboxd_username.isnot(None), User.letterboxd_username != ""
-        ):
+        ).all():
             xml_text = fetch_letterboxd_feed(user.letterboxd_username)
             if not xml_text:
                 continue
@@ -266,17 +267,25 @@ def sync_letterboxd_feeds():
                 )
                 continue
 
+            # A failure in the feed of 1 user must not stop the sync of
+            # the next users.
+
             added = updated = completed = 0
             created_movies = []
-            for entry in entries:
-                result = _ingest_entry(user.id, entry, created_movies)
-                if result == "added":
-                    added += 1
-                elif result == "updated":
-                    updated += 1
-                elif result == "completed":
-                    completed += 1
-            db.session.commit()
+            try:
+                for entry in entries:
+                    result = _ingest_entry(user.id, entry, created_movies)
+                    if result == "added":
+                        added += 1
+                    elif result == "updated":
+                        updated += 1
+                    elif result == "completed":
+                        completed += 1
+                db.session.commit()
+            except Exception:
+                db.session.rollback()
+                current_app.logger.error(traceback.format_exc())
+                continue
 
             # Enrich the movie records that the feed created, through the
             # standard two-phase refresh pipeline.
