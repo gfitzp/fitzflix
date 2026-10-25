@@ -603,6 +603,7 @@ def register(app):
             lost_handle,
             probe_path,
             record_result,
+            share_responsive,
             share_root,
             unmounted,
         )
@@ -632,8 +633,20 @@ def register(app):
         other = []
         not_local = []
         offline_shares = set()
+        responsive = {}
         for file in files:
             path = library_path(file)
+
+            # A wedged share hangs the open of the probe. Thus, ask each
+            # share 1 time, with a timeout, before its first file (#345).
+            # The recheck task does the same.
+
+            share = share_root(path)
+            if share not in responsive:
+                responsive[share] = share_responsive(path)
+            if not responsive[share]:
+                offline_shares.add(share)
+                continue
             result = probe_path(path)
             record_result(result, context="cli probe")
             if lost_handle(result):
@@ -653,7 +666,10 @@ def register(app):
         # it reports missing at one time. That says nothing about handles.
 
         for share in sorted(offline_shares):
-            click.echo(f"  SHARE NOT MOUNTED  {share} — its files were not probed")
+            click.echo(
+                f"  SHARE NOT MOUNTED OR NOT RESPONDING  {share} — its files "
+                f"were not probed"
+            )
 
         summary = (
             f"{len(files)} file(s) probed, {len(broken)} in the lost-handle "

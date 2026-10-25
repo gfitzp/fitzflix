@@ -924,3 +924,42 @@ def test_the_etag_uses_the_part_size_of_the_upload(app, monkeypatch, tmp_path):
     )
     with app.app_context():
         assert aws_storage.calculate_etag(str(path)) == expected
+
+
+def test_the_cli_probe_asks_each_share_before_its_files(app, monkeypatch):
+    """Test flask smb probe with a wedged share (#345).
+
+    The open of a probe hangs on a wedged share. The command asks each
+    share 1 time, reports the share as offline, and probes nothing on it."""
+
+    import app.cli as app_cli
+
+    from app import db, smb_probe
+    from app.models import File
+    from tests.factories import make_movie, make_movie_file
+
+    app_cli.register(app)
+
+    with app.app_context():
+        for title in ("Wedged One", "Wedged Two"):
+            make_movie_file(make_movie(title, 2021), "Bluray-1080p")
+        db.session.commit()
+        file_ids = [str(f.id) for f in File.query]
+
+        asked, probed = [], []
+        monkeypatch.setattr(
+            smb_probe, "share_responsive", lambda path: asked.append(path) or False
+        )
+        monkeypatch.setattr(
+            smb_probe, "probe_path", lambda path: probed.append(path) or failure(path)
+        )
+
+        args = ["smb", "probe"]
+        for file_id in file_ids:
+            args += ["--file-id", file_id]
+        result = app.test_cli_runner().invoke(args=args)
+
+    assert result.exit_code == 0, result.output
+    assert probed == []
+    assert len(asked) == 1
+    assert "SHARE NOT MOUNTED OR NOT RESPONDING" in result.output
