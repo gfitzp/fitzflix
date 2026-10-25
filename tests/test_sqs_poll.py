@@ -143,3 +143,28 @@ def test_an_expired_restore_is_requested_again_not_downloaded(app, monkeypatch):
     assert restored == [key]
     with app.app_context():
         assert downloads(app) == []
+
+
+def test_the_poll_renews_a_restore_for_the_full_days(app, monkeypatch):
+    """S3 counts the days from now. 1 day cut the 2-day copy short (#320)."""
+
+    requests = []
+
+    class RecordingS3:
+        def restore_object(self, **kwargs):
+            requests.append(kwargs["RestoreRequest"]["Days"])
+
+    sqs = FakeSQS([])
+    monkeypatch.setattr(aws_storage, "aws_sqs_client", lambda: sqs)
+    monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kw: RecordingS3())
+
+    with app.app_context():
+        app.file_queue.enqueue(
+            "app.videos.download_task",
+            args=("untouched/Pending (2003) - [DVD].mkv", "Pending.mkv", "r9"),
+            meta={"sqs_receipt_handle": "r9"},
+        )
+
+    assert aws_storage.sqs_retrieve_task() is True
+    assert requests == [aws_storage.RESTORE_DAYS]
+    assert aws_storage.RESTORE_DAYS >= 2

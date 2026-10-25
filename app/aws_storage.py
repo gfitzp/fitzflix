@@ -903,16 +903,21 @@ def sqs_retrieve_task():
                         f"'{job_description}' Extending SQS message timeout by "
                         f"{SQS_VISIBILITY_SECONDS} seconds"
                     )
+                    # S3 counts the days of a new request from now. They
+                    # do not add to the old expiry. "Days": 1 cut the
+                    # 2-day copy of aws_restore to 1 day (#320).
+
                     s3_client.restore_object(
                         Bucket=current_app.config["AWS_BUCKET"],
                         Key=job.args[0],
                         RestoreRequest={
-                            "Days": 1,
+                            "Days": RESTORE_DAYS,
                             "GlacierJobParameters": {"Tier": "Standard"},
                         },
                     )
                     current_app.logger.info(
-                        f"'{job.args[0]}' Extending restoration period by 1 day"
+                        f"'{job.args[0]}' Renewing the restored copy for "
+                        f"{RESTORE_DAYS} days from now"
                     )
                 except botocore.exceptions.ClientError as error:
                     current_app.logger.warning(
@@ -1466,6 +1471,11 @@ MAX_DOWNLOAD_RETRIES = 10
 # failed (MessageNotInflight), and the poll received it a second time.
 
 SQS_VISIBILITY_SECONDS = 7200
+
+# The days that a restored copy stays in S3 Standard. The hourly SQS poll
+# renews a pending copy for the same days.
+
+RESTORE_DAYS = 2
 
 # The weekly S3 sync does not prune an object younger than this. The
 # untouched/ upload of an import has no claim until the import finishes.
@@ -2094,7 +2104,7 @@ def aws_download(key, basename, sqs_receipt_handle=None, place_at=None):
     return False
 
 
-def aws_restore(key, days=2, tier="Standard", record_request=True):
+def aws_restore(key, days=RESTORE_DAYS, tier="Standard", record_request=True):
     """Request a restore of a file at AWS from Glacier status for a download.
 
     The request time goes to Redis. Then download_task can tell if an
