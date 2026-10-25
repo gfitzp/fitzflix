@@ -56,6 +56,7 @@ from app.main import bp
 from app.plex_player import remote_playback_configured
 from app.main.helpers import (
     _card_fetch,
+    season_episode_counts,
     _enqueue_profile_recompute,
     _ladder_fetch,
     _ladder_state,
@@ -1241,12 +1242,10 @@ def tv_card():
         # seasons than TMDB says exist. A series record with no files is
         # a leftover, and it badges nothing.
 
-        season_counts = (
-            db.session.query(File.season, db.func.count(db.func.distinct(File.episode)))
-            .filter(File.series_id == series.id)
-            .group_by(File.season)
-            .all()
-        )
+        season_counts = [
+            (season, count)
+            for (_, season), count in season_episode_counts([series.id]).items()
+        ]
         owned_seasons = sum(1 for season, _ in season_counts if season)
         return render_template(
             "_tv_card.html",

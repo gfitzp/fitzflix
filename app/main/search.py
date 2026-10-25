@@ -34,6 +34,7 @@ from app.models import (
 from app.main import bp
 from app.main.helpers import (
     _upgrade_threshold,
+    season_episode_counts,
     library_upgradable,
     series_upgradable,
 )
@@ -254,12 +255,16 @@ def _tv_search_results(wildcard, limit=50, years=None):
         .all()
     )
 
+    # The episode count expands multi-episode files (#330)
+
+    episode_counts = season_episode_counts(series_ids)
+
     seasons_by_series = {}
     for series_id, season, episodes, preference, physical, worst_quality in season_rows:
         seasons_by_series.setdefault(series_id, []).append(
             {
                 "season": season,
-                "episode_count": episodes,
+                "episode_count": episode_counts.get((series_id, season), episodes),
                 "worst_quality": worst_quality,
                 "preference": preference,
                 # A physical-media season (DVD, SD/720p Blu-ray) is often the

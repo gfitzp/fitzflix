@@ -85,6 +85,7 @@ from app.infuse_player import play_movie as infuse_play_movie
 from app.plex_player import play_movie, remote_playback_configured
 from app.main.helpers import (
     admin_required,
+    season_episode_counts,
     _card_fetch,
     _enqueue_profile_recompute,
     _ladder_fetch,
@@ -2252,6 +2253,10 @@ def tv_library():
         .all()
     )
 
+    # The episode count expands multi-episode files (#330)
+
+    episode_counts = season_episode_counts()
+
     seasons_by_series = {}
     for (
         series_id,
@@ -2264,7 +2269,7 @@ def tv_library():
         seasons_by_series.setdefault(series_id, []).append(
             {
                 "season": season,
-                "episode_count": num_episodes,
+                "episode_count": episode_counts.get((series_id, season), num_episodes),
                 "min_quality": min_quality,
                 # A physical-media season (DVD, SD/720p Blu-ray) is often the
                 # only release that will ever exist. Thus, it does not count as

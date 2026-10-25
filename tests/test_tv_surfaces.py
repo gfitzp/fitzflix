@@ -645,3 +645,28 @@ def test_tv_shopping_list_searches_by_season(app, admin_client):
     page = admin_client.get("/shopping-list/tv").get_data(as_text=True)
     assert "amazon.com/s?k=Season%20Search%20Show Season 2&i=movies-tv" in page
     assert "_nkw=Season%20Search%20Show Season 2" in page
+
+
+def test_episode_counts_expand_multi_episode_files(app, admin_client):
+    """Test that a multi-episode file counts each episode of its span (#330).
+
+    Animaniacs season 4 holds 6 files that cover E01 to E22. The pills,
+    the search badge, and the card counted 6 (distinct first episodes)."""
+
+    with app.app_context():
+        series = make_tv_series("Zanimaniacs (1993)", tmdb_name="Zanimaniacs")
+        make_tv_file(series, 4, 1, "WEBDL-480p", last_episode=11)
+        make_tv_file(series, 4, 12, "WEBDL-480p", last_episode=22)
+        # An overlapping single-episode copy adds no episode
+        make_tv_file(series, 4, 5, "Bluray-1080p")
+        db.session.commit()
+        series_id = series.id
+
+    card = admin_client.get(f"/tv_card?series_id={series_id}").get_data(as_text=True)
+    assert "1 season, 22 episodes in your library" in card
+
+    library = admin_client.get("/library/tv?q=zanimaniacs").get_data(as_text=True)
+    assert '<span class="badge text-bg-primary rounded-pill">22</span>' in library
+
+    search = admin_client.get("/search?q=zanimaniacs").get_data(as_text=True)
+    assert 'title="22 episodes"' in search

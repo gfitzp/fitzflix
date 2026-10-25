@@ -432,3 +432,39 @@ def tv_meta_line(first_year, last_year, seasons, episodes, genres):
     if genres:
         bits.append(", ".join(genres))
     return " · ".join(bits)
+
+
+# A span longer than this is a damaged episode number, not a real
+# multi-episode file. It counts as its first episode only. The TV shopping
+# list uses the same rule.
+
+MAX_EPISODE_SPAN = 500
+
+
+def season_episode_counts(series_ids=None):
+    """Return {(series_id, season): number of owned episodes} (#330).
+
+    The count is the number of distinct episode numbers that the files of
+    the season hold. A multi-episode file (S04E17-E22) counts each episode
+    in its span. A count of distinct File.episode values counts it as one.
+    series_ids limits the query to those series."""
+
+    query = db.session.query(
+        File.series_id, File.season, File.episode, File.last_episode
+    ).filter(File.series_id.isnot(None))
+    if series_ids is not None:
+        query = query.filter(File.series_id.in_(list(series_ids)))
+
+    # A file with no episode number puts its season in the result with
+    # no episodes
+
+    numbers = {}
+    for series_id, season, episode, last_episode in query.all():
+        held = numbers.setdefault((series_id, season), set())
+        if episode is None:
+            continue
+        last = last_episode if last_episode is not None else episode
+        if last < episode or last - episode > MAX_EPISODE_SPAN:
+            last = episode
+        held.update(range(episode, last + 1))
+    return {key: len(value) for key, value in numbers.items()}
