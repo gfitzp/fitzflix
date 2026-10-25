@@ -1080,3 +1080,36 @@ def test_each_smb_command_keeps_its_help(app):
     for option in ("--file-id", "--since", "--all"):
         assert option in probe_help
     assert "--enqueue" in runner.invoke(args=["smb", "repair", "--help"]).output
+
+
+def test_a_smb_command_body_runs_with_no_cli_runner(app, monkeypatch, capsys):
+    from app import smb_cli, smb_probe
+
+    monkeypatch.setattr(smb_probe, "history", lambda: [])
+    smb_cli.show_history()
+    monkeypatch.setattr(
+        smb_probe, "recheck", lambda: smb_probe.RecheckReport([], [], [], [])
+    )
+    smb_cli.report_recheck()
+    assert capsys.readouterr().out.splitlines() == [
+        "No recoveries recorded yet",
+        "0 recovered, 0 still failing",
+    ]
+
+
+def test_a_second_registration_does_not_repeat_the_options(app):
+    """click writes the options to the callback. The module body stays clean."""
+
+    import app.cli as app_cli
+
+    from app import smb_cli
+
+    app_cli.register(app)
+    app_cli.register(app)
+    probe = app.cli.commands["smb"].commands["probe"]
+    assert [param.name for param in probe.params] == [
+        "file_ids",
+        "since",
+        "everything",
+    ]
+    assert not hasattr(smb_cli.probe_files, "__click_params__")
