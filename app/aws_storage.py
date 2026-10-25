@@ -26,6 +26,7 @@ import time
 import traceback
 import urllib.parse
 
+from collections import namedtuple
 from datetime import datetime, timedelta, timezone
 
 import boto3
@@ -263,481 +264,542 @@ class DownloadProgressPercentage(object):
                 self._job.save_meta()
 
 
+# The S3 listing of the archive prefixes that the sync works from.
+
+Listing = namedtuple("Listing", "prefixes sizes modified keys")
+
+# These are the library files that are not videos. The import of the
+# uncataloged files skips them.
+
+ARTWORK_PREFIXES = ("cover", "default", "folder", "movie", "poster")
+ARTWORK_SUFFIXES = ("jpg", "jpeg", "png", "tbn")
+
+
 def sync_aws_s3_storage_task():
-    """Add the files to AWS, and remove the files that are not in the library."""
+    """Add the files to AWS, and remove the files that are not in the library.
+
+    The sync runs in phases (#358). Each phase has its own error
+    handling. A failed phase is logged, and the best-effort phases (the
+    inventory, the reports, the mails, the import of the uncataloged
+    files) still run. The prune deletes objects. Thus, it runs only
+    after a clean listing and a clean pass over the file records. After
+    a failed phase, the task raises at the end. Then the job is in the
+    FailedJobRegistry, and it does not report a success."""
 
     with app.app_context():
-        # Sync only when each queue is idle. A file can be in an import, in
-        # an upload, or in a wait for database writes. Then it can exist at
-        # AWS without its final database record. The prune below would see
-        # it as an extra file and delete it.
-
         job = get_current_job()
-        # Every queue of the roster counts. The maintenance queue runs the
-        # hourly import sweep. That sweep can feed new files into the
-        # import pipeline during the sync.
-
-        busy = []
-        for queue in roster_queues(current_app):
-            queue_name = queue.name
-            started = StartedJobRegistry(
-                queue_name, connection=current_app.redis
-            ).get_job_ids()
-
-            # This task itself is in the started registry of maintenance
-            # (#314). Each producer and each retry uses that queue.
-
-            if job:
-                started = [job_id for job_id in started if job_id != job.id]
-
-            count = len(queue.job_ids) + len(started)
-            if count:
-                busy.append(f"{queue_name}: {count}")
-
-        if busy:
-            requeue(
-                "app.videos.sync_aws_s3_storage_task",
-                key=None,
-                delay=timedelta(minutes=5),
-                reason=f"waits for the other tasks to finish ({', '.join(busy)})",
-                level="info",
-            )
+        if _sync_deferred(job):
             return True
 
-        # A dead library volume makes every one of its files look missing.
-        # The sync would then request a paid restore of each, and the
-        # direct restores would overwrite the files after the remount.
+        failures = []
 
-        from app.videos import _dead_volumes
+        def phase(name, func, *args):
+            """Run 1 phase. Return (ok, result). Log and record a failure."""
 
-        dead = _dead_volumes(
-            [current_app.config["MOVIE_LIBRARY"], current_app.config["TV_LIBRARY"]]
+            try:
+                return True, func(*args)
+            except Exception as error:
+                db.session.rollback()
+                current_app.logger.error(
+                    f"S3 sync: the {name} phase failed: " + traceback.format_exc()
+                )
+                failures.append((name, error))
+                return False, None
+
+        listed, listing = phase("listing", _list_archives)
+        orphaned_files = []
+        unreferenced_files = []
+        if listed:
+            reconciled, result = phase("file records", _reconcile_files, listing, job)
+            if reconciled:
+                inventory_export, orphaned_files = result
+                phase("inventory", _put_inventory, inventory_export)
+            phase("dangling claims", _report_dangling_claims, listing)
+            if reconciled:
+                phase("prune", _prune_unclaimed, listing, job, unreferenced_files)
+        phase("reports", _mail_reports, unreferenced_files, orphaned_files)
+        phase(
+            "uncataloged files",
+            _import_uncataloged,
+            (current_app.config["MOVIE_LIBRARY"], current_app.config["TV_LIBRARY"]),
         )
-        if dead:
-            requeue(
-                "app.videos.sync_aws_s3_storage_task",
-                key=None,
-                delay=timedelta(minutes=30),
-                reason=f"Library volume(s) unavailable ({', '.join(dead)})",
+
+        if failures:
+            names = ", ".join(name for name, _ in failures)
+            raise RuntimeError(f"S3 sync: the {names} phase(s) failed") from failures[
+                0
+            ][1]
+        return True
+
+
+def _sync_deferred(job):
+    """Return True if the sync must wait. Then a retry is booked.
+
+    The sync runs only when each queue is idle. A file can be in an
+    import, in an upload, or in a wait for database writes. Then it can
+    exist at AWS without its final database record. The prune would see
+    it as an extra file and delete it. Every queue of the roster counts.
+    The maintenance queue runs the hourly import sweep. That sweep can
+    feed new files into the import pipeline during the sync."""
+
+    busy = []
+    for queue in roster_queues(current_app):
+        queue_name = queue.name
+        started = StartedJobRegistry(
+            queue_name, connection=current_app.redis
+        ).get_job_ids()
+
+        # This task itself is in the started registry of maintenance
+        # (#314). Each producer and each retry uses that queue.
+
+        if job:
+            started = [job_id for job_id in started if job_id != job.id]
+
+        count = len(queue.job_ids) + len(started)
+        if count:
+            busy.append(f"{queue_name}: {count}")
+
+    if busy:
+        requeue(
+            "app.videos.sync_aws_s3_storage_task",
+            key=None,
+            delay=timedelta(minutes=5),
+            reason=f"waits for the other tasks to finish ({', '.join(busy)})",
+            level="info",
+        )
+        return True
+
+    # A dead library volume makes every one of its files look missing.
+    # The sync would then request a paid restore of each, and the direct
+    # restores would overwrite the files after the remount.
+
+    from app.videos import _dead_volumes
+
+    dead = _dead_volumes(
+        [current_app.config["MOVIE_LIBRARY"], current_app.config["TV_LIBRARY"]]
+    )
+    if dead:
+        requeue(
+            "app.videos.sync_aws_s3_storage_task",
+            key=None,
+            delay=timedelta(minutes=30),
+            reason=f"Library volume(s) unavailable ({', '.join(dead)})",
+        )
+        return True
+    return False
+
+
+def _list_archives():
+    """List the archive prefixes of the bucket. Return a Listing.
+
+    The archives live in 3 prefixes (#299): untouched/ (the rips),
+    modified/ (library files after a change), and transcoded/ (the 1080p
+    copies of the conversions). The sizes map each key to its object
+    size. Thus, the file records can get the exact size that AWS bills
+    for a restore."""
+
+    prefixes = [
+        f"{s3_layout.prefix_value(entry)}/"
+        for entry in s3_layout.PREFIXES
+        if entry.lifecycle == "archive"
+    ]
+    listed = [
+        entry
+        for prefix in prefixes
+        for entry in get_matching_s3_objects(app.config["AWS_BUCKET"], prefix=prefix)
+    ]
+    sizes = {entry["Key"]: entry["Size"] for entry in listed}
+    modified = {entry["Key"]: entry.get("LastModified") for entry in listed}
+    return Listing(prefixes, sizes, modified, set(sizes))
+
+
+def _reconcile_files(listing, job):
+    """Compare each file record with the listing. Return (inventory, orphans).
+
+    The pass queues the uploads of the missing archives, requests the
+    restores of the missing best files, and stores the object sizes.
+    The inventory lists the best files for a bulk restore."""
+
+    s3_objects = listing.sizes
+    s3_keys = listing.keys
+
+    movie_rank = (
+        db.session.query(
+            File.id,
+            movie_file_rank(),
+        )
+        .join(Movie, (Movie.id == File.movie_id))
+        .join(RefQuality, (RefQuality.id == File.quality_id))
+        .subquery()
+    )
+
+    tv_rank = (
+        db.session.query(
+            File.id,
+            tv_file_rank(),
+        )
+        .join(TVSeries, (TVSeries.id == File.series_id))
+        .join(RefQuality, (RefQuality.id == File.quality_id))
+        .subquery()
+    )
+
+    files = (
+        db.session.query(
+            File,
+            db.case(
+                (movie_rank.c.rank == 1, 1), (tv_rank.c.rank == 1, 1), else_=0
+            ).label("rank"),
+        )
+        .join(RefQuality, (RefQuality.id == File.quality_id))
+        .outerjoin(movie_rank, (movie_rank.c.id == File.id))
+        .outerjoin(tv_rank, (tv_rank.c.id == File.id))
+        .order_by(RefQuality.preference.asc(), File.aws_key.asc())
+        .all()
+    )
+
+    current_app.logger.info(f"Evaluating {len(files)} files for S3 sync")
+
+    inventory_export = []
+    orphaned_files = []
+
+    for i, (file, rank) in enumerate(files):
+        if job:
+            job.meta["description"] = "Queuing local files for S3 upload"
+            job.meta["progress"] = int((i / len(files)) * 100)
+            job.save_meta()
+
+        file_path = os.path.join(current_app.config["LIBRARY_DIR"], file.file_path)
+
+        # The transcoded/ copy of a conversion (#299). Upload it when
+        # it is missing. When the library file is missing, restore
+        # this copy, not the original. It goes straight into the
+        # library, with its track edits and no new conversion.
+
+        # The stale flag of a conversion is about this copy. The
+        # original in untouched/ never changes. Thus, a stale copy
+        # uploads again, and the sync never restores it.
+
+        local = os.path.isfile(file_path)
+        use_transcoded = bool(
+            file.converted_from_quality
+            and file.aws_transcoded_key in s3_keys
+            and file.aws_transcoded_date_uploaded
+            and not file.aws_stale
+        )
+        if file.converted_from_quality and not use_transcoded and local:
+            current_app.logger.info(
+                f"'{file.basename}' Queuing the transcoded copy for upload"
             )
-            return True
+            enqueue_task(
+                "app.videos.upload_task",
+                file.id,
+                description=f"'{file.basename}'",
+            )
+        if use_transcoded:
+            remote_size = s3_objects[file.aws_transcoded_key]
+            if file.aws_transcoded_filesize_bytes != remote_size:
+                file.aws_transcoded_filesize_bytes = remote_size
+            if rank == 1:
+                inventory_export.append(
+                    [current_app.config["AWS_BUCKET"], file.aws_transcoded_key]
+                )
+                if not local:
+                    current_app.logger.info(
+                        f"'{file.aws_transcoded_key}' does not exist in "
+                        f"the local library"
+                    )
+                    aws_restore(file.aws_transcoded_key, tier="Bulk")
+
+        # The next branches test the state of the archive of the file.
+
+        # The archive is not in S3, but the library file exists. The
+        # archive of a conversion is its original (#292). The library
+        # file cannot take its place. For a normal file, the upload
+        # puts the library file in modified/ (#299).
+        if (
+            (file.aws_key not in s3_keys or file.aws_date_uploaded == None)
+            and os.path.isfile(file_path)
+            and not file.archive_is_library_copy
+        ):
+            current_app.logger.warning(
+                f"'{file.aws_key}' The original of this "
+                f"conversion is not in AWS S3. The library file is not "
+                f"the original. Thus, it is not uploaded"
+            )
+
+        elif (
+            file.aws_key not in s3_keys
+            or file.aws_date_uploaded == None
+            or (file.aws_stale and file.archive_is_library_copy)
+        ) and os.path.isfile(file_path):
+
+            # Queue the file for an upload to S3.
+
+            current_app.logger.info(f"'{file.aws_key}' Queuing for upload to AWS")
+
+            enqueue_task(
+                "app.videos.upload_task",
+                file.id,
+                description=f"'{file.basename}'",
+            )
+
+        # The file exists in S3.
+        elif file.aws_key in s3_keys:
+
+            # Add the file to the inventory.
+
+            current_app.logger.info(f"'{file.aws_key}' Exists in AWS S3; rank {rank}")
+
+            # Record the real size of the object if the record does
+            # not have it, or if the size changed after the record.
+
+            remote_size = s3_objects[file.aws_key]
+            if file.aws_filesize_bytes != remote_size:
+                file.aws_filesize_bytes = remote_size
+
+            if rank == 1 and not use_transcoded:
+                inventory_export.append(
+                    [current_app.config["AWS_BUCKET"], file.aws_key]
+                )
+
+                # Queue the file for a restore if it does not exist
+                # locally.
+
+                if not local:
+                    current_app.logger.info(
+                        f"'{file.aws_key}' does not exist in the local library"
+                    )
+                    aws_restore(file.aws_key, tier="Bulk")
+
+        # The file is not in S3 and does not exist in the filesystem.
+        elif file.aws_key not in s3_keys and not os.path.isfile(file_path):
+
+            # Flag the file as an orphaned file.
+
+            current_app.logger.info(f"'{file.aws_key}' has no associated files")
+            orphaned_files.append([file.id, file.untouched_basename])
+
+    # Store the AWS object sizes that this filled in.
+
+    db.session.commit()
+
+    current_app.logger.info(f"Orphaned files: {orphaned_files}")
+    return inventory_export, orphaned_files
+
+
+def _put_inventory(inventory_export):
+    """Upload the CSV of the best files to the S3 bucket.
+
+    If a bulk restore of the library is necessary, this file can drive a
+    restore of all the best files through an S3 Batch Operation."""
+
+    if inventory_export:
+        f = io.StringIO()
+        inventory_writer = csv.writer(f, quoting=csv.QUOTE_ALL)
+        for file_object in inventory_export:
+            inventory_writer.writerow(file_object)
+        inventory_file = bytes(f.getvalue(), encoding="utf-8")
+        f.close()
+        client = aws_s3_client(with_retries=True)
+        inventory_key = s3_layout.key_under("inventory", s3_layout.INVENTORY_BASENAME)
+        client.put_object(
+            Body=inventory_file,
+            Bucket=current_app.config["AWS_BUCKET"],
+            Key=inventory_key,
+        )
+
+        # Each upload replaces the 1 object. Remove the old
+        # versions (#318). A failure here is not a sync failure.
 
         try:
-            job = get_current_job()
-
-            # Map each remote key to its object size. Thus, the file records
-            # can get the exact size that AWS bills for a restore.
-
-            # The archives live in 3 prefixes (#299): untouched/ (the
-            # rips), modified/ (library files after a change), and
-            # transcoded/ (the 1080p copies of the conversions).
-
-            archive_prefixes = [
-                f"{app.config[name]}/"
-                for name in (
-                    "AWS_UNTOUCHED_PREFIX",
-                    "AWS_MODIFIED_PREFIX",
-                    "AWS_TRANSCODED_PREFIX",
-                )
-            ]
-            listed = [
-                object
-                for prefix in archive_prefixes
-                for object in get_matching_s3_objects(
-                    app.config["AWS_BUCKET"], prefix=prefix
-                )
-            ]
-            s3_objects = {object["Key"]: object["Size"] for object in listed}
-            s3_modified = {
-                object["Key"]: object.get("LastModified") for object in listed
-            }
-            s3_keys = set(s3_objects)
-
-            files = File.query.all()
-
-            movie_rank = (
-                db.session.query(
-                    File.id,
-                    movie_file_rank(),
-                )
-                .join(Movie, (Movie.id == File.movie_id))
-                .join(RefQuality, (RefQuality.id == File.quality_id))
-                .subquery()
+            s3_layout.prune_noncurrent(
+                client, current_app.config["AWS_BUCKET"], inventory_key
+            )
+        except Exception as e:
+            current_app.logger.warning(
+                f"Could not remove the old versions of '{inventory_key}': {e}"
             )
 
-            tv_rank = (
-                db.session.query(
-                    File.id,
-                    tv_file_rank(),
-                )
-                .join(TVSeries, (TVSeries.id == File.series_id))
-                .join(RefQuality, (RefQuality.id == File.quality_id))
-                .subquery()
+
+def _claimed_keys():
+    """Return the archive keys that a record claims.
+
+    The archive-only originals (#292) have no File row. Their keys are
+    claimed too."""
+
+    return (
+        {aws_key for (aws_key,) in db.session.query(File.aws_key).all()}
+        | {key for (key,) in db.session.query(ArchivedOriginal.aws_key).all()}
+        | {
+            key
+            for (key,) in db.session.query(File.aws_transcoded_key)
+            .filter(File.aws_transcoded_key.isnot(None))
+            .all()
+        }
+    )
+
+
+def _report_dangling_claims(listing):
+    """Mail the admin the claimed keys that have no object in S3.
+
+    This is the rename-skew tripwire. An ACTIVE claim with no matching
+    object means that a restore would return a 404. The 2026-08-17 audit
+    found 1,184 cases of this silent damage. The sync reports it loudly
+    each week. Thus, it can never accumulate."""
+
+    s3_key_set = listing.keys
+    dangling_claims = sorted(
+        key
+        for (key,) in db.session.query(File.aws_key)
+        .filter(File.aws_key.isnot(None))
+        .filter(File.aws_date_deleted.is_(None))
+        .union(db.session.query(ArchivedOriginal.aws_key))
+        .union(
+            db.session.query(File.aws_transcoded_key).filter(
+                File.aws_transcoded_key.isnot(None),
+                File.aws_transcoded_date_uploaded.isnot(None),
             )
+        )
+        if key not in s3_key_set
+    )
+    if dangling_claims:
+        admin_user = User.query.filter(User.admin == True).first()
+        send_email(
+            "Fitzflix - Archive keys missing from AWS S3!",
+            sender=("Fitzflix", current_app.config["SERVER_EMAIL"]),
+            recipients=[admin_user.email],
+            text_body=(
+                "These file records claim untouched archive keys "
+                "that don't exist in S3 — a restore would fail:\n\n"
+                + "\n".join(dangling_claims)
+            ),
+            html_body=(
+                "<p>These file records claim untouched archive "
+                "keys that don't exist in S3 — a restore would "
+                "fail:</p><ul>"
+                + "".join(f"<li>{key}</li>" for key in dangling_claims)
+                + "</ul>"
+            ),
+        )
 
-            files = (
-                db.session.query(
-                    File,
-                    db.case(
-                        (movie_rank.c.rank == 1, 1), (tv_rank.c.rank == 1, 1), else_=0
-                    ).label("rank"),
-                )
-                .join(RefQuality, (RefQuality.id == File.quality_id))
-                .outerjoin(movie_rank, (movie_rank.c.id == File.id))
-                .outerjoin(tv_rank, (tv_rank.c.id == File.id))
-                .order_by(RefQuality.preference.asc(), File.aws_key.asc())
-                .all()
-            )
 
-            current_app.logger.info(f"Evaluating {len(files)} files for S3 sync")
+def _prune_unclaimed(listing, job, unreferenced_files):
+    """Delete the S3 objects that no record claims. Add each key to unreferenced_files.
 
-            inventory_export = []
-            orphaned_files = []
-            unreferenced_files = []
+    The caller owns the list. Thus, the report names the deleted keys
+    also after a failure in the middle of the prune. An import that
+    waits for library space has no File row yet. Its wait has no limit.
+    Its marker names its source, and the key of its untouched/ upload
+    comes from that name."""
 
-            for i, (file, rank) in enumerate(files):
-                if job:
-                    job.meta["description"] = "Queuing local files for S3 upload"
-                    job.meta["progress"] = int((i / len(files)) * 100)
-                    job.save_meta()
+    s3_keys = listing.keys
+    s3_modified = listing.modified
+    archive_prefixes = listing.prefixes
+    aws_keys = _claimed_keys()
 
-                file_path = os.path.join(
-                    current_app.config["LIBRARY_DIR"], file.file_path
-                )
+    from app.importing import SPACE_WAIT_KEY
 
-                # The transcoded/ copy of a conversion (#299). Upload it when
-                # it is missing. When the library file is missing, restore
-                # this copy, not the original. It goes straight into the
-                # library, with its track edits and no new conversion.
+    marker_prefix = SPACE_WAIT_KEY.format("")
+    waiting_keys = {
+        os.path.join(
+            current_app.config["AWS_UNTOUCHED_PREFIX"],
+            sanitize_s3_key(marker.decode()[len(marker_prefix) :]),
+        )
+        for marker in current_app.redis.scan_iter(f"{marker_prefix}*")
+    }
 
-                # The stale flag of a conversion is about this copy. The
-                # original in untouched/ never changes. Thus, a stale copy
-                # uploads again, and the sync never restores it.
+    for i, remote_key in enumerate(s3_keys):
+        if remote_key in waiting_keys:
+            continue
+        if job:
+            job.meta["description"] = "Pruning extra files from AWS S3 storage"
+            job.meta["progress"] = int((i / len(s3_keys)) * 100)
+            job.save_meta()
 
-                local = os.path.isfile(file_path)
-                use_transcoded = bool(
-                    file.converted_from_quality
-                    and file.aws_transcoded_key in s3_keys
-                    and file.aws_transcoded_date_uploaded
-                    and not file.aws_stale
-                )
-                if file.converted_from_quality and not use_transcoded and local:
-                    current_app.logger.info(
-                        f"'{file.basename}' Queuing the transcoded copy for upload"
-                    )
-                    enqueue_task(
-                        "app.videos.upload_task",
-                        file.id,
-                        description=f"'{file.basename}'",
-                    )
-                if use_transcoded:
-                    remote_size = s3_objects[file.aws_transcoded_key]
-                    if file.aws_transcoded_filesize_bytes != remote_size:
-                        file.aws_transcoded_filesize_bytes = remote_size
-                    if rank == 1:
-                        inventory_export.append(
-                            [current_app.config["AWS_BUCKET"], file.aws_transcoded_key]
-                        )
-                        if not local:
-                            current_app.logger.info(
-                                f"'{file.aws_transcoded_key}' does not exist in "
-                                f"the local library"
-                            )
-                            aws_restore(file.aws_transcoded_key, tier="Bulk")
+        # An import uploads its rip to untouched/ long before its
+        # File row exists. A wait for library space has no limit.
+        # Thus, a recent object is never pruned. A real leftover
+        # goes at a later weekly sync.
 
-                # The next branches test the state of the archive of the file.
+        modified = s3_modified.get(remote_key)
+        if modified is not None and modified > datetime.now(timezone.utc) - timedelta(
+            days=PRUNE_GRACE_DAYS
+        ):
+            continue
 
-                # The archive is not in S3, but the library file exists. The
-                # archive of a conversion is its original (#292). The library
-                # file cannot take its place. For a normal file, the upload
-                # puts the library file in modified/ (#299).
-                if (
-                    (file.aws_key not in s3_keys or file.aws_date_uploaded == None)
-                    and os.path.isfile(file_path)
-                    and not file.archive_is_library_copy
+        if remote_key not in aws_keys and remote_key not in archive_prefixes:
+            aws_delete(remote_key)
+            unreferenced_files.append(remote_key)
+
+
+def _mail_reports(unreferenced_files, orphaned_files):
+    """Mail the admin the pruned objects and the orphaned file records."""
+
+    if unreferenced_files:
+        admin_user = User.query.filter(User.admin == True).first()
+        send_email(
+            "Fitzflix - Deleted unreferenced AWS files",
+            sender=("Fitzflix", current_app.config["SERVER_EMAIL"]),
+            recipients=[admin_user.email],
+            text_body=render_template(
+                "email/unreferenced_files.txt",
+                user=admin_user.email,
+                unreferenced_files=unreferenced_files,
+            ),
+            html_body=render_template(
+                "email/unreferenced_files.html",
+                user=admin_user.email,
+                unreferenced_files=unreferenced_files,
+            ),
+        )
+
+    if orphaned_files:
+        admin_user = User.query.filter(User.admin == True).first()
+        send_email(
+            "Fitzflix - Orphaned file records found!",
+            sender=("Fitzflix", current_app.config["SERVER_EMAIL"]),
+            recipients=[admin_user.email],
+            text_body=render_template(
+                "email/orphaned_files.txt",
+                user=admin_user.email,
+                orphaned_files=orphaned_files,
+            ),
+            html_body=render_template(
+                "email/orphaned_files.html",
+                user=admin_user.email,
+                orphaned_files=orphaned_files,
+            ),
+        )
+
+
+def _import_uncataloged(roots):
+    """Queue the files of the library folders that have no record for an import."""
+
+    from app.importing import enqueue_localization
+
+    library = []
+    for root in roots:
+        for path, subdirs, local_files in os.walk(root):
+            for name in local_files:
+                if name.startswith(ARTWORK_PREFIXES) and name.endswith(
+                    ARTWORK_SUFFIXES
                 ):
-                    current_app.logger.warning(
-                        f"'{file.aws_key}' The original of this "
-                        f"conversion is not in AWS S3. The library file is not "
-                        f"the original. Thus, it is not uploaded"
-                    )
-
-                elif (
-                    file.aws_key not in s3_keys
-                    or file.aws_date_uploaded == None
-                    or (file.aws_stale and file.archive_is_library_copy)
-                ) and os.path.isfile(file_path):
-
-                    # Queue the file for an upload to S3.
-
-                    current_app.logger.info(
-                        f"'{file.aws_key}' Queuing for upload to AWS"
-                    )
-
-                    enqueue_task(
-                        "app.videos.upload_task",
-                        file.id,
-                        description=f"'{file.basename}'",
-                    )
-
-                # The file exists in S3.
-                elif file.aws_key in s3_keys:
-
-                    # Add the file to the inventory.
-
-                    current_app.logger.info(
-                        f"'{file.aws_key}' Exists in AWS S3; rank {rank}"
-                    )
-
-                    # Record the real size of the object if the record does
-                    # not have it, or if the size changed after the record.
-
-                    remote_size = s3_objects[file.aws_key]
-                    if file.aws_filesize_bytes != remote_size:
-                        file.aws_filesize_bytes = remote_size
-
-                    if rank == 1 and not use_transcoded:
-                        inventory_export.append(
-                            [current_app.config["AWS_BUCKET"], file.aws_key]
-                        )
-
-                        # Queue the file for a restore if it does not exist
-                        # locally.
-
-                        if not local:
-                            current_app.logger.info(
-                                f"'{file.aws_key}' does not exist in the local library"
-                            )
-                            aws_restore(file.aws_key, tier="Bulk")
-
-                # The file is not in S3 and does not exist in the filesystem.
-                elif file.aws_key not in s3_keys and not os.path.isfile(file_path):
-
-                    # Flag the file as an orphaned file.
-
-                    current_app.logger.info(f"'{file.aws_key}' has no associated files")
-                    orphaned_files.append([file.id, file.untouched_basename])
-
-            # Store the AWS object sizes that this filled in.
-
-            db.session.commit()
-
-            current_app.logger.info(f"Orphaned files: {orphaned_files}")
-
-            # Make a CSV of the best files and upload it to the S3 bucket. If
-            # a bulk restore of the library is necessary, this file can drive
-            # a restore of all the best files through an S3 Batch Operation.
-
-            if inventory_export:
-                f = io.StringIO()
-                inventory_writer = csv.writer(f, quoting=csv.QUOTE_ALL)
-                for file_object in inventory_export:
-                    inventory_writer.writerow(file_object)
-                inventory_file = bytes(f.getvalue(), encoding="utf-8")
-                f.close()
-                client = aws_s3_client(with_retries=True)
-                inventory_key = s3_layout.key_under(
-                    "inventory", s3_layout.INVENTORY_BASENAME
-                )
-                client.put_object(
-                    Body=inventory_file,
-                    Bucket=current_app.config["AWS_BUCKET"],
-                    Key=inventory_key,
-                )
-
-                # Each upload replaces the 1 object. Remove the old
-                # versions (#318). A failure here is not a sync failure.
-
-                try:
-                    s3_layout.prune_noncurrent(
-                        client, current_app.config["AWS_BUCKET"], inventory_key
-                    )
-                except Exception as e:
-                    current_app.logger.warning(
-                        f"Could not remove the old versions of '{inventory_key}': {e}"
-                    )
-
-            # Delete the remote S3 files that are not in Fitzflix.
-
-            # The archive-only originals (#292) have no File row. Their
-            # keys are claimed too.
-
-            aws_keys = (
-                {aws_key for (aws_key,) in db.session.query(File.aws_key).all()}
-                | {key for (key,) in db.session.query(ArchivedOriginal.aws_key).all()}
-                | {
-                    key
-                    for (key,) in db.session.query(File.aws_transcoded_key)
-                    .filter(File.aws_transcoded_key.isnot(None))
-                    .all()
-                }
-            )
-
-            # This is the rename-skew tripwire. An ACTIVE claim with no
-            # matching object means that a restore would return a 404.
-            # The 2026-08-17 audit found 1,184 cases of this silent
-            # damage. Report it loudly here each week. Thus, it can never
-            # accumulate.
-
-            s3_key_set = set(s3_keys)
-            dangling_claims = sorted(
-                key
-                for (key,) in db.session.query(File.aws_key)
-                .filter(File.aws_key.isnot(None))
-                .filter(File.aws_date_deleted.is_(None))
-                .union(db.session.query(ArchivedOriginal.aws_key))
-                .union(
-                    db.session.query(File.aws_transcoded_key).filter(
-                        File.aws_transcoded_key.isnot(None),
-                        File.aws_transcoded_date_uploaded.isnot(None),
-                    )
-                )
-                if key not in s3_key_set
-            )
-            if dangling_claims:
-                admin_user = User.query.filter(User.admin == True).first()
-                send_email(
-                    "Fitzflix - Archive keys missing from AWS S3!",
-                    sender=("Fitzflix", current_app.config["SERVER_EMAIL"]),
-                    recipients=[admin_user.email],
-                    text_body=(
-                        "These file records claim untouched archive keys "
-                        "that don't exist in S3 — a restore would fail:\n\n"
-                        + "\n".join(dangling_claims)
-                    ),
-                    html_body=(
-                        "<p>These file records claim untouched archive "
-                        "keys that don't exist in S3 — a restore would "
-                        "fail:</p><ul>"
-                        + "".join(f"<li>{key}</li>" for key in dangling_claims)
-                        + "</ul>"
-                    ),
-                )
-
-            # An import that waits for library space has no File row yet.
-            # Its wait has no limit. Its marker names its source. The key of
-            # its untouched/ upload comes from that name.
-
-            from app.importing import SPACE_WAIT_KEY
-
-            marker_prefix = SPACE_WAIT_KEY.format("")
-            waiting_keys = {
-                os.path.join(
-                    current_app.config["AWS_UNTOUCHED_PREFIX"],
-                    sanitize_s3_key(marker.decode()[len(marker_prefix) :]),
-                )
-                for marker in current_app.redis.scan_iter(f"{marker_prefix}*")
-            }
-
-            for i, remote_key in enumerate(s3_keys):
-                if remote_key in waiting_keys:
                     continue
-                if job:
-                    job.meta["description"] = "Pruning extra files from AWS S3 storage"
-                    job.meta["progress"] = int((i / len(s3_keys)) * 100)
-                    job.save_meta()
+                if not name.startswith(".") and "@eaDir" not in path:
+                    library_file = os.path.join(path, name)
+                    file_path = os.path.relpath(
+                        library_file, current_app.config["LIBRARY_DIR"]
+                    )
+                    library.append((library_file, file_path))
 
-                # An import uploads its rip to untouched/ long before its
-                # File row exists. A wait for library space has no limit.
-                # Thus, a recent object is never pruned. A real leftover
-                # goes at a later weekly sync.
-
-                modified = s3_modified.get(remote_key)
-                if modified is not None and modified > datetime.now(
-                    timezone.utc
-                ) - timedelta(days=PRUNE_GRACE_DAYS):
-                    continue
-
-                if remote_key not in aws_keys and remote_key not in archive_prefixes:
-                    unreferenced_files.append(remote_key)
-                    aws_delete(remote_key)
-
-            if unreferenced_files:
-                admin_user = User.query.filter(User.admin == True).first()
-                send_email(
-                    "Fitzflix - Deleted unreferenced AWS files",
-                    sender=("Fitzflix", current_app.config["SERVER_EMAIL"]),
-                    recipients=[admin_user.email],
-                    text_body=render_template(
-                        "email/unreferenced_files.txt",
-                        user=admin_user.email,
-                        unreferenced_files=unreferenced_files,
-                    ),
-                    html_body=render_template(
-                        "email/unreferenced_files.html",
-                        user=admin_user.email,
-                        unreferenced_files=unreferenced_files,
-                    ),
+    for library_file, file_path in library:
+        if not File.query.filter_by(file_path=file_path).first() and os.path.isfile(
+            library_file
+        ):
+            if enqueue_localization(library_file):
+                current_app.logger.info(
+                    f"'{library_file}' isn't in library; added to import queue"
                 )
-
-            if orphaned_files:
-                admin_user = User.query.filter(User.admin == True).first()
-                send_email(
-                    "Fitzflix - Orphaned file records found!",
-                    sender=("Fitzflix", current_app.config["SERVER_EMAIL"]),
-                    recipients=[admin_user.email],
-                    text_body=render_template(
-                        "email/orphaned_files.txt",
-                        user=admin_user.email,
-                        orphaned_files=orphaned_files,
-                    ),
-                    html_body=render_template(
-                        "email/orphaned_files.html",
-                        user=admin_user.email,
-                        orphaned_files=orphaned_files,
-                    ),
-                )
-
-            # Queue the local files that are in the library folders but not
-            # in Fitzflix for an import.
-
-            library = []
-            for path, subdirs, local_files in os.walk(
-                current_app.config["MOVIE_LIBRARY"]
-            ):
-                for name in local_files:
-                    if name.startswith(
-                        ("cover", "default", "folder", "movie", "poster")
-                    ) and name.endswith(("jpg", "jpeg", "png", "tbn")):
-                        continue
-
-                    if not name.startswith(".") and "@eaDir" not in path:
-                        library_file = os.path.join(path, name)
-                        file_path = os.path.relpath(
-                            library_file, current_app.config["LIBRARY_DIR"]
-                        )
-                        library.append((library_file, file_path))
-
-            for path, subdirs, local_files in os.walk(current_app.config["TV_LIBRARY"]):
-                for name in local_files:
-                    if name.startswith(
-                        ("cover", "default", "folder", "movie", "poster")
-                    ) and name.endswith(("jpg", "jpeg", "png", "tbn")):
-                        continue
-
-                    if not name.startswith(".") and "@eaDir" not in path:
-                        library_file = os.path.join(path, name)
-                        file_path = os.path.relpath(
-                            library_file, current_app.config["LIBRARY_DIR"]
-                        )
-                        library.append((library_file, file_path))
-
-            for library_file, file_path in library:
-                if not File.query.filter_by(
-                    file_path=file_path
-                ).first() and os.path.isfile(library_file):
-                    from app.importing import enqueue_localization
-
-                    if enqueue_localization(library_file):
-                        current_app.logger.info(
-                            f"'{library_file}' isn't in library; added to import queue"
-                        )
-
-        except Exception:
-            app.logger.error(traceback.format_exc())
-
-        else:
-            return True
 
 
 def download_task(key, basename, sqs_receipt_handle=None, transient_retries=0):
