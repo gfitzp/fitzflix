@@ -8,7 +8,7 @@ movie_id instead of acting on the film of the page."""
 import pytest
 
 from tests.factories import make_movie
-from tests.test_streaming import csrf_token_from
+from tests.conftest import csrf_token_from
 
 LADDER = {"X-Requested-With": "ladder"}
 CARD = {"X-Requested-With": "card"}

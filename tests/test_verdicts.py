@@ -5,8 +5,6 @@ differences stay. The TMDB page never removes a rating or undoes a ✕,
 its ✕ never steers the drive, and its messages name the TMDB title.
 """
 
-import re
-
 import pytest
 
 from datetime import datetime
@@ -15,12 +13,7 @@ from app import db
 
 from tests.factories import make_movie
 from tests.test_reviews import JAWS_2_DETAILS, FakeTMDBDetails
-
-
-def csrf_token_from(page_html):
-    match = re.search(r'name="csrf_token"[^>]*value="([^"]+)"', page_html)
-    assert match, "no csrf token found in page"
-    return match.group(1)
+from tests.conftest import csrf_token_from
 
 
 def _admin_id():

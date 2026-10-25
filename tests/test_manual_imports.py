@@ -255,7 +255,7 @@ def test_import_enqueues_task_and_task_finishes_the_download(
     ]
 
     page = admin_client.get("/maintenance/manual-imports").get_data(as_text=True)
-    from tests.test_rejects import csrf_token_from
+    from tests.conftest import csrf_token_from
 
     response = admin_client.post(
         "/maintenance/manual-imports",
@@ -312,7 +312,7 @@ def test_import_refuses_bad_names_and_foreign_files(
     output_path = make_download(downloads)
     fake_queues["Radarr"] = [radarr_item(output_path)]
     page = admin_client.get("/maintenance/manual-imports").get_data(as_text=True)
-    from tests.test_rejects import csrf_token_from
+    from tests.conftest import csrf_token_from
 
     token = csrf_token_from(page)
     base = {
@@ -370,7 +370,7 @@ def test_discard_removes_queue_items_with_client_delete(
     output_path = make_download(downloads)
     fake_queues["Radarr"] = [radarr_item(output_path)]
     page = admin_client.get("/maintenance/manual-imports").get_data(as_text=True)
-    from tests.test_rejects import csrf_token_from
+    from tests.conftest import csrf_token_from
 
     body = admin_client.post(
         "/maintenance/manual-imports",

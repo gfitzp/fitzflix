@@ -11,7 +11,8 @@ from datetime import date, timedelta
 
 from tests.conftest import ADMIN_EMAIL, MEMBER_EMAIL
 from tests.factories import make_movie, make_movie_file
-from tests.test_streaming import csrf_token_from, plant_availability, subscribe
+from tests.conftest import csrf_token_from
+from tests.test_streaming import plant_availability, subscribe
 
 NETFLIX = {"provider_id": 8, "provider_name": "Netflix", "logo_path": "/n.jpg"}
 CRITERION = {

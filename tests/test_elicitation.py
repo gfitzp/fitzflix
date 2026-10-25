@@ -4,25 +4,12 @@ The tests cover the candidate pool exclusions, the adjacency-ranked
 suggestions after a positive movie-page rating, and the background
 posts of the ladder."""
 
-import re
-
 from app import db
 from app.models import MovieCrew, UserMovieReview, UserWatchlist
 from tests.factories import make_movie, make_movie_file
-from tests.test_recommendations import (
-    admin_id,
-    genre,
-    log_watch,
-    make_person,
-)
-
-
-def csrf_token_from(page_html):
-    """Return the CSRF token from a rendered form."""
-
-    match = re.search(r'name="csrf_token"[^>]*value="([^"]+)"', page_html)
-    assert match, "no csrf token found in page"
-    return match.group(1)
+from tests.factories import make_person
+from tests.test_recommendations import genre, log_watch
+from tests.conftest import csrf_token_from
 
 
 def make_candidate(title, year, genre_row=None, director=None):
@@ -44,12 +31,12 @@ def make_candidate(title, year, genre_row=None, director=None):
     return movie
 
 
-def test_candidates_exclude_declared_states(app):
+def test_candidates_exclude_declared_states(app, admin_id):
     from app.elicitation import elicitation_candidates
     from app.models import UserMovieStatus
 
     with app.app_context():
-        user_id = admin_id()
+        user_id = admin_id
         eligible = make_candidate("Elicit Eligible", 1990)
         logged = make_candidate("Elicit Logged", 1991)
         log_watch(user_id, logged, rating=4)
@@ -67,7 +54,7 @@ def test_candidates_exclude_declared_states(app):
         assert elicitation_candidates(user_id) == [eligible.id]
 
 
-def test_unseen_mark_expires_after_two_years(app):
+def test_unseen_mark_expires_after_two_years(app, admin_id):
     """Make sure the "Haven't seen it" mark expires.
 
     A mark older than the resurface bar stops the exclusion of the film.
@@ -83,7 +70,7 @@ def test_unseen_mark_expires_after_two_years(app):
     from app.models import UserMovieStatus
 
     with app.app_context():
-        user_id = admin_id()
+        user_id = admin_id
         film = make_candidate("Unseen Expiry", 1972)
         db.session.flush()
         film_id = film.id
@@ -102,7 +89,7 @@ def test_unseen_mark_expires_after_two_years(app):
         assert film_id in elicitation_candidates(user_id)
 
 
-def test_movie_page_ladder_logs_a_quick_rating(app, admin_client):
+def test_movie_page_ladder_logs_a_quick_rating(app, admin_client, admin_id):
     """Make sure the ladder on the movie page logs a quick rating.
 
     The ladder goes with the log form of the movie page too. One tap
@@ -110,7 +97,7 @@ def test_movie_page_ladder_logs_a_quick_rating(app, admin_client):
     other form fields as submitted."""
 
     with app.app_context():
-        user_id = admin_id()
+        user_id = admin_id
         movie = make_candidate("Ladder Movie Page", 1970)
         db.session.commit()
         movie_id = movie.id
@@ -131,7 +118,7 @@ def test_movie_page_ladder_logs_a_quick_rating(app, admin_client):
         assert float(review.rating) == 4.0
 
 
-def test_movie_page_positive_rating_earns_suggestions(app, admin_client):
+def test_movie_page_positive_rating_earns_suggestions(app, admin_client, admin_id):
     """Make sure a positive rating on the movie page earns suggestions.
 
     A ladder tap of 3 or more earns the "since you liked" strip on the
@@ -143,7 +130,7 @@ def test_movie_page_positive_rating_earns_suggestions(app, admin_client):
     from app.elicitation import last_response
 
     with app.app_context():
-        user_id = admin_id()
+        user_id = admin_id
         western = genre(37, "Western")
         auteur = make_person(777006, "Page Strip Director")
         anchor = make_candidate(
@@ -248,7 +235,7 @@ def test_movie_page_positive_rating_earns_suggestions(app, admin_client):
     assert "Page Strip Similar Two (1962)" not in page
 
 
-def test_card_rating_on_suggestion_never_reanchors(app, admin_client):
+def test_card_rating_on_suggestion_never_reanchors(app, admin_client, admin_id):
     """Make sure a card rating on a suggestion never moves the anchor.
 
     A ladder tap on the poster tile of a suggestion (from_card) rates
@@ -260,7 +247,7 @@ def test_card_rating_on_suggestion_never_reanchors(app, admin_client):
     from app.elicitation import last_response
 
     with app.app_context():
-        user_id = admin_id()
+        user_id = admin_id
         western = genre(37, "Western")
         auteur = make_person(777007, "Chain Director")
         anchor = make_candidate(
@@ -325,7 +312,7 @@ def test_card_rating_on_suggestion_never_reanchors(app, admin_client):
         assert last["positive"] is True
 
 
-def test_movie_page_x_flags_and_never_reviews(app, admin_client):
+def test_movie_page_x_flags_and_never_reviews(app, admin_client, admin_id):
     """Make sure the ✕ on the movie page flags the film and never reviews it.
 
     The ✕ of the ladder writes the not-interested flag and no diary row.
@@ -335,7 +322,7 @@ def test_movie_page_x_flags_and_never_reviews(app, admin_client):
     from app.models import UserMovieStatus, UserWatchlist
 
     with app.app_context():
-        user_id = admin_id()
+        user_id = admin_id
         movie = make_candidate("X Owned Film", 1975)
         db.session.add(UserWatchlist(user_id=user_id, movie_id=movie.id))
         db.session.commit()
@@ -383,7 +370,7 @@ def test_movie_page_x_flags_and_never_reviews(app, admin_client):
         )
 
 
-def test_seen_films_cannot_be_flagged_and_hide_the_x(app, admin_client):
+def test_seen_films_cannot_be_flagged_and_hide_the_x(app, admin_client, admin_id):
     """Make sure a seen film refuses the ✕ and hides the button.
 
     The server refuses the ✕ for a film with a diary row. The floor of
@@ -393,7 +380,7 @@ def test_seen_films_cannot_be_flagged_and_hide_the_x(app, admin_client):
     from app.videos import star_rating_fields
 
     with app.app_context():
-        user_id = admin_id()
+        user_id = admin_id
         movie = make_candidate("X Seen Film", 1976)
         db.session.add(
             UserMovieReview(
@@ -435,7 +422,7 @@ def test_seen_films_cannot_be_flagged_and_hide_the_x(app, admin_client):
     assert 'name="quick_rating" value="0"' not in page
 
 
-def test_same_day_retap_edits_todays_review(app, admin_client):
+def test_same_day_retap_edits_todays_review(app, admin_client, admin_id):
     """Make sure a second tap on the same day edits the review of that day.
 
     A different star on a day with a rating corrects that review in
@@ -446,7 +433,7 @@ def test_same_day_retap_edits_todays_review(app, admin_client):
     from datetime import datetime, timedelta
 
     with app.app_context():
-        user_id = admin_id()
+        user_id = admin_id
         movie = make_candidate("Same Day Rerate", 1986)
         db.session.commit()
         movie_id = movie.id
@@ -501,7 +488,7 @@ def test_same_day_retap_edits_todays_review(app, admin_client):
         assert rows[1].rewatch is True
 
 
-def test_same_star_tap_removes_the_rating(app, admin_client):
+def test_same_star_tap_removes_the_rating(app, admin_client, admin_id):
     """Make sure a tap on the current rating removes it.
 
     A bare row with no date disappears fully. A dated viewing loses
@@ -510,7 +497,7 @@ def test_same_star_tap_removes_the_rating(app, admin_client):
     from app.videos import star_rating_fields
 
     with app.app_context():
-        user_id = admin_id()
+        user_id = admin_id
         bare_movie = make_candidate("Toggle Bare", 1984)
         dated_movie = make_candidate("Toggle Dated", 1985)
         db.session.add(
@@ -649,7 +636,7 @@ def test_ladder_fetch_returns_state_without_redirect(app, admin_client):
     }
 
 
-def test_half_star_ratings_render_a_partial_fill(app, admin_client):
+def test_half_star_ratings_render_a_partial_fill(app, admin_client, admin_id):
     """Make sure a half-star rating renders a partial fill.
 
     Letterboxd logs in half-star steps. The widget fills part of the
@@ -659,7 +646,7 @@ def test_half_star_ratings_render_a_partial_fill(app, admin_client):
     from app.videos import star_rating_fields
 
     with app.app_context():
-        user_id = admin_id()
+        user_id = admin_id
         movie = make_candidate("Half Star Film", 1975)
         db.session.add(
             UserMovieReview(

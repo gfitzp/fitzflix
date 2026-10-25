@@ -12,12 +12,7 @@ import json
 import re
 
 from datetime import datetime, timedelta, timezone
-
-
-def csrf_token_from(page_html):
-    match = re.search(r'name="csrf_token"[^>]*value="([^"]+)"', page_html)
-    assert match, "no csrf token found in page"
-    return match.group(1)
+from tests.conftest import csrf_token_from
 
 
 def whatson_html(title="Shock Corridor", minutes_left=83, guid="8rWb21ax"):

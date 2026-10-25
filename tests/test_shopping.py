@@ -391,7 +391,7 @@ def test_shopping_row_passes_the_instruction_to_the_store_menu(app, admin_client
 def test_an_unknown_film_post_keeps_the_filters_of_the_list(app, admin_client):
     """The add or exclude post of an unknown film goes back to the same view."""
 
-    from tests.test_pages import csrf_token_from
+    from tests.conftest import csrf_token_from
 
     page = admin_client.get("/shopping-list/movie").get_data(as_text=True)
     response = admin_client.post(

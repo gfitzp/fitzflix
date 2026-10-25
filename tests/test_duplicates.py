@@ -11,12 +11,7 @@ from datetime import datetime
 from app import db
 
 from tests.factories import make_movie
-
-
-def csrf_token_from(page_html):
-    match = re.search(r'name="csrf_token"[^>]*value="([^"]+)"', page_html)
-    assert match, "no csrf token found in page"
-    return match.group(1)
+from tests.conftest import csrf_token_from
 
 
 def build_duplicates(app):

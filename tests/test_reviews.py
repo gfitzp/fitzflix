@@ -14,6 +14,7 @@ import pytest
 from datetime import datetime
 
 from tests.factories import make_movie
+from tests.conftest import csrf_token_from
 
 
 def assert_binds(job):
@@ -21,12 +22,6 @@ def assert_binds(job):
     function."""
 
     inspect.signature(job.func).bind(*(job.args or ()), **(job.kwargs or {}))
-
-
-def csrf_token_from(page_html):
-    match = re.search(r'name="csrf_token"[^>]*value="([^"]+)"', page_html)
-    assert match, "no csrf token found in page"
-    return match.group(1)
 
 
 def letterboxd_zip(files):

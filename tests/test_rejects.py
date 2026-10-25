@@ -5,10 +5,10 @@ import directory, the deletion, and the path-traversal guard.
 """
 
 import os
-import re
 import shutil
 
 import pytest
+from tests.conftest import csrf_token_from
 
 
 @pytest.fixture(autouse=True)
@@ -24,12 +24,6 @@ def clean_rejects(app):
                 shutil.rmtree(path)
             else:
                 os.remove(path)
-
-
-def csrf_token_from(page_html):
-    match = re.search(r'name="csrf_token"[^>]*value="([^"]+)"', page_html)
-    assert match, "no csrf token found in page"
-    return match.group(1)
 
 
 def reject_a_file(app, reason, basename, content=b"rejected bytes"):

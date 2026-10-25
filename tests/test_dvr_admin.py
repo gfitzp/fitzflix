@@ -12,6 +12,7 @@ import pytest
 from app.models import DVRChannel, db
 from tests.conftest import dvr_rebuild_jobs
 from tests.factories import make_movie, make_movie_file, make_tv_file, make_tv_series
+from tests.conftest import csrf_token_from
 
 
 @pytest.fixture(autouse=True)
@@ -24,11 +25,6 @@ def library_present(monkeypatch):
 
     monkeypatch.setattr(dvr, "_on_disk", lambda file: True)
     monkeypatch.setattr(dvr, "_library_online", lambda: True)
-
-
-def csrf_token_from(page_html):
-    match = re.search(r'name="csrf_token"[^>]*value="([^"]+)"', page_html)
-    return match.group(1)
 
 
 def rebuild_jobs(app):

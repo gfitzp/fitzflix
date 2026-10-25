@@ -500,7 +500,7 @@ def test_only_the_changed_languages_are_sent_to_the_edit(app, admin_client):
     import inspect
 
     from app.videos import mkvpropedit_task
-    from tests.test_subtitle_triage import csrf_token_from
+    from tests.conftest import csrf_token_from
 
     file_id, library_path, page = _matroska_file_page(app, admin_client, subtitles=True)
     try:
@@ -540,7 +540,7 @@ def test_an_unknown_language_refuses_the_whole_edit(app, admin_client):
     entry also stops the flag edits. Thus, the page that the visitor
     comes back to still shows the real content of the file."""
 
-    from tests.test_subtitle_triage import csrf_token_from
+    from tests.conftest import csrf_token_from
 
     file_id, library_path, page = _matroska_file_page(
         app, admin_client, subtitles=False
@@ -580,7 +580,7 @@ def test_a_terminologic_code_reads_as_a_name_and_is_not_a_change(app, admin_clie
     import inspect
 
     from app.videos import mkvpropedit_task
-    from tests.test_subtitle_triage import csrf_token_from
+    from tests.conftest import csrf_token_from
 
     file_id, library_path, page = _matroska_file_page(
         app, admin_client, subtitles=False, language="deu"

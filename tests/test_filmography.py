@@ -6,21 +6,10 @@ no local record. The movie library page shows a badge for the quality
 of each film. The badge color shows if the film is upgradable."""
 
 from app import db
-from app.models import Movie, MovieCast, MovieCrew, TMDBCredit, User, UserMovieReview
+from app.models import Movie, MovieCrew, TMDBCredit, User, UserMovieReview
 from app.videos import star_rating_fields
 from tests.factories import make_movie, make_movie_file
-
-
-def make_cast(person, movie, character="Self", order=0):
-    cast = MovieCast(
-        movie_id=movie.id,
-        credit_id=person.id,
-        character=character,
-        billing_order=order,
-    )
-    db.session.add(cast)
-    db.session.flush()
-    return cast
+from tests.factories import make_cast
 
 
 def test_filmography_includes_unowned_films_without_tmdb(app, admin_client):

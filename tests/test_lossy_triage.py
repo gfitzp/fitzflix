@@ -12,7 +12,7 @@ from app import db
 from app.models import File, FileAudioTrack, FileSubtitleTrack
 
 from tests.factories import make_movie, make_movie_file
-from tests.test_subtitle_triage import csrf_token_from
+from tests.conftest import csrf_token_from
 
 
 def audio(file, track, codec, compression, fmt=None, streamorder=None, **kwargs):

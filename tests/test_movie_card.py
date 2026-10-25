@@ -13,8 +13,9 @@ from app import db
 from app.models import Movie, UserMovieReview, UserMovieStatus, UserWatchlist
 from app.videos import star_rating_fields
 from tests.factories import make_movie, make_movie_file
-from tests.test_elicitation import csrf_token_from, make_candidate
-from tests.test_recommendations import admin_id, make_cast, make_person
+from tests.conftest import csrf_token_from
+from tests.test_elicitation import make_candidate
+from tests.factories import make_cast, make_person
 
 
 def test_movie_card_for_a_library_film(app, admin_client):
@@ -79,14 +80,14 @@ def test_movie_card_for_a_library_film(app, admin_client):
     assert "<form" not in page
 
 
-def test_movie_card_badges_watchlist_and_amber_library(app, admin_client):
+def test_movie_card_badges_watchlist_and_amber_library(app, admin_client, admin_id):
     """Test a watchlisted film with a best copy below the threshold.
 
     The card shows both facts: the amber In-library badge and the
     watchlist badge."""
 
     with app.app_context():
-        user_id = admin_id()
+        user_id = admin_id
         movie = make_movie("Card Verdict", 1970)
         make_movie_file(movie, "DVD")
         db.session.add(UserWatchlist(user_id=user_id, movie_id=movie.id))
@@ -212,7 +213,7 @@ def test_movie_page_keeps_the_plain_chip_for_a_non_mpaa_rating(app, admin_client
     assert "cert-box cert-mpaa" not in page
 
 
-def test_movie_states_batch_hydration_payload(app, admin_client):
+def test_movie_states_batch_hydration_payload(app, admin_client, admin_id):
     """Test that /movie_states answers the state of many films in 1 fetch.
 
     The state is the ladder and watchlist state: verdicts, flags, stored
@@ -222,7 +223,7 @@ def test_movie_states_batch_hydration_payload(app, admin_client):
     from app.recommendations import PROFILE_KEY, SCORES_KEY
 
     with app.app_context():
-        user_id = admin_id()
+        user_id = admin_id
         rated = make_candidate("States Rated", 1980)
         estimated = make_candidate("States Estimated", 1981)
         flagged = make_candidate("States Flagged", 1982)
@@ -282,7 +283,7 @@ def test_movie_states_batch_hydration_payload(app, admin_client):
     assert payload["tmdb"]["999999"]["on_watchlist"] is False
 
 
-def test_movie_states_estimates_record_less_tmdb_ids(app, admin_client):
+def test_movie_states_estimates_record_less_tmdb_ids(app, admin_client, admin_id):
     """Test a tmdb id with no local record (most of a filmography page).
 
     It answers with an estimate from the tmdb lane of the shared source.
@@ -294,7 +295,7 @@ def test_movie_states_estimates_record_less_tmdb_ids(app, admin_client):
     from app.recommendations import PROFILE_KEY
 
     with app.app_context():
-        user_id = admin_id()
+        user_id = admin_id
 
     app.redis.set(
         PROFILE_KEY.format(user_id=user_id),
@@ -346,7 +347,9 @@ def test_movie_states_estimates_record_less_tmdb_ids(app, admin_client):
         assert Movie.query.filter_by(tmdb_id=888777).first() is None
 
 
-def test_movie_states_live_scores_films_the_nightly_map_missed(app, admin_client):
+def test_movie_states_live_scores_films_the_nightly_map_missed(
+    app, admin_client, admin_id
+):
     """Test the estimate for a record created after the last recompute.
 
     Such a record has no stored score. It still gets an estimate in a
@@ -358,7 +361,7 @@ def test_movie_states_live_scores_films_the_nightly_map_missed(app, admin_client
     from app.recommendations import PROFILE_KEY, stored_scores
 
     with app.app_context():
-        user_id = admin_id()
+        user_id = admin_id
         fresh = make_movie("States Fresh Add", 1993, tmdb_data_as_of=datetime.now())
         db.session.commit()
         fresh_id = fresh.id
@@ -389,7 +392,7 @@ def test_movie_states_live_scores_films_the_nightly_map_missed(app, admin_client
     assert f"Estimated {estimated} for you" in page
 
 
-def test_gallery_tiles_carry_the_actions(app, admin_client):
+def test_gallery_tiles_carry_the_actions(app, admin_client, admin_id):
     """Test that a landing-rail tile renders its actions under the poster.
 
     The actions are the blank ladder and the watchlist toggle. They are
@@ -398,7 +401,7 @@ def test_gallery_tiles_carry_the_actions(app, admin_client):
     are gone from the tile."""
 
     with app.app_context():
-        user_id = admin_id()
+        user_id = admin_id
         favorite = make_movie("Popover Shelf Film", 1975)
         make_movie_file(favorite, "Bluray-1080p")
         db.session.add(
@@ -484,7 +487,7 @@ def test_movie_card_requires_a_known_film(app, admin_client):
     assert admin_client.get("/movie_card?tmdb_id=579").status_code == 404
 
 
-def test_tile_watchlist_toggle_round_trips_as_json(app, admin_client):
+def test_tile_watchlist_toggle_round_trips_as_json(app, admin_client, admin_id):
     """Test the watchlist toggle of the tile in both directions.
 
     The toggle posts with the card marker and gets {on_watchlist} back.
@@ -494,7 +497,7 @@ def test_tile_watchlist_toggle_round_trips_as_json(app, admin_client):
         movie = make_candidate("Card Toggled", 1974)
         db.session.commit()
         movie_id = movie.id
-        user_id = admin_id()
+        user_id = admin_id
 
     # The card has no forms now. The token comes from the tile forms on
     # any gallery page
@@ -539,7 +542,7 @@ def test_tile_watchlist_toggle_round_trips_as_json(app, admin_client):
 
 
 def test_tile_watchlist_add_creates_the_record_for_a_tmdb_film(
-    app, admin_client, monkeypatch
+    app, admin_client, monkeypatch, admin_id
 ):
     """Test the bank of a rail film without a record from its tile.
 
@@ -567,7 +570,7 @@ def test_tile_watchlist_add_creates_the_record_for_a_tmdb_film(
     assert response.status_code == 200
     assert response.get_json() == {"on_watchlist": True}
     with app.app_context():
-        user_id = admin_id()
+        user_id = admin_id
         movie = Movie.query.filter_by(tmdb_id=579).one()
         assert (
             UserWatchlist.query.filter_by(user_id=user_id, movie_id=movie.id).first()
@@ -593,12 +596,12 @@ def test_tile_watchlist_add_creates_the_record_for_a_tmdb_film(
     assert response.get_json() == {"on_watchlist": False}
     with app.app_context():
         assert (
-            UserWatchlist.query.filter_by(user_id=admin_id(), movie_id=movie_id).first()
+            UserWatchlist.query.filter_by(user_id=admin_id, movie_id=movie_id).first()
             is None
         )
 
 
-def test_movie_states_estimates_bare_unrated_watches(app, admin_client):
+def test_movie_states_estimates_bare_unrated_watches(app, admin_client, admin_id):
     """Test that a logged but unrated viewing (a Plex watch) keeps the
     estimate on its tile.
 
@@ -608,7 +611,7 @@ def test_movie_states_estimates_bare_unrated_watches(app, admin_client):
     from app.recommendations import PROFILE_KEY
 
     with app.app_context():
-        user_id = admin_id()
+        user_id = admin_id
         watched = make_movie("States Bare Watch", 1994, tmdb_data_as_of=datetime.now())
         db.session.add(
             UserMovieReview(
@@ -639,7 +642,7 @@ def test_movie_states_estimates_bare_unrated_watches(app, admin_client):
     assert state["estimated"] is not None
 
 
-def test_movie_states_fills_a_whole_page_in_one_pass(app, admin_client):
+def test_movie_states_fills_a_whole_page_in_one_pass(app, admin_client, admin_id):
     """Test that 1 hydration pass covers every film without a record on a
     page.
 
@@ -649,7 +652,7 @@ def test_movie_states_fills_a_whole_page_in_one_pass(app, admin_client):
     from app.recommendations import PROFILE_KEY
 
     with app.app_context():
-        user_id = admin_id()
+        user_id = admin_id
 
     app.redis.set(
         PROFILE_KEY.format(user_id=user_id),

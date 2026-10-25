@@ -15,12 +15,7 @@ from PIL import Image
 
 from app import db
 from tests.factories import make_movie, make_movie_file
-
-
-def csrf_token_from(page_html):
-    match = re.search(r'name="csrf_token"[^>]*value="([^"]+)"', page_html)
-    assert match, "no csrf token found in page"
-    return match.group(1)
+from tests.conftest import csrf_token_from
 
 
 def png_bytes():

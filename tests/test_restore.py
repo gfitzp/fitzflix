@@ -4,18 +4,11 @@ Fitzflix enqueues 1 aws_restore job for each best-ranked archived file.
 It skips the unarchived copies and the outranked copies.
 """
 
-import re
-
 from app import db
 
 from tests.conftest import ADMIN_PASSWORD
 from tests.factories import make_tv_file, make_tv_series
-
-
-def csrf_token_from(page_html):
-    match = re.search(r'name="csrf_token"[^>]*value="([^"]+)"', page_html)
-    assert match, "no csrf token found in page"
-    return match.group(1)
+from tests.conftest import csrf_token_from
 
 
 def build_series(app):

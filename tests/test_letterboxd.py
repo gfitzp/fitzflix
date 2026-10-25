@@ -69,10 +69,6 @@ def build_feed(*items):
     return FEED_TEMPLATE.format(items="\n".join(items))
 
 
-def admin_id():
-    return User.query.first().id
-
-
 def run_sync(app, xml_text, monkeypatch):
     import app.letterboxd as letterboxd
 

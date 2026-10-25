@@ -17,12 +17,8 @@ from app.models import (
 )
 from tests.factories import make_movie
 from tests.test_elicitation import make_candidate
-from tests.test_recommendations import (
-    admin_id,
-    genre,
-    log_watch,
-    make_person,
-)
+from tests.factories import make_person
+from tests.test_recommendations import genre, log_watch
 
 
 def make_award(movie, award_id="Q102427", name="Academy Award for Best Picture"):
@@ -263,7 +259,7 @@ def test_single_anchor_criteria_shelf_from_specific_feature(app):
         assert outsider_id not in shelf["movie_ids"]
 
 
-def test_recommendations_page_renders_shelves(app, admin_client):
+def test_recommendations_page_renders_shelves(app, admin_client, admin_id):
     """Make sure the page renders a shelf.
 
     The page shows the heading of the shelf, the fanned anchor slot that
@@ -271,7 +267,7 @@ def test_recommendations_page_renders_shelves(app, admin_client):
     suggestion tiles."""
 
     with app.app_context():
-        user_id = admin_id()
+        user_id = admin_id
         western = genre(37, "Western")
         anchor_a = make_candidate("Page Anchor A", 1961, genre_row=western)
         anchor_b = make_candidate("Page Anchor B", 1963, genre_row=western)
@@ -306,7 +302,7 @@ def test_recommendations_page_renders_shelves(app, admin_client):
     assert "shelf-films" in page
 
 
-def test_recommendations_page_empty_states(app, admin_client):
+def test_recommendations_page_empty_states(app, admin_client, admin_id):
     """Make sure the page shows the correct empty state.
 
     With no diary, the page shows the log-some-films prompt. With a
@@ -317,7 +313,7 @@ def test_recommendations_page_empty_states(app, admin_client):
     assert "Log some films to get recommendations." in page
 
     with app.app_context():
-        user_id = admin_id()
+        user_id = admin_id
         lone = make_candidate("Empty State Watched", 1980)
         log_watch(user_id, lone, rating=4)
         db.session.commit()
@@ -360,7 +356,9 @@ def test_tile_endpoint_refills_and_exhausts(app, admin_client):
     assert admin_client.get("/recommendations/tile").status_code == 400
 
 
-def test_tile_endpoint_honors_every_criterion_and_fresh_verdicts(app, admin_client):
+def test_tile_endpoint_honors_every_criterion_and_fresh_verdicts(
+    app, admin_client, admin_id
+):
     """Make sure a refill honors each criterion and each new verdict.
 
     A slot with more than 1 criterion refills only with a film that
@@ -368,7 +366,7 @@ def test_tile_endpoint_honors_every_criterion_and_fresh_verdicts(app, admin_clie
     watchlist, or waved off never comes back as its own replacement."""
 
     with app.app_context():
-        user_id = admin_id()
+        user_id = admin_id
         western = genre(37, "Western")
         both = make_candidate("Refill Both", 1971, genre_row=western)
         make_award(both, award_id="Q179808", name="Palme d'Or")

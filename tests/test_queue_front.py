@@ -248,7 +248,7 @@ def test_the_criterion_refresh_button_uses_the_maintenance_queue(app, admin_clie
     maintenance queue with a 3600 s timeout. The Maintenance page button
     must do the same. It put the job at the front of the request queue."""
 
-    from tests.test_streaming import csrf_token_from
+    from tests.conftest import csrf_token_from
 
     page = admin_client.get("/maintenance").get_data(as_text=True)
     response = admin_client.post(

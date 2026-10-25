@@ -9,22 +9,7 @@ never counts. This is the specification from Glenn in GitHub #13.
 from app import db
 from app.models import MovieCast, MovieCrew, TMDBCredit
 from tests.factories import make_movie
-
-
-def make_person(person_id, name, movies, character="Self"):
-    person = TMDBCredit(id=person_id, name=name)
-    db.session.add(person)
-    db.session.flush()
-    for order, movie in enumerate(movies):
-        db.session.add(
-            MovieCast(
-                movie_id=movie.id,
-                credit_id=person.id,
-                character=character,
-                billing_order=order,
-            )
-        )
-    return person
+from tests.factories import make_person
 
 
 def make_crew_person(person_id, name, jobs_by_movie):

@@ -21,7 +21,7 @@ def _movie(app, title, tmdb_id):
 
 
 def _token(client, movie_id):
-    from tests.test_streaming import csrf_token_from
+    from tests.conftest import csrf_token_from
 
     return csrf_token_from(client.get(f"/movie/{movie_id}").get_data(as_text=True))
 

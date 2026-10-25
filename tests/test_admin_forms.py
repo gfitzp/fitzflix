@@ -5,14 +5,13 @@ the restore and delete tools of a series and a season. Each form posts
 to the URL in ACTIONS. A regular user can never run one.
 """
 
-import re
-
 import pytest
 
 from app import db
 from app.models import Movie
 
 from tests.factories import make_movie, make_movie_file
+from tests.conftest import csrf_token_from
 
 # The URL that each admin form posts to.
 
@@ -20,12 +19,6 @@ ACTIONS = {
     "movie_tmdb": "/movie/{id}/tmdb",
     "movie_criterion": "/movie/{id}/criterion",
 }
-
-
-def csrf_token_from(page_html):
-    match = re.search(r'name="csrf_token"[^>]*value="([^"]+)"', page_html)
-    assert match, "no csrf token found in page"
-    return match.group(1)
 
 
 @pytest.fixture

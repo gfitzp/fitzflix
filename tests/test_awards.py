@@ -12,7 +12,7 @@ import pytest
 from app import db
 from app.models import MovieAward
 from tests.factories import make_movie, make_movie_file
-from tests.test_recommendations import admin_id, genre, log_watch
+from tests.test_recommendations import genre, log_watch
 
 
 def binding(ext, award_q, label, kind, year=None):
@@ -263,7 +263,7 @@ def test_award_prior_math(app):
     assert award_label(0, 3) == "award-nominated"
 
 
-def test_award_prior_reranks_and_explains(app):
+def test_award_prior_reranks_and_explains(app, admin_id):
     """Test that the award prior reranks the candidates and explains why.
 
     When the taste profile scores 2 candidates the same, the awarded
@@ -273,7 +273,7 @@ def test_award_prior_reranks_and_explains(app):
     from app.recommendations import compute_user_recommendations
 
     with app.app_context():
-        user_id = admin_id()
+        user_id = admin_id
         comedy = genre(35, "Comedy")
 
         liked = make_movie("Prior Liked Comedy", 1990)

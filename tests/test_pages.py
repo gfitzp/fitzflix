@@ -11,12 +11,7 @@ import pytest
 from wtforms.validators import ValidationError
 
 from tests.conftest import ADMIN_EMAIL
-
-
-def csrf_token_from(page_html):
-    match = re.search(r'name="csrf_token"[^>]*value="([^"]+)"', page_html)
-    assert match, "no csrf token found in page"
-    return match.group(1)
+from tests.conftest import csrf_token_from
 
 
 def test_anonymous_user_is_redirected_to_login(client):

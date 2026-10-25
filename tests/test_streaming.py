@@ -6,11 +6,11 @@ surfaces (movie pages, TMDB search) with the mandatory JustWatch
 attribution."""
 
 import json
-import re
 
 from datetime import datetime
 
 from tests.factories import make_movie, make_movie_file
+from tests.conftest import csrf_token_from
 
 
 class FakeTMDB:
@@ -26,14 +26,6 @@ class FakeTMDB:
         """Return the canned payload."""
 
         return self.payload
-
-
-def csrf_token_from(page_html):
-    """Return the CSRF token from a rendered form."""
-
-    match = re.search(r'name="csrf_token"[^>]*value="([^"]+)"', page_html)
-    assert match, "no csrf token found in page"
-    return match.group(1)
 
 
 def plant_registry(app, providers):

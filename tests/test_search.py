@@ -6,7 +6,7 @@ lookup with the in-library annotations.
 """
 
 from app import db
-from app.models import MovieCast, TMDBCredit, User, UserMovieReview
+from app.models import User, UserMovieReview
 
 from tests.factories import (
     make_movie,
@@ -14,24 +14,7 @@ from tests.factories import (
     make_tv_file,
     make_tv_series,
 )
-
-
-def make_person(person_id, name, movies, character="Self"):
-    """Make a TMDBCredit with a cast row in each of the given movies."""
-
-    person = TMDBCredit(id=person_id, name=name)
-    db.session.add(person)
-    db.session.flush()
-    for order, movie in enumerate(movies):
-        db.session.add(
-            MovieCast(
-                movie_id=movie.id,
-                credit_id=person.id,
-                character=character,
-                billing_order=order,
-            )
-        )
-    return person
+from tests.factories import make_person
 
 
 def build_library(app):

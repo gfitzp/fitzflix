@@ -13,25 +13,9 @@ import zipfile
 from datetime import datetime
 
 from tests.factories import make_movie, make_movie_file
+from tests.conftest import csrf_token_from
 
 NETFLIX = {"provider_id": 8, "provider_name": "Netflix", "logo_path": "/netflix.jpg"}
-
-
-def csrf_token_from(page_html):
-    """Return the CSRF token from a rendered form."""
-
-    match = re.search(r'name="csrf_token"[^>]*value="([^"]+)"', page_html)
-    assert match, "no csrf token found in page"
-    return match.group(1)
-
-
-def admin_id(app):
-    """Return the id of the seeded admin user."""
-
-    from app.models import User
-
-    with app.app_context():
-        return User.query.filter_by(admin=True).first().id
 
 
 def entries_for(app, user_id):
@@ -92,7 +76,7 @@ def pill_counts(page_html):
     }
 
 
-def test_movie_page_toggle_adds_and_removes(app, admin_client):
+def test_movie_page_toggle_adds_and_removes(app, admin_client, admin_id):
     from app import db
 
     with app.app_context():
@@ -121,7 +105,7 @@ def test_movie_page_toggle_adds_and_removes(app, admin_client):
         data={"csrf_token": token, "add_watchlist_submit": "Add to Watchlist"},
     )
     assert response.status_code == 302
-    user_id = admin_id(app)
+    user_id = admin_id
     assert entries_for(app, user_id) == [unowned_id]
 
     # The page now shows the Remove face. Both faces stay in the DOM for
@@ -150,7 +134,7 @@ def test_movie_page_toggle_adds_and_removes(app, admin_client):
     assert entries_for(app, user_id) == []
 
 
-def test_movie_page_funnel_badges(app, admin_client):
+def test_movie_page_funnel_badges(app, admin_client, admin_id):
     """Test the personal funnel badges on the movie page.
 
     While the film is unseen, the watchlist badge and the might-interest
@@ -161,7 +145,7 @@ def test_movie_page_funnel_badges(app, admin_client):
     from app.models import User, UserMovieReview, UserWatchlist
     from app.recommendations import RECS_KEY
 
-    user_id = admin_id(app)
+    user_id = admin_id
     with app.app_context():
         movie = make_movie(
             "Funnel Page Film", 1994, tmdb_id=9601, tmdb_data_as_of=datetime.utcnow()
@@ -218,11 +202,11 @@ def test_movie_page_funnel_badges(app, admin_client):
     assert "Might interest you" not in page
 
 
-def test_manual_log_clears_the_watchlist_entry(app, admin_client):
+def test_manual_log_clears_the_watchlist_entry(app, admin_client, admin_id):
     from app import db
     from app.models import UserWatchlist
 
-    user_id = admin_id(app)
+    user_id = admin_id
     with app.app_context():
         movie = make_movie(
             "Watchlist Logged", 1994, tmdb_id=9303, tmdb_data_as_of=datetime.utcnow()
@@ -260,7 +244,7 @@ def test_plex_watch_clears_the_watchlist_entry(app):
     assert entries_for(app, user_id) == []
 
 
-def test_letterboxd_watchlist_imports_and_watches_clear(app):
+def test_letterboxd_watchlist_imports_and_watches_clear(app, admin_id):
     from app import db
     from app.models import UserMovieReview
     from app.models import UserWatchlist
@@ -285,7 +269,7 @@ def test_letterboxd_watchlist_imports_and_watches_clear(app):
     assert by_title["Wanted Import"]["entries"] == []
     assert by_title["Watched Import"]["watchlist"] is False
 
-    user_id = admin_id(app)
+    user_id = admin_id
     with app.app_context():
         wanted = make_movie("Wanted Import", 1994)
         watched = make_movie("Watched Import", 1995)
@@ -312,11 +296,13 @@ def test_letterboxd_watchlist_imports_and_watches_clear(app):
         )
 
 
-def test_watchlist_page_lists_availability_and_removes(app, admin_client, monkeypatch):
+def test_watchlist_page_lists_availability_and_removes(
+    app, admin_client, monkeypatch, admin_id
+):
     from app import db
     from app.models import UserWatchlist
 
-    user_id = admin_id(app)
+    user_id = admin_id
     with app.app_context():
         from app.models import UserStreamingProvider
 
@@ -403,7 +389,9 @@ def test_watchlist_page_lists_availability_and_removes(app, admin_client, monkey
     assert 'href="/watchlist"' in page
 
 
-def test_review_tmdb_watchlist_add_creates_the_record(app, admin_client, monkeypatch):
+def test_review_tmdb_watchlist_add_creates_the_record(
+    app, admin_client, monkeypatch, admin_id
+):
     import app.main.discover as discover
 
     from app.models import Movie
@@ -453,7 +441,7 @@ def test_review_tmdb_watchlist_add_creates_the_record(app, admin_client, monkeyp
         follow_redirects=True,
     )
 
-    user_id = admin_id(app)
+    user_id = admin_id
     with app.app_context():
         movie = Movie.query.filter_by(tmdb_id=9306).one()
         assert entries_for(app, user_id) == [movie.id]
@@ -482,7 +470,7 @@ def test_review_tmdb_watchlist_add_creates_the_record(app, admin_client, monkeyp
     assert "TMDB data refreshing" in body
 
 
-def test_rail_excludes_watchlisted_films(app, admin_client):
+def test_rail_excludes_watchlisted_films(app, admin_client, admin_id):
     """Test that a watchlisted film never appears on the streaming rail.
 
     The rail is only discovery now (2026-08-30). Wanted films appear on
@@ -493,7 +481,7 @@ def test_rail_excludes_watchlisted_films(app, admin_client):
     from app.streaming_rail import RAIL_KEY
     from tests.test_streaming_rail import subscribe
 
-    user_id = admin_id(app)
+    user_id = admin_id
     subscribe(app, 8, "Netflix")
     with app.app_context():
         wanted = make_movie("Rail Wanted", 1994, tmdb_id=9307)
@@ -536,7 +524,7 @@ def test_rail_excludes_watchlisted_films(app, admin_client):
     assert "Rail Unwanted High (1994)" in body
 
 
-def test_watchlist_shelf_shows_streaming_watchlisted_films(app, admin_client):
+def test_watchlist_shelf_shows_streaming_watchlisted_films(app, admin_client, admin_id):
     """Test that a streaming watchlisted film appears on the top shelf.
 
     A watchlisted film that streams on a subscribed service is watchable
@@ -548,7 +536,7 @@ def test_watchlist_shelf_shows_streaming_watchlisted_films(app, admin_client):
     from app.streaming import AVAILABILITY_KEY
     from app.streaming_rail import RAIL_KEY
 
-    user_id = admin_id(app)
+    user_id = admin_id
     with app.app_context():
         from app.models import UserStreamingProvider
 
@@ -596,7 +584,7 @@ def test_watchlist_shelf_shows_streaming_watchlisted_films(app, admin_client):
     assert body.count("Rail Wanted (1994)") == 1
 
 
-def test_watchlist_shelf_takes_the_wanted_films_whole(app, admin_client):
+def test_watchlist_shelf_takes_the_wanted_films_whole(app, admin_client, admin_id):
     """Test that the watchlist shelf shows all 12 watchlisted owned films.
 
     The cap of the watchlist shelf is larger than the cap of a discovery
@@ -606,7 +594,7 @@ def test_watchlist_shelf_takes_the_wanted_films_whole(app, admin_client):
     from app.models import UserWatchlist
     from app.recommendations import RECS_KEY
 
-    user_id = admin_id(app)
+    user_id = admin_id
     rec_items = []
     with app.app_context():
         for n in range(12):
@@ -634,12 +622,12 @@ def test_watchlist_shelf_takes_the_wanted_films_whole(app, admin_client):
     assert shown_discovery == 12
 
 
-def test_watchlist_feeds_the_taste_profile(app):
+def test_watchlist_feeds_the_taste_profile(app, admin_id):
     from app import db
     from app.models import UserWatchlist
     from app.recommendations import WATCHLIST_WEIGHT, user_movie_weights
 
-    user_id = admin_id(app)
+    user_id = admin_id
     with app.app_context():
         wanted = make_movie("Weights Wanted", 1994)
         wanted_id = wanted.id
@@ -651,7 +639,7 @@ def test_watchlist_feeds_the_taste_profile(app):
     assert weights[wanted_id] == WATCHLIST_WEIGHT
 
 
-def test_library_rail_excludes_watchlisted_films(app, admin_client):
+def test_library_rail_excludes_watchlisted_films(app, admin_client, admin_id):
     """Test that a watchlisted owned film moves from the rail to the shelf.
 
     The library rail is only discovery. The top watchlist shelf is
@@ -661,7 +649,7 @@ def test_library_rail_excludes_watchlisted_films(app, admin_client):
     from app.models import UserWatchlist
     from app.recommendations import RECS_KEY
 
-    user_id = admin_id(app)
+    user_id = admin_id
     with app.app_context():
         strong = make_movie("Library Unwanted High", 1994)
         make_movie_file(strong, "Bluray-1080p")
@@ -696,7 +684,7 @@ def test_library_rail_excludes_watchlisted_films(app, admin_client):
     assert body.index("Library Wanted (1995)") < body.index("From your library")
 
 
-def test_watchlist_shelf_leads_the_page(app, admin_client):
+def test_watchlist_shelf_leads_the_page(app, admin_client, admin_id):
     """Test that the watchlist shelf renders above every discovery shelf.
 
     The page first shows "what you already want", then the ways to find
@@ -706,7 +694,7 @@ def test_watchlist_shelf_leads_the_page(app, admin_client):
     from app.models import UserWatchlist
     from app.recommendations import RECS_KEY
 
-    user_id = admin_id(app)
+    user_id = admin_id
     rec_items = []
     with app.app_context():
         for n in range(4):
@@ -736,7 +724,7 @@ def test_watchlist_shelf_leads_the_page(app, admin_client):
         assert body.index("From your library") < body.index(f"Mix Discovery {n} (1991)")
 
 
-def test_movie_page_not_interested_toggle(app, admin_client):
+def test_movie_page_not_interested_toggle(app, admin_client, admin_id):
     """Test that the \u2715 of the ladder is the only disinterest channel.
 
     #184 removed the standalone buttons. A zero quick-rating flags an
@@ -748,7 +736,7 @@ def test_movie_page_not_interested_toggle(app, admin_client):
     from app import db
     from app.models import UserMovieStatus, UserWatchlist
 
-    user_id = admin_id(app)
+    user_id = admin_id
     with app.app_context():
         record = make_movie("Refusable Record", 1994, tmdb_id=9320)
         db.session.add(UserWatchlist(user_id=user_id, movie_id=record.id))
@@ -814,7 +802,7 @@ def test_movie_page_renders_before_enrichment_arrives(app, admin_client):
     assert "TMDB data refreshing" in response.get_data(as_text=True)
 
 
-def test_watchlist_availability_filter(app, admin_client):
+def test_watchlist_availability_filter(app, admin_client, admin_id):
     """Test the availability filter pills of the 2026-08 revision.
 
     The default pill shows all films. The other pills are exclusive
@@ -827,7 +815,7 @@ def test_watchlist_availability_filter(app, admin_client):
     from app import db
     from app.models import UserStreamingProvider, UserWatchlist
 
-    user_id = admin_id(app)
+    user_id = admin_id
     with app.app_context():
         db.session.add(
             UserStreamingProvider(
@@ -957,7 +945,7 @@ def test_watchlist_availability_filter(app, admin_client):
     assert "availability=local" in response.headers["Location"]
 
 
-def test_watchlist_service_filter(app, admin_client):
+def test_watchlist_service_filter(app, admin_client, admin_id):
     """Test the service dropdown of the On my services view (2026-09-15).
 
     The dropdown lists the subscribed services of the user with the
@@ -973,7 +961,7 @@ def test_watchlist_service_filter(app, admin_client):
         "provider_name": "Criterion Channel",
         "logo_path": "/c.jpg",
     }
-    user_id = admin_id(app)
+    user_id = admin_id
     with app.app_context():
         db.session.add(
             UserStreamingProvider(
@@ -1064,7 +1052,7 @@ def test_watchlist_service_filter(app, admin_client):
     assert "availability=services" in response.headers["Location"]
 
 
-def test_watchlist_title_and_runtime_filters(app, admin_client):
+def test_watchlist_title_and_runtime_filters(app, admin_client, admin_id):
     """Test the title search (#216) and the duration filter (#195).
 
     Both filters narrow the list before the availability pills count.
@@ -1075,7 +1063,7 @@ def test_watchlist_title_and_runtime_filters(app, admin_client):
     from app import db
     from app.models import UserWatchlist
 
-    user_id = admin_id(app)
+    user_id = admin_id
     with app.app_context():
         epic = make_movie("Alpha Epic", 1990, tmdb_runtime=150)
         brisk = make_movie("Beta Brisk", 1991, tmdb_runtime=90)
@@ -1144,7 +1132,7 @@ def test_watchlist_title_and_runtime_filters(app, admin_client):
     assert brisk_id not in entries_for(app, user_id)
 
 
-def test_watchlist_genre_filter(app, admin_client):
+def test_watchlist_genre_filter(app, admin_client, admin_id):
     """Test the genre filter of the watchlist page.
 
     The menu holds only the genres of the films on the list. The filter
@@ -1155,7 +1143,7 @@ def test_watchlist_genre_filter(app, admin_client):
     from app import db
     from app.models import TMDBGenre, UserWatchlist
 
-    user_id = admin_id(app)
+    user_id = admin_id
     with app.app_context():
         noir = TMDBGenre(id=777101, name="Watchlist Noir")
         farce = TMDBGenre(id=777102, name="Watchlist Farce")
@@ -1237,7 +1225,7 @@ def test_watchlist_genre_filter(app, admin_client):
     assert short_id not in entries_for(app, user_id)
 
 
-def test_watchlist_remove_in_place(app, admin_client):
+def test_watchlist_remove_in_place(app, admin_client, admin_id):
     """Test that the Remove button of the tile posts in the background.
 
     The form shows data-card-watchlist plus the remove-cell marker
@@ -1247,7 +1235,7 @@ def test_watchlist_remove_in_place(app, admin_client):
     from app import db
     from app.models import UserWatchlist
 
-    user_id = admin_id(app)
+    user_id = admin_id
     with app.app_context():
         movie = make_movie("In Place Removal", 1990)
         db.session.add(UserWatchlist(user_id=user_id, movie_id=movie.id))
@@ -1268,13 +1256,13 @@ def test_watchlist_remove_in_place(app, admin_client):
     assert entries_for(app, user_id) == []
 
 
-def test_watchlist_search_ignores_accents_and_word_gaps(app, admin_client):
+def test_watchlist_search_ignores_accents_and_word_gaps(app, admin_client, admin_id):
     """ "amelie" finds "Amélie", and "spider man" finds "Spider-Man"."""
 
     from app import db
     from app.models import UserWatchlist
 
-    user_id = admin_id(app)
+    user_id = admin_id
     with app.app_context():
         for title, year in (
             ("Amélie", 2001),

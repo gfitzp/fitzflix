@@ -496,15 +496,30 @@ def dvr_rebuild_jobs(app):
     ]
 
 
+def csrf_token_from(page_html):
+    """Return the csrf token that a rendered form carries."""
+
+    import re
+
+    match = re.search(r'name="csrf_token"[^>]*value="([^"]+)"', page_html)
+    assert match, "no csrf token found in page"
+    return match.group(1)
+
+
 def page_csrf_token(client, path="/profile"):
     """Return the csrf token that a page renders for a signed-in client.
 
     A hand-built POST to a route that checks the form must carry this
     token."""
 
-    import re
+    return csrf_token_from(client.get(path).get_data(as_text=True))
 
-    page = client.get(path).get_data(as_text=True)
-    match = re.search(r'name="csrf_token"[^>]*value="([^"]+)"', page)
-    assert match, f"no csrf token found on {path}"
-    return match.group(1)
+
+@pytest.fixture
+def admin_id(app):
+    """Return the id of the seeded admin user."""
+
+    from app.models import User
+
+    with app.app_context():
+        return User.query.filter_by(admin=True).first().id

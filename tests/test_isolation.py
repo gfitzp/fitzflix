@@ -47,3 +47,21 @@ def test_the_suite_hashes_passwords_with_a_cheap_pbkdf2(app):
         user2.set_password("x")
         assert user2.password_hash.startswith("pbkdf2:sha256:1000$")
         assert user2.check_password("x")
+
+
+def test_the_shared_helpers_live_in_conftest_and_factories():
+    """Pin the moves of #360: one copy of each helper, no cross-test imports."""
+
+    import pathlib
+    import re
+
+    shared = ("csrf_token_from", "admin_id", "make_person", "make_cast")
+    offenders = []
+    for path in sorted(pathlib.Path("tests").glob("test_*.py")):
+        source = path.read_text()
+        for name in shared:
+            if re.search(rf"^def {name}\(", source, flags=re.M):
+                offenders.append(f"{path.name} defines {name}")
+            if re.search(rf"from tests\.test_\w+ import[^\n]*\b{name}\b", source):
+                offenders.append(f"{path.name} imports {name} from a test module")
+    assert offenders == []

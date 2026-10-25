@@ -749,7 +749,7 @@ def test_a_held_row_with_no_file_goes_away(app, admin_client):
 
 
 def _decide(admin_client, held_id, button):
-    from tests.test_rejects import csrf_token_from
+    from tests.conftest import csrf_token_from
 
     page = admin_client.get("/maintenance/held-imports").get_data(as_text=True)
     return admin_client.post(
@@ -804,7 +804,7 @@ def test_discard_moves_the_held_file_to_rejects(app, admin_client):
 
 def test_a_restore_needs_the_password(app, admin_client):
     from tests.conftest import ADMIN_PASSWORD
-    from tests.test_rejects import csrf_token_from
+    from tests.conftest import csrf_token_from
 
     with app.app_context():
         archived = ArchivedOriginal(

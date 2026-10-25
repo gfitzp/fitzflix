@@ -8,7 +8,15 @@ does not exist on SQLite.
 from datetime import datetime
 
 from app import db
-from app.models import File, Movie, RefFeatureType, RefQuality, TVSeries
+from app.models import (
+    File,
+    Movie,
+    MovieCast,
+    RefFeatureType,
+    RefQuality,
+    TMDBCredit,
+    TVSeries,
+)
 
 
 def quality(quality_title):
@@ -89,3 +97,28 @@ def make_tv_file(series, season, episode, quality_title, **kwargs):
         last_episode=last_episode,
         **kwargs,
     )
+
+
+def make_person(person_id, name, movies=(), character="Self"):
+    """Make a TMDBCredit row, with a cast row in each of the given movies."""
+
+    person = TMDBCredit(id=person_id, name=name)
+    db.session.add(person)
+    db.session.flush()
+    for order, movie in enumerate(movies):
+        make_cast(person, movie, character, order)
+    return person
+
+
+def make_cast(person, movie, character="Self", order=0):
+    """Make a cast join row."""
+
+    cast = MovieCast(
+        movie_id=movie.id,
+        credit_id=person.id,
+        character=character,
+        billing_order=order,
+    )
+    db.session.add(cast)
+    db.session.flush()
+    return cast

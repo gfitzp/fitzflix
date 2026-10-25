@@ -286,7 +286,7 @@ def test_game_round_and_choice_guessing(app, admin_client):
         assert score.best_streak == 1
 
 
-def test_easy_serves_only_rated_films(app, admin_client):
+def test_easy_serves_only_rated_films(app, admin_client, admin_id):
     """Deal only rated films on Easy.
 
     When the pool has no rated film, the page says so. It does not
@@ -295,7 +295,6 @@ def test_easy_serves_only_rated_films(app, admin_client):
     from app import db
     from app.models import UserMovieReview
     from app.videos import star_rating_fields
-    from tests.test_recommendations import admin_id
 
     with app.app_context():
         rated = make_movie("Frame Rated Film", 1995)
@@ -307,7 +306,7 @@ def test_easy_serves_only_rated_films(app, admin_client):
             make_movie_file(filler, "Bluray-1080p")
         db.session.add(
             UserMovieReview(
-                user_id=admin_id(),
+                user_id=admin_id,
                 movie_id=rated.id,
                 liked=True,
                 **star_rating_fields(4.0),
@@ -502,7 +501,7 @@ def test_high_scores_persist_per_difficulty(app, admin_client):
     assert "Best: 2" in page
 
 
-def test_refresh_guarantees_the_rated_floor(app, monkeypatch):
+def test_refresh_guarantees_the_rated_floor(app, monkeypatch, admin_id):
     """Guarantee the rated floor for each reviewer.
 
     The pass queues at least FRAME_POOL_MIN_RATED rated films of each
@@ -512,7 +511,6 @@ def test_refresh_guarantees_the_rated_floor(app, monkeypatch):
     from app.models import UserMovieReview
     from app.frames import refresh_frame_pool_task
     from app.videos import star_rating_fields
-    from tests.test_recommendations import admin_id
 
     monkeypatch.setitem(app.config, "FRAME_POOL_SIZE", 3)
     monkeypatch.setitem(app.config, "FRAME_POOL_ROTATE", 1)
@@ -525,7 +523,7 @@ def test_refresh_guarantees_the_rated_floor(app, monkeypatch):
             make_movie_file(movie, "Bluray-1080p")
             db.session.add(
                 UserMovieReview(
-                    user_id=admin_id(),
+                    user_id=admin_id,
                     movie_id=movie.id,
                     liked=True,
                     **star_rating_fields(4.0),
@@ -592,7 +590,7 @@ def test_reveal_offers_the_answer_as_an_action_tile(app, admin_client):
     assert f'href="/movie/{answer_id}"' in body
 
 
-def test_options_stay_within_the_answers_era(app, admin_client, monkeypatch):
+def test_options_stay_within_the_answers_era(app, admin_client, monkeypatch, admin_id):
     """Keep the options in the era of the answer.
 
     Difficult tries ±2 years, then ±5 years. An out-of-era title never
@@ -604,7 +602,6 @@ def test_options_stay_within_the_answers_era(app, admin_client, monkeypatch):
     from app import db
     from app.models import UserMovieReview
     from app.videos import star_rating_fields
-    from tests.test_recommendations import admin_id
 
     # Difficult has 3 options. Thus, 2 distractors decide the tiers
 
@@ -636,7 +633,7 @@ def test_options_stay_within_the_answers_era(app, admin_client, monkeypatch):
         for movie in (rated_near, rated_wide, rated_far, answer):
             db.session.add(
                 UserMovieReview(
-                    user_id=admin_id(),
+                    user_id=admin_id,
                     movie_id=movie.id,
                     liked=True,
                     **star_rating_fields(4.0),
@@ -744,7 +741,7 @@ def test_rotation_retires_played_frames_before_merely_old_ones(
         assert app.redis.zscore(dealt_key(1), played) is None
 
 
-def test_rotation_cannot_undercut_the_rated_floor(app, monkeypatch):
+def test_rotation_cannot_undercut_the_rated_floor(app, monkeypatch, admin_id):
     """Make sure the rotation cannot undercut the rated floor (#200).
 
     The rotation runs before the pass measures the reviewer floors.
@@ -756,7 +753,6 @@ def test_rotation_cannot_undercut_the_rated_floor(app, monkeypatch):
     from app.models import UserMovieReview
     from app.frames import refresh_frame_pool_task
     from app.videos import star_rating_fields
-    from tests.test_recommendations import admin_id
 
     monkeypatch.setitem(app.config, "FRAME_POOL_SIZE", 3)
     monkeypatch.setitem(app.config, "FRAME_POOL_ROTATE", 1)
@@ -769,7 +765,7 @@ def test_rotation_cannot_undercut_the_rated_floor(app, monkeypatch):
             make_movie_file(movie, "Bluray-1080p")
             db.session.add(
                 UserMovieReview(
-                    user_id=admin_id(),
+                    user_id=admin_id,
                     movie_id=movie.id,
                     liked=True,
                     **star_rating_fields(4.0),
@@ -804,7 +800,7 @@ def test_rotation_cannot_undercut_the_rated_floor(app, monkeypatch):
         assert len(set(rated_ids) & (pooled | queued)) == 2
 
 
-def test_the_pool_never_grows_past_its_configured_size(app, monkeypatch):
+def test_the_pool_never_grows_past_its_configured_size(app, monkeypatch, admin_id):
     """Never grow the pool past its configured size.
 
     FRAME_POOL_SIZE is the ceiling. The reviewer floors are a
@@ -815,7 +811,6 @@ def test_the_pool_never_grows_past_its_configured_size(app, monkeypatch):
     from app.models import UserMovieReview
     from app.frames import pool_entries, refresh_frame_pool_task
     from app.videos import star_rating_fields
-    from tests.test_recommendations import admin_id
 
     monkeypatch.setitem(app.config, "FRAME_POOL_SIZE", 4)
     monkeypatch.setitem(app.config, "FRAME_POOL_ROTATE", 1)
@@ -829,7 +824,7 @@ def test_the_pool_never_grows_past_its_configured_size(app, monkeypatch):
             make_movie_file(movie, "Bluray-1080p")
             db.session.add(
                 UserMovieReview(
-                    user_id=admin_id(),
+                    user_id=admin_id,
                     movie_id=movie.id,
                     liked=True,
                     **star_rating_fields(4.0),
@@ -974,7 +969,7 @@ def test_options_fall_back_to_shared_genre_outside_the_era(
     assert "Ladder Far Plain (1991)" not in page
 
 
-def test_extra_difficult_zooms_out_and_scores_points(app, admin_client):
+def test_extra_difficult_zooms_out_and_scores_points(app, admin_client, admin_id):
     """Play an Extra Difficult round with zoom-outs and points (#202).
 
     The round opens on a stage-one crop worth 3 points. Zoom Out widens
@@ -993,14 +988,13 @@ def test_extra_difficult_zooms_out_and_scores_points(app, admin_client):
     from app import db
     from app.models import UserFrameScore, UserMovieReview
     from app.videos import star_rating_fields
-    from tests.test_recommendations import admin_id
 
     with app.app_context():
         movie = make_movie("Extra Round Film", 2001)
         make_movie_file(movie, "Bluray-1080p")
         db.session.add(
             UserMovieReview(
-                user_id=admin_id(),
+                user_id=admin_id,
                 movie_id=movie.id,
                 liked=True,
                 **star_rating_fields(4.0),
@@ -1248,7 +1242,7 @@ def test_crop_boxes_roam_the_whole_frame():
     assert min(tops) == 0 and max(tops) == height - int(height * 0.3)
 
 
-def test_rated_films_are_the_default_world(app, admin_client):
+def test_rated_films_are_the_default_world(app, admin_client, admin_id):
     """Deal only rated films by default on the library-wide difficulties.
 
     This is the inverse of the old default (requested by Glenn,
@@ -1258,7 +1252,6 @@ def test_rated_films_are_the_default_world(app, admin_client):
     from app import db
     from app.models import UserMovieReview
     from app.videos import star_rating_fields
-    from tests.test_recommendations import admin_id
 
     with app.app_context():
         rated = make_movie("Filter Rated Film", 1990)
@@ -1267,7 +1260,7 @@ def test_rated_films_are_the_default_world(app, admin_client):
         make_movie_file(unrated, "Bluray-1080p")
         db.session.add(
             UserMovieReview(
-                user_id=admin_id(),
+                user_id=admin_id,
                 movie_id=rated.id,
                 liked=True,
                 **star_rating_fields(4.0),
@@ -1412,7 +1405,7 @@ def test_extra_resume_counts_one_frame_seen(app, admin_client):
         assert score.rounds_seen == 2
 
 
-def test_profile_reset_wipes_frame_standings(app, admin_client):
+def test_profile_reset_wipes_frame_standings(app, admin_client, admin_id):
     """Delete the frame standings with the reset button of the profile.
 
     The button deletes each standings row of the user: the streaks, the
@@ -1422,13 +1415,12 @@ def test_profile_reset_wipes_frame_standings(app, admin_client):
 
     from app import db
     from app.models import UserFrameScore
-    from tests.test_recommendations import admin_id
 
     with app.app_context():
         for difficulty, best in (("difficult", 4), ("extra", 2)):
             db.session.add(
                 UserFrameScore(
-                    user_id=admin_id(),
+                    user_id=admin_id,
                     difficulty=difficulty,
                     current_streak=1,
                     best_streak=best,
@@ -1693,7 +1685,7 @@ def test_fuzzy_matching_disregards_punctuation(app, admin_client):
     assert "alert-danger" in guess("Catch-22")
 
 
-def test_unrated_watches_do_not_count_as_rated(app, admin_client):
+def test_unrated_watches_do_not_count_as_rated(app, admin_client, admin_id):
     """Do not count an unrated watch as rated.
 
     A diary row without a star rating, for example a Netflix-import
@@ -1705,7 +1697,6 @@ def test_unrated_watches_do_not_count_as_rated(app, admin_client):
     from app import db
     from app.models import UserMovieReview
     from app.videos import star_rating_fields
-    from tests.test_recommendations import admin_id
 
     with app.app_context():
         watched = make_movie("Unrated Watch Film", 1974)
@@ -1713,11 +1704,11 @@ def test_unrated_watches_do_not_count_as_rated(app, admin_client):
         rated = make_movie("Rated Film Proper", 1975)
         make_movie_file(rated, "Bluray-1080p")
         db.session.add(
-            UserMovieReview(user_id=admin_id(), movie_id=watched.id, liked=False)
+            UserMovieReview(user_id=admin_id, movie_id=watched.id, liked=False)
         )
         db.session.add(
             UserMovieReview(
-                user_id=admin_id(),
+                user_id=admin_id,
                 movie_id=rated.id,
                 liked=True,
                 **star_rating_fields(4.0),
@@ -1738,7 +1729,7 @@ def test_unrated_watches_do_not_count_as_rated(app, admin_client):
             assert watched_token not in page
 
 
-def test_pool_floor_ignores_unrated_watches(app, monkeypatch):
+def test_pool_floor_ignores_unrated_watches(app, monkeypatch, admin_id):
     """Ignore unrated watches in the pool floor.
 
     The nightly rated floor matches the tightened world of the game. An
@@ -1749,7 +1740,6 @@ def test_pool_floor_ignores_unrated_watches(app, monkeypatch):
     from app.models import UserMovieReview
     from app.frames import refresh_frame_pool_task
     from app.videos import star_rating_fields
-    from tests.test_recommendations import admin_id
 
     monkeypatch.setitem(app.config, "FRAME_POOL_SIZE", 1)
     monkeypatch.setitem(app.config, "FRAME_POOL_ROTATE", 1)
@@ -1761,11 +1751,11 @@ def test_pool_floor_ignores_unrated_watches(app, monkeypatch):
         rated = make_movie("Floor Rated Star", 1977)
         make_movie_file(rated, "Bluray-1080p")
         db.session.add(
-            UserMovieReview(user_id=admin_id(), movie_id=watched.id, liked=False)
+            UserMovieReview(user_id=admin_id, movie_id=watched.id, liked=False)
         )
         db.session.add(
             UserMovieReview(
-                user_id=admin_id(),
+                user_id=admin_id,
                 movie_id=rated.id,
                 liked=True,
                 **star_rating_fields(3.5),

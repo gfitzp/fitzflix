@@ -112,13 +112,6 @@ def plant_profile(app, user_id):
     app.redis.set(f"fitzflix:recs:profile:{user_id}", json.dumps(NIGHTLY_PROFILE))
 
 
-def admin_id(app):
-    from app.models import User
-
-    with app.app_context():
-        return User.query.filter_by(admin=True).first().id
-
-
 def test_affinity_people_rank_and_dedupe(app):
     from app.estimate_warm import _affinity_people
 
@@ -126,7 +119,7 @@ def test_affinity_people_rank_and_dedupe(app):
     assert people == [9001, 9002]
 
 
-def test_warm_task_caches_scores_and_rolls_cursors(app, monkeypatch):
+def test_warm_task_caches_scores_and_rolls_cursors(app, monkeypatch, admin_id):
     """Test that one night's run warms, pre-scores, and rolls the cursors.
 
     The run warms each candidate payload with the long TTL. It pre-scores
@@ -138,7 +131,7 @@ def test_warm_task_caches_scores_and_rolls_cursors(app, monkeypatch):
     from app.estimate_warm import CURSORS_KEY, warm_estimates
     from app.recommendations import TMDB_PATCH_SCORES_KEY
 
-    user_id = admin_id(app)
+    user_id = admin_id
     plant_profile(app, user_id)
     with app.app_context():
         make_movie("Warm Recorded", 1994, tmdb_id=700010)
@@ -201,14 +194,14 @@ def test_warm_task_caches_scores_and_rolls_cursors(app, monkeypatch):
     assert fetched == []
 
 
-def test_warm_task_respects_the_fetch_budget(app, monkeypatch):
+def test_warm_task_respects_the_fetch_budget(app, monkeypatch, admin_id):
     """Test that the nightly budget limits the new enrichment fetches.
 
     The candidates after the budget wait for the roll of the next night."""
 
     import app.estimate_warm as estimate_warm
 
-    user_id = admin_id(app)
+    user_id = admin_id
     plant_profile(app, user_id)
 
     fetched = []
