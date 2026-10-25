@@ -890,6 +890,25 @@ def title_lock_key(
     return json.dumps(identity)
 
 
+# The keys of the parsed details of an import that are not File columns.
+# The title and the year belong to the Movie or the TVSeries row, the
+# quality title to the RefQuality row. tmdb_id routes the metadata fetch
+# (#155). replace_existing is the "Import" choice of a held conversion
+# (#292). Any other key outside the columns is a mistake.
+
+IMPORT_DETAIL_KEYS = frozenset(
+    {
+        "title",
+        "year",
+        "quality_title",
+        "extension",
+        "feature_type_name",
+        "tmdb_id",
+        "replace_existing",
+    }
+)
+
+
 class File(db.Model):
     """A library media file.
 
@@ -1052,6 +1071,13 @@ class File(db.Model):
         The import rules of app.file_ranking read the dict, not a File."""
 
         mapped = set(db.inspect(cls).attrs.keys())
+        unexpected = set(details) - mapped - IMPORT_DETAIL_KEYS
+        if unexpected:
+            # A misspelled column key must not catalog a file with a
+            # blank column. That is how a conversion would pass as a rip.
+            raise TypeError(
+                f"File.from_details() got unexpected key(s): {sorted(unexpected)}"
+            )
         return cls(**{key: value for key, value in details.items() if key in mapped})
 
     def delete_local_file(self, delete_directory_tree=False):

@@ -236,15 +236,31 @@ def release_certification(country_release):
 def us_certification_from(details):
     """Return the US rating of a TMDB movie payload, or None (#365).
 
-    The rule is release_certification, the rule that the cataloger
-    stores. A rating outside MPAA_RATINGS gives None."""
+    The theatrical release comes first, as in release_certification,
+    the rule that the cataloger stores. The result is the first value
+    in MPAA_RATINGS. A country entry with no MPAA value gives None."""
 
     for country_release in (details.get("release_dates") or {}).get("results") or []:
         if isinstance(country_release, dict) and (
             country_release.get("iso_3166_1") == "US"
         ):
-            rating = release_certification(country_release)
-            return rating if rating in MPAA_RATINGS else None
+            # An unrated theatrical run ("NR") must not hide the MPAA
+            # mark of a later entry. Thus, the first MPAA value wins,
+            # with the theatrical entries first.
+            entries = [
+                entry
+                for entry in country_release.get("release_dates") or []
+                if isinstance(entry, dict)
+            ]
+            entries.sort(key=lambda entry: entry.get("type") != 3)
+            return next(
+                (
+                    entry.get("certification")
+                    for entry in entries
+                    if entry.get("certification") in MPAA_RATINGS
+                ),
+                None,
+            )
     return None
 
 

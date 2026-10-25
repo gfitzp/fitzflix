@@ -376,3 +376,18 @@ def test_the_library_names_are_constants(app):
         if literal.search(path.read_text())
     ]
     assert offenders == []
+
+
+def test_a_file_from_details_refuses_an_unknown_key(app):
+    """A misspelled column key must raise, not catalog a blank column."""
+
+    import pytest
+
+    with app.app_context():
+        with pytest.raises(TypeError, match="converted_from_qualty"):
+            File.from_details(
+                {
+                    "basename": "Typo (2001) - [DVD].mkv",
+                    "converted_from_qualty": "Bluray-2160p",
+                }
+            )

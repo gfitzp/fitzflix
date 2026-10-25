@@ -756,3 +756,39 @@ def test_the_stored_us_certification_of_a_record(app):
         db.session.flush()
         assert movie.us_certification == "R"
         db.session.rollback()
+
+
+def test_an_unrated_theatrical_entry_does_not_hide_the_mpaa_mark():
+    """An NR theatrical run with a rated disc entry still shows the mark."""
+
+    from app.tmdb_apply import us_certification_from
+
+    details = {
+        "release_dates": {
+            "results": [
+                {
+                    "iso_3166_1": "US",
+                    "release_dates": [
+                        {"type": 1, "certification": ""},
+                        {"type": 3, "certification": "NR"},
+                        {"type": 5, "certification": "R"},
+                    ],
+                }
+            ]
+        }
+    }
+    assert us_certification_from(details) == "R"
+    theatrical = {
+        "release_dates": {
+            "results": [
+                {
+                    "iso_3166_1": "US",
+                    "release_dates": [
+                        {"type": 2, "certification": "R"},
+                        {"type": 3, "certification": "PG-13"},
+                    ],
+                }
+            ]
+        }
+    }
+    assert us_certification_from(theatrical) == "PG-13"
