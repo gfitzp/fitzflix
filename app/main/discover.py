@@ -739,7 +739,10 @@ def file_activity():
     the queue poll of base.html fetches /file-activity/cards. Thus, the
     chips stay live, and the card of a new file appears in its place."""
 
-    page = request.args.get("page", 1, type=int)
+    # paginate() reads a page below 1 as page 1. The page-1 checks below
+    # must agree, or ?page=0 renders page 1 without its live parts (#312).
+
+    page = max(request.args.get("page", 1, type=int), 1)
 
     recently_added = _recent_file_cards().paginate(
         page=page, per_page=FILE_ACTIVITY_PER_PAGE, error_out=False

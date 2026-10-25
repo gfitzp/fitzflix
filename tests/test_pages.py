@@ -838,3 +838,24 @@ def test_a_shopping_form_without_a_known_film_flashes(
         data["movie_id"] = movie_id
     response = admin_client.post("/shopping-list/movie", data=data)
     assert response.status_code == 302
+
+
+def test_file_activity_page_zero_is_page_one(app, admin_client):
+    """?page=0 must render page 1 with its import panel (#312)."""
+
+    import os
+
+    folder = os.path.join(app.config["REJECTS_DIR"], "exception")
+    os.makedirs(folder, exist_ok=True)
+    rejected = os.path.join(folder, "Page Zero (2001) - [DVD].mkv")
+    with open(rejected, "wb") as handle:
+        handle.write(b"video")
+    try:
+        assert "Recently rejected" in admin_client.get("/file-activity").get_data(
+            as_text=True
+        )
+        assert "Recently rejected" in admin_client.get(
+            "/file-activity?page=0"
+        ).get_data(as_text=True)
+    finally:
+        os.remove(rejected)
