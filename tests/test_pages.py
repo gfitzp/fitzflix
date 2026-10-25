@@ -787,3 +787,17 @@ def test_the_maintenance_page_queues_the_sync_on_maintenance(app, admin_client):
         "app.videos.sync_aws_s3_storage_task"
     ]
     assert names.count("app.videos.sync_aws_s3_storage_task") == 1
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/movie_states?movie_ids=%C2%B2",
+        "/movie_states?tmdb_ids=1,%C2%B2",
+        "/recommendations/tile?criteria=genre:18&exclude=%C2%B2",
+    ],
+)
+def test_a_superscript_id_is_not_an_id(app, admin_client, path):
+    """ "²" passes isdigit(), and int() refuses it (#307)."""
+
+    assert admin_client.get(path).status_code < 500

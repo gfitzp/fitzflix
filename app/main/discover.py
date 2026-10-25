@@ -1373,10 +1373,15 @@ def movie_states():
     map. Every other estimate surface reads the same source."""
 
     def parse_ids(name):
+        """Return the integer ids of a comma-separated query value.
+
+        isdecimal, not isdigit: "²" is a digit, and int() refuses it
+        (#307)."""
+
         return [
             int(part)
             for part in (request.args.get(name) or "").split(",")
-            if part.strip().isdigit()
+            if part.strip().isdecimal()
         ]
 
     movie_ids = parse_ids("movie_ids")
@@ -2129,7 +2134,7 @@ def recommendations_tile():
     exclude = [
         int(part)
         for part in (request.args.get("exclude") or "").split(",")
-        if part.strip().isdigit()
+        if part.strip().isdecimal()
     ]
     movie_id = replacement_film(current_user, criteria, exclude)
     if movie_id is None:

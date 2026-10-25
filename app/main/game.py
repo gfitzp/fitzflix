@@ -846,8 +846,12 @@ def name_that_frame():
             guess_shown = guessed or None
         else:
             guessed = (form.choice.data or "").strip()
-            correct = guessed.isdigit() and int(guessed) == movie.id
-            chosen = db.session.get(Movie, int(guessed)) if guessed.isdigit() else None
+            # isdecimal, not isdigit: int() refuses a digit such as "²" (#307).
+
+            correct = guessed.isdecimal() and int(guessed) == movie.id
+            chosen = (
+                db.session.get(Movie, int(guessed)) if guessed.isdecimal() else None
+            )
             guess_shown = _display_title(chosen) if chosen else None
 
         score = _score_row(difficulty)
