@@ -132,6 +132,7 @@ def adopt_episode_task(
 
     from app import get_app
     from app.importing import enqueue_localization
+    from app.radarr_push import fallback_rename
 
     with get_app().app_context():
         try:
@@ -146,8 +147,14 @@ def adopt_episode_task(
                 f"Sonarr could not rename '{downloaded_path}'. Fitzflix renames "
                 f"it: " + traceback.format_exc()
             )
-            rename_download_locally(downloaded_path, new_path, series_id)
-            path = new_path
+            path = fallback_rename(
+                downloaded_path,
+                new_path,
+                lambda: _sonarr("GET", f"/api/v3/episodefile/{int(episode_file_id)}")[
+                    "path"
+                ],
+                lambda: rename_download_locally(downloaded_path, new_path, series_id),
+            )
         if enqueue_localization(path, at_front=at_front):
             current_app.logger.info(f"'{path}' Sent to Fitzflix")
         return True

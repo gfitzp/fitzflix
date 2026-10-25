@@ -36,9 +36,10 @@ def _download(tmp_path):
 class FakeRadarr:
     """Fake the Radarr API calls of the adopt task. RenameFiles renames."""
 
-    def __init__(self, folder, rename_status="completed"):
+    def __init__(self, folder, rename_status="completed", renames=None):
         self.folder = folder
         self.rename_status = rename_status
+        self.renames = rename_status == "completed" if renames is None else renames
         self.record = {"id": 7, "path": str(folder / ORIGINAL), "quality": {}}
         self.calls = []
 
@@ -53,7 +54,7 @@ class FakeRadarr:
             return payload
         if path == "/api/v3/command":
             assert payload == {"name": "RenameFiles", "movieId": 3, "files": [7]}
-            if self.rename_status == "completed":
+            if self.renames:
                 os.rename(self.folder / ORIGINAL, self.folder / RENAMED)
                 self.record["path"] = str(self.folder / RENAMED)
             return {"id": 55}
@@ -155,3 +156,42 @@ def test_a_local_rename_without_a_radarr_address_does_not_crash(
 
     assert (folder / RENAMED).exists()
     assert sent == []
+
+
+def test_a_late_radarr_rename_imports_the_radarr_file(app, monkeypatch, tmp_path):
+    """Radarr renames the file after the wait ends (#325).
+
+    The download is not at its old path. The task imports the file at the
+    path of the Radarr record and does not crash in shutil.move."""
+
+    import app.radarr_push as radarr_push
+
+    folder = _download(tmp_path)
+    fake = FakeRadarr(folder, rename_status="started", renames=True)
+    monkeypatch.setattr(radarr_push, "_radarr", fake)
+    monkeypatch.setattr(radarr_push, "RADARR_RENAME_WAIT", -1)
+    monkeypatch.setattr(radarr_push.time, "sleep", lambda seconds: None)
+
+    assert radarr_push.adopt_download_task(
+        3, 7, str(folder / ORIGINAL), str(folder / RENAMED), "WEBDL-1080p"
+    )
+
+    assert (folder / RENAMED).exists()
+    job = app.import_queue.fetch_job(safe_job_id(RENAMED))
+    assert job is not None and job.args == (str(folder / RENAMED),)
+
+
+def test_a_lost_download_fails_the_task_and_queues_nothing(app, monkeypatch, tmp_path):
+    import app.radarr_push as radarr_push
+
+    folder = _download(tmp_path)
+    (folder / ORIGINAL).unlink()
+    fake = FakeRadarr(folder, rename_status="failed")
+    monkeypatch.setattr(radarr_push, "_radarr", fake)
+    monkeypatch.setattr(radarr_push.time, "sleep", lambda seconds: None)
+
+    with pytest.raises(FileNotFoundError):
+        radarr_push.adopt_download_task(
+            3, 7, str(folder / ORIGINAL), str(folder / RENAMED), "WEBDL-1080p"
+        )
+    assert app.import_queue.job_ids == []

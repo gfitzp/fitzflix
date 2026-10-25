@@ -455,6 +455,47 @@ def rename_download_locally(downloaded_path, new_path, movie_id):
         )
 
 
+def fallback_rename(downloaded_path, new_path, arr_path, rename_locally):
+    """Rename a download in Fitzflix after the arr rename failed, and return
+    the path to import.
+
+    The arr can complete its rename after Fitzflix stops the wait (#325).
+    For example, the RenameFiles command waits behind a long refresh. Then
+    the download is not at its old path. Fitzflix asks the arr for the path
+    of its record, then looks for the new name. A failure is logged, and
+    the error goes to the job. Thus, the job stays in the failed jobs for a
+    retry."""
+
+    try:
+        if os.path.exists(downloaded_path):
+            rename_locally()
+            return new_path
+        try:
+            path = arr_path()
+        except Exception as e:
+            current_app.logger.warning(
+                f"'{downloaded_path}' is not at its path, and the arr record "
+                f"is not available: {e}"
+            )
+            path = None
+        for candidate in (path, new_path):
+            if candidate and os.path.exists(candidate):
+                current_app.logger.info(
+                    f"'{downloaded_path}' The arr renamed it as '{candidate}'"
+                )
+                return candidate
+        raise FileNotFoundError(
+            f"'{downloaded_path}' is not at its path, at the arr path "
+            f"{path!r}, or at '{new_path}'"
+        )
+    except Exception:
+        current_app.logger.error(
+            f"'{downloaded_path}' Fitzflix could not rename or find the "
+            f"download. The import is not queued: " + traceback.format_exc()
+        )
+        raise
+
+
 def adopt_download_task(movie_id, movie_file_id, downloaded_path, new_path, quality):
     """Give a Radarr download the quality of Fitzflix, then queue its import.
 
@@ -480,8 +521,14 @@ def adopt_download_task(movie_id, movie_file_id, downloaded_path, new_path, qual
                 f"Radarr could not rename '{downloaded_path}'. Fitzflix renames "
                 f"it: " + traceback.format_exc()
             )
-            rename_download_locally(downloaded_path, new_path, movie_id)
-            path = new_path
+            path = fallback_rename(
+                downloaded_path,
+                new_path,
+                lambda: _radarr("GET", f"/api/v3/moviefile/{int(movie_file_id)}")[
+                    "path"
+                ],
+                lambda: rename_download_locally(downloaded_path, new_path, movie_id),
+            )
         if enqueue_localization(path):
             current_app.logger.info(f"'{path}' Sent to Fitzflix")
         return True

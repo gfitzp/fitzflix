@@ -39,9 +39,10 @@ def _download(tmp_path):
 class FakeSonarr:
     """Fake the Sonarr API calls of the adopt task. RenameFiles renames."""
 
-    def __init__(self, season, rename_status="completed"):
+    def __init__(self, season, rename_status="completed", renames=None):
         self.season = season
         self.rename_status = rename_status
+        self.renames = rename_status == "completed" if renames is None else renames
         self.record = {"id": 9, "path": str(season / ORIGINAL), "quality": {}}
 
     def __call__(self, method, path, payload=None):
@@ -54,7 +55,7 @@ class FakeSonarr:
             return payload
         if path == "/api/v3/command":
             assert payload == {"name": "RenameFiles", "seriesId": 4, "files": [9]}
-            if self.rename_status == "completed":
+            if self.renames:
                 os.rename(self.season / ORIGINAL, self.season / RENAMED)
                 self.record["path"] = str(self.season / RENAMED)
             return {"id": 66}
@@ -157,3 +158,22 @@ def test_a_local_rename_without_a_sonarr_address_does_not_crash(
 
     assert (tmp_path / "b.mkv").exists()
     assert sent == []
+
+
+def test_a_late_sonarr_rename_imports_the_sonarr_file(app, monkeypatch, tmp_path):
+    """Sonarr renames the file after the wait ends (#325)."""
+
+    import app.sonarr_push as sonarr_push
+
+    _, season = _download(tmp_path)
+    fake = FakeSonarr(season, rename_status="started", renames=True)
+    monkeypatch.setattr(sonarr_push, "_sonarr", fake)
+    monkeypatch.setattr(sonarr_push, "SONARR_RENAME_WAIT", -1)
+    monkeypatch.setattr(sonarr_push.time, "sleep", lambda seconds: None)
+
+    assert sonarr_push.adopt_episode_task(
+        4, 9, str(season / ORIGINAL), str(season / RENAMED), "WEBDL-1080p"
+    )
+
+    assert (season / RENAMED).exists()
+    assert app.import_queue.fetch_job(safe_job_id(RENAMED)) is not None
