@@ -419,8 +419,15 @@ def mux_command(video_file, localized_file, output_file, language=None):
     return command
 
 
+class TitleLockLost(Exception):
+    """Another task took the title lock during a conversion (#339)."""
+
+
 def _run_encode(command, job, basename, lock, total_seconds):
-    """Run an encode with progress on the job, and keep the title lock alive."""
+    """Run an encode with progress on the job, and keep the title lock alive.
+
+    If another task took the title lock, the encode stops, and this
+    raises TitleLockLost."""
 
     from app.importing import _hold_title_lock
     from app.videos import wait_for_subprocess
@@ -455,12 +462,17 @@ def _run_encode(command, job, basename, lock, total_seconds):
                 job.meta["progress"] = percent
                 job.save_meta()
         if time.monotonic() - last_refresh > LOCK_REFRESH_SECONDS:
-            _hold_title_lock(lock, basename)
+            if not _hold_title_lock(lock, basename):
+                process.kill()
+                process.wait()
+                raise TitleLockLost(basename)
             last_refresh = time.monotonic()
     wait_for_subprocess(process)
 
 
-def convert_localized_file(source_path, file_details, lock, hidden_output_file, plan):
+def convert_localized_file(
+    source_path, file_details, lock, hidden_output_file, plan, lock_waits=0
+):
     """Replace the video of a localized file with a 1080p SDR conversion.
 
     This runs on the transcode queue, between the localization and the
@@ -470,10 +482,14 @@ def convert_localized_file(source_path, file_details, lock, hidden_output_file, 
     move_localized_file. The title lock passes through.
 
     A failure rejects the import and releases the lock. The original is
-    still in the import directory, and its archive is in S3."""
+    still in the import directory, and its archive is in S3.
+
+    If another task holds the title lock, the conversion waits and tries
+    again later (#339). It does not convert without the lock."""
 
     from app.importing import (
         _hold_title_lock,
+        defer_for_title_lock,
         move_to_rejects,
         release_staging_reservation,
         set_staging_reservation,
@@ -492,8 +508,22 @@ def convert_localized_file(source_path, file_details, lock, hidden_output_file, 
         video_only = f"{hidden_output_file}.sdr-video.mkv"
         muxed = f"{hidden_output_file}.sdr.mkv"
 
+        def defer():
+            defer_for_title_lock(
+                current_app.transcode_queue,
+                "app.videos.convert_localized_file",
+                (source_path, file_details, lock, hidden_output_file, plan),
+                {"lock_waits": lock_waits},
+                source_path,
+                basename,
+                current_app.config["TRANSCODE_TASK_TIMEOUT"],
+            )
+            return False
+
+        if not _hold_title_lock(lock, basename):
+            return defer()
+
         try:
-            _hold_title_lock(lock, basename)
             source_video = probe_video(hidden_output_file) or {}
             total_seconds = source_video.get("duration")
 
@@ -559,6 +589,13 @@ def convert_localized_file(source_path, file_details, lock, hidden_output_file, 
                 os.path.getsize(hidden_output_file),
                 [os.path.basename(hidden_output_file).lstrip(".")],
             )
+
+        except TitleLockLost:
+            # The localized file stays on staging for the retry. Only the
+            # work files of this encode go.
+
+            _remove_quietly(video_only, muxed)
+            return defer()
 
         except Exception:
             current_app.logger.error(traceback.format_exc())

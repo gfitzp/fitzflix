@@ -269,10 +269,15 @@ def _hold_title_lock(lock, basename):
 
     A copy can wait for space for longer than the TTL of 1 day. Without
     this, the lock expired, and a second import of the same title could
-    start and write to the same staging file."""
+    start and write to the same staging file.
+
+    Return False if another task holds the lock (#339). The caller must
+    then stop and try again later. It must not write the files or the
+    records of the title. Return True if this task holds the lock, or if
+    the task has no lock."""
 
     if not lock:
-        return
+        return True
     resource, token = lock[1], lock[2]
     ttl_ms = current_app.config["LOCALIZATION_TASK_TIMEOUT"] * 1000
     result = current_app.redis.eval(EXTEND_LOCK_SCRIPT, 1, resource, token, ttl_ms)
@@ -284,6 +289,42 @@ def _hold_title_lock(lock, basename):
         current_app.logger.warning(
             f"'{basename}' Another task holds the title lock during the wait"
         )
+        return False
+    return True
+
+
+# The time that a stage waits when another task holds its title lock (#339)
+
+TITLE_LOCK_WAIT = timedelta(minutes=30)
+
+
+def defer_for_title_lock(queue, func, args, kwargs, source_path, basename, timeout):
+    """Run a stage again after TITLE_LOCK_WAIT, with the same lock (#339).
+
+    The lock of the stage expired, and another task took it. The retry
+    keeps the old lock token. When the other task releases the lock, the
+    extend script of _hold_title_lock takes it again with that token.
+    kwargs["lock_waits"] counts the waits, and the count goes into the id."""
+
+    lock_waits = int(kwargs.get("lock_waits") or 0) + 1
+    current_app.logger.warning(
+        f"'{basename}' Another task holds the title lock. Trying again in "
+        f"{int(TITLE_LOCK_WAIT.total_seconds() // 60)} minutes (wait {lock_waits})"
+    )
+    queue.enqueue_in(
+        TITLE_LOCK_WAIT,
+        func,
+        *args,
+        **{**kwargs, "lock_waits": lock_waits},
+        job_timeout=timeout,
+        job_id=retry_job_id(
+            func.rsplit(".", 1)[-1],
+            f"'{basename}':{path_tag(source_path)}",
+            f"lock{lock_waits}",
+        ),
+        result_ttl=86400,
+        description=f"'{basename}'",
+    )
 
 
 def _existing_directory(path):
@@ -1791,6 +1832,7 @@ def move_localized_file(
     transient_retries=0,
     space_waits=0,
     vanished_retries=0,
+    lock_waits=0,
 ):
     """Carry the localized output to a hidden name at its library destination.
 
@@ -1808,6 +1850,9 @@ def move_localized_file(
     mount can lose the just-written copy (the Movies share, Oct 2026).
     Then finalize gives the copy back to this task. vanished_retries
     counts those returns.
+
+    If another task holds the title lock, the copy waits (#339). Then
+    neither this task nor finalize writes the files of the title.
     """
 
     from app.videos import (
@@ -1823,6 +1868,23 @@ def move_localized_file(
         output_directory = os.path.join(
             current_app.config["LIBRARY_DIR"], file_details.get("dirname")
         )
+
+        if not _hold_title_lock(lock, basename):
+            defer_for_title_lock(
+                current_app.handoff_queue,
+                "app.videos.move_localized_file",
+                (source_path, file_details, lock, hidden_output_file),
+                {
+                    "transient_retries": transient_retries,
+                    "space_waits": space_waits,
+                    "vanished_retries": vanished_retries,
+                    "lock_waits": lock_waits,
+                },
+                source_path,
+                basename,
+                current_app.config["MOVE_TASK_TIMEOUT"],
+            )
+            return False
 
         # Defer if a necessary volume is dead. The task keeps the title lock
         # for the retry.

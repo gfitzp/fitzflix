@@ -30,6 +30,7 @@ from app.sdr_conversion import (
 )
 
 from tests.conftest import _TMP
+from tests.test_scheduling import scheduled_jobs
 from tests.factories import (
     make_file,
     make_movie,
@@ -1006,3 +1007,113 @@ def test_a_missing_held_volume_prunes_no_row(app, monkeypatch, tmp_path):
         monkeypatch.setitem(app.config, "HELD_DIR", str(tmp_path / "absent"))
         assert prune_held_imports() == 0
         assert HeldImport.query.count() == 1
+
+
+def _foreign_lock(app, resource):
+    """Return a lock tuple whose title another task holds now (#339)."""
+
+    from redlock import Lock
+
+    app.redis.set(resource, "other-task-token", px=60000)
+    return Lock(0, resource, "expired-token")
+
+
+def test_a_conversion_waits_while_another_task_holds_the_title_lock(
+    app, tmp_path, monkeypatch
+):
+    """Test that convert_localized_file does not encode without its lock."""
+
+    from app import sdr_conversion
+
+    hidden = tmp_path / ".Locked (2001) - [Bluray-1080p].mkv"
+    hidden.write_bytes(b"localized")
+    source = tmp_path / "Locked (2001) - [Remux-2160p].mkv"
+    source.write_bytes(b"source")
+    encodes = []
+    monkeypatch.setattr(sdr_conversion, "_run_encode", lambda *a: encodes.append(a))
+    resource = '{"title": "Locked Conversion"}'
+
+    with app.app_context():
+        lock = _foreign_lock(app, resource)
+        result = sdr_conversion.convert_localized_file(
+            str(source),
+            {"basename": "Locked (2001) - [Bluray-1080p].mkv"},
+            lock,
+            str(hidden),
+            {"source_format": "HDR10", "source_quality": "x", "target_quality": "y"},
+        )
+
+    assert result is False
+    assert encodes == []
+    assert hidden.exists() and source.exists()
+    assert app.redis.get(resource) == b"other-task-token"
+    retries = [
+        job for job in _jobs(app.transcode_queue, "app.videos.convert_localized_file")
+    ] + [
+        job
+        for job in scheduled_jobs(app.transcode_queue)
+        if job.func_name == "app.videos.convert_localized_file"
+    ]
+    assert len(retries) == 1
+    assert retries[0].kwargs == {"lock_waits": 1}
+    assert retries[0].id.endswith("lock1")
+
+
+def test_a_conversion_that_loses_its_lock_keeps_the_localized_file(
+    app, tmp_path, monkeypatch
+):
+    from app import sdr_conversion
+
+    hidden = tmp_path / ".Lost (2001) - [Bluray-1080p].mkv"
+    hidden.write_bytes(b"localized")
+    source = tmp_path / "Lost (2001) - [Remux-2160p].mkv"
+    source.write_bytes(b"source")
+
+    def lose_lock(*args):
+        raise sdr_conversion.TitleLockLost("Lost")
+
+    monkeypatch.setattr(sdr_conversion, "_run_encode", lose_lock)
+    monkeypatch.setattr(sdr_conversion, "probe_video", lambda path: {})
+
+    with app.app_context():
+        result = sdr_conversion.convert_localized_file(
+            str(source),
+            {"basename": "Lost (2001) - [Bluray-1080p].mkv"},
+            None,
+            str(hidden),
+            {"source_format": "HDR10", "source_quality": "x", "target_quality": "y"},
+        )
+
+    assert result is False
+    assert hidden.exists() and source.exists()
+    assert any(
+        job.func_name == "app.videos.convert_localized_file"
+        for job in scheduled_jobs(app.transcode_queue)
+    )
+
+
+def test_a_move_waits_while_another_task_holds_the_title_lock(app, tmp_path):
+    import app.videos as videos
+
+    hidden = tmp_path / ".Moved (2001) - [DVD].mkv"
+    hidden.write_bytes(b"localized")
+    resource = '{"title": "Locked Move"}'
+    with app.app_context():
+        lock = _foreign_lock(app, resource)
+        result = videos.move_localized_file(
+            "/import/Moved (2001) - [DVD].mkv",
+            {"basename": "Moved (2001) - [DVD].mkv", "dirname": "Movies/Moved (2001)"},
+            lock,
+            str(hidden),
+        )
+
+    assert result is False
+    assert hidden.exists()
+    retries = [
+        job
+        for job in scheduled_jobs(app.handoff_queue)
+        if job.func_name == "app.videos.move_localized_file"
+    ]
+    assert len(retries) == 1
+    assert retries[0].kwargs["lock_waits"] == 1
+    assert app.redis.get(resource) == b"other-task-token"
