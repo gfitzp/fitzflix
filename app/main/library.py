@@ -84,6 +84,7 @@ from app.infuse_player import infuse_only_formats
 from app.infuse_player import play_movie as infuse_play_movie
 from app.plex_player import play_movie, remote_playback_configured
 from app.main.helpers import (
+    _hold_verdict_lock,
     admin_required,
     season_episode_counts,
     _card_fetch,
@@ -1399,6 +1400,7 @@ def movie(movie_id):
             form_movie_id = (request.form.get("movie_id") or "").strip()
             if form_movie_id.isdigit() and int(form_movie_id) != movie.id:
                 target = db.session.get(Movie, int(form_movie_id)) or movie
+            _hold_verdict_lock(f"movie:{target.id}")
 
         # ✕ is "not interested, never saw it". It is a status flag, never
         # a review. The film leaves each recommendation surface. A seen

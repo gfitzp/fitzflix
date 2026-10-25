@@ -7,6 +7,7 @@ the quality threshold."""
 from datetime import date, datetime, timedelta
 
 from flask import (
+    after_this_request,
     current_app,
     jsonify,
     flash,
@@ -207,6 +208,44 @@ def _letterboxd_locked(user_id, movie_id, rating, removes, corrects):
     return None
 
 
+# The longest time that one star-row post holds the verdict lock of a film,
+# in seconds. A second post waits for half of this time at most.
+
+VERDICT_LOCK_SECONDS = 10
+
+
+def _hold_verdict_lock(name):
+    """Make the star-row posts of 1 user and 1 film run 1 at a time (#337).
+
+    2 posts that run at the same time both read the latest review row
+    before either commits. Thus, a double tap could write 2 rows for 1
+    gesture. The second post waits here until the first post sends its
+    answer. Then it sees the committed row. The lock goes when the
+    response goes. If Redis fails, the post runs without the lock."""
+
+    lock = current_app.redis.lock(
+        f"fitzflix:verdict-lock:{int(current_user.id)}:{name}",
+        timeout=VERDICT_LOCK_SECONDS,
+        blocking_timeout=VERDICT_LOCK_SECONDS / 2,
+    )
+    try:
+        if not lock.acquire():
+            return False
+    except Exception:
+        current_app.logger.warning(f"Verdict lock {name} not available")
+        return False
+
+    @after_this_request
+    def release(response):
+        try:
+            lock.release()
+        except Exception:
+            pass
+        return response
+
+    return True
+
+
 def _ladder_state(user_id, movie_id):
     """Return the current verdict of the star row for a film as JSON.
 
@@ -238,6 +277,9 @@ def _ladder_state(user_id, movie_id):
                 if row is not None and row.rating is not None
                 else None
             ),
+            # The ✕ hides when the film has a diary row. This is the rule
+            # of the batched hydration (state_for in discover.py, #335).
+            "has_review": row is not None,
             "flagged": flagged,
             "estimated": estimated,
             # A rating or a ✕ removes the watchlist entry of the film. Thus,

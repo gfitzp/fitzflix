@@ -598,6 +598,7 @@ def test_ladder_fetch_returns_state_without_redirect(app, admin_client):
     assert response.status_code == 200
     assert response.get_json() == {
         "rating": 5.0,
+        "has_review": True,
         "flagged": False,
         "estimated": None,
         "on_watchlist": False,
@@ -610,6 +611,7 @@ def test_ladder_fetch_returns_state_without_redirect(app, admin_client):
     )
     assert response.get_json() == {
         "rating": None,
+        "has_review": False,
         "flagged": False,
         "estimated": None,
         "on_watchlist": False,
@@ -622,6 +624,7 @@ def test_ladder_fetch_returns_state_without_redirect(app, admin_client):
     )
     assert response.get_json() == {
         "rating": None,
+        "has_review": False,
         "flagged": True,
         "estimated": None,
         "on_watchlist": False,
@@ -639,6 +642,7 @@ def test_ladder_fetch_returns_state_without_redirect(app, admin_client):
     )
     assert response.get_json() == {
         "rating": None,
+        "has_review": False,
         "flagged": False,
         "estimated": None,
         "on_watchlist": False,

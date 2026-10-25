@@ -55,6 +55,7 @@ from app.models import (
 from app.main import bp
 from app.plex_player import remote_playback_configured
 from app.main.helpers import (
+    _hold_verdict_lock,
     _card_fetch,
     season_episode_counts,
     _enqueue_profile_recompute,
@@ -2307,6 +2308,8 @@ def review_tmdb(tmdb_id):
         if quick_present and quick_rating is None:
             flash("That rating is not valid.", "warning")
             return redirect(url_for("main.review_tmdb", tmdb_id=tmdb_id))
+        if quick_present:
+            _hold_verdict_lock(f"tmdb:{int(tmdb_id)}")
         movie, created = find_or_create_tmdb_movie(
             tmdb_id, film_title, year, details=details
         )

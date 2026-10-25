@@ -863,8 +863,8 @@
 				x.classList.toggle("active", !!state.flagged);
 				// The user cannot dismiss a seen film. The hydration
 				// hides the ✕ when a diary row exists (the client-side
-				// mirror of allow_not_interested). The live posts do
-				// not carry the flag
+				// mirror of allow_not_interested). The live posts carry
+				// the flag too (#335)
 				if (typeof state.has_review !== "undefined") {
 					x.classList.toggle("d-none", !!state.has_review);
 				}
@@ -874,12 +874,46 @@
 			}
 		}
 
+		// The own Remove of the watchlist page clears its tile in place
+		// and settles the filter counts. It uses the bucket that the
+		// cell rendered with (#187). A rating or a ✕ on the tile also
+		// removes the film from the watchlist (#336). A cell counts
+		// down 1 time only, whichever post removes it first
+
+		function removeWatchlistCell(cell) {
+			if (!cell || cell._watchlistRemoved) return;
+			cell._watchlistRemoved = true;
+			["all", cell.getAttribute("data-bucket")].forEach(function(name) {
+				var count = name && document.querySelector('[data-watchlist-count="' + name + '"]');
+				if (count) count.textContent = Math.max(0, parseInt(count.textContent, 10) - 1);
+			});
+			// The per-service counts of the dropdown settle the same
+			// way, from the services of the cell
+			if (cell.getAttribute("data-bucket") === "services") {
+				(cell.getAttribute("data-services") || "").split(",").forEach(function(id) {
+					var option = id && document.querySelector('[data-watchlist-service] option[value="' + id + '"]');
+					if (!option) return;
+					var left = Math.max(0, parseInt(option.getAttribute("data-watchlist-service-count"), 10) - 1);
+					option.setAttribute("data-watchlist-service-count", left);
+					option.textContent = option.textContent.replace(/\(\d+\)$/, "(" + left + ")");
+				});
+			}
+			cell.remove();
+		}
+
+		// A ladder or toggle post has no second post in flight for the
+		// same form (#337). Two quick taps could land out of order and
+		// paint the older state. A double tap on 1 star could write 2
+		// rows. A tap during a post does nothing
+
 		document.addEventListener("click", function(event) {
 			var button = event.target.closest("[data-ladder-live] button[name=quick_rating]");
 			if (!button) return;
 			var form = button.closest("form");
 			if (!form) return;
 			event.preventDefault();
+			if (form._postInFlight) return;
+			form._postInFlight = true;
 			var data = new FormData(form);
 			data.set("quick_rating", button.value);
 			fetch(form.getAttribute("action") || window.location.href, {
@@ -891,6 +925,7 @@
 				if (!response.ok) throw new Error("ladder post failed");
 				return response.json();
 			}).then(function(state) {
+				form._postInFlight = false;
 				paintLadder(button.closest(".star-row"), state);
 				// A rating or a ✕ clears the watchlist entry of the film
 				// on the server. The toggle that shares the scope of this
@@ -910,7 +945,16 @@
 				// tile for a new suggestion
 				form.dispatchEvent(new CustomEvent("fitzflix:tile-state",
 					{bubbles: true, detail: state}));
+				// On the watchlist page, a film that left the watchlist
+				// leaves the grid (#336)
+				if (state.on_watchlist === false) {
+					var cell = form.closest(".poster-cell");
+					if (cell && cell.querySelector("[data-watchlist-remove-cell]")) {
+						removeWatchlistCell(cell);
+					}
+				}
 			}).catch(function() {
+				form._postInFlight = false;
 				form.submit();
 			});
 		});
@@ -1126,6 +1170,8 @@
 			var form = event.target.closest("form[data-card-watchlist]");
 			if (!form) return;
 			event.preventDefault();
+			if (form._postInFlight) return;
+			form._postInFlight = true;
 			var data = new FormData(form);
 			if (event.submitter && event.submitter.name) {
 				data.set(event.submitter.name, event.submitter.value || "1");
@@ -1139,39 +1185,20 @@
 				if (!response.ok) throw new Error("watchlist post failed");
 				return response.json();
 			}).then(function(state) {
+				form._postInFlight = false;
 				syncWatchlistForm(form, state.on_watchlist);
 				// The same scope as the ladder tap. Thus, a toggle tap on
 				// a control row refreshes its cached card too
 				invalidateCard(form.closest(".poster-actions, [data-watchlist-scope]"));
-				// The own Remove of the watchlist page clears its tile
-				// in place and settles the filter counts. It uses the
-				// bucket that the cell rendered with (#187)
 				if (form.hasAttribute("data-watchlist-remove-cell") && !state.on_watchlist) {
-					var cell = form.closest(".poster-cell");
-					if (cell) {
-						["all", cell.getAttribute("data-bucket")].forEach(function(name) {
-							var count = name && document.querySelector('[data-watchlist-count="' + name + '"]');
-							if (count) count.textContent = Math.max(0, parseInt(count.textContent, 10) - 1);
-						});
-						// The per-service counts of the dropdown settle
-						// the same way, from the services of the cell
-						if (cell.getAttribute("data-bucket") === "services") {
-							(cell.getAttribute("data-services") || "").split(",").forEach(function(id) {
-								var option = id && document.querySelector('[data-watchlist-service] option[value="' + id + '"]');
-								if (!option) return;
-								var left = Math.max(0, parseInt(option.getAttribute("data-watchlist-service-count"), 10) - 1);
-								option.setAttribute("data-watchlist-service-count", left);
-								option.textContent = option.textContent.replace(/\(\d+\)$/, "(" + left + ")");
-							});
-						}
-						cell.remove();
-					}
+					removeWatchlistCell(form.closest(".poster-cell"));
 				}
 				// The Recommendations page swaps a banked suggestion
 				// for a new one on this event, as it does for a rating
 				form.dispatchEvent(new CustomEvent("fitzflix:tile-state",
 					{bubbles: true, detail: state}));
 			}).catch(function() {
+				form._postInFlight = false;
 				form.submit();
 			});
 		});
