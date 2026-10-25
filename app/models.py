@@ -203,6 +203,126 @@ def tmdb_objects(entries, owner, what):
             )
 
 
+def _tmdb_date(value):
+    """Return a TMDB date string as a datetime, or None for a blank value."""
+
+    return datetime.strptime(value, "%Y-%m-%d") if value else None
+
+
+def pick_rating(entries, field, preferred=None):
+    """Return the first non-blank value of field in a list of TMDB entries.
+
+    The entries that preferred accepts come first, in their order. The
+    movie certifications prefer the theatrical release (type 3). The
+    premiere (type 1) usually has a blank certification (#303). The TV
+    content ratings use the US entry."""
+
+    entries = [entry for entry in entries or [] if isinstance(entry, dict)]
+    if preferred:
+        entries = sorted(entries, key=lambda entry: not preferred(entry))
+    return next((entry.get(field) for entry in entries if entry.get(field)), None)
+
+
+class TMDBAssociation:
+    """1 association group of a TMDB apply: the rows that a record links to.
+
+    rel is the dynamic relationship of the record. model is the name of
+    the linked model class. path is the key path of the payload list. A
+    payload object at the path counts as a list of 1. key is the payload
+    field that holds the id of a row. fields maps each column of a new
+    row to a payload field, or to a function of the payload entry. With
+    refresh_fields, an existing row gets the fields again on each apply.
+    prune_link is a link-table column. After the apply, each row that no
+    link names goes (#305). no_guard lets an empty payload clear the
+    links. Collections use it, because most films belong to no
+    collection. resolve replaces the find-or-create of the rows. label
+    names the group in the guard warning, and kept names what stays."""
+
+    def __init__(
+        self,
+        rel,
+        model,
+        path,
+        key="id",
+        fields=None,
+        label=None,
+        kept="ones",
+        refresh_fields=False,
+        prune_link=None,
+        no_guard=False,
+        resolve=None,
+    ):
+        self.rel = rel
+        self.model = model
+        self.path = path
+        self.key = key
+        self.fields = fields or {"name": "name"}
+        self.label = label or rel.replace("_", " ")
+        self.kept = kept
+        self.refresh_fields = refresh_fields
+        self.prune_link = prune_link
+        self.no_guard = no_guard
+        self.resolve = resolve
+
+    def entries(self, tmdb_info):
+        """Return the payload list of the group. A missing list is empty."""
+
+        value = tmdb_info
+        for part in self.path:
+            value = (value or {}).get(part) if isinstance(value, dict) else None
+        if isinstance(value, dict):
+            return [value]
+        return list(value or [])
+
+    def values(self, entry):
+        """Return the column values of a row from its payload entry."""
+
+        return {
+            column: (field(entry) if callable(field) else entry.get(field))
+            for column, field in self.fields.items()
+        }
+
+
+def _movie_certifications(record, entries):
+    """Return the certification rows of the release dates of a movie payload.
+
+    Each country gives at most 1 rating (pick_rating). A rating with no
+    row in the table is not shown. The weekly sync adds the new ones."""
+
+    rows = []
+    for country_release in entries:
+        country = country_release.get("iso_3166_1")
+        if not country:
+            continue
+        rating = pick_rating(
+            country_release.get("release_dates"),
+            "certification",
+            preferred=lambda entry: entry.get("type") == 3,
+        )
+        if rating:
+            certification = RefTMDBCertification.query.filter_by(
+                country=country, certification=rating
+            ).first()
+            if certification:
+                rows.append(certification)
+    return rows
+
+
+def _tmdb_credit(person):
+    """Return the TMDBCredit row of a payload person. Make it if it is new."""
+
+    credit = TMDBCredit.query.filter_by(id=person.get("id")).first()
+    if not credit:
+        credit = TMDBCredit(
+            id=person.get("id"),
+            name=person.get("name"),
+            gender=person.get("gender"),
+            tmdb_profile_path=person.get("profile_path"),
+        )
+        db.session.add(credit)
+    return credit
+
+
 class TMDBUnavailable(Exception):
     """TMDB answered a details request with an error that is not a 404 (#342)."""
 
@@ -264,6 +384,92 @@ class TMDBMixin(object):
                     f"than {length}. It is shortened"
                 )
                 setattr(self, name, value[:length])
+
+    def _apply_association(self, spec, tmdb_info):
+        """Replace the links of 1 association group from the payload.
+
+        TMDB can serve a payload with an empty list for a short time,
+        while the rest is intact. The bulk refreshes of 2026-08-07 to
+        2026-08-13 got empty genre lists for approximately 16% of the
+        requests. An unconditional delete then erased the genres of 943
+        films (#251). Thus, an empty incoming list never deletes the
+        links that the record has. Fitzflix keeps them and logs the
+        anomaly. A spec with no_guard skips this check. Each clear-out
+        goes through the links of this record only (#295)."""
+
+        entries = spec.entries(tmdb_info)
+        links = getattr(self, spec.rel)
+        if entries or spec.no_guard or links.count() == 0:
+            _clear_links(links)
+        else:
+            current_app.logger.warning(
+                f"{self} TMDB payload carries no {spec.label}; "
+                f"keeping the stored {spec.kept}"
+            )
+            return
+        if not entries:
+            return
+
+        model = globals()[spec.model]
+        if spec.resolve:
+            rows = spec.resolve(self, entries)
+        else:
+            rows = []
+            for entry in entries:
+                row = model.query.filter_by(id=entry.get(spec.key)).first()
+                if not row:
+                    row = model(id=entry.get(spec.key), **spec.values(entry))
+                    db.session.add(row)
+                elif spec.refresh_fields:
+                    for column, value in spec.values(entry).items():
+                        setattr(row, column, value)
+                rows.append(row)
+        for row in rows:
+            if links.filter(model.id == row.id).count() == 0:
+                links.append(row)
+
+        if spec.prune_link is not None:
+            db.session.flush()
+            linked = db.session.query(spec.prune_link).filter(
+                spec.prune_link.isnot(None)
+            )
+            model.query.filter(~model.id.in_(linked)).delete(synchronize_session=False)
+
+    def _apply_scalars(self, tmdb_info):
+        """Copy the external ids, the scalars and the dates of the payload.
+
+        A scalar keeps its stored value if the KEY is absent (#252). A
+        full details payload always carries every key, with null where
+        TMDB has nothing. Thus, a missing key means a partial payload. It
+        must not set a populated column to null. A key that is present
+        with null still clears the column. That is TMDB that removes real
+        data. A date changes only when the payload has a value."""
+
+        external_ids = tmdb_info.get("external_ids")
+        if external_ids:
+            for column, field in self.EXTERNAL_ID_FIELDS:
+                setattr(self, column, external_ids.get(field))
+        for column, field in self.SCALAR_FIELDS:
+            setattr(self, column, tmdb_info.get(field, getattr(self, column)))
+        for column, field in self.DATE_FIELDS:
+            if tmdb_info.get(field):
+                setattr(self, column, _tmdb_date(tmdb_info.get(field)))
+
+    def _clear_tmdb(self):
+        """Remove every TMDB field and link that the apply tables name.
+
+        The caller removes the credit rows. The record is then marked as
+        ignored."""
+
+        for spec in self.TMDB_ASSOCIATIONS:
+            _clear_links(getattr(self, spec.rel))
+        for column, _ in (
+            self.EXTERNAL_ID_FIELDS + self.SCALAR_FIELDS + self.DATE_FIELDS
+        ):
+            setattr(self, column, None)
+        for column in self.CLEARED_FIELDS:
+            setattr(self, column, None)
+        self.tmdb_ignored = True
 
     def tmdb_movie_fetch(self, tmdb_id=None):
         """Do the network half of a TMDB movie refresh.
@@ -352,150 +558,10 @@ class TMDBMixin(object):
         if not tmdb_info:
             return self
 
-        # Delete the existing records associated with this movie. Each
-        # clear-out goes through the links of this film only (#295).
-
-        _clear_links(self.collections)
-
-        # Cast and crew get the same empty-payload guard as the association
-        # groups below (#252). Before, the bulk delete ran before any
-        # payload check. Thus, a bad payload with an empty or missing
-        # credits section deleted the cast of a film permanently. This is
-        # the #251 failure shape. It hits the /people rankings, the cast
-        # criteria shelves, and the Name That Frame distractors.
-
-        incoming_credits = tmdb_info.get("credits") or {}
-        if (
-            incoming_credits.get("cast")
-            or MovieCast.query.filter_by(movie_id=self.id).count() == 0
-        ):
-            MovieCast.query.filter_by(movie_id=self.id).delete()
-        else:
-            current_app.logger.warning(
-                f"{self} TMDB payload carries no cast; keeping the stored rows"
-            )
-        if (
-            incoming_credits.get("crew")
-            or MovieCrew.query.filter_by(movie_id=self.id).count() == 0
-        ):
-            MovieCrew.query.filter_by(movie_id=self.id).delete()
-        else:
-            current_app.logger.warning(
-                f"{self} TMDB payload carries no crew; keeping the stored rows"
-            )
-
-        # TMDB can serve a details payload with an empty genre list for a
-        # short time, while the rest is intact. The bulk refreshes of
-        # 2026-08-07 to 2026-08-13 got such payloads for approximately 16%
-        # of the requests. The unconditional delete here then erased the
-        # genres of 943 films permanently (#251. The credits glitch of
-        # 2026-08-22 had the same failure shape). An empty incoming list
-        # never deletes the rows that the record already has. Fitzflix
-        # keeps the rows and logs the anomaly. A film can really lose all
-        # its genres or keywords on TMDB. That is much more rare than bad
-        # data from TMDB for a short time.
-
-        if tmdb_info.get("genres") or self.genres.count() == 0:
-            _clear_links(self.genres)
-        else:
-            current_app.logger.warning(
-                f"{self} TMDB payload carries no genres; " f"keeping the stored ones"
-            )
-
-        if (tmdb_info.get("keywords") or {}).get(
-            "keywords"
-        ) or self.keywords.count() == 0:
-            _clear_links(self.keywords)
-        else:
-            current_app.logger.warning(
-                f"{self} TMDB payload carries no keywords; " f"keeping the stored ones"
-            )
-
-        # The remaining association groups carry the same guard (#252).
-        # Collections have no guard on purpose. belongs_to_collection is
-        # correctly null for most films.
-
-        if (
-            tmdb_info.get("production_companies")
-            or self.production_companies.count() == 0
-        ):
-            _clear_links(self.production_companies)
-        else:
-            current_app.logger.warning(
-                f"{self} TMDB payload carries no production companies; "
-                f"keeping the stored ones"
-            )
-
-        if (
-            tmdb_info.get("production_countries")
-            or self.production_countries.count() == 0
-        ):
-            _clear_links(self.production_countries)
-        else:
-            current_app.logger.warning(
-                f"{self} TMDB payload carries no production countries; "
-                f"keeping the stored ones"
-            )
-
-        if tmdb_info.get("spoken_languages") or self.spoken_languages.count() == 0:
-            _clear_links(self.spoken_languages)
-        else:
-            current_app.logger.warning(
-                f"{self} TMDB payload carries no spoken languages; "
-                f"keeping the stored ones"
-            )
-
-        if (tmdb_info.get("release_dates") or {}).get(
-            "results"
-        ) or self.certifications.count() == 0:
-            _clear_links(self.certifications)
-        else:
-            current_app.logger.warning(
-                f"{self} TMDB payload carries no release dates; "
-                f"keeping the stored certifications"
-            )
-
-        # Add the new data from TMDB.
-
-        if tmdb_info.get("external_ids"):
-            external_ids = tmdb_info.get("external_ids")
-            self.imdb_id = external_ids.get("imdb_id")
-
-        # A scalar keeps its stored value if the KEY is absent (#252). A
-        # full details payload always carries every key (null where TMDB
-        # has nothing). Thus, a missing key means a partial payload. Do
-        # not let it set a populated column to null. A key that is present
-        # with null still clears the column. That is TMDB that removes
-        # real data.
-
-        self.tmdb_id = tmdb_info.get("id", self.tmdb_id)
-        self.tmdb_adult = tmdb_info.get("adult", self.tmdb_adult)
-        self.tmdb_backdrop_path = tmdb_info.get(
-            "backdrop_path", self.tmdb_backdrop_path
-        )
-        self.tmdb_budget = tmdb_info.get("budget", self.tmdb_budget)
-        self.tmdb_homepage = tmdb_info.get("homepage", self.tmdb_homepage)
-        self.tmdb_original_language = tmdb_info.get(
-            "original_language", self.tmdb_original_language
-        )
-        self.tmdb_original_title = tmdb_info.get(
-            "original_title", self.tmdb_original_title
-        )
-        self.tmdb_overview = tmdb_info.get("overview", self.tmdb_overview)
-        self.tmdb_popularity = tmdb_info.get("popularity", self.tmdb_popularity)
-        self.tmdb_poster_path = tmdb_info.get("poster_path", self.tmdb_poster_path)
+        self._apply_scalars(tmdb_info)
         canonical_year = self.year
-        if tmdb_info.get("release_date"):
-            self.tmdb_release_date = datetime.strptime(
-                tmdb_info.get("release_date"), "%Y-%m-%d"
-            )
+        if self.tmdb_release_date and tmdb_info.get("release_date"):
             canonical_year = self.tmdb_release_date.year
-
-        self.tmdb_revenue = tmdb_info.get("revenue", self.tmdb_revenue)
-        self.tmdb_runtime = tmdb_info.get("runtime", self.tmdb_runtime)
-        self.tmdb_status = tmdb_info.get("status", self.tmdb_status)
-        self.tmdb_tagline = tmdb_info.get("tagline", self.tmdb_tagline)
-        self.tmdb_title = tmdb_info.get("title", self.tmdb_title)
         self._fit_tmdb_strings()
 
         # Rename this movie to the canonical TMDB title and year, unless a
@@ -543,206 +609,71 @@ class TMDBMixin(object):
         elif canonical_title:
             self.title = canonical_title
             self.year = canonical_year
-        self.tmdb_video = tmdb_info.get("video", self.tmdb_video)
-        self.tmdb_vote_average = tmdb_info.get("vote_average", self.tmdb_vote_average)
-        self.tmdb_vote_count = tmdb_info.get("vote_count", self.tmdb_vote_count)
         if tmdb_info.get("id"):
             self.tmdb_data_as_of = datetime.now(timezone.utc)
 
-        release_dates = tmdb_info.get("release_dates")
-        if release_dates:
-            if release_dates.get("results"):
-                for country_release in release_dates["results"]:
-                    country = country_release.get("iso_3166_1")
-                    if country:
-                        # TMDB lists 1 entry for each release type. The
-                        # premiere (type 1) usually has a blank
-                        # certification. Thus, the theatrical entry (type 3)
-                        # comes first, then the first entry with a value.
+        for spec in self.TMDB_ASSOCIATIONS:
+            self._apply_association(spec, tmdb_info)
 
-                        dates = sorted(
-                            country_release.get("release_dates") or [],
-                            key=lambda entry: entry.get("type") != 3,
-                        )
-                        rating = next(
-                            (
-                                entry.get("certification")
-                                for entry in dates
-                                if entry.get("certification")
-                            ),
-                            None,
-                        )
-                        if rating:
-                            certification = RefTMDBCertification.query.filter_by(
-                                country=country, certification=rating
-                            ).first()
-                            if certification:
-                                self.certifications.append(certification)
+        # Cast and crew get the same empty-payload guard as the association
+        # groups (#252). Before, the bulk delete ran before any payload
+        # check. Thus, a bad payload with an empty or missing credits
+        # section deleted the cast of a film permanently. This is the #251
+        # failure shape. It hits the /people rankings, the cast criteria
+        # shelves, and the Name That Frame distractors.
 
-        if tmdb_info.get("belongs_to_collection"):
-            collection = tmdb_info.get("belongs_to_collection")
-            movie_collection = TMDBMovieCollection.query.filter_by(
-                id=collection.get("id")
-            ).first()
-            if not movie_collection:
-                movie_collection = TMDBMovieCollection(
-                    id=collection.get("id"),
-                    tmdb_backdrop_path=collection.get("backdrop_path"),
-                    name=collection.get("name"),
-                    tmdb_poster_path=collection.get("poster_path"),
+        incoming_credits = tmdb_info.get("credits") or {}
+        for model, section in ((MovieCast, "cast"), (MovieCrew, "crew")):
+            rows = model.query.filter_by(movie_id=self.id)
+            if incoming_credits.get(section) or rows.count() == 0:
+                rows.delete()
+            else:
+                current_app.logger.warning(
+                    f"{self} TMDB payload carries no {section}; keeping the "
+                    f"stored rows"
                 )
-                db.session.add(movie_collection)
-
-            if (
-                self.collections.filter(
-                    TMDBMovieCollection.id == movie_collection.id
-                ).count()
-                == 0
-            ):
-                self.collections.append(movie_collection)
 
         if tmdb_info.get("credits"):
             invalidate_people_ranking()
             credits = tmdb_info.get("credits")
             for person in tmdb_objects(credits.get("cast"), self, "cast"):
-                p = TMDBCredit.query.filter_by(id=person.get("id")).first()
-                if not p:
-                    p = TMDBCredit(
-                        id=person.get("id"),
-                        name=person.get("name"),
-                        gender=person.get("gender"),
-                        tmdb_profile_path=person.get("profile_path"),
-                    )
-                    db.session.add(p)
-
+                credit = _tmdb_credit(person)
                 if (
                     MovieCast.query.filter_by(
                         movie_id=self.id,
-                        credit_id=p.id,
+                        credit_id=credit.id,
                         character=person.get("character"),
                     ).count()
                     == 0
                 ):
-                    mc = MovieCast(
-                        movie_id=self.id,
-                        credit_id=p.id,
-                        character=person.get("character"),
-                        billing_order=person.get("order"),
+                    db.session.add(
+                        MovieCast(
+                            movie_id=self.id,
+                            credit_id=credit.id,
+                            character=person.get("character"),
+                            billing_order=person.get("order"),
+                        )
                     )
-                    db.session.add(mc)
 
             for person in tmdb_objects(credits.get("crew"), self, "crew"):
-                p = TMDBCredit.query.filter_by(id=person.get("id")).first()
-                if not p:
-                    p = TMDBCredit(
-                        id=person.get("id"),
-                        name=person.get("name"),
-                        gender=person.get("gender"),
-                        tmdb_profile_path=person.get("profile_path"),
-                    )
-                    db.session.add(p)
-
+                credit = _tmdb_credit(person)
                 if (
                     MovieCrew.query.filter_by(
                         movie_id=self.id,
-                        credit_id=p.id,
+                        credit_id=credit.id,
                         department=person.get("department"),
                         job=person.get("job"),
                     ).count()
                     == 0
                 ):
-                    mc = MovieCrew(
-                        movie_id=self.id,
-                        credit_id=p.id,
-                        department=person.get("department"),
-                        job=person.get("job"),
+                    db.session.add(
+                        MovieCrew(
+                            movie_id=self.id,
+                            credit_id=credit.id,
+                            department=person.get("department"),
+                            job=person.get("job"),
+                        )
                     )
-                    db.session.add(mc)
-
-        if tmdb_info.get("genres"):
-            tmdb_genres = tmdb_info.get("genres")
-            for genre in tmdb_genres:
-                g = TMDBGenre.query.filter_by(id=genre.get("id")).first()
-                if not g:
-                    g = TMDBGenre(id=genre.get("id"), name=genre.get("name"))
-                    db.session.add(g)
-
-                if self.genres.filter(TMDBGenre.id == g.id).count() == 0:
-                    self.genres.append(g)
-
-        if tmdb_info.get("keywords"):
-            tmdb_keywords = tmdb_info.get("keywords")
-            for keyword in tmdb_keywords.get("keywords"):
-                k = TMDBKeyword.query.filter_by(id=keyword.get("id")).first()
-                if not k:
-                    k = TMDBKeyword(id=keyword.get("id"), name=keyword.get("name"))
-                    db.session.add(k)
-
-                if self.keywords.filter(TMDBKeyword.id == k.id).count() == 0:
-                    self.keywords.append(k)
-
-        if tmdb_info.get("production_companies"):
-            tmdb_production_companies = tmdb_info.get("production_companies")
-            for company in tmdb_production_companies:
-                prod_company = TMDBProductionCompany.query.filter_by(
-                    id=company.get("id")
-                ).first()
-                if not prod_company:
-                    prod_company = TMDBProductionCompany(
-                        id=company.get("id"),
-                        name=company.get("name"),
-                        country=company.get("origin_country"),
-                        tmdb_logo_path=company.get("logo_path"),
-                    )
-                    db.session.add(prod_company)
-
-                if (
-                    self.production_companies.filter(
-                        TMDBProductionCompany.id == prod_company.id
-                    ).count()
-                    == 0
-                ):
-                    self.production_companies.append(prod_company)
-
-        if tmdb_info.get("production_countries"):
-            tmdb_production_countries = tmdb_info.get("production_countries")
-            for country in tmdb_production_countries:
-                prod_country = TMDBProductionCountry.query.filter_by(
-                    id=country.get("iso_3166_1")
-                ).first()
-                if not prod_country:
-                    prod_country = TMDBProductionCountry(
-                        id=country.get("iso_3166_1"), name=country.get("name")
-                    )
-                    db.session.add(prod_country)
-
-                if (
-                    self.production_countries.filter(
-                        TMDBProductionCountry.id == prod_country.id
-                    ).count()
-                    == 0
-                ):
-                    self.production_countries.append(prod_country)
-
-        if tmdb_info.get("spoken_languages"):
-            tmdb_languages = tmdb_info.get("spoken_languages")
-            for language in tmdb_languages:
-                spoken_lang = TMDBSpokenLanguage.query.filter_by(
-                    id=language.get("iso_639_1")
-                ).first()
-                if not spoken_lang:
-                    spoken_lang = TMDBSpokenLanguage(
-                        id=language.get("iso_639_1"), name=language.get("name")
-                    )
-                    db.session.add(spoken_lang)
-
-                if (
-                    self.spoken_languages.filter(
-                        TMDBSpokenLanguage.id == spoken_lang.id
-                    ).count()
-                    == 0
-                ):
-                    self.spoken_languages.append(spoken_lang)
 
         return self
 
@@ -771,42 +702,7 @@ class TMDBMixin(object):
         MovieCast.query.filter_by(movie_id=self.id).delete()
         MovieCrew.query.filter_by(movie_id=self.id).delete()
         invalidate_people_ranking()
-
-        for related in (
-            self.collections,
-            self.genres,
-            self.keywords,
-            self.production_companies,
-            self.production_countries,
-            self.spoken_languages,
-            self.certifications,
-        ):
-            for row in related.all():
-                related.remove(row)
-
-        self.imdb_id = None
-        self.tmdb_id = None
-        self.tmdb_adult = None
-        self.tmdb_backdrop_path = None
-        self.tmdb_budget = None
-        self.tmdb_homepage = None
-        self.tmdb_original_language = None
-        self.tmdb_original_title = None
-        self.tmdb_overview = None
-        self.tmdb_popularity = None
-        self.tmdb_poster_path = None
-        self.tmdb_release_date = None
-        self.tmdb_revenue = None
-        self.tmdb_runtime = None
-        self.tmdb_status = None
-        self.tmdb_tagline = None
-        self.tmdb_title = None
-        self.tmdb_video = None
-        self.tmdb_vote_average = None
-        self.tmdb_vote_count = None
-        self.tmdb_data_as_of = None
-        self.tmdb_ignored = True
-
+        self._clear_tmdb()
         return self
 
     def tmdb_tv_fetch(self, tmdb_id=None):
@@ -887,214 +783,32 @@ class TMDBMixin(object):
         if not tmdb_info:
             return self
 
-        # Delete the existing records associated with this TV series.
-        # Genres and keywords get the same empty-payload guard as
-        # tmdb_movie_apply (#251). The TV keyword lists are in "results".
-
-        if tmdb_info.get("genres") or self.genres.count() == 0:
-            _clear_links(self.genres)
-        else:
-            current_app.logger.warning(
-                f"{self} TMDB payload carries no genres; " f"keeping the stored ones"
-            )
-
-        if (tmdb_info.get("keywords") or {}).get(
-            "results"
-        ) or self.keywords.count() == 0:
-            _clear_links(self.keywords)
-        else:
-            current_app.logger.warning(
-                f"{self} TMDB payload carries no keywords; " f"keeping the stored ones"
-            )
-
-        if tmdb_info.get("networks") or self.networks.count() == 0:
-            _clear_links(self.networks)
-        else:
-            current_app.logger.warning(
-                f"{self} TMDB payload carries no networks; keeping the stored ones"
-            )
-
-        if (
-            tmdb_info.get("production_companies")
-            or self.production_companies.count() == 0
-        ):
-            _clear_links(self.production_companies)
-        else:
-            current_app.logger.warning(
-                f"{self} TMDB payload carries no production companies; "
-                f"keeping the stored ones"
-            )
-
-        if tmdb_info.get("seasons") or self.seasons.count() == 0:
-            _clear_links(self.seasons)
-        else:
-            current_app.logger.warning(
-                f"{self} TMDB payload carries no seasons; keeping the stored ones"
-            )
-
-        # Add the new data from TMDB.
-
-        if tmdb_info.get("external_ids"):
-            external_ids = tmdb_info.get("external_ids")
-            self.imdb_id = external_ids.get("imdb_id")
-            self.tvdb_id = external_ids.get("tvdb_id")
-
-        # A scalar keeps its stored value if the key is absent, the same
-        # as the movie side (#252). The id is a scalar too.
-
-        self.tmdb_id = tmdb_info.get("id", self.tmdb_id)
-
-        self.tmdb_backdrop_path = tmdb_info.get(
-            "backdrop_path", self.tmdb_backdrop_path
-        )
-        if tmdb_info.get("first_air_date"):
-            self.tmdb_first_air_date = datetime.strptime(
-                tmdb_info.get("first_air_date"), "%Y-%m-%d"
-            )
-
-        self.tmdb_homepage = tmdb_info.get("homepage", self.tmdb_homepage)
-        self.tmdb_in_production = tmdb_info.get(
-            "in_production", self.tmdb_in_production
-        )
-        if tmdb_info.get("last_air_date"):
-            self.tmdb_last_air_date = datetime.strptime(
-                tmdb_info.get("last_air_date"), "%Y-%m-%d"
-            )
-
-        self.tmdb_name = tmdb_info.get("name", self.tmdb_name)
+        self._apply_scalars(tmdb_info)
         if tmdb_info.get("status") == "Ended":
             self.tmdb_number_of_episodes = tmdb_info.get("number_of_episodes")
             self.tmdb_number_of_seasons = tmdb_info.get("number_of_seasons")
 
         # The US content rating is in the appended content_ratings block.
         # A payload with no US entry keeps the stored rating, the same as
-        # the empty-list guards above (#251).
+        # the empty-list guards of the associations (#251).
 
-        for country_rating in (tmdb_info.get("content_ratings") or {}).get(
-            "results"
-        ) or []:
-            if country_rating.get("iso_3166_1") == "US" and country_rating.get(
-                "rating"
-            ):
-                self.tmdb_content_rating = country_rating.get("rating")
-                break
-
-        self.tmdb_original_language = tmdb_info.get(
-            "original_language", self.tmdb_original_language
+        rating = pick_rating(
+            [
+                entry
+                for entry in (tmdb_info.get("content_ratings") or {}).get("results")
+                or []
+                if isinstance(entry, dict) and entry.get("iso_3166_1") == "US"
+            ],
+            "rating",
         )
-        self.tmdb_original_name = tmdb_info.get(
-            "original_name", self.tmdb_original_name
-        )
-        self.tmdb_overview = tmdb_info.get("overview", self.tmdb_overview)
-        self.tmdb_popularity = tmdb_info.get("popularity", self.tmdb_popularity)
-        self.tmdb_poster_path = tmdb_info.get("poster_path", self.tmdb_poster_path)
-        self.tmdb_status = tmdb_info.get("status", self.tmdb_status)
-        self.tmdb_type = tmdb_info.get("type", self.tmdb_type)
-        self.tmdb_vote_average = tmdb_info.get("vote_average", self.tmdb_vote_average)
-        self.tmdb_vote_count = tmdb_info.get("vote_count", self.tmdb_vote_count)
+        if rating:
+            self.tmdb_content_rating = rating
         self._fit_tmdb_strings()
         if tmdb_info.get("id"):
             self.tmdb_data_as_of = datetime.now(timezone.utc)
 
-        if tmdb_info.get("genres"):
-            tmdb_genres = tmdb_info.get("genres")
-            for genre in tmdb_genres:
-                g = TMDBGenre.query.filter_by(id=genre.get("id")).first()
-                if not g:
-                    g = TMDBGenre(id=genre.get("id"), name=genre.get("name"))
-                    db.session.add(g)
-
-                if self.genres.filter(TMDBGenre.id == g.id).count() == 0:
-                    self.genres.append(g)
-
-        if tmdb_info.get("keywords"):
-            tmdb_keywords = tmdb_info.get("keywords")
-            for keyword in tmdb_keywords.get("results"):
-                k = TMDBKeyword.query.filter_by(id=keyword.get("id")).first()
-                if not k:
-                    k = TMDBKeyword(id=keyword.get("id"), name=keyword.get("name"))
-                    db.session.add(k)
-
-                if self.keywords.filter(TMDBKeyword.id == k.id).count() == 0:
-                    self.keywords.append(k)
-
-        if tmdb_info.get("networks"):
-            tmdb_networks = tmdb_info.get("networks")
-            for network in tmdb_networks:
-                n = TMDBNetwork.query.filter_by(id=network.get("id")).first()
-                if not n:
-                    n = TMDBNetwork(
-                        id=network.get("id"),
-                        tmdb_logo_path=network.get("logo_path"),
-                        name=network.get("name"),
-                        origin_country=network.get("origin_country"),
-                    )
-                    db.session.add(n)
-
-                if self.networks.filter(TMDBNetwork.id == n.id).count() == 0:
-                    self.networks.append(n)
-
-        if tmdb_info.get("production_companies"):
-            tmdb_production_companies = tmdb_info.get("production_companies")
-            for company in tmdb_production_companies:
-                prod_company = TMDBProductionCompany.query.filter_by(
-                    id=company.get("id")
-                ).first()
-                if not prod_company:
-                    prod_company = TMDBProductionCompany(
-                        id=company.get("id"),
-                        name=company.get("name"),
-                        country=company.get("origin_country"),
-                        tmdb_logo_path=company.get("logo_path"),
-                    )
-                    db.session.add(prod_company)
-
-                if (
-                    self.production_companies.filter(
-                        TMDBProductionCompany.id == prod_company.id
-                    ).count()
-                    == 0
-                ):
-                    self.production_companies.append(prod_company)
-
-        if tmdb_info.get("seasons"):
-            tmdb_seasons = tmdb_info.get("seasons")
-            for season in tmdb_seasons:
-                s = TMDBSeason.query.filter_by(id=season.get("id")).first()
-                if not s:
-                    s = TMDBSeason(id=season.get("id"))
-                    db.session.add(s)
-
-                # Set the fields on every refresh, not only at creation.
-                # The original create-only code kept episode_count frozen
-                # at the value the season had when first seen. The census
-                # of the TV overhaul found announcement-time counts that
-                # were years old.
-
-                s.air_date = (
-                    datetime.strptime(season.get("air_date"), "%Y-%m-%d")
-                    if season.get("air_date")
-                    else None
-                )
-                s.episode_count = season.get("episode_count")
-                s.name = season.get("name")
-                s.overview = season.get("overview")
-                s.tmdb_poster_path = season.get("poster_path")
-                s.season_number = season.get("season_number")
-
-                if self.seasons.filter(TMDBSeason.id == s.id).count() == 0:
-                    self.seasons.append(s)
-
-            # A season that TMDB renumbered, or the season of a deleted
-            # series, has no link now. Remove it.
-
-            db.session.flush()
-            linked = db.session.query(tv_seasons.c.season_id).filter(
-                tv_seasons.c.season_id.isnot(None)
-            )
-            TMDBSeason.query.filter(~TMDBSeason.id.in_(linked)).delete(
-                synchronize_session=False
-            )
+        for spec in self.TMDB_ASSOCIATIONS:
+            self._apply_association(spec, tmdb_info)
 
         # Series cast and crew. Replace the join rows of this series from
         # the aggregate credits, the same as the movie apply. Delete, then
@@ -1140,15 +854,7 @@ class TMDBMixin(object):
 
             seen_roles = set()
             for person in tmdb_objects(aggregate.get("cast"), self, "cast"):
-                p = TMDBCredit.query.filter_by(id=person.get("id")).first()
-                if not p:
-                    p = TMDBCredit(
-                        id=person.get("id"),
-                        name=person.get("name"),
-                        gender=person.get("gender"),
-                        tmdb_profile_path=person.get("profile_path"),
-                    )
-                    db.session.add(p)
+                p = _tmdb_credit(person)
 
                 for role in tmdb_objects(
                     person.get("roles"), self, f"cast {person.get('id')} role"
@@ -1169,15 +875,7 @@ class TMDBMixin(object):
 
             seen_jobs = set()
             for person in tmdb_objects(aggregate.get("crew"), self, "crew"):
-                p = TMDBCredit.query.filter_by(id=person.get("id")).first()
-                if not p:
-                    p = TMDBCredit(
-                        id=person.get("id"),
-                        name=person.get("name"),
-                        gender=person.get("gender"),
-                        tmdb_profile_path=person.get("profile_path"),
-                    )
-                    db.session.add(p)
+                p = _tmdb_credit(person)
 
                 for job in tmdb_objects(
                     person.get("jobs"), self, f"crew {person.get('id')} job"
@@ -1206,41 +904,7 @@ class TMDBMixin(object):
         TVCast.query.filter_by(tv_id=self.id).delete()
         TVCrew.query.filter_by(tv_id=self.id).delete()
         invalidate_people_ranking()
-
-        for related in (
-            self.genres,
-            self.keywords,
-            self.networks,
-            self.production_companies,
-            self.seasons,
-        ):
-            for row in related.all():
-                related.remove(row)
-
-        self.imdb_id = None
-        self.tvdb_id = None
-        self.tmdb_id = None
-        self.tmdb_backdrop_path = None
-        self.tmdb_content_rating = None
-        self.tmdb_first_air_date = None
-        self.tmdb_homepage = None
-        self.tmdb_poster_path = None
-        self.tmdb_in_production = None
-        self.tmdb_last_air_date = None
-        self.tmdb_name = None
-        self.tmdb_number_of_seasons = None
-        self.tmdb_number_of_episodes = None
-        self.tmdb_original_language = None
-        self.tmdb_original_name = None
-        self.tmdb_overview = None
-        self.tmdb_popularity = None
-        self.tmdb_status = None
-        self.tmdb_type = None
-        self.tmdb_vote_average = None
-        self.tmdb_vote_count = None
-        self.tmdb_data_as_of = None
-        self.tmdb_ignored = True
-
+        self._clear_tmdb()
         return self
 
 
@@ -1895,6 +1559,78 @@ class Movie(db.Model, TMDBMixin, Utilities):
 
     __table_args__ = (db.UniqueConstraint("title", "year"),)
 
+    # The apply tables of the TMDB mixin. tmdb_movie_clear clears the
+    # same columns and links.
+
+    EXTERNAL_ID_FIELDS = (("imdb_id", "imdb_id"),)
+    SCALAR_FIELDS = (
+        ("tmdb_id", "id"),
+        ("tmdb_adult", "adult"),
+        ("tmdb_backdrop_path", "backdrop_path"),
+        ("tmdb_budget", "budget"),
+        ("tmdb_homepage", "homepage"),
+        ("tmdb_original_language", "original_language"),
+        ("tmdb_original_title", "original_title"),
+        ("tmdb_overview", "overview"),
+        ("tmdb_popularity", "popularity"),
+        ("tmdb_poster_path", "poster_path"),
+        ("tmdb_revenue", "revenue"),
+        ("tmdb_runtime", "runtime"),
+        ("tmdb_status", "status"),
+        ("tmdb_tagline", "tagline"),
+        ("tmdb_title", "title"),
+        ("tmdb_video", "video"),
+        ("tmdb_vote_average", "vote_average"),
+        ("tmdb_vote_count", "vote_count"),
+    )
+    DATE_FIELDS = (("tmdb_release_date", "release_date"),)
+    CLEARED_FIELDS = ("tmdb_data_as_of",)
+    TMDB_ASSOCIATIONS = (
+        TMDBAssociation(
+            "collections",
+            "TMDBMovieCollection",
+            ("belongs_to_collection",),
+            fields={
+                "tmdb_backdrop_path": "backdrop_path",
+                "name": "name",
+                "tmdb_poster_path": "poster_path",
+            },
+            no_guard=True,
+        ),
+        TMDBAssociation("genres", "TMDBGenre", ("genres",)),
+        TMDBAssociation("keywords", "TMDBKeyword", ("keywords", "keywords")),
+        TMDBAssociation(
+            "production_companies",
+            "TMDBProductionCompany",
+            ("production_companies",),
+            fields={
+                "name": "name",
+                "country": "origin_country",
+                "tmdb_logo_path": "logo_path",
+            },
+        ),
+        TMDBAssociation(
+            "production_countries",
+            "TMDBProductionCountry",
+            ("production_countries",),
+            key="iso_3166_1",
+        ),
+        TMDBAssociation(
+            "spoken_languages",
+            "TMDBSpokenLanguage",
+            ("spoken_languages",),
+            key="iso_639_1",
+        ),
+        TMDBAssociation(
+            "certifications",
+            "RefTMDBCertification",
+            ("release_dates", "results"),
+            label="release dates",
+            kept="certifications",
+            resolve=_movie_certifications,
+        ),
+    )
+
     @property
     def display_title(self):
         """Return the site-wide display form: the TMDB title and year if known.
@@ -2008,6 +1744,81 @@ class TVSeries(db.Model, TMDBMixin):
         secondary=tv_seasons,
         backref=db.backref("tv_series", lazy="dynamic"),
         lazy="dynamic",
+    )
+
+    # The apply tables of the TMDB mixin. The episode counts change only
+    # for an ended series, and the content rating has its own pick.
+
+    EXTERNAL_ID_FIELDS = (("imdb_id", "imdb_id"), ("tvdb_id", "tvdb_id"))
+    SCALAR_FIELDS = (
+        ("tmdb_id", "id"),
+        ("tmdb_backdrop_path", "backdrop_path"),
+        ("tmdb_homepage", "homepage"),
+        ("tmdb_in_production", "in_production"),
+        ("tmdb_name", "name"),
+        ("tmdb_original_language", "original_language"),
+        ("tmdb_original_name", "original_name"),
+        ("tmdb_overview", "overview"),
+        ("tmdb_popularity", "popularity"),
+        ("tmdb_poster_path", "poster_path"),
+        ("tmdb_status", "status"),
+        ("tmdb_type", "type"),
+        ("tmdb_vote_average", "vote_average"),
+        ("tmdb_vote_count", "vote_count"),
+    )
+    DATE_FIELDS = (
+        ("tmdb_first_air_date", "first_air_date"),
+        ("tmdb_last_air_date", "last_air_date"),
+    )
+    CLEARED_FIELDS = (
+        "tmdb_content_rating",
+        "tmdb_number_of_seasons",
+        "tmdb_number_of_episodes",
+        "tmdb_data_as_of",
+    )
+    TMDB_ASSOCIATIONS = (
+        TMDBAssociation("genres", "TMDBGenre", ("genres",)),
+        TMDBAssociation("keywords", "TMDBKeyword", ("keywords", "results")),
+        TMDBAssociation(
+            "networks",
+            "TMDBNetwork",
+            ("networks",),
+            fields={
+                "tmdb_logo_path": "logo_path",
+                "name": "name",
+                "origin_country": "origin_country",
+            },
+        ),
+        TMDBAssociation(
+            "production_companies",
+            "TMDBProductionCompany",
+            ("production_companies",),
+            fields={
+                "name": "name",
+                "country": "origin_country",
+                "tmdb_logo_path": "logo_path",
+            },
+        ),
+        # The season fields change on every refresh, not only at the
+        # creation. The create-only code kept episode_count frozen at the
+        # value of the first sight. A season that TMDB renumbered, or the
+        # season of a deleted series, has no link after the apply. It
+        # goes (#305).
+        TMDBAssociation(
+            "seasons",
+            "TMDBSeason",
+            ("seasons",),
+            fields={
+                "air_date": lambda season: _tmdb_date(season.get("air_date")),
+                "episode_count": "episode_count",
+                "name": "name",
+                "overview": "overview",
+                "tmdb_poster_path": "poster_path",
+                "season_number": "season_number",
+            },
+            refresh_fields=True,
+            prune_link=tv_seasons.c.season_id,
+        ),
     )
 
     @property
