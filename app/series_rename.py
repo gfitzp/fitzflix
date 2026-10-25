@@ -18,11 +18,8 @@ a rename. The sync defers unless every queue is idle, and this task
 occupies one queue.
 """
 
-import json
 import os
 import traceback
-
-import urllib3
 
 from flask import current_app
 from pathvalidate import sanitize_filename
@@ -37,56 +34,37 @@ app = LocalProxy(get_app)
 
 
 def _update_sonarr_path(series, old_folder, new_folder):
-    """Point the Sonarr series at the renamed folder.
+    """Point the Sonarr series at the renamed folder, then request a rescan.
 
     Sonarr matches the series by TheTVDB id, its native key. Thus, the
     Sonarr imports and upgrades continue to arrive in the correct folder.
-    This function uses urllib3, the same as the arr webhook helpers. The
-    requests library segfaults on this host for arr calls."""
+    The PUT does not move files. This task moved them already. The
+    RescanSeries command makes Sonarr see the renamed files at once.
+    The call goes through the arr client (app.arr_client)."""
 
-    base_url = current_app.config.get("SONARR_URL")
-    api_key = current_app.config.get("SONARR_API_KEY")
-    if not (base_url and api_key and series.tvdb_id):
+    from app.arr_client import SONARR, rescan_command
+    from app.sonarr_push import _sonarr, sonarr_configured
+
+    if not (sonarr_configured() and series.tvdb_id):
         return False
 
-    http = urllib3.PoolManager()
-    headers = {"X-Api-Key": api_key, "Content-Type": "application/json"}
-    listing = http.request(
-        "GET", f"{base_url}/api/v3/series", headers=headers, timeout=15
+    listing = _sonarr("GET", f"/api/v3/series?tvdbId={int(series.tvdb_id)}") or []
+    entry = next(
+        (item for item in listing if item.get("tvdbId") == series.tvdb_id), None
     )
-    if listing.status != 200:
-        current_app.logger.warning(
-            f"Series rename: Sonarr series list answered {listing.status}"
+    if entry is None:
+        current_app.logger.info(
+            f"Series rename: Sonarr doesn't manage tvdb {series.tvdb_id}, skipping"
         )
         return False
 
-    for entry in json.loads(listing.data.decode("utf-8")):
-        if entry.get("tvdbId") != series.tvdb_id:
-            continue
-        old_path = entry.get("path") or ""
-        new_path = os.path.join(os.path.dirname(old_path), new_folder)
-        entry["path"] = new_path
-        put = http.request(
-            "PUT",
-            f"{base_url}/api/v3/series/{entry['id']}",
-            headers=headers,
-            body=json.dumps(entry).encode("utf-8"),
-            timeout=30,
-        )
-        if put.status in (200, 202):
-            current_app.logger.info(
-                f"Series rename: Sonarr path {old_path!r} -> {new_path!r}"
-            )
-            return True
-        current_app.logger.warning(
-            f"Series rename: Sonarr path update answered {put.status}"
-        )
-        return False
-
-    current_app.logger.info(
-        f"Series rename: Sonarr doesn't manage tvdb {series.tvdb_id}, skipping"
-    )
-    return False
+    old_path = entry.get("path") or ""
+    new_path = os.path.join(os.path.dirname(old_path), new_folder)
+    entry["path"] = new_path
+    _sonarr("PUT", f"/api/v3/series/{entry['id']}", entry)
+    current_app.logger.info(f"Series rename: Sonarr path {old_path!r} -> {new_path!r}")
+    _sonarr("POST", "/api/v3/command", rescan_command(SONARR, entry["id"]))
+    return True
 
 
 def _folder_title(title):

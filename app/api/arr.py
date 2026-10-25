@@ -275,13 +275,118 @@ def reject_incomplete_download(service, payload, file_path, refresh_command):
     return failed
 
 
+def handle_import_event(arr, payload, priority=None):
+    """Handle the import event of a Radarr or Sonarr webhook.
+
+    The steps are the same for the 2 apps. Take the path of the file,
+    and refuse a path outside the root folders of arr. Reject a truncated
+    download. Downgrade the quality title. If the name changes, a task
+    lets arr rename its own file (#288, #289), and the task queues the
+    import. Otherwise rename the file here and queue the import.
+    priority is a function of the new file name. It returns True when
+    the import goes to the front of the queue. Only Sonarr gives it, for
+    a recent episode."""
+
+    from app.arr_client import configured, rescan_command
+    from app.arr_client import rename_download_locally
+    from app.importing import enqueue_localization
+    from app.settings import get_setting
+    from app.tasks import enqueue_task
+
+    response = jsonify(request.get_json())
+    owner = payload.get(arr.owner_key) or {}
+    media_file = payload[arr.file_key]
+    folder = owner.get(arr.folder_field)
+    relative = media_file.get("relativePath")
+    downloaded_file_path = downloaded_path(arr.name, folder, relative)
+    if downloaded_file_path is None:
+        current_app.logger.warning(
+            f"{arr.name} webhook named a file outside "
+            f"{arr.name.upper()}_ROOT_FOLDERS ({folder!r} + {relative!r}); "
+            f"refusing it"
+        )
+        response.status_code = 400
+        return response
+
+    # A download that is truncated per its container never reaches the
+    # pipeline. Fitzflix marks the grab as failed. Thus, arr blocklists
+    # the release and searches again.
+
+    owner_id = owner.get("id")
+    if import_source_incomplete(downloaded_file_path):
+        reject_incomplete_download(
+            arr.name,
+            payload,
+            downloaded_file_path,
+            rescan_command(arr, owner_id) if owner_id else None,
+        )
+        return response
+
+    # Find the name with the downgraded quality title.
+
+    original_quality = media_file.get("quality")
+    new_quality = downgrade_quality_title(
+        original_quality,
+        (payload.get("customFormatInfo") or {}).get("customFormatScore", 0),
+        get_setting(arr.min_score_setting),
+    )
+    new_name = os.path.basename(downloaded_file_path).replace(
+        f"[{original_quality}]", f"[{new_quality}]"
+    )
+    new_path = os.path.join(os.path.dirname(downloaded_file_path), new_name)
+    at_front = bool(priority and priority(new_name))
+    file_id = media_file.get("id")
+
+    # A rename in Fitzflix made arr lose its file, and arr downloaded it
+    # again (#288). Thus, arr changes the quality of its own record and
+    # renames the file, in a task. The task then queues the import. This
+    # keeps the webhook short.
+
+    if downloaded_file_path != new_path and owner_id and file_id and configured(arr):
+        enqueue_task(
+            arr.adopt_task,
+            int(owner_id),
+            int(file_id),
+            downloaded_file_path,
+            new_path,
+            new_quality,
+            *([at_front] if priority else []),
+            description=f"'{new_name}' Setting the {arr.name} quality",
+            result_ttl=86400,
+        )
+        current_app.logger.info(
+            f"'{downloaded_file_path}' {arr.name} renames it as '{new_name}'"
+        )
+        return response
+
+    # Import the downloaded file in place. An earlier version copied the
+    # file to the import directory. But if a second file arrived during
+    # the copy, the first copy was abandoned. A later version made a hard
+    # link in the import directory. But the NAS did not support hard
+    # links. A second webhook for the same file adds no second job (#287).
+
+    rename_download_locally(
+        arr,
+        downloaded_file_path,
+        new_path,
+        owner_id,
+        title=owner.get("title") or os.path.dirname(downloaded_file_path),
+    )
+    queued = (
+        enqueue_localization(new_path, at_front=True)
+        if at_front
+        else enqueue_localization(new_path)
+    )
+    if queued:
+        current_app.logger.info(f"'{new_path}' Sent to Fitzflix")
+    return response
+
+
 def send_arr_command(service, url, api_key, body):
     """POST a command to a Sonarr/Radarr API. Log a failure. Do not raise.
 
-    This function uses urllib3, not requests. The requests version crashed
-    with a segmentation fault on this machine many times. The cause was
-    never found.
-    """
+    This function uses urllib3. The docstring of app.arr_client records
+    the choice of the HTTP library."""
 
     try:
         http = urllib3.PoolManager()

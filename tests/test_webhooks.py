@@ -189,14 +189,13 @@ def test_incomplete_download_is_refused_and_marked_failed(
     nothing."""
 
     from app.api import arr as arr_module
-    from app.api import radarr as radarr_module
 
     movie_dir = tmp_path / "Heat (1995)"
     movie_dir.mkdir(parents=True)
     original = "Heat (1995) - [WEBDL-1080p].mkv"
     (movie_dir / original).write_bytes(b"partial")
 
-    monkeypatch.setattr(radarr_module, "import_source_incomplete", lambda path: True)
+    monkeypatch.setattr(arr_module, "import_source_incomplete", lambda path: True)
     calls = []
     monkeypatch.setattr(
         arr_module,
@@ -230,14 +229,13 @@ def test_incomplete_download_kept_when_failed_mark_fails(
     pipeline."""
 
     from app.api import arr as arr_module
-    from app.api import sonarr as sonarr_module
 
     series_dir = tmp_path / "Doctor Who (2005)" / "Season 01"
     series_dir.mkdir(parents=True)
     original = "Doctor Who (2005) - S01E01 - Rose [WEBDL-1080p].mkv"
     (series_dir / original).write_bytes(b"partial")
 
-    monkeypatch.setattr(sonarr_module, "import_source_incomplete", lambda path: True)
+    monkeypatch.setattr(arr_module, "import_source_incomplete", lambda path: True)
     monkeypatch.setattr(arr_module, "mark_grab_failed", lambda *args: False)
 
     response = client.post(
