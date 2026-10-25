@@ -196,6 +196,12 @@ def movie_shopping():
         type=str,
     )
 
+    # A quality id that is not a number counts as an unknown id. The
+    # fallback below then uses the default bound (#306).
+
+    min_quality = str(min_quality) if str(min_quality).isdecimal() else "0"
+    max_quality = str(max_quality) if str(max_quality).isdecimal() else "0"
+
     # The page heading comes from the active filters (below, after the
     # quality bounds are normalized). It does not come from a ?title=
     # query parameter. With the old approach, a crafted URL could put
@@ -1070,6 +1076,12 @@ def tv_shopping():
         .scalar(),
         type=str,
     )
+
+    # A quality id that is not a number counts as an unknown id. The
+    # fallback below then uses the default bound (#306).
+
+    min_quality = str(min_quality) if str(min_quality).isdecimal() else "0"
+    max_quality = str(max_quality) if str(max_quality).isdecimal() else "0"
 
     # This form filters the shopping list by quality.
 

@@ -1836,6 +1836,11 @@ def files():
     page = request.args.get("page", 1, type=int)
     q = request.args.get("q", None, type=str)
     quality = request.args.get("quality", "0", type=str)
+
+    # A stale or mistyped bookmark must not crash the page (#306).
+
+    if not quality.isdecimal():
+        quality = "0"
     audio = request.args.get("audio", None, type=str)
 
     movie_rank = (

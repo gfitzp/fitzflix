@@ -271,6 +271,11 @@ def movie_library():
     genre = request.args.get("genre", None, type=int)
     quality = request.args.get("quality", "0", type=str)
 
+    # A stale or mistyped bookmark must not crash the page (#306).
+
+    if not quality.isdecimal():
+        quality = "0"
+
     # This subquery gets the best movie files.
 
     ranked_files = (

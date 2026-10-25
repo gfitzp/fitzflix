@@ -708,3 +708,21 @@ def test_a_case_only_email_change_is_not_a_different_account(app, monkeypatch):
         )
         with pytest.raises(ValidationError, match="different email"):
             other.validate_email(other.email)
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/library/movie?quality=abc",
+        "/library/movie?quality=",
+        "/library/movie?quality=%C2%B2",
+        "/shopping-list/movie?min_quality=abc",
+        "/shopping-list/movie?max_quality=",
+        "/shopping-list/tv?min_quality=x",
+        "/library/files?quality=abc",
+    ],
+)
+def test_a_bad_quality_filter_shows_the_page(app, admin_client, path):
+    """A mistyped or stale quality id is "no filter", not a 500 (#306)."""
+
+    assert admin_client.get(path).status_code == 200
