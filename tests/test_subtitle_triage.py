@@ -525,35 +525,20 @@ def test_reset_triage_state_clears_verdict_and_aids(app):
 def test_a_text_track_snapshot_shows_its_caption(app, tmp_path):
     """ffmpeg cannot overlay text. Pillow draws the caption on the frame."""
 
-    import subprocess
-
     from PIL import Image
 
     from app import triage
+    from tests.media import make_sample_mkv
 
     srt = tmp_path / "subs.srt"
     srt.write_text("1\n00:00:01,000 --> 00:00:03,000\n<i>Hello there</i>\n\n")
-    video = tmp_path / "film.mkv"
-    subprocess.run(
-        [
-            app.config["FFMPEG_BIN"],
-            "-v",
-            "error",
-            "-y",
-            "-f",
-            "lavfi",
-            "-i",
-            "color=black:size=640x360:duration=4:rate=10",
-            "-i",
-            str(srt),
-            "-c:v",
-            "libx264",
-            "-c:s",
-            "srt",
-            str(video),
-        ],
-        check=True,
-        capture_output=True,
+    video = make_sample_mkv(
+        str(tmp_path / "film.mkv"),
+        audio=(),
+        video="black",
+        subtitles=(srt,),
+        size="640x360",
+        duration=4,
     )
     with app.app_context():
         codec, _position = triage._subtitle_stream(str(video), 1)

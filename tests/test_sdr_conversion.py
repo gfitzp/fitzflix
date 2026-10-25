@@ -3,7 +3,6 @@
 import json
 import os
 import shutil
-import subprocess
 from datetime import datetime
 
 import pytest
@@ -30,6 +29,7 @@ from app.sdr_conversion import (
 )
 
 from tests.conftest import _TMP
+from tests.media import make_sample_mkv
 from tests.test_scheduling import scheduled_jobs
 from tests.factories import (
     make_file,
@@ -351,42 +351,13 @@ def test_the_library_file_of_a_conversion_goes_to_transcoded(app, monkeypatch):
 # The import chain, with the real tools
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture(scope="session")
 def hdr10_mkv(app):
     """Build a 1-second HDR10 Matroska file with an English audio track."""
 
-    path = os.path.join(_TMP, "sample-hdr10.mkv")
-    if not os.path.exists(path):
-        subprocess.run(
-            [
-                app.config["FFMPEG_BIN"],
-                "-f",
-                "lavfi",
-                "-i",
-                "testsrc=duration=1:size=640x360:rate=24",
-                "-f",
-                "lavfi",
-                "-i",
-                "sine=frequency=440:duration=1",
-                "-c:v",
-                "libx265",
-                "-pix_fmt",
-                "yuv420p10le",
-                "-x265-params",
-                "hdr10=1:colorprim=bt2020:transfer=smpte2084:colormatrix=bt2020nc"
-                ":max-cll=1000,400:log-level=error",
-                "-c:a",
-                "aac",
-                "-metadata:s:a:0",
-                "language=eng",
-                "-shortest",
-                "-y",
-                path,
-            ],
-            check=True,
-            capture_output=True,
-        )
-    return path
+    return make_sample_mkv(
+        os.path.join(_TMP, "sample-hdr10.mkv"), video="hdr10", size="640x360"
+    )
 
 
 @pytest.fixture(autouse=True)

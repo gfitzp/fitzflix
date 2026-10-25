@@ -18,45 +18,24 @@ the file. That track becomes the first track. Thus, "default" and
 
 import os
 import shutil
-import subprocess
 
 import pytest
 
 from tests.conftest import _TMP
+from tests.media import make_sample_mkv
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture(scope="session")
 def three_audio_mkv(app):
     """Build a 1-second Matroska with eng/fra/deu audio.
 
     The default flag is on the SECOND track on purpose. Thus, the rule
     has something to correct."""
 
-    base = os.path.join(_TMP, "three-audio-base.mp4")
-    mkv = os.path.join(_TMP, "three-audio.mkv")
-    if not os.path.exists(mkv):
-        subprocess.run(
-            [app.config["FFMPEG_BIN"]]
-            + ["-f", "lavfi", "-i", "testsrc=duration=1:size=320x240:rate=10"]
-            + ["-f", "lavfi", "-i", "sine=frequency=440:duration=1"]
-            + ["-f", "lavfi", "-i", "sine=frequency=880:duration=1"]
-            + ["-f", "lavfi", "-i", "sine=frequency=1320:duration=1"]
-            + ["-map", "0:v", "-map", "1:a", "-map", "2:a", "-map", "3:a"]
-            + ["-c:v", "libx264", "-c:a", "aac", "-shortest", "-y", base],
-            check=True,
-            capture_output=True,
-        )
-        subprocess.run(
-            [app.config["MKVMERGE_BIN"], "-o", mkv]
-            + ["--language", "1:eng", "--language", "2:fra", "--language", "3:deu"]
-            + ["--default-track", "1:0"]
-            + ["--default-track", "2:1"]
-            + ["--default-track", "3:0"]
-            + [base],
-            check=True,
-            capture_output=True,
-        )
-    return mkv
+    return make_sample_mkv(
+        os.path.join(_TMP, "three-audio.mkv"),
+        audio=(("eng", False), ("fra", True), ("deu", False)),
+    )
 
 
 def _audio(app, path):

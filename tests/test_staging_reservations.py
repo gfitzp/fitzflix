@@ -2,7 +2,6 @@
 
 import json
 import os
-import subprocess
 import time
 
 import pytest
@@ -18,42 +17,17 @@ from app.importing import (
 )
 
 from tests.conftest import _TMP
+from tests.media import make_sample_mkv
 from tests.test_scheduling import scheduled_jobs
 
 GB = 1024**3
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture(scope="session")
 def sample_mkv(app):
     """Build a 1-second Matroska file with an English audio track."""
 
-    path = os.path.join(_TMP, "sample-staging.mkv")
-    if not os.path.exists(path):
-        subprocess.run(
-            [
-                app.config["FFMPEG_BIN"],
-                "-f",
-                "lavfi",
-                "-i",
-                "testsrc=duration=1:size=320x240:rate=10",
-                "-f",
-                "lavfi",
-                "-i",
-                "sine=frequency=440:duration=1",
-                "-c:v",
-                "libx264",
-                "-c:a",
-                "aac",
-                "-metadata:s:a:0",
-                "language=eng",
-                "-shortest",
-                "-y",
-                path,
-            ],
-            check=True,
-            capture_output=True,
-        )
-    return path
+    return make_sample_mkv(os.path.join(_TMP, "sample.mkv"))
 
 
 @pytest.fixture

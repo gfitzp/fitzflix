@@ -28,6 +28,7 @@ from app.models import File
 from app.videos import finalize_localization, localization_task, move_to_rejects
 
 from tests.conftest import _TMP
+from tests.media import make_sample_mkv, make_sample_mp4
 
 
 def loc_retry(source, **changes):
@@ -75,48 +76,11 @@ def settle(path, age_seconds=3600):
     os.utime(path, (stamp, stamp))
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture(scope="session")
 def sample_mkv(app):
     """Build a 1-second Matroska file with an English audio track."""
 
-    base = os.path.join(_TMP, "sample-base.mp4")
-    mkv = os.path.join(_TMP, "sample.mkv")
-    if not os.path.exists(mkv):
-        subprocess.run(
-            [
-                app.config["FFMPEG_BIN"],
-                "-f",
-                "lavfi",
-                "-i",
-                "testsrc=duration=1:size=320x240:rate=10",
-                "-f",
-                "lavfi",
-                "-i",
-                "sine=frequency=440:duration=1",
-                "-c:v",
-                "libx264",
-                "-c:a",
-                "aac",
-                "-shortest",
-                "-y",
-                base,
-            ],
-            check=True,
-            capture_output=True,
-        )
-        subprocess.run(
-            [
-                app.config["MKVMERGE_BIN"],
-                "-o",
-                mkv,
-                "--language",
-                "1:eng",
-                base,
-            ],
-            check=True,
-            capture_output=True,
-        )
-    return mkv
+    return make_sample_mkv(os.path.join(_TMP, "sample.mkv"))
 
 
 def test_localization_end_to_end_through_staging(app, sample_mkv, incoming_dir):
@@ -206,11 +170,11 @@ def test_localization_end_to_end_through_staging(app, sample_mkv, incoming_dir):
     os.remove(output)
 
 
-@pytest.fixture(scope="module")
-def sample_mp4(app, sample_mkv):
-    """Return the MP4 intermediate that the sample_mkv fixture builds."""
+@pytest.fixture(scope="session")
+def sample_mp4(app):
+    """Build a 1-second MP4 file, a container that the import converts."""
 
-    return os.path.join(_TMP, "sample-base.mp4")
+    return make_sample_mp4(os.path.join(_TMP, "sample-base.mp4"))
 
 
 def run_full_chain(app, source):

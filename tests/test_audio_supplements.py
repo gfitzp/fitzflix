@@ -488,30 +488,24 @@ def test_the_cover_art_survives_the_ffmpeg_remux(app, tmp_path):
 
     from app.tracks import copy_image_attachments
 
+    from tests.media import make_sample_mkv
+
     ffmpeg = app.config["FFMPEG_BIN"]
     mkvmerge = app.config["MKVMERGE_BIN"]
-    base = tmp_path / "base.mkv"
     cover = tmp_path / "cover.jpg"
-    source = tmp_path / "source.mkv"
     output = tmp_path / "output.mkv"
-    subprocess.run(
-        [ffmpeg, "-y", "-f", "lavfi", "-i", "testsrc=duration=1:size=160x120"]
-        + ["-f", "lavfi", "-i", "sine=duration=1", "-c:v", "libx264"]
-        + ["-c:a", "flac", "-shortest", str(base)],
-        check=True,
-        capture_output=True,
-    )
     subprocess.run(
         [ffmpeg, "-y", "-f", "lavfi", "-i", "color=red:size=64x64"]
         + ["-frames:v", "1", str(cover)],
         check=True,
         capture_output=True,
     )
-    subprocess.run(
-        [mkvmerge, "-o", str(source), "--attachment-mime-type", "image/jpeg"]
-        + ["--attach-file", str(cover), str(base)],
-        check=True,
-        capture_output=True,
+    source = make_sample_mkv(
+        str(tmp_path / "source.mkv"),
+        audio=(("und", True),),
+        audio_codec="flac",
+        size="160x120",
+        attachments=((cover, "image/jpeg"),),
     )
 
     # The same maps as the remuxes.

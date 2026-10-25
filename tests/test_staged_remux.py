@@ -11,47 +11,17 @@ import app.tracks as tracks
 from app.importing import STAGING_RESERVED_KEY
 
 from tests.conftest import _TMP
+from tests.media import make_sample_mkv
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture(scope="session")
 def two_audio_mkv(app):
     """Build a 1-second Matroska file with 2 audio tracks."""
 
-    path = os.path.join(_TMP, "sample-two-audio.mkv")
-    if not os.path.exists(path):
-        subprocess.run(
-            [
-                app.config["FFMPEG_BIN"],
-                "-f",
-                "lavfi",
-                "-i",
-                "testsrc=duration=1:size=320x240:rate=10",
-                "-f",
-                "lavfi",
-                "-i",
-                "sine=frequency=440:duration=1",
-                "-f",
-                "lavfi",
-                "-i",
-                "sine=frequency=880:duration=1",
-                "-map",
-                "0",
-                "-map",
-                "1",
-                "-map",
-                "2",
-                "-c:v",
-                "libx264",
-                "-c:a",
-                "aac",
-                "-shortest",
-                "-y",
-                path,
-            ],
-            check=True,
-            capture_output=True,
-        )
-    return path
+    return make_sample_mkv(
+        os.path.join(_TMP, "sample-two-audio.mkv"),
+        audio=(("und", True), ("und", False)),
+    )
 
 
 @pytest.fixture

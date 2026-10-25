@@ -19,44 +19,25 @@ the whole page. That is the class of bug that it was.
 
 import os
 import shutil
-import subprocess
 
 from html.parser import HTMLParser
 
 import pytest
 
 from tests.conftest import _TMP
+from tests.media import make_sample_mkv
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture(scope="session")
 def undetermined_mkv(app):
     """Build a 1-second Matroska with 2 audio tracks that have no language.
 
     That is the state that the File page exists to correct."""
 
-    base = os.path.join(_TMP, "undetermined-base.mp4")
-    mkv = os.path.join(_TMP, "undetermined.mkv")
-    if not os.path.exists(mkv):
-        subprocess.run(
-            [app.config["FFMPEG_BIN"]]
-            + ["-f", "lavfi", "-i", "testsrc=duration=1:size=320x240:rate=10"]
-            + ["-f", "lavfi", "-i", "sine=frequency=440:duration=1"]
-            + ["-f", "lavfi", "-i", "sine=frequency=880:duration=1"]
-            + ["-map", "0:v", "-map", "1:a", "-map", "2:a"]
-            + ["-c:v", "libx264", "-c:a", "aac", "-shortest", "-y", base],
-            check=True,
-            capture_output=True,
-        )
-        subprocess.run(
-            [app.config["MKVMERGE_BIN"], "-o", mkv]
-            + ["--language", "1:und", "--language", "2:und"]
-            + ["--default-track", "1:1"]
-            + ["--default-track", "2:0"]
-            + [base],
-            check=True,
-            capture_output=True,
-        )
-    return mkv
+    return make_sample_mkv(
+        os.path.join(_TMP, "undetermined.mkv"),
+        audio=(("und", True), ("und", False)),
+    )
 
 
 def _audio_languages(app, path):
