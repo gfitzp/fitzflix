@@ -74,6 +74,22 @@ def mysqldump_stub(app, tmp_path, monkeypatch):
     return stub, backup_dir
 
 
+class VersionPages:
+    """Fake the list_object_versions paginator of the S3 client."""
+
+    def __init__(self, versions=(), markers=()):
+        self.versions = list(versions)
+        self.markers = list(markers)
+
+    def paginate(self, Bucket, Prefix):
+        """Yield 1 page with the versions and markers under the prefix."""
+
+        yield {
+            "Versions": [v for v in self.versions if v["Key"].startswith(Prefix)],
+            "DeleteMarkers": [m for m in self.markers if m["Key"].startswith(Prefix)],
+        }
+
+
 def test_backup_database_dumps_and_prunes(app, mysqldump_stub):
     stub, backup_dir = mysqldump_stub
 
@@ -116,8 +132,9 @@ def test_backup_database_uploads_to_s3_and_prunes_remote(
 ):
     """Upload the dump to the backup prefix when AWS is configured.
 
-    The task deletes the remote copies that are older than the retention
-    window."""
+    The bucket keeps versions. The task deletes each version older than
+    the retention window by its version id, and each delete marker with
+    no version left behind it (#318)."""
 
     from datetime import datetime, timedelta, timezone
 
@@ -126,36 +143,60 @@ def test_backup_database_uploads_to_s3_and_prunes_remote(
     stub, backup_dir = mysqldump_stub
     monkeypatch.setitem(app.config, "AWS_BUCKET", "test-bucket")
 
+    old = datetime.now(timezone.utc) - timedelta(days=30)
+    new = datetime.now(timezone.utc) - timedelta(days=1)
     uploads = []
-    deletes = []
+    deleted = []
+    pages = VersionPages(
+        versions=[
+            # A current dump past the window.
+            {
+                "Key": "backup/a-2020.sql.gz",
+                "VersionId": "a1",
+                "LastModified": old,
+                "IsLatest": True,
+            },
+            # A dump that an earlier run "deleted": a noncurrent version.
+            {
+                "Key": "backup/b-2020.sql.gz",
+                "VersionId": "b1",
+                "LastModified": old,
+                "IsLatest": False,
+            },
+            # A fresh dump, and the directory marker.
+            {
+                "Key": "backup/c-fresh.sql.gz",
+                "VersionId": "c1",
+                "LastModified": new,
+                "IsLatest": True,
+            },
+            {
+                "Key": "backup/",
+                "VersionId": "d1",
+                "LastModified": old,
+                "IsLatest": True,
+            },
+        ],
+        markers=[
+            {"Key": "backup/b-2020.sql.gz", "VersionId": "bm", "LastModified": new},
+            # A marker over a version inside the window stays.
+            {"Key": "backup/c-fresh.sql.gz", "VersionId": "cm", "LastModified": new},
+        ],
+    )
 
     class FakeS3Client:
         def upload_file(self, filename, bucket, key, **kwargs):
             uploads.append((filename, bucket, key))
 
-        def delete_object(self, Bucket, Key):
-            deletes.append((Bucket, Key))
+        def get_paginator(self, name):
+            assert name == "list_object_versions"
+            return pages
 
-    stale = {
-        "Key": "backup/fitzflix_test-2020-01-01.sql.gz",
-        "LastModified": datetime.now(timezone.utc) - timedelta(days=30),
-    }
-    fresh = {
-        "Key": "backup/fitzflix_test-fresh.sql.gz",
-        "LastModified": datetime.now(timezone.utc) - timedelta(days=1),
-    }
-    marker = {
-        "Key": "backup/",
-        "LastModified": datetime.now(timezone.utc) - timedelta(days=999),
-    }
+        def delete_objects(self, Bucket, Delete):
+            deleted.extend((o["Key"], o["VersionId"]) for o in Delete["Objects"])
 
     monkeypatch.setattr(
         videos, "aws_s3_client", lambda with_retries=False: FakeS3Client()
-    )
-    monkeypatch.setattr(
-        videos,
-        "get_matching_s3_objects",
-        lambda bucket, prefix="", suffix="": iter([stale, fresh, marker]),
     )
 
     with app.app_context():
@@ -167,12 +208,11 @@ def test_backup_database_uploads_to_s3_and_prunes_remote(
     assert bucket == "test-bucket"
     assert key.startswith("backup/fitzflix_test-")
     assert key.endswith(".sql.gz")
-
-    # The task deletes only the stale backup. It does not delete the fresh
-    # backup or the directory marker. It never deletes the object that it
-    # uploaded
-
-    assert deletes == [("test-bucket", "backup/fitzflix_test-2020-01-01.sql.gz")]
+    assert sorted(deleted) == [
+        ("backup/a-2020.sql.gz", "a1"),
+        ("backup/b-2020.sql.gz", "b1"),
+        ("backup/b-2020.sql.gz", "bm"),
+    ]
 
 
 def test_backup_database_skips_s3_when_unconfigured(app, mysqldump_stub, monkeypatch):
@@ -219,6 +259,12 @@ def test_backup_uploads_encrypted_env(app, mysqldump_stub, monkeypatch, tmp_path
                 captured[key] = f.read()
 
         def delete_object(self, Bucket, Key):
+            pass
+
+        def get_paginator(self, name):
+            return VersionPages()
+
+        def delete_objects(self, Bucket, Delete):
             pass
 
     monkeypatch.setattr(videos, "aws_s3_client", lambda **kwargs: FakeS3Client())
@@ -325,6 +371,12 @@ def test_backup_syncs_custom_posters(app, mysqldump_stub, monkeypatch):
 
         def delete_object(self, Bucket, Key):
             deletes.append(Key)
+
+        def get_paginator(self, name):
+            return VersionPages()
+
+        def delete_objects(self, Bucket, Delete):
+            deletes.extend(o["Key"] for o in Delete["Objects"])
 
     monkeypatch.setattr(videos, "aws_s3_client", lambda **kwargs: FakeS3Client())
     monkeypatch.setattr(videos, "get_matching_s3_objects", fake_objects)

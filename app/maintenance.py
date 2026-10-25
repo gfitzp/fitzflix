@@ -758,6 +758,40 @@ def rotate_logs():
         )
 
 
+def _prune_backup_versions(client, bucket, prefix, cutoff, keep):
+    """Delete the backup versions older than cutoff, and the bare delete markers.
+
+    This returns the keys that lost a current version. A noncurrent
+    version and a delete marker have no other cleanup on this prefix."""
+
+    versions = []
+    markers = []
+    paginator = client.get_paginator("list_object_versions")
+    for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+        versions.extend(page.get("Versions", []))
+        markers.extend(page.get("DeleteMarkers", []))
+
+    doomed = []
+    removed_keys = []
+    left = set()
+    for version in versions:
+        if version["Key"] not in keep and version["LastModified"] < cutoff:
+            doomed.append({"Key": version["Key"], "VersionId": version["VersionId"]})
+            if version.get("IsLatest"):
+                removed_keys.append(version["Key"])
+        else:
+            left.add(version["Key"])
+    for marker in markers:
+        if marker["Key"] not in left:
+            doomed.append({"Key": marker["Key"], "VersionId": marker["VersionId"]})
+    for start in range(0, len(doomed), 1000):
+        client.delete_objects(
+            Bucket=bucket,
+            Delete={"Objects": doomed[start : start + 1000], "Quiet": True},
+        )
+    return removed_keys
+
+
 def backup_database():
     """Dump the database to a compressed backup and delete the old backups.
 
@@ -941,20 +975,21 @@ def backup_database():
                     )
 
             # Delete the remote backups older than the retention window.
+            # The bucket keeps versions. A delete without a version id
+            # only adds a delete marker, and the dump stays in S3 Standard
+            # (#318). Thus, this deletes each old version. Then it deletes
+            # each delete marker that has no version left behind it. That
+            # also removes the versions that the earlier runs left.
 
-            remote_cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days)
-            for object in get_matching_s3_objects(
-                current_app.config["AWS_BUCKET"], prefix=f"{backup_prefix}/"
-            ):
-                if (
-                    object["Key"] != uploaded_key
-                    and object["Key"] != f"{backup_prefix}/"
-                    and object["LastModified"] < remote_cutoff
-                ):
-                    client.delete_object(
-                        Bucket=current_app.config["AWS_BUCKET"], Key=object["Key"]
-                    )
-                    remote_deleted.append(object["Key"])
+            remote_deleted.extend(
+                _prune_backup_versions(
+                    client,
+                    current_app.config["AWS_BUCKET"],
+                    f"{backup_prefix}/",
+                    datetime.now(timezone.utc) - timedelta(days=retention_days),
+                    keep={uploaded_key, f"{backup_prefix}/"},
+                )
+            )
 
         cutoff = datetime.now() - timedelta(days=retention_days)
         deleted = []
