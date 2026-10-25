@@ -37,6 +37,7 @@ from app.models import (
     Movie,
     MovieAward,
     RefTMDBCertification,
+    TMDBUnavailable,
     TVSeries,
     User,
     UserMovieReview,
@@ -375,6 +376,12 @@ def refresh_tmdb_info(
                 description=description,
                 at_front=apply_at_front,
             )
+
+        except TMDBUnavailable:
+            # The fetch logged a warning. A TMDB outage is not an error of
+            # Fitzflix, and a nightly refresh must not send 1 email per film
+
+            return False
 
         except Exception:
             current_app.logger.error(traceback.format_exc())

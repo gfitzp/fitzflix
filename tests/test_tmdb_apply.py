@@ -553,3 +553,79 @@ def test_tmdb_strings_fit_their_columns(app):
         assert db.session.get(TVSeries, series.id).tmdb_homepage == (
             "https://example.com/show"
         )
+
+
+class _ErrorAnswer:
+    """A TMDB response whose raise_for_status raises for its status."""
+
+    def __init__(self, status):
+        import requests
+
+        self.status_code = status
+        self.response = requests.Response()
+        self.response.status_code = status
+
+    def raise_for_status(self):
+        import requests
+
+        raise requests.exceptions.HTTPError(
+            f"{self.status_code} error", response=self.response
+        )
+
+
+def test_a_tmdb_outage_sends_no_not_found_email(app, monkeypatch):
+    """Test a 503 from TMDB during a refresh (#342).
+
+    Only a 404 means that the id does not exist. A 503 must not send the
+    "TMDB ID not found" email, and the refresh queues no apply."""
+
+    import app.models as models
+    from app.tmdb_refresh import refresh_tmdb_info
+
+    sent = []
+    monkeypatch.setitem(app.config, "TMDB_API_KEY", "key")
+    monkeypatch.setattr(models, "send_email", lambda *a, **k: sent.append(a))
+    monkeypatch.setattr(models, "render_template", lambda *a, **k: "")
+    monkeypatch.setattr(models, "tmdb_get", lambda url, **k: _ErrorAnswer(503))
+    with app.app_context():
+        movie = make_movie("Outage Film", 1999, tmdb_id=990021)
+        db.session.commit()
+        movie_id = movie.id
+
+    assert refresh_tmdb_info("Movies", movie_id, 990021) is False
+    assert sent == []
+    assert [
+        job
+        for job in app.sql_queue.jobs
+        if job.func_name == "app.videos.apply_tmdb_refresh"
+    ] == []
+
+    # A 404 still sends the email
+
+    monkeypatch.setattr(models, "tmdb_get", lambda url, **k: _ErrorAnswer(404))
+    with app.app_context():
+        assert db.session.get(Movie, movie_id).tmdb_movie_fetch(990021) is None
+    assert len(sent) == 1
+
+
+def test_a_missing_id_with_no_admin_does_not_crash(app, monkeypatch):
+    import app.models as models
+
+    sent = []
+    monkeypatch.setitem(app.config, "TMDB_API_KEY", "key")
+    monkeypatch.setattr(models, "send_email", lambda *a, **k: sent.append(a))
+    monkeypatch.setattr(models, "tmdb_get", lambda url, **k: _ErrorAnswer(404))
+
+    class NoAdmin:
+        def filter(self, *args):
+            return self
+
+        def first(self):
+            return None
+
+    with app.app_context():
+        series = make_tv_series("No Admin Series")
+        db.session.commit()
+        monkeypatch.setattr(models.User, "query", NoAdmin())
+        assert series.tmdb_tv_fetch(990022) is None
+    assert sent == []

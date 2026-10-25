@@ -203,6 +203,25 @@ def tmdb_objects(entries, owner, what):
             )
 
 
+class TMDBUnavailable(Exception):
+    """TMDB answered a details request with an error that is not a 404 (#342)."""
+
+
+def _raise_unless_not_found(record, tmdb_id, error):
+    """Raise TMDBUnavailable for a TMDB error that is not a 404 (#342).
+
+    Only a 404 says that the id does not exist. A 429 or a 5xx is an
+    outage. It must not send the "TMDB ID not found" email for each record
+    of a nightly refresh. The refresh stops and changes nothing."""
+
+    status = error.response.status_code if error.response is not None else None
+    if status != 404:
+        current_app.logger.warning(
+            f"{record} TMDB answered {status} for id {tmdb_id}. Nothing changed"
+        )
+        raise TMDBUnavailable(f"TMDB answered {status} for id {tmdb_id}") from error
+
+
 class TMDBMixin(object):
     """TMDB fetch and apply methods shared by the Movie and TVSeries models.
 
@@ -291,8 +310,14 @@ class TMDBMixin(object):
                     },
                 )
                 r.raise_for_status()
-            except requests.exceptions.HTTPError:
+            except requests.exceptions.HTTPError as e:
+                _raise_unless_not_found(self, tmdb_id, e)
                 admin_user = User.query.filter(User.admin == True).first()
+                if admin_user is None:
+                    current_app.logger.warning(
+                        f"{self} TMDB has no id {tmdb_id}, and no admin gets the email"
+                    )
+                    return None
                 send_email(
                     "Fitzflix - TMDB ID not found",
                     sender=("Fitzflix", current_app.config["SERVER_EMAIL"]),
@@ -825,8 +850,14 @@ class TMDBMixin(object):
                     },
                 )
                 r.raise_for_status()
-            except requests.exceptions.HTTPError:
+            except requests.exceptions.HTTPError as e:
+                _raise_unless_not_found(self, tmdb_id, e)
                 admin_user = User.query.filter(User.admin == True).first()
+                if admin_user is None:
+                    current_app.logger.warning(
+                        f"{self} TMDB has no id {tmdb_id}, and no admin gets the email"
+                    )
+                    return None
                 send_email(
                     "Fitzflix - TMDB ID not found",
                     sender=("Fitzflix", current_app.config["SERVER_EMAIL"]),
