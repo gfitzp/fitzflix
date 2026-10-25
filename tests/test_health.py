@@ -564,3 +564,138 @@ def test_an_import_worker_starts_without_the_import_directory(app, caplog):
     second = create_app(MissingImportDir, watch_import_dir=True)
     assert second is not app
     assert "Import directory observer did not start" in caplog.text
+
+
+def test_health_probe_reports_each_collector_in_order(
+    app, health_env, monkeypatch, tmp_path
+):
+    """Pin the conditions, the messages and their order for each collector.
+
+    Each collector has a problem. The email lists the problems in the
+    order of the collectors, then the self-heal actions."""
+
+    import json
+    import time
+
+    from app.criterion_catalog import CRITERION_FETCHED_KEY
+    from app.log_digest import DIGEST_KEY
+
+    monkeypatch.setitem(app.config, "DB_BACKUP_DIR", str(tmp_path))
+    monkeypatch.setitem(app.config, "DISK_ALERT_FREE_GB", 10**6)
+    monkeypatch.setattr(maintenance, "EXPECTED_WORKERS", {"fitzflix-import": 1})
+    monkeypatch.setattr(maintenance, "_live_workers", lambda connection: [])
+    monkeypatch.setattr(maintenance, "repair_worker_registry", lambda redis: ["A"])
+    monkeypatch.setattr(
+        maintenance, "heal_worker_processes", lambda redis, config: ["B"]
+    )
+    monkeypatch.setattr(maintenance, "missing_volumes", lambda config: ["/Volumes/X"])
+    monkeypatch.setattr(
+        maintenance, "heal_mounts", lambda mounts, redis, config: [f"C {mounts}"]
+    )
+    health_env.redis.delete("rq:cron_scheduler:test")
+    health_env.redis.delete("fitzflix:observer:test-1")
+    health_env.redis.set(CRITERION_FETCHED_KEY, int(time.time()) - 20 * 86400)
+    health_env.redis.hset(maintenance.PLEX_TRASH_HELD_KEY, "Movies", "Trash held")
+    digest = {
+        "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "flagged": [{"key": "abc123", "count": 96, "example": "Repeat"}],
+    }
+    health_env.redis.set(DIGEST_KEY, json.dumps(digest))
+    health_env.failing.add("TMDB")
+
+    emails = health_env.run()
+    with app.app_context():
+        disks = [
+            f"Volume {d['mount']} has only {d['free']} free ({d['percent']}% used), "
+            "below the 1000000 GB alert threshold"
+            for d in maintenance.disk_health(app.config)
+        ]
+    problems = disks + [
+        "No database backups exist yet",
+        "Queue fitzflix-import has 0 of 1 expected workers",
+        "Volume /Volumes/X is not mounted or not responding",
+        "Only 1 of 2 import-directory watchers are alive",
+        "The rq scheduler is not running",
+        "The stored Criterion releases are 20 days old. The weekly Wikidata "
+        "fetch is failing",
+        "Trash held",
+        "A log entry repeated 96 times in 24 hours: Repeat",
+    ]
+    healing = ["A", "B", "C ['/Volumes/X']"]
+    assert [email["body"].split("\n") for email in emails] == [
+        ["Problems:"]
+        + [f"  - {p}" for p in problems]
+        + ["", "Self-healing:"]
+        + [f"  - {h}" for h in healing]
+    ]
+    assert emails[0]["subject"] == f"Fitzflix health: {len(problems)} problem(s)"
+
+    emails = health_env.run()
+    assert len(emails) == 1
+    assert emails[0]["body"].split("\n")[:2] == [
+        "Problems:",
+        "  - TMDB has failed 2 consecutive probes: ConnectionError: simulated "
+        "TMDB outage",
+    ]
+    issues = {
+        k.decode(): v.decode()
+        for k, v in health_env.redis.hgetall("fitzflix:health:issues").items()
+    }
+    assert set(issues) == {
+        "probe:TMDB",
+        *(f"disk:{d['mount']}" for d in maintenance.disk_health(app.config)),
+        "backup",
+        "workers:fitzflix-import",
+        "mount:/Volumes/X",
+        "observer",
+        "scheduler",
+        "criterion-releases",
+        "plex-trash:Movies",
+        "log:abc123",
+    }
+
+
+def test_health_probe_reports_a_stale_backup_and_probes_s3(
+    app, health_env, monkeypatch, tmp_path
+):
+    """Pin the stale backup message and the S3 probe row."""
+
+    import os
+
+    from datetime import timezone
+
+    probed = []
+
+    class FakeS3:
+        def head_bucket(self, Bucket):
+            probed.append(Bucket)
+
+    monkeypatch.setattr("app.videos.aws_s3_client", lambda with_retries: FakeS3())
+    monkeypatch.setitem(app.config, "AWS_BUCKET", "bucket-test")
+    monkeypatch.setitem(app.config, "AWS_ACCESS_KEY", "key-test")
+    monkeypatch.setitem(app.config, "AWS_SECRET_KEY", "secret-test")
+    monkeypatch.setitem(app.config, "DB_BACKUP_DIR", str(tmp_path))
+    old = tmp_path / "old.sql.gz"
+    old.write_bytes(b"old")
+    stamp = time_of(2026, 1, 2, 3, 4)
+    os.utime(old, (stamp, stamp))
+
+    emails = health_env.run()
+    assert probed == ["bucket-test"]
+    probes = {p["service"] for p in maintenance.probe_health(health_env.redis)}
+    assert probes == {"TMDB", "Sonarr", "Radarr", "AWS S3"}
+    when = datetime.fromtimestamp(stamp, tz=timezone.utc)
+    assert emails[0]["body"].split("\n") == [
+        "Problems:",
+        f"  - The newest database backup is from "
+        f"{when.strftime('%Y-%m-%d %H:%M %Z')}, more than "
+        f"{maintenance.BACKUP_STALE_HOURS} hours ago",
+    ]
+
+
+def time_of(*parts):
+    """Return the POSIX time of a UTC date and time."""
+
+    from datetime import timezone
+
+    return datetime(*parts, tzinfo=timezone.utc).timestamp()
