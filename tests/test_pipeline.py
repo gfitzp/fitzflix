@@ -1751,3 +1751,30 @@ def test_the_queue_poll_paints_each_page_through_its_hook(admin_client):
     assert "function refreshCards() {" in activity
     assert "window.fitzflixQueueHooks.push(refreshCards);" in activity
     assert "function renderAll(" not in activity
+
+
+def test_a_best_effort_trail_function_logs_and_returns_its_fallback(app, caplog):
+    """A trail failure logs a warning. It never raises into the task.
+
+    Outside an app context, the warning goes to the logger of
+    app.pipeline. Before, it was silently dropped there."""
+
+    import logging
+
+    from app.pipeline import _best_effort
+
+    @_best_effort(fallback=lambda value: value * 2)
+    def broken(value):
+        raise RuntimeError("trail write failed")
+
+    @_best_effort()
+    def silent():
+        raise RuntimeError("no fallback")
+
+    with app.app_context():
+        assert broken(2) == 4
+        assert silent() is None
+
+    with caplog.at_level(logging.WARNING, logger="app.pipeline"):
+        assert broken(3) == 6
+    assert "trail write failed" in caplog.text

@@ -32,8 +32,10 @@ new name and leaves an alias. Thus, 1 file stays 1 trail. It does not
 become 2 trails that fight over the same File Activity card.
 """
 
+import functools
 import hashlib
 import json
+import logging
 import os
 import time
 import traceback
@@ -569,6 +571,43 @@ def _apply_stage_event(trail, first_run, first_enqueued, event):
     return trail, first_run, first_enqueued, True
 
 
+def _log_traceback():
+    """Log the current exception as a warning.
+
+    The trail is advisory. A failure here must never fail the task or the
+    page that wrote or read it. Outside an app context, the warning goes
+    to the logger of this module."""
+
+    message = traceback.format_exc()
+    try:
+        from flask import current_app
+
+        current_app.logger.warning(message)
+    except Exception:
+        logging.getLogger(__name__).warning(message)
+
+
+def _best_effort(fallback=None):
+    """Decorate a trail function. An exception in it only logs a warning.
+
+    On an exception, the function returns fallback(*args, **kwargs), or
+    None with no fallback."""
+
+    def decorate(function):
+        @functools.wraps(function)
+        def wrapper(*args, **kwargs):
+            try:
+                return function(*args, **kwargs)
+            except Exception:
+                _log_traceback()
+                return fallback(*args, **kwargs) if fallback else None
+
+        return wrapper
+
+    return decorate
+
+
+@_best_effort()
 def migrate_trail(connection, old_basename, new_basename):
     """Merge the trail of a file under its new basename.
 
@@ -586,116 +625,102 @@ def migrate_trail(connection, old_basename, new_basename):
     occurs when the task body returns. This is advisory, like each
     hook. It logs and catches failures. The retries are limited."""
 
-    try:
-        if not old_basename or not new_basename or old_basename == new_basename:
-            return
-        from redis import WatchError
+    if not old_basename or not new_basename or old_basename == new_basename:
+        return
+    from redis import WatchError
 
-        old_digest = _digest(old_basename)
-        new_digest = _digest(new_basename)
-        old_key = FILE_KEY.format(digest=old_digest)
-        new_key = FILE_KEY.format(digest=new_digest)
-        alias_key = ALIAS_KEY.format(digest=old_digest)
+    old_digest = _digest(old_basename)
+    new_digest = _digest(new_basename)
+    old_key = FILE_KEY.format(digest=old_digest)
+    new_key = FILE_KEY.format(digest=new_digest)
+    alias_key = ALIAS_KEY.format(digest=old_digest)
 
-        for _ in range(10):
-            now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            with connection.pipeline() as pipe:
-                try:
-                    pipe.watch(old_key, new_key)
-                    old_trail = _decode_trail(pipe.hget(old_key, "trail"))
-                    old_first = pipe.hget(old_key, "first_run")
-                    old_enqueued = pipe.hget(old_key, "first_enqueued")
+    for _ in range(10):
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with connection.pipeline() as pipe:
+            try:
+                pipe.watch(old_key, new_key)
+                old_trail = _decode_trail(pipe.hget(old_key, "trail"))
+                old_first = pipe.hget(old_key, "first_run")
+                old_enqueued = pipe.hget(old_key, "first_enqueued")
 
-                    # Nothing is recorded under the old name. It expired,
-                    # or the hooks never ran. Only leave the redirect.
+                # Nothing is recorded under the old name. It expired,
+                # or the hooks never ran. Only leave the redirect.
 
-                    if not old_trail and old_first is None:
-                        pipe.multi()
-                        pipe.set(alias_key, new_basename, ex=TRAIL_TTL_SECONDS)
-                        pipe.execute()
-                        return
-
-                    # A re-import within the TTL finds the chips of the
-                    # last run under the new name. The entries of the
-                    # current run are newer. Thus, they go after.
-
-                    merged = _decode_trail(pipe.hget(new_key, "trail")) + old_trail
-                    del merged[:-40]
-
+                if not old_trail and old_first is None:
                     pipe.multi()
-                    if old_first is not None:
-                        pipe.hsetnx(new_key, "first_run", old_first)
-                    if old_enqueued is not None:
-                        pipe.hsetnx(new_key, "first_enqueued", old_enqueued)
-                    pipe.hset(
-                        new_key,
-                        mapping={
-                            "basename": new_basename,
-                            "trail": json.dumps(merged),
-                            "updated": now,
-                        },
-                    )
-                    pipe.expire(new_key, TRAIL_TTL_SECONDS)
                     pipe.set(alias_key, new_basename, ex=TRAIL_TTL_SECONDS)
-                    pipe.delete(old_key)
-                    pipe.zrem(ACTIVE_KEY, old_digest)
-                    pipe.zadd(ACTIVE_KEY, {new_digest: time.time()})
-                    pipe.zremrangebyrank(ACTIVE_KEY, 0, -(ACTIVE_LIMIT + 1))
                     pipe.execute()
                     return
-                except WatchError:
-                    continue
-    except Exception:
-        try:
-            from flask import current_app
 
-            current_app.logger.warning(traceback.format_exc())
-        except Exception:
-            pass
+                # A re-import within the TTL finds the chips of the
+                # last run under the new name. The entries of the
+                # current run are newer. Thus, they go after.
+
+                merged = _decode_trail(pipe.hget(new_key, "trail")) + old_trail
+                del merged[:-40]
+
+                pipe.multi()
+                if old_first is not None:
+                    pipe.hsetnx(new_key, "first_run", old_first)
+                if old_enqueued is not None:
+                    pipe.hsetnx(new_key, "first_enqueued", old_enqueued)
+                pipe.hset(
+                    new_key,
+                    mapping={
+                        "basename": new_basename,
+                        "trail": json.dumps(merged),
+                        "updated": now,
+                    },
+                )
+                pipe.expire(new_key, TRAIL_TTL_SECONDS)
+                pipe.set(alias_key, new_basename, ex=TRAIL_TTL_SECONDS)
+                pipe.delete(old_key)
+                pipe.zrem(ACTIVE_KEY, old_digest)
+                pipe.zadd(ACTIVE_KEY, {new_digest: time.time()})
+                pipe.zremrangebyrank(ACTIVE_KEY, 0, -(ACTIVE_LIMIT + 1))
+                pipe.execute()
+                return
+            except WatchError:
+                continue
 
 
+@_best_effort()
 def record_job_event(connection, job, event):
     """Append or update 1 stage entry on the file trail of the job.
 
     This is advisory only. It logs and catches each failure. It never
     shows a failure to the pipeline."""
 
-    try:
-        found = _stage_for(job)
-        if found is None:
-            return
-        basename, stage = found
+    found = _stage_for(job)
+    if found is None:
+        return
+    basename, stage = found
 
-        # The trail stamps are local wall clock. rq stamps enqueued_at in
-        # UTC. Thus, convert it before the compare.
+    # The trail stamps are local wall clock. rq stamps enqueued_at in
+    # UTC. Thus, convert it before the compare.
 
-        enqueued_at = None
-        anchor = None
-        if job.enqueued_at is not None:
-            moment = job.enqueued_at
-            if moment.tzinfo is None:
-                moment = moment.replace(tzinfo=timezone.utc)
-            anchor = moment.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-            if event in ("queued", "scheduled"):
-                enqueued_at = moment.astimezone().strftime("%Y-%m-%d %H:%M:%S")
-        _write_trail_entry(
-            connection,
-            basename,
-            stage,
-            event,
-            job.id,
-            enqueued_at=enqueued_at,
-            anchor=anchor,
-        )
-    except Exception:
-        try:
-            from flask import current_app
-
-            current_app.logger.warning(traceback.format_exc())
-        except Exception:
-            pass
+    enqueued_at = None
+    anchor = None
+    if job.enqueued_at is not None:
+        moment = job.enqueued_at
+        if moment.tzinfo is None:
+            moment = moment.replace(tzinfo=timezone.utc)
+        anchor = moment.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        if event in ("queued", "scheduled"):
+            enqueued_at = moment.astimezone().strftime("%Y-%m-%d %H:%M:%S")
+    _write_trail_entry(
+        connection,
+        basename,
+        stage,
+        event,
+        job.id,
+        enqueued_at=enqueued_at,
+        anchor=anchor,
+    )
 
 
+@_best_effort()
 def record_task_stage(stage, status):
     """Record a named phase INSIDE 1 pipeline job from the task body.
 
@@ -711,40 +736,32 @@ def record_task_stage(stage, status):
     each hook. It catches failures. Outside a worker (direct calls in
     tests), it does nothing."""
 
-    try:
-        from rq import get_current_job
+    from rq import get_current_job
 
-        job = get_current_job()
-        if job is None:
-            return
-        found = _stage_for(job)
-        if found is None:
-            return
-        basename, job_stage = found
+    job = get_current_job()
+    if job is None:
+        return
+    found = _stage_for(job)
+    if found is None:
+        return
+    basename, job_stage = found
 
-        # While the sub-stage runs, the own chip of the job gives
-        # "running" to it. The main phase has not started. Thus, the job
-        # chip reads "queued" until the sub-stage completes. Then it
-        # continues. The own done/failed hook of the worker has the last
-        # word at the end of the job.
+    # While the sub-stage runs, the own chip of the job gives
+    # "running" to it. The main phase has not started. Thus, the job
+    # chip reads "queued" until the sub-stage completes. Then it
+    # continues. The own done/failed hook of the worker has the last
+    # word at the end of the job.
 
-        sibling = (job_stage, "queued" if status == "started" else "started")
-        _write_trail_entry(
-            job.connection,
-            basename,
-            stage,
-            status,
-            job.id,
-            before_job=True,
-            sibling=sibling,
-        )
-    except Exception:
-        try:
-            from flask import current_app
-
-            current_app.logger.warning(traceback.format_exc())
-        except Exception:
-            pass
+    sibling = (job_stage, "queued" if status == "started" else "started")
+    _write_trail_entry(
+        job.connection,
+        basename,
+        stage,
+        status,
+        job.id,
+        before_job=True,
+        sibling=sibling,
+    )
 
 
 class TaskPhases:
@@ -804,6 +821,7 @@ class TaskPhases:
             record_stage_for(*self.target, None, status)
 
 
+@_best_effort()
 def record_stage_for(job_id, basename, own_stage, stage, status):
     """Stamp a chip of an earlier job of the same run.
 
@@ -812,30 +830,22 @@ def record_stage_for(job_id, basename, own_stage, stage, status):
     the same as record_task_stage. This is advisory. It catches each
     failure."""
 
-    try:
-        from flask import current_app
+    from flask import current_app
 
-        connection = current_app.redis
-        if stage is None:
-            _write_trail_entry(connection, basename, own_stage, status, job_id)
-            return
-        sibling = (own_stage, "queued" if status == "started" else "started")
-        _write_trail_entry(
-            connection,
-            basename,
-            stage,
-            status,
-            job_id,
-            before_job=True,
-            sibling=sibling,
-        )
-    except Exception:
-        try:
-            from flask import current_app
-
-            current_app.logger.warning(traceback.format_exc())
-        except Exception:
-            pass
+    connection = current_app.redis
+    if stage is None:
+        _write_trail_entry(connection, basename, own_stage, status, job_id)
+        return
+    sibling = (own_stage, "queued" if status == "started" else "started")
+    _write_trail_entry(
+        connection,
+        basename,
+        stage,
+        status,
+        job_id,
+        before_job=True,
+        sibling=sibling,
+    )
 
 
 def keep_trail_open(connection, job_id, ttl):
@@ -942,6 +952,7 @@ def first_enqueued(connection, job):
         return None
 
 
+@_best_effort(fallback=lambda connection, digest, entries: entries)
 def _heal_orphaned_entries(connection, digest, entries):
     """Remove or settle the waiting chips of jobs that are not waiting.
 
@@ -967,68 +978,56 @@ def _heal_orphaned_entries(connection, digest, entries):
     from redis import WatchError
 
     waiting = ("queued", "scheduled", "started")
-    try:
-        candidates = {
-            entry.get("job")
-            for entry in entries
-            if entry.get("status") in waiting and entry.get("job")
-        }
-        if not candidates or all(
-            _waiting_chip_fate(connection, job_id) is None for job_id in candidates
-        ):
-            return entries
-
-        key = FILE_KEY.format(digest=digest)
-        with connection.pipeline() as pipe:
-            try:
-                pipe.watch(key)
-
-                # Read and verify again under WATCH. A re-enqueue can use
-                # a deterministic job id (safe_job_id) again. rq creates
-                # its hash before its trail stamp. The second check here
-                # keeps the chip of a job that was just revived.
-
-                trail = _decode_trail(pipe.hget(key, "trail"))
-                kept = []
-                changed = False
-                for entry in trail:
-                    fate = None
-                    if (
-                        entry.get("status") in waiting
-                        and entry.get("job") in candidates
-                    ):
-                        fate = _waiting_chip_fate(pipe, entry.get("job"))
-                    if fate == "gone":
-                        changed = True
-                        continue
-                    if fate in ("done", "failed"):
-                        entry = dict(entry, status=fate)
-                        changed = True
-                    kept.append(entry)
-                if not changed:
-                    return kept
-                pipe.multi()
-                if kept:
-                    # hset keeps the remaining TTL of the key. The repair
-                    # does not extend the life of the trail. It does not
-                    # increase its recency in the active set.
-                    pipe.hset(key, "trail", json.dumps(kept))
-                else:
-                    pipe.delete(key)
-                    pipe.delete(ALIAS_KEY.format(digest=digest))
-                    pipe.zrem(ACTIVE_KEY, digest)
-                pipe.execute()
-                return kept or None
-            except WatchError:
-                return entries
-    except Exception:
-        try:
-            from flask import current_app
-
-            current_app.logger.warning(traceback.format_exc())
-        except Exception:
-            pass
+    candidates = {
+        entry.get("job")
+        for entry in entries
+        if entry.get("status") in waiting and entry.get("job")
+    }
+    if not candidates or all(
+        _waiting_chip_fate(connection, job_id) is None for job_id in candidates
+    ):
         return entries
+
+    key = FILE_KEY.format(digest=digest)
+    with connection.pipeline() as pipe:
+        try:
+            pipe.watch(key)
+
+            # Read and verify again under WATCH. A re-enqueue can use
+            # a deterministic job id (safe_job_id) again. rq creates
+            # its hash before its trail stamp. The second check here
+            # keeps the chip of a job that was just revived.
+
+            trail = _decode_trail(pipe.hget(key, "trail"))
+            kept = []
+            changed = False
+            for entry in trail:
+                fate = None
+                if entry.get("status") in waiting and entry.get("job") in candidates:
+                    fate = _waiting_chip_fate(pipe, entry.get("job"))
+                if fate == "gone":
+                    changed = True
+                    continue
+                if fate in ("done", "failed"):
+                    entry = dict(entry, status=fate)
+                    changed = True
+                kept.append(entry)
+            if not changed:
+                return kept
+            pipe.multi()
+            if kept:
+                # hset keeps the remaining TTL of the key. The repair
+                # does not extend the life of the trail. It does not
+                # increase its recency in the active set.
+                pipe.hset(key, "trail", json.dumps(kept))
+            else:
+                pipe.delete(key)
+                pipe.delete(ALIAS_KEY.format(digest=digest))
+                pipe.zrem(ACTIVE_KEY, digest)
+            pipe.execute()
+            return kept or None
+        except WatchError:
+            return entries
 
 
 def dismiss_trail(connection, digest):
@@ -1222,12 +1221,7 @@ def pipeline_trails(connection, limit=25, journey_only=False):
                 }
             )
     except Exception:
-        try:
-            from flask import current_app
-
-            current_app.logger.warning(traceback.format_exc())
-        except Exception:
-            pass
+        _log_traceback()
     return trails
 
 
