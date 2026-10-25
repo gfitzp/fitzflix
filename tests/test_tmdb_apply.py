@@ -629,3 +629,35 @@ def test_a_missing_id_with_no_admin_does_not_crash(app, monkeypatch):
         monkeypatch.setattr(models.User, "query", NoAdmin())
         assert series.tmdb_tv_fetch(990022) is None
     assert sent == []
+
+
+def test_tv_apply_absent_scalar_keys_keep_stored_values(app):
+    """Test that absent scalar keys keep the stored values on the TV side (#252).
+
+    A partial payload must not null a populated column. The id is a
+    scalar too: before the fix, tmdb_tv_apply set tmdb_id from the
+    payload without a default, so a payload without an id nulled it."""
+
+    with app.app_context():
+        series = make_tv_series("Scalar Series", tmdb_id=990006)
+        series.tmdb_overview = "A stored overview."
+        series.tmdb_poster_path = "/stored.jpg"
+        db.session.commit()
+
+        series.tmdb_tv_apply({"poster_path": None})
+        db.session.commit()
+
+        assert series.tmdb_id == 990006
+        assert series.tmdb_overview == "A stored overview."
+        assert series.tmdb_poster_path is None
+
+
+def test_tv_series_declares_each_column_once():
+    """TVSeries declared tmdb_poster_path 2 times. The second one won silently."""
+
+    import inspect
+    import re
+
+    source = inspect.getsource(TVSeries)
+    names = re.findall(r"^    (\w+) = db\.Column\(", source, re.M)
+    assert len(names) == len(set(names)), [n for n in names if names.count(n) > 1]

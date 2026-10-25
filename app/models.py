@@ -939,9 +939,10 @@ class TMDBMixin(object):
             self.imdb_id = external_ids.get("imdb_id")
             self.tvdb_id = external_ids.get("tvdb_id")
 
-        self.tmdb_id = tmdb_info.get("id")
         # A scalar keeps its stored value if the key is absent, the same
-        # as the movie side (#252).
+        # as the movie side (#252). The id is a scalar too.
+
+        self.tmdb_id = tmdb_info.get("id", self.tmdb_id)
 
         self.tmdb_backdrop_path = tmdb_info.get(
             "backdrop_path", self.tmdb_backdrop_path
@@ -1944,7 +1945,6 @@ class TVSeries(db.Model, TMDBMixin):
     tmdb_original_name = db.Column(db.String(256))
     tmdb_overview = db.Column(db.Text)
     tmdb_popularity = db.Column(db.Float)
-    tmdb_poster_path = db.Column(db.String(64))
     tmdb_status = db.Column(db.String(32))
     tmdb_type = db.Column(db.String(32))
     tmdb_vote_average = db.Column(db.Float)
