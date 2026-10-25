@@ -492,6 +492,7 @@ def convert_localized_file(
 
     from app.importing import (
         _hold_title_lock,
+        abandon_handoff,
         defer_for_title_lock,
         move_to_rejects,
         release_staging_reservation,
@@ -616,12 +617,19 @@ def convert_localized_file(
         current_app.logger.info(
             f"'{basename}' Converted to {result.get('width')}x{result.get('height')} SDR"
         )
-        current_app.handoff_queue.enqueue(
-            "app.videos.move_localized_file",
-            args=(source_path, file_details, lock, hidden_output_file),
-            job_timeout=current_app.config["MOVE_TASK_TIMEOUT"],
-            description=f"'{basename}'",
-        )
+        # A failed enqueue must not keep the title lock for its full TTL
+        # (#340). The source stays in the import directory.
+
+        try:
+            current_app.handoff_queue.enqueue(
+                "app.videos.move_localized_file",
+                args=(source_path, file_details, lock, hidden_output_file),
+                job_timeout=current_app.config["MOVE_TASK_TIMEOUT"],
+                description=f"'{basename}'",
+            )
+        except Exception:
+            abandon_handoff(source_path, lock, hidden_output_file)
+            return False
         return True
 
 

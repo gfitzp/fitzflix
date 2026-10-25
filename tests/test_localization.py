@@ -2237,3 +2237,42 @@ def test_a_hold_never_creates_a_directory_on_an_unmounted_volume(
 
     assert made == []
     assert source.exists()
+
+
+def test_a_failed_handoff_releases_the_title_lock(
+    app, sample_mkv, incoming_dir, monkeypatch
+):
+    """Test a localization whose move enqueue fails (Redis away, #340).
+
+    The title lock must not stay for its 1-day TTL. The source stays in
+    the import directory for the sweep. The staged output goes."""
+
+    basename = "Handoff Fault (2021) - [DVD].mkv"
+    source = os.path.join(incoming_dir, basename)
+    with open(sample_mkv, "rb") as f_in, open(source, "wb") as f_out:
+        f_out.write(f_in.read())
+
+    unlocked = []
+    real_unlock = app.lock_manager.unlock
+    monkeypatch.setattr(
+        app.lock_manager,
+        "unlock",
+        lambda lock: (unlocked.append(lock), real_unlock(lock))[1],
+    )
+
+    def refuse(*args, **kwargs):
+        raise ConnectionError("Redis is away")
+
+    monkeypatch.setattr(app.handoff_queue, "enqueue", refuse)
+    try:
+        with app.app_context():
+            assert localization_task(source) is False
+        title_locks = [lock for lock in unlocked if "Handoff Fault" in lock.resource]
+        assert len(title_locks) == 1
+        assert app.redis.get(title_locks[0].resource) is None
+        assert os.path.exists(source)
+        staging = app.config["STAGING_DIR"]
+        assert not [n for n in os.listdir(staging) if "Handoff Fault" in n]
+    finally:
+        if os.path.exists(source):
+            os.remove(source)

@@ -1628,39 +1628,75 @@ def localization_task(
             # conversion writes more next to it. Shrink the reservation to
             # what remains (#294).
 
-            if staged:
-                output_size = os.path.getsize(hidden_output_file)
-                set_staging_reservation(
-                    basename,
-                    output_size * (CONVERSION_STAGING_FACTOR if conversion else 1),
-                    [basename],
-                )
+            # A failure here (Redis away at the enqueue) must not keep the
+            # title lock for its full TTL (#340). The source stays in the
+            # import directory for the hourly sweep.
 
-            # A conversion first goes to the transcode queue. That task
-            # gives the file to move_localized_file after the encode.
+            try:
+                if staged:
+                    output_size = os.path.getsize(hidden_output_file)
+                    set_staging_reservation(
+                        basename,
+                        output_size * (CONVERSION_STAGING_FACTOR if conversion else 1),
+                        [basename],
+                    )
 
-            if conversion:
-                current_app.transcode_queue.enqueue(
-                    "app.videos.convert_localized_file",
-                    args=(
-                        source_path,
-                        file_details,
-                        lock,
-                        hidden_output_file,
-                        conversion,
-                    ),
-                    job_timeout=current_app.config["TRANSCODE_TASK_TIMEOUT"],
-                    description=f"'{file_details.get('basename')}'",
-                )
-            else:
-                current_app.handoff_queue.enqueue(
-                    "app.videos.move_localized_file",
-                    args=(source_path, file_details, lock, hidden_output_file),
-                    job_timeout=current_app.config["MOVE_TASK_TIMEOUT"],
-                    description=f"'{basename}'",
-                )
+                # A conversion first goes to the transcode queue. That task
+                # gives the file to move_localized_file after the encode.
+
+                if conversion:
+                    current_app.transcode_queue.enqueue(
+                        "app.videos.convert_localized_file",
+                        args=(
+                            source_path,
+                            file_details,
+                            lock,
+                            hidden_output_file,
+                            conversion,
+                        ),
+                        job_timeout=current_app.config["TRANSCODE_TASK_TIMEOUT"],
+                        description=f"'{file_details.get('basename')}'",
+                    )
+                else:
+                    current_app.handoff_queue.enqueue(
+                        "app.videos.move_localized_file",
+                        args=(source_path, file_details, lock, hidden_output_file),
+                        job_timeout=current_app.config["MOVE_TASK_TIMEOUT"],
+                        description=f"'{basename}'",
+                    )
+            except Exception:
+                abandon_handoff(source_path, lock, hidden_output_file, staged)
+                return False
 
         return True
+
+
+def abandon_handoff(source_path, lock, staged_output, staged=True):
+    """Clean up after a stage could not queue the next stage (#340).
+
+    Remove the staged output, release the staging reservation and the
+    title lock, and leave the source in place. The hourly sweep of the
+    import directory queues the source again. Each step is best effort."""
+
+    current_app.logger.error(
+        f"'{os.path.basename(source_path)}' The next stage could not be "
+        f"queued. The source stays for the next sweep: " + traceback.format_exc()
+    )
+    if staged and staged_output:
+        try:
+            os.remove(staged_output)
+        except OSError:
+            pass
+    try:
+        release_staging_reservation(os.path.basename(source_path))
+    except Exception:
+        current_app.logger.warning(traceback.format_exc())
+    if lock:
+        try:
+            current_app.lock_manager.unlock(lock)
+            current_app.logger.info(f"Removed lock {lock}")
+        except Exception:
+            current_app.logger.warning(traceback.format_exc())
 
 
 def _plan_conversion_or_reject(file_path, file_details):
@@ -2641,13 +2677,15 @@ def finalize_localization(
                     f"volume yet; re-queueing the library copy"
                 )
                 db.session.rollback()
-                handed_off = True
+                # handed_off is set only after the enqueue. If the enqueue
+                # fails, the finally block releases the lock (#340)
                 current_app.handoff_queue.enqueue(
                     "app.videos.move_localized_file",
                     args=(file_path, file_details, lock, hidden_output_file),
                     job_timeout=current_app.config["MOVE_TASK_TIMEOUT"],
                     description=f"'{file_details.get('basename')}'",
                 )
+                handed_off = True
                 return False
 
             try:
@@ -2671,7 +2709,6 @@ def finalize_localization(
                     f"{vanished_retries + 1} of {MAX_VANISHED_RETRIES})"
                 )
                 db.session.rollback()
-                handed_off = True
                 current_app.handoff_queue.enqueue_in(
                     timedelta(minutes=1),
                     "app.videos.move_localized_file",
@@ -2690,6 +2727,7 @@ def finalize_localization(
                     result_ttl=86400,
                     description=f"'{file_details.get('basename')}'",
                 )
+                handed_off = True
                 return False
 
             # The archive-only originals commit with the import. Their
