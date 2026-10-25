@@ -15,7 +15,9 @@ Thus, this module calls the public step methods of each loop directly.
 """
 
 import importlib
+import os
 import signal
+import socket
 import sys
 import time
 
@@ -63,6 +65,14 @@ QUEUE_NAMES = [
 
 TICK_SECONDS = 15
 
+# Only 1 process can run the cron table. 2 processes enqueue each job 2
+# times. The duplicate check of rq cannot fire inside its pipeline
+# (#323). Thus, this process holds its own lock. It refreshes the lock on
+# each tick, so a killed process frees it in INSTANCE_TTL seconds.
+
+INSTANCE_KEY = "fitzflix:scheduler:instance"
+INSTANCE_TTL = 45
+
 app = get_app()
 
 stop_requested = False
@@ -76,9 +86,36 @@ def request_stop(signum, frame):
 signal.signal(signal.SIGTERM, request_stop)
 signal.signal(signal.SIGINT, request_stop)
 
-# A crashed predecessor can leave a stale registry entry. That entry
-# would make this birth look like a duplicate. Thus, sweep the registry
-# first.
+instance_token = f"{socket.gethostname()}:{os.getpid()}"
+refresh_instance = app.redis.register_script(
+    "if redis.call('get', KEYS[1]) == ARGV[1] then "
+    "return redis.call('expire', KEYS[1], ARGV[2]) else return 0 end"
+)
+release_instance = app.redis.register_script(
+    "if redis.call('get', KEYS[1]) == ARGV[1] then "
+    "return redis.call('del', KEYS[1]) else return 0 end"
+)
+
+# Wait for the lock. A replacement of a killed process waits until the
+# lock of that process expires. A second process waits as long as the
+# first one runs.
+
+waiting = False
+while not app.redis.set(INSTANCE_KEY, instance_token, nx=True, ex=INSTANCE_TTL):
+    if stop_requested:
+        sys.exit(0)
+    if not waiting:
+        holder = app.redis.get(INSTANCE_KEY)
+        app.logger.warning(
+            f"The recurring-jobs process {holder!r} is running. This process "
+            f"waits for its lock"
+        )
+        waiting = True
+    time.sleep(1)
+
+# A crashed predecessor can leave a stale registry entry, and the System
+# page would list it. Thus, sweep the registry first. The duplicate check
+# of rq does not protect against 2 processes. The instance lock does.
 
 cron_scheduler_registry.cleanup(app.redis)
 
@@ -133,6 +170,12 @@ mover = RQScheduler(
     connection=app.redis,
     interval=TICK_SECONDS,
 )
+
+# This process holds the instance lock. Thus, a mover lock that exists
+# now belongs to a dead process. While it lived (up to 75 seconds), the
+# fallback period of rq kept the new mover idle for 2 minutes (#321).
+
+app.redis.delete(*[mover.get_locking_key(name) for name in QUEUE_NAMES])
 mover.register_birth()
 
 app.logger.info(
@@ -142,6 +185,13 @@ app.logger.info(
 
 try:
     while not stop_requested:
+        if not refresh_instance(
+            keys=[INSTANCE_KEY], args=[instance_token, INSTANCE_TTL]
+        ):
+            app.logger.error(
+                "The recurring-jobs process lost its instance lock. It stops"
+            )
+            break
         if mover.should_reacquire_locks:
             mover.acquire_locks()
         mover.enqueue_scheduled_jobs()
@@ -152,9 +202,20 @@ try:
             record_latest_times()
         cron.heartbeat()
 
-        time.sleep(TICK_SECONDS)
+        # Sleep in short steps. A stop request then ends the loop in 1
+        # second. Supervisor waits 10 seconds before SIGKILL, and a kill
+        # skips the cleanup below (#322).
+
+        wake = time.monotonic() + TICK_SECONDS
+        while not stop_requested and time.monotonic() < wake:
+            time.sleep(1)
 finally:
     cron.register_death()
-    mover.register_death()
+
+    # stop() releases the mover locks. register_death() alone kept them
+    # for up to 75 seconds (#321).
+
+    mover.stop()
+    release_instance(keys=[INSTANCE_KEY], args=[instance_token])
 
 sys.exit(0)
