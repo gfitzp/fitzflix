@@ -1293,35 +1293,42 @@ def mkvmerge_unlocked(file_id, audio_tracks, subtitle_tracks):
             file = File.query.filter_by(id=file_id).first()
             file_path = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
 
-            audio_start = None
-            subtitle_start = None
+            # The form gives the 1-based position of each track in its
+            # kind (FileAudioTrack.track). mkvmerge wants the container
+            # stream order. MediaInfo lists the tracks grouped by kind,
+            # so its list index is the stream order only when the file has
+            # video, then audio, then subtitles. Each track carries its own
+            # stream order. remove_empty_subtitle_tracks uses it the same
+            # way (#315).
 
             media_info = MediaInfo.parse(file_path)
-            tracks = [
-                track for track in media_info.tracks if track.track_id is not None
-            ]
-
-            current_app.logger.info(
-                f"MediaInfo tracks: "
-                f"{[(track.track_type, track.track_id, track.streamorder) for track in tracks]}"
-            )
-
-            for i, track in enumerate(tracks):
-                if track.track_type == "Audio" and audio_start == None:
-                    audio_start = i
-                if track.track_type == "Text" and subtitle_start == None:
-                    subtitle_start = i
-
+            stream_orders = {"Audio": [], "Text": []}
+            for track in media_info.tracks:
+                if track.track_type in stream_orders:
+                    stream_orders[track.track_type].append(
+                        track.to_data().get("streamorder")
+                    )
+            current_app.logger.info(f"Stream orders: {stream_orders}")
             current_app.logger.info(f"Audio tracks: {audio_tracks}")
             current_app.logger.info(f"Subtitle tracks: {subtitle_tracks}")
 
-            current_app.logger.info(f"First audio track: {audio_start}")
-            current_app.logger.info(f"First subtitle track: {subtitle_start}")
+            def stream_ids(kind, positions):
+                """Return the mkvmerge ids of the tracks at the form positions."""
 
-            audio_tracks = [audio_start + int(track) - 1 for track in audio_tracks]
-            subtitle_tracks = [
-                subtitle_start + int(track) - 1 for track in subtitle_tracks
-            ]
+                orders = stream_orders[kind]
+                ids = []
+                for position in positions:
+                    index = int(position) - 1
+                    if not 0 <= index < len(orders) or not str(orders[index]).isdigit():
+                        raise RuntimeError(
+                            f"'{file.basename}' has no stream order for "
+                            f"{kind} track {position}. The remux stops."
+                        )
+                    ids.append(int(orders[index]))
+                return ids
+
+            audio_tracks = stream_ids("Audio", audio_tracks)
+            subtitle_tracks = stream_ids("Text", subtitle_tracks)
 
             current_app.logger.info(f"Modified audio tracks: {audio_tracks}")
             current_app.logger.info(f"Modified subtitle tracks: {subtitle_tracks}")
