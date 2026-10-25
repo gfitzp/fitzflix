@@ -1,3 +1,4 @@
+import errno
 import hashlib
 import json
 import logging
@@ -583,6 +584,21 @@ def get_app(watch_import_dir=False):
     if _app is None:
         _app = create_app(watch_import_dir=watch_import_dir)
     return _app
+
+
+def makedirs_on_mounted_volume(path):
+    """Create a directory tree, but never on an unmounted volume (#341).
+
+    A path under /Volumes must be on a mounted volume. Without the volume,
+    makedirs creates the tree on the boot disk. Then the volume mounts
+    under a new name, and every config path points at the boot disk
+    (#227). Thus, this raises OSError (ENODEV) in place of the makedirs."""
+
+    if path.startswith("/Volumes/"):
+        mountpoint = "/".join(path.split("/")[:3])
+        if not os.path.ismount(mountpoint):
+            raise OSError(errno.ENODEV, f"volume '{mountpoint}' is not mounted", path)
+    os.makedirs(path, exist_ok=True)
 
 
 def create_work_directory(app, key):

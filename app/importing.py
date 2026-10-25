@@ -48,6 +48,7 @@ from app import (
     db,
     get_app,
     importable_basename,
+    makedirs_on_mounted_volume,
     path_tag,
     retry_job_id,
     safe_job_id,
@@ -3834,7 +3835,10 @@ def move_to_rejects(file_path, reason=""):
     hidden_destination = os.path.join(reject_directory, f".{basename}.partial")
 
     try:
-        os.makedirs(reject_directory, exist_ok=True)
+        # The rejects directory is on the external SSD. The SSD can drop
+        # during a long task. Then the file stays in place (#341)
+
+        makedirs_on_mounted_volume(reject_directory)
         try:
             os.rename(file_path, destination)
         except OSError:

@@ -2197,3 +2197,43 @@ def test_a_failed_finalize_commit_leaves_no_library_copy(
         rejected = os.path.join(app.config["REJECTS_DIR"], "exception", basename)
         assert os.path.exists(rejected)
         os.remove(rejected)
+
+
+def test_rejects_never_create_a_directory_on_an_unmounted_volume(
+    app, monkeypatch, tmp_path
+):
+    """Test move_to_rejects with an SSD that dropped during the task (#341).
+
+    makedirs would create the rejects tree on the boot disk. The file
+    stays in place, and nothing is created."""
+
+    made = []
+    monkeypatch.setitem(app.config, "REJECTS_DIR", "/Volumes/fitzflix-absent/rejects")
+    monkeypatch.setattr(os, "makedirs", lambda *a, **k: made.append(a))
+    source = tmp_path / "Dropped (2001) - [DVD].mkv"
+    source.write_bytes(b"movie")
+
+    with app.app_context():
+        assert move_to_rejects(str(source), "exception") is False
+
+    assert made == []
+    assert source.exists()
+
+
+def test_a_hold_never_creates_a_directory_on_an_unmounted_volume(
+    app, monkeypatch, tmp_path
+):
+    from app import sdr_conversion
+
+    made = []
+    monkeypatch.setitem(app.config, "HELD_DIR", "/Volumes/fitzflix-absent/held")
+    monkeypatch.setattr(os, "makedirs", lambda *a, **k: made.append(a))
+    source = tmp_path / "Held (2001) - [Remux-2160p].mkv"
+    source.write_bytes(b"movie")
+
+    with app.app_context():
+        with pytest.raises(OSError):
+            sdr_conversion.hold_import(str(source), {}, {"source_format": "HDR10"}, [])
+
+    assert made == []
+    assert source.exists()

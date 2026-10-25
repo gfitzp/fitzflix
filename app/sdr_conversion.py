@@ -41,7 +41,7 @@ from rq import get_current_job
 from flask import current_app, render_template
 from werkzeug.local import LocalProxy
 
-from app import db, get_app
+from app import db, get_app, makedirs_on_mounted_volume
 
 app = LocalProxy(get_app)
 
@@ -273,8 +273,11 @@ def hold_import(file_path, file_details, plan, blockers):
     from app.models import HeldImport
     from app.pipeline import record_task_stage
 
+    # HELD_DIR is on the external SSD. If the SSD is not mounted, this
+    # raises, and the file stays in place (#341)
+
     held_dir = current_app.config["HELD_DIR"]
-    os.makedirs(held_dir, exist_ok=True)
+    makedirs_on_mounted_volume(held_dir)
     basename = os.path.basename(file_path)
     held_path = os.path.join(held_dir, basename)
     if os.path.abspath(file_path) != os.path.abspath(held_path):
