@@ -51,7 +51,7 @@ from app.models import (
     UserWatchlist,
     movie_genres,
 )
-from app.tmdb_apply import tmdb_json_or
+from app.tmdb_apply import tmdb_json_or, us_certification_from
 from app.main import bp
 from app.plex_player import remote_playback_configured
 from app.queues import QUEUE_NAME
@@ -135,15 +135,6 @@ WATCHLIST_SHELF_SIZE = 18
 
 RECS_REQUESTED_KEY = "fitzflix:recs:requested:{user_id}"
 RAIL_REQUESTED_KEY = "fitzflix:rail:requested:{user_id}"
-
-# The 6 marks of the MPA rating system. The certification chip of a
-# film shows only these (Glenn, 2026-09-17). The reference table holds
-# only these US values, so a library record never carries another one.
-# The 2 live TMDB paths (the review page and the card of a bare TMDB
-# id) filter through this set. Thus, an NR or an Unrated film shows no
-# chip, the same as it does once it is cataloged.
-
-MPAA_RATINGS = frozenset({"G", "PG", "PG-13", "R", "NC-17", "X"})
 
 
 def _fits(movie, minutes):
@@ -1079,14 +1070,7 @@ def movie_card():
             href=url_for("main.movie", movie_id=movie.id),
             runtime=movie.tmdb_runtime,
             genres=[genre.name for genre in movie.genres],
-            certification=next(
-                (
-                    c.certification
-                    for c in movie.certifications
-                    if c.country == "US" and c.certification
-                ),
-                None,
-            ),
+            certification=movie.us_certification,
             overview=movie.tmdb_overview,
             directors=directors,
             top_cast=top_cast,
@@ -1122,64 +1106,105 @@ def movie_card():
 
     if not current_app.config["TMDB_API_KEY"]:
         abort(404)
-    details = tmdb_json_or(
-        f"/movie/{tmdb_id}", {"append_to_response": "credits,release_dates"}, None
-    )
+    details = tmdb_movie_details(tmdb_id)
     if details is None:
         abort(503)
-    film_title = details.get("title")
-    release_year = (details.get("release_date") or "")[:4]
-    if not film_title or not release_year.isdigit():
+    summary = movie_summary(details)
+    if not summary["title"] or not summary["year"].isdigit():
         abort(404)
-
-    directors = [
-        (person.get("id"), person.get("name"))
-        for person in (details.get("credits") or {}).get("crew") or []
-        if person.get("job") == "Director" and person.get("id") is not None
-    ]
-    billed_cast = sorted(
-        (details.get("credits") or {}).get("cast") or [],
-        key=lambda person: person.get("order", 99),
-    )
-    top_cast = [
-        (person.get("id"), person.get("name"))
-        for person in billed_cast[:TOP_BILLING_CUTOFF]
-        if person.get("id") is not None
-    ]
-
-    # The US rating. The first certified release wins. This is the same
-    # answer that the cataloger stores for library records. A value
-    # outside the MPA marks shows no chip.
-    certification = next(
-        (
-            date.get("certification")
-            for country in (details.get("release_dates") or {}).get("results") or []
-            if country.get("iso_3166_1") == "US"
-            for date in country.get("release_dates") or []
-            if date.get("certification") in MPAA_RATINGS
-        ),
-        None,
-    )
 
     return render_template(
         "_movie_card.html",
-        display_title=f"{film_title} ({release_year})",
+        display_title=f"{summary['title']} ({summary['year']})",
         href=url_for("main.review_tmdb", tmdb_id=tmdb_id),
-        runtime=details.get("runtime"),
-        genres=[
-            genre.get("name")
-            for genre in details.get("genres") or []
-            if genre.get("name")
-        ],
-        certification=certification,
-        overview=details.get("overview"),
-        directors=directors,
-        top_cast=top_cast,
+        runtime=summary["runtime"],
+        genres=[name for _, name in summary["genres"]],
+        certification=summary["certification"],
+        overview=summary["overview"],
+        directors=summary["directors"],
+        top_cast=summary["top_cast"],
         on_watchlist=False,
         in_library=False,
         library_upgradable=None,
         streaming=user_streaming(tmdb_id, current_user, negative=True),
     )
+
+
+def tmdb_movie_details(tmdb_id):
+    """Return the TMDB movie payload of a card or the log page, or None on a failure.
+
+    The payload carries the credits and the release dates. A failure
+    goes to the log."""
+
+    return tmdb_json_or(
+        f"/movie/{tmdb_id}", {"append_to_response": "credits,release_dates"}, None
+    )
+
+
+def tmdb_tv_details(tmdb_id):
+    """Return the TMDB series payload of a TV card, or None on a failure.
+
+    The payload carries the series-wide credits and the content ratings.
+    A failure goes to the log."""
+
+    return tmdb_json_or(
+        f"/tv/{tmdb_id}",
+        {"append_to_response": "aggregate_credits,content_ratings"},
+        None,
+    )
+
+
+def movie_summary(details):
+    """Return the facts of a TMDB movie payload for the card and the log page.
+
+    The dict has the title, the year (a string, blank if unknown), the
+    runtime, the overview, the poster path, and the IMDb id. It has the
+    genres as (id, name) pairs and the US certification
+    (us_certification_from). It also has the directors as unique (id, name) pairs, the billed
+    cast as dicts, and the top billing as (id, name) pairs. The
+    filmography page serves every TMDB person id. Thus, each credit
+    with an id links."""
+
+    credits = details.get("credits") or {}
+    billed_cast = sorted(
+        credits.get("cast") or [], key=lambda person: person.get("order", 99)
+    )
+    directors = []
+    for person in credits.get("crew") or []:
+        if person.get("job") == "Director" and person.get("id") is not None:
+            pair = (person["id"], person.get("name"))
+            if pair not in directors:
+                directors.append(pair)
+    return {
+        "title": details.get("title"),
+        "year": (details.get("release_date") or "")[:4],
+        "runtime": details.get("runtime"),
+        "overview": details.get("overview"),
+        "poster_path": details.get("poster_path"),
+        "imdb_id": details.get("imdb_id"),
+        "genres": [
+            (genre.get("id"), genre.get("name"))
+            for genre in details.get("genres") or []
+            if genre.get("name")
+        ],
+        "certification": us_certification_from(details),
+        "directors": directors,
+        "cast": [
+            {
+                "id": person.get("id"),
+                "name": person.get("name"),
+                "profile_path": person.get("profile_path"),
+                "character": person.get("character"),
+            }
+            for person in billed_cast
+            if person.get("id") is not None
+        ],
+        "top_cast": [
+            (person.get("id"), person.get("name"))
+            for person in billed_cast[:TOP_BILLING_CUTOFF]
+            if person.get("id") is not None
+        ],
+    }
 
 
 @bp.route("/tv_card")
@@ -1268,11 +1293,7 @@ def tv_card():
 
     if not current_app.config["TMDB_API_KEY"]:
         abort(404)
-    details = tmdb_json_or(
-        f"/tv/{tmdb_id}",
-        {"append_to_response": "aggregate_credits,content_ratings"},
-        None,
-    )
+    details = tmdb_tv_details(tmdb_id)
     if details is None:
         abort(503)
     series_name = details.get("name")
@@ -2127,9 +2148,7 @@ def review_tmdb(tmdb_id):
         flash("TMDB_API_KEY is not configured. Fitzflix cannot query TMDB.", "warning")
         return redirect(url_for("main.history"))
 
-    details = tmdb_json_or(
-        f"/movie/{tmdb_id}", {"append_to_response": "credits,release_dates"}, None
-    )
+    details = tmdb_movie_details(tmdb_id)
     if details is None:
         flash("Fitzflix could not reach TMDB. Try again in a moment.", "warning")
         return redirect(url_for("main.history"))
@@ -2137,50 +2156,9 @@ def review_tmdb(tmdb_id):
     # The runtime, genres, US certification, and top billing. This
     # mirrors what the movie page shows for library films.
 
-    genres = [
-        (g.get("id"), g.get("name"))
-        for g in details.get("genres") or []
-        if g.get("name")
-    ]
-    certification = None
-    for country_release in (details.get("release_dates") or {}).get("results") or []:
-        if country_release.get("iso_3166_1") == "US":
-            for release in country_release.get("release_dates") or []:
-                if release.get("certification") in MPAA_RATINGS:
-                    certification = release["certification"]
-                    break
-            break
-
-    billed_cast = sorted(
-        (details.get("credits") or {}).get("cast") or [],
-        key=lambda person: person.get("order", 99),
-    )
-
-    # The filmography page serves every TMDB person id. Thus, every cast
-    # member links, with or without local credit rows.
-
-    cast = [
-        {
-            "id": person.get("id"),
-            "name": person.get("name"),
-            "profile_path": person.get("profile_path"),
-            "character": person.get("character"),
-        }
-        for person in billed_cast
-        if person.get("id") is not None
-    ]
-
-    # The (person id, name) pairs for the directed-by line. This matches
-    # the movie page. The filmography route serves every TMDB person id.
-
-    directors = []
-    for person in (details.get("credits") or {}).get("crew") or []:
-        if person.get("job") == "Director" and person.get("id") is not None:
-            pair = (person["id"], person.get("name"))
-            if pair not in directors:
-                directors.append(pair)
-    film_title = details.get("title")
-    release_year = (details.get("release_date") or "")[:4]
+    summary = movie_summary(details)
+    film_title = summary["title"]
+    release_year = summary["year"]
     if not film_title or not release_year.isdigit():
         flash(
             "TMDB has no title or release year for that film yet. Fitzflix "
@@ -2300,7 +2278,7 @@ def review_tmdb(tmdb_id):
         tmdb_title=None,
         tmdb_release_date=None,
         tmdb_id=tmdb_id,
-        imdb_id=details.get("imdb_id"),
+        imdb_id=summary["imdb_id"],
         criterion_spine_number=None,
         criterion_set_title=None,
         criterion_in_print=None,
@@ -2313,13 +2291,13 @@ def review_tmdb(tmdb_id):
         poster_fold=poster_fold(current_user, tmdb_id),
         film_title=film_title,
         year=year,
-        overview=details.get("overview"),
-        poster_path=details.get("poster_path"),
-        runtime=details.get("runtime"),
-        genres=genres,
-        certification=certification,
-        cast=cast,
-        directors=directors,
+        overview=summary["overview"],
+        poster_path=summary["poster_path"],
+        runtime=summary["runtime"],
+        genres=summary["genres"],
+        certification=summary["certification"],
+        cast=summary["cast"],
+        directors=summary["directors"],
         estimated_rating=estimated,
         movie_review_form=movie_review_form,
         movie=store_lookup,

@@ -692,3 +692,66 @@ def test_movie_states_fills_a_whole_page_in_one_pass(app, admin_client, admin_id
         if payload["tmdb"][str(tmdb_id)]["estimated"] is not None
     ]
     assert len(estimated) == 30
+
+
+def test_the_live_tmdb_pages_take_the_theatrical_rating(app, admin_client, monkeypatch):
+    """The card and the log page read the rating that the cataloger stores (#365).
+
+    The limited release (type 2) carries R. The theatrical release
+    (type 3) carries PG-13. The cataloger stores PG-13. Before, the 2
+    live TMDB pages showed the first MPA mark, R."""
+
+    import copy
+
+    from tests.test_reviews import JAWS_2_DETAILS, FakeTMDBDetails
+
+    details = copy.deepcopy(JAWS_2_DETAILS)
+    details["release_dates"]["results"][0]["release_dates"] = [
+        {"certification": "R", "type": 2},
+        {"certification": "PG-13", "type": 3},
+    ]
+    monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
+    monkeypatch.setattr(
+        "app.tmdb_apply.tmdb_get", lambda *a, **k: FakeTMDBDetails(details)
+    )
+
+    card = admin_client.get("/movie_card?tmdb_id=579").get_data(as_text=True)
+    page = admin_client.get("/review/tmdb/579").get_data(as_text=True)
+    for html in (card, page):
+        assert ">PG-13</span>" in html
+        assert ">R</span>" not in html
+
+
+def test_movie_summary_reads_a_tmdb_payload(app):
+    from app.main.discover import movie_summary
+    from tests.test_reviews import JAWS_2_DETAILS
+
+    summary = movie_summary(JAWS_2_DETAILS)
+    assert summary["title"] == "Jaws 2"
+    assert summary["year"] == "1978"
+    assert summary["runtime"] == 116
+    assert summary["genres"] == [(27, "Horror"), (53, "Thriller")]
+    assert summary["certification"] == "PG"
+    assert summary["directors"] == [(56512, "Jeannot Szwarc")]
+    assert summary["top_cast"][0] == (4430, "Roy Scheider")
+    assert [person["id"] for person in summary["cast"]] == [
+        4430,
+        999888777,
+        555444333,
+    ]
+    assert movie_summary({})["year"] == ""
+
+
+def test_the_stored_us_certification_of_a_record(app):
+    from app.models import RefTMDBCertification
+
+    with app.app_context():
+        movie = make_movie("Certified", 1990)
+        assert movie.us_certification is None
+        for country, value in (("GB", "15"), ("US", "R")):
+            row = RefTMDBCertification(country=country, certification=value)
+            db.session.add(row)
+            movie.certifications.append(row)
+        db.session.flush()
+        assert movie.us_certification == "R"
+        db.session.rollback()

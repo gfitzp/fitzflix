@@ -649,6 +649,22 @@ class Movie(db.Model, TMDBMixin):
         )
         return f"{title} ({year})"
 
+    @property
+    def us_certification(self):
+        """Return the stored US rating of the film, or None (#365).
+
+        The cataloger stores 1 rating per country (release_certification).
+        The movie page and the poster card of a record show this value."""
+
+        return next(
+            (
+                certification.certification
+                for certification in self.certifications
+                if certification.country == "US" and certification.certification
+            ),
+            None,
+        )
+
     def __repr__(self):
         return f"<Movie '{self.title} ({self.year})'>"
 

@@ -1444,14 +1444,7 @@ def movie(movie_id):
         genres=genres,
         # The US rating of the meta line. It is the same answer that the
         # popover card gives. Thus, the page and the popup read the same.
-        certification=next(
-            (
-                c.certification
-                for c in movie.certifications
-                if c.country == "US" and c.certification
-            ),
-            None,
-        ),
+        certification=movie.us_certification,
         awards=awards,
         review=review,
         films=films,

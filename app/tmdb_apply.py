@@ -212,11 +212,48 @@ class TMDBAssociation:
         }
 
 
+# The 6 marks of the MPA rating system. The certification chip of a
+# film shows only these (Glenn, 2026-09-17). The live TMDB paths (the
+# review page and the card of a bare TMDB id) filter through this set.
+# Thus, an NR or an Unrated film shows no chip there.
+
+MPAA_RATINGS = frozenset({"G", "PG", "PG-13", "R", "NC-17", "X"})
+
+
+def release_certification(country_release):
+    """Return the rating of 1 country entry of the TMDB release dates, or None.
+
+    The theatrical release (type 3) comes first (pick_rating, #303).
+    This is the 1 rule of the cataloger and of the live TMDB pages."""
+
+    return pick_rating(
+        country_release.get("release_dates"),
+        "certification",
+        preferred=lambda entry: entry.get("type") == 3,
+    )
+
+
+def us_certification_from(details):
+    """Return the US rating of a TMDB movie payload, or None (#365).
+
+    The rule is release_certification, the rule that the cataloger
+    stores. A rating outside MPAA_RATINGS gives None."""
+
+    for country_release in (details.get("release_dates") or {}).get("results") or []:
+        if isinstance(country_release, dict) and (
+            country_release.get("iso_3166_1") == "US"
+        ):
+            rating = release_certification(country_release)
+            return rating if rating in MPAA_RATINGS else None
+    return None
+
+
 def _movie_certifications(record, entries):
     """Return the certification rows of the release dates of a movie payload.
 
-    Each country gives at most 1 rating (pick_rating). A rating with no
-    row in the table is not shown. The weekly sync adds the new ones."""
+    Each country gives at most 1 rating (release_certification). A
+    rating with no row in the table is not shown. The weekly sync adds
+    the new ones."""
 
     from app.models import RefTMDBCertification
 
@@ -225,11 +262,7 @@ def _movie_certifications(record, entries):
         country = country_release.get("iso_3166_1")
         if not country:
             continue
-        rating = pick_rating(
-            country_release.get("release_dates"),
-            "certification",
-            preferred=lambda entry: entry.get("type") == 3,
-        )
+        rating = release_certification(country_release)
         if rating:
             certification = RefTMDBCertification.query.filter_by(
                 country=country, certification=rating
