@@ -343,6 +343,14 @@ def cron_table(config):
             3600,
             "Month-start check of the leaving-Criterion film set",
         ),
+        # Add the new official TMDB certifications weekly, before the
+        # Monday refreshes. A rating with no row in the table never shows.
+        (
+            "0 4 * * 1",
+            "app.tmdb_refresh.sync_certification_list",
+            600,
+            "Syncing the TMDB certification list",
+        ),
         # Refresh the film awards from Wikidata weekly, early on Monday.
         (
             "15 4 * * 1",

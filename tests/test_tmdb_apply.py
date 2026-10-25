@@ -457,3 +457,59 @@ def test_tv_seasons_are_shared_and_pruned(app):
         )
         db.session.commit()
         assert sorted(s.id for s in TMDBSeason.query.all()) == [77001, 77003]
+
+
+def test_the_certification_sync_adds_the_missing_values(app, monkeypatch):
+    """The 1-time seed had no US "NR". An NR film showed no rating (#303)."""
+
+    import app.tmdb_refresh as tmdb_refresh
+    from app.models import RefTMDBCertification
+
+    class Answer:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {
+                "certifications": {
+                    "US": [
+                        {"certification": "NR", "meaning": "Not rated", "order": 0},
+                        {"certification": "R", "meaning": "Restricted", "order": 4},
+                    ],
+                    "GB": [{"certification": "12A", "meaning": "", "order": 3}],
+                }
+            }
+
+    monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
+    monkeypatch.setattr(tmdb_refresh, "tmdb_get", lambda url, **kwargs: Answer())
+    with app.app_context():
+        db.session.add(RefTMDBCertification(country="US", certification="R"))
+        movie = make_movie("Unrated Classic", 1951, tmdb_id=990030)
+        db.session.commit()
+
+        assert tmdb_refresh.sync_certification_list() is True
+        assert tmdb_refresh.sync_certification_list() is True
+        rows = {
+            (c.country, c.certification): c.order
+            for c in RefTMDBCertification.query.all()
+        }
+        assert rows == {("US", "NR"): 0, ("US", "R"): 4, ("GB", "12A"): 3}
+
+        movie.tmdb_movie_apply(
+            {
+                "id": 990030,
+                "release_dates": {
+                    "results": [
+                        {
+                            "iso_3166_1": "US",
+                            "release_dates": [
+                                {"type": 1, "certification": ""},
+                                {"type": 3, "certification": "NR"},
+                            ],
+                        }
+                    ]
+                },
+            }
+        )
+        db.session.commit()
+        assert [c.certification for c in movie.certifications] == ["NR"]

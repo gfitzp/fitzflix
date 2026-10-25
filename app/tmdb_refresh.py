@@ -25,6 +25,7 @@ from datetime import datetime, timedelta, timezone
 
 from flask import current_app, render_template
 from rq.registry import ScheduledJobRegistry, StartedJobRegistry
+from unidecode import unidecode
 from werkzeug.local import LocalProxy
 
 from app import db, get_app, safe_job_id
@@ -35,11 +36,13 @@ from app.models import (
     File,
     Movie,
     MovieAward,
+    RefTMDBCertification,
     TVSeries,
     User,
     UserMovieReview,
     UserMovieStatus,
     UserWatchlist,
+    tmdb_get,
 )
 
 
@@ -929,6 +932,62 @@ def apply_tmdb_refresh(
         finally:
             for held in locks:
                 current_app.lock_manager.unlock(held)
+
+
+def sync_certification_list():
+    """Add the official TMDB certifications that the lookup table lacks.
+
+    tmdb_movie_apply stores a certification only when the table has its
+    row. The table was a 1-time seed. It had 142 of the 316 official
+    values, and US "NR" was not 1 of them. Thus, the most common US
+    rating of the old films never showed. This weekly task adds the new
+    values and updates the meaning and the order. It deletes no row,
+    because movie rows link to them. Return True when TMDB answered."""
+
+    with app.app_context():
+        try:
+            response = tmdb_get(
+                current_app.config["TMDB_API_URL"] + "/certification/movie/list",
+                params={"api_key": current_app.config["TMDB_API_KEY"]},
+            )
+            response.raise_for_status()
+            listing = response.json().get("certifications") or {}
+        except Exception:
+            current_app.logger.warning(traceback.format_exc())
+            return False
+
+        # The unique key compares without case or accents in MySQL. Thus,
+        # the lookup folds the value the same way, and a near-duplicate
+        # updates the stored row instead of failing the insert.
+
+        def folded(country, value):
+            """Return the key of a row as the MySQL collation compares it."""
+
+            return country, unidecode(value).casefold()
+
+        stored = {
+            folded(row.country, row.certification): row
+            for row in RefTMDBCertification.query.all()
+        }
+        added = 0
+        for country, entries in listing.items():
+            for entry in entries or []:
+                value = (entry.get("certification") or "").strip()
+                if not value:
+                    continue
+                row = stored.get(folded(country, value))
+                if row is None:
+                    row = RefTMDBCertification(country=country, certification=value)
+                    db.session.add(row)
+                    stored[folded(country, value)] = row
+                    added += 1
+                row.meaning = entry.get("meaning")
+                row.order = entry.get("order")
+        db.session.commit()
+        current_app.logger.info(
+            f"TMDB certifications: {added} added, {len(stored)} in the table"
+        )
+        return True
 
 
 def refresh_in_production_tv():
