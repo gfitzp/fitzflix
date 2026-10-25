@@ -157,6 +157,17 @@ def dvr_lineup(token):
     ]
 
 
+def _m3u_text(value, attribute=False):
+    """Return a channel name that is safe in an EXTINF line (#327).
+
+    A line break ends the line. In an attribute, a double quote ends the
+    value. Thus, a line break becomes a space, and a double quote in an
+    attribute becomes a single quote."""
+
+    text = " ".join(str(value).splitlines())
+    return text.replace('"', "'") if attribute else text
+
+
 @bp.route("/dvr/<token>/playlist.m3u")
 def dvr_playlist(token):
     """Return the M3U tuner playlist.
@@ -170,9 +181,10 @@ def dvr_playlist(token):
     lines = ["#EXTM3U"]
     for channel in channel_index(current_app.redis):
         lines.append(
-            f'#EXTINF:-1 tvg-id="{channel["slug"]}" tvg-name="{channel["name"]}" '
+            f'#EXTINF:-1 tvg-id="{channel["slug"]}" '
+            f'tvg-name="{_m3u_text(channel["name"], attribute=True)}" '
             f'tvg-chno="{channel["number"]}" tvg-logo="{logo}" '
-            f'group-title="Fitzflix",{channel["name"]}'
+            f'group-title="Fitzflix",{_m3u_text(channel["name"])}'
         )
         lines.append(_absolute("main.dvr_stream", token=token, slug=channel["slug"]))
     return Response("\n".join(lines) + "\n", mimetype="audio/x-mpegurl")

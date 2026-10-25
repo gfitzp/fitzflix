@@ -740,3 +740,29 @@ def test_build_steps_aside_for_a_queued_rebuild(app, monkeypatch):
     assert json.loads(app.redis.get(dvr.LINEUP_KEY.format(slug="fitzflix-mix"))) == {
         "x": 1
     }
+
+
+def test_playlist_escapes_quotes_and_line_breaks_in_channel_names(
+    app, client, monkeypatch
+):
+    """Test a channel name with double quotes and a line break (#327).
+
+    The attribute order stays the order that Plex reads."""
+
+    import app.main.dvr as dvr_routes
+
+    monkeypatch.setattr(
+        dvr_routes,
+        "channel_index",
+        lambda redis: [
+            {"number": 7, "name": '"Golden Age"\nWesterns', "slug": "golden-age"}
+        ],
+    )
+    body = client.get(f"/dvr/{TOKEN}/playlist.m3u").get_data(as_text=True)
+    extinf = [line for line in body.splitlines() if line.startswith("#EXTINF")]
+    assert len(extinf) == 1
+    assert extinf[0].startswith(
+        '#EXTINF:-1 tvg-id="golden-age" tvg-name="\'Golden Age\' Westerns" '
+        'tvg-chno="7" tvg-logo="'
+    )
+    assert extinf[0].endswith(',"Golden Age" Westerns')
