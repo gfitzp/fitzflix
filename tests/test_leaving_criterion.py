@@ -1143,3 +1143,26 @@ def test_a_film_leaving_criterion_is_not_urgent_for_a_non_subscriber(app):
         assert urgent == []
         assert [row["movie"].id for row in rows] == [film.id]
         assert rows[0]["leaving"] is None
+
+
+def test_an_earlier_set_never_replaces_the_stored_set(app, monkeypatch):
+    """Last month's page must not replace an incomplete current set (#324)."""
+
+    import app.leaving_criterion as leaving_criterion
+
+    current = {
+        "departs": (date.today() + timedelta(days=20)).isoformat(),
+        "items": [{"title": "Still Leaving", "tmdb_id": None}],
+        "incomplete": True,
+    }
+    app.redis.set(leaving_criterion.LEAVING_KEY, json.dumps(current))
+    departed = [{"title": "Already Gone", "year": 1950, "director": None}]
+    monkeypatch.setattr(
+        leaving_criterion,
+        "fetch_leaving_films",
+        lambda: (date.today() - timedelta(days=3), "leaving-last-month", departed),
+    )
+
+    with app.app_context():
+        assert leaving_criterion.refresh_leaving_criterion() is True
+    assert json.loads(app.redis.get(leaving_criterion.LEAVING_KEY)) == current

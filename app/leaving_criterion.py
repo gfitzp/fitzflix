@@ -529,6 +529,21 @@ def refresh_leaving_criterion():
             )
             return True
 
+        # The candidates include the page of last month. It stays up for
+        # some days after its month. A failed fetch of this month must not
+        # replace the stored set with the departed one (#324). The stored
+        # set keeps its incomplete mark, and the next run tries again.
+
+        if stored and (
+            departs < date.fromisoformat(stored["departs"]) or departs < date.today()
+        ):
+            current_app.logger.warning(
+                f"Leaving-Criterion: '{source}' departs {departs.isoformat()}, "
+                f"before the stored set ({stored['departs']}). Keeping the "
+                f"stored set"
+            )
+            return True
+
         # Films that the TMDB matcher cannot resolve still go into the
         # stored set. They carry only the scraped facts (title, director,
         # year). The /leaving page lists them as plain rows. Thus, the
