@@ -95,7 +95,7 @@
 {% endif %}
 {% if movies %}
 {{ pagination_pair(pages, 'main.movie_shopping', {'q': request.args.get('q'), 'library': request.args.get('library'), 'media': request.args.get('media'), 'min_quality': request.args.get('min_quality'), 'max_quality': request.args.get('max_quality')}, prev_url, next_url) }}
-{% for file, movie, quality, rating, modified_rating, whole_stars, half_stars, instruction in movies %}
+{% for file, movie, quality, instruction in movies %}
 {{ shopping_row(movie, instruction, file=file) }}
 {% endfor %}
 {{ pagination_pair(pages, 'main.movie_shopping', {'q': request.args.get('q'), 'library': request.args.get('library'), 'media': request.args.get('media'), 'min_quality': request.args.get('min_quality'), 'max_quality': request.args.get('max_quality')}, prev_url, next_url) }}

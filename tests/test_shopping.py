@@ -386,3 +386,23 @@ def test_shopping_row_passes_the_instruction_to_the_store_menu(app, admin_client
     assert "Format=Blu%252Dray%7C4K%2520UHD%2520Blu%252Dray&_sop=15" in page
     assert "Format=DVD%7C" not in page
     assert f'data-state-movie="{movie_id}" data-watchlist-scope' in page
+
+
+def test_an_unknown_film_post_keeps_the_filters_of_the_list(app, admin_client):
+    """The add or exclude post of an unknown film goes back to the same view."""
+
+    from tests.test_pages import csrf_token_from
+
+    page = admin_client.get("/shopping-list/movie").get_data(as_text=True)
+    response = admin_client.post(
+        "/shopping-list/movie?library=criterion&media=digital&q=jaws&page=2",
+        data={
+            "csrf_token": csrf_token_from(page),
+            "movie_id": "999999",
+            "exclude_submit": "1",
+        },
+    )
+    assert response.status_code == 302
+    location = response.headers["Location"]
+    for part in ("library=criterion", "media=digital", "q=jaws", "page=2"):
+        assert part in location, part

@@ -33,7 +33,7 @@ from app.models import (
     User,
     UserMovieReview,
     UserWatchlist,
-    movie_file_rank,
+    ranked_movie_files,
     title_sort,
 )
 from app.streaming import (
@@ -362,66 +362,9 @@ def movie_shopping():
             )
         )
 
-    # This subquery gets the best movie titles.
+    # This subquery gets the best movie files.
 
-    ranked_files = (
-        db.session.query(
-            File.id.label("file_id"),
-            Movie.id.label("movie_id"),
-            Movie.title,
-            File.edition,
-            RefQuality.quality_title,
-            movie_file_rank(),
-        )
-        .join(Movie, (Movie.id == File.movie_id))
-        .join(RefQuality, (RefQuality.id == File.quality_id))
-        .subquery()
-    )
-
-    # This subquery gets only the physical-media movies.
-
-    physical_media = (
-        db.session.query(Movie.id)
-        .join(File, (File.movie_id == Movie.id))
-        .join(RefQuality, (RefQuality.id == File.quality_id))
-        .filter(RefQuality.physical_media == True)
-        .filter(File.feature_type_id == None)
-        .subquery()
-    )
-
-    # This subquery gets the average rating of the current user for each
-    # movie. The math on modified_rating, whole_stars, and half_stars is
-    # the same as at review creation. Here it applies to the *average*.
-    # The page no longer draws these columns. Each row has the live star
-    # ladder, painted from /movie_states with the latest verdict. But the
-    # columns still go with the row tuple that the template unpacks.
-
-    rating = (
-        db.session.query(
-            UserMovieReview.user_id,
-            UserMovieReview.movie_id,
-            db.func.avg(UserMovieReview.rating).label("rating"),
-            (db.func.round(db.func.avg(UserMovieReview.rating) * 2) / 2).label(
-                "modified_rating"
-            ),
-            db.func.floor(
-                db.func.round(db.func.avg(UserMovieReview.rating) * 2) / 2
-            ).label("whole_stars"),
-            db.case(
-                (
-                    db.func.mod(
-                        (db.func.round(db.func.avg(UserMovieReview.rating) * 2) / 2),
-                        1,
-                    )
-                    == 0,
-                    0,
-                ),
-                else_=(1),
-            ).label("half_stars"),
-        )
-        .group_by(UserMovieReview.user_id, UserMovieReview.movie_id)
-        .subquery()
-    )
+    ranked_files = ranked_movie_files()
 
     # These subqueries get the preference of each quality limit.
 
@@ -681,10 +624,6 @@ def movie_shopping():
                 File,
                 Movie,
                 RefQuality,
-                rating.c.rating,
-                rating.c.modified_rating,
-                rating.c.whole_stars,
-                rating.c.half_stars,
                 shopping_instruction_case.label("instruction"),
             )
             .select_from(Movie)
@@ -693,13 +632,44 @@ def movie_shopping():
             .outerjoin(
                 CriterionQuality, (CriterionQuality.id == Movie.criterion_quality_id)
             )
-            .outerjoin(
-                rating,
-                (rating.c.movie_id == Movie.id) & (rating.c.user_id == current_user.id),
-            )
             .filter(Movie.id.in_(liked_movie_ids))
             .filter(Movie.id.not_in(owned_movie_ids))
         )
+
+    def shopping_rows():
+        """Return the best owned copy of each film in the quality range, with its instruction."""
+
+        return (
+            db.session.query(
+                File,
+                Movie,
+                RefQuality,
+                shopping_instruction_case.label("instruction"),
+            )
+            .join(Movie, (Movie.id == File.movie_id))
+            .join(RefQuality, (RefQuality.id == File.quality_id))
+            .outerjoin(
+                CriterionQuality, (CriterionQuality.id == Movie.criterion_quality_id)
+            )
+            .join(ranked_files, (ranked_files.c.id == File.id))
+            .filter(File.feature_type_id == None)
+            .filter(ranked_files.c.rank == 1)
+            .filter(RefQuality.preference >= min_preference)
+            .filter(RefQuality.preference <= max_preference)
+        )
+
+    # The Criterion view keeps only the films with a spine number or a set
+    # title.
+
+    def criterion_only(query):
+        if criterion_release:
+            query = query.filter(
+                db.or_(
+                    Movie.criterion_spine_number != None,
+                    Movie.criterion_set_title != None,
+                )
+            )
+        return query
 
     watchlist_groups = None
 
@@ -712,32 +682,7 @@ def movie_shopping():
             else:
                 title = f'Upgrade details for "{movie.display_title}"'
             movies = (
-                db.session.query(
-                    File,
-                    Movie,
-                    RefQuality,
-                    rating.c.rating,
-                    rating.c.modified_rating,
-                    rating.c.whole_stars,
-                    rating.c.half_stars,
-                    shopping_instruction_case.label("instruction"),
-                )
-                .join(Movie, (Movie.id == File.movie_id))
-                .join(RefQuality, (RefQuality.id == File.quality_id))
-                .outerjoin(
-                    CriterionQuality,
-                    (CriterionQuality.id == Movie.criterion_quality_id),
-                )
-                .outerjoin(
-                    rating,
-                    (rating.c.movie_id == Movie.id)
-                    & (rating.c.user_id == current_user.id),
-                )
-                .join(ranked_files, (ranked_files.c.file_id == File.id))
-                .filter(File.feature_type_id == None)
-                .filter(ranked_files.c.rank == 1)
-                .filter(RefQuality.preference >= min_preference)
-                .filter(RefQuality.preference <= max_preference)
+                shopping_rows()
                 .filter(Movie.tmdb_id == tmdb_id)
                 .order_by(
                     title_sort(Movie, tmdb=False).asc(),
@@ -756,46 +701,12 @@ def movie_shopping():
             # searches. Thus, "spider man" finds "Spider-Man".
 
             pattern = q.replace(" ", "%")
-            owned_matches = (
-                db.session.query(
-                    File,
-                    Movie,
-                    RefQuality,
-                    rating.c.rating,
-                    rating.c.modified_rating,
-                    rating.c.whole_stars,
-                    rating.c.half_stars,
-                    shopping_instruction_case.label("instruction"),
-                )
-                .join(Movie, (Movie.id == File.movie_id))
-                .join(RefQuality, (RefQuality.id == File.quality_id))
-                .outerjoin(
-                    CriterionQuality,
-                    (CriterionQuality.id == Movie.criterion_quality_id),
-                )
-                .outerjoin(
-                    rating,
-                    (rating.c.movie_id == Movie.id)
-                    & (rating.c.user_id == current_user.id),
-                )
-                .join(ranked_files, (ranked_files.c.file_id == File.id))
-                .filter(File.feature_type_id == None)
-                .filter(ranked_files.c.rank == 1)
-                .filter(RefQuality.preference >= min_preference)
-                .filter(RefQuality.preference <= max_preference)
-                .filter(
-                    db.or_(
-                        Movie.title.ilike(f"%{pattern}%"),
-                        Movie.tmdb_title.ilike(f"%{pattern}%"),
-                    )
-                )
+            title_matches = db.or_(
+                Movie.title.ilike(f"%{pattern}%"),
+                Movie.tmdb_title.ilike(f"%{pattern}%"),
             )
-            liked_matches = liked_unowned_query().filter(
-                db.or_(
-                    Movie.title.ilike(f"%{pattern}%"),
-                    Movie.tmdb_title.ilike(f"%{pattern}%"),
-                )
-            )
+            owned_matches = shopping_rows().filter(title_matches)
+            liked_matches = liked_unowned_query().filter(title_matches)
 
             # A film with no local copy counts as the virtual bottom
             # quality. Thus, it appears only if the minimum of the range
@@ -843,44 +754,10 @@ def movie_shopping():
         )
 
         movies = (
-            db.session.query(
-                File,
-                Movie,
-                RefQuality,
-                rating.c.rating,
-                rating.c.modified_rating,
-                rating.c.whole_stars,
-                rating.c.half_stars,
-                shopping_instruction_case.label("instruction"),
-            )
-            .join(Movie, (Movie.id == File.movie_id))
-            .join(RefQuality, (RefQuality.id == File.quality_id))
-            .outerjoin(
-                CriterionQuality, (CriterionQuality.id == Movie.criterion_quality_id)
-            )
-            .outerjoin(
-                rating,
-                (rating.c.movie_id == Movie.id) & (rating.c.user_id == current_user.id),
-            )
-            .join(ranked_files, (ranked_files.c.file_id == File.id))
-            .filter(File.feature_type_id == None)
-            .filter(ranked_files.c.rank == 1)
-            .filter(RefQuality.preference >= min_preference)
-            .filter(RefQuality.preference <= max_preference)
-            .filter(Movie.id.not_in(db.select(physical_media.c.movie_id)))
-            .filter(
-                db.or_(
-                    db.and_(
-                        criterion_release == True,
-                        db.or_(
-                            Movie.criterion_spine_number != None,
-                            Movie.criterion_set_title != None,
-                        ),
-                        # Movie.criterion_in_print == 1,
-                        # CriterionQuality.preference >= RefQuality.preference,
-                    ),
-                    criterion_release != True,
-                ),
+            criterion_only(
+                shopping_rows().filter(
+                    Movie.id.not_in(db.select(physical_media.c.movie_id))
+                )
             )
             .order_by(
                 shopping_urgency_order_case.desc(),
@@ -896,58 +773,9 @@ def movie_shopping():
         )
 
     else:
-        owned_titles = (
-            db.session.query(
-                File,
-                Movie,
-                RefQuality,
-                rating.c.rating,
-                rating.c.modified_rating,
-                rating.c.whole_stars,
-                rating.c.half_stars,
-                shopping_instruction_case.label("instruction"),
-            )
-            .join(Movie, (Movie.id == File.movie_id))
-            .join(RefQuality, (RefQuality.id == File.quality_id))
-            .outerjoin(
-                CriterionQuality, (CriterionQuality.id == Movie.criterion_quality_id)
-            )
-            .outerjoin(
-                rating,
-                (rating.c.movie_id == Movie.id) & (rating.c.user_id == current_user.id),
-            )
-            .join(ranked_files, (ranked_files.c.file_id == File.id))
-            .filter(File.feature_type_id == None)
-            .filter(ranked_files.c.rank == 1)
-            .filter(RefQuality.preference >= min_preference)
-            .filter(RefQuality.preference <= max_preference)
-            .filter(
-                db.or_(
-                    db.and_(
-                        criterion_release == True,
-                        db.or_(
-                            Movie.criterion_spine_number != None,
-                            Movie.criterion_set_title != None,
-                        ),
-                        # Movie.criterion_in_print == 1,
-                        # CriterionQuality.preference >= RefQuality.preference,
-                    ),
-                    criterion_release != True,
-                ),
-            )
-        )
-        liked_titles = liked_unowned_query().filter(
-            db.or_(
-                db.and_(
-                    criterion_release == True,
-                    db.or_(
-                        Movie.criterion_spine_number != None,
-                        Movie.criterion_set_title != None,
-                    ),
-                ),
-                criterion_release != True,
-            ),
-        )
+        owned_titles = criterion_only(shopping_rows())
+        liked_titles = criterion_only(liked_unowned_query())
+
         # A film with no local copy counts as the virtual bottom quality.
         # Thus, it appears only if the minimum of the range reaches down to
         # "Not in library".
@@ -970,29 +798,22 @@ def movie_shopping():
 
     movie_shopping_exclude_form = MovieShoppingExcludeForm()
 
+    # The links and the redirects keep each filter of the page.
+
+    filters = {
+        "q": q,
+        "media": media,
+        "library": library,
+        "min_quality": min_quality,
+        "max_quality": max_quality,
+    }
     next_url = (
-        url_for(
-            "main.movie_shopping",
-            page=movies.next_num,
-            q=q,
-            media=media,
-            library=library,
-            min_quality=min_quality,
-            max_quality=max_quality,
-        )
+        url_for("main.movie_shopping", page=movies.next_num, **filters)
         if movies is not None and movies.has_next
         else None
     )
     prev_url = (
-        url_for(
-            "main.movie_shopping",
-            page=movies.prev_num,
-            q=q,
-            media=media,
-            library=library,
-            min_quality=min_quality,
-            max_quality=max_quality,
-        )
+        url_for("main.movie_shopping", page=movies.prev_num, **filters)
         if movies is not None and movies.has_prev
         else None
     )
@@ -1015,21 +836,11 @@ def movie_shopping():
     ):
         movie = posted_movie()
         if movie is None:
-            return redirect(url_for("main.movie_shopping"))
+            return redirect(url_for("main.movie_shopping", page=page, **filters))
         movie.shopping_list_exclude = None
         db.session.commit()
         flash(f"Added '{movie.title}' to the shopping list")
-        return redirect(
-            url_for(
-                "main.movie_shopping",
-                page=page,
-                q=q,
-                library=library,
-                media=media,
-                min_quality=min_quality,
-                max_quality=max_quality,
-            ),
-        )
+        return redirect(url_for("main.movie_shopping", page=page, **filters))
 
     elif (
         movie_shopping_exclude_form.exclude_submit.data
@@ -1037,21 +848,11 @@ def movie_shopping():
     ):
         movie = posted_movie()
         if movie is None:
-            return redirect(url_for("main.movie_shopping"))
+            return redirect(url_for("main.movie_shopping", page=page, **filters))
         movie.shopping_list_exclude = 1
         db.session.commit()
         flash(f"Removed '{movie.title}' from the shopping list")
-        return redirect(
-            url_for(
-                "main.movie_shopping",
-                page=page,
-                q=q,
-                library=library,
-                media=media,
-                min_quality=min_quality,
-                max_quality=max_quality,
-            ),
-        )
+        return redirect(url_for("main.movie_shopping", page=page, **filters))
 
     return render_template(
         "shopping_movie.html",
