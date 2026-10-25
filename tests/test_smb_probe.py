@@ -963,3 +963,120 @@ def test_the_cli_probe_asks_each_share_before_its_files(app, monkeypatch):
     assert probed == []
     assert len(asked) == 1
     assert "SHARE NOT MOUNTED OR NOT RESPONDING" in result.output
+
+
+def test_the_cli_status_history_and_recheck_reports(app, monkeypatch):
+    """Pin the output of flask smb status, history and recheck."""
+
+    import app.cli as app_cli
+
+    from app import db, smb_probe
+    from tests.factories import make_movie, make_movie_file
+
+    app_cli.register(app)
+    runner = app.test_cli_runner()
+    monkeypatch.setattr(
+        smb_probe,
+        "failing_state",
+        lambda: {
+            "/lib/b.mkv": {"message": "EBADF", "first_seen": "T1", "context": "upload"},
+            "/lib/a.mkv": {"message": "EBADF", "first_seen": "T0"},
+        },
+    )
+    monkeypatch.setattr(smb_probe, "healed_state", lambda: {"/lib/c.mkv": {}})
+    with app.app_context():
+        file = make_movie_file(make_movie("Stale Archive", 2020), "DVD")
+        file.aws_stale = True
+        db.session.commit()
+        status = runner.invoke(args=["smb", "status"]).output
+    assert status.splitlines() == [
+        "  EBADF since T0 (after unknown)  /lib/a.mkv",
+        "  EBADF since T1 (after upload)  /lib/b.mkv",
+        "2 file(s) failing",
+        "1 recovery(ies) recorded and not yet reported; run 'flask smb "
+        "recheck' to see how long they were stuck",
+        "1 file(s) have a stale S3 archive; run 'flask smb repair' to "
+        "re-archive them",
+    ]
+
+    monkeypatch.setattr(
+        smb_probe,
+        "history",
+        lambda: [
+            {
+                "path": "/lib/a.mkv",
+                "held_for_seconds": 600,
+                "first_seen": "T0",
+                "healed_at": "T2",
+            },
+            {"path": "/lib/b.mkv", "first_seen": "T1", "healed_at": "T3"},
+            {
+                "path": "/lib/c.mkv",
+                "held_for_seconds": 1800,
+                "first_seen": "T4",
+                "healed_at": "T5",
+                "context": "remux",
+            },
+        ],
+    )
+    history = runner.invoke(args=["smb", "history"]).output
+    assert history.splitlines() == [
+        "      10 min  T0 -> T2  (broke after unknown)  /lib/a.mkv",
+        "        ?      T1 -> T3  (broke after unknown)  /lib/b.mkv",
+        "      30 min  T4 -> T5  (broke after remux)  /lib/c.mkv",
+        "3 recovery(ies) recorded",
+        "held for at least: min 10 min, median 20 min, max 30 min",
+    ]
+
+    monkeypatch.setattr(
+        smb_probe,
+        "recheck",
+        lambda: smb_probe.RecheckReport(
+            [
+                {"path": "/lib/a.mkv", "held_for_seconds": 120, "healed_by": "upload"},
+                {"path": "/lib/d.mkv", "healed_by": "recheck"},
+            ],
+            [{"path": "/lib/b.mkv", "first_seen": "T1"}],
+            [{"path": "/lib/e.mkv"}],
+            [{"path": "/lib/f.mkv", "share": "/Volumes/Movies"}],
+        ),
+    )
+    recheck = runner.invoke(args=["smb", "recheck"]).output
+    assert recheck.splitlines() == [
+        "  RECOVERED after at least 2 minute(s), found by upload  /lib/a.mkv",
+        "  RECOVERED  /lib/d.mkv",
+        "  still failing since T1  /lib/b.mkv",
+        "  GONE from the volume, dropped  /lib/e.mkv",
+        "  SKIPPED, share not mounted (/Volumes/Movies); record kept  /lib/f.mkv",
+        "2 recovered, 1 still failing, 1 gone, 1 skipped (share not mounted)",
+    ]
+
+    monkeypatch.setattr(smb_probe, "history", lambda: [])
+    monkeypatch.setattr(smb_probe, "failing_state", lambda: {})
+    monkeypatch.setattr(smb_probe, "healed_state", lambda: {})
+    assert runner.invoke(args=["smb", "history"]).output == (
+        "No recoveries recorded yet\n"
+    )
+
+
+def test_each_smb_command_keeps_its_help(app):
+    """The first line of each docstring is the help of its command."""
+
+    import app.cli as app_cli
+
+    app_cli.register(app)
+    runner = app.test_cli_runner()
+    expected = {
+        "probe": "Open and close files to find the ones whose handle the NAS lost.",
+        "status": "List the files that are recorded as failing their probe now.",
+        "repair": "Archive again the files whose S3 copy is older than the local",
+        "history": "Show every recovery ever recorded, with how long each one",
+        "recheck": "Report every recovery, and probe the files that still fail",
+    }
+    for name, first_line in expected.items():
+        output = runner.invoke(args=["smb", name, "--help"]).output
+        assert first_line in output, name
+    probe_help = runner.invoke(args=["smb", "probe", "--help"]).output
+    for option in ("--file-id", "--since", "--all"):
+        assert option in probe_help
+    assert "--enqueue" in runner.invoke(args=["smb", "repair", "--help"]).output
