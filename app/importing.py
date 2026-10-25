@@ -65,8 +65,6 @@ from app.email import send_email as send_email_async
 from app.models import (
     ArchivedOriginal,
     File,
-    FileAudioTrack,
-    FileSubtitleTrack,
     HeldImport,
     Movie,
     RefFeatureType,
@@ -86,7 +84,7 @@ from app.sdr_conversion import (
 )
 from app.tracks import (
     _extract_media_details,
-    flag_possibly_forced_subtitles,
+    replace_track_rows,
     get_audio_tracks_from_file,
     get_subtitle_tracks_from_file,
     record_filesize,
@@ -2351,11 +2349,10 @@ def finalize_localization(
                         archived_original_from_file(file, "replaced by a real rip")
                     )
 
-                # Clear the metadata of the existing File record.
+                # The track rows of the existing record go in the
+                # replace_track_rows call below.
 
                 file.date_updated = datetime.now(timezone.utc)
-                FileAudioTrack.query.filter_by(file_id=file.id).delete()
-                FileSubtitleTrack.query.filter_by(file_id=file.id).delete()
 
             if file.media_library == "Movies":
                 # Look for a Movie record. If it does not exist, make one.
@@ -2466,54 +2463,33 @@ def finalize_localization(
             for field, value in inspection["video"].items():
                 setattr(file, field, value)
 
-            # Set the file audio track info.
-
-            possibly_foreign_language = False
-            first_audio_track_lossy = True
-            lossless_audio_track_present = False
-            for i, track in enumerate(output_audio_tracks):
-                track["file_id"] = file.id
-                track["track"] = i + 1
-                audio_track = FileAudioTrack(**track)
-                file.audio_track = audio_track
-                if track["track"] == 1 and audio_track.language not in [
-                    current_app.config["NATIVE_LANGUAGE"],
-                    "und",
-                    "zxx",
-                ]:
-                    possibly_foreign_language = True
-                if (
-                    track["track"] == 1
-                    and track.get("compression_mode", "Lossy") == "Lossless"
-                ):
-                    first_audio_track_lossy = False
-                    lossless_audio_track_present = True
-                elif track.get("compression_mode", "Lossy") == "Lossless":
-                    lossless_audio_track_present = True
-                current_app.logger.info(f"{file} Adding audio track {audio_track}")
-                db.session.add(audio_track)
-
-            # Set the file subtitle track info. The flag pass marks the forced
-            # state of a suspicious track as unknown. The candidates query
-            # decides later if the file needs triage. Imported content is NEW
-            # evidence. A re-imported file first deletes an earlier reviewed
-            # verdict and the stale aids. A replacement can have a forced
-            # track that the original did not have.
+            # Write the track rows. The flag pass inside marks the forced
+            # state of a suspicious subtitle track as unknown. The
+            # candidates query decides later if the file needs triage.
+            # Imported content is NEW evidence. A re-imported file first
+            # deletes an earlier reviewed verdict and the stale aids. A
+            # replacement can have a forced track that the original did
+            # not have.
 
             from app.triage import reset_triage_state
 
             reset_triage_state(file)
-            flag_possibly_forced_subtitles(file, output_subtitle_tracks)
+            audio_rows = replace_track_rows(
+                file, output_audio_tracks, output_subtitle_tracks
+            )
 
-            for i, track in enumerate(output_subtitle_tracks):
-                track["file_id"] = file.id
-                track["track"] = i + 1
-                subtitle_track = FileSubtitleTrack(**track)
-                file.subtitle_track = subtitle_track
-                current_app.logger.info(
-                    f"{file} Adding subtitle track {subtitle_track}"
-                )
-                db.session.add(subtitle_track)
+            # The admin emails of the finish read the audio layout.
+
+            native_like = [current_app.config["NATIVE_LANGUAGE"], "und", "zxx"]
+            possibly_foreign_language = (
+                bool(audio_rows) and audio_rows[0].language not in native_like
+            )
+            lossless = [
+                track.get("compression_mode", "Lossy") == "Lossless"
+                for track in output_audio_tracks
+            ]
+            first_audio_track_lossy = not (lossless and lossless[0])
+            lossless_audio_track_present = any(lossless)
 
             # Set the localized date.
 

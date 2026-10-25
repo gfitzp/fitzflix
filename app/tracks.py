@@ -448,41 +448,18 @@ def save_track_metadata(file_id, details, lock=None, archive=False):
             if file is None:
                 return False
 
-            # Clear the metadata of the existing File record
-
-            file.date_updated = datetime.now(timezone.utc)
-            FileAudioTrack.query.filter_by(file_id=file.id).delete()
-            FileSubtitleTrack.query.filter_by(file_id=file.id).delete()
-
             # Set the video track info of the file
 
+            file.date_updated = datetime.now(timezone.utc)
             for field, value in details["video"].items():
                 setattr(file, field, value)
 
             record_filesize(file, details["filesize_bytes"])
             current_app.logger.info(f"{file} {file.filesize_bytes} bytes")
 
-            # Set the audio track info of the file
-
-            for i, track in enumerate(details["audio_tracks"]):
-                track["file_id"] = file.id
-                track["track"] = i + 1
-                audio_track = FileAudioTrack(**track)
-                file.audio_track = audio_track
-                current_app.logger.info(f"{file} Adding audio track {audio_track}")
-                db.session.add(audio_track)
-
-            # Set the subtitle track info of the file
-
-            for i, track in enumerate(details["subtitle_tracks"]):
-                track["file_id"] = file.id
-                track["track"] = i + 1
-                subtitle_track = FileSubtitleTrack(**track)
-                file.subtitle_track = subtitle_track
-                current_app.logger.info(
-                    f"{file} Adding subtitle track {subtitle_track}"
-                )
-                db.session.add(subtitle_track)
+            replace_track_rows(
+                file, details["audio_tracks"], details["subtitle_tracks"]
+            )
 
         except Exception:
             current_app.logger.error(traceback.format_exc())
@@ -1163,32 +1140,7 @@ def mkvpropedit_unlocked(
             # writes start a new transaction here.
 
             file = _fresh_file(file.id)
-            FileAudioTrack.query.filter_by(file_id=file.id).delete()
-            FileSubtitleTrack.query.filter_by(file_id=file.id).delete()
-
-            # Set the audio track info of the file
-
-            for i, track in enumerate(output_audio_tracks):
-                track["file_id"] = file.id
-                track["track"] = i + 1
-                audio_track = FileAudioTrack(**track)
-                file.audio_track = audio_track
-                current_app.logger.info(f"{file} Adding audio track {audio_track}")
-                db.session.add(audio_track)
-
-            # Set the subtitle track info of the file
-
-            flag_possibly_forced_subtitles(file, output_subtitle_tracks)
-
-            for i, track in enumerate(output_subtitle_tracks):
-                track["file_id"] = file.id
-                track["track"] = i + 1
-                subtitle_track = FileSubtitleTrack(**track)
-                file.subtitle_track = subtitle_track
-                current_app.logger.info(
-                    f"{file} Adding subtitle track {subtitle_track}"
-                )
-                db.session.add(subtitle_track)
+            replace_track_rows(file, output_audio_tracks, output_subtitle_tracks)
 
             record_filesize(file, os.path.getsize(file_path))
             file.date_updated = datetime.now(timezone.utc)
@@ -1383,32 +1335,7 @@ def mkvmerge_unlocked(file_id, audio_tracks, subtitle_tracks):
             # writes start a new transaction here.
 
             file = _fresh_file(file.id)
-            FileAudioTrack.query.filter_by(file_id=file.id).delete()
-            FileSubtitleTrack.query.filter_by(file_id=file.id).delete()
-
-            # Set the audio track info of the file
-
-            for i, track in enumerate(output_audio_tracks):
-                track["file_id"] = file.id
-                track["track"] = i + 1
-                audio_track = FileAudioTrack(**track)
-                file.audio_track = audio_track
-                current_app.logger.info(f"{file} Adding audio track {audio_track}")
-                db.session.add(audio_track)
-
-            # Set the subtitle track info of the file
-
-            flag_possibly_forced_subtitles(file, output_subtitle_tracks)
-
-            for i, track in enumerate(output_subtitle_tracks):
-                track["file_id"] = file.id
-                track["track"] = i + 1
-                subtitle_track = FileSubtitleTrack(**track)
-                file.subtitle_track = subtitle_track
-                current_app.logger.info(
-                    f"{file} Adding subtitle track {subtitle_track}"
-                )
-                db.session.add(subtitle_track)
+            replace_track_rows(file, output_audio_tracks, output_subtitle_tracks)
 
         except Exception:
             current_app.logger.error(traceback.format_exc())
@@ -1598,6 +1525,38 @@ def get_subtitle_tracks_from_file(file_path):
         f"'{os.path.basename(file_path)}' Subtitle tracks: {subtitle_tracks}"
     )
     return subtitle_tracks
+
+
+def replace_track_rows(file, audio_tracks, subtitle_tracks):
+    """Replace the audio and subtitle rows of a file with the given track dicts.
+
+    This is the one write path of the track rows: the import, a rescan,
+    the in-place rewrites and the Atmos supplement. The old rows go in a
+    delete. Each track dict gets the file id and a 1-based track number.
+    The forced-subtitle pass runs on every write. It marks the forced
+    state of a suspicious subtitle track as unknown (None) before the
+    insert. Return the new FileAudioTrack rows in track order."""
+
+    FileAudioTrack.query.filter_by(file_id=file.id).delete()
+    FileSubtitleTrack.query.filter_by(file_id=file.id).delete()
+
+    audio_rows = []
+    for i, track in enumerate(audio_tracks):
+        track["file_id"] = file.id
+        track["track"] = i + 1
+        audio_track = FileAudioTrack(**track)
+        current_app.logger.info(f"{file} Adding audio track {audio_track}")
+        db.session.add(audio_track)
+        audio_rows.append(audio_track)
+
+    flag_possibly_forced_subtitles(file, subtitle_tracks)
+    for i, track in enumerate(subtitle_tracks):
+        track["file_id"] = file.id
+        track["track"] = i + 1
+        subtitle_track = FileSubtitleTrack(**track)
+        current_app.logger.info(f"{file} Adding subtitle track {subtitle_track}")
+        db.session.add(subtitle_track)
+    return audio_rows
 
 
 def flag_possibly_forced_subtitles(file, subtitle_tracks):
@@ -2161,17 +2120,7 @@ def _remux_audio_plan_unlocked(file_id, plan):
             # transaction avoids MariaDB error 1020 after the long remux.
 
             file = _fresh_file(file.id)
-            FileAudioTrack.query.filter_by(file_id=file.id).delete()
-            FileSubtitleTrack.query.filter_by(file_id=file.id).delete()
-            for i, track in enumerate(new_audio_tracks):
-                track["file_id"] = file.id
-                track["track"] = i + 1
-                db.session.add(FileAudioTrack(**track))
-            flag_possibly_forced_subtitles(file, new_subtitle_tracks)
-            for i, track in enumerate(new_subtitle_tracks):
-                track["file_id"] = file.id
-                track["track"] = i + 1
-                db.session.add(FileSubtitleTrack(**track))
+            replace_track_rows(file, new_audio_tracks, new_subtitle_tracks)
             record_filesize(file, os.path.getsize(final_staging))
             file.date_updated = datetime.now(timezone.utc)
             db.session.commit()

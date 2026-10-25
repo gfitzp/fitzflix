@@ -36,7 +36,7 @@ from rq import get_current_job
 from rq.registry import StartedJobRegistry
 
 from app import db, get_app, safe_job_id
-from app.models import File, FileAudioTrack, FileSubtitleTrack
+from app.models import File, FileAudioTrack
 from app.settings import get_setting
 from app.pipeline import TaskPhases, close_trail, keep_trail_open
 from app.plex_library import enqueue_plex_analyze
@@ -982,7 +982,7 @@ def _atmos_finish(state, phases):
     from app.videos import (
         aws_s3_client,
         copy_with_progress,
-        flag_possibly_forced_subtitles,
+        replace_track_rows,
         get_audio_tracks_from_file,
         get_subtitle_tracks_from_file,
         record_filesize,
@@ -1159,21 +1159,7 @@ def _atmos_finish(state, phases):
 
         db.session.rollback()
         file = db.session.get(File, file.id)
-        FileAudioTrack.query.filter_by(file_id=file.id).delete()
-        FileSubtitleTrack.query.filter_by(file_id=file.id).delete()
-
-        for i, track in enumerate(new_audio_tracks):
-            track["file_id"] = file.id
-            track["track"] = i + 1
-            audio_track = FileAudioTrack(**track)
-            current_app.logger.info(f"{file} Adding audio track {audio_track}")
-            db.session.add(audio_track)
-
-        flag_possibly_forced_subtitles(file, new_subtitle_tracks)
-        for i, track in enumerate(new_subtitle_tracks):
-            track["file_id"] = file.id
-            track["track"] = i + 1
-            db.session.add(FileSubtitleTrack(**track))
+        replace_track_rows(file, new_audio_tracks, new_subtitle_tracks)
 
         # Read from the staging copy. It is byte-identical to the file that
         # was renamed into the library. Thus, the share is not touched
