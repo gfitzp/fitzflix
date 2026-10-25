@@ -23,6 +23,7 @@ import random
 import re
 import secrets
 
+from collections import namedtuple
 from datetime import datetime
 from difflib import SequenceMatcher
 
@@ -678,6 +679,80 @@ def _stash_brag_crop(token, stage):
     return share_token
 
 
+# The result of 1 graded action. ended is False for a zoom out or a
+# mid-round miss of Extra Difficult. Then next_stage is the stage that
+# the round goes on at. points_won is None for a difficulty that keeps
+# no points.
+
+Outcome = namedtuple("Outcome", "ended next_stage points_won correct")
+
+
+def grade_round(difficulty, stage, zoom_out, gave_up, correct):
+    """Return the Outcome of 1 action of a round. This is the rule of the game.
+
+    Each guess of Easy, Medium and Hard ends the round. In Extra
+    Difficult, a Zoom Out or a mid-round miss advances the stage. A hit
+    banks the points of the stage. A stage-3 miss ends the round and
+    the streak. A give-up after the first zoom out does the same
+    (#202). The surrender rule was requested by Glenn (2026-08-27): a
+    started round is won or lost."""
+
+    if difficulty != "extra":
+        return Outcome(True, None, None, correct)
+    if zoom_out:
+        return Outcome(False, min(stage + 1, EXTRA_STAGES), None, False)
+    if not gave_up and not correct and stage < EXTRA_STAGES:
+        # A mid-round miss zooms out. It does not end the round. The
+        # wrong guess buys the same look as a Zoom Out.
+        return Outcome(False, stage + 1, None, False)
+    points_won = EXTRA_STAGES + 1 - stage if correct else 0
+    return Outcome(True, None, points_won, correct)
+
+
+def apply_outcome(score, outcome):
+    """Add the Outcome of an ended round to a score row. Return True for a new best streak.
+
+    A round with no points (points_won None) does not touch the points."""
+
+    if outcome.points_won is not None:
+        score.points = (score.points or 0) + outcome.points_won
+    score.current_streak = score.current_streak + 1 if outcome.correct else 0
+    if outcome.correct:
+        score.rounds_won = (score.rounds_won or 0) + 1
+    new_best = outcome.correct and score.current_streak > score.best_streak
+    if new_best:
+        score.best_streak = score.current_streak
+        score.date_best = datetime.now()
+    return new_best
+
+
+def game_context(difficulty, score, form, **extra):
+    """Return the template values of the game page.
+
+    score can be None (a player with no score row for the difficulty).
+    extra holds the values of the page state: the result, the token,
+    the options and the stage. A rated_only in extra replaces the
+    stored one."""
+
+    rated_only = extra.pop("rated_only", None)
+    context = {
+        "title": "Name That Frame",
+        "difficulty": difficulty,
+        "difficulties": DIFFICULTIES,
+        "include_unrated": _include_unrated(difficulty),
+        "rated_only": _rated_only(difficulty) if rated_only is None else rated_only,
+        "streak": score.current_streak if score else 0,
+        "best": score.best_streak if score else 0,
+        "points": (score.points or 0) if score else 0,
+        "seen": (score.rounds_seen or 0) if score else 0,
+        "won": (score.rounds_won or 0) if score else 0,
+        "form": form,
+        "pool_size": len(pool_entries()),
+    }
+    context.update(extra)
+    return context
+
+
 def _render_extra_round(token, stage, form, missed=None):
     """Render the Extra Difficult guessing page at one stage.
 
@@ -689,24 +764,17 @@ def _render_extra_round(token, stage, form, missed=None):
     ).first()
     return render_template(
         "game.html",
-        title="Name That Frame",
-        difficulty="extra",
-        difficulties=DIFFICULTIES,
-        result=None,
-        token=token,
-        options=None,
-        stage=stage,
-        stage_points=EXTRA_STAGES + 1 - stage,
-        missed_guess=missed,
-        include_unrated=_include_unrated("extra"),
-        rated_only=_rated_only("extra"),
-        streak=score.current_streak if score else 0,
-        best=score.best_streak if score else 0,
-        points=(score.points or 0) if score else 0,
-        seen=(score.rounds_seen or 0) if score else 0,
-        won=(score.rounds_won or 0) if score else 0,
-        form=form,
-        pool_size=len(pool_entries()),
+        **game_context(
+            "extra",
+            score,
+            form,
+            result=None,
+            token=token,
+            options=None,
+            stage=stage,
+            stage_points=EXTRA_STAGES + 1 - stage,
+            missed_guess=missed,
+        ),
     )
 
 
@@ -727,72 +795,52 @@ def _extra_post(form, token, movie):
         return redirect(url_for("main.name_that_frame", difficulty="extra"))
     stage = min(int(round_.get("stage") or 1), EXTRA_STAGES)
 
-    if form.zoom_out.data:
-        stage = min(stage + 1, EXTRA_STAGES)
-        _save_extra_round(token, stage)
-        return _render_extra_round(token, stage, form)
-
+    zoom_out = bool(form.zoom_out.data)
     gave_up = bool(form.give_up.data)
-    guessed = "" if gave_up else (form.guess.data or "").strip()
-    correct = False if gave_up else _fuzzy_match(guessed, movie)
-    if not gave_up and not correct and stage < EXTRA_STAGES:
-        # A mid-round miss zooms out. It does not end the round. The
-        # wrong guess buys the same look as a Zoom Out.
-        stage += 1
-        _save_extra_round(token, stage)
-        return _render_extra_round(token, stage, form, missed=guessed or None)
+    guessed = "" if gave_up or zoom_out else (form.guess.data or "").strip()
+    correct = not (gave_up or zoom_out) and _fuzzy_match(guessed, movie)
+    outcome = grade_round("extra", stage, zoom_out, gave_up, correct)
+    if not outcome.ended:
+        _save_extra_round(token, outcome.next_stage)
+        missed = None if zoom_out else guessed or None
+        return _render_extra_round(token, outcome.next_stage, form, missed=missed)
 
     _clear_extra_round()
     # A correct guess while zoomed in is the feat worth a brag. A
     # full-frame win is only a win.
     brag = _stash_brag_crop(token, stage) if correct and stage < EXTRA_STAGES else None
-    points_won = EXTRA_STAGES + 1 - stage if correct else 0
     # The unrated bonus stays secret until it applies. The round prompt
     # quoted the base points. Only now can the reveal say that the
     # player had not rated the film.
-    doubled = bool(points_won) and movie.id not in _rated_movie_ids()
+    doubled = bool(outcome.points_won) and movie.id not in _rated_movie_ids()
     if doubled:
-        points_won *= UNRATED_BONUS
+        outcome = outcome._replace(points_won=outcome.points_won * UNRATED_BONUS)
     score = _score_row("extra")
-    score.points = (score.points or 0) + points_won
-    score.current_streak = score.current_streak + 1 if correct else 0
-    if correct:
-        score.rounds_won = (score.rounds_won or 0) + 1
-    new_best = correct and score.current_streak > score.best_streak
-    if new_best:
-        score.best_streak = score.current_streak
-        score.date_best = datetime.now()
+    new_best = apply_outcome(score, outcome)
     db.session.commit()
     _enqueue_frame_replacement(movie)
 
     return render_template(
         "game.html",
-        title="Name That Frame",
-        difficulty="extra",
-        difficulties=DIFFICULTIES,
-        result={
-            "correct": correct,
-            "guess": guessed or None,
-            "movie_id": movie.id,
-            "answer": movie.display_title,
-            "new_best": new_best,
-            "points_won": points_won,
-            "doubled": doubled,
-            "brag": brag,
-        },
-        answer_movie=movie,
-        token=token,
-        options=None,
-        stage=None,
-        include_unrated=_include_unrated("extra"),
-        rated_only=_rated_only("extra"),
-        streak=score.current_streak,
-        best=score.best_streak,
-        points=score.points or 0,
-        seen=(score.rounds_seen or 0),
-        won=(score.rounds_won or 0),
-        form=form,
-        pool_size=len(pool_entries()),
+        **game_context(
+            "extra",
+            score,
+            form,
+            result={
+                "correct": correct,
+                "guess": guessed or None,
+                "movie_id": movie.id,
+                "answer": movie.display_title,
+                "new_best": new_best,
+                "points_won": outcome.points_won,
+                "doubled": doubled,
+                "brag": brag,
+            },
+            answer_movie=movie,
+            token=token,
+            options=None,
+            stage=None,
+        ),
     )
 
 
@@ -839,45 +887,34 @@ def name_that_frame():
             guess_shown = chosen.display_title if chosen else None
 
         score = _score_row(difficulty)
-        score.current_streak = score.current_streak + 1 if correct else 0
-        if correct:
-            score.rounds_won = (score.rounds_won or 0) + 1
-        new_best = correct and score.current_streak > score.best_streak
-        if new_best:
-            score.best_streak = score.current_streak
-            score.date_best = datetime.now()
+        new_best = apply_outcome(
+            score, grade_round(difficulty, None, False, False, correct)
+        )
         db.session.commit()
         _enqueue_frame_replacement(movie)
 
         return render_template(
             "game.html",
-            title="Name That Frame",
-            difficulty=difficulty,
-            difficulties=DIFFICULTIES,
-            result={
-                "correct": correct,
-                "guess": guess_shown,
-                "movie_id": movie.id,
-                "answer": movie.display_title,
-                "new_best": new_best,
-            },
-            # The reveal shows the answer as a standard poster tile: the
-            # popover card plus the ladder and the watchlist toggle.
-            # Thus, the player can rate or watchlist an interesting film
-            # immediately (requested by Glenn, 2026-08-20).
-            answer_movie=movie,
-            token=token,
-            options=None,
-            stage=None,
-            include_unrated=_include_unrated(difficulty),
-            rated_only=_rated_only(difficulty),
-            streak=score.current_streak,
-            best=score.best_streak,
-            points=(score.points or 0),
-            seen=(score.rounds_seen or 0),
-            won=(score.rounds_won or 0),
-            form=form,
-            pool_size=len(pool_entries()),
+            **game_context(
+                difficulty,
+                score,
+                form,
+                result={
+                    "correct": correct,
+                    "guess": guess_shown,
+                    "movie_id": movie.id,
+                    "answer": movie.display_title,
+                    "new_best": new_best,
+                },
+                # The reveal shows the answer as a standard poster tile: the
+                # popover card plus the ladder and the watchlist toggle.
+                # Thus, the player can rate or watchlist an interesting film
+                # immediately (requested by Glenn, 2026-08-20).
+                answer_movie=movie,
+                token=token,
+                options=None,
+                stage=None,
+            ),
         )
 
     # A plain /game visit opens again at the difficulty that the user
@@ -948,24 +985,18 @@ def name_that_frame():
 
     return render_template(
         "game.html",
-        title="Name That Frame",
-        difficulty=difficulty,
-        difficulties=DIFFICULTIES,
-        result=None,
-        token=token,
-        options=options,
-        stage=stage,
-        stage_points=(EXTRA_STAGES + 1 - stage) if stage else None,
-        missed_guess=None,
-        include_unrated=_include_unrated(difficulty),
-        rated_only=rated_only,
-        streak=score.current_streak if score else 0,
-        best=score.best_streak if score else 0,
-        points=(score.points or 0) if score else 0,
-        seen=(score.rounds_seen or 0) if score else 0,
-        won=(score.rounds_won or 0) if score else 0,
-        form=form,
-        pool_size=len(pool_entries()),
+        **game_context(
+            difficulty,
+            score,
+            form,
+            result=None,
+            token=token,
+            options=options,
+            stage=stage,
+            stage_points=(EXTRA_STAGES + 1 - stage) if stage else None,
+            missed_guess=None,
+            rated_only=rated_only,
+        ),
     )
 
 

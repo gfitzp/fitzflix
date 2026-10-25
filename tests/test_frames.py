@@ -2253,3 +2253,48 @@ def test_zoom_crops_hunt_for_light_inside_the_active_area(app, admin_client):
     crop = Image.open(io.BytesIO(served.data)).convert("L")
     histogram = crop.histogram()
     assert sum(histogram[ACTIVE_LUMA + 1 :]) / sum(histogram) >= 0.1
+
+
+def test_grade_round_is_the_rule_of_each_action(app):
+    from app.main.game import EXTRA_STAGES, Outcome, grade_round
+
+    assert EXTRA_STAGES == 3
+    assert grade_round("easy", None, False, False, True) == Outcome(
+        True, None, None, True
+    )
+    assert grade_round("hard", None, False, False, False) == Outcome(
+        True, None, None, False
+    )
+    cases = [
+        # (stage, zoom_out, gave_up, correct) -> Outcome
+        ((1, True, False, False), Outcome(False, 2, None, False)),
+        ((3, True, False, False), Outcome(False, 3, None, False)),
+        ((1, False, False, False), Outcome(False, 2, None, False)),
+        ((2, False, False, False), Outcome(False, 3, None, False)),
+        ((3, False, False, False), Outcome(True, None, 0, False)),
+        ((2, False, True, False), Outcome(True, None, 0, False)),
+        ((1, False, False, True), Outcome(True, None, 3, True)),
+        ((3, False, False, True), Outcome(True, None, 1, True)),
+    ]
+    for args, outcome in cases:
+        assert grade_round("extra", *args) == outcome, args
+
+
+def test_apply_outcome_updates_the_score_row(app):
+    from types import SimpleNamespace
+
+    from app.main.game import Outcome, apply_outcome
+
+    score = SimpleNamespace(
+        points=None, current_streak=2, best_streak=2, rounds_won=None, date_best=None
+    )
+    assert apply_outcome(score, Outcome(True, None, None, True)) is True
+    assert (score.points, score.current_streak, score.best_streak) == (None, 3, 3)
+    assert score.rounds_won == 1 and score.date_best is not None
+
+    assert apply_outcome(score, Outcome(True, None, 0, False)) is False
+    assert (score.points, score.current_streak, score.best_streak) == (0, 0, 3)
+    assert score.rounds_won == 1
+
+    assert apply_outcome(score, Outcome(True, None, 6, True)) is False
+    assert (score.points, score.current_streak, score.rounds_won) == (6, 1, 2)
