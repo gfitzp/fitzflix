@@ -237,7 +237,7 @@ def test_series_delete_clears_poster_husks(app, admin_client):
 
     token = _admin_csrf_token(admin_client, f"/tv/{series_id}")
     response = admin_client.post(
-        f"/tv/{series_id}",
+        f"/tv/{series_id}/delete",
         data={"csrf_token": token, "delete_submit": "Delete Series"},
     )
     assert response.status_code == 302

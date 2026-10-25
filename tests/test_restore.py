@@ -66,7 +66,7 @@ def test_season_restore_fans_out_to_best_archived_files(app, admin_client):
     assert "≈ $" in page
 
     response = admin_client.post(
-        f"/tv/{series_id}/1",
+        f"/tv/{series_id}/1/restore",
         data={
             "csrf_token": csrf_token_from(page),
             "password": ADMIN_PASSWORD,
@@ -92,7 +92,7 @@ def test_series_restore_fans_out_across_seasons(app, admin_client):
     assert "Bulk restore series from AWS" in page
 
     response = admin_client.post(
-        f"/tv/{series_id}",
+        f"/tv/{series_id}/restore",
         data={
             "csrf_token": csrf_token_from(page),
             "password": ADMIN_PASSWORD,
@@ -118,7 +118,7 @@ def test_series_restore_does_not_trigger_other_forms(app, admin_client):
 
     page = admin_client.get(f"/tv/{series_id}").get_data(as_text=True)
     admin_client.post(
-        f"/tv/{series_id}",
+        f"/tv/{series_id}/restore",
         data={
             "csrf_token": csrf_token_from(page),
             "password": ADMIN_PASSWORD,
@@ -143,7 +143,7 @@ def test_restore_requires_correct_password(app, admin_client):
     # Wrong password: Fitzflix flashes the error and enqueues nothing.
 
     response = admin_client.post(
-        f"/tv/{series_id}",
+        f"/tv/{series_id}/restore",
         data={
             "csrf_token": csrf_token_from(page),
             "password": "not-the-password",
@@ -158,7 +158,7 @@ def test_restore_requires_correct_password(app, admin_client):
     # nothing.
 
     admin_client.post(
-        f"/tv/{series_id}",
+        f"/tv/{series_id}/restore",
         data={
             "csrf_token": csrf_token_from(page),
             "series_restore_submit": "Bulk restore series from AWS",

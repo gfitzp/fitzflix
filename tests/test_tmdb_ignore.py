@@ -262,7 +262,7 @@ def test_blank_lookup_on_a_matched_series_is_refused(app, admin_client):
 
     page = admin_client.get(f"/tv/{series_id}").get_data(as_text=True)
     response = admin_client.post(
-        f"/tv/{series_id}",
+        f"/tv/{series_id}/tmdb",
         data={
             "csrf_token": csrf_token_from(page),
             "tmdb_id": "",
@@ -286,7 +286,7 @@ def test_remove_button_detaches_the_series(app, admin_client):
 
     page = admin_client.get(f"/tv/{series_id}").get_data(as_text=True)
     response = admin_client.post(
-        f"/tv/{series_id}",
+        f"/tv/{series_id}/tmdb",
         data={
             "csrf_token": csrf_token_from(page),
             "remove_submit": "Remove TMDB ID",
@@ -319,7 +319,7 @@ def test_entering_an_id_by_hand_reattaches_an_ignored_series(
 
     page = admin_client.get(f"/tv/{series_id}").get_data(as_text=True)
     admin_client.post(
-        f"/tv/{series_id}",
+        f"/tv/{series_id}/tmdb",
         data={
             "csrf_token": csrf_token_from(page),
             "tmdb_id": "110230",
@@ -376,7 +376,7 @@ def test_blank_lookup_on_a_detached_series_stays_detached(app, admin_client):
 
     page = admin_client.get(f"/tv/{series_id}").get_data(as_text=True)
     response = admin_client.post(
-        f"/tv/{series_id}",
+        f"/tv/{series_id}/tmdb",
         data={
             "csrf_token": csrf_token_from(page),
             "tmdb_id": "",
@@ -403,7 +403,7 @@ def test_blank_lookup_on_a_detached_movie_stays_detached(app, admin_client):
 
     page = admin_client.get(f"/movie/{movie_id}").get_data(as_text=True)
     response = admin_client.post(
-        f"/movie/{movie_id}",
+        f"/movie/{movie_id}/tmdb",
         data={
             "csrf_token": csrf_token_from(page),
             "tmdb_id": "",
@@ -443,17 +443,20 @@ def test_movie_data_section_is_admin_only(app, admin_client, user_client):
     assert "Movie Data" in admin_page
     assert "lookup_submit" in admin_page
 
-    for tampered in (
-        {"tmdb_id": "999", "lookup_submit": "Refresh TMDB Data"},
-        {"remove_submit": "Remove TMDB ID"},
-        {
-            "spine_number": "7",
-            "quality": "1",
-            "criterion_submit": "Update Criterion Info",
-        },
+    for action, tampered in (
+        ("tmdb", {"tmdb_id": "999", "lookup_submit": "Refresh TMDB Data"}),
+        ("tmdb", {"remove_submit": "Remove TMDB ID"}),
+        (
+            "criterion",
+            {
+                "spine_number": "7",
+                "quality": "1",
+                "criterion_submit": "Update Criterion Info",
+            },
+        ),
     ):
         response = user_client.post(
-            f"/movie/{movie_id}",
+            f"/movie/{movie_id}/{action}",
             data={"csrf_token": csrf_token_from(page), **tampered},
             follow_redirects=True,
         )
@@ -492,7 +495,7 @@ def test_fileless_record_locks_its_tmdb_id(app, admin_client, monkeypatch):
     assert "criterion_submit" in page  # the Criterion form stays
 
     response = admin_client.post(
-        f"/movie/{movie_id}",
+        f"/movie/{movie_id}/tmdb",
         data={
             "csrf_token": csrf_token_from(page),
             "tmdb_id": "999",
@@ -525,7 +528,7 @@ def test_fileless_record_refuses_detach(app, admin_client):
 
     page = admin_client.get(f"/movie/{movie_id}").get_data(as_text=True)
     response = admin_client.post(
-        f"/movie/{movie_id}",
+        f"/movie/{movie_id}/tmdb",
         data={
             "csrf_token": csrf_token_from(page),
             "remove_submit": "Remove TMDB ID",
@@ -579,14 +582,14 @@ def test_tv_management_forms_are_admin_only(app, admin_client, user_client):
     # the session-wide csrf token from a page that still has one
 
     token = csrf_token_from(user_client.get("/profile").get_data(as_text=True))
-    for tampered in (
-        {"tmdb_id": "999", "lookup_submit": "Refresh TMDB Data"},
-        {"remove_submit": "Remove TMDB ID"},
-        {"password": "hunter2", "series_restore_submit": "Bulk restore"},
-        {"delete_submit": "Delete Series"},
+    for action, tampered in (
+        ("tmdb", {"tmdb_id": "999", "lookup_submit": "Refresh TMDB Data"}),
+        ("tmdb", {"remove_submit": "Remove TMDB ID"}),
+        ("restore", {"password": "hunter2", "series_restore_submit": "Bulk restore"}),
+        ("delete", {"delete_submit": "Delete Series"}),
     ):
         response = user_client.post(
-            f"/tv/{series_id}",
+            f"/tv/{series_id}/{action}",
             data={"csrf_token": token, **tampered},
             follow_redirects=True,
         )
@@ -646,7 +649,7 @@ def test_file_pages_are_admin_only(app, admin_client, user_client):
 
     token = csrf_token_from(user_client.get("/profile").get_data(as_text=True))
     response = user_client.post(
-        f"/tv/{series_id}/1",
+        f"/tv/{series_id}/1/restore",
         data={
             "csrf_token": token,
             "password": "hunter2",

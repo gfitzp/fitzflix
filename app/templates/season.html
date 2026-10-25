@@ -41,7 +41,7 @@
 {% if current_user.admin %}
 <div class="row my-2">
 	<div class="col-sm-4 col-md-3">
-		<form action="" method="post">
+		<form action="{{ url_for('main.season_restore', series_id=tv.id, season=season) }}" method="post">
 			{{ season_restore_form.hidden_tag() }}
 			{{ season_restore_form.password(class_="form-control form-control-sm mb-1", placeholder="Password") }}
 			{{ season_restore_form.season_restore_submit(class_="btn btn-sm btn-primary container") }}

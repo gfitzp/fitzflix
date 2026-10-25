@@ -263,9 +263,9 @@
 	<span class="badge text-bg-info" title="Radarr is monitoring this film">Requested via Radarr</span>
 </div>
 {% endif %}
-{# Movie Data is an admin section (#186 follow-up). The route bounces
-   stray posts from everyone else. Thus, to hide it here is presentation,
-   not the protection. #}
+{# Movie Data is an admin section (#186 follow-up). Its forms post to
+   admin-only routes. Thus, to hide it here is presentation, not the
+   protection. #}
 {% if current_user.admin %}
 <hr>
 <h4 class="mt-3 mb-2">Movie Data</h4>
@@ -273,7 +273,7 @@
 <div class="row">
 	<div class="col-sm-4">
 		{% if films or features %}
-		<form action="" method="post">
+		<form action="{{ url_for('main.movie_tmdb', movie_id=movie.id) }}" method="post">
 			{{ tmdb_lookup_form.hidden_tag() }}
 			<div class="mb-3">
 				{{ tmdb_lookup_form.tmdb_id.label }}
@@ -282,7 +282,7 @@
 			{{ tmdb_lookup_form.lookup_submit(class_="btn btn-sm btn-warning") }}
 		</form>
 		{% if movie.tmdb_id %}
-		<form action="" method="post" class="mt-2">
+		<form action="{{ url_for('main.movie_tmdb', movie_id=movie.id) }}" method="post" class="mt-2">
 			{{ tmdb_remove_form.hidden_tag() }}
 			{{ tmdb_remove_form.remove_submit(class_="btn btn-sm btn-danger", onclick="return confirm('Remove the TMDB ID from this movie? Its TMDB details, cast and crew will be deleted, and the movie will not be looked up again.');") }}
 		</form>
@@ -293,7 +293,7 @@
 		   fetches the same id again. There is no re-point and no detach. #}
 		<p class="mb-2">TMDB ID: {{ movie.tmdb_id if movie.tmdb_id else "not matched" }}</p>
 		{% if movie.tmdb_id %}
-		<form action="" method="post">
+		<form action="{{ url_for('main.movie_tmdb', movie_id=movie.id) }}" method="post">
 			{{ tmdb_lookup_form.hidden_tag() }}
 			{{ tmdb_lookup_form.lookup_submit(class_="btn btn-sm btn-warning", value="Refresh TMDB Data") }}
 		</form>
@@ -308,7 +308,7 @@
 		<hr class="d-block d-sm-none">
 	</div>
 	<div class="col-sm-4">
-		<form action="" method="post">
+		<form action="{{ url_for('main.movie_criterion', movie_id=movie.id) }}" method="post">
 			{{ criterion_form.hidden_tag() }}
 			<div class="mb-3">
 				{{ criterion_form.spine_number.label }}

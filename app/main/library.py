@@ -87,6 +87,7 @@ from app.plex_player import play_movie, remote_playback_configured
 from app.main.helpers import (
     _hold_verdict_lock,
     admin_required,
+    flash_form_errors,
     season_episode_counts,
     _card_fetch,
     _enqueue_profile_recompute,
@@ -1322,21 +1323,7 @@ def movie(movie_id):
         .all()
     )
     review = _latest_review_row(current_user.id, movie.id)
-    films = (
-        File.query.join(RefQuality, (RefQuality.id == File.quality_id))
-        .filter(File.movie_id == movie_id)
-        .filter(File.feature_type_id == None)
-        .order_by(
-            File.fullscreen.asc(), File.edition.asc(), RefQuality.preference.desc()
-        )
-        .all()
-    )
-    features = (
-        File.query.filter(File.movie_id == movie_id)
-        .filter(File.feature_type_id != None)
-        .order_by(File.basename.asc())
-        .all()
-    )
+    films, features = _films_and_features(movie_id)
 
     movie_shopping_exclude_form = MovieShoppingExcludeForm()
     if (
@@ -1640,200 +1627,12 @@ def movie(movie_id):
     )
 
     # The Movie Data forms are admin tools (#186 follow-up). The section
-    # renders only for admins. Each branch rejects a stray post from a
-    # different user. It does not process the post silently.
-
-    # The form to detach a movie from TMDB completely, for a film that
-    # TMDB has no entry for (#207). A record with no local files can
-    # never be such a film. Fitzflix created it FROM a TMDB id, and it
-    # mirrors that entry. Thus, a detach would leave a husk that nothing
-    # can enrich again.
+    # renders only for admins. The forms post to movie_tmdb and
+    # movie_criterion, which only admins can reach.
 
     tmdb_remove_form = TMDBRemoveForm()
-    if tmdb_remove_form.remove_submit.data and tmdb_remove_form.validate_on_submit():
-        if not current_user.admin:
-            flash("Need to be an admin user to do that!", "danger")
-            return redirect(url_for("main.movie", movie_id=movie.id))
-        if not films and not features:
-            flash(
-                f"'{title}' has no local files. Its record mirrors TMDB "
-                f"and cannot be detached",
-                "warning",
-            )
-            return redirect(url_for("main.movie", movie_id=movie.id))
-        movie.tmdb_movie_clear()
-        db.session.commit()
-        flash(
-            f"Removed the TMDB ID from '{title}'. Fitzflix will not look it up "
-            f"again until you enter one by hand",
-            "success",
-        )
-        return redirect(url_for("main.movie", movie_id=movie.id))
-
-    # The form to update the information of a movie with the latest TMDB data
-
     tmdb_lookup_form = TMDBLookupForm()
-    if tmdb_lookup_form.lookup_submit.data and tmdb_lookup_form.validate_on_submit():
-        if not current_user.admin:
-            flash("Need to be an admin user to do that!", "danger")
-            return redirect(url_for("main.movie", movie_id=movie.id))
-
-        # A record with no local files IS its TMDB entry. The id came
-        # directly from TMDB at creation, and the diary rows depend on
-        # it. Thus, the only operation is a refresh of the stored id.
-        # Never point it to a different id. Fitzflix ignores a smuggled
-        # id in the post.
-
-        if not films and not features:
-            if not movie.tmdb_id:
-                flash(
-                    f"'{title}' is not matched to TMDB. There is nothing "
-                    f"to refresh",
-                    "warning",
-                )
-                return redirect(url_for("main.movie", movie_id=movie.id))
-            refresh_job = enqueue_task(
-                "app.videos.refresh_tmdb_info",
-                "Movies",
-                movie.id,
-                movie.tmdb_id,
-                apply_at_front=True,
-                # The page waits for this refresh. Thus, it goes to the front
-                # of the sql queue, not behind the bulk refreshes of the
-                # request queue.
-                queue="sql",
-                description=f"Refreshing TMDB data for '{movie.title} ({movie.year})'",
-                at_front=True,
-            )
-            waited_seconds = 0
-            while refresh_job.result == None and waited_seconds < 10:
-                time.sleep(1)
-                waited_seconds = waited_seconds + 1
-            _flash_tmdb_refresh(
-                refresh_job.result,
-                f"{movie.title} ({movie.year})",
-                url_for("main.movie", movie_id=movie.id),
-            )
-            return redirect(url_for("main.movie", movie_id=movie.id))
-
-        # A blank id asks TMDB to search by title, and takes the first
-        # hit. On a film that is already matched, this silently points
-        # the film at a different movie. Offer that only for a film with
-        # nothing to lose. A detached film has something to lose: the
-        # detachment itself. The detachment promised "not until you
-        # enter one by hand".
-
-        if tmdb_lookup_form.tmdb_id.data is None and (
-            movie.tmdb_id is not None or movie.tmdb_ignored
-        ):
-            flash(
-                "Enter a TMDB ID to refresh this movie, or use "
-                "'Remove TMDB ID' to detach it from TMDB",
-                "warning",
-            )
-            return redirect(url_for("main.movie", movie_id=movie.id))
-
-        # An id entered by hand is an intentional new match. It undoes a
-        # previous removal. Only an actual id clears the flag. A blank
-        # submit cannot get here on a detached record, because of the
-        # guard.
-
-        if tmdb_lookup_form.tmdb_id.data is not None:
-            movie.tmdb_ignored = False
-            db.session.commit()
-
-        # Add a task to the fitzflix-sql queue to check TMDB and update the database.
-        # Add it to the front of the queue, because the user added it interactively.
-
-        refresh_job = enqueue_task(
-            "app.videos.refresh_tmdb_info",
-            "Movies",
-            movie.id,
-            tmdb_lookup_form.tmdb_id.data,
-            apply_at_front=True,
-            # The page waits for this refresh. Thus, it goes to the front
-            # of the sql queue, not behind the bulk refreshes of the
-            # request queue.
-            queue="sql",
-            description=f"Refreshing TMDB data for '{movie.title} ({movie.year})'",
-            at_front=True,
-        )
-
-        # Check if the requested TMDB ID already exists in the database.
-        # If it does, redirect to the info page of that movie, because this
-        # movie gets the TMDB data of that movie.
-
-        # A blank ID refreshes this movie. filter_by(tmdb_id=None) would
-        # match any unmatched movie.
-
-        existing_tmdb_movie = (
-            Movie.query.filter_by(tmdb_id=tmdb_lookup_form.tmdb_id.data).first()
-            if tmdb_lookup_form.tmdb_id.data is not None
-            else None
-        )
-        if existing_tmdb_movie:
-            movie_id = existing_tmdb_movie.id
-
-        else:
-            movie_id = movie.id
-
-        # Check the status of the refresh job each second. If the TMDB refresh
-        # completes in 10 seconds, redirect to the updated page. If not, redirect
-        # to the existing page and give the user a link to reload the page.
-
-        waited_seconds = 0
-        while refresh_job.result == None and waited_seconds < 10:
-            time.sleep(1)
-            waited_seconds = waited_seconds + 1
-
-        _flash_tmdb_refresh(
-            refresh_job.result,
-            f"{movie.title} ({movie.year})",
-            url_for("main.movie", movie_id=movie_id),
-        )
-
-        return redirect(url_for("main.movie", movie_id=movie_id))
-
-    # The form to update the Criterion Collection information of a movie by hand
-    criterion_form = CriterionForm()
-    qualities = (
-        db.session.query(RefQuality.id, RefQuality.quality_title)
-        .filter(
-            db.or_(
-                RefQuality.id == 1,
-                db.and_(
-                    RefQuality.physical_media == 1,
-                    db.or_(
-                        RefQuality.quality_title == "DVD",
-                        RefQuality.quality_title.like("%1080p"),
-                        RefQuality.quality_title.like("%2160p"),
-                    ),
-                ),
-            )
-        )
-        .order_by(RefQuality.preference.asc())
-        .all()
-    )
-    criterion_form.quality.choices = [(str(id), title) for (id, title) in qualities]
-    criterion_form.quality.default = movie.criterion_quality_id
-    if criterion_form.criterion_submit.data and criterion_form.validate_on_submit():
-        if not current_user.admin:
-            flash("Need to be an admin user to do that!", "danger")
-            return redirect(url_for("main.movie", movie_id=movie.id))
-        movie.criterion_spine_number = criterion_form.spine_number.data
-        if criterion_form.set_title.data:
-            movie.criterion_set_title = criterion_form.set_title.data
-
-        else:
-            movie.criterion_set_title = None
-
-        movie.criterion_in_print = criterion_form.in_print.data
-        movie.criterion_disc_owned = criterion_form.owned.data
-        movie.criterion_quality_id = criterion_form.quality.data
-
-        db.session.commit()
-        flash(f"Updated Criterion Collection details for '{title}'")
-        return redirect(url_for("main.movie", movie_id=movie.id))
+    criterion_form = _criterion_form(movie)
     criterion_form.process()
 
     # Streaming availability for the services of this user. It is quiet
@@ -1968,6 +1767,232 @@ def movie(movie_id):
         default_player=current_user.preferred_player,
         infuse_reasons=infuse_only_formats(films),
     )
+
+
+def _films_and_features(movie_id):
+    """Return (films, features), the main files and the extras of a film."""
+
+    films = (
+        File.query.join(RefQuality, (RefQuality.id == File.quality_id))
+        .filter(File.movie_id == movie_id)
+        .filter(File.feature_type_id == None)
+        .order_by(
+            File.fullscreen.asc(), File.edition.asc(), RefQuality.preference.desc()
+        )
+        .all()
+    )
+    features = (
+        File.query.filter(File.movie_id == movie_id)
+        .filter(File.feature_type_id != None)
+        .order_by(File.basename.asc())
+        .all()
+    )
+    return films, features
+
+
+def _criterion_form(movie):
+    """Return the Criterion form of a film, with its quality choices and default."""
+
+    criterion_form = CriterionForm()
+    qualities = (
+        db.session.query(RefQuality.id, RefQuality.quality_title)
+        .filter(
+            db.or_(
+                RefQuality.id == 1,
+                db.and_(
+                    RefQuality.physical_media == 1,
+                    db.or_(
+                        RefQuality.quality_title == "DVD",
+                        RefQuality.quality_title.like("%1080p"),
+                        RefQuality.quality_title.like("%2160p"),
+                    ),
+                ),
+            )
+        )
+        .order_by(RefQuality.preference.asc())
+        .all()
+    )
+    criterion_form.quality.choices = [(str(id), title) for (id, title) in qualities]
+    criterion_form.quality.default = movie.criterion_quality_id
+    return criterion_form
+
+
+def _wait_for_refresh(refresh_job):
+    """Wait up to 10 seconds for the result of an interactive TMDB refresh.
+
+    If the refresh completes in that time, the redirect shows the
+    updated page. If not, the page gives the user a link to reload."""
+
+    waited_seconds = 0
+    while refresh_job.result == None and waited_seconds < 10:
+        time.sleep(1)
+        waited_seconds = waited_seconds + 1
+    return refresh_job.result
+
+
+@bp.route("/movie/<int:movie_id>/tmdb", methods=["POST"])
+@login_required
+@admin_required
+def movie_tmdb(movie_id):
+    """Detach a film from TMDB, or refresh its TMDB data, for an admin."""
+
+    movie = Movie.query.filter_by(id=movie_id).first_or_404()
+    title = movie.display_title
+    films, features = _films_and_features(movie.id)
+
+    # The form to detach a movie from TMDB completely, for a film that
+    # TMDB has no entry for (#207). A record with no local files can
+    # never be such a film. Fitzflix created it FROM a TMDB id, and it
+    # mirrors that entry. Thus, a detach would leave a husk that nothing
+    # can enrich again.
+
+    tmdb_remove_form = TMDBRemoveForm()
+    if tmdb_remove_form.remove_submit.data and tmdb_remove_form.validate_on_submit():
+        if not films and not features:
+            flash(
+                f"'{title}' has no local files. Its record mirrors TMDB "
+                f"and cannot be detached",
+                "warning",
+            )
+            return redirect(url_for("main.movie", movie_id=movie.id))
+        movie.tmdb_movie_clear()
+        db.session.commit()
+        flash(
+            f"Removed the TMDB ID from '{title}'. Fitzflix will not look it up "
+            f"again until you enter one by hand",
+            "success",
+        )
+        return redirect(url_for("main.movie", movie_id=movie.id))
+
+    # The form to update the information of a movie with the latest TMDB data
+
+    tmdb_lookup_form = TMDBLookupForm()
+    if not (
+        tmdb_lookup_form.lookup_submit.data and tmdb_lookup_form.validate_on_submit()
+    ):
+        flash_form_errors(tmdb_lookup_form)
+        return redirect(url_for("main.movie", movie_id=movie.id))
+
+    # A record with no local files IS its TMDB entry. The id came directly
+    # from TMDB at creation, and the diary rows depend on it. Thus, the
+    # only operation is a refresh of the stored id. Never point it to a
+    # different id. Fitzflix ignores a smuggled id in the post.
+
+    if not films and not features:
+        if not movie.tmdb_id:
+            flash(
+                f"'{title}' is not matched to TMDB. There is nothing to refresh",
+                "warning",
+            )
+            return redirect(url_for("main.movie", movie_id=movie.id))
+        refresh_job = enqueue_task(
+            "app.videos.refresh_tmdb_info",
+            "Movies",
+            movie.id,
+            movie.tmdb_id,
+            apply_at_front=True,
+            # The page waits for this refresh. Thus, it goes to the front
+            # of the sql queue, not behind the bulk refreshes of the
+            # request queue.
+            queue="sql",
+            description=f"Refreshing TMDB data for '{movie.title} ({movie.year})'",
+            at_front=True,
+        )
+        _flash_tmdb_refresh(
+            _wait_for_refresh(refresh_job),
+            f"{movie.title} ({movie.year})",
+            url_for("main.movie", movie_id=movie.id),
+        )
+        return redirect(url_for("main.movie", movie_id=movie.id))
+
+    # A blank id asks TMDB to search by title, and takes the first hit. On
+    # a film that is already matched, this silently points the film at a
+    # different movie. Offer that only for a film with nothing to lose. A
+    # detached film has something to lose: the detachment itself. The
+    # detachment promised "not until you enter one by hand".
+
+    if tmdb_lookup_form.tmdb_id.data is None and (
+        movie.tmdb_id is not None or movie.tmdb_ignored
+    ):
+        flash(
+            "Enter a TMDB ID to refresh this movie, or use "
+            "'Remove TMDB ID' to detach it from TMDB",
+            "warning",
+        )
+        return redirect(url_for("main.movie", movie_id=movie.id))
+
+    # An id entered by hand is an intentional new match. It undoes a
+    # previous removal. Only an actual id clears the flag. A blank submit
+    # cannot get here on a detached record, because of the guard.
+
+    if tmdb_lookup_form.tmdb_id.data is not None:
+        movie.tmdb_ignored = False
+        db.session.commit()
+
+    # Add a task to the fitzflix-sql queue to check TMDB and update the
+    # database. Add it to the front of the queue, because the user added
+    # it interactively.
+
+    refresh_job = enqueue_task(
+        "app.videos.refresh_tmdb_info",
+        "Movies",
+        movie.id,
+        tmdb_lookup_form.tmdb_id.data,
+        apply_at_front=True,
+        # The page waits for this refresh. Thus, it goes to the front of
+        # the sql queue, not behind the bulk refreshes of the request
+        # queue.
+        queue="sql",
+        description=f"Refreshing TMDB data for '{movie.title} ({movie.year})'",
+        at_front=True,
+    )
+
+    # The requested TMDB ID can belong to a movie in the database. Then go
+    # to the page of that movie. This movie gets its TMDB data. A blank ID
+    # refreshes this movie. filter_by(tmdb_id=None)
+    # would match any unmatched movie.
+
+    existing_tmdb_movie = (
+        Movie.query.filter_by(tmdb_id=tmdb_lookup_form.tmdb_id.data).first()
+        if tmdb_lookup_form.tmdb_id.data is not None
+        else None
+    )
+    target_id = existing_tmdb_movie.id if existing_tmdb_movie else movie.id
+    _flash_tmdb_refresh(
+        _wait_for_refresh(refresh_job),
+        f"{movie.title} ({movie.year})",
+        url_for("main.movie", movie_id=target_id),
+    )
+    return redirect(url_for("main.movie", movie_id=target_id))
+
+
+@bp.route("/movie/<int:movie_id>/criterion", methods=["POST"])
+@login_required
+@admin_required
+def movie_criterion(movie_id):
+    """Update the Criterion Collection details of a film by hand, for an admin."""
+
+    movie = Movie.query.filter_by(id=movie_id).first_or_404()
+    criterion_form = _criterion_form(movie)
+    if not (
+        criterion_form.criterion_submit.data and criterion_form.validate_on_submit()
+    ):
+        flash_form_errors(criterion_form)
+        return redirect(url_for("main.movie", movie_id=movie.id))
+    movie.criterion_spine_number = criterion_form.spine_number.data
+    if criterion_form.set_title.data:
+        movie.criterion_set_title = criterion_form.set_title.data
+
+    else:
+        movie.criterion_set_title = None
+
+    movie.criterion_in_print = criterion_form.in_print.data
+    movie.criterion_disc_owned = criterion_form.owned.data
+    movie.criterion_quality_id = criterion_form.quality.data
+
+    db.session.commit()
+    flash(f"Updated Criterion Collection details for '{movie.display_title}'")
+    return redirect(url_for("main.movie", movie_id=movie.id))
 
 
 @bp.route("/movie/<int:movie_id>/play", methods=["POST"])
@@ -2332,7 +2357,7 @@ def restore_cost_estimate(files, bulk=False):
     return {"count": len(files), "gigabytes": gigabytes, "cost": cost}
 
 
-@bp.route("/tv/<int:series_id>", methods=["GET", "POST"])
+@bp.route("/tv/<int:series_id>")
 @login_required
 def tv(series_id):
     """Show details for a particular TV series."""
@@ -2347,228 +2372,21 @@ def tv(series_id):
 
     seasons = sorted(set(seasons))
 
-    # The series management forms (restore, delete, TMDB)
-    # are admin tools, like the Movie Data section of the movie page
-    # (#186 follow-up). The template hides them. Each branch rejects a
-    # stray post from a different user.
+    # The series management forms (restore, delete, TMDB) are admin
+    # tools, like the Movie Data section of the movie page (#186
+    # follow-up). The template hides them. They post to tv_restore,
+    # tv_delete, and tv_tmdb, which only admins can reach.
 
-    # The form to request a restore of each archived file of this series
-    # from AWS Glacier. The hourly SQS poll downloads each file when it is
-    # ready. A restore costs real money. Thus, show an estimate and
-    # require the password of the user before the request.
+    # A restore costs real money. Thus, the page shows an estimate.
 
-    restore_ranked_files = (
-        db.session.query(
-            File.id,
-            tv_file_rank(),
-        )
-        .join(TVSeries, (TVSeries.id == File.series_id))
-        .join(RefQuality, (RefQuality.id == File.quality_id))
-        .subquery()
+    series_restore_estimate = restore_cost_estimate(
+        _series_restorable(series_id), bulk=True
     )
-
-    series_restorable = (
-        File.query.join(restore_ranked_files, (restore_ranked_files.c.id == File.id))
-        .filter(File.series_id == series_id)
-        .filter(restore_ranked_files.c.rank == 1)
-        .filter(File.aws_key != None)
-        .order_by(File.season.asc(), File.episode.asc())
-        .all()
-    )
-    series_restore_estimate = restore_cost_estimate(series_restorable, bulk=True)
 
     series_restore_form = SeriesRestoreForm()
-    if (
-        series_restore_form.series_restore_submit.data
-        and series_restore_form.validate_on_submit()
-    ):
-        if not current_user.admin:
-            flash("Need to be an admin user to do that!", "danger")
-            return redirect(url_for("main.tv", series_id=tv.id))
-        if not current_user.check_password(series_restore_form.password.data):
-            flash("Incorrect password provided!", "danger")
-
-        else:
-            for file in series_restorable:
-                enqueue_task(
-                    "app.videos.aws_restore",
-                    file.restore_key,
-                    tier="Bulk",
-                    description=f"'{file.untouched_basename}'",
-                )
-
-            flash(
-                f"Requesting {len(series_restorable)} file(s) for '{title}' to "
-                f"be restored from AWS Glacier "
-                f"(≈ ${series_restore_estimate['cost']:.2f})",
-                "info",
-            )
-
-        return redirect(url_for("main.tv", series_id=tv.id))
-
-    # Delete the TV series from the database
-
     series_delete_form = SeriesDeleteForm()
-    if (
-        series_delete_form.delete_submit.data
-        and series_delete_form.validate_on_submit()
-    ):
-        if not current_user.admin:
-            flash("Need to be an admin user to do that!", "danger")
-            return redirect(url_for("main.tv", series_id=tv.id))
-        aws_keys = []
-        leftover_dirs = set()
-
-        try:
-            files = File.query.filter(File.series_id == series_id).all()
-            for file in files:
-                if file.aws_key:
-                    aws_keys.append(file.aws_key)
-                leftover_dirs.add(
-                    os.path.join(current_app.config["LIBRARY_DIR"], file.dirname)
-                )
-                file.delete_local_file(delete_directory_tree=True)
-                db.session.delete(file)
-
-            db.session.delete(tv)
-            db.session.commit()
-
-        except Exception:
-            db.session.rollback()
-            flash(f"Unable to delete TV series '{title}'!", "danger")
-            return redirect(url_for("main.tv", series_id=series_id))
-
-        # Delete the AWS copies only after the database delete is committed.
-        # Thus, a failed commit cannot leave database records whose backups
-        # are gone.
-
-        for aws_key in aws_keys:
-            if untouched_key_still_claimed(aws_key):
-                continue
-            enqueue_task(
-                "app.videos.aws_delete",
-                aws_key,
-                # A delete from a page uses the request workers. The handoff
-                # queue can hold long library copies.
-                queue="request",
-            )
-
-        # The folders themselves. delete_local_file removes only EMPTY
-        # directories. Poster art sits beside the episodes (placed by
-        # Fitzflix for movies, by Sonarr or by hand for TV). Thus, that
-        # art used to leave husks for the weekly sweep. An explicit
-        # delete clears the junk-only folders immediately.
-
-        from app.maintenance import clear_leftover_directory
-
-        for leftover_dir in sorted(leftover_dirs):
-            clear_leftover_directory(leftover_dir)
-
-        flash(
-            f"Deleted TV series '{title}' and its files from the database.", "success"
-        )
-        return redirect(url_for("main.tv_library"))
-
-    # The form to detach a series from TMDB completely (#207). It is for
-    # a series that TMDB has no entry for, or an id that TMDB deleted
-    # later.
-
     tmdb_remove_form = TMDBRemoveForm()
-    if tmdb_remove_form.remove_submit.data and tmdb_remove_form.validate_on_submit():
-        if not current_user.admin:
-            flash("Need to be an admin user to do that!", "danger")
-            return redirect(url_for("main.tv", series_id=tv.id))
-        tv.tmdb_tv_clear()
-        db.session.commit()
-        flash(
-            f"Removed the TMDB ID from '{tv.title}'. Fitzflix will not look it "
-            f"up again until you enter one by hand",
-            "success",
-        )
-        return redirect(url_for("main.tv", series_id=tv.id))
-
-    # The form to update the information of a TV series with the latest TMDB data
-
     tmdb_lookup_form = TMDBLookupForm()
-    if tmdb_lookup_form.lookup_submit.data and tmdb_lookup_form.validate_on_submit():
-        if not current_user.admin:
-            flash("Need to be an admin user to do that!", "danger")
-            return redirect(url_for("main.tv", series_id=tv.id))
-
-        # A blank id asks TMDB to search by title, and takes the first
-        # hit. On a series that is already matched, this silently points
-        # the series at a different show. That is the merge reported in
-        # #207. A detached series is guarded too. A blank refresh must
-        # not silently undo the detachment with a title search.
-
-        if tmdb_lookup_form.tmdb_id.data is None and (
-            tv.tmdb_id is not None or tv.tmdb_ignored
-        ):
-            flash(
-                "Enter a TMDB ID to refresh this series, or use "
-                "'Remove TMDB ID' to detach it from TMDB",
-                "warning",
-            )
-            return redirect(url_for("main.tv", series_id=tv.id))
-
-        # An id entered by hand is an intentional new match. It undoes a
-        # previous removal. Only an actual id clears the flag. A blank
-        # submit cannot get here on a detached record, because of the
-        # guard.
-
-        if tmdb_lookup_form.tmdb_id.data is not None:
-            tv.tmdb_ignored = False
-            db.session.commit()
-
-        # Add a task to the fitzflix-sql queue to check TMDB and update the database.
-        # Add it to the front of the queue, because the user added it interactively.
-
-        refresh_job = enqueue_task(
-            "app.videos.refresh_tmdb_info",
-            "TV Shows",
-            tv.id,
-            tmdb_lookup_form.tmdb_id.data,
-            apply_at_front=True,
-            # The page waits for this refresh. Thus, it goes to the front
-            # of the sql queue, not behind the bulk refreshes of the
-            # request queue.
-            queue="sql",
-            description=f"Refreshing TMDB data for '{tv.title}'",
-            at_front=True,
-        )
-
-        # Check if the requested TMDB ID already exists in the database.
-        # If it does, redirect to the info page of that show, because this
-        # TV series gets the TMDB data of that show.
-
-        # A blank ID refreshes this series. filter_by(tmdb_id=None) would
-        # match any unmatched series.
-
-        existing_tmdb_tv = (
-            TVSeries.query.filter_by(tmdb_id=tmdb_lookup_form.tmdb_id.data).first()
-            if tmdb_lookup_form.tmdb_id.data is not None
-            else None
-        )
-        if existing_tmdb_tv:
-            tv_id = existing_tmdb_tv.id
-
-        else:
-            tv_id = tv.id
-
-        # Check the status of the refresh job each second. If the TMDB refresh
-        # completes in 10 seconds, redirect to the updated page. If not, redirect
-        # to the existing page and give the user a link to reload the page.
-
-        waited_seconds = 0
-        while refresh_job.result == None and waited_seconds < 10:
-            time.sleep(1)
-            waited_seconds = waited_seconds + 1
-
-        _flash_tmdb_refresh(
-            refresh_job.result, tv.title, url_for("main.tv", series_id=tv_id)
-        )
-
-        return redirect(url_for("main.tv", series_id=tv_id))
 
     # The billed cast for the scroller, in aggregate billing order. The
     # list has a maximum. The aggregate cast of a long-running series
@@ -2627,7 +2445,7 @@ def tv(series_id):
     )
 
 
-@bp.route("/tv/<int:series_id>/<int:season>", methods=["GET", "POST"])
+@bp.route("/tv/<int:series_id>/<int:season>")
 @login_required
 def season(series_id, season):
     """Show all files for a season of a TV show, regardless of ranking.
@@ -2644,6 +2462,55 @@ def season(series_id, season):
     else:
         title = f'Files for "{tv.display_title}", season {season}'
 
+    files = _season_files(series_id, season)
+
+    # The restore of the best archived files of this season is an admin
+    # tool, like on the series page (#186 follow-up). The season page
+    # itself stays open to all users for its episode listing. A restore
+    # costs real money. Thus, the page shows an estimate.
+
+    season_restore_estimate = restore_cost_estimate(
+        _season_restorable(files), bulk=True
+    )
+
+    season_restore_form = SeasonRestoreForm()
+
+    return render_template(
+        "season.html",
+        title=title,
+        tv=tv,
+        season=season,
+        files=files,
+        season_restore_form=season_restore_form,
+        season_restore_estimate=season_restore_estimate,
+    )
+
+
+def _series_restorable(series_id):
+    """Return the best archived file of each episode of a series."""
+
+    restore_ranked_files = (
+        db.session.query(
+            File.id,
+            tv_file_rank(),
+        )
+        .join(TVSeries, (TVSeries.id == File.series_id))
+        .join(RefQuality, (RefQuality.id == File.quality_id))
+        .subquery()
+    )
+    return (
+        File.query.join(restore_ranked_files, (restore_ranked_files.c.id == File.id))
+        .filter(File.series_id == series_id)
+        .filter(restore_ranked_files.c.rank == 1)
+        .filter(File.aws_key != None)
+        .order_by(File.season.asc(), File.episode.asc())
+        .all()
+    )
+
+
+def _season_files(series_id, season):
+    """Return (File, TVSeries, RefQuality, rank) for each file of a season."""
+
     # This subquery gets the ranking of each file of this season.
 
     ranked_files = (
@@ -2655,10 +2522,7 @@ def season(series_id, season):
         .join(RefQuality, (RefQuality.id == File.quality_id))
         .subquery()
     )
-
-    # This query gets all the files of this season.
-
-    files = (
+    return (
         db.session.query(File, TVSeries, RefQuality, ranked_files.c.rank)
         .join(TVSeries, (TVSeries.id == File.series_id))
         .join(RefQuality, (RefQuality.id == File.quality_id))
@@ -2671,56 +2535,249 @@ def season(series_id, season):
         .all()
     )
 
-    # The form to request a restore of the best archived files of this
-    # season from AWS Glacier. The hourly SQS poll downloads each file
-    # when it is ready. A restore costs real money. Thus, show an estimate
-    # and require the password of the user before the request.
 
-    restorable = [file for file, _, _, rank in files if rank == 1 and file.aws_key]
-    season_restore_estimate = restore_cost_estimate(restorable, bulk=True)
+def _season_restorable(files):
+    """Return the best archived file of each episode in the rows of _season_files."""
 
+    return [file for file, _, _, rank in files if rank == 1 and file.aws_key]
+
+
+def _request_restores(files):
+    """Queue a bulk Glacier restore of each file.
+
+    The hourly SQS poll downloads each file when it is ready."""
+
+    for file in files:
+        enqueue_task(
+            "app.videos.aws_restore",
+            file.restore_key,
+            tier="Bulk",
+            description=f"'{file.untouched_basename}'",
+        )
+
+
+@bp.route("/tv/<int:series_id>/restore", methods=["POST"])
+@login_required
+@admin_required
+def tv_restore(series_id):
+    """Request a restore of each archived episode of a series, for an admin.
+
+    A restore costs real money. Thus, the form needs the password of the
+    user."""
+
+    tv = TVSeries.query.filter_by(id=series_id).first_or_404()
+    series_restore_form = SeriesRestoreForm()
+    if not (
+        series_restore_form.series_restore_submit.data
+        and series_restore_form.validate_on_submit()
+    ):
+        flash_form_errors(series_restore_form)
+        return redirect(url_for("main.tv", series_id=tv.id))
+    if not current_user.check_password(series_restore_form.password.data):
+        flash("Incorrect password provided!", "danger")
+
+    else:
+        series_restorable = _series_restorable(series_id)
+        series_restore_estimate = restore_cost_estimate(series_restorable, bulk=True)
+        _request_restores(series_restorable)
+        flash(
+            f"Requesting {len(series_restorable)} file(s) for '{tv.display_title}' "
+            f"to be restored from AWS Glacier "
+            f"(≈ ${series_restore_estimate['cost']:.2f})",
+            "info",
+        )
+
+    return redirect(url_for("main.tv", series_id=tv.id))
+
+
+@bp.route("/tv/<int:series_id>/delete", methods=["POST"])
+@login_required
+@admin_required
+def tv_delete(series_id):
+    """Delete a TV series and its files from the database, for an admin."""
+
+    tv = TVSeries.query.filter_by(id=series_id).first_or_404()
+    title = tv.display_title
+    series_delete_form = SeriesDeleteForm()
+    if not (
+        series_delete_form.delete_submit.data
+        and series_delete_form.validate_on_submit()
+    ):
+        flash_form_errors(series_delete_form)
+        return redirect(url_for("main.tv", series_id=tv.id))
+    aws_keys = []
+    leftover_dirs = set()
+
+    try:
+        files = File.query.filter(File.series_id == series_id).all()
+        for file in files:
+            if file.aws_key:
+                aws_keys.append(file.aws_key)
+            leftover_dirs.add(
+                os.path.join(current_app.config["LIBRARY_DIR"], file.dirname)
+            )
+            file.delete_local_file(delete_directory_tree=True)
+            db.session.delete(file)
+
+        db.session.delete(tv)
+        db.session.commit()
+
+    except Exception:
+        db.session.rollback()
+        flash(f"Unable to delete TV series '{title}'!", "danger")
+        return redirect(url_for("main.tv", series_id=series_id))
+
+    # Delete the AWS copies only after the database delete is committed.
+    # Thus, a failed commit cannot leave database records whose backups
+    # are gone.
+
+    for aws_key in aws_keys:
+        if untouched_key_still_claimed(aws_key):
+            continue
+        enqueue_task(
+            "app.videos.aws_delete",
+            aws_key,
+            # A delete from a page uses the request workers. The handoff
+            # queue can hold long library copies.
+            queue="request",
+        )
+
+    # The folders themselves. delete_local_file removes only EMPTY
+    # directories. Poster art sits beside the episodes (placed by Fitzflix
+    # for movies, by Sonarr or by hand for TV). Thus, that art used to
+    # leave husks for the weekly sweep. An explicit delete clears the
+    # junk-only folders immediately.
+
+    from app.maintenance import clear_leftover_directory
+
+    for leftover_dir in sorted(leftover_dirs):
+        clear_leftover_directory(leftover_dir)
+
+    flash(f"Deleted TV series '{title}' and its files from the database.", "success")
+    return redirect(url_for("main.tv_library"))
+
+
+@bp.route("/tv/<int:series_id>/tmdb", methods=["POST"])
+@login_required
+@admin_required
+def tv_tmdb(series_id):
+    """Detach a series from TMDB, or refresh its TMDB data, for an admin."""
+
+    tv = TVSeries.query.filter_by(id=series_id).first_or_404()
+
+    # The form to detach a series from TMDB completely (#207). It is for a
+    # series that TMDB has no entry for, or an id that TMDB deleted later.
+
+    tmdb_remove_form = TMDBRemoveForm()
+    if tmdb_remove_form.remove_submit.data and tmdb_remove_form.validate_on_submit():
+        tv.tmdb_tv_clear()
+        db.session.commit()
+        flash(
+            f"Removed the TMDB ID from '{tv.title}'. Fitzflix will not look it "
+            f"up again until you enter one by hand",
+            "success",
+        )
+        return redirect(url_for("main.tv", series_id=tv.id))
+
+    # The form to update the information of a TV series with the latest TMDB data
+
+    tmdb_lookup_form = TMDBLookupForm()
+    if not (
+        tmdb_lookup_form.lookup_submit.data and tmdb_lookup_form.validate_on_submit()
+    ):
+        flash_form_errors(tmdb_lookup_form)
+        return redirect(url_for("main.tv", series_id=tv.id))
+
+    # A blank id asks TMDB to search by title, and takes the first hit. On
+    # a series that is already matched, this silently points the series at
+    # a different show. That is the merge reported in #207. A detached
+    # series is guarded too. A blank refresh must not silently undo the
+    # detachment with a title search.
+
+    if tmdb_lookup_form.tmdb_id.data is None and (
+        tv.tmdb_id is not None or tv.tmdb_ignored
+    ):
+        flash(
+            "Enter a TMDB ID to refresh this series, or use "
+            "'Remove TMDB ID' to detach it from TMDB",
+            "warning",
+        )
+        return redirect(url_for("main.tv", series_id=tv.id))
+
+    # An id entered by hand is an intentional new match. It undoes a
+    # previous removal. Only an actual id clears the flag. A blank submit
+    # cannot get here on a detached record, because of the guard.
+
+    if tmdb_lookup_form.tmdb_id.data is not None:
+        tv.tmdb_ignored = False
+        db.session.commit()
+
+    # Add a task to the fitzflix-sql queue to check TMDB and update the
+    # database. Add it to the front of the queue, because the user added
+    # it interactively.
+
+    refresh_job = enqueue_task(
+        "app.videos.refresh_tmdb_info",
+        "TV Shows",
+        tv.id,
+        tmdb_lookup_form.tmdb_id.data,
+        apply_at_front=True,
+        # The page waits for this refresh. Thus, it goes to the front of
+        # the sql queue, not behind the bulk refreshes of the request
+        # queue.
+        queue="sql",
+        description=f"Refreshing TMDB data for '{tv.title}'",
+        at_front=True,
+    )
+
+    # The requested TMDB ID can belong to a show in the database. Then go
+    # to the page of that show. This series gets its TMDB data. A blank ID
+    # refreshes this series. filter_by(tmdb_id=None) would
+    # match any unmatched series.
+
+    existing_tmdb_tv = (
+        TVSeries.query.filter_by(tmdb_id=tmdb_lookup_form.tmdb_id.data).first()
+        if tmdb_lookup_form.tmdb_id.data is not None
+        else None
+    )
+    tv_id = existing_tmdb_tv.id if existing_tmdb_tv else tv.id
+    _flash_tmdb_refresh(
+        _wait_for_refresh(refresh_job), tv.title, url_for("main.tv", series_id=tv_id)
+    )
+    return redirect(url_for("main.tv", series_id=tv_id))
+
+
+@bp.route("/tv/<int:series_id>/<int:season>/restore", methods=["POST"])
+@login_required
+@admin_required
+def season_restore(series_id, season):
+    """Request a restore of the best archived files of a season, for an admin."""
+
+    TVSeries.query.filter_by(id=series_id).first_or_404()
     season_restore_form = SeasonRestoreForm()
-    if (
+    back = url_for("main.season", series_id=series_id, season=season)
+    if not (
         season_restore_form.season_restore_submit.data
         and season_restore_form.validate_on_submit()
     ):
-        # The restore is an admin tool, like on the series page (#186
-        # follow-up). The season page itself stays open to all users
-        # for its episode listing.
-        if not current_user.admin:
-            flash("Need to be an admin user to do that!", "danger")
-            return redirect(url_for("main.season", series_id=series_id, season=season))
-        if not current_user.check_password(season_restore_form.password.data):
-            flash("Incorrect password provided!", "danger")
+        flash_form_errors(season_restore_form)
+        return redirect(back)
+    if not current_user.check_password(season_restore_form.password.data):
+        flash("Incorrect password provided!", "danger")
 
-        else:
-            for file in restorable:
-                enqueue_task(
-                    "app.videos.aws_restore",
-                    file.restore_key,
-                    tier="Bulk",
-                    description=f"'{file.untouched_basename}'",
-                )
+    else:
+        restorable = _season_restorable(_season_files(series_id, season))
+        season_restore_estimate = restore_cost_estimate(restorable, bulk=True)
+        _request_restores(restorable)
+        season_name = "specials" if season == 0 else f"season {season}"
+        flash(
+            f"Requesting {len(restorable)} file(s) for {season_name} to be "
+            f"restored from AWS Glacier "
+            f"(≈ ${season_restore_estimate['cost']:.2f})",
+            "info",
+        )
 
-            season_name = "specials" if season == 0 else f"season {season}"
-            flash(
-                f"Requesting {len(restorable)} file(s) for {season_name} to be "
-                f"restored from AWS Glacier "
-                f"(≈ ${season_restore_estimate['cost']:.2f})",
-                "info",
-            )
-
-        return redirect(url_for("main.season", series_id=series_id, season=season))
-
-    return render_template(
-        "season.html",
-        title=title,
-        tv=tv,
-        season=season,
-        files=files,
-        season_restore_form=season_restore_form,
-        season_restore_estimate=season_restore_estimate,
-    )
+    return redirect(back)
 
 
 @bp.route("/file/<int:file_id>", methods=["GET", "POST"])

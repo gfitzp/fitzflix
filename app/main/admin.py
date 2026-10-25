@@ -702,10 +702,7 @@ def maintenance():
 
     sync_form = SyncAWSStorageForm()
     if sync_form.sync_submit.data and sync_form.validate_on_submit():
-        if not current_user.admin:
-            flash("Need to be an admin user for this task!", "danger")
-
-        elif current_user.check_password(sync_form.password.data):
+        if current_user.check_password(sync_form.password.data):
             # The sync runs for hours. The maintenance queue holds it, as
             # in the cron table. On the single sql worker it blocked the
             # cataloging of each import (#314).

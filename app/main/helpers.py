@@ -352,6 +352,18 @@ def _watched_timestamp(watched_date):
     return datetime.combine(watched_date, datetime.min.time())
 
 
+def flash_form_errors(form):
+    """Flash the first error of each field of a form that failed validation.
+
+    The pages do not show the field errors of these forms. Thus, a
+    refused field gets a message. A csrf error stays quiet, as a form
+    that did not validate always did."""
+
+    for field, messages in form.errors.items():
+        if field != "csrf_token":
+            flash(f"{getattr(form, field).label.text}: {messages[0]}", "danger")
+
+
 def admin_required(view):
     """Allow only admin users through the view.
 

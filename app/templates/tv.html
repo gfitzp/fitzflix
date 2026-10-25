@@ -60,12 +60,12 @@
 	</div>
 	{# The series management tools are admin tools. These are restore,
 	   delete, and the TMDB forms below. They are like the Movie
-	   Data section of the movie page (#186 follow-up). The route rejects
-	   stray posts from all other users. Thus, to hide the tools here is
+	   Data section of the movie page (#186 follow-up). Their forms post
+	   to admin-only routes. Thus, to hide the tools here is
 	   presentation, not the protection #}
 	{% if current_user.admin %}
 	<div class="col-sm-3 col-md-2">
-		<form action="" method="post">
+		<form action="{{ url_for('main.tv_restore', series_id=tv.id) }}" method="post">
 			{{ series_restore_form.hidden_tag() }}
 			{{ series_restore_form.password(class_="form-control form-control-sm mb-1", placeholder="Password") }}
 			{{ series_restore_form.series_restore_submit(class_="btn btn-sm btn-primary container") }}
@@ -77,7 +77,7 @@
 		{% endif %}
 	</div>
 	<div class="col-sm-3 col-md-2">
-		<form action="" method="post">
+		<form action="{{ url_for('main.tv_delete', series_id=tv.id) }}" method="post">
 			{{ series_delete_form.hidden_tag() }}
 			{{ series_delete_form.delete_submit(class_="btn btn-sm btn-danger container") }}
 		</form>
@@ -88,7 +88,7 @@
 <hr>
 <div class="row">
 	<div class="col-sm-4">
-		<form action="" method="post">
+		<form action="{{ url_for('main.tv_tmdb', series_id=tv.id) }}" method="post">
 			{{ tmdb_lookup_form.hidden_tag() }}
 			<div class="mb-3">
 				{{ tmdb_lookup_form.tmdb_id.label }}
@@ -97,7 +97,7 @@
 			{{ tmdb_lookup_form.lookup_submit(class_="btn btn-sm btn-warning") }}
 		</form>
 		{% if tv.tmdb_id %}
-		<form action="" method="post" class="mt-2">
+		<form action="{{ url_for('main.tv_tmdb', series_id=tv.id) }}" method="post" class="mt-2">
 			{{ tmdb_remove_form.hidden_tag() }}
 			{{ tmdb_remove_form.remove_submit(class_="btn btn-sm btn-danger", onclick="return confirm('Remove the TMDB ID from this series? Its TMDB details, cast, crew and episode list will be deleted, and the series will not be looked up again.');") }}
 		</form>
