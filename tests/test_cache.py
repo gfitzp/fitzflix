@@ -104,7 +104,7 @@ def test_enriched_movie_states(app, monkeypatch):
 def test_a_legacy_plex_tmdb_entry_is_read_again(app, monkeypatch):
     """The old cache wrote "" for no guid. It now reads as MISS and refetches."""
 
-    from app import diary
+    from app import diary, plex_api
 
     class Response:
         def raise_for_status(self):
@@ -114,12 +114,12 @@ def test_a_legacy_plex_tmdb_entry_is_read_again(app, monkeypatch):
             return {"MediaContainer": {"Metadata": [{"Guid": [{"id": "tmdb://77"}]}]}}
 
     monkeypatch.setitem(app.config, "PLEX_URL", "http://plex.test")
-    monkeypatch.setattr(diary.requests, "get", lambda *a, **k: Response())
+    monkeypatch.setattr(plex_api.requests, "get", lambda *a, **k: Response())
     key = diary.PLEX_TMDB_KEY.format(rating_key="555")
     with app.app_context():
         app.redis.set(key, "", ex=60)
         try:
-            assert diary._plex_tmdb_id({"ratingKey": "555"}, {}) == 77
+            assert diary._plex_tmdb_id({"ratingKey": "555"}) == 77
             assert app.redis.get(key) == b"77"
         finally:
             app.redis.delete(key)

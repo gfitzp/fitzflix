@@ -19,50 +19,22 @@ only "Doctor Who". The "(1963)" is only in the folder name.
 import os
 import traceback
 
-import requests
-
 from flask import current_app
 from werkzeug.local import LocalProxy
 
 from app import db, get_app
 from app.models import File
+from app.plex_api import plex_command, plex_get
 
 app = LocalProxy(get_app)
 
 PAGE_SIZE = 1000
 
 
-def _plex_get(path, params=None):
-    """Send one authenticated JSON GET to the local Plex server."""
-
-    r = requests.get(
-        current_app.config["PLEX_URL"] + path,
-        params={
-            **(params or {}),
-            "X-Plex-Token": current_app.config["PLEX_TOKEN"],
-        },
-        headers={"Accept": "application/json"},
-        timeout=60,
-    )
-    r.raise_for_status()
-    return r.json()
-
-
-def _plex_put(path, params):
-    """Send one PUT to the local Plex server (metadata edits)."""
-
-    r = requests.put(
-        current_app.config["PLEX_URL"] + path,
-        params={**params, "X-Plex-Token": current_app.config["PLEX_TOKEN"]},
-        timeout=60,
-    )
-    r.raise_for_status()
-
-
 def _tv_section_key():
     """Return the Plex library section that holds the TV shows, or None."""
 
-    payload = _plex_get("/library/sections")
+    payload = plex_get("/library/sections")
     for section in payload.get("MediaContainer", {}).get("Directory", []) or []:
         if section.get("type") == "show":
             return section.get("key")
@@ -105,7 +77,7 @@ def sync_plex_episode_titles():
             updated = current = matched = 0
             start = 0
             while True:
-                payload = _plex_get(
+                payload = plex_get(
                     f"/library/sections/{section}/all",
                     params={
                         "type": 4,
@@ -131,7 +103,8 @@ def sync_plex_episode_titles():
                     if (episode.get("title") or "") == title:
                         current += 1
                         continue
-                    _plex_put(
+                    plex_command(
+                        "PUT",
                         f"/library/sections/{section}/all",
                         {
                             "type": 4,

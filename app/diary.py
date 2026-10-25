@@ -26,7 +26,6 @@ import zipfile
 
 from datetime import datetime, timedelta, timezone
 
-import requests
 
 from flask import current_app
 from werkzeug.local import LocalProxy
@@ -41,6 +40,7 @@ from app.models import (
     UserMovieStatus,
     UserWatchlist,
 )
+from app.plex_api import plex_get
 from app.tmdb_apply import tmdb_json
 
 # The TMDB id of a Plex rating key, cached for 1 week. The rating keys
@@ -608,7 +608,7 @@ def apply_plex_watch(tmdb_id, plex_username, viewed_at, source):
             return True
 
 
-def _plex_tmdb_id(entry, headers, failures=None):
+def _plex_tmdb_id(entry, failures=None):
     """Resolve a Plex history entry to a TMDB id through its Guid list.
 
     Redis caches the result, because the rating keys are stable. A
@@ -622,13 +622,8 @@ def _plex_tmdb_id(entry, headers, failures=None):
     def fetch():
         tmdb_id = None
         try:
-            r = requests.get(
-                f"{current_app.config['PLEX_URL']}/library/metadata/{rating_key}",
-                headers=headers,
-                timeout=30,
-            )
-            r.raise_for_status()
-            items = (r.json().get("MediaContainer") or {}).get("Metadata") or []
+            body = plex_get(f"/library/metadata/{rating_key}", timeout=30)
+            items = (body.get("MediaContainer") or {}).get("Metadata") or []
             guids = (items[0].get("Guid") or []) if items else []
             for guid in guids:
                 match = re.match(r"tmdb://(\d+)", guid.get("id") or "")
@@ -671,7 +666,6 @@ def plex_history_poll():
             return True
 
         redis_conn = current_app.redis
-        headers = {"X-Plex-Token": config["PLEX_TOKEN"], "Accept": "application/json"}
         cursor_key = "fitzflix:plex:history-cursor"
 
         cursor = redis_conn.get(cursor_key)
@@ -685,14 +679,16 @@ def plex_history_poll():
         cursor = int(cursor)
 
         try:
-            r = requests.get(
-                f"{config['PLEX_URL']}/status/sessions/history/all",
-                headers={**headers, "X-Plex-Container-Size": "500"},
-                params={"viewedAt>": cursor, "sort": "viewedAt:asc"},
+            body = plex_get(
+                "/status/sessions/history/all",
+                {
+                    "viewedAt>": cursor,
+                    "sort": "viewedAt:asc",
+                    "X-Plex-Container-Size": "500",
+                },
                 timeout=30,
             )
-            r.raise_for_status()
-            entries = (r.json().get("MediaContainer") or {}).get("Metadata") or []
+            entries = (body.get("MediaContainer") or {}).get("Metadata") or []
         except Exception:
             current_app.logger.error(traceback.format_exc())
             return False
@@ -703,11 +699,8 @@ def plex_history_poll():
 
         accounts = {}
         try:
-            r = requests.get(
-                f"{config['PLEX_URL']}/accounts", headers=headers, timeout=30
-            )
-            r.raise_for_status()
-            for account in (r.json().get("MediaContainer") or {}).get("Account") or []:
+            body = plex_get("/accounts", timeout=30)
+            for account in (body.get("MediaContainer") or {}).get("Account") or []:
                 accounts[account.get("id")] = account.get("name")
         except Exception:
             current_app.logger.warning(traceback.format_exc())
@@ -731,7 +724,7 @@ def plex_history_poll():
             if entry.get("live"):
                 continue
             failures = []
-            tmdb_id = _plex_tmdb_id(entry, headers, failures)
+            tmdb_id = _plex_tmdb_id(entry, failures)
             if failures:
                 failed_at = (
                     viewed_at if failed_at is None else min(failed_at, viewed_at)

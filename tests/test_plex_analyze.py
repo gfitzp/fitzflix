@@ -76,8 +76,8 @@ def _wire(app, monkeypatch, fake):
 
     monkeypatch.setitem(app.config, "PLEX_URL", "http://plex.test")
     monkeypatch.setitem(app.config, "PLEX_TOKEN", "token")
-    monkeypatch.setattr(plex_library, "_plex_get", fake.get)
-    monkeypatch.setattr(plex_library, "_plex_command", fake.command)
+    monkeypatch.setattr(plex_library, "plex_get", fake.get)
+    monkeypatch.setattr(plex_library, "plex_command", fake.command)
     return plex_library
 
 

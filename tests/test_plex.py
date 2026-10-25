@@ -292,12 +292,12 @@ class FakePlexServer:
 
 @pytest.fixture
 def plex_server(app, monkeypatch):
-    from app import diary
+    from app import plex_api
 
     server = FakePlexServer()
     monkeypatch.setitem(app.config, "PLEX_URL", "http://plex.test:32400")
     monkeypatch.setitem(app.config, "PLEX_TOKEN", "plex-test-token")
-    monkeypatch.setattr(diary.requests, "get", server.get)
+    monkeypatch.setattr(plex_api.requests, "get", server.get)
     return server
 
 
@@ -321,9 +321,9 @@ def test_a_failed_lookup_holds_the_cursor_for_the_next_poll(
             raise TimeoutError("Plex is busy")
         return real_get(url, *args, **kwargs)
 
-    from app import diary
+    from app import plex_api
 
-    monkeypatch.setattr(diary.requests, "get", flaky_get)
+    monkeypatch.setattr(plex_api.requests, "get", flaky_get)
 
     with app.app_context():
         assert plex_history_poll() is True

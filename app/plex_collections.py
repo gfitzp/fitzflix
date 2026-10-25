@@ -47,7 +47,7 @@ from werkzeug.local import LocalProxy
 from app.tasks import enqueue_task
 from app import db, get_app
 from app.models import File, Movie, RefQuality, ranked_movie_files
-from app.plex_titles import _plex_get
+from app.plex_api import plex_get, plex_write
 
 app = LocalProxy(get_app)
 
@@ -159,29 +159,12 @@ def box_set_groups():
     }
 
 
-def _plex_request(method, path, params=None):
-    """Send one write call (POST, PUT, or DELETE) to the local Plex server."""
-
-    r = requests.request(
-        method,
-        current_app.config["PLEX_URL"] + path,
-        params={
-            **(params or {}),
-            "X-Plex-Token": current_app.config["PLEX_TOKEN"],
-        },
-        headers={"Accept": "application/json"},
-        timeout=60,
-    )
-    r.raise_for_status()
-    return r.json() if r.content else {}
-
-
 def _paged(path, params=None):
     """Yield every Metadata entry of a Plex list, one page at a time."""
 
     start = 0
     while True:
-        container = _plex_get(
+        container = plex_get(
             path,
             params={
                 **(params or {}),
@@ -235,7 +218,7 @@ def _sync_collection(section, collections, by_path, groups, name, machine, sort=
         if not wanted:
             return
         first = sorted(wanted)[:ADD_BATCH]
-        created = _plex_request(
+        created = plex_write(
             "POST",
             "/library/collections",
             {
@@ -263,7 +246,7 @@ def _sync_collection(section, collections, by_path, groups, name, machine, sort=
     added += len(to_add)
     for start in range(0, len(to_add), ADD_BATCH):
         try:
-            _plex_request(
+            plex_write(
                 "PUT",
                 f"/library/collections/{collection_key}/items",
                 {"uri": _uri(machine, to_add[start : start + ADD_BATCH])},
@@ -295,10 +278,10 @@ def _sync_collection(section, collections, by_path, groups, name, machine, sort=
         )
         to_remove = []
     for member in to_remove:
-        _plex_request("DELETE", f"/library/collections/{collection_key}/items/{member}")
+        plex_write("DELETE", f"/library/collections/{collection_key}/items/{member}")
 
     if sort is not None and collection.get("collectionSort") != sort:
-        _plex_request(
+        plex_write(
             "PUT",
             f"/library/metadata/{collection_key}/prefs",
             {"collectionSort": sort},
@@ -338,7 +321,7 @@ def sync_criterion_collection():
             for set_title, groups in sorted(box_set_groups().items()):
                 plans.append((set_title, groups, SORT_RELEASE))
             machine = _server_machine_id()
-            sections = _plex_get("/library/sections").get("MediaContainer", {})
+            sections = plex_get("/library/sections").get("MediaContainer", {})
         except Exception:
             current_app.logger.warning(traceback.format_exc())
             return True
@@ -350,7 +333,7 @@ def sync_criterion_collection():
                 by_path = _items_by_path(section["key"])
                 collections = {
                     entry.get("title"): entry
-                    for entry in _plex_get(
+                    for entry in plex_get(
                         f"/library/sections/{section['key']}/collections"
                     )
                     .get("MediaContainer", {})

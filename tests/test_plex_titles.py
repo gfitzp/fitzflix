@@ -49,7 +49,8 @@ class FakePlexServer:
             }
         raise AssertionError(f"unexpected GET {path}")
 
-    def put(self, path, params):
+    def command(self, method, path, params):
+        assert method == "PUT"
         assert path == "/library/sections/4/all"
         assert params["title.locked"] == 1
         self.puts.append((params["id"], params["title.value"]))
@@ -120,8 +121,8 @@ def test_edition_titles_reach_plex_locked(app, monkeypatch):
         )
         monkeypatch.setitem(app.config, "PLEX_URL", "http://plex.test")
         monkeypatch.setitem(app.config, "PLEX_TOKEN", "token")
-        monkeypatch.setattr(plex_titles, "_plex_get", fake.get)
-        monkeypatch.setattr(plex_titles, "_plex_put", fake.put)
+        monkeypatch.setattr(plex_titles, "plex_get", fake.get)
+        monkeypatch.setattr(plex_titles, "plex_command", fake.command)
 
         assert plex_titles.sync_plex_episode_titles() is True
         assert fake.puts == [("201", "The Lost Special")]
@@ -153,8 +154,8 @@ def test_pagination_walks_every_episode(app, monkeypatch):
         fake = FakePlexServer(episodes)
         monkeypatch.setitem(app.config, "PLEX_URL", "http://plex.test")
         monkeypatch.setitem(app.config, "PLEX_TOKEN", "token")
-        monkeypatch.setattr(plex_titles, "_plex_get", fake.get)
-        monkeypatch.setattr(plex_titles, "_plex_put", fake.put)
+        monkeypatch.setattr(plex_titles, "plex_get", fake.get)
+        monkeypatch.setattr(plex_titles, "plex_command", fake.command)
 
         assert plex_titles.sync_plex_episode_titles() is True
         assert fake.puts == [("9999", "Deep Cut")]

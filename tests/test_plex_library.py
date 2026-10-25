@@ -69,8 +69,8 @@ def test_refresh_guards_every_declared_location(app, monkeypatch, tmp_path):
     )
     monkeypatch.setitem(app.config, "PLEX_URL", "http://plex.test")
     monkeypatch.setitem(app.config, "PLEX_TOKEN", "token")
-    monkeypatch.setattr(plex_library, "_plex_get", fake.get)
-    monkeypatch.setattr(plex_library, "_plex_command", fake.command)
+    monkeypatch.setattr(plex_library, "plex_get", fake.get)
+    monkeypatch.setattr(plex_library, "plex_command", fake.command)
 
     assert plex_library.refresh_plex_libraries() is True
 
@@ -95,8 +95,8 @@ def test_refresh_skips_sections_on_dead_mounts(app, monkeypatch, tmp_path):
     fake = FakePlexServer([("5", "movie", "Movies", [str(existing)])])
     monkeypatch.setitem(app.config, "PLEX_URL", "http://plex.test")
     monkeypatch.setitem(app.config, "PLEX_TOKEN", "token")
-    monkeypatch.setattr(plex_library, "_plex_get", fake.get)
-    monkeypatch.setattr(plex_library, "_plex_command", fake.command)
+    monkeypatch.setattr(plex_library, "plex_get", fake.get)
+    monkeypatch.setattr(plex_library, "plex_command", fake.command)
     monkeypatch.setattr(plex_library, "volume_alive", lambda path, timeout=10: False)
 
     assert plex_library.refresh_plex_libraries() is True
@@ -114,8 +114,8 @@ def _guarded_refresh(app, monkeypatch, tmp_path, trash=None):
     fake = FakePlexServer([("5", "movie", "Movies", [str(movies)])], trash=trash)
     monkeypatch.setitem(app.config, "PLEX_URL", "http://plex.test")
     monkeypatch.setitem(app.config, "PLEX_TOKEN", "token")
-    monkeypatch.setattr(plex_library, "_plex_get", fake.get)
-    monkeypatch.setattr(plex_library, "_plex_command", fake.command)
+    monkeypatch.setattr(plex_library, "plex_get", fake.get)
+    monkeypatch.setattr(plex_library, "plex_command", fake.command)
     return plex_library, fake
 
 

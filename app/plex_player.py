@@ -41,7 +41,7 @@ import requests
 from flask import current_app
 
 from app.cache import cached_fetch
-from app.plex_titles import _plex_get
+from app.plex_api import plex_get as _plex_get
 
 # Stable controller identity. The Apple TV tracks controllers by this
 # id. Thus, a change to it makes Fitzflix look like a new remote.

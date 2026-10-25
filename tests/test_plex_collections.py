@@ -115,8 +115,8 @@ def _setup(app, monkeypatch, sections):
     monkeypatch.setitem(app.config, "PLEX_TOKEN", "token")
     monkeypatch.setitem(app.config, "LIBRARY_DIR", LIBRARY)
     monkeypatch.setitem(app.config, "PLEX_CRITERION_COLLECTION", NAME)
-    monkeypatch.setattr(plex_collections, "_plex_get", fake.get)
-    monkeypatch.setattr(plex_collections, "_plex_request", fake.request)
+    monkeypatch.setattr(plex_collections, "plex_get", fake.get)
+    monkeypatch.setattr(plex_collections, "plex_write", fake.request)
     monkeypatch.setattr(plex_player, "_server_machine_id", lambda: "machine")
     return plex_collections, fake
 
@@ -280,7 +280,7 @@ def test_sync_explains_a_collection_that_refuses_items(app, monkeypatch, caplog)
             raise requests.HTTPError("400 Client Error", response=response)
         return real_request(method, path, params)
 
-    monkeypatch.setattr(plex_collections, "_plex_request", refuse)
+    monkeypatch.setattr(plex_collections, "plex_write", refuse)
     with caplog.at_level("WARNING"):
         assert plex_collections.sync_criterion_collection() is True
 

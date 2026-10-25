@@ -49,15 +49,13 @@ import os
 import traceback
 from datetime import timedelta
 
-import requests
-
 from flask import current_app
 from werkzeug.local import LocalProxy
 
 from app.tasks import enqueue_task, requeue
 from app import get_app, path_tag, safe_job_id
 from app.maintenance import PLEX_TRASH_HELD_KEY, VOLUMES_ROOT, volume_alive
-from app.plex_titles import _plex_get
+from app.plex_api import plex_command, plex_get
 from app.settings import get_setting
 
 app = LocalProxy(get_app)
@@ -113,21 +111,6 @@ def _part_files(item):
                 yield part["file"]
 
 
-def _plex_command(method, path):
-    """Make a command-style Plex call (refresh, emptyTrash).
-
-    These calls answer with an EMPTY body. Thus, this function parses
-    nothing. The status is the success signal."""
-
-    r = requests.request(
-        method,
-        current_app.config["PLEX_URL"] + path,
-        params={"X-Plex-Token": current_app.config["PLEX_TOKEN"]},
-        timeout=60,
-    )
-    r.raise_for_status()
-
-
 def _mount_ids(targets):
     """Return {mount: device number} for each mount that stat can read."""
 
@@ -148,7 +131,7 @@ def _trash_count(key, kind):
     more than the number of items that an empty deletes. It is never less.
     """
 
-    payload = _plex_get(
+    payload = plex_get(
         f"/library/sections/{key}/all",
         params={
             "type": SECTION_ITEM_TYPE[kind],
@@ -175,7 +158,7 @@ def refresh_plex_libraries():
             return True
 
         try:
-            payload = _plex_get("/library/sections")
+            payload = plex_get("/library/sections")
         except Exception:
             current_app.logger.warning(traceback.format_exc())
             return True
@@ -226,7 +209,7 @@ def refresh_plex_libraries():
             )
 
             try:
-                _plex_command("GET", f"/library/sections/{key}/refresh")
+                plex_command("GET", f"/library/sections/{key}/refresh")
             except Exception:
                 current_app.logger.warning(traceback.format_exc())
                 continue
@@ -266,7 +249,7 @@ def refresh_plex_libraries():
                 continue
 
             try:
-                _plex_command("PUT", f"/library/sections/{key}/emptyTrash")
+                plex_command("PUT", f"/library/sections/{key}/emptyTrash")
                 redis.hdel(PLEX_TRASH_HELD_KEY, title)
                 current_app.logger.info(
                     f"Plex library '{title}': scanned and emptied trash"
@@ -320,7 +303,7 @@ def _analyze_section(section, targets, by_basename, analyzed):
     key = section.get("key")
     start = 0
     while True:
-        payload = _plex_get(
+        payload = plex_get(
             f"/library/sections/{key}/all",
             params={
                 "type": SECTION_ITEM_TYPE[section["type"]],
@@ -342,7 +325,7 @@ def _analyze_section(section, targets, by_basename, analyzed):
                 )
                 if target is None or target in analyzed:
                     continue
-                _plex_command("PUT", f"/library/metadata/{rating_key}/analyze")
+                plex_command("PUT", f"/library/metadata/{rating_key}/analyze")
                 analyzed.add(target)
                 current_app.logger.info(
                     f"Plex analyze: {rating_key} '{os.path.basename(target)}' "
@@ -415,7 +398,7 @@ def analyze_plex_media(file_paths, retries=0):
         by_basename = {os.path.basename(path): path for path in readable}
 
         try:
-            payload = _plex_get("/library/sections")
+            payload = plex_get("/library/sections")
         except Exception:
             current_app.logger.warning(traceback.format_exc())
             return True
