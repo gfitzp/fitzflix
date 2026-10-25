@@ -22,7 +22,7 @@ from flask import current_app
 from werkzeug.local import LocalProxy
 
 from app import get_app, path_tag, safe_job_id
-from app.tasks import requeue
+from app.tasks import report_progress, requeue
 from app.maintenance import VOLUMES_ROOT, volume_alive
 
 # The AWS storage layer moved to app.aws_storage. These re-exports keep
@@ -260,10 +260,7 @@ def copy_with_progress(src, dst, job, name, activity="Moving into the library"):
                 if previous_percent != percent:
                     current_app.logger.info(f"'{name}' {activity}: {percent}%")
                     previous_percent = percent
-                    if job:
-                        job.meta["description"] = f"'{name}' — {activity}"
-                        job.meta["progress"] = percent
-                        job.save_meta()
+                    report_progress(job, name, activity, percent)
     except BaseException:
         try:
             fsrc.close()

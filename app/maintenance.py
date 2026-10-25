@@ -25,6 +25,7 @@ from app import db, get_app
 from app.email import task_send_email
 from app import s3_layout
 from app.queues import QUEUE_NAMES, queue_names
+from app.tasks import report_progress
 from app.settings import get_setting
 
 # This is the app instance of this process. Fitzflix resolves it lazily.
@@ -1534,9 +1535,12 @@ def smb_handle_sweep():
 
         for i, file in enumerate(files):
             if job and i % 500 == 0:
-                job.meta["description"] = "Probing library files for lost SMB handles"
-                job.meta["progress"] = int((i / len(files)) * 100) if files else 100
-                job.save_meta()
+                report_progress(
+                    job,
+                    None,
+                    "Probing library files for lost SMB handles",
+                    int((i / len(files)) * 100) if files else 100,
+                )
 
             path = library_path(file)
             share = share_root(path)

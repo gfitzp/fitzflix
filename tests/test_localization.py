@@ -2623,3 +2623,67 @@ def test_an_mp4_that_mkvmerge_cannot_carry_loses_its_metadata(
     finally:
         if os.path.exists(source):
             os.remove(source)
+
+
+@pytest.mark.parametrize(
+    "subtitles, foreign, expected",
+    [
+        # Foreign audio: the first native subtitle track is the default.
+        (
+            [_track("fre", 3), _track("eng", 4), _track("eng", 5)],
+            True,
+            ["-s", "eng", "--default-track-flag", "4:1", "--default-track-flag", "5:0"],
+        ),
+        # Native audio: no native subtitle track is a default.
+        (
+            [_track("eng", 2), _track("eng", 3)],
+            False,
+            ["-s", "eng", "--default-track-flag", "2:0", "--default-track-flag", "3:0"],
+        ),
+        # Foreign subtitles only, and no subtitles at all, build 1 command.
+        ([_track("fre", 2)], True, ["--no-subtitles"]),
+        ([_track("fre", 2)], False, ["--no-subtitles"]),
+        ([], True, ["--no-subtitles"]),
+        ([], False, ["--no-subtitles"]),
+    ],
+)
+def test_build_localize_command(app, subtitles, foreign, expected):
+    """The command builder is pure. It needs no file and no app context."""
+
+    from app.importing import build_localize_command
+
+    command = build_localize_command(
+        "mkvmerge", "/in.mkv", "/out.mkv", "fre,eng", "eng", subtitles, foreign
+    )
+    assert command == (
+        ["mkvmerge", "-o", "/out.mkv", "-a", "fre,eng"]
+        + expected
+        + ["--title", "", "--track-name", "-1:", "/in.mkv"]
+    )
+
+
+def test_report_progress_writes_the_queue_page_text(app):
+    """report_progress names the file and the activity, and saves the meta."""
+
+    from app.tasks import report_progress
+
+    class FakeJob:
+        def __init__(self):
+            self.meta = {"progress": 40}
+            self.saves = 0
+
+        def save_meta(self):
+            self.saves += 1
+
+    job = FakeJob()
+    report_progress(job, "Film.mkv", "Downloading from AWS", percent=None)
+    assert job.meta == {
+        "description": "'Film.mkv' — Downloading from AWS",
+        "progress": 40,
+    }
+    report_progress(job, None, "Pruning extra files", 7)
+    assert job.meta == {"description": "Pruning extra files", "progress": 7}
+    report_progress(job, "Film.mkv", "Cataloging")
+    assert job.meta["progress"] == -1
+    assert job.saves == 3
+    report_progress(None, "Film.mkv", "Cataloging")

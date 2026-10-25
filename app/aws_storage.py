@@ -42,7 +42,7 @@ from s3transfer.utils import ChunksizeAdjuster
 from flask import current_app, render_template
 from werkzeug.local import LocalProxy
 
-from app.tasks import enqueue_task, requeue
+from app.tasks import enqueue_task, report_progress, requeue
 from app import db, get_app
 from app.email import task_send_email as send_email
 from app import s3_layout
@@ -215,12 +215,12 @@ class UploadProgressPercentage(object):
             app.logger.info(
                 f"'{os.path.basename(self._file_path)}' Uploading to AWS: {percent}%"
             )
-            if self._job:
-                self._job.meta["description"] = (
-                    f"'{os.path.basename(self._file_path)}' — Uploading to AWS"
-                )
-                self._job.meta["progress"] = percent
-                self._job.save_meta()
+            report_progress(
+                self._job,
+                os.path.basename(self._file_path),
+                "Uploading to AWS",
+                percent,
+            )
 
 
 class DownloadProgressPercentage(object):
@@ -256,12 +256,12 @@ class DownloadProgressPercentage(object):
             app.logger.info(
                 f"'{os.path.basename(self._file_path)}' Downloading from AWS: {percent}%"
             )
-            if self._job:
-                self._job.meta["description"] = (
-                    f"'{os.path.basename(self._file_path)}' — Downloading from AWS"
-                )
-                self._job.meta["progress"] = percent
-                self._job.save_meta()
+            report_progress(
+                self._job,
+                os.path.basename(self._file_path),
+                "Downloading from AWS",
+                percent,
+            )
 
 
 # The S3 listing of the archive prefixes that the sync works from.
@@ -464,9 +464,12 @@ def _reconcile_files(listing, job):
 
     for i, (file, rank) in enumerate(files):
         if job:
-            job.meta["description"] = "Queuing local files for S3 upload"
-            job.meta["progress"] = int((i / len(files)) * 100)
-            job.save_meta()
+            report_progress(
+                job,
+                None,
+                "Queuing local files for S3 upload",
+                int((i / len(files)) * 100),
+            )
 
         file_path = os.path.join(current_app.config["LIBRARY_DIR"], file.file_path)
 
@@ -712,9 +715,12 @@ def _prune_unclaimed(listing, job, unreferenced_files):
         if remote_key in waiting_keys:
             continue
         if job:
-            job.meta["description"] = "Pruning extra files from AWS S3 storage"
-            job.meta["progress"] = int((i / len(s3_keys)) * 100)
-            job.save_meta()
+            report_progress(
+                job,
+                None,
+                "Pruning extra files from AWS S3 storage",
+                int((i / len(s3_keys)) * 100),
+            )
 
         # An import uploads its rip to untouched/ long before its
         # File row exists. A wait for library space has no limit.
@@ -848,9 +854,7 @@ def download_task(key, basename, sqs_receipt_handle=None, transient_retries=0):
                 )
             return True
 
-        if job:
-            job.meta["description"] = f"'{basename}' — Downloading from AWS"
-            job.save_meta()
+        report_progress(job, basename, "Downloading from AWS", percent=None)
 
         try:
             current_app.logger.info(
@@ -2456,10 +2460,7 @@ def calculate_etag(file_path):
                         f"'{basename}' Calculating ETag: {percent}%"
                     )
                     previous_percent = percent
-                if job:
-                    job.meta["description"] = f"'{basename}' — Calculating ETag"
-                    job.meta["progress"] = percent
-                    job.save_meta()
+                report_progress(job, basename, "Calculating ETag", percent)
 
         # Get an MD5 hash of the concatenated hashes. Append the number of
         # parts. For example, "c7c2300fd47954c421d5fe0bc7910ca3-64":

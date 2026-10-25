@@ -41,7 +41,7 @@ from rq import get_current_job
 from flask import current_app
 from werkzeug.local import LocalProxy
 
-from app.tasks import enqueue_task
+from app.tasks import enqueue_task, report_progress
 from app import db, get_app, makedirs_on_mounted_volume
 from app.email import notify_admin
 
@@ -431,10 +431,7 @@ def _run_encode(command, job, basename, lock, total_seconds):
             previous_percent = percent
             if percent % 5 == 0:
                 current_app.logger.info(f"'{basename}' Converting to SDR: {percent}%")
-            if job:
-                job.meta["description"] = f"'{basename}' — Converting to SDR"
-                job.meta["progress"] = percent
-                job.save_meta()
+            report_progress(job, basename, "Converting to SDR", percent)
         if time.monotonic() - last_refresh > LOCK_REFRESH_SECONDS:
             if not _hold_title_lock(lock, basename):
                 process.kill()
@@ -509,10 +506,7 @@ def convert_localized_file(
                 command = handbrake_command(hidden_output_file, video_only)
             _run_encode(command, job, basename, lock, total_seconds)
 
-            if job:
-                job.meta["description"] = f"'{basename}' — Joining the SDR video"
-                job.meta["progress"] = -1
-                job.save_meta()
+            report_progress(job, basename, "Joining the SDR video")
             mux_process = subprocess.Popen(
                 mux_command(
                     video_only, hidden_output_file, muxed, plan.get("video_language")

@@ -193,6 +193,22 @@ TASKS = {
 }
 
 
+def report_progress(job, name, activity, percent=-1):
+    """Show the activity of a running job on the queue page.
+
+    The description is the name in single quotes, a dash, and the
+    activity. With no name, it is only the activity. A percent of None
+    keeps the progress that the job has. A call with no job does
+    nothing. Thus, a task can call it outside a worker."""
+
+    if not job:
+        return
+    job.meta["description"] = activity if name is None else f"'{name}' — {activity}"
+    if percent is not None:
+        job.meta["progress"] = percent
+    job.save_meta()
+
+
 def task_timeout(spec, config=None):
     """Return the timeout of a spec in seconds.
 

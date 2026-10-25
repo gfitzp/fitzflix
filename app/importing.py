@@ -44,7 +44,7 @@ from unidecode import unidecode
 from flask import current_app, render_template
 from werkzeug.local import LocalProxy
 
-from app.tasks import enqueue_task, requeue, requeue_job_id
+from app.tasks import enqueue_task, report_progress, requeue, requeue_job_id
 from app import (
     db,
     get_app,
@@ -635,6 +635,45 @@ def probe_file_completeness(file_path):
 # Tasks
 
 
+class _LocalizationRun:
+    """Hold the state that the phases of 1 localization run share.
+
+    localization_task owns the one exception handler of the run. That
+    handler needs the title lock and the work files of the run. Thus,
+    those 2 values live here. A phase that changes them says so."""
+
+    def __init__(self, source_path, counters):
+        self.source_path = source_path
+        self.basename = os.path.basename(source_path)
+        self.counters = counters
+        self.job = None
+        self.lock = None
+        self.strays = []
+
+    def retry(self, delay, reason, level="warning", **changes):
+        """Book the task again after delay. Every retry carries all 4 counters.
+
+        Each retry changes only its own counter. Return "retry"."""
+
+        requeue(
+            "app.videos.localization_task",
+            key=self.source_path,
+            delay=delay,
+            reason=reason,
+            counters={**self.counters, **changes},
+            kwargs={"file_path": self.source_path},
+            description=f"'{self.basename}'",
+            level=level,
+        )
+        return "retry"
+
+    def release_lock(self):
+        """Release the title lock of the run and log it."""
+
+        current_app.lock_manager.unlock(self.lock)
+        current_app.logger.info(f"Removed lock {self.lock}")
+
+
 def localization_task(
     file_path,
     transient_retries=0,
@@ -652,790 +691,59 @@ def localization_task(
       the file to the database.
     - It waits while the library volume has too little free space.
       space_waits counts the waits.
+
+    The phases run in this order: _admission_gate, _identify,
+    _take_title_lock, _quality_and_space_gate, _stage_source,
+    _archive_original, _localize, and _hand_off. A phase that stops the
+    run returns a verdict. A failure in any phase before the hand-off
+    goes to the one handler here, which calls abandon_import.
     """
 
-    # The shared lock, retry, and copy functions stay in app.videos. The
-    # import is lazy. Thus, the module import direction stays one-way.
-
-    from app.videos import (
-        MAX_TRANSIENT_RETRIES,
-        TRANSIENT_COPY_ERRNOS,
-        _dead_volumes,
-        acquire_lock_or_defer,
-        copy_with_progress,
-        wait_for_subprocess,
-    )
-
     with app.app_context():
-        # Define these first. Then the exception handler can tell if the task
-        # acquired the lock before the failure, and if staging occurred.
-
-        lock = None
-        source_path = file_path
-        staged = False
-        staging_paths = []
-
-        try:
-            job = get_current_job()
-            basename = os.path.basename(file_path)
-
-            # Every retry carries all 4 counters. Each retry changes only
-            # its own counter.
-
-            counters = {
+        run = _LocalizationRun(
+            file_path,
+            {
                 "transient_retries": transient_retries,
                 "completeness_retries": completeness_retries,
                 "space_waits": space_waits,
                 "tmdb_retries": tmdb_retries,
-            }
+            },
+        )
 
-            def retry(delay, reason, level="warning", **changes):
-                requeue(
-                    "app.videos.localization_task",
-                    key=source_path,
-                    delay=delay,
-                    reason=reason,
-                    counters={**counters, **changes},
-                    kwargs={"file_path": source_path},
-                    description=f"'{basename}'",
-                    level=level,
-                )
+        try:
+            run.job = get_current_job()
+
+            verdict = _admission_gate(file_path, run)
+            if verdict != "ok":
+                return verdict == "retry"
+
+            identified = _identify(file_path, run)
+            if isinstance(identified, str):
+                return identified == "retry"
+            file_details, conversion = identified
+
+            run.lock = _take_title_lock(file_details, run)
+            if not run.lock:
+                return False
+
+            verdict = _quality_and_space_gate(file_path, file_details, conversion, run)
+            if verdict != "ok":
+                return verdict == "wait"
+
+            # Save the untouched filename. Fitzflix can need it to recreate
+            # the file.
+
+            file_details["untouched_basename"] = run.basename
+
+            staging = _stage_source(file_path, run)
+            if staging is None:
                 return True
+            work_path, staged = staging
 
-            # Do not start if a necessary volume is dead. A mount that fails
-            # during the task strands partial files. Thus, defer to a retry.
-
-            dead = _dead_volumes(
-                [
-                    os.path.dirname(file_path),
-                    current_app.config["MOVIE_LIBRARY"],
-                    current_app.config["TV_LIBRARY"],
-                    current_app.config["MEDIA_LOCATION"],
-                    current_app.config["STAGING_DIR"],
-                ]
+            _archive_original(work_path, file_details)
+            work_path, hidden_output_file = _localize(
+                file_path, work_path, file_details, staged, run.job, run.strays
             )
-            if dead:
-                return retry(
-                    timedelta(minutes=5), f"Volumes unavailable ({', '.join(dead)})"
-                )
-
-            # If the incoming file does not exist, there is nothing to do.
-
-            if not os.path.exists(file_path):
-                return False
-
-            # A duplicate job or a late retry can reach a file that an
-            # earlier job already imported in place (#287).
-
-            if already_cataloged(file_path):
-                current_app.logger.info(
-                    f"'{basename}' Is already in the library; nothing to import"
-                )
-                return False
-
-            # The work files add up to 22 bytes to the name ("." and
-            # ".localized", ".remux.mkv", and others). A name system allows 255
-            # bytes. A longer name made mkvmerge fail with no clear reason.
-
-            if len(basename.encode("utf-8")) > MAX_NAME_BYTES:
-                current_app.logger.error(
-                    f"'{basename}' has a name of more than {MAX_NAME_BYTES} bytes. "
-                    f"Rename it shorter"
-                )
-                move_to_rejects(file_path, "name too long")
-                return False
-
-            # If the file name contains "temp-1234.", ignore the file.
-            if re.search(r"\-temp\-\d+\.", basename):
-                return False
-
-            # Do not process a file that a copy is still writing. If the file
-            # grows, check again in 1 minute.
-
-            size_before = os.path.getsize(file_path)
-            time.sleep(GROWTH_CHECK_SECONDS)
-            if os.path.getsize(file_path) != size_before:
-                return retry(
-                    timedelta(minutes=1), "is still being copied", level="info"
-                )
-
-            # A stalled network copy can fool the size check above. Its size
-            # stays constant while the file is still incomplete. Let the
-            # container prove completeness where it can. A partial Matroska
-            # or MP4 file reports truncation. The time that the copy has
-            # stalled is not important. Give a format that the probe cannot
-            # read a modification-time quiet period instead. Fitzflix imports
-            # a file that never proves itself within the budget in all cases,
-            # because Fitzflix imports a corrupt-but-complete file as it is
-            # by design.
-
-            verdict = probe_file_completeness(file_path)
-            if verdict is False or (
-                verdict is None
-                and time.time() - os.path.getmtime(file_path)
-                < COMPLETENESS_QUIET_SECONDS
-            ):
-                if completeness_retries >= MAX_COMPLETENESS_RETRIES:
-                    current_app.logger.warning(
-                        f"'{basename}' Could not be confirmed complete after "
-                        f"{MAX_COMPLETENESS_RETRIES} checks, importing anyway"
-                    )
-                else:
-                    reason = (
-                        "is still incomplete"
-                        if verdict is False
-                        else "was modified too recently"
-                    )
-                    return retry(
-                        timedelta(minutes=1),
-                        f"{reason} (check {completeness_retries + 1} of "
-                        f"{MAX_COMPLETENESS_RETRIES})",
-                        level="info",
-                        completeness_retries=completeness_retries + 1,
-                    )
-
-            file_details = evaluate_filename(file_path)
-            current_app.logger.info(f"'{basename}' File details: {file_details}")
-            if not file_details:
-                reason = getattr(file_details, "reason", None)
-                # The TMDB tries have their own count. The transient count
-                # limits the retries of an I/O error in the staging copy.
-
-                if reason == TMDB_UNREACHABLE and tmdb_retries < TMDB_RETRIES:
-                    return retry(
-                        timedelta(minutes=30),
-                        "TMDB is unreachable",
-                        tmdb_retries=tmdb_retries + 1,
-                    )
-                current_app.logger.error(
-                    f"'{basename}' rejected: {reason}!"
-                    if reason
-                    else f"'{basename}' doesn't match expected naming formats!"
-                )
-                move_to_rejects(file_path, reason or "incorrect filename")
-                return False
-
-            # An HDR or BT.2020 import becomes a 1080p SDR conversion (#292).
-            # The plan renames it to its 1080p quality now. Thus, the
-            # quality checks below compare the conversion, not the original.
-
-            conversion = None
-            if get_setting("CONVERT_HDR_TO_SDR"):
-                conversion = _plan_conversion_or_reject(file_path, file_details)
-                if conversion is False:
-                    return False
-                if conversion:
-                    file_details = converted_file_details(file_details, conversion)
-                    current_app.logger.info(
-                        f"'{basename}' {conversion['source_format']} "
-                        f"{conversion['source_quality']}. Importing as a "
-                        f"{conversion['target_quality']} SDR conversion"
-                    )
-
-            # Fitzflix must not process a different version of this video at
-            # the same time. Thus, this task makes an identifier from specific
-            # movie or TV show fields and uses it for the lock. If a different
-            # file has this same identifier, the lock prevents its processing
-            # until the processing of the first file is complete.
-
-            file_identifier = lock_key_for_details(file_details)
-            current_app.logger.debug(f"'{basename}' Lock identifier: {file_identifier}")
-
-            # If this task does not get the lock, it returns to the
-            # localization queue. The queue retries it when the lock becomes
-            # available.
-
-            lock = acquire_lock_or_defer(
-                file_identifier,
-                current_app.config["LOCALIZATION_TASK_TIMEOUT"] * 1000,
-                current_app.import_queue,
-                "app.videos.localization_task",
-                minutes=(45, 75),
-                timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
-                description=f"'{basename}'",
-                kwargs={
-                    "file_path": file_path,
-                    "transient_retries": transient_retries,
-                    "completeness_retries": completeness_retries,
-                    "space_waits": space_waits,
-                    "tmdb_retries": tmdb_retries,
-                },
-            )
-            if not lock:
-                return False
-
-            # A conversion waits for an admin when the library has a real rip
-            # of the title at its quality or better. "Import" sends the file
-            # back here with replace_existing.
-
-            if conversion:
-                if held_decision(file_path):
-                    file_details["replace_existing"] = True
-                else:
-                    blockers = real_rips_blocking(file_details)
-                    if blockers:
-                        hold_import(file_path, file_details, conversion, blockers)
-                        current_app.lock_manager.unlock(lock)
-                        current_app.logger.info(f"Removed lock {lock}")
-                        return False
-
-            # Look for better-quality versions of this file that already exist.
-
-            better_versions = File(**file_details).find_better_files()
-            if better_versions:
-                current_app.logger.info(
-                    f"Better versions of '{basename}' exist; skipping import"
-                )
-                for better in better_versions:
-                    current_app.logger.debug(vars(better))
-
-                move_to_rejects(file_path, "inferior quality")
-                current_app.lock_manager.unlock(lock)
-                current_app.logger.info(f"Removed lock {lock}")
-                notify_admin(
-                    "Received an inferior-quality file",
-                    "inferior_warning",
-                    basename=basename,
-                    better_versions=better_versions,
-                    rejects_directory=current_app.config["REJECTS_DIR"],
-                )
-
-                return False
-
-            # Wait for free space on the library volume before the heavy
-            # work. Without the space, the final copy would fail and discard
-            # the work. The wait releases the title lock (#262).
-
-            output_directory = os.path.join(
-                current_app.config["LIBRARY_DIR"], file_details.get("dirname")
-            )
-            needed = int(os.path.getsize(file_path) * SPACE_FACTOR) + SPACE_RESERVE
-            shortfall = library_space_shortfall(output_directory, needed)
-            if shortfall:
-                _log_space_wait(
-                    basename, output_directory, needed, shortfall, space_waits
-                )
-                mark_space_wait(basename)
-                current_app.lock_manager.unlock(lock)
-                current_app.logger.info(f"Removed lock {lock}")
-                lock = None
-                return retry(
-                    SPACE_WAIT,
-                    "waits for space",
-                    level=None,
-                    space_waits=space_waits + 1,
-                )
-            if space_waits:
-                clear_space_wait(basename)
-                current_app.logger.info(
-                    f"'{basename}' Continuing the import after {space_waits} "
-                    f"wait(s) for space"
-                )
-
-            # Save the untouched filename. Fitzflix can need it to recreate the
-            # file.
-
-            file_details["untouched_basename"] = os.path.basename(file_path)
-
-            # Copy the source to local staging. Then the archive upload and the
-            # localization tools do their heavy I/O on the local disk. A
-            # network failure then costs a retry, not a stranded partial file.
-
-            # The space check counts what the other imports on staging still
-            # need (#294). Without enough space, the import waits. Only a file
-            # that cannot fit on the staging volume at all is processed on
-            # its source volume.
-
-            staging_dir = current_app.config["STAGING_DIR"]
-            staging_needed = int(os.path.getsize(file_path) * STAGING_FACTOR)
-            staging = reserve_staging(basename, staging_needed, [basename], staging_dir)
-            if staging == "wait":
-                current_app.logger.info(
-                    f"'{basename}' Needs {_gigabytes(staging_needed)} on staging. "
-                    f"The other imports still need "
-                    f"{_gigabytes(staging_outstanding(staging_dir, exclude=basename))}. "
-                    f"Trying again in {int(SPACE_WAIT.total_seconds() // 60)} minutes"
-                )
-                mark_space_wait(basename)
-                current_app.lock_manager.unlock(lock)
-                current_app.logger.info(f"Removed lock {lock}")
-                lock = None
-                return retry(
-                    SPACE_WAIT,
-                    "waits for staging space",
-                    level=None,
-                    space_waits=space_waits + 1,
-                )
-
-            if staging == "ok":
-                staged_path = os.path.join(staging_dir, basename)
-                staging_paths.append(staged_path)
-                record_task_stage("Copying to staging", "started")
-                try:
-                    copy_with_progress(
-                        file_path,
-                        staged_path,
-                        job,
-                        basename,
-                        "Copying to local staging",
-                    )
-                except OSError as e:
-                    record_task_stage("Copying to staging", "failed")
-                    if (
-                        e.errno not in TRANSIENT_COPY_ERRNOS
-                        or transient_retries >= MAX_TRANSIENT_RETRIES
-                    ):
-                        raise
-
-                    # An unstable mount revoked the file handles of the copy.
-                    # The source is not damaged. Thus, clean up and retry
-                    # after the mount settles. Do not reject a good file.
-
-                    try:
-                        os.remove(staged_path)
-                    except OSError:
-                        pass
-                    if lock:
-                        current_app.lock_manager.unlock(lock)
-                        current_app.logger.info(f"Removed lock {lock}")
-                    return retry(
-                        timedelta(minutes=5),
-                        f"Staging copy failed with a transient I/O error ({e}) "
-                        f"(attempt {transient_retries + 1} of {MAX_TRANSIENT_RETRIES})",
-                        transient_retries=transient_retries + 1,
-                    )
-
-                record_task_stage("Copying to staging", "done")
-                file_path = staged_path
-                staged = True
-
-            else:
-                current_app.logger.warning(
-                    f"'{basename}' Does not fit on the staging volume, "
-                    f"processing on the source volume instead"
-                )
-
-            # Upload the untouched file to AWS S3 storage as a backup.
-
-            if get_setting("ARCHIVE_ORIGINAL_MEDIA"):
-                (
-                    file_details["aws_key"],
-                    file_details["aws_date_uploaded"],
-                    file_details["aws_filesize_bytes"],
-                ) = aws_upload(
-                    file_path,
-                    current_app.config["AWS_UNTOUCHED_PREFIX"],
-                )
-
-            # Start the localization process.
-
-            current_app.logger.info(f"'{basename}' Starting localization process")
-
-            # Find the output directory.
-
-            output_directory = os.path.join(
-                current_app.config["LIBRARY_DIR"], file_details.get("dirname")
-            )
-
-            # Parse the incoming file and get its details with MediaInfo.
-
-            current_app.logger.info(f"'{basename}' Parsing with MediaInfo")
-            media_info = MediaInfo.parse(file_path)
-            current_app.logger.debug(f"'{basename}' -> {media_info.to_json()}")
-
-            for track in media_info.tracks:
-                if track.track_type == "General" and track.format:
-                    current_app.logger.info(
-                        f"'{basename}' File container {track.format}"
-                    )
-                    file_details["container"] = track.format
-
-            # Fitzflix first remuxes a non-Matroska file into a Matroska
-            # container. Thus, every importable format gets the same
-            # localization. Fitzflix imports a format that mkvmerge cannot
-            # carry as it is.
-
-            if file_details.get("container") != "Matroska":
-                scratch_dir = staging_dir if staged else output_directory
-                makedirs_on_mounted_volume(scratch_dir)
-                converted_file = os.path.join(scratch_dir, f".{basename}.convert.mkv")
-                staging_paths.append(converted_file)
-
-                if convert_to_matroska(file_path, converted_file, job, basename):
-                    # Use the converted file. Rename the final output to agree
-                    # with its new container.
-
-                    if file_path != source_path:
-                        try:
-                            os.remove(file_path)
-                        except OSError:
-                            pass
-                    file_path = converted_file
-                    file_details["container"] = "Matroska"
-                    stem = file_details["basename"].rsplit(".", 1)[0]
-                    file_details["basename"] = f"{stem}.mkv"
-                    file_details["extension"] = "mkv"
-                    file_details["file_path"] = os.path.join(
-                        file_details["dirname"], file_details["basename"]
-                    )
-
-                else:
-                    current_app.logger.warning(
-                        f"'{basename}' Can't be converted to Matroska, "
-                        f"importing as-is"
-                    )
-
-            # If staging is on, Fitzflix writes the localized output next to
-            # the staged copy. Thus, only the complete file goes to the
-            # library.
-
-            # On staging, the name comes from the source. The library name of
-            # an extra is only the extra, for example "Trailer.mkv". The
-            # extras of 2 films would then write the same staging file.
-
-            if staged:
-                hidden_output_file = staged_output_path(
-                    staging_dir, basename, file_details.get("basename")
-                )
-                staging_paths.append(hidden_output_file)
-            else:
-                hidden_output_file = os.path.join(
-                    output_directory, f".{file_details.get('basename')}"
-                )
-
-            # Export a localized version of the incoming file.
-
-            if file_details.get("container") == "Matroska":
-                current_app.logger.info(f"'{basename}' Localizing as a Matroska file")
-
-                # Give each lossless track that is not FLAC or PCM a FLAC twin
-                # immediately before it. An Apple TV client can play FLAC
-                # natively. Always keep the original for direct play and for
-                # future passthrough. A file whose twins already exist (a
-                # MakeMKV "FLAC Plus Original Audio" rip, or a re-download of
-                # a supplemented upload) passes through as it is.
-                # CREATE_FLAC_TWINS turns this step off for passthrough players.
-
-                if not get_setting("CREATE_FLAC_TWINS"):
-                    current_app.logger.info(
-                        f"'{basename}' CREATE_FLAC_TWINS is off. No FLAC twins"
-                    )
-                else:
-                    supplement_lossless_tracks(file_path)
-
-                # Sometimes the input mkv file has no track details, for example
-                # the number of subtitle elements in a subtitle track. Fitzflix
-                # needs those details to tell if there is possibly a forced
-                # subtitle track. This command adds the details to the file if
-                # they are missing.
-
-                current_app.logger.info(f"'{basename}' Adding track statistics tags")
-
-                statistics_tags_process = subprocess.Popen(
-                    [
-                        current_app.config["MKVPROPEDIT_BIN"],
-                        "--add-track-statistics-tags",
-                        file_path,
-                    ],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    universal_newlines=True,
-                    bufsize=1,
-                )
-                watch_mkvmerge_progress(
-                    statistics_tags_process,
-                    job,
-                    basename,
-                    "Adding track statistics tags",
-                )
-
-                wait_for_subprocess(statistics_tags_process, ok_returncodes=(0, 1))
-
-                # Parse the file again, because it now has the track statistics
-                # tags.
-
-                current_app.logger.info(
-                    f"'{basename}' Parsing added statistics with MediaInfo"
-                )
-                media_info = MediaInfo.parse(file_path)
-                current_app.logger.debug(f"'{basename}' -> {media_info.to_json()}")
-                audio_tracks = get_audio_tracks_from_file(file_path)
-                subtitle_tracks = get_subtitle_tracks_from_file(file_path)
-
-                # Change the ISO-639-2 language code to the ISO-639-3 code if
-                # MakeMKV wrote the file.
-
-                native_language = current_app.config["NATIVE_LANGUAGE"]
-
-                for track in media_info.tracks:
-                    if track.writing_application:
-                        if (
-                            track.track_type == "General"
-                            and "MakeMKV" in track.writing_application
-                        ):
-                            native_language = iso_639_3_native_language()
-                            current_app.logger.warning(
-                                f"'{basename}' was created with MakeMKV. Will use ISO-639-3 "
-                                f"code '{native_language}' instead of user-supplied "
-                                f"ISO-639-2 '{current_app.config['NATIVE_LANGUAGE']}' when "
-                                f"processing this file with mkvmerge"
-                            )
-
-                # Find the audio tracks to export.
-
-                # If there are no audio tracks, mkvmerge could use the --no-audio
-                # flag. But the default of the first audio track is sufficient,
-                # because no track will exist.
-
-                if len(audio_tracks) == 0:
-                    first_audio_track_language = "1"
-
-                elif audio_tracks[0].get("language"):
-                    first_audio_track_language = audio_tracks[0].get("language")
-
-                else:
-                    first_audio_track_language = 1
-
-                # If the first audio track is in the native language, remove all
-                # other languages.
-
-                if (
-                    len(audio_tracks) >= 1
-                    and first_audio_track_language == native_language
-                ):
-                    current_app.logger.info(
-                        f"'{basename}' First audio track matches native language "
-                        f"'{native_language}'"
-                    )
-                    output_audio_langs = native_language
-
-                # The first audio track can be in a language that is not the
-                # native language, while the native language is present. Then
-                # export the tracks in the first language and all
-                # native-language audio. The file is probably a dub, or it has
-                # native-language commentary tracks.
-
-                elif native_language in [track["language"] for track in audio_tracks]:
-                    current_app.logger.info(
-                        f"'{basename}' First audio track is foreign, "
-                        f"but '{native_language}' audio is present"
-                    )
-                    output_audio_langs = (
-                        f"{first_audio_track_language},{native_language}"
-                    )
-
-                # If there is no native-language track, export only the tracks
-                # in the first language. The file is probably a subtitled movie
-                # with no commentary track.
-
-                else:
-                    current_app.logger.info(
-                        f"'{basename}' No '{native_language}' audio track"
-                    )
-                    output_audio_langs = first_audio_track_language
-
-                # Find the tracks to export and make the output file.
-
-                makedirs_on_mounted_volume(output_directory)
-
-                # Non-native audio, and native-language subtitles are present.
-
-                if (
-                    len(audio_tracks) >= 1
-                    and first_audio_track_language != native_language
-                    and native_language
-                    in [track["language"] for track in subtitle_tracks]
-                ):
-                    current_app.logger.info(
-                        f"'{basename}' Non-native audio, "
-                        f"but '{native_language}' subtitles are present"
-                    )
-
-                    default_subtitle_tracks = []
-
-                    # Turn on the first native-language subtitle track.
-                    for i, track in enumerate(subtitle_tracks):
-                        if track["language"] == native_language:
-                            default_subtitle_tracks.extend(
-                                ["--default-track-flag", f"{track['streamorder']}:1"]
-                            )
-                            break
-
-                    # Turn off all the subsequent native-language subtitle tracks.
-                    for track in subtitle_tracks[i + 1 :]:
-                        if track["language"] == native_language:
-                            default_subtitle_tracks.extend(
-                                ["--default-track-flag", f"{track['streamorder']}:0"]
-                            )
-
-                    mkvmerge_process = subprocess.Popen(
-                        [
-                            current_app.config["MKVMERGE_BIN"],
-                            "-o",
-                            hidden_output_file,
-                            "-a",
-                            output_audio_langs,
-                            "-s",
-                            native_language,
-                        ]
-                        + default_subtitle_tracks
-                        + [
-                            "--title",
-                            "",
-                            "--track-name",
-                            "-1:",
-                            file_path,
-                        ],
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.STDOUT,
-                        universal_newlines=True,
-                        bufsize=1,
-                    )
-
-                # Native-language audio, and native-language subtitles are
-                # present.
-
-                elif native_language in [
-                    track["language"] for track in subtitle_tracks
-                ]:
-                    current_app.logger.info(
-                        f"'{basename}' '{native_language}' audio and subtitles"
-                    )
-
-                    default_subtitle_tracks = []
-
-                    # The file has native-language audio. Thus, turn off all
-                    # subtitle tracks.
-                    for track in subtitle_tracks:
-                        if track["language"] == native_language:
-                            default_subtitle_tracks.extend(
-                                ["--default-track-flag", f"{track['streamorder']}:0"]
-                            )
-
-                    mkvmerge_process = subprocess.Popen(
-                        [
-                            current_app.config["MKVMERGE_BIN"],
-                            "-o",
-                            hidden_output_file,
-                            "-a",
-                            output_audio_langs,
-                            "-s",
-                            native_language,
-                        ]
-                        + default_subtitle_tracks
-                        + [
-                            "--title",
-                            "",
-                            "--track-name",
-                            "-1:",
-                            file_path,
-                        ],
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.STDOUT,
-                        universal_newlines=True,
-                        bufsize=1,
-                    )
-
-                # No native-language subtitles.
-
-                elif len(subtitle_tracks) >= 1:
-                    current_app.logger.info(
-                        f"'{basename}' No '{native_language}' subtitles"
-                    )
-                    mkvmerge_process = subprocess.Popen(
-                        [
-                            current_app.config["MKVMERGE_BIN"],
-                            "-o",
-                            hidden_output_file,
-                            "-a",
-                            output_audio_langs,
-                            "--no-subtitles",
-                            "--title",
-                            "",
-                            "--track-name",
-                            "-1:",
-                            file_path,
-                        ],
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.STDOUT,
-                        universal_newlines=True,
-                        bufsize=1,
-                    )
-
-                # No subtitles at all.
-
-                else:
-                    current_app.logger.info(f"'{basename}' No subtitles whatsoever")
-                    mkvmerge_process = subprocess.Popen(
-                        [
-                            current_app.config["MKVMERGE_BIN"],
-                            "-o",
-                            hidden_output_file,
-                            "-a",
-                            output_audio_langs,
-                            "--no-subtitles",
-                            "--title",
-                            "",
-                            "--track-name",
-                            "-1:",
-                            file_path,
-                        ],
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.STDOUT,
-                        universal_newlines=True,
-                        bufsize=1,
-                    )
-
-                watch_mkvmerge_progress(mkvmerge_process, job, basename, "Localizing")
-
-                wait_for_subprocess(mkvmerge_process, ok_returncodes=(0, 1))
-
-            else:
-                if file_details.get("container") == "MPEG-4":
-                    current_app.logger.info(f"'{basename}' Removing MPEG-4 metadata")
-                    atomicparsley_process = subprocess.Popen(
-                        [
-                            current_app.config["ATOMICPARSLEY_BIN"],
-                            file_path,
-                            "--metaEnema",
-                            "--overWrite",
-                        ],
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.STDOUT,
-                        universal_newlines=True,
-                        bufsize=1,
-                    )
-                    for line in atomicparsley_process.stdout:
-                        line = line.replace("\n", "")
-                        current_app.logger.info(
-                            f"'{os.path.basename(file_path)}' {line}"
-                        )
-                        if job:
-                            job.meta["description"] = (
-                                f"'{os.path.basename(file_path)}' — Removing MPEG-4 metadata"
-                            )
-                            job.meta["progress"] = -1
-                            job.save_meta()
-
-                    wait_for_subprocess(atomicparsley_process)
-
-                    current_app.logger.info(f"'{basename}' Removed MPEG-4 metadata")
-
-                else:
-                    current_app.logger.info(
-                        f"'{basename}' Not Matroska or MPEG-4, importing as-is"
-                    )
-
-                current_app.logger.info(
-                    f"'{basename}' Copying to '{hidden_output_file}'"
-                )
-                makedirs_on_mounted_volume(output_directory)
-                if job:
-                    job.meta["description"] = f"'{basename}' — Copying to destination"
-                    job.meta["progress"] = -1
-                    job.save_meta()
-
-                shutil.copy(file_path, hidden_output_file)
 
         except Exception:
             current_app.logger.error(traceback.format_exc())
@@ -1443,72 +751,764 @@ def localization_task(
             # Remove the staged copies. Fitzflix rejects the original source.
             # Nothing has changed the source since staging.
 
-            abandon_import(source_path, lock, strays=staging_paths)
+            abandon_import(run.source_path, run.lock, strays=run.strays)
 
         else:
-            # The working copy (the staged source or the conversion temp file)
-            # is no longer necessary. The file-operation queue carries the
-            # localized output to the library. Then it gives the quick database
-            # work to the sql queue.
-
-            if file_path != source_path:
-                try:
-                    os.remove(file_path)
-                except OSError:
-                    pass
-
-            # The parse can have renamed the file (the title made canonical
-            # against an existing series, or the container changed to .mkv).
-            # The key of the trail is the basename. Thus, merge the trail
-            # under the new name before the move job stamps "queued" on it.
-
-            if file_details.get("basename") != basename:
-                migrate_trail(current_app.redis, basename, file_details.get("basename"))
-
-            # The localized file stays on staging until its move, and a
-            # conversion writes more next to it. Shrink the reservation to
-            # what remains (#294).
-
-            # A failure here (Redis away at the enqueue) must not keep the
-            # title lock for its full TTL (#340). The source stays in the
-            # import directory for the hourly sweep.
-
-            try:
-                if staged:
-                    output_size = os.path.getsize(hidden_output_file)
-                    set_staging_reservation(
-                        basename,
-                        output_size * (CONVERSION_STAGING_FACTOR if conversion else 1),
-                        [basename],
-                    )
-
-                # A conversion first goes to the transcode queue. That task
-                # gives the file to move_localized_file after the encode.
-
-                if conversion:
-                    enqueue_task(
-                        "app.videos.convert_localized_file",
-                        source_path,
-                        file_details,
-                        lock,
-                        hidden_output_file,
-                        conversion,
-                        description=f"'{file_details.get('basename')}'",
-                    )
-                else:
-                    enqueue_task(
-                        "app.videos.move_localized_file",
-                        source_path,
-                        file_details,
-                        lock,
-                        hidden_output_file,
-                        description=f"'{basename}'",
-                    )
-            except Exception:
-                abandon_handoff(source_path, lock, hidden_output_file, staged)
-                return False
+            return _hand_off(
+                run, work_path, file_details, hidden_output_file, staged, conversion
+            )
 
         return True
+
+
+def _admission_gate(file_path, run):
+    """Decide if an incoming file can start its import. Return "ok", "retry", or "stop".
+
+    "retry" means that the task is booked again (a dead volume, a file
+    that grows, or a file that is not complete yet). "stop" means that
+    the task ends with nothing to do, or after a reject."""
+
+    from app.videos import _dead_volumes
+
+    basename = run.basename
+    completeness_retries = run.counters["completeness_retries"]
+
+    # Do not start if a necessary volume is dead. A mount that fails
+    # during the task strands partial files. Thus, defer to a retry.
+
+    dead = _dead_volumes(
+        [
+            os.path.dirname(file_path),
+            current_app.config["MOVIE_LIBRARY"],
+            current_app.config["TV_LIBRARY"],
+            current_app.config["MEDIA_LOCATION"],
+            current_app.config["STAGING_DIR"],
+        ]
+    )
+    if dead:
+        return run.retry(
+            timedelta(minutes=5), f"Volumes unavailable ({', '.join(dead)})"
+        )
+
+    # If the incoming file does not exist, there is nothing to do.
+
+    if not os.path.exists(file_path):
+        return "stop"
+
+    # A duplicate job or a late retry can reach a file that an earlier
+    # job already imported in place (#287).
+
+    if already_cataloged(file_path):
+        current_app.logger.info(
+            f"'{basename}' Is already in the library; nothing to import"
+        )
+        return "stop"
+
+    # The work files add up to 22 bytes to the name ("." and
+    # ".localized", ".remux.mkv", and others). A name system allows 255
+    # bytes. A longer name made mkvmerge fail with no clear reason.
+
+    if len(basename.encode("utf-8")) > MAX_NAME_BYTES:
+        current_app.logger.error(
+            f"'{basename}' has a name of more than {MAX_NAME_BYTES} bytes. "
+            f"Rename it shorter"
+        )
+        move_to_rejects(file_path, "name too long")
+        return "stop"
+
+    # If the file name contains "temp-1234.", ignore the file.
+
+    if re.search(r"\-temp\-\d+\.", basename):
+        return "stop"
+
+    # Do not process a file that a copy is still writing. If the file
+    # grows, check again in 1 minute.
+
+    size_before = os.path.getsize(file_path)
+    time.sleep(GROWTH_CHECK_SECONDS)
+    if os.path.getsize(file_path) != size_before:
+        return run.retry(timedelta(minutes=1), "is still being copied", level="info")
+
+    # A stalled network copy can fool the size check above. Its size
+    # stays constant while the file is still incomplete. Let the
+    # container prove completeness where it can. A partial Matroska or
+    # MP4 file reports truncation. The time that the copy has stalled is
+    # not important. Give a format that the probe cannot read a
+    # modification-time quiet period instead. Fitzflix imports a file
+    # that never proves itself within the budget in all cases, because
+    # Fitzflix imports a corrupt-but-complete file as it is by design.
+
+    verdict = probe_file_completeness(file_path)
+    if verdict is False or (
+        verdict is None
+        and time.time() - os.path.getmtime(file_path) < COMPLETENESS_QUIET_SECONDS
+    ):
+        if completeness_retries >= MAX_COMPLETENESS_RETRIES:
+            current_app.logger.warning(
+                f"'{basename}' Could not be confirmed complete after "
+                f"{MAX_COMPLETENESS_RETRIES} checks, importing anyway"
+            )
+        else:
+            reason = (
+                "is still incomplete"
+                if verdict is False
+                else "was modified too recently"
+            )
+            return run.retry(
+                timedelta(minutes=1),
+                f"{reason} (check {completeness_retries + 1} of "
+                f"{MAX_COMPLETENESS_RETRIES})",
+                level="info",
+                completeness_retries=completeness_retries + 1,
+            )
+
+    return "ok"
+
+
+def _identify(file_path, run):
+    """Parse the name of an import and plan its conversion.
+
+    Return (file_details, conversion), where conversion is None for a
+    file that needs no conversion. Return "retry" after a TMDB outage,
+    or "stop" after a reject."""
+
+    basename = run.basename
+    tmdb_retries = run.counters["tmdb_retries"]
+
+    file_details = evaluate_filename(file_path)
+    current_app.logger.info(f"'{basename}' File details: {file_details}")
+    if not file_details:
+        reason = getattr(file_details, "reason", None)
+
+        # The TMDB tries have their own count. The transient count limits
+        # the retries of an I/O error in the staging copy.
+
+        if reason == TMDB_UNREACHABLE and tmdb_retries < TMDB_RETRIES:
+            return run.retry(
+                timedelta(minutes=30),
+                "TMDB is unreachable",
+                tmdb_retries=tmdb_retries + 1,
+            )
+        current_app.logger.error(
+            f"'{basename}' rejected: {reason}!"
+            if reason
+            else f"'{basename}' doesn't match expected naming formats!"
+        )
+        move_to_rejects(file_path, reason or "incorrect filename")
+        return "stop"
+
+    # An HDR or BT.2020 import becomes a 1080p SDR conversion (#292). The
+    # plan renames it to its 1080p quality now. Thus, the quality checks
+    # compare the conversion, not the original.
+
+    conversion = None
+    if get_setting("CONVERT_HDR_TO_SDR"):
+        conversion = _plan_conversion_or_reject(file_path, file_details)
+        if conversion is False:
+            return "stop"
+        if conversion:
+            file_details = converted_file_details(file_details, conversion)
+            current_app.logger.info(
+                f"'{basename}' {conversion['source_format']} "
+                f"{conversion['source_quality']}. Importing as a "
+                f"{conversion['target_quality']} SDR conversion"
+            )
+    return file_details, conversion
+
+
+def _take_title_lock(file_details, run):
+    """Take the title lock of an import. Return the lock, or None after a deferral.
+
+    Fitzflix must not process a different version of this video at the
+    same time. Thus, the lock key comes from specific movie or TV show
+    fields. A different file with the same key waits until the
+    processing of the first file is complete. Without the lock, the task
+    returns to the localization queue. The queue tries it again when the
+    lock becomes available."""
+
+    from app.videos import acquire_lock_or_defer
+
+    file_identifier = lock_key_for_details(file_details)
+    current_app.logger.debug(f"'{run.basename}' Lock identifier: {file_identifier}")
+    return acquire_lock_or_defer(
+        file_identifier,
+        current_app.config["LOCALIZATION_TASK_TIMEOUT"] * 1000,
+        current_app.import_queue,
+        "app.videos.localization_task",
+        minutes=(45, 75),
+        timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
+        description=f"'{run.basename}'",
+        kwargs={"file_path": run.source_path, **run.counters},
+    )
+
+
+def _quality_and_space_gate(file_path, file_details, conversion, run):
+    """Decide if a locked import goes on. Return "ok", "hold", "reject", or "wait".
+
+    "hold" waits for an admin, "reject" sends an inferior file to
+    rejects, and "wait" books the task again for library space. Each of
+    the 3 releases the title lock. "wait" also clears run.lock."""
+
+    basename = run.basename
+    space_waits = run.counters["space_waits"]
+
+    # A conversion waits for an admin when the library has a real rip of
+    # the title at its quality or better. "Import" sends the file back
+    # here with replace_existing.
+
+    if conversion:
+        if held_decision(file_path):
+            file_details["replace_existing"] = True
+        else:
+            blockers = real_rips_blocking(file_details)
+            if blockers:
+                hold_import(file_path, file_details, conversion, blockers)
+                run.release_lock()
+                return "hold"
+
+    # Look for better-quality versions of this file that already exist.
+
+    better_versions = File(**file_details).find_better_files()
+    if better_versions:
+        current_app.logger.info(
+            f"Better versions of '{basename}' exist; skipping import"
+        )
+        for better in better_versions:
+            current_app.logger.debug(vars(better))
+
+        move_to_rejects(file_path, "inferior quality")
+        run.release_lock()
+        notify_admin(
+            "Received an inferior-quality file",
+            "inferior_warning",
+            basename=basename,
+            better_versions=better_versions,
+            rejects_directory=current_app.config["REJECTS_DIR"],
+        )
+        return "reject"
+
+    # Wait for free space on the library volume before the heavy work.
+    # Without the space, the final copy would fail and discard the work.
+    # The wait releases the title lock (#262).
+
+    output_directory = os.path.join(
+        current_app.config["LIBRARY_DIR"], file_details.get("dirname")
+    )
+    needed = int(os.path.getsize(file_path) * SPACE_FACTOR) + SPACE_RESERVE
+    shortfall = library_space_shortfall(output_directory, needed)
+    if shortfall:
+        _log_space_wait(basename, output_directory, needed, shortfall, space_waits)
+        mark_space_wait(basename)
+        run.release_lock()
+        run.lock = None
+        run.retry(
+            SPACE_WAIT, "waits for space", level=None, space_waits=space_waits + 1
+        )
+        return "wait"
+    if space_waits:
+        clear_space_wait(basename)
+        current_app.logger.info(
+            f"'{basename}' Continuing the import after {space_waits} "
+            f"wait(s) for space"
+        )
+    return "ok"
+
+
+def _stage_source(file_path, run):
+    """Copy the source to local staging. Return (work_path, staged), or None.
+
+    The archive upload and the localization tools then do their heavy
+    I/O on the local disk. A network failure costs a retry, not a
+    stranded partial file. None means that the task is booked again.
+    The staged copy goes in run.strays.
+
+    The space check counts what the other imports on staging still need
+    (#294). Without enough space, the import waits and releases the
+    title lock. Only a file that cannot fit on the staging volume at all
+    is processed on its source volume. Then staged is False."""
+
+    from app.videos import (
+        MAX_TRANSIENT_RETRIES,
+        TRANSIENT_COPY_ERRNOS,
+        copy_with_progress,
+    )
+
+    basename = run.basename
+    space_waits = run.counters["space_waits"]
+    transient_retries = run.counters["transient_retries"]
+    staging_dir = current_app.config["STAGING_DIR"]
+    staging_needed = int(os.path.getsize(file_path) * STAGING_FACTOR)
+    staging = reserve_staging(basename, staging_needed, [basename], staging_dir)
+    if staging == "wait":
+        current_app.logger.info(
+            f"'{basename}' Needs {_gigabytes(staging_needed)} on staging. "
+            f"The other imports still need "
+            f"{_gigabytes(staging_outstanding(staging_dir, exclude=basename))}. "
+            f"Trying again in {int(SPACE_WAIT.total_seconds() // 60)} minutes"
+        )
+        mark_space_wait(basename)
+        run.release_lock()
+        run.lock = None
+        run.retry(
+            SPACE_WAIT,
+            "waits for staging space",
+            level=None,
+            space_waits=space_waits + 1,
+        )
+        return None
+
+    if staging != "ok":
+        current_app.logger.warning(
+            f"'{basename}' Does not fit on the staging volume, "
+            f"processing on the source volume instead"
+        )
+        return file_path, False
+
+    staged_path = os.path.join(staging_dir, basename)
+    run.strays.append(staged_path)
+    record_task_stage("Copying to staging", "started")
+    try:
+        copy_with_progress(
+            file_path, staged_path, run.job, basename, "Copying to local staging"
+        )
+    except OSError as e:
+        record_task_stage("Copying to staging", "failed")
+        if (
+            e.errno not in TRANSIENT_COPY_ERRNOS
+            or transient_retries >= MAX_TRANSIENT_RETRIES
+        ):
+            raise
+
+        # An unstable mount revoked the file handles of the copy. The
+        # source is not damaged. Thus, clean up and retry after the mount
+        # settles. Do not reject a good file.
+
+        try:
+            os.remove(staged_path)
+        except OSError:
+            pass
+        run.release_lock()
+        run.retry(
+            timedelta(minutes=5),
+            f"Staging copy failed with a transient I/O error ({e}) "
+            f"(attempt {transient_retries + 1} of {MAX_TRANSIENT_RETRIES})",
+            transient_retries=transient_retries + 1,
+        )
+        return None
+
+    record_task_stage("Copying to staging", "done")
+    return staged_path, True
+
+
+def _archive_original(work_path, file_details):
+    """Upload the untouched file to AWS S3 storage as a backup, if the setting is on."""
+
+    if get_setting("ARCHIVE_ORIGINAL_MEDIA"):
+        (
+            file_details["aws_key"],
+            file_details["aws_date_uploaded"],
+            file_details["aws_filesize_bytes"],
+        ) = aws_upload(work_path, current_app.config["AWS_UNTOUCHED_PREFIX"])
+
+
+def _localize(source_path, work_path, file_details, staged, job, strays):
+    """Write the localized output of an import. Return (work_path, hidden_output_file).
+
+    A non-Matroska file first becomes Matroska where mkvmerge can carry
+    it. Then work_path is the converted file. A Matroska file loses its
+    non-native tracks. Any other file is copied as it is. Each work file
+    that this step makes goes in strays."""
+
+    basename = os.path.basename(source_path)
+    staging_dir = current_app.config["STAGING_DIR"]
+
+    current_app.logger.info(f"'{basename}' Starting localization process")
+
+    output_directory = os.path.join(
+        current_app.config["LIBRARY_DIR"], file_details.get("dirname")
+    )
+
+    # Parse the incoming file and get its details with MediaInfo.
+
+    current_app.logger.info(f"'{basename}' Parsing with MediaInfo")
+    media_info = MediaInfo.parse(work_path)
+    current_app.logger.debug(f"'{basename}' -> {media_info.to_json()}")
+
+    for track in media_info.tracks:
+        if track.track_type == "General" and track.format:
+            current_app.logger.info(f"'{basename}' File container {track.format}")
+            file_details["container"] = track.format
+
+    # Fitzflix first remuxes a non-Matroska file into a Matroska container.
+    # Thus, every importable format gets the same localization. Fitzflix
+    # imports a format that mkvmerge cannot carry as it is.
+
+    if file_details.get("container") != "Matroska":
+        scratch_dir = staging_dir if staged else output_directory
+        makedirs_on_mounted_volume(scratch_dir)
+        converted_file = os.path.join(scratch_dir, f".{basename}.convert.mkv")
+        strays.append(converted_file)
+
+        if convert_to_matroska(work_path, converted_file, job, basename):
+            # Use the converted file. Rename the final output to agree with
+            # its new container.
+
+            if work_path != source_path:
+                try:
+                    os.remove(work_path)
+                except OSError:
+                    pass
+            work_path = converted_file
+            file_details["container"] = "Matroska"
+            stem = file_details["basename"].rsplit(".", 1)[0]
+            file_details["basename"] = f"{stem}.mkv"
+            file_details["extension"] = "mkv"
+            file_details["file_path"] = os.path.join(
+                file_details["dirname"], file_details["basename"]
+            )
+
+        else:
+            current_app.logger.warning(
+                f"'{basename}' Can't be converted to Matroska, importing as-is"
+            )
+
+    # If staging is on, Fitzflix writes the localized output next to the
+    # staged copy. Thus, only the complete file goes to the library.
+
+    # On staging, the name comes from the source. The library name of an
+    # extra is only the extra, for example "Trailer.mkv". The extras of 2
+    # films would then write the same staging file.
+
+    if staged:
+        hidden_output_file = staged_output_path(
+            staging_dir, basename, file_details.get("basename")
+        )
+        strays.append(hidden_output_file)
+    else:
+        hidden_output_file = os.path.join(
+            output_directory, f".{file_details.get('basename')}"
+        )
+
+    # Export a localized version of the incoming file.
+
+    if file_details.get("container") == "Matroska":
+        _localize_matroska(
+            work_path, hidden_output_file, output_directory, basename, job
+        )
+    else:
+        _copy_as_is(
+            work_path,
+            hidden_output_file,
+            output_directory,
+            basename,
+            file_details.get("container"),
+            job,
+        )
+    return work_path, hidden_output_file
+
+
+def _localize_matroska(work_path, hidden_output_file, output_directory, basename, job):
+    """Write the localized Matroska output of work_path to hidden_output_file."""
+
+    from app.videos import wait_for_subprocess
+
+    current_app.logger.info(f"'{basename}' Localizing as a Matroska file")
+
+    # Give each lossless track that is not FLAC or PCM a FLAC twin
+    # immediately before it. An Apple TV client can play FLAC natively.
+    # Always keep the original for direct play and for future
+    # passthrough. A file whose twins already exist (a MakeMKV "FLAC Plus
+    # Original Audio" rip, or a re-download of a supplemented upload)
+    # passes through as it is. CREATE_FLAC_TWINS turns this step off for
+    # passthrough players.
+
+    if not get_setting("CREATE_FLAC_TWINS"):
+        current_app.logger.info(f"'{basename}' CREATE_FLAC_TWINS is off. No FLAC twins")
+    else:
+        supplement_lossless_tracks(work_path)
+
+    # Sometimes the input mkv file has no track details, for example the
+    # number of subtitle elements in a subtitle track. Fitzflix needs
+    # those details to tell if there is possibly a forced subtitle track.
+    # This command adds the details to the file if they are missing.
+
+    current_app.logger.info(f"'{basename}' Adding track statistics tags")
+
+    statistics_tags_process = subprocess.Popen(
+        [
+            current_app.config["MKVPROPEDIT_BIN"],
+            "--add-track-statistics-tags",
+            work_path,
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        universal_newlines=True,
+        bufsize=1,
+    )
+    watch_mkvmerge_progress(
+        statistics_tags_process, job, basename, "Adding track statistics tags"
+    )
+    wait_for_subprocess(statistics_tags_process, ok_returncodes=(0, 1))
+
+    # Parse the file again, because it now has the track statistics tags.
+
+    current_app.logger.info(f"'{basename}' Parsing added statistics with MediaInfo")
+    media_info = MediaInfo.parse(work_path)
+    current_app.logger.debug(f"'{basename}' -> {media_info.to_json()}")
+    audio_tracks = get_audio_tracks_from_file(work_path)
+    subtitle_tracks = get_subtitle_tracks_from_file(work_path)
+
+    # Change the ISO-639-2 language code to the ISO-639-3 code if MakeMKV
+    # wrote the file.
+
+    native_language = current_app.config["NATIVE_LANGUAGE"]
+
+    for track in media_info.tracks:
+        if track.writing_application:
+            if track.track_type == "General" and "MakeMKV" in track.writing_application:
+                native_language = iso_639_3_native_language()
+                current_app.logger.warning(
+                    f"'{basename}' was created with MakeMKV. Will use ISO-639-3 "
+                    f"code '{native_language}' instead of user-supplied "
+                    f"ISO-639-2 '{current_app.config['NATIVE_LANGUAGE']}' when "
+                    f"processing this file with mkvmerge"
+                )
+
+    # Find the audio tracks to export.
+
+    # If there are no audio tracks, mkvmerge could use the --no-audio
+    # flag. But the default of the first audio track is sufficient,
+    # because no track will exist.
+
+    if len(audio_tracks) == 0:
+        first_audio_track_language = "1"
+
+    elif audio_tracks[0].get("language"):
+        first_audio_track_language = audio_tracks[0].get("language")
+
+    else:
+        first_audio_track_language = 1
+
+    # If the first audio track is in the native language, remove all other
+    # languages.
+
+    if len(audio_tracks) >= 1 and first_audio_track_language == native_language:
+        current_app.logger.info(
+            f"'{basename}' First audio track matches native language "
+            f"'{native_language}'"
+        )
+        output_audio_langs = native_language
+
+    # The first audio track can be in a language that is not the native
+    # language, while the native language is present. Then export the
+    # tracks in the first language and all native-language audio. The
+    # file is probably a dub, or it has native-language commentary tracks.
+
+    elif native_language in [track["language"] for track in audio_tracks]:
+        current_app.logger.info(
+            f"'{basename}' First audio track is foreign, "
+            f"but '{native_language}' audio is present"
+        )
+        output_audio_langs = f"{first_audio_track_language},{native_language}"
+
+    # If there is no native-language track, export only the tracks in the
+    # first language. The file is probably a subtitled movie with no
+    # commentary track.
+
+    else:
+        current_app.logger.info(f"'{basename}' No '{native_language}' audio track")
+        output_audio_langs = first_audio_track_language
+
+    # Find the tracks to export and make the output file.
+
+    makedirs_on_mounted_volume(output_directory)
+
+    first_audio_foreign = (
+        len(audio_tracks) >= 1 and first_audio_track_language != native_language
+    )
+    native_subtitles = native_language in [
+        track["language"] for track in subtitle_tracks
+    ]
+    if first_audio_foreign and native_subtitles:
+        current_app.logger.info(
+            f"'{basename}' Non-native audio, "
+            f"but '{native_language}' subtitles are present"
+        )
+    elif native_subtitles:
+        current_app.logger.info(f"'{basename}' '{native_language}' audio and subtitles")
+    elif subtitle_tracks:
+        current_app.logger.info(f"'{basename}' No '{native_language}' subtitles")
+    else:
+        current_app.logger.info(f"'{basename}' No subtitles whatsoever")
+
+    mkvmerge_process = subprocess.Popen(
+        build_localize_command(
+            current_app.config["MKVMERGE_BIN"],
+            work_path,
+            hidden_output_file,
+            output_audio_langs,
+            native_language,
+            subtitle_tracks,
+            first_audio_foreign,
+        ),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        universal_newlines=True,
+        bufsize=1,
+    )
+    watch_mkvmerge_progress(mkvmerge_process, job, basename, "Localizing")
+    wait_for_subprocess(mkvmerge_process, ok_returncodes=(0, 1))
+
+
+def build_localize_command(
+    mkvmerge,
+    source,
+    output,
+    audio_langs,
+    native_language,
+    subtitle_tracks,
+    first_audio_foreign,
+):
+    """Return the mkvmerge command that localizes source into output.
+
+    audio_langs is the value of -a. With native-language subtitles, the
+    command keeps only those subtitles. Then, if the first audio track is
+    foreign, the first native-language subtitle track becomes the default
+    and the others do not. If the audio is native, no native-language
+    subtitle track is a default. Without native-language subtitles, the
+    command keeps no subtitles. The output has no title and no track
+    names. This function reads nothing and runs nothing."""
+
+    native_tracks = [
+        track for track in subtitle_tracks if track["language"] == native_language
+    ]
+    if native_tracks:
+        flags = []
+        for index, track in enumerate(native_tracks):
+            on = first_audio_foreign and index == 0
+            flags.extend(
+                ["--default-track-flag", f"{track['streamorder']}:{1 if on else 0}"]
+            )
+        subtitles = ["-s", native_language] + flags
+    else:
+        subtitles = ["--no-subtitles"]
+    return (
+        [mkvmerge, "-o", output, "-a", audio_langs]
+        + subtitles
+        + ["--title", "", "--track-name", "-1:", source]
+    )
+
+
+def _copy_as_is(
+    work_path, hidden_output_file, output_directory, basename, container, job
+):
+    """Copy a file that is not Matroska to its hidden output.
+
+    An MPEG-4 file first loses its metadata through AtomicParsley."""
+
+    from app.videos import wait_for_subprocess
+
+    if container == "MPEG-4":
+        current_app.logger.info(f"'{basename}' Removing MPEG-4 metadata")
+        atomicparsley_process = subprocess.Popen(
+            [
+                current_app.config["ATOMICPARSLEY_BIN"],
+                work_path,
+                "--metaEnema",
+                "--overWrite",
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            universal_newlines=True,
+            bufsize=1,
+        )
+        for line in atomicparsley_process.stdout:
+            line = line.replace("\n", "")
+            current_app.logger.info(f"'{os.path.basename(work_path)}' {line}")
+            report_progress(
+                job, os.path.basename(work_path), "Removing MPEG-4 metadata"
+            )
+
+        wait_for_subprocess(atomicparsley_process)
+
+        current_app.logger.info(f"'{basename}' Removed MPEG-4 metadata")
+
+    else:
+        current_app.logger.info(f"'{basename}' Not Matroska or MPEG-4, importing as-is")
+
+    current_app.logger.info(f"'{basename}' Copying to '{hidden_output_file}'")
+    makedirs_on_mounted_volume(output_directory)
+    report_progress(job, basename, "Copying to destination")
+    shutil.copy(work_path, hidden_output_file)
+
+
+def _hand_off(run, work_path, file_details, hidden_output_file, staged, conversion):
+    """Give the localized output to the next stage. Return True, or False on a failure.
+
+    The working copy (the staged source or the conversion temp file) is
+    no longer necessary. The file-operation queue carries the localized
+    output to the library. Then it gives the quick database work to the
+    sql queue. A conversion first goes to the transcode queue."""
+
+    source_path, basename, lock = run.source_path, run.basename, run.lock
+
+    if work_path != source_path:
+        try:
+            os.remove(work_path)
+        except OSError:
+            pass
+
+    # The parse can have renamed the file (the title made canonical
+    # against an existing series, or the container changed to .mkv). The
+    # key of the trail is the basename. Thus, merge the trail under the
+    # new name before the move job stamps "queued" on it.
+
+    if file_details.get("basename") != basename:
+        migrate_trail(current_app.redis, basename, file_details.get("basename"))
+
+    # The localized file stays on staging until its move, and a
+    # conversion writes more next to it. Shrink the reservation to what
+    # remains (#294).
+
+    # A failure here (Redis away at the enqueue) must not keep the title
+    # lock for its full TTL (#340). The source stays in the import
+    # directory for the hourly sweep.
+
+    try:
+        if staged:
+            output_size = os.path.getsize(hidden_output_file)
+            set_staging_reservation(
+                basename,
+                output_size * (CONVERSION_STAGING_FACTOR if conversion else 1),
+                [basename],
+            )
+
+        # A conversion first goes to the transcode queue. That task gives
+        # the file to move_localized_file after the encode.
+
+        if conversion:
+            enqueue_task(
+                "app.videos.convert_localized_file",
+                source_path,
+                file_details,
+                lock,
+                hidden_output_file,
+                conversion,
+                description=f"'{file_details.get('basename')}'",
+            )
+        else:
+            enqueue_task(
+                "app.videos.move_localized_file",
+                source_path,
+                file_details,
+                lock,
+                hidden_output_file,
+                description=f"'{basename}'",
+            )
+    except Exception:
+        abandon_handoff(source_path, lock, hidden_output_file, staged)
+        return False
+    return True
 
 
 def abandon_import(
@@ -2097,11 +2097,7 @@ def finalize_localization(
         # The queue page lists this job with a banner and a row. Name the
         # stage there, as the other stages of the pipeline do.
 
-        job = get_current_job()
-        if job:
-            job.meta["description"] = f"'{file_details.get('basename')}' — Cataloging"
-            job.meta["progress"] = -1
-            job.save_meta()
+        report_progress(get_current_job(), file_details.get("basename"), "Cataloging")
 
         output_directory = os.path.join(
             current_app.config["LIBRARY_DIR"], file_details.get("dirname")

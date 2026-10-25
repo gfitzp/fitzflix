@@ -33,7 +33,7 @@ from rq import get_current_job
 from flask import current_app
 from werkzeug.local import LocalProxy
 
-from app.tasks import enqueue_task, requeue
+from app.tasks import enqueue_task, report_progress, requeue
 from app import db, get_app
 from app.aws_storage import archive_library_file, mark_archive_stale
 from app.models import File, FileAudioTrack, FileSubtitleTrack
@@ -175,10 +175,7 @@ def watch_mkvmerge_progress(process, job, name, activity):
             if previous_percent != percent:
                 current_app.logger.info(f"'{name}' {activity}: {percent}%")
                 previous_percent = percent
-            if job:
-                job.meta["description"] = f"'{name}' — {activity}"
-                job.meta["progress"] = percent
-                job.save_meta()
+            report_progress(job, name, activity, percent)
 
 
 def parse_dolby_vision_profile(hdr_format):
@@ -914,10 +911,7 @@ def mkvpropedit_unlocked(
             file = File.query.filter_by(id=file_id).first()
             file_path = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
 
-            if job:
-                job.meta["description"] = f"'{file.basename}' — Updating MKV properties"
-                job.meta["progress"] = -1
-                job.save_meta()
+            report_progress(job, file.basename, "Updating MKV properties")
 
             media_info = MediaInfo.parse(file_path)
             audio_tracks = get_audio_tracks_from_file(file_path)
@@ -1895,12 +1889,9 @@ def supplement_lossless_tracks(file_path, file_id=None):
                         f"'{basename}' Supplementing lossless tracks with FLAC: {progress}%"
                     )
                     previous_percent = progress
-                if job:
-                    job.meta["description"] = (
-                        f"'{basename}' — Supplementing lossless tracks with FLAC"
-                    )
-                    job.meta["progress"] = progress
-                    job.save_meta()
+                report_progress(
+                    job, basename, "Supplementing lossless tracks with FLAC", progress
+                )
 
             wait_for_subprocess(flac_track_process)
             copy_image_attachments(file_path, temp_flac_file)

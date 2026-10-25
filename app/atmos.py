@@ -36,7 +36,7 @@ from rq import get_current_job
 from rq.registry import StartedJobRegistry
 
 from app import s3_layout
-from app.tasks import enqueue_task
+from app.tasks import enqueue_task, report_progress
 from app import db, get_app, safe_job_id
 from app.models import File, FileAudioTrack
 from app.settings import get_setting
@@ -286,10 +286,7 @@ def _set_stage(job, basename, description, progress=-1):
     progress of -1 shows the indeterminate bar until the stage reports
     real numbers."""
 
-    if job:
-        job.meta["description"] = f"'{basename}' — {description}"
-        job.meta["progress"] = progress
-        job.save_meta()
+    report_progress(job, basename, description, progress)
 
 
 class _UploadProgress:
