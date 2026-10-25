@@ -8,7 +8,9 @@ rows exactly.
 """
 
 import os
+import shutil
 import tempfile
+from functools import partial
 
 import pytest
 
@@ -209,12 +211,31 @@ def app():
 
     from app import create_app, db
     from app.models import RefFeatureType, RefQuality, User
+    import app.models as models
+
+    # The default hash (scrypt) costs about 0.1 s per password. The suite
+    # sets about 20 passwords. A cheap pbkdf2 is enough for a test. The
+    # check reads the method from the hash. Thus, each login still works
+
+    patches = pytest.MonkeyPatch()
+    patches.setattr(
+        models,
+        "generate_password_hash",
+        partial(models.generate_password_hash, method="pbkdf2:sha256:1000"),
+    )
 
     # watch_import_dir: the watchdog test puts files into IMPORT_DIR and
     # expects Fitzflix to notice them. Thus, the test app opts into the
     # observer. In production, only the import workers run the observer
 
     application = create_app(TestConfig, watch_import_dir=True)
+
+    # A busy lock makes the task defer. In production, Redlock tries 3
+    # times with 0.2 s between the tries. A test that holds a lock
+    # paid for the waits (about 5 s over the suite). One try is enough
+
+    application.lock_manager.retry_count = 1
+    application.lock_manager.retry_delay = 0
 
     # Refuse to run against a store that is not isolated
 
@@ -257,6 +278,16 @@ def app():
         db.session.commit()
 
     yield application
+    patches.undo()
+
+
+def pytest_sessionfinish(session, exitstatus):
+    """Remove the temp directory of the session (#360).
+
+    Each session made a new directory under TMPDIR and left it. On
+    2026-10-25, 558 of them held 347 MB."""
+
+    shutil.rmtree(_TMP, ignore_errors=True)
 
 
 @pytest.fixture(autouse=True)
@@ -280,6 +311,7 @@ def clean_state(app):
         db.session.commit()
     reset_user_state(app)
     clear_rejects(app)
+    clear_artifacts(app)
 
 
 def clear_rejects(app):
@@ -295,6 +327,44 @@ def clear_rejects(app):
         for name in files:
             try:
                 os.remove(os.path.join(root, name))
+            except FileNotFoundError:
+                pass
+
+
+def _empty_directory(path):
+    """Remove the contents of a directory. Keep the directory."""
+
+    if not os.path.isdir(path):
+        return
+    for name in os.listdir(path):
+        child = os.path.join(path, name)
+        if os.path.isdir(child) and not os.path.islink(child):
+            shutil.rmtree(child, ignore_errors=True)
+        else:
+            try:
+                os.remove(child)
+            except FileNotFoundError:
+                pass
+
+
+def clear_artifacts(app):
+    """Empty the shared directories that a test can fill (#360).
+
+    The 2 library roots, the held directory and the custom artwork
+    directory live for the whole session. The log rotation leaves
+    archives next to the log file. A test that asserts an empty
+    directory, or counts the archives, failed when it ran after a test
+    that left files there. The log file itself stays: the app holds it
+    open."""
+
+    for key in ("MOVIE_LIBRARY", "TV_LIBRARY", "HELD_DIR", "CUSTOM_ARTWORK_DIR"):
+        _empty_directory(app.config[key])
+    log_file = app.config["LOG_FILE"]
+    log_dir = os.path.dirname(log_file)
+    for name in os.listdir(log_dir):
+        if name != os.path.basename(log_file):
+            try:
+                os.remove(os.path.join(log_dir, name))
             except FileNotFoundError:
                 pass
 

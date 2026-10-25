@@ -199,6 +199,12 @@ def test_backup_database_uploads_to_s3_and_prunes_remote(
         videos, "aws_s3_client", lambda with_retries=False: FakeS3Client()
     )
 
+    # The poster mirror lists S3 through get_matching_s3_objects, not through the
+    # fake client. It runs when the artwork directory exists, which an
+    # earlier posters test makes. An empty listing keeps it quiet
+
+    monkeypatch.setattr(videos, "get_matching_s3_objects", lambda *args, **kwargs: [])
+
     with app.app_context():
         backup_database()
 
