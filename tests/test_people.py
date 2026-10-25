@@ -77,6 +77,25 @@ def test_people_page_defaults_to_multi_film_credited_people(app, admin_client):
     assert "No Character Listed" in page
 
 
+def test_people_page_text_matches_the_counted_records(app, admin_client):
+    """Test that the page text says what the counts hold (#331).
+
+    The counts include the film records that have no file (watchlist,
+    diary, and catalog records). The text said "in the library", which
+    is not true for those records. The counts stay as they are."""
+
+    with app.app_context():
+        build_population(app)
+
+    page = admin_client.get("/people").get_data(as_text=True)
+    assert "in more than one film or series in the library" not in page
+    assert "that Fitzflix has a record of" in page
+    assert "films that are not in the library" in page
+
+    # The population has no files. The people still count
+    assert "2 titles" in page
+
+
 def test_people_search_widens_to_single_film_people(app, admin_client):
     with app.app_context():
         build_population(app)
