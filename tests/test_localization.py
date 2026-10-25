@@ -2076,3 +2076,53 @@ def test_a_name_too_long_for_the_work_files_is_rejected_clearly(app, incoming_di
     with app.app_context():
         assert localization_task(source) is False
     assert basename in rejected_files(app)
+
+
+def test_a_failed_finalize_commit_leaves_no_library_copy(
+    app, sample_mkv, incoming_dir, monkeypatch
+):
+    """The rename runs before the commit. A failed commit must remove it (#316)."""
+
+    from app import importing
+
+    basename = "Commit Fail (2021) - [DVD].mkv"
+    source = os.path.join(incoming_dir, basename)
+    with open(sample_mkv, "rb") as f_in, open(source, "wb") as f_out:
+        f_out.write(f_in.read())
+
+    class Failing:
+        """A HeldImport stand-in whose cleanup delete fails, as a commit can."""
+
+        class query:
+            @staticmethod
+            def filter_by(**kwargs):
+                raise RuntimeError("simulated failure before the commit")
+
+    with app.app_context():
+        assert localization_task(source) is True
+        (move,) = [
+            job
+            for job in app.handoff_queue.jobs
+            if job.func_name == "app.videos.move_localized_file"
+        ]
+        assert videos.move_localized_file(*move.args) is True
+        (finalize,) = [
+            job
+            for job in app.sql_queue.jobs
+            if job.func_name == "app.videos.finalize_localization"
+        ]
+        monkeypatch.setattr(importing, "HeldImport", Failing)
+        finalize_localization(*finalize.args)
+
+        output = os.path.join(
+            app.config["LIBRARY_DIR"],
+            "Movies/Commit Fail (2021)/Commit Fail (2021) - [DVD].mkv",
+        )
+        assert not os.path.exists(output)
+        assert not os.path.exists(finalize.args[3])
+        assert File.query.filter_by(basename=basename).first() is None
+        assert not os.path.exists(source)
+        assert os.listdir(app.config["STAGING_DIR"]) == []
+        rejected = os.path.join(app.config["REJECTS_DIR"], "exception", basename)
+        assert os.path.exists(rejected)
+        os.remove(rejected)

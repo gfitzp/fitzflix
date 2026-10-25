@@ -2208,6 +2208,13 @@ def finalize_localization(
         # rejects. For an in-place import, file_path is that library file.
 
         committed = False
+
+        # A failure before the commit must not leave the new file in the
+        # library with no record (#316). The handler needs to know if the
+        # rename happened, and if it replaced a file at that path.
+
+        renamed = False
+        replaced_existing = False
         atmos_handoff = None
         atmos_queued = False
         worse_local_copies = []
@@ -2569,7 +2576,9 @@ def finalize_localization(
                 return False
 
             try:
+                replaced_existing = os.path.exists(output_file)
                 _rename_with_retries(hidden_output_file, output_file)
+                renamed = True
             except OSError:
                 if not _copy_vanished(
                     hidden_output_file, staged_output, vanished_retries
@@ -2862,6 +2871,25 @@ def finalize_localization(
                     except FileNotFoundError:
                         pass
             else:
+                # The source goes to rejects. Remove the hidden library
+                # copy, or the renamed file when no record keeps it. A
+                # rename over an existing file already replaced that file,
+                # and its record still points to it. For an in-place import
+                # the renamed file IS file_path, and it goes to rejects.
+
+                stray = None
+                if not renamed:
+                    stray = hidden_output_file
+                elif file_path != output_file and not replaced_existing:
+                    stray = output_file
+                if stray:
+                    try:
+                        os.remove(stray)
+                        current_app.logger.info(f"Removed '{stray}'")
+                    except FileNotFoundError:
+                        pass
+                    except OSError:
+                        current_app.logger.warning(traceback.format_exc())
                 move_to_rejects(file_path, "exception")
                 _remove_staged_output(staged_output)
 
