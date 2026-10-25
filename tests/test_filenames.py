@@ -175,22 +175,36 @@ def test_edge_cases(app, filename, expected):
         assert details[key] == value, f"{key}: {details[key]!r} != {value!r}"
 
 
+NO_FORMAT = "no name format matches"
+
+
 @pytest.mark.parametrize(
-    "filename",
+    "filename, detail",
     [
-        "Jaws (1975) - [Bluray-4K].mkv",  # an unknown quality title.
-        "Friends - S01E01 - [Ultra-HD].mkv",  # an unknown quality title (TV).
-        "Jaws - [DVD].mkv",  # a movie without a year.
-        "totally random file.mkv",  # matches no format.
-        "Jaws (1975).mkv",  # no quality tag at all.
-        "Jaws (1975) {bogus-123} - [DVD].mkv",  # an unknown brace tag kind.
-        "Jaws (1975) {imdb-0073195} - [DVD].mkv",  # the imdb id has no tt prefix.
-        "Hamilton {edition-Broadway} - [DVD].mkv",  # a yearless name needs an id tag.
+        ("Jaws (1975) - [Bluray-4K].mkv", "unknown quality"),
+        ("Friends - S01E01 - [Ultra-HD].mkv", "unknown quality"),
+        ("Jaws - [DVD].mkv", NO_FORMAT),  # a movie without a year.
+        ("totally random file.mkv", NO_FORMAT),
+        ("Jaws (1975).mkv", NO_FORMAT),  # no quality tag at all.
+        ("Jaws (1975) {bogus-123} - [DVD].mkv", NO_FORMAT),  # an unknown tag kind.
+        ("Jaws (1975) {imdb-0073195} - [DVD].mkv", NO_FORMAT),  # no tt prefix.
+        ("Hamilton {edition-Broadway} - [DVD].mkv", "no year and no id tag"),
     ],
 )
-def test_rejected_filenames(app, filename):
+def test_rejected_filenames(app, filename, detail):
+    """Each reject is a labelled FilenameRejection.
+
+    A reason of None keeps the generic reject: the "incorrect filename"
+    folder, the log line, and the text of the filename tester."""
+
+    from app.importing import FilenameRejection
+
     with app.app_context():
-        assert evaluate_filename(filename, log=False) is False
+        result = evaluate_filename(filename, log=False)
+    assert isinstance(result, FilenameRejection)
+    assert not result
+    assert result.reason is None
+    assert result.detail == detail
 
 
 # Plex external-id tags (#155): {tmdb-NNN}, {imdb-ttNNN}, {tvdb-NNN} after
