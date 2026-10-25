@@ -110,7 +110,7 @@ from app.main.helpers import (
     tv_meta_line,
 )
 from app.cache import cached_fetch
-from app.tmdb_apply import tmdb_json_or
+from app.tmdb_apply import PEOPLE_RANKING_SECONDS, tmdb_json_or
 from app.funnel import might_interest, user_film_sets_by_id
 from app.recommendations import (
     JOB_TO_CLASS,
@@ -671,10 +671,6 @@ CRITERION_CHANNEL_PROVIDER_ID = 258
 
 
 CRITERION_CATALOG_PER_PAGE = 120
-
-# The cache life of the /people ranking. This is a backstop. The
-# credit writers invalidate the cache directly.
-PEOPLE_RANKING_SECONDS = 7 * 86400
 
 
 def _page_window(current, last):

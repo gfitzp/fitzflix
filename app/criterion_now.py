@@ -58,7 +58,9 @@ WATCH_LIVE_URL = "https://www.criterionchannel.com/live/1emmgvqX/criterion-24-7"
 
 WHATSON_URL = WATCH_LIVE_URL
 NOW_KEY = "fitzflix:criterion:now"
+NOW_SECONDS = 86400
 SCHEDULE_KEY = "fitzflix:criterion:schedule"
+SCHEDULE_SECONDS = 86400
 POLL_JOB_ID = "fitzflix-criterion-now-poll"
 
 # The poll runs this long after the end time of the current film. The
@@ -620,7 +622,7 @@ def poll_criterion_now():
                             **_enriched_entry(title, parsed["more_url"], known),
                         }
                     ),
-                    ex=86400,
+                    ex=NOW_SECONDS,
                 )
 
                 # The upcoming films. Each gets the same enrichment as
@@ -636,7 +638,7 @@ def poll_criterion_now():
                 current_app.redis.set(
                     SCHEDULE_KEY,
                     json.dumps({"fetched_at": fetched_at, "upcoming": upcoming}),
-                    ex=86400,
+                    ex=SCHEDULE_SECONDS,
                 )
 
                 end_note = (

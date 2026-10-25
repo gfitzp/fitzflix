@@ -40,6 +40,7 @@ from app.file_ranking import (
 from app.elicitation import set_last_response
 from app.recommendations import (
     RECOMPUTE_QUEUED_KEY,
+    RECOMPUTE_QUEUED_SECONDS,
     RECOMPUTE_TRAILING_KEY,
     estimated_rating,
     resolved_score,
@@ -90,14 +91,20 @@ def _enqueue_profile_recompute():
 
     user_id = int(current_user.id)
     if current_app.redis.set(
-        RECOMPUTE_QUEUED_KEY.format(user_id=user_id), "1", nx=True, ex=300
+        RECOMPUTE_QUEUED_KEY.format(user_id=user_id),
+        "1",
+        nx=True,
+        ex=RECOMPUTE_QUEUED_SECONDS,
     ):
         enqueue_task(
             "app.recommendations.recompute_recommendations",
             description="Recomputing film recommendations",
         )
     elif current_app.redis.set(
-        RECOMPUTE_TRAILING_KEY.format(user_id=user_id), "1", nx=True, ex=300
+        RECOMPUTE_TRAILING_KEY.format(user_id=user_id),
+        "1",
+        nx=True,
+        ex=RECOMPUTE_QUEUED_SECONDS,
     ):
         enqueue_task(
             "app.recommendations.recompute_recommendations",

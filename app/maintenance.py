@@ -84,6 +84,7 @@ ALERTED_KEY_PREFIX = "fitzflix:health:alerted:"
 
 PLEX_TRASH_HELD_KEY = "fitzflix:plex:trash-held"
 OBSERVER_KEY_PREFIX = "fitzflix:observer:"
+OBSERVER_HEARTBEAT_SECONDS = 180
 SCHEDULER_KEY_PREFIX = "rq:cron_scheduler:"
 
 # While a problem continues, send the alert again daily, not on every

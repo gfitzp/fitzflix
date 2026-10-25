@@ -112,11 +112,13 @@ def start_import_watch(app):
         # watch the import directory. A dead or wedged process stops
         # the refresh.
 
-        from app.maintenance import OBSERVER_KEY_PREFIX
+        from app.maintenance import OBSERVER_HEARTBEAT_SECONDS, OBSERVER_KEY_PREFIX
 
         try:
             app.redis.set(
-                f"{OBSERVER_KEY_PREFIX}{os.getpid()}", int(time.time()), ex=180
+                f"{OBSERVER_KEY_PREFIX}{os.getpid()}",
+                int(time.time()),
+                ex=OBSERVER_HEARTBEAT_SECONDS,
             )
         except Exception:
             pass

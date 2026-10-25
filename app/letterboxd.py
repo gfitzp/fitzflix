@@ -314,10 +314,16 @@ def sync_letterboxd_feeds():
                     f"{added} added, {completed} completed from bare watches, "
                     f"{updated} updated"
                 )
-                from app.recommendations import RECOMPUTE_QUEUED_KEY
+                from app.recommendations import (
+                    RECOMPUTE_QUEUED_KEY,
+                    RECOMPUTE_QUEUED_SECONDS,
+                )
 
                 if current_app.redis.set(
-                    RECOMPUTE_QUEUED_KEY.format(user_id=user.id), "1", nx=True, ex=300
+                    RECOMPUTE_QUEUED_KEY.format(user_id=user.id),
+                    "1",
+                    nx=True,
+                    ex=RECOMPUTE_QUEUED_SECONDS,
                 ):
                     enqueue_task(
                         "app.recommendations.recompute_recommendations",

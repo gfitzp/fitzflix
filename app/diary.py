@@ -54,6 +54,7 @@ PLEX_TMDB_SECONDS = 604800
 # the second from adding a row.
 
 PLEX_WATCH_KEY = "fitzflix:plex:watch:{username}:{tmdb_id}:{day}"
+PLEX_WATCH_SECONDS = 2 * 86400
 
 
 def clear_watchlist(user_id, movie_id):
@@ -528,7 +529,9 @@ def apply_plex_watch(tmdb_id, plex_username, viewed_at, source):
                 tmdb_id=tmdb_id,
                 day=day_start.strftime("%Y-%m-%d"),
             )
-            if not current_app.redis.set(marker, source, nx=True, ex=172800):
+            if not current_app.redis.set(
+                marker, source, nx=True, ex=PLEX_WATCH_SECONDS
+            ):
                 current_app.logger.debug(
                     f"Plex watch already recorded ({marker}); skipping"
                 )

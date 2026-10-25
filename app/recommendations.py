@@ -138,6 +138,7 @@ RECS_KEY = "fitzflix:recs:{user_id}"
 
 RECOMPUTE_QUEUED_KEY = "fitzflix:elicit:recompute:{user_id}"
 RECOMPUTE_TRAILING_KEY = "fitzflix:elicit:recompute:trailing:{user_id}"
+RECOMPUTE_QUEUED_SECONDS = 300
 PROFILE_KEY = "fitzflix:recs:profile:{user_id}"
 
 # The complete score map: the full-recipe engine score of each

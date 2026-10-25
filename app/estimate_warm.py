@@ -41,7 +41,7 @@ from app.recommendations import (
     tmdb_taste_score,
 )
 from app.cache import cached_fetch
-from app.streaming_rail import ENRICHED_KEY, enriched_movie
+from app.streaming_rail import ENRICHED_CACHE_SECONDS, ENRICHED_KEY, enriched_movie
 
 # This is the app instance of this process. Fitzflix resolves it lazily.
 # Thus, the nightly task can run on a worker without a second application
@@ -55,12 +55,6 @@ CURSORS_KEY = "fitzflix:estimates:warm:cursors"
 # in parallel take some minutes of queue time
 
 WARM_FETCH_BUDGET = 2000
-
-# The warmed payloads stay for 1 month. The rolling cursor warms the
-# tracked films again before that time. Thus, in practice they never
-# expire
-
-WARM_TTL = 30 * 86400
 
 # These are the affinity people warmed per user per night, and the chart
 # pages read per chart per night. TMDB stops the chart pages at 500
@@ -307,12 +301,15 @@ def warm_estimates():
             with ThreadPoolExecutor(max_workers=10) as executor:
                 list(executor.map(warm, to_fetch))
 
-        # Each warmed candidate gets the long TTL. The rolling cursor sets
-        # it again before it expires
+        # Each warmed candidate gets the full cache life again. The
+        # rolling cursor sets it again before it expires. Thus, in
+        # practice a tracked film never expires
 
         pipeline = redis.pipeline()
         for tmdb_id in candidates:
-            pipeline.expire(ENRICHED_KEY.format(tmdb_id=tmdb_id), WARM_TTL)
+            pipeline.expire(
+                ENRICHED_KEY.format(tmdb_id=tmdb_id), ENRICHED_CACHE_SECONDS
+            )
         pipeline.execute()
 
         for user_id, profile in profiles.items():

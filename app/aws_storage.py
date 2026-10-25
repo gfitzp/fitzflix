@@ -94,6 +94,7 @@ def aws_sqs_client():
 # own meta for its progress. Thus, the handle has its own key.
 
 SQS_HANDLE_KEY = "fitzflix:sqs:handle:{job_id}"
+SQS_HANDLE_SECONDS = 14 * 86400
 
 
 def _latest_receipt_handle(receipt_handle, job_id=None):
@@ -967,7 +968,7 @@ def sqs_retrieve_task():
                 current_app.redis.set(
                     SQS_HANDLE_KEY.format(job_id=downloads_by_key[key].id),
                     receipt_handle,
-                    ex=86400 * 14,
+                    ex=SQS_HANDLE_SECONDS,
                 )
                 current_app.logger.info(
                     f"'{key}' Already has a download job. Recorded the new "

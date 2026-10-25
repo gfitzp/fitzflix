@@ -136,6 +136,7 @@ WATCHLIST_SHELF_SIZE = 18
 
 RECS_REQUESTED_KEY = "fitzflix:recs:requested:{user_id}"
 RAIL_REQUESTED_KEY = "fitzflix:rail:requested:{user_id}"
+REQUESTED_SECONDS = 3600
 
 
 def _fits(movie, minutes):
@@ -437,7 +438,7 @@ def index():
             RECS_REQUESTED_KEY.format(user_id=int(current_user.id)),
             "1",
             nx=True,
-            ex=3600,
+            ex=REQUESTED_SECONDS,
         ):
             enqueue_task(
                 "app.recommendations.recompute_recommendations",
@@ -501,7 +502,7 @@ def index():
             RAIL_REQUESTED_KEY.format(user_id=int(current_user.id)),
             "1",
             nx=True,
-            ex=3600,
+            ex=REQUESTED_SECONDS,
         ):
             enqueue_task(
                 "app.streaming_rail.recompute_streaming_rail",

@@ -48,6 +48,7 @@ from app.tmdb_apply import tmdb_json_or
 # The TMDB poster gallery of a film, cached in Redis.
 
 POSTERS_KEY = "fitzflix:tmdb:movie:{tmdb_id}:posters"
+POSTERS_SECONDS = 86400
 
 
 def save_custom_poster(uploaded_data, poster_filename, custom_poster_dir):
@@ -331,7 +332,7 @@ def _tmdb_poster_gallery(tmdb_id):
             return None, False
         return body.get("posters") or [], True
 
-    return cached_fetch(POSTERS_KEY.format(tmdb_id=tmdb_id), 86400, fetch)
+    return cached_fetch(POSTERS_KEY.format(tmdb_id=tmdb_id), POSTERS_SECONDS, fetch)
 
 
 def _fetch_tmdb_poster(poster_path):

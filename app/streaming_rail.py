@@ -57,7 +57,12 @@ RAIL_KEY = "fitzflix:recs:streaming:{user_id}"
 POOL_KEY = "fitzflix:rail:pool:{provider_id}"
 POOL_CACHE_SECONDS = 86400
 ENRICHED_KEY = "fitzflix:tmdb:movie:{tmdb_id}:enriched"
-ENRICHED_CACHE_SECONDS = 7 * 86400
+
+# The 1 cache life of an enriched payload. A fetch on demand and the
+# nightly warm (app.estimate_warm) both use it. The warm sets it again
+# on each tracked film before it expires.
+
+ENRICHED_CACHE_SECONDS = 30 * 86400
 
 # Shared per-provider pool queries: (provenance tag, sort_by, vote floor).
 # The acclaimed variant needs a real vote floor. If not, obscure

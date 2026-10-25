@@ -34,6 +34,11 @@ def _clear_links(links):
 
 PEOPLE_RANKING_KEY = "fitzflix:people:ranked:{role}"
 
+# The cache life of the /people ranking. This is a backstop. The
+# credit writers invalidate the cache directly.
+
+PEOPLE_RANKING_SECONDS = 7 * 86400
+
 
 def invalidate_people_ranking():
     """Delete the cached rankings of the /people page (2026-08).
