@@ -50,6 +50,7 @@ from app.frames import (
 )
 from app.main import bp
 from app.main.forms import GuessFrameForm
+from app.main.helpers import decimal_id
 from app.models import Movie, MovieCast, UserFrameScore, UserMovieReview, movie_genres
 
 # This maps a difficulty to its number of multiple-choice options.
@@ -846,11 +847,10 @@ def name_that_frame():
             guess_shown = guessed or None
         else:
             guessed = (form.choice.data or "").strip()
-            # isdecimal, not isdigit: int() refuses a digit such as "²" (#307).
-
-            correct = guessed.isdecimal() and int(guessed) == movie.id
+            guessed_id = decimal_id(guessed)
+            correct = guessed_id == movie.id
             chosen = (
-                db.session.get(Movie, int(guessed)) if guessed.isdecimal() else None
+                db.session.get(Movie, guessed_id) if guessed_id is not None else None
             )
             guess_shown = _display_title(chosen) if chosen else None
 

@@ -64,7 +64,12 @@ from app.models import (
     UserStreamingProvider,
 )
 from app.main import bp
-from app.main.helpers import _ladder_fetch, _quick_rating, _watched_timestamp
+from app.main.helpers import (
+    _ladder_fetch,
+    _quick_rating,
+    _watched_timestamp,
+    decimal_id,
+)
 from app.newly_added import poster_fold
 from app.recommendations import (
     estimated_rating,
@@ -818,8 +823,9 @@ def profile():
 
     infuse_pin_form = InfusePinForm()
     if infuse_pin_form.infuse_pin_submit.data and infuse_pin_form.validate_on_submit():
+        # The PIN stays a string: a leading zero is part of it.
         pin = (infuse_pin_form.infuse_pin.data or "").strip()
-        if not pin.isdigit():
+        if decimal_id(pin) is None:
             flash("The PIN is the number on the screen of the Apple TV.", "danger")
         else:
             submit_pin(current_user.id, pin)
@@ -950,10 +956,11 @@ def stats():
 
     years = watched_years(int(current_user.id))
     requested = request.args.get("year")
+    requested_year = decimal_id(requested)
     if requested == "all" or not years:
         year = None
-    elif requested and requested.isdigit() and int(requested) in years:
-        year = int(requested)
+    elif requested_year is not None and requested_year in years:
+        year = requested_year
     else:
         year = years[0]
 

@@ -92,6 +92,7 @@ from app.main.helpers import (
     _ladder_fetch,
     _ladder_state,
     _latest_review_row,
+    decimal_id,
     _mark_not_interested,
     _quick_rating,
     _letterboxd_locked,
@@ -1426,9 +1427,21 @@ def movie(movie_id):
         rating = quick_rating
         target = movie
         if quick_present:
-            form_movie_id = (request.form.get("movie_id") or "").strip()
-            if form_movie_id.isdigit() and int(form_movie_id) != movie.id:
-                target = db.session.get(Movie, int(form_movie_id)) or movie
+            raw_movie_id = (request.form.get("movie_id") or "").strip()
+            if raw_movie_id:
+                form_movie_id = decimal_id(raw_movie_id)
+                target = (
+                    db.session.get(Movie, form_movie_id)
+                    if form_movie_id is not None
+                    else None
+                )
+                if target is None:
+                    # An unknown id names no film. The post must not fall
+                    # back on the film of this page.
+                    if _ladder_fetch():
+                        return jsonify({"error": "unknown film"}), 404
+                    flash("That film is not in the library.", "warning")
+                    return redirect(url_for("main.movie", movie_id=movie.id))
             _hold_verdict_lock(f"movie:{target.id}")
 
         # ✕ is "not interested, never saw it". It is a status flag, never
@@ -1658,7 +1671,12 @@ def movie(movie_id):
         # the last-response state. Thus, the strip stays anchored, and
         # the banked film only drops out of it.
         target_id = watchlist_form.movie_id.data or movie.id
-        target = db.session.get(Movie, target_id) or movie
+        target = db.session.get(Movie, target_id)
+        if target is None:
+            if _card_fetch():
+                return jsonify({"error": "unknown film"}), 404
+            flash("That film is not in the library.", "warning")
+            return redirect(url_for("main.movie", movie_id=movie.id))
         if not UserWatchlist.query.filter_by(
             user_id=int(current_user.id), movie_id=target.id
         ).first():

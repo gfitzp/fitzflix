@@ -57,6 +57,7 @@ from app.plex_player import remote_playback_configured
 from app.main.helpers import (
     _hold_verdict_lock,
     _card_fetch,
+    decimal_ids,
     season_episode_counts,
     _enqueue_profile_recompute,
     _ladder_fetch,
@@ -1375,20 +1376,8 @@ def movie_states():
     of missing films score live through the resolver that patches the
     map. Every other estimate surface reads the same source."""
 
-    def parse_ids(name):
-        """Return the integer ids of a comma-separated query value.
-
-        isdecimal, not isdigit: "²" is a digit, and int() refuses it
-        (#307)."""
-
-        return [
-            int(part)
-            for part in (request.args.get(name) or "").split(",")
-            if part.strip().isdecimal()
-        ]
-
-    movie_ids = parse_ids("movie_ids")
-    tmdb_ids = parse_ids("tmdb_ids")
+    movie_ids = decimal_ids(request.args.get("movie_ids"))
+    tmdb_ids = decimal_ids(request.args.get("tmdb_ids"))
     if len(movie_ids) + len(tmdb_ids) > MOVIE_STATES_LIMIT:
         abort(400)
 
@@ -2134,11 +2123,7 @@ def recommendations_tile():
     criteria = parse_criteria(request.args.get("criteria"))
     if criteria is None:
         abort(400)
-    exclude = [
-        int(part)
-        for part in (request.args.get("exclude") or "").split(",")
-        if part.strip().isdecimal()
-    ]
+    exclude = decimal_ids(request.args.get("exclude"))
     movie_id = replacement_film(current_user, criteria, exclude)
     if movie_id is None:
         return "", 204

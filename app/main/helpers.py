@@ -43,6 +43,30 @@ from app.videos import (
 from functools import wraps
 
 
+def decimal_id(value):
+    """Return the integer of a decimal string, or None.
+
+    This is the one parser for an id or a count that comes from a form
+    field, a query string or an API payload. The test is isdecimal, not
+    isdigit: "²" passes isdigit(), and int() refuses it (#307). None, a
+    blank value and a value with other characters give None."""
+
+    text = str(value if value is not None else "").strip()
+    return int(text) if text.isdecimal() else None
+
+
+def decimal_ids(values):
+    """Return the integer ids in a comma-separated string or a list.
+
+    A part that is not a decimal string is skipped. The order of the
+    input is kept."""
+
+    if isinstance(values, str) or values is None:
+        values = (values or "").split(",")
+    ids = (decimal_id(value) for value in values)
+    return [value for value in ids if value is not None]
+
+
 def _enqueue_profile_recompute():
     """Enqueue a recompute that puts new ratings into the stored profile.
 

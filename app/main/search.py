@@ -34,6 +34,7 @@ from app.models import (
 from app.main import bp
 from app.main.helpers import (
     _upgrade_threshold,
+    decimal_id,
     season_episode_counts,
     library_upgradable,
     series_upgradable,
@@ -528,8 +529,9 @@ def search_tmdb():
                     if len(bucket) >= 10:
                         break
                     year = (result.get(date_key) or "")[:4]
+                    year_number = decimal_id(year)
                     if years and not (
-                        year.isdigit() and years[0] <= int(year) <= years[1]
+                        year_number is not None and years[0] <= year_number <= years[1]
                     ):
                         continue
                     bucket.append(

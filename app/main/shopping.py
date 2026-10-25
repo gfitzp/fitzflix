@@ -42,6 +42,7 @@ from app.streaming import (
     user_provider_ids,
 )
 from app.main import bp
+from app.main.helpers import decimal_id
 
 # This is the scarcity order of the watchlist view (#247, the ranking
 # of Glenn). A film that no service of a watcher has can only be
@@ -1001,8 +1002,8 @@ def movie_shopping():
         The id is a hidden field. A post without it, or with an unknown
         id, flashes a message. It does not give a 500."""
 
-        raw = str(movie_shopping_exclude_form.movie_id.data or "").strip()
-        movie = db.session.get(Movie, int(raw)) if raw.isdecimal() else None
+        movie_id = decimal_id(movie_shopping_exclude_form.movie_id.data)
+        movie = db.session.get(Movie, movie_id) if movie_id is not None else None
         if movie is None:
             flash("That film is not in the library.", "warning")
         return movie

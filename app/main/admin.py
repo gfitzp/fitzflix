@@ -64,7 +64,7 @@ from app.models import (
     tv_file_rank,
 )
 from app.main import bp
-from app.main.helpers import admin_required
+from app.main.helpers import admin_required, decimal_id, decimal_ids
 from app.main.library import restore_cost_estimate
 from app.log_digest import stored_digest
 from app.maintenance import system_health
@@ -864,9 +864,7 @@ def missing_files():
             flash("Incorrect password provided!", "danger")
             return redirect(url_for("main.missing_files"))
 
-        selected = [
-            int(value) for value in request.form.getlist("file_id") if value.isdigit()
-        ]
+        selected = decimal_ids(request.form.getlist("file_id"))
         files = (
             File.query.filter(File.id.in_(selected), File.aws_key.isnot(None)).all()
             if selected
@@ -946,11 +944,8 @@ def held_imports():
     if (
         form.import_submit.data or form.archive_submit.data or form.discard_submit.data
     ) and form.validate_on_submit():
-        held = (
-            db.session.get(HeldImport, int(form.held_id.data))
-            if form.held_id.data.isdigit()
-            else None
-        )
+        held_id = decimal_id(form.held_id.data)
+        held = db.session.get(HeldImport, held_id) if held_id is not None else None
         if held is None or not os.path.exists(held.held_path):
             flash("That file no longer waits for a decision.", "warning")
             return redirect(url_for("main.held_imports"))
@@ -996,9 +991,10 @@ def held_imports():
         if not current_user.check_password(restore_form.password.data):
             flash("Incorrect password provided!", "danger")
             return redirect(url_for("main.held_imports"))
+        archived_id = decimal_id(restore_form.archived_id.data)
         archived = (
-            db.session.get(ArchivedOriginal, int(restore_form.archived_id.data))
-            if restore_form.archived_id.data.isdigit()
+            db.session.get(ArchivedOriginal, archived_id)
+            if archived_id is not None
             else None
         )
         if archived is None:
