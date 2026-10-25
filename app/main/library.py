@@ -74,10 +74,11 @@ from app.models import (
     UserMovieReview,
     UserMovieStatus,
     UserWatchlist,
-    movie_file_rank,
     movie_genres,
     tmdb_get,
-    tv_file_rank,
+    ranked_movie_files,
+    ranked_tv_files,
+    title_sort,
 )
 from app.main import bp
 from app.newly_added import poster_fold
@@ -256,6 +257,346 @@ def _person_bio(details):
     }
 
 
+def _filmography(credit):
+    """Render the filmography page of 1 TMDB person, the credit view of movie_library."""
+
+    ranked_files = ranked_movie_files()
+
+    # Credit ids are TMDB person ids. Thus, the filmography is not
+    # limited to people with local credit rows. The user can browse
+    # each person that TMDB knows from any cast list. The day-cached
+    # TMDB person lookup supplies the biography for each person. A
+    # local credit row supplies the name and photo when Fitzflix
+    # cannot reach TMDB.
+
+    person = TMDBCredit.query.filter_by(id=int(credit)).first()
+    details = _tmdb_person_details(int(credit)) or {}
+    person_name = details.get("name") or (person.name if person else None)
+    person_profile_path = details.get("profile_path") or (
+        person.tmdb_profile_path if person else None
+    )
+    if person_name is None:
+        abort(404)
+    bio = _person_bio(details) if details else None
+
+    # The filmography shows the full TMDB career of the person. It
+    # does not matter if a film has a local record. The local rows
+    # attach the best owned file through an outer join. The rank
+    # condition must be in the join, not in the WHERE clause. If not,
+    # the WHERE clause would filter away the file-less review-only
+    # records. The full credit list comes from TMDB, cached for 1 day.
+
+    best_file_ids = db.session.query(ranked_files.c.id).filter(ranked_files.c.rank == 1)
+
+    def local_credit_rows(credit_table):
+        """Return the local films of the person through a credit join table.
+
+        Each film has its best owned file outer-joined."""
+
+        query = (
+            db.session.query(File, Movie, RefQuality)
+            .select_from(Movie)
+            .join(credit_table, (credit_table.movie_id == Movie.id))
+            .outerjoin(
+                File,
+                db.and_(
+                    File.movie_id == Movie.id,
+                    File.feature_type_id == None,
+                    File.id.in_(best_file_ids),
+                ),
+            )
+            .outerjoin(RefQuality, (RefQuality.id == File.quality_id))
+            .filter(credit_table.credit_id == int(credit))
+        )
+        if credit_table is MovieCrew:
+            query = query.filter(MovieCrew.job.in_(list(CREW_ROLE_LABELS)))
+        return query.all()
+
+    local_rows = local_credit_rows(MovieCast) + local_credit_rows(MovieCrew)
+
+    # The best owned copy per movie. A movie can have several rank-1
+    # editions. The filmography shows 1 entry per film.
+
+    local = {}
+    for file, film, quality in local_rows:
+        existing = local.get(film.id)
+        if (
+            existing is None
+            or (quality is not None and existing["quality"] is None)
+            or (
+                quality is not None
+                and existing["quality"] is not None
+                and quality.preference > existing["quality"].preference
+            )
+        ):
+            local[film.id] = {"movie": film, "file": file, "quality": quality}
+
+    reviewed = {
+        movie_id: bool(liked)
+        for movie_id, liked in db.session.query(
+            UserMovieReview.movie_id,
+            db.func.max(db.case((UserMovieReview.liked == True, 1), else_=0)),
+        )
+        .filter(UserMovieReview.user_id == int(current_user.id))
+        .filter(UserMovieReview.movie_id.in_(list(local.keys()) or [0]))
+        .group_by(UserMovieReview.movie_id)
+        .all()
+    }
+
+    # The full TMDB credit list of the person, cached for 1 day
+
+    tmdb_credits = None
+    if current_app.config["TMDB_API_KEY"]:
+        from app.estimate_warm import person_movie_credits
+
+        tmdb_credits = person_movie_credits(credit, get=tmdb_get)
+
+    # Merge. There is 1 row per film. The TMDB credits come first. They
+    # are deduplicated by film, and the characters are combined. Then
+    # come the local credits that TMDB did not list.
+
+    local_by_tmdb_id = {
+        entry["movie"].tmdb_id: entry
+        for entry in local.values()
+        if entry["movie"].tmdb_id is not None
+    }
+    rows = {}
+
+    def credit_row(entry):
+        """Return the merged filmography row for a TMDB credit entry.
+
+        This function creates the row on first sight. The cast and
+        crew credits for the same film share 1 row."""
+
+        tmdb_id = entry.get("id")
+        row = rows.get(tmdb_id)
+        if row is None:
+            release_year = (entry.get("release_date") or "")[:4]
+            local_entry = local_by_tmdb_id.get(tmdb_id)
+            row = rows[tmdb_id] = {
+                "tmdb_id": tmdb_id,
+                "title": entry.get("title"),
+                "year": int(release_year) if release_year.isdigit() else None,
+                "poster_path": entry.get("poster_path"),
+                "genre_ids": entry.get("genre_ids") or [],
+                "overview": entry.get("overview"),
+                "characters": [],
+                "jobs": [],
+                "movie": local_entry["movie"] if local_entry else None,
+                "file": local_entry["file"] if local_entry else None,
+                "quality": local_entry["quality"] if local_entry else None,
+            }
+        return row
+
+    for cast_credit in (tmdb_credits or {}).get("cast") or []:
+        if cast_credit.get("id") is None:
+            continue
+        row = credit_row(cast_credit)
+        if cast_credit.get("character"):
+            row["characters"].append(cast_credit["character"])
+
+    for crew_credit in (tmdb_credits or {}).get("crew") or []:
+        if crew_credit.get("id") is None:
+            continue
+        row = credit_row(crew_credit)
+        label = CREW_ROLE_LABELS.get(crew_credit.get("job"))
+        if label and label not in row["jobs"]:
+            row["jobs"].append(label)
+    for row in rows.values():
+        row["jobs"].sort(key=CLOSING_CREDIT_ORDER.index)
+
+    matched_tmdb_ids = set(rows.keys())
+    for entry in local.values():
+        if entry["movie"].tmdb_id in matched_tmdb_ids:
+            continue
+        rows[f"local:{entry['movie'].id}"] = {
+            "tmdb_id": entry["movie"].tmdb_id,
+            "title": entry["movie"].tmdb_title or entry["movie"].title,
+            "year": entry["movie"].year,
+            "poster_path": entry["movie"].tmdb_poster_path,
+            "overview": entry["movie"].tmdb_overview,
+            "characters": [],
+            "jobs": [],
+            "movie": entry["movie"],
+            "file": entry["file"],
+            "quality": entry["quality"],
+        }
+
+    filmography = sorted(
+        rows.values(), key=lambda row: (row["year"] is None, row["year"] or 0)
+    )
+    watchlisted = {
+        movie_id
+        for (movie_id,) in db.session.query(UserWatchlist.movie_id)
+        .filter(UserWatchlist.user_id == int(current_user.id))
+        .filter(UserWatchlist.movie_id.in_(list(local.keys()) or [0]))
+    }
+    for row in filmography:
+        row["seen"] = row["movie"] is not None and row["movie"].id in reviewed
+        row["liked"] = bool(row["movie"] and reviewed.get(row["movie"].id))
+        row["watchlisted"] = row["movie"] is not None and row["movie"].id in watchlisted
+
+    # "Might interest you" markers. The unowned films score at render
+    # time. The score uses the cached credits payload and the stored
+    # taste profile of the user (no TMDB calls, nothing persisted).
+    # The owned unwatched films show a badge when the nightly
+    # recompute ranked them in the stored recommendations. Thus, the
+    # filmographies agree with the library rail and the search pages.
+
+    profile = stored_profile(current_app.redis, current_user.id)
+    rec_ids = recommended_movie_ids(current_app.redis, current_user.id)
+    refused = not_interested_movie_ids(current_user.id)
+    interesting = credit_interest_markers(profile, int(credit), filmography)
+    for row in filmography:
+        if row["movie"] is not None and row["movie"].id in refused:
+            row["might_interest"] = False
+            continue
+        unowned_marker = (
+            row["quality"] is None and not row["seen"] and row["tmdb_id"] in interesting
+        )
+        owned_marker = bool(
+            row["movie"] and not row["seen"] and row["movie"].id in rec_ids
+        )
+        row["might_interest"] = unowned_marker or owned_marker
+
+    # Streaming badges on the films without a local file, filtered to
+    # the services of this user. Fitzflix reads the availability from
+    # the cache that the nightly refresh keeps full. It never fetches
+    # inline (2026-08). A career can span hundreds of films. Each
+    # fetch shares the app-wide TMDB rate limiter. Thus, the page of
+    # a prolific actor stalled 4 to 6 seconds behind 50 fetches. The
+    # refresh cannot cover the films without a record. Those films
+    # warm in the background for the next visit.
+
+    provider_ids = user_provider_ids(current_user)
+    if provider_ids:
+        availability_by_id, deferred = batch_title_availability(
+            (
+                row["tmdb_id"]
+                for row in filmography
+                if row["tmdb_id"] and not row["quality"]
+            ),
+            fetch_limit=0,
+        )
+        request_warm(int(credit), deferred)
+        for row in filmography:
+            if row["quality"] or not row["tmdb_id"]:
+                continue
+            availability = availability_by_id.get(row["tmdb_id"])
+            matches = streaming_matches(
+                availability, provider_ids, tmdb_id=row["tmdb_id"]
+            )
+            rentals = rental_matches(availability, provider_ids)
+            if matches:
+                row["streaming"] = matches
+            if rentals:
+                row["rentals"] = rentals
+
+    # Television credits. This is the TMDB TV career of the person,
+    # 1 row per series, cached for 1 day like the film list. Self
+    # appearances are dropped. The talk-show and awards-night rows
+    # would swamp the acting credits (the key-roles-only spirit).
+    # Owned series link to their pages. TV has no review flow. Thus,
+    # the unowned rows render without a link (the TMDB-row rule).
+
+    tv_rows = {}
+    tv_credits = None
+    if current_app.config["TMDB_API_KEY"]:
+        tv_cache_key = PERSON_TV_CREDITS_KEY.format(person_id=int(credit))
+        cached = current_app.redis.get(tv_cache_key)
+        if cached:
+            tv_credits = json.loads(cached)
+        else:
+            try:
+                r = tmdb_get(
+                    current_app.config["TMDB_API_URL"]
+                    + f"/person/{int(credit)}/tv_credits",
+                    params={"api_key": current_app.config["TMDB_API_KEY"]},
+                    timeout=10,
+                )
+                r.raise_for_status()
+                payload = r.json()
+                tv_credits = {
+                    "cast": [
+                        entry
+                        for entry in payload.get("cast") or []
+                        if not SELF_ROLE.match(entry.get("character") or "")
+                    ],
+                    "crew": [
+                        entry
+                        for entry in payload.get("crew") or []
+                        if entry.get("job") in CREW_ROLE_LABELS
+                    ],
+                }
+                current_app.redis.set(tv_cache_key, json.dumps(tv_credits), ex=86400)
+            except Exception:
+                current_app.logger.warning(traceback.format_exc())
+
+    if tv_credits:
+        credited_ids = {
+            entry.get("id")
+            for entry in (tv_credits.get("cast") or []) + (tv_credits.get("crew") or [])
+            if entry.get("id") is not None
+        }
+        local_series = {
+            series.tmdb_id: series
+            for series in TVSeries.query.filter(
+                TVSeries.tmdb_id.in_(credited_ids or [0])
+            )
+        }
+
+        def tv_credit_row(entry):
+            tmdb_id = entry.get("id")
+            row = tv_rows.get(tmdb_id)
+            if row is None:
+                first_air = (entry.get("first_air_date") or "")[:4]
+                series = local_series.get(tmdb_id)
+                row = tv_rows[tmdb_id] = {
+                    "tmdb_id": tmdb_id,
+                    "name": entry.get("name"),
+                    "year": int(first_air) if first_air.isdigit() else None,
+                    "poster_path": entry.get("poster_path"),
+                    "overview": entry.get("overview"),
+                    "characters": [],
+                    "jobs": [],
+                    "episode_count": entry.get("episode_count"),
+                    "series": series,
+                    "owned": bool(series and series.files.count()),
+                }
+            return row
+
+        for entry in tv_credits.get("cast") or []:
+            if entry.get("id") is None:
+                continue
+            row = tv_credit_row(entry)
+            if entry.get("character"):
+                row["characters"].append(entry["character"])
+        for entry in tv_credits.get("crew") or []:
+            if entry.get("id") is None:
+                continue
+            row = tv_credit_row(entry)
+            label = CREW_ROLE_LABELS.get(entry.get("job"))
+            if label and label not in row["jobs"]:
+                row["jobs"].append(label)
+        for row in tv_rows.values():
+            row["jobs"].sort(key=CLOSING_CREDIT_ORDER.index)
+
+    television = sorted(
+        tv_rows.values(), key=lambda row: (row["year"] is None, row["year"] or 0)
+    )
+
+    return render_template(
+        "filmography.html",
+        title=person_name,
+        person_name=person_name,
+        profile_path=person_profile_path,
+        bio=bio,
+        filmography=filmography,
+        television=television,
+        tmdb_unavailable=tmdb_credits is None,
+    )
+
+
 @bp.route("/library/movie", methods=["GET", "POST"])
 @login_required
 def movie_library():
@@ -279,487 +620,55 @@ def movie_library():
     if not quality.isdecimal():
         quality = "0"
 
+    if credit:
+        return _filmography(credit)
+
     # This subquery gets the best movie files.
 
-    ranked_files = (
-        db.session.query(
-            File.id,
-            movie_file_rank(),
-        )
+    ranked_files = ranked_movie_files()
+    movies = (
+        db.session.query(File, Movie, RefQuality)
         .join(Movie, (Movie.id == File.movie_id))
         .join(RefQuality, (RefQuality.id == File.quality_id))
-        .subquery()
+        .join(ranked_files, (ranked_files.c.id == File.id))
     )
 
-    if credit:
-        # Credit ids are TMDB person ids. Thus, the filmography is not
-        # limited to people with local credit rows. The user can browse
-        # each person that TMDB knows from any cast list. The day-cached
-        # TMDB person lookup supplies the biography for each person. A
-        # local credit row supplies the name and photo when Fitzflix
-        # cannot reach TMDB.
+    # A search ignores the genre and the quality. The genre links on the
+    # movie pages filter the library to the films that carry the TMDB
+    # genre. The quality dropdown can combine with the genre.
 
-        person = TMDBCredit.query.filter_by(id=int(credit)).first()
-        details = _tmdb_person_details(int(credit)) or {}
-        person_name = details.get("name") or (person.name if person else None)
-        person_profile_path = details.get("profile_path") or (
-            person.tmdb_profile_path if person else None
-        )
-        if person_name is None:
-            abort(404)
-        bio = _person_bio(details) if details else None
-
-        # The filmography shows the full TMDB career of the person. It
-        # does not matter if a film has a local record. The local rows
-        # attach the best owned file through an outer join. The rank
-        # condition must be in the join, not in the WHERE clause. If not,
-        # the WHERE clause would filter away the file-less review-only
-        # records. The full credit list comes from TMDB, cached for 1 day.
-
-        best_file_ids = db.session.query(ranked_files.c.id).filter(
-            ranked_files.c.rank == 1
-        )
-
-        def local_credit_rows(credit_table):
-            """Return the local films of the person through a credit join table.
-
-            Each film has its best owned file outer-joined."""
-
-            query = (
-                db.session.query(File, Movie, RefQuality)
-                .select_from(Movie)
-                .join(credit_table, (credit_table.movie_id == Movie.id))
-                .outerjoin(
-                    File,
-                    db.and_(
-                        File.movie_id == Movie.id,
-                        File.feature_type_id == None,
-                        File.id.in_(best_file_ids),
-                    ),
-                )
-                .outerjoin(RefQuality, (RefQuality.id == File.quality_id))
-                .filter(credit_table.credit_id == int(credit))
-            )
-            if credit_table is MovieCrew:
-                query = query.filter(MovieCrew.job.in_(list(CREW_ROLE_LABELS)))
-            return query.all()
-
-        local_rows = local_credit_rows(MovieCast) + local_credit_rows(MovieCrew)
-
-        # The best owned copy per movie. A movie can have several rank-1
-        # editions. The filmography shows 1 entry per film.
-
-        local = {}
-        for file, film, quality in local_rows:
-            existing = local.get(film.id)
-            if (
-                existing is None
-                or (quality is not None and existing["quality"] is None)
-                or (
-                    quality is not None
-                    and existing["quality"] is not None
-                    and quality.preference > existing["quality"].preference
-                )
-            ):
-                local[film.id] = {"movie": film, "file": file, "quality": quality}
-
-        reviewed = {
-            movie_id: bool(liked)
-            for movie_id, liked in db.session.query(
-                UserMovieReview.movie_id,
-                db.func.max(db.case((UserMovieReview.liked == True, 1), else_=0)),
-            )
-            .filter(UserMovieReview.user_id == int(current_user.id))
-            .filter(UserMovieReview.movie_id.in_(list(local.keys()) or [0]))
-            .group_by(UserMovieReview.movie_id)
-            .all()
-        }
-
-        # The full TMDB credit list of the person, cached for 1 day
-
-        tmdb_credits = None
-        if current_app.config["TMDB_API_KEY"]:
-            from app.estimate_warm import person_movie_credits
-
-            tmdb_credits = person_movie_credits(credit, get=tmdb_get)
-
-        # Merge. There is 1 row per film. The TMDB credits come first. They
-        # are deduplicated by film, and the characters are combined. Then
-        # come the local credits that TMDB did not list.
-
-        local_by_tmdb_id = {
-            entry["movie"].tmdb_id: entry
-            for entry in local.values()
-            if entry["movie"].tmdb_id is not None
-        }
-        rows = {}
-
-        def credit_row(entry):
-            """Return the merged filmography row for a TMDB credit entry.
-
-            This function creates the row on first sight. The cast and
-            crew credits for the same film share 1 row."""
-
-            tmdb_id = entry.get("id")
-            row = rows.get(tmdb_id)
-            if row is None:
-                release_year = (entry.get("release_date") or "")[:4]
-                local_entry = local_by_tmdb_id.get(tmdb_id)
-                row = rows[tmdb_id] = {
-                    "tmdb_id": tmdb_id,
-                    "title": entry.get("title"),
-                    "year": int(release_year) if release_year.isdigit() else None,
-                    "poster_path": entry.get("poster_path"),
-                    "genre_ids": entry.get("genre_ids") or [],
-                    "overview": entry.get("overview"),
-                    "characters": [],
-                    "jobs": [],
-                    "movie": local_entry["movie"] if local_entry else None,
-                    "file": local_entry["file"] if local_entry else None,
-                    "quality": local_entry["quality"] if local_entry else None,
-                }
-            return row
-
-        for cast_credit in (tmdb_credits or {}).get("cast") or []:
-            if cast_credit.get("id") is None:
-                continue
-            row = credit_row(cast_credit)
-            if cast_credit.get("character"):
-                row["characters"].append(cast_credit["character"])
-
-        for crew_credit in (tmdb_credits or {}).get("crew") or []:
-            if crew_credit.get("id") is None:
-                continue
-            row = credit_row(crew_credit)
-            label = CREW_ROLE_LABELS.get(crew_credit.get("job"))
-            if label and label not in row["jobs"]:
-                row["jobs"].append(label)
-        for row in rows.values():
-            row["jobs"].sort(key=CLOSING_CREDIT_ORDER.index)
-
-        matched_tmdb_ids = set(rows.keys())
-        for entry in local.values():
-            if entry["movie"].tmdb_id in matched_tmdb_ids:
-                continue
-            rows[f"local:{entry['movie'].id}"] = {
-                "tmdb_id": entry["movie"].tmdb_id,
-                "title": entry["movie"].tmdb_title or entry["movie"].title,
-                "year": entry["movie"].year,
-                "poster_path": entry["movie"].tmdb_poster_path,
-                "overview": entry["movie"].tmdb_overview,
-                "characters": [],
-                "jobs": [],
-                "movie": entry["movie"],
-                "file": entry["file"],
-                "quality": entry["quality"],
-            }
-
-        filmography = sorted(
-            rows.values(), key=lambda row: (row["year"] is None, row["year"] or 0)
-        )
-        watchlisted = {
-            movie_id
-            for (movie_id,) in db.session.query(UserWatchlist.movie_id)
-            .filter(UserWatchlist.user_id == int(current_user.id))
-            .filter(UserWatchlist.movie_id.in_(list(local.keys()) or [0]))
-        }
-        for row in filmography:
-            row["seen"] = row["movie"] is not None and row["movie"].id in reviewed
-            row["liked"] = bool(row["movie"] and reviewed.get(row["movie"].id))
-            row["watchlisted"] = (
-                row["movie"] is not None and row["movie"].id in watchlisted
-            )
-
-        # "Might interest you" markers. The unowned films score at render
-        # time. The score uses the cached credits payload and the stored
-        # taste profile of the user (no TMDB calls, nothing persisted).
-        # The owned unwatched films show a badge when the nightly
-        # recompute ranked them in the stored recommendations. Thus, the
-        # filmographies agree with the library rail and the search pages.
-
-        profile = stored_profile(current_app.redis, current_user.id)
-        rec_ids = recommended_movie_ids(current_app.redis, current_user.id)
-        refused = not_interested_movie_ids(current_user.id)
-        interesting = credit_interest_markers(profile, int(credit), filmography)
-        for row in filmography:
-            if row["movie"] is not None and row["movie"].id in refused:
-                row["might_interest"] = False
-                continue
-            unowned_marker = (
-                row["quality"] is None
-                and not row["seen"]
-                and row["tmdb_id"] in interesting
-            )
-            owned_marker = bool(
-                row["movie"] and not row["seen"] and row["movie"].id in rec_ids
-            )
-            row["might_interest"] = unowned_marker or owned_marker
-
-        # Streaming badges on the films without a local file, filtered to
-        # the services of this user. Fitzflix reads the availability from
-        # the cache that the nightly refresh keeps full. It never fetches
-        # inline (2026-08). A career can span hundreds of films. Each
-        # fetch shares the app-wide TMDB rate limiter. Thus, the page of
-        # a prolific actor stalled 4 to 6 seconds behind 50 fetches. The
-        # refresh cannot cover the films without a record. Those films
-        # warm in the background for the next visit.
-
-        provider_ids = user_provider_ids(current_user)
-        if provider_ids:
-            availability_by_id, deferred = batch_title_availability(
-                (
-                    row["tmdb_id"]
-                    for row in filmography
-                    if row["tmdb_id"] and not row["quality"]
-                ),
-                fetch_limit=0,
-            )
-            request_warm(int(credit), deferred)
-            for row in filmography:
-                if row["quality"] or not row["tmdb_id"]:
-                    continue
-                availability = availability_by_id.get(row["tmdb_id"])
-                matches = streaming_matches(
-                    availability, provider_ids, tmdb_id=row["tmdb_id"]
-                )
-                rentals = rental_matches(availability, provider_ids)
-                if matches:
-                    row["streaming"] = matches
-                if rentals:
-                    row["rentals"] = rentals
-
-        # Television credits. This is the TMDB TV career of the person,
-        # 1 row per series, cached for 1 day like the film list. Self
-        # appearances are dropped. The talk-show and awards-night rows
-        # would swamp the acting credits (the key-roles-only spirit).
-        # Owned series link to their pages. TV has no review flow. Thus,
-        # the unowned rows render without a link (the TMDB-row rule).
-
-        tv_rows = {}
-        tv_credits = None
-        if current_app.config["TMDB_API_KEY"]:
-            tv_cache_key = PERSON_TV_CREDITS_KEY.format(person_id=int(credit))
-            cached = current_app.redis.get(tv_cache_key)
-            if cached:
-                tv_credits = json.loads(cached)
-            else:
-                try:
-                    r = tmdb_get(
-                        current_app.config["TMDB_API_URL"]
-                        + f"/person/{int(credit)}/tv_credits",
-                        params={"api_key": current_app.config["TMDB_API_KEY"]},
-                        timeout=10,
-                    )
-                    r.raise_for_status()
-                    payload = r.json()
-                    tv_credits = {
-                        "cast": [
-                            entry
-                            for entry in payload.get("cast") or []
-                            if not SELF_ROLE.match(entry.get("character") or "")
-                        ],
-                        "crew": [
-                            entry
-                            for entry in payload.get("crew") or []
-                            if entry.get("job") in CREW_ROLE_LABELS
-                        ],
-                    }
-                    current_app.redis.set(
-                        tv_cache_key, json.dumps(tv_credits), ex=86400
-                    )
-                except Exception:
-                    current_app.logger.warning(traceback.format_exc())
-
-        if tv_credits:
-            credited_ids = {
-                entry.get("id")
-                for entry in (tv_credits.get("cast") or [])
-                + (tv_credits.get("crew") or [])
-                if entry.get("id") is not None
-            }
-            local_series = {
-                series.tmdb_id: series
-                for series in TVSeries.query.filter(
-                    TVSeries.tmdb_id.in_(credited_ids or [0])
-                )
-            }
-
-            def tv_credit_row(entry):
-                tmdb_id = entry.get("id")
-                row = tv_rows.get(tmdb_id)
-                if row is None:
-                    first_air = (entry.get("first_air_date") or "")[:4]
-                    series = local_series.get(tmdb_id)
-                    row = tv_rows[tmdb_id] = {
-                        "tmdb_id": tmdb_id,
-                        "name": entry.get("name"),
-                        "year": int(first_air) if first_air.isdigit() else None,
-                        "poster_path": entry.get("poster_path"),
-                        "overview": entry.get("overview"),
-                        "characters": [],
-                        "jobs": [],
-                        "episode_count": entry.get("episode_count"),
-                        "series": series,
-                        "owned": bool(series and series.files.count()),
-                    }
-                return row
-
-            for entry in tv_credits.get("cast") or []:
-                if entry.get("id") is None:
-                    continue
-                row = tv_credit_row(entry)
-                if entry.get("character"):
-                    row["characters"].append(entry["character"])
-            for entry in tv_credits.get("crew") or []:
-                if entry.get("id") is None:
-                    continue
-                row = tv_credit_row(entry)
-                label = CREW_ROLE_LABELS.get(entry.get("job"))
-                if label and label not in row["jobs"]:
-                    row["jobs"].append(label)
-            for row in tv_rows.values():
-                row["jobs"].sort(key=CLOSING_CREDIT_ORDER.index)
-
-        television = sorted(
-            tv_rows.values(), key=lambda row: (row["year"] is None, row["year"] or 0)
-        )
-
-        return render_template(
-            "filmography.html",
-            title=person_name,
-            person_name=person_name,
-            profile_path=person_profile_path,
-            bio=bio,
-            filmography=filmography,
-            television=television,
-            tmdb_unavailable=tmdb_credits is None,
-        )
-
-    elif q:
+    if q:
         title = f"Library movies matching '{q}'"
-        q = q.replace(" ", "%")
-        movies = (
-            db.session.query(File, Movie, RefQuality)
-            .join(Movie, (Movie.id == File.movie_id))
-            .join(RefQuality, (RefQuality.id == File.quality_id))
-            .join(ranked_files, (ranked_files.c.id == File.id))
-            .filter(File.feature_type_id == None)
-            .filter(ranked_files.c.rank == 1)
-            .filter(
-                db.or_(Movie.title.ilike(f"%{q}%"), Movie.tmdb_title.ilike(f"%{q}%"))
-            )
-            .order_by(
-                db.func.regexp_replace(
-                    db.case(
-                        (Movie.tmdb_title != None, Movie.tmdb_title),
-                        else_=Movie.title,
-                    ),
-                    "^(The|A|An) ",
-                    "",
-                ).asc(),
-                db.case(
-                    (Movie.tmdb_title != None, Movie.tmdb_release_date),
-                    else_=Movie.year,
-                ).asc(),
-                File.edition.asc(),
-            )
-            .paginate(page=page, per_page=120, error_out=False)
-        )
-
     elif genre:
-        # The genre links on the movie pages go here. The library is
-        # filtered to the films that carry the TMDB genre. The quality
-        # dropdown can combine with it.
-
         genre_row = db.session.get(TMDBGenre, int(genre))
         if genre_row is None:
             abort(404)
         title = f"{genre_row.name} Movies"
-        movies = (
-            db.session.query(File, Movie, RefQuality)
-            .join(Movie, (Movie.id == File.movie_id))
-            .join(RefQuality, (RefQuality.id == File.quality_id))
-            .join(ranked_files, (ranked_files.c.id == File.id))
-            .join(movie_genres, (movie_genres.c.movie_id == Movie.id))
-            .filter(movie_genres.c.genre_id == int(genre))
-            .filter(File.feature_type_id == None)
-            .filter(ranked_files.c.rank == 1)
-        )
-        if int(quality) > 0:
-            movies = movies.filter(RefQuality.id == int(quality))
-        movies = movies.order_by(
-            db.func.regexp_replace(
-                db.case(
-                    (Movie.tmdb_title != None, Movie.tmdb_title),
-                    else_=Movie.title,
-                ),
-                "^(The|A|An) ",
-                "",
-            ).asc(),
-            db.case(
-                (Movie.tmdb_title != None, Movie.tmdb_release_date),
-                else_=Movie.year,
-            ).asc(),
-            File.edition.asc(),
-        ).paginate(page=page, per_page=120, error_out=False)
-
-    elif int(quality) > 0:
-        title = "Movie Library"
-        movies = (
-            db.session.query(File, Movie, RefQuality)
-            .join(Movie, (Movie.id == File.movie_id))
-            .join(RefQuality, (RefQuality.id == File.quality_id))
-            .join(ranked_files, (ranked_files.c.id == File.id))
-            .filter(File.feature_type_id == None)
-            .filter(ranked_files.c.rank == 1)
-            .filter(RefQuality.id == int(quality))
-            .order_by(
-                db.func.regexp_replace(
-                    db.case(
-                        (Movie.tmdb_title != None, Movie.tmdb_title),
-                        else_=Movie.title,
-                    ),
-                    "^(The|A|An) ",
-                    "",
-                ).asc(),
-                db.case(
-                    (Movie.tmdb_title != None, Movie.tmdb_release_date),
-                    else_=Movie.year,
-                ).asc(),
-                File.edition.asc(),
-            )
-            .paginate(page=page, per_page=120, error_out=False)
-        )
-
+        movies = movies.join(
+            movie_genres, (movie_genres.c.movie_id == Movie.id)
+        ).filter(movie_genres.c.genre_id == int(genre))
     else:
         title = "Movie Library"
-        movies = (
-            db.session.query(File, Movie, RefQuality)
-            .join(Movie, (Movie.id == File.movie_id))
-            .join(RefQuality, (RefQuality.id == File.quality_id))
-            .join(ranked_files, (ranked_files.c.id == File.id))
-            .filter(File.feature_type_id == None)
-            .filter(ranked_files.c.rank == 1)
-            .order_by(
-                db.func.regexp_replace(
-                    db.case(
-                        (Movie.tmdb_title != None, Movie.tmdb_title),
-                        else_=Movie.title,
-                    ),
-                    "^(The|A|An) ",
-                    "",
-                ).asc(),
-                db.case(
-                    (Movie.tmdb_title != None, Movie.tmdb_release_date),
-                    else_=Movie.year,
-                ).asc(),
-                File.edition.asc(),
-            )
-            .paginate(page=page, per_page=120, error_out=False)
+    movies = movies.filter(File.feature_type_id == None).filter(
+        ranked_files.c.rank == 1
+    )
+    if q:
+        like = q.replace(" ", "%")
+        movies = movies.filter(
+            db.or_(Movie.title.ilike(f"%{like}%"), Movie.tmdb_title.ilike(f"%{like}%"))
         )
+    elif int(quality) > 0:
+        movies = movies.filter(RefQuality.id == int(quality))
+    movies = movies.order_by(
+        title_sort(Movie).asc(),
+        db.case(
+            (Movie.tmdb_title != None, Movie.tmdb_release_date),
+            else_=Movie.year,
+        ).asc(),
+        File.edition.asc(),
+    ).paginate(page=page, per_page=120, error_out=False)
 
-    # The arrows keep each filter of the page. The search text comes from
-    # the request, because the query above changed its spaces to "%".
+    # The arrows keep each filter of the page.
 
     filters = {
         "quality": quality,
@@ -907,15 +816,7 @@ def criterion_collection():
     # A film whose record is older than its release was never marked.
     # But the catalog knows its spine.
 
-    ranked_files = (
-        db.session.query(
-            File.id,
-            movie_file_rank(),
-        )
-        .join(Movie, (Movie.id == File.movie_id))
-        .join(RefQuality, (RefQuality.id == File.quality_id))
-        .subquery()
-    )
+    ranked_files = ranked_movie_files()
 
     results = (
         db.session.query(File, Movie, RefQuality)
@@ -1987,15 +1888,7 @@ def movie_files(movie_id):
 
     # This subquery gets the ranking of each file of this movie.
 
-    ranked_files = (
-        db.session.query(
-            File.id,
-            movie_file_rank(),
-        )
-        .join(Movie, (Movie.id == File.movie_id))
-        .join(RefQuality, (RefQuality.id == File.quality_id))
-        .subquery()
-    )
+    ranked_files = ranked_movie_files()
 
     files = (
         db.session.query(File, Movie, RefQuality, RefFeatureType, ranked_files.c.rank)
@@ -2030,15 +1923,7 @@ def tv_library():
     # This subquery gets the number of episodes in each season, and the
     # worst quality of each season.
 
-    ranked_files = (
-        db.session.query(
-            File.id,
-            tv_file_rank(),
-        )
-        .join(TVSeries, (TVSeries.id == File.series_id))
-        .join(RefQuality, (RefQuality.id == File.quality_id))
-        .subquery()
-    )
+    ranked_files = ranked_tv_files()
 
     subquery = (
         db.session.query(
@@ -2126,9 +2011,7 @@ def tv_library():
         )
 
     tv = []
-    for series in series_query.order_by(
-        db.func.regexp_replace(TVSeries.title, "^(The|A|An) ", "").asc()
-    ).all():
+    for series in series_query.order_by(title_sort(TVSeries, tmdb=False).asc()).all():
         tv.append(
             {
                 "id": series.id,
@@ -2323,15 +2206,7 @@ def season(series_id, season):
 def _series_restorable(series_id):
     """Return the best archived file of each episode of a series."""
 
-    restore_ranked_files = (
-        db.session.query(
-            File.id,
-            tv_file_rank(),
-        )
-        .join(TVSeries, (TVSeries.id == File.series_id))
-        .join(RefQuality, (RefQuality.id == File.quality_id))
-        .subquery()
-    )
+    restore_ranked_files = ranked_tv_files()
     return (
         File.query.join(restore_ranked_files, (restore_ranked_files.c.id == File.id))
         .filter(File.series_id == series_id)
@@ -2347,15 +2222,7 @@ def _season_files(series_id, season):
 
     # This subquery gets the ranking of each file of this season.
 
-    ranked_files = (
-        db.session.query(
-            File.id,
-            tv_file_rank(),
-        )
-        .join(TVSeries, (TVSeries.id == File.series_id))
-        .join(RefQuality, (RefQuality.id == File.quality_id))
-        .subquery()
-    )
+    ranked_files = ranked_tv_files()
     return (
         db.session.query(File, TVSeries, RefQuality, ranked_files.c.rank)
         .join(TVSeries, (TVSeries.id == File.series_id))
@@ -2653,15 +2520,7 @@ def file(file_id):
     if file.movie_id:
         movie = Movie.query.filter_by(id=int(file.movie_id)).first_or_404()
         tv = None
-        file_rank = (
-            db.session.query(
-                File.id,
-                movie_file_rank(),
-            )
-            .join(Movie, (Movie.id == File.movie_id))
-            .join(RefQuality, (RefQuality.id == File.quality_id))
-            .subquery()
-        )
+        file_rank = ranked_movie_files()
         best_file = (
             db.session.query(
                 File,
@@ -2676,15 +2535,7 @@ def file(file_id):
     elif file.series_id:
         movie = None
         tv = TVSeries.query.filter_by(id=int(file.series_id)).first_or_404()
-        file_rank = (
-            db.session.query(
-                File.id,
-                tv_file_rank(),
-            )
-            .join(TVSeries, (TVSeries.id == File.series_id))
-            .join(RefQuality, (RefQuality.id == File.quality_id))
-            .subquery()
-        )
+        file_rank = ranked_tv_files()
         best_file = (
             db.session.query(
                 File,

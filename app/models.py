@@ -3133,3 +3133,43 @@ def tv_file_rank():
         )
         .label("rank")
     )
+
+
+def ranked_movie_files():
+    """Return a subquery of (id, rank) with the movie_file_rank of each movie file.
+
+    rank 1 is the best copy of its title, feature, and edition group."""
+
+    return (
+        db.session.query(File.id, movie_file_rank())
+        .join(Movie, (Movie.id == File.movie_id))
+        .join(RefQuality, (RefQuality.id == File.quality_id))
+        .subquery()
+    )
+
+
+def ranked_tv_files():
+    """Return a subquery of (id, rank) with the tv_file_rank of each episode file.
+
+    rank 1 is the best copy of its series, season, and episode."""
+
+    return (
+        db.session.query(File.id, tv_file_rank())
+        .join(TVSeries, (TVSeries.id == File.series_id))
+        .join(RefQuality, (RefQuality.id == File.quality_id))
+        .subquery()
+    )
+
+
+def title_sort(model, tmdb=True):
+    """Return the sort expression of the title of a film or a series.
+
+    A leading "The", "A", or "An" does not count. With tmdb, the TMDB
+    title (tmdb_title of a Movie, tmdb_name of a TVSeries) is used when
+    it is set. Without tmdb, only the local title is used."""
+
+    title = model.title
+    if tmdb:
+        tmdb_title = model.tmdb_title if model is Movie else model.tmdb_name
+        title = db.case((tmdb_title != None, tmdb_title), else_=model.title)
+    return db.func.regexp_replace(title, "^(The|A|An) ", "")

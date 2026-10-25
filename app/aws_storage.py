@@ -51,12 +51,10 @@ from app.settings import get_setting
 from app.models import (
     ArchivedOriginal,
     File,
-    Movie,
     RefQuality,
-    TVSeries,
     User,
-    movie_file_rank,
-    tv_file_rank,
+    ranked_movie_files,
+    ranked_tv_files,
 )
 
 EIGHT_MEGABYTES = 8388608
@@ -423,25 +421,9 @@ def _reconcile_files(listing, job):
     s3_objects = listing.sizes
     s3_keys = listing.keys
 
-    movie_rank = (
-        db.session.query(
-            File.id,
-            movie_file_rank(),
-        )
-        .join(Movie, (Movie.id == File.movie_id))
-        .join(RefQuality, (RefQuality.id == File.quality_id))
-        .subquery()
-    )
+    movie_rank = ranked_movie_files()
 
-    tv_rank = (
-        db.session.query(
-            File.id,
-            tv_file_rank(),
-        )
-        .join(TVSeries, (TVSeries.id == File.series_id))
-        .join(RefQuality, (RefQuality.id == File.quality_id))
-        .subquery()
-    )
+    tv_rank = ranked_tv_files()
 
     files = (
         db.session.query(

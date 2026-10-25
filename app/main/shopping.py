@@ -34,6 +34,7 @@ from app.models import (
     UserMovieReview,
     UserWatchlist,
     movie_file_rank,
+    title_sort,
 )
 from app.streaming import (
     batch_title_availability,
@@ -739,7 +740,7 @@ def movie_shopping():
                 .filter(RefQuality.preference <= max_preference)
                 .filter(Movie.tmdb_id == tmdb_id)
                 .order_by(
-                    db.func.regexp_replace(Movie.title, "^(The|A|An) ", "").asc(),
+                    title_sort(Movie, tmdb=False).asc(),
                     Movie.year.asc(),
                     File.edition.asc(),
                     RefQuality.preference.asc(),
@@ -806,7 +807,7 @@ def movie_shopping():
                 else owned_matches
             )
             movies = candidates.order_by(
-                db.func.regexp_replace(Movie.title, "^(The|A|An) ", "").asc(),
+                title_sort(Movie, tmdb=False).asc(),
                 Movie.year.asc(),
                 File.edition.asc(),
                 RefQuality.preference.asc(),
@@ -886,7 +887,7 @@ def movie_shopping():
                 cart_priority_order_case.desc(),
                 quality_order_case.asc(),
                 cart_age_order_case.desc(),
-                db.func.regexp_replace(Movie.title, "^(The|A|An) ", "").asc(),
+                title_sort(Movie, tmdb=False).asc(),
                 Movie.year.asc(),
                 File.edition.asc(),
                 File.date_added.asc(),
@@ -961,7 +962,7 @@ def movie_shopping():
             cart_priority_order_case.desc(),
             quality_order_case.asc(),
             cart_age_order_case.desc(),
-            db.func.regexp_replace(Movie.title, "^(The|A|An) ", "").asc(),
+            title_sort(Movie, tmdb=False).asc(),
             Movie.year.asc(),
             File.edition.asc(),
             File.date_added.asc(),
@@ -1275,14 +1276,12 @@ def tv_shopping():
                     TVSeries.title.ilike(f"%{q}%"), TVSeries.tmdb_name.ilike(f"%{q}%")
                 )
             )
-            .order_by(db.func.regexp_replace(TVSeries.title, "^(The|A|An) ", "").asc())
+            .order_by(title_sort(TVSeries, tmdb=False).asc())
             .all()
         )
 
     else:
-        t = TVSeries.query.order_by(
-            db.func.regexp_replace(TVSeries.title, "^(The|A|An) ", "").asc()
-        ).all()
+        t = TVSeries.query.order_by(title_sort(TVSeries, tmdb=False).asc()).all()
         title = "TV Shows to upgrade"
 
     for series in t:

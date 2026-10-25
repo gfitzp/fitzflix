@@ -29,7 +29,7 @@ from app.models import (
     UserMovieStatus,
     UserWatchlist,
     tmdb_get,
-    tv_file_rank,
+    ranked_tv_files,
 )
 from app.main import bp
 from app.main.helpers import (
@@ -213,15 +213,7 @@ def _tv_search_results(wildcard, limit=50, years=None):
     # each episode, keep the best copy per episode, then take the worst
     # best-copy of each season.
 
-    ranked_files = (
-        db.session.query(
-            File.id,
-            tv_file_rank(),
-        )
-        .join(TVSeries, (TVSeries.id == File.series_id))
-        .join(RefQuality, (RefQuality.id == File.quality_id))
-        .subquery()
-    )
+    ranked_files = ranked_tv_files()
 
     season_aggregate = (
         db.session.query(

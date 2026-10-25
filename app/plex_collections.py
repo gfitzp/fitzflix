@@ -46,7 +46,7 @@ from werkzeug.local import LocalProxy
 
 from app.tasks import enqueue_task
 from app import db, get_app
-from app.models import File, Movie, RefQuality, movie_file_rank
+from app.models import File, Movie, RefQuality, ranked_movie_files
 from app.plex_titles import _plex_get
 
 app = LocalProxy(get_app)
@@ -106,12 +106,7 @@ def criterion_paths():
         .group_by(Movie.criterion_spine_number)
         .having(db.func.count(Movie.id) > 1)
     )
-    ranked = (
-        db.session.query(File.id.label("id"), movie_file_rank())
-        .join(Movie, Movie.id == File.movie_id)
-        .join(RefQuality, RefQuality.id == File.quality_id)
-        .subquery()
-    )
+    ranked = ranked_movie_files()
     rows = (
         db.session.query(
             File.movie_id,
