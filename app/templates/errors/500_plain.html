@@ -1,0 +1,19 @@
+<!doctype html>
+{# This page extends nothing and reads no user or queue data. Thus, it
+   renders when the database or Redis is not available (#346). #}
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>Fitzflix - Error</title>
+	<style>
+		body { font-family: -apple-system, system-ui, sans-serif; margin: 3em auto; max-width: 30em; padding: 0 16px; text-align: center; background: #fff; color: #212529; }
+		@media (prefers-color-scheme: dark) { body { background: #212529; color: #dee2e6; } a { color: #6ea8fe; } }
+	</style>
+</head>
+<body>
+	<h1>An unexpected error occurred</h1>
+	<p>Fitzflix sent a report to the administrator. We are sorry for the problem.</p>
+	<p><a href="/">Back</a></p>
+</body>
+</html>
