@@ -1612,6 +1612,251 @@ def smb_handle_sweep():
         return True
 
 
+def _probe_s3(config):
+    """Ask S3 for the head of the archive bucket, with no retries."""
+
+    from app.videos import aws_s3_client
+
+    aws_s3_client(with_retries=False).head_bucket(Bucket=config["AWS_BUCKET"])
+
+
+# The external services that health_probe checks: (service, configured,
+# check). A service runs its check only if configured(config) is true.
+# The check raises on a failure.
+
+HEALTH_PROBES = (
+    (
+        "TMDB",
+        lambda config: bool(config["TMDB_API_KEY"]),
+        lambda config: _probe_http(
+            f"{config['TMDB_API_URL']}/configuration",
+            params={"api_key": config["TMDB_API_KEY"]},
+        ),
+    ),
+    (
+        "Sonarr",
+        lambda config: bool(config["SONARR_URL"] and config["SONARR_API_KEY"]),
+        lambda config: _probe_http(
+            f"{config['SONARR_URL']}/api/v3/system/status",
+            headers={"X-Api-Key": config["SONARR_API_KEY"]},
+        ),
+    ),
+    (
+        "Radarr",
+        lambda config: bool(config["RADARR_URL"] and config["RADARR_API_KEY"]),
+        lambda config: _probe_http(
+            f"{config['RADARR_URL']}/api/v3/system/status",
+            headers={"X-Api-Key": config["RADARR_API_KEY"]},
+        ),
+    ),
+    (
+        "AWS S3",
+        lambda config: bool(
+            config["AWS_BUCKET"]
+            and config["AWS_ACCESS_KEY"]
+            and config["AWS_SECRET_KEY"]
+        ),
+        lambda config: _probe_s3(config),
+    ),
+)
+
+
+def _run_probe(check, config):
+    """Run 1 probe check. Return its result for the probes hash."""
+
+    started = time.perf_counter()
+    try:
+        check(config)
+        ok, detail = True, "ok"
+    except Exception as e:
+        ok, detail = False, f"{type(e).__name__}: {e}"[:200]
+    return {
+        "ok": ok,
+        "detail": detail,
+        "latency_ms": round((time.perf_counter() - started) * 1000),
+        "checked": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def _probe_issues(results, redis):
+    """Yield (condition, message) for each service that failed 2 probes in a row.
+
+    One flaky request or a service in a restart does not cause an alert.
+    A probe that passes clears the failure count of its service."""
+
+    for service, result in results.items():
+        if result["ok"]:
+            redis.hdel(FAILCOUNT_KEY, service)
+            continue
+        failures = redis.hincrby(FAILCOUNT_KEY, service, 1)
+        if failures >= 2:
+            yield f"probe:{service}", (
+                f"{service} has failed {failures} consecutive probes: "
+                f"{result['detail']}"
+            )
+
+
+def _disk_issues(volumes, config):
+    """Yield (condition, message) for each volume below the free-space floor."""
+
+    for volume in volumes:
+        if not volume["ok"]:
+            yield f"disk:{volume['mount']}", (
+                f"Volume {volume['mount']} has only {volume['free']} free "
+                f"({volume['percent']}% used), below the "
+                f"{get_setting('DISK_ALERT_FREE_GB', config)} GB alert threshold"
+            )
+
+
+def _backup_issues(backup, config):
+    """Yield the condition and the message of a missing or old database backup."""
+
+    if backup["ok"]:
+        return
+    if backup["last"] is None:
+        yield "backup", "No database backups exist yet"
+    else:
+        yield "backup", (
+            f"The newest database backup is from "
+            f"{backup['last'].strftime('%Y-%m-%d %H:%M %Z')}, more than "
+            f"{BACKUP_STALE_HOURS} hours ago"
+        )
+
+
+def _worker_issues(entries, config):
+    """Yield (condition, message) for each queue with too few workers."""
+
+    for entry in entries:
+        if not entry["ok"]:
+            yield f"workers:{entry['queue']}", (
+                f"Queue {entry['queue']} has {entry['live']} of "
+                f"{entry['expected']} expected workers"
+            )
+
+
+def _mount_issues(dead_mounts, config):
+    """Yield (condition, message) for each volume that is not mounted."""
+
+    for mount in dead_mounts:
+        yield f"mount:{mount}", f"Volume {mount} is not mounted or not responding"
+
+
+def _self_heal(config, redis, seen):
+    """Repair the workers and the mounts. Return the actions.
+
+    List the registry-swept workers again on every run. Bring back the
+    dead worker processes and the ones that lost their identity when a
+    queue is short. Remount the dead network volumes."""
+
+    actions = repair_worker_registry(redis)
+    if any(not entry["ok"] for entry in seen["workers"]):
+        actions += heal_worker_processes(redis, config)
+    if seen["mounts"]:
+        actions += heal_mounts(seen["mounts"], redis, config)
+    for action in actions:
+        current_app.logger.warning(f"Health self-heal: {action}")
+    return actions
+
+
+def _observer_issues(observers, config):
+    """Yield the condition and the message of too few import-directory watchers."""
+
+    if not observers["ok"]:
+        yield "observer", (
+            f"Only {observers['watchers']} of {observers['expected']} "
+            f"import-directory watchers are alive"
+        )
+
+
+def _scheduler_issues(scheduler, config):
+    """Yield the condition and the message of a stopped rq scheduler."""
+
+    if not scheduler["ok"]:
+        yield "scheduler", "The rq scheduler is not running"
+
+
+def _criterion_age(config, redis, seen):
+    """Return the age in days of the stored Criterion releases, or None."""
+
+    from app.criterion_catalog import criterion_releases_age_days
+
+    return criterion_releases_age_days(redis)
+
+
+def _criterion_issues(age, config):
+    """Yield the condition and the message of old Criterion releases.
+
+    The weekly fetch failed 2 times or more (#283). The page still works
+    from the old copy."""
+
+    from app.criterion_catalog import CRITERION_STALE_DAYS
+
+    if age is not None and age > CRITERION_STALE_DAYS:
+        yield "criterion-releases", (
+            f"The stored Criterion releases are {int(age)} days old. The "
+            f"weekly Wikidata fetch is failing"
+        )
+
+
+def _plex_trash_issues(held, config):
+    """Yield (condition, message) for each Plex library that keeps its trash (#280)."""
+
+    for title, message in held.items():
+        yield f"plex-trash:{title.decode()}", message.decode()
+
+
+def _digest(config, redis, seen):
+    """Return the conditions of the repeated warnings of the nightly digest (#265).
+
+    A warning that repeats all day is a problem that sends no email of
+    its own. Each flagged signature is 1 condition. Thus, it is
+    announced once, reminded daily, and reported as recovered when a
+    digest no longer has it."""
+
+    from app.log_digest import digest_issues
+
+    return digest_issues(
+        redis,
+        {
+            condition.decode(): message.decode()
+            for condition, message in redis.hgetall(ISSUES_KEY).items()
+        },
+    )
+
+
+# The issue collectors of health_probe, in the order of the email:
+# (name, read, issues). read(config, redis, seen) returns the health of
+# the collector. seen holds the health of the collectors before it.
+# issues(health, config) yields (condition, message) for each problem.
+# The self-heal collector runs between the mounts and the observers, and
+# it gives no problems of its own.
+
+HEALTH_COLLECTORS = (
+    ("disks", lambda config, redis, seen: disk_health(config), _disk_issues),
+    ("backup", lambda config, redis, seen: backup_health(config), _backup_issues),
+    ("workers", lambda config, redis, seen: worker_health(redis), _worker_issues),
+    ("mounts", lambda config, redis, seen: missing_volumes(config), _mount_issues),
+    ("self-heal", _self_heal, lambda actions, config: ()),
+    (
+        "observers",
+        lambda config, redis, seen: observer_health(redis),
+        _observer_issues,
+    ),
+    (
+        "scheduler",
+        lambda config, redis, seen: scheduler_health(redis),
+        _scheduler_issues,
+    ),
+    ("criterion", _criterion_age, _criterion_issues),
+    (
+        "plex-trash",
+        lambda config, redis, seen: redis.hgetall(PLEX_TRASH_HELD_KEY),
+        _plex_trash_issues,
+    ),
+    ("digest", _digest, lambda found, config: found.items()),
+)
+
+
 def health_probe():
     """Probe the external services, record the results, and alert on problems.
 
@@ -1625,62 +1870,11 @@ def health_probe():
     with app.app_context():
         config = current_app.config
         redis = current_app.redis
-        results = {}
-
-        def probe(service, check):
-            started = time.perf_counter()
-            try:
-                check()
-                ok, detail = True, "ok"
-            except Exception as e:
-                ok, detail = False, f"{type(e).__name__}: {e}"[:200]
-            results[service] = {
-                "ok": ok,
-                "detail": detail,
-                "latency_ms": round((time.perf_counter() - started) * 1000),
-                "checked": datetime.now(timezone.utc).isoformat(),
-            }
-
-        if config["TMDB_API_KEY"]:
-            probe(
-                "TMDB",
-                lambda: _probe_http(
-                    f"{config['TMDB_API_URL']}/configuration",
-                    params={"api_key": config["TMDB_API_KEY"]},
-                ),
-            )
-
-        if config["SONARR_URL"] and config["SONARR_API_KEY"]:
-            probe(
-                "Sonarr",
-                lambda: _probe_http(
-                    f"{config['SONARR_URL']}/api/v3/system/status",
-                    headers={"X-Api-Key": config["SONARR_API_KEY"]},
-                ),
-            )
-
-        if config["RADARR_URL"] and config["RADARR_API_KEY"]:
-            probe(
-                "Radarr",
-                lambda: _probe_http(
-                    f"{config['RADARR_URL']}/api/v3/system/status",
-                    headers={"X-Api-Key": config["RADARR_API_KEY"]},
-                ),
-            )
-
-        if (
-            config["AWS_BUCKET"]
-            and config["AWS_ACCESS_KEY"]
-            and config["AWS_SECRET_KEY"]
-        ):
-            from app.videos import aws_s3_client
-
-            probe(
-                "AWS S3",
-                lambda: aws_s3_client(with_retries=False).head_bucket(
-                    Bucket=config["AWS_BUCKET"]
-                ),
-            )
+        results = {
+            service: _run_probe(check, config)
+            for service, configured, check in HEALTH_PROBES
+            if configured(config)
+        }
 
         pipe = redis.pipeline()
         pipe.delete(PROBES_KEY)
@@ -1691,114 +1885,14 @@ def health_probe():
             )
         pipe.execute()
 
-        # Collect every current problem as condition -> message. An
-        # external service must fail 2 times in a row. Thus, one flaky
-        # request or a service in a restart does not cause an alert.
+        # Collect every current problem as condition -> message.
 
-        issues = {}
-        for service, result in results.items():
-            if result["ok"]:
-                redis.hdel(FAILCOUNT_KEY, service)
-            else:
-                failures = redis.hincrby(FAILCOUNT_KEY, service, 1)
-                if failures >= 2:
-                    issues[f"probe:{service}"] = (
-                        f"{service} has failed {failures} consecutive probes: "
-                        f"{result['detail']}"
-                    )
-
-        for volume in disk_health(config):
-            if not volume["ok"]:
-                issues[f"disk:{volume['mount']}"] = (
-                    f"Volume {volume['mount']} has only {volume['free']} free "
-                    f"({volume['percent']}% used), below the "
-                    f"{get_setting('DISK_ALERT_FREE_GB', config)} GB alert threshold"
-                )
-
-        backup = backup_health(config)
-        if not backup["ok"]:
-            if backup["last"] is None:
-                issues["backup"] = "No database backups exist yet"
-            else:
-                issues["backup"] = (
-                    f"The newest database backup is from "
-                    f"{backup['last'].strftime('%Y-%m-%d %H:%M %Z')}, more than "
-                    f"{BACKUP_STALE_HOURS} hours ago"
-                )
-
-        worker_entries = worker_health(redis)
-        for entry in worker_entries:
-            if not entry["ok"]:
-                issues[f"workers:{entry['queue']}"] = (
-                    f"Queue {entry['queue']} has {entry['live']} of "
-                    f"{entry['expected']} expected workers"
-                )
-
-        dead_mounts = missing_volumes(config)
-        for mount in dead_mounts:
-            issues[f"mount:{mount}"] = (
-                f"Volume {mount} is not mounted or not responding"
-            )
-
-        # Self-healing: list the registry-swept workers again on every
-        # run. Bring back the dead worker processes and the ones that lost
-        # their identity when a queue is short. Remount the dead network
-        # volumes.
-
-        heal_actions = repair_worker_registry(redis)
-        if any(not entry["ok"] for entry in worker_entries):
-            heal_actions += heal_worker_processes(redis, config)
-        if dead_mounts:
-            heal_actions += heal_mounts(dead_mounts, redis, config)
-        for action in heal_actions:
-            current_app.logger.warning(f"Health self-heal: {action}")
-
-        observers = observer_health(redis)
-        if not observers["ok"]:
-            issues["observer"] = (
-                f"Only {observers['watchers']} of {observers['expected']} "
-                f"import-directory watchers are alive"
-            )
-
-        if not scheduler_health(redis)["ok"]:
-            issues["scheduler"] = "The rq scheduler is not running"
-
-        # The stored Criterion releases are old. The weekly fetch failed
-        # 2 times or more (#283). The page still works from the old copy.
-
-        from app.criterion_catalog import (
-            CRITERION_STALE_DAYS,
-            criterion_releases_age_days,
-        )
-
-        age = criterion_releases_age_days(redis)
-        if age is not None and age > CRITERION_STALE_DAYS:
-            issues["criterion-releases"] = (
-                f"The stored Criterion releases are {int(age)} days old. The "
-                f"weekly Wikidata fetch is failing"
-            )
-
-        # A Plex library whose refresh keeps its trash (#280).
-
-        for title, message in redis.hgetall(PLEX_TRASH_HELD_KEY).items():
-            issues[f"plex-trash:{title.decode()}"] = message.decode()
-
-        # A warning that repeats all day is a problem that sends no email
-        # of its own (#265). The nightly digest flags it. Each flagged
-        # signature is 1 condition. Thus, it is announced once, reminded
-        # daily, and reported as recovered when a digest no longer has it.
-
-        from app.log_digest import digest_issues
-
-        issues.update(
-            digest_issues(
-                redis,
-                {
-                    condition.decode(): message.decode()
-                    for condition, message in redis.hgetall(ISSUES_KEY).items()
-                },
-            )
-        )
+        issues = dict(_probe_issues(results, redis))
+        seen = {}
+        for name, read, collector_issues in HEALTH_COLLECTORS:
+            seen[name] = read(config, redis, seen)
+            issues.update(collector_issues(seen[name], config))
+        heal_actions = seen["self-heal"]
 
         # Compare with the problems known from the previous run to find
         # what is new and what recovered. Fitzflix reports a continued
