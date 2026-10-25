@@ -513,11 +513,19 @@ def check_config(app):
         app.logger.warning(
             f"AWS is partially configured, uploads will fail: missing {aws_missing}"
         )
-    if app.config["ARCHIVE_ORIGINAL_MEDIA"] and aws_missing:
-        app.logger.warning(
-            f"ARCHIVE_ORIGINAL_MEDIA is set, but uploads will fail: "
-            f"missing {aws_missing}"
-        )
+    if aws_missing:
+        # The Settings page can turn archival on. Thus, read the setting
+        # through get_setting. The read occurs only if a value is missing.
+
+        from app.settings import get_setting
+
+        with app.app_context():
+            archive = get_setting("ARCHIVE_ORIGINAL_MEDIA", app.config)
+        if archive:
+            app.logger.warning(
+                f"ARCHIVE_ORIGINAL_MEDIA is set, but uploads will fail: "
+                f"missing {aws_missing}"
+            )
 
     for service in ("SONARR", "RADARR"):
         if bool(app.config[f"{service}_URL"]) != bool(app.config[f"{service}_API_KEY"]):

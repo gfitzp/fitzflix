@@ -379,3 +379,23 @@ def test_get_setting_works_outside_an_app_context(app):
 
     _store(app, "DVR_CHANNEL_EPISODES", "12")
     assert get_setting("DVR_CHANNEL_EPISODES") == 12
+
+
+def test_the_startup_check_reads_archival_from_the_page(app, monkeypatch, caplog):
+    """The page can turn archival on. The startup check must see it.
+
+    Before, the check read app.config and missed the page value."""
+
+    from app import check_config
+
+    monkeypatch.setitem(app.config, "ARCHIVE_ORIGINAL_MEDIA", False)
+    monkeypatch.setitem(app.config, "AWS_BUCKET", None)
+    monkeypatch.setitem(app.config, "ENV_LOCKED", frozenset())
+    with caplog.at_level(logging.WARNING):
+        check_config(app)
+    assert "ARCHIVE_ORIGINAL_MEDIA is set" not in caplog.text
+
+    _store(app, "ARCHIVE_ORIGINAL_MEDIA", "1")
+    with caplog.at_level(logging.WARNING):
+        check_config(app)
+    assert "ARCHIVE_ORIGINAL_MEDIA is set, but uploads will fail" in caplog.text

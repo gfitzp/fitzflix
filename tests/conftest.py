@@ -258,7 +258,11 @@ def app():
         "the test function"
     )
 
+    # The startup checks of create_app can read the database already.
+    # Close those connections. Then each connection gets the functions.
+
     with application.app_context():
+        db.engine.dispose()
         _register_mysql_compat_functions(db.engine)
         db.create_all()
         for title, preference, physical in QUALITIES:
