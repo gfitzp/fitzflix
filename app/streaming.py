@@ -26,7 +26,8 @@ from werkzeug.local import LocalProxy
 
 from app import db, get_app
 from app.cache import cache_json, cached_fetch
-from app.models import Movie, tmdb_get
+from app.models import Movie
+from app.tmdb_apply import tmdb_json, tmdb_json_or
 
 # The app instance of this process. Fitzflix resolves it lazily. Thus,
 # the warm task can run on a worker without a second application.
@@ -66,21 +67,11 @@ def _fetch_provider_registry():
     availability alerts). Thus, they pay 1 timeout for each outage,
     not 1 for each film."""
 
-    try:
-        r = tmdb_get(
-            current_app.config["TMDB_API_URL"] + "/watch/providers/movie",
-            params={
-                "api_key": current_app.config["TMDB_API_KEY"],
-                "watch_region": WATCH_REGION,
-            },
-            timeout=10,
-        )
-        r.raise_for_status()
-        results = r.json().get("results") or []
-    except Exception:
-        current_app.logger.warning(traceback.format_exc())
+    body = tmdb_json_or("/watch/providers/movie", {"watch_region": WATCH_REGION}, None)
+    if body is None:
         cache_json(REGISTRY_KEY, [], REGISTRY_RETRY_SECONDS)
         return [], False
+    results = body.get("results") or []
 
     providers = [
         {
@@ -127,14 +118,8 @@ def _fetch_title_availability(tmdb_id):
     """Fetch the watch-provider payload of 1 film from TMDB, for cached_fetch."""
 
     try:
-        r = tmdb_get(
-            current_app.config["TMDB_API_URL"]
-            + f"/movie/{int(tmdb_id)}/watch/providers",
-            params={"api_key": current_app.config["TMDB_API_KEY"]},
-            timeout=10,
-        )
-        r.raise_for_status()
-        region = (r.json().get("results") or {}).get(WATCH_REGION) or {}
+        body = tmdb_json(f"/movie/{int(tmdb_id)}/watch/providers")
+        region = (body.get("results") or {}).get(WATCH_REGION) or {}
     except requests.exceptions.HTTPError as e:
         # A 404 is the answer of TMDB, not an outage. The id has no watch
         # record (a stale or wrong tmdb id). Thus, Fitzflix caches it as

@@ -642,8 +642,6 @@ def test_log_page_poster_wears_the_fold(app, admin_client, monkeypatch):
 
     The server renders the fold on the poster."""
 
-    import app.main.discover as discover
-
     from tests.test_streaming import plant_availability
 
     subscribe_criterion(app)
@@ -666,7 +664,7 @@ def test_log_page_poster_wears_the_fold(app, admin_client, monkeypatch):
             )
         return FakeResponse(payload={})
 
-    monkeypatch.setattr(discover, "tmdb_get", fake_tmdb_get)
+    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
     plant_availability(
         app, 9802, {"link": None, "flatrate": [], "ads": [], "rent": [], "buy": []}
     )

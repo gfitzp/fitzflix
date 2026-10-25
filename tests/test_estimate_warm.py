@@ -59,9 +59,6 @@ def install_warm_fakes(app, monkeypatch, fetched):
     serves 1 page. The fake records each /movie/{id} enrichment in
     `fetched`."""
 
-    import app.estimate_warm as estimate_warm
-    import app.streaming_rail as streaming_rail
-
     def fake_tmdb_get(url, params=None, timeout=None):
         if "/person/9001/movie_credits" in url:
             return FakeTMDB(
@@ -104,8 +101,8 @@ def install_warm_fakes(app, monkeypatch, fetched):
         return FakeTMDB({"results": []})
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr(estimate_warm, "tmdb_get", fake_tmdb_get)
-    monkeypatch.setattr(streaming_rail, "tmdb_get", fake_tmdb_get)
+    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
+    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
 
 
 def plant_profile(app, user_id):

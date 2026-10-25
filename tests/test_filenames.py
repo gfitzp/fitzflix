@@ -693,7 +693,7 @@ def test_a_yearless_tagged_name_waits_out_a_tmdb_outage(app, monkeypatch):
         raise requests.ConnectionError("TMDB is down")
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr(importing, "tmdb_get", unreachable)
+    monkeypatch.setattr("app.tmdb_apply.tmdb_get", unreachable)
     with app.app_context():
         details = evaluate_filename("Unseen Film {tmdb-999123} - [DVD].mkv", log=False)
         assert not details
@@ -851,11 +851,9 @@ class _Answer:
 def test_a_title_search_names_the_film_as_tmdb_does(app, monkeypatch):
     """The search result gives the title and the year of a film with no record."""
 
-    import app.importing as importing
-
     calls = []
 
-    def answer(url, params=None):
+    def answer(url, params=None, **kwargs):
         calls.append((url.rsplit("/", 2)[-2:], dict(params)))
         return _Answer(
             {
@@ -869,7 +867,7 @@ def test_a_title_search_names_the_film_as_tmdb_does(app, monkeypatch):
             }
         )
 
-    monkeypatch.setattr(importing, "tmdb_get", answer)
+    monkeypatch.setattr("app.tmdb_apply.tmdb_get", answer)
     with app.app_context():
         details = evaluate_filename(
             "A Fistful of Dynamite (1971) - [DVD].mkv", log=False
@@ -888,17 +886,15 @@ def test_a_title_search_names_the_film_as_tmdb_does(app, monkeypatch):
 def test_a_tmdb_tag_with_no_record_reads_the_movie_object(app, monkeypatch):
     """A tag that no record owns fetches /movie/<id> and keeps the tag."""
 
-    import app.importing as importing
-
     calls = []
 
-    def answer(url, params=None):
+    def answer(url, params=None, **kwargs):
         calls.append(url.rsplit("/", 2)[-2:])
         return _Answer(
             {"id": 556574, "title": "Hamilton", "release_date": "2020-07-03"}
         )
 
-    monkeypatch.setattr(importing, "tmdb_get", answer)
+    monkeypatch.setattr("app.tmdb_apply.tmdb_get", answer)
     with app.app_context():
         details = evaluate_filename("Hamilton {tmdb-556574} - [DVD].mkv", log=False)
     assert calls == [["movie", "556574"]]
@@ -910,12 +906,10 @@ def test_a_tmdb_tag_with_no_record_reads_the_movie_object(app, monkeypatch):
 def test_an_explicit_tmdb_id_outranks_the_tag(app, monkeypatch):
     """The TMDb-refresh rename passes tmdb_id. It wins over the tag of the name."""
 
-    import app.importing as importing
     from tests.factories import make_movie
 
     monkeypatch.setattr(
-        importing,
-        "tmdb_get",
+        "app.tmdb_apply.tmdb_get",
         lambda *args, **kwargs: pytest.fail("the record owns the id"),
     )
     with app.app_context():

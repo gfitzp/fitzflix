@@ -40,8 +40,8 @@ from app.models import (
     UserMovieReview,
     UserMovieStatus,
     UserWatchlist,
-    tmdb_get,
 )
+from app.tmdb_apply import tmdb_json
 
 # The TMDB id of a Plex rating key, cached for 1 week. The rating keys
 # are stable.
@@ -273,7 +273,6 @@ def letterboxd_import_task(user_id, films):
     with app.app_context():
         try:
             tmdb_api_key = current_app.config["TMDB_API_KEY"]
-            tmdb_api_url = current_app.config["TMDB_API_URL"]
             resolved = []
             skipped = []
 
@@ -294,27 +293,25 @@ def letterboxd_import_task(user_id, films):
                 # only if no year-filtered result has the exact title.
                 # _pick_tmdb_match decides between the two.
 
-                r = tmdb_get(
-                    tmdb_api_url + "/search/movie",
-                    params={
-                        "api_key": tmdb_api_key,
-                        "query": title,
-                        "primary_release_year": year,
-                    },
+                year_filtered = (
+                    tmdb_json(
+                        "/search/movie",
+                        {"query": title, "primary_release_year": year},
+                        timeout=30,
+                    ).get("results")
+                    or []
                 )
-                r.raise_for_status()
-                year_filtered = r.json().get("results") or []
                 title_only = []
                 wanted = _normalize_title(title)
                 if not any(
                     _normalize_title(c.get("title")) == wanted for c in year_filtered
                 ):
-                    r = tmdb_get(
-                        tmdb_api_url + "/search/movie",
-                        params={"api_key": tmdb_api_key, "query": title},
+                    title_only = (
+                        tmdb_json("/search/movie", {"query": title}, timeout=30).get(
+                            "results"
+                        )
+                        or []
                     )
-                    r.raise_for_status()
-                    title_only = r.json().get("results") or []
                 result = _pick_tmdb_match(title, year, year_filtered, title_only)
 
                 if not result:
@@ -796,20 +793,11 @@ def review_task(user_id, title, rating):
                 tmdb_info = {}
                 if not current_app.config["TMDB_API_KEY"]:
                     return False
-                tmdb_api_key = current_app.config["TMDB_API_KEY"]
-                tmdb_api_url = current_app.config["TMDB_API_URL"]
                 current_app.logger.info(f"'{title}' not in database, searching in TMDB")
-                r = tmdb_get(
-                    tmdb_api_url + "/search/movie",
-                    params={
-                        "api_key": tmdb_api_key,
-                        "query": title,
-                    },
-                )
-                r.raise_for_status()
-                current_app.logger.debug(f"{r.url}: {r.json()}")
-                if len(r.json().get("results")) > 0:
-                    first_result = r.json().get("results")[0]
+                search = tmdb_json("/search/movie", {"query": title}, timeout=30)
+                current_app.logger.debug(f"/search/movie: {search}")
+                if len(search.get("results")) > 0:
+                    first_result = search.get("results")[0]
                     tmdb_id = first_result.get("id")
 
                     if tmdb_id and title == first_result.get("title"):
@@ -819,13 +807,8 @@ def review_task(user_id, title, rating):
                         # date. tmdb_movie_query below does the full
                         # enrichment of the movie.
 
-                        r = tmdb_get(
-                            tmdb_api_url + "/movie/" + str(tmdb_id),
-                            params={"api_key": tmdb_api_key},
-                        )
-                        r.raise_for_status()
-                        current_app.logger.debug(f"{r.url}: {r.json()}")
-                        tmdb_info = r.json()
+                        tmdb_info = tmdb_json(f"/movie/{tmdb_id}", timeout=30)
+                        current_app.logger.debug(f"/movie/{tmdb_id}: {tmdb_info}")
 
                         tmdb_title = tmdb_info.get("title")
                         tmdb_year = None

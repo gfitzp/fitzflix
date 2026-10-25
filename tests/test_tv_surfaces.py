@@ -254,8 +254,6 @@ def test_tv_card_renders_an_unowned_series_from_tmdb(app, admin_client, monkeypa
     TMDB and shows no badge. This is the same as the tmdb lane of the
     film card."""
 
-    import app.main.discover as discover
-
     class FakeResponse:
         def raise_for_status(self):
             pass
@@ -281,7 +279,7 @@ def test_tv_card_renders_an_unowned_series_from_tmdb(app, admin_client, monkeypa
             }
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr(discover, "tmdb_get", lambda *a, **k: FakeResponse())
+    monkeypatch.setattr("app.tmdb_apply.tmdb_get", lambda *a, **k: FakeResponse())
 
     page = admin_client.get("/tv_card?tmdb_id=999123").get_data(as_text=True)
     assert 'class="poster-card"' in page
@@ -394,8 +392,6 @@ def test_self_appearances_drop_but_selfridge_survives(app, admin_client, monkeyp
     - Host", "Herself"). A real character that only contains the letters,
     for example Harry Selfridge, is a real acting credit. It stays."""
 
-    import app.main.library as library
-
     with app.app_context():
         monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
         db.session.add(TMDBCredit(id=287, name="Jeremy Piven"))
@@ -456,7 +452,7 @@ def test_self_appearances_drop_but_selfridge_survives(app, admin_client, monkeyp
             def json(self):
                 return payload
 
-        monkeypatch.setattr(library, "tmdb_get", lambda *a, **kw: FakeResponse())
+        monkeypatch.setattr("app.tmdb_apply.tmdb_get", lambda *a, **kw: FakeResponse())
 
     response = admin_client.get("/library/movie?credit=287")
     assert response.status_code == 200

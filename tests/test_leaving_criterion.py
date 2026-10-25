@@ -127,7 +127,7 @@ def test_match_tmdb_id_searches_by_year_and_caches(app, monkeypatch):
         return FakeResponse(payload={"results": [{"id": 9999}]})
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr(leaving_criterion, "tmdb_get", fake_tmdb_get)
+    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
 
     with app.app_context():
         assert leaving_criterion.match_tmdb_id("The Searchers", 1956) == 3110
@@ -250,7 +250,7 @@ def test_match_tmdb_id_verifies_the_director(app, monkeypatch):
         return FakeResponse(payload={})
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr(leaving_criterion, "tmdb_get", fake_tmdb_get)
+    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
 
     with app.app_context():
         # The exact-title candidate comes first. Thus, only 1 credits call
@@ -343,7 +343,7 @@ def test_match_tmdb_id_accepts_a_differently_written_director(app, monkeypatch):
         )
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr(leaving_criterion, "tmdb_get", fake_tmdb_get)
+    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
 
     with app.app_context():
         match = leaving_criterion.match_tmdb_id
@@ -397,7 +397,7 @@ def test_match_tmdb_id_finds_a_retitled_film_through_its_director(app, monkeypat
         raise AssertionError(url)
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr(leaving_criterion, "tmdb_get", fake_tmdb_get)
+    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
 
     with app.app_context():
         match = leaving_criterion.match_tmdb_id
@@ -453,12 +453,10 @@ def test_refresh_task_scrapes_matches_and_stores(app, monkeypatch):
             )
         return FakeResponse(payload={"results": []})
 
-    import app.streaming_rail as streaming_rail
-
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
     monkeypatch.setattr(leaving_criterion.requests, "get", fake_requests_get)
-    monkeypatch.setattr(leaving_criterion, "tmdb_get", fake_tmdb_get)
-    monkeypatch.setattr(streaming_rail, "tmdb_get", fake_tmdb_get)
+    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
+    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
     from app import db
 
     with app.app_context():
@@ -546,7 +544,7 @@ def test_a_tmdb_failure_is_not_cached_as_a_miss(app, monkeypatch):
         return FakeResponse(payload={"results": [{"id": 3110}]})
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr(leaving_criterion, "tmdb_get", fake_tmdb_get)
+    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
 
     with app.app_context():
         failures = []

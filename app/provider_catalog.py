@@ -40,14 +40,13 @@ Profiles change over time. But a second evaluation of each rejected
 film, for ever, would grow without limit.
 """
 
-import traceback
-
 from flask import current_app
 from werkzeug.local import LocalProxy
 
 from app.tasks import enqueue_task
 from app import db, get_app
-from app.models import CatalogExclusion, Movie, User, UserStreamingProvider, tmdb_get
+from app.models import CatalogExclusion, Movie, User, UserStreamingProvider
+from app.tmdb_apply import tmdb_json_or
 from app.recommendations import (
     estimated_rating,
     resolved_tmdb_score,
@@ -110,24 +109,19 @@ def _catalog_ids(provider_id):
     ids = []
     page = 1
     while page <= PAGE_CAP:
-        try:
-            r = tmdb_get(
-                current_app.config["TMDB_API_URL"] + "/discover/movie",
-                params={
-                    "api_key": current_app.config["TMDB_API_KEY"],
-                    "watch_region": "US",
-                    "with_watch_providers": str(provider_id),
-                    "with_watch_monetization_types": "flatrate",
-                    "include_adult": "false",
-                    "vote_count.gte": VOTE_FLOOR,
-                    "page": page,
-                },
-                timeout=10,
-            )
-            r.raise_for_status()
-            body = r.json() or {}
-        except Exception:
-            current_app.logger.warning(traceback.format_exc())
+        body = tmdb_json_or(
+            "/discover/movie",
+            {
+                "watch_region": "US",
+                "with_watch_providers": str(provider_id),
+                "with_watch_monetization_types": "flatrate",
+                "include_adult": "false",
+                "vote_count.gte": VOTE_FLOOR,
+                "page": page,
+            },
+            None,
+        )
+        if body is None:
             break
         ids.extend(item["id"] for item in body.get("results") or [] if item.get("id"))
         if page >= (body.get("total_pages") or 0):

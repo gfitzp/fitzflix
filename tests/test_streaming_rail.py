@@ -133,9 +133,6 @@ def install_rail_fakes(app, monkeypatch, discover_calls=None):
     enrichment payloads. An availability miss returns nothing that
     streams."""
 
-    import app.streaming as streaming
-    import app.streaming_rail as streaming_rail
-
     def fake_tmdb_get(url, params=None, **kwargs):
         if "/discover/movie" in url:
             if discover_calls is not None:
@@ -149,8 +146,8 @@ def install_rail_fakes(app, monkeypatch, discover_calls=None):
         return FakeTMDB({"results": []})
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr(streaming_rail, "tmdb_get", fake_tmdb_get)
-    monkeypatch.setattr(streaming, "tmdb_get", fake_tmdb_get)
+    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
+    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
 
 
 def test_provider_pool_queries_and_caches(app, monkeypatch):
@@ -217,7 +214,7 @@ def test_deleted_tmdb_id_caches_the_miss(app, monkeypatch):
         return Gone()
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr(streaming_rail, "tmdb_get", fake_tmdb_get)
+    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
 
     with app.app_context():
         assert streaming_rail.enriched_movie(126678) is None

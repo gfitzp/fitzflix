@@ -45,7 +45,7 @@ from app.streaming import (
     streaming_matches,
     user_provider_ids,
 )
-from app.models import tmdb_get
+from app.tmdb_apply import tmdb_json, tmdb_json_or
 
 # The app instance of this process. Fitzflix resolves it lazily. Thus,
 # the nightly task can run on a worker without a second application.
@@ -93,17 +93,7 @@ def _discover(params):
 
     On failure, the rail only becomes less deep."""
 
-    try:
-        r = tmdb_get(
-            current_app.config["TMDB_API_URL"] + "/discover/movie",
-            params={"api_key": current_app.config["TMDB_API_KEY"], **params},
-            timeout=10,
-        )
-        r.raise_for_status()
-        return r.json().get("results") or []
-    except Exception:
-        current_app.logger.warning(traceback.format_exc())
-        return []
+    return (tmdb_json_or("/discover/movie", params, None) or {}).get("results") or []
 
 
 def _base_params(provider_ids):
@@ -341,16 +331,12 @@ def _fetch_enriched(tmdb_id):
     (None, False), and nothing is cached."""
 
     try:
-        r = tmdb_get(
-            current_app.config["TMDB_API_URL"] + f"/movie/{int(tmdb_id)}",
-            params={
-                "api_key": current_app.config["TMDB_API_KEY"],
-                "append_to_response": "credits,keywords",
-            },
-            timeout=10,
+        payload = (
+            tmdb_json(
+                f"/movie/{int(tmdb_id)}", {"append_to_response": "credits,keywords"}
+            )
+            or {}
         )
-        r.raise_for_status()
-        payload = r.json() or {}
     except HTTPError as error:
         if error.response is not None and error.response.status_code == 404:
             current_app.logger.info(f"TMDB movie {int(tmdb_id)} is gone (404)")

@@ -41,7 +41,7 @@ from app.funnel import user_film_sets
 from app.recommendations import stored_profile, tmdb_taste_score
 from app.cache import MISS, cache_json, cached_json
 from app.streaming_rail import enriched_movie, movie_gone
-from app.models import tmdb_get
+from app.tmdb_apply import tmdb_json_or
 
 # The app instance of this process. Fitzflix resolves it lazily. Thus,
 # the monthly task can run on a worker without a second application.
@@ -265,22 +265,6 @@ def _same_person(wanted, name):
     return name_words[-1] in wanted_words or len(wanted_words & set(name_words)) >= 2
 
 
-def _tmdb_json(path, params):
-    """Return the JSON body of 1 TMDB GET, or None on a failure (logged)."""
-
-    try:
-        r = tmdb_get(
-            current_app.config["TMDB_API_URL"] + path,
-            params={"api_key": current_app.config["TMDB_API_KEY"], **params},
-            timeout=10,
-        )
-        r.raise_for_status()
-        return r.json()
-    except Exception:
-        current_app.logger.warning(traceback.format_exc())
-        return None
-
-
 def match_tmdb_id(title, year, director=None, failures=None):
     """Return the TMDB id for a leaving film, or None if TMDB has no match.
 
@@ -324,7 +308,7 @@ def match_tmdb_id(title, year, director=None, failures=None):
     failed = []
 
     def tmdb_json(path, params):
-        body = _tmdb_json(path, params)
+        body = tmdb_json_or(path, params, None)
         if body is None:
             failed.append(path)
         return body

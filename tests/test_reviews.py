@@ -826,11 +826,10 @@ def test_movie_page_logs_bare_watches(app, admin_client):
 
 
 def test_review_tmdb_renders_form_for_unowned_film(app, admin_client, monkeypatch):
-    import app.main.discover as discover
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
     monkeypatch.setattr(
-        discover, "tmdb_get", lambda *a, **k: FakeTMDBDetails(JAWS_2_DETAILS)
+        "app.tmdb_apply.tmdb_get", lambda *a, **k: FakeTMDBDetails(JAWS_2_DETAILS)
     )
 
     from app import db
@@ -905,15 +904,15 @@ def test_review_tmdb_hides_the_chip_for_a_non_mpaa_rating(
 
     import copy
 
-    import app.main.discover as discover
-
     details = copy.deepcopy(JAWS_2_DETAILS)
     details["release_dates"]["results"][0]["release_dates"] = [
         {"certification": "NR"},
         {"certification": ""},
     ]
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr(discover, "tmdb_get", lambda *a, **k: FakeTMDBDetails(details))
+    monkeypatch.setattr(
+        "app.tmdb_apply.tmdb_get", lambda *a, **k: FakeTMDBDetails(details)
+    )
 
     page = admin_client.get("/review/tmdb/579").get_data(as_text=True)
     assert "116&nbsp;minutes" in page
@@ -934,13 +933,11 @@ def test_review_tmdb_shows_estimate_and_interest_marker(app, admin_client, monke
 
     import json
 
-    import app.main.discover as discover
-
     from app.models import User
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
     monkeypatch.setattr(
-        discover, "tmdb_get", lambda *a, **k: FakeTMDBDetails(JAWS_2_DETAILS)
+        "app.tmdb_apply.tmdb_get", lambda *a, **k: FakeTMDBDetails(JAWS_2_DETAILS)
     )
 
     with app.app_context():
@@ -965,11 +962,9 @@ def test_review_tmdb_shows_estimate_and_interest_marker(app, admin_client, monke
 def test_review_tmdb_creates_movie_and_enqueues_refresh(app, admin_client, monkeypatch):
     from app.models import Movie, User, UserMovieReview
 
-    import app.main.discover as discover
-
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
     monkeypatch.setattr(
-        discover, "tmdb_get", lambda *a, **k: FakeTMDBDetails(JAWS_2_DETAILS)
+        "app.tmdb_apply.tmdb_get", lambda *a, **k: FakeTMDBDetails(JAWS_2_DETAILS)
     )
 
     page = admin_client.get("/review/tmdb/579").get_data(as_text=True)
@@ -1026,8 +1021,6 @@ def test_review_tmdb_not_interested_creates_flagged_record(
     and flags it in 1 step. It makes no diary row. It clears a watchlist
     entry. Thus, the film leaves every recommendation surface."""
 
-    import app.main.discover as discover
-
     from app.models import (
         Movie,
         User,
@@ -1038,7 +1031,7 @@ def test_review_tmdb_not_interested_creates_flagged_record(
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
     monkeypatch.setattr(
-        discover, "tmdb_get", lambda *a, **k: FakeTMDBDetails(JAWS_2_DETAILS)
+        "app.tmdb_apply.tmdb_get", lambda *a, **k: FakeTMDBDetails(JAWS_2_DETAILS)
     )
 
     page = admin_client.get("/review/tmdb/579").get_data(as_text=True)

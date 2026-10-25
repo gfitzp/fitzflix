@@ -44,8 +44,8 @@ from app.models import (
     UserMovieReview,
     UserMovieStatus,
     UserWatchlist,
-    tmdb_get,
 )
+from app.tmdb_apply import tmdb_json_or
 
 
 def library_name_details(file, file_details):
@@ -925,16 +925,10 @@ def sync_certification_list():
     because movie rows link to them. Return True when TMDB answered."""
 
     with app.app_context():
-        try:
-            response = tmdb_get(
-                current_app.config["TMDB_API_URL"] + "/certification/movie/list",
-                params={"api_key": current_app.config["TMDB_API_KEY"]},
-            )
-            response.raise_for_status()
-            listing = response.json().get("certifications") or {}
-        except Exception:
-            current_app.logger.warning(traceback.format_exc())
+        body = tmdb_json_or("/certification/movie/list", None, None, timeout=30)
+        if body is None:
             return False
+        listing = body.get("certifications") or {}
 
         # The unique key compares without case or accents in MySQL. Thus,
         # the lookup folds the value the same way, and a near-duplicate

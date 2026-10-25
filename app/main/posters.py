@@ -39,11 +39,11 @@ from app.main.forms import (
 from app.models import (
     File,
     Movie,
-    tmdb_get,
 )
 from app.main import bp
 from app.main.helpers import admin_required
 from app.plex_collections import enqueue_criterion_sync
+from app.tmdb_apply import tmdb_json_or
 
 # The TMDB poster gallery of a film, cached in Redis.
 
@@ -326,17 +326,10 @@ def _tmdb_poster_gallery(tmdb_id):
     def fetch():
         if not current_app.config["TMDB_API_KEY"]:
             return None, False
-        try:
-            r = tmdb_get(
-                current_app.config["TMDB_API_URL"] + f"/movie/{tmdb_id}/images",
-                params={"api_key": current_app.config["TMDB_API_KEY"]},
-                timeout=10,
-            )
-            r.raise_for_status()
-            return r.json().get("posters") or [], True
-        except Exception:
-            current_app.logger.warning(traceback.format_exc())
+        body = tmdb_json_or(f"/movie/{tmdb_id}/images", None, None)
+        if body is None:
             return None, False
+        return body.get("posters") or [], True
 
     return cached_fetch(POSTERS_KEY.format(tmdb_id=tmdb_id), 86400, fetch)
 

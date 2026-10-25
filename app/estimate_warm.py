@@ -22,7 +22,6 @@ cache, and this task uses them.
 """
 
 import json
-import traceback
 
 from concurrent.futures import ThreadPoolExecutor
 
@@ -30,7 +29,8 @@ from flask import current_app
 from werkzeug.local import LocalProxy
 
 from app import db, get_app
-from app.models import Movie, User, tmdb_get
+from app.models import Movie, User
+from app.tmdb_apply import tmdb_json_or
 from app.recommendations import (
     CREW_ROLE_JOBS,
     JOB_TO_CLASS,
@@ -98,25 +98,15 @@ PERSON_CREDITS_KEY = "fitzflix:tmdb:person:{person_id}:credits"
 PERSON_CREDITS_SECONDS = 86400
 
 
-def person_movie_credits(person_id, get=None):
+def person_movie_credits(person_id):
     """Return {"cast": [...], "crew": [...]} for 1 person, or None.
 
     None means a transient TMDB error. Nothing is cached then. This is
-    the 1 writer of the key. get is the rate-limited TMDB getter of the
-    caller. The default is tmdb_get."""
+    the 1 writer of the key."""
 
     def fetch():
-        try:
-            r = (get or tmdb_get)(
-                current_app.config["TMDB_API_URL"]
-                + f"/person/{int(person_id)}/movie_credits",
-                params={"api_key": current_app.config["TMDB_API_KEY"]},
-                timeout=10,
-            )
-            r.raise_for_status()
-            payload = r.json()
-        except Exception:
-            current_app.logger.warning(traceback.format_exc())
+        payload = tmdb_json_or(f"/person/{int(person_id)}/movie_credits", None, None)
+        if payload is None:
             return None, False
         credits = {
             "cast": payload.get("cast") or [],
@@ -155,16 +145,8 @@ def person_film_ids(person_id):
 def chart_page_ids(chart, page):
     """Return (tmdb ids, total pages) for 1 page of a TMDB chart."""
 
-    try:
-        r = tmdb_get(
-            current_app.config["TMDB_API_URL"] + f"/movie/{chart}",
-            params={"api_key": current_app.config["TMDB_API_KEY"], "page": page},
-            timeout=10,
-        )
-        r.raise_for_status()
-        payload = r.json()
-    except Exception:
-        current_app.logger.warning(traceback.format_exc())
+    payload = tmdb_json_or(f"/movie/{chart}", {"page": page}, None)
+    if payload is None:
         return [], None
     ids = [result["id"] for result in payload.get("results") or [] if result.get("id")]
     return ids, payload.get("total_pages")

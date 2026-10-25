@@ -74,7 +74,6 @@ from app.models import (
     UserMovieStatus,
     UserWatchlist,
     movie_genres,
-    tmdb_get,
     ranked_movie_files,
     ranked_tv_files,
     title_sort,
@@ -109,6 +108,7 @@ from app.main.helpers import (
     tv_meta_line,
 )
 from app.cache import cached_fetch
+from app.tmdb_apply import tmdb_json_or
 from app.funnel import might_interest, user_film_sets_by_id
 from app.recommendations import (
     JOB_TO_CLASS,
@@ -189,17 +189,7 @@ def _tmdb_person_details(person_id):
         return None
 
     def fetch():
-        try:
-            r = tmdb_get(
-                current_app.config["TMDB_API_URL"] + f"/person/{person_id}",
-                params={"api_key": current_app.config["TMDB_API_KEY"]},
-                timeout=10,
-            )
-            r.raise_for_status()
-            payload = r.json() or {}
-        except Exception:
-            current_app.logger.warning(traceback.format_exc())
-            return None, False
+        payload = tmdb_json_or(f"/person/{person_id}", None, None) or {}
         if not payload.get("name"):
             return None, False
         details = {
@@ -222,16 +212,8 @@ def _fetch_tv_credits(person_id):
     An error is (None, False): the page renders without the TV rows,
     and nothing is cached."""
 
-    try:
-        r = tmdb_get(
-            current_app.config["TMDB_API_URL"] + f"/person/{person_id}/tv_credits",
-            params={"api_key": current_app.config["TMDB_API_KEY"]},
-            timeout=10,
-        )
-        r.raise_for_status()
-        payload = r.json()
-    except Exception:
-        current_app.logger.warning(traceback.format_exc())
+    payload = tmdb_json_or(f"/person/{person_id}/tv_credits", None, None)
+    if payload is None:
         return None, False
     return {
         "cast": [
@@ -380,7 +362,7 @@ def _filmography(credit):
     if current_app.config["TMDB_API_KEY"]:
         from app.estimate_warm import person_movie_credits
 
-        tmdb_credits = person_movie_credits(credit, get=tmdb_get)
+        tmdb_credits = person_movie_credits(credit)
 
     # Merge. There is 1 row per film. The TMDB credits come first. They
     # are deduplicated by film, and the characters are combined. Then

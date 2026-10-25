@@ -392,7 +392,6 @@ def test_watchlist_page_lists_availability_and_removes(
 def test_review_tmdb_watchlist_add_creates_the_record(
     app, admin_client, monkeypatch, admin_id
 ):
-    import app.main.discover as discover
 
     from app.models import Movie
 
@@ -427,7 +426,7 @@ def test_review_tmdb_watchlist_add_creates_the_record(
         )
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr(discover, "tmdb_get", fake_tmdb_get)
+    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
 
     page = admin_client.get("/review/tmdb/9306").get_data(as_text=True)
     assert 'name="add_watchlist_submit"' in page

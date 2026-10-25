@@ -23,11 +23,10 @@ def _admin_id():
 
 
 def _fake_tmdb(app, monkeypatch):
-    import app.main.discover as discover
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
     monkeypatch.setattr(
-        discover, "tmdb_get", lambda *a, **k: FakeTMDBDetails(JAWS_2_DETAILS)
+        "app.tmdb_apply.tmdb_get", lambda *a, **k: FakeTMDBDetails(JAWS_2_DETAILS)
     )
 
 

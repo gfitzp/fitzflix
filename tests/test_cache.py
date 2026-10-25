@@ -82,8 +82,7 @@ def test_enriched_movie_states(app, monkeypatch):
     statuses = {991: 200, 992: 404, 993: 500}
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "key")
     monkeypatch.setattr(
-        streaming_rail,
-        "tmdb_get",
+        "app.tmdb_apply.tmdb_get",
         lambda url, **kwargs: Response(statuses[int(url.rsplit("/", 1)[1])]),
     )
     keys = [streaming_rail.ENRICHED_KEY.format(tmdb_id=tmdb_id) for tmdb_id in statuses]
@@ -180,7 +179,7 @@ def test_a_cached_empty_registry_answers_without_tmdb(app, monkeypatch):
     from app import streaming
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "key")
-    monkeypatch.setattr(streaming, "tmdb_get", _Down())
+    monkeypatch.setattr("app.tmdb_apply.tmdb_get", _Down())
     with app.app_context():
         app.redis.set(streaming.REGISTRY_KEY, "[]", ex=60)
         assert streaming.provider_registry() == []
@@ -193,7 +192,7 @@ def test_a_failed_registry_fetch_is_remembered_briefly(app, monkeypatch):
         raise ConnectionError("TMDB is away")
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "key")
-    monkeypatch.setattr(streaming, "tmdb_get", down)
+    monkeypatch.setattr("app.tmdb_apply.tmdb_get", down)
     with app.app_context():
         app.redis.delete(streaming.REGISTRY_KEY)
         assert streaming.provider_registry() == []
@@ -208,7 +207,7 @@ def test_a_cached_empty_gallery_answers_without_tmdb(app, monkeypatch):
     from app.main import posters
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "key")
-    monkeypatch.setattr(posters, "tmdb_get", _Down())
+    monkeypatch.setattr("app.tmdb_apply.tmdb_get", _Down())
     with app.app_context():
         app.redis.set(posters.POSTERS_KEY.format(tmdb_id=77), "[]", ex=60)
         assert posters._tmdb_poster_gallery(77) == []

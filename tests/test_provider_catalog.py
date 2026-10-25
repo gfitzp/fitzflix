@@ -77,7 +77,7 @@ def test_enumeration_plants_then_queues_only_new(app, monkeypatch):
             return catalog_page(pages[page - 1], total_pages=len(pages))
         return catalog_page([], total_pages=len(pages))
 
-    monkeypatch.setattr(pc, "tmdb_get", fake_tmdb_get)
+    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
     monkeypatch.setattr(pc, "_process_pending", lambda subscribed: 0)
 
     # The first run plants the ever-seen set. It queues nothing. A film

@@ -73,8 +73,8 @@ from app.models import (
     RefQuality,
     TVSeries,
     title_lock_key,
-    tmdb_get,
 )
+from app.tmdb_apply import tmdb_json
 from app.pipeline import migrate_trail, record_task_stage
 from app.sdr_conversion import (
     archived_original_from_file,
@@ -3008,17 +3008,12 @@ def resolve_external_id_tag(source, value, kind, log=True):
     """
 
     try:
-        r = tmdb_get(
-            current_app.config["TMDB_API_URL"] + f"/find/{value}",
-            params={
-                "api_key": current_app.config["TMDB_API_KEY"],
-                "external_source": f"{source}_id",
-            },
+        body = tmdb_json(
+            f"/find/{value}", {"external_source": f"{source}_id"}, timeout=30
         )
         if log:
-            current_app.logger.debug(r.json())
-        r.raise_for_status()
-        results = r.json().get(f"{kind}_results")
+            current_app.logger.debug(body)
+        results = body.get(f"{kind}_results")
 
     except Exception as e:
         response = getattr(e, "response", None)
@@ -3654,20 +3649,13 @@ def _resolve_movie_identity(basename, title, year, id_tag, tmdb_id, log):
             if tmdb_id:
                 # This reads only the id, the title, and the release date.
                 # Thus, it requests no appended blocks.
-                params = {
-                    "api_key": current_app.config["TMDB_API_KEY"],
-                }
+                params = {}
                 url = "/movie/" + str(tmdb_id)
             else:
-                params = {
-                    "api_key": current_app.config["TMDB_API_KEY"],
-                    "query": title,
-                    "primary_release_year": year,
-                }
+                params = {"query": title, "primary_release_year": year}
                 url = "/search/movie"
-            r = tmdb_get(current_app.config["TMDB_API_URL"] + url, params=params)
-            current_app.logger.debug(r.json())
-            r.raise_for_status()
+            body = tmdb_json(url, params, timeout=30)
+            current_app.logger.debug(body)
 
         except Exception as e:
             # A TMDB API problem must not prevent the import of the file.
@@ -3690,7 +3678,7 @@ def _resolve_movie_identity(basename, title, year, id_tag, tmdb_id, log):
             tmdb_unreachable = bool(current_app.config.get("TMDB_API_KEY"))
 
         else:
-            tmdb_result = r.json()
+            tmdb_result = body
 
     if tmdb_result:
         if tmdb_id:

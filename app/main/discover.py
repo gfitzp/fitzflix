@@ -50,8 +50,8 @@ from app.models import (
     UserMovieReview,
     UserWatchlist,
     movie_genres,
-    tmdb_get,
 )
+from app.tmdb_apply import tmdb_json_or
 from app.main import bp
 from app.plex_player import remote_playback_configured
 from app.queues import QUEUE_NAME
@@ -1122,21 +1122,11 @@ def movie_card():
 
     if not current_app.config["TMDB_API_KEY"]:
         abort(404)
-    try:
-        r = tmdb_get(
-            current_app.config["TMDB_API_URL"] + "/movie/" + str(tmdb_id),
-            params={
-                "api_key": current_app.config["TMDB_API_KEY"],
-                "append_to_response": "credits,release_dates",
-            },
-            timeout=10,
-        )
-        r.raise_for_status()
-    except Exception:
-        current_app.logger.warning(traceback.format_exc())
+    details = tmdb_json_or(
+        f"/movie/{tmdb_id}", {"append_to_response": "credits,release_dates"}, None
+    )
+    if details is None:
         abort(503)
-
-    details = r.json()
     film_title = details.get("title")
     release_year = (details.get("release_date") or "")[:4]
     if not film_title or not release_year.isdigit():
@@ -1278,21 +1268,13 @@ def tv_card():
 
     if not current_app.config["TMDB_API_KEY"]:
         abort(404)
-    try:
-        r = tmdb_get(
-            current_app.config["TMDB_API_URL"] + "/tv/" + str(tmdb_id),
-            params={
-                "api_key": current_app.config["TMDB_API_KEY"],
-                "append_to_response": "aggregate_credits,content_ratings",
-            },
-            timeout=10,
-        )
-        r.raise_for_status()
-    except Exception:
-        current_app.logger.warning(traceback.format_exc())
+    details = tmdb_json_or(
+        f"/tv/{tmdb_id}",
+        {"append_to_response": "aggregate_credits,content_ratings"},
+        None,
+    )
+    if details is None:
         abort(503)
-
-    details = r.json()
     series_name = details.get("name")
     if not series_name:
         abort(404)
@@ -2145,22 +2127,12 @@ def review_tmdb(tmdb_id):
         flash("TMDB_API_KEY is not configured. Fitzflix cannot query TMDB.", "warning")
         return redirect(url_for("main.history"))
 
-    try:
-        r = tmdb_get(
-            current_app.config["TMDB_API_URL"] + "/movie/" + str(tmdb_id),
-            params={
-                "api_key": current_app.config["TMDB_API_KEY"],
-                "append_to_response": "credits,release_dates",
-            },
-            timeout=10,
-        )
-        r.raise_for_status()
-    except Exception:
-        current_app.logger.warning(traceback.format_exc())
+    details = tmdb_json_or(
+        f"/movie/{tmdb_id}", {"append_to_response": "credits,release_dates"}, None
+    )
+    if details is None:
         flash("Fitzflix could not reach TMDB. Try again in a moment.", "warning")
         return redirect(url_for("main.history"))
-
-    details = r.json()
 
     # The runtime, genres, US certification, and top billing. This
     # mirrors what the movie page shows for library films.

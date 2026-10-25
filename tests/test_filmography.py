@@ -50,8 +50,6 @@ def test_filmography_merges_full_tmdb_career(app, admin_client, monkeypatch):
     local rows have their badges. The unknown films link to the review
     page."""
 
-    import app.main.library as library
-
     with app.app_context():
         user_id = User.query.first().id
         person = TMDBCredit(
@@ -124,7 +122,7 @@ def test_filmography_merges_full_tmdb_career(app, admin_client, monkeypatch):
         )
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr(library, "tmdb_get", fake_tmdb_get)
+    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
 
     page = admin_client.get("/library/movie?credit=535353").get_data(as_text=True)
     assert "/w185/career.jpg" in page
@@ -164,8 +162,6 @@ def test_filmography_badges_recommended_owned_films(app, admin_client, monkeypat
     makes the same claim."""
 
     import json
-
-    import app.main.library as library
 
     from app.recommendations import RECS_KEY
 
@@ -226,7 +222,7 @@ def test_filmography_badges_recommended_owned_films(app, admin_client, monkeypat
         return FakeTMDB({"name": "Ranked Actor"})
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr(library, "tmdb_get", fake_tmdb_get)
+    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
 
     # The badge goes with the anchor of the recommended film as a card
     # label (2026-08). One film has it, and that film is the ranked one
@@ -246,8 +242,6 @@ def test_filmography_owned_rows_show_seen_and_watchlist(app, admin_client, monke
     through the widgets. The tile markup has no badges. The hydrated
     ladder shows Seen. The toggle and the popover show the watchlist.
     /movie_states supplies the answers for both films."""
-
-    import app.main.library as library
 
     from app.models import UserWatchlist
 
@@ -306,7 +300,7 @@ def test_filmography_owned_rows_show_seen_and_watchlist(app, admin_client, monke
         return FakeTMDB({"name": "Funnel Actor"})
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr(library, "tmdb_get", fake_tmdb_get)
+    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
 
     page = admin_client.get("/library/movie?credit=737373").get_data(as_text=True)
     assert 'title="In your Fitzflix library"' not in page
@@ -332,8 +326,6 @@ def test_filmography_serves_people_without_local_credit_rows(
     A person in the cast of a film that is not in the library has no
     TMDBCredit row. The filmography still renders. The name and the
     career come from TMDB."""
-
-    import app.main.library as library
 
     class FakeTMDB:
         def __init__(self, payload):
@@ -370,7 +362,7 @@ def test_filmography_serves_people_without_local_credit_rows(
         )
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr(library, "tmdb_get", fake_tmdb_get)
+    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
 
     page = admin_client.get("/library/movie?credit=808080").get_data(as_text=True)
     assert "Uncredited Wanderer" in page
@@ -391,8 +383,6 @@ def test_filmography_includes_key_crew_credits(app, admin_client, monkeypatch):
     rows. A crew credit shares a row with an acting credit on the same
     film. The non-key jobs stay out. An owned crew film attaches its
     local record through MovieCrew."""
-
-    import app.main.library as library
 
     from app.models import MovieCrew
 
@@ -479,7 +469,7 @@ def test_filmography_includes_key_crew_credits(app, admin_client, monkeypatch):
         return FakeTMDB({"name": "Career Director"})
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr(library, "tmdb_get", fake_tmdb_get)
+    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
 
     page = admin_client.get("/library/movie?credit=838383").get_data(as_text=True)
 
@@ -512,13 +502,11 @@ def test_filmography_person_unknown_to_tmdb_is_404(app, admin_client, monkeypatc
 
     import requests
 
-    import app.main.library as library
-
     def raising_tmdb_get(url, **kwargs):
         raise requests.HTTPError("404 Client Error")
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr(library, "tmdb_get", raising_tmdb_get)
+    monkeypatch.setattr("app.tmdb_apply.tmdb_get", raising_tmdb_get)
 
     assert admin_client.get("/library/movie?credit=888888888").status_code == 404
 

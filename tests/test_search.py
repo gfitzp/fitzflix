@@ -267,8 +267,6 @@ def test_search_tmdb_funnel_badges(app, admin_client, monkeypatch):
         ),
     )
 
-    import app.main.search as search
-
     class FakeResponse:
         def __init__(self, results):
             self._results = results
@@ -294,7 +292,7 @@ def test_search_tmdb_funnel_badges(app, admin_client, monkeypatch):
         return FakeResponse([])
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr(search, "tmdb_get", fake_get)
+    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_get)
 
     page = admin_client.get("/search/tmdb?q=funnel").get_data(as_text=True)
     assert page.count("Might interest you") == 0
@@ -341,8 +339,6 @@ def test_search_tmdb_badges_recommended_owned_films(app, admin_client, monkeypat
         ),
     )
 
-    import app.main.search as search
-
     class FakeResponse:
         def __init__(self, results):
             self._results = results
@@ -364,7 +360,7 @@ def test_search_tmdb_badges_recommended_owned_films(app, admin_client, monkeypat
         return FakeResponse([])
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr(search, "tmdb_get", fake_get)
+    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_get)
 
     page = admin_client.get("/search/tmdb?q=jaws").get_data(as_text=True)
     assert page.count("Might interest you") == 1
@@ -499,8 +495,6 @@ def test_search_tmdb_annotates_library_membership(app, admin_client, monkeypatch
         db.session.commit()
         owned_id = owned.id
 
-    import app.main.search as search
-
     class FakeResponse:
         def __init__(self, results):
             self._results = results
@@ -533,7 +527,7 @@ def test_search_tmdb_annotates_library_membership(app, admin_client, monkeypatch
         return FakeResponse([])
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr(search, "tmdb_get", fake_get)
+    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_get)
 
     page = admin_client.get("/search/tmdb?q=jaws").get_data(as_text=True)
     assert "Jaws (1975)" in page
@@ -585,8 +579,6 @@ def test_search_tmdb_library_badges_wear_shopping_colors(
         make_tv_file(settled_series, 1, 1, "DVD")
         db.session.commit()
 
-    import app.main.search as search
-
     class FakeResponse:
         def __init__(self, results):
             self._results = results
@@ -613,7 +605,7 @@ def test_search_tmdb_library_badges_wear_shopping_colors(
         )
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr(search, "tmdb_get", fake_get)
+    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_get)
 
     page = admin_client.get("/search/tmdb?q=show").get_data(as_text=True)
 
@@ -778,8 +770,6 @@ def test_search_tmdb_rows_carry_the_star_ladder(app, admin_client, monkeypatch):
         db.session.commit()
         recorded_id = recorded.id
 
-    import app.main.search as search
-
     class FakeResponse:
         def __init__(self, results):
             self._results = results
@@ -806,7 +796,7 @@ def test_search_tmdb_rows_carry_the_star_ladder(app, admin_client, monkeypatch):
         return FakeResponse([])
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr(search, "tmdb_get", fake_get)
+    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_get)
 
     page = admin_client.get("/search/tmdb?q=ladder").get_data(as_text=True)
     assert f'data-state-movie="{recorded_id}"' in page
@@ -842,9 +832,6 @@ def test_search_tmdb_watchlist_toggle(app, admin_client, monkeypatch):
         db.session.commit()
         wanted_id = wanted.id
         user_id = admin.id
-
-    import app.main.discover as discover
-    import app.main.search as search
 
     class FakeResponse:
         def __init__(self, payload):
@@ -889,8 +876,13 @@ def test_search_tmdb_watchlist_toggle(app, admin_client, monkeypatch):
         )
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr(search, "tmdb_get", fake_search)
-    monkeypatch.setattr(discover, "tmdb_get", fake_details)
+
+    def fake_tmdb_get(url, **kwargs):
+        if "/search/" in url:
+            return fake_search(url, **kwargs)
+        return fake_details(url, **kwargs)
+
+    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
 
     page = admin_client.get("/search/tmdb?q=toggle").get_data(as_text=True)
 
@@ -970,8 +962,6 @@ def test_search_tmdb_movies_scope_skips_tv(app, admin_client, monkeypatch):
     The Log a film hand-off of the History page uses scope=movies. It
     never queries or renders TV results. The diary only logs movies."""
 
-    import app.main.search as search
-
     class FakeResponse:
         def __init__(self, payload):
             self._payload = payload
@@ -1007,7 +997,7 @@ def test_search_tmdb_movies_scope_skips_tv(app, admin_client, monkeypatch):
         )
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr(search, "tmdb_get", fake_get)
+    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_get)
 
     page = admin_client.get("/search/tmdb?q=scoped&scope=movies").get_data(as_text=True)
     assert "Scoped Movie" in page
@@ -1112,8 +1102,6 @@ def test_search_tmdb_year_modifier(app, admin_client, monkeypatch):
     release date after the search. A modifier with no title text shows
     an explanation and does not search."""
 
-    import app.main.search as search
-
     class FakeResponse:
         def __init__(self, results):
             self._results = results
@@ -1138,7 +1126,7 @@ def test_search_tmdb_year_modifier(app, admin_client, monkeypatch):
         return FakeResponse([])
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr(search, "tmdb_get", fake_get)
+    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_get)
 
     page = admin_client.get("/search/tmdb", query_string={"q": "jaws y:1975"}).get_data(
         as_text=True

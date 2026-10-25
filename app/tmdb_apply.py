@@ -7,6 +7,8 @@ module before it defines the models. Thus, this module imports the
 models only inside the functions that use them. app.models re-exports
 every public name of this module."""
 
+import traceback
+
 from datetime import datetime, timezone
 from time import sleep, time
 
@@ -74,6 +76,35 @@ def tmdb_get(url, **kwargs):
         sleep(max(int(now) + 1 - now, 0.05))
     kwargs.setdefault("timeout", 30)
     return requests.get(url, **kwargs)
+
+
+def tmdb_json(path, params=None, timeout=10):
+    """GET 1 TMDB API path through tmdb_get and return the JSON body.
+
+    path starts with a slash, for example "/movie/603". This function
+    adds the URL of the API and the API key. An HTTP error raises
+    requests.HTTPError. Thus, a caller can tell a 404 from an outage."""
+
+    r = tmdb_get(
+        current_app.config["TMDB_API_URL"] + path,
+        params={"api_key": current_app.config["TMDB_API_KEY"], **(params or {})},
+        timeout=timeout,
+    )
+    r.raise_for_status()
+    return r.json()
+
+
+def tmdb_json_or(path, params, default, timeout=10):
+    """Return the JSON body of 1 TMDB GET, or default on any failure.
+
+    The failure goes to the log as a warning with its traceback. Use
+    tmdb_json for a caller that must tell a 404 from an outage."""
+
+    try:
+        return tmdb_json(path, params, timeout=timeout)
+    except Exception:
+        current_app.logger.warning(traceback.format_exc())
+        return default
 
 
 def tmdb_objects(entries, owner, what):
@@ -388,38 +419,29 @@ class TMDBMixin(object):
         tmdb_info = {}
         if not current_app.config["TMDB_API_KEY"]:
             return None
-        tmdb_api_key = current_app.config["TMDB_API_KEY"]
-        tmdb_api_url = current_app.config["TMDB_API_URL"]
 
         # Request only the appended blocks that tmdb_movie_apply reads.
 
         requested_info = "credits,external_ids,keywords,release_dates"
         current_app.logger.info(f"{self} Getting TMDB data")
         if tmdb_id == None:
-            r = tmdb_get(
-                tmdb_api_url + "/search/movie",
-                params={
-                    "api_key": tmdb_api_key,
-                    "query": self.title,
-                    "primary_release_year": self.year,
-                },
+            search = tmdb_json(
+                "/search/movie",
+                {"query": self.title, "primary_release_year": self.year},
+                timeout=30,
             )
-            r.raise_for_status()
-            current_app.logger.debug(f"{r.url}: {r.json()}")
-            if len(r.json().get("results")) > 0:
-                first_result = r.json().get("results")[0]
+            current_app.logger.debug(f"/search/movie: {search}")
+            if len(search.get("results")) > 0:
+                first_result = search.get("results")[0]
                 tmdb_id = first_result.get("id")
 
         if tmdb_id:
             try:
-                r = tmdb_get(
-                    tmdb_api_url + "/movie/" + str(tmdb_id),
-                    params={
-                        "api_key": tmdb_api_key,
-                        "append_to_response": requested_info,
-                    },
+                tmdb_info = tmdb_json(
+                    f"/movie/{tmdb_id}",
+                    {"append_to_response": requested_info},
+                    timeout=30,
                 )
-                r.raise_for_status()
             except requests.exceptions.HTTPError as e:
                 _raise_unless_not_found(self, tmdb_id, e)
                 notify_admin(
@@ -429,8 +451,7 @@ class TMDBMixin(object):
                     tmdb_id=tmdb_id,
                 )
                 return None
-            current_app.logger.debug(f"{r.url}: {r.json()}")
-            tmdb_info = r.json()
+            current_app.logger.debug(f"/movie/{tmdb_id}: {tmdb_info}")
 
         return tmdb_info or None
 
@@ -588,8 +609,6 @@ class TMDBMixin(object):
         tmdb_info = {}
         if not current_app.config["TMDB_API_KEY"]:
             return None
-        tmdb_api_key = current_app.config["TMDB_API_KEY"]
-        tmdb_api_url = current_app.config["TMDB_API_URL"]
 
         # Request only the appended blocks that tmdb_tv_apply reads.
         # Networks, companies, genres, and seasons arrive in the base
@@ -600,29 +619,19 @@ class TMDBMixin(object):
         requested_info = "aggregate_credits,external_ids,keywords,content_ratings"
         current_app.logger.info(f"{self} Getting TMDB data")
         if tmdb_id == None:
-            r = tmdb_get(
-                tmdb_api_url + "/search/tv",
-                params={
-                    "api_key": tmdb_api_key,
-                    "query": self.title,
-                },
-            )
-            r.raise_for_status()
-            current_app.logger.debug(f"{r.url}: {r.json()}")
-            if len(r.json().get("results")) > 0:
-                first_result = r.json().get("results")[0]
+            search = tmdb_json("/search/tv", {"query": self.title}, timeout=30)
+            current_app.logger.debug(f"/search/tv: {search}")
+            if len(search.get("results")) > 0:
+                first_result = search.get("results")[0]
                 tmdb_id = first_result.get("id")
 
         if tmdb_id:
             try:
-                r = tmdb_get(
-                    tmdb_api_url + "/tv/" + str(tmdb_id),
-                    params={
-                        "api_key": tmdb_api_key,
-                        "append_to_response": requested_info,
-                    },
+                tmdb_info = tmdb_json(
+                    f"/tv/{tmdb_id}",
+                    {"append_to_response": requested_info},
+                    timeout=30,
                 )
-                r.raise_for_status()
             except requests.exceptions.HTTPError as e:
                 _raise_unless_not_found(self, tmdb_id, e)
                 notify_admin(
@@ -632,8 +641,7 @@ class TMDBMixin(object):
                     tmdb_id=tmdb_id,
                 )
                 return None
-            current_app.logger.debug(f"{r.url}: {r.json()}")
-            tmdb_info = r.json()
+            current_app.logger.debug(f"/tv/{tmdb_id}: {tmdb_info}")
 
         return tmdb_info or None
 

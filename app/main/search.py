@@ -26,11 +26,11 @@ from app.models import (
     TMDBCredit,
     TVSeries,
     UserMovieReview,
-    tmdb_get,
     ranked_tv_files,
 )
 from app.main import bp
 from app.file_ranking import MOVIE_BEST_ORDER, copy_upgradable
+from app.tmdb_apply import tmdb_json
 from app.main.helpers import (
     _upgrade_threshold,
     decimal_id,
@@ -490,7 +490,7 @@ def search_tmdb():
         # endpoints cannot express a range. The release-date filter below
         # enforces the range in each case.
 
-        params = {"api_key": current_app.config["TMDB_API_KEY"], "query": text}
+        params = {"query": text}
         try:
             searches = [
                 ("/search/movie", movie_matches, "title", "release_date"),
@@ -506,13 +506,8 @@ def search_tmdb():
                         else "first_air_date_year"
                     )
                     request_params[year_param] = years[0]
-                r = tmdb_get(
-                    current_app.config["TMDB_API_URL"] + url,
-                    params=request_params,
-                    timeout=10,
-                )
-                r.raise_for_status()
-                for result in r.json().get("results") or []:
+                body = tmdb_json(url, request_params)
+                for result in body.get("results") or []:
                     if len(bucket) >= 10:
                         break
                     year = (result.get(date_key) or "")[:4]

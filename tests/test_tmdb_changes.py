@@ -42,7 +42,7 @@ def sweep_with_feeds(app, monkeypatch, movie_pages=None, tv_pages=None):
             return changes_page(pages[page - 1], total_pages=len(pages))
         return changes_page([], total_pages=len(pages))
 
-    monkeypatch.setattr(tc, "tmdb_get", fake_tmdb_get)
+    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
     return tc.refresh_changed_records(), seen
 
 
@@ -145,7 +145,7 @@ def test_failed_enumeration_keeps_the_watermark(app, monkeypatch):
     def failing_tmdb_get(url, params=None, **kwargs):
         raise ConnectionError("TMDB unreachable")
 
-    monkeypatch.setattr(tc, "tmdb_get", failing_tmdb_get)
+    monkeypatch.setattr("app.tmdb_apply.tmdb_get", failing_tmdb_get)
 
     assert tc.refresh_changed_records() == 0
     assert app.redis.get(tc.LAST_RUN_KEY).decode() == stamp

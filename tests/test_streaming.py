@@ -96,7 +96,7 @@ def test_provider_registry_fetches_once_and_sorts(app, monkeypatch):
         )
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr(streaming, "tmdb_get", fake_tmdb_get)
+    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
 
     with app.app_context():
         first = streaming.provider_registry()
@@ -117,7 +117,7 @@ def test_title_availability_caches_even_when_empty(app, monkeypatch):
         return FakeTMDB({"results": {}})
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr(streaming, "tmdb_get", fake_tmdb_get)
+    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
 
     with app.app_context():
         first = streaming.title_availability(603)
@@ -432,7 +432,6 @@ def test_movie_page_without_subscriptions_shows_nothing(app, admin_client, monke
 
 
 def test_search_results_badge_unowned_matches(app, admin_client, monkeypatch):
-    import app.main.search as search
 
     def fake_tmdb_get(url, **kwargs):
         if url.endswith("/search/movie"):
@@ -451,7 +450,7 @@ def test_search_results_badge_unowned_matches(app, admin_client, monkeypatch):
         return FakeTMDB({"results": []})
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr(search, "tmdb_get", fake_tmdb_get)
+    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
 
     subscribe(app, 8, "Netflix")
     subscribe(app, 2, "Apple TV")
@@ -477,7 +476,6 @@ def test_search_results_badge_unowned_matches(app, admin_client, monkeypatch):
 def test_search_results_without_matches_carry_no_attribution(
     app, admin_client, monkeypatch
 ):
-    import app.main.search as search
 
     def fake_tmdb_get(url, **kwargs):
         if url.endswith("/search/movie"):
@@ -496,7 +494,7 @@ def test_search_results_without_matches_carry_no_attribution(
         return FakeTMDB({"results": []})
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr(search, "tmdb_get", fake_tmdb_get)
+    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
 
     subscribe(app, 8, "Netflix")
     plant_availability(
@@ -511,7 +509,6 @@ def test_search_results_without_matches_carry_no_attribution(
 def test_review_tmdb_page_shows_rental_badge_for_your_stores(
     app, admin_client, monkeypatch
 ):
-    import app.main.discover as discover
 
     def fake_tmdb_get(url, **kwargs):
         return FakeTMDB(
@@ -527,7 +524,7 @@ def test_review_tmdb_page_shows_rental_badge_for_your_stores(
         )
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr(discover, "tmdb_get", fake_tmdb_get)
+    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
 
     subscribe(app, 8, "Netflix")
     subscribe(app, 2, "Apple TV")
@@ -652,7 +649,7 @@ def test_title_availability_caches_a_404_as_empty(app, monkeypatch):
         raise requests.exceptions.HTTPError(response=response)
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr(streaming, "tmdb_get", fake_tmdb_get)
+    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
 
     with app.app_context():
         first = streaming.title_availability(999999)
@@ -677,7 +674,7 @@ def test_batch_availability_mixes_cache_hits_and_fetches(app, monkeypatch):
         return FakeTMDB({"results": {"US": {"flatrate": [NETFLIX]}}})
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr(streaming, "tmdb_get", fake_tmdb_get)
+    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
 
     plant_availability(
         app,
@@ -714,9 +711,6 @@ def test_filmography_badges_unowned_films_on_your_services(
     The availability moved into the popover (2026-08). Filmography tiles
     carry no provider badges. The card of an unowned career film answers
     from the same cached availability that the page warms."""
-
-    import app.main.discover as discover
-    import app.main.library as library
 
     from app import db
     from app.models import TMDBCredit, MovieCast
@@ -767,7 +761,7 @@ def test_filmography_badges_unowned_films_on_your_services(
         return FakeTMDB({"name": "Streaming Actor"})
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr(library, "tmdb_get", fake_tmdb_get)
+    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
 
     subscribe(app, 8, "Netflix")
     subscribe(app, 2, "Apple TV")
@@ -805,7 +799,7 @@ def test_filmography_badges_unowned_films_on_your_services(
             }
         )
 
-    monkeypatch.setattr(discover, "tmdb_get", fake_details_get)
+    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_details_get)
     card = admin_client.get("/movie_card?tmdb_id=911").get_data(as_text=True)
     assert card.count('title="Streaming on Netflix"') == 1
     assert card.count("Apple TV (rent)") == 1
@@ -863,7 +857,7 @@ def test_filmography_defers_overflow_to_a_warm_task(app, admin_client, monkeypat
         return FakeTMDB({"name": "Deferred Actor"})
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr(library, "tmdb_get", fake_tmdb_get)
+    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
     monkeypatch.setattr(
         library, "batch_title_availability", lambda ids, **kw: ({}, [921])
     )
@@ -898,7 +892,7 @@ def test_batch_availability_reads_the_cache_in_one_call(app, monkeypatch):
         return FakeTMDB({"results": {"US": {"flatrate": [NETFLIX]}}})
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr(streaming, "tmdb_get", fake_tmdb_get)
+    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
     for tmdb_id in (930, 931, 932):
         plant_availability(
             app,
@@ -965,7 +959,7 @@ def test_refresh_availability_covers_every_film_with_a_tmdb_id(app, monkeypatch)
         return FakeTMDB({"results": {"US": {"flatrate": [NETFLIX]}}})
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr(streaming, "tmdb_get", fake_tmdb_get)
+    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
 
     assert streaming.refresh_availability() is True
     assert sorted(calls) == [
@@ -985,10 +979,6 @@ def test_list_pages_never_fetch_availability_inline(app, admin_client, monkeypat
     An uncached film costs no TMDB call during the render. Before
     2026-08, 50 uncached films stalled the page for 4 seconds. The page
     hands the film to 1 background warm job instead."""
-
-    import app.main.discover as discover
-    import app.main.library as library
-    import app.streaming as streaming
 
     from app import db
     from app.models import UserWatchlist
@@ -1014,8 +1004,7 @@ def test_list_pages_never_fetch_availability_inline(app, admin_client, monkeypat
         return FakeTMDB({"results": {"US": {"flatrate": [NETFLIX]}}})
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    for module in (streaming, discover, library):
-        monkeypatch.setattr(module, "tmdb_get", fake_tmdb_get)
+    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
 
     page = admin_client.get("/watchlist?availability=services").get_data(as_text=True)
     assert "Inline Cached" in page
@@ -1095,7 +1084,7 @@ def test_provider_registry_remembers_a_failed_fetch_briefly(app, monkeypatch):
         raise RuntimeError("down")
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr(streaming, "tmdb_get", failing_tmdb_get)
+    monkeypatch.setattr("app.tmdb_apply.tmdb_get", failing_tmdb_get)
 
     with app.app_context():
         assert streaming.provider_registry() == []

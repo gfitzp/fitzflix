@@ -1743,6 +1743,8 @@ _REEXPORTS = {
         "invalidate_people_ranking",
         "pick_rating",
         "tmdb_get",
+        "tmdb_json",
+        "tmdb_json_or",
         "tmdb_objects",
     ),
 }

@@ -36,7 +36,8 @@ from werkzeug.local import LocalProxy
 
 from app.tasks import enqueue_task
 from app import db, get_app
-from app.models import Movie, TVSeries, tmdb_get
+from app.models import Movie, TVSeries
+from app.tmdb_apply import tmdb_json
 
 # The app instance of this process. Fitzflix resolves it lazily. Thus,
 # the nightly task can run on a worker without a second application.
@@ -77,18 +78,17 @@ def _changed_ids(media_type, window_start, window_end):
         total_pages = 1
         while page <= total_pages:
             try:
-                r = tmdb_get(
-                    current_app.config["TMDB_API_URL"] + f"/{media_type}/changes",
-                    params={
-                        "api_key": current_app.config["TMDB_API_KEY"],
-                        "start_date": day.isoformat(),
-                        "end_date": (day + timedelta(days=1)).isoformat(),
-                        "page": page,
-                    },
-                    timeout=10,
+                body = (
+                    tmdb_json(
+                        f"/{media_type}/changes",
+                        {
+                            "start_date": day.isoformat(),
+                            "end_date": (day + timedelta(days=1)).isoformat(),
+                            "page": page,
+                        },
+                    )
+                    or {}
                 )
-                r.raise_for_status()
-                body = r.json() or {}
             except Exception:
                 current_app.logger.warning(traceback.format_exc())
                 complete = False
