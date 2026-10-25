@@ -3013,86 +3013,6 @@ class DVRChannel(db.Model):
         return f"<DVRChannel {self.number} '{self.name}'>"
 
 
-def movie_file_rank():
-    """Rank each movie file in its title/feature/edition group by quality.
-
-    At the same quality, a real rip ranks above a 1080p SDR conversion
-    (#292). A tie goes to the lowest file id. Thus, the winner is always
-    the same. The ranked_files reporting view uses the same rule (#273)."""
-
-    return (
-        db.func.row_number()
-        .over(
-            partition_by=(
-                Movie.id,
-                File.feature_type_id,
-                File.plex_title,
-                File.edition,
-            ),
-            order_by=(
-                File.fullscreen.asc(),
-                RefQuality.preference.desc(),
-                File.converted_from_quality.isnot(None).asc(),
-                File.id.asc(),
-            ),
-        )
-        .label("rank")
-    )
-
-
-def tv_file_rank():
-    """Rank each episode file in its series/season/episode group.
-
-    The edition is not part of the group. That is intentional. For a TV
-    file, it only carries the optional episode title. Thus, 2 copies of
-    the same episode compete, with or without a title in their
-    filenames. At the same quality and span, a real rip ranks above a
-    1080p SDR conversion (#292). A tie goes to the lowest file id. The
-    ranked_files reporting view uses the same rule (#273).
-    """
-
-    return (
-        db.func.row_number()
-        .over(
-            partition_by=(TVSeries.id, File.season, File.episode),
-            order_by=(
-                File.fullscreen.asc(),
-                RefQuality.preference.desc(),
-                File.last_episode.desc(),
-                File.converted_from_quality.isnot(None).asc(),
-                File.id.asc(),
-            ),
-        )
-        .label("rank")
-    )
-
-
-def ranked_movie_files():
-    """Return a subquery of (id, rank) with the movie_file_rank of each movie file.
-
-    rank 1 is the best copy of its title, feature, and edition group."""
-
-    return (
-        db.session.query(File.id, movie_file_rank())
-        .join(Movie, (Movie.id == File.movie_id))
-        .join(RefQuality, (RefQuality.id == File.quality_id))
-        .subquery()
-    )
-
-
-def ranked_tv_files():
-    """Return a subquery of (id, rank) with the tv_file_rank of each episode file.
-
-    rank 1 is the best copy of its series, season, and episode."""
-
-    return (
-        db.session.query(File.id, tv_file_rank())
-        .join(TVSeries, (TVSeries.id == File.series_id))
-        .join(RefQuality, (RefQuality.id == File.quality_id))
-        .subquery()
-    )
-
-
 def title_sort(model, tmdb=True):
     """Return the sort expression of the title of a film or a series.
 
@@ -3105,3 +3025,27 @@ def title_sort(model, tmdb=True):
         tmdb_title = model.tmdb_title if model is Movie else model.tmdb_name
         title = db.case((tmdb_title != None, tmdb_title), else_=model.title)
     return db.func.regexp_replace(title, "^(The|A|An) ", "")
+
+
+# The quality ranking lives in app.file_ranking (#361). These names stay
+# importable from app.models. The import is lazy, because
+# app.file_ranking imports the models of this module.
+
+_FILE_RANKING_NAMES = {
+    "MOVIE_BEST_ORDER",
+    "TV_BEST_ORDER",
+    "movie_file_rank",
+    "tv_file_rank",
+    "ranked_movie_files",
+    "ranked_tv_files",
+}
+
+
+def __getattr__(name):
+    """Return a re-exported name of app.file_ranking."""
+
+    if name in _FILE_RANKING_NAMES:
+        from app import file_ranking
+
+        return getattr(file_ranking, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

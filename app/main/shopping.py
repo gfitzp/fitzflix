@@ -44,6 +44,11 @@ from app.streaming import (
 )
 from app.main import bp
 from app.main.helpers import decimal_id
+from app.file_ranking import (
+    lowest_physical_preference,
+    quality_id,
+    quality_preference,
+)
 
 # This is the scarcity order of the watchlist view (#247, the ranking
 # of Glenn). A film that no service of a watcher has can only be
@@ -192,9 +197,7 @@ def movie_shopping():
     min_quality = request.args.get("min_quality", 0, type=str)
     max_quality = request.args.get(
         "max_quality",
-        db.session.query(RefQuality.id)
-        .filter(RefQuality.quality_title == "Bluray-2160p Remux")
-        .scalar(),
+        quality_id("Bluray-2160p Remux"),
         type=str,
     )
 
@@ -245,22 +248,13 @@ def movie_shopping():
     # default view includes the liked films that the user does not own.
 
     if not RefQuality.query.filter_by(id=int(min_quality)).first():
-        min_quality = int(
-            db.session.query(RefQuality.id)
-            .filter(RefQuality.quality_title == "Not in library")
-            .scalar()
-        )
+        min_quality = int(quality_id("Not in library"))
 
     # If the max_quality ID does not exist in the RefQuality table, use
     # "Bluray-1080p".
 
     if not RefQuality.query.filter_by(id=int(max_quality)).first():
-        max_quality = int(
-            db.session.query(RefQuality.id)
-            .filter(RefQuality.quality_title == "Bluray-1080p")
-            .filter(RefQuality.physical_media == True)
-            .scalar()
-        )
+        max_quality = int(quality_id("Bluray-1080p"))
 
     # Find the preference of the quality ID. Set it as the dropdown default.
 
@@ -292,16 +286,8 @@ def movie_shopping():
     else:
         title = "Movies to upgrade"
 
-    not_in_library_quality = bottom_quality = (
-        db.session.query(RefQuality.preference)
-        .filter(RefQuality.quality_title == "Not in library")
-        .scalar()
-    )
-    top_quality = (
-        db.session.query(RefQuality.preference)
-        .filter(RefQuality.quality_title == "Bluray-2160p Remux")
-        .scalar()
-    )
+    not_in_library_quality = bottom_quality = quality_preference("Not in library")
+    top_quality = quality_preference("Bluray-2160p Remux")
     min_quality_title = (
         db.session.query(RefQuality.quality_title)
         .filter_by(id=int(min_quality))
@@ -368,23 +354,9 @@ def movie_shopping():
 
     # These subqueries get the preference of each quality limit.
 
-    dvd_quality = (
-        db.session.query(RefQuality.preference)
-        .filter(RefQuality.quality_title == "DVD")
-        .scalar()
-    )
-    bluray_quality = (
-        db.session.query(db.func.min(RefQuality.preference))
-        .filter(RefQuality.quality_title.like("Bluray-1080%"))
-        .filter(RefQuality.physical_media == True)
-        .scalar()
-    )
-    uhd_quality = (
-        db.session.query(db.func.min(RefQuality.preference))
-        .filter(RefQuality.quality_title.like("Bluray-2160%"))
-        .filter(RefQuality.physical_media == True)
-        .scalar()
-    )
+    dvd_quality = quality_preference("DVD")
+    bluray_quality = lowest_physical_preference("Bluray-1080")
+    uhd_quality = lowest_physical_preference("Bluray-2160")
 
     CriterionQuality = db.aliased(RefQuality)
 
@@ -886,9 +858,7 @@ def tv_shopping():
     min_quality = request.args.get("min_quality", 0, type=str)
     max_quality = request.args.get(
         "max_quality",
-        db.session.query(RefQuality.id)
-        .filter(RefQuality.quality_title == "Bluray-2160p Remux")
-        .scalar(),
+        quality_id("Bluray-2160p Remux"),
         type=str,
     )
 
@@ -919,22 +889,13 @@ def tv_shopping():
     # "Unknown".
 
     if not RefQuality.query.filter_by(id=int(min_quality)).first():
-        min_quality = int(
-            db.session.query(RefQuality.id)
-            .filter(RefQuality.quality_title == "Unknown")
-            .scalar()
-        )
+        min_quality = int(quality_id("Unknown"))
 
     # If the max_quality ID does not exist in the RefQuality table, use
     # "Bluray-1080p".
 
     if not RefQuality.query.filter_by(id=int(max_quality)).first():
-        max_quality = int(
-            db.session.query(RefQuality.id)
-            .filter(RefQuality.quality_title == "Bluray-1080p")
-            .filter(RefQuality.physical_media == True)
-            .scalar()
-        )
+        max_quality = int(quality_id("Bluray-1080p"))
 
     # Find the preference of the quality ID. Set it as the dropdown default.
 
@@ -983,17 +944,8 @@ def tv_shopping():
 
     # These subqueries get the preference of each quality limit.
 
-    dvd_quality = (
-        db.session.query(RefQuality.preference)
-        .filter(RefQuality.quality_title == "DVD")
-        .scalar()
-    )
-    bluray_quality = (
-        db.session.query(db.func.min(RefQuality.preference))
-        .filter(RefQuality.quality_title.like("Bluray-1080%"))
-        .filter(RefQuality.physical_media == True)
-        .scalar()
-    )
+    dvd_quality = quality_preference("DVD")
+    bluray_quality = lowest_physical_preference("Bluray-1080")
 
     # Grade each season by its episodes. The quality of an episode is the
     # best quality of the files that hold it, a multi-episode file

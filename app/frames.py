@@ -32,6 +32,7 @@ from werkzeug.local import LocalProxy
 
 from app.tasks import enqueue_task
 from app import db, get_app
+from app.file_ranking import MOVIE_BEST_ORDER
 from app.models import File, Movie, RefQuality
 
 app = LocalProxy(get_app)
@@ -173,15 +174,14 @@ def _frame_has_picture(path):
 def _best_file(movie_id):
     """Return the best main-feature copy of the movie.
 
-    The ranking is the same as on the card. Never select a fullscreen copy
-    if a widescreen copy exists. Then select the best quality."""
+    The order is MOVIE_BEST_ORDER, the ranking of the card."""
 
     return (
         db.session.query(File, RefQuality)
         .join(RefQuality, RefQuality.id == File.quality_id)
         .filter(File.movie_id == movie_id)
         .filter(File.feature_type_id == None)
-        .order_by(File.fullscreen.asc(), RefQuality.preference.desc())
+        .order_by(*MOVIE_BEST_ORDER)
         .first()
     )
 

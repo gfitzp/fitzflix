@@ -55,6 +55,7 @@ from app.models import (
 from app.main import bp
 from app.plex_player import remote_playback_configured
 from app.queues import QUEUE_NAME
+from app.file_ranking import copy_upgradable
 from app.main.helpers import (
     _hold_verdict_lock,
     apply_verdict,
@@ -839,7 +840,7 @@ def file_activity():
         next_url=next_url,
         prev_url=prev_url,
         pages=recently_added,
-        upgrade_threshold=_upgrade_threshold(),
+        card_upgradable=_card_upgradable(recently_added.items),
         trail_for=trail_for,
         card_version=card_version,
     )
@@ -868,6 +869,30 @@ def _recent_files(query):
     return query.filter(
         recency >= db.func.adddate(db.func.current_date(), -7)
     ).order_by(recency.desc(), File.id.desc())
+
+
+def _card_upgradable(files):
+    """Return a dict of file id -> True if the main copy is worth an upgrade.
+
+    The quality badge of a File Activity card reads it. The rule is
+    copy_upgradable. A film that the shopping list excludes is never
+    upgradable. A TV copy on physical media is final."""
+
+    threshold = _upgrade_threshold()
+    upgradable = {}
+    for file in files:
+        if file.movie:
+            upgradable[file.id] = not file.movie.shopping_list_exclude and (
+                copy_upgradable(file.fullscreen, file.quality.preference, threshold)
+            )
+        elif file.tv_series:
+            upgradable[file.id] = copy_upgradable(
+                False,
+                file.quality.preference,
+                threshold,
+                physical=file.quality.physical_media,
+            )
+    return upgradable
 
 
 def _recent_file_cards():
@@ -974,7 +999,7 @@ def file_activity_cards():
             "_file_activity_cards.html",
             recently_added=files,
             native_language=[current_app.config["NATIVE_LANGUAGE"], "und", "zxx"],
-            upgrade_threshold=_upgrade_threshold(),
+            card_upgradable=_card_upgradable(files),
             trail_for=trail_for,
             card_version=card_version,
         )

@@ -80,6 +80,13 @@ from app.models import (
     title_sort,
 )
 from app.main import bp
+from app.file_ranking import (
+    MOVIE_BEST_ORDER,
+    TV_BEST_ORDER,
+    best_copy_key,
+    copy_upgradable,
+    quality_anchors,
+)
 from app.newly_added import poster_fold
 from app.infuse_player import infuse_only_formats
 from app.infuse_player import play_movie as infuse_play_movie
@@ -344,19 +351,14 @@ def _filmography(credit):
     local_rows = local_credit_rows(MovieCast) + local_credit_rows(MovieCrew)
 
     # The best owned copy per movie. A movie can have several rank-1
-    # editions. The filmography shows 1 entry per film.
+    # editions. The filmography shows 1 entry per film. The best of
+    # them is the first in MOVIE_BEST_ORDER (best_copy_key).
 
     local = {}
     for file, film, quality in local_rows:
         existing = local.get(film.id)
-        if (
-            existing is None
-            or (quality is not None and existing["quality"] is None)
-            or (
-                quality is not None
-                and existing["quality"] is not None
-                and quality.preference > existing["quality"].preference
-            )
+        if existing is None or best_copy_key(file, quality) < best_copy_key(
+            existing["file"], existing["quality"]
         ):
             local[film.id] = {"movie": film, "file": file, "quality": quality}
 
@@ -886,8 +888,12 @@ def criterion_collection():
                 consumed_tmdb.add(release["tmdb_id"])
             if release.get("title") and release.get("year"):
                 consumed_title_year.add((release["title"], release["year"]))
-        target = min(criterion_prefs.get(movie.id) or threshold, threshold)
-        upgradable = bool(file.fullscreen) or quality.preference < target
+        upgradable = copy_upgradable(
+            file.fullscreen,
+            quality.preference,
+            threshold,
+            criterion_prefs.get(movie.id),
+        )
         library_rows.append(
             {
                 "kind": "library",
@@ -1505,9 +1511,7 @@ def _films_and_features(movie_id):
         File.query.join(RefQuality, (RefQuality.id == File.quality_id))
         .filter(File.movie_id == movie_id)
         .filter(File.feature_type_id == None)
-        .order_by(
-            File.fullscreen.asc(), File.edition.asc(), RefQuality.preference.desc()
-        )
+        .order_by(File.fullscreen.asc(), File.edition.asc(), *MOVIE_BEST_ORDER)
         .all()
     )
     features = (
@@ -1522,26 +1526,22 @@ def _films_and_features(movie_id):
 def _criterion_form(movie):
     """Return the Criterion form of a film, with its quality choices and default."""
 
+    # The choices are the Unknown tier (id 1) and the physical DVD,
+    # 1080p, and 2160p tiers, worst first.
+
     criterion_form = CriterionForm()
-    qualities = (
-        db.session.query(RefQuality.id, RefQuality.quality_title)
-        .filter(
-            db.or_(
-                RefQuality.id == 1,
-                db.and_(
-                    RefQuality.physical_media == 1,
-                    db.or_(
-                        RefQuality.quality_title == "DVD",
-                        RefQuality.quality_title.like("%1080p"),
-                        RefQuality.quality_title.like("%2160p"),
-                    ),
-                ),
+    tiers = sorted(
+        (
+            (tier.preference, tier.id, title)
+            for title, tier in quality_anchors().items()
+            if tier.id == 1
+            or (
+                tier.physical_media
+                and (title == "DVD" or title.endswith(("1080p", "2160p")))
             )
-        )
-        .order_by(RefQuality.preference.asc())
-        .all()
+        ),
     )
-    criterion_form.quality.choices = [(str(id), title) for (id, title) in qualities]
+    criterion_form.quality.choices = [(str(id), title) for (_, id, title) in tiers]
     criterion_form.quality.default = movie.criterion_quality_id
     return criterion_form
 
@@ -1891,11 +1891,7 @@ def movie_files(movie_id):
         .join(ranked_files, (ranked_files.c.id == File.id))
         .outerjoin(RefFeatureType, (RefFeatureType.id == File.feature_type_id))
         .filter(Movie.id == movie_id)
-        .order_by(
-            File.feature_type_id.asc(),
-            File.plex_title.asc(),
-            RefQuality.preference.desc(),
-        )
+        .order_by(File.feature_type_id.asc(), File.plex_title.asc(), *MOVIE_BEST_ORDER)
         .all()
     )
 
@@ -1977,7 +1973,9 @@ def tv_library():
                 # A physical-media season (DVD, SD/720p Blu-ray) is often the
                 # only release that will ever exist. Thus, it does not count as
                 # upgradable.
-                "upgradable": not physical and preference < upgrade_threshold,
+                "upgradable": copy_upgradable(
+                    False, preference, upgrade_threshold, physical=physical
+                ),
             }
         )
 
@@ -2224,9 +2222,7 @@ def _season_files(series_id, season):
         .join(ranked_files, (ranked_files.c.id == File.id))
         .filter(TVSeries.id == series_id)
         .filter(File.season == season)
-        .order_by(
-            File.episode.asc(), RefQuality.preference.desc(), File.last_episode.desc()
-        )
+        .order_by(File.episode.asc(), *TV_BEST_ORDER)
         .all()
     )
 

@@ -29,7 +29,12 @@ from app.models import (
     UserMovieReview,
     UserMovieStatus,
     UserWatchlist,
+)
+from app.file_ranking import (
+    MOVIE_BEST_ORDER,
+    copy_upgradable,
     tv_file_rank,
+    upgrade_threshold,
 )
 from app.elicitation import set_last_response
 from app.recommendations import (
@@ -658,12 +663,7 @@ def admin_required(view):
 def _upgrade_threshold():
     """Return the quality preference below which a copy is upgradable."""
 
-    return (
-        db.session.query(RefQuality.preference)
-        .filter(RefQuality.quality_title == "Bluray-1080p")
-        .scalar()
-        or 0
-    )
+    return upgrade_threshold()
 
 
 def library_upgradable(movie, criterion=False):
@@ -687,7 +687,7 @@ def library_upgradable(movie, criterion=False):
         .join(RefQuality, RefQuality.id == File.quality_id)
         .filter(File.movie_id == movie.id)
         .filter(File.feature_type_id == None)
-        .order_by(File.fullscreen.asc(), RefQuality.preference.desc())
+        .order_by(*MOVIE_BEST_ORDER)
         .first()
     )
     if best is None:
@@ -702,12 +702,13 @@ def library_upgradable(movie, criterion=False):
             if movie.criterion_quality_id
             else None
         )
-        target = min(criterion_pref or threshold, threshold)
-        upgradable = bool(file.fullscreen) or quality.preference < target
+        upgradable = copy_upgradable(
+            file.fullscreen, quality.preference, threshold, criterion_pref
+        )
         return not (bool(movie.criterion_disc_owned) and not upgradable)
     if movie.shopping_list_exclude:
         return False
-    return bool(file.fullscreen) or quality.preference < threshold
+    return copy_upgradable(file.fullscreen, quality.preference, threshold)
 
 
 def series_upgradable(series_ids):
@@ -773,7 +774,9 @@ def series_upgradable(series_ids):
     threshold = _upgrade_threshold()
     upgradable = {}
     for (series_id, _season), (preference, physical) in worst.items():
-        season_upgradable = not physical and preference < threshold
+        season_upgradable = copy_upgradable(
+            False, preference, threshold, physical=physical
+        )
         upgradable[series_id] = upgradable.get(series_id, False) or season_upgradable
 
     return upgradable

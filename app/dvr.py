@@ -38,6 +38,7 @@ from app.tasks import enqueue_task
 from app import db, get_app
 from app.availability_alerts import _leaving_set
 from app.settings import get_setting
+from app.file_ranking import MOVIE_BEST_ORDER, TV_BEST_ORDER
 from app.leaving_criterion import CRITERION_PROVIDER_ID
 from app.models import (
     DVRChannel,
@@ -243,9 +244,8 @@ def _library_online():
 def _best_files_by_movie():
     """Return the best main-feature copy on disk of each owned movie.
 
-    Never select a fullscreen copy while a widescreen copy exists. Then
-    select the best quality. This is the same ranking that the movie
-    cards use. Skip the rows whose file is absent. Thus, an absent best
+    The order is MOVIE_BEST_ORDER, the ranking of the movie cards. Skip
+    the rows whose file is absent. Thus, an absent best
     row yields to a present lesser one. A movie with no copy on disk
     leaves the pool, because there is nothing to air and nothing to
     probe."""
@@ -255,7 +255,7 @@ def _best_files_by_movie():
         .join(File, File.movie_id == Movie.id)
         .join(RefQuality, RefQuality.id == File.quality_id)
         .filter(File.feature_type_id == None)  # noqa: E711
-        .order_by(Movie.id, File.fullscreen.asc(), RefQuality.preference.desc())
+        .order_by(Movie.id, *MOVIE_BEST_ORDER)
         .all()
     )
     best = {}
@@ -524,8 +524,8 @@ def _channel_window(members, day, cap):
 def _series_episodes(series_id):
     """Return the best copy on disk of each regular episode, in broadcast order.
 
-    This is the same per-episode quality ranking that the library pages
-    use (the order of tv_file_rank). Specials are excluded. Rows whose
+    The order is TV_BEST_ORDER, the per-episode ranking of the library
+    pages. Specials are excluded. Rows whose
     file is absent are skipped, in the same way as _best_files_by_movie
     skips them."""
 
@@ -536,9 +536,7 @@ def _series_episodes(series_id):
         .order_by(
             File.season.asc(),
             File.episode.asc(),
-            File.fullscreen.asc(),
-            RefQuality.preference.desc(),
-            File.last_episode.desc(),
+            *TV_BEST_ORDER,
         )
         .all()
     )

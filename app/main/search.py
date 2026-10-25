@@ -30,6 +30,7 @@ from app.models import (
     ranked_tv_files,
 )
 from app.main import bp
+from app.file_ranking import MOVIE_BEST_ORDER, copy_upgradable
 from app.main.helpers import (
     _upgrade_threshold,
     decimal_id,
@@ -136,7 +137,7 @@ def _movie_search_results(wildcard, limit=50, years=None):
         best = (
             movie.files.filter(File.feature_type_id == None)
             .join(RefQuality, (RefQuality.id == File.quality_id))
-            .order_by(File.fullscreen.asc(), RefQuality.preference.desc())
+            .order_by(*MOVIE_BEST_ORDER)
             .first()
         )
         results.append(
@@ -146,7 +147,9 @@ def _movie_search_results(wildcard, limit=50, years=None):
                 "quality": best.quality.quality_title if best else None,
                 "upgradable": bool(
                     best
-                    and (best.fullscreen or best.quality.preference < upgrade_threshold)
+                    and copy_upgradable(
+                        best.fullscreen, best.quality.preference, upgrade_threshold
+                    )
                     and not (movie.shopping_list_exclude == 1)
                 ),
                 "excluded": movie.shopping_list_exclude == 1,
@@ -262,7 +265,9 @@ def _tv_search_results(wildcard, limit=50, years=None):
                 # A physical-media season (DVD, SD/720p Blu-ray) is often the
                 # only release that will exist. Thus, it does not count as
                 # upgradable.
-                "upgradable": not physical and preference < upgrade_threshold,
+                "upgradable": copy_upgradable(
+                    False, preference, upgrade_threshold, physical=physical
+                ),
             }
         )
 
