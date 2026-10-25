@@ -2020,6 +2020,40 @@ class TVSeries(db.Model, TMDBMixin):
         return f"<TVSeries '{self.title}'>"
 
 
+def title_lock_key(
+    media_library,
+    title,
+    year=None,
+    feature_type=None,
+    plex_title=None,
+    season=None,
+    episode=None,
+    edition=None,
+):
+    """Return the cross-task lock key of a title as a JSON string.
+
+    Fitzflix must not process 2 versions of one video at the same time.
+    The import task builds this key from the parsed filename. The later
+    tasks build it from the database rows (File.file_identifier). Both
+    go through this one function, so the 2 keys are the same string. A
+    movie key is title, year, feature type, Plex title and edition. A TV
+    key is series title, season and episode."""
+
+    if media_library == "Movies":
+        identity = {
+            "title": title,
+            "year": year,
+            "feature_type": feature_type,
+            "plex_title": plex_title,
+            "edition": edition,
+        }
+    elif media_library == "TV Shows":
+        identity = {"title": title, "season": season, "episode": episode}
+    else:
+        raise ValueError(f"unknown media library {media_library!r}")
+    return json.dumps(identity)
+
+
 class File(db.Model):
     """A library media file.
 
@@ -2266,30 +2300,28 @@ class File(db.Model):
                 .filter(File.id == self.id)
                 .first()
             )
-            file_identifier = {
-                "title": file.movie.title,
-                "year": file.movie.year,
-                "feature_type": (
+            return title_lock_key(
+                "Movies",
+                file.movie.title,
+                year=file.movie.year,
+                feature_type=(
                     file.feature_type.feature_type if file.feature_type else None
                 ),
-                "plex_title": file.plex_title,
-                "edition": file.edition,
-            }
-
-        elif self.media_library == "TV Shows":
-            file = (
-                File.query.join(TVSeries, (TVSeries.id == File.series_id))
-                .filter(File.id == self.id)
-                .first()
+                plex_title=file.plex_title,
+                edition=file.edition,
             )
-            file_identifier = {
-                "title": file.tv_series.title,
-                "season": file.season,
-                "episode": file.episode,
-            }
 
-        file_identifier = json.dumps(file_identifier)
-        return file_identifier
+        file = (
+            File.query.join(TVSeries, (TVSeries.id == File.series_id))
+            .filter(File.id == self.id)
+            .first()
+        )
+        return title_lock_key(
+            "TV Shows",
+            file.tv_series.title,
+            season=file.season,
+            episode=file.episode,
+        )
 
     def find_better_files(self):
         # A message to the future Glenn (written by Glenn, 2020-08-02):

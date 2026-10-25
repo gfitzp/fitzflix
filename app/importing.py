@@ -70,6 +70,7 @@ from app.models import (
     RefFeatureType,
     RefQuality,
     TVSeries,
+    title_lock_key,
     tmdb_get,
 )
 from app.pipeline import migrate_trail, record_task_stage
@@ -259,6 +260,24 @@ def already_cataloged(file_path):
         return False
     file = File.query.filter_by(file_path=relative).first()
     return file is not None and file.filesize_bytes == os.path.getsize(file_path)
+
+
+def lock_key_for_details(file_details):
+    """Return the title lock key of the parsed details of an import file.
+
+    This is the filename side of title_lock_key. File.file_identifier is
+    the database side. tests/test_locks.py pins their agreement."""
+
+    return title_lock_key(
+        file_details.get("media_library"),
+        file_details.get("title"),
+        year=file_details.get("year"),
+        feature_type=file_details.get("feature_type_name"),
+        plex_title=file_details.get("plex_title"),
+        season=file_details.get("season"),
+        episode=file_details.get("episode"),
+        edition=file_details.get("edition"),
+    )
 
 
 def _hold_title_lock(lock, basename):
@@ -885,23 +904,7 @@ def localization_task(
             # file has this same identifier, the lock prevents its processing
             # until the processing of the first file is complete.
 
-            if file_details.get("media_library") == "Movies":
-                file_identifier = {
-                    "title": file_details.get("title"),
-                    "year": file_details.get("year"),
-                    "feature_type": file_details.get("feature_type_name"),
-                    "plex_title": file_details.get("plex_title"),
-                    "edition": file_details.get("edition"),
-                }
-
-            elif file_details.get("media_library") == "TV Shows":
-                file_identifier = {
-                    "title": file_details.get("title"),
-                    "season": file_details.get("season"),
-                    "episode": file_details.get("episode"),
-                }
-
-            file_identifier = json.dumps(file_identifier)
+            file_identifier = lock_key_for_details(file_details)
             current_app.logger.debug(f"'{basename}' Lock identifier: {file_identifier}")
 
             # If this task does not get the lock, it returns to the

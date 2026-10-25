@@ -1,13 +1,16 @@
 """Test the cross-task lock contract.
 
 The localization task builds its lock identifier from the parsed filename
-details. The later tasks build their lock identifiers from database rows
-through File.file_identifier(). Both must serialize to the same string.
-If they do not, two tasks that work on the same title do not contend for
-the same lock.
+details (lock_key_for_details). The later tasks build their lock
+identifiers from database rows through File.file_identifier(). Both go
+through title_lock_key and must serialize to the same string. If they
+do not, two tasks that work on the same title do not contend for the
+same lock.
 """
 
 import json
+
+import pytest
 
 from app.videos import evaluate_filename
 
@@ -15,27 +18,23 @@ from tests.factories import make_movie, make_movie_file, make_tv_file, make_tv_s
 
 
 def localization_identifier(details):
-    """Return the identifier dict that localization_task builds.
+    """Return the lock key that localization_task builds from the details."""
 
-    The task builds it from the evaluate_filename details."""
+    from app.importing import lock_key_for_details
 
-    if details.get("media_library") == "Movies":
-        return json.dumps(
-            {
-                "title": details.get("title"),
-                "year": details.get("year"),
-                "feature_type": details.get("feature_type_name"),
-                "plex_title": details.get("plex_title"),
-                "edition": details.get("edition"),
-            }
-        )
-    return json.dumps(
-        {
-            "title": details.get("title"),
-            "season": details.get("season"),
-            "episode": details.get("episode"),
-        }
-    )
+    return lock_key_for_details(details)
+
+
+def test_title_lock_key_shapes():
+    from app.models import title_lock_key
+
+    movie = json.loads(title_lock_key("Movies", "Jaws", year=1975))
+    assert list(movie) == ["title", "year", "feature_type", "plex_title", "edition"]
+    assert movie["year"] == 1975 and movie["edition"] is None
+    tv = json.loads(title_lock_key("TV Shows", "Doctor Who", season=1, episode=1))
+    assert tv == {"title": "Doctor Who", "season": 1, "episode": 1}
+    with pytest.raises(ValueError):
+        title_lock_key("Music", "x")
 
 
 def test_movie_identifiers_match(app):
