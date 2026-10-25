@@ -338,7 +338,7 @@ def test_the_orphans_are_gone(app):
 
 
 def test_the_library_names_are_constants(app):
-    """Test MOVIES and TV_SHOWS, the 2 values of File.media_library (#360)."""
+    """Test MOVIES and TV_SHOWS, the 2 values of File.media_library."""
 
     import pathlib
     import re

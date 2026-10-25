@@ -1,4 +1,4 @@
-"""Test the per-test sweeps and the speed settings of the suite (#360).
+"""Test the per-test sweeps and the speed settings of the suite (#363).
 
 The shared directories live for the whole session. A test that leaves
 a file there changed the result of a later test. The lock manager and
@@ -50,7 +50,7 @@ def test_the_suite_hashes_passwords_with_a_cheap_pbkdf2(app):
 
 
 def test_the_shared_helpers_live_in_conftest_and_factories():
-    """Pin the moves of #360: one copy of each helper, no cross-test imports."""
+    """Pin the helper moves: one copy of each helper, no cross-test imports."""
 
     import pathlib
     import re

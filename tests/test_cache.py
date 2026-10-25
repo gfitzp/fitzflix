@@ -175,7 +175,7 @@ class _Down:
 
 
 def test_a_cached_empty_registry_answers_without_tmdb(app, monkeypatch):
-    """An empty list in the cache is an answer, not a miss (#360)."""
+    """An empty list in the cache is an answer, not a miss."""
 
     from app import streaming
 

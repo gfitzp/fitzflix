@@ -1,4 +1,4 @@
-"""Table tests for the 2 pure helpers of mkvpropedit_unlocked (#360).
+"""Table tests for the 2 pure helpers of mkvpropedit_unlocked (#364).
 
 build_propedit_args returns the argument list. Before, the task built
 strings and split them on the spaces. track_order is one stable sort.

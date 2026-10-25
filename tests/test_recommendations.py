@@ -1763,7 +1763,7 @@ def test_genre_filter_trims_the_library_rail(app, admin_client):
 
 
 def test_job_to_class_is_the_one_crew_job_map():
-    """Test the shared map of TMDB crew jobs to taste classes (#360).
+    """Test the shared map of TMDB crew jobs to taste classes.
 
     The rail, the warm estimate, the filmography labels and the feature
     builder each built it. One constant beside CREW_ROLE_JOBS now."""

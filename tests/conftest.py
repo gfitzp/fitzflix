@@ -282,7 +282,7 @@ def app():
 
 
 def pytest_sessionfinish(session, exitstatus):
-    """Remove the temp directory of the session (#360).
+    """Remove the temp directory of the session (#363).
 
     Each session made a new directory under TMPDIR and left it. On
     2026-10-25, 558 of them held 347 MB."""
@@ -348,7 +348,7 @@ def _empty_directory(path):
 
 
 def clear_artifacts(app):
-    """Empty the shared directories that a test can fill (#360).
+    """Empty the shared directories that a test can fill (#363).
 
     The 2 library roots, the held directory and the custom artwork
     directory live for the whole session. The log rotation leaves

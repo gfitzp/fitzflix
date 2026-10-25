@@ -1,4 +1,4 @@
-"""Test app/funnel.py: the film sets of a user and the one marker rule (#360).
+"""Test app/funnel.py: the film sets of a user and the one marker rule.
 
 Six routes built the sets by hand, and each decided the "Might
 interest you" marker on its own. The route tests in test_filmography,
