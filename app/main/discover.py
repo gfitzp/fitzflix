@@ -65,7 +65,8 @@ from app.main.helpers import (
     season_episode_counts,
     _ladder_fetch,
     ladder_payload,
-    _quick_rating,
+    _verdict_post,
+    TMDB_PAGE_POLICY,
     _upgrade_threshold,
     library_upgradable,
     series_upgradable,
@@ -2203,14 +2204,12 @@ def review_tmdb(tmdb_id):
     # the date.
 
     movie_review_form = MovieReviewForm()
-    quick_present, quick_rating = _quick_rating()
-    if (
-        movie_review_form.review_submit.data or quick_present
-    ) and movie_review_form.validate_on_submit():
-        if quick_present and quick_rating is None:
+    post = _verdict_post(movie_review_form)
+    if post is not None:
+        if post.invalid:
             flash("That rating is not valid.", "warning")
             return redirect(url_for("main.review_tmdb", tmdb_id=tmdb_id))
-        if quick_present:
+        if post.quick_present:
             _hold_verdict_lock(f"tmdb:{int(tmdb_id)}")
         movie, created = find_or_create_tmdb_movie(
             tmdb_id, film_title, year, details=details
@@ -2226,16 +2225,7 @@ def review_tmdb(tmdb_id):
         # strip stays empty until the enrichment arrives.
 
         outcome = apply_verdict(
-            int(current_user.id),
-            movie,
-            quick_rating,
-            movie_review_form.review.data,
-            movie_review_form.date_watched.data,
-            quick_present,
-            allow_unflag=False,
-            allow_remove=False,
-            steer=not request.form.get("from_card"),
-            steer_flag=False,
+            post, movie, TMDB_PAGE_POLICY(steer=not request.form.get("from_card"))
         )
         if created and outcome.kind in ("flagged", "corrected", "logged"):
             enqueue_task(

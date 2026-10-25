@@ -69,7 +69,7 @@ from app.main import bp
 from app.main.helpers import (
     _ladder_fetch,
     flash_form_errors,
-    _quick_rating,
+    _verdict_post,
     apply_row_edit,
     decimal_id,
     ladder_payload,
@@ -125,17 +125,15 @@ def review_edit(review_id):
         return redirect(url_for("main.history", page=page))
 
     movie_review_form = MovieReviewForm()
-    quick_present, quick_rating = _quick_rating()
-    if (
-        movie_review_form.review_submit.data or quick_present
-    ) and movie_review_form.validate_on_submit():
-        if quick_present and quick_rating is None:
+    post = _verdict_post(movie_review_form)
+    if post is not None:
+        if post.invalid:
             flash("That rating is not valid.", "warning")
             return redirect(url_for("main.review_edit", review_id=review_id, page=page))
         # A logged viewing cannot be "not interested". The ladder hides
         # its ✕ here. This refuses a stray 0. It does not store it.
 
-        if quick_rating == 0:
+        if post.rating == 0:
             flash(
                 f"You logged '{title}'. The lowest rating for a "
                 f"seen film is 1 star.",
@@ -143,11 +141,7 @@ def review_edit(review_id):
             )
             return redirect(url_for("main.review_edit", review_id=review_id, page=page))
         apply_row_edit(
-            user_review,
-            quick_rating,
-            movie_review_form.review.data,
-            movie_review_form.date_watched.data,
-            request.form,
+            user_review, post.rating, post.review_text, post.watched_date, request.form
         )
         if _ladder_fetch():
             # This page edits 1 viewing. Thus, the state of the row comes

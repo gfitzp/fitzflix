@@ -102,7 +102,8 @@ from app.main.helpers import (
     _ladder_fetch,
     _latest_review_row,
     decimal_id,
-    _quick_rating,
+    _verdict_post,
+    MOVIE_PAGE_POLICY,
     _upgrade_threshold,
     library_upgradable,
     series_upgradable,
@@ -1182,11 +1183,9 @@ def movie(movie_id):
     # date is known.
 
     movie_review_form = MovieReviewForm()
-    quick_present, quick_rating = _quick_rating()
-    if (
-        movie_review_form.review_submit.data or quick_present
-    ) and movie_review_form.validate_on_submit():
-        if quick_present and quick_rating is None:
+    post = _verdict_post(movie_review_form)
+    if post is not None:
+        if post.invalid:
             flash("That rating is not valid.", "warning")
             return redirect(url_for("main.movie", movie_id=movie.id))
         # The ladder is the only rating input. Log Watch without a tap
@@ -1196,9 +1195,8 @@ def movie(movie_id):
         # rates it (without a date). The strip stays anchored to this
         # page.
 
-        rating = quick_rating
         target = movie
-        if quick_present:
+        if post.quick_present:
             raw_movie_id = (request.form.get("movie_id") or "").strip()
             if raw_movie_id:
                 form_movie_id = decimal_id(raw_movie_id)
@@ -1221,18 +1219,7 @@ def movie(movie_id):
         # card) moves the last-response state.
 
         steer = target.id == movie.id and not request.form.get("from_card")
-        outcome = apply_verdict(
-            int(current_user.id),
-            target,
-            rating,
-            movie_review_form.review.data,
-            movie_review_form.date_watched.data,
-            quick_present,
-            allow_unflag=True,
-            allow_remove=True,
-            steer=steer,
-            steer_flag=steer,
-        )
+        outcome = apply_verdict(post, target, MOVIE_PAGE_POLICY(steer))
         return verdict_response(
             outcome,
             target,

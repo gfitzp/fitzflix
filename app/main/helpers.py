@@ -352,20 +352,71 @@ def _ladder_state(user_id, movie_id):
 Outcome = namedtuple("Outcome", "kind rating is_review")
 
 
-def apply_verdict(
-    user_id,
-    target,
-    rating,
-    review_text,
-    watched_date,
-    quick_present,
-    *,
-    allow_unflag,
-    allow_remove,
-    steer,
-    steer_flag,
+class VerdictPost(
+    namedtuple("VerdictPost", "user_id rating review_text watched_date quick_present")
 ):
-    """Apply 1 verdict post on a film to the diary. Return an Outcome.
+    """1 verdict post of the review form: the ladder tap, the text, the date.
+
+    rating is None for a post without a tap, 0 for the ✕, or 1.0 to
+    5.0. quick_present is True if the post has a ladder tap."""
+
+    @property
+    def invalid(self):
+        """Return True if the post has a ladder tap that is not a rating."""
+
+        return self.quick_present and self.rating is None
+
+
+def _verdict_post(form):
+    """Return the VerdictPost of a valid post of a review form, or None.
+
+    The result is None if the user posted neither the form nor a ladder
+    tap, or if the form does not validate. The movie page, the TMDB log
+    page, and the review editor read their posts with this function."""
+
+    quick_present, quick_rating = _quick_rating()
+    if not (form.review_submit.data or quick_present) or not form.validate_on_submit():
+        return None
+    return VerdictPost(
+        int(current_user.id),
+        quick_rating,
+        form.review.data,
+        form.date_watched.data,
+        quick_present,
+    )
+
+
+# The rules of a verdict on 1 page. allow_unflag lets a ✕ on a flagged
+# film remove the flag. allow_remove lets a tap on the current rating
+# remove it. steer and steer_flag say if a rating and a ✕ move the
+# last-response state of the drive.
+
+VerdictPolicy = namedtuple(
+    "VerdictPolicy", "allow_unflag allow_remove steer steer_flag"
+)
+
+
+def MOVIE_PAGE_POLICY(steer):
+    """Return the verdict rules of the movie page. Its ✕ steers like its stars."""
+
+    return VerdictPolicy(
+        allow_unflag=True, allow_remove=True, steer=steer, steer_flag=steer
+    )
+
+
+def TMDB_PAGE_POLICY(steer):
+    """Return the verdict rules of the TMDB log page.
+
+    The page never removes a rating and never undoes a ✕. Its ✕ never
+    steers the drive."""
+
+    return VerdictPolicy(
+        allow_unflag=False, allow_remove=False, steer=steer, steer_flag=False
+    )
+
+
+def apply_verdict(post, target, policy):
+    """Apply 1 VerdictPost on a film to the diary under a VerdictPolicy. Return an Outcome.
 
     This is the database work of the movie page and of the TMDB log page.
     A rating of 0 is the ✕: the not-interested flag, never a review. A
@@ -373,10 +424,11 @@ def apply_verdict(
     film removes the flag. A Letterboxd row cannot lose its stars or
     change them in place. With allow_remove, a tap on the current rating
     removes it. A bare star tap on a day that already has a review
-    corrects that review. Anything else logs a new viewing. steer and
-    steer_flag say if a rating and a ✕ move the last-response state of
-    the drive. The changes are committed."""
+    corrects that review. Anything else logs a new viewing. The changes
+    are committed."""
 
+    user_id, rating, review_text, watched_date, quick_present = post
+    allow_unflag, allow_remove, steer, steer_flag = policy
     text = (review_text or "").strip()
     if rating == 0:
         return _apply_flag(user_id, target, allow_unflag, steer_flag)

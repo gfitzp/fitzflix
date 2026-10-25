@@ -178,3 +178,21 @@ def test_a_movie_page_star_post_flashes_the_rating(app, admin_client):
     assert "Removed your rating of &#39;Rated Film (1999)&#39;" in response.get_data(
         as_text=True
     )
+
+
+def test_the_verdict_policies_of_the_2_pages(app):
+    """The movie page may unflag and remove. The TMDB page never does."""
+
+    from app.main.helpers import (
+        MOVIE_PAGE_POLICY,
+        TMDB_PAGE_POLICY,
+        VerdictPolicy,
+        VerdictPost,
+    )
+
+    assert MOVIE_PAGE_POLICY(True) == VerdictPolicy(True, True, True, True)
+    assert MOVIE_PAGE_POLICY(False) == VerdictPolicy(True, True, False, False)
+    assert TMDB_PAGE_POLICY(True) == VerdictPolicy(False, False, True, False)
+    assert VerdictPost(1, None, "", None, True).invalid is True
+    assert VerdictPost(1, None, "text", None, False).invalid is False
+    assert VerdictPost(1, 0.0, "", None, True).invalid is False
