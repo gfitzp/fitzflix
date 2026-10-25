@@ -1171,9 +1171,10 @@ def test_an_earlier_set_never_replaces_the_stored_set(app, monkeypatch):
 
 
 def _candidate(title, year, directors=None, tmdb_id=1):
-    from app.leaving_criterion import Candidate, _normalize
+    from app.leaving_criterion import Candidate
+    from app.title_keys import match_key
 
-    return Candidate(tmdb_id, _normalize(title), str(year), directors)
+    return Candidate(tmdb_id, match_key(title), str(year), directors)
 
 
 def test_rank_puts_the_exact_title_and_the_near_year_first(app):

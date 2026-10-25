@@ -15,10 +15,10 @@ from time import sleep, time
 import requests
 
 from flask import current_app
-from unidecode import unidecode
 
 from app import db
 from app.email import notify_admin
+from app.title_keys import title_key
 
 
 def _clear_links(links):
@@ -742,7 +742,7 @@ class TMDBMixin(object):
         # Python sees 2 values. MySQL sees a 1062 duplicate.
 
         def collation_key(*parts):
-            return tuple(unidecode(part or "").casefold().strip() for part in parts)
+            return tuple(title_key(part) for part in parts)
 
         if tmdb_info.get("aggregate_credits"):
             aggregate = tmdb_info.get("aggregate_credits")

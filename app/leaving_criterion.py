@@ -26,7 +26,6 @@ import calendar
 import json
 import re
 import traceback
-import unicodedata
 
 from collections import namedtuple
 from datetime import date, datetime
@@ -43,6 +42,7 @@ from app.recommendations import stored_profile, tmdb_taste_score
 from app.cache import MISS, cache_json, cached_json
 from app.streaming_rail import enriched_movie, movie_gone
 from app.tmdb_apply import tmdb_json_or
+from app.title_keys import match_key
 
 # The app instance of this process. Fitzflix resolves it lazily. Thus,
 # the monthly task can run on a worker without a second application.
@@ -218,19 +218,6 @@ def fetch_leaving_films():
     return None, None, []
 
 
-def _normalize(text):
-    """Return a comparison key for titles and names.
-
-    This folds accents. It removes case and punctuation. It removes
-    apostrophes (straight or curly) fully. Thus, "Muriel’s Wedding"
-    matches "Muriel's Wedding", and "P. J. Hogan" matches "P.J.
-    Hogan"."""
-
-    text = re.sub(r"[\'’`]", "", text or "")
-    text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode()
-    return re.sub(r"[^a-z0-9]+", " ", text.lower()).strip()
-
-
 # The words that carry no meaning in a title comparison.
 
 TITLE_STOPWORDS = {"a", "an", "and", "in", "of", "the", "to"}
@@ -243,7 +230,7 @@ def _title_words(text):
     the Spider" give the same set."""
 
     words = set()
-    for word in _normalize(text).split():
+    for word in match_key(text).split():
         if word in TITLE_STOPWORDS:
             continue
         words.add(word[:-1] if len(word) > 3 and word.endswith("s") else word)
@@ -253,7 +240,7 @@ def _title_words(text):
 def _same_person(wanted, name):
     """Return True if a credited name can name a scraped director.
 
-    Both values are comparison keys from _normalize. The scraped value
+    Both values are comparison keys from match_key. The scraped value
     can hold more than 1 director. The family name of the credit must
     be a word of the scraped value, or 2 words must agree. Thus,
     "Lindsey C. Vickers" matches "Lindsey Vickers", and "Adam Wingard"
@@ -267,7 +254,7 @@ def _same_person(wanted, name):
 
 
 # A search result of TMDB, reduced to what the match rules read. The
-# title is a comparison key from _normalize. The year is the first 4
+# title is a comparison key from match_key. The year is the first 4
 # characters of the release date. The directors are comparison keys,
 # None before the credits lookup or if it failed, and an empty list if
 # TMDB credits no director.
@@ -280,7 +267,7 @@ def candidate_of(result):
 
     return Candidate(
         result.get("id"),
-        _normalize(result.get("title")),
+        match_key(result.get("title")),
         (result.get("release_date") or "")[:4],
         None,
     )
@@ -402,7 +389,7 @@ class _MatchLookups:
                 None
                 if body is None
                 else [
-                    _normalize(person.get("name"))
+                    match_key(person.get("name"))
                     for person in body.get("crew") or []
                     if person.get("job") == "Director"
                 ]
@@ -414,14 +401,14 @@ class _MatchLookups:
 
         Only the first 2 people of the person search count."""
 
-        wanted_name = _normalize(name)
+        wanted_name = match_key(name)
         if not wanted_name:
             return
         body = self.json("/search/person", {"query": name.strip()})
         people = [
             person
             for person in (body or {}).get("results") or []
-            if _normalize(person.get("name")) == wanted_name
+            if match_key(person.get("name")) == wanted_name
         ]
         for person in people[:2]:
             body = self.json(f"/person/{person['id']}/movie_credits", {})
@@ -436,7 +423,7 @@ def _match_candidates(lookups, title, year, wanted_director, params):
     candidates. The fallback without a year reads 2 pages. A popular
     unrelated film must not cost a credits call."""
 
-    wanted_title = _normalize(title)
+    wanted_title = match_key(title)
     found = lookups.search(title, params, pages=1 if params else 2)
     ordered = sorted(found, key=lambda c: rank(c, wanted_title, year))
     if wanted_director:
@@ -452,8 +439,8 @@ def _pick(lookups, title, year, director, params):
     initial, a wrong first name). Thus, the loose test runs next. Then
     unique_exact is the last rule."""
 
-    wanted_title = _normalize(title)
-    wanted_director = _normalize(director) if director else None
+    wanted_title = match_key(title)
+    wanted_director = match_key(director) if director else None
     found = _match_candidates(lookups, title, year, wanted_director, params)
     if not wanted_director:
         return found[0].id if found else None

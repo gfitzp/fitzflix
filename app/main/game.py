@@ -37,7 +37,6 @@ from flask import (
     url_for,
 )
 from flask_login import current_user, login_required
-from unidecode import unidecode
 
 from app.tasks import enqueue_task
 from app import db
@@ -53,6 +52,7 @@ from app.frames import (
 from app.main import bp
 from app.main.forms import GuessFrameForm
 from app.main.helpers import decimal_id
+from app.title_keys import title_key
 from app.models import (
     Movie,
     MovieCast,
@@ -186,8 +186,7 @@ def _normalize(text):
     removes a leading article, folds number words to digits, and
     collapses the whitespace."""
 
-    text = unidecode(text or "").casefold()
-    text = re.sub(r"[^a-z0-9 ]+", " ", text)
+    text = re.sub(r"[^a-z0-9 ]+", " ", title_key(text))
     words = text.split()
     if words and words[0] in ("the", "a", "an"):
         words = words[1:]

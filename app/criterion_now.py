@@ -41,6 +41,7 @@ from app.tasks import enqueue_task
 from app import get_app
 from app.leaving_criterion import CRITERION_PROVIDER_ID, match_tmdb_id
 from app.streaming_rail import enriched_movie
+from app.title_keys import title_key
 
 app = LocalProxy(get_app)
 
@@ -223,12 +224,12 @@ def _current_slot(entries, title, now):
     of that film), and the poller tries again. A title that is in no
     entry gives (None, None). Fitzflix never guesses an end time."""
 
-    wanted = title.casefold()
+    wanted = title_key(title)
     early = None
     stale_end = None
     for entry in entries:
         start, end, entry_title, _ = entry
-        if entry_title.casefold() != wanted:
+        if title_key(entry_title) != wanted:
             continue
         if start <= now < end:
             return entry, None
@@ -509,7 +510,7 @@ def _enrichment_key(title, more_url):
     film with no link uses its title."""
 
     match = FILM_ID_RE.search(more_url or "")
-    return f"id:{match.group(1)}" if match else f"title:{title.casefold()}"
+    return f"id:{match.group(1)}" if match else f"title:{title_key(title)}"
 
 
 def _known_enrichments():

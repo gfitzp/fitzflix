@@ -24,7 +24,6 @@ from datetime import datetime, timezone
 
 from flask import current_app
 from rq.registry import ScheduledJobRegistry, StartedJobRegistry
-from unidecode import unidecode
 from werkzeug.local import LocalProxy
 
 from app.tasks import enqueue_task, requeue
@@ -47,6 +46,7 @@ from app.models import (
 )
 from app.tmdb_apply import tmdb_json_or
 from app.naming import retag_quality, with_extension
+from app.title_keys import title_key
 
 
 def library_name_details(file, file_details):
@@ -916,7 +916,7 @@ def sync_certification_list():
         def folded(country, value):
             """Return the key of a row as the MySQL collation compares it."""
 
-            return country, unidecode(value).casefold()
+            return country, title_key(value)
 
         stored = {
             folded(row.country, row.certification): row

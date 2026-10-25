@@ -23,9 +23,9 @@ CORPUS = [
 
 
 def test_the_strict_key_of_the_criterion_match(app):
-    from app.leaving_criterion import _normalize
+    from app.title_keys import match_key
 
-    assert [_normalize(title) for title in CORPUS] == [
+    assert [match_key(title) for title in CORPUS] == [
         "the searchers",
         "muriels wedding",
         "p j hogan",
@@ -65,6 +65,38 @@ def test_the_enrichment_key_of_a_film_with_no_link(app):
     assert _enrichment_key("Seven Samurai", "/films/seven-samurai") == (
         "id:seven-samurai"
     )
+
+
+def test_the_loose_key_folds_the_accents_the_case_and_the_ends(app):
+    from app.title_keys import title_key
+
+    assert [title_key(title) for title in CORPUS] == [
+        "the searchers",
+        "muriel's wedding",
+        "p. j. hogan",
+        "amelie",
+        "spider's   eyes",
+        "seven samurai",
+        "2001: a space odyssey",
+        "aeon flux",
+        "strasse",
+        "",
+        "",
+    ]
+
+
+def test_the_schedule_folds_the_accents_of_a_title(app):
+    """The Criterion schedule compares titles with the loose key.
+
+    Before, it compared only the case. Now "Amélie" in the heading also
+    finds an "Amelie" entry."""
+
+    from app.criterion_now import _current_slot, _enrichment_key
+
+    now = datetime(2026, 10, 25, 20, tzinfo=timezone.utc)
+    entry = (now - timedelta(minutes=5), now + timedelta(hours=1), "Amelie", None)
+    assert _current_slot([entry], "Amélie ", now) == (entry, None)
+    assert _enrichment_key("Amélie", None) == _enrichment_key("amelie", "")
 
 
 def test_the_current_slot_ignores_the_case_of_the_title(app):
