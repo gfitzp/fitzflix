@@ -1287,7 +1287,7 @@ def test_the_atmos_twin_leaves_a_trail(app):
 def test_both_chip_painters_know_the_past_tense_of_each_stage():
     """Keep the past tense of each chip the same in both painters.
 
-    The server macro and paintChips in base.html each carry the map. A
+    The server macro and paintChips in queue.html each carry the map. A
     done chip with no entry kept its present tense ("Re-archiving to
     S3" after it completed)."""
 
@@ -1300,7 +1300,7 @@ def test_both_chip_painters_know_the_past_tense_of_each_stage():
     macro = (templates / "_trail_chips.html").read_text()
     macro = macro[macro.index("chip_past_tense") :]
     macro = macro[: macro.index("} %}")]
-    script = (templates / "base.html").read_text()
+    script = (templates / "queue.html").read_text()
     script = script[script.index("var chipPastTense") :]
     script = script[: script.index("};")]
     pair = re.compile(r'"([^"]+)": "([^"]+)"')
@@ -1722,3 +1722,32 @@ def test_apply_stage_event_keeps_the_last_40_entries(app):
     )
     assert len(new_trail) == 40
     assert new_trail[-1]["job"] == "new"
+
+
+def test_the_queue_poll_paints_each_page_through_its_hook(admin_client):
+    """The badge poll stays in base.html. Each page brings its own painter.
+
+    queue.html paints the table, and file_activity.html fetches the
+    cards. Each pushes a hook onto window.fitzflixQueueHooks, and the
+    poll calls each hook with the answer."""
+
+    home = admin_client.get("/").get_data(as_text=True)
+    assert "var hooks = window.fitzflixQueueHooks || [];" in home
+    assert "function renderRunning(running) {" in home
+    for painter in (
+        "function renderAll(",
+        "function paintChips(",
+        "function refreshCards(",
+    ):
+        assert painter not in home
+
+    queue = admin_client.get("/queue").get_data(as_text=True)
+    assert "function renderAll(tasks, files) {" in queue
+    assert "function paintChips(target, entries) {" in queue
+    assert "window.fitzflixQueueHooks.push(function(queue_details) {" in queue
+    assert "function refreshCards(" not in queue
+
+    activity = admin_client.get("/file-activity").get_data(as_text=True)
+    assert "function refreshCards() {" in activity
+    assert "window.fitzflixQueueHooks.push(refreshCards);" in activity
+    assert "function renderAll(" not in activity
