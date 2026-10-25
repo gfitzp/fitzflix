@@ -33,6 +33,7 @@ from app.models import (
 from app.file_ranking import (
     MOVIE_BEST_ORDER,
     copy_upgradable,
+    criterion_settled,
     tv_file_rank,
     upgrade_threshold,
 )
@@ -702,10 +703,9 @@ def library_upgradable(movie, criterion=False):
             if movie.criterion_quality_id
             else None
         )
-        upgradable = copy_upgradable(
-            file.fullscreen, quality.preference, threshold, criterion_pref
+        return not criterion_settled(
+            file, quality, criterion_pref, threshold, movie.criterion_disc_owned
         )
-        return not (bool(movie.criterion_disc_owned) and not upgradable)
     if movie.shopping_list_exclude:
         return False
     return copy_upgradable(file.fullscreen, quality.preference, threshold)

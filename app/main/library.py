@@ -84,6 +84,7 @@ from app.file_ranking import (
     TV_BEST_ORDER,
     best_copy_key,
     copy_upgradable,
+    criterion_settled,
     quality_anchors,
 )
 from app.newly_added import poster_fold
@@ -163,18 +164,11 @@ CREW_ROLE_LABELS = {job: role.capitalize() for job, role in JOB_TO_CLASS.items()
 CLOSING_CREDIT_ORDER = ("Director", "Writer", "Cinematographer", "Editor", "Composer")
 
 
-# A TV role where the person appears as themselves. TMDB writes
-# these as "Self", "Self - Host", "Herself (archive footage)". The
-# self-word starts the line. The pattern is word-bounded. Thus, a real
-# character that only contains the letters (Harry Selfridge) survives.
-
-SELF_ROLE = re.compile(r"(?:him|her|them)?sel(?:f|ves)\b", re.IGNORECASE)
-
-# The TMDB person payloads of the person pages, cached in Redis. The
-# movie credits key lives with person_movie_credits in app.estimate_warm.
+# The TMDB person details of the person pages, cached in Redis. The
+# movie and TV credits keys live with person_movie_credits and
+# person_tv_credits in app.estimate_warm.
 
 PERSON_DETAILS_KEY = "fitzflix:tmdb:person:{person_id}:details"
-PERSON_TV_CREDITS_KEY = "fitzflix:tmdb:person:{person_id}:tv_credits"
 
 
 def _tmdb_person_details(person_id):
@@ -203,30 +197,6 @@ def _tmdb_person_details(person_id):
         return details, True
 
     return cached_fetch(PERSON_DETAILS_KEY.format(person_id=person_id), 86400, fetch)
-
-
-def _fetch_tv_credits(person_id):
-    """Fetch the TV credits of 1 person from TMDB, for cached_fetch.
-
-    The self roles and the crew jobs outside the key roles drop out.
-    An error is (None, False): the page renders without the TV rows,
-    and nothing is cached."""
-
-    payload = tmdb_json_or(f"/person/{person_id}/tv_credits", None, None)
-    if payload is None:
-        return None, False
-    return {
-        "cast": [
-            entry
-            for entry in payload.get("cast") or []
-            if not SELF_ROLE.match(entry.get("character") or "")
-        ],
-        "crew": [
-            entry
-            for entry in payload.get("crew") or []
-            if entry.get("job") in CREW_ROLE_LABELS
-        ],
-    }, True
 
 
 def _tmdb_date(value):
@@ -273,6 +243,58 @@ def _person_bio(details):
         "died_line": died_line,
         "biography": (details.get("biography") or "").strip(),
     }
+
+
+def merge_credit_rows(credits, local_by_tmdb_id, title_key, date_key):
+    """Return {tmdb id: row} with 1 row per title of a TMDB credits payload.
+
+    credits is {"cast": [...], "crew": [...]}. The cast and crew
+    credits of 1 title share 1 row. The characters are combined, and
+    the key crew jobs read in the closing-credit order. title_key and
+    date_key name the title and the date fields ("title" and
+    "release_date" for a film, "name" and "first_air_date" for a
+    series). row["local"] is the entry of local_by_tmdb_id for the
+    title, or None. The rows keep the order of the credits."""
+
+    rows = {}
+
+    def row_for(entry):
+        """Return the row of a credit entry. Make it on first sight."""
+
+        tmdb_id = entry.get("id")
+        row = rows.get(tmdb_id)
+        if row is None:
+            year = (entry.get(date_key) or "")[:4]
+            row = rows[tmdb_id] = {
+                "tmdb_id": tmdb_id,
+                title_key: entry.get(title_key),
+                "year": int(year) if year.isdigit() else None,
+                "poster_path": entry.get("poster_path"),
+                "genre_ids": entry.get("genre_ids") or [],
+                "overview": entry.get("overview"),
+                "episode_count": entry.get("episode_count"),
+                "characters": [],
+                "jobs": [],
+                "local": local_by_tmdb_id.get(tmdb_id),
+            }
+        return row
+
+    for entry in (credits or {}).get("cast") or []:
+        if entry.get("id") is None:
+            continue
+        row = row_for(entry)
+        if entry.get("character"):
+            row["characters"].append(entry["character"])
+    for entry in (credits or {}).get("crew") or []:
+        if entry.get("id") is None:
+            continue
+        row = row_for(entry)
+        label = CREW_ROLE_LABELS.get(entry.get("job"))
+        if label and label not in row["jobs"]:
+            row["jobs"].append(label)
+    for row in rows.values():
+        row["jobs"].sort(key=CLOSING_CREDIT_ORDER.index)
+    return rows
 
 
 def _filmography(credit):
@@ -373,50 +395,12 @@ def _filmography(credit):
         for entry in local.values()
         if entry["movie"].tmdb_id is not None
     }
-    rows = {}
-
-    def credit_row(entry):
-        """Return the merged filmography row for a TMDB credit entry.
-
-        This function creates the row on first sight. The cast and
-        crew credits for the same film share 1 row."""
-
-        tmdb_id = entry.get("id")
-        row = rows.get(tmdb_id)
-        if row is None:
-            release_year = (entry.get("release_date") or "")[:4]
-            local_entry = local_by_tmdb_id.get(tmdb_id)
-            row = rows[tmdb_id] = {
-                "tmdb_id": tmdb_id,
-                "title": entry.get("title"),
-                "year": int(release_year) if release_year.isdigit() else None,
-                "poster_path": entry.get("poster_path"),
-                "genre_ids": entry.get("genre_ids") or [],
-                "overview": entry.get("overview"),
-                "characters": [],
-                "jobs": [],
-                "movie": local_entry["movie"] if local_entry else None,
-                "file": local_entry["file"] if local_entry else None,
-                "quality": local_entry["quality"] if local_entry else None,
-            }
-        return row
-
-    for cast_credit in (tmdb_credits or {}).get("cast") or []:
-        if cast_credit.get("id") is None:
-            continue
-        row = credit_row(cast_credit)
-        if cast_credit.get("character"):
-            row["characters"].append(cast_credit["character"])
-
-    for crew_credit in (tmdb_credits or {}).get("crew") or []:
-        if crew_credit.get("id") is None:
-            continue
-        row = credit_row(crew_credit)
-        label = CREW_ROLE_LABELS.get(crew_credit.get("job"))
-        if label and label not in row["jobs"]:
-            row["jobs"].append(label)
+    rows = merge_credit_rows(tmdb_credits, local_by_tmdb_id, "title", "release_date")
     for row in rows.values():
-        row["jobs"].sort(key=CLOSING_CREDIT_ORDER.index)
+        local_entry = row.pop("local") or {}
+        row["movie"] = local_entry.get("movie")
+        row["file"] = local_entry.get("file")
+        row["quality"] = local_entry.get("quality")
 
     matched_tmdb_ids = set(rows.keys())
     for entry in local.values():
@@ -508,11 +492,9 @@ def _filmography(credit):
     tv_rows = {}
     tv_credits = None
     if current_app.config["TMDB_API_KEY"]:
-        tv_credits = cached_fetch(
-            PERSON_TV_CREDITS_KEY.format(person_id=int(credit)),
-            86400,
-            lambda: _fetch_tv_credits(int(credit)),
-        )
+        from app.estimate_warm import person_tv_credits
+
+        tv_credits = person_tv_credits(int(credit))
 
     if tv_credits:
         credited_ids = {
@@ -527,41 +509,10 @@ def _filmography(credit):
             )
         }
 
-        def tv_credit_row(entry):
-            tmdb_id = entry.get("id")
-            row = tv_rows.get(tmdb_id)
-            if row is None:
-                first_air = (entry.get("first_air_date") or "")[:4]
-                series = local_series.get(tmdb_id)
-                row = tv_rows[tmdb_id] = {
-                    "tmdb_id": tmdb_id,
-                    "name": entry.get("name"),
-                    "year": int(first_air) if first_air.isdigit() else None,
-                    "poster_path": entry.get("poster_path"),
-                    "overview": entry.get("overview"),
-                    "characters": [],
-                    "jobs": [],
-                    "episode_count": entry.get("episode_count"),
-                    "series": series,
-                    "owned": bool(series and series.files.count()),
-                }
-            return row
-
-        for entry in tv_credits.get("cast") or []:
-            if entry.get("id") is None:
-                continue
-            row = tv_credit_row(entry)
-            if entry.get("character"):
-                row["characters"].append(entry["character"])
-        for entry in tv_credits.get("crew") or []:
-            if entry.get("id") is None:
-                continue
-            row = tv_credit_row(entry)
-            label = CREW_ROLE_LABELS.get(entry.get("job"))
-            if label and label not in row["jobs"]:
-                row["jobs"].append(label)
+        tv_rows = merge_credit_rows(tv_credits, local_series, "name", "first_air_date")
         for row in tv_rows.values():
-            row["jobs"].sort(key=CLOSING_CREDIT_ORDER.index)
+            series = row["series"] = row.pop("local")
+            row["owned"] = bool(series and series.files.count())
 
     television = sorted(
         tv_rows.values(), key=lambda row: (row["year"] is None, row["year"] or 0)
@@ -760,6 +711,74 @@ def _criterion_row_key(row):
     )
 
 
+def catalog_rows_for(releases, consumed_tmdb, consumed_title_year, excluded_tmdb):
+    """Return the rows of the catalog releases that the library does not consume.
+
+    The standalone entries come before the set entries in the cache.
+    Thus, a film with both keeps its own spine. The releases without a
+    TMDB id render as plain spine rows. Box-set CONTAINER items are
+    redundant. Wikidata gives the spine to the set item, and no TMDB id
+    (TMDB has no set entries). The member films arrive separately and
+    show the set title. Thus, a row without a TMDB id, whose spine
+    belongs to a set, would only shadow its own members ("#88 Ivan the
+    Terrible" between the actual Parts I–III). The hand-excluded ids
+    (Wikidata junk, see CatalogExclusion) do not render."""
+
+    set_spines = {
+        release["spine_number"] for release in releases if release.get("set_title")
+    }
+    rows = []
+    keys = set()
+    for release in releases:
+        tmdb_id = release.get("tmdb_id")
+        if (
+            not tmdb_id
+            and not release.get("set_title")
+            and release.get("spine_number") in set_spines
+        ):
+            continue
+        if tmdb_id and (tmdb_id in excluded_tmdb or tmdb_id in consumed_tmdb):
+            continue
+        title_year = (release.get("title"), release.get("year"))
+        if title_year in consumed_title_year:
+            continue
+        key = tmdb_id or title_year
+        if key in keys:
+            continue
+        keys.add(key)
+        rows.append(
+            {
+                "kind": "tmdb" if tmdb_id else "plain",
+                "movie": None,
+                "tmdb_id": tmdb_id,
+                "title": release.get("label") or release.get("title"),
+                "year": release.get("year"),
+                "spine": release.get("spine_number"),
+                "set_title": release.get("set_title"),
+            }
+        )
+    return rows
+
+
+def criterion_sort_key(row):
+    """Return the spine order key of a Criterion page row.
+
+    The order is 1 spine order across owned and unowned rows. The set
+    members sort at the spine of their set (year, then title inside the
+    set). The local rows without a spine keep their old place at the
+    end."""
+
+    spine = row.get("spine")
+    title = re.sub(r"^(The|A|An)\s+", "", row.get("title") or "", flags=re.IGNORECASE)
+    return (
+        0 if spine is not None else 1,
+        spine if spine is not None else 0,
+        row.get("set_title") or "",
+        row.get("year") or 9999,
+        title.upper(),
+    )
+
+
 @bp.route("/library/criterion-collection")
 @login_required
 def criterion_collection():
@@ -831,15 +850,11 @@ def criterion_collection():
             best_rows[movie.id] = row
     results = list(best_rows.values())
 
-    # A library row is SETTLED when the Criterion disc is owned AND the
-    # local file matches the format of the release. Settled means the
-    # Fitzflix library badge and nothing to do. The bar has a MAXIMUM at
-    # the app-wide threshold. Decided by Glenn: an owned disc with a
-    # Bluray-1080p file is settled here, even if Criterion released it
-    # again in 2160p. That upgrade is the job of the shopping list, not
-    # of this page. The threshold also covers the releases whose quality
-    # was never recorded. Each other row shows its amber quality tier.
-    # This means: go find the Criterion version.
+    # A library row is SETTLED (criterion_settled) when the Criterion
+    # disc is owned AND the local file matches the format of the
+    # release. Settled means the Fitzflix library badge and nothing to
+    # do. Each other row shows its amber quality tier. This means: go
+    # find the Criterion version.
 
     movie_ids = [movie.id for _, movie, _ in results]
     CriterionQuality = db.aliased(RefQuality)
@@ -870,19 +885,19 @@ def criterion_collection():
                 consumed_tmdb.add(release["tmdb_id"])
             if release.get("title") and release.get("year"):
                 consumed_title_year.add((release["title"], release["year"]))
-        upgradable = copy_upgradable(
-            file.fullscreen,
-            quality.preference,
-            threshold,
-            criterion_prefs.get(movie.id),
-        )
         library_rows.append(
             {
                 "kind": "library",
                 "file": file,
                 "movie": movie,
                 "quality": quality,
-                "settled": bool(movie.criterion_disc_owned) and not upgradable,
+                "settled": criterion_settled(
+                    file,
+                    quality,
+                    criterion_prefs.get(movie.id),
+                    threshold,
+                    movie.criterion_disc_owned,
+                ),
                 "tmdb_id": movie.tmdb_id,
                 "title": movie.tmdb_title or movie.title,
                 "year": (
@@ -897,56 +912,14 @@ def criterion_collection():
             }
         )
 
-    # The rest of the catalog. The standalone entries come before the
-    # set entries in the cache. Thus, a film with both keeps its own
-    # spine. The releases without a TMDB id render as plain spine rows.
-    # Box-set CONTAINER items are redundant. Wikidata gives the spine to
-    # the set item, and no TMDB id (TMDB has no set entries). The member
-    # films arrive separately and show the set title. Thus, a row
-    # without a TMDB id, whose spine belongs to a set, would only shadow
-    # its own members ("#88 Ivan the Terrible" between the actual Parts
-    # I–III).
+    # The rest of the catalog (catalog_rows_for).
 
-    set_spines = {
-        release["spine_number"] for release in releases if release.get("set_title")
-    }
-    excluded_tmdb = {
-        tmdb_id for (tmdb_id,) in db.session.query(CatalogExclusion.tmdb_id)
-    }
-    catalog_rows = []
-    catalog_keys = set()
-    for release in releases:
-        tmdb_id = release.get("tmdb_id")
-        if (
-            not tmdb_id
-            and not release.get("set_title")
-            and release.get("spine_number") in set_spines
-        ):
-            continue
-        # Hand-excluded ids (Wikidata junk, see CatalogExclusion) do not
-        # render, and Fitzflix creates no records for them.
-        if tmdb_id and tmdb_id in excluded_tmdb:
-            continue
-        if tmdb_id and tmdb_id in consumed_tmdb:
-            continue
-        title_year = (release.get("title"), release.get("year"))
-        if title_year in consumed_title_year:
-            continue
-        key = tmdb_id or title_year
-        if key in catalog_keys:
-            continue
-        catalog_keys.add(key)
-        catalog_rows.append(
-            {
-                "kind": "tmdb" if tmdb_id else "plain",
-                "movie": None,
-                "tmdb_id": tmdb_id,
-                "title": release.get("label") or release.get("title"),
-                "year": release.get("year"),
-                "spine": release.get("spine_number"),
-                "set_title": release.get("set_title"),
-            }
-        )
+    catalog_rows = catalog_rows_for(
+        releases,
+        consumed_tmdb,
+        consumed_title_year,
+        {tmdb_id for (tmdb_id,) in db.session.query(CatalogExclusion.tmdb_id)},
+    )
 
     # The file-less local records (logged or watchlisted unowned films)
     # give their catalog rows the stored title, poster, and overview.
@@ -1025,26 +998,7 @@ def criterion_collection():
             bar=bar,
         )
 
-    # One spine order across owned and unowned rows. The set members
-    # sort at the spine of their set (year, then title inside the set).
-    # The local rows without a spine keep their old place at the end.
-
-    def sort_key(row):
-        """Return the spine order key, with set members at the number of their set."""
-
-        spine = row.get("spine")
-        title = re.sub(
-            r"^(The|A|An)\s+", "", row.get("title") or "", flags=re.IGNORECASE
-        )
-        return (
-            0 if spine is not None else 1,
-            spine if spine is not None else 0,
-            row.get("set_title") or "",
-            row.get("year") or 9999,
-            title.upper(),
-        )
-
-    merged = sorted(library_rows + catalog_rows, key=sort_key)
+    merged = sorted(library_rows + catalog_rows, key=criterion_sort_key)
 
     # The ON STREAMING filter (requested by Glenn, 2026-09-29). It keeps
     # the films that stream now on a flat-rate service: the Criterion

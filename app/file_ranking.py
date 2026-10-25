@@ -187,6 +187,21 @@ def copy_upgradable(
 QualityTier = namedtuple("QualityTier", "id preference physical_media")
 
 
+def criterion_settled(file, quality, criterion_pref, threshold, disc_owned):
+    """Return True if a library copy of a Criterion film needs nothing more (#77a).
+
+    The disc must be owned AND the copy must satisfy the format of the
+    release, capped at the threshold. Decided by Glenn: an owned disc
+    with a Bluray-1080p file is settled, even if Criterion released the
+    film again in 2160p. That upgrade is the job of the shopping list.
+    The threshold also covers a release whose quality was never
+    recorded."""
+
+    return bool(disc_owned) and not copy_upgradable(
+        file.fullscreen, quality.preference, threshold, criterion_pref
+    )
+
+
 def quality_anchors():
     """Return a dict of quality title -> QualityTier for each tier.
 

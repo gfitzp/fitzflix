@@ -22,6 +22,7 @@ cache, and this task uses them.
 """
 
 import json
+import re
 
 from concurrent.futures import ThreadPoolExecutor
 
@@ -120,6 +121,49 @@ def person_movie_credits(person_id):
 
     return cached_fetch(
         PERSON_CREDITS_KEY.format(person_id=int(person_id)),
+        PERSON_CREDITS_SECONDS,
+        fetch,
+    )
+
+
+# The TV credits of the person pages, cached in Redis for 1 day.
+
+PERSON_TV_CREDITS_KEY = "fitzflix:tmdb:person:{person_id}:tv_credits"
+
+# A TV role where the person appears as themselves. TMDB writes
+# these as "Self", "Self - Host", "Herself (archive footage)". The
+# self-word starts the line. The pattern is word-bounded. Thus, a real
+# character that only contains the letters (Harry Selfridge) survives.
+
+SELF_ROLE = re.compile(r"(?:him|her|them)?sel(?:f|ves)\b", re.IGNORECASE)
+
+
+def person_tv_credits(person_id):
+    """Return {"cast": [...], "crew": [...]} of the TV career of 1 person, or None.
+
+    The self roles and the crew jobs outside the key roles drop out.
+    None means a transient TMDB error. Nothing is cached then. The
+    filmography renders without the TV rows."""
+
+    def fetch():
+        payload = tmdb_json_or(f"/person/{int(person_id)}/tv_credits", None, None)
+        if payload is None:
+            return None, False
+        return {
+            "cast": [
+                entry
+                for entry in payload.get("cast") or []
+                if not SELF_ROLE.match(entry.get("character") or "")
+            ],
+            "crew": [
+                entry
+                for entry in payload.get("crew") or []
+                if entry.get("job") in JOB_TO_CLASS
+            ],
+        }, True
+
+    return cached_fetch(
+        PERSON_TV_CREDITS_KEY.format(person_id=int(person_id)),
         PERSON_CREDITS_SECONDS,
         fetch,
     )
