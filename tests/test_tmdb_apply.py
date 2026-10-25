@@ -370,3 +370,51 @@ def test_a_refresh_that_tmdb_answers_with_nothing_says_so(app, monkeypatch):
             if job.func_name == "app.videos.apply_tmdb_refresh"
         ]
         assert apply_job.kwargs["tmdb_payload"] is None
+
+
+def test_movie_apply_skips_the_blank_premiere_certification(app):
+    """The premiere entry of a country usually has a blank certification (#303)."""
+
+    from app.models import RefTMDBCertification
+
+    with app.app_context():
+        db.session.add(RefTMDBCertification(country="US", certification="PG-13"))
+        db.session.add(RefTMDBCertification(country="US", certification="R"))
+        db.session.add(RefTMDBCertification(country="GB", certification="15"))
+        movie = make_movie("Premiere First", 2012, tmdb_id=990010)
+        db.session.commit()
+        movie.tmdb_movie_apply(
+            {
+                "id": 990010,
+                "release_dates": {
+                    "results": [
+                        {
+                            "iso_3166_1": "US",
+                            "release_dates": [
+                                {"type": 1, "certification": ""},
+                                {"type": 4, "certification": "R"},
+                                {"type": 3, "certification": "PG-13"},
+                            ],
+                        },
+                        {
+                            "iso_3166_1": "GB",
+                            "release_dates": [
+                                {"type": 1, "certification": ""},
+                                {"type": 5, "certification": "15"},
+                            ],
+                        },
+                        {
+                            "iso_3166_1": "FR",
+                            "release_dates": [{"type": 1, "certification": ""}],
+                        },
+                    ]
+                },
+            }
+        )
+        db.session.commit()
+
+        stored = db.session.get(Movie, movie.id)
+        assert sorted((c.country, c.certification) for c in stored.certifications) == [
+            ("GB", "15"),
+            ("US", "PG-13"),
+        ]

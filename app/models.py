@@ -494,11 +494,26 @@ class TMDBMixin(object):
                 for country_release in release_dates["results"]:
                     country = country_release.get("iso_3166_1")
                     if country:
-                        dates = country_release.get("release_dates")
-                        if dates:
+                        # TMDB lists 1 entry for each release type. The
+                        # premiere (type 1) usually has a blank
+                        # certification. Thus, the theatrical entry (type 3)
+                        # comes first, then the first entry with a value.
+
+                        dates = sorted(
+                            country_release.get("release_dates") or [],
+                            key=lambda entry: entry.get("type") != 3,
+                        )
+                        rating = next(
+                            (
+                                entry.get("certification")
+                                for entry in dates
+                                if entry.get("certification")
+                            ),
+                            None,
+                        )
+                        if rating:
                             certification = RefTMDBCertification.query.filter_by(
-                                country=country,
-                                certification=dates[0].get("certification"),
+                                country=country, certification=rating
                             ).first()
                             if certification:
                                 self.certifications.append(certification)
