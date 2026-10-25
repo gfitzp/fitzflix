@@ -682,9 +682,25 @@ def prune_held_imports():
     """Remove the HeldImport rows whose held file is gone, for example after a reject."""
 
     from app.models import HeldImport
+    from app.videos import _dead_volumes
 
+    # A dropped volume makes each held file look gone. The prune then
+    # deleted each row, and the files in held/ had no record when the
+    # volume came back (#319). Thus, a dead or missing held directory
+    # prunes nothing. A row is gone only when its folder is there and
+    # its file is not.
+
+    held_dir = current_app.config["HELD_DIR"]
+    if _dead_volumes([held_dir]) or not os.path.isdir(held_dir):
+        current_app.logger.warning(
+            f"'{held_dir}' is not available. The held imports stay as they are"
+        )
+        return 0
     gone = [
-        held for held in HeldImport.query.all() if not os.path.exists(held.held_path)
+        held
+        for held in HeldImport.query.all()
+        if os.path.isdir(os.path.dirname(held.held_path))
+        and not os.path.exists(held.held_path)
     ]
     for held in gone:
         db.session.delete(held)

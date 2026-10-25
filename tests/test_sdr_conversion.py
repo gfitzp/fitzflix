@@ -958,3 +958,51 @@ def test_a_conversion_that_reuses_a_record_takes_the_untouched_name(app):
         assert file.untouched_basename == "Reused Record (1984) - [Bluray-2160p].mkv"
         assert file.aws_key == ("untouched/Reused Record (1984) - [Bluray-2160p].mkv")
         os.remove(os.path.join(app.config["LIBRARY_DIR"], file.file_path))
+
+
+def test_a_missing_held_volume_prunes_no_row(app, monkeypatch, tmp_path):
+    """A dropped volume makes each held file look gone (#319)."""
+
+    import app.videos as videos
+    from app import db
+    from app.models import HeldImport
+    from app.sdr_conversion import prune_held_imports
+
+    held_dir = tmp_path / "held"
+    held_dir.mkdir()
+    monkeypatch.setitem(app.config, "HELD_DIR", str(held_dir))
+
+    def row(name):
+        """Add a HeldImport for a file in the held directory."""
+
+        db.session.add(
+            HeldImport(
+                held_path=str(held_dir / name),
+                untouched_basename=name,
+                file_details="{}",
+                source_format="HDR10",
+            )
+        )
+
+    with app.app_context():
+        row("Gone (2001) - [Bluray-2160p].mkv")
+        row("Kept (2002) - [Bluray-2160p].mkv")
+        (held_dir / "Kept (2002) - [Bluray-2160p].mkv").write_bytes(b"video")
+        db.session.commit()
+
+        # The volume is dead. Nothing goes.
+        monkeypatch.setattr(videos, "_dead_volumes", lambda paths: ["/Volumes/x"])
+        assert prune_held_imports() == 0
+        assert HeldImport.query.count() == 2
+
+        # The volume answers. Only the row of the missing file goes.
+        monkeypatch.setattr(videos, "_dead_volumes", lambda paths: [])
+        assert prune_held_imports() == 1
+        assert [h.untouched_basename for h in HeldImport.query.all()] == [
+            "Kept (2002) - [Bluray-2160p].mkv"
+        ]
+
+        # The held directory is not there (an unmounted mountpoint).
+        monkeypatch.setitem(app.config, "HELD_DIR", str(tmp_path / "absent"))
+        assert prune_held_imports() == 0
+        assert HeldImport.query.count() == 1
