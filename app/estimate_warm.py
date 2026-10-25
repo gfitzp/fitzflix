@@ -33,6 +33,7 @@ from app import db, get_app
 from app.models import Movie, User, tmdb_get
 from app.recommendations import (
     CREW_ROLE_JOBS,
+    JOB_TO_CLASS,
     PATCH_SCORES_TTL,
     TMDB_PATCH_SCORES_KEY,
     _tmdb_copref,
@@ -105,8 +106,6 @@ def person_movie_credits(person_id, get=None):
     the 1 writer of the key. get is the rate-limited TMDB getter of the
     caller. The default is tmdb_get."""
 
-    role_jobs = {job for jobs, _ in CREW_ROLE_JOBS.values() for job in jobs}
-
     def fetch():
         try:
             r = (get or tmdb_get)(
@@ -125,7 +124,7 @@ def person_movie_credits(person_id, get=None):
             "crew": [
                 crew_credit
                 for crew_credit in payload.get("crew") or []
-                if crew_credit.get("job") in role_jobs
+                if crew_credit.get("job") in JOB_TO_CLASS
             ],
         }
         return credits, True

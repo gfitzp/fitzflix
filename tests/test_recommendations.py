@@ -1760,3 +1760,21 @@ def test_genre_filter_trims_the_library_rail(app, admin_client):
     assert "Genre Western Long (1951)" in body
     assert "Genre Musical (1952)" in body
     assert ">Clear</a>" not in body
+
+
+def test_job_to_class_is_the_one_crew_job_map():
+    """Test the shared map of TMDB crew jobs to taste classes (#360).
+
+    The rail, the warm estimate, the filmography labels and the feature
+    builder each built it. One constant beside CREW_ROLE_JOBS now."""
+
+    from app.main.library import CREW_ROLE_LABELS
+    from app.recommendations import CREW_ROLE_JOBS, JOB_TO_CLASS
+
+    expected = {}
+    for cls, (jobs, _) in CREW_ROLE_JOBS.items():
+        for job in jobs:
+            expected[job] = cls
+    assert JOB_TO_CLASS == expected
+    assert JOB_TO_CLASS["Director of Photography"] == "cinematographer"
+    assert CREW_ROLE_LABELS == {job: cls.capitalize() for job, cls in expected.items()}

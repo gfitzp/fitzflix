@@ -103,7 +103,7 @@ from app.main.helpers import (
     tv_meta_line,
 )
 from app.recommendations import (
-    CREW_ROLE_JOBS,
+    JOB_TO_CLASS,
     coarse_interest_score,
     credit_interest_markers,
     estimated_rating,
@@ -146,9 +146,7 @@ from app.videos import (
 # nouns. Decided by Glenn: only these join the film-count ordering.
 # Thus, grips and gaffers do not outrank directors.
 
-CREW_ROLE_LABELS = {
-    job: role.capitalize() for role, (jobs, _) in CREW_ROLE_JOBS.items() for job in jobs
-}
+CREW_ROLE_LABELS = {job: role.capitalize() for job, role in JOB_TO_CLASS.items()}
 
 
 # A multi-role credit line reads in the conventional closing-credit

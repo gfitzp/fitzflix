@@ -1,5 +1,7 @@
 """Test the ranking builders: the row_number windows that select the best file."""
 
+import os
+
 from app import db
 from app.models import File, Movie, RefQuality, TVSeries, movie_file_rank, tv_file_rank
 
@@ -333,3 +335,22 @@ def test_the_orphans_are_gone(app):
         assert name not in videos.__all__
     assert not hasattr(Movie, "sanitize_string")
     assert "Utilities" not in dir(__import__("app.models", fromlist=["x"]))
+
+
+def test_the_library_names_are_constants(app):
+    """Test MOVIES and TV_SHOWS, the 2 values of File.media_library (#360)."""
+
+    import pathlib
+    import re
+
+    from app.models import MOVIES, TV_SHOWS
+
+    assert os.path.basename(app.config["MOVIE_LIBRARY"]) == MOVIES
+    assert os.path.basename(app.config["TV_LIBRARY"]) == TV_SHOWS
+    literal = re.compile(r'[=!]= "(Movies|TV Shows)"')
+    offenders = [
+        str(path)
+        for path in pathlib.Path("app").rglob("*.py")
+        if literal.search(path.read_text())
+    ]
+    assert offenders == []

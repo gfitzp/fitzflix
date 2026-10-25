@@ -52,6 +52,7 @@ from app.main.forms import (
     TrackMetadataScanForm,
 )
 from app.models import (
+    MOVIES,
     ArchivedOriginal,
     File,
     FileAudioTrack,
@@ -1196,11 +1197,11 @@ def tmdb_triage():
             return redirect(url_for("main.tmdb_triage"))
 
         display = (
-            f"{record.title} ({record.year})" if library == "Movies" else record.title
+            f"{record.title} ({record.year})" if library == MOVIES else record.title
         )
 
         if form.flag_submit.data:
-            if library == "Movies":
+            if library == MOVIES:
                 record.tmdb_movie_clear()
             else:
                 record.tmdb_tv_clear()

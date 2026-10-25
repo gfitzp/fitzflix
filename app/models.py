@@ -117,6 +117,12 @@ def _clear_links(links):
         links.remove(linked)
 
 
+# The 2 library names. They are the directory names under LIBRARY_DIR
+# and the values of File.media_library
+
+MOVIES = "Movies"
+TV_SHOWS = "TV Shows"
+
 PEOPLE_RANKING_KEY = "fitzflix:people:ranked:{role}"
 
 
@@ -1787,7 +1793,7 @@ def title_lock_key(
     movie key is title, year, feature type, Plex title and edition. A TV
     key is series title, season and episode."""
 
-    if media_library == "Movies":
+    if media_library == MOVIES:
         identity = {
             "title": title,
             "year": year,
@@ -1795,7 +1801,7 @@ def title_lock_key(
             "plex_title": plex_title,
             "edition": edition,
         }
-    elif media_library == "TV Shows":
+    elif media_library == TV_SHOWS:
         identity = {"title": title, "season": season, "episode": episode}
     else:
         raise ValueError(f"unknown media library {media_library!r}")
@@ -2041,7 +2047,7 @@ class File(db.Model):
         for TV.
         """
 
-        if self.media_library == "Movies":
+        if self.media_library == MOVIES:
             file = (
                 File.query.join(Movie, (Movie.id == File.movie_id))
                 .outerjoin(RefFeatureType, (RefFeatureType.id == File.feature_type_id))
@@ -2133,7 +2139,7 @@ class File(db.Model):
 
         current_app.logger.debug(f"Import vars: {vars(self)}")
 
-        if self.media_library == "Movies":
+        if self.media_library == MOVIES:
             # If the new file is a full screen version, these better files
             # prevent the import of this file:
             # - the exact same movie, also full screen, in a better quality
@@ -2194,7 +2200,7 @@ class File(db.Model):
                     .all()
                 )
 
-        elif self.media_library == "TV Shows":
+        elif self.media_library == TV_SHOWS:
             # The identity of a TV episode is series + season + episode
             # span. It is NEVER the edition. For a TV file, the edition
             # holds the episode-title segment of the filename. Two releases
@@ -2307,14 +2313,14 @@ class File(db.Model):
                 File.id != self.id,
             )
         )
-        if self.media_library == "Movies":
+        if self.media_library == MOVIES:
             query = query.filter(
                 File.movie_id == self.movie_id,
                 File.feature_type_id == self.feature_type_id,
                 File.plex_title == self.plex_title,
                 File.edition == self.edition,
             )
-        elif self.media_library == "TV Shows":
+        elif self.media_library == TV_SHOWS:
             query = query.filter(
                 File.series_id == self.series_id,
                 File.season == self.season,
@@ -2349,7 +2355,7 @@ class File(db.Model):
                     or f.needs_sdr_conversion
                     or f.quality.preference < self.quality.preference
                     or (
-                        self.media_library == "TV Shows"
+                        self.media_library == TV_SHOWS
                         and f.last_episode < self.last_episode
                     )
                 ]
@@ -2365,7 +2371,7 @@ class File(db.Model):
 
         worse_files = []
 
-        if self.media_library == "Movies":
+        if self.media_library == MOVIES:
             worse_files = (
                 File.query.join(RefQuality, (RefQuality.id == File.quality_id))
                 .options(joinedload(File.quality, innerjoin=True))
@@ -2381,7 +2387,7 @@ class File(db.Model):
                 .all()
             )
 
-        elif self.media_library == "TV Shows":
+        elif self.media_library == TV_SHOWS:
             # The edition is absent on purpose. For a TV file, it holds the
             # episode-title segment of the filename. Two releases of the
             # same episode can give it different titles. The episode span

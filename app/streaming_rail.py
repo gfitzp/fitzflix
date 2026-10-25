@@ -35,6 +35,7 @@ from app import db, get_app
 from app.models import File, Movie, User, UserMovieReview, UserMovieStatus
 from app.recommendations import (
     CREW_ROLE_JOBS,
+    JOB_TO_CLASS,
     TOP_BILLING_CUTOFF,
     score_movie,
     stored_profile,
@@ -368,9 +369,6 @@ def _fetch_enriched(tmdb_id):
         return None, False
 
     credits = payload.get("credits") or {}
-    job_to_class = {
-        job: cls for cls, (jobs, _) in CREW_ROLE_JOBS.items() for job in jobs
-    }
     trimmed = {
         "tmdb_id": payload.get("id"),
         "title": payload.get("title"),
@@ -394,7 +392,7 @@ def _fetch_enriched(tmdb_id):
         "crew": [
             {"id": c.get("id"), "name": c.get("name"), "job": c.get("job")}
             for c in credits.get("crew") or []
-            if c.get("job") in job_to_class
+            if c.get("job") in JOB_TO_CLASS
         ],
     }
     return trimmed, True
@@ -423,11 +421,8 @@ def _payload_features(payload):
         features.append(("keyword", f"keyword:{keyword['id']}", keyword["name"]))
     for actor in payload.get("cast") or []:
         features.append(("actor", f"actor:{actor['id']}", actor["name"]))
-    job_to_class = {
-        job: cls for cls, (jobs, _) in CREW_ROLE_JOBS.items() for job in jobs
-    }
     for person in payload.get("crew") or []:
-        cls = job_to_class[person["job"]]
+        cls = JOB_TO_CLASS[person["job"]]
         label = CREW_ROLE_JOBS[cls][1].format(name=person["name"])
         features.append((cls, f"{cls}:{person['id']}", label))
 

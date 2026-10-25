@@ -80,6 +80,10 @@ CREW_ROLE_JOBS = {
     "editor": (("Editor",), "edited by {name}"),
 }
 
+# Each TMDB crew job and the class that it counts as
+
+JOB_TO_CLASS = {job: cls for cls, (jobs, _) in CREW_ROLE_JOBS.items() for job in jobs}
+
 # Bayesian shrinkage for each class: affinity = sum(weights) / (count +
 # k). Thus, a feature seen 1 time cannot dominate a feature that the
 # user rated many times. Sparse classes (people) get lighter shrinkage
@@ -234,19 +238,16 @@ def collect_features(movie_ids):
     ):
         features[movie_id].append(("keyword", f"keyword:{keyword_id}", name))
 
-    job_to_class = {
-        job: cls for cls, (jobs, _) in CREW_ROLE_JOBS.items() for job in jobs
-    }
     for movie_id, credit_id, name, job in (
         db.session.query(
             MovieCrew.movie_id, MovieCrew.credit_id, TMDBCredit.name, MovieCrew.job
         )
         .join(TMDBCredit, TMDBCredit.id == MovieCrew.credit_id)
         .filter(
-            MovieCrew.movie_id.in_(movie_ids), MovieCrew.job.in_(list(job_to_class))
+            MovieCrew.movie_id.in_(movie_ids), MovieCrew.job.in_(list(JOB_TO_CLASS))
         )
     ):
-        cls = job_to_class[job]
+        cls = JOB_TO_CLASS[job]
         label = CREW_ROLE_JOBS[cls][1].format(name=name)
         features[movie_id].append((cls, f"{cls}:{credit_id}", label))
 

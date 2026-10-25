@@ -63,6 +63,8 @@ from app.criterion_catalog import (
 from app.email import admin_email, notify_admin
 from app.email import send_email
 from app.models import (
+    MOVIES,
+    TV_SHOWS,
     ArchivedOriginal,
     File,
     HeldImport,
@@ -2252,9 +2254,9 @@ def _build_records(file_details, inspection, output_name):
 
         file.date_updated = datetime.now(timezone.utc)
 
-    if file.media_library == "Movies":
+    if file.media_library == MOVIES:
         _attach_movie(file, file_details)
-    elif file.media_library == "TV Shows":
+    elif file.media_library == TV_SHOWS:
         _attach_tv_series(file, file_details)
 
     # Set the file quality details.
@@ -3934,7 +3936,7 @@ def reconstruct_filename(file_id):
     f = File.query.filter_by(id=file_id).first()
     if not f:
         return False
-    if f.media_library != "Movies":
+    if f.media_library != MOVIES:
         return f.untouched_basename
 
     file = (

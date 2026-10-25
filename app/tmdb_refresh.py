@@ -32,6 +32,8 @@ from app import db, get_app
 from app.aws_storage import rename_untouched_object, sanitize_s3_key
 from app.email import notify_admin, notify_admin_text
 from app.models import (
+    MOVIES,
+    TV_SHOWS,
     ArchivedOriginal,
     File,
     Movie,
@@ -303,7 +305,7 @@ def refresh_tmdb_info(
     with app.app_context():
         try:
 
-            if library == "Movies":
+            if library == MOVIES:
                 movie = Movie.query.filter_by(id=id).first()
                 if movie is None:
                     # For example, an earlier job in a bulk refresh merged
@@ -324,7 +326,7 @@ def refresh_tmdb_info(
                 current_app.logger.info(f"tmdb_id: {tmdb_id}")
                 tmdb_info = movie.tmdb_movie_fetch(tmdb_id)
 
-            elif library == "TV Shows":
+            elif library == TV_SHOWS:
                 tv_show = TVSeries.query.filter_by(id=id).first()
                 if tv_show is None:
                     current_app.logger.warning(
@@ -404,7 +406,7 @@ def save_failed_payload(library, id, tmdb_payload):
     if not tmdb_payload:
         return None
 
-    slug = "tv" if library == "TV Shows" else "movie"
+    slug = "tv" if library == TV_SHOWS else "movie"
     stamp = datetime.now().strftime("%Y-%m-%dT%H%M%S")
     path = f"{current_app.config['LOG_FILE']}.tmdb-payload.{slug}-{id}.{stamp}.json.gz"
     try:
@@ -495,7 +497,7 @@ def apply_tmdb_refresh(
             if tmdb_payload:
                 tmdb_info = json.loads(zlib.decompress(tmdb_payload).decode("utf-8"))
 
-            if library == "Movies":
+            if library == MOVIES:
                 # Get the Movie record to update.
 
                 movie = Movie.query.filter_by(id=id).first()
@@ -859,7 +861,7 @@ def apply_tmdb_refresh(
                     ).first()
                     db.session.delete(original_movie_record)
 
-            elif library == "TV Shows":
+            elif library == TV_SHOWS:
                 # Get the TVSeries record to update.
 
                 tv_show = TVSeries.query.filter_by(id=id).first()

@@ -43,6 +43,7 @@ from werkzeug.local import LocalProxy
 
 from app.tasks import enqueue_task, report_progress
 from app import db, get_app, makedirs_on_mounted_volume
+from app.models import MOVIES
 from app.email import notify_admin
 
 app = LocalProxy(get_app)
@@ -211,7 +212,7 @@ def real_rips_blocking(file_details):
         File.converted_from_quality.is_(None),
         RefQuality.preference >= target.preference,
     )
-    if file_details["media_library"] == "Movies":
+    if file_details["media_library"] == MOVIES:
         query = query.join(Movie, (Movie.id == File.movie_id)).filter(
             Movie.title == file_details["title"],
             Movie.year == file_details["year"],
@@ -611,7 +612,7 @@ def archived_original_from_file(file, reason):
     archived.season = file.season
     archived.episode = file.episode
     archived.plex_title = file.plex_title
-    archived.edition = file.edition if file.media_library == "Movies" else None
+    archived.edition = file.edition if file.media_library == MOVIES else None
     archived.quality_title = file.converted_from_quality or file.quality.quality_title
     archived.hdr_format = file.converted_from_format or file.hdr_format
     archived.untouched_basename = file.untouched_basename or os.path.basename(
@@ -645,7 +646,7 @@ def archive_held_task(held_id):
             if archived is None:
                 archived = ArchivedOriginal(aws_key=key)
             archived.media_library = details["media_library"]
-            if details["media_library"] == "Movies":
+            if details["media_library"] == MOVIES:
                 movie = Movie.query.filter_by(
                     title=details["title"], year=details["year"]
                 ).first()
