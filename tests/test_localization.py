@@ -249,6 +249,33 @@ def test_unconvertible_file_imports_as_is(app, incoming_dir):
     os.remove(output)
 
 
+def test_a_dead_volume_defer_keeps_every_counter(app, incoming_dir, monkeypatch):
+    """A defer must not reset the TMDb or space counters of the chain."""
+
+    basename = "Dead Counters (2021) - [DVD].mkv"
+    source = os.path.join(incoming_dir, basename)
+    with open(source, "wb") as f:
+        f.write(b"video")
+
+    monkeypatch.setattr(videos, "_dead_volumes", lambda paths: ["/Volumes/Movies"])
+    try:
+        with app.app_context():
+            assert localization_task(source, space_waits=2, tmdb_retries=3) is True
+
+        (job,) = [
+            job
+            for job in scheduled_jobs(app.import_queue)
+            if job.id.startswith("retry_")
+        ]
+        assert job.kwargs["space_waits"] == 2
+        assert job.kwargs["tmdb_retries"] == 3
+        assert job.id == retry_job_id(
+            "localization_task", f"'{basename}'", 0, 0, "s2", "t3"
+        )
+    finally:
+        os.remove(source)
+
+
 def test_localization_defers_when_volumes_dead(app, incoming_dir, monkeypatch):
     basename = "Dead Mount (2021) - [DVD].mkv"
     source = os.path.join(incoming_dir, basename)
@@ -265,7 +292,9 @@ def test_localization_defers_when_volumes_dead(app, incoming_dir, monkeypatch):
             for job in scheduled_jobs(app.import_queue)
             if job.id.startswith("retry_")
         ]
-        assert retries == [retry_job_id("localization_task", f"'{basename}'", 0, 0)]
+        assert retries == [
+            retry_job_id("localization_task", f"'{basename}'", 0, 0, "s0", "t0")
+        ]
 
         # The task left the file untouched. It did not reject or stage it
         assert os.path.exists(source)
@@ -305,7 +334,7 @@ def test_staging_copy_transient_error_defers_and_retries(
             if job.id.startswith("retry_")
         ]
         assert [job.id for job in retries] == [
-            retry_job_id("localization_task", f"'{basename}'", 1, 0)
+            retry_job_id("localization_task", f"'{basename}'", 1, 0, "s0", "t0")
         ]
 
         # The retry carries the increased attempt count and the original
@@ -375,7 +404,7 @@ def test_staging_copy_retries_advance_toward_the_budget(app, incoming_dir, monke
                 }
                 assert scheduled == {
                     retry_job_id(
-                        "localization_task", f"'{basename}'", attempt + 1, 0
+                        "localization_task", f"'{basename}'", attempt + 1, 0, "s0", "t0"
                     ): attempt
                     + 1
                 }, f"attempt {attempt} did not schedule attempt {attempt + 1}"
@@ -1067,7 +1096,7 @@ def test_truncated_matroska_defers_even_when_size_is_stable(
             if job.id.startswith("retry_")
         ]
         assert [job.id for job in retries] == [
-            retry_job_id("localization_task", f"'{basename}'", 0, 1)
+            retry_job_id("localization_task", f"'{basename}'", 0, 1, "s0", "t0")
         ]
         job = retries[0]
         assert job.kwargs["completeness_retries"] == 1
@@ -1105,7 +1134,7 @@ def test_unprobeable_fresh_file_waits_out_the_quiet_period(app, incoming_dir):
             if job.id.startswith("retry_")
         ]
         assert [job.id for job in retries] == [
-            retry_job_id("localization_task", f"'{basename}'", 0, 1)
+            retry_job_id("localization_task", f"'{basename}'", 0, 1, "s0", "t0")
         ]
         assert retries[0].kwargs["completeness_retries"] == 1
         assert os.path.exists(source)
@@ -1182,7 +1211,7 @@ def test_localization_waits_for_library_space(app, sample_mkv, incoming_dir, cap
                 if job.id.startswith("retry_")
             ]
             assert [job.id for job in waits] == [
-                retry_job_id("localization_task", f"'{basename}'", 0, 0, "space1")
+                retry_job_id("localization_task", f"'{basename}'", 0, 0, "space1", "t0")
             ]
             assert waits[0].kwargs["space_waits"] == 1
             inspect.signature(videos.localization_task).bind(
@@ -1215,7 +1244,7 @@ def test_localization_waits_for_library_space(app, sample_mkv, incoming_dir, cap
             caplog.clear()
             assert localization_task(source, space_waits=1) is True
             assert retry_job_id(
-                "localization_task", f"'{basename}'", 0, 0, "space2"
+                "localization_task", f"'{basename}'", 0, 0, "space2", "t0"
             ) in [job.id for job in scheduled_jobs(app.import_queue)]
             assert "waiting for free space" not in caplog.text
 

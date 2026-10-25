@@ -483,3 +483,36 @@ def test_a_review_added_later_updates_the_same_row(app, monkeypatch):
         ).all()
         assert row.letterboxd_guid == "letterboxd-review-77"
         assert "Added later." in row.review
+
+
+def test_review_text_removed_on_letterboxd_goes_away(app, monkeypatch):
+    """The guid flips to "watch" when the text is removed. The row follows."""
+
+    from app import db
+    from app.models import User, UserMovieReview
+
+    with app.app_context():
+        user = User.query.first()
+        user.letterboxd_username = "test"
+        make_movie("Unreviewed Entry", 1969, tmdb_id=88431)
+        db.session.commit()
+        run_sync(
+            app,
+            build_feed(
+                feed_item(
+                    "letterboxd-review-78", 88431, rating="4", body="<p>Spicy take.</p>"
+                )
+            ),
+            monkeypatch,
+        )
+        run_sync(
+            app,
+            build_feed(feed_item("letterboxd-watch-78", 88431, rating=None)),
+            monkeypatch,
+        )
+        (row,) = UserMovieReview.query.filter(
+            UserMovieReview.letterboxd_guid.like("letterboxd-%-78")
+        ).all()
+        assert row.letterboxd_guid == "letterboxd-watch-78"
+        assert row.rating is None
+        assert row.review == ""

@@ -1,3 +1,5 @@
+import hashlib
+import hmac
 import json
 import os
 
@@ -1283,11 +1285,35 @@ class User(UserMixin, db.Model):
 
         return check_password_hash(self.password_hash, password)
 
+    def password_fingerprint(self):
+        """Return a keyed fingerprint of the password hash.
+
+        A new password changes the fingerprint. The reset token and the
+        login session carry it. Thus, a password change makes each older
+        token and session not valid."""
+
+        return hmac.new(
+            current_app.config["SECRET_KEY"].encode(),
+            (self.password_hash or "").encode(),
+            hashlib.sha256,
+        ).hexdigest()[:32]
+
+    def get_id(self):
+        """Return the session id of flask-login: the user id and the password fingerprint."""
+
+        return f"{self.id}:{self.password_fingerprint()}"
+
     def get_reset_password_token(self, expires_in=600):
-        """Return a signed, short-lived JWT for the password-reset email link."""
+        """Return a signed, short-lived JWT for the password-reset email link.
+
+        The token holds the password fingerprint. Thus, it works 1 time."""
 
         return jwt.encode(
-            {"reset_password": self.id, "exp": time() + expires_in},
+            {
+                "reset_password": self.id,
+                "password": self.password_fingerprint(),
+                "exp": time() + expires_in,
+            },
             current_app.config["SECRET_KEY"],
             algorithm="HS256",
         )
@@ -1296,15 +1322,21 @@ class User(UserMixin, db.Model):
     def verify_reset_password_token(token):
         """Return the User that a reset token identifies, or None.
 
-        The result is None if the token is not valid or has expired."""
+        The result is None if the token is not valid, has expired, or was
+        used. A used token holds the fingerprint of the old password."""
 
         try:
-            id = jwt.decode(
+            claims = jwt.decode(
                 token, current_app.config["SECRET_KEY"], algorithms=["HS256"]
-            )["reset_password"]
-        except:
-            return
-        return db.session.get(User, id)
+            )
+            user = db.session.get(User, int(claims["reset_password"]))
+        except Exception:
+            return None
+        if user is None or not hmac.compare_digest(
+            str(claims.get("password") or ""), user.password_fingerprint()
+        ):
+            return None
+        return user
 
     def _listed_queues(self):
         """Return the queues that the queue page lists, each with a job filter.
@@ -2984,9 +3016,22 @@ class TMDBSeason(db.Model, TMDBMixin):
 
 @login.user_loader
 def load_user(id):
-    """Load a user for flask-login."""
+    """Load a user for flask-login.
 
-    return db.session.get(User, int(id))
+    The session id holds the password fingerprint. A session from before
+    a password change does not load. A session id with no fingerprint
+    (from before the fingerprint) does not load either."""
+
+    user_id, _, fingerprint = str(id).partition(":")
+    try:
+        user = db.session.get(User, int(user_id))
+    except ValueError:
+        return None
+    if user is None or not hmac.compare_digest(
+        fingerprint, user.password_fingerprint()
+    ):
+        return None
+    return user
 
 
 dvr_channel_movies = db.Table(

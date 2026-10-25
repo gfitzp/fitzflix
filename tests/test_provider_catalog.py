@@ -33,15 +33,15 @@ def scorer_that_likes_westerns(monkeypatch):
     real curve of the engine."""
 
     import app.provider_catalog as pc
+    from app.streaming_rail import _payload_features
 
-    monkeypatch.setattr(
-        pc,
-        "score_movie",
-        lambda features, profile: (
-            1.0 if any(label == "Western" for _, _, label in features) else 0.0,
-            [],
-        ),
-    )
+    def score(redis, user_id, tmdb_id, profile):
+        """Score a Western payload 1.0 and each different payload 0.0."""
+
+        features = _payload_features(pc.enriched_movie(tmdb_id) or {})
+        return 1.0 if any(label == "Western" for _, _, label in features) else 0.0
+
+    monkeypatch.setattr(pc, "resolved_tmdb_score", score)
     monkeypatch.setattr(
         pc, "estimated_rating", lambda profile, score: 5.0 if score > 0 else 2.0
     )
@@ -215,3 +215,38 @@ def test_creation_cap_pushes_verified_films_back(app, monkeypatch):
     assert app.redis.scard(pc.PENDING_KEY) == 1
     with app.app_context():
         assert Movie.query.filter(Movie.tmdb_id.in_([301, 302])).count() == 1
+
+
+def test_the_bar_reads_the_shared_score(app, monkeypatch):
+    """The shared score adds co-preference. The bar must read that score.
+
+    The profile leans to Western, so a Drama scores 0 on taste only. The
+    shared source has a higher score for the film. The film passes."""
+
+    import app.provider_catalog as pc
+
+    from app.models import Movie
+    from app.recommendations import TMDB_PATCH_SCORES_KEY
+
+    user_id = subscribe_criterion(app)
+    monkeypatch.setattr(
+        pc, "estimated_rating", lambda profile, score: 5.0 if score > 0 else 2.0
+    )
+    payloads = {205: shelf_item(205, "Catalog Copref Drama", genre=(18, "Drama"))}
+    monkeypatch.setattr(pc, "enriched_movie", lambda tmdb_id: payloads.get(tmdb_id))
+    plant_availability(
+        app,
+        205,
+        {"link": None, "flatrate": [CRITERION], "ads": [], "rent": [], "buy": []},
+    )
+    app.redis.hset(TMDB_PATCH_SCORES_KEY.format(user_id=user_id), "205", 0.6)
+    app.redis.sadd(pc.PENDING_KEY, 205)
+
+    class FakeQueue:
+        def enqueue(self, *args, **kwargs):
+            pass
+
+    with app.app_context():
+        monkeypatch.setattr(app, "maintenance_queue", FakeQueue())
+        assert pc._process_pending({258}) == 1
+        assert Movie.query.filter_by(tmdb_id=205).first() is not None

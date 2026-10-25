@@ -477,3 +477,65 @@ def test_the_flac_pass_keeps_the_attachments(app, monkeypatch, tmp_path):
     pairs = list(zip(command, command[1:]))
     assert ("-map", "0:t?") in pairs
     assert ("-map", "0:V") in pairs
+
+
+def test_the_cover_art_survives_the_ffmpeg_remux(app, tmp_path):
+    """The "0:V" map drops an image attachment. The cover must come back."""
+
+    import json
+    import os
+    import subprocess
+
+    from app.tracks import copy_image_attachments
+
+    ffmpeg = app.config["FFMPEG_BIN"]
+    mkvmerge = app.config["MKVMERGE_BIN"]
+    base = tmp_path / "base.mkv"
+    cover = tmp_path / "cover.jpg"
+    source = tmp_path / "source.mkv"
+    output = tmp_path / "output.mkv"
+    subprocess.run(
+        [ffmpeg, "-y", "-f", "lavfi", "-i", "testsrc=duration=1:size=160x120"]
+        + ["-f", "lavfi", "-i", "sine=duration=1", "-c:v", "libx264"]
+        + ["-c:a", "flac", "-shortest", str(base)],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        [ffmpeg, "-y", "-f", "lavfi", "-i", "color=red:size=64x64"]
+        + ["-frames:v", "1", str(cover)],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        [mkvmerge, "-o", str(source), "--attachment-mime-type", "image/jpeg"]
+        + ["--attach-file", str(cover), str(base)],
+        check=True,
+        capture_output=True,
+    )
+
+    # The same maps as the remuxes.
+
+    subprocess.run(
+        [ffmpeg, "-y", "-i", str(source), "-map", "0:V", "-map", "0:a"]
+        + ["-map", "0:s:?", "-map", "0:t?", "-c", "copy", str(output)],
+        check=True,
+        capture_output=True,
+    )
+    with app.app_context():
+        assert copy_image_attachments(str(source), str(output)) == 1
+
+    identity = json.loads(
+        subprocess.run(
+            [mkvmerge, "-J", str(output)], check=True, capture_output=True
+        ).stdout
+    )
+    assert [track["codec"] for track in identity["tracks"]] == [
+        "AVC/H.264/MPEG-4p10",
+        "FLAC",
+    ]
+    assert [
+        (attachment["file_name"], attachment["content_type"])
+        for attachment in identity["attachments"]
+    ] == [("cover.jpg", "image/jpeg")]
+    assert not [p for p in os.listdir(tmp_path) if p.startswith(".attachments-")]

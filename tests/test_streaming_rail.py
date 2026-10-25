@@ -354,6 +354,7 @@ def test_landing_page_renders_the_rail(app, admin_client):
     from app.streaming_rail import RAIL_KEY
     from app.videos import star_rating_fields
 
+    subscribe(app, 8, "Netflix")
     with app.app_context():
         user_id = User.query.filter_by(admin=True).first().id
 
@@ -459,6 +460,8 @@ def test_runtime_filter_trims_the_streaming_rail(app, admin_client):
     from app.models import User
     from app.streaming_rail import RAIL_KEY
 
+    subscribe(app, 8, "Netflix")
+
     with app.app_context():
         user_id = User.query.filter_by(admin=True).first().id
 
@@ -509,6 +512,8 @@ def test_runtime_filter_says_when_the_rail_empties(app, admin_client):
     from app.models import User
     from app.streaming_rail import RAIL_KEY
 
+    subscribe(app, 8, "Netflix")
+
     with app.app_context():
         user_id = User.query.filter_by(admin=True).first().id
 
@@ -553,6 +558,8 @@ def test_genre_filter_trims_the_rail(app, admin_client):
     from app.models import TMDBGenre, User
     from app.streaming_rail import RAIL_KEY
 
+    subscribe(app, 8, "Netflix")
+
     with app.app_context():
         user_id = User.query.filter_by(admin=True).first().id
         noir = TMDBGenre(id=990201, name="Rail Genre Noir")
@@ -594,3 +601,36 @@ def test_genre_filter_trims_the_rail(app, admin_client):
 
     body = admin_client.get("/").get_data(as_text=True)
     assert "Rail Genre Other (1994)" in body
+
+
+def test_a_user_with_no_services_has_no_rail(app, admin_client):
+    """The rail goes away at once on the page and at the next run in Redis."""
+
+    from app import db
+    from app.models import UserStreamingProvider
+    from app.streaming_rail import RAIL_KEY, recompute_streaming_rail
+
+    user_id = subscribe(app, 8, "Netflix")
+    item = {
+        "tmdb_id": 6001,
+        "title": "Rail Showpiece",
+        "year": "1994",
+        "poster_path": "/rail.jpg",
+        "runtime": 95,
+        "providers": [{**NETFLIX, "kind": "flatrate"}],
+        "because": ["popular on Netflix"],
+        "score": 1.0,
+    }
+    app.redis.set(
+        RAIL_KEY.format(user_id=user_id),
+        json.dumps({"computed_at": "2026-08-12 02:15", "items": [item]}),
+    )
+    assert "Rail Showpiece (1994)" in admin_client.get("/").get_data(as_text=True)
+
+    with app.app_context():
+        UserStreamingProvider.query.filter_by(user_id=user_id).delete()
+        db.session.commit()
+    assert "Rail Showpiece" not in admin_client.get("/").get_data(as_text=True)
+
+    assert recompute_streaming_rail() is True
+    assert app.redis.get(RAIL_KEY.format(user_id=user_id)) is None

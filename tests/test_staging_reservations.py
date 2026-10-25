@@ -204,7 +204,9 @@ def test_localization_waits_for_staging_space(
 
             waits = [job.id for job in scheduled_jobs(app.import_queue)]
             assert (
-                retry_job_id("localization_task", f"'{basename}'", 0, 0, "staging1")
+                retry_job_id(
+                    "localization_task", f"'{basename}'", 0, 0, "staging1", "t0"
+                )
                 in waits
             )
             assert os.listdir(staging) == []

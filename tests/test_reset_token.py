@@ -205,3 +205,58 @@ def test_reset_page_keeps_the_password_for_a_bad_token(app, client):
 
     with app.app_context():
         assert member(app).check_password(MEMBER_PASSWORD)
+
+
+def test_a_reset_token_works_one_time(app, client, restore_member_password):
+    """A used token holds the fingerprint of the old password. It fails."""
+
+    from app.models import User
+
+    with app.app_context():
+        token = member(app).get_reset_password_token()
+    path = f"/auth/reset-password/{token}"
+    csrf = page_csrf_token(client, path)
+    client.post(
+        path,
+        data={"csrf_token": csrf, "password": "first-new", "password2": "first-new"},
+    )
+    second = client.post(
+        path,
+        data={"csrf_token": csrf, "password": "second-new", "password2": "second-new"},
+    )
+    assert second.status_code == 302
+    assert not second.headers["Location"].endswith("/auth/login")
+
+    with app.app_context():
+        assert member(app).check_password("first-new")
+        assert User.verify_reset_password_token(token) is None
+
+
+def test_a_password_reset_ends_the_older_sessions(app, user_client):
+    """A session from before the reset does not load after it."""
+
+    from app import db
+
+    assert user_client.get("/profile").status_code == 200
+    with app.app_context():
+        member(app).set_password("a-reset-password")
+        db.session.commit()
+    try:
+        response = user_client.get("/profile")
+        assert response.status_code == 302
+        assert "/auth/login" in response.headers["Location"]
+    finally:
+        with app.app_context():
+            member(app).set_password(MEMBER_PASSWORD)
+            db.session.commit()
+
+
+def test_a_session_id_without_a_fingerprint_does_not_load(app):
+    """A cookie from before the fingerprint holds only the user id."""
+
+    from app.models import load_user
+
+    with app.app_context():
+        assert load_user(str(member(app).id)) is None
+        assert load_user(member(app).get_id()).id == member(app).id
+        assert load_user("not-a-number:x") is None

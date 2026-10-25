@@ -47,9 +47,13 @@ from werkzeug.local import LocalProxy
 
 from app import db, get_app
 from app.models import CatalogExclusion, Movie, User, UserStreamingProvider, tmdb_get
-from app.recommendations import estimated_rating, score_movie, stored_profile
+from app.recommendations import (
+    estimated_rating,
+    resolved_tmdb_score,
+    stored_profile,
+)
 from app.streaming import batch_title_availability, streaming_matches
-from app.streaming_rail import _payload_features, enriched_movie
+from app.streaming_rail import enriched_movie
 
 # This is the app instance of this process. Fitzflix resolves it lazily.
 # Thus, the nightly task can run on a worker without a second application
@@ -230,7 +234,7 @@ def _process_pending(subscribed):
     for (user_id,) in db.session.query(User.id):
         profile = stored_profile(redis, user_id)
         if profile:
-            profiles.append(profile)
+            profiles.append((user_id, profile))
     if not profiles:
         return 0
 
@@ -249,10 +253,16 @@ def _process_pending(subscribed):
             or not str(payload.get("year") or "").isdigit()
         ):
             continue
-        features = _payload_features(payload)
+        # The score comes from the shared source (taste plus
+        # co-preference). The calibration curve was built from the same
+        # recipe. A taste-only score read off that curve put films on the
+        # wrong side of the bar.
+
         best = None
-        for profile in profiles:
-            score, _ = score_movie(features, profile)
+        for user_id, profile in profiles:
+            score = resolved_tmdb_score(redis, user_id, tmdb_id, profile)
+            if score is None:
+                continue
             estimate = estimated_rating(profile, score)
             if estimate is not None and (best is None or estimate > best):
                 best = estimate

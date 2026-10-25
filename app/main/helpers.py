@@ -180,6 +180,33 @@ def _same_day_rerate(user_id, movie_id, rating):
     return row
 
 
+def _letterboxd_locked(user_id, movie_id, rating, removes, corrects):
+    """Return the latest row if a star tap would change a Letterboxd row.
+
+    A row from the feed sync is locked, as in the History editor. The
+    next poll would put the Letterboxd verdict back. Outside the feed
+    window, the local change would differ from Letterboxd forever. A tap
+    on the current stars (removes) and a correction on the same day
+    (corrects) change the row in place. Thus, they are refused. A
+    rating on a later day is a new log, and it stays allowed. This
+    returns None if the tap can go on."""
+
+    if rating is None:
+        return None
+    row = _latest_review_row(user_id, movie_id)
+    if row is None or not row.letterboxd_guid:
+        return None
+    if removes and row.rating is not None and float(row.rating) == rating:
+        return row
+    if (
+        corrects
+        and row.date_reviewed is not None
+        and row.date_reviewed.date() == date.today()
+    ):
+        return row
+    return None
+
+
 def _ladder_state(user_id, movie_id):
     """Return the current verdict of the star row for a film as JSON.
 

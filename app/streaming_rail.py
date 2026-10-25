@@ -574,7 +574,11 @@ def recompute_streaming_rail():
         computed_at = datetime.now().strftime("%Y-%m-%d %H:%M")
         rail_films = {}
         for user in User.query.all():
+            # A user with no services has no rail. Remove the rail of an
+            # earlier run. Otherwise, the landing page shows it forever.
+
             if not user.streaming_providers.count():
+                current_app.redis.delete(RAIL_KEY.format(user_id=user.id))
                 continue
             items = compute_user_rail(user)
             if items is None:

@@ -189,7 +189,11 @@ def test_warm_task_caches_scores_and_rolls_cursors(app, monkeypatch):
     fetched.clear()
     with app.test_client() as client:
         with client.session_transaction() as session:
-            session["_user_id"] = str(user_id)
+            with app.app_context():
+                from app import db
+                from app.models import User
+
+                session["_user_id"] = db.session.get(User, user_id).get_id()
             session["_fresh"] = True
         payload = client.get("/movie_states?tmdb_ids=700001,700020").get_json()
     assert payload["tmdb"]["700001"]["estimated"] is not None

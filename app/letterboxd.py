@@ -202,13 +202,13 @@ def _find_merge_target(user_id, movie_id, watched_date):
     ).first()
 
 
-def _apply_entry_fields(row, entry):
+def _apply_entry_fields(row, entry, owned=False):
     """Write the verdict of a feed entry onto a row.
 
     Fitzflix stores liked VERBATIM. This is the rule of Glenn: a
     Letterboxd like is its own signal. A guilty pleasure below 3 stars
     keeps its heart. The rewatch flag of the feed is authoritative when
-    it is present."""
+    it is present. An owned row already belongs to this feed entry."""
 
     from app.videos import star_rating_fields
 
@@ -217,6 +217,14 @@ def _apply_entry_fields(row, entry):
     fields["liked"] = entry["liked"]
     fields["contains_spoilers"] = entry["contains_spoilers"]
     fields["review"] = entry["review"] or row.review or ""
+
+    # A row that the feed claims now keeps its local text when the entry
+    # has none. A row that the feed owns follows the feed. A "watch" guid
+    # tells that the text was removed on Letterboxd. A "review" guid
+    # with no text is a bad payload, and the text stays.
+
+    if owned and (entry["guid"] or "").startswith("letterboxd-watch-"):
+        fields["review"] = entry["review"] or ""
     if entry["rewatch"] is not None:
         fields["rewatch"] = entry["rewatch"]
     for field, value in fields.items():
@@ -354,10 +362,12 @@ def _ingest_entry(user_id, entry, created_movies):
             )
             if existing is not None:
                 existing.letterboxd_guid = entry["guid"]
-                _apply_entry_fields(existing, entry)
+                _apply_entry_fields(existing, entry, owned=True)
                 return "updated"
     if existing is not None:
-        return "updated" if _apply_entry_fields(existing, entry) else "skipped"
+        return (
+            "updated" if _apply_entry_fields(existing, entry, owned=True) else "skipped"
+        )
 
     movie = Movie.query.filter_by(tmdb_id=entry["tmdb_id"]).first()
     if movie is None:

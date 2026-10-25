@@ -2077,3 +2077,86 @@ def test_history_forms_moved_per_215(app, admin_client):
     assert 'name="upload_submit"' in profile
     assert 'name="export_submit"' in profile
     assert "Review Import &amp; Export" in profile
+
+
+def _guid_row(app, title, tmdb_id, rating, date_watched, date_reviewed):
+    """Add a Letterboxd feed row for the admin. Return (movie id, row id)."""
+
+    from app import db
+    from app.models import User, UserMovieReview
+    from app.videos import star_rating_fields
+
+    with app.app_context():
+        user_id = User.query.filter_by(admin=True).first().id
+        movie = make_movie(title, 1990, tmdb_id=tmdb_id)
+        row = UserMovieReview(
+            user_id=user_id,
+            movie_id=movie.id,
+            letterboxd_guid=f"letterboxd-review-{tmdb_id}",
+            review="",
+            liked=rating >= 3,
+            date_watched=date_watched,
+            date_reviewed=date_reviewed,
+            **star_rating_fields(rating),
+        )
+        db.session.add(row)
+        db.session.commit()
+        return movie.id, row.id
+
+
+def test_the_star_ladder_never_changes_a_letterboxd_row(app, admin_client):
+    """A tap on the current stars or a same-day correction is refused."""
+
+    from app import db
+    from app.models import UserMovieReview
+
+    today = datetime.now()
+    cases = [
+        # A tap on the current stars of a dated row.
+        ("Guid Clear", 777001, 4.0, datetime(2026, 8, 1), datetime(2026, 8, 1), "4"),
+        # A same-day correction.
+        ("Guid Rerate", 777002, 4.0, today, today, "2"),
+        # A tap on the current stars of an undated, bare row.
+        ("Guid Bare", 777003, 3.0, None, datetime(2026, 9, 1), "3"),
+    ]
+    for title, tmdb_id, rating, watched, reviewed, tap in cases:
+        movie_id, row_id = _guid_row(app, title, tmdb_id, rating, watched, reviewed)
+        page = admin_client.get(f"/movie/{movie_id}").get_data(as_text=True)
+        response = admin_client.post(
+            f"/movie/{movie_id}",
+            data={"csrf_token": csrf_token_from(page), "quick_rating": tap},
+            headers={"X-Requested-With": "ladder"},
+        )
+        assert response.get_json()["rating"] == rating, title
+        with app.app_context():
+            row = db.session.get(UserMovieReview, row_id)
+            assert row is not None and float(row.rating) == rating, title
+            assert UserMovieReview.query.filter_by(movie_id=movie_id).count() == 1
+
+    # The TMDb review page has the same same-day rule.
+
+    movie_id, row_id = _guid_row(app, "Guid Tmdb", 777004, 4.0, today, today)
+    page = admin_client.get(f"/movie/{movie_id}").get_data(as_text=True)
+    response = admin_client.post(
+        "/review/tmdb/777004",
+        data={"csrf_token": csrf_token_from(page), "quick_rating": "1"},
+    )
+    assert response.status_code == 302
+    with app.app_context():
+        assert float(db.session.get(UserMovieReview, row_id).rating) == 4.0
+        assert UserMovieReview.query.filter_by(movie_id=movie_id).count() == 1
+
+    # A rating on a later day than the Letterboxd row is a new log.
+
+    movie_id, row_id = _guid_row(
+        app, "Guid Later", 777005, 4.0, datetime(2026, 8, 1), datetime(2026, 8, 1)
+    )
+    page = admin_client.get(f"/movie/{movie_id}").get_data(as_text=True)
+    admin_client.post(
+        f"/movie/{movie_id}",
+        data={"csrf_token": csrf_token_from(page), "quick_rating": "2"},
+        headers={"X-Requested-With": "ladder"},
+    )
+    with app.app_context():
+        assert float(db.session.get(UserMovieReview, row_id).rating) == 4.0
+        assert UserMovieReview.query.filter_by(movie_id=movie_id).count() == 2

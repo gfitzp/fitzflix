@@ -623,3 +623,17 @@ def test_a_639_3_only_language_resolves(app):
         assert resolve_language_code("cmn") == "cmn"
         assert language_names()["yue"] == "Yue Chinese"
         assert "yue" not in dict(iso_639_2_languages())
+
+
+def test_a_code_wins_over_the_name_of_a_different_language(app):
+    """The language named "Lou" (loj) must not take the code "lou"."""
+
+    from app.tracks import language_names, resolve_language_code
+
+    with app.app_context():
+        assert resolve_language_code("lou") == "lou"
+        assert language_names()["lou"] == "Louisiana Creole"
+        assert resolve_language_code("koi") == "koi"
+        assert resolve_language_code("Lou") == "lou"
+        assert resolve_language_code("eng") == "eng"
+        assert resolve_language_code("fra") == "fre"

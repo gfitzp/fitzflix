@@ -228,7 +228,9 @@ def test_localization_defers_while_file_is_growing(app, incoming_dir, monkeypatc
                 for job_id in scheduled_ids(app.import_queue)
                 if job_id.startswith("retry_")
             ]
-            assert retries == [retry_job_id("localization_task", f"'{basename}'", 0, 0)]
+            assert retries == [
+                retry_job_id("localization_task", f"'{basename}'", 0, 0, "s0", "t0")
+            ]
             assert_binds(Job.fetch(retries[0], connection=app.redis))
     finally:
         stop.set()

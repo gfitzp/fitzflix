@@ -1056,6 +1056,52 @@ def shuffle_daily(items, seed):
 SHELF_SNAPSHOT_KEY = "fitzflix:shelf:{shelf}:{user_id}:{day}"
 SHELF_SNAPSHOT_TTL = 2 * 86400
 
+# The shelves of 1 user that stored a snapshot on 1 day. A replacement on
+# 1 shelf must not take a card that a different shelf shows.
+
+SHELF_INDEX_KEY = "fitzflix:shelf-index:{user_id}:{day}"
+
+
+def _store_shelf_snapshot(redis_client, user_id, shelf, day, cards):
+    """Store the snapshot of 1 shelf, and record the shelf in the day index."""
+
+    redis_client.set(
+        SHELF_SNAPSHOT_KEY.format(shelf=shelf, user_id=int(user_id), day=day),
+        json.dumps(cards),
+        ex=SHELF_SNAPSHOT_TTL,
+    )
+    index_key = SHELF_INDEX_KEY.format(user_id=int(user_id), day=day)
+    redis_client.sadd(index_key, shelf)
+    redis_client.expire(index_key, SHELF_SNAPSHOT_TTL)
+
+
+def _other_shelf_cards(redis_client, user_id, shelf, day):
+    """Return the card ids that the other shelves of the user show on the day."""
+
+    others = [
+        name.decode() if isinstance(name, bytes) else name
+        for name in redis_client.smembers(
+            SHELF_INDEX_KEY.format(user_id=int(user_id), day=day)
+        )
+    ]
+    others = sorted(name for name in others if name != shelf)
+    if not others:
+        return set()
+    cards = set()
+    for stored in redis_client.mget(
+        [
+            SHELF_SNAPSHOT_KEY.format(shelf=name, user_id=int(user_id), day=day)
+            for name in others
+        ]
+    ):
+        if not stored:
+            continue
+        try:
+            cards.update(json.loads(stored))
+        except (TypeError, ValueError):
+            continue
+    return cards
+
 
 def frozen_shelf(redis_client, user_id, shelf, eligible_ids, pick, day=None, size=None):
     """Return the stable ordered card ids of the day for 1 shelf.
@@ -1090,10 +1136,18 @@ def frozen_shelf(redis_client, user_id, shelf, eligible_ids, pick, day=None, siz
             snapshot = None
     if snapshot is None:
         snapshot = list(pick())
-        redis_client.set(key, json.dumps(snapshot), ex=SHELF_SNAPSHOT_TTL)
+        _store_shelf_snapshot(redis_client, user_id, shelf, day, snapshot)
         return snapshot
 
-    showing = set(snapshot)
+    # A card on a different shelf of the page is not a replacement. If it
+    # was, that shelf would lose a card that is still eligible, and it
+    # would replace that card too. A replay records its shelf too. Thus,
+    # a snapshot from before the day index existed is protected.
+
+    index_key = SHELF_INDEX_KEY.format(user_id=int(user_id), day=day)
+    redis_client.sadd(index_key, shelf)
+    redis_client.expire(index_key, SHELF_SNAPSHOT_TTL)
+    showing = set(snapshot) | _other_shelf_cards(redis_client, user_id, shelf, day)
     # Lazy on purpose: `showing` grows as replacements land, and the
     # generator's membership test reads the live set
     replacements = (card_id for card_id in eligible if card_id not in showing)
@@ -1116,7 +1170,7 @@ def frozen_shelf(redis_client, user_id, shelf, eligible_ids, pick, day=None, siz
         showing.add(addition)
         changed = True
     if changed:
-        redis_client.set(key, json.dumps(cards), ex=SHELF_SNAPSHOT_TTL)
+        _store_shelf_snapshot(redis_client, user_id, shelf, day, cards)
     return cards
 
 
@@ -1210,13 +1264,7 @@ def daily_shelf(
             head = kept + [row_key for row_key in lead if row_key not in kept]
             ids = head + [row_key for row_key in ids if row_key not in head]
             ids = ids[:count]
-            redis_client.set(
-                SHELF_SNAPSHOT_KEY.format(
-                    shelf=shelf, user_id=int(user_id), day=day.isoformat()
-                ),
-                json.dumps(ids),
-                ex=SHELF_SNAPSHOT_TTL,
-            )
+            _store_shelf_snapshot(redis_client, user_id, shelf, day.isoformat(), ids)
     else:
         ids = pick()
     shown.update(ids)

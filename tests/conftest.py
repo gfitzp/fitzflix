@@ -303,13 +303,13 @@ def _signed_in_client(app, email):
     from app.models import User
 
     with app.app_context():
-        user_id = User.query.filter_by(email=email).one().id
+        session_id = User.query.filter_by(email=email).one().get_id()
 
     test_client = app.test_client()
     serializer = app.session_interface.get_signing_serializer(app)
     test_client.set_cookie(
         app.config.get("SESSION_COOKIE_NAME", "session"),
-        serializer.dumps({"_user_id": str(user_id), "_fresh": True}),
+        serializer.dumps({"_user_id": session_id, "_fresh": True}),
         domain="localhost",
     )
     return test_client

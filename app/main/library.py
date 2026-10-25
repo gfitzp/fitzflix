@@ -92,6 +92,7 @@ from app.main.helpers import (
     _latest_review_row,
     _mark_not_interested,
     _quick_rating,
+    _letterboxd_locked,
     _same_day_rerate,
     _upgrade_threshold,
     library_upgradable,
@@ -1435,6 +1436,26 @@ def movie(movie_id):
                 )
             if _ladder_fetch():
                 return _ladder_state(current_user.id, target.id)
+            return redirect(url_for("main.movie", movie_id=movie.id))
+
+        # A Letterboxd row cannot lose its stars or change them in place.
+
+        if _letterboxd_locked(
+            current_user.id,
+            target.id,
+            rating,
+            removes=True,
+            corrects=quick_present
+            and not (movie_review_form.review.data or "").strip()
+            and movie_review_form.date_watched.data is None,
+        ):
+            if _ladder_fetch():
+                return _ladder_state(current_user.id, target.id)
+            flash(
+                f"'{title if target.id == movie.id else target.title}' syncs "
+                f"from your Letterboxd account. Change it on Letterboxd instead.",
+                "info",
+            )
             return redirect(url_for("main.movie", movie_id=movie.id))
 
         # A tap on your current rating removes it. A bare drive-style

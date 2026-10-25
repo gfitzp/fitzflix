@@ -353,3 +353,60 @@ def test_a_new_score_order_does_not_reorder_the_urgent_rows(app):
 
     assert first[:2] == ["u1", "u2"]
     assert reordered == first
+
+
+def test_a_replacement_never_takes_a_card_from_a_different_shelf(app):
+    """Only the watched film changes. The other shelf keeps every card."""
+
+    from datetime import timedelta
+
+    rows = list(range(1, 41))
+
+    for offset in range(30):
+        day = date(2026, 10, 1) + timedelta(days=offset)
+
+        def render(excluded):
+            """Render the 2 shelves in page order. Return their card ids."""
+
+            shown = set()
+            with app.app_context():
+                return [
+                    daily_shelf(
+                        app.redis,
+                        1,
+                        f"{name}-{offset}",
+                        [row for row in rows if row not in excluded],
+                        shown,
+                        key=lambda row: row,
+                        day=day,
+                        count=6,
+                    )
+                    for name in ("unit-rail", "unit-leaving")
+                ]
+
+        first, second = render(set())
+        watched = first[0]
+        after_first, after_second = render({watched})
+        assert after_second == second
+        assert after_first[1:] == first[1:]
+        assert after_first[0] not in first + second
+
+
+def test_a_snapshot_from_before_the_index_is_protected(app):
+    """A replay records its shelf. The other shelf then skips its cards."""
+
+    day = "2026-10-24"
+    app.redis.set(f"fitzflix:shelf:old-a:1:{day}", json.dumps([1, 2]))
+    app.redis.set(f"fitzflix:shelf:old-b:1:{day}", json.dumps([3, 4]))
+
+    # Shelf b replays first, and it records itself in the index.
+    assert frozen_shelf(app.redis, 1, "old-b", [3, 4, 5], lambda: [], day=day) == [
+        3,
+        4,
+    ]
+
+    # Film 1 is watched. Its replacement skips 3 and 4 of shelf b.
+    assert frozen_shelf(app.redis, 1, "old-a", [2, 3, 4, 5], lambda: [], day=day) == [
+        5,
+        2,
+    ]

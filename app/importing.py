@@ -639,12 +639,16 @@ def localization_task(
                     ignore_etag=ignore_etag,
                     transient_retries=transient_retries,
                     completeness_retries=completeness_retries,
+                    space_waits=space_waits,
+                    tmdb_retries=tmdb_retries,
                     job_timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
                     job_id=retry_job_id(
                         "localization_task",
                         f"'{basename}'",
                         transient_retries,
                         completeness_retries,
+                        f"s{space_waits}",
+                        f"t{tmdb_retries}",
                     ),
                     result_ttl=86400,
                     description=f"'{basename}'",
@@ -699,12 +703,16 @@ def localization_task(
                     ignore_etag=ignore_etag,
                     transient_retries=transient_retries,
                     completeness_retries=completeness_retries,
+                    space_waits=space_waits,
+                    tmdb_retries=tmdb_retries,
                     job_timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
                     job_id=retry_job_id(
                         "localization_task",
                         f"'{basename}'",
                         transient_retries,
                         completeness_retries,
+                        f"s{space_waits}",
+                        f"t{tmdb_retries}",
                     ),
                     result_ttl=86400,
                     description=f"'{basename}'",
@@ -751,12 +759,16 @@ def localization_task(
                         ignore_etag=ignore_etag,
                         transient_retries=transient_retries,
                         completeness_retries=completeness_retries + 1,
+                        space_waits=space_waits,
+                        tmdb_retries=tmdb_retries,
                         job_timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
                         job_id=retry_job_id(
                             "localization_task",
                             f"'{basename}'",
                             transient_retries,
                             completeness_retries + 1,
+                            f"s{space_waits}",
+                            f"t{tmdb_retries}",
                         ),
                         result_ttl=86400,
                         description=f"'{basename}'",
@@ -788,6 +800,7 @@ def localization_task(
                             transient_retries,
                             completeness_retries,
                             f"tmdb{tmdb_retries + 1}",
+                            f"s{space_waits}",
                         ),
                         result_ttl=86400,
                         description=f"'{basename}'",
@@ -865,6 +878,7 @@ def localization_task(
                     "transient_retries": transient_retries,
                     "completeness_retries": completeness_retries,
                     "space_waits": space_waits,
+                    "tmdb_retries": tmdb_retries,
                 },
             )
             if not lock:
@@ -947,6 +961,7 @@ def localization_task(
                     transient_retries=transient_retries,
                     completeness_retries=completeness_retries,
                     space_waits=space_waits + 1,
+                    tmdb_retries=tmdb_retries,
                     job_timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
                     job_id=retry_job_id(
                         "localization_task",
@@ -954,6 +969,7 @@ def localization_task(
                         transient_retries,
                         completeness_retries,
                         f"space{space_waits + 1}",
+                        f"t{tmdb_retries}",
                     ),
                     result_ttl=86400,
                     description=f"'{basename}'",
@@ -1003,6 +1019,7 @@ def localization_task(
                     transient_retries=transient_retries,
                     completeness_retries=completeness_retries,
                     space_waits=space_waits + 1,
+                    tmdb_retries=tmdb_retries,
                     job_timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
                     job_id=retry_job_id(
                         "localization_task",
@@ -1010,6 +1027,7 @@ def localization_task(
                         transient_retries,
                         completeness_retries,
                         f"staging{space_waits + 1}",
+                        f"t{tmdb_retries}",
                     ),
                     result_ttl=86400,
                     description=f"'{basename}'",
@@ -1061,12 +1079,16 @@ def localization_task(
                         ignore_etag=ignore_etag,
                         transient_retries=transient_retries + 1,
                         completeness_retries=completeness_retries,
+                        space_waits=space_waits,
+                        tmdb_retries=tmdb_retries,
                         job_timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
                         job_id=retry_job_id(
                             "localization_task",
                             f"'{basename}'",
                             transient_retries + 1,
                             completeness_retries,
+                            f"s{space_waits}",
+                            f"t{tmdb_retries}",
                         ),
                         result_ttl=86400,
                         description=f"'{basename}'",
@@ -1889,7 +1911,7 @@ def move_localized_file(
         if space_waits:
             clear_space_wait(os.path.basename(source_path))
             current_app.logger.info(
-                f"'{basename}' The library volume has space again after "
+                f"'{basename}' The space is available again after "
                 f"{space_waits} wait(s). Copying"
             )
 

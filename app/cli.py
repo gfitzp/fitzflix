@@ -27,41 +27,29 @@ def register(app):
         app.logger.info("Refreshing Criterion Collection information from Wikipedia")
 
     @refresh.command()
-    @click.argument("library", required=False)
+    @click.argument("library", required=False, type=click.Choice(["movie", "tv"]))
     @click.argument("tmdb_id", required=False)
     def tmdb(library=None, tmdb_id=None):
-        """Refresh the library information from TMDB."""
+        """Refresh the library information from TMDB.
+
+        With no library, this refreshes each movie and each TV series.
+        With a library, it refreshes only that library. With a TMDB id
+        too, it refreshes only that title."""
 
         movies = []
         tv_shows = []
 
-        if library in ["movie", "tv"] and tmdb_id:
+        if library in (None, "movie"):
+            query = Movie.query.filter(Movie.tmdb_id != None)
+            if tmdb_id:
+                query = query.filter(Movie.tmdb_id == tmdb_id)
+            movies = query.order_by(Movie.title.asc(), Movie.year.asc()).all()
 
-            if library == "movie":
-                movies = (
-                    Movie.query.filter(Movie.tmdb_id == tmdb_id)
-                    .order_by(Movie.title.asc(), Movie.year.asc())
-                    .all()
-                )
-
-            elif library == "tv":
-                tv_shows = (
-                    TVSeries.query.filter(TVSeries.tmdb_id == tmdb_id)
-                    .order_by(TVSeries.title.asc())
-                    .all()
-                )
-
-        else:
-            movies = (
-                Movie.query.filter(Movie.tmdb_id != None)
-                .order_by(Movie.title.asc(), Movie.year.asc())
-                .all()
-            )
-            tv_shows = (
-                TVSeries.query.filter(TVSeries.tmdb_id != None)
-                .order_by(TVSeries.title.asc())
-                .all()
-            )
+        if library in (None, "tv"):
+            query = TVSeries.query.filter(TVSeries.tmdb_id != None)
+            if tmdb_id:
+                query = query.filter(TVSeries.tmdb_id == tmdb_id)
+            tv_shows = query.order_by(TVSeries.title.asc()).all()
 
         # The network phase of the refresh belongs on the request queue.
         # It gives its payload to the sql queue for the database writes.

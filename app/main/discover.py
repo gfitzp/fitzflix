@@ -61,6 +61,7 @@ from app.main.helpers import (
     _ladder_state,
     _mark_not_interested,
     _quick_rating,
+    _letterboxd_locked,
     _same_day_rerate,
     _upgrade_threshold,
     library_upgradable,
@@ -482,6 +483,11 @@ def index():
     rail_rows = []
     rail_computed_at = None
     rail_payload = stored_rail(current_app.redis, current_user.id)
+
+    # A user who removed all services sees no rail before the next run.
+
+    if rail_payload and not current_user.streaming_providers.count():
+        rail_payload = None
     if rail_payload:
         rail_computed_at = rail_payload.get("computed_at")
         rail_ids = [item["tmdb_id"] for item in rail_payload.get("items", [])]
@@ -2343,13 +2349,29 @@ def review_tmdb(tmdb_id):
         # A second star tap on a film already reviewed today corrects
         # that review in place. This is the same rule as on the movie page.
 
-        edited = None
-        if (
+        correction = (
             quick_present
             and rating is not None
             and not (movie_review_form.review.data or "").strip()
             and movie_review_form.date_watched.data is None
+        )
+
+        # A Letterboxd row of today cannot change in place.
+
+        if _letterboxd_locked(
+            current_user.id, movie.id, rating, removes=False, corrects=correction
         ):
+            if _ladder_fetch():
+                return _ladder_state(current_user.id, movie.id)
+            flash(
+                f"'{film_title} ({year})' syncs from your Letterboxd account. "
+                f"Change it on Letterboxd instead.",
+                "info",
+            )
+            return redirect(url_for("main.movie", movie_id=movie.id))
+
+        edited = None
+        if correction:
             edited = _same_day_rerate(current_user.id, movie.id, rating)
         if edited is None:
             rewatch = (

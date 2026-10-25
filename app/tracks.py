@@ -22,6 +22,7 @@ import random
 import re
 import shutil
 import subprocess
+import tempfile
 import traceback
 
 from datetime import datetime, timedelta, timezone
@@ -657,24 +658,29 @@ def _code_names():
 
 @lru_cache(maxsize=1)
 def _language_aliases():
-    """Map each name of a language, in lowercase, to its 639-2 code.
+    """Map each name of a language, in lowercase, to its code.
 
-    The names are the language name, each code column in the table,
-    and the ISO 639-2/T spellings that are not in the table. See
-    ISO_639_2_TERMINOLOGIC.
+    The code is the 639-2 code, or the 639-3 code of a language that has
+    no 639-2 code. The names are the language name, each code column in
+    the table, and the ISO 639-2/T spellings that are not in the table.
+    See ISO_639_2_TERMINOLOGIC.
     """
 
     aliases = {}
 
     # The 639-2 rows come first. Thus, a name that a 639-3-only language
-    # shares maps to the 639-2 code.
+    # shares maps to the 639-2 code. All codes come before all names.
+    # Thus, the language named "Lou" (loj) does not take the code "lou"
+    # of Louisiana Creole.
 
     rows = sorted(_language_table(), key=lambda row: not row[2])
     for name, iso_639_3, iso_639_2, iso_639_1 in rows:
-        code = iso_639_2 or iso_639_3
-        for alias in (name, iso_639_3, iso_639_2, iso_639_1):
+        for alias in (iso_639_3, iso_639_2, iso_639_1):
             if alias:
-                aliases.setdefault(alias.lower(), code)
+                aliases.setdefault(alias.lower(), iso_639_2 or iso_639_3)
+    for name, iso_639_3, iso_639_2, iso_639_1 in rows:
+        if name:
+            aliases.setdefault(name.lower(), iso_639_2 or iso_639_3)
 
     for terminologic, bibliographic in ISO_639_2_TERMINOLOGIC.items():
         if bibliographic in aliases:
@@ -778,7 +784,10 @@ def library_language_choices():
 
 
 def resolve_language_code(value):
-    """Return the ISO 639-2 code for the text typed in a language box.
+    """Return the language code for the text typed in a language box.
+
+    The code is ISO 639-2, or ISO 639-3 for a language without a 639-2
+    code.
 
     The boxes hold language names. A bare code in one of the 3
     standards also works. The "German (ger)" pair also works. A person
@@ -1724,6 +1733,61 @@ def plan_audio_supplements(audio_tracks):
     return plan
 
 
+def copy_image_attachments(source, output):
+    """Copy the image attachments (cover art) of a Matroska file to an output.
+
+    ffmpeg shows an image attachment as an attached picture, not as an
+    attachment stream. The "0:V" map leaves it out, and "0:t?" does not
+    carry it. Thus, mkvpropedit adds each image to the ffmpeg output
+    again, in place. This returns the number of images that it copied.
+    """
+
+    def run(command):
+        """Run an mkvtoolnix command. Exit code 1 is only a warning."""
+
+        result = subprocess.run(command, capture_output=True, text=True)
+        if result.returncode > 1:
+            raise RuntimeError(
+                f"{os.path.basename(command[0])} failed: "
+                f"{(result.stdout + result.stderr)[-500:]}"
+            )
+        return result.stdout
+
+    identity = json.loads(run([current_app.config["MKVMERGE_BIN"], "-J", source]))
+    images = [
+        attachment
+        for attachment in identity.get("attachments") or []
+        if (attachment.get("content_type") or "").startswith("image/")
+    ]
+    if not images:
+        return 0
+
+    with tempfile.TemporaryDirectory(
+        prefix=".attachments-", dir=os.path.dirname(output)
+    ) as scratch:
+        extracted = {
+            attachment["id"]: os.path.join(scratch, str(attachment["id"]))
+            for attachment in images
+        }
+        run(
+            [current_app.config["MKVEXTRACT_BIN"], source, "attachments"]
+            + [f"{number}:{path}" for number, path in extracted.items()]
+        )
+        command = [current_app.config["MKVPROPEDIT_BIN"], output]
+        for attachment in images:
+            command += [
+                "--attachment-name",
+                attachment.get("file_name") or f"cover-{attachment['id']}",
+                "--attachment-mime-type",
+                attachment["content_type"],
+            ]
+            if attachment.get("description"):
+                command += ["--attachment-description", attachment["description"]]
+            command += ["--add-attachment", extracted[attachment["id"]]]
+        run(command)
+    return len(images)
+
+
 def build_supplement_args(plan):
     """Return the ffmpeg audio arguments for a supplement plan.
 
@@ -1828,7 +1892,7 @@ def supplement_lossless_tracks(file_path, file_id=None):
                     # "V" is each video track, but not an attached
                     # picture. ffmpeg shows a cover-art attachment as a
                     # video stream. With "v", it became a second video
-                    # track.
+                    # track. copy_image_attachments adds the cover again.
                     "-map",
                     "0:V",
                     "-c:v",
@@ -1881,6 +1945,7 @@ def supplement_lossless_tracks(file_path, file_id=None):
                     job.save_meta()
 
             wait_for_subprocess(flac_track_process)
+            copy_image_attachments(file_path, temp_flac_file)
 
             current_app.logger.info(f"'{basename}' Supplemented lossless tracks")
             current_app.logger.info(f"Moving '{temp_flac_file}' to '{file_path}'")
@@ -2008,7 +2073,8 @@ def _remux_audio_plan_unlocked(file_id, plan):
                     "copy",
                 ]
                 + audio_args
-                # The attachments (subtitle fonts) stay, as in the import pass.
+                # The attachments (subtitle fonts) stay, as in the import
+                # pass. copy_image_attachments adds the cover art again.
                 + ["-map", "0:s:?", "-c:s", "copy", "-map", "0:t?", "-c:t", "copy"]
                 + [staging_output],
                 capture_output=True,
@@ -2018,6 +2084,7 @@ def _remux_audio_plan_unlocked(file_id, plan):
                 raise RuntimeError(
                     f"'{basename}' ffmpeg failed: {result.stderr[-500:]}"
                 )
+            copy_image_attachments(staging_source, staging_output)
 
             # Never replace the library copy with a remux that failed. The
             # track count and the codec at each position must match the

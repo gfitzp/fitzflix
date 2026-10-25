@@ -491,8 +491,10 @@ def test_rail_excludes_watchlisted_films(app, admin_client):
     from app import db
     from app.models import UserWatchlist
     from app.streaming_rail import RAIL_KEY
+    from tests.test_streaming_rail import subscribe
 
     user_id = admin_id(app)
+    subscribe(app, 8, "Netflix")
     with app.app_context():
         wanted = make_movie("Rail Wanted", 1994, tmdb_id=9307)
         db.session.add(UserWatchlist(user_id=user_id, movie_id=wanted.id))
