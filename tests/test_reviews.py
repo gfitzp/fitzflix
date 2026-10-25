@@ -256,6 +256,62 @@ def test_apply_creates_missing_movie_and_enqueues_refresh(app):
         assert len(refresh_jobs) == 1
 
 
+def test_a_letterboxd_namesake_with_another_tmdb_id_is_not_adopted(app):
+    """The CSV twin of test_a_namesake_with_another_tmdb_id_is_not_adopted (#357).
+
+    The import resolves a CSV row to a TMDB id and a canonical name. A
+    record of another film can have that name. The review must not go
+    to that film. A record with the name and no TMDB id is adopted."""
+
+    from app import db
+    from app.models import Movie, UserMovieReview
+    from app.videos import apply_letterboxd_import
+
+    def film(title, tmdb_id):
+        return {
+            "title": title,
+            "year": 1999,
+            "rating": 4,
+            "liked": False,
+            "tmdb_id": tmdb_id,
+            "canonical_title": title,
+            "canonical_year": 1999,
+            "entries": [
+                {
+                    "watched": "2020-01-02",
+                    "logged": "2020-01-02",
+                    "rating": 4,
+                    "review": None,
+                }
+            ],
+        }
+
+    with app.app_context():
+        namesake = make_movie("Csv Same Name", 1999, tmdb_id=601)
+        unmatched = make_movie("Csv Unmatched Name", 1999)
+        db.session.commit()
+
+        assert (
+            apply_letterboxd_import(
+                9, [film("Csv Same Name", 602), film("Csv Unmatched Name", 603)]
+            )
+            is True
+        )
+
+        assert db.session.get(Movie, namesake.id).tmdb_id == 601
+        assert (
+            UserMovieReview.query.filter_by(user_id=9, movie_id=namesake.id).count()
+            == 0
+        )
+        assert Movie.query.filter_by(tmdb_id=602).first() is None
+
+        assert db.session.get(Movie, unmatched.id).tmdb_id == 603
+        assert (
+            UserMovieReview.query.filter_by(user_id=9, movie_id=unmatched.id).count()
+            == 1
+        )
+
+
 def test_review_export_uses_letterboxd_import_format(app, admin_client, monkeypatch):
     import csv as csv_module
 

@@ -353,6 +353,8 @@ def apply_letterboxd_import(user_id, films):
     pipeline enriches the movies that this creates.
     """
 
+    from app.tmdb_refresh import find_or_create_tmdb_movie
+
     with app.app_context():
         try:
             created_movie_ids = []
@@ -363,25 +365,17 @@ def apply_letterboxd_import(user_id, films):
                 if film.get("movie_id"):
                     movie = Movie.query.filter_by(id=film["movie_id"]).first()
                 elif film.get("tmdb_id") is not None:
-                    movie = Movie.query.filter_by(tmdb_id=film["tmdb_id"]).first()
-                    if movie is None:
-                        # The canonical name can collide with an existing
-                        # record. Then use that record. Do not violate the
-                        # unique title + year constraint.
+                    # The canonical name can belong to a record of another
+                    # film. find_or_create_tmdb_movie then returns None,
+                    # and the entry is skipped. The review must not go to
+                    # the wrong film (#357).
 
-                        movie = Movie.query.filter_by(
-                            title=film["canonical_title"],
-                            year=film["canonical_year"],
-                        ).first()
-                        if movie is not None and movie.tmdb_id is None:
-                            movie.tmdb_id = film["tmdb_id"]
-                    if movie is None:
-                        movie = Movie(
-                            title=film["canonical_title"],
-                            year=film["canonical_year"],
-                            tmdb_id=film["tmdb_id"],
-                        )
-                        db.session.add(movie)
+                    movie, created = find_or_create_tmdb_movie(
+                        film["tmdb_id"],
+                        film["canonical_title"],
+                        film["canonical_year"],
+                    )
+                    if created:
                         db.session.flush()
                         created_movie_ids.append(movie.id)
 
