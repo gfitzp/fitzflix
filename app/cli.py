@@ -18,17 +18,22 @@ def register(app):
     def criterion():
         """Refresh the Criterion Collection info from Wikidata."""
 
-        app.sql_queue.enqueue(
+        # The same queue and timeout as the monthly cron row (#343). The
+        # task makes a Wikidata request for each movie. On the single sql
+        # worker it blocked every database job, and 10 minutes was too
+        # short for it.
+
+        app.maintenance_queue.enqueue(
             "app.videos.refresh_criterion_collection_info",
             args=None,
-            job_timeout=app.config["SQL_TASK_TIMEOUT"],
+            job_timeout=3600,
             description="Refreshing Criterion Collection information for all movies in library",
         )
         app.logger.info("Refreshing Criterion Collection information from Wikipedia")
 
     @refresh.command()
     @click.argument("library", required=False, type=click.Choice(["movie", "tv"]))
-    @click.argument("tmdb_id", required=False)
+    @click.argument("tmdb_id", required=False, type=int)
     def tmdb(library=None, tmdb_id=None):
         """Refresh the library information from TMDB.
 
@@ -50,6 +55,12 @@ def register(app):
             if tmdb_id:
                 query = query.filter(TVSeries.tmdb_id == tmdb_id)
             tv_shows = query.order_by(TVSeries.title.asc()).all()
+
+        # A TMDB id that matches nothing is a mistake of the user. Say so,
+        # and exit with an error (#344).
+
+        if tmdb_id is not None and not movies and not tv_shows:
+            raise click.ClickException(f"No title in the library has TMDB id {tmdb_id}")
 
         # The network phase of the refresh belongs on the request queue.
         # It gives its payload to the sql queue for the database writes.
@@ -85,9 +96,15 @@ def register(app):
                 app.logger.info(f"Queueing TMDB refresh for '{tv.title}'")
 
     @refresh.command()
-    @click.argument("file_id")
+    @click.argument("file_id", type=int)
     def file(file_id):
         """Refresh the metadata for the file with the specified file ID."""
+
+        from app import db
+        from app.models import File
+
+        if db.session.get(File, file_id) is None:
+            raise click.ClickException(f"No file has id {file_id}")
 
         app.file_queue.enqueue(
             "app.videos.track_metadata_scan_task",
