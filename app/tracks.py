@@ -884,6 +884,76 @@ def mkvpropedit_task(
             current_app.lock_manager.unlock(lock)
 
 
+# The mkvmerge track order puts the default track of each type first,
+# and the video tracks before the audio tracks before the subtitles.
+# Thus, Plex selects the default audio track first
+
+_TRACK_ORDER_TYPES = {"Video": 0, "Audio": 1, "Text": 2}
+_TRACK_ORDER_DEFAULTS = {"Yes": 0, "No": 1}
+
+
+def track_order(tracks):
+    """Return the --track-order value of mkvmerge for the MediaInfo tracks.
+
+    The order is video, then audio, then subtitles. In each type, the
+    default track comes first. The sort is stable. Thus, 2 tracks of
+    the same type and flag keep the order of the file."""
+
+    kept = [
+        track
+        for track in tracks
+        if track.track_type in _TRACK_ORDER_TYPES
+        and track.default in _TRACK_ORDER_DEFAULTS
+    ]
+    kept.sort(
+        key=lambda track: (
+            _TRACK_ORDER_TYPES[track.track_type],
+            _TRACK_ORDER_DEFAULTS[track.default],
+        )
+    )
+    return ",".join(f"0:{track.streamorder}" for track in kept)
+
+
+def build_propedit_args(
+    audio_count,
+    subtitle_count,
+    default_audio_track,
+    default_subtitle_track,
+    forced_subtitle_tracks,
+    track_languages=None,
+):
+    """Return the mkvpropedit arguments that set the flags and the languages.
+
+    The track ids are strings that count from 1 in each type. Each
+    audio track gets its default flag. The subtitle tracks get their
+    default and forced flags only when the caller selected a default
+    or a forced track. The language corrections are independent: a
+    file whose flags are correct still needs them. mkvpropedit also
+    applies a language to LanguageIETF."""
+
+    args = []
+    for track_id in range(1, audio_count + 1):
+        flag = 1 if str(track_id) == default_audio_track else 0
+        args += ["--edit", f"track:a{track_id}", "--set", f"flag-default={flag}"]
+    if default_subtitle_track or forced_subtitle_tracks:
+        for track_id in range(1, subtitle_count + 1):
+            default = 1 if str(track_id) == default_subtitle_track else 0
+            forced = 1 if str(track_id) in forced_subtitle_tracks else 0
+            args += ["--edit", f"track:s{track_id}", "--set", f"flag-default={default}"]
+            args += ["--edit", f"track:s{track_id}", "--set", f"flag-forced={forced}"]
+    for track_type, count in (("a", audio_count), ("s", subtitle_count)):
+        for track_id in range(1, count + 1):
+            language = (track_languages or {}).get(f"{track_type}{track_id}")
+            if language:
+                args += [
+                    "--edit",
+                    f"track:{track_type}{track_id}",
+                    "--set",
+                    f"language={language}",
+                ]
+    return args
+
+
 def mkvpropedit_unlocked(
     file_id,
     default_audio_track,
@@ -913,7 +983,6 @@ def mkvpropedit_unlocked(
 
             report_progress(job, file.basename, "Updating MKV properties")
 
-            media_info = MediaInfo.parse(file_path)
             audio_tracks = get_audio_tracks_from_file(file_path)
             subtitle_tracks = get_subtitle_tracks_from_file(file_path)
 
@@ -941,82 +1010,14 @@ def mkvpropedit_unlocked(
             if default_subtitle_track is not None:
                 default_subtitle_track = str(default_subtitle_track)
 
-            audio_track_arguments = []
-            subtitle_track_arguments = []
-            language_arguments = []
-
-            for track_id, track in enumerate(audio_tracks, 1):
-                track_id = str(track_id)
-
-                if track_id == default_audio_track:
-                    audio_track_arguments.append(
-                        f"--edit track:a{track_id} --set flag-default=1"
-                    )
-
-                else:
-                    audio_track_arguments.append(
-                        f"--edit track:a{track_id} --set flag-default=0"
-                    )
-
-            if default_subtitle_track or forced_subtitle_tracks:
-                for track_id, track in enumerate(subtitle_tracks, 1):
-                    track_id = str(track_id)
-
-                    if track_id == default_subtitle_track:
-                        subtitle_track_arguments.append(
-                            f"--edit track:s{track_id} --set flag-default=1"
-                        )
-
-                    else:
-                        subtitle_track_arguments.append(
-                            f"--edit track:s{track_id} --set flag-default=0"
-                        )
-
-                    if track_id in forced_subtitle_tracks:
-                        subtitle_track_arguments.append(
-                            f"--edit track:s{track_id} --set flag-forced=1"
-                        )
-
-                    else:
-                        subtitle_track_arguments.append(
-                            f"--edit track:s{track_id} --set flag-forced=0"
-                        )
-
-            # The language corrections are independent. A file whose default
-            # flags are already correct still needs the edit. Thus, Fitzflix
-            # collects them outside the flag loops above. mkvpropedit also
-            # applies the change to LanguageIETF
-
-            for track_type, tracks in (("a", audio_tracks), ("s", subtitle_tracks)):
-                for track_id, track in enumerate(tracks, 1):
-                    language = (track_languages or {}).get(f"{track_type}{track_id}")
-                    if language:
-                        language_arguments.append(
-                            f"--edit track:{track_type}{track_id} "
-                            f"--set language={language}"
-                        )
-
-            current_app.logger.info(
-                f"{file.basename} audio_track_arguments: {audio_track_arguments}"
+            localization_arguments = build_propedit_args(
+                len(audio_tracks),
+                len(subtitle_tracks),
+                default_audio_track,
+                default_subtitle_track,
+                forced_subtitle_tracks,
+                track_languages,
             )
-            current_app.logger.info(
-                f"{file.basename} subtitle_track_arguments: {subtitle_track_arguments}"
-            )
-            current_app.logger.info(
-                f"{file.basename} language_arguments: {language_arguments}"
-            )
-
-            # subprocess expects an array of arguments. Thus, split the
-            # arguments on the spaces
-            localization_arguments = []
-            for arg in audio_track_arguments:
-                localization_arguments.extend(arg.split())
-
-            for arg in subtitle_track_arguments:
-                localization_arguments.extend(arg.split())
-
-            for arg in language_arguments:
-                localization_arguments.extend(arg.split())
 
             current_app.logger.info(
                 f"{file.basename} localization_arguments: {localization_arguments}"
@@ -1046,43 +1047,7 @@ def mkvpropedit_unlocked(
                 # selects it first
 
                 if default_audio_track is not None and default_audio_track != "1":
-                    new_track_order = []
-                    media_info = MediaInfo.parse(file_path)
-
-                    # Default video tracks
-                    for track in media_info.tracks:
-                        if track.track_type == "Video" and track.default == "Yes":
-                            new_track_order.append(f"0:{track.streamorder}")
-
-                    # Non-default video tracks
-                    for track in media_info.tracks:
-                        if track.track_type == "Video" and track.default == "No":
-                            new_track_order.append(f"0:{track.streamorder}")
-
-                    # Default audio tracks
-                    for track in media_info.tracks:
-                        if track.track_type == "Audio" and track.default == "Yes":
-                            new_track_order.append(f"0:{track.streamorder}")
-
-                    # Non-default audio tracks
-
-                    for track in media_info.tracks:
-                        if track.track_type == "Audio" and track.default == "No":
-                            new_track_order.append(f"0:{track.streamorder}")
-
-                    # Default subtitle tracks
-
-                    for track in media_info.tracks:
-                        if track.track_type == "Text" and track.default == "Yes":
-                            new_track_order.append(f"0:{track.streamorder}")
-
-                    # Non-default subtitle tracks
-
-                    for track in media_info.tracks:
-                        if track.track_type == "Text" and track.default == "No":
-                            new_track_order.append(f"0:{track.streamorder}")
-
-                    new_track_order = ",".join(new_track_order)
+                    new_track_order = track_order(MediaInfo.parse(file_path).tracks)
 
                     current_app.logger.info(
                         f"{file.basename} new_track_order: {new_track_order}"
