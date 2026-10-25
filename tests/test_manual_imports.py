@@ -182,6 +182,23 @@ def test_proposed_names(app, monkeypatch):
         == "30 Rock - S01E01-E02 - [WEBRip-1080p].mkv"
     )
 
+    # A movie with no year, and a series with no episode numbers, still
+    # get a name in the Fitzflix form.
+    yearless = dict(movie, record={"kind": "movie", "title": "M"})
+    assert (
+        manual_imports.proposed_name(yearless, "mkv") == "M (0000) - [WEBDL-1080p].mkv"
+    )
+    no_episodes = dict(episodes, episodes=[(None, 4)])
+    assert (
+        manual_imports.proposed_name(no_episodes, "mkv")
+        == "30 Rock - S00E00 - [WEBRip-1080p].mkv"
+    )
+    single = dict(episodes, episodes=[(12, 3)])
+    assert (
+        manual_imports.proposed_name(single, "mkv")
+        == "30 Rock - S12E03 - [WEBRip-1080p].mkv"
+    )
+
     unmatched = {"quality": None, "title": "Some.Release.2020", "record": None}
     assert (
         manual_imports.proposed_name(unmatched, None)

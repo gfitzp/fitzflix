@@ -920,3 +920,151 @@ def test_an_explicit_tmdb_id_outranks_the_tag(app, monkeypatch):
     assert details["title"] == "Ran"
     assert details["tmdb_id"] == 11645
     assert details["dirname"] == "Movies/Ran (1985) {tmdb-11645}"
+
+
+# The round trip of app.naming (#362). Each name of the corpus above goes
+# through evaluate_filename. Its parts then go through library_name, which
+# must give the same plex title and basename. The extra names cover the
+# shapes that the corpus does not hold.
+
+NAMING_EXTRA_NAMES = [
+    "Jaws (1975) - Trailers [DVD].mkv",
+    "Jaws (1975) - Fullscreen - Trailers [DVD].mkv",
+    "Jaws (1975) - Trailers - Theatrical Trailer - Fullscreen [DVD].mkv",
+    "Star Wars (1977) - Featurettes - Star Wars (1977) - Original Trailer [DVD].mkv",
+    "Apocalypse Now (1979) {edition-Redux} - Trailers - Theatrical Trailer [DVD].mkv",
+    "Dune (1984) {tmdb-841} {edition-Extended} - Fullscreen - Alternate Cut [DVD].mkv",
+    "Friends - S1E7 - [DVD].mkv",
+    "Friends - S01E001 - [DVD].mkv",
+    "Friends - S10E05-E05 - [DVD].mkv",
+    "Friends - S02E03 - Fullscreen [DVD].m2ts",
+]
+
+NAMING_CORPUS = [
+    case[0] for case in README_CASES + EDGE_CASES + ID_TAG_CASES + FULL_DETAIL_CASES
+] + NAMING_EXTRA_NAMES
+
+
+def _library_name_parts(filename, details):
+    """Return the parts of library_name for a name that evaluate_filename parsed.
+
+    The parts come from the details and from the groups of the name.
+    They do not come from the plex title or the basename that the test
+    compares."""
+
+    from app.importing import (
+        MOVIE_NAME_RE,
+        TV_NAME_RE,
+        YEARLESS_MOVIE_NAME_RE,
+        _standard_full_screen,
+        parse_name_tags,
+        preferred_id_tag,
+    )
+
+    parts = {
+        "library": details["media_library"],
+        "title": details["title"],
+        "quality_title": details["quality_title"],
+        "fullscreen": details["fullscreen"],
+        "extension": details["extension"],
+    }
+    if details["media_library"] == "TV Shows":
+        match = TV_NAME_RE.match(filename)
+        parts["season"] = match.group("season")
+        parts["episode"] = match.group("episode")
+        parts["last_episode"] = match.group("last_episode")
+        parts["version"] = details["edition"]
+        return parts
+
+    match = MOVIE_NAME_RE.match(filename) or YEARLESS_MOVIE_NAME_RE.match(filename)
+    id_tags, edition = parse_name_tags(match.group("tags"))
+    id_tag = preferred_id_tag(id_tags)
+    parts["year"] = details["year"]
+    parts["edition"] = edition
+    if id_tag:
+        parts["id_tag"] = (
+            f"{{tmdb-{details['tmdb_id']}}}" if details["tmdb_id"] else id_tag[2]
+        )
+    strings, _ = _standard_full_screen(match.group("version") or "")
+    upper = [string.upper() for string in strings]
+    feature = details["feature_type_name"]
+    if feature and feature.upper() in upper:
+        name = " - ".join(strings[upper.index(feature.upper()) + 1 :])
+        if name:
+            parts["feature_type"] = feature
+            parts["version"] = name
+            return parts
+    parts["version"] = (
+        " - ".join(s for s in strings if s and s != "Full Screen") or None
+    )
+    return parts
+
+
+@pytest.mark.parametrize("filename", NAMING_CORPUS)
+def test_library_name_rebuilds_each_parsed_name(app, filename):
+    from pathvalidate import sanitize_filename
+    from unidecode import unidecode
+
+    from app.manual_imports import fitzflix_basename
+    from app.naming import library_name
+
+    with app.app_context():
+        details = evaluate_filename(filename, log=False)
+    assert details, f"{filename} was rejected"
+    parts = _library_name_parts(filename, details)
+    plex_title, basename = library_name(parts)
+    if details["media_library"] == "Movies":
+        basename = sanitize_filename(unidecode(basename))
+    assert (plex_title, basename) == (details["plex_title"], details["basename"])
+    if not parts.get("feature_type"):
+        assert fitzflix_basename(basename), basename
+
+
+def test_reconstruct_filename_of_each_film_shape(app):
+    """Pin the untouched names that reconstruct_filename builds for films.
+
+    A version becomes an edition tag. A full screen copy keeps only "Full
+    Screen". An extra keeps its type and its name. A conversion keeps the
+    quality of its original (#292)."""
+
+    from app import db
+    from app.importing import reconstruct_filename
+    from tests.factories import feature_type, make_file, make_movie, make_movie_file
+
+    with app.app_context():
+        movie = make_movie("Big Hit", 1999)
+        movie.tmdb_title = "The Big Hit"
+        cut = make_movie_file(
+            movie,
+            "DVD",
+            edition="Director's Cut",
+            fullscreen=True,
+            untouched_basename="Big Hit (1999) - Fullscreen - Director's Cut [DVD].mkv",
+        )
+        extra = make_file(
+            "Making Of.mkv",
+            "Movies/Big Hit (1999)/Featurettes",
+            "Making Of",
+            "Movies",
+            "DVD",
+            movie_id=movie.id,
+            feature_type_id=feature_type("Featurettes").id,
+            untouched_basename="Big Hit (1999) - Featurettes - Making Of [DVD].m2ts",
+        )
+        converted = make_movie_file(
+            movie,
+            "Bluray-1080p",
+            converted_from_quality="Bluray-2160p",
+            untouched_basename="Big Hit (1999) - [Bluray-2160p].mkv",
+        )
+        db.session.commit()
+        assert reconstruct_filename(cut.id) == (
+            "The Big Hit (1999) {edition-Director's Cut} - Full Screen [DVD].mkv"
+        )
+        assert reconstruct_filename(extra.id) == (
+            "The Big Hit (1999) - Featurettes - Making Of [DVD].m2ts"
+        )
+        assert reconstruct_filename(converted.id) == (
+            "The Big Hit (1999) - [Bluray-2160p].mkv"
+        )
+        assert reconstruct_filename(999999) is False
