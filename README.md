@@ -753,7 +753,7 @@ The hooks run on the staged Python files at each commit. The `migrations/` direc
 venv/bin/python -m pytest
 ```
 
-The test suite is fully isolated from an installation that runs. It uses a temporary SQLite database, Redis database 9 (the app uses database 0), temporary media directories, and no external services. TMDB, Sonarr, Radarr, AWS, and mail are stubs, or the configuration makes them unreachable. The only requirement in addition to `requirements-dev.txt` is a local Redis server. You can run the suite while the real application runs. The suite takes approximately 30 seconds. Run it after dependency upgrades and before you deploy changes.
+The test suite is fully isolated from an installation that runs. It uses a temporary SQLite database, Redis database 9 (the app uses database 0), temporary media directories, and no external services. TMDB, Sonarr, Radarr, AWS, and mail are stubs, or the configuration makes them unreachable. The only requirement in addition to `requirements-dev.txt` is a local Redis server. You can run the suite while the real application runs. The suite has approximately 1,800 tests and takes approximately 50 seconds. Run it after dependency upgrades and before you deploy changes. `tests/README.md` lists the shared test helpers and the traps of the suite.
 
 The suite covers:
 
