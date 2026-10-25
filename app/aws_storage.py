@@ -43,6 +43,7 @@ from werkzeug.local import LocalProxy
 
 from app import db, get_app, path_tag, retry_job_id, safe_job_id
 from app.email import task_send_email as send_email
+from app.queues import QUEUE_NAME, roster_queues
 from app.settings import get_setting
 from app.models import (
     ArchivedOriginal,
@@ -270,18 +271,13 @@ def sync_aws_s3_storage_task():
         # it as an extra file and delete it.
 
         job = get_current_job()
+        # Every queue of the roster counts. The maintenance queue runs the
+        # hourly import sweep. That sweep can feed new files into the
+        # import pipeline during the sync.
+
         busy = []
-        for queue_name, queue in (
-            ("fitzflix-handoff", current_app.handoff_queue),
-            ("fitzflix-import", current_app.import_queue),
-            ("fitzflix-transcode", current_app.transcode_queue),
-            ("fitzflix-file-operation", current_app.file_queue),
-            ("fitzflix-sql", current_app.sql_queue),
-            ("fitzflix-user-request", current_app.request_queue),
-            # The maintenance queue runs the hourly import sweep. That sweep
-            # can feed new files into the import pipeline during the sync.
-            ("fitzflix-maintenance", current_app.maintenance_queue),
-        ):
+        for queue in roster_queues(current_app):
+            queue_name = queue.name
             started = StartedJobRegistry(
                 queue_name, connection=current_app.redis
             ).get_job_ids()
@@ -865,7 +861,7 @@ def sqs_retrieve_task():
         # download runs or waits in the download queue.
 
         file_operations = StartedJobRegistry(
-            "fitzflix-file-operation", connection=current_app.redis
+            QUEUE_NAME["file"], connection=current_app.redis
         )
         download_job_ids = (
             file_operations.get_job_ids()

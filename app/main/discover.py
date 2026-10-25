@@ -54,6 +54,7 @@ from app.models import (
 )
 from app.main import bp
 from app.plex_player import remote_playback_configured
+from app.queues import QUEUE_NAME
 from app.main.helpers import (
     _hold_verdict_lock,
     _card_fetch,
@@ -771,7 +772,7 @@ def file_activity():
     if page == 1:
         active = []
         started_ids = StartedJobRegistry(
-            "fitzflix-import", connection=current_app.redis
+            QUEUE_NAME["import"], connection=current_app.redis
         ).get_job_ids()
         for job_id in started_ids + list(current_app.import_queue.job_ids):
             job = current_app.import_queue.fetch_job(job_id)

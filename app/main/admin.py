@@ -83,6 +83,7 @@ from app.manual_imports import (
     video_candidates,
 )
 from app.missing_files import missing_best_report, missing_best_summary
+from app.queues import roster_queues
 from app.settings import (
     SETTINGS,
     clear_setting,
@@ -116,18 +117,7 @@ from rq.registry import FailedJobRegistry
 def system():
     """Show the system status: health, worker and scheduler state, and failed jobs."""
 
-    queues_by_name = {
-        queue.name: queue
-        for queue in (
-            current_app.handoff_queue,
-            current_app.import_queue,
-            current_app.sql_queue,
-            current_app.request_queue,
-            current_app.transcode_queue,
-            current_app.file_queue,
-            current_app.maintenance_queue,
-        )
-    }
+    queues_by_name = {queue.name: queue for queue in roster_queues(current_app)}
 
     # This form requeues or forgets a failed background job
 

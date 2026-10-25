@@ -29,6 +29,7 @@ from rq.scheduler import RQScheduler
 from rq.utils import now
 
 from app import cron_table, get_app, next_cron_time
+from app.queues import QUEUE_NAMES
 
 
 class LocalTimeCronJob(CronJob):
@@ -52,16 +53,6 @@ class LocalTimeCronJob(CronJob):
 # is the run-history behavior of the register_cron flow.
 
 LATEST_KEY = "fitzflix:cron:latest"
-
-QUEUE_NAMES = [
-    "fitzflix-handoff",
-    "fitzflix-import",
-    "fitzflix-file-operation",
-    "fitzflix-transcode",
-    "fitzflix-sql",
-    "fitzflix-user-request",
-    "fitzflix-maintenance",
-]
 
 TICK_SECONDS = 15
 

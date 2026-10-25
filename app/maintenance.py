@@ -23,6 +23,7 @@ from werkzeug.local import LocalProxy
 
 from app import db, get_app
 from app.email import task_send_email
+from app.queues import QUEUE_NAMES, queue_names
 from app.settings import get_setting
 
 # This is the app instance of this process. Fitzflix resolves it lazily.
@@ -35,30 +36,17 @@ app = LocalProxy(get_app)
 # queues that each program listens to, and how many processes it runs
 # (numprocs, default 1). Update it when the roster changes there. The
 # expected per-queue counts and the self-healing restart targets both
-# come from it.
+# come from it. The queue names come from the roster of app/queues.py.
 
 SUPERVISOR_GROUP = "fitzflix"
 
 PROGRAM_QUEUES = {
-    "fitzflix-maintenance": ["fitzflix-maintenance"],
-    "fitzflix-sql": ["fitzflix-sql"],
-    "fitzflix-user-request": ["fitzflix-user-request"],
-    "fitzflix-import": [
-        "fitzflix-handoff",
-        "fitzflix-import",
-        "fitzflix-file-operation",
-    ],
-    "fitzflix-transcode": [
-        "fitzflix-handoff",
-        "fitzflix-transcode",
-        "fitzflix-import",
-        "fitzflix-file-operation",
-    ],
-    "fitzflix-file-operation": [
-        "fitzflix-handoff",
-        "fitzflix-file-operation",
-        "fitzflix-import",
-    ],
+    "fitzflix-maintenance": queue_names("maintenance"),
+    "fitzflix-sql": queue_names("sql"),
+    "fitzflix-user-request": queue_names("request"),
+    "fitzflix-import": queue_names("handoff", "import", "file"),
+    "fitzflix-transcode": queue_names("handoff", "transcode", "import", "file"),
+    "fitzflix-file-operation": queue_names("handoff", "file", "import"),
 }
 
 PROGRAM_COUNTS = {
@@ -67,12 +55,16 @@ PROGRAM_COUNTS = {
     "fitzflix-user-request": 2,
 }
 
-EXPECTED_WORKERS = {}
-for _program, _queues in PROGRAM_QUEUES.items():
-    for _queue in _queues:
-        EXPECTED_WORKERS[_queue] = EXPECTED_WORKERS.get(_queue, 0) + PROGRAM_COUNTS.get(
-            _program, 1
-        )
+# Each roster queue gets an entry, in roster order.
+
+EXPECTED_WORKERS = {
+    _name: sum(
+        PROGRAM_COUNTS.get(_program, 1)
+        for _program, _queues in PROGRAM_QUEUES.items()
+        if _name in _queues
+    )
+    for _name in QUEUE_NAMES
+}
 
 # This is the default worker_ttl of rq. An idle worker whose heartbeat is
 # older than this is a leftover registration, not a live worker.

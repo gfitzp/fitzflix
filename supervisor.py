@@ -6,6 +6,7 @@ from redis import Redis
 
 from app import db, get_app, videos
 from app.pipeline import PipelineWorker
+from app.queues import QUEUE_NAME
 from config import Config
 
 qs = sys.argv[1:] or ["default"]
@@ -16,8 +17,8 @@ qs = sys.argv[1:] or ["default"]
 # pipeline worker takes from first. The other programs only drain the
 # import queue. Thus, they do not need their own filesystem observer.
 
-primary = next((q for q in qs if q != "fitzflix-handoff"), qs[0])
-get_app(watch_import_dir=primary == "fitzflix-import")
+primary = next((q for q in qs if q != QUEUE_NAME["handoff"]), qs[0])
+get_app(watch_import_dir=primary == QUEUE_NAME["import"])
 
 db.configure_mappers()
 
