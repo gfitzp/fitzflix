@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% from "_page_header.html" import page_header, library_search %}
+{% from "_tv_poster_small.html" import tv_poster_small %}
 
 {% block app_content %}
 {# The own search of the TV library (#210) searches this library
@@ -26,7 +27,7 @@
 	   toggle cards. Rows navigate #}
 	<div class="sticky-under-nav pt-1 align-self-start">
 		<a href="{{ url_for('main.tv', series_id=tv.id) }}" data-card-url="{{ url_for('main.tv_card', series_id=tv.id) }}">
-			{% include "_tv_poster_small.html" %}
+			{{ tv_poster_small(tv) }}
 		</a>
 	</div>
 	<div class="flex-grow-1">

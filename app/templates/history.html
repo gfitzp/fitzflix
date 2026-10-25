@@ -2,6 +2,7 @@
 {% from "_page_header.html" import page_header %}
 {% from "_pagination.html" import pagination, pagination_pair %}
 {% from "_rating_ladder.html" import rating_ladder %}
+{% from "_movie_poster_small.html" import movie_poster_small %}
 
 {% block app_content %}
 {# The header carries only the title since #215. The Log a film box sits
@@ -53,7 +54,7 @@
 {% set movie = review.movie %}
 <div class="d-flex mb-2">
 	<a href="{{ url_for('main.movie', movie_id=review.movie.id) }}">
-		{% include "_movie_poster_small.html" %}
+		{{ movie_poster_small(movie) }}
 	</a>
 	<div class="flex-grow-1">
 		<h5 class="mt-0 mb-0"><a href="{{ url_for('main.movie', movie_id=review.movie.id) }}" class="text-decoration-none text-body">{{ review.movie|display_title }} ({{ review.movie|display_year }})</a></h5>

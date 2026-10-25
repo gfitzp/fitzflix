@@ -24,6 +24,7 @@
    data-plex-play handler in base.html. #}
 {% from "_cert_chip.html" import cert_chip %}
 {% from "_availability_badges.html" import library_badge %}
+{% from "_streaming_strip.html" import streaming_strip %}
 <div class="poster-card">
 	<h6 class="mb-1"><a href="{{ href }}" class="text-body">{{ display_title }}</a></h6>
 	{% if directors or runtime or genres or certification %}
@@ -39,7 +40,7 @@
 	   movie page. It also keeps the mandatory JustWatch credit. A film
 	   that the strip cannot describe still badges its library copy #}
 	{% if streaming %}
-		{% include "_streaming_strip.html" %}
+		{{ streaming_strip(streaming) }}
 	{% elif in_library %}
 		<div class="mt-1">{{ library_badge(library_upgradable) }}</div>
 	{% endif %}

@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% from "_page_header.html" import page_header, quality_filter, library_search %}
 {% from "_find_button.html" import find_button, cart_toggle with context %}
+{% from "_tv_poster_small.html" import tv_poster_small %}
 
 {% block app_content %}
 {% call page_header(title) %}
@@ -13,7 +14,7 @@
 <div class="d-flex flex-column flex-sm-row">
 	<div class="sticky-under-nav pt-1 align-self-start">
 		<a href="{{ url_for('main.tv', series_id=tv.id) }}">
-			{% include "_tv_poster_small.html" %}
+			{{ tv_poster_small(tv) }}
 		</a>
 	</div>
 	<div class="flex-grow-1 w-100">

@@ -6,6 +6,8 @@
 
 {% block app_content %}
 {% from "_poster_tile.html" import poster_placeholder, control_row, ladder_form, watchlist_toggle %}
+{% from "_streaming_strip.html" import streaming_strip %}
+{% from "_cast_scroller.html" import cast_scroller %}
 {{ breadcrumb([('My History', url_for('main.history')), (film_title ~ ' (' ~ year ~ ')', none)]) }}
 <div class="row">
 	{# The gap under the poster on a phone, where the column stacks
@@ -66,14 +68,14 @@
 			   movie page. Its badges say where the film is: on a
 			   service, for rent, or "Not on your services". The page
 			   carries no separate not-in-library note (Glenn, 2026-09). #}
-			{% include "_streaming_strip.html" %}
+			{{ streaming_strip(streaming) }}
 		</div>
 	</div>
 </div>
 {# The cast strip spans the page below the poster, between two
    page-wide rules. This is the pattern of movie.html. #}
 <hr>
-{% include "_cast_scroller.html" %}
+{{ cast_scroller(cast) }}
 <hr>
 {# Letterboxd-first logging, as on the movie page. A linked account logs
    dated watches on Letterboxd and lets the feed sync them back. The

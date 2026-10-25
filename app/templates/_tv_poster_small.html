@@ -1,4 +1,7 @@
 {% from "_poster_tile.html" import poster_placeholder %}
+{# The 92-pixel poster of a series in a row. A missing tv is a template
+   error. #}
+{% macro tv_poster_small(tv) -%}
 {% if tv.tmdb_poster_path %}
 	{# align-self-start keeps the aspect ratio of the poster in a d-flex
 	   row. Without it, the flex items stretch to the height of the
@@ -7,3 +10,4 @@
 	{% else %}
 	{{ poster_placeholder("tv", "me-3 poster-sm", "1.5em") }}
 {% endif %}
+{%- endmacro %}

@@ -898,3 +898,32 @@ def test_the_page_pollers_share_start_poll(app, admin_client):
     recommendations = (templates / "recommendations.html").read_text()
     assert "window.fitzflixHydrate([id], []);" in recommendations
     assert "STATES_URL" not in recommendations
+
+
+def test_the_row_partials_refuse_a_missing_argument(app):
+    """The 4 row partials are macros with explicit arguments.
+
+    A call with no argument is a template error. Before, an include with
+    no streaming or cast in its context rendered blank."""
+
+    import jinja2
+    import pytest
+
+    calls = [
+        ("_movie_poster_small.html", "movie_poster_small"),
+        ("_tv_poster_small.html", "tv_poster_small"),
+        ("_streaming_strip.html", "streaming_strip"),
+        ("_cast_scroller.html", "cast_scroller"),
+    ]
+    with app.test_request_context():
+        for template, macro in calls:
+            source = f'{{% from "{template}" import {macro} %}}{{{{ {macro}() }}}}'
+            with pytest.raises(jinja2.exceptions.UndefinedError):
+                app.jinja_env.from_string(source).render()
+        none_source = (
+            '{% from "_streaming_strip.html" import streaming_strip %}'
+            '{% from "_cast_scroller.html" import cast_scroller %}'
+            "[{{ streaming_strip(none) }}{{ cast_scroller([]) }}]"
+        )
+        rendered = app.jinja_env.from_string(none_source).render()
+        assert "".join(rendered.split()) == "[]"

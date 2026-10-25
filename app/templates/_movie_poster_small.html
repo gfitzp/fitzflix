@@ -1,5 +1,8 @@
 {% from "_poster_tile.html" import poster_placeholder %}
-{% if file is defined and file.custom_poster %}
+{# The 92-pixel poster of a film in a row. A file with its own custom
+   poster shows that poster. A missing movie is a template error. #}
+{% macro movie_poster_small(movie, file=none) -%}
+{% if file and file.custom_poster %}
 	<img src="{{ url_for('static', filename='custom/file/' + file.id|string + '/w185/' + file.custom_poster )}}" loading="lazy" class="me-3 border align-self-start poster-sm" alt="{{ movie|display_title }} ({{ movie|display_year }})" style="width: 92px;">
 {% elif movie.custom_poster %}
 	<img src="{{ url_for('static', filename='custom/movie/' + movie.id|string + '/w185/' + movie.custom_poster )}}" loading="lazy" class="me-3 border align-self-start poster-sm" alt="{{ movie|display_title }} ({{ movie|display_year }})" style="width: 92px;">
@@ -8,3 +11,4 @@
 {% else %}
 	{{ poster_placeholder("film", "me-3 poster-sm", "1.5em") }}
 {% endif %}
+{%- endmacro %}

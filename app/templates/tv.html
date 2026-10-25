@@ -3,6 +3,7 @@
 {% from "_find_button.html" import find_button, cart_toggle with context %}
 {% from "_cert_chip.html" import cert_chip %}
 {% from "_availability_badges.html" import library_badge %}
+{% from "_cast_scroller.html" import cast_scroller %}
 
 {% block app_content %}
 {{ breadcrumb([('TV Shows', url_for('main.tv_library') ~ '#' ~ tv.id), (tv.tmdb_name if tv.tmdb_name else tv.title, none)]) }}
@@ -42,7 +43,7 @@
 {# The cast strip spans the page below the poster, between two
    page-wide rules. This is the pattern of movie.html (Glenn, 2026-09). #}
 <hr>
-{% include "_cast_scroller.html" %}
+{{ cast_scroller(cast) }}
 <hr>
 {# g-3: the gutters keep a gap between the columns when a phone
    stacks them. Thus, the buttons never touch. #}

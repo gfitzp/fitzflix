@@ -4,6 +4,8 @@
 {% from "_find_button.html" import find_button, cart_toggle with context %}
 {% from "_rating_ladder.html" import rating_ladder %}
 {% from "_poster_tile.html" import tile_actions, poster_image, movie_poster_src, control_row, ladder_form, watchlist_toggle %}
+{% from "_streaming_strip.html" import streaming_strip %}
+{% from "_cast_scroller.html" import cast_scroller %}
 
 {% block app_content %}
 {{ breadcrumb([('Movies', url_for('main.movie_library')), (title, none)]) }}
@@ -141,7 +143,7 @@
 			   ends with the margin of a paragraph. Thus, the strip stands
 			   off from the controls the same way the controls stand off
 			   from the Criterion note. #}
-			{% include "_streaming_strip.html" %}
+			{{ streaming_strip(streaming) }}
 			{% if awards %}
 				{# What Wikidata lists wins first. Wikidata is strong for
 				   major ceremonies and patchy for festivals. Thus, the
@@ -167,7 +169,7 @@
    only the facts and the controls. A page-wide rule stands on each side
    of the strip. #}
 <hr>
-{% include "_cast_scroller.html" %}
+{{ cast_scroller(cast) }}
 <hr>
 {# Letterboxd-first logging: with a linked account, dated watches and
    reviews belong on Letterboxd. The feed syncs them back on its own.

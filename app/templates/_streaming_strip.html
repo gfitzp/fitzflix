@@ -1,6 +1,7 @@
 {# Availability badges for the services of the current user. Rendered only
-   when the route supplies `streaming` (the user picked services on their
-   Profile). One shared badge grammar, [logo] Name, covers all 3 facts:
+   when the route supplies a `streaming` value (the user picked services
+   on their Profile). The route passes None otherwise. A missing argument
+   is a template error. One shared badge grammar, [logo] Name, covers all 3 facts:
    the library copy, streaming matches, and rentals (with the suffix
    "(rent)"). The library badge of an owned film comes first. Thus,
    streaming never upstages the shelf. The JustWatch attribution is
@@ -9,6 +10,10 @@
    library badge alone shows none of their data. Thus, it carries no
    credit. #}
 {% from "_availability_badges.html" import availability_badge, library_badge %}
+{% macro streaming_strip(streaming) -%}
+{# An attribute of an undefined value is an error. Thus, a call with no
+   argument fails. It does not render blank. #}
+{%- if streaming is undefined %}{{ streaming.required }}{% endif %}
 {% if streaming %}
 <div class="mt-1">
 	{% if streaming.local %}
@@ -37,3 +42,4 @@
 	{% endif %}
 </div>
 {% endif %}
+{%- endmacro %}

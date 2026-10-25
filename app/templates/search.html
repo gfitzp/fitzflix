@@ -2,6 +2,7 @@
 {% from "_page_header.html" import page_header %}
 {% from "_search_form.html" import global_search_form %}
 {% from "_poster_tile.html" import poster_image, movie_poster_src, tile_actions, poster_placeholder %}
+{% from "_tv_poster_small.html" import tv_poster_small %}
 
 {% block app_content %}
 {# This is the search box of the navbar again. It is pre-filled and
@@ -45,7 +46,7 @@
 	{% set tv = result.series %}
 	<a href="{{ url_for('main.tv', series_id=tv.id) }}" class="list-group-item list-group-item-action">
 		<div class="d-flex">
-			{% include "_tv_poster_small.html" %}
+			{{ tv_poster_small(tv) }}
 			<div class="flex-grow-1">
 				<h5 class="mb-1">{{ tv.tmdb_name if tv.tmdb_name else tv.title }}</h5>
 				{% if result.seasons %}

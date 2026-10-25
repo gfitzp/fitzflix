@@ -6,12 +6,14 @@
    by data-card-key. It keeps a card whose data-card-version did not
    change. #}
 {% from "_trail_chips.html" import trail_chips %}
+{% from "_movie_poster_small.html" import movie_poster_small %}
+{% from "_tv_poster_small.html" import tv_poster_small %}
 {% set trail = trail_for(file) if trail_for is defined else [] %}
 <div class="list-group-item py-2 d-flex" data-card-key="{{ file.id }}" data-card-version="{{ card_version.get(file.id, '') if card_version is defined else '' }}">
 	{% if file.movie %}
 		{% set movie = file.movie %}
 		<a href="{{ url_for('main.movie', movie_id=movie.id) }}">
-			{% include "_movie_poster_small.html" %}
+			{{ movie_poster_small(movie, file) }}
 		</a>
 		<div class="flex-grow-1">
 			<div class="text-muted small font-italic">Added {{ moment(file.date_added).format("LLL") }}{% if file.date_updated %}, file details last updated {{ moment(file.date_updated).format("LLL") }}{% endif %}</div>
@@ -44,7 +46,7 @@
 	{% elif file.tv_series %}
 		{% set tv = file.tv_series %}
 		<a href="{{ url_for('main.file', file_id=file.id) }}">
-			{% include "_tv_poster_small.html" %}
+			{{ tv_poster_small(tv) }}
 		</a>
 		<div class="flex-grow-1">
 			<div class="text-muted small font-italic">Added {{ moment(file.date_added).format("LLL") }}{% if file.date_updated %}, file details last updated {{ moment(file.date_updated).format("LLL") }}{% endif %}</div>

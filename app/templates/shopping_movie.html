@@ -4,6 +4,7 @@
 {% from "_find_button.html" import find_button, cart_toggle with context %}
 {% from "_pagination.html" import pagination, pagination_pair %}
 {% from "_rating_ladder.html" import rating_ladder %}
+{% from "_movie_poster_small.html" import movie_poster_small %}
 
 {% block app_content %}
 {% call page_header(title, hr=false) %}
@@ -55,7 +56,7 @@
 {% macro shopping_row(movie, instruction, file=none, watchers=none) %}
 <div class="d-flex mb-3">
 	<a href="{{ url_for('main.movie', movie_id=movie.id) }}" data-card-url="{{ url_for('main.movie_card', movie_id=movie.id) }}">
-		{% include "_movie_poster_small.html" %}
+		{{ movie_poster_small(movie, file) }}
 	</a>
 	<div class="flex-grow-1" data-state-movie="{{ movie.id }}" data-watchlist-scope>
 		<h5 class="mb-0"><a href="{{ url_for('main.movie', movie_id=movie.id) }}" class="text-decoration-none text-body">{{ movie|display_title }} ({{ movie|display_year }})</a></h5>
