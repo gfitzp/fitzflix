@@ -418,3 +418,42 @@ def test_movie_apply_skips_the_blank_premiere_certification(app):
             ("GB", "15"),
             ("US", "PG-13"),
         ]
+
+
+def test_tv_seasons_are_shared_and_pruned(app):
+    """2 records with 1 TMDB id share season rows. A delete keeps them (#305)."""
+
+    from app.models import TMDBSeason
+
+    payload = {
+        "id": 990020,
+        "seasons": [
+            {"id": 77001, "season_number": 1, "name": "Season 1"},
+            {"id": 77002, "season_number": 2, "name": "Season 2"},
+        ],
+    }
+    with app.app_context():
+        first = make_tv_series("Shared Seasons", tmdb_id=990020)
+        second = make_tv_series("Shared Seasons Copy", tmdb_id=990020)
+        db.session.commit()
+        first.tmdb_tv_apply(payload)
+        second.tmdb_tv_apply(payload)
+        db.session.commit()
+
+        # Deleting 1 record keeps the rows that the other links to.
+        db.session.delete(second)
+        db.session.commit()
+        assert sorted(s.id for s in first.seasons) == [77001, 77002]
+
+        # TMDB renumbers season 2. Its old row has no link and goes.
+        first.tmdb_tv_apply(
+            {
+                "id": 990020,
+                "seasons": [
+                    {"id": 77001, "season_number": 1, "name": "Season 1"},
+                    {"id": 77003, "season_number": 2, "name": "Season 2"},
+                ],
+            }
+        )
+        db.session.commit()
+        assert sorted(s.id for s in TMDBSeason.query.all()) == [77001, 77003]

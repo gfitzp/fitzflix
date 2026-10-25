@@ -1016,6 +1016,17 @@ class TMDBMixin(object):
                 if self.seasons.filter(TMDBSeason.id == s.id).count() == 0:
                     self.seasons.append(s)
 
+            # A season that TMDB renumbered, or the season of a deleted
+            # series, has no link now. Remove it.
+
+            db.session.flush()
+            linked = db.session.query(tv_seasons.c.season_id).filter(
+                tv_seasons.c.season_id.isnot(None)
+            )
+            TMDBSeason.query.filter(~TMDBSeason.id.in_(linked)).delete(
+                synchronize_session=False
+            )
+
         # Series cast and crew. Replace the join rows of this series from
         # the aggregate credits, the same as the movie apply. Delete, then
         # add again. The presence of the block gates this. Thus, a payload
@@ -1903,12 +1914,16 @@ class TVSeries(db.Model, TMDBMixin):
         backref=db.backref("tv_series", lazy="dynamic"),
         lazy="dynamic",
     )
+    # No delete cascade: 2 series records with 1 TMDB id share their
+    # season rows. The cascade deleted the shared rows (#305), as it did
+    # the shared genres before 423b475. tmdb_tv_apply removes the season
+    # rows that no series links to.
+
     seasons = db.relationship(
         "TMDBSeason",
         secondary=tv_seasons,
         backref=db.backref("tv_series", lazy="dynamic"),
         lazy="dynamic",
-        cascade="all,delete",
     )
 
     def __repr__(self):
