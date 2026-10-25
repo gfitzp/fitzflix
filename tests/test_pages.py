@@ -246,7 +246,7 @@ def test_service_worker_is_served_from_root_scope(client):
     response = client.get("/sw.js")
     assert response.status_code == 200
     assert "javascript" in response.headers["Content-Type"]
-    assert b"fitzflix-v2" in response.data
+    assert b"fitzflix-v3" in response.data
 
     # The cache-first rule excludes the manifest. Thus, the edits to
     # start_url, icon, and shortcut reach the installed apps
@@ -272,7 +272,7 @@ def test_service_worker_only_caches_successful_responses(client):
     # No branch can write to the cache without the check
 
     assert body.count("cache.put(request, copy)") == body.count(
-        "if (isCacheable(response))"
+        "if (isCacheable(response)"
     )
 
 
