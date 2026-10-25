@@ -2373,8 +2373,9 @@ def tv(series_id):
     for file in tv.files:
         seasons.append(file.season)
 
-    seasons.sort()
-    seasons = list(set(seasons))
+    # A set has no order. Thus, the sort comes after the dedup (#313).
+
+    seasons = sorted(set(seasons))
 
     # The series management forms (restore, delete, TMDB)
     # are admin tools, like the Movie Data section of the movie page

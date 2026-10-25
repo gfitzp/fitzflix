@@ -742,3 +742,23 @@ def test_an_origin_that_leaves_the_site_is_ignored(app, admin_client, origin):
         response = admin_client.get(f"{page}?origin={quote(origin)}")
         assert response.status_code == 200
         assert "evil.com" not in response.get_data(as_text=True)
+
+
+def test_the_season_dropdown_is_in_season_order(app, admin_client):
+    """A set loses the order. Season 13 showed above Season 5 (#313)."""
+
+    import re
+
+    from app import db
+    from tests.factories import make_tv_file, make_tv_series
+
+    with app.app_context():
+        series = make_tv_series("Season Order Show")
+        for season, episode in ((13, 1), (5, 1), (2018, 1), (2011, 1), (13, 2)):
+            make_tv_file(series, season, episode, "WEBDL-1080p")
+        db.session.commit()
+        series_id = series.id
+
+    page = admin_client.get(f"/tv/{series_id}").get_data(as_text=True)
+    listed = [int(n) for n in re.findall(r">Season (\d+)</a>", page)]
+    assert listed == [5, 13, 2011, 2018]
