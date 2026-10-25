@@ -45,6 +45,10 @@ from app.main import bp
 from app.main.helpers import admin_required
 from app.plex_collections import enqueue_criterion_sync
 
+# The TMDB poster gallery of a film, cached in Redis.
+
+POSTERS_KEY = "fitzflix:tmdb:movie:{tmdb_id}:posters"
+
 
 def save_custom_poster(uploaded_data, poster_filename, custom_poster_dir):
     """Validate an uploaded poster, then write the original and its thumbnails.
@@ -318,7 +322,7 @@ def _tmdb_poster_gallery(tmdb_id):
 
     if not tmdb_id:
         return None
-    cache_key = f"fitzflix:tmdb:movie:{tmdb_id}:posters"
+    cache_key = POSTERS_KEY.format(tmdb_id=tmdb_id)
     cached = current_app.redis.get(cache_key)
     if cached:
         return json.loads(cached)

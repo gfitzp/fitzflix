@@ -845,9 +845,11 @@ def create_app(config_class=Config, watch_import_dir=False):
             # watch the import directory. A dead or wedged process stops
             # the refresh.
 
+            from app.maintenance import OBSERVER_KEY_PREFIX
+
             try:
                 app.redis.set(
-                    f"fitzflix:observer:{os.getpid()}", int(time.time()), ex=180
+                    f"{OBSERVER_KEY_PREFIX}{os.getpid()}", int(time.time()), ex=180
                 )
             except Exception:
                 pass

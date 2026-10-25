@@ -44,6 +44,7 @@ from app import db
 from app.frames import (
     ACTIVE_LUMA,
     DEALT_TTL,
+    FRAMES_LAST_KEY,
     POOL_KEY,
     dealt_key,
     frame_path,
@@ -466,7 +467,7 @@ def _deal_token(tokens):
         return None
     user_id = int(current_user.id)
     key = dealt_key(user_id)
-    last_key = f"fitzflix:frames:last:{user_id}"
+    last_key = FRAMES_LAST_KEY.format(user_id=user_id)
     last = (current_app.redis.get(last_key) or b"").decode()
     served = {
         token.decode(): score

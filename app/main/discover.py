@@ -96,6 +96,7 @@ from app.availability_alerts import NEW_IN_LIBRARY_LABEL, recent_availability
 from app.streaming import (
     batch_title_availability,
     rental_matches,
+    request_warm,
     streaming_matches,
     user_provider_ids,
     user_streaming,
@@ -137,6 +138,12 @@ from rq.registry import ScheduledJobRegistry, StartedJobRegistry
 # Thus, it gets 3 rows before the discovery shelves start.
 
 WATCHLIST_SHELF_SIZE = 18
+
+# The markers of a first recompute that a page queued. The page then
+# does not queue it again on each load for 1 hour.
+
+RECS_REQUESTED_KEY = "fitzflix:recs:requested:{user_id}"
+RAIL_REQUESTED_KEY = "fitzflix:rail:requested:{user_id}"
 
 # The 6 marks of the MPA rating system. The certification chip of a
 # film shows only these (Glenn, 2026-09-17). The reference table holds
@@ -449,7 +456,10 @@ def index():
         # tonight. The marker prevents a new enqueue on each page load.
 
         if current_app.redis.set(
-            f"fitzflix:recs:requested:{int(current_user.id)}", "1", nx=True, ex=3600
+            RECS_REQUESTED_KEY.format(user_id=int(current_user.id)),
+            "1",
+            nx=True,
+            ex=3600,
         ):
             enqueue_task(
                 "app.recommendations.recompute_recommendations",
@@ -530,7 +540,10 @@ def index():
         current_app.redis, current_user.id
     ):
         if current_app.redis.set(
-            f"fitzflix:rail:requested:{int(current_user.id)}", "1", nx=True, ex=3600
+            RAIL_REQUESTED_KEY.format(user_id=int(current_user.id)),
+            "1",
+            nx=True,
+            ex=3600,
         ):
             enqueue_task(
                 "app.streaming_rail.recompute_streaming_rail",
@@ -1756,17 +1769,7 @@ def watchlist():
             (entry.movie.tmdb_id for entry in entries if entry.movie.tmdb_id),
             fetch_limit=0,
         )
-        if deferred and current_app.redis.set(
-            f"fitzflix:streaming:warm:watchlist:{int(current_user.id)}",
-            "1",
-            nx=True,
-            ex=900,
-        ):
-            enqueue_task(
-                "app.streaming.warm_title_availability",
-                deferred,
-                description=f"Warming streaming availability for {len(deferred)} films",
-            )
+        request_warm(f"watchlist:{int(current_user.id)}", deferred)
 
     # Owned films show the library mark. Thus, the user can separate
     # owned-wanted and unowned-wanted at a glance.

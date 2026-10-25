@@ -512,50 +512,6 @@ def test_filmography_includes_key_crew_credits(app, admin_client, monkeypatch):
     assert "Thanked Film" not in page
 
 
-def test_filmography_tolerates_pre_crew_cached_payloads(app, admin_client, monkeypatch):
-    """Test that the page accepts the cached payloads from before crew credits.
-
-    The day-cached credits payloads from before the crew credits joined
-    the filmography are bare cast lists. The page still renders them."""
-
-    import json
-
-    import app.main.library as library
-
-    with app.app_context():
-        person = TMDBCredit(id=848484, name="Cached Actor")
-        db.session.add(person)
-        db.session.commit()
-
-    app.redis.set(
-        "fitzflix:tmdb:person:848484:credits",
-        json.dumps(
-            [
-                {
-                    "id": 600,
-                    "title": "Old Cache Film",
-                    "release_date": "1990-01-01",
-                    "character": "The Lead",
-                }
-            ]
-        ),
-    )
-
-    class FakeTMDB:
-        def raise_for_status(self):
-            pass
-
-        def json(self):
-            return {"name": "Cached Actor"}
-
-    monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr(library, "tmdb_get", lambda url, **kwargs: FakeTMDB())
-
-    page = admin_client.get("/library/movie?credit=848484").get_data(as_text=True)
-    assert "Old Cache Film (1990)" in page
-    assert "as The Lead" in page
-
-
 def test_filmography_unknown_person_is_404(app, admin_client):
     """Test that an unknown person is 404 with no local row and no TMDB key."""
 

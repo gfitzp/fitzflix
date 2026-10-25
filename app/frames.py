@@ -84,6 +84,10 @@ DEALT_KEY = "fitzflix:frames:dealt:{user_id}"
 
 DEALT_TTL = 60 * 24 * 3600
 
+# The last frame that a user was shown. A reload does not deal it again.
+
+FRAMES_LAST_KEY = "fitzflix:frames:last:{user_id}"
+
 
 def dealt_key(user_id):
     """Return the key of the dealt-frames sorted set for one user."""

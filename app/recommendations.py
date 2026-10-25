@@ -128,6 +128,12 @@ NOT_INTERESTED_WEIGHT = -0.3
 # The Redis keys that the nightly recompute writes.
 
 RECS_KEY = "fitzflix:recs:{user_id}"
+
+# The markers of a recompute that a rating queued: 1 recompute and 1
+# trailing recompute per user each 5 minutes.
+
+RECOMPUTE_QUEUED_KEY = "fitzflix:elicit:recompute:{user_id}"
+RECOMPUTE_TRAILING_KEY = "fitzflix:elicit:recompute:trailing:{user_id}"
 PROFILE_KEY = "fitzflix:recs:profile:{user_id}"
 
 # The complete score map: the full-recipe engine score of each

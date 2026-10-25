@@ -32,6 +32,8 @@ from app.models import (
     tv_file_rank,
 )
 from app.recommendations import (
+    RECOMPUTE_QUEUED_KEY,
+    RECOMPUTE_TRAILING_KEY,
     estimated_rating,
     resolved_score,
     stored_profile,
@@ -79,14 +81,14 @@ def _enqueue_profile_recompute():
 
     user_id = int(current_user.id)
     if current_app.redis.set(
-        f"fitzflix:elicit:recompute:{user_id}", "1", nx=True, ex=300
+        RECOMPUTE_QUEUED_KEY.format(user_id=user_id), "1", nx=True, ex=300
     ):
         enqueue_task(
             "app.recommendations.recompute_recommendations",
             description="Recomputing film recommendations",
         )
     elif current_app.redis.set(
-        f"fitzflix:elicit:recompute:trailing:{user_id}", "1", nx=True, ex=300
+        RECOMPUTE_TRAILING_KEY.format(user_id=user_id), "1", nx=True, ex=300
     ):
         enqueue_task(
             "app.recommendations.recompute_recommendations",
@@ -235,6 +237,7 @@ def _letterboxd_locked(user_id, movie_id, rating, removes, corrects):
 # in seconds. A second post waits for half of this time at most.
 
 VERDICT_LOCK_SECONDS = 10
+VERDICT_LOCK_KEY = "fitzflix:verdict-lock:{user_id}:{name}"
 
 
 def _hold_verdict_lock(name):
@@ -247,7 +250,7 @@ def _hold_verdict_lock(name):
     response goes. If Redis fails, the post runs without the lock."""
 
     lock = current_app.redis.lock(
-        f"fitzflix:verdict-lock:{int(current_user.id)}:{name}",
+        VERDICT_LOCK_KEY.format(user_id=int(current_user.id), name=name),
         timeout=VERDICT_LOCK_SECONDS,
         blocking_timeout=VERDICT_LOCK_SECONDS / 2,
     )

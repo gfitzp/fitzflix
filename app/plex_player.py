@@ -40,6 +40,7 @@ import requests
 
 from flask import current_app
 
+from app.cache import cached_fetch
 from app.plex_titles import _plex_get
 
 # Stable controller identity. The Apple TV tracks controllers by this
@@ -135,16 +136,14 @@ def player_token(user):
         return current_app.config["PLEX_TOKEN"]
     if not user.plex_username:
         return None
-    key = HOME_TOKEN_KEY.format(user_id=user.id)
-    cached = current_app.redis.get(key)
-    if cached is not None:
-        return cached.decode() or None
-    token = _home_user_token(user.plex_username)
-    if token:
-        current_app.redis.set(key, token, ex=HOME_TOKEN_SECONDS)
-    else:
-        current_app.redis.set(key, "", ex=HOME_TOKEN_MISS_SECONDS)
-    return token
+    # A miss (no Home user matches) is cached as null for a short time.
+
+    return cached_fetch(
+        HOME_TOKEN_KEY.format(user_id=user.id),
+        HOME_TOKEN_SECONDS,
+        lambda: (_home_user_token(user.plex_username), True),
+        miss_ttl=HOME_TOKEN_MISS_SECONDS,
+    )
 
 
 def forget_home_token(user_id):

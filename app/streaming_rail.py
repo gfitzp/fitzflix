@@ -29,6 +29,7 @@ from flask import current_app
 from requests.exceptions import HTTPError
 from werkzeug.local import LocalProxy
 
+from app.cache import MISS, cache_json, cached_json
 from app.tasks import enqueue_task
 from app import db, get_app
 from app.models import File, Movie, User, UserMovieReview, UserMovieStatus
@@ -303,8 +304,7 @@ def movie_gone(tmdb_id):
     A caller that retries after a TMDB failure must not retry a film
     that TMDB deleted. That is not a failure."""
 
-    cached = current_app.redis.get(ENRICHED_KEY.format(tmdb_id=int(tmdb_id)))
-    return cached is not None and json.loads(cached) is None
+    return enriched_movie_state(tmdb_id, fetch=False)[0] == "gone"
 
 
 def enriched_movie(tmdb_id):
@@ -312,14 +312,40 @@ def enriched_movie(tmdb_id):
 
     It holds the genres, keywords, top cast, role-mapped crew, and
     runtime. Fitzflix caches it for 1 week (credits and runtimes are
-    stable)."""
+    stable). The result is None for a film that TMDB deleted and after
+    a transient error. enriched_movie_state tells the 2 apart."""
+
+    return enriched_movie_state(tmdb_id)[1]
+
+
+def enriched_movie_state(tmdb_id, fetch=True):
+    """Return (state, payload) for the enriched payload of a film.
+
+    The state is "hit" with a payload, "gone" for a film that TMDB
+    deleted, or "unknown". Unknown means a transient error, no TMDB key,
+    or no cached entry when fetch is False."""
 
     cache_key = ENRICHED_KEY.format(tmdb_id=int(tmdb_id))
-    cached = current_app.redis.get(cache_key)
-    if cached:
-        return json.loads(cached)
-    if not current_app.config["TMDB_API_KEY"]:
-        return None
+    payload = cached_json(cache_key)
+    if payload is MISS:
+        if not fetch or not current_app.config["TMDB_API_KEY"]:
+            return "unknown", None
+        payload, ok = _fetch_enriched(tmdb_id)
+        if not ok:
+            return "unknown", None
+        cache_json(cache_key, payload, ENRICHED_CACHE_SECONDS)
+    return ("gone", None) if payload is None else ("hit", payload)
+
+
+def _fetch_enriched(tmdb_id):
+    """Fetch and trim the movie payload from TMDB. Return (payload, ok).
+
+    TMDB deletes films, but their credit rows stay on person pages.
+    Thus, a filmography can continue to offer an id that the movie
+    endpoint no longer answers. A 404 is (None, True). The cache keeps
+    that miss, and each render does not ask again. Any other error is
+    (None, False), and nothing is cached."""
+
     try:
         r = tmdb_get(
             current_app.config["TMDB_API_URL"] + f"/movie/{int(tmdb_id)}",
@@ -333,21 +359,13 @@ def enriched_movie(tmdb_id):
         payload = r.json() or {}
     except HTTPError as error:
         if error.response is not None and error.response.status_code == 404:
-            # TMDB deletes films, but their credit rows stay on person
-            # pages. Thus, a filmography can continue to offer an id that
-            # the movie endpoint no longer answers. Cache the miss as a
-            # null payload. The readers treat it as "nothing here". Thus,
-            # each render does not ask again.
             current_app.logger.info(f"TMDB movie {int(tmdb_id)} is gone (404)")
-            current_app.redis.set(
-                cache_key, json.dumps(None), ex=ENRICHED_CACHE_SECONDS
-            )
-            return None
+            return None, True
         current_app.logger.warning(traceback.format_exc())
-        return None
+        return None, False
     except Exception:
         current_app.logger.warning(traceback.format_exc())
-        return None
+        return None, False
 
     credits = payload.get("credits") or {}
     job_to_class = {
@@ -379,8 +397,7 @@ def enriched_movie(tmdb_id):
             if c.get("job") in job_to_class
         ],
     }
-    current_app.redis.set(cache_key, json.dumps(trimmed), ex=ENRICHED_CACHE_SECONDS)
-    return trimmed
+    return trimmed, True
 
 
 def _payload_features(payload):

@@ -31,6 +31,7 @@ import requests
 from flask import current_app
 from werkzeug.local import LocalProxy
 
+from app.cache import cached_fetch
 from app.tasks import enqueue_task
 from app import db, get_app
 from app.models import (
@@ -41,6 +42,18 @@ from app.models import (
     UserWatchlist,
     tmdb_get,
 )
+
+# The TMDB id of a Plex rating key, cached for 1 week. The rating keys
+# are stable.
+
+PLEX_TMDB_KEY = "fitzflix:plex:tmdb:{rating_key}"
+PLEX_TMDB_SECONDS = 604800
+
+# The marker of 1 recorded Plex watch per user, film and day. The
+# webhook and the history poll both record a watch. The marker keeps
+# the second from adding a row.
+
+PLEX_WATCH_KEY = "fitzflix:plex:watch:{username}:{tmdb_id}:{day}"
 
 
 def clear_watchlist(user_id, movie_id):
@@ -513,9 +526,10 @@ def apply_plex_watch(tmdb_id, plex_username, viewed_at, source):
                 datetime.fromisoformat(viewed_at).astimezone().replace(tzinfo=None)
             )
             day_start = datetime(watched_at.year, watched_at.month, watched_at.day)
-            marker = (
-                f"fitzflix:plex:watch:{plex_username}:{tmdb_id}:"
-                f"{day_start.strftime('%Y-%m-%d')}"
+            marker = PLEX_WATCH_KEY.format(
+                username=plex_username,
+                tmdb_id=tmdb_id,
+                day=day_start.strftime("%Y-%m-%d"),
             )
             if not current_app.redis.set(marker, source, nx=True, ex=172800):
                 current_app.logger.debug(
@@ -607,41 +621,41 @@ def _plex_tmdb_id(entry, headers, failures=None):
     rating_key = entry.get("ratingKey")
     if not rating_key:
         return None
-    cache_key = f"fitzflix:plex:tmdb:{rating_key}"
-    cached = current_app.redis.get(cache_key)
-    if cached is not None:
-        # An empty value means that the entry cannot resolve (no TMDB guid).
-        return int(cached) if cached else None
 
-    tmdb_id = None
-    try:
-        r = requests.get(
-            f"{current_app.config['PLEX_URL']}/library/metadata/{rating_key}",
-            headers=headers,
-            timeout=30,
-        )
-        r.raise_for_status()
-        items = (r.json().get("MediaContainer") or {}).get("Metadata") or []
-        guids = (items[0].get("Guid") or []) if items else []
-        for guid in guids:
-            match = re.match(r"tmdb://(\d+)", guid.get("id") or "")
-            if match:
-                tmdb_id = int(match.group(1))
-                break
-        if tmdb_id is None and items:
-            # With the legacy metadata agent, the guid is one string.
-            match = re.search(r"themoviedb://(\d+)", items[0].get("guid") or "")
-            if match:
-                tmdb_id = int(match.group(1))
-    except Exception:
-        # Do not cache a transient failure.
-        current_app.logger.warning(traceback.format_exc())
-        if failures is not None:
-            failures.append(entry)
-        return None
+    def fetch():
+        tmdb_id = None
+        try:
+            r = requests.get(
+                f"{current_app.config['PLEX_URL']}/library/metadata/{rating_key}",
+                headers=headers,
+                timeout=30,
+            )
+            r.raise_for_status()
+            items = (r.json().get("MediaContainer") or {}).get("Metadata") or []
+            guids = (items[0].get("Guid") or []) if items else []
+            for guid in guids:
+                match = re.match(r"tmdb://(\d+)", guid.get("id") or "")
+                if match:
+                    tmdb_id = int(match.group(1))
+                    break
+            if tmdb_id is None and items:
+                # With the legacy metadata agent, the guid is one string.
+                match = re.search(r"themoviedb://(\d+)", items[0].get("guid") or "")
+                if match:
+                    tmdb_id = int(match.group(1))
+        except Exception:
+            # Do not cache a transient failure.
+            current_app.logger.warning(traceback.format_exc())
+            if failures is not None:
+                failures.append(entry)
+            return None, False
+        return tmdb_id, True
 
-    current_app.redis.set(cache_key, str(tmdb_id) if tmdb_id else "", ex=604800)
-    return tmdb_id
+    # A null value means that the entry cannot resolve (no TMDB guid).
+
+    return cached_fetch(
+        PLEX_TMDB_KEY.format(rating_key=rating_key), PLEX_TMDB_SECONDS, fetch
+    )
 
 
 def plex_history_poll():

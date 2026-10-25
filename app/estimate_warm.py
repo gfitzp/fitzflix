@@ -39,6 +39,7 @@ from app.recommendations import (
     score_movie,
     stored_profile,
 )
+from app.cache import cached_fetch
 from app.streaming_rail import ENRICHED_KEY, _payload_features, enriched_movie
 
 # This is the app instance of this process. Fitzflix resolves it lazily.
@@ -89,23 +90,26 @@ def _affinity_people(profile):
     return [person_id for person_id, _ in sorted(best.items(), key=lambda kv: -kv[1])]
 
 
-def person_film_ids(person_id):
-    """Return the tmdb ids across the career of 1 person.
+# The movie credits of 1 TMDB person, cached for 1 day. The crew list
+# keeps only the jobs of the taste roles. The filmography page and the
+# warm read the same payload.
 
-    This function reads the same credits payload that the filmography
-    page reads. That payload stays in the cache for 1 day. Thus, a warm
-    here also saves that page its fetch."""
+PERSON_CREDITS_KEY = "fitzflix:tmdb:person:{person_id}:credits"
+PERSON_CREDITS_SECONDS = 86400
 
-    cache_key = f"fitzflix:tmdb:person:{int(person_id)}:credits"
-    cached = current_app.redis.get(cache_key)
-    if cached:
-        credits = json.loads(cached)
-        if isinstance(credits, list):
-            credits = {"cast": credits, "crew": []}
-    else:
-        role_jobs = {job for jobs, _ in CREW_ROLE_JOBS.values() for job in jobs}
+
+def person_movie_credits(person_id, get=None):
+    """Return {"cast": [...], "crew": [...]} for 1 person, or None.
+
+    None means a transient TMDB error. Nothing is cached then. This is
+    the 1 writer of the key. get is the rate-limited TMDB getter of the
+    caller. The default is tmdb_get."""
+
+    role_jobs = {job for jobs, _ in CREW_ROLE_JOBS.values() for job in jobs}
+
+    def fetch():
         try:
-            r = tmdb_get(
+            r = (get or tmdb_get)(
                 current_app.config["TMDB_API_URL"]
                 + f"/person/{int(person_id)}/movie_credits",
                 params={"api_key": current_app.config["TMDB_API_KEY"]},
@@ -115,7 +119,7 @@ def person_film_ids(person_id):
             payload = r.json()
         except Exception:
             current_app.logger.warning(traceback.format_exc())
-            return []
+            return None, False
         credits = {
             "cast": payload.get("cast") or [],
             "crew": [
@@ -124,7 +128,25 @@ def person_film_ids(person_id):
                 if crew_credit.get("job") in role_jobs
             ],
         }
-        current_app.redis.set(cache_key, json.dumps(credits), ex=86400)
+        return credits, True
+
+    return cached_fetch(
+        PERSON_CREDITS_KEY.format(person_id=int(person_id)),
+        PERSON_CREDITS_SECONDS,
+        fetch,
+    )
+
+
+def person_film_ids(person_id):
+    """Return the tmdb ids across the career of 1 person.
+
+    This function reads the same credits payload that the filmography
+    page reads. That payload stays in the cache for 1 day. Thus, a warm
+    here also saves that page its fetch."""
+
+    credits = person_movie_credits(person_id)
+    if credits is None:
+        return []
     return [
         entry["id"]
         for entry in (credits.get("cast") or []) + (credits.get("crew") or [])

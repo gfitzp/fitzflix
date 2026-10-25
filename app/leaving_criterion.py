@@ -38,6 +38,7 @@ from werkzeug.local import LocalProxy
 from app import db, get_app
 from app.models import File, Movie, UserMovieReview, UserMovieStatus, UserWatchlist
 from app.recommendations import score_movie, stored_profile
+from app.cache import MISS, cache_json, cached_json
 from app.streaming_rail import _payload_features, enriched_movie, movie_gone
 from app.models import tmdb_get
 
@@ -149,9 +150,9 @@ def film_page_director(url):
     if not media:
         return None
     cache_key = DIRECTOR_KEY.format(media_id=media.group(1))
-    cached = current_app.redis.get(cache_key)
-    if cached is not None:
-        return json.loads(cached) or None
+    cached = cached_json(cache_key)
+    if cached is not MISS:
+        return cached or None
 
     # Imported here. criterion_now imports this module at its top.
     from app.criterion_now import parse_film_info
@@ -163,7 +164,7 @@ def film_page_director(url):
     except Exception:
         current_app.logger.warning(traceback.format_exc())
         return None
-    current_app.redis.set(cache_key, json.dumps(director), ex=MATCH_CACHE_SECONDS)
+    cache_json(cache_key, director, MATCH_CACHE_SECONDS)
     return director
 
 
@@ -309,9 +310,8 @@ def match_tmdb_id(title, year, director=None, failures=None):
         "-"
     )
     cache_key = MATCH_KEY.format(slug=slug)
-    cached = current_app.redis.get(cache_key)
-    if cached:
-        stored = json.loads(cached)
+    stored = cached_json(cache_key)
+    if stored is not MISS:
         return stored or None
 
     wanted_title = _normalize(title)
@@ -496,7 +496,7 @@ def match_tmdb_id(title, year, director=None, failures=None):
         if failures is not None:
             failures.append("tmdb")
         return None
-    current_app.redis.set(cache_key, json.dumps(tmdb_id), ex=MATCH_CACHE_SECONDS)
+    cache_json(cache_key, tmdb_id, MATCH_CACHE_SECONDS)
     return tmdb_id
 
 

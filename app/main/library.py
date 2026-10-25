@@ -118,6 +118,7 @@ from app.recommendations import (
 from app.streaming import (
     batch_title_availability,
     rental_matches,
+    request_warm,
     streaming_matches,
     user_provider_ids,
     user_streaming,
@@ -171,6 +172,12 @@ CLOSING_CREDIT_ORDER = ("Director", "Writer", "Cinematographer", "Editor", "Comp
 
 SELF_ROLE = re.compile(r"(?:him|her|them)?sel(?:f|ves)\b", re.IGNORECASE)
 
+# The TMDB person payloads of the person pages, cached in Redis. The
+# movie credits key lives with person_movie_credits in app.estimate_warm.
+
+PERSON_DETAILS_KEY = "fitzflix:tmdb:person:{person_id}:details"
+PERSON_TV_CREDITS_KEY = "fitzflix:tmdb:person:{person_id}:tv_credits"
+
 
 def _tmdb_person_details(person_id):
     """Return the name, photo, and biographical fields of the person from TMDB.
@@ -182,7 +189,7 @@ def _tmdb_person_details(person_id):
 
     if not current_app.config["TMDB_API_KEY"]:
         return None
-    cache_key = f"fitzflix:tmdb:person:{person_id}:details"
+    cache_key = PERSON_DETAILS_KEY.format(person_id=person_id)
     cached = current_app.redis.get(cache_key)
     if cached:
         return json.loads(cached)
@@ -380,37 +387,9 @@ def movie_library():
 
         tmdb_credits = None
         if current_app.config["TMDB_API_KEY"]:
-            cache_key = f"fitzflix:tmdb:person:{int(credit)}:credits"
-            cached = current_app.redis.get(cache_key)
-            if cached:
-                tmdb_credits = json.loads(cached)
-            else:
-                try:
-                    r = tmdb_get(
-                        current_app.config["TMDB_API_URL"]
-                        + f"/person/{int(credit)}/movie_credits",
-                        params={"api_key": current_app.config["TMDB_API_KEY"]},
-                        timeout=10,
-                    )
-                    r.raise_for_status()
-                    payload = r.json()
-                    tmdb_credits = {
-                        "cast": payload.get("cast") or [],
-                        "crew": [
-                            crew_credit
-                            for crew_credit in payload.get("crew") or []
-                            if crew_credit.get("job") in CREW_ROLE_LABELS
-                        ],
-                    }
-                    current_app.redis.set(cache_key, json.dumps(tmdb_credits), ex=86400)
-                except Exception:
-                    current_app.logger.warning(traceback.format_exc())
+            from app.estimate_warm import person_movie_credits
 
-        # The day-cached payloads written before the crew credits joined
-        # the filmography are bare cast lists.
-
-        if isinstance(tmdb_credits, list):
-            tmdb_credits = {"cast": tmdb_credits, "crew": []}
+            tmdb_credits = person_movie_credits(credit, get=tmdb_get)
 
         # Merge. There is 1 row per film. The TMDB credits come first. They
         # are deduplicated by film, and the characters are combined. Then
@@ -544,14 +523,7 @@ def movie_library():
                 ),
                 fetch_limit=0,
             )
-            if deferred and current_app.redis.set(
-                f"fitzflix:streaming:warm:{int(credit)}", "1", nx=True, ex=900
-            ):
-                enqueue_task(
-                    "app.streaming.warm_title_availability",
-                    deferred,
-                    description=f"Warming streaming availability for {len(deferred)} films",
-                )
+            request_warm(int(credit), deferred)
             for row in filmography:
                 if row["quality"] or not row["tmdb_id"]:
                     continue
@@ -577,7 +549,7 @@ def movie_library():
         tv_rows = {}
         tv_credits = None
         if current_app.config["TMDB_API_KEY"]:
-            tv_cache_key = f"fitzflix:tmdb:person:{int(credit)}:tv_credits"
+            tv_cache_key = PERSON_TV_CREDITS_KEY.format(person_id=int(credit))
             cached = current_app.redis.get(tv_cache_key)
             if cached:
                 tv_credits = json.loads(cached)
@@ -1220,14 +1192,7 @@ def criterion_collection():
         (row["tmdb_id"] for row in merged if row["tmdb_id"]),
         fetch_limit=0,
     )
-    if deferred and current_app.redis.set(
-        "fitzflix:streaming:warm:criterion", "1", nx=True, ex=900
-    ):
-        enqueue_task(
-            "app.streaming.warm_title_availability",
-            deferred,
-            description=f"Warming streaming availability for {len(deferred)} films",
-        )
+    request_warm("criterion", deferred)
     for row in merged:
         # The rows with a local file skip the leaving/newly-added
         # annotations. The copy on the shelf stays.

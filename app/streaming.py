@@ -39,6 +39,12 @@ REGISTRY_KEY = "fitzflix:tmdb:watch-providers:registry"
 REGISTRY_RETRY_SECONDS = 300
 AVAILABILITY_KEY = "fitzflix:tmdb:watch-providers:movie:{tmdb_id}"
 
+# The marker of a queued background warm of 1 page scope. A page asks
+# for at most 1 warm per scope each WARM_MARKER_SECONDS.
+
+WARM_KEY = "fitzflix:streaming:warm:{scope}"
+WARM_MARKER_SECONDS = 900
+
 
 def provider_registry():
     """Return the US movie watch providers from the registry of TMDB.
@@ -398,3 +404,26 @@ def user_streaming(tmdb_id, user, negative=False, local=False, upgradable=None):
         "local": local,
         "upgradable": upgradable,
     }
+
+
+def request_warm(scope, deferred):
+    """Queue a background warm of the deferred availability of a page.
+
+    A list page reads the availability from the cache only. It never
+    fetches inline. The films without a cache entry (deferred) warm in
+    the background for the next visit. The marker of the scope keeps a
+    page from queueing a warm on each load. Return True if a warm was
+    queued."""
+
+    if not deferred or not current_app.redis.set(
+        WARM_KEY.format(scope=scope), "1", nx=True, ex=WARM_MARKER_SECONDS
+    ):
+        return False
+    from app.tasks import enqueue_task
+
+    enqueue_task(
+        "app.streaming.warm_title_availability",
+        deferred,
+        description=f"Warming streaming availability for {len(deferred)} films",
+    )
+    return True

@@ -156,6 +156,11 @@ def invalidate_people_ranking():
     redis.delete(*keys)
 
 
+# The counter of the TMDB requests of 1 second, shared by every process.
+
+TMDB_RATE_KEY = "fitzflix:tmdb:requests:{second}"
+
+
 def tmdb_get(url, **kwargs):
     """GET a TMDB API resource through a shared rate limiter.
 
@@ -170,7 +175,7 @@ def tmdb_get(url, **kwargs):
     limit = current_app.config["TMDB_REQUESTS_PER_SECOND"]
     while True:
         now = time()
-        bucket = f"fitzflix:tmdb:requests:{int(now)}"
+        bucket = TMDB_RATE_KEY.format(second=int(now))
         pipe = current_app.redis.pipeline()
         pipe.incr(bucket)
         pipe.expire(bucket, 3)
