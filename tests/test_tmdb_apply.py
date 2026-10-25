@@ -513,3 +513,43 @@ def test_the_certification_sync_adds_the_missing_values(app, monkeypatch):
         )
         db.session.commit()
         assert [c.certification for c in movie.certifications] == ["NR"]
+
+
+def test_tmdb_strings_fit_their_columns(app):
+    """Test that a TMDB value longer than its VARCHAR column fits (#328).
+
+    MariaDB in strict mode refuses the commit of a value that is too long.
+    SQLite does not. Thus, the test checks the values against the column
+    lengths. A link that is too long is not stored. Text is shortened."""
+
+    long_link = "https://www.peacocktv.com/" + "a" * 200
+    with app.app_context():
+        movie = make_movie("Long Links", 1985, tmdb_id=990011)
+        movie.tmdb_movie_apply(
+            {
+                "id": 990011,
+                "homepage": long_link,
+                "tagline": "t" * 500,
+                "original_title": "Long Links",
+            }
+        )
+        db.session.commit()
+        stored = db.session.get(Movie, movie.id)
+        assert stored.tmdb_homepage is None
+        assert stored.tmdb_tagline == "t" * Movie.__table__.c.tmdb_tagline.type.length
+        assert stored.tmdb_original_title == "Long Links"
+
+        series = make_tv_series("Long Series")
+        series.tmdb_tv_apply({"id": 990012, "homepage": long_link, "type": "x" * 40})
+        db.session.commit()
+        stored = db.session.get(TVSeries, series.id)
+        assert stored.tmdb_homepage is None
+        assert stored.tmdb_type == "x" * 32
+
+        # A link that fits is stored as it is
+
+        series.tmdb_tv_apply({"id": 990012, "homepage": "https://example.com/show"})
+        db.session.commit()
+        assert db.session.get(TVSeries, series.id).tmdb_homepage == (
+            "https://example.com/show"
+        )

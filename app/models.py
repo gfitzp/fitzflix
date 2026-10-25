@@ -211,6 +211,41 @@ class TMDBMixin(object):
     two-phase refresh tasks can run the halves on different queues.
     """
 
+    # TMDB strings that are links or image paths. A shortened link is a
+    # broken link. Thus, a value that is too long for its column is not
+    # stored. Other text is shortened to fit.
+
+    TMDB_LINK_COLUMNS = ("tmdb_homepage", "tmdb_backdrop_path", "tmdb_poster_path")
+
+    def _fit_tmdb_strings(self):
+        """Make each TMDB string value fit its VARCHAR column (#328).
+
+        MariaDB runs with STRICT_TRANS_TABLES. A value that is too long
+        stops the commit of the full refresh with error 1406. Thus, one
+        long homepage link removed all the TMDB updates of the record.
+        SQLite does not check the length, so the tests cannot see it."""
+
+        for column in self.__table__.columns:
+            name = column.key
+            length = getattr(column.type, "length", None)
+            if not length or not (name.startswith("tmdb_") or name == "imdb_id"):
+                continue
+            value = getattr(self, name, None)
+            if not isinstance(value, str) or len(value) <= length:
+                continue
+            if name in self.TMDB_LINK_COLUMNS:
+                current_app.logger.warning(
+                    f"{self} TMDB {name} has {len(value)} characters, more "
+                    f"than {length}. It is not stored: {value!r}"
+                )
+                setattr(self, name, None)
+            else:
+                current_app.logger.warning(
+                    f"{self} TMDB {name} has {len(value)} characters, more "
+                    f"than {length}. It is shortened"
+                )
+                setattr(self, name, value[:length])
+
     def tmdb_movie_fetch(self, tmdb_id=None):
         """Do the network half of a TMDB movie refresh.
 
@@ -436,6 +471,7 @@ class TMDBMixin(object):
         self.tmdb_status = tmdb_info.get("status", self.tmdb_status)
         self.tmdb_tagline = tmdb_info.get("tagline", self.tmdb_tagline)
         self.tmdb_title = tmdb_info.get("title", self.tmdb_title)
+        self._fit_tmdb_strings()
 
         # Rename this movie to the canonical TMDB title and year, unless a
         # different movie record already holds that name. Title + year is
@@ -924,6 +960,7 @@ class TMDBMixin(object):
         self.tmdb_type = tmdb_info.get("type", self.tmdb_type)
         self.tmdb_vote_average = tmdb_info.get("vote_average", self.tmdb_vote_average)
         self.tmdb_vote_count = tmdb_info.get("vote_count", self.tmdb_vote_count)
+        self._fit_tmdb_strings()
         if tmdb_info.get("id"):
             self.tmdb_data_as_of = datetime.now(timezone.utc)
 
