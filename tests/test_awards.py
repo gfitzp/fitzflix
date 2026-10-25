@@ -53,7 +53,7 @@ def test_refresh_parses_batches_and_replaces(app, monkeypatch):
         db.session.commit()
         imdb_movie_id, tmdb_movie_id = by_imdb.id, by_tmdb.id
 
-    def fake_sparql(query):
+    def fake_sparql(url, query, timeout=None):
         """Return the canned bindings for each id-system query."""
 
         if "P345" in query:
@@ -157,7 +157,7 @@ def test_craft_backfill_attributes_for_work_awards(app, monkeypatch):
         db.session.commit()
         waterfront_id, ryan_id = waterfront.id, ryan.id
 
-    def fake_sparql(query):
+    def fake_sparql(url, query, timeout=None):
         """Return the canned for-work bindings for each id-system query."""
 
         assert "pq:P1686" in query
@@ -405,30 +405,24 @@ def test_sparql_client_honors_retry_after_on_429(app, monkeypatch):
         wikidata_retry_after_seconds(FakeResponse(429, {"Retry-After": "9000"})) == 300
     )
 
-    # Both clients: a 429, then success. One capped sleep occurs, then the
-    # rows come.
+    # The 2 clients are 1 function. A 429, then success. One capped sleep
+    # occurs, then the rows come.
 
+    assert awards._wikidata_sparql is criterion_catalog._wikidata_sparql
     with app.app_context():
-        for module, call in (
-            (awards, lambda: awards._wikidata_sparql("SELECT 1")),
-            (
-                criterion_catalog,
-                lambda: criterion_catalog._wikidata_sparql(
-                    "http://example.test", "SELECT 1"
-                ),
-            ),
-        ):
-            responses = [
-                FakeResponse(429, {"Retry-After": "3"}),
-                FakeResponse(200, bindings=[{"ok": {"value": "1"}}]),
-            ]
-            sleeps = []
-            monkeypatch.setattr(
-                module.requests, "get", lambda *a, **k: responses.pop(0)
-            )
-            monkeypatch.setattr(module.time, "sleep", sleeps.append)
-            assert call() == [{"ok": {"value": "1"}}]
-            assert sleeps == [3]
+        responses = [
+            FakeResponse(429, {"Retry-After": "3"}),
+            FakeResponse(200, bindings=[{"ok": {"value": "1"}}]),
+        ]
+        sleeps = []
+        monkeypatch.setattr(
+            criterion_catalog.requests, "get", lambda *a, **k: responses.pop(0)
+        )
+        monkeypatch.setattr(criterion_catalog.time, "sleep", sleeps.append)
+        assert criterion_catalog._wikidata_sparql(
+            "http://example.test", "SELECT 1"
+        ) == [{"ok": {"value": "1"}}]
+        assert sleeps == [3]
 
 
 def test_awards_refresh_aborts_after_consecutive_failures(app, monkeypatch):
@@ -450,7 +444,7 @@ def test_awards_refresh_aborts_after_consecutive_failures(app, monkeypatch):
 
         calls = []
 
-        def explode(query):
+        def explode(url, query, timeout=None):
             calls.append(query)
             raise RuntimeError("504 whoops")
 

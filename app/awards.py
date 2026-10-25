@@ -33,12 +33,11 @@ career honor, a knighthood) never matches.
 import time
 import traceback
 
-import requests
-
 from flask import current_app
 from werkzeug.local import LocalProxy
 
 from app import db, get_app
+from app.criterion_catalog import _wikidata_sparql
 from app.models import Movie, MovieAward
 
 # This is the app instance of this process. Fitzflix resolves it lazily.
@@ -96,41 +95,6 @@ SELECT ?ext ?award ?awardLabel ?kind (YEAR(?when) AS ?year) WHERE {{
   SERVICE wikibase:label {{ bd:serviceParam wikibase:language "en". }}
 }}
 """
-
-
-def _wikidata_sparql(query):
-    """Run one SPARQL query against Wikidata, per its access guidelines.
-
-    A 429 response means that WDQS throttled this client. This function
-    obeys the Retry-After header of the response, with 1 retry and a
-    cap on the delay. Then the error propagates to the failure handling
-    of the batch loop.
-    """
-
-    from app.videos import wikidata_retry_after_seconds
-
-    contact = current_app.config["SERVER_EMAIL"] or "fitzflix"
-    headers = {
-        "User-Agent": f"FitzflixBot/1.0 (mailto:{contact})",
-        "Accept": "application/sparql-results+json",
-        "Accept-Encoding": "gzip,deflate",
-    }
-    for attempt in range(2):
-        r = requests.get(
-            current_app.config["WIKIDATA_SPARQL_URL"],
-            params={"query": query},
-            headers=headers,
-            timeout=120,
-        )
-        if getattr(r, "status_code", None) == 429 and attempt == 0:
-            delay = wikidata_retry_after_seconds(r)
-            current_app.logger.warning(
-                f"Wikidata throttled the awards query (429); retrying in {delay}s"
-            )
-            time.sleep(delay)
-            continue
-        r.raise_for_status()
-        return r.json().get("results", {}).get("bindings", [])
 
 
 def _parse_award(binding):
@@ -287,7 +251,9 @@ def refresh_person_awards():
             values = " ".join(f'"{ext}"' for ext in batch)
             try:
                 bindings = _wikidata_sparql(
-                    CRAFT_AWARDS_QUERY.format(values=values, id_prop=id_prop)
+                    current_app.config["WIKIDATA_SPARQL_URL"],
+                    CRAFT_AWARDS_QUERY.format(values=values, id_prop=id_prop),
+                    timeout=120,
                 )
             except Exception:
                 current_app.logger.warning(traceback.format_exc())
@@ -358,7 +324,9 @@ def refresh_movie_awards():
             values = " ".join(f'"{ext}"' for ext in batch)
             try:
                 bindings = _wikidata_sparql(
-                    AWARDS_QUERY.format(values=values, id_prop=id_prop)
+                    current_app.config["WIKIDATA_SPARQL_URL"],
+                    AWARDS_QUERY.format(values=values, id_prop=id_prop),
+                    timeout=120,
                 )
             except Exception:
                 current_app.logger.warning(traceback.format_exc())

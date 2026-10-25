@@ -101,14 +101,14 @@ def wikidata_retry_after_seconds(response, default=60, cap=300):
     return max(1, min(seconds, cap))
 
 
-def _wikidata_sparql(url, query):
+def _wikidata_sparql(url, query, timeout=60):
     """Run one SPARQL query against Wikidata, per its access guidelines.
 
     WDQS throttles a client with 429 and Retry-After when the client
     exceeds its processing budget. This function obeys the header with
     1 retry, capped. Thus, WDQS keeps polite clients off the
-    temporary-ban list.
-    """
+    temporary-ban list. Then the error propagates to the caller. The
+    Criterion catalog and the craft awards (app.awards) use it."""
 
     contact = current_app.config["SERVER_EMAIL"] or "fitzflix"
     headers = {
@@ -117,7 +117,7 @@ def _wikidata_sparql(url, query):
         "Accept-Encoding": "gzip,deflate",
     }
     for attempt in range(2):
-        r = requests.get(url, params={"query": query}, headers=headers, timeout=60)
+        r = requests.get(url, params={"query": query}, headers=headers, timeout=timeout)
         if getattr(r, "status_code", None) == 429 and attempt == 0:
             delay = wikidata_retry_after_seconds(r)
             current_app.logger.warning(
