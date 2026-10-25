@@ -2940,3 +2940,24 @@ def test_audio_alerts(app, tracks, expected):
     from app.importing import _audio_alerts
 
     assert _audio_alerts(tracks, "eng") == expected
+
+
+def test_a_failed_radarr_report_does_not_skip_the_tmdb_refresh(
+    app, sample_mkv, incoming_dir, monkeypatch
+):
+    """The movie_id read of the Radarr report runs inside its own guarded step."""
+
+    from app import importing
+
+    def broken(*args, **kwargs):
+        raise RuntimeError("Radarr is away")
+
+    monkeypatch.setattr(importing, "_report_import_move_to_radarr", broken)
+    basename = "Radarr Away (2021) - [DVD].mkv"
+    with app.app_context():
+        _import(app, sample_mkv, incoming_dir, basename)
+        file = File.query.filter_by(basename=basename).one()
+        output = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
+        assert _roster_jobs(app, "app.videos.refresh_tmdb_info")
+    assert os.listdir(app.config["STAGING_DIR"]) == []
+    os.remove(output)

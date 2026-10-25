@@ -2122,10 +2122,6 @@ def finalize_localization(
             )
             return False
 
-        output_file = os.path.join(
-            current_app.config["LIBRARY_DIR"], file_details.get("file_path")
-        )
-
         # A failure before the commit must not leave the new file in the
         # library with no record (#316). The handler needs to know if the
         # rename happened, and if it replaced a file at that path. None
@@ -2133,6 +2129,9 @@ def finalize_localization(
 
         placement = None
         try:
+            output_file = os.path.join(
+                current_app.config["LIBRARY_DIR"], file_details.get("file_path")
+            )
             records = _build_records(
                 file_details, inspection, os.path.basename(hidden_output_file)
             )
@@ -2674,13 +2673,7 @@ def _after_commit(
     if file_path != output_file:
         step("source removal", _remove_source, file_path)
 
-    if file.movie_id:
-        step(
-            "radarr",
-            _report_import_move_to_radarr,
-            os.path.dirname(file_path),
-            output_directory,
-        )
+    step("radarr", _report_film_move, file, file_path, output_directory)
 
     step("tmdb refresh", _enqueue_tmdb_enrichment, file, file_details)
 
@@ -2694,18 +2687,7 @@ def _after_commit(
     # An Atmos job archives it when it finishes. Thus, the upload waits
     # for that job.
 
-    if (
-        file.converted_from_quality
-        and get_setting("ARCHIVE_ORIGINAL_MEDIA")
-        and not atmos_queued
-    ):
-        step(
-            "transcoded archive",
-            enqueue_task,
-            "app.videos.upload_task",
-            file.id,
-            description=f"'{file.basename}'",
-        )
+    step("transcoded archive", _enqueue_transcoded_archive, file, atmos_queued)
 
     possibly_foreign_language, lossy_lead = _audio_alerts(
         audio_tracks, current_app.config["NATIVE_LANGUAGE"]
@@ -2719,7 +2701,7 @@ def _after_commit(
             file=file,
         )
 
-    current_app.logger.info(f"{file} File ID {file.id}")
+    step("file id", lambda: current_app.logger.info(f"{file} File ID {file.id}"))
 
     step("triage snapshots", _enqueue_triage_snapshots, file)
     step("audio comparison", _enqueue_audio_comparison, file)
@@ -2750,6 +2732,26 @@ def _audio_alerts(audio_tracks, native_language):
     ]
     first_audio_track_lossy = not (lossless and lossless[0])
     return possibly_foreign_language, first_audio_track_lossy and any(lossless)
+
+
+def _report_film_move(file, file_path, output_directory):
+    """Tell Radarr about the move of a film import. An episode has nothing to report."""
+
+    if file.movie_id:
+        _report_import_move_to_radarr(os.path.dirname(file_path), output_directory)
+
+
+def _enqueue_transcoded_archive(file, atmos_queued):
+    """Queue the transcoded/ archive of a conversion, unless an Atmos job does it."""
+
+    if (
+        file.converted_from_quality
+        and get_setting("ARCHIVE_ORIGINAL_MEDIA")
+        and not atmos_queued
+    ):
+        enqueue_task(
+            "app.videos.upload_task", file.id, description=f"'{file.basename}'"
+        )
 
 
 def _delete_worse_copies(worse_local_copies, output_file):
