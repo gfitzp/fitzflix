@@ -279,6 +279,24 @@ def clean_state(app):
                 db.session.execute(table.delete())
         db.session.commit()
     reset_user_state(app)
+    clear_rejects(app)
+
+
+def clear_rejects(app):
+    """Remove the files that a test left in the shared rejects directory.
+
+    The rejects directory lives for the whole session. A test that
+    rejects a file and does not remove it leaves the file for the next
+    test. Then a test that asserts an empty rejects directory fails when
+    it runs after that test, and passes when it runs alone. The reason
+    subdirectories stay. Only the files go."""
+
+    for root, _, files in os.walk(app.config["REJECTS_DIR"]):
+        for name in files:
+            try:
+                os.remove(os.path.join(root, name))
+            except FileNotFoundError:
+                pass
 
 
 def reset_user_state(app):
