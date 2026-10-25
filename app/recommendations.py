@@ -1330,6 +1330,24 @@ def resolved_score(redis, user_id, movie, profile, scores=None):
     return score
 
 
+def tmdb_taste_score(user_id, tmdb_id, payload, profile):
+    """Return (score, contributions) of a film through the TMDB-keyed lane.
+
+    This is the one writer of the TMDB-lane number: the taste score of
+    the enriched payload plus the tmdb-keyed co-preference, rounded to
+    4 places. The tile (resolved_tmdb_score), the warm pre-score and
+    the discovery shelves all read it. Thus, a shelf orders by the
+    number that its tiles show."""
+
+    # streaming_rail owns the enriched-payload cache and its feature
+    # extraction. This imports it lazily because it imports this module.
+
+    from app.streaming_rail import _payload_features
+
+    taste, contributions = score_movie(_payload_features(payload), profile)
+    return round(taste + _tmdb_copref(user_id, int(tmdb_id)), 4), contributions
+
+
 def resolved_tmdb_score(redis, user_id, tmdb_id, profile, scores=None):
     """Return the score for a film through the TMDB-keyed lane of the
     shared source. The film can be absent from the local database.
@@ -1355,16 +1373,12 @@ def resolved_tmdb_score(redis, user_id, tmdb_id, profile, scores=None):
     if cached is not None:
         return float(cached)
 
-    # streaming_rail owns the enriched-payload cache and its feature
-    # extraction. This imports it lazily because it imports this module.
-
-    from app.streaming_rail import _payload_features, enriched_movie
+    from app.streaming_rail import enriched_movie
 
     payload = enriched_movie(tmdb_id)
     if not payload:
         return None
-    taste, _ = score_movie(_payload_features(payload), profile)
-    score = round(taste + _tmdb_copref(user_id, int(tmdb_id)), 4)
+    score, _ = tmdb_taste_score(user_id, tmdb_id, payload, profile)
     redis.hset(key, str(int(tmdb_id)), score)
     redis.expire(key, PATCH_SCORES_TTL)
     return score

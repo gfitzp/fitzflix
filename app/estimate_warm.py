@@ -36,12 +36,11 @@ from app.recommendations import (
     JOB_TO_CLASS,
     PATCH_SCORES_TTL,
     TMDB_PATCH_SCORES_KEY,
-    _tmdb_copref,
-    score_movie,
     stored_profile,
+    tmdb_taste_score,
 )
 from app.cache import cached_fetch
-from app.streaming_rail import ENRICHED_KEY, _payload_features, enriched_movie
+from app.streaming_rail import ENRICHED_KEY, enriched_movie
 
 # This is the app instance of this process. Fitzflix resolves it lazily.
 # Thus, the nightly task can run on a worker without a second application
@@ -200,8 +199,7 @@ def prescore_films(redis, user_id, tmdb_ids, profile):
             data = json.loads(payload) if payload else None
             if not data:
                 continue
-            taste, _ = score_movie(_payload_features(data), profile)
-            mapping[str(tmdb_id)] = round(taste + _tmdb_copref(user_id, tmdb_id), 4)
+            mapping[str(tmdb_id)], _ = tmdb_taste_score(user_id, tmdb_id, data, profile)
         if mapping:
             redis.hset(key, mapping=mapping)
             scored += len(mapping)

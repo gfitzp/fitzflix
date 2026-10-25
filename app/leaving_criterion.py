@@ -38,9 +38,9 @@ from werkzeug.local import LocalProxy
 from app import db, get_app
 from app.models import File, Movie
 from app.funnel import user_film_sets
-from app.recommendations import score_movie, stored_profile
+from app.recommendations import stored_profile, tmdb_taste_score
 from app.cache import MISS, cache_json, cached_json
-from app.streaming_rail import _payload_features, enriched_movie, movie_gone
+from app.streaming_rail import enriched_movie, movie_gone
 from app.models import tmdb_get
 
 # The app instance of this process. Fitzflix resolves it lazily. Thus,
@@ -642,7 +642,7 @@ def leaving_shelf(user):
             continue
         if tmdb_id in logged or tmdb_id in watchlisted:
             continue
-        score, contributions = score_movie(_payload_features(item), profile)
+        score, contributions = tmdb_taste_score(user.id, tmdb_id, item, profile)
         items.append(
             {
                 "tmdb_id": tmdb_id,
@@ -746,7 +746,7 @@ def leaving_inventory(user):
     for item in matched:
         tmdb_id = item["tmdb_id"]
         if profile:
-            score, contributions = score_movie(_payload_features(item), profile)
+            score, contributions = tmdb_taste_score(user.id, tmdb_id, item, profile)
         else:
             score, contributions = 0.0, []
         items.append(

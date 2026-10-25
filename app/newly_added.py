@@ -46,8 +46,8 @@ from app.leaving_criterion import (
     match_tmdb_id,
 )
 from app.models import File, Movie, UserMovieReview, UserWatchlist
-from app.recommendations import score_movie, stored_profile
-from app.streaming_rail import _payload_features, enriched_movie
+from app.recommendations import stored_profile, tmdb_taste_score
+from app.streaming_rail import enriched_movie
 
 # The app instance of this process. Fitzflix resolves it lazily. Thus, the
 # nightly task can run on a worker without a second application.
@@ -233,7 +233,7 @@ def newly_added_shelves(user):
                 continue
             if tmdb_id in logged or tmdb_id in watchlisted:
                 continue
-            score, contributions = score_movie(_payload_features(item), profile)
+            score, contributions = tmdb_taste_score(user.id, tmdb_id, item, profile)
             rows.append(
                 {
                     "tmdb_id": tmdb_id,
@@ -319,7 +319,7 @@ def newly_added_inventory(user):
         for item in matched:
             tmdb_id = item["tmdb_id"]
             if profile:
-                score, contributions = score_movie(_payload_features(item), profile)
+                score, contributions = tmdb_taste_score(user.id, tmdb_id, item, profile)
             else:
                 score, contributions = 0.0, []
             films.append(
