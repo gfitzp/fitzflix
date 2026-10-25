@@ -2276,3 +2276,51 @@ def test_a_failed_handoff_releases_the_title_lock(
     finally:
         if os.path.exists(source):
             os.remove(source)
+
+
+def test_a_library_path_never_creates_a_directory_on_an_unmounted_volume(
+    app, sample_mkv, incoming_dir, monkeypatch
+):
+    """Test the import with a library volume that dropped during the task.
+
+    5 sites of importing.py called makedirs on a library path. With the
+    volume absent, makedirs built the library tree on the boot disk
+    (#227, #341). Each site now goes through makedirs_on_mounted_volume.
+    The task rejects the file as an exception, so the source is kept in
+    the rejects directory, and the absent volume gets no directory."""
+
+    basename = "Absent Library (2021) - [DVD].mkv"
+    source = os.path.join(incoming_dir, basename)
+    with open(sample_mkv, "rb") as f_in, open(source, "wb") as f_out:
+        f_out.write(f_in.read())
+
+    made = []
+    real_makedirs = os.makedirs
+
+    def record(path, *args, **kwargs):
+        made.append(path)
+        return real_makedirs(path, *args, **kwargs)
+
+    monkeypatch.setitem(app.config, "LIBRARY_DIR", "/Volumes/fitzflix-absent/library")
+    # The liveness probe of the task must not defer first. The makedirs
+    # guard is the subject here.
+    monkeypatch.setattr(videos, "_dead_volumes", lambda paths: [])
+    monkeypatch.setattr(os, "makedirs", record)
+    try:
+        with app.app_context():
+            localization_task(source)
+        assert [
+            path for path in made if path.startswith("/Volumes/fitzflix-absent")
+        ] == []
+        assert not os.path.exists("/Volumes/fitzflix-absent")
+        rejected = os.path.join(app.config["REJECTS_DIR"], "exception", basename)
+        assert os.path.exists(rejected)
+        staging = app.config["STAGING_DIR"]
+        assert not [n for n in os.listdir(staging) if "Absent Library" in n]
+    finally:
+        for path in (
+            source,
+            os.path.join(app.config["REJECTS_DIR"], "exception", basename),
+        ):
+            if os.path.exists(path):
+                os.remove(path)

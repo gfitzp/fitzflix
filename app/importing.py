@@ -1184,7 +1184,7 @@ def localization_task(
 
             if file_details.get("container") != "Matroska":
                 scratch_dir = staging_dir if staged else output_directory
-                os.makedirs(scratch_dir, exist_ok=True)
+                makedirs_on_mounted_volume(scratch_dir)
                 converted_file = os.path.join(scratch_dir, f".{basename}.convert.mkv")
                 staging_paths.append(converted_file)
 
@@ -1363,7 +1363,7 @@ def localization_task(
 
                 # Find the tracks to export and make the output file.
 
-                os.makedirs(output_directory, exist_ok=True)
+                makedirs_on_mounted_volume(output_directory)
 
                 # Non-native audio, and native-language subtitles are present.
 
@@ -1556,7 +1556,7 @@ def localization_task(
                 current_app.logger.info(
                     f"'{basename}' Copying to '{hidden_output_file}'"
                 )
-                os.makedirs(output_directory, exist_ok=True)
+                makedirs_on_mounted_volume(output_directory)
                 if job:
                     job.meta["description"] = f"'{basename}' — Copying to destination"
                     job.meta["progress"] = -1
@@ -2037,7 +2037,7 @@ def move_localized_file(
                 raise
 
             try:
-                os.makedirs(output_directory, exist_ok=True)
+                makedirs_on_mounted_volume(output_directory)
 
                 if hidden_output_file == destination_hidden:
                     # Legacy unstaged processing already put it at the destination.
@@ -2621,7 +2621,7 @@ def finalize_localization(
             # the file is not there, give the copy back to the file-operation
             # queue. Do not do long file work on the sql queue.
 
-            os.makedirs(output_directory, exist_ok=True)
+            makedirs_on_mounted_volume(output_directory)
             if (
                 os.stat(os.path.dirname(hidden_output_file)).st_dev
                 != os.stat(output_directory).st_dev
