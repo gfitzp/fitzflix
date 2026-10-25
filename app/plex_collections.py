@@ -17,8 +17,8 @@ set. A film belongs in it when its movie has the set title and at least
 the best copy. A set needs 2 films or more. The box-set collections sort
 by release date.
 
-The main collection sorts by spine number (#285). The sync keeps that
-custom order, and a new film lands at its spine.
+The main collection also sorts by release date. It sorted by spine
+number for a time (#285), but a film was hard to find in that order.
 
 Each film is 1 item in the main collection (#284). Plex makes 1 item
 for each edition of a film. The main collection uses the version with
@@ -66,10 +66,9 @@ ADD_BATCH = 100
 
 BOX_SET_MIN_FILMS = 2
 
-# The collectionSort values of Plex for release date and custom order.
+# The collectionSort value of Plex for release date.
 
 SORT_RELEASE = "0"
-SORT_CUSTOM = "2"
 
 
 def _normal(path):
@@ -98,7 +97,7 @@ def _one_version(rows):
 
 
 def criterion_paths():
-    """Return {absolute path: spine number} for the files of the collection."""
+    """Return the absolute paths of the files that belong in the collection."""
 
     shared = (
         db.session.query(Movie.criterion_spine_number)
@@ -108,12 +107,7 @@ def criterion_paths():
     )
     ranked = ranked_movie_files()
     rows = (
-        db.session.query(
-            File.movie_id,
-            File.edition,
-            File.file_path,
-            Movie.criterion_spine_number,
-        )
+        db.session.query(File.movie_id, File.edition, File.file_path)
         .join(ranked, ranked.c.id == File.id)
         .join(Movie, Movie.id == File.movie_id)
         .join(RefQuality, RefQuality.id == File.quality_id)
@@ -127,13 +121,7 @@ def criterion_paths():
         )
         .all()
     )
-    spines = {movie_id: spine for movie_id, _, _, spine in rows}
-    films = _one_version(
-        [(movie_id, edition, path) for movie_id, edition, path, _ in rows]
-    )
-    return {
-        path: spines[movie_id] for movie_id, paths in films.items() for path in paths
-    }
+    return {path for paths in _one_version(rows).values() for path in paths}
 
 
 def box_set_groups():
@@ -229,16 +217,12 @@ def _uri(machine, keys):
     )
 
 
-def _sync_collection(
-    section, collections, by_path, groups, name, machine, sort=None, order=None
-):
+def _sync_collection(section, collections, by_path, groups, name, machine, sort=None):
     """Make 1 collection of 1 movie section match the selected films.
 
     Each group holds the paths of 1 film. A film is in the collection
     through each Plex item that one of its paths matches. The collections
     argument maps the titles of the section to its collection entries.
-    With order ({path: sort key}), the collection uses custom order, and
-    the items follow the sort keys (#285).
     """
 
     key = section["key"]
@@ -313,51 +297,17 @@ def _sync_collection(
     for member in to_remove:
         _plex_request("DELETE", f"/library/collections/{collection_key}/items/{member}")
 
-    if order is not None:
-        sort = SORT_CUSTOM
     if sort is not None and collection.get("collectionSort") != sort:
         _plex_request(
             "PUT",
             f"/library/metadata/{collection_key}/prefs",
             {"collectionSort": sort},
         )
-    if order is not None:
-        _arrange(collection_key, by_path, order)
 
     current_app.logger.info(
         f"Plex collection '{name}' in '{title}': {len(wanted)} items, "
         f"{added} added, {len(to_remove)} removed"
     )
-
-
-def _arrange(collection_key, by_path, order):
-    """Move the items of a collection into the order of their sort keys.
-
-    The function compares the Plex order first. It moves nothing when the
-    orders agree. An item without a sort key goes to the end."""
-
-    keys = {}
-    for path, key in order.items():
-        if path in by_path:
-            keys.setdefault(by_path[path], key)
-    current = [
-        entry["ratingKey"]
-        for entry in _paged(f"/library/collections/{collection_key}/children")
-    ]
-    wanted = sorted(
-        current,
-        key=lambda item: (item not in keys, keys.get(item, 0), int(item)),
-    )
-    if current == wanted:
-        return
-    previous = None
-    for item in wanted:
-        _plex_request(
-            "PUT",
-            f"/library/collections/{collection_key}/items/{item}/move",
-            {"after": previous} if previous else None,
-        )
-        previous = item
 
 
 def sync_criterion_collection():
@@ -378,17 +328,15 @@ def sync_criterion_collection():
             # The main collection: 1 group for each file. Each edition is
             # its own Plex item.
 
-            spines = criterion_paths()
             plans = [
                 (
                     current_app.config["PLEX_CRITERION_COLLECTION"],
-                    [{path} for path in sorted(spines)],
-                    None,
-                    spines,
+                    [{path} for path in sorted(criterion_paths())],
+                    SORT_RELEASE,
                 )
             ]
             for set_title, groups in sorted(box_set_groups().items()):
-                plans.append((set_title, groups, SORT_RELEASE, None))
+                plans.append((set_title, groups, SORT_RELEASE))
             machine = _server_machine_id()
             sections = _plex_get("/library/sections").get("MediaContainer", {})
         except Exception:
@@ -412,17 +360,10 @@ def sync_criterion_collection():
             except Exception:
                 current_app.logger.warning(traceback.format_exc())
                 continue
-            for name, groups, sort, order in plans:
+            for name, groups, sort in plans:
                 try:
                     _sync_collection(
-                        section,
-                        collections,
-                        by_path,
-                        groups,
-                        name,
-                        machine,
-                        sort,
-                        order,
+                        section, collections, by_path, groups, name, machine, sort
                     )
                 except Exception:
                     current_app.logger.warning(traceback.format_exc())
