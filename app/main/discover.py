@@ -30,7 +30,7 @@ from flask_login import current_user, login_required
 from sqlalchemy.orm import contains_eager, selectinload
 from unidecode import unidecode
 
-from app import db
+from app import db, local_path
 from app.main.forms import (
     MovieReviewForm,
     RadarrForm,
@@ -1989,7 +1989,7 @@ def radarr_request():
 
     radarr_form = RadarrForm()
     origin = request.args.get("origin", "", type=str)
-    if not origin.startswith("/") or origin.startswith("//"):
+    if not local_path(origin):
         origin = None
     if not radarr_form.validate_on_submit() or not radarr_form.movie_id.data:
         flash("That Radarr request was not valid.", "warning")

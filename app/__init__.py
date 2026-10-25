@@ -7,7 +7,7 @@ import time
 import traceback
 
 from logging.handlers import SMTPHandler, WatchedFileHandler
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, urlparse
 
 import rq
 
@@ -39,6 +39,23 @@ mail = Mail()
 moment = Moment()
 
 _app = None
+
+
+def local_path(target):
+    """Return True if target is a path on this site, safe for a redirect.
+
+    A browser reads "\\" as "/" in a URL. Thus, "/\\evil.com" and
+    "http:evil.com" go to another site, but urlparse gives them no host.
+    A browser also removes tabs and line breaks. Thus, "/<tab>/evil.com"
+    becomes "//evil.com". Only a path that starts with 1 "/", has no
+    scheme, and has no control or space characters passes."""
+
+    if not target or not target.startswith("/") or target.startswith("//"):
+        return False
+    if "\\" in target or any(ord(char) <= 0x20 for char in target):
+        return False
+    parsed = urlparse(target)
+    return not parsed.scheme and not parsed.netloc
 
 
 def safe_job_id(value):

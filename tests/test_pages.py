@@ -726,3 +726,19 @@ def test_a_bad_quality_filter_shows_the_page(app, admin_client, path):
     """A mistyped or stale quality id is "no filter", not a 500 (#306)."""
 
     assert admin_client.get(path).status_code == 200
+
+
+@pytest.mark.parametrize("origin", ["/\\evil.com", "/\t/evil.com", "//evil.com"])
+def test_an_origin_that_leaves_the_site_is_ignored(app, admin_client, origin):
+    """A backslash or a tab path is a different site to a browser (#309)."""
+
+    from urllib.parse import quote
+
+    response = admin_client.post(f"/radarr?origin={quote(origin)}", data={})
+    assert response.status_code == 302
+    assert "evil.com" not in response.headers["Location"]
+
+    for page in ("/maintenance/subtitles", "/maintenance/lossy-audio"):
+        response = admin_client.get(f"{page}?origin={quote(origin)}")
+        assert response.status_code == 200
+        assert "evil.com" not in response.get_data(as_text=True)

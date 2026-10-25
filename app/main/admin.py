@@ -23,7 +23,7 @@ from flask import (
 # Flask 2.4 removed flask.Markup. Import it from its real module
 from flask_login import current_user, login_required
 
-from app import db, enqueue_import_scan, safe_job_id
+from app import db, enqueue_import_scan, local_path, safe_job_id
 from app.main.forms import (
     ArchivedRestoreForm,
     CriterionRefreshForm,
@@ -1314,7 +1314,7 @@ def subtitle_triage(file_id):
     # origin would be an open redirect
 
     origin = request.args.get("origin", "", type=str)
-    if not origin.startswith("/") or origin.startswith("//"):
+    if not local_path(origin):
         origin = None
 
     def done():
@@ -1469,7 +1469,7 @@ def lossy_audio_triage(file_id):
     """
 
     origin = request.args.get("origin", "", type=str)
-    if not origin.startswith("/") or origin.startswith("//"):
+    if not local_path(origin):
         origin = None
 
     def done():
