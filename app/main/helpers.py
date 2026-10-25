@@ -270,6 +270,37 @@ def _hold_verdict_lock(name):
     return True
 
 
+# The keys of every star-row state. The page script reads them from the
+# live ladder post, the batched hydration, the history row edit and the
+# Criterion 24/7 card. One builder keeps the 4 payloads in step (#335).
+LADDER_KEYS = frozenset(
+    ["rating", "has_review", "flagged", "estimated", "on_watchlist"]
+)
+
+
+def ladder_payload(row, flagged, estimated, on_watchlist, **extra):
+    """Return the state of a star row as a dict.
+
+    row is the diary row that the row shows, or None. The rating is the
+    float of its stars, or None for a bare watch. The ✕ hides when the
+    film has a diary row, so has_review follows the row (#335). The
+    extra keys (folds, upgradable, movie_id) belong to one surface each
+    and come after the shared keys."""
+
+    return {
+        "rating": (
+            float(row.rating) if row is not None and row.rating is not None else None
+        ),
+        "has_review": row is not None,
+        "flagged": bool(flagged),
+        "estimated": estimated,
+        # A rating or a ✕ removes the watchlist entry of the film. Thus,
+        # the popover card (#45c) syncs its toggle from the same payload.
+        "on_watchlist": bool(on_watchlist),
+        **extra,
+    }
+
+
 def _ladder_state(user_id, movie_id):
     """Return the current verdict of the star row for a film as JSON.
 
@@ -294,28 +325,13 @@ def _ladder_state(user_id, movie_id):
         score = resolved_score(current_app.redis, int(user_id), movie, profile)
         if score is not None:
             estimated = estimated_rating(profile, score)
-    return jsonify(
-        {
-            "rating": (
-                float(row.rating)
-                if row is not None and row.rating is not None
-                else None
-            ),
-            # The ✕ hides when the film has a diary row. This is the rule
-            # of the batched hydration (state_for in discover.py, #335).
-            "has_review": row is not None,
-            "flagged": flagged,
-            "estimated": estimated,
-            # A rating or a ✕ removes the watchlist entry of the film. Thus,
-            # the popover card (#45c) syncs its toggle from the same payload.
-            "on_watchlist": (
-                UserWatchlist.query.filter_by(
-                    user_id=int(user_id), movie_id=int(movie_id)
-                ).first()
-                is not None
-            ),
-        }
+    on_watchlist = (
+        UserWatchlist.query.filter_by(
+            user_id=int(user_id), movie_id=int(movie_id)
+        ).first()
+        is not None
     )
+    return jsonify(ladder_payload(row, flagged, estimated, on_watchlist))
 
 
 def _watched_timestamp(watched_date):

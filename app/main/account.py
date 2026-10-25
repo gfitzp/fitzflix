@@ -62,6 +62,7 @@ from app.models import (
     UserFrameScore,
     UserMovieReview,
     UserStreamingProvider,
+    UserWatchlist,
 )
 from app.main import bp
 from app.main.helpers import (
@@ -69,6 +70,7 @@ from app.main.helpers import (
     _quick_rating,
     _watched_timestamp,
     decimal_id,
+    ladder_payload,
 )
 from app.newly_added import poster_fold
 from app.recommendations import (
@@ -223,17 +225,15 @@ def review_edit(review_id):
                 )
                 if score is not None:
                     estimated = estimated_rating(profile, score)
-            return jsonify(
-                {
-                    "rating": (
-                        float(user_review.rating)
-                        if user_review.rating is not None
-                        else None
-                    ),
-                    "flagged": False,
-                    "estimated": estimated,
-                }
+            # A logged viewing is a seen film. A seen film never carries
+            # the not-interested flag (its floor is 1 star).
+            on_watchlist = (
+                UserWatchlist.query.filter_by(
+                    user_id=int(current_user.id), movie_id=movie.id
+                ).first()
+                is not None
             )
+            return jsonify(ladder_payload(user_review, False, estimated, on_watchlist))
         flash(f"Updated your review of '{title}'", "success")
         return redirect(url_for("main.history", page=page))
 

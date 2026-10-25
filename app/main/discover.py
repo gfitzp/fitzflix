@@ -63,6 +63,7 @@ from app.main.helpers import (
     _ladder_fetch,
     _ladder_state,
     _mark_not_interested,
+    ladder_payload,
     _quick_rating,
     _letterboxd_locked,
     _same_day_rerate,
@@ -1553,15 +1554,9 @@ def movie_states():
 
     def state_for(movie_id):
         if movie_id is None:
-            return {
-                "rating": None,
-                "has_review": False,
-                "flagged": False,
-                "estimated": None,
-                "on_watchlist": False,
-                "fold_new": None,
-                "fold_leaving": None,
-            }
+            return ladder_payload(
+                None, False, None, False, fold_new=None, fold_leaving=None
+            )
         row = latest.get(movie_id)
         flagged = movie_id in flagged_ids
         estimated = None
@@ -1586,19 +1581,14 @@ def movie_states():
                 if criterion_member
                 else None
             )
-        return {
-            "rating": (
-                float(row.rating)
-                if row is not None and row.rating is not None
-                else None
-            ),
-            "has_review": row is not None,
-            "flagged": flagged,
-            "estimated": estimated,
-            "on_watchlist": movie_id in listed_ids,
-            "fold_new": fold_new,
-            "fold_leaving": fold_leaving,
-        }
+        return ladder_payload(
+            row,
+            flagged,
+            estimated,
+            movie_id in listed_ids,
+            fold_new=fold_new,
+            fold_leaving=fold_leaving,
+        )
 
     def tmdb_state_for(tmdb_id):
         state = state_for(tmdb_to_movie.get(tmdb_id))

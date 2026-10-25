@@ -904,7 +904,7 @@ def _ladder_state_for(user, tmdb_id, payload):
 
     # Routes imports this module at startup. Thus, its helpers load lazily.
 
-    from app.main.helpers import _latest_review_row, library_upgradable
+    from app.main.helpers import _latest_review_row, ladder_payload, library_upgradable
     from app.models import Movie, UserMovieStatus, UserWatchlist
     from app.recommendations import (
         estimated_rating,
@@ -913,51 +913,45 @@ def _ladder_state_for(user, tmdb_id, payload):
         stored_profile,
     )
 
-    state = {
-        "movie_id": None,
-        "rating": None,
-        "has_review": False,
-        "flagged": False,
-        "estimated": None,
-        # The watchlist toggle of the card reads its state from here.
-        "on_watchlist": False,
-        # The In-library badge (#160). None = not owned. Otherwise it is
-        # the amber or green upgradable verdict that the movie page shows.
-        "upgradable": None,
-    }
-    if not tmdb_id:
-        return state
-
-    profile = stored_profile(current_app.redis, user.id)
-    movie = Movie.query.filter_by(tmdb_id=tmdb_id).first()
+    # The 2 extra keys of the card: movie_id, and the In-library badge
+    # (#160). upgradable None = not owned. Otherwise it is the amber or
+    # green upgradable verdict that the movie page shows.
+    row = None
+    flagged = False
+    estimated = None
+    on_watchlist = False
+    movie = Movie.query.filter_by(tmdb_id=tmdb_id).first() if tmdb_id else None
+    profile = stored_profile(current_app.redis, user.id) if tmdb_id else None
     if movie is not None:
-        state["movie_id"] = movie.id
-        state["upgradable"] = library_upgradable(movie)
-        state["on_watchlist"] = (
+        on_watchlist = (
             UserWatchlist.query.filter_by(
                 user_id=int(user.id), movie_id=movie.id
             ).first()
             is not None
         )
         row = _latest_review_row(user.id, movie.id)
-        state["has_review"] = row is not None
-        if row is not None and row.rating is not None:
-            state["rating"] = float(row.rating)
-        state["flagged"] = (
+        flagged = (
             UserMovieStatus.query.filter_by(
                 user_id=int(user.id), movie_id=movie.id, kind="not_interested"
             ).first()
             is not None
         )
-        if (row is None or row.rating is None) and not state["flagged"]:
+        if (row is None or row.rating is None) and not flagged:
             score = resolved_score(current_app.redis, user.id, movie, profile)
             if score is not None:
-                state["estimated"] = estimated_rating(profile, score)
-    elif profile and payload:
+                estimated = estimated_rating(profile, score)
+    elif tmdb_id and profile and payload:
         # This is the tmdb lane of the shared source. The enriched payload
         # is already in the cache. Thus, this adds no fetch. The overlay
         # keeps the number identical to every other surface.
         score = resolved_tmdb_score(current_app.redis, user.id, tmdb_id, profile)
         if score is not None:
-            state["estimated"] = estimated_rating(profile, score)
-    return state
+            estimated = estimated_rating(profile, score)
+    return ladder_payload(
+        row,
+        flagged,
+        estimated,
+        on_watchlist,
+        movie_id=movie.id if movie is not None else None,
+        upgradable=library_upgradable(movie) if movie is not None else None,
+    )
