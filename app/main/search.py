@@ -47,9 +47,10 @@ from app.recommendations import (
     stored_profile,
 )
 from app.streaming import (
+    batch_title_availability,
     rental_matches,
+    request_warm,
     streaming_matches,
-    title_availability,
     user_provider_ids,
 )
 
@@ -629,16 +630,24 @@ def search_tmdb():
                 match["might_interest"] = True
 
         # Streaming and rent/buy badges on unowned movie matches. Both use
-        # only the services of this user (Fitzflix caches the lookups per
-        # title for 1 day). The flag turns on the mandatory JustWatch
-        # credit.
+        # only the services of this user. The flag turns on the mandatory
+        # JustWatch credit. The availability is cache-only, the same as on
+        # the other list surfaces (#366). A film without a cache entry
+        # warms in the background for the next search.
 
         provider_ids = user_provider_ids(current_user)
         if provider_ids:
-            for match in movie_matches:
-                if match["library_id"] is not None or match["tmdb_id"] is None:
-                    continue
-                availability = title_availability(match["tmdb_id"])
+            unowned = [
+                match
+                for match in movie_matches
+                if match["library_id"] is None and match["tmdb_id"] is not None
+            ]
+            availability_by_id, deferred = batch_title_availability(
+                (match["tmdb_id"] for match in unowned), fetch_limit=0
+            )
+            request_warm(f"search:{text.casefold()}", deferred)
+            for match in unowned:
+                availability = availability_by_id.get(match["tmdb_id"])
                 matches = streaming_matches(
                     availability, provider_ids, tmdb_id=match["tmdb_id"]
                 )

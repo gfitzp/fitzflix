@@ -1021,6 +1021,53 @@ def test_list_pages_never_fetch_availability_inline(app, admin_client, monkeypat
     assert warm_jobs[0].args == ([951],)
 
 
+def test_the_tmdb_search_never_fetches_availability_inline(
+    app, admin_client, monkeypatch
+):
+    """The TMDB search reads the availability from the cache alone (#366).
+
+    A cached match shows its badge. An uncached match costs no
+    availability call during the render. It goes to 1 warm job."""
+
+    plant_availability(
+        app,
+        960,
+        {"link": None, "flatrate": [NETFLIX], "ads": [], "rent": [], "buy": []},
+    )
+    subscribe(app, 8, "Netflix")
+
+    calls = []
+
+    def fake_tmdb_get(url, **kwargs):
+        calls.append(url)
+        if "/search/movie" in url:
+            return FakeTMDB(
+                {
+                    "results": [
+                        {"id": 960, "title": "Warm Cached", "release_date": "1980"},
+                        {"id": 961, "title": "Warm Uncached", "release_date": "1981"},
+                    ]
+                }
+            )
+        return FakeTMDB({"results": {"US": {"flatrate": [NETFLIX]}}})
+
+    monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
+    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
+
+    page = admin_client.get("/search/tmdb?q=warm&type=movies").get_data(as_text=True)
+    assert "Warm Cached" in page and "Warm Uncached" in page
+    assert page.count('title="Streaming on Netflix"') == 1
+    assert [url for url in calls if "/watch/providers" in url] == []
+
+    warm_jobs = [
+        job
+        for job in app.maintenance_queue.jobs
+        if job.func_name == "app.streaming.warm_title_availability"
+    ]
+    assert len(warm_jobs) == 1
+    assert warm_jobs[0].args == ([961],)
+
+
 def test_synthesized_matches_read_the_registry_once(app, monkeypatch):
     # The rec-shelf pool asks for each candidate film. Each context
     # pays 1 registry parse. If the registry is cold, each context pays
