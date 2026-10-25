@@ -243,9 +243,10 @@ def app():
     assert application.redis.connection_pool.connection_kwargs.get("db") == 9
 
     # The first app created in the process becomes the singleton of
-    # get_app(). The task modules (app.videos, app.atmos, ...) capture it
-    # at import time. A test module that imports one of them at TOP LEVEL
-    # runs during pytest collection, before this fixture. That creates a
+    # get_app(). app.atmos calls get_app() at import time. The other task
+    # modules (app.videos, app.triage, ...) get it later through a
+    # LocalProxy. A test module that imports app.atmos at TOP LEVEL runs
+    # that call during pytest collection, before this fixture. That creates a
     # real-config app. It silently points each task function in the
     # suite at production. Import the task modules inside the test
     # functions instead.
