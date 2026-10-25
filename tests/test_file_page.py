@@ -176,3 +176,54 @@ def test_the_page_labels_each_track(app, admin_client):
     page = admin_client.get(f"/file/{file_id}").get_data(as_text=True)
     assert "24-bit 48 kHz" in page
     assert "640 kbps" in page
+
+
+def test_changed_track_languages(app):
+    """A blank box and an unchanged code are no change. A bad value is unresolved."""
+
+    from types import SimpleNamespace
+
+    from app.main.library import changed_track_languages
+
+    audio = [
+        SimpleNamespace(track=1, language="und"),
+        SimpleNamespace(track=2, language="ger"),
+    ]
+    subtitles = [SimpleNamespace(track=3, language="eng")]
+    with app.app_context():
+        changes, unresolved = changed_track_languages(
+            {
+                "language_a1": "eng",
+                "language_a2": "deu",
+                "language_s3": "  ",
+            },
+            audio,
+            subtitles,
+        )
+        assert (changes, unresolved) == ({"a1": "eng"}, [])
+        changes, unresolved = changed_track_languages(
+            {"language_s3": "Klingonese"}, audio, subtitles
+        )
+        assert (changes, unresolved) == ({}, ["Klingonese"])
+
+
+def test_the_track_labels(app):
+    from app.models import FileAudioTrack, FileSubtitleTrack
+
+    lossless = FileAudioTrack(
+        language_name="English",
+        codec="TrueHD",
+        channels="8",
+        compression_mode="Lossless",
+        bit_depth=24,
+        sampling_rate_khz=48,
+    )
+    lossy = FileAudioTrack(
+        language_name="French", codec="AC-3", channels="6", bitrate_kbps=640
+    )
+    bare = FileAudioTrack(language_name="Latin", codec="PCM", channels="2")
+    assert lossless.label == "English: TrueHD 8 (24-bit 48 kHz)"
+    assert lossy.label == "French: AC-3 6 (640 kbps)"
+    assert bare.label == "Latin: PCM 2" and bare.quality_label is None
+    subtitle = FileSubtitleTrack(elements=1200, language_name="English")
+    assert subtitle.label == "1200-element English"

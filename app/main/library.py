@@ -2446,193 +2446,130 @@ def season_restore(series_id, season):
     return redirect(back)
 
 
-@bp.route("/file/<int:file_id>", methods=["GET", "POST"])
-@login_required
-@admin_required
-def file(file_id):
-    """Show the details for a particular video file.
+def _best_file_row(file):
+    """Return the (File, 1) row of the file if it is the best copy of its group, or None.
 
-    This is an admin page (#186 follow-up). All on it (track edits,
-    remux, upload/download, delete) is library management.
-    Thus, the whole page is gated, and not each form."""
-
-    # if request.form:
-    #         forced_subtitle_tracks = []
-    #
-    #     for key in request.form:
-    #         current_app.logger.info(f"{key}: {request.form.getlist(key)}")
-
-    #         if form_field == "forced_subtitles":
-    #             forced_subtitle_tracks.append(form_value)
-
-    #     current_app.logger.info(f"Forced subtitle tracks from the form: {forced_subtitle_tracks}")
-
-    file = File.query.filter_by(id=file_id).first_or_404()
-    title = file.basename
-
-    # When the file is not in the local library, only a restore from AWS or
-    # a delete are useful. The template disables the other forms. Their
-    # submit handlers below refuse stale submissions.
-
-    file_exists_locally = os.path.isfile(
-        os.path.join(current_app.config["LIBRARY_DIR"], file.file_path)
-    )
-
-    # The video file can belong to a movie or to a TV show. Find which one
-    # from its movie_id or series_id. Then get the information of the
-    # related movie or TV series.
+    The rank is movie_file_rank for a movie file and tv_file_rank for an
+    episode file. The template marks the best copy with it."""
 
     if file.movie_id:
-        movie = Movie.query.filter_by(id=int(file.movie_id)).first_or_404()
-        tv = None
         file_rank = ranked_movie_files()
-        best_file = (
-            db.session.query(
-                File,
-                db.case((file_rank.c.rank == 1, 1), else_=0).label("rank"),
-            )
-            .join(file_rank, (file_rank.c.id == File.id))
-            .filter(File.id == file_id)
-            .filter(file_rank.c.rank == 1)
-            .first()
-        )
-
     elif file.series_id:
-        movie = None
-        tv = TVSeries.query.filter_by(id=int(file.series_id)).first_or_404()
         file_rank = ranked_tv_files()
-        best_file = (
-            db.session.query(
-                File,
-                db.case((file_rank.c.rank == 1, 1), else_=0).label("rank"),
-            )
-            .join(file_rank, (file_rank.c.id == File.id))
-            .filter(File.id == file_id)
-            .filter(file_rank.c.rank == 1)
-            .first()
+    else:
+        return None
+    return (
+        db.session.query(
+            File,
+            db.case((file_rank.c.rank == 1, 1), else_=0).label("rank"),
         )
+        .join(file_rank, (file_rank.c.id == File.id))
+        .filter(File.id == file.id)
+        .filter(file_rank.c.rank == 1)
+        .first()
+    )
 
-    # Get the details of each of the audio and subtitle tracks for this file
 
-    audio_tracks = FileAudioTrack.query.filter_by(file_id=file.id).all()
-    subtitle_tracks = FileSubtitleTrack.query.filter_by(file_id=file.id).all()
+def changed_track_languages(posted, audio_tracks, subtitle_tracks):
+    """Return (changes, unresolved) for the language boxes of the file page.
 
-    # The form to scan the metadata of the file again
+    posted maps a box name ("language_a1", "language_s3") to its value.
+    changes maps a track key ("a1", "s3") to the new code of each track
+    whose language changed. unresolved holds the values that are not a
+    language. A blank box is not a change. The comparison uses resolved
+    codes. Thus, a box can still hold a stored ISO 639-2/T spelling
+    ("deu"). That box does not read as a request to rewrite the track to
+    the bibliographic spelling."""
 
-    metadata_scan_form = TrackMetadataScanForm()
+    changes = {}
+    unresolved = []
+    for prefix, tracks in (("a", audio_tracks), ("s", subtitle_tracks)):
+        for track in tracks:
+            submitted = posted.get(f"language_{prefix}{track.track}", "")
+            if not submitted.strip():
+                continue
+            language = resolve_language_code(submitted)
+            if not language:
+                unresolved.append(submitted.strip())
+            elif language != (resolve_language_code(track.language) or track.language):
+                changes[f"{prefix}{track.track}"] = language
+    return changes, unresolved
 
-    if metadata_scan_form.scan_submit.data and metadata_scan_form.validate_on_submit():
-        if not file_exists_locally:
-            flash(f"'{file.basename}' is not present locally.", "warning")
-            return redirect(url_for("main.file", file_id=file.id))
 
-        if track_metadata_scan(file.id):
-            flash(f"Rescanned track metadata for '{file.basename}'", "info")
-        else:
-            flash(
-                f"A different task is processing '{file.basename}'. "
-                f"Try again when it finishes.",
-                "warning",
-            )
-        return redirect(url_for("main.file", file_id=file.id))
+def _propedit_form(audio_tracks, subtitle_tracks):
+    """Return the form of the track flag edits, with the choices of the file.
 
-    # The form to edit the attributes of the file
+    The choices and defaults are strings, because WTForms coerces the
+    submitted values to strings. An int here would fail the "valid
+    choice" validation."""
 
-    mkvpropedit_form = MKVPropEditForm()
-
-    # The choices and defaults are strings, because WTForms coerces the
-    # submitted values to strings. An int here would fail the "valid
-    # choice" validation.
-
-    default_audio_choices = []
-    default_audio_track_number = "1"
-    for audio_track in audio_tracks:
-        if (
-            audio_track.compression_mode == "Lossless"
-            and audio_track.bit_depth
-            and audio_track.sampling_rate_khz
-        ):
-            default_audio_choices.append(
-                (
-                    str(audio_track.track),
-                    f"{audio_track.language_name}: {audio_track.codec} {audio_track.channels} ({audio_track.bit_depth}-bit {audio_track.sampling_rate_khz} khz)",
-                )
-            )
-        elif audio_track.bitrate_kbps:
-            default_audio_choices.append(
-                (
-                    str(audio_track.track),
-                    f"{audio_track.language_name}: {audio_track.codec} {audio_track.channels} ({audio_track.bitrate_kbps} kbps)",
-                )
-            )
-        else:
-            default_audio_choices.append(
-                (
-                    str(audio_track.track),
-                    f"{audio_track.language_name}: {audio_track.codec} {audio_track.channels}",
-                )
-            )
-
-        if audio_track.default == True:
-            default_audio_track_number = str(audio_track.track)
-
+    form = MKVPropEditForm()
     if audio_tracks:
-        mkvpropedit_form.default_audio.choices = default_audio_choices
-        mkvpropedit_form.default_audio.default = default_audio_track_number
-
+        form.default_audio.choices = [
+            (str(track.track), track.label) for track in audio_tracks
+        ]
+        form.default_audio.default = next(
+            (str(track.track) for track in reversed(audio_tracks) if track.default),
+            "1",
+        )
     else:
         # No audio tracks. Remove the field completely. Thus, its empty
         # radio group cannot fail validation and block subtitle-only
         # property edits. The template already does not render it,
         # through {% if audio_tracks %}.
 
-        del mkvpropedit_form.default_audio
+        del form.default_audio
 
-    default_subtitle_choices = [("0", "None")]
-    default_subtitle_track_number = "0"
+    subtitle_choices = [(str(track.track), track.label) for track in subtitle_tracks]
+    form.default_subtitle.choices = [("0", "None")] + subtitle_choices
+    form.default_subtitle.default = next(
+        (str(track.track) for track in reversed(subtitle_tracks) if track.default),
+        "0",
+    )
+    form.forced_subtitles.choices = subtitle_choices
+    form.forced_subtitles.default = [
+        str(track.track) for track in subtitle_tracks if track.forced
+    ]
+    return form
 
-    forced_subtitle_choices = []
-    default_forced_subtitles = []
 
-    for subtitle_track in subtitle_tracks:
-        default_subtitle_choices.append(
-            (
-                str(subtitle_track.track),
-                f"{subtitle_track.elements}-element {subtitle_track.language_name}",
-            )
+def _remux_form(audio_tracks, subtitle_tracks):
+    """Return the form of a remux without some tracks. Each track starts kept."""
+
+    form = MKVMergeForm()
+    form.audio_tracks.choices = [
+        (str(track.track), track.label) for track in audio_tracks
+    ]
+    form.audio_tracks.default = [str(track.track) for track in audio_tracks]
+    form.subtitle_tracks.choices = [
+        (str(track.track), track.label) for track in subtitle_tracks
+    ]
+    form.subtitle_tracks.default = [str(track.track) for track in subtitle_tracks]
+    return form
+
+
+def _scan_file_post(file, form):
+    """Scan the track metadata of the file again."""
+
+    if track_metadata_scan(file.id):
+        flash(f"Rescanned track metadata for '{file.basename}'", "info")
+    else:
+        flash(
+            f"A different task is processing '{file.basename}'. "
+            f"Try again when it finishes.",
+            "warning",
         )
-        if subtitle_track.default == True:
-            default_subtitle_track_number = str(subtitle_track.track)
 
-        forced_subtitle_choices.append(
-            (
-                str(subtitle_track.track),
-                f"{subtitle_track.elements}-element {subtitle_track.language_name}",
-            )
-        )
-        if subtitle_track.forced == True:
-            default_forced_subtitles.append(str(subtitle_track.track))
 
-    mkvpropedit_form.default_subtitle.choices = default_subtitle_choices
-    mkvpropedit_form.default_subtitle.default = default_subtitle_track_number
+def _propedit_post(audio_tracks, subtitle_tracks):
+    """Return the handler of the track flag and language edits of the file."""
 
-    mkvpropedit_form.forced_subtitles.choices = forced_subtitle_choices
-    mkvpropedit_form.forced_subtitles.default = default_forced_subtitles
+    def handler(file, form):
+        # The default_audio field is deleted from the form when the file
+        # has no audio tracks. None tells the task that there is no
+        # default to set.
 
-    if (
-        mkvpropedit_form.mkvpropedit_submit.data
-        and mkvpropedit_form.validate_on_submit()
-    ):
-        if not file_exists_locally:
-            flash(f"'{file.basename}' is not present locally.", "warning")
-            return redirect(url_for("main.file", file_id=file.id))
-
-        # The default_audio field is deleted from the form when the file has
-        # no audio tracks. None tells the task that there is no default to set.
-
-        default_audio_track = (
-            mkvpropedit_form.default_audio.data if audio_tracks else None
-        )
+        default_audio_track = form.default_audio.data if audio_tracks else None
 
         # The per-track language boxes go with the flag edits. Thus, 1
         # mkvpropedit pass and 1 scan cover both. They are rendered by
@@ -2640,28 +2577,9 @@ def file(file_id):
         # subtitle triage checkboxes). Only the tracks whose code changed
         # are sent. An untouched form leaves them as they are.
 
-        track_languages = {}
-        unresolved = []
-        for prefix, tracks in (("a", audio_tracks), ("s", subtitle_tracks)):
-            for track in tracks:
-                submitted = request.form.get(f"language_{prefix}{track.track}", "")
-                if not submitted.strip():
-                    continue
-
-                language = resolve_language_code(submitted)
-                if not language:
-                    unresolved.append(submitted.strip())
-
-                # The comparison uses resolved codes. Thus, a box can
-                # still hold a stored ISO 639-2/T spelling ("deu"). That
-                # box does not read as a request to rewrite the track to
-                # the bibliographic spelling.
-
-                elif language != (
-                    resolve_language_code(track.language) or track.language
-                ):
-                    track_languages[f"{prefix}{track.track}"] = language
-
+        track_languages, unresolved = changed_track_languages(
+            request.form, audio_tracks, subtitle_tracks
+        )
         if unresolved:
             flash(
                 f"Unrecognized language "
@@ -2670,162 +2588,80 @@ def file(file_id):
                 f"No properties were changed.",
                 "danger",
             )
-            return redirect(url_for("main.file", file_id=file.id))
+            return None
 
         current_app.logger.debug(f"Default audio: {default_audio_track}")
-        current_app.logger.debug(
-            f"Default subtitle: {mkvpropedit_form.default_subtitle.data}"
-        )
-        current_app.logger.debug(
-            f"Forced subtitles: {mkvpropedit_form.forced_subtitles.data}"
-        )
+        current_app.logger.debug(f"Default subtitle: {form.default_subtitle.data}")
+        current_app.logger.debug(f"Forced subtitles: {form.forced_subtitles.data}")
 
-        if file.container == "Matroska":
-            mkvpropedit_job = enqueue_task(
-                "app.videos.mkvpropedit_task",
-                file.id,
-                default_audio_track,
-                mkvpropedit_form.default_subtitle.data,
-                mkvpropedit_form.forced_subtitles.data,
-                track_languages or None,
-                description=f"'{file.basename}'",
-            )
-            if mkvpropedit_job:
-                current_app.logger.info(
-                    f"Queued '{file.basename}' for MKV property edits"
-                )
-
-            flash(f"Updating MKV properties for '{file.basename}'", "info")
-
-        else:
+        if file.container != "Matroska":
             flash(
                 f"Unable to update MKV properties for '{file.basename}' because it is not an MKV file!",
                 "danger",
             )
-
-        return redirect(url_for("main.file", file_id=file.id))
-
-    mkvpropedit_form.process()
-
-    # The form to remux the file without some tracks
-
-    mkvmerge_form = MKVMergeForm()
-
-    audio_track_choices = []
-    default_audio_tracks = []
-
-    subtitle_track_choices = []
-    default_subtitle_tracks = []
-
-    for audio_track in audio_tracks:
-        if (
-            audio_track.compression_mode == "Lossless"
-            and audio_track.bit_depth
-            and audio_track.sampling_rate_khz
-        ):
-            audio_track_choices.append(
-                (
-                    str(audio_track.track),
-                    f"{audio_track.language_name}: {audio_track.codec} {audio_track.channels} ({audio_track.bit_depth}-bit {audio_track.sampling_rate_khz} khz)",
-                )
-            )
-        elif audio_track.bitrate_kbps:
-            audio_track_choices.append(
-                (
-                    str(audio_track.track),
-                    f"{audio_track.language_name}: {audio_track.codec} {audio_track.channels} ({audio_track.bitrate_kbps} kbps)",
-                )
-            )
-        else:
-            audio_track_choices.append(
-                (
-                    str(audio_track.track),
-                    f"{audio_track.language_name}: {audio_track.codec} {audio_track.channels}",
-                )
-            )
-        default_audio_tracks.append(str(audio_track.track))
-
-    for subtitle_track in subtitle_tracks:
-        subtitle_track_choices.append(
-            (
-                str(subtitle_track.track),
-                f"{subtitle_track.elements}-element {subtitle_track.language_name}",
-            )
-        )
-        default_subtitle_tracks.append(str(subtitle_track.track))
-
-    mkvmerge_form.audio_tracks.choices = audio_track_choices
-    mkvmerge_form.audio_tracks.default = default_audio_tracks
-
-    mkvmerge_form.subtitle_tracks.choices = subtitle_track_choices
-    mkvmerge_form.subtitle_tracks.default = default_subtitle_tracks
-
-    if mkvmerge_form.mkvmerge_submit.data and mkvmerge_form.validate_on_submit():
-        if not file_exists_locally:
-            flash(f"'{file.basename}' is not present locally.", "warning")
-            return redirect(url_for("main.file", file_id=file.id))
-
-        current_app.logger.info(f"Audio tracks: {mkvmerge_form.audio_tracks.data}")
-        current_app.logger.info(
-            f"Subtitle tracks: {mkvmerge_form.subtitle_tracks.data}"
-        )
-
-        if file.container == "Matroska":
-            mkvmerge_job = enqueue_task(
-                "app.videos.mkvmerge_task",
-                file.id,
-                mkvmerge_form.audio_tracks.data,
-                mkvmerge_form.subtitle_tracks.data,
-                description=f"'{file.basename}'",
-                at_front=True,
-            )
-            if mkvmerge_job:
-                current_app.logger.info(f"Queued '{file.basename}' for MKV remuxing")
-            flash(f"Remuxing MKV file '{file.basename}'", "info")
-
-        else:
-            flash(
-                f"Unable to remux '{file.basename}' because it is not an MKV file!",
-                "danger",
-            )
-
-        return redirect(url_for("main.file", file_id=file.id))
-
-    mkvmerge_form.process()
-
-    # The form to request an upload of this file to AWS S3 storage
-
-    upload_form = S3UploadForm()
-    if upload_form.s3_upload_submit.data and upload_form.validate_on_submit():
-        if not file_exists_locally:
-            flash(f"'{file.basename}' is not present locally.", "warning")
-            return redirect(url_for("main.file", file_id=file.id))
-
-        # Enqueue an upload task for this file
-
-        enqueue_task(
-            "app.videos.upload_task",
+            return None
+        mkvpropedit_job = enqueue_task(
+            "app.videos.mkvpropedit_task",
             file.id,
+            default_audio_track,
+            form.default_subtitle.data,
+            form.forced_subtitles.data,
+            track_languages or None,
             description=f"'{file.basename}'",
-            at_front=True,
         )
-        flash(f"Uploading '{file.basename}' to AWS S3 storage", "info")
-        return redirect(url_for("main.file", file_id=file.id))
+        if mkvpropedit_job:
+            current_app.logger.info(f"Queued '{file.basename}' for MKV property edits")
+        flash(f"Updating MKV properties for '{file.basename}'", "info")
 
-    file_restore_estimate = restore_cost_estimate([file] if file.aws_key else [])
+    return handler
 
-    download_form = S3DownloadForm()
-    if download_form.s3_download_submit.data and download_form.validate_on_submit():
-        if not current_user.check_password(download_form.password.data):
+
+def _remux_post(file, form):
+    """Queue a remux of the file with the kept tracks."""
+
+    current_app.logger.info(f"Audio tracks: {form.audio_tracks.data}")
+    current_app.logger.info(f"Subtitle tracks: {form.subtitle_tracks.data}")
+    if file.container != "Matroska":
+        flash(
+            f"Unable to remux '{file.basename}' because it is not an MKV file!",
+            "danger",
+        )
+        return
+    mkvmerge_job = enqueue_task(
+        "app.videos.mkvmerge_task",
+        file.id,
+        form.audio_tracks.data,
+        form.subtitle_tracks.data,
+        description=f"'{file.basename}'",
+        at_front=True,
+    )
+    if mkvmerge_job:
+        current_app.logger.info(f"Queued '{file.basename}' for MKV remuxing")
+    flash(f"Remuxing MKV file '{file.basename}'", "info")
+
+
+def _upload_post(file, form):
+    """Queue an upload of the file to AWS S3 storage."""
+
+    enqueue_task(
+        "app.videos.upload_task",
+        file.id,
+        description=f"'{file.basename}'",
+        at_front=True,
+    )
+    flash(f"Uploading '{file.basename}' to AWS S3 storage", "info")
+
+
+def _restore_post(estimate):
+    """Return the handler of a Glacier restore of the file at the estimated cost."""
+
+    def handler(file, form):
+        if not current_user.check_password(form.password.data):
             flash("Incorrect password provided!", "danger")
-            return redirect(url_for("main.file", file_id=file.id))
-
+            return
         if not file.restore_key:
             flash(f"'{file.basename}' has no archive in AWS to restore.", "warning")
-            return redirect(url_for("main.file", file_id=file.id))
-
-        # Enqueue a restore task for this file
-
+            return
         enqueue_task(
             "app.videos.aws_restore",
             file.restore_key,
@@ -2833,63 +2669,143 @@ def file(file_id):
         )
         flash(
             f"Requesting '{file.untouched_basename}' to be restored from AWS "
-            f"Glacier (≈ ${file_restore_estimate['cost']:.2f})",
+            f"Glacier (≈ ${estimate['cost']:.2f})",
             "info",
         )
-        return redirect(url_for("main.file", file_id=file.id))
 
-    # The form to delete and purge the file from the database
+    return handler
 
+
+def _delete_file_post(file, form):
+    """Delete the file and its record. Return the page to go to next."""
+
+    aws_key = file.aws_key
+    leftover_dir = os.path.join(current_app.config["LIBRARY_DIR"], file.dirname)
+
+    try:
+        file.delete_local_file(delete_directory_tree=True)
+        db.session.delete(file)
+        db.session.commit()
+
+    except Exception:
+        db.session.rollback()
+        flash(f"Unable to delete '{file.basename}'!", "danger")
+        return None
+
+    # Delete the AWS copy only after the database delete is committed.
+    # Thus, a failed commit cannot leave a database record whose backup is
+    # gone.
+
+    if aws_key and not untouched_key_still_claimed(aws_key):
+        enqueue_task(
+            "app.videos.aws_delete",
+            aws_key,
+            # A delete from a page uses the request workers. The handoff
+            # queue can hold long library copies.
+            queue="request",
+        )
+
+    # Clear the folder if only placed poster art and OS metadata
+    # remain. A delete of the last file of a movie used to leave its
+    # poster.jpg husk for the weekly sweep.
+
+    from app.maintenance import clear_leftover_directory
+
+    clear_leftover_directory(leftover_dir)
+
+    flash(f"Deleted '{file.basename}' and removed from database.", "success")
+
+    if file.movie_id:
+        return redirect(url_for("main.movie_files", movie_id=file.movie_id))
+
+    # Season 0 holds the specials. It is a real season page.
+
+    if file.series_id and file.season is not None:
+        return redirect(
+            url_for("main.season", series_id=file.series_id, season=file.season)
+        )
+    return redirect(url_for("main.index"))
+
+
+@bp.route("/file/<int:file_id>", methods=["GET", "POST"])
+@login_required
+@admin_required
+def file(file_id):
+    """Show the details for a particular video file.
+
+    This is an admin page (#186 follow-up). All on it (track edits,
+    remux, upload/download, delete) is library management.
+    Thus, the whole page is gated, and not each form.
+
+    Each form of the page has a handler. A valid post of a form runs its
+    handler. Then the page shows again, unless the handler gives another
+    page. A form with needs_local_file refuses a file that is not in the
+    local library. Only a restore from AWS or a delete are useful then.
+    The template disables the other forms."""
+
+    file = File.query.filter_by(id=file_id).first_or_404()
+    file_exists_locally = os.path.isfile(
+        os.path.join(current_app.config["LIBRARY_DIR"], file.file_path)
+    )
+
+    # The video file can belong to a movie or to a TV show.
+
+    movie = (
+        Movie.query.filter_by(id=int(file.movie_id)).first_or_404()
+        if file.movie_id
+        else None
+    )
+    tv = (
+        TVSeries.query.filter_by(id=int(file.series_id)).first_or_404()
+        if file.series_id and not file.movie_id
+        else None
+    )
+    best_file = _best_file_row(file)
+
+    audio_tracks = FileAudioTrack.query.filter_by(file_id=file.id).all()
+    subtitle_tracks = FileSubtitleTrack.query.filter_by(file_id=file.id).all()
+
+    metadata_scan_form = TrackMetadataScanForm()
+    mkvpropedit_form = _propedit_form(audio_tracks, subtitle_tracks)
+    mkvmerge_form = _remux_form(audio_tracks, subtitle_tracks)
+    upload_form = S3UploadForm()
+    file_restore_estimate = restore_cost_estimate([file] if file.aws_key else [])
+    download_form = S3DownloadForm()
     delete_form = FileDeleteForm()
-    if delete_form.delete_submit.data and delete_form.validate_on_submit():
-        aws_key = file.aws_key
-        leftover_dir = os.path.join(current_app.config["LIBRARY_DIR"], file.dirname)
 
-        try:
-            file.delete_local_file(delete_directory_tree=True)
-            db.session.delete(file)
-            db.session.commit()
+    # (form, submit field, handler, needs_local_file)
 
-        except Exception:
-            db.session.rollback()
-            flash(f"Unable to delete '{file.basename}'!", "danger")
-            return redirect(url_for("main.file", file_id=file.id))
-
-        # Delete the AWS copy only after the database delete is committed.
-        # Thus, a failed commit cannot leave a database record whose backup is
-        # gone.
-
-        if aws_key and not untouched_key_still_claimed(aws_key):
-            enqueue_task(
-                "app.videos.aws_delete",
-                aws_key,
-                # A delete from a page uses the request workers. The handoff
-                # queue can hold long library copies.
-                queue="request",
+    handlers = (
+        (metadata_scan_form, metadata_scan_form.scan_submit, _scan_file_post, True),
+        (
+            mkvpropedit_form,
+            mkvpropedit_form.mkvpropedit_submit,
+            _propedit_post(audio_tracks, subtitle_tracks),
+            True,
+        ),
+        (mkvmerge_form, mkvmerge_form.mkvmerge_submit, _remux_post, True),
+        (upload_form, upload_form.s3_upload_submit, _upload_post, True),
+        (
+            download_form,
+            download_form.s3_download_submit,
+            _restore_post(file_restore_estimate),
+            False,
+        ),
+        (delete_form, delete_form.delete_submit, _delete_file_post, False),
+    )
+    for form, submit, handler, needs_local_file in handlers:
+        if submit.data and form.validate_on_submit():
+            if needs_local_file and not file_exists_locally:
+                flash(f"'{file.basename}' is not present locally.", "warning")
+                return redirect(url_for("main.file", file_id=file.id))
+            return handler(file, form) or redirect(
+                url_for("main.file", file_id=file.id)
             )
 
-        # Clear the folder if only placed poster art and OS metadata
-        # remain. A delete of the last file of a movie used to leave its
-        # poster.jpg husk for the weekly sweep.
+    # A form that was not posted shows its defaults.
 
-        from app.maintenance import clear_leftover_directory
-
-        clear_leftover_directory(leftover_dir)
-
-        flash(f"Deleted '{file.basename}' and removed from database.", "success")
-
-        if file.movie_id:
-            return redirect(url_for("main.movie_files", movie_id=file.movie_id))
-
-        # Season 0 holds the specials. It is a real season page.
-
-        elif file.series_id and file.season is not None:
-            return redirect(
-                url_for("main.season", series_id=file.series_id, season=file.season)
-            )
-
-        else:
-            return redirect(url_for("main.index"))
+    mkvpropedit_form.process()
+    mkvmerge_form.process()
 
     # The per-file triage link exists only while this file has pending
     # possibly-forced tracks (and only admins can act on them). The
@@ -2913,7 +2829,7 @@ def file(file_id):
     return render_template(
         "file.html",
         file=file,
-        title=title,
+        title=file.basename,
         movie=movie,
         tv=tv,
         audio_tracks=audio_tracks,

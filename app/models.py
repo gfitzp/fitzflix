@@ -1219,6 +1219,31 @@ class FileAudioTrack(db.Model):
 
     __table_args__ = (db.UniqueConstraint("file_id", "track"),)
 
+    @property
+    def quality_label(self):
+        """Return the quality of the track as text, or None if it is unknown.
+
+        A lossless track with a known depth and rate reads "24-bit 48 kHz".
+        Another track with a known bitrate reads "640 kbps"."""
+
+        if (
+            self.compression_mode == "Lossless"
+            and self.bit_depth
+            and self.sampling_rate_khz
+        ):
+            return f"{self.bit_depth}-bit {self.sampling_rate_khz} kHz"
+        if self.bitrate_kbps:
+            return f"{self.bitrate_kbps} kbps"
+        return None
+
+    @property
+    def label(self):
+        """Return the label of the track in a choice list of the file page."""
+
+        label = f"{self.language_name}: {self.codec} {self.channels}"
+        quality = self.quality_label
+        return f"{label} ({quality})" if quality else label
+
     def __repr__(self):
         return f"<FileAudioTrack '{self.file_id}:{self.track}:{self.language}'>"
 
@@ -1238,6 +1263,12 @@ class FileSubtitleTrack(db.Model):
     language_name = db.Column(db.String(64), nullable=False)
 
     __table_args__ = (db.UniqueConstraint("file_id", "track"),)
+
+    @property
+    def label(self):
+        """Return the label of the track in a choice list of the file page."""
+
+        return f"{self.elements}-element {self.language_name}"
 
     def __repr__(self):
         return f"<FileSubtitleTrack '{self.file_id}:{self.track}:{self.language}:{self.forced}'>"

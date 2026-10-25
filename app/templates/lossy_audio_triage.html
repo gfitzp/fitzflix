@@ -69,13 +69,7 @@
 						<td>{{ track.codec }}</td>
 						<td>{{ track.channels }}</td>
 						<td>
-							{% if track.compression_mode == "Lossless" and track.bit_depth and track.sampling_rate_khz %}
-								{{ track.bit_depth }}-bit {{ track.sampling_rate_khz }} kHz
-							{% elif track.bitrate_kbps %}
-								{{ track.bitrate_kbps }} kbps
-							{% else %}
-								&mdash;
-							{% endif %}
+							{% if track.quality_label %}{{ track.quality_label }}{% else %}&mdash;{% endif %}
 						</td>
 						<td>{% if track.track == 1 and track.compression_mode != "Lossless" %}<span class="badge text-bg-warning">Lossy lead</span>{% elif track.compression_mode == "Lossless" %}<span class="badge text-bg-info">Lossless</span>{% endif %}</td>
 					</tr>
