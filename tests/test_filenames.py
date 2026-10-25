@@ -684,3 +684,231 @@ def test_a_yearless_tagged_name_waits_out_a_tmdb_outage(app, monkeypatch):
         details = evaluate_filename("Unseen Film {tmdb-999123} - [DVD].mkv", log=False)
         assert not details
         assert details.reason == importing.TMDB_UNREACHABLE
+
+
+# The pins of the evaluate_filename branches that the split moves
+# (tranche 3). Each pin passed against the old function. The full dict,
+# with its key order, is the contract: the import log prints it.
+
+FULL_DETAIL_CASES = [
+    (
+        "Jaws (1975) - [Bluray-1080p].mkv",
+        {
+            "media_library": "Movies",
+            "file_path": "Movies/Jaws (1975)/Jaws (1975) - [Bluray-1080p].mkv",
+            "dirname": "Movies/Jaws (1975)",
+            "basename": "Jaws (1975) - [Bluray-1080p].mkv",
+            "plex_title": "Jaws (1975)",
+            "title": "Jaws",
+            "year": 1975,
+            "tmdb_id": None,
+            "feature_type_name": None,
+            "edition": None,
+            "quality_title": "Bluray-1080p",
+            "fullscreen": None,
+            "extension": "mkv",
+        },
+    ),
+    (
+        "Blade Runner (1982) {edition-Final Cut} - Fullscreen - Alternate Cut [DVD].mkv",
+        {
+            "media_library": "Movies",
+            "file_path": "Movies/Blade Runner (1982) {edition-Final Cut}/"
+            "Blade Runner (1982) {edition-Final Cut} - Alternate Cut - Full Screen [DVD].mkv",
+            "dirname": "Movies/Blade Runner (1982) {edition-Final Cut}",
+            "basename": "Blade Runner (1982) {edition-Final Cut} - Alternate Cut - "
+            "Full Screen [DVD].mkv",
+            "plex_title": "Blade Runner (1982) {edition-Final Cut} - Alternate Cut",
+            "title": "Blade Runner",
+            "year": 1982,
+            "tmdb_id": None,
+            "feature_type_name": None,
+            "edition": "Alternate Cut",
+            "quality_title": "DVD",
+            "fullscreen": True,
+            "extension": "mkv",
+        },
+    ),
+    (
+        "Jaws (1975) {edition-Special} - Featurettes - From the Set [DVD].mkv",
+        {
+            "media_library": "Movies",
+            "file_path": "Movies/Jaws (1975) {edition-Special}/Featurettes/From the Set.mkv",
+            "dirname": "Movies/Jaws (1975) {edition-Special}/Featurettes",
+            "basename": "From the Set.mkv",
+            "plex_title": "From the Set",
+            "title": "Jaws",
+            "year": 1975,
+            "tmdb_id": None,
+            "feature_type_name": "Featurettes",
+            "edition": "Special",
+            "quality_title": "DVD",
+            "fullscreen": None,
+            "extension": "mkv",
+        },
+    ),
+    (
+        "Friends - S01E01 - Fullscreen - Uncut [DVD].mkv",
+        {
+            "media_library": "TV Shows",
+            "file_path": "TV Shows/Friends/Season 01/"
+            "Friends - S01E01 - Uncut - Full Screen [DVD].mkv",
+            "dirname": "TV Shows/Friends/Season 01",
+            "basename": "Friends - S01E01 - Uncut - Full Screen [DVD].mkv",
+            "plex_title": "Friends - S01E01 - Uncut - Full Screen",
+            "title": "Friends",
+            "tmdb_id": None,
+            "season": 1,
+            "episode": 1,
+            "last_episode": 1,
+            "edition": "Uncut - Full Screen",
+            "quality_title": "DVD",
+            "fullscreen": True,
+            "extension": "mkv",
+        },
+    ),
+    (
+        "Agents of S.H.I.E.L.D. - S02E03-E04 - Pilot [WEBDL-1080p].mkv",
+        {
+            "media_library": "TV Shows",
+            "file_path": "TV Shows/Agents of S.H.I.E.L.D/Season 02/"
+            "Agents of S.H.I.E.L.D. - S02E03-E04 - Pilot [WEBDL-1080p].mkv",
+            "dirname": "TV Shows/Agents of S.H.I.E.L.D/Season 02",
+            "basename": "Agents of S.H.I.E.L.D. - S02E03-E04 - Pilot [WEBDL-1080p].mkv",
+            "plex_title": "Agents of S.H.I.E.L.D. - S02E03-E04 - Pilot",
+            "title": "Agents of S.H.I.E.L.D.",
+            "tmdb_id": None,
+            "season": 2,
+            "episode": 3,
+            "last_episode": 4,
+            "edition": "Pilot",
+            "quality_title": "WEBDL-1080p",
+            "fullscreen": None,
+            "extension": "mkv",
+        },
+    ),
+    (
+        "Fargo {tmdb-60622} - S01E01 - [DVD].mkv",
+        {
+            "media_library": "TV Shows",
+            "file_path": "TV Shows/Fargo {tmdb-60622}/Season 01/Fargo - S01E01 - [DVD].mkv",
+            "dirname": "TV Shows/Fargo {tmdb-60622}/Season 01",
+            "basename": "Fargo - S01E01 - [DVD].mkv",
+            "plex_title": "Fargo - S01E01",
+            "title": "Fargo",
+            "tmdb_id": 60622,
+            "season": 1,
+            "episode": 1,
+            "last_episode": 1,
+            "edition": None,
+            "quality_title": "DVD",
+            "fullscreen": None,
+            "extension": "mkv",
+        },
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    "filename,expected", FULL_DETAIL_CASES, ids=[c[0] for c in FULL_DETAIL_CASES]
+)
+def test_full_details_and_their_order(app, filename, expected):
+    with app.app_context():
+        details = evaluate_filename(filename, log=False)
+    assert details == expected
+    assert list(details) == list(expected)
+
+
+class _Answer:
+    """A TMDB response with a fixed JSON body."""
+
+    status_code = 200
+
+    def __init__(self, body):
+        self.body = body
+
+    def json(self):
+        return self.body
+
+    def raise_for_status(self):
+        pass
+
+
+def test_a_title_search_names_the_film_as_tmdb_does(app, monkeypatch):
+    """The search result gives the title and the year of a film with no record."""
+
+    import app.importing as importing
+
+    calls = []
+
+    def answer(url, params=None):
+        calls.append((url.rsplit("/", 2)[-2:], dict(params)))
+        return _Answer(
+            {
+                "results": [
+                    {
+                        "id": 1234,
+                        "title": "Duck, You Sucker",
+                        "release_date": "1972-06-29",
+                    }
+                ]
+            }
+        )
+
+    monkeypatch.setattr(importing, "tmdb_get", answer)
+    with app.app_context():
+        details = evaluate_filename(
+            "A Fistful of Dynamite (1971) - [DVD].mkv", log=False
+        )
+    assert calls[0][0] == ["search", "movie"]
+    assert calls[0][1]["query"] == "A Fistful of Dynamite"
+    assert calls[0][1]["primary_release_year"] == 1971
+    assert details["title"] == "Duck, You Sucker"
+    assert details["year"] == 1972
+    assert details["tmdb_id"] is None
+    assert details["file_path"] == (
+        "Movies/Duck, You Sucker (1972)/Duck, You Sucker (1972) - [DVD].mkv"
+    )
+
+
+def test_a_tmdb_tag_with_no_record_reads_the_movie_object(app, monkeypatch):
+    """A tag that no record owns fetches /movie/<id> and keeps the tag."""
+
+    import app.importing as importing
+
+    calls = []
+
+    def answer(url, params=None):
+        calls.append(url.rsplit("/", 2)[-2:])
+        return _Answer(
+            {"id": 556574, "title": "Hamilton", "release_date": "2020-07-03"}
+        )
+
+    monkeypatch.setattr(importing, "tmdb_get", answer)
+    with app.app_context():
+        details = evaluate_filename("Hamilton {tmdb-556574} - [DVD].mkv", log=False)
+    assert calls == [["movie", "556574"]]
+    assert details["year"] == 2020
+    assert details["tmdb_id"] == 556574
+    assert details["dirname"] == "Movies/Hamilton (2020) {tmdb-556574}"
+
+
+def test_an_explicit_tmdb_id_outranks_the_tag(app, monkeypatch):
+    """The TMDb-refresh rename passes tmdb_id. It wins over the tag of the name."""
+
+    import app.importing as importing
+    from tests.factories import make_movie
+
+    monkeypatch.setattr(
+        importing,
+        "tmdb_get",
+        lambda *args, **kwargs: pytest.fail("the record owns the id"),
+    )
+    with app.app_context():
+        make_movie("Ran", 1985, tmdb_id=11645)
+        details = evaluate_filename(
+            "Run (1985) {tmdb-99} - [DVD].mkv", tmdb_id=11645, log=False
+        )
+    assert details["title"] == "Ran"
+    assert details["tmdb_id"] == 11645
+    assert details["dirname"] == "Movies/Ran (1985) {tmdb-11645}"
