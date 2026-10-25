@@ -2,6 +2,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 
 from datetime import datetime
 from time import time
@@ -641,13 +642,13 @@ class Movie(db.Model, TMDBMixin):
         title is known. Without a TMDB title, the local title and year
         show."""
 
-        title = self.tmdb_title or self.title
-        year = (
-            self.tmdb_release_date.strftime("%Y")
-            if self.tmdb_title and self.tmdb_release_date
-            else self.year
-        )
-        return f"{title} ({year})"
+        return f"{self.tmdb_title or self.title} ({self.display_year})"
+
+    @property
+    def display_year(self):
+        """Return the year that the site shows for the film (display_year_of)."""
+
+        return display_year_of(self.year, self.tmdb_title, self.tmdb_release_date)
 
     @property
     def us_certification(self):
@@ -844,6 +845,12 @@ class TVSeries(db.Model, TMDBMixin):
         """Return the site-wide display form: the TMDB name if known."""
 
         return self.tmdb_name or self.title
+
+    @property
+    def display_year(self):
+        """Return the year of the first TMDB air date of the series, or None."""
+
+        return self.tmdb_first_air_date.year if self.tmdb_first_air_date else None
 
     def __repr__(self):
         return f"<TVSeries '{self.title}'>"
@@ -1753,6 +1760,25 @@ class DVRChannel(db.Model):
 
     def __repr__(self):
         return f"<DVRChannel {self.number} '{self.name}'>"
+
+
+def display_year_of(year, tmdb_title, tmdb_release_date):
+    """Return the year that the site shows for a film.
+
+    This is the TMDB release year if the TMDB title rules. In all other
+    cases, it is the local year. Movie.display_year and the column rows
+    of the frame game use this rule."""
+
+    return tmdb_release_date.year if tmdb_title and tmdb_release_date else year
+
+
+def sort_title(text):
+    """Return a title without its leading "The", "A", or "An", for a Python sort.
+
+    This is the rule of title_sort for a title in Python. The article
+    test ignores the case."""
+
+    return re.sub(r"^(The|A|An)\s+", "", text or "", flags=re.IGNORECASE)
 
 
 def title_sort(model, tmdb=True):

@@ -406,3 +406,74 @@ def test_an_unknown_film_post_keeps_the_filters_of_the_list(app, admin_client):
     location = response.headers["Location"]
     for part in ("library=criterion", "media=digital", "q=jaws", "page=2"):
         assert part in location, part
+
+
+def test_quality_range_falls_back_and_collapses(app):
+    """An unknown bound takes its fallback. An inverted range collapses (#306)."""
+
+    from app.file_ranking import quality_id
+    from app.main.shopping import quality_range
+
+    with app.app_context():
+        dvd, bluray = quality_id("DVD"), quality_id("Bluray-1080p")
+        movie = quality_range("x", "999999", "Not in library", "Bluray-1080p", "min")
+        assert (movie.min_title, movie.max_title) == ("Not in library", "Bluray-1080p")
+        assert (movie.bottom, movie.top) == (0, 21)
+        inverted = quality_range(bluray, dvd, "Unknown", "Bluray-1080p", "min")
+        assert (inverted.min_id, inverted.max_id) == (bluray, bluray)
+        inverted = quality_range(bluray, dvd, "Unknown", "Bluray-1080p", "max")
+        assert (inverted.min_id, inverted.max_id) == (dvd, dvd)
+        assert inverted.min_preference == inverted.max_preference == 9
+
+
+def test_shopping_heading_reads_the_filters(app):
+    from app.main.shopping import QualityRange, shopping_heading
+
+    def qualities(low, high, low_title, high_title):
+        return QualityRange(1, 2, low, high, low_title, high_title, 0, 21)
+
+    full = qualities(0, 21, "Not in library", "Bluray-2160p Remux")
+    assert shopping_heading(full, None, None) == "Movies to upgrade"
+    assert shopping_heading(full, "criterion", None) == (
+        "Criterion Collection movies to upgrade"
+    )
+    assert shopping_heading(full, None, "digital") == (
+        "Digital downloads to get as physical media"
+    )
+    assert shopping_heading(
+        qualities(0, 0, "Not in library", "Not in library"), None, None
+    ) == ("Movies to upgrade that have been liked but aren't in the library")
+    assert shopping_heading(qualities(9, 9, "DVD", "DVD"), None, None) == (
+        "Movies to upgrade (DVD quality)"
+    )
+    assert shopping_heading(qualities(9, 18, "DVD", "Bluray-1080p"), None, None) == (
+        "Movies to upgrade (between DVD and Bluray-1080p quality)"
+    )
+    assert shopping_heading(
+        qualities(0, 18, "Not in library", "Bluray-1080p"), None, None
+    ) == ("Movies to upgrade (Bluray-1080p quality and below)")
+    assert shopping_heading(
+        qualities(9, 21, "DVD", "Bluray-2160p Remux"), None, None
+    ) == ("Movies to upgrade (DVD quality and above)")
+
+
+def test_sort_title_and_display_year(app):
+    from datetime import date
+
+    from app.models import Movie, TVSeries, display_year_of, sort_title
+
+    assert sort_title("The Third Man") == "Third Man"
+    assert sort_title("an American Werewolf") == "American Werewolf"
+    assert sort_title("Them!") == "Them!"
+    assert sort_title(None) == ""
+    assert display_year_of(1950, "Rashomon", date(1951, 12, 26)) == 1951
+    assert display_year_of(1950, None, date(1951, 12, 26)) == 1950
+    film = Movie(title="Rashomon", year=1950, tmdb_title="Rashomon")
+    assert film.display_year == 1950
+    film.tmdb_release_date = date(1951, 12, 26)
+    assert film.display_year == 1951 and film.display_title == "Rashomon (1951)"
+    assert TVSeries(title="Columbo").display_year is None
+    assert (
+        TVSeries(title="Columbo", tmdb_first_air_date=date(1971, 9, 15)).display_year
+        == 1971
+    )

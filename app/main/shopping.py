@@ -5,6 +5,7 @@ with exclusions and store links."""
 
 import re
 
+from collections import namedtuple
 
 from flask import (
     current_app,
@@ -34,6 +35,7 @@ from app.models import (
     UserMovieReview,
     UserWatchlist,
     ranked_movie_files,
+    sort_title,
     title_sort,
 )
 from app.streaming import (
@@ -46,6 +48,7 @@ from app.main import bp
 from app.main.helpers import decimal_id
 from app.file_ranking import (
     lowest_physical_preference,
+    quality_anchors,
     quality_id,
     quality_preference,
 )
@@ -64,6 +67,119 @@ WATCHLIST_GROUPS = (
     ("rent", "Available to rent"),
     ("streaming", "Streaming on subscribed services"),
 )
+
+
+# A film with a Criterion release: a spine number or a set title.
+
+HAS_CRITERION_RELEASE = db.or_(
+    Movie.criterion_spine_number != None,
+    Movie.criterion_set_title != None,
+)
+
+# A film that the shopping list does not exclude.
+
+NOT_EXCLUDED = db.or_(
+    Movie.shopping_list_exclude == False,
+    Movie.shopping_list_exclude == None,
+)
+
+# A Criterion film whose disc is not owned.
+
+DISC_NOT_OWNED = db.or_(
+    Movie.criterion_disc_owned == False,
+    Movie.criterion_disc_owned == None,
+)
+
+# The title order of the search views of the movie shopping list.
+
+TITLE_ORDER = (
+    title_sort(Movie, tmdb=False).asc(),
+    Movie.year.asc(),
+    File.edition.asc(),
+    RefQuality.preference.asc(),
+    File.date_added.asc(),
+)
+
+# The quality bounds of a shopping list, after the fallbacks and the
+# collapse. bottom and top are the preferences of the ends of the scale.
+
+QualityRange = namedtuple(
+    "QualityRange",
+    "min_id max_id min_preference max_preference min_title max_title bottom top",
+)
+
+
+def quality_range(min_arg, max_arg, min_fallback, max_fallback, collapse):
+    """Return the QualityRange of the 2 quality bounds of a shopping list.
+
+    A bound is a quality id from the query string. A value that is not a
+    number, or the id of no quality, takes the quality title of its
+    fallback (#306). If the minimum outranks the maximum, the range
+    collapses to 1 quality. collapse "min" keeps the minimum (the movie
+    list). collapse "max" keeps the maximum (the TV list). The test
+    compares preferences, because the quality ids do not always follow
+    the quality order."""
+
+    tiers = {tier.id: (title, tier) for title, tier in quality_anchors().items()}
+
+    def bound(value, fallback):
+        """Return the quality id of 1 bound."""
+
+        text = str(value)
+        tier_id = int(text) if text.isdecimal() else None
+        return tier_id if tier_id in tiers else quality_id(fallback)
+
+    min_id = bound(min_arg, min_fallback)
+    max_id = bound(max_arg, max_fallback)
+    if tiers[min_id][1].preference > tiers[max_id][1].preference:
+        if collapse == "min":
+            max_id = min_id
+        else:
+            min_id = max_id
+    return QualityRange(
+        min_id,
+        max_id,
+        tiers[min_id][1].preference,
+        tiers[max_id][1].preference,
+        tiers[min_id][0],
+        tiers[max_id][0],
+        quality_preference("Not in library"),
+        quality_preference("Bluray-2160p Remux"),
+    )
+
+
+def shopping_heading(qualities, library, media):
+    """Return the heading of the movie shopping list from its filters.
+
+    qualities is the QualityRange of the list. The heading never comes
+    from the query string. With the old ?title= parameter, a crafted URL
+    could put any text in the heading. The search views replace it with
+    their own titles."""
+
+    if library == "criterion":
+        title = "Criterion Collection movies to upgrade"
+    elif media == "digital":
+        title = "Digital downloads to get as physical media"
+    else:
+        title = "Movies to upgrade"
+
+    low, high = qualities.min_preference, qualities.max_preference
+    if qualities.min_title == qualities.max_title:
+        # Equal titles mean equal preferences. Thus, a test of 1 bound is
+        # sufficient.
+        if low == qualities.bottom:
+            return f"{title} that have been liked but aren't in the library"
+        return f"{title} ({qualities.min_title} quality)"
+    if low > qualities.bottom and high < qualities.top:
+        return (
+            f"{title} (between {qualities.min_title} and "
+            f"{qualities.max_title} quality)"
+        )
+    if high < qualities.top:
+        return f"{title} ({qualities.max_title} quality and below)"
+    if low > qualities.bottom:
+        return f"{title} ({qualities.min_title} quality and above)"
+    return title
 
 
 def _watcher_name(user):
@@ -91,12 +207,7 @@ def watchlist_shopping_groups():
         .join(User, User.id == UserWatchlist.user_id)
         .join(Movie, Movie.id == UserWatchlist.movie_id)
         .filter(~Movie.files.any(File.feature_type_id.is_(None)))
-        .filter(
-            db.or_(
-                Movie.shopping_list_exclude == False,
-                Movie.shopping_list_exclude == None,
-            )
-        )
+        .filter(NOT_EXCLUDED)
         .all()
     )
     watchers = {}
@@ -158,11 +269,7 @@ def watchlist_shopping_groups():
         key=lambda entry: (
             -entry["rank"],
             -entry["watcher_count"],
-            re.sub(
-                r"^(The|A|An) ",
-                "",
-                entry["movie"].tmdb_title or entry["movie"].title or "",
-            ).lower(),
+            sort_title(entry["movie"].tmdb_title or entry["movie"].title).lower(),
         )
     )
     return [
@@ -194,23 +301,27 @@ def movie_shopping():
     q = request.args.get("q", None, type=str)
     library = request.args.get("library", None, type=str)
     media = request.args.get("media", None, type=str)
-    min_quality = request.args.get("min_quality", 0, type=str)
-    max_quality = request.args.get(
-        "max_quality",
-        quality_id("Bluray-2160p Remux"),
-        type=str,
+
+    # The bounds of the quality range. A missing or unknown minimum is
+    # "Not in library", the virtual bottom of the scale. Thus, the
+    # default view includes the liked films that the user does not own.
+    # An unknown maximum is "Bluray-1080p". A minimum above the maximum
+    # collapses the range to the minimum only.
+
+    qualities = quality_range(
+        request.args.get("min_quality", 0, type=str),
+        request.args.get("max_quality", quality_id("Bluray-2160p Remux"), type=str),
+        "Not in library",
+        "Bluray-1080p",
+        collapse="min",
     )
-
-    # A quality id that is not a number counts as an unknown id. The
-    # fallback below then uses the default bound (#306).
-
-    min_quality = str(min_quality) if str(min_quality).isdecimal() else "0"
-    max_quality = str(max_quality) if str(max_quality).isdecimal() else "0"
-
-    # The page heading comes from the active filters (below, after the
-    # quality bounds are normalized). It does not come from a ?title=
-    # query parameter. With the old approach, a crafted URL could put
-    # any text in the heading.
+    min_quality, max_quality = qualities.min_id, qualities.max_id
+    min_preference, max_preference = (
+        qualities.min_preference,
+        qualities.max_preference,
+    )
+    bottom_quality = qualities.bottom
+    title = shopping_heading(qualities, library, media)
 
     # This form filters the shopping list by Criterion release or quality.
 
@@ -235,82 +346,18 @@ def movie_shopping():
 
     # Make the list of qualities for the dropdown filter.
 
-    qualities = (
-        db.session.query(RefQuality.id, RefQuality.quality_title)
+    choices = [
+        (str(id), quality_title)
+        for (id, quality_title) in db.session.query(
+            RefQuality.id, RefQuality.quality_title
+        )
         .order_by(RefQuality.preference.asc())
         .all()
-    )
-    filter_form.min_quality.choices = [(str(id), title) for (id, title) in qualities]
-    filter_form.max_quality.choices = [(str(id), title) for (id, title) in qualities]
-
-    # If the min_quality ID does not exist in the RefQuality table, use
-    # "Not in library". That is the virtual bottom of the scale. Thus, the
-    # default view includes the liked films that the user does not own.
-
-    if not RefQuality.query.filter_by(id=int(min_quality)).first():
-        min_quality = int(quality_id("Not in library"))
-
-    # If the max_quality ID does not exist in the RefQuality table, use
-    # "Bluray-1080p".
-
-    if not RefQuality.query.filter_by(id=int(max_quality)).first():
-        max_quality = int(quality_id("Bluray-1080p"))
-
-    # Find the preference of the quality ID. Set it as the dropdown default.
-
-    min_preference = (
-        db.session.query(RefQuality.preference).filter_by(id=int(min_quality)).scalar()
-    )
-    max_preference = (
-        db.session.query(RefQuality.preference).filter_by(id=int(max_quality)).scalar()
-    )
-
-    # If the minimum quality outranks the maximum, collapse the range to
-    # the minimum only. Compare by preference. The quality ids do not
-    # always follow the quality order.
-
-    if min_preference > max_preference:
-        max_quality = int(min_quality)
-        max_preference = min_preference
-
+    ]
+    filter_form.min_quality.choices = choices
+    filter_form.max_quality.choices = choices
     filter_form.min_quality.default = min_quality
     filter_form.max_quality.default = max_quality
-
-    # Derive the heading from the filter state. The search branches below
-    # replace it with their own, more specific, titles.
-
-    if library == "criterion":
-        title = "Criterion Collection movies to upgrade"
-    elif media == "digital":
-        title = "Digital downloads to get as physical media"
-    else:
-        title = "Movies to upgrade"
-
-    not_in_library_quality = bottom_quality = quality_preference("Not in library")
-    top_quality = quality_preference("Bluray-2160p Remux")
-    min_quality_title = (
-        db.session.query(RefQuality.quality_title)
-        .filter_by(id=int(min_quality))
-        .scalar()
-    )
-    max_quality_title = (
-        db.session.query(RefQuality.quality_title)
-        .filter_by(id=int(max_quality))
-        .scalar()
-    )
-    if min_quality_title == max_quality_title:
-        # Equal titles mean equal preferences. Thus, a test of 1 bound is
-        # sufficient.
-        if min_preference == not_in_library_quality:
-            title = f"{title} that have been liked but aren't in the library"
-        else:
-            title = f"{title} ({min_quality_title} quality)"
-    elif min_preference > bottom_quality and max_preference < top_quality:
-        title = f"{title} (between {min_quality_title} and {max_quality_title} quality)"
-    elif max_preference < top_quality:
-        title = f"{title} ({max_quality_title} quality and below)"
-    elif min_preference > bottom_quality:
-        title = f"{title} ({min_quality_title} quality and above)"
 
     # This form filters the shopping list by a substring.
 
@@ -366,60 +413,32 @@ def movie_shopping():
         (Movie.shopping_list_exclude == True, "Already owned"),
         (
             db.and_(
-                db.or_(
-                    Movie.criterion_spine_number != None,
-                    Movie.criterion_set_title != None,
-                ),
+                HAS_CRITERION_RELEASE,
                 Movie.criterion_disc_owned == True,
-                #                                 db.and_(
-                #                                     db.or_(
-                #                                         db.and_(
-                #                                             CriterionQuality.preference == dvd_quality,
-                #                                             RefQuality.preference >= dvd_quality,
-                #                                         ),
-                #                                         db.and_(
-                #                                             CriterionQuality.preference
-                #                                             >= bluray_quality,
-                #                                             RefQuality.preference >= bluray_quality,
-                #                                         ),
-                #                                     ),
-                #                                 ),
             ),
             "Already owned",
         ),
         (
             db.and_(
-                db.or_(
-                    Movie.criterion_spine_number != None,
-                    Movie.criterion_set_title != None,
-                ),
+                HAS_CRITERION_RELEASE,
                 Movie.criterion_disc_owned == False,
                 CriterionQuality.preference == uhd_quality,
-                # RefQuality.preference <= uhd_quality,
             ),
             "Buy Criterion edition on 4K UHD Blu-Ray",
         ),
         (
             db.and_(
-                db.or_(
-                    Movie.criterion_spine_number != None,
-                    Movie.criterion_set_title != None,
-                ),
+                HAS_CRITERION_RELEASE,
                 Movie.criterion_disc_owned == False,
                 CriterionQuality.preference == bluray_quality,
-                # RefQuality.preference <= bluray_quality,
             ),
             "Buy Criterion edition on Blu-Ray",
         ),
         (
             db.and_(
-                db.or_(
-                    Movie.criterion_spine_number != None,
-                    Movie.criterion_set_title != None,
-                ),
+                HAS_CRITERION_RELEASE,
                 Movie.criterion_disc_owned == False,
                 CriterionQuality.preference == dvd_quality,
-                # RefQuality.preference <= dvd_quality,
             ),
             "Buy Criterion edition on DVD",
         ),
@@ -442,14 +461,8 @@ def movie_shopping():
         (RefQuality.preference < bluray_quality, 1),
         (
             db.and_(
-                db.or_(
-                    Movie.criterion_spine_number != None,
-                    Movie.criterion_set_title != None,
-                ),
-                db.or_(
-                    Movie.criterion_disc_owned == False,
-                    Movie.criterion_disc_owned == None,
-                ),
+                HAS_CRITERION_RELEASE,
+                DISC_NOT_OWNED,
             ),
             1,
         ),
@@ -461,33 +474,21 @@ def movie_shopping():
         (
             db.and_(
                 File.id == None,
-                db.or_(
-                    Movie.shopping_list_exclude == False,
-                    Movie.shopping_list_exclude == None,
-                ),
+                NOT_EXCLUDED,
             ),
             Movie.shopping_cart_priority,
         ),
         (
             db.and_(
-                db.or_(
-                    Movie.shopping_list_exclude == False,
-                    Movie.shopping_list_exclude == None,
-                ),
+                NOT_EXCLUDED,
                 RefQuality.preference < bluray_quality,
             ),
             Movie.shopping_cart_priority,
         ),
         (
             db.and_(
-                db.or_(
-                    Movie.criterion_spine_number != None,
-                    Movie.criterion_set_title != None,
-                ),
-                db.or_(
-                    Movie.criterion_disc_owned == False,
-                    Movie.criterion_disc_owned == None,
-                ),
+                HAS_CRITERION_RELEASE,
+                DISC_NOT_OWNED,
             ),
             Movie.shopping_cart_priority,
         ),
@@ -500,33 +501,21 @@ def movie_shopping():
         (
             db.and_(
                 File.id == None,
-                db.or_(
-                    Movie.shopping_list_exclude == False,
-                    Movie.shopping_list_exclude == None,
-                ),
+                NOT_EXCLUDED,
             ),
             0,
         ),
         (
             db.and_(
-                db.or_(
-                    Movie.shopping_list_exclude == False,
-                    Movie.shopping_list_exclude == None,
-                ),
+                NOT_EXCLUDED,
                 RefQuality.preference < bluray_quality,
             ),
             RefQuality.preference,
         ),
         (
             db.and_(
-                db.or_(
-                    Movie.criterion_spine_number != None,
-                    Movie.criterion_set_title != None,
-                ),
-                db.or_(
-                    Movie.criterion_disc_owned == False,
-                    Movie.criterion_disc_owned == None,
-                ),
+                HAS_CRITERION_RELEASE,
+                DISC_NOT_OWNED,
             ),
             RefQuality.preference,
         ),
@@ -538,37 +527,39 @@ def movie_shopping():
         (
             db.and_(
                 File.id == None,
-                db.or_(
-                    Movie.shopping_list_exclude == False,
-                    Movie.shopping_list_exclude == None,
-                ),
+                NOT_EXCLUDED,
             ),
             Movie.shopping_cart_add_date,
         ),
         (
             db.and_(
-                db.or_(
-                    Movie.shopping_list_exclude == False,
-                    Movie.shopping_list_exclude == None,
-                ),
+                NOT_EXCLUDED,
                 RefQuality.preference < bluray_quality,
             ),
             Movie.shopping_cart_add_date,
         ),
         (
             db.and_(
-                db.or_(
-                    Movie.criterion_spine_number != None,
-                    Movie.criterion_set_title != None,
-                ),
-                db.or_(
-                    Movie.criterion_disc_owned == False,
-                    Movie.criterion_disc_owned == None,
-                ),
+                HAS_CRITERION_RELEASE,
+                DISC_NOT_OWNED,
             ),
             Movie.shopping_cart_add_date,
         ),
         else_=(0),
+    )
+
+    # The order of the views that are not searches: the most urgent
+    # purchase first.
+
+    urgency_order = (
+        shopping_urgency_order_case.desc(),
+        cart_priority_order_case.desc(),
+        quality_order_case.asc(),
+        cart_age_order_case.desc(),
+        title_sort(Movie, tmdb=False).asc(),
+        Movie.year.asc(),
+        File.edition.asc(),
+        File.date_added.asc(),
     )
 
     # A movie with a liked review but no files is possible after the
@@ -635,12 +626,7 @@ def movie_shopping():
 
     def criterion_only(query):
         if criterion_release:
-            query = query.filter(
-                db.or_(
-                    Movie.criterion_spine_number != None,
-                    Movie.criterion_set_title != None,
-                )
-            )
+            query = query.filter(HAS_CRITERION_RELEASE)
         return query
 
     watchlist_groups = None
@@ -656,13 +642,7 @@ def movie_shopping():
             movies = (
                 shopping_rows()
                 .filter(Movie.tmdb_id == tmdb_id)
-                .order_by(
-                    title_sort(Movie, tmdb=False).asc(),
-                    Movie.year.asc(),
-                    File.edition.asc(),
-                    RefQuality.preference.asc(),
-                    File.date_added.asc(),
-                )
+                .order_by(*TITLE_ORDER)
                 .paginate(page=page, per_page=100, error_out=False)
             )
 
@@ -689,13 +669,9 @@ def movie_shopping():
                 if min_preference <= bottom_quality
                 else owned_matches
             )
-            movies = candidates.order_by(
-                title_sort(Movie, tmdb=False).asc(),
-                Movie.year.asc(),
-                File.edition.asc(),
-                RefQuality.preference.asc(),
-                File.date_added.asc(),
-            ).paginate(page=page, per_page=100, error_out=False)
+            movies = candidates.order_by(*TITLE_ORDER).paginate(
+                page=page, per_page=100, error_out=False
+            )
 
     elif library == "watchlist":
         # This is the watchlist view (#247). It is cross-user and ranked
@@ -731,16 +707,7 @@ def movie_shopping():
                     Movie.id.not_in(db.select(physical_media.c.movie_id))
                 )
             )
-            .order_by(
-                shopping_urgency_order_case.desc(),
-                cart_priority_order_case.desc(),
-                quality_order_case.asc(),
-                cart_age_order_case.desc(),
-                title_sort(Movie, tmdb=False).asc(),
-                Movie.year.asc(),
-                File.edition.asc(),
-                File.date_added.asc(),
-            )
+            .order_by(*urgency_order)
             .paginate(page=page, per_page=100, error_out=False)
         )
 
@@ -757,16 +724,9 @@ def movie_shopping():
             if min_preference <= bottom_quality
             else owned_titles
         )
-        movies = candidates.order_by(
-            shopping_urgency_order_case.desc(),
-            cart_priority_order_case.desc(),
-            quality_order_case.asc(),
-            cart_age_order_case.desc(),
-            title_sort(Movie, tmdb=False).asc(),
-            Movie.year.asc(),
-            File.edition.asc(),
-            File.date_added.asc(),
-        ).paginate(page=page, per_page=100, error_out=False)
+        movies = candidates.order_by(*urgency_order).paginate(
+            page=page, per_page=100, error_out=False
+        )
 
     movie_shopping_exclude_form = MovieShoppingExcludeForm()
 
@@ -855,18 +815,23 @@ def tv_shopping():
     """
 
     q = request.args.get("q", None, type=str)
-    min_quality = request.args.get("min_quality", 0, type=str)
-    max_quality = request.args.get(
-        "max_quality",
-        quality_id("Bluray-2160p Remux"),
-        type=str,
+
+    # The bounds of the quality range. An unknown minimum is "Unknown".
+    # An unknown maximum is "Bluray-1080p". A minimum above the maximum
+    # collapses the range to the maximum only.
+
+    qualities = quality_range(
+        request.args.get("min_quality", 0, type=str),
+        request.args.get("max_quality", quality_id("Bluray-2160p Remux"), type=str),
+        "Unknown",
+        "Bluray-1080p",
+        collapse="max",
     )
-
-    # A quality id that is not a number counts as an unknown id. The
-    # fallback below then uses the default bound (#306).
-
-    min_quality = str(min_quality) if str(min_quality).isdecimal() else "0"
-    max_quality = str(max_quality) if str(max_quality).isdecimal() else "0"
+    max_quality = qualities.max_id
+    min_preference, max_preference = (
+        qualities.min_preference,
+        qualities.max_preference,
+    )
 
     # This form filters the shopping list by quality.
 
@@ -877,43 +842,15 @@ def tv_shopping():
     # "Not in library" is the virtual quality of the movie shopping list.
     # TV has no unowned rows. Thus, it stays out of this dropdown.
 
-    qualities = (
+    choices = (
         db.session.query(RefQuality.id, RefQuality.quality_title)
         .filter(RefQuality.quality_title != "Not in library")
         .order_by(RefQuality.preference.asc())
         .all()
     )
-    filter_form.quality.choices = [(str(id), title) for (id, title) in qualities]
-
-    # If the min_quality ID does not exist in the RefQuality table, use
-    # "Unknown".
-
-    if not RefQuality.query.filter_by(id=int(min_quality)).first():
-        min_quality = int(quality_id("Unknown"))
-
-    # If the max_quality ID does not exist in the RefQuality table, use
-    # "Bluray-1080p".
-
-    if not RefQuality.query.filter_by(id=int(max_quality)).first():
-        max_quality = int(quality_id("Bluray-1080p"))
-
-    # Find the preference of the quality ID. Set it as the dropdown default.
-
-    min_preference = (
-        db.session.query(RefQuality.preference).filter_by(id=int(min_quality)).scalar()
-    )
-    max_preference = (
-        db.session.query(RefQuality.preference).filter_by(id=int(max_quality)).scalar()
-    )
-
-    # If the minimum quality outranks the maximum, collapse the range to
-    # the maximum only. Compare by preference. The quality ids do not
-    # always follow the quality order.
-
-    if min_preference > max_preference:
-        min_quality = int(max_quality)
-        min_preference = max_preference
-
+    filter_form.quality.choices = [
+        (str(id), quality_title) for (id, quality_title) in choices
+    ]
     filter_form.quality.default = max_quality
 
     # This form filters the shopping list by a substring.
@@ -1053,11 +990,7 @@ def tv_shopping():
                 "title": series.title,
                 "tmdb_id": series.tmdb_id,
                 "tmdb_name": series.tmdb_name,
-                "first_air_year": (
-                    series.tmdb_first_air_date.year
-                    if series.tmdb_first_air_date
-                    else None
-                ),
+                "first_air_year": series.display_year,
                 "tmdb_poster_path": series.tmdb_poster_path,
                 "seasons": seasons,
             }

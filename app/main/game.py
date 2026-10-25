@@ -53,7 +53,14 @@ from app.frames import (
 from app.main import bp
 from app.main.forms import GuessFrameForm
 from app.main.helpers import decimal_id
-from app.models import Movie, MovieCast, UserFrameScore, UserMovieReview, movie_genres
+from app.models import (
+    Movie,
+    MovieCast,
+    UserFrameScore,
+    UserMovieReview,
+    display_year_of,
+    movie_genres,
+)
 
 # This maps a difficulty to its number of multiple-choice options.
 # None means free text.
@@ -276,15 +283,6 @@ def _rated_movie_ids():
     }
 
 
-def _display_year(year, tmdb_title, tmdb_release_date):
-    """Return the year that the site shows for a film.
-
-    This is the TMDB year if the TMDB title rules. In all other cases,
-    it is the local year."""
-
-    return tmdb_release_date.year if tmdb_title and tmdb_release_date else year
-
-
 def _shared_cast_movie_ids(answer_id):
     """Return the movies that credit a top-billed cast member of the answer.
 
@@ -345,11 +343,9 @@ def _build_options(answer_id, difficulty, rated_only=False):
 
     count = DIFFICULTIES[difficulty]
     answer = db.session.get(Movie, answer_id)
-    answer_year = _display_year(
-        answer.year, answer.tmdb_title, answer.tmdb_release_date
-    )
+    answer_year = answer.display_year
     years = {
-        movie_id: _display_year(year, tmdb_title, tmdb_release_date)
+        movie_id: display_year_of(year, tmdb_title, tmdb_release_date)
         for movie_id, year, tmdb_title, tmdb_release_date in db.session.query(
             Movie.id, Movie.year, Movie.tmdb_title, Movie.tmdb_release_date
         )

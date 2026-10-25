@@ -5,7 +5,6 @@ Criterion spine catalog, the people page, and the per-title
 movie/tv/season/file detail pages."""
 
 import os
-import re
 import time
 import traceback
 
@@ -76,6 +75,7 @@ from app.models import (
     movie_genres,
     ranked_movie_files,
     ranked_tv_files,
+    sort_title,
     title_sort,
 )
 from app.main import bp
@@ -770,7 +770,7 @@ def criterion_sort_key(row):
     end."""
 
     spine = row.get("spine")
-    title = re.sub(r"^(The|A|An)\s+", "", row.get("title") or "", flags=re.IGNORECASE)
+    title = sort_title(row.get("title"))
     return (
         0 if spine is not None else 1,
         spine if spine is not None else 0,
@@ -901,11 +901,7 @@ def criterion_collection():
                 ),
                 "tmdb_id": movie.tmdb_id,
                 "title": movie.tmdb_title or movie.title,
-                "year": (
-                    movie.tmdb_release_date.year
-                    if movie.tmdb_title and movie.tmdb_release_date
-                    else movie.year
-                ),
+                "year": movie.display_year,
                 "spine": movie.criterion_spine_number
                 or (release or {}).get("spine_number"),
                 "set_title": movie.criterion_set_title
