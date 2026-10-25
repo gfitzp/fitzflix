@@ -250,3 +250,39 @@ def test_the_bar_reads_the_shared_score(app, monkeypatch):
         monkeypatch.setattr(app, "maintenance_queue", FakeQueue())
         assert pc._process_pending({258}) == 1
         assert Movie.query.filter_by(tmdb_id=205).first() is not None
+
+
+def test_an_unknown_answer_keeps_the_id_pending(app, monkeypatch):
+    """A TMDB failure must not drop a discovery for good (#304)."""
+
+    import app.provider_catalog as pc
+
+    subscribe_criterion(app)
+    scorer_that_likes_westerns(monkeypatch)
+    streams = {"link": None, "flatrate": [CRITERION], "ads": [], "rent": [], "buy": []}
+    rental = {"link": None, "flatrate": [], "ads": [], "rent": [CRITERION], "buy": []}
+
+    # 301 has no availability answer. 302 streams, but its payload fetch
+    # fails. 303 is a verified rental, a real negative.
+
+    monkeypatch.setattr(
+        pc,
+        "batch_title_availability",
+        lambda ids: ({301: None, 302: streams, 303: rental}, []),
+    )
+    monkeypatch.setattr(pc, "enriched_movie", lambda tmdb_id: None)
+    monkeypatch.setattr(pc, "movie_gone", lambda tmdb_id: False)
+    app.redis.sadd(pc.PENDING_KEY, 301, 302, 303)
+
+    with app.app_context():
+        assert pc._process_pending({258}) == 0
+    assert sorted(int(m) for m in app.redis.smembers(pc.PENDING_KEY)) == [301, 302]
+
+    # With no taste profile yet, the streamable ids wait too.
+
+    app.redis.delete(pc.PENDING_KEY)
+    app.redis.sadd(pc.PENDING_KEY, 302)
+    monkeypatch.setattr(pc, "stored_profile", lambda redis, user_id: None)
+    with app.app_context():
+        assert pc._process_pending({258}) == 0
+    assert sorted(int(m) for m in app.redis.smembers(pc.PENDING_KEY)) == [302]

@@ -53,7 +53,7 @@ from app.recommendations import (
     stored_profile,
 )
 from app.streaming import batch_title_availability, streaming_matches
-from app.streaming_rail import enriched_movie
+from app.streaming_rail import enriched_movie, movie_gone
 
 # This is the app instance of this process. Fitzflix resolves it lazily.
 # Thus, the nightly task can run on a worker without a second application
@@ -204,7 +204,22 @@ def _process_pending(subscribed):
     redis = current_app.redis
     popped = redis.spop(PENDING_KEY, PROCESS_CAP)
     ids = sorted(int(member) for member in popped or [])
-    if not ids or not subscribed:
+    if not ids:
+        return 0
+
+    # The seen set already holds each popped id. Thus, an id that drops
+    # here is never discovered again. Only a verified answer drops an
+    # id. An unknown answer (a TMDB failure, no profile yet) puts the id
+    # back for the next run (#304).
+
+    def retry(tmdb_ids):
+        """Put ids back in the pending set."""
+
+        if tmdb_ids:
+            redis.sadd(PENDING_KEY, *tmdb_ids)
+
+    if not subscribed:
+        retry(ids)
         return 0
 
     existing = {
@@ -223,11 +238,17 @@ def _process_pending(subscribed):
     # the eligibility check of the shelves reads. Thus, a created record
     # is answerable immediately
 
-    availability, _ = batch_title_availability(candidates)
+    availability, deferred = batch_title_availability(candidates)
+    unknown = sorted(
+        set(deferred)
+        | {tmdb_id for tmdb_id in candidates if availability.get(tmdb_id) is None}
+    )
+    retry(unknown)
     streamable = [
         tmdb_id
         for tmdb_id in candidates
-        if streaming_matches(availability.get(tmdb_id), subscribed, tmdb_id=tmdb_id)
+        if tmdb_id not in unknown
+        and streaming_matches(availability.get(tmdb_id), subscribed, tmdb_id=tmdb_id)
     ]
 
     profiles = []
@@ -236,6 +257,7 @@ def _process_pending(subscribed):
         if profile:
             profiles.append((user_id, profile))
     if not profiles:
+        retry(streamable)
         return 0
 
     to_refresh = []
@@ -247,6 +269,9 @@ def _process_pending(subscribed):
             redis.sadd(PENDING_KEY, tmdb_id)
             continue
         payload = enriched_movie(tmdb_id)
+        if payload is None and not movie_gone(tmdb_id):
+            retry([tmdb_id])
+            continue
         if (
             not payload
             or not payload.get("title")
