@@ -895,6 +895,22 @@ def _page_window(current, last):
     return numbers
 
 
+def _criterion_row_key(row):
+    """Return the sort key of a (File, Movie, RefQuality) row of the
+    Criterion page. The smallest key is the row that stands for the film.
+
+    The editionless file comes first. Then a file that is not fullscreen,
+    then the best quality, then the lowest file id."""
+
+    file, _, quality = row
+    return (
+        file.edition is not None,
+        bool(file.fullscreen),
+        -(quality.preference or 0),
+        file.id,
+    )
+
+
 @bp.route("/library/criterion-collection")
 @login_required
 def criterion_collection():
@@ -950,7 +966,6 @@ def criterion_collection():
         .join(ranked_files, (ranked_files.c.id == File.id))
         .filter(File.feature_type_id == None)
         .filter(ranked_files.c.rank == 1)
-        .filter(File.edition == None)
         .filter(
             db.or_(
                 Movie.criterion_spine_number != None,
@@ -960,6 +975,20 @@ def criterion_collection():
         )
         .all()
     )
+
+    # 1 row per film (#349). The editionless main feature stands for the
+    # film. A film that has only edition-tagged main features (for
+    # example, only a Director's Cut) is owned too. Then its best edition
+    # stands for it. Before, an edition filter dropped such a film, and
+    # its release showed as not owned.
+
+    best_rows = {}
+    for row in results:
+        file, movie, quality = row
+        held = best_rows.get(movie.id)
+        if held is None or _criterion_row_key(row) < _criterion_row_key(held):
+            best_rows[movie.id] = row
+    results = list(best_rows.values())
 
     # A library row is SETTLED when the Criterion disc is owned AND the
     # local file matches the format of the release. Settled means the

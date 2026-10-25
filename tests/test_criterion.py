@@ -962,3 +962,47 @@ def test_criterion_page_without_a_copy_does_not_wait(app, admin_client, monkeypa
     with app.app_context():
         assert len(app.request_queue) == 1
         app.request_queue.empty()
+
+
+def test_an_edition_only_film_counts_as_owned(app, admin_client):
+    """Test a Criterion film owned only as an edition-tagged file (#349).
+
+    The page dropped every main feature with an edition. Such a film
+    showed as an unowned catalog row. A film with both kinds of file
+    still gets 1 row."""
+
+    from tests.factories import make_movie_file
+
+    with app.app_context():
+        cut_only = make_movie("Cut Only", 1979, tmdb_id=555101)
+        make_movie_file(
+            cut_only,
+            "Bluray-1080p",
+            edition="Director's Cut",
+            plex_title="Cut Only (1979) {edition-Director's Cut}",
+        )
+        both = make_movie("Both Kinds", 1981, tmdb_id=555102)
+        make_movie_file(both, "DVD")
+        make_movie_file(
+            both,
+            "Bluray-1080p",
+            edition="Extended",
+            plex_title="Both Kinds (1981) {edition-Extended}",
+        )
+        db.session.commit()
+        cut_id = cut_only.id
+
+    _seed_release_cache(
+        app,
+        [
+            release(701, "Cut Only", 1979, tmdb_id=555101),
+            release(702, "Both Kinds", 1981, tmdb_id=555102),
+        ],
+    )
+
+    page = admin_client.get("/library/criterion-collection").get_data(as_text=True)
+    # Both films count as in the library, each 1 time
+    assert "In library (2)" in page
+    assert f'href="/movie/{cut_id}"' in page
+    assert page.count("#701 &ndash;") == 1
+    assert page.count("#702 &ndash;") == 1
