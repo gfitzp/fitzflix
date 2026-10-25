@@ -13,12 +13,12 @@ from rq.registry import ScheduledJobRegistry, StartedJobRegistry
 from unidecode import unidecode
 
 from werkzeug.security import generate_password_hash, check_password_hash
-from flask import current_app, render_template
+from flask import current_app
 from flask_login import UserMixin
 from sqlalchemy.orm import joinedload
 
 from app import db, login
-from app.email import task_send_email as send_email
+from app.email import notify_admin
 
 movie_collections = db.Table(
     "movie_collections",
@@ -526,28 +526,11 @@ class TMDBMixin(object):
                 r.raise_for_status()
             except requests.exceptions.HTTPError as e:
                 _raise_unless_not_found(self, tmdb_id, e)
-                admin_user = User.query.filter(User.admin == True).first()
-                if admin_user is None:
-                    current_app.logger.warning(
-                        f"{self} TMDB has no id {tmdb_id}, and no admin gets the email"
-                    )
-                    return None
-                send_email(
-                    "Fitzflix - TMDB ID not found",
-                    sender=("Fitzflix", current_app.config["SERVER_EMAIL"]),
-                    recipients=[admin_user.email],
-                    text_body=render_template(
-                        "email/nonexistent_tmdb_id_movie.txt",
-                        user=admin_user.email,
-                        movie=self,
-                        tmdb_id=tmdb_id,
-                    ),
-                    html_body=render_template(
-                        "email/nonexistent_tmdb_id_movie.html",
-                        user=admin_user.email,
-                        movie=self,
-                        tmdb_id=tmdb_id,
-                    ),
+                notify_admin(
+                    "TMDB ID not found",
+                    "nonexistent_tmdb_id_movie",
+                    movie=self,
+                    tmdb_id=tmdb_id,
                 )
                 return None
             current_app.logger.debug(f"{r.url}: {r.json()}")
@@ -591,27 +574,13 @@ class TMDBMixin(object):
                 f"{duplicate} already has that name; refresh either movie "
                 f"with TMDB id {tmdb_info.get('id')} to merge them"
             )
-            admin_user = User.query.filter(User.admin == True).first()
-            send_email(
-                "Fitzflix - Duplicate movie detected",
-                sender=("Fitzflix", current_app.config["SERVER_EMAIL"]),
-                recipients=[admin_user.email],
-                text_body=render_template(
-                    "email/duplicate_movie.txt",
-                    user=admin_user.email,
-                    movie=self,
-                    duplicate=duplicate,
-                    canonical_title=canonical_title,
-                    canonical_year=canonical_year,
-                ),
-                html_body=render_template(
-                    "email/duplicate_movie.html",
-                    user=admin_user.email,
-                    movie=self,
-                    duplicate=duplicate,
-                    canonical_title=canonical_title,
-                    canonical_year=canonical_year,
-                ),
+            notify_admin(
+                "Duplicate movie detected",
+                "duplicate_movie",
+                movie=self,
+                duplicate=duplicate,
+                canonical_title=canonical_title,
+                canonical_year=canonical_year,
             )
 
         elif canonical_title:
@@ -756,28 +725,11 @@ class TMDBMixin(object):
                 r.raise_for_status()
             except requests.exceptions.HTTPError as e:
                 _raise_unless_not_found(self, tmdb_id, e)
-                admin_user = User.query.filter(User.admin == True).first()
-                if admin_user is None:
-                    current_app.logger.warning(
-                        f"{self} TMDB has no id {tmdb_id}, and no admin gets the email"
-                    )
-                    return None
-                send_email(
-                    "Fitzflix - TMDB ID not found",
-                    sender=("Fitzflix", current_app.config["SERVER_EMAIL"]),
-                    recipients=[admin_user.email],
-                    text_body=render_template(
-                        "email/nonexistent_tmdb_id_tv.txt",
-                        user=admin_user.email,
-                        tv=self,
-                        tmdb_id=tmdb_id,
-                    ),
-                    html_body=render_template(
-                        "email/nonexistent_tmdb_id_tv.html",
-                        user=admin_user.email,
-                        tv=self,
-                        tmdb_id=tmdb_id,
-                    ),
+                notify_admin(
+                    "TMDB ID not found",
+                    "nonexistent_tmdb_id_tv",
+                    tv=self,
+                    tmdb_id=tmdb_id,
                 )
                 return None
             current_app.logger.debug(f"{r.url}: {r.json()}")

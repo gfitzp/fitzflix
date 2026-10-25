@@ -584,8 +584,8 @@ def test_a_tmdb_outage_sends_no_not_found_email(app, monkeypatch):
 
     sent = []
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "key")
-    monkeypatch.setattr(models, "send_email", lambda *a, **k: sent.append(a))
-    monkeypatch.setattr(models, "render_template", lambda *a, **k: "")
+    monkeypatch.setattr("app.email.send_email", lambda *a, **k: sent.append(a))
+    monkeypatch.setattr("app.email.render_template", lambda *a, **k: "")
     monkeypatch.setattr(models, "tmdb_get", lambda url, **k: _ErrorAnswer(503))
     with app.app_context():
         movie = make_movie("Outage Film", 1999, tmdb_id=990021)
@@ -613,7 +613,7 @@ def test_a_missing_id_with_no_admin_does_not_crash(app, monkeypatch):
 
     sent = []
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "key")
-    monkeypatch.setattr(models, "send_email", lambda *a, **k: sent.append(a))
+    monkeypatch.setattr("app.email.send_email", lambda *a, **k: sent.append(a))
     monkeypatch.setattr(models, "tmdb_get", lambda url, **k: _ErrorAnswer(404))
 
     class NoAdmin:

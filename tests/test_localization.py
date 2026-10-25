@@ -2724,7 +2724,7 @@ def _capture_emails(monkeypatch):
     monkeypatch.setattr(importing, "admin_email", admin_email)
     monkeypatch.setattr(
         importing,
-        "send_email_async",
+        "send_email",
         lambda subject, **kwargs: sent.append(("todo", subject)),
     )
     return sent

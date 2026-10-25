@@ -229,8 +229,7 @@ def reject_incomplete_download(service, payload, file_path, refresh_command):
     the deletion. If the mark did not succeed, the file stays in place for
     manual handling. This function emails the admin in both cases."""
 
-    from app.email import send_email as send_email_async
-    from app.models import User
+    from app.email import notify_admin_text
 
     basename = os.path.basename(file_path)
     base_url = current_app.config.get(f"{service.upper()}_URL")
@@ -258,19 +257,12 @@ def reject_incomplete_download(service, payload, file_path, refresh_command):
         else "Marking the release failed did NOT succeed — the file was "
         "left in place for manual handling."
     )
-    admin_user = User.query.filter(User.admin == True).first()
-    send_email_async(
-        "Fitzflix - Incomplete download rejected",
-        sender=("Fitzflix", current_app.config["SERVER_EMAIL"]),
-        recipients=[admin_user.email],
-        text_body=(
-            f"'{basename}' arrived structurally incomplete and was not "
-            f"imported.\n\n{outcome}"
-        ),
-        html_body=(
-            f"<p>'{basename}' arrived structurally incomplete and was "
-            f"not imported.</p><p>{outcome}</p>"
-        ),
+    notify_admin_text(
+        "Incomplete download rejected",
+        f"'{basename}' arrived structurally incomplete and was not "
+        f"imported.\n\n{outcome}",
+        f"<p>'{basename}' arrived structurally incomplete and was "
+        f"not imported.</p><p>{outcome}</p>",
     )
     return failed
 

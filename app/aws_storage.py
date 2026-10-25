@@ -39,12 +39,12 @@ from rq import get_current_job
 from rq.registry import ScheduledJobRegistry, StartedJobRegistry
 from s3transfer.utils import ChunksizeAdjuster
 
-from flask import current_app, render_template
+from flask import current_app
 from werkzeug.local import LocalProxy
 
 from app.tasks import enqueue_task, report_progress, requeue
 from app import db, get_app
-from app.email import task_send_email as send_email
+from app.email import notify_admin, notify_admin_text
 from app import s3_layout
 from app.queues import QUEUE_NAME, roster_queues
 from app.settings import get_setting
@@ -52,7 +52,6 @@ from app.models import (
     ArchivedOriginal,
     File,
     RefQuality,
-    User,
     ranked_movie_files,
     ranked_tv_files,
 )
@@ -648,23 +647,16 @@ def _report_dangling_claims(listing):
         if key not in s3_key_set
     )
     if dangling_claims:
-        admin_user = User.query.filter(User.admin == True).first()
-        send_email(
-            "Fitzflix - Archive keys missing from AWS S3!",
-            sender=("Fitzflix", current_app.config["SERVER_EMAIL"]),
-            recipients=[admin_user.email],
-            text_body=(
-                "These file records claim untouched archive keys "
-                "that don't exist in S3 — a restore would fail:\n\n"
-                + "\n".join(dangling_claims)
-            ),
-            html_body=(
-                "<p>These file records claim untouched archive "
-                "keys that don't exist in S3 — a restore would "
-                "fail:</p><ul>"
-                + "".join(f"<li>{key}</li>" for key in dangling_claims)
-                + "</ul>"
-            ),
+        notify_admin_text(
+            "Archive keys missing from AWS S3!",
+            "These file records claim untouched archive keys "
+            "that don't exist in S3 — a restore would fail:\n\n"
+            + "\n".join(dangling_claims),
+            "<p>These file records claim untouched archive "
+            "keys that don't exist in S3 — a restore would "
+            "fail:</p><ul>"
+            + "".join(f"<li>{key}</li>" for key in dangling_claims)
+            + "</ul>",
         )
 
 
@@ -724,39 +716,17 @@ def _mail_reports(unreferenced_files, orphaned_files):
     """Mail the admin the pruned objects and the orphaned file records."""
 
     if unreferenced_files:
-        admin_user = User.query.filter(User.admin == True).first()
-        send_email(
-            "Fitzflix - Deleted unreferenced AWS files",
-            sender=("Fitzflix", current_app.config["SERVER_EMAIL"]),
-            recipients=[admin_user.email],
-            text_body=render_template(
-                "email/unreferenced_files.txt",
-                user=admin_user.email,
-                unreferenced_files=unreferenced_files,
-            ),
-            html_body=render_template(
-                "email/unreferenced_files.html",
-                user=admin_user.email,
-                unreferenced_files=unreferenced_files,
-            ),
+        notify_admin(
+            "Deleted unreferenced AWS files",
+            "unreferenced_files",
+            unreferenced_files=unreferenced_files,
         )
 
     if orphaned_files:
-        admin_user = User.query.filter(User.admin == True).first()
-        send_email(
-            "Fitzflix - Orphaned file records found!",
-            sender=("Fitzflix", current_app.config["SERVER_EMAIL"]),
-            recipients=[admin_user.email],
-            text_body=render_template(
-                "email/orphaned_files.txt",
-                user=admin_user.email,
-                orphaned_files=orphaned_files,
-            ),
-            html_body=render_template(
-                "email/orphaned_files.html",
-                user=admin_user.email,
-                orphaned_files=orphaned_files,
-            ),
+        notify_admin(
+            "Orphaned file records found!",
+            "orphaned_files",
+            orphaned_files=orphaned_files,
         )
 
 

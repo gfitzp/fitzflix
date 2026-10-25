@@ -35,7 +35,7 @@ def _sync_env(app, monkeypatch, objects, fail_delete=None, fail_listing=False):
     monkeypatch.setattr(aws_storage, "aws_delete", delete)
     monkeypatch.setattr(aws_storage, "aws_restore", lambda key, **kw: None)
     monkeypatch.setattr(
-        aws_storage, "send_email", lambda subject, **kw: calls["mails"].append(subject)
+        "app.email.send_email", lambda subject, **kw: calls["mails"].append(subject)
     )
     monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kw: FakeClient())
     monkeypatch.setattr(

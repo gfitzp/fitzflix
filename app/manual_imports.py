@@ -453,27 +453,19 @@ def still_blocked(service, download_id):
 def email_manual_import_needed(service, title, reason):
     """Email the admin about a download that waits for a manual import."""
 
-    from app.email import send_email
-    from app.models import User
+    from app.email import notify_admin_text
 
-    admin_user = User.query.filter(User.admin == True).first()
-    if admin_user is None or not current_app.config.get("MAIL_SERVER"):
+    if not current_app.config.get("MAIL_SERVER"):
         return
     page = url_for("main.manual_imports", _external=True)
-    send_email(
-        f"Fitzflix - {service} needs a manual import",
-        sender=("Fitzflix", current_app.config["SERVER_EMAIL"]),
-        recipients=[admin_user.email],
-        text_body=(
-            f"{service} downloaded '{title}' but cannot import it.\n\n"
-            f"Reason: {reason}\n\n"
-            f"Finish the import at {page}"
-        ),
-        html_body=(
-            f"<p>{service} downloaded '{title}' but cannot import it.</p>"
-            f"<p>Reason: {reason}</p>"
-            f'<p><a href="{page}">Finish the import on the Manual imports page</a></p>'
-        ),
+    notify_admin_text(
+        f"{service} needs a manual import",
+        f"{service} downloaded '{title}' but cannot import it.\n\n"
+        f"Reason: {reason}\n\n"
+        f"Finish the import at {page}",
+        f"<p>{service} downloaded '{title}' but cannot import it.</p>"
+        f"<p>Reason: {reason}</p>"
+        f'<p><a href="{page}">Finish the import on the Manual imports page</a></p>',
     )
 
 

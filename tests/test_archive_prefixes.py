@@ -206,7 +206,7 @@ def test_the_sync_restores_the_transcoded_copy_and_prunes_all_prefixes(
         aws_storage, "aws_restore", lambda key, **kw: restores.append(key)
     )
     monkeypatch.setattr(aws_storage, "aws_delete", lambda key: deletes.append(key))
-    monkeypatch.setattr(aws_storage, "send_email", lambda *a, **k: None)
+    monkeypatch.setattr("app.email.send_email", lambda *a, **k: None)
 
     class FakeClient:
         def put_object(self, **kwargs):
@@ -259,7 +259,7 @@ def test_the_sync_uploads_the_stale_transcoded_copy_again(app, monkeypatch):
         aws_storage, "aws_restore", lambda key, **kw: restores.append(key)
     )
     monkeypatch.setattr(aws_storage, "aws_delete", lambda key: None)
-    monkeypatch.setattr(aws_storage, "send_email", lambda *a, **k: None)
+    monkeypatch.setattr("app.email.send_email", lambda *a, **k: None)
 
     class FakeClient:
         def put_object(self, **kwargs):
@@ -520,7 +520,7 @@ def test_the_prune_keeps_a_recent_unclaimed_upload(app, monkeypatch):
     deletes = []
     monkeypatch.setattr(aws_storage, "aws_delete", lambda key: deletes.append(key))
     monkeypatch.setattr(aws_storage, "aws_restore", lambda key, **kw: None)
-    monkeypatch.setattr(aws_storage, "send_email", lambda *a, **k: None)
+    monkeypatch.setattr("app.email.send_email", lambda *a, **k: None)
 
     class FakeClient:
         def put_object(self, **kwargs):
@@ -588,7 +588,7 @@ def test_the_prune_keeps_the_upload_of_an_import_that_waits_for_space(app, monke
     deletes = []
     monkeypatch.setattr(aws_storage, "aws_delete", lambda key: deletes.append(key))
     monkeypatch.setattr(aws_storage, "aws_restore", lambda key, **kw: None)
-    monkeypatch.setattr(aws_storage, "send_email", lambda *a, **k: None)
+    monkeypatch.setattr("app.email.send_email", lambda *a, **k: None)
 
     class FakeClient:
         def put_object(self, **kwargs):

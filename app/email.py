@@ -55,6 +55,25 @@ def admin_address():
     return admin_user.email if admin_user else None
 
 
+def admin_email_text(subject, text_body, html_body):
+    """Return a callable that sends the given bodies to the first admin, or None.
+
+    The subject gets the "Fitzflix - " prefix. Without an admin, there
+    is nobody to tell: None comes back."""
+
+    recipient = admin_address()
+    if not recipient:
+        return None
+    return partial(
+        send_email,
+        f"Fitzflix - {subject}",
+        sender=("Fitzflix", current_app.config["SERVER_EMAIL"]),
+        recipients=[recipient],
+        text_body=text_body,
+        html_body=html_body,
+    )
+
+
 def admin_email(subject, template, **context):
     """Return a callable that sends an email to the first admin, or None.
 
@@ -68,26 +87,34 @@ def admin_email(subject, template, **context):
     if not recipient:
         return None
     context.setdefault("user", recipient)
-    return partial(
-        send_email,
-        f"Fitzflix - {subject}",
-        sender=("Fitzflix", current_app.config["SERVER_EMAIL"]),
-        recipients=[recipient],
-        text_body=render_template(f"email/{template}.txt", **context),
-        html_body=render_template(f"email/{template}.html", **context),
+    return admin_email_text(
+        subject,
+        render_template(f"email/{template}.txt", **context),
+        render_template(f"email/{template}.html", **context),
     )
 
 
-def notify_admin(subject, template, **context):
-    """Send an email from a template pair in templates/email to the first admin.
+def _send_or_log(build):
+    """Build an admin email and send it. Log an error instead of raising it.
 
-    A failed email must not stop the import step that sends it. Thus,
-    an error is logged and swallowed. Without an admin, nothing is
-    sent."""
+    A failed email must not stop the task that sends it. Without an
+    admin, build returns None and nothing is sent."""
 
     try:
-        send = admin_email(subject, template, **context)
+        send = build()
         if send is not None:
             send()
     except Exception:
         current_app.logger.error(traceback.format_exc())
+
+
+def notify_admin(subject, template, **context):
+    """Send an email from a template pair in templates/email to the first admin."""
+
+    _send_or_log(lambda: admin_email(subject, template, **context))
+
+
+def notify_admin_text(subject, text_body, html_body):
+    """Send an email with the given bodies to the first admin."""
+
+    _send_or_log(lambda: admin_email_text(subject, text_body, html_body))

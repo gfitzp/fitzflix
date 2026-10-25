@@ -61,7 +61,7 @@ from app.criterion_catalog import (
     stored_criterion_releases,
 )
 from app.email import admin_email, notify_admin
-from app.email import send_email as send_email_async
+from app.email import send_email
 from app.models import (
     ArchivedOriginal,
     File,
@@ -2483,7 +2483,7 @@ def _disposal_emails(file, worse):
         todo_email = current_app.config["TODO_EMAIL"]
         sends.append(
             partial(
-                send_email_async,
+                send_email,
                 f"Find and dispose of the media for '{worse.untouched_basename}'",
                 sender=("Fitzflix", current_app.config["SERVER_EMAIL"]),
                 recipients=[todo_email],

@@ -22,7 +22,7 @@ import zlib
 
 from datetime import datetime, timezone
 
-from flask import current_app, render_template
+from flask import current_app
 from rq.registry import ScheduledJobRegistry, StartedJobRegistry
 from unidecode import unidecode
 from werkzeug.local import LocalProxy
@@ -30,7 +30,7 @@ from werkzeug.local import LocalProxy
 from app.tasks import enqueue_task, requeue
 from app import db, get_app
 from app.aws_storage import rename_untouched_object, sanitize_s3_key
-from app.email import send_email as send_email_async
+from app.email import notify_admin, notify_admin_text
 from app.models import (
     ArchivedOriginal,
     File,
@@ -39,7 +39,6 @@ from app.models import (
     RefTMDBCertification,
     TMDBUnavailable,
     TVSeries,
-    User,
     UserMovieReview,
     UserMovieStatus,
     UserWatchlist,
@@ -576,17 +575,8 @@ def apply_tmdb_refresh(
                     movie.tmdb_movie_apply(tmdb_info)
 
                 if notify_if_missing and movie.tmdb_id == None:
-                    admin_user = User.query.filter(User.admin == True).first()
-                    send_email_async(
-                        "Fitzflix - Added a movie without a TMDB ID",
-                        sender=("Fitzflix", current_app.config["SERVER_EMAIL"]),
-                        recipients=[admin_user.email],
-                        text_body=render_template(
-                            "email/no_tmdb_id.txt", user=admin_user.email, movie=movie
-                        ),
-                        html_body=render_template(
-                            "email/no_tmdb_id.html", user=admin_user.email, movie=movie
-                        ),
+                    notify_admin(
+                        "Added a movie without a TMDB ID", "no_tmdb_id", movie=movie
                     )
 
                 # Keep the updated movie_id field.
@@ -699,24 +689,17 @@ def apply_tmdb_refresh(
                             f"'{new_relative}': {detail}. Delete one copy, "
                             f"then re-assign the TMDB id."
                         )
-                        admin_user = User.query.filter(User.admin == True).first()
-                        send_email_async(
-                            "Fitzflix - Rename collision needs triage",
-                            sender=("Fitzflix", current_app.config["SERVER_EMAIL"]),
-                            recipients=[admin_user.email],
-                            text_body=(
-                                f"Renaming '{f.basename}' (file #{f.id}) to "
-                                f"'{new_relative}' was refused: {detail}.\n\n"
-                                f"Delete one of the copies, then re-assign "
-                                f"the TMDB id to finish the rename."
-                            ),
-                            html_body=(
-                                f"<p>Renaming '{f.basename}' (file #{f.id}) "
-                                f"to '{new_relative}' was refused: {detail}."
-                                f"</p><p>Delete one of the copies, then "
-                                f"re-assign the TMDB id to finish the "
-                                f"rename.</p>"
-                            ),
+                        notify_admin_text(
+                            "Rename collision needs triage",
+                            f"Renaming '{f.basename}' (file #{f.id}) to "
+                            f"'{new_relative}' was refused: {detail}.\n\n"
+                            f"Delete one of the copies, then re-assign "
+                            f"the TMDB id to finish the rename.",
+                            f"<p>Renaming '{f.basename}' (file #{f.id}) "
+                            f"to '{new_relative}' was refused: {detail}."
+                            f"</p><p>Delete one of the copies, then "
+                            f"re-assign the TMDB id to finish the "
+                            f"rename.</p>",
                         )
                         continue
 
