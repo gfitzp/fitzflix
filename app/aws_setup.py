@@ -23,8 +23,12 @@ import time
 
 import botocore
 
+from app.s3_layout import PREFIX_BY_NAME, PREFIXES, prefix_value
+
+# The prefix table of app/s3_layout.py holds the rule ids and the
+# retention days of each prefix.
+
 ABORT_RULE_ID = "fitzflix-abort-incomplete-multipart"
-TRANSITION_RULE_ID = "fitzflix-untouched-to-deep-archive"
 NOTIFICATION_ID = "fitzflix-restore-completed"
 
 # A failed multipart upload (a killed backup upload, or a dropped
@@ -33,33 +37,11 @@ NOTIFICATION_ID = "fitzflix-restore-completed"
 
 ABORT_AFTER_DAYS = 1
 
-# This is the time that the previous version of a deleted or replaced
-# original stays recoverable. Deep Archive bills a minimum storage
-# duration of 180 days. Thus, to expire the noncurrent versions sooner
-# costs exactly the same in early-deletion fees. 180 days is the largest
-# recovery window that is free compared with a shorter setting
+# A scratch area expires its current objects after this many days. S3
+# does not accept the delete-marker setting in a rule that has a number
+# of days. Thus, the markers have a rule of their own.
 
-UNTOUCHED_NONCURRENT_RETENTION_DAYS = 180
-
-# A replaced poster makes a small noncurrent version on each change. One
-# month is sufficient time to undo a poster mistake
-
-CUSTOM_POSTERS_NONCURRENT_RETENTION_DAYS = 30
-
-CUSTOM_POSTERS_RULE_ID = "fitzflix-custom-posters-noncurrent"
-
-# The Atmos pipeline writes its DAMF masters and the .ec3 twins under a
-# scratch prefix and deletes them when the run ends. The bucket keeps
-# versions. Thus, a delete leaves a noncurrent version (1.6 TB on
-# 2026-10-24). These rules remove what a run leaves: current objects
-# after 1 week, noncurrent versions after 1 day, and then the delete
-# markers. S3 does not accept the delete-marker setting in a rule that
-# has a number of days.
-
-SCRATCH_RULE_ID = "fitzflix-mediaconvert-scratch-expire"
-SCRATCH_MARKERS_RULE_ID = "fitzflix-mediaconvert-scratch-markers"
 SCRATCH_CURRENT_DAYS = 7
-SCRATCH_NONCURRENT_DAYS = 1
 
 
 class StaleReadSuspected(Exception):
@@ -201,7 +183,7 @@ def provision(config, s3, sqs, echo=print, force=False):
 
     changes = []
 
-    def ensure_archive_rules(prefix, rule_id):
+    def ensure_archive_rules(prefix, rule_id, retention_days):
         """Make sure that 1 archive prefix has its transition and retention rules."""
 
         def transitions_prefix(rule):
@@ -253,107 +235,109 @@ def provision(config, s3, sqs, echo=print, force=False):
 
         retention_label = (
             f"lifecycle: {prefix} noncurrent-version retention "
-            f"({UNTOUCHED_NONCURRENT_RETENTION_DAYS} days)"
+            f"({retention_days} days)"
         )
         noncurrent = dict(rule_for_prefix.get("NoncurrentVersionExpiration", {}))
         current_days = noncurrent.get("NoncurrentDays")
-        if (
-            current_days is not None
-            and current_days >= UNTOUCHED_NONCURRENT_RETENTION_DAYS
-        ):
+        if current_days is not None and current_days >= retention_days:
             report(retention_label, "present")
         else:
-            noncurrent["NoncurrentDays"] = UNTOUCHED_NONCURRENT_RETENTION_DAYS
+            noncurrent["NoncurrentDays"] = retention_days
             rule_for_prefix["NoncurrentVersionExpiration"] = noncurrent
             changes.append(prefix)
             report(retention_label, "created" if current_days is None else "updated")
 
-    untouched_prefix = f"{config['AWS_UNTOUCHED_PREFIX']}/"
-    archive_prefixes = [
-        (untouched_prefix, TRANSITION_RULE_ID),
-        (
-            f"{config['AWS_MODIFIED_PREFIX']}/",
-            f"fitzflix-{config['AWS_MODIFIED_PREFIX']}-to-deep-archive",
-        ),
-        (
-            f"{config['AWS_TRANSCODED_PREFIX']}/",
-            f"fitzflix-{config['AWS_TRANSCODED_PREFIX']}-to-deep-archive",
-        ),
-    ]
-    for prefix, rule_id in archive_prefixes:
-        ensure_archive_rules(prefix, rule_id)
+    def table_prefix(entry):
+        return f"{prefix_value(entry, config)}/"
+
+    for entry in PREFIXES:
+        if entry.lifecycle == "archive":
+            ensure_archive_rules(
+                table_prefix(entry),
+                entry.rule_ids[0].format(prefix=prefix_value(entry, config)),
+                entry.noncurrent_days,
+            )
     if changes:
         changed = True
 
-    # 3d. The noncurrent-version retention for the custom posters mirror.
-    # Fitzflix detects it by content. Thus, a hand-made rule counts
+    # 3d. The noncurrent-version retention of the other mirrors (the custom
+    # posters). Fitzflix detects it by content. Thus, a hand-made rule
+    # counts
 
-    posters_prefix = f"{config['AWS_CUSTOM_POSTERS_PREFIX']}/"
-    posters_label = (
-        f"lifecycle: {posters_prefix} noncurrent-version retention "
-        f"({CUSTOM_POSTERS_NONCURRENT_RETENTION_DAYS} days)"
-    )
-
-    def expires_poster_versions(rule):
-        prefix = rule.get("Filter", {}).get("Prefix", rule.get("Prefix", ""))
-        return (
-            rule.get("Status") == "Enabled"
-            and prefix == posters_prefix
-            and "NoncurrentDays" in rule.get("NoncurrentVersionExpiration", {})
+    for entry in PREFIXES:
+        if entry.lifecycle != "noncurrent":
+            continue
+        mirror_prefix = table_prefix(entry)
+        mirror_label = (
+            f"lifecycle: {mirror_prefix} noncurrent-version retention "
+            f"({entry.noncurrent_days} days)"
         )
 
-    if any(expires_poster_versions(rule) for rule in rules):
-        report(posters_label, "present")
-    else:
+        def expires_versions(rule, mirror_prefix=mirror_prefix):
+            prefix = rule.get("Filter", {}).get("Prefix", rule.get("Prefix", ""))
+            return (
+                rule.get("Status") == "Enabled"
+                and prefix == mirror_prefix
+                and "NoncurrentDays" in rule.get("NoncurrentVersionExpiration", {})
+            )
+
+        if any(expires_versions(rule) for rule in rules):
+            report(mirror_label, "present")
+            continue
         rules.append(
             {
-                "ID": CUSTOM_POSTERS_RULE_ID,
+                "ID": entry.rule_ids[0],
                 "Status": "Enabled",
-                "Filter": {"Prefix": posters_prefix},
+                "Filter": {"Prefix": mirror_prefix},
                 "NoncurrentVersionExpiration": {
-                    "NoncurrentDays": CUSTOM_POSTERS_NONCURRENT_RETENTION_DAYS
+                    "NoncurrentDays": entry.noncurrent_days
                 },
                 "Expiration": {"ExpiredObjectDeleteMarker": True},
             }
         )
         changed = True
-        report(posters_label, "created")
+        report(mirror_label, "created")
 
-    # 3e. The expiry of the MediaConvert scratch area of the Atmos pipeline
+    # 3e. The expiry of the scratch areas (the MediaConvert scratch of the
+    # Atmos pipeline)
 
-    scratch_prefix = f"{config['AWS_MEDIACONVERT_PREFIX']}/"
-    scratch_rules = (
-        (
-            SCRATCH_RULE_ID,
-            f"lifecycle: {scratch_prefix} expiry ({SCRATCH_CURRENT_DAYS} days, "
-            f"noncurrent {SCRATCH_NONCURRENT_DAYS} day)",
-            {
-                "Expiration": {"Days": SCRATCH_CURRENT_DAYS},
-                "NoncurrentVersionExpiration": {
-                    "NoncurrentDays": SCRATCH_NONCURRENT_DAYS
-                },
-            },
-        ),
-        (
-            SCRATCH_MARKERS_RULE_ID,
-            f"lifecycle: {scratch_prefix} expired delete markers",
-            {"Expiration": {"ExpiredObjectDeleteMarker": True}},
-        ),
-    )
-    for rule_id, label, actions in scratch_rules:
-        if any(rule.get("ID") == rule_id for rule in rules):
-            report(label, "present")
+    for entry in PREFIXES:
+        if entry.lifecycle != "scratch":
             continue
-        rules.append(
-            {
-                "ID": rule_id,
-                "Status": "Enabled",
-                "Filter": {"Prefix": scratch_prefix},
-                **actions,
-            }
+        scratch_prefix = table_prefix(entry)
+        expire_id, markers_id = entry.rule_ids
+        scratch_rules = (
+            (
+                expire_id,
+                f"lifecycle: {scratch_prefix} expiry ({SCRATCH_CURRENT_DAYS} days, "
+                f"noncurrent {entry.noncurrent_days} day)",
+                {
+                    "Expiration": {"Days": SCRATCH_CURRENT_DAYS},
+                    "NoncurrentVersionExpiration": {
+                        "NoncurrentDays": entry.noncurrent_days
+                    },
+                },
+            ),
+            (
+                markers_id,
+                f"lifecycle: {scratch_prefix} expired delete markers",
+                {"Expiration": {"ExpiredObjectDeleteMarker": True}},
+            ),
         )
-        changed = True
-        report(label, "created")
+        for rule_id, label, actions in scratch_rules:
+            if any(rule.get("ID") == rule_id for rule in rules):
+                report(label, "present")
+                continue
+            rules.append(
+                {
+                    "ID": rule_id,
+                    "Status": "Enabled",
+                    "Filter": {"Prefix": scratch_prefix},
+                    **actions,
+                }
+            )
+            changed = True
+            report(label, "created")
 
     if changed:
         s3.put_bucket_lifecycle_configuration(
@@ -422,7 +406,11 @@ def provision(config, s3, sqs, echo=print, force=False):
         )
 
     added = False
-    for prefix, _rule_id in archive_prefixes:
+    untouched_prefix = table_prefix(PREFIX_BY_NAME["untouched"])
+    for entry in PREFIXES:
+        if not entry.restore_notification:
+            continue
+        prefix = table_prefix(entry)
         label = f"bucket restore-completed notification for {prefix}"
         if any(notifies_restore(entry, prefix) for entry in queue_configurations):
             report(label, "present")

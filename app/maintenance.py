@@ -23,6 +23,7 @@ from werkzeug.local import LocalProxy
 
 from app import db, get_app
 from app.email import task_send_email
+from app import s3_layout
 from app.queues import QUEUE_NAMES, queue_names
 from app.settings import get_setting
 
@@ -776,11 +777,7 @@ def _prune_backup_versions(client, bucket, prefix, cutoff, keep):
     for marker in markers:
         if marker["Key"] not in left:
             doomed.append({"Key": marker["Key"], "VersionId": marker["VersionId"]})
-    for start in range(0, len(doomed), 1000):
-        client.delete_objects(
-            Bucket=bucket,
-            Delete={"Objects": doomed[start : start + 1000], "Quiet": True},
-        )
+    s3_layout.delete_versions(client, bucket, doomed)
     return removed_keys
 
 
@@ -956,9 +953,7 @@ def backup_database():
                             posters_uploaded += 1
                 for key in remote_posters:
                     if key not in local_keys:
-                        client.delete_object(
-                            Bucket=current_app.config["AWS_BUCKET"], Key=key
-                        )
+                        s3_layout.delete(client, current_app.config["AWS_BUCKET"], key)
                         posters_deleted += 1
                 if posters_uploaded or posters_deleted:
                     current_app.logger.info(

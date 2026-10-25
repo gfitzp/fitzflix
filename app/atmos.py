@@ -35,6 +35,7 @@ from pymediainfo import MediaInfo
 from rq import get_current_job
 from rq.registry import StartedJobRegistry
 
+from app import s3_layout
 from app.tasks import enqueue_task
 from app import db, get_app, safe_job_id
 from app.models import File, FileAudioTrack
@@ -363,11 +364,7 @@ def _cleanup_s3_prefix(s3_client, bucket, prefix):
         for page in paginator.paginate(Bucket=bucket, Prefix=f"{prefix}/"):
             for entry in page.get("Versions", []) + page.get("DeleteMarkers", []):
                 doomed.append({"Key": entry["Key"], "VersionId": entry["VersionId"]})
-        for start in range(0, len(doomed), 1000):
-            s3_client.delete_objects(
-                Bucket=bucket,
-                Delete={"Objects": doomed[start : start + 1000], "Quiet": True},
-            )
+        s3_layout.delete_versions(s3_client, bucket, doomed)
         if doomed:
             current_app.logger.info(
                 f"Removed {len(doomed)} scratch object version(s) under '{prefix}/'"

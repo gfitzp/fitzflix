@@ -44,6 +44,7 @@ from werkzeug.local import LocalProxy
 from app.tasks import enqueue_task, requeue
 from app import db, get_app
 from app.email import task_send_email as send_email
+from app import s3_layout
 from app.queues import QUEUE_NAME, roster_queues
 from app.settings import get_setting
 from app.models import (
@@ -535,11 +536,26 @@ def sync_aws_s3_storage_task():
                 inventory_file = bytes(f.getvalue(), encoding="utf-8")
                 f.close()
                 client = aws_s3_client(with_retries=True)
+                inventory_key = s3_layout.key_under(
+                    "inventory", s3_layout.INVENTORY_BASENAME
+                )
                 client.put_object(
                     Body=inventory_file,
                     Bucket=current_app.config["AWS_BUCKET"],
-                    Key="inventory/rank_1.csv",
+                    Key=inventory_key,
                 )
+
+                # Each upload replaces the 1 object. Remove the old
+                # versions (#318). A failure here is not a sync failure.
+
+                try:
+                    s3_layout.prune_noncurrent(
+                        client, current_app.config["AWS_BUCKET"], inventory_key
+                    )
+                except Exception as e:
+                    current_app.logger.warning(
+                        f"Could not remove the old versions of '{inventory_key}': {e}"
+                    )
 
             # Delete the remote S3 files that are not in Fitzflix.
 
@@ -1192,10 +1208,7 @@ def move_archive_to_modified_task(file_id):
                     f"bytes differ. Thus, the archive stays in untouched/, and "
                     f"the new object is deleted"
                 )
-                version = (
-                    {"VersionId": new["VersionId"]} if new.get("VersionId") else {}
-                )
-                s3_client.delete_object(Bucket=bucket, Key=key, **version)
+                s3_layout.delete(s3_client, bucket, key, new.get("VersionId"))
                 return False
 
             file.aws_key = key
@@ -1204,10 +1217,9 @@ def move_archive_to_modified_task(file_id):
             file.aws_stale = False
             db.session.commit()
             if not untouched_key_still_claimed(old_key):
-                version = (
-                    {"VersionId": old["VersionId"]} if old.get("VersionId") else {}
-                )
-                s3_client.delete_object(Bucket=bucket, Key=old_key, **version)
+                # The old version goes permanently. The table entry of
+                # untouched/ in app/s3_layout.py records why.
+                s3_layout.delete(s3_client, bucket, old_key, old.get("VersionId"))
             current_app.logger.info(
                 f"'{file.basename}' Moved the archive to '{key}' and deleted "
                 f"'{old_key}'. The ETags are equal"
@@ -1301,7 +1313,7 @@ def rename_untouched_object(file, new_key):
             f"'{basename}' archive copy size mismatch: "
             f"{verify['ContentLength']} vs {head['ContentLength']}"
         )
-    s3_client.delete_object(Bucket=bucket, Key=old_key)
+    s3_layout.delete(s3_client, bucket, old_key)
     file.aws_key = new_key
     return True
 
@@ -1403,7 +1415,7 @@ def aws_delete(key):
     with app.app_context():
         current_app.logger.info(f"Preparing to delete '{key}' from AWS...")
         s3_client = aws_s3_client()
-        s3_client.delete_object(Bucket=current_app.config["AWS_BUCKET"], Key=key)
+        s3_layout.delete(s3_client, current_app.config["AWS_BUCKET"], key)
         current_app.logger.info(f"'{key}' deleted from AWS S3 storage")
         return datetime.now(timezone.utc)
 
