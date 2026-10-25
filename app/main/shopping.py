@@ -995,13 +995,25 @@ def movie_shopping():
         else None
     )
 
+    def posted_movie():
+        """Return the film of the add or exclude form, or None (#310).
+
+        The id is a hidden field. A post without it, or with an unknown
+        id, flashes a message. It does not give a 500."""
+
+        raw = str(movie_shopping_exclude_form.movie_id.data or "").strip()
+        movie = db.session.get(Movie, int(raw)) if raw.isdecimal() else None
+        if movie is None:
+            flash("That film is not in the library.", "warning")
+        return movie
+
     if (
         movie_shopping_exclude_form.add_submit.data
         and movie_shopping_exclude_form.validate_on_submit()
     ):
-        movie = Movie.query.filter_by(
-            id=int(movie_shopping_exclude_form.movie_id.data)
-        ).first()
+        movie = posted_movie()
+        if movie is None:
+            return redirect(url_for("main.movie_shopping"))
         movie.shopping_list_exclude = None
         db.session.commit()
         flash(f"Added '{movie.title}' to the shopping list")
@@ -1021,9 +1033,9 @@ def movie_shopping():
         movie_shopping_exclude_form.exclude_submit.data
         and movie_shopping_exclude_form.validate_on_submit()
     ):
-        movie = Movie.query.filter_by(
-            id=int(movie_shopping_exclude_form.movie_id.data)
-        ).first()
+        movie = posted_movie()
+        if movie is None:
+            return redirect(url_for("main.movie_shopping"))
         movie.shopping_list_exclude = 1
         db.session.commit()
         flash(f"Removed '{movie.title}' from the shopping list")

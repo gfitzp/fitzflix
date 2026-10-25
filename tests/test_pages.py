@@ -823,3 +823,18 @@ def test_an_unparseable_form_value_is_a_form_error(app):
         criterion.quality.choices = [("", "")]
         criterion.validate()
         assert criterion.spine_number.errors
+
+
+@pytest.mark.parametrize("movie_id", [None, "999999"])
+@pytest.mark.parametrize("button", ["add_submit", "exclude_submit"])
+def test_a_shopping_form_without_a_known_film_flashes(
+    app, admin_client, button, movie_id
+):
+    """A missing or unknown hidden id is a message, not a 500 (#310)."""
+
+    page = admin_client.get("/shopping-list/movie").get_data(as_text=True)
+    data = {"csrf_token": csrf_token_from(page), button: "1"}
+    if movie_id:
+        data["movie_id"] = movie_id
+    response = admin_client.post("/shopping-list/movie", data=data)
+    assert response.status_code == 302
