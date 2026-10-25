@@ -1,15 +1,10 @@
 import errno
 import hashlib
 import json
-import logging
 import os
 import re
-import threading
-import time
-import traceback
 
-from logging.handlers import SMTPHandler, WatchedFileHandler
-from urllib.parse import quote_plus, urlparse
+from urllib.parse import urlparse
 
 import rq
 
@@ -17,12 +12,6 @@ from redis import Redis
 from redlock import Redlock
 from rq.exceptions import NoSuchJobError
 from rq.job import Job
-from watchdog.events import (
-    FileCreatedEvent,
-    FileMovedEvent,
-    FileSystemEventHandler,
-)
-from watchdog.observers.polling import PollingObserver
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 from config import Config
@@ -556,105 +545,21 @@ def create_app(config_class=Config, watch_import_dir=False):
 
     This is the application factory. watch_import_dir starts the
     filesystem observer of the import directory. supervisor.py enables
-    it for the import-program workers only.
+    it for the import-program workers only. The template helpers, the
+    log handlers, and the import watch are in app.templating,
+    app.logging_setup, and app.import_watch.
     """
 
-    class MyHandler(FileSystemEventHandler):
-        """Hold the handlers that watchdog runs when filesystem events occur."""
-
-        def process_new_file(self, path):
-            """Queue a localization for a file that appeared in the import directory."""
-
-            # Create a Redis lock with the filename. This prevents multiple
-            # workers from getting the same file at one time.
-
-            lock = app.lock_manager.lock(os.path.basename(path), 30000)
-            if lock:
-                # The job id is the file basename. enqueue_localization adds
-                # the file only if no localization of it waits or runs, and
-                # no space wait holds it (#262 review, #287).
-
-                from app.importing import enqueue_localization
-
-                with app.app_context():
-                    if enqueue_localization(path, quiet=True):
-                        app.logger.info(
-                            f"'{os.path.basename(path)}' Found in import directory"
-                        )
-
-                app.lock_manager.unlock(lock)
-
-        def on_moved(self, event):
-            """Process a file when it is moved in the watched directory."""
-
-            # Process only the moved files that were invisible before.
-
-            if (
-                not importable_basename(os.path.basename(event.src_path))
-                and importable_basename(os.path.basename(event.dest_path))
-                and os.path.isfile(event.dest_path)
-            ):
-                self.process_new_file(event.dest_path)
-
-        def on_created(self, event):
-            """Process a file when it appears in the watched directory."""
-
-            # Process only the files that are not invisible or transient.
-
-            if importable_basename(os.path.basename(event.src_path)) and os.path.isfile(
-                event.src_path
-            ):
-                self.process_new_file(event.src_path)
-
-        def on_any_event(self, event):
-            """Log any filesystem event."""
-
-            app.logger.debug(event)
+    from app.import_watch import start_import_watch
+    from app.logging_setup import configure_logging
+    from app.templating import register_template_helpers
 
     app = Flask(__name__)
 
     # Build the application configuration from the config.py file.
 
     app.config.from_object(config_class)
-    app.jinja_env.filters["quote_plus"] = lambda u: quote_plus(u)
-
-    from app.richtext import review_html
-
-    app.jinja_env.filters["review_html"] = review_html
-
-    # The display name of a film, and its year. TMDB wins when the film
-    # has a TMDB match. The year falls back to the local year when the
-    # match has no release date. Thus, no template calls strftime on
-    # None. Every template uses these two filters for the title line.
-
-    def display_title(movie):
-        """Return the TMDB title of a film, or its local title.
-
-        The review page passes a plain namespace with no TMDB fields.
-        Thus, the lookups tolerate a missing attribute.
-        """
-
-        return getattr(movie, "tmdb_title", None) or movie.title
-
-    def display_year(movie):
-        """Return the TMDB release year of a film, or its local year."""
-
-        release_date = getattr(movie, "tmdb_release_date", None)
-        if getattr(movie, "tmdb_title", None) and release_date:
-            return release_date.strftime("%Y")
-        return movie.year
-
-    app.jinja_env.filters["display_title"] = display_title
-    app.jinja_env.filters["display_year"] = display_year
-
-    # The action forms of the poster tiles render their own csrf inputs.
-    # They do not need a form object passed through every gallery route.
-    # This is the same name that CSRFProtect would register, without its
-    # enforcement.
-
-    from flask_wtf.csrf import generate_csrf
-
-    app.jinja_env.globals["csrf_token"] = generate_csrf
+    register_template_helpers(app)
 
     # The built-in SECRET_KEY fallback lets anyone forge session cookies
     # and password-reset tokens. Thus, it is acceptable only in debug
@@ -732,65 +637,7 @@ def create_app(config_class=Config, watch_import_dir=False):
 
     app.register_blueprint(api_bp, url_prefix="/api")
 
-    # Credentials never reach the log, with any handler that writes it.
-    # See app.redaction. Fitzflix installs this in every mode. Thus, the
-    # tests cover it too.
-
-    from app.redaction import install as install_redaction
-
-    install_redaction(app.logger, app.config)
-
-    if not app.debug:
-        # Configure the log handling for production mode.
-
-        # Both Flask instances in this package share the "app" logger.
-        # Thus, attach the mail and file handlers only if an earlier
-        # create_app() did not.
-
-        if app.config["MAIL_SERVER"] and not any(
-            isinstance(handler, SMTPHandler) for handler in app.logger.handlers
-        ):
-            # Send an email for each exception.
-
-            auth = None
-            if app.config["MAIL_USERNAME"] or app.config["MAIL_PASSWORD"]:
-                auth = (app.config["MAIL_USERNAME"], app.config["MAIL_PASSWORD"])
-
-            secure = None
-            if app.config["MAIL_USE_TLS"]:
-                secure = ()
-
-            mail_handler = SMTPHandler(
-                mailhost=(app.config["MAIL_SERVER"], app.config["MAIL_PORT"]),
-                fromaddr=app.config["SERVER_EMAIL"],
-                toaddrs=app.config["ADMIN_EMAIL"],
-                subject="Fitzflix Failure",
-                credentials=auth,
-                secure=secure,
-            )
-            mail_handler.setLevel(logging.ERROR)
-            app.logger.addHandler(mail_handler)
-
-        os.makedirs(os.path.dirname(app.config["LOG_FILE"]), exist_ok=True)
-
-        if not any(
-            isinstance(handler, logging.FileHandler) for handler in app.logger.handlers
-        ):
-            # WatchedFileHandler sees when the rotate_logs maintenance
-            # task renames the log file. It opens the file again before
-            # the next write.
-
-            file_handler = WatchedFileHandler(app.config["LOG_FILE"])
-            file_handler.setFormatter(
-                logging.Formatter(
-                    "%(asctime)s %(levelname)s: %(message)s [in %(pathname)s:%(lineno)d]"
-                )
-            )
-            file_handler.setLevel(logging.INFO)
-            app.logger.addHandler(file_handler)
-
-        app.logger.setLevel(logging.INFO)
-        app.logger.info("Fitzflix startup")
+    configure_logging(app)
 
     # Create the work directories that Fitzflix writes to. The library
     # directories are not in the list. A missing library is a fault
@@ -813,108 +660,10 @@ def create_app(config_class=Config, watch_import_dir=False):
     # Watch the import directory for file changes, but only when asked.
     # supervisor.py enables this for the import-program workers only.
     # Thus, the other workers and the web process do not each poll the
-    # network-mounted directory with no benefit. The polling emitter
-    # stops itself permanently on any OSError from that mount. Thus, a
-    # keeper thread rebuilds the observer each time it dies. Then the
-    # thread sweeps the directory for the files that arrived while the
-    # observer was blind.
+    # network-mounted directory with no benefit.
 
     if watch_import_dir:
-        event_handler = MyHandler()
-
-        def start_observer():
-            observer = PollingObserver()
-            # Only the created and moved file events are important to
-            # the handler. Thus, the emitter filters all other events
-            # before dispatch.
-            observer.schedule(
-                event_handler,
-                path=app.config["IMPORT_DIR"],
-                recursive=False,
-                event_filter=[FileCreatedEvent, FileMovedEvent],
-            )
-            observer.start()
-            return observer
-
-        def enqueue_import_sweep():
-            enqueue_import_scan(app.import_queue)
-
-        def write_observer_heartbeat():
-            # This is a per-process heartbeat that expires. The admin
-            # health card counts these keys to show how many processes
-            # watch the import directory. A dead or wedged process stops
-            # the refresh.
-
-            from app.maintenance import OBSERVER_KEY_PREFIX
-
-            try:
-                app.redis.set(
-                    f"{OBSERVER_KEY_PREFIX}{os.getpid()}", int(time.time()), ex=180
-                )
-            except Exception:
-                pass
-
-        def keep_observer_alive(observer):
-            while True:
-                time.sleep(60)
-                try:
-                    # The failed emitter thread stays in the emitters set
-                    # after it dies. Thus, check if it is alive, not if it
-                    # is present.
-
-                    healthy = (
-                        observer.is_alive()
-                        and observer.emitters
-                        and all(emitter.is_alive() for emitter in observer.emitters)
-                    )
-                    if not healthy:
-                        app.logger.warning(
-                            "Import directory observer died; "
-                            "rebuilding it and sweeping for missed files"
-                        )
-                        try:
-                            observer.stop()
-                        except Exception:
-                            pass
-                        try:
-                            observer = start_observer()
-                        except OSError as e:
-                            # The import directory is still missing. Try
-                            # again at the next check.
-                            app.logger.warning(
-                                f"Import directory observer did not start: {e}"
-                            )
-                            observer = PollingObserver()
-                            continue
-                        enqueue_import_sweep()
-                    write_observer_heartbeat()
-                except Exception:
-                    app.logger.error(traceback.format_exc())
-
-        # A missing import directory (the SSD is not mounted) makes the
-        # first start fail. The worker must still start and serve its
-        # queues. Thus, the keeper thread starts the observer later.
-
-        try:
-            observer = start_observer()
-        except Exception:
-            app.logger.warning(
-                f"Import directory observer did not start "
-                f"({app.config['IMPORT_DIR']}); trying again every minute"
-            )
-            observer = PollingObserver()
-        write_observer_heartbeat()
-        threading.Thread(
-            target=keep_observer_alive,
-            args=(observer,),
-            daemon=True,
-            name="import-observer-keeper",
-        ).start()
-
-        # Process the files that arrived while the application did not
-        # watch.
-
-        enqueue_import_sweep()
+        start_import_watch(app)
 
     # The first application created becomes the instance of this process
     # for the modules that resolve their app through get_app().
