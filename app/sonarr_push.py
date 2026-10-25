@@ -17,7 +17,6 @@ from app.arr_client import (
     adopt_download,
     arr_request,
     configured,
-    rename_to_quality,
 )
 from app.arr_client import rename_download_locally as _rename_locally
 
@@ -42,16 +41,6 @@ def _sonarr(method, path, payload=None):
     """Make one authenticated JSON call to the Sonarr API."""
 
     return arr_request(SONARR, method, path, payload)
-
-
-def _sonarr_rename_to_quality(series_id, episode_file_id, quality_name):
-    """Give a Sonarr episode file a new quality, and let Sonarr rename it.
-
-    Return the new absolute path from the record of Sonarr."""
-
-    return rename_to_quality(
-        SONARR, _sonarr, series_id, episode_file_id, quality_name, SONARR_RENAME_WAIT
-    )
 
 
 def rename_download_locally(downloaded_path, new_path, series_id, series_title=None):

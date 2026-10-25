@@ -68,8 +68,6 @@ from app.criterion_catalog import (
     wikidata_retry_after_seconds,
 )
 from app.diary import (
-    _normalize_title,
-    _pick_tmdb_match,
     apply_letterboxd_import,
     apply_plex_watch,
     clear_not_interested,
@@ -104,7 +102,6 @@ from app.tmdb_refresh import (
     refresh_tmdb_info,
 )
 from app.tracks import (
-    _extract_media_details,
     build_supplement_args,
     extract_track_metadata,
     flag_possibly_forced_subtitles,
@@ -166,8 +163,6 @@ __all__ = [
     "refresh_criterion_releases",
     "stored_criterion_releases",
     "wikidata_retry_after_seconds",
-    "_normalize_title",
-    "_pick_tmdb_match",
     "apply_letterboxd_import",
     "apply_plex_watch",
     "clear_not_interested",
@@ -177,7 +172,6 @@ __all__ = [
     "plex_history_poll",
     "review_task",
     "star_rating_fields",
-    "_extract_media_details",
     "build_supplement_args",
     "extract_track_metadata",
     "flag_possibly_forced_subtitles",

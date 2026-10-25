@@ -117,29 +117,6 @@ def _clear_links(links):
         links.remove(linked)
 
 
-class Utilities(object):
-    """Static string helpers shared by the import pipeline."""
-
-    @staticmethod
-    def sanitize_string(string):
-        """Remove the characters that cause problems from a string."""
-
-        # fmt: off
-        bad_characters  = ["\\", "/", "<", ">", "?", "!", "*", ":", "|", '"',   "…", "“", "”", "‘", "’"]
-        good_characters = ["+",  "+",  "",  "",  "",  "", "-", "-",  "",  "", "...",  "",  "", "'", "'"]
-        # fmt: on
-
-        for i, bad_char in enumerate(bad_characters):
-            string = string.replace(bad_char, good_characters[i])
-
-        while "  " in string:
-            string = string.replace("  ", " ")
-
-        string = string.strip().strip("-").strip(".")
-        string = unidecode(string)
-        return string
-
-
 PEOPLE_RANKING_KEY = "fitzflix:people:ranked:{role}"
 
 
@@ -1374,7 +1351,7 @@ class UserMovieReview(db.Model):
         return f"<UserMovieReview '{self.user_id}:{self.movie_id}:{self.rating}'>"
 
 
-class Movie(db.Model, TMDBMixin, Utilities):
+class Movie(db.Model, TMDBMixin):
     """A film.
 
     The row holds the local identity, the TMDB enrichment, the Criterion
@@ -2618,18 +2595,11 @@ class TMDBCredit(db.Model, TMDBMixin):
     name = db.Column(db.String(128))
     gender = db.Column(db.Integer)
     tmdb_profile_path = db.Column(db.String(64))
-    acted_in = db.relationship(
-        "MovieCast", backref="starring", lazy="dynamic", cascade="all,delete"
-    )
-    crewed_on = db.relationship(
-        "MovieCrew", backref="crewed", lazy="dynamic", cascade="all,delete"
-    )
-    tv_acted_in = db.relationship(
-        "TVCast", backref="starring", lazy="dynamic", cascade="all,delete"
-    )
-    tv_crewed_on = db.relationship(
-        "TVCrew", backref="crewed", lazy="dynamic", cascade="all,delete"
-    )
+
+    # The join rows point at the credit (MovieCast.starring and so on).
+    # The credit has no relationship back to them. Thus, a delete of a
+    # credit does not delete the cast and crew rows. The foreign keys
+    # refuse it. Nothing in the app deletes a credit.
 
     def __repr__(self):
         return f"<TMDBCredit '{self.name}'>"
@@ -2641,6 +2611,7 @@ class MovieCast(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     movie_id = db.Column(db.Integer, db.ForeignKey("movie.id"))
     credit_id = db.Column(db.Integer, db.ForeignKey("tmdb_credit.id"))
+    starring = db.relationship("TMDBCredit")
     character = db.Column(db.String(512))
     billing_order = db.Column(db.Integer)
 
@@ -2656,6 +2627,7 @@ class MovieCrew(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     movie_id = db.Column(db.Integer, db.ForeignKey("movie.id"))
     credit_id = db.Column(db.Integer, db.ForeignKey("tmdb_credit.id"))
+    crewed = db.relationship("TMDBCredit")
     department = db.Column(db.String(128))
     job = db.Column(db.String(128))
 
@@ -2829,6 +2801,7 @@ class TVCast(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     tv_id = db.Column(db.Integer, db.ForeignKey("tv_series.id"))
     credit_id = db.Column(db.Integer, db.ForeignKey("tmdb_credit.id"))
+    starring = db.relationship("TMDBCredit")
     character = db.Column(db.String(512))
     billing_order = db.Column(db.Integer)
     episode_count = db.Column(db.Integer)
@@ -2848,6 +2821,7 @@ class TVCrew(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     tv_id = db.Column(db.Integer, db.ForeignKey("tv_series.id"))
     credit_id = db.Column(db.Integer, db.ForeignKey("tmdb_credit.id"))
+    crewed = db.relationship("TMDBCredit")
     department = db.Column(db.String(128))
     job = db.Column(db.String(128))
     episode_count = db.Column(db.Integer)

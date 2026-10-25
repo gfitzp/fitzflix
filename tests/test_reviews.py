@@ -1960,7 +1960,7 @@ def test_pick_tmdb_match_prefers_exact_title_in_year_results(app):
 
     TMDB ranks the featurette first in the year-filtered results."""
 
-    from app.videos import _pick_tmdb_match
+    from app.diary import _pick_tmdb_match
 
     year_filtered = [
         _result('The Digital Special Effects in "A Close Shave"', 1995),
@@ -1977,7 +1977,7 @@ def test_pick_tmdb_match_falls_through_year_junk_to_exact_title(app):
     wins, although its year is 2007. The match is never "My Poetic Works
     300 Yen"."""
 
-    from app.videos import _pick_tmdb_match
+    from app.diary import _pick_tmdb_match
 
     year_filtered = [_result("My Poetic Works 300 Yen", 2006)]
     title_only = [_result("300", 2007), _result("300: Rise of an Empire", 2014)]
@@ -1991,7 +1991,7 @@ def test_pick_tmdb_match_accepts_lone_exact_title_across_years(app):
 
     Fitzflix accepts a single exact-title match at any year distance."""
 
-    from app.videos import _pick_tmdb_match
+    from app.diary import _pick_tmdb_match
 
     title = "The Men Who Tread on the Tiger's Tail"
     title_only = [_result(title, 1952), _result("It Is Wonderful to Create", 2002)]
@@ -2002,7 +2002,7 @@ def test_pick_tmdb_match_accepts_lone_exact_title_across_years(app):
 def test_pick_tmdb_match_nearest_year_among_exact_titles(app):
     """Casino Royale (1967) selects the 1967 spoof, not the 2006 film."""
 
-    from app.videos import _pick_tmdb_match
+    from app.diary import _pick_tmdb_match
 
     title_only = [
         _result("Casino Royale", 2006),
@@ -2019,7 +2019,7 @@ def test_pick_tmdb_match_keeps_alternative_title_head(app):
 
     The first year-filtered result stays the fallback."""
 
-    from app.videos import _pick_tmdb_match
+    from app.diary import _pick_tmdb_match
 
     year_filtered = [_result("Waking Ned", 1998)]
     picked = _pick_tmdb_match("Waking Ned Devine", 1998, year_filtered, [])
@@ -2030,7 +2030,7 @@ def test_pick_tmdb_match_normalizes_dashes(app):
     """The en-dash Star Wars titles of Letterboxd equal the hyphens of
     TMDB."""
 
-    from app.videos import _normalize_title, _pick_tmdb_match
+    from app.diary import _normalize_title, _pick_tmdb_match
 
     lb = "Star Wars: Episode I – The Phantom Menace"
     tmdb = "Star Wars: Episode I - The Phantom Menace"
@@ -2042,7 +2042,7 @@ def test_pick_tmdb_match_normalizes_dashes(app):
 def test_pick_tmdb_match_skips_when_nothing_plausible(app):
     """TRIGUN (a TV series) matches nothing and stays unresolved."""
 
-    from app.videos import _pick_tmdb_match
+    from app.diary import _pick_tmdb_match
 
     assert (
         _pick_tmdb_match("TRIGUN", 1998, [], [_result("Trigun: Badlands Rumble", 2010)])

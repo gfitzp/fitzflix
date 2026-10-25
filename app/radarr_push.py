@@ -38,7 +38,6 @@ from app.arr_client import (
     arr_request,
     configured,
     fallback_rename,
-    rename_to_quality,
 )
 from app.arr_client import rename_download_locally as _rename_locally
 from app.tasks import enqueue_task
@@ -369,16 +368,6 @@ def reconcile_radarr_paths():
             f"{ambiguous} left for review"
         )
         return f"{fixed} repointed, {ambiguous} for review"
-
-
-def _radarr_rename_to_quality(movie_id, movie_file_id, quality_name):
-    """Give a Radarr movie file a new quality, and let Radarr rename it (#288).
-
-    Return the new absolute path from the record of Radarr."""
-
-    return rename_to_quality(
-        RADARR, _radarr, movie_id, movie_file_id, quality_name, RADARR_RENAME_WAIT
-    )
 
 
 def rename_download_locally(downloaded_path, new_path, movie_id):

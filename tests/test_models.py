@@ -270,3 +270,66 @@ def test_no_many_to_many_relationship_carries_a_delete_cascade(app):
                 if relationship.cascade.delete or relationship.cascade.delete_orphan:
                     offenders.append(f"{mapper.class_.__name__}.{relationship.key}")
         assert offenders == []
+
+
+def test_the_credit_rows_carry_no_delete_cascade(app):
+    """Test that a delete of a credit cannot delete the cast and crew rows.
+
+    The credit (a person) had 4 relationships to its join rows with a
+    delete cascade. None was ever read. The join rows now point at the
+    credit, and nothing points back. Thus, no delete cascade can reach
+    the rows that the movie and series pages read."""
+
+    from app.models import MovieCast, MovieCrew, TMDBCredit, TVCast, TVCrew
+
+    with app.app_context():
+        credit_mapper = db.inspect(TMDBCredit)
+        assert list(credit_mapper.relationships) == []
+        for cls, key in (
+            (MovieCast, "starring"),
+            (MovieCrew, "crewed"),
+            (TVCast, "starring"),
+            (TVCrew, "crewed"),
+        ):
+            relationship = db.inspect(cls).relationships[key]
+            assert relationship.mapper.class_ is TMDBCredit
+            assert not relationship.cascade.delete
+            assert not relationship.cascade.delete_orphan
+
+
+def test_a_movie_delete_removes_its_watchlist_rows(app):
+    """Test the one reader of Movie.watchlist_entries: the delete cascade.
+
+    No code reads the attribute. But the relationship gives UserWatchlist
+    its movie backref (the availability digest reads it) and the junk
+    delete of the CLI its cascade. Thus, it stays."""
+
+    from app.models import Movie, User, UserWatchlist
+
+    with app.app_context():
+        movie = make_movie("Watchlisted Junk", 2001)
+        user = User.query.first()
+        db.session.add(UserWatchlist(user_id=user.id, movie_id=movie.id))
+        db.session.commit()
+        movie_id = movie.id
+        assert UserWatchlist.query.filter_by(movie_id=movie_id).count() == 1
+
+        db.session.delete(db.session.get(Movie, movie_id))
+        db.session.commit()
+        assert UserWatchlist.query.filter_by(movie_id=movie_id).count() == 0
+
+
+def test_the_orphans_are_gone(app):
+    """Pin the deletions of the second simplification pass."""
+
+    import app.radarr_push as radarr_push
+    import app.sonarr_push as sonarr_push
+    import app.videos as videos
+    from app.models import Movie
+
+    assert not hasattr(radarr_push, "_radarr_rename_to_quality")
+    assert not hasattr(sonarr_push, "_sonarr_rename_to_quality")
+    for name in ("_normalize_title", "_pick_tmdb_match", "_extract_media_details"):
+        assert name not in videos.__all__
+    assert not hasattr(Movie, "sanitize_string")
+    assert "Utilities" not in dir(__import__("app.models", fromlist=["x"]))
