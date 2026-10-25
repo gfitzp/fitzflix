@@ -23,6 +23,7 @@ from flask import (
 # Flask 2.4 removed flask.Markup. Import it from its real module
 from flask_login import current_user, login_required
 
+from app.tasks import enqueue_task
 from app import db, enqueue_import_scan, local_path, safe_job_id
 from app.main.forms import (
     ArchivedRestoreForm,
@@ -644,10 +645,8 @@ def maintenance():
         # longer than the request queue allows, and it must not hold the
         # user-request worker.
 
-        current_app.maintenance_queue.enqueue(
+        enqueue_task(
             "app.videos.refresh_criterion_collection_info",
-            args=None,
-            job_timeout=3600,
             description="Refreshing Criterion Collection information for all movies in library",
         )
         flash(
@@ -681,18 +680,20 @@ def maintenance():
         # import work of the single sql worker for the whole run
 
         for movie in movies:
-            current_app.request_queue.enqueue(
+            enqueue_task(
                 "app.videos.refresh_tmdb_info",
-                args=("Movies", movie.id, movie.tmdb_id),
-                job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
+                "Movies",
+                movie.id,
+                movie.tmdb_id,
                 description=f"Refreshing TMDB data for '{movie.title} ({movie.year})'",
             )
 
         for tv in tv_shows:
-            current_app.request_queue.enqueue(
+            enqueue_task(
                 "app.videos.refresh_tmdb_info",
-                args=("TV Shows", tv.id, tv.tmdb_id),
-                job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
+                "TV Shows",
+                tv.id,
+                tv.tmdb_id,
                 description=f"Refreshing TMDB data for '{tv.title}'",
             )
 
@@ -709,10 +710,8 @@ def maintenance():
             # in the cron table. On the single sql worker it blocked the
             # cataloging of each import (#314).
 
-            current_app.maintenance_queue.enqueue(
+            enqueue_task(
                 "app.videos.sync_aws_s3_storage_task",
-                args=None,
-                job_timeout="24h",
                 description="Syncing files with AWS S3 storage",
             )
             flash("Syncing files with AWS S3 storage", "info")
@@ -727,10 +726,8 @@ def maintenance():
     metadata_scan_form = TrackMetadataScanForm()
 
     if metadata_scan_form.scan_submit.data and metadata_scan_form.validate_on_submit():
-        current_app.sql_queue.enqueue(
+        enqueue_task(
             "app.videos.track_metadata_scan_library",
-            args=(),
-            job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
             description="Scanning track metadata for all files in the library",
         )
         flash("Scanning track metadata for all files in the library", "info")
@@ -767,14 +764,13 @@ def maintenance():
         else:
             canonical = group[0]
             for duplicate in group[1:]:
-                current_app.request_queue.enqueue(
+                enqueue_task(
                     "app.videos.refresh_tmdb_info",
-                    args=("Movies", duplicate.id, merge_tmdb_id),
-                    job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
-                    description=(
-                        f"Merging '{duplicate.title} ({duplicate.year})' into "
-                        f"'{canonical.title} ({canonical.year})'"
-                    ),
+                    "Movies",
+                    duplicate.id,
+                    merge_tmdb_id,
+                    description=f"Merging '{duplicate.title} ({duplicate.year})' into "
+                    f"'{canonical.title} ({canonical.year})'",
                 )
             flash(
                 f"Merging {len(group) - 1} duplicate(s) into "
@@ -837,10 +833,8 @@ def missing_files():
 
     scan_form = MissingScanForm()
     if scan_form.missing_scan_submit.data and scan_form.validate_on_submit():
-        current_app.maintenance_queue.enqueue(
+        enqueue_task(
             "app.missing_files.missing_best_files_task",
-            args=(),
-            job_timeout=1800,
             description="Scanning for best files that have no local copy",
             at_front=True,
         )
@@ -884,10 +878,9 @@ def missing_files():
             return redirect(url_for("main.missing_files"))
 
         for file in files:
-            current_app.request_queue.enqueue(
+            enqueue_task(
                 "app.videos.aws_restore",
-                args=(file.restore_key,),
-                job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
+                file.restore_key,
                 description=f"'{file.untouched_basename}'",
             )
         estimate = restore_cost_estimate(files)
@@ -963,11 +956,8 @@ def held_imports():
                 "info",
             )
         else:
-            current_app.file_queue.enqueue(
-                "app.videos.archive_held_task",
-                args=(held.id,),
-                job_timeout=current_app.config["UPLOAD_TASK_TIMEOUT"],
-                description=f"'{name}'",
+            enqueue_task(
+                "app.videos.archive_held_task", held.id, description=f"'{name}'"
             )
             flash(f"Archiving '{name}' to S3. The library does not change.", "info")
         current_app.logger.info(
@@ -989,10 +979,9 @@ def held_imports():
         if archived is None:
             flash("That original is no longer archived.", "warning")
             return redirect(url_for("main.held_imports"))
-        current_app.request_queue.enqueue(
+        enqueue_task(
             "app.videos.aws_restore",
-            args=(archived.aws_key,),
-            job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
+            archived.aws_key,
             description=f"'{archived.untouched_basename}'",
         )
         flash(
@@ -1093,10 +1082,13 @@ def manual_imports():
         current_app.redis.set(
             STARTED_KEY.format(download_id=download_id), "1", ex=STARTED_TTL
         )
-        current_app.file_queue.enqueue(
+        enqueue_task(
             "app.manual_imports.manual_import_task",
-            args=(service, download_id, entry["output_path"], relative, new_name),
-            job_timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
+            service,
+            download_id,
+            entry["output_path"],
+            relative,
+            new_name,
             description=f"'{new_name}'",
             job_id=safe_job_id(f"manual-import:{download_id}"),
         )
@@ -1232,11 +1224,16 @@ def tmdb_triage():
         # reload. If the id already belongs to a different record, the
         # merge path of the refresh merges this record into it
 
-        refresh_job = current_app.sql_queue.enqueue(
+        refresh_job = enqueue_task(
             "app.videos.refresh_tmdb_info",
-            args=(library, record.id, form.tmdb_id.data),
-            kwargs={"apply_at_front": True},
-            job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
+            library,
+            record.id,
+            form.tmdb_id.data,
+            apply_at_front=True,
+            # The page waits for this refresh. Thus, it goes to the front
+            # of the sql queue, not behind the bulk refreshes of the
+            # request queue.
+            queue="sql",
             description=f"Refreshing TMDB data for '{display}'",
             at_front=True,
         )
@@ -1371,15 +1368,12 @@ def subtitle_triage(file_id):
             key=int,
         )
 
-        current_app.file_queue.enqueue(
+        enqueue_task(
             "app.videos.mkvpropedit_task",
-            args=(
-                file.id,
-                default_audio_track,
-                default_subtitle_track,
-                forced_tracks,
-            ),
-            job_timeout=current_app.config["MKVPROPEDIT_TASK_TIMEOUT"],
+            file.id,
+            default_audio_track,
+            default_subtitle_track,
+            forced_tracks,
             description=f"'{file.basename}'",
         )
         remove_triage_snapshots(file.id)
@@ -1513,15 +1507,12 @@ def lossy_audio_triage(file_id):
             key=int,
         )
 
-        current_app.file_queue.enqueue(
+        enqueue_task(
             "app.videos.mkvpropedit_task",
-            args=(
-                file.id,
-                str(track.track),
-                default_subtitle_track,
-                forced_tracks,
-            ),
-            job_timeout=current_app.config["MKVPROPEDIT_TASK_TIMEOUT"],
+            file.id,
+            str(track.track),
+            default_subtitle_track,
+            forced_tracks,
             description=f"'{file.basename}'",
         )
 
@@ -1551,10 +1542,9 @@ def lossy_audio_triage(file_id):
         ):
             flash(f"'{file.basename}' is not present locally.", "warning")
             return stay()
-        current_app.transcode_queue.enqueue(
+        enqueue_task(
             "app.triage.generate_audio_comparison",
-            args=(file.id,),
-            job_timeout="2h",
+            file.id,
             description=f"Audio comparison for '{file.basename}'",
         )
         flash(

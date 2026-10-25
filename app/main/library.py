@@ -32,6 +32,7 @@ from markupsafe import Markup
 from flask_login import current_user, login_required
 from flask_sqlalchemy.pagination import Pagination
 
+from app.tasks import enqueue_task
 from app import db
 from app.main.forms import (
     CriterionForm,
@@ -546,13 +547,10 @@ def movie_library():
             if deferred and current_app.redis.set(
                 f"fitzflix:streaming:warm:{int(credit)}", "1", nx=True, ex=900
             ):
-                current_app.maintenance_queue.enqueue(
+                enqueue_task(
                     "app.streaming.warm_title_availability",
-                    args=(deferred,),
-                    job_timeout="30m",
-                    description=(
-                        f"Warming streaming availability for {len(deferred)} films"
-                    ),
+                    deferred,
+                    description=f"Warming streaming availability for {len(deferred)} films",
                 )
             for row in filmography:
                 if row["quality"] or not row["tmdb_id"]:
@@ -1225,11 +1223,10 @@ def criterion_collection():
     if deferred and current_app.redis.set(
         "fitzflix:streaming:warm:criterion", "1", nx=True, ex=900
     ):
-        current_app.maintenance_queue.enqueue(
+        enqueue_task(
             "app.streaming.warm_title_availability",
-            args=(deferred,),
-            job_timeout="30m",
-            description=(f"Warming streaming availability for {len(deferred)} films"),
+            deferred,
+            description=f"Warming streaming availability for {len(deferred)} films",
         )
     for row in merged:
         # The rows with a local file skip the leaving/newly-added
@@ -1735,11 +1732,16 @@ def movie(movie_id):
                     "warning",
                 )
                 return redirect(url_for("main.movie", movie_id=movie.id))
-            refresh_job = current_app.sql_queue.enqueue(
+            refresh_job = enqueue_task(
                 "app.videos.refresh_tmdb_info",
-                args=("Movies", movie.id, movie.tmdb_id),
-                kwargs={"apply_at_front": True},
-                job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
+                "Movies",
+                movie.id,
+                movie.tmdb_id,
+                apply_at_front=True,
+                # The page waits for this refresh. Thus, it goes to the front
+                # of the sql queue, not behind the bulk refreshes of the
+                # request queue.
+                queue="sql",
                 description=f"Refreshing TMDB data for '{movie.title} ({movie.year})'",
                 at_front=True,
             )
@@ -1783,11 +1785,16 @@ def movie(movie_id):
         # Add a task to the fitzflix-sql queue to check TMDB and update the database.
         # Add it to the front of the queue, because the user added it interactively.
 
-        refresh_job = current_app.sql_queue.enqueue(
+        refresh_job = enqueue_task(
             "app.videos.refresh_tmdb_info",
-            args=("Movies", movie.id, tmdb_lookup_form.tmdb_id.data),
-            kwargs={"apply_at_front": True},
-            job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
+            "Movies",
+            movie.id,
+            tmdb_lookup_form.tmdb_id.data,
+            apply_at_front=True,
+            # The page waits for this refresh. Thus, it goes to the front
+            # of the sql queue, not behind the bulk refreshes of the
+            # request queue.
+            queue="sql",
             description=f"Refreshing TMDB data for '{movie.title} ({movie.year})'",
             at_front=True,
         )
@@ -2443,11 +2450,10 @@ def tv(series_id):
 
         else:
             for file in series_restorable:
-                current_app.request_queue.enqueue(
+                enqueue_task(
                     "app.videos.aws_restore",
-                    args=(file.restore_key,),
-                    kwargs={"tier": "Bulk"},
-                    job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
+                    file.restore_key,
+                    tier="Bulk",
                     description=f"'{file.untouched_basename}'",
                 )
 
@@ -2499,10 +2505,12 @@ def tv(series_id):
         for aws_key in aws_keys:
             if untouched_key_still_claimed(aws_key):
                 continue
-            current_app.request_queue.enqueue(
+            enqueue_task(
                 "app.videos.aws_delete",
-                args=(aws_key,),
-                job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
+                aws_key,
+                # A delete from a page uses the request workers. The handoff
+                # queue can hold long library copies.
+                queue="request",
             )
 
         # The folders themselves. delete_local_file removes only EMPTY
@@ -2575,11 +2583,16 @@ def tv(series_id):
         # Add a task to the fitzflix-sql queue to check TMDB and update the database.
         # Add it to the front of the queue, because the user added it interactively.
 
-        refresh_job = current_app.sql_queue.enqueue(
+        refresh_job = enqueue_task(
             "app.videos.refresh_tmdb_info",
-            args=("TV Shows", tv.id, tmdb_lookup_form.tmdb_id.data),
-            kwargs={"apply_at_front": True},
-            job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
+            "TV Shows",
+            tv.id,
+            tmdb_lookup_form.tmdb_id.data,
+            apply_at_front=True,
+            # The page waits for this refresh. Thus, it goes to the front
+            # of the sql queue, not behind the bulk refreshes of the
+            # request queue.
+            queue="sql",
             description=f"Refreshing TMDB data for '{tv.title}'",
             at_front=True,
         )
@@ -2742,11 +2755,10 @@ def season(series_id, season):
 
         else:
             for file in restorable:
-                current_app.request_queue.enqueue(
+                enqueue_task(
                     "app.videos.aws_restore",
-                    args=(file.restore_key,),
-                    kwargs={"tier": "Bulk"},
-                    job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
+                    file.restore_key,
+                    tier="Bulk",
                     description=f"'{file.untouched_basename}'",
                 )
 
@@ -3022,16 +3034,13 @@ def file(file_id):
         )
 
         if file.container == "Matroska":
-            mkvpropedit_job = current_app.file_queue.enqueue(
+            mkvpropedit_job = enqueue_task(
                 "app.videos.mkvpropedit_task",
-                args=(
-                    file.id,
-                    default_audio_track,
-                    mkvpropedit_form.default_subtitle.data,
-                    mkvpropedit_form.forced_subtitles.data,
-                    track_languages or None,
-                ),
-                job_timeout=current_app.config["MKVPROPEDIT_TASK_TIMEOUT"],
+                file.id,
+                default_audio_track,
+                mkvpropedit_form.default_subtitle.data,
+                mkvpropedit_form.forced_subtitles.data,
+                track_languages or None,
                 description=f"'{file.basename}'",
             )
             if mkvpropedit_job:
@@ -3115,14 +3124,11 @@ def file(file_id):
         )
 
         if file.container == "Matroska":
-            mkvmerge_job = current_app.import_queue.enqueue(
+            mkvmerge_job = enqueue_task(
                 "app.videos.mkvmerge_task",
-                args=(
-                    file.id,
-                    mkvmerge_form.audio_tracks.data,
-                    mkvmerge_form.subtitle_tracks.data,
-                ),
-                job_timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
+                file.id,
+                mkvmerge_form.audio_tracks.data,
+                mkvmerge_form.subtitle_tracks.data,
                 description=f"'{file.basename}'",
                 at_front=True,
             )
@@ -3150,10 +3156,9 @@ def file(file_id):
 
         # Enqueue an upload task for this file
 
-        current_app.file_queue.enqueue(
+        enqueue_task(
             "app.videos.upload_task",
-            args=(file.id,),
-            job_timeout=current_app.config["UPLOAD_TASK_TIMEOUT"],
+            file.id,
             description=f"'{file.basename}'",
             at_front=True,
         )
@@ -3174,10 +3179,9 @@ def file(file_id):
 
         # Enqueue a restore task for this file
 
-        current_app.request_queue.enqueue(
+        enqueue_task(
             "app.videos.aws_restore",
-            args=(file.restore_key,),
-            job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
+            file.restore_key,
             description=f"'{file.untouched_basename}'",
         )
         flash(
@@ -3209,10 +3213,12 @@ def file(file_id):
         # gone.
 
         if aws_key and not untouched_key_still_claimed(aws_key):
-            current_app.request_queue.enqueue(
+            enqueue_task(
                 "app.videos.aws_delete",
-                args=(aws_key,),
-                job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
+                aws_key,
+                # A delete from a page uses the request workers. The handoff
+                # queue can hold long library copies.
+                queue="request",
             )
 
         # Clear the folder if only placed poster art and OS metadata

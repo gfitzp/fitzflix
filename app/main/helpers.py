@@ -19,6 +19,7 @@ from flask import (
 # Flask 2.4 removed flask.Markup. Import it from its real home.
 from flask_login import current_user
 
+from app.tasks import enqueue_task
 from app import db
 from app.models import (
     File,
@@ -80,9 +81,8 @@ def _enqueue_profile_recompute():
     if current_app.redis.set(
         f"fitzflix:elicit:recompute:{user_id}", "1", nx=True, ex=300
     ):
-        current_app.maintenance_queue.enqueue(
+        enqueue_task(
             "app.recommendations.recompute_recommendations",
-            job_timeout="1h",
             description="Recomputing film recommendations",
         )
     elif current_app.redis.set(

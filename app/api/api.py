@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from flask import current_app, jsonify, request
 from flask_login import current_user
 
+from app.tasks import enqueue_task
 from app.api import bp
 
 
@@ -104,15 +105,12 @@ def plex_webhook(token):
         return "", 204
 
     username = (payload.get("Account") or {}).get("title") or ""
-    current_app.sql_queue.enqueue(
+    enqueue_task(
         "app.videos.apply_plex_watch",
-        args=(
-            tmdb_id,
-            username,
-            datetime.now(timezone.utc).isoformat(),
-            "webhook",
-        ),
-        job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
+        tmdb_id,
+        username,
+        datetime.now(timezone.utc).isoformat(),
+        "webhook",
         description=f"Recording Plex watch of tmdb:{tmdb_id} by {username}",
     )
     return "", 204

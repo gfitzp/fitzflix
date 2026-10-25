@@ -45,6 +45,7 @@ import traceback
 from flask import current_app
 from werkzeug.local import LocalProxy
 
+from app.tasks import enqueue_task
 from app import db, get_app
 from app.models import File, FileAudioTrack, FileSubtitleTrack, Movie
 
@@ -628,10 +629,9 @@ def maybe_enqueue_triage_snapshots(file_id):
     if not forced_subtitle_candidates(file_id=file_id):
         return False
     file = db.session.get(File, file_id)
-    current_app.transcode_queue.enqueue(
+    enqueue_task(
         "app.triage.generate_triage_snapshots",
-        args=(int(file_id),),
-        job_timeout="2h",
+        int(file_id),
         description=f"Subtitle snapshots for '{file.basename}'",
     )
     return True
@@ -960,10 +960,9 @@ def maybe_enqueue_audio_comparison(file_id):
     if not lossy_audio_candidates(file_id=file_id):
         return False
     file = db.session.get(File, file_id)
-    current_app.transcode_queue.enqueue(
+    enqueue_task(
         "app.triage.generate_audio_comparison",
-        args=(int(file_id),),
-        job_timeout="2h",
+        int(file_id),
         description=f"Audio comparison for '{file.basename}'",
     )
     return True

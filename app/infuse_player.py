@@ -40,6 +40,7 @@ import pyatv
 from pyatv import conf, exceptions
 from pyatv.const import PairingRequirement, Protocol
 
+from app.tasks import enqueue_task
 from app import db
 from app.models import User
 from app.plex_player import player_address
@@ -216,10 +217,13 @@ def start_pairing(user_id, address):
     redis.set(_attempt_key(user_id), attempt, ex=PAIR_TTL)
     redis.set(_state_key(user_id), "queued", ex=PAIR_TTL)
     redis.delete(_pin_key(user_id))
-    current_app.request_queue.enqueue(
+    enqueue_task(
         "app.infuse_player.pair_task",
-        args=(user_id, address, attempt),
-        job_timeout=PIN_WAIT_SECONDS + 120,
+        user_id,
+        address,
+        attempt,
+        # The task waits for the PIN. Thus, the wait sets its timeout.
+        timeout=PIN_WAIT_SECONDS + 120,
         description=f"Pairing Apple TV at {address} for Infuse playback",
     )
     return True

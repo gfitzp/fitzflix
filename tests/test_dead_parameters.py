@@ -8,7 +8,6 @@ localization_task carried force_upload and ignore_etag through 8
 self-requeues and never read them."""
 
 import inspect
-import re
 
 
 def _params(function):
@@ -31,18 +30,30 @@ def test_the_task_signatures_carry_only_live_parameters():
 
 
 def test_every_upload_task_producer_passes_the_file_id_only():
+    """Test that each enqueue_task of upload_task passes 1 argument.
+
+    The other keywords of a producer must be options of enqueue_task,
+    not task arguments."""
+
+    import ast
     import glob
 
-    enqueue = re.compile(r'"app\.videos\.upload_task",\s*args=\(([^)]*)\)', re.S)
+    options = {"description", "at_front", "queue", "timeout", "job_id", "meta"}
     producers = 0
     for path in glob.glob("app/**/*.py", recursive=True):
         with open(path) as handle:
-            for match in enqueue.finditer(handle.read()):
-                producers += 1
-                args = [
-                    part.strip() for part in match.group(1).split(",") if part.strip()
-                ]
-                assert len(args) == 1, (path, match.group(0))
+            tree = ast.parse(handle.read())
+        for node in ast.walk(tree):
+            if not (
+                isinstance(node, ast.Call)
+                and getattr(node.func, "id", None) == "enqueue_task"
+                and node.args
+                and getattr(node.args[0], "value", None) == "app.videos.upload_task"
+            ):
+                continue
+            producers += 1
+            assert len(node.args) == 2, (path, node.lineno)
+            assert {k.arg for k in node.keywords} <= options, (path, node.lineno)
     assert producers >= 5
 
 

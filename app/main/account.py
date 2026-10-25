@@ -26,6 +26,7 @@ from flask import (
 from flask_login import current_user, login_required
 from sqlalchemy.orm import contains_eager
 
+from app.tasks import enqueue_task
 from app import db
 from app.main.forms import (
     AvailabilityAlertsForm,
@@ -458,10 +459,10 @@ def _review_upload_response(review_upload_form):
             flash(unreadable, "warning")
             return redirect(url_for("main.profile"))
         if films:
-            current_app.request_queue.enqueue(
+            enqueue_task(
                 "app.videos.letterboxd_import_task",
-                args=(current_user.id, films),
-                job_timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
+                current_user.id,
+                films,
                 description=f"Matching {len(films)} Letterboxd film(s)",
             )
             flash(f"Importing Letterboxd data for {len(films)} films", "info")
@@ -490,10 +491,11 @@ def _review_upload_response(review_upload_form):
 
         for name, rating in ratings:
             if rating >= 0:
-                current_app.sql_queue.enqueue(
+                enqueue_task(
                     "app.videos.review_task",
-                    args=(current_user.id, name, rating),
-                    job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
+                    current_user.id,
+                    name,
+                    rating,
                     description=f"Reviewing {name}",
                 )
     return redirect(url_for("main.profile"))

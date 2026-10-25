@@ -4,6 +4,7 @@ from datetime import date, datetime
 
 from flask import current_app, jsonify, request
 
+from app.tasks import enqueue_task
 from app.api import bp
 from app.settings import get_setting
 from app.api.arr import (
@@ -92,19 +93,16 @@ def sonarr_add(payload):
         and episode_file_id
         and sonarr_configured()
     ):
-        current_app.request_queue.enqueue(
+        enqueue_task(
             "app.sonarr_push.adopt_episode_task",
-            args=(
-                int(series_id),
-                int(episode_file_id),
-                downloaded_file_path,
-                sonarr_file_path,
-                new_quality,
-                at_front,
-            ),
-            job_timeout=300,
-            result_ttl=86400,
+            int(series_id),
+            int(episode_file_id),
+            downloaded_file_path,
+            sonarr_file_path,
+            new_quality,
+            at_front,
             description=f"'{sonarr_file_name}' Setting the Sonarr quality",
+            result_ttl=86400,
         )
         current_app.logger.info(
             f"'{downloaded_file_path}' Sonarr renames it as '{sonarr_file_name}'"

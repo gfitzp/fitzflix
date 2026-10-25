@@ -28,6 +28,7 @@ from rq.registry import ScheduledJobRegistry, StartedJobRegistry
 from unidecode import unidecode
 from werkzeug.local import LocalProxy
 
+from app.tasks import enqueue_task
 from app import db, get_app, safe_job_id
 from app.aws_storage import rename_untouched_object, sanitize_s3_key
 from app.email import send_email as send_email_async
@@ -363,16 +364,13 @@ def refresh_tmdb_info(
             if tmdb_info:
                 tmdb_payload = zlib.compress(json.dumps(tmdb_info).encode("utf-8"))
 
-            current_app.sql_queue.enqueue(
+            enqueue_task(
                 "app.videos.apply_tmdb_refresh",
-                kwargs={
-                    "library": library,
-                    "id": id,
-                    "tmdb_id": tmdb_id,
-                    "tmdb_payload": tmdb_payload,
-                    "notify_if_missing": notify_if_missing,
-                },
-                job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
+                library=library,
+                id=id,
+                tmdb_id=tmdb_id,
+                tmdb_payload=tmdb_payload,
+                notify_if_missing=notify_if_missing,
                 description=description,
                 at_front=apply_at_front,
             )
@@ -1022,10 +1020,11 @@ def refresh_in_production_tv():
             .all()
         )
         for tv in series:
-            current_app.request_queue.enqueue(
+            enqueue_task(
                 "app.videos.refresh_tmdb_info",
-                args=("TV Shows", tv.id, tv.tmdb_id),
-                job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
+                "TV Shows",
+                tv.id,
+                tv.tmdb_id,
                 description=f"Refreshing TMDB data for '{tv.title}'",
             )
 

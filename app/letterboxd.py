@@ -24,6 +24,7 @@ import requests
 from flask import current_app
 from werkzeug.local import LocalProxy
 
+from app.tasks import enqueue_task
 from app import db, get_app
 from app.models import Movie, User, UserMovieReview
 from app.richtext import strip_disallowed_tags
@@ -299,10 +300,11 @@ def sync_letterboxd_feeds():
             # standard two-phase refresh pipeline.
 
             for movie_id, tmdb_id in created_movies:
-                current_app.request_queue.enqueue(
+                enqueue_task(
                     "app.videos.refresh_tmdb_info",
-                    args=("Movies", movie_id, tmdb_id),
-                    job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
+                    "Movies",
+                    movie_id,
+                    tmdb_id,
                     description=f"Refreshing TMDB data for movie {movie_id}",
                 )
 
@@ -315,9 +317,8 @@ def sync_letterboxd_feeds():
                 if current_app.redis.set(
                     f"fitzflix:elicit:recompute:{user.id}", "1", nx=True, ex=300
                 ):
-                    current_app.maintenance_queue.enqueue(
+                    enqueue_task(
                         "app.recommendations.recompute_recommendations",
-                        job_timeout="1h",
                         description="Recomputing film recommendations",
                     )
         return True

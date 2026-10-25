@@ -31,6 +31,7 @@ import requests
 from flask import current_app
 from werkzeug.local import LocalProxy
 
+from app.tasks import enqueue_task
 from app import db, get_app
 from app.models import (
     Movie,
@@ -326,13 +327,11 @@ def letterboxd_import_task(user_id, films):
                 )
 
             if resolved:
-                current_app.sql_queue.enqueue(
+                enqueue_task(
                     "app.videos.apply_letterboxd_import",
-                    args=(user_id, resolved),
-                    job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
-                    description=(
-                        f"Importing Letterboxd data for {len(resolved)} film(s)"
-                    ),
+                    user_id,
+                    resolved,
+                    description=f"Importing Letterboxd data for {len(resolved)} film(s)",
                 )
 
         except Exception:
@@ -471,13 +470,12 @@ def apply_letterboxd_import(user_id, films):
 
             for movie_id in created_movie_ids:
                 movie = Movie.query.filter_by(id=movie_id).first()
-                current_app.request_queue.enqueue(
+                enqueue_task(
                     "app.videos.refresh_tmdb_info",
-                    args=("Movies", movie_id, movie.tmdb_id),
-                    job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
-                    description=(
-                        f"Refreshing TMDB data for '{movie.title} ({movie.year})'"
-                    ),
+                    "Movies",
+                    movie_id,
+                    movie.tmdb_id,
+                    description=f"Refreshing TMDB data for '{movie.title} ({movie.year})'",
                 )
 
             current_app.logger.info(
@@ -742,15 +740,12 @@ def plex_history_poll():
                 continue
             account_id = entry.get("accountID")
             username = accounts.get(account_id) or f"account-{account_id}"
-            current_app.sql_queue.enqueue(
+            enqueue_task(
                 "app.videos.apply_plex_watch",
-                args=(
-                    tmdb_id,
-                    username,
-                    datetime.fromtimestamp(viewed_at, tz=timezone.utc).isoformat(),
-                    "history",
-                ),
-                job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
+                tmdb_id,
+                username,
+                datetime.fromtimestamp(viewed_at, tz=timezone.utc).isoformat(),
+                "history",
                 description=f"Recording Plex watch of tmdb:{tmdb_id} by {username}",
             )
             queued += 1

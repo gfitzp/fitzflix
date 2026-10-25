@@ -30,6 +30,7 @@ from flask_login import current_user, login_required
 from sqlalchemy.orm import contains_eager, selectinload
 from unidecode import unidecode
 
+from app.tasks import enqueue_task
 from app import db, local_path
 from app.main.forms import (
     MovieReviewForm,
@@ -450,9 +451,8 @@ def index():
         if current_app.redis.set(
             f"fitzflix:recs:requested:{int(current_user.id)}", "1", nx=True, ex=3600
         ):
-            current_app.maintenance_queue.enqueue(
+            enqueue_task(
                 "app.recommendations.recompute_recommendations",
-                job_timeout="1h",
                 description="Computing film recommendations",
             )
 
@@ -532,9 +532,8 @@ def index():
         if current_app.redis.set(
             f"fitzflix:rail:requested:{int(current_user.id)}", "1", nx=True, ex=3600
         ):
-            current_app.maintenance_queue.enqueue(
+            enqueue_task(
                 "app.streaming_rail.recompute_streaming_rail",
-                job_timeout="1h",
                 description="Computing the streaming rail",
             )
 
@@ -1763,13 +1762,10 @@ def watchlist():
             nx=True,
             ex=900,
         ):
-            current_app.maintenance_queue.enqueue(
+            enqueue_task(
                 "app.streaming.warm_title_availability",
-                args=(deferred,),
-                job_timeout="30m",
-                description=(
-                    f"Warming streaming availability for {len(deferred)} films"
-                ),
+                deferred,
+                description=f"Warming streaming availability for {len(deferred)} films",
             )
 
     # Owned films show the library mark. Thus, the user can separate
@@ -2253,13 +2249,12 @@ def review_tmdb(tmdb_id):
             db.session.add(UserWatchlist(user_id=current_user.id, movie_id=movie.id))
         db.session.commit()
         if created:
-            current_app.request_queue.enqueue(
+            enqueue_task(
                 "app.videos.refresh_tmdb_info",
-                args=("Movies", movie.id, tmdb_id),
-                job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
-                description=(
-                    f"Refreshing TMDB data for '{movie.title} ({movie.year})'"
-                ),
+                "Movies",
+                movie.id,
+                tmdb_id,
+                description=f"Refreshing TMDB data for '{movie.title} ({movie.year})'",
             )
         if _card_fetch():
             return jsonify({"on_watchlist": True})
@@ -2292,13 +2287,12 @@ def review_tmdb(tmdb_id):
         if quick_present and quick_rating == 0:
             if _mark_not_interested(current_user.id, movie.id):
                 if created:
-                    current_app.request_queue.enqueue(
+                    enqueue_task(
                         "app.videos.refresh_tmdb_info",
-                        args=("Movies", movie.id, tmdb_id),
-                        job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
-                        description=(
-                            f"Refreshing TMDB data for '{movie.title} ({movie.year})'"
-                        ),
+                        "Movies",
+                        movie.id,
+                        tmdb_id,
+                        description=f"Refreshing TMDB data for '{movie.title} ({movie.year})'",
                     )
                 _enqueue_profile_recompute()
                 if not _ladder_fetch():
@@ -2394,13 +2388,12 @@ def review_tmdb(tmdb_id):
             _enqueue_profile_recompute()
 
         if created:
-            current_app.request_queue.enqueue(
+            enqueue_task(
                 "app.videos.refresh_tmdb_info",
-                args=("Movies", movie.id, tmdb_id),
-                job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
-                description=(
-                    f"Refreshing TMDB data for '{movie.title} ({movie.year})'"
-                ),
+                "Movies",
+                movie.id,
+                tmdb_id,
+                description=f"Refreshing TMDB data for '{movie.title} ({movie.year})'",
             )
 
         if _ladder_fetch():

@@ -41,6 +41,7 @@ from rq import get_current_job
 from flask import current_app
 from werkzeug.local import LocalProxy
 
+from app.tasks import enqueue_task
 from app import db, get_app, makedirs_on_mounted_volume
 from app.email import notify_admin
 
@@ -591,10 +592,12 @@ def convert_localized_file(
         # (#340). The source stays in the import directory.
 
         try:
-            current_app.handoff_queue.enqueue(
+            enqueue_task(
                 "app.videos.move_localized_file",
-                args=(source_path, file_details, lock, hidden_output_file),
-                job_timeout=current_app.config["MOVE_TASK_TIMEOUT"],
+                source_path,
+                file_details,
+                lock,
+                hidden_output_file,
                 description=f"'{basename}'",
             )
         except Exception:

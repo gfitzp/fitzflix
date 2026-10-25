@@ -2,6 +2,7 @@ import os
 
 import click
 
+from app.tasks import enqueue_task
 from app import enqueue_import_scan
 from app.models import Movie, TVSeries
 
@@ -23,10 +24,8 @@ def register(app):
         # worker it blocked every database job, and 10 minutes was too
         # short for it.
 
-        app.maintenance_queue.enqueue(
+        enqueue_task(
             "app.videos.refresh_criterion_collection_info",
-            args=None,
-            job_timeout=3600,
             description="Refreshing Criterion Collection information for all movies in library",
         )
         app.logger.info("Refreshing Criterion Collection information from Wikipedia")
@@ -67,14 +66,11 @@ def register(app):
 
         if movies:
             for movie in movies:
-                app.request_queue.enqueue(
+                enqueue_task(
                     "app.videos.refresh_tmdb_info",
-                    args=(
-                        "Movies",
-                        movie.id,
-                        movie.tmdb_id,
-                    ),
-                    job_timeout=app.config["SQL_TASK_TIMEOUT"],
+                    "Movies",
+                    movie.id,
+                    movie.tmdb_id,
                     description=f"Refreshing TMDB data for '{movie.title} ({movie.year})'",
                 )
                 app.logger.info(
@@ -83,14 +79,11 @@ def register(app):
 
         if tv_shows:
             for tv in tv_shows:
-                app.request_queue.enqueue(
+                enqueue_task(
                     "app.videos.refresh_tmdb_info",
-                    args=(
-                        "TV Shows",
-                        tv.id,
-                        tv.tmdb_id,
-                    ),
-                    job_timeout=app.config["SQL_TASK_TIMEOUT"],
+                    "TV Shows",
+                    tv.id,
+                    tv.tmdb_id,
                     description=f"Refreshing TMDB data for '{tv.title}'",
                 )
                 app.logger.info(f"Queueing TMDB refresh for '{tv.title}'")
@@ -106,10 +99,9 @@ def register(app):
         if db.session.get(File, file_id) is None:
             raise click.ClickException(f"No file has id {file_id}")
 
-        app.file_queue.enqueue(
+        enqueue_task(
             "app.videos.track_metadata_scan_task",
-            args=(int(file_id),),
-            job_timeout=app.config["MKVPROPEDIT_TASK_TIMEOUT"],
+            int(file_id),
             description=f"Refreshing metadata for file ID {file_id}",
         )
         app.logger.info(f"Refreshing metadata for file ID {file_id}")
@@ -118,10 +110,8 @@ def register(app):
     def sync():
         """Sync the library with the AWS storage."""
 
-        app.maintenance_queue.enqueue(
+        enqueue_task(
             "app.videos.sync_aws_s3_storage_task",
-            args=None,
-            job_timeout="24h",
             description="Syncing files with AWS S3 storage",
         )
         app.logger.info("Queueing the AWS S3 storage sync")
@@ -137,9 +127,11 @@ def register(app):
     def sqs():
         """Check for restored files at AWS S3."""
 
-        app.request_queue.enqueue(
+        enqueue_task(
             "app.videos.sqs_retrieve_task",
-            job_timeout="2h",
+            # The command asks for a poll now. Thus, it does not wait behind
+            # the maintenance work of the hourly cron.
+            queue="request",
             description="Polling AWS SQS for files to download",
         )
         app.logger.info("Polling AWS SQS for files to download")
@@ -330,11 +322,8 @@ def register(app):
         Do not wait for the nightly run. The extractions queue on the
         transcode lane."""
 
-        from flask import current_app
-
-        job = current_app.maintenance_queue.enqueue(
+        job = enqueue_task(
             "app.frames.refresh_frame_pool_task",
-            job_timeout=3600,
             description="Refreshing the Name That Frame pool",
         )
         click.echo(f"Enqueued frame-pool refresh as {job.id}")
@@ -353,12 +342,10 @@ def register(app):
         This is the Plex-disambiguation fix. The S3 keys deliberately
         stay the same."""
 
-        from flask import current_app
-
-        job = current_app.file_queue.enqueue(
+        job = enqueue_task(
             "app.series_rename.rename_tv_series_task",
-            args=(series_id, new_title),
-            job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
+            series_id,
+            new_title,
             description=f"Renaming TV series {series_id} to '{new_title}'",
         )
         click.echo(f"Enqueued series rename as {job.id}")
@@ -434,10 +421,9 @@ def register(app):
                 os.path.join(app.config["LIBRARY_DIR"], file.file_path)
             ):
                 continue
-            app.transcode_queue.enqueue(
+            enqueue_task(
                 "app.triage.generate_triage_snapshots",
-                args=(file.id,),
-                job_timeout="2h",
+                file.id,
                 description=f"Subtitle snapshots for '{file.basename}'",
             )
             queued += 1
@@ -464,10 +450,9 @@ def register(app):
                 os.path.join(app.config["LIBRARY_DIR"], file.file_path)
             ):
                 continue
-            app.transcode_queue.enqueue(
+            enqueue_task(
                 "app.triage.generate_audio_comparison",
-                args=(file.id,),
-                job_timeout="2h",
+                file.id,
                 description=f"Audio comparison for '{file.basename}'",
             )
             queued += 1
@@ -736,8 +721,6 @@ def register(app):
         way. Thus, this probes each file first and queues only the
         readable ones."""
 
-        from flask import current_app
-
         from app.models import File
         from app.smb_probe import library_path, lost_handle, probe_path, unmounted
 
@@ -763,10 +746,9 @@ def register(app):
                 click.echo(f"  {'QUEUED' if enqueue else 'READY'}  {file.file_path}")
 
                 if enqueue:
-                    current_app.file_queue.enqueue(
+                    enqueue_task(
                         "app.videos.upload_task",
-                        args=(file.id,),
-                        job_timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
+                        file.id,
                         description=f"'{file.basename}'",
                     )
 

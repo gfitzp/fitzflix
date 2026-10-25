@@ -39,6 +39,7 @@ from flask import (
 from flask_login import current_user, login_required
 from unidecode import unidecode
 
+from app.tasks import enqueue_task
 from app import db
 from app.frames import (
     ACTIVE_LUMA,
@@ -495,10 +496,9 @@ def _enqueue_frame_replacement(movie):
     for the nightly
     pass. This runs only on a reveal. A skipped frame keeps its slot."""
 
-    current_app.transcode_queue.enqueue(
+    enqueue_task(
         "app.frames.replace_frame_task",
-        args=(movie.id,),
-        job_timeout=600,
+        movie.id,
         description=f"Replacing the played frame from '{movie.title}'",
     )
 

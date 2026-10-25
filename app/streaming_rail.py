@@ -29,6 +29,7 @@ from flask import current_app
 from requests.exceptions import HTTPError
 from werkzeug.local import LocalProxy
 
+from app.tasks import enqueue_task
 from app import db, get_app
 from app.models import File, Movie, User, UserMovieReview, UserMovieStatus
 from app.recommendations import (
@@ -556,11 +557,15 @@ def ensure_rail_records(items):
             to_refresh[movie.id] = movie
     db.session.commit()
     for movie in to_refresh.values():
-        current_app.maintenance_queue.enqueue(
+        enqueue_task(
             "app.videos.refresh_tmdb_info",
-            args=("Movies", movie.id, movie.tmdb_id),
-            job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
-            description=(f"Refreshing TMDB data for '{movie.title} ({movie.year})'"),
+            "Movies",
+            movie.id,
+            movie.tmdb_id,
+            # A bulk discovery refreshes on the maintenance queue. Thus,
+            # it does not crowd out the refreshes that a user asks for.
+            queue="maintenance",
+            description=f"Refreshing TMDB data for '{movie.title} ({movie.year})'",
         )
 
 

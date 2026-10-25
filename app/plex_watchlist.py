@@ -24,6 +24,7 @@ import requests
 from flask import current_app
 from werkzeug.local import LocalProxy
 
+from app.tasks import enqueue_task
 from app import db, get_app
 from app.models import Movie, User, UserWatchlist
 
@@ -423,10 +424,11 @@ def sync_plex_watchlist():
         current_app.redis.set(SNAPSHOT_KEY, json.dumps(sorted(synced)))
 
         for movie_id, tmdb_id in created_movies:
-            current_app.request_queue.enqueue(
+            enqueue_task(
                 "app.videos.refresh_tmdb_info",
-                args=("Movies", movie_id, tmdb_id),
-                job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
+                "Movies",
+                movie_id,
+                tmdb_id,
                 description=f"Refreshing TMDB data for movie {movie_id}",
             )
 

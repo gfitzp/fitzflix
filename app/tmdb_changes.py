@@ -34,6 +34,7 @@ from datetime import datetime, timedelta, timezone
 from flask import current_app
 from werkzeug.local import LocalProxy
 
+from app.tasks import enqueue_task
 from app import db, get_app
 from app.models import Movie, TVSeries, tmdb_get
 
@@ -155,10 +156,11 @@ def refresh_changed_records():
         for movie_id, tmdb_id, title, year in movie_rows:
             if tmdb_id not in changed_movies:
                 continue
-            current_app.request_queue.enqueue(
+            enqueue_task(
                 "app.videos.refresh_tmdb_info",
-                args=("Movies", movie_id, tmdb_id),
-                job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
+                "Movies",
+                movie_id,
+                tmdb_id,
                 description=f"Refreshing TMDB data for '{title} ({year})'",
             )
             movies_queued += 1
@@ -187,10 +189,11 @@ def refresh_changed_records():
         for series_id, tmdb_id, title in tv_rows:
             if tmdb_id not in changed_tv:
                 continue
-            current_app.request_queue.enqueue(
+            enqueue_task(
                 "app.videos.refresh_tmdb_info",
-                args=("TV Shows", series_id, tmdb_id),
-                job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
+                "TV Shows",
+                series_id,
+                tmdb_id,
                 description=f"Refreshing TMDB data for '{title}'",
             )
             tv_queued += 1

@@ -30,6 +30,7 @@ import requests
 from flask import current_app
 from werkzeug.local import LocalProxy
 
+from app.tasks import enqueue_task
 from app import db, get_app
 from app.models import CatalogExclusion, Movie
 
@@ -237,9 +238,11 @@ def enqueue_criterion_releases_refresh():
         CRITERION_QUEUED_KEY, 1, nx=True, ex=CRITERION_QUEUED_SECONDS
     ):
         return
-    current_app.request_queue.enqueue(
+    enqueue_task(
         "app.criterion_catalog.refresh_criterion_releases",
-        job_timeout=900,
+        # A page waits for the stored releases. Thus, the fetch uses the
+        # request workers, not the maintenance queue of the weekly cron.
+        queue="request",
         description="Fetching the Criterion Collection releases from Wikidata",
     )
 
@@ -378,11 +381,15 @@ def create_criterion_catalog_records(criterion_collection, by_tmdb_id, by_title_
             to_refresh.append(movie)
     db.session.commit()
     for movie in to_refresh:
-        current_app.maintenance_queue.enqueue(
+        enqueue_task(
             "app.videos.refresh_tmdb_info",
-            args=("Movies", movie.id, movie.tmdb_id),
-            job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
-            description=(f"Refreshing TMDB data for '{movie.title} ({movie.year})'"),
+            "Movies",
+            movie.id,
+            movie.tmdb_id,
+            # A bulk discovery refreshes on the maintenance queue. Thus,
+            # it does not crowd out the refreshes that a user asks for.
+            queue="maintenance",
+            description=f"Refreshing TMDB data for '{movie.title} ({movie.year})'",
         )
     return created_count
 

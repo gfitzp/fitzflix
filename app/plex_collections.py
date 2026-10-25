@@ -44,6 +44,7 @@ import requests
 from flask import current_app
 from werkzeug.local import LocalProxy
 
+from app.tasks import enqueue_task
 from app import db, get_app
 from app.models import File, Movie, RefQuality, movie_file_rank
 from app.plex_titles import _plex_get
@@ -440,8 +441,7 @@ def enqueue_criterion_sync():
         current_app.config.get("PLEX_URL") and current_app.config.get("PLEX_TOKEN")
     ):
         return
-    current_app.maintenance_queue.enqueue(
+    enqueue_task(
         "app.plex_collections.sync_criterion_collection",
-        job_timeout=600,
         description="Syncing the Criterion collections into Plex",
     )

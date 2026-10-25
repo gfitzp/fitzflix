@@ -29,6 +29,7 @@ from pathvalidate import sanitize_filename
 from unidecode import unidecode
 from werkzeug.local import LocalProxy
 
+from app.tasks import enqueue_task
 from app import db, get_app
 from app.models import TVSeries
 
@@ -217,9 +218,8 @@ def rename_tv_series_task(series_id, new_title):
             current_app.logger.warning(traceback.format_exc())
 
         if current_app.config.get("PLEX_URL") and current_app.config.get("PLEX_TOKEN"):
-            current_app.maintenance_queue.enqueue(
+            enqueue_task(
                 "app.plex_library.refresh_plex_libraries",
-                job_timeout=600,
                 description="Refreshing Plex libraries",
             )
 

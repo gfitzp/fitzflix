@@ -34,6 +34,7 @@ from rq import get_current_job
 from flask import current_app
 from werkzeug.local import LocalProxy
 
+from app.tasks import enqueue_task
 from app import db, get_app, retry_job_id, safe_job_id
 from app.aws_storage import archive_library_file, mark_archive_stale
 from app.models import File, FileAudioTrack, FileSubtitleTrack
@@ -297,10 +298,9 @@ def track_metadata_scan_library():
 
             files = File.query.all()
             for file in files:
-                current_app.file_queue.enqueue(
+                enqueue_task(
                     "app.videos.track_metadata_scan_task",
-                    args=(file.id,),
-                    job_timeout=current_app.config["MKVPROPEDIT_TASK_TIMEOUT"],
+                    file.id,
                     description=f"{file.basename} – Scanning track metadata",
                 )
 
@@ -369,10 +369,12 @@ def track_metadata_scan_task(file_id):
             if archive:
                 _flag_rewritten_archive(file_id)
 
-            current_app.sql_queue.enqueue(
+            enqueue_task(
                 "app.videos.save_track_metadata",
-                args=(file_id, details, lock, archive),
-                job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
+                file_id,
+                details,
+                lock,
+                archive,
                 description=f"{file.basename} – Saving track metadata",
             )
 
@@ -469,11 +471,8 @@ def save_track_metadata(file_id, details, lock=None, archive=False):
         else:
             db.session.commit()
             if archive:
-                current_app.file_queue.enqueue(
-                    "app.videos.upload_task",
-                    args=(file_id,),
-                    job_timeout=current_app.config["UPLOAD_TASK_TIMEOUT"],
-                    description=f"'{file.basename}'",
+                enqueue_task(
+                    "app.videos.upload_task", file_id, description=f"'{file.basename}'"
                 )
             return True
 

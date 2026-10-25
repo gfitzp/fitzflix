@@ -45,6 +45,7 @@ import traceback
 from flask import current_app
 from werkzeug.local import LocalProxy
 
+from app.tasks import enqueue_task
 from app import db, get_app
 from app.models import CatalogExclusion, Movie, User, UserStreamingProvider, tmdb_get
 from app.recommendations import (
@@ -304,10 +305,14 @@ def _process_pending(subscribed):
     db.session.commit()
 
     for movie in to_refresh:
-        current_app.maintenance_queue.enqueue(
+        enqueue_task(
             "app.videos.refresh_tmdb_info",
-            args=("Movies", movie.id, movie.tmdb_id),
-            job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
-            description=(f"Refreshing TMDB data for '{movie.title} ({movie.year})'"),
+            "Movies",
+            movie.id,
+            movie.tmdb_id,
+            # A bulk discovery refreshes on the maintenance queue. Thus,
+            # it does not crowd out the refreshes that a user asks for.
+            queue="maintenance",
+            description=f"Refreshing TMDB data for '{movie.title} ({movie.year})'",
         )
     return created

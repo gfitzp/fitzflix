@@ -30,6 +30,7 @@ import traceback
 from flask import current_app
 from werkzeug.local import LocalProxy
 
+from app.tasks import enqueue_task
 from app import db, get_app
 from app.models import File, Movie, RefQuality
 
@@ -353,13 +354,10 @@ def refresh_frame_pool_task():
             )
         }
         for movie_id in to_extract:
-            current_app.transcode_queue.enqueue(
+            enqueue_task(
                 "app.frames.extract_frame_task",
-                args=(movie_id,),
-                job_timeout=600,
-                description=(
-                    f"Extracting a frame from '{titles.get(movie_id, movie_id)}'"
-                ),
+                movie_id,
+                description=f"Extracting a frame from '{titles.get(movie_id, movie_id)}'",
             )
         current_app.logger.info(
             f"Frame pool: {pooled} pooled, {len(entries) - pooled} pruned, "

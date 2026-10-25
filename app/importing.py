@@ -44,6 +44,7 @@ from unidecode import unidecode
 from flask import current_app, render_template
 from werkzeug.local import LocalProxy
 
+from app.tasks import enqueue_task
 from app import (
     db,
     get_app,
@@ -237,13 +238,12 @@ def enqueue_localization(path, at_front=False, quiet=False):
     job_id = safe_job_id(basename)
     FinishedJobRegistry(queue=queue).remove(job_id)
     FailedJobRegistry(queue=queue).remove(job_id)
-    return queue.enqueue(
+    return enqueue_task(
         "app.videos.localization_task",
-        args=(path,),
-        job_timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
+        path,
         description=f"'{basename}'",
-        job_id=job_id,
         at_front=at_front,
+        job_id=job_id,
     )
 
 
@@ -1611,23 +1611,22 @@ def localization_task(
                 # gives the file to move_localized_file after the encode.
 
                 if conversion:
-                    current_app.transcode_queue.enqueue(
+                    enqueue_task(
                         "app.videos.convert_localized_file",
-                        args=(
-                            source_path,
-                            file_details,
-                            lock,
-                            hidden_output_file,
-                            conversion,
-                        ),
-                        job_timeout=current_app.config["TRANSCODE_TASK_TIMEOUT"],
+                        source_path,
+                        file_details,
+                        lock,
+                        hidden_output_file,
+                        conversion,
                         description=f"'{file_details.get('basename')}'",
                     )
                 else:
-                    current_app.handoff_queue.enqueue(
+                    enqueue_task(
                         "app.videos.move_localized_file",
-                        args=(source_path, file_details, lock, hidden_output_file),
-                        job_timeout=current_app.config["MOVE_TASK_TIMEOUT"],
+                        source_path,
+                        file_details,
+                        lock,
+                        hidden_output_file,
                         description=f"'{basename}'",
                     )
             except Exception:
@@ -2120,14 +2119,15 @@ def move_localized_file(
                 current_app.logger.info(f"Removed lock {lock}")
 
         else:
-            current_app.sql_queue.enqueue(
+            enqueue_task(
                 "app.videos.finalize_localization",
-                args=(source_path, file_details, lock, destination_hidden, inspection),
-                kwargs={
-                    "staged_output": staged_output,
-                    "vanished_retries": vanished_retries,
-                },
-                job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
+                source_path,
+                file_details,
+                lock,
+                destination_hidden,
+                inspection,
+                staged_output=staged_output,
+                vanished_retries=vanished_retries,
                 description=f"'{basename}'",
             )
 
@@ -2613,10 +2613,12 @@ def finalize_localization(
                 db.session.rollback()
                 # handed_off is set only after the enqueue. If the enqueue
                 # fails, the finally block releases the lock (#340)
-                current_app.handoff_queue.enqueue(
+                enqueue_task(
                     "app.videos.move_localized_file",
-                    args=(file_path, file_details, lock, hidden_output_file),
-                    job_timeout=current_app.config["MOVE_TASK_TIMEOUT"],
+                    file_path,
+                    file_details,
+                    lock,
+                    hidden_output_file,
                     description=f"'{file_details.get('basename')}'",
                 )
                 handed_off = True
@@ -2736,10 +2738,9 @@ def finalize_localization(
                         f"record still claims it"
                     )
                     continue
-                current_app.handoff_queue.enqueue(
+                enqueue_task(
                     "app.videos.aws_delete",
-                    args=(worse_key,),
-                    job_timeout=current_app.config["FILE_TASK_TIMEOUT"],
+                    worse_key,
                     description=f"Deleting '{worse_key}' from AWS",
                 )
 
@@ -2768,24 +2769,24 @@ def finalize_localization(
             # that exact title. It does not search by name (#155).
 
             if file.movie_id and movie.tmdb_id == None and not movie.tmdb_ignored:
-                current_app.request_queue.enqueue(
+                enqueue_task(
                     "app.videos.refresh_tmdb_info",
-                    args=("Movies", movie.id, file_details.get("tmdb_id")),
-                    kwargs={"notify_if_missing": True},
-                    job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
-                    description=(
-                        f"Refreshing TMDB data for '{movie.title} ({movie.year})'"
-                    ),
+                    "Movies",
+                    movie.id,
+                    file_details.get("tmdb_id"),
+                    notify_if_missing=True,
+                    description=f"Refreshing TMDB data for '{movie.title} ({movie.year})'",
                 )
             elif (
                 file.series_id
                 and tv_series.tmdb_id == None
                 and not tv_series.tmdb_ignored
             ):
-                current_app.request_queue.enqueue(
+                enqueue_task(
                     "app.videos.refresh_tmdb_info",
-                    args=("TV Shows", tv_series.id, file_details.get("tmdb_id")),
-                    job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
+                    "TV Shows",
+                    tv_series.id,
+                    file_details.get("tmdb_id"),
                     description=f"Refreshing TMDB data for '{tv_series.title}'",
                 )
 
@@ -2821,11 +2822,8 @@ def finalize_localization(
                 and get_setting("ARCHIVE_ORIGINAL_MEDIA")
                 and not atmos_queued
             ):
-                current_app.file_queue.enqueue(
-                    "app.videos.upload_task",
-                    args=(file.id,),
-                    job_timeout=current_app.config["UPLOAD_TASK_TIMEOUT"],
-                    description=f"'{file.basename}'",
+                enqueue_task(
+                    "app.videos.upload_task", file.id, description=f"'{file.basename}'"
                 )
 
             if possibly_foreign_language == True and len(output_audio_tracks) > 1:

@@ -35,6 +35,7 @@ from pymediainfo import MediaInfo
 from rq import get_current_job
 from rq.registry import StartedJobRegistry
 
+from app.tasks import enqueue_task
 from app import db, get_app, safe_job_id
 from app.models import File, FileAudioTrack
 from app.settings import get_setting
@@ -450,13 +451,13 @@ def maybe_enqueue_atmos_supplement(file_id, staged_source=None, queue=None):
         started = StartedJobRegistry(queue=queued)
         if job_id in queued.job_ids or job_id in started.get_job_ids():
             return False
-    (queue or current_app.import_queue).enqueue(
+    enqueue_task(
         "app.atmos.atmos_supplement_task",
-        args=(int(file_id),),
-        kwargs={"staged_source": staged_source} if staged_source else None,
-        job_timeout=current_app.config["TRANSCODE_TASK_TIMEOUT"],
-        job_id=job_id,
+        int(file_id),
+        **({"staged_source": staged_source} if staged_source else {}),
+        queue=queue or current_app.import_queue,
         description=f"E-AC-3 Atmos twin for '{file.basename}'",
+        job_id=job_id,
     )
     return True
 
@@ -926,14 +927,14 @@ def atmos_check_task(state, lock, checks=0):
                 current_app.logger.info(
                     f"'{basename}' MediaConvert finished the E-AC-3 Atmos twin"
                 )
-                current_app.handoff_queue.enqueue(
+                enqueue_task(
                     "app.atmos.atmos_finish_task",
-                    args=(state, lock),
-                    job_timeout=current_app.config["TRANSCODE_TASK_TIMEOUT"],
+                    state,
+                    lock,
+                    description=f"E-AC-3 Atmos twin for '{basename}'",
                     job_id=safe_job_id(
                         f"atmos_finish:{state['file_id']}:{state['chain']}"
                     ),
-                    description=f"E-AC-3 Atmos twin for '{basename}'",
                     meta=_continuation_meta(state, "retries"),
                 )
                 return True

@@ -41,6 +41,7 @@ from s3transfer.utils import ChunksizeAdjuster
 from flask import current_app, render_template
 from werkzeug.local import LocalProxy
 
+from app.tasks import enqueue_task
 from app import db, get_app, path_tag, retry_job_id, safe_job_id
 from app.email import task_send_email as send_email
 from app.queues import QUEUE_NAME, roster_queues
@@ -434,10 +435,9 @@ def sync_aws_s3_storage_task():
                     current_app.logger.info(
                         f"'{file.basename}' Queuing the transcoded copy for upload"
                     )
-                    current_app.file_queue.enqueue(
+                    enqueue_task(
                         "app.videos.upload_task",
-                        args=(file.id,),
-                        job_timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
+                        file.id,
                         description=f"'{file.basename}'",
                     )
                 if use_transcoded:
@@ -484,10 +484,9 @@ def sync_aws_s3_storage_task():
                         f"'{file.aws_key}' Queuing for upload to AWS"
                     )
 
-                    current_app.file_queue.enqueue(
+                    enqueue_task(
                         "app.videos.upload_task",
-                        args=(file.id,),
-                        job_timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
+                        file.id,
                         description=f"'{file.basename}'",
                     )
 
@@ -961,10 +960,11 @@ def sqs_retrieve_task():
                     f"receipt handle of its message"
                 )
             else:
-                job = current_app.file_queue.enqueue(
+                job = enqueue_task(
                     "app.videos.download_task",
-                    args=(key, os.path.basename(key), receipt_handle),
-                    job_timeout=current_app.config["TRANSCODE_TASK_TIMEOUT"],
+                    key,
+                    os.path.basename(key),
+                    receipt_handle,
                     description=f"'{os.path.basename(key)}' — Downloading from AWS",
                     meta={"sqs_receipt_handle": receipt_handle},
                 )
@@ -1117,10 +1117,9 @@ def archive_library_file(file, path, delete_replaced=True):
     current_app.logger.info(f"'{file.basename}' Archived the library file as '{key}'")
 
     if replaced and delete_replaced and not untouched_key_still_claimed(replaced):
-        current_app.handoff_queue.enqueue(
+        enqueue_task(
             "app.videos.aws_delete",
-            args=(replaced,),
-            job_timeout=config["FILE_TASK_TIMEOUT"],
+            replaced,
             description=f"Deleting '{replaced}' from AWS",
         )
     return key
@@ -2141,10 +2140,10 @@ def aws_restore(key, tier="Standard", record_request=True):
                     current_app.logger.info(
                         f"'{key}' doesn't need to be restored; attempting to download"
                     )
-                    current_app.file_queue.enqueue(
+                    enqueue_task(
                         "app.videos.download_task",
-                        args=(key, os.path.basename(key)),
-                        job_timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
+                        key,
+                        os.path.basename(key),
                         description=f"'{os.path.basename(key)}'",
                         at_front=True,
                     )

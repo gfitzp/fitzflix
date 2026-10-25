@@ -55,6 +55,7 @@ import requests
 from flask import current_app
 from werkzeug.local import LocalProxy
 
+from app.tasks import enqueue_task
 from app import get_app, path_tag, retry_job_id, safe_job_id
 from app.maintenance import PLEX_TRASH_HELD_KEY, VOLUMES_ROOT, volume_alive
 from app.plex_titles import _plex_get
@@ -505,12 +506,12 @@ def enqueue_plex_analyze(file_path):
 
         if job_id in queue.job_ids:
             return False
-        queue.enqueue(
+        enqueue_task(
             "app.plex_library.analyze_plex_media",
-            args=([file_path],),
-            job_timeout=1800,
-            job_id=job_id,
+            [file_path],
+            queue=queue,
             description=f"Re-analyzing '{basename}' in Plex",
+            job_id=job_id,
         )
         return True
     except Exception:
