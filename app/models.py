@@ -275,8 +275,11 @@ class TMDBAssociation:
         value = tmdb_info
         for part in self.path:
             value = (value or {}).get(part) if isinstance(value, dict) else None
+        # belongs_to_collection is one object, not a list. An empty object
+        # at a list path is a glitch of the #251 class. It must read as
+        # "nothing", or the guard below would let it clear the links.
         if isinstance(value, dict):
-            return [value]
+            return [value] if value else []
         return list(value or [])
 
     def values(self, entry):

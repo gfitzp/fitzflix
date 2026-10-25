@@ -408,3 +408,29 @@ def test_a_full_tv_apply_stores_every_field_and_link(app):
             assert getattr(stored, rel).count() == 0, rel
         assert TVCast.query.filter_by(tv_id=series.id).count() == 0
         assert TVCrew.query.filter_by(tv_id=series.id).count() == 0
+
+
+def test_an_empty_object_at_a_list_path_keeps_the_links(app):
+    """A {} where TMDB sends a list is a glitch (#251). It must not clear."""
+
+    from app.models import Movie, TMDBGenre
+
+    with app.app_context():
+        movie = make_movie(title="Object Glitch", year=2001, tmdb_id=991003)
+        movie.tmdb_movie_apply({"id": 991003, "genres": [{"id": 27, "name": "Horror"}]})
+        db.session.commit()
+        nameless_before = TMDBGenre.query.filter_by(name=None).count()
+
+        movie.tmdb_movie_apply(
+            {
+                "id": 991003,
+                "genres": {},
+                "keywords": {"keywords": {}},
+                "belongs_to_collection": {},
+            }
+        )
+        db.session.commit()
+        stored = db.session.get(Movie, movie.id)
+        assert _names(stored.genres) == ["Horror"]
+        assert stored.collections.count() == 0
+        assert TMDBGenre.query.filter_by(name=None).count() == nameless_before
