@@ -4,23 +4,20 @@ Before the fix, a library with no TMDB id refreshed the whole library,
 movies and TV. A refresh queues 1 TMDB job for each title."""
 
 from tests.factories import make_movie, make_tv_series
+from tests.fakes import RecordingQueue
 
 
 def _refreshed(app, monkeypatch, *args):
     """Run the command with fake queue. Return the queued (library, tmdb id) pairs."""
 
-    queued = []
-
-    class FakeQueue:
-        def enqueue(self, func, args=(), **kwargs):
-            queued.append((args[0], args[2]))
-
-    monkeypatch.setattr(app, "request_queue", FakeQueue())
+    queue = RecordingQueue()
+    monkeypatch.setattr(app, "request_queue", queue)
     if "refresh" not in app.cli.commands:
         from app.cli import register
 
         register(app)
     result = app.test_cli_runner().invoke(args=["refresh", "tmdb", *args])
+    queued = [(kwargs["args"][0], kwargs["args"][2]) for _, kwargs in queue.calls]
     return result, sorted(queued)
 
 
@@ -73,13 +70,8 @@ def test_a_wrong_tmdb_id_is_an_error(app, monkeypatch):
 
 
 def test_refresh_file_checks_its_id(app, monkeypatch):
-    queued = []
-
-    class FakeQueue:
-        def enqueue(self, func, args=(), **kwargs):
-            queued.append(args)
-
-    monkeypatch.setattr(app, "file_queue", FakeQueue())
+    queue = RecordingQueue()
+    monkeypatch.setattr(app, "file_queue", queue)
     if "refresh" not in app.cli.commands:
         from app.cli import register
 
@@ -93,29 +85,26 @@ def test_refresh_file_checks_its_id(app, monkeypatch):
     result = runner.invoke(args=["refresh", "file", "424242"])
     assert result.exit_code == 1
     assert "No file has id 424242" in result.output
-    assert queued == []
+    assert queue.calls == []
 
 
 def test_refresh_criterion_runs_on_the_maintenance_queue(app, monkeypatch):
     """Test the queue and the timeout of the CLI Criterion refresh (#343)."""
 
-    queued = []
-
-    class FakeQueue:
-        def __init__(self, name):
-            self.name = name
-
-        def enqueue(self, func, **kwargs):
-            queued.append((self.name, func, kwargs.get("job_timeout")))
-
-    monkeypatch.setattr(app, "sql_queue", FakeQueue("sql"))
-    monkeypatch.setattr(app, "maintenance_queue", FakeQueue("maintenance"))
+    queues = [RecordingQueue("sql"), RecordingQueue("maintenance")]
+    monkeypatch.setattr(app, "sql_queue", queues[0])
+    monkeypatch.setattr(app, "maintenance_queue", queues[1])
     if "refresh" not in app.cli.commands:
         from app.cli import register
 
         register(app)
     result = app.test_cli_runner().invoke(args=["refresh", "criterion"])
     assert result.exit_code == 0
+    queued = [
+        (queue.name, args[0], kwargs.get("job_timeout"))
+        for queue in queues
+        for args, kwargs in queue.calls
+    ]
     assert queued == [
         ("maintenance", "app.videos.refresh_criterion_collection_info", 3600)
     ]

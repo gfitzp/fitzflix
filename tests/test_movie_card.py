@@ -443,11 +443,12 @@ def test_movie_card_for_a_bare_tmdb_id(app, admin_client, monkeypatch):
 
     The card is information only. It links to the TMDB log page."""
 
-    from tests.test_reviews import JAWS_2_DETAILS, FakeTMDBDetails
+    from tests.fakes import Response
+    from tests.test_reviews import JAWS_2_DETAILS
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
     monkeypatch.setattr(
-        "app.tmdb_apply.tmdb_get", lambda *a, **k: FakeTMDBDetails(JAWS_2_DETAILS)
+        "app.tmdb_apply.tmdb_get", lambda *a, **k: Response(JAWS_2_DETAILS)
     )
 
     page = admin_client.get("/movie_card?tmdb_id=579").get_data(as_text=True)
@@ -548,11 +549,12 @@ def test_tile_watchlist_add_creates_the_record_for_a_tmdb_film(
     The tile posts to the TMDB log route. The route creates the record
     and answers the same JSON."""
 
-    from tests.test_reviews import JAWS_2_DETAILS, FakeTMDBDetails
+    from tests.fakes import Response
+    from tests.test_reviews import JAWS_2_DETAILS
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
     monkeypatch.setattr(
-        "app.tmdb_apply.tmdb_get", lambda *a, **k: FakeTMDBDetails(JAWS_2_DETAILS)
+        "app.tmdb_apply.tmdb_get", lambda *a, **k: Response(JAWS_2_DETAILS)
     )
 
     token = csrf_token_from(admin_client.get("/review/tmdb/579").get_data(as_text=True))
@@ -703,7 +705,8 @@ def test_the_live_tmdb_pages_take_the_theatrical_rating(app, admin_client, monke
 
     import copy
 
-    from tests.test_reviews import JAWS_2_DETAILS, FakeTMDBDetails
+    from tests.fakes import Response
+    from tests.test_reviews import JAWS_2_DETAILS
 
     details = copy.deepcopy(JAWS_2_DETAILS)
     details["release_dates"]["results"][0]["release_dates"] = [
@@ -711,9 +714,7 @@ def test_the_live_tmdb_pages_take_the_theatrical_rating(app, admin_client, monke
         {"certification": "PG-13", "type": 3},
     ]
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr(
-        "app.tmdb_apply.tmdb_get", lambda *a, **k: FakeTMDBDetails(details)
-    )
+    monkeypatch.setattr("app.tmdb_apply.tmdb_get", lambda *a, **k: Response(details))
 
     card = admin_client.get("/movie_card?tmdb_id=579").get_data(as_text=True)
     page = admin_client.get("/review/tmdb/579").get_data(as_text=True)

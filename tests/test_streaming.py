@@ -11,21 +11,7 @@ from datetime import datetime
 
 from tests.factories import make_movie, make_movie_file
 from tests.conftest import csrf_token_from
-
-
-class FakeTMDB:
-    """A canned TMDB response."""
-
-    def __init__(self, payload):
-        self.payload = payload
-
-    def raise_for_status(self):
-        """Do nothing. The canned response is never an HTTP error."""
-
-    def json(self):
-        """Return the canned payload."""
-
-        return self.payload
+from tests.fakes import Response, tmdb_router
 
 
 def plant_registry(app, providers):
@@ -86,7 +72,7 @@ def test_provider_registry_fetches_once_and_sorts(app, monkeypatch):
 
     def fake_tmdb_get(url, **kwargs):
         calls.append(url)
-        return FakeTMDB(
+        return Response(
             {
                 "results": [
                     {**MAX, "display_priorities": {"US": 2}},
@@ -114,7 +100,7 @@ def test_title_availability_caches_even_when_empty(app, monkeypatch):
 
     def fake_tmdb_get(url, **kwargs):
         calls.append(url)
-        return FakeTMDB({"results": {}})
+        return Response({"results": {}})
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
     monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
@@ -433,21 +419,21 @@ def test_movie_page_without_subscriptions_shows_nothing(app, admin_client, monke
 
 def test_search_results_badge_unowned_matches(app, admin_client, monkeypatch):
 
-    def fake_tmdb_get(url, **kwargs):
-        if url.endswith("/search/movie"):
-            return FakeTMDB(
-                {
-                    "results": [
-                        {
-                            "id": 700,
-                            "title": "Streamable Search Hit",
-                            "release_date": "1999-09-09",
-                            "overview": "Findable.",
-                        }
-                    ]
-                }
-            )
-        return FakeTMDB({"results": []})
+    fake_tmdb_get = tmdb_router(
+        {
+            "/search/movie": {
+                "results": [
+                    {
+                        "id": 700,
+                        "title": "Streamable Search Hit",
+                        "release_date": "1999-09-09",
+                        "overview": "Findable.",
+                    }
+                ]
+            },
+        },
+        default={"results": []},
+    )
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
     monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
@@ -477,21 +463,21 @@ def test_search_results_without_matches_carry_no_attribution(
     app, admin_client, monkeypatch
 ):
 
-    def fake_tmdb_get(url, **kwargs):
-        if url.endswith("/search/movie"):
-            return FakeTMDB(
-                {
-                    "results": [
-                        {
-                            "id": 701,
-                            "title": "Unstreamable Search Hit",
-                            "release_date": "1999-09-09",
-                            "overview": "Findable.",
-                        }
-                    ]
-                }
-            )
-        return FakeTMDB({"results": []})
+    fake_tmdb_get = tmdb_router(
+        {
+            "/search/movie": {
+                "results": [
+                    {
+                        "id": 701,
+                        "title": "Unstreamable Search Hit",
+                        "release_date": "1999-09-09",
+                        "overview": "Findable.",
+                    }
+                ]
+            },
+        },
+        default={"results": []},
+    )
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
     monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
@@ -511,7 +497,7 @@ def test_review_tmdb_page_shows_rental_badge_for_your_stores(
 ):
 
     def fake_tmdb_get(url, **kwargs):
-        return FakeTMDB(
+        return Response(
             {
                 "title": "Unowned Reviewable",
                 "release_date": "1999-09-09",
@@ -671,7 +657,7 @@ def test_batch_availability_mixes_cache_hits_and_fetches(app, monkeypatch):
 
     def fake_tmdb_get(url, **kwargs):
         calls.append(url)
-        return FakeTMDB({"results": {"US": {"flatrate": [NETFLIX]}}})
+        return Response({"results": {"US": {"flatrate": [NETFLIX]}}})
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
     monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
@@ -736,29 +722,29 @@ def test_filmography_badges_unowned_films_on_your_services(
         )
         db.session.commit()
 
-    def fake_tmdb_get(url, **kwargs):
-        """Return the person details and a career of 2 films."""
+    # Return the person details and a career of 2 films.
 
-        if url.endswith("/movie_credits"):
-            return FakeTMDB(
-                {
-                    "cast": [
-                        {
-                            "id": 910,
-                            "title": "Filmography Owned",
-                            "release_date": "1980-05-01",
-                            "character": "Lead",
-                        },
-                        {
-                            "id": 911,
-                            "title": "Filmography Unowned",
-                            "release_date": "1999-09-09",
-                            "character": "Cameo",
-                        },
-                    ]
-                }
-            )
-        return FakeTMDB({"name": "Streaming Actor"})
+    fake_tmdb_get = tmdb_router(
+        {
+            "/movie_credits": {
+                "cast": [
+                    {
+                        "id": 910,
+                        "title": "Filmography Owned",
+                        "release_date": "1980-05-01",
+                        "character": "Lead",
+                    },
+                    {
+                        "id": 911,
+                        "title": "Filmography Unowned",
+                        "release_date": "1999-09-09",
+                        "character": "Cameo",
+                    },
+                ]
+            },
+        },
+        default={"name": "Streaming Actor"},
+    )
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
     monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
@@ -791,7 +777,7 @@ def test_filmography_badges_unowned_films_on_your_services(
     # availability: the logo, the rent suffix, and the mandatory credit.
 
     def fake_details_get(url, **kwargs):
-        return FakeTMDB(
+        return Response(
             {
                 "title": "Filmography Unowned",
                 "release_date": "1999-09-09",
@@ -839,22 +825,22 @@ def test_filmography_defers_overflow_to_a_warm_task(app, admin_client, monkeypat
         )
         db.session.commit()
 
-    def fake_tmdb_get(url, **kwargs):
-        """Return the person details and a career of 1 film."""
+    # Return the person details and a career of 1 film.
 
-        if url.endswith("/movie_credits"):
-            return FakeTMDB(
-                {
-                    "cast": [
-                        {
-                            "id": 921,
-                            "title": "Deferred Unowned",
-                            "release_date": "1999-09-09",
-                        }
-                    ]
-                }
-            )
-        return FakeTMDB({"name": "Deferred Actor"})
+    fake_tmdb_get = tmdb_router(
+        {
+            "/movie_credits": {
+                "cast": [
+                    {
+                        "id": 921,
+                        "title": "Deferred Unowned",
+                        "release_date": "1999-09-09",
+                    }
+                ]
+            },
+        },
+        default={"name": "Deferred Actor"},
+    )
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
     monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
@@ -889,7 +875,7 @@ def test_batch_availability_reads_the_cache_in_one_call(app, monkeypatch):
 
     def fake_tmdb_get(url, **kwargs):
         calls.append(url)
-        return FakeTMDB({"results": {"US": {"flatrate": [NETFLIX]}}})
+        return Response({"results": {"US": {"flatrate": [NETFLIX]}}})
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
     monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
@@ -956,7 +942,7 @@ def test_refresh_availability_covers_every_film_with_a_tmdb_id(app, monkeypatch)
 
     def fake_tmdb_get(url, **kwargs):
         calls.append(url)
-        return FakeTMDB({"results": {"US": {"flatrate": [NETFLIX]}}})
+        return Response({"results": {"US": {"flatrate": [NETFLIX]}}})
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
     monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
@@ -1001,7 +987,7 @@ def test_list_pages_never_fetch_availability_inline(app, admin_client, monkeypat
 
     def fake_tmdb_get(url, **kwargs):
         calls.append(url)
-        return FakeTMDB({"results": {"US": {"flatrate": [NETFLIX]}}})
+        return Response({"results": {"US": {"flatrate": [NETFLIX]}}})
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
     monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
@@ -1041,7 +1027,7 @@ def test_the_tmdb_search_never_fetches_availability_inline(
     def fake_tmdb_get(url, **kwargs):
         calls.append(url)
         if "/search/movie" in url:
-            return FakeTMDB(
+            return Response(
                 {
                     "results": [
                         {"id": 960, "title": "Warm Cached", "release_date": "1980"},
@@ -1049,7 +1035,7 @@ def test_the_tmdb_search_never_fetches_availability_inline(
                     ]
                 }
             )
-        return FakeTMDB({"results": {"US": {"flatrate": [NETFLIX]}}})
+        return Response({"results": {"US": {"flatrate": [NETFLIX]}}})
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
     monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)

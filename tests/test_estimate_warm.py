@@ -8,6 +8,7 @@ The overlay lets the tiles paint estimates without a wait."""
 import json
 
 from tests.factories import make_movie
+from tests.fakes import Response
 
 NIGHTLY_PROFILE = {
     "affinities": {
@@ -40,17 +41,6 @@ NIGHTLY_PROFILE = {
 }
 
 
-class FakeTMDB:
-    def __init__(self, payload):
-        self.payload = payload
-
-    def raise_for_status(self):
-        pass
-
-    def json(self):
-        return self.payload
-
-
 def install_warm_fakes(app, monkeypatch, fetched):
     """Install a fake tmdb_get for the warm task and the enrichment module.
 
@@ -61,14 +51,14 @@ def install_warm_fakes(app, monkeypatch, fetched):
 
     def fake_tmdb_get(url, params=None, timeout=None):
         if "/person/9001/movie_credits" in url:
-            return FakeTMDB(
+            return Response(
                 {
                     "cast": [{"id": 700001}, {"id": 700002}],
                     "crew": [{"id": 700003, "job": "Director"}],
                 }
             )
         if "/person/9002/movie_credits" in url:
-            return FakeTMDB(
+            return Response(
                 {
                     "cast": [],
                     "crew": [
@@ -79,15 +69,15 @@ def install_warm_fakes(app, monkeypatch, fetched):
                 }
             )
         if url.endswith("/movie/popular"):
-            return FakeTMDB(
+            return Response(
                 {"results": [{"id": 700010}, {"id": 700011}], "total_pages": 1}
             )
         if url.endswith("/movie/top_rated"):
-            return FakeTMDB({"results": [{"id": 700020}], "total_pages": 1})
+            return Response({"results": [{"id": 700020}], "total_pages": 1})
         for tmdb_id in (700001, 700002, 700003, 700004, 700010, 700011, 700020):
             if url.endswith(f"/movie/{tmdb_id}"):
                 fetched.append(tmdb_id)
-                return FakeTMDB(
+                return Response(
                     {
                         "id": tmdb_id,
                         "title": f"Warm Film {tmdb_id}",
@@ -98,7 +88,7 @@ def install_warm_fakes(app, monkeypatch, fetched):
                         "credits": {"cast": [], "crew": []},
                     }
                 )
-        return FakeTMDB({"results": []})
+        return Response({"results": []})
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
     monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)

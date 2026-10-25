@@ -10,6 +10,7 @@ from app.models import Movie, MovieCrew, TMDBCredit, User, UserMovieReview
 from app.videos import star_rating_fields
 from tests.factories import make_movie, make_movie_file
 from tests.factories import make_cast
+from tests.fakes import tmdb_router
 
 
 def test_filmography_includes_unowned_films_without_tmdb(app, admin_client):
@@ -73,53 +74,41 @@ def test_filmography_merges_full_tmdb_career(app, admin_client, monkeypatch):
         make_cast(person, seen)
         db.session.commit()
 
-    class FakeTMDB:
-        def __init__(self, payload):
-            self.payload = payload
-
-        def raise_for_status(self):
-            pass
-
-        def json(self):
-            return self.payload
-
-    def fake_tmdb_get(url, **kwargs):
-        if url.endswith("/movie_credits"):
-            return FakeTMDB(
-                {
-                    "cast": [
-                        {
-                            "id": 100,
-                            "title": "Career Owned Film",
-                            "release_date": "1980-05-01",
-                            "character": "The Lead",
-                        },
-                        {
-                            "id": 150,
-                            "title": "Career Seen Film",
-                            "release_date": "1985-02-01",
-                            "character": "The Friend",
-                        },
-                        {
-                            "id": 200,
-                            "title": "Career Unknown Film",
-                            "release_date": "1999-09-09",
-                            "character": "The Cameo",
-                            "poster_path": "/unknown.jpg",
-                            "overview": "A cameo-laden curiosity from 1999.",
-                        },
-                    ]
-                }
-            )
-        return FakeTMDB(
-            {
-                "name": "Career Actor",
-                "profile_path": "/career.jpg",
-                "biography": "Worked steadily for decades.",
-                "birthday": "1920-01-10",
-                "deathday": "1999-05-02",
-            }
-        )
+    fake_tmdb_get = tmdb_router(
+        {
+            "/movie_credits": {
+                "cast": [
+                    {
+                        "id": 100,
+                        "title": "Career Owned Film",
+                        "release_date": "1980-05-01",
+                        "character": "The Lead",
+                    },
+                    {
+                        "id": 150,
+                        "title": "Career Seen Film",
+                        "release_date": "1985-02-01",
+                        "character": "The Friend",
+                    },
+                    {
+                        "id": 200,
+                        "title": "Career Unknown Film",
+                        "release_date": "1999-09-09",
+                        "character": "The Cameo",
+                        "poster_path": "/unknown.jpg",
+                        "overview": "A cameo-laden curiosity from 1999.",
+                    },
+                ]
+            },
+        },
+        default={
+            "name": "Career Actor",
+            "profile_path": "/career.jpg",
+            "biography": "Worked steadily for decades.",
+            "birthday": "1920-01-10",
+            "deathday": "1999-05-02",
+        },
+    )
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
     monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
@@ -189,37 +178,27 @@ def test_filmography_badges_recommended_owned_films(app, admin_client, monkeypat
         ),
     )
 
-    class FakeTMDB:
-        def __init__(self, payload):
-            self.payload = payload
-
-        def raise_for_status(self):
-            pass
-
-        def json(self):
-            return self.payload
-
-    def fake_tmdb_get(url, **kwargs):
-        if url.endswith("/movie_credits"):
-            return FakeTMDB(
-                {
-                    "cast": [
-                        {
-                            "id": 300,
-                            "title": "Ranked Owned Film",
-                            "release_date": "1946-08-23",
-                            "character": "The Detective",
-                        },
-                        {
-                            "id": 301,
-                            "title": "Unranked Owned Film",
-                            "release_date": "1950-03-01",
-                            "character": "The Heavy",
-                        },
-                    ]
-                }
-            )
-        return FakeTMDB({"name": "Ranked Actor"})
+    fake_tmdb_get = tmdb_router(
+        {
+            "/movie_credits": {
+                "cast": [
+                    {
+                        "id": 300,
+                        "title": "Ranked Owned Film",
+                        "release_date": "1946-08-23",
+                        "character": "The Detective",
+                    },
+                    {
+                        "id": 301,
+                        "title": "Unranked Owned Film",
+                        "release_date": "1950-03-01",
+                        "character": "The Heavy",
+                    },
+                ]
+            },
+        },
+        default={"name": "Ranked Actor"},
+    )
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
     monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
@@ -267,37 +246,27 @@ def test_filmography_owned_rows_show_seen_and_watchlist(app, admin_client, monke
         make_cast(person, owned_wanted)
         db.session.commit()
 
-    class FakeTMDB:
-        def __init__(self, payload):
-            self.payload = payload
-
-        def raise_for_status(self):
-            pass
-
-        def json(self):
-            return self.payload
-
-    def fake_tmdb_get(url, **kwargs):
-        if url.endswith("/movie_credits"):
-            return FakeTMDB(
-                {
-                    "cast": [
-                        {
-                            "id": 400,
-                            "title": "Funnel Owned Seen Film",
-                            "release_date": "1960-01-01",
-                            "character": "The Lead",
-                        },
-                        {
-                            "id": 401,
-                            "title": "Funnel Owned Wanted Film",
-                            "release_date": "1965-01-01",
-                            "character": "The Rival",
-                        },
-                    ]
-                }
-            )
-        return FakeTMDB({"name": "Funnel Actor"})
+    fake_tmdb_get = tmdb_router(
+        {
+            "/movie_credits": {
+                "cast": [
+                    {
+                        "id": 400,
+                        "title": "Funnel Owned Seen Film",
+                        "release_date": "1960-01-01",
+                        "character": "The Lead",
+                    },
+                    {
+                        "id": 401,
+                        "title": "Funnel Owned Wanted Film",
+                        "release_date": "1965-01-01",
+                        "character": "The Rival",
+                    },
+                ]
+            },
+        },
+        default={"name": "Funnel Actor"},
+    )
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
     monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
@@ -327,39 +296,27 @@ def test_filmography_serves_people_without_local_credit_rows(
     TMDBCredit row. The filmography still renders. The name and the
     career come from TMDB."""
 
-    class FakeTMDB:
-        def __init__(self, payload):
-            self.payload = payload
-
-        def raise_for_status(self):
-            pass
-
-        def json(self):
-            return self.payload
-
-    def fake_tmdb_get(url, **kwargs):
-        if url.endswith("/movie_credits"):
-            return FakeTMDB(
-                {
-                    "cast": [
-                        {
-                            "id": 300,
-                            "title": "Wanderer Unknown Film",
-                            "release_date": "2005-03-03",
-                            "character": "The Stranger",
-                        }
-                    ]
-                }
-            )
-        return FakeTMDB(
-            {
-                "name": "Uncredited Wanderer",
-                "profile_path": "/wanderer.jpg",
-                "biography": "Wandered into pictures by accident.",
-                "birthday": "1970-03-03",
-                "place_of_birth": "Butte, Montana, USA",
-            }
-        )
+    fake_tmdb_get = tmdb_router(
+        {
+            "/movie_credits": {
+                "cast": [
+                    {
+                        "id": 300,
+                        "title": "Wanderer Unknown Film",
+                        "release_date": "2005-03-03",
+                        "character": "The Stranger",
+                    }
+                ]
+            },
+        },
+        default={
+            "name": "Uncredited Wanderer",
+            "profile_path": "/wanderer.jpg",
+            "biography": "Wandered into pictures by accident.",
+            "birthday": "1970-03-03",
+            "place_of_birth": "Butte, Montana, USA",
+        },
+    )
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
     monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
@@ -402,71 +359,61 @@ def test_filmography_includes_key_crew_credits(app, admin_client, monkeypatch):
         )
         db.session.commit()
 
-    class FakeTMDB:
-        def __init__(self, payload):
-            self.payload = payload
-
-        def raise_for_status(self):
-            pass
-
-        def json(self):
-            return self.payload
-
-    def fake_tmdb_get(url, **kwargs):
-        if url.endswith("/movie_credits"):
-            return FakeTMDB(
-                {
-                    "cast": [
-                        {
-                            "id": 500,
-                            "title": "Directed Owned Film",
-                            "release_date": "1970-01-01",
-                            "character": "The Cameo",
-                        }
-                    ],
-                    "crew": [
-                        {
-                            "id": 500,
-                            "title": "Directed Owned Film",
-                            "release_date": "1970-01-01",
-                            "department": "Directing",
-                            "job": "Director",
-                        },
-                        # Intentionally not in closing-credit order. The
-                        # credit line must sort to Director · Writer ·
-                        # Composer for each payload order
-                        {
-                            "id": 501,
-                            "title": "Directed Unknown Film",
-                            "release_date": "1975-01-01",
-                            "department": "Sound",
-                            "job": "Original Music Composer",
-                        },
-                        {
-                            "id": 501,
-                            "title": "Directed Unknown Film",
-                            "release_date": "1975-01-01",
-                            "department": "Writing",
-                            "job": "Screenplay",
-                        },
-                        {
-                            "id": 501,
-                            "title": "Directed Unknown Film",
-                            "release_date": "1975-01-01",
-                            "department": "Directing",
-                            "job": "Director",
-                        },
-                        {
-                            "id": 502,
-                            "title": "Thanked Film",
-                            "release_date": "1980-01-01",
-                            "department": "Crew",
-                            "job": "Thanks",
-                        },
-                    ],
-                }
-            )
-        return FakeTMDB({"name": "Career Director"})
+    fake_tmdb_get = tmdb_router(
+        {
+            "/movie_credits": {
+                "cast": [
+                    {
+                        "id": 500,
+                        "title": "Directed Owned Film",
+                        "release_date": "1970-01-01",
+                        "character": "The Cameo",
+                    }
+                ],
+                "crew": [
+                    {
+                        "id": 500,
+                        "title": "Directed Owned Film",
+                        "release_date": "1970-01-01",
+                        "department": "Directing",
+                        "job": "Director",
+                    },
+                    # Intentionally not in closing-credit order. The
+                    # credit line must sort to Director · Writer ·
+                    # Composer for each payload order
+                    {
+                        "id": 501,
+                        "title": "Directed Unknown Film",
+                        "release_date": "1975-01-01",
+                        "department": "Sound",
+                        "job": "Original Music Composer",
+                    },
+                    {
+                        "id": 501,
+                        "title": "Directed Unknown Film",
+                        "release_date": "1975-01-01",
+                        "department": "Writing",
+                        "job": "Screenplay",
+                    },
+                    {
+                        "id": 501,
+                        "title": "Directed Unknown Film",
+                        "release_date": "1975-01-01",
+                        "department": "Directing",
+                        "job": "Director",
+                    },
+                    {
+                        "id": 502,
+                        "title": "Thanked Film",
+                        "release_date": "1980-01-01",
+                        "department": "Crew",
+                        "job": "Thanks",
+                    },
+                ],
+            },
+        },
+        default={"name": "Career Director"},
+    )
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
     monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)

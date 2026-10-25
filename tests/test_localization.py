@@ -829,23 +829,18 @@ def test_copy_with_progress_reports_percentages(app, tmp_path):
     dst = tmp_path / "copy.mkv"
     src.write_bytes(os.urandom(96 * 1024 * 1024))  # 3 chunks
 
-    class FakeJob:
-        meta = {}
-        updates = []
+    from tests.fakes import Job
 
-        def save_meta(self):
-            self.updates.append(dict(self.meta))
-
-    job = FakeJob()
+    job = Job()
     with app.app_context():
         videos.copy_with_progress(str(src), str(dst), job, "big.mkv")
 
     assert dst.read_bytes() == src.read_bytes()
-    percents = [u["progress"] for u in job.updates]
+    percents = [u["progress"] for u in job.saved]
     assert percents == sorted(percents)
     assert percents[-1] == 100
     assert all(
-        u["description"] == "'big.mkv' — Moving into the library" for u in job.updates
+        u["description"] == "'big.mkv' — Moving into the library" for u in job.saved
     )
 
 
@@ -2548,15 +2543,9 @@ def test_an_mp4_that_mkvmerge_cannot_carry_loses_its_metadata(
     monkeypatch.setattr(importing, "convert_to_matroska", lambda *args: False)
     monkeypatch.setitem(app.config, "ATOMICPARSLEY_BIN", "/bin/echo")
 
-    class FakeJob:
-        def __init__(self):
-            self.meta = {}
-            self.saved = []
+    from tests.fakes import Job
 
-        def save_meta(self):
-            self.saved.append(dict(self.meta))
-
-    job = FakeJob()
+    job = Job()
     monkeypatch.setattr(importing, "get_current_job", lambda: job)
     basename = "Plain Mp4 (2021) - [DVD].mp4"
     source = os.path.join(incoming_dir, basename)
@@ -2631,15 +2620,9 @@ def test_report_progress_writes_the_queue_page_text(app):
 
     from app.tasks import report_progress
 
-    class FakeJob:
-        def __init__(self):
-            self.meta = {"progress": 40}
-            self.saves = 0
+    from tests.fakes import Job
 
-        def save_meta(self):
-            self.saves += 1
-
-    job = FakeJob()
+    job = Job({"progress": 40})
     report_progress(job, "Film.mkv", "Downloading from AWS", percent=None)
     assert job.meta == {
         "description": "'Film.mkv' — Downloading from AWS",
@@ -2649,7 +2632,7 @@ def test_report_progress_writes_the_queue_page_text(app):
     assert job.meta == {"description": "Pruning extra files", "progress": 7}
     report_progress(job, "Film.mkv", "Cataloging")
     assert job.meta["progress"] == -1
-    assert job.saves == 3
+    assert len(job.saved) == 3
     report_progress(None, "Film.mkv", "Cataloging")
 
 

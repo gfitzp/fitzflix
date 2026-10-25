@@ -8,6 +8,7 @@ import zlib
 
 from app import db
 from tests.factories import make_movie, make_movie_file, make_tv_series
+from tests.fakes import Response
 
 
 def _payload(details):
@@ -30,21 +31,11 @@ def test_a_series_refresh_works_on_the_record_that_owns_the_tmdb_id(app, monkeyp
 
     searched = []
 
-    class Answer:
-        def __init__(self, payload):
-            self.payload = payload
-
-        def raise_for_status(self):
-            pass
-
-        def json(self):
-            return self.payload
-
     def fake_get(url, params=None, **kwargs):
         searched.append(params.get("query"))
         if "/search/tv" in url:
-            return Answer({"results": [{"id": 555}]})
-        return Answer({"id": 555, "name": "Canonical Show"})
+            return Response({"results": [{"id": 555}]})
+        return Response({"id": 555, "name": "Canonical Show"})
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "key")
     monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_get)

@@ -15,6 +15,7 @@ from datetime import datetime
 
 from tests.factories import make_movie
 from tests.conftest import csrf_token_from
+from tests.fakes import Response
 
 
 def assert_binds(job):
@@ -663,19 +664,6 @@ def test_movie_page_renders_unrated_liked_review(app, admin_client):
     assert "star filled" not in page and "star estimated" not in page
 
 
-class FakeTMDBDetails:
-    """Provide a canned TMDB movie-details response."""
-
-    def __init__(self, payload):
-        self._payload = payload
-
-    def raise_for_status(self):
-        pass
-
-    def json(self):
-        return self._payload
-
-
 JAWS_2_DETAILS = {
     "id": 579,
     "title": "Jaws 2",
@@ -829,7 +817,7 @@ def test_review_tmdb_renders_form_for_unowned_film(app, admin_client, monkeypatc
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
     monkeypatch.setattr(
-        "app.tmdb_apply.tmdb_get", lambda *a, **k: FakeTMDBDetails(JAWS_2_DETAILS)
+        "app.tmdb_apply.tmdb_get", lambda *a, **k: Response(JAWS_2_DETAILS)
     )
 
     from app import db
@@ -910,9 +898,7 @@ def test_review_tmdb_hides_the_chip_for_a_non_mpaa_rating(
         {"certification": ""},
     ]
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr(
-        "app.tmdb_apply.tmdb_get", lambda *a, **k: FakeTMDBDetails(details)
-    )
+    monkeypatch.setattr("app.tmdb_apply.tmdb_get", lambda *a, **k: Response(details))
 
     page = admin_client.get("/review/tmdb/579").get_data(as_text=True)
     assert "116&nbsp;minutes" in page
@@ -937,7 +923,7 @@ def test_review_tmdb_shows_estimate_and_interest_marker(app, admin_client, monke
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
     monkeypatch.setattr(
-        "app.tmdb_apply.tmdb_get", lambda *a, **k: FakeTMDBDetails(JAWS_2_DETAILS)
+        "app.tmdb_apply.tmdb_get", lambda *a, **k: Response(JAWS_2_DETAILS)
     )
 
     with app.app_context():
@@ -964,7 +950,7 @@ def test_review_tmdb_creates_movie_and_enqueues_refresh(app, admin_client, monke
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
     monkeypatch.setattr(
-        "app.tmdb_apply.tmdb_get", lambda *a, **k: FakeTMDBDetails(JAWS_2_DETAILS)
+        "app.tmdb_apply.tmdb_get", lambda *a, **k: Response(JAWS_2_DETAILS)
     )
 
     page = admin_client.get("/review/tmdb/579").get_data(as_text=True)
@@ -1031,7 +1017,7 @@ def test_review_tmdb_not_interested_creates_flagged_record(
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
     monkeypatch.setattr(
-        "app.tmdb_apply.tmdb_get", lambda *a, **k: FakeTMDBDetails(JAWS_2_DETAILS)
+        "app.tmdb_apply.tmdb_get", lambda *a, **k: Response(JAWS_2_DETAILS)
     )
 
     page = admin_client.get("/review/tmdb/579").get_data(as_text=True)

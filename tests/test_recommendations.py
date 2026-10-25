@@ -11,6 +11,7 @@ import pytest
 from tests.factories import make_movie, make_movie_file
 from tests.factories import make_person
 from tests.factories import make_cast
+from tests.fakes import Response
 
 
 def genre(genre_id, name):
@@ -347,25 +348,11 @@ def test_filmography_marks_films_that_might_interest(
         make_cast(person, owned)
         db.session.commit()
 
-    class FakeTMDB:
-        """Fake a TMDB response."""
-
-        def __init__(self, payload):
-            self.payload = payload
-
-        def raise_for_status(self):
-            """Never raise an HTTP error."""
-
-        def json(self):
-            """Return the fake payload."""
-
-            return self.payload
-
     def fake_tmdb_get(url, **kwargs):
         """Return person-details and movie-credits payloads without the network."""
 
         if url.endswith("/movie_credits"):
-            return FakeTMDB(
+            return Response(
                 {
                     "cast": [
                         {
@@ -392,7 +379,7 @@ def test_filmography_marks_films_that_might_interest(
                     ]
                 }
             )
-        return FakeTMDB({"name": "Marker Actor"})
+        return Response({"name": "Marker Actor"})
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
     monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
@@ -436,25 +423,11 @@ def test_no_markers_without_a_stored_profile(app, admin_client, monkeypatch):
         make_cast(person, owned)
         db.session.commit()
 
-    class FakeTMDB:
-        """Fake a TMDB response."""
-
-        def __init__(self, payload):
-            self.payload = payload
-
-        def raise_for_status(self):
-            """Never raise an HTTP error."""
-
-        def json(self):
-            """Return the fake payload."""
-
-            return self.payload
-
     def fake_tmdb_get(url, **kwargs):
         """Return minimal person and credits payloads."""
 
         if url.endswith("/movie_credits"):
-            return FakeTMDB(
+            return Response(
                 {
                     "cast": [
                         {
@@ -466,7 +439,7 @@ def test_no_markers_without_a_stored_profile(app, admin_client, monkeypatch):
                     ]
                 }
             )
-        return FakeTMDB({"name": "Profileless Actor"})
+        return Response({"name": "Profileless Actor"})
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
     monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
@@ -711,25 +684,11 @@ def test_search_results_mark_might_interest(app, admin_client, monkeypatch):
         ),
     )
 
-    class FakeTMDB:
-        """Fake a TMDB response."""
-
-        def __init__(self, payload):
-            self.payload = payload
-
-        def raise_for_status(self):
-            """Never raise an HTTP error."""
-
-        def json(self):
-            """Return the fake payload."""
-
-            return self.payload
-
     def fake_tmdb_get(url, params=None, **kwargs):
         """Return search results: a strong match, a non-match, and an owned match."""
 
         if url.endswith("/search/movie"):
-            return FakeTMDB(
+            return Response(
                 {
                     "results": [
                         {
@@ -753,7 +712,7 @@ def test_search_results_mark_might_interest(app, admin_client, monkeypatch):
                     ]
                 }
             )
-        return FakeTMDB({"results": []})
+        return Response({"results": []})
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
     monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
@@ -1638,25 +1597,11 @@ def test_search_markers_respect_the_stored_bar(app, admin_client, monkeypatch):
         ),
     )
 
-    class FakeTMDB:
-        """Fake a TMDB response."""
-
-        def __init__(self, payload):
-            self.payload = payload
-
-        def raise_for_status(self):
-            """Never raise an HTTP error."""
-
-        def json(self):
-            """Return the fake payload."""
-
-            return self.payload
-
     def fake_tmdb_get(url, params=None, **kwargs):
         """Return 1 film over the bar and 1 film that only matches a genre."""
 
         if url.endswith("/search/movie"):
-            return FakeTMDB(
+            return Response(
                 {
                     "results": [
                         {
@@ -1677,7 +1622,7 @@ def test_search_markers_respect_the_stored_bar(app, admin_client, monkeypatch):
                     ]
                 }
             )
-        return FakeTMDB({"results": []})
+        return Response({"results": []})
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
     monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)

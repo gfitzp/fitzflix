@@ -10,6 +10,7 @@ from tests.test_leaving_criterion import (
     shelf_item,
     subscribe_criterion,
 )
+from tests.fakes import RecordingQueue
 from tests.test_streaming import plant_availability
 
 CRITERION = {
@@ -150,14 +151,11 @@ def test_processing_verifies_scores_and_creates(app, monkeypatch):
 
     app.redis.sadd(pc.PENDING_KEY, 201, 202, 203, 204)
 
-    refreshes = []
-
-    class FakeQueue:
-        def enqueue(self, *args, **kwargs):
-            refreshes.append((args, kwargs))
+    queue = RecordingQueue()
+    refreshes = queue.calls
 
     with app.app_context():
-        monkeypatch.setattr(app, "maintenance_queue", FakeQueue())
+        monkeypatch.setattr(app, "maintenance_queue", queue)
         created = pc._process_pending({258})
 
     assert created == 1
@@ -200,12 +198,8 @@ def test_creation_cap_pushes_verified_films_back(app, monkeypatch):
         )
     app.redis.sadd(pc.PENDING_KEY, 301, 302)
 
-    class FakeQueue:
-        def enqueue(self, *args, **kwargs):
-            pass
-
     with app.app_context():
-        monkeypatch.setattr(app, "maintenance_queue", FakeQueue())
+        monkeypatch.setattr(app, "maintenance_queue", RecordingQueue())
         created = pc._process_pending({258})
 
     # One record made the cap. The second verified film waits in the
@@ -242,12 +236,8 @@ def test_the_bar_reads_the_shared_score(app, monkeypatch):
     app.redis.hset(TMDB_PATCH_SCORES_KEY.format(user_id=user_id), "205", 0.6)
     app.redis.sadd(pc.PENDING_KEY, 205)
 
-    class FakeQueue:
-        def enqueue(self, *args, **kwargs):
-            pass
-
     with app.app_context():
-        monkeypatch.setattr(app, "maintenance_queue", FakeQueue())
+        monkeypatch.setattr(app, "maintenance_queue", RecordingQueue())
         assert pc._process_pending({258}) == 1
         assert Movie.query.filter_by(tmdb_id=205).first() is not None
 

@@ -14,6 +14,7 @@ from datetime import datetime
 
 from tests.factories import make_movie, make_movie_file
 from tests.conftest import csrf_token_from
+from tests.fakes import Response
 
 NETFLIX = {"provider_id": 8, "provider_name": "Netflix", "logo_path": "/netflix.jpg"}
 
@@ -395,24 +396,10 @@ def test_review_tmdb_watchlist_add_creates_the_record(
 
     from app.models import Movie
 
-    class FakeTMDB:
-        """A canned TMDB response."""
-
-        def __init__(self, payload):
-            self.payload = payload
-
-        def raise_for_status(self):
-            """Do nothing. The canned response is never an HTTP error."""
-
-        def json(self):
-            """Return the canned payload."""
-
-            return self.payload
-
     def fake_tmdb_get(url, params=None, **kwargs):
         """Return the movie details for the unowned film."""
 
-        return FakeTMDB(
+        return Response(
             {
                 "title": "Wanted Unknown",
                 "release_date": "1999-09-09",

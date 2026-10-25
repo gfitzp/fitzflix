@@ -12,6 +12,7 @@ import json
 from requests.exceptions import HTTPError
 
 from tests.factories import make_movie, make_movie_file
+from tests.fakes import Response
 
 NETFLIX = {"provider_id": 8, "provider_name": "Netflix", "logo_path": "/netflix.jpg"}
 
@@ -111,21 +112,6 @@ ENRICHED = {
 }
 
 
-class FakeTMDB:
-    """Provide a canned TMDB response."""
-
-    def __init__(self, payload):
-        self.payload = payload
-
-    def raise_for_status(self):
-        """Never an HTTP error."""
-
-    def json(self):
-        """Return the canned payload."""
-
-        return self.payload
-
-
 def install_rail_fakes(app, monkeypatch, discover_calls=None):
     """Provide a fake tmdb_get for the rail and availability modules.
 
@@ -137,13 +123,13 @@ def install_rail_fakes(app, monkeypatch, discover_calls=None):
         if "/discover/movie" in url:
             if discover_calls is not None:
                 discover_calls.append(params or {})
-            return FakeTMDB({"results": DISCOVER_ITEMS})
+            return Response({"results": DISCOVER_ITEMS})
         for tmdb_id, payload in ENRICHED.items():
             if url.endswith(f"/movie/{tmdb_id}"):
-                return FakeTMDB(payload)
+                return Response(payload)
         if "/watch/providers" in url:
-            return FakeTMDB({"results": {}})
-        return FakeTMDB({"results": []})
+            return Response({"results": {}})
+        return Response({"results": []})
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
     monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)

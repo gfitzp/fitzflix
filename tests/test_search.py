@@ -15,6 +15,7 @@ from tests.factories import (
     make_tv_series,
 )
 from tests.factories import make_person
+from tests.fakes import Response, tmdb_router
 
 
 def build_library(app):
@@ -267,29 +268,25 @@ def test_search_tmdb_funnel_badges(app, admin_client, monkeypatch):
         ),
     )
 
-    class FakeResponse:
-        def __init__(self, results):
-            self._results = results
-
-        def raise_for_status(self):
-            pass
-
-        def json(self):
-            return {"results": self._results}
-
-    def fake_get(url, params=None, timeout=None):
-        if url.endswith("/search/movie"):
-            return FakeResponse(
-                [
+    fake_get = tmdb_router(
+        {
+            "/search/movie": {
+                "results": [
                     {
                         "id": 678,
                         "title": "Funnel Owned Seen",
                         "release_date": "1975-06-20",
                     },
-                    {"id": 679, "title": "Funnel Wanted", "release_date": "1978-06-16"},
+                    {
+                        "id": 679,
+                        "title": "Funnel Wanted",
+                        "release_date": "1978-06-16",
+                    },
                 ]
-            )
-        return FakeResponse([])
+            },
+        },
+        default={"results": []},
+    )
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
     monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_get)
@@ -339,25 +336,17 @@ def test_search_tmdb_badges_recommended_owned_films(app, admin_client, monkeypat
         ),
     )
 
-    class FakeResponse:
-        def __init__(self, results):
-            self._results = results
-
-        def raise_for_status(self):
-            pass
-
-        def json(self):
-            return {"results": self._results}
-
-    def fake_get(url, params=None, timeout=None):
-        if url.endswith("/search/movie"):
-            return FakeResponse(
-                [
+    fake_get = tmdb_router(
+        {
+            "/search/movie": {
+                "results": [
                     {"id": 578, "title": "Jaws", "release_date": "1975-06-20"},
                     {"id": 579, "title": "Jaws 2", "release_date": "1978-06-16"},
                 ]
-            )
-        return FakeResponse([])
+            },
+        },
+        default={"results": []},
+    )
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
     monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_get)
@@ -495,20 +484,10 @@ def test_search_tmdb_annotates_library_membership(app, admin_client, monkeypatch
         db.session.commit()
         owned_id = owned.id
 
-    class FakeResponse:
-        def __init__(self, results):
-            self._results = results
-
-        def raise_for_status(self):
-            pass
-
-        def json(self):
-            return {"results": self._results}
-
-    def fake_get(url, params=None, timeout=None):
-        if url.endswith("/search/movie"):
-            return FakeResponse(
-                [
+    fake_get = tmdb_router(
+        {
+            "/search/movie": {
+                "results": [
                     {
                         "id": 578,
                         "title": "Jaws",
@@ -523,8 +502,10 @@ def test_search_tmdb_annotates_library_membership(app, admin_client, monkeypatch
                         "poster_path": "/jaws2.jpg",
                     },
                 ]
-            )
-        return FakeResponse([])
+            },
+        },
+        default={"results": []},
+    )
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
     monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_get)
@@ -579,30 +560,38 @@ def test_search_tmdb_library_badges_wear_shopping_colors(
         make_tv_file(settled_series, 1, 1, "DVD")
         db.session.commit()
 
-    class FakeResponse:
-        def __init__(self, results):
-            self._results = results
-
-        def raise_for_status(self):
-            pass
-
-        def json(self):
-            return {"results": self._results}
-
-    def fake_get(url, params=None, timeout=None):
-        if url.endswith("/search/movie"):
-            return FakeResponse(
-                [
-                    {"id": 8601, "title": "Lagging Film", "release_date": "1975-01-01"},
-                    {"id": 8602, "title": "Settled Film", "release_date": "1976-01-01"},
+    fake_get = tmdb_router(
+        {
+            "/search/movie": {
+                "results": [
+                    {
+                        "id": 8601,
+                        "title": "Lagging Film",
+                        "release_date": "1975-01-01",
+                    },
+                    {
+                        "id": 8602,
+                        "title": "Settled Film",
+                        "release_date": "1976-01-01",
+                    },
                 ]
-            )
-        return FakeResponse(
-            [
-                {"id": 8701, "name": "Lagging Show", "first_air_date": "1971-01-01"},
-                {"id": 8702, "name": "Settled Show", "first_air_date": "1972-01-01"},
+            },
+        },
+        default={
+            "results": [
+                {
+                    "id": 8701,
+                    "name": "Lagging Show",
+                    "first_air_date": "1971-01-01",
+                },
+                {
+                    "id": 8702,
+                    "name": "Settled Show",
+                    "first_air_date": "1972-01-01",
+                },
             ]
-        )
+        },
+    )
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
     monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_get)
@@ -770,30 +759,26 @@ def test_search_tmdb_rows_carry_the_star_ladder(app, admin_client, monkeypatch):
         db.session.commit()
         recorded_id = recorded.id
 
-    class FakeResponse:
-        def __init__(self, results):
-            self._results = results
-
-        def raise_for_status(self):
-            pass
-
-        def json(self):
-            return {"results": self._results}
-
-    def fake_get(url, params=None, timeout=None):
-        if url.endswith("/search/movie"):
-            return FakeResponse(
-                [
+    fake_get = tmdb_router(
+        {
+            "/search/movie": {
+                "results": [
                     {
                         "id": 871,
                         "title": "Ladder Recorded",
                         "release_date": "1975-06-20",
                     },
-                    {"id": 872, "title": "Ladder Bare", "release_date": "1981-03-13"},
+                    {
+                        "id": 872,
+                        "title": "Ladder Bare",
+                        "release_date": "1981-03-13",
+                    },
                     {"id": 873, "title": "Ladder Dateless"},
                 ]
-            )
-        return FakeResponse([])
+            },
+        },
+        default={"results": []},
+    )
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
     monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_get)
@@ -833,39 +818,29 @@ def test_search_tmdb_watchlist_toggle(app, admin_client, monkeypatch):
         wanted_id = wanted.id
         user_id = admin.id
 
-    class FakeResponse:
-        def __init__(self, payload):
-            self._payload = payload
-
-        def raise_for_status(self):
-            pass
-
-        def json(self):
-            return self._payload
-
-    def fake_search(url, params=None, timeout=None):
-        if url.endswith("/search/movie"):
-            return FakeResponse(
-                {
-                    "results": [
-                        {
-                            "id": 741,
-                            "title": "Toggle Wanted",
-                            "release_date": "1970-01-01",
-                        },
-                        {
-                            "id": 742,
-                            "title": "Toggle Unknown",
-                            "release_date": "1971-02-02",
-                        },
-                        {"id": 743, "title": "Toggle Dateless"},
-                    ]
-                }
-            )
-        return FakeResponse({"results": []})
+    fake_search = tmdb_router(
+        {
+            "/search/movie": {
+                "results": [
+                    {
+                        "id": 741,
+                        "title": "Toggle Wanted",
+                        "release_date": "1970-01-01",
+                    },
+                    {
+                        "id": 742,
+                        "title": "Toggle Unknown",
+                        "release_date": "1971-02-02",
+                    },
+                    {"id": 743, "title": "Toggle Dateless"},
+                ]
+            },
+        },
+        default={"results": []},
+    )
 
     def fake_details(url, params=None, timeout=None, **kwargs):
-        return FakeResponse(
+        return Response(
             {
                 "title": "Toggle Unknown",
                 "release_date": "1971-02-02",
@@ -962,22 +937,12 @@ def test_search_tmdb_movies_scope_skips_tv(app, admin_client, monkeypatch):
     The Log a film hand-off of the History page uses scope=movies. It
     never queries or renders TV results. The diary only logs movies."""
 
-    class FakeResponse:
-        def __init__(self, payload):
-            self._payload = payload
-
-        def raise_for_status(self):
-            pass
-
-        def json(self):
-            return self._payload
-
     calls = []
 
     def fake_get(url, params=None, timeout=None):
         calls.append(url)
         if url.endswith("/search/movie"):
-            return FakeResponse(
+            return Response(
                 {
                     "results": [
                         {
@@ -988,7 +953,7 @@ def test_search_tmdb_movies_scope_skips_tv(app, admin_client, monkeypatch):
                     ]
                 }
             )
-        return FakeResponse(
+        return Response(
             {
                 "results": [
                     {"id": 901, "name": "Scoped Show", "first_air_date": "1991-01-01"}
@@ -1102,28 +1067,20 @@ def test_search_tmdb_year_modifier(app, admin_client, monkeypatch):
     release date after the search. A modifier with no title text shows
     an explanation and does not search."""
 
-    class FakeResponse:
-        def __init__(self, results):
-            self._results = results
-
-        def raise_for_status(self):
-            pass
-
-        def json(self):
-            return {"results": self._results}
-
     captured = {}
 
     def fake_get(url, params=None, timeout=None):
         captured[url.rsplit("/", 1)[-1]] = dict(params)
         if url.endswith("/search/movie"):
-            return FakeResponse(
-                [
-                    {"id": 578, "title": "Jaws", "release_date": "1975-06-20"},
-                    {"id": 579, "title": "Jaws 2", "release_date": "1978-06-16"},
-                ]
+            return Response(
+                {
+                    "results": [
+                        {"id": 578, "title": "Jaws", "release_date": "1975-06-20"},
+                        {"id": 579, "title": "Jaws 2", "release_date": "1978-06-16"},
+                    ]
+                }
             )
-        return FakeResponse([])
+        return Response({"results": []})
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
     monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_get)

@@ -12,7 +12,8 @@ from datetime import datetime
 from app import db
 
 from tests.factories import make_movie
-from tests.test_reviews import JAWS_2_DETAILS, FakeTMDBDetails
+from tests.fakes import Response
+from tests.test_reviews import JAWS_2_DETAILS
 from tests.conftest import csrf_token_from
 
 
@@ -26,7 +27,7 @@ def _fake_tmdb(app, monkeypatch):
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
     monkeypatch.setattr(
-        "app.tmdb_apply.tmdb_get", lambda *a, **k: FakeTMDBDetails(JAWS_2_DETAILS)
+        "app.tmdb_apply.tmdb_get", lambda *a, **k: Response(JAWS_2_DETAILS)
     )
 
 

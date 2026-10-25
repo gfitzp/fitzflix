@@ -12,6 +12,7 @@ from app.models import Movie
 from app.videos import refresh_criterion_collection_info
 
 from tests.factories import make_movie
+from tests.fakes import Response
 
 import app.videos as videos
 
@@ -66,22 +67,12 @@ def fake_sparql(monkeypatch, calls=None):
 
     import app.criterion_catalog as criterion_catalog
 
-    class FakeResponse:
-        def __init__(self, payload):
-            self._payload = payload
-
-        def raise_for_status(self):
-            pass
-
-        def json(self):
-            return self._payload
-
     def fake_get(url, params=None, headers=None, timeout=None):
         if calls is not None:
             calls.append({"url": url, "params": params, "headers": headers})
         if "P527" in (params or {}).get("query", ""):
-            return FakeResponse(SETS_RESPONSE)
-        return FakeResponse(SPARQL_RESPONSE)
+            return Response(SETS_RESPONSE)
+        return Response(SPARQL_RESPONSE)
 
     monkeypatch.setattr(criterion_catalog.requests, "get", fake_get)
 
