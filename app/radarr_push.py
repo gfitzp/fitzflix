@@ -23,7 +23,6 @@ availability Released, and the "Fitzflix" quality profile. Fitzflix
 finds the profile by name, never by a hardcoded id.
 """
 
-import json
 import os
 import time
 
@@ -31,6 +30,7 @@ import requests
 
 from flask import current_app
 
+from app.cache import cache_json, cached_fetch
 from app.arr_client import (
     RADARR,
     RadarrError,
@@ -82,17 +82,21 @@ def radarr_tmdb_ids(refresh=False):
     returns an empty set. The badges are then incomplete. The buttons
     continue to work."""
 
-    if not refresh:
-        cached = current_app.redis.get(RADARR_IDS_KEY)
-        if cached is not None:
-            return set(json.loads(cached))
-    try:
-        ids = {movie["tmdbId"] for movie in _radarr("GET", "/api/v3/movie")}
-    except Exception as e:
-        current_app.logger.warning(f"Radarr: couldn't list movies: {e}")
-        return set()
-    current_app.redis.set(RADARR_IDS_KEY, json.dumps(sorted(ids)), ex=RADARR_IDS_TTL)
-    return ids
+    def fetch():
+        try:
+            ids = {movie["tmdbId"] for movie in _radarr("GET", "/api/v3/movie")}
+        except Exception as e:
+            current_app.logger.warning(f"Radarr: couldn't list movies: {e}")
+            return None, False
+        return sorted(ids), True
+
+    if refresh:
+        ids, ok = fetch()
+        if ok:
+            cache_json(RADARR_IDS_KEY, ids, RADARR_IDS_TTL)
+    else:
+        ids = cached_fetch(RADARR_IDS_KEY, RADARR_IDS_TTL, fetch)
+    return set(ids or [])
 
 
 def request_movie(tmdb_id):

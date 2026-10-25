@@ -165,3 +165,88 @@ def test_no_module_builds_a_redis_key_inline():
             ):
                 inline.append(f"{path.relative_to(ROOT)}:{node.lineno}")
     assert not inline, inline
+
+
+class _Down:
+    """A TMDB getter that must not run."""
+
+    def __call__(self, *args, **kwargs):
+        raise AssertionError("the cache should have answered")
+
+
+def test_a_cached_empty_registry_answers_without_tmdb(app, monkeypatch):
+    """An empty list in the cache is an answer, not a miss (#360)."""
+
+    from app import streaming
+
+    monkeypatch.setitem(app.config, "TMDB_API_KEY", "key")
+    monkeypatch.setattr(streaming, "tmdb_get", _Down())
+    with app.app_context():
+        app.redis.set(streaming.REGISTRY_KEY, "[]", ex=60)
+        assert streaming.provider_registry() == []
+
+
+def test_a_failed_registry_fetch_is_remembered_briefly(app, monkeypatch):
+    from app import streaming
+
+    def down(*args, **kwargs):
+        raise ConnectionError("TMDB is away")
+
+    monkeypatch.setitem(app.config, "TMDB_API_KEY", "key")
+    monkeypatch.setattr(streaming, "tmdb_get", down)
+    with app.app_context():
+        app.redis.delete(streaming.REGISTRY_KEY)
+        assert streaming.provider_registry() == []
+        assert (
+            0
+            < app.redis.ttl(streaming.REGISTRY_KEY)
+            <= streaming.REGISTRY_RETRY_SECONDS
+        )
+
+
+def test_a_cached_empty_gallery_answers_without_tmdb(app, monkeypatch):
+    from app.main import posters
+
+    monkeypatch.setitem(app.config, "TMDB_API_KEY", "key")
+    monkeypatch.setattr(posters, "tmdb_get", _Down())
+    with app.app_context():
+        app.redis.set(posters.POSTERS_KEY.format(tmdb_id=77), "[]", ex=60)
+        assert posters._tmdb_poster_gallery(77) == []
+        # Without a key and without a cache entry, nothing is fetched or cached
+        monkeypatch.setitem(app.config, "TMDB_API_KEY", None)
+        assert posters._tmdb_poster_gallery(78) is None
+        assert app.redis.get(posters.POSTERS_KEY.format(tmdb_id=78)) is None
+
+
+def test_cached_radarr_ids_and_a_refresh_that_fails(app, monkeypatch):
+    from app import radarr_push
+
+    def down(*args, **kwargs):
+        raise ConnectionError("Radarr is away")
+
+    monkeypatch.setattr(radarr_push, "_radarr", down)
+    with app.app_context():
+        app.redis.set(radarr_push.RADARR_IDS_KEY, "[]", ex=60)
+        assert radarr_push.radarr_tmdb_ids() == set()
+        app.redis.set(radarr_push.RADARR_IDS_KEY, "[5, 7]", ex=60)
+        assert radarr_push.radarr_tmdb_ids() == {5, 7}
+        # A failed refresh keeps the live entry and answers empty
+        assert radarr_push.radarr_tmdb_ids(refresh=True) == set()
+        assert app.redis.get(radarr_push.RADARR_IDS_KEY) == b"[5, 7]"
+
+
+def test_language_choices_read_back_as_tuples(app):
+    from app import tracks
+
+    with app.app_context():
+        app.redis.delete(tracks.LANGUAGE_CHOICES_KEY)
+        first = tracks.library_language_choices()
+        assert 0 < app.redis.ttl(tracks.LANGUAGE_CHOICES_KEY)
+        assert (
+            app.redis.ttl(tracks.LANGUAGE_CHOICES_KEY)
+            <= tracks.LANGUAGE_CHOICES_SECONDS
+        )
+        second = tracks.library_language_choices()
+        assert first == second
+        assert all(isinstance(pair, tuple) for pair in second)
+        assert ("eng", "English") in second

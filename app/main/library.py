@@ -4,7 +4,6 @@ These are the movie and TV browsing pages, the filmographies, the
 Criterion spine catalog, the people page, and the per-title
 movie/tv/season/file detail pages."""
 
-import json
 import os
 import re
 import time
@@ -102,6 +101,7 @@ from app.main.helpers import (
     series_upgradable,
     tv_meta_line,
 )
+from app.cache import cached_fetch
 from app.funnel import might_interest, user_film_sets_by_id
 from app.recommendations import (
     JOB_TO_CLASS,
@@ -180,33 +180,64 @@ def _tmdb_person_details(person_id):
 
     if not current_app.config["TMDB_API_KEY"]:
         return None
-    cache_key = PERSON_DETAILS_KEY.format(person_id=person_id)
-    cached = current_app.redis.get(cache_key)
-    if cached:
-        return json.loads(cached)
+
+    def fetch():
+        try:
+            r = tmdb_get(
+                current_app.config["TMDB_API_URL"] + f"/person/{person_id}",
+                params={"api_key": current_app.config["TMDB_API_KEY"]},
+                timeout=10,
+            )
+            r.raise_for_status()
+            payload = r.json() or {}
+        except Exception:
+            current_app.logger.warning(traceback.format_exc())
+            return None, False
+        if not payload.get("name"):
+            return None, False
+        details = {
+            "name": payload["name"],
+            "profile_path": payload.get("profile_path"),
+            "biography": payload.get("biography"),
+            "birthday": payload.get("birthday"),
+            "deathday": payload.get("deathday"),
+            "place_of_birth": payload.get("place_of_birth"),
+        }
+        return details, True
+
+    return cached_fetch(PERSON_DETAILS_KEY.format(person_id=person_id), 86400, fetch)
+
+
+def _fetch_tv_credits(person_id):
+    """Fetch the TV credits of 1 person from TMDB, for cached_fetch.
+
+    The self roles and the crew jobs outside the key roles drop out.
+    An error is (None, False): the page renders without the TV rows,
+    and nothing is cached."""
+
     try:
         r = tmdb_get(
-            current_app.config["TMDB_API_URL"] + f"/person/{person_id}",
+            current_app.config["TMDB_API_URL"] + f"/person/{person_id}/tv_credits",
             params={"api_key": current_app.config["TMDB_API_KEY"]},
             timeout=10,
         )
         r.raise_for_status()
-        payload = r.json() or {}
+        payload = r.json()
     except Exception:
         current_app.logger.warning(traceback.format_exc())
-        return None
-    if not payload.get("name"):
-        return None
-    details = {
-        "name": payload["name"],
-        "profile_path": payload.get("profile_path"),
-        "biography": payload.get("biography"),
-        "birthday": payload.get("birthday"),
-        "deathday": payload.get("deathday"),
-        "place_of_birth": payload.get("place_of_birth"),
-    }
-    current_app.redis.set(cache_key, json.dumps(details), ex=86400)
-    return details
+        return None, False
+    return {
+        "cast": [
+            entry
+            for entry in payload.get("cast") or []
+            if not SELF_ROLE.match(entry.get("character") or "")
+        ],
+        "crew": [
+            entry
+            for entry in payload.get("crew") or []
+            if entry.get("job") in CREW_ROLE_LABELS
+        ],
+    }, True
 
 
 def _tmdb_date(value):
@@ -493,35 +524,11 @@ def _filmography(credit):
     tv_rows = {}
     tv_credits = None
     if current_app.config["TMDB_API_KEY"]:
-        tv_cache_key = PERSON_TV_CREDITS_KEY.format(person_id=int(credit))
-        cached = current_app.redis.get(tv_cache_key)
-        if cached:
-            tv_credits = json.loads(cached)
-        else:
-            try:
-                r = tmdb_get(
-                    current_app.config["TMDB_API_URL"]
-                    + f"/person/{int(credit)}/tv_credits",
-                    params={"api_key": current_app.config["TMDB_API_KEY"]},
-                    timeout=10,
-                )
-                r.raise_for_status()
-                payload = r.json()
-                tv_credits = {
-                    "cast": [
-                        entry
-                        for entry in payload.get("cast") or []
-                        if not SELF_ROLE.match(entry.get("character") or "")
-                    ],
-                    "crew": [
-                        entry
-                        for entry in payload.get("crew") or []
-                        if entry.get("job") in CREW_ROLE_LABELS
-                    ],
-                }
-                current_app.redis.set(tv_cache_key, json.dumps(tv_credits), ex=86400)
-            except Exception:
-                current_app.logger.warning(traceback.format_exc())
+        tv_credits = cached_fetch(
+            PERSON_TV_CREDITS_KEY.format(person_id=int(credit)),
+            86400,
+            lambda: _fetch_tv_credits(int(credit)),
+        )
 
     if tv_credits:
         credited_ids = {
@@ -3022,16 +3029,17 @@ def _ranked_people(role):
     caches them until the next credit write (see
     invalidate_people_ranking) or for PEOPLE_RANKING_SECONDS."""
 
-    key = PEOPLE_RANKING_KEY.format(role=role)
-    cached = current_app.redis.get(key)
-    if cached:
-        return json.loads(cached)
-    ranked = [
-        [credit_id, name, profile_path, count]
-        for credit_id, name, profile_path, count in _ranked_people_query(role, None, 2)
-    ]
-    current_app.redis.set(key, json.dumps(ranked), ex=PEOPLE_RANKING_SECONDS)
-    return ranked
+    def fetch():
+        return [
+            [credit_id, name, profile_path, count]
+            for credit_id, name, profile_path, count in _ranked_people_query(
+                role, None, 2
+            )
+        ], True
+
+    return cached_fetch(
+        PEOPLE_RANKING_KEY.format(role=role), PEOPLE_RANKING_SECONDS, fetch
+    )
 
 
 class ListPagination(Pagination):

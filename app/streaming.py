@@ -25,6 +25,7 @@ from flask import current_app, g
 from werkzeug.local import LocalProxy
 
 from app import db, get_app
+from app.cache import cache_json, cached_fetch
 from app.models import Movie, tmdb_get
 
 # The app instance of this process. Fitzflix resolves it lazily. Thus,
@@ -54,9 +55,17 @@ def provider_registry():
 
     if not current_app.config["TMDB_API_KEY"]:
         return []
-    cached = current_app.redis.get(REGISTRY_KEY)
-    if cached:
-        return json.loads(cached)
+    return cached_fetch(REGISTRY_KEY, CACHE_SECONDS, _fetch_provider_registry)
+
+
+def _fetch_provider_registry():
+    """Fetch the provider registry from TMDB, for cached_fetch.
+
+    Fitzflix remembers a failed fetch for a short time. Some callers
+    ask for each film (the rec-shelf pool, the DVR build, the
+    availability alerts). Thus, they pay 1 timeout for each outage,
+    not 1 for each film."""
+
     try:
         r = tmdb_get(
             current_app.config["TMDB_API_URL"] + "/watch/providers/movie",
@@ -69,13 +78,9 @@ def provider_registry():
         r.raise_for_status()
         results = r.json().get("results") or []
     except Exception:
-        # Fitzflix remembers a failed fetch for a short time. Some
-        # callers ask for each film (the rec-shelf pool, the DVR build,
-        # the availability alerts). Thus, they pay 1 timeout for each
-        # outage, not 1 for each film.
         current_app.logger.warning(traceback.format_exc())
-        current_app.redis.set(REGISTRY_KEY, "[]", ex=REGISTRY_RETRY_SECONDS)
-        return []
+        cache_json(REGISTRY_KEY, [], REGISTRY_RETRY_SECONDS)
+        return [], False
 
     providers = [
         {
@@ -90,8 +95,7 @@ def provider_registry():
         if p.get("provider_id") is not None
     ]
     providers.sort(key=lambda p: p["display_priority"])
-    current_app.redis.set(REGISTRY_KEY, json.dumps(providers), ex=CACHE_SECONDS)
-    return providers
+    return providers, True
 
 
 def title_availability(tmdb_id, refresh=False):
@@ -109,9 +113,19 @@ def title_availability(tmdb_id, refresh=False):
     if tmdb_id is None or not current_app.config["TMDB_API_KEY"]:
         return None
     cache_key = AVAILABILITY_KEY.format(tmdb_id=int(tmdb_id))
-    cached = None if refresh else current_app.redis.get(cache_key)
-    if cached:
-        return json.loads(cached)
+    if not refresh:
+        return cached_fetch(
+            cache_key, CACHE_SECONDS, lambda: _fetch_title_availability(tmdb_id)
+        )
+    payload, ok = _fetch_title_availability(tmdb_id)
+    if ok:
+        cache_json(cache_key, payload, CACHE_SECONDS)
+    return payload
+
+
+def _fetch_title_availability(tmdb_id):
+    """Fetch the watch-provider payload of 1 film from TMDB, for cached_fetch."""
+
     try:
         r = tmdb_get(
             current_app.config["TMDB_API_URL"]
@@ -130,10 +144,10 @@ def title_availability(tmdb_id, refresh=False):
             region = {}
         else:
             current_app.logger.warning(traceback.format_exc())
-            return None
+            return None, False
     except Exception:
         current_app.logger.warning(traceback.format_exc())
-        return None
+        return None, False
 
     payload = {"link": region.get("link")}
     for kind in ("flatrate", "ads", "rent", "buy"):
@@ -145,8 +159,7 @@ def title_availability(tmdb_id, refresh=False):
             }
             for p in region.get(kind) or []
         ]
-    current_app.redis.set(cache_key, json.dumps(payload), ex=CACHE_SECONDS)
-    return payload
+    return payload, True
 
 
 def batch_title_availability(

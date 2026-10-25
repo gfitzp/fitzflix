@@ -37,6 +37,7 @@ from app.tasks import enqueue_task, report_progress, requeue
 from app import db, get_app
 from app.aws_storage import archive_library_file, mark_archive_stale
 from app.models import File, FileAudioTrack, FileSubtitleTrack
+from app.cache import cached_fetch
 from app.settings import get_setting
 from app.plex_library import enqueue_plex_analyze
 from app.smb_probe import library_path, probe_and_record
@@ -705,15 +706,20 @@ def library_language_choices():
     list also grows when films in new languages arrive.
     """
 
-    from app.models import FileAudioTrack, FileSubtitleTrack, Movie
-
     # Three DISTINCT queries over the track tables take approximately
     # 40 ms. That is too much for each File page render. The answer
     # changes only when a new language enters the library
 
-    cached = current_app.redis.get(LANGUAGE_CHOICES_KEY)
-    if cached:
-        return tuple(tuple(pair) for pair in json.loads(cached))
+    choices = cached_fetch(
+        LANGUAGE_CHOICES_KEY, LANGUAGE_CHOICES_SECONDS, _stored_language_choices
+    )
+    return tuple(tuple(pair) for pair in choices)
+
+
+def _stored_language_choices():
+    """Return the (code, name) choices of the library, for cached_fetch."""
+
+    from app.models import FileAudioTrack, FileSubtitleTrack, Movie
 
     stored = set()
     for column in (
@@ -737,16 +743,13 @@ def library_language_choices():
     codes.discard(None)
 
     names = _code_names() or dict(iso_639_2_languages())
-    choices = tuple(
+    return (
         sorted(
             ((code, names.get(code, code)) for code in codes),
             key=lambda language: language[1].lower(),
-        )
+        ),
+        True,
     )
-    current_app.redis.set(
-        LANGUAGE_CHOICES_KEY, json.dumps(choices), ex=LANGUAGE_CHOICES_SECONDS
-    )
-    return choices
 
 
 def resolve_language_code(value):

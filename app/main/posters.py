@@ -5,7 +5,6 @@ artwork uploads, the TMDB gallery picks, and the library-folder copies
 that Plex reads."""
 
 import io
-import json
 import os
 import re
 import shutil
@@ -31,6 +30,7 @@ from werkzeug.datastructures import FileStorage
 from werkzeug.utils import secure_filename
 
 from app import db
+from app.cache import cached_fetch
 from app.main.forms import (
     CustomPosterRemoveForm,
     CustomPosterUploadForm,
@@ -322,25 +322,23 @@ def _tmdb_poster_gallery(tmdb_id):
 
     if not tmdb_id:
         return None
-    cache_key = POSTERS_KEY.format(tmdb_id=tmdb_id)
-    cached = current_app.redis.get(cache_key)
-    if cached:
-        return json.loads(cached)
-    if not current_app.config["TMDB_API_KEY"]:
-        return None
-    try:
-        r = tmdb_get(
-            current_app.config["TMDB_API_URL"] + f"/movie/{tmdb_id}/images",
-            params={"api_key": current_app.config["TMDB_API_KEY"]},
-            timeout=10,
-        )
-        r.raise_for_status()
-        posters = r.json().get("posters") or []
-    except Exception:
-        current_app.logger.warning(traceback.format_exc())
-        return None
-    current_app.redis.set(cache_key, json.dumps(posters), ex=86400)
-    return posters
+
+    def fetch():
+        if not current_app.config["TMDB_API_KEY"]:
+            return None, False
+        try:
+            r = tmdb_get(
+                current_app.config["TMDB_API_URL"] + f"/movie/{tmdb_id}/images",
+                params={"api_key": current_app.config["TMDB_API_KEY"]},
+                timeout=10,
+            )
+            r.raise_for_status()
+            return r.json().get("posters") or [], True
+        except Exception:
+            current_app.logger.warning(traceback.format_exc())
+            return None, False
+
+    return cached_fetch(POSTERS_KEY.format(tmdb_id=tmdb_id), 86400, fetch)
 
 
 def _fetch_tmdb_poster(poster_path):

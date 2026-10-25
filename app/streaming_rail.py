@@ -29,7 +29,7 @@ from flask import current_app
 from requests.exceptions import HTTPError
 from werkzeug.local import LocalProxy
 
-from app.cache import MISS, cache_json, cached_json
+from app.cache import MISS, cache_json, cached_fetch, cached_json
 from app.tasks import enqueue_task
 from app import db, get_app
 from app.models import File, Movie, User, UserMovieReview, UserMovieStatus
@@ -142,28 +142,21 @@ def provider_pool(provider_id, provider_name):
     Fitzflix caches it for 1 day. Thus, an on-demand rail compute does
     not fetch again what the nightly run already pulled."""
 
-    cache_key = POOL_KEY.format(provider_id=int(provider_id))
-    cached = current_app.redis.get(cache_key)
-    if cached:
-        return json.loads(cached)
+    def fetch():
+        pool = {}
+        for tag, sort_by, vote_floor in POOL_SORTS:
+            for page in range(1, POOL_PAGES + 1):
+                params = _base_params([provider_id])
+                params.update(
+                    {"sort_by": sort_by, "page": page, "vote_count.gte": vote_floor}
+                )
+                _merge(pool, _discover(params), f"{tag} on {provider_name}")
+        # An empty pool is a failed fetch. It is not cached
+        return {str(k): v for k, v in pool.items()}, bool(pool)
 
-    pool = {}
-    for tag, sort_by, vote_floor in POOL_SORTS:
-        for page in range(1, POOL_PAGES + 1):
-            params = _base_params([provider_id])
-            params.update(
-                {"sort_by": sort_by, "page": page, "vote_count.gte": vote_floor}
-            )
-            _merge(pool, _discover(params), f"{tag} on {provider_name}")
-
-    if pool:
-        current_app.redis.set(
-            cache_key,
-            json.dumps({str(k): v for k, v in pool.items()}),
-            ex=POOL_CACHE_SECONDS,
-        )
-        return {str(k): v for k, v in pool.items()}
-    return {}
+    return cached_fetch(
+        POOL_KEY.format(provider_id=int(provider_id)), POOL_CACHE_SECONDS, fetch
+    )
 
 
 def _taste_queries(profile, provider_ids):

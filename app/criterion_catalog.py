@@ -32,6 +32,7 @@ from werkzeug.local import LocalProxy
 
 from app.tasks import enqueue_task
 from app import db, get_app
+from app.cache import MISS, cached_json
 from app.models import CatalogExclusion, Movie
 
 # Wikidata models Criterion spine numbers as property P12279, TMDB movie
@@ -172,9 +173,9 @@ def get_criterion_collection_from_wikidata(force_refresh=False):
         return []
 
     if not force_refresh:
-        cached = current_app.redis.get(CRITERION_CACHE_KEY)
-        if cached:
-            return json.loads(cached)
+        cached = cached_json(CRITERION_CACHE_KEY)
+        if cached is not MISS:
+            return cached
 
     criterion_collection = []
     for binding in _wikidata_sparql(url, CRITERION_SPARQL_QUERY):
@@ -197,8 +198,8 @@ def get_criterion_collection_from_wikidata(force_refresh=False):
     # A glitch of the endpoint can return few rows or none. Such a list
     # must not replace the last good copy.
 
-    stored = current_app.redis.get(CRITERION_CACHE_KEY)
-    stored_count = len(json.loads(stored)) if stored else 0
+    stored = cached_json(CRITERION_CACHE_KEY)
+    stored_count = len(stored) if stored is not MISS else 0
     if len(criterion_collection) < max(1, stored_count // 2):
         raise ValueError(
             f"Wikidata returned {len(criterion_collection)} Criterion releases, "
@@ -222,9 +223,9 @@ def stored_criterion_releases():
     cannot stall a web request or an import.
     """
 
-    cached = current_app.redis.get(CRITERION_CACHE_KEY)
-    if cached:
-        return json.loads(cached)
+    cached = cached_json(CRITERION_CACHE_KEY)
+    if cached is not MISS:
+        return cached
     enqueue_criterion_releases_refresh()
     return []
 
