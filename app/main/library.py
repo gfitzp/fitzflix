@@ -512,7 +512,6 @@ def movie_library():
         # refresh cannot cover the films without a record. Those films
         # warm in the background for the next visit.
 
-        streaming_attribution = False
         provider_ids = user_provider_ids(current_user)
         if provider_ids:
             availability_by_id, deferred = batch_title_availability(
@@ -536,8 +535,6 @@ def movie_library():
                     row["streaming"] = matches
                 if rentals:
                     row["rentals"] = rentals
-                if matches or rentals:
-                    streaming_attribution = True
 
         # Television credits. This is the TMDB TV career of the person,
         # 1 row per series, cached for 1 day like the film list. Self
@@ -644,7 +641,6 @@ def movie_library():
             filmography=filmography,
             television=television,
             tmdb_unavailable=tmdb_credits is None,
-            streaming_attribution=streaming_attribution,
         )
 
     elif q:
@@ -833,7 +829,6 @@ def movie_library():
         pages=movies,
         filter_form=filter_form,
         library_search_form=library_search_form,
-        upgrade_threshold=_upgrade_threshold(),
     )
 
 
@@ -1895,30 +1890,11 @@ def movie(movie_id):
     # guess.
 
     estimated = None
-    might_interest = False
     profile = stored_profile(current_app.redis, current_user.id)
     if (review is None or review.rating is None) and not refused:
         score = resolved_score(current_app.redis, current_user.id, movie, profile)
         if score is not None:
             estimated = estimated_rating(profile, score)
-
-    # "Might interest you" keeps the stricter diary rule. Any watch, rated
-    # or not, already feeds the profile. Thus, a seen film never shows the
-    # badge.
-
-    if review is None and not refused:
-        if films:
-            might_interest = movie.id in recommended_movie_ids(
-                current_app.redis, current_user.id
-            )
-        elif profile:
-            year = (
-                movie.tmdb_release_date.year if movie.tmdb_release_date else movie.year
-            )
-            coarse = coarse_interest_score(
-                profile, [genre.id for genre in movie.genres], year
-            )
-            might_interest = coarse > marker_bar(profile)
 
     # The ad-hoc Radarr hand-off. An admin can request an unowned film
     # for download. The badge reads from the hour-cached id set.
@@ -1975,7 +1951,6 @@ def movie(movie_id):
         streaming=streaming,
         watchlist_form=watchlist_form,
         on_watchlist=on_watchlist,
-        might_interest=might_interest,
         estimated_rating=estimated,
         refused=refused,
         suggestions=suggestions,

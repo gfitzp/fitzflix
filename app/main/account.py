@@ -954,7 +954,7 @@ def stats():
     current year if it has viewings. Otherwise it shows the newest year
     with viewings."""
 
-    from app.stats import diary_stats, star_label, watched_years
+    from app.stats import diary_stats, watched_years
 
     years = watched_years(int(current_user.id))
     requested = request.args.get("year")
@@ -972,5 +972,4 @@ def stats():
         years=years,
         year=year,
         stats=diary_stats(int(current_user.id), year),
-        star_label=star_label,
     )

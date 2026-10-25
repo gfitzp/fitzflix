@@ -79,9 +79,7 @@ from app.main.helpers import (
 from app.recommendations import (
     TMDB_PATCH_SCORES_KEY,
     TOP_BILLING_CUTOFF,
-    coarse_interest_score,
     estimated_rating,
-    marker_bar,
     not_interested_movie_ids,
     resolved_score,
     resolved_tmdb_score,
@@ -558,7 +556,6 @@ def index():
     shelf = leaving_shelf(current_user)
     leaving_rows = shelf["items"] if shelf else []
     shelf_departs = shelf["departs"].strftime("%B %-d") if shelf else None
-    shelf_url = shelf["url"] if shelf else None
 
     # The sources of the newly-added discovery shelves (#246): recent
     # arrivals on the own newly-added feed of a subscribed provider. The
@@ -709,11 +706,9 @@ def index():
         rail_computed_at=rail_computed_at,
         shelf=shelf_items,
         shelf_departs=shelf_departs,
-        shelf_url=shelf_url,
         new_shelves=new_shelves,
         now_playing=criterion_now_card(current_user),
         criterion_subscriber=is_criterion_subscriber(current_user),
-        review_form=MovieReviewForm(),
         minutes=minutes,
         genres=genres,
         genre=genre,
@@ -740,7 +735,6 @@ def criterion_now():
     return render_template(
         "_criterion_now_card.html",
         now_playing=criterion_now_card(current_user),
-        review_form=MovieReviewForm(),
     )
 
 
@@ -1790,7 +1784,6 @@ def watchlist():
     )
 
     rows = []
-    streaming_attribution = False
     for entry in entries:
         movie = entry.movie
         streaming = []
@@ -1805,8 +1798,6 @@ def watchlist():
                 tmdb_id=None if movie.id in owned_ids else movie.tmdb_id,
             )
             rentals = rental_matches(availability, provider_ids)
-            if streaming or rentals:
-                streaming_attribution = True
         rows.append(
             {
                 "movie": movie,
@@ -1952,7 +1943,6 @@ def watchlist():
         radarr_form=RadarrForm(),
         radarr_available=bool(current_user.admin and radarr_configured()),
         radarr_proxy_url=current_app.config["RADARR_PROXY_URL"],
-        streaming_attribution=streaming_attribution,
     )
 
 
@@ -2415,7 +2405,6 @@ def review_tmdb(tmdb_id):
     # person context here.
 
     estimated = None
-    might_interest = False
     profile = stored_profile(current_app.redis, current_user.id)
     if profile:
         score = resolved_tmdb_score(
@@ -2423,10 +2412,6 @@ def review_tmdb(tmdb_id):
         )
         if score is not None:
             estimated = estimated_rating(profile, score)
-        coarse = coarse_interest_score(
-            profile, [genre_id for genre_id, _ in genres if genre_id], str(year)
-        )
-        might_interest = coarse > marker_bar(profile)
 
     # A movie-shaped stand-in. Thus, the shared store-search dropdown and
     # the external-site links render for a film with no local record.
@@ -2458,7 +2443,6 @@ def review_tmdb(tmdb_id):
         cast=cast,
         directors=directors,
         estimated_rating=estimated,
-        might_interest=might_interest,
         movie_review_form=movie_review_form,
         movie=store_lookup,
         streaming=user_streaming(tmdb_id, current_user, negative=True),
