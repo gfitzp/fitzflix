@@ -1741,7 +1741,14 @@ def test_the_queue_poll_paints_each_page_through_its_hook(admin_client):
     ):
         assert painter not in home
 
+    # The painter owns its state. A variable left behind in base.html is
+    # a ReferenceError that the poll swallows, and the table never
+    # repaints (the first deploy of this move, 2026-10-25).
+
+    assert "var allSignature" not in home
+
     queue = admin_client.get("/queue").get_data(as_text=True)
+    assert queue.count("var allSignature = null;") == 1
     assert "function renderAll(tasks, files) {" in queue
     assert "function paintChips(target, entries) {" in queue
     assert "window.fitzflixQueueHooks.push(function(queue_details) {" in queue

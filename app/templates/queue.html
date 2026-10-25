@@ -102,6 +102,11 @@
 </div>
 <script>
 	(function() {
+		// The signature of the last painted table. A poll with the same
+		// signature paints nothing
+
+		var allSignature = null;
+
 		// The table of the queue page has 1 row per running, queued, or
 		// deferred job. Each row carries the pipeline trail of its FILE
 		// as stage chips below the description. The chips were in a
