@@ -34,6 +34,7 @@ from random import Random
 from flask import current_app
 from werkzeug.local import LocalProxy
 
+from app.tasks import enqueue_task
 from app import db, get_app
 from app.availability_alerts import _leaving_set
 from app.settings import get_setting
@@ -740,10 +741,10 @@ def enqueue_lineup_rebuild(reason, tmdb_ids=None):
     queue = current_app.maintenance_queue
     if rebuild_queued(queue):
         return None
-    return queue.enqueue(
+    return enqueue_task(
         REBUILD_FUNC,
+        queue=queue,
         job_id=f"{REBUILD_JOB_ID}-{uuid.uuid4().hex[:12]}",
-        job_timeout=3600,
         description=f"Building virtual DVR channel lineups ({reason})",
     )
 

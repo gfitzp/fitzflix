@@ -41,8 +41,8 @@ from s3transfer.utils import ChunksizeAdjuster
 from flask import current_app, render_template
 from werkzeug.local import LocalProxy
 
-from app.tasks import enqueue_task
-from app import db, get_app, path_tag, retry_job_id, safe_job_id
+from app.tasks import enqueue_task, requeue
+from app import db, get_app
 from app.email import task_send_email as send_email
 from app.queues import QUEUE_NAME, roster_queues
 from app.settings import get_setting
@@ -294,17 +294,12 @@ def sync_aws_s3_storage_task():
                 busy.append(f"{queue_name}: {count}")
 
         if busy:
-            current_app.maintenance_queue.enqueue_in(
-                timedelta(minutes=5),
+            requeue(
                 "app.videos.sync_aws_s3_storage_task",
-                job_timeout="24h",
-                job_id=safe_job_id("retry:sync_aws_s3_storage_task"),
-                result_ttl=86400,
-                description="Syncing files with AWS S3 storage",
-            )
-            current_app.logger.info(
-                f"Waiting 5 minutes for other tasks to finish "
-                f"before attempting to sync ({', '.join(busy)})"
+                key=None,
+                delay=timedelta(minutes=5),
+                reason=f"waits for the other tasks to finish ({', '.join(busy)})",
+                level="info",
             )
             return True
 
@@ -318,17 +313,11 @@ def sync_aws_s3_storage_task():
             [current_app.config["MOVIE_LIBRARY"], current_app.config["TV_LIBRARY"]]
         )
         if dead:
-            current_app.maintenance_queue.enqueue_in(
-                timedelta(minutes=30),
+            requeue(
                 "app.videos.sync_aws_s3_storage_task",
-                job_timeout="24h",
-                job_id=safe_job_id("retry:sync_aws_s3_storage_task"),
-                result_ttl=86400,
-                description="Syncing files with AWS S3 storage",
-            )
-            current_app.logger.warning(
-                f"Library volume(s) unavailable ({', '.join(dead)}); "
-                f"trying the S3 sync again in 30 minutes"
+                key=None,
+                delay=timedelta(minutes=30),
+                reason=f"Library volume(s) unavailable ({', '.join(dead)})",
             )
             return True
 
@@ -802,29 +791,19 @@ def download_task(key, basename, sqs_receipt_handle=None, transient_retries=0):
                 # rename. The S3 object and the SQS message are not affected.
                 # Thus, retry after the mount settles.
 
-                current_app.logger.warning(
-                    f"'{basename}' Download failed with a transient I/O "
-                    f"error ({e}), returning to queue to try again in 5 "
-                    f"minutes (attempt {transient_retries + 1} of "
-                    f"{MAX_TRANSIENT_RETRIES})"
-                )
                 # The retry is a new job. It carries the newest handle.
 
                 sqs_receipt_handle = _latest_receipt_handle(sqs_receipt_handle)
-                current_app.file_queue.enqueue_in(
-                    timedelta(minutes=5),
+                requeue(
                     "app.videos.download_task",
-                    key,
-                    basename,
-                    sqs_receipt_handle,
-                    transient_retries=transient_retries + 1,
-                    job_timeout=current_app.config["TRANSCODE_TASK_TIMEOUT"],
-                    job_id=retry_job_id(
-                        "download_task",
-                        f"'{basename}':{path_tag(key)}",
-                        transient_retries + 1,
+                    key=key,
+                    delay=timedelta(minutes=5),
+                    reason=(
+                        f"Download failed with a transient I/O error ({e}) "
+                        f"(attempt {transient_retries + 1} of {MAX_TRANSIENT_RETRIES})"
                     ),
-                    result_ttl=86400,
+                    counters={"transient_retries": transient_retries + 1},
+                    args=(key, basename, sqs_receipt_handle),
                     description=f"'{basename}' — Downloading from AWS",
                     meta={"sqs_receipt_handle": sqs_receipt_handle},
                 )
@@ -1379,25 +1358,17 @@ def rearchive_untouched_object(file_id, new_key, path_retries=0):
                 # The refresh that queued this job may still hold the
                 # path rename in an open transaction. Read the record
                 # again after the rename has time to land.
-                current_app.logger.warning(
-                    f"'{file.basename}' '{local_path}' isn't present locally, "
-                    f"returning the re-archive as '{new_key}' to the queue "
-                    f"to try again in 5 minutes (attempt "
-                    f"{path_retries + 1} of {MAX_REARCHIVE_PATH_RETRIES})"
-                )
-                current_app.file_queue.enqueue_in(
-                    timedelta(minutes=5),
+                requeue(
                     "app.videos.rearchive_untouched_object",
-                    file_id,
-                    new_key,
-                    path_retries=path_retries + 1,
-                    job_timeout=current_app.config["UPLOAD_TASK_TIMEOUT"],
-                    job_id=retry_job_id(
-                        "rearchive_untouched_object",
-                        f"'{file.basename}':{path_tag(file_id)}",
-                        path_retries + 1,
+                    key=int(file_id),
+                    delay=timedelta(minutes=5),
+                    reason=(
+                        f"'{local_path}' is not present locally for the "
+                        f"re-archive as '{new_key}' (attempt {path_retries + 1} "
+                        f"of {MAX_REARCHIVE_PATH_RETRIES})"
                     ),
-                    result_ttl=86400,
+                    counters={"path_retries": path_retries + 1},
+                    args=(file_id, new_key),
                     description=f"'{file.basename}'",
                 )
                 return False

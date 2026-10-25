@@ -13,11 +13,14 @@ a number of seconds or the name of a config setting, for example
 "SQL_TASK_TIMEOUT". The setting is read at enqueue time.
 """
 
+import random
+
 from collections import namedtuple
 from datetime import timedelta
 
 from flask import current_app
 
+from app import path_tag, safe_job_id
 from app.queues import QUEUE_NAME
 
 TaskSpec = namedtuple("TaskSpec", "queue timeout description", defaults=(None,))
@@ -232,11 +235,43 @@ def enqueue_task(
     Each explicit argument overrides the spec. The return value is the
     rq job."""
 
+    return _submit(
+        name,
+        args,
+        kwargs,
+        delay=delay,
+        at_front=at_front,
+        queue=queue,
+        timeout=timeout,
+        description=description,
+        job_id=job_id,
+        meta=meta,
+        result_ttl=result_ttl,
+    )
+
+
+def _submit(
+    name,
+    args,
+    kwargs,
+    delay=None,
+    at_front=False,
+    queue=None,
+    timeout=None,
+    description=None,
+    job_id=None,
+    meta=None,
+    result_ttl=None,
+):
+    """Queue 1 job. The task arguments are a tuple and a dict here.
+
+    Thus, a task argument can have the name of an option."""
+
     spec = TASKS[name]
     target = resolve_queue(queue if queue is not None else spec.queue)
     options = {
-        "args": args,
-        "kwargs": kwargs,
+        "args": tuple(args),
+        "kwargs": dict(kwargs),
         "job_timeout": timeout if timeout is not None else task_timeout(spec),
     }
     if description is None:
@@ -256,3 +291,84 @@ def enqueue_task(
     if not isinstance(delay, timedelta):
         delay = timedelta(seconds=delay)
     return target.enqueue_in(delay, name, **options)
+
+
+def requeue_job_id(name, key=None, counters=None):
+    """Return the id of a retry of the task called name.
+
+    The id is "retry", the short task name, a digest of key, and each
+    counter as name=value in name order. Each attempt of a chain thus
+    gets an id of its own (see retry_job_id). The digest keeps apart 2
+    files with the same basename (#338). A retry with no key and no
+    counters has a fixed id, and a repeat defer replaces it."""
+
+    parts = ["retry", name.rsplit(".", 1)[-1]]
+    if key is not None:
+        parts.append(path_tag(key))
+    parts.extend(
+        f"{counter}={value}" for counter, value in sorted((counters or {}).items())
+    )
+    return safe_job_id(":".join(parts))
+
+
+def _wait_text(delay):
+    """Return a delay as words for the log, for example "5 minutes"."""
+
+    seconds = int(delay.total_seconds())
+    if seconds % 60:
+        return f"{seconds} seconds"
+    minutes = seconds // 60
+    return "1 minute" if minutes == 1 else f"{minutes} minutes"
+
+
+def requeue(
+    name,
+    *,
+    key,
+    delay,
+    reason,
+    counters=None,
+    args=(),
+    kwargs=None,
+    description=None,
+    queue=None,
+    timeout=None,
+    job_id=None,
+    meta=None,
+    level="warning",
+):
+    """Put a task back on its queue after a delay. Return the delay.
+
+    This is the 1 retry path of the tasks. delay is a timedelta or a
+    (low, high) range of minutes for a random delay. counters holds
+    every attempt counter of the task. They go into the task kwargs and
+    into the job id. Thus, a retry cannot drop a counter (#351). The
+    queue, the timeout and the description come from TASKS unless the
+    caller gives them. job_id replaces the id from requeue_job_id. The
+    result ttl of 1 day keeps the record of a finished retry alive. The
+    function writes 1 log line at the given level. A caller that wrote a
+    more detailed line itself gives level=None."""
+
+    if isinstance(delay, tuple):
+        delay = timedelta(minutes=random.randint(*delay))
+    task_kwargs = {**(kwargs or {}), **(counters or {})}
+    if job_id is None:
+        job_id = requeue_job_id(name, key, counters)
+    if level:
+        label = description or TASKS[name].description or name.rsplit(".", 1)[-1]
+        getattr(current_app.logger, level)(
+            f"{label} {reason}, returning to queue after {_wait_text(delay)}"
+        )
+    _submit(
+        name,
+        args,
+        task_kwargs,
+        delay=delay,
+        queue=queue,
+        timeout=timeout,
+        description=description,
+        job_id=job_id,
+        meta=meta,
+        result_ttl=86400,
+    )
+    return delay

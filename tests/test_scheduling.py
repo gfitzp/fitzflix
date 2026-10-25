@@ -18,12 +18,20 @@ import pytest
 from rq.exceptions import NoSuchJobError
 from rq.job import Job
 
-from app import cron_table, path_tag, retry_job_id, safe_job_id
+from app import cron_table, safe_job_id
 from app.videos import (
     acquire_lock_or_defer,
     localization_task,
     sync_aws_s3_storage_task,
 )
+
+
+def requeue_id(*args, **kwargs):
+    """Return a requeue id. The import of app.tasks waits for the test app."""
+
+    from app.tasks import requeue_job_id
+
+    return requeue_job_id(*args, **kwargs)
 
 
 def scheduled_ids(queue):
@@ -188,7 +196,7 @@ def test_localization_defers_while_title_is_locked(app, held_lock, incoming_dir)
 
             from app.importing import localization_pending
 
-            assert localization_pending(app.import_queue, basename)
+            assert localization_pending(app.import_queue, file_path)
     finally:
         os.remove(file_path)
 
@@ -229,7 +237,16 @@ def test_localization_defers_while_file_is_growing(app, incoming_dir, monkeypatc
                 if job_id.startswith("retry_")
             ]
             assert retries == [
-                retry_job_id("localization_task", f"'{basename}'", 0, 0, "s0", "t0")
+                requeue_id(
+                    "app.videos.localization_task",
+                    file_path,
+                    {
+                        "transient_retries": 0,
+                        "completeness_retries": 0,
+                        "space_waits": 0,
+                        "tmdb_retries": 0,
+                    },
+                )
             ]
             assert_binds(Job.fetch(retries[0], connection=app.redis))
     finally:
@@ -467,7 +484,7 @@ def test_mkvpropedit_transient_error_defers_and_releases_lock(app, monkeypatch):
             if job.id.startswith(safe_job_id("retry:mkvpropedit_task"))
         ]
         assert [job.id for job in retries] == [
-            retry_job_id("mkvpropedit_task", file_id, 1)
+            requeue_id("app.videos.mkvpropedit_task", file_id, {"transient_retries": 1})
         ]
         job = retries[0]
         assert list(job.args) == [file_id, "2", None, [], {"a1": "eng"}]
@@ -550,11 +567,10 @@ def test_download_transient_error_defers(app, monkeypatch):
         if job.id.startswith(safe_job_id("retry:download_task"))
     ]
     assert [job.id for job in retries] == [
-        retry_job_id(
-            "download_task",
-            "'Thing (2021) - [DVD].mkv':"
-            + path_tag("untouched/Thing (2021) - [DVD].mkv"),
-            1,
+        requeue_id(
+            "app.videos.download_task",
+            "untouched/Thing (2021) - [DVD].mkv",
+            {"transient_retries": 1},
         )
     ]
     job = retries[0]
@@ -1111,7 +1127,7 @@ def test_tmdb_apply_defers_while_title_is_locked(app, held_lock):
             if job.id.startswith("retry_apply_tmdb_refresh")
         ]
         assert [job.id for job in retries] == [
-            safe_job_id(f"retry:apply_tmdb_refresh:Movies:{movie_id}")
+            requeue_id("app.videos.apply_tmdb_refresh", f"Movies:{movie_id}")
         ]
         job = retries[0]
         assert job.kwargs["library"] == "Movies"
@@ -1142,7 +1158,7 @@ def test_tmdb_apply_locks_the_merge_target_too(app, held_lock):
 
         assert apply_tmdb_refresh("Movies", source_id, tmdb_id=4242) is False
         assert any(
-            job.id == safe_job_id(f"retry:apply_tmdb_refresh:Movies:{source_id}")
+            job.id == requeue_id("app.videos.apply_tmdb_refresh", f"Movies:{source_id}")
             for job in scheduled_jobs(app.sql_queue)
         )
 

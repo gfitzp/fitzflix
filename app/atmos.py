@@ -825,13 +825,12 @@ def _book_check(state, lock, checks, percent):
     """Book the next atmos_check_task in MEDIACONVERT_CHECK_SECONDS."""
 
     progress = f" ({percent}%)" if percent is not None else ""
-    current_app.handoff_queue.enqueue_in(
-        timedelta(seconds=MEDIACONVERT_CHECK_SECONDS),
+    enqueue_task(
         "app.atmos.atmos_check_task",
         state,
         lock,
         checks=checks,
-        job_timeout=600,
+        delay=timedelta(seconds=MEDIACONVERT_CHECK_SECONDS),
         job_id=safe_job_id(f"atmos_check:{state['file_id']}:{state['chain']}:{checks}"),
         description=(
             f"'{state['basename']}' — MediaConvert encoding E-AC-3 Atmos{progress}"

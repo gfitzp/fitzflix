@@ -15,16 +15,14 @@ real homes. The shim exists for the strings and the history.
 
 import errno
 import os
-import random
 import subprocess
 import time
-
-from datetime import timedelta
 
 from flask import current_app
 from werkzeug.local import LocalProxy
 
 from app import get_app, path_tag, safe_job_id
+from app.tasks import requeue
 from app.maintenance import VOLUMES_ROOT, volume_alive
 
 # The AWS storage layer moved to app.aws_storage. These re-exports keep
@@ -379,25 +377,26 @@ def schedule_retry(
     Without the key, the retry of 1 file replaces the retry of the other.
     """
 
-    sleep_duration = random.randint(*minutes)
-    current_app.logger.warning(
-        f"{description} {reason}, returning to queue after {sleep_duration} minutes"
-    )
-    queue.enqueue_in(
-        timedelta(minutes=sleep_duration),
+    # The lock wait keeps its own id format. localization_pending matches
+    # the localization form of it exactly (#287).
+
+    delay = requeue(
         func,
-        *args,
-        **(kwargs or {}),
-        job_timeout=timeout,
+        key=key,
+        delay=minutes,
+        reason=reason,
+        args=args,
+        kwargs=kwargs,
+        description=description,
+        queue=queue,
+        timeout=timeout,
         job_id=safe_job_id(
             f"retry:{func.rsplit('.', 1)[-1]}:"
             + (f"{path_tag(key)}:" if key is not None else "")
             + description
         ),
-        result_ttl=86400,
-        description=description,
     )
-    return sleep_duration
+    return int(delay.total_seconds() // 60)
 
 
 def wait_for_subprocess(process, ok_returncodes=(0,)):

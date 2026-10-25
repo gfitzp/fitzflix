@@ -18,7 +18,6 @@ import errno
 import hashlib
 import json
 import os
-import random
 import re
 import shutil
 import subprocess
@@ -34,8 +33,8 @@ from rq import get_current_job
 from flask import current_app
 from werkzeug.local import LocalProxy
 
-from app.tasks import enqueue_task
-from app import db, get_app, retry_job_id, safe_job_id
+from app.tasks import enqueue_task, requeue
+from app import db, get_app
 from app.aws_storage import archive_library_file, mark_archive_stale
 from app.models import File, FileAudioTrack, FileSubtitleTrack
 from app.settings import get_setting
@@ -335,18 +334,12 @@ def track_metadata_scan_task(file_id):
                 current_app.config["MKVPROPEDIT_TASK_TIMEOUT"] * 1000,
             )
             if not lock:
-                sleep_duration = random.randint(5, 15)
-                current_app.logger.warning(
-                    f"'{file.basename}' Lock exists, "
-                    f"returning to queue after {sleep_duration} minutes"
-                )
-                current_app.file_queue.enqueue_in(
-                    timedelta(minutes=sleep_duration),
+                requeue(
                     "app.videos.track_metadata_scan_task",
-                    file_id=file_id,
-                    job_timeout=current_app.config["MKVPROPEDIT_TASK_TIMEOUT"],
-                    job_id=safe_job_id(f"retry:track_metadata_scan_task:{file_id}"),
-                    result_ttl=86400,
+                    key=int(file_id),
+                    delay=(5, 15),
+                    reason="Lock exists",
+                    kwargs={"file_id": file_id},
                     description=f"'{file.basename}'",
                 )
                 return True
@@ -865,25 +858,23 @@ def mkvpropedit_task(
                 # finally block releases the lock. The retry takes the
                 # lock again, like a new run
 
-                current_app.logger.warning(
-                    f"'{file.basename}' MKV property edit failed with a "
-                    f"transient I/O error ({e}), retrying in 5 minutes "
-                    f"(attempt {transient_retries + 1} of {MAX_TRANSIENT_RETRIES})"
-                )
-                current_app.file_queue.enqueue_in(
-                    timedelta(minutes=5),
+                requeue(
                     "app.videos.mkvpropedit_task",
-                    file_id,
-                    default_audio_track,
-                    default_subtitle_track,
-                    forced_subtitle_tracks,
-                    track_languages,
-                    transient_retries=transient_retries + 1,
-                    job_timeout=current_app.config["MKVPROPEDIT_TASK_TIMEOUT"],
-                    job_id=retry_job_id(
-                        "mkvpropedit_task", file_id, transient_retries + 1
+                    key=int(file_id),
+                    delay=timedelta(minutes=5),
+                    reason=(
+                        f"MKV property edit failed with a transient I/O error "
+                        f"({e}) (attempt {transient_retries + 1} of "
+                        f"{MAX_TRANSIENT_RETRIES})"
                     ),
-                    result_ttl=86400,
+                    counters={"transient_retries": transient_retries + 1},
+                    args=(
+                        file_id,
+                        default_audio_track,
+                        default_subtitle_track,
+                        forced_subtitle_tracks,
+                        track_languages,
+                    ),
                     description=f"'{file.basename}'",
                 )
                 return False

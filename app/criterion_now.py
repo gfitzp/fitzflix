@@ -37,6 +37,7 @@ import requests
 from flask import current_app
 from werkzeug.local import LocalProxy
 
+from app.tasks import enqueue_task
 from app import get_app
 from app.leaving_criterion import CRITERION_PROVIDER_ID, match_tmdb_id
 from app.streaming_rail import enriched_movie
@@ -676,10 +677,9 @@ def _book_next_poll(delay):
     id while a poll runs is safe here."""
 
     delay = max(timedelta(seconds=30), min(delay, timedelta(hours=4)))
-    current_app.maintenance_queue.enqueue_in(
-        delay,
+    enqueue_task(
         "app.criterion_now.poll_criterion_now",
-        job_timeout=300,
+        delay=delay,
         job_id=POLL_JOB_ID,
         result_ttl=86400,
         description="Checking what's on Criterion 24/7",

@@ -44,13 +44,12 @@ from unidecode import unidecode
 from flask import current_app, render_template
 from werkzeug.local import LocalProxy
 
-from app.tasks import enqueue_task
+from app.tasks import enqueue_task, requeue, requeue_job_id
 from app import (
     db,
     get_app,
     importable_basename,
     makedirs_on_mounted_volume,
-    path_tag,
     retry_job_id,
     safe_job_id,
 )
@@ -158,30 +157,42 @@ def space_wait_pending(redis, basename):
     return bool(redis.exists(SPACE_WAIT_KEY.format(basename)))
 
 
-def localization_pending(queue, basename):
+def localization_pending(queue, path):
     """Return True if a localization of this file is waiting or running (#287).
 
     The fixed job id of the file can be in the queue list or in the
-    StartedJobRegistry. It can also be in the intermediate queue, which is
-    the gap between the list and the worker. A retry of the file has its own id, with the
-    prefix of retry_job_id. It can be scheduled, queued, or running."""
+    StartedJobRegistry. It can also be in the intermediate queue, which
+    is the gap between the list and the worker. A retry of the file has
+    its own id. It can be scheduled, queued, or running."""
 
+    basename = os.path.basename(path)
     job_id = safe_job_id(basename)
-    # With no attempt counters, retry_job_id ends with the separator of
-    # the counters. Thus, it is the prefix of each retry id of the file.
 
-    retry_prefix = retry_job_id("localization_task", f"'{basename}'")
+    # A retry id from requeue starts with the name of the task and the
+    # digest of the path. The counters follow.
+
+    retry_id = requeue_job_id("app.videos.localization_task", path)
 
     # A wait for the title lock has its own id (schedule_retry in
-    # app.videos). It has no counter separator. Thus, the prefix above
-    # misses it, and each sweep queued the file again.
+    # app.videos). It has the basename and no counters.
 
     lock_retry_id = safe_job_id(f"retry:localization_task:'{basename}'")
+
+    # The retries that were scheduled before requeue have the basename
+    # and the counters. With no counters, retry_job_id gives the prefix
+    # of each of them.
+
+    legacy_prefix = retry_job_id("localization_task", f"'{basename}'")
     ids = set(queue.job_ids)
     ids.update(queue.intermediate_queue.get_job_ids())
     ids.update(StartedJobRegistry(queue=queue).get_job_ids())
     ids.update(ScheduledJobRegistry(queue=queue).get_job_ids())
-    return any(i in (job_id, lock_retry_id) or i.startswith(retry_prefix) for i in ids)
+    return any(
+        i in (job_id, lock_retry_id, retry_id)
+        or i.startswith(retry_id + "_")
+        or i.startswith(legacy_prefix)
+        for i in ids
+    )
 
 
 # The stages after the localization. Each one has the source path as its
@@ -227,7 +238,7 @@ def enqueue_localization(path, at_front=False, quiet=False):
     queue = current_app.import_queue
     basename = os.path.basename(path)
     if (
-        localization_pending(queue, basename)
+        localization_pending(queue, path)
         or space_wait_pending(current_app.redis, basename)
         or later_stage_holds(path)
     ):
@@ -314,31 +325,23 @@ def _hold_title_lock(lock, basename):
 TITLE_LOCK_WAIT = timedelta(minutes=30)
 
 
-def defer_for_title_lock(queue, func, args, kwargs, source_path, basename, timeout):
+def defer_for_title_lock(func, args, counters, source_path, basename):
     """Run a stage again after TITLE_LOCK_WAIT, with the same lock (#339).
 
     The lock of the stage expired, and another task took it. The retry
     keeps the old lock token. When the other task releases the lock, the
     extend script of _hold_title_lock takes it again with that token.
-    kwargs["lock_waits"] counts the waits, and the count goes into the id."""
+    counters holds every attempt counter of the stage. lock_waits counts
+    the waits. The queue and the timeout come from the task registry."""
 
-    lock_waits = int(kwargs.get("lock_waits") or 0) + 1
-    current_app.logger.warning(
-        f"'{basename}' Another task holds the title lock. Trying again in "
-        f"{int(TITLE_LOCK_WAIT.total_seconds() // 60)} minutes (wait {lock_waits})"
-    )
-    queue.enqueue_in(
-        TITLE_LOCK_WAIT,
+    counters = {**counters, "lock_waits": int(counters.get("lock_waits") or 0) + 1}
+    requeue(
         func,
-        *args,
-        **{**kwargs, "lock_waits": lock_waits},
-        job_timeout=timeout,
-        job_id=retry_job_id(
-            func.rsplit(".", 1)[-1],
-            f"'{basename}':{path_tag(source_path)}",
-            f"lock{lock_waits}",
-        ),
-        result_ttl=86400,
+        key=source_path,
+        delay=TITLE_LOCK_WAIT,
+        reason=f"Another task holds the title lock (wait {counters['lock_waits']})",
+        counters=counters,
+        args=args,
         description=f"'{basename}'",
     )
 
@@ -676,6 +679,29 @@ def localization_task(
             job = get_current_job()
             basename = os.path.basename(file_path)
 
+            # Every retry carries all 4 counters. Each retry changes only
+            # its own counter.
+
+            counters = {
+                "transient_retries": transient_retries,
+                "completeness_retries": completeness_retries,
+                "space_waits": space_waits,
+                "tmdb_retries": tmdb_retries,
+            }
+
+            def retry(delay, reason, level="warning", **changes):
+                requeue(
+                    "app.videos.localization_task",
+                    key=source_path,
+                    delay=delay,
+                    reason=reason,
+                    counters={**counters, **changes},
+                    kwargs={"file_path": source_path},
+                    description=f"'{basename}'",
+                    level=level,
+                )
+                return True
+
             # Do not start if a necessary volume is dead. A mount that fails
             # during the task strands partial files. Thus, defer to a retry.
 
@@ -689,31 +715,9 @@ def localization_task(
                 ]
             )
             if dead:
-                current_app.logger.warning(
-                    f"'{basename}' Volumes unavailable ({', '.join(dead)}), "
-                    f"returning to queue to try again in 5 minutes"
+                return retry(
+                    timedelta(minutes=5), f"Volumes unavailable ({', '.join(dead)})"
                 )
-                current_app.import_queue.enqueue_in(
-                    timedelta(minutes=5),
-                    "app.videos.localization_task",
-                    file_path=file_path,
-                    transient_retries=transient_retries,
-                    completeness_retries=completeness_retries,
-                    space_waits=space_waits,
-                    tmdb_retries=tmdb_retries,
-                    job_timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
-                    job_id=retry_job_id(
-                        "localization_task",
-                        f"'{basename}'",
-                        transient_retries,
-                        completeness_retries,
-                        f"s{space_waits}",
-                        f"t{tmdb_retries}",
-                    ),
-                    result_ttl=86400,
-                    description=f"'{basename}'",
-                )
-                return True
 
             # If the incoming file does not exist, there is nothing to do.
 
@@ -751,31 +755,9 @@ def localization_task(
             size_before = os.path.getsize(file_path)
             time.sleep(GROWTH_CHECK_SECONDS)
             if os.path.getsize(file_path) != size_before:
-                current_app.logger.info(
-                    f"'{basename}' is still being copied, "
-                    f"returning to queue to try again in 1 minute"
+                return retry(
+                    timedelta(minutes=1), "is still being copied", level="info"
                 )
-                current_app.import_queue.enqueue_in(
-                    timedelta(minutes=1),
-                    "app.videos.localization_task",
-                    file_path=file_path,
-                    transient_retries=transient_retries,
-                    completeness_retries=completeness_retries,
-                    space_waits=space_waits,
-                    tmdb_retries=tmdb_retries,
-                    job_timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
-                    job_id=retry_job_id(
-                        "localization_task",
-                        f"'{basename}'",
-                        transient_retries,
-                        completeness_retries,
-                        f"s{space_waits}",
-                        f"t{tmdb_retries}",
-                    ),
-                    result_ttl=86400,
-                    description=f"'{basename}'",
-                )
-                return True
 
             # A stalled network copy can fool the size check above. Its size
             # stays constant while the file is still incomplete. Let the
@@ -804,32 +786,13 @@ def localization_task(
                         if verdict is False
                         else "was modified too recently"
                     )
-                    current_app.logger.info(
-                        f"'{basename}' {reason}, returning to queue to try "
-                        f"again in 1 minute (check {completeness_retries + 1} "
-                        f"of {MAX_COMPLETENESS_RETRIES})"
-                    )
-                    current_app.import_queue.enqueue_in(
+                    return retry(
                         timedelta(minutes=1),
-                        "app.videos.localization_task",
-                        file_path=file_path,
-                        transient_retries=transient_retries,
+                        f"{reason} (check {completeness_retries + 1} of "
+                        f"{MAX_COMPLETENESS_RETRIES})",
+                        level="info",
                         completeness_retries=completeness_retries + 1,
-                        space_waits=space_waits,
-                        tmdb_retries=tmdb_retries,
-                        job_timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
-                        job_id=retry_job_id(
-                            "localization_task",
-                            f"'{basename}'",
-                            transient_retries,
-                            completeness_retries + 1,
-                            f"s{space_waits}",
-                            f"t{tmdb_retries}",
-                        ),
-                        result_ttl=86400,
-                        description=f"'{basename}'",
                     )
-                    return True
 
             file_details = evaluate_filename(file_path)
             current_app.logger.info(f"'{basename}' File details: {file_details}")
@@ -839,30 +802,11 @@ def localization_task(
                 # limits the retries of an I/O error in the staging copy.
 
                 if reason == TMDB_UNREACHABLE and tmdb_retries < TMDB_RETRIES:
-                    current_app.import_queue.enqueue_in(
+                    return retry(
                         timedelta(minutes=30),
-                        "app.videos.localization_task",
-                        file_path=file_path,
-                        transient_retries=transient_retries,
-                        completeness_retries=completeness_retries,
-                        space_waits=space_waits,
+                        "TMDB is unreachable",
                         tmdb_retries=tmdb_retries + 1,
-                        job_timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
-                        job_id=retry_job_id(
-                            "localization_task",
-                            f"'{basename}'",
-                            transient_retries,
-                            completeness_retries,
-                            f"tmdb{tmdb_retries + 1}",
-                            f"s{space_waits}",
-                        ),
-                        result_ttl=86400,
-                        description=f"'{basename}'",
                     )
-                    current_app.logger.warning(
-                        f"'{basename}' TMDB is unreachable. Trying again in 30 minutes"
-                    )
-                    return True
                 current_app.logger.error(
                     f"'{basename}' rejected: {reason}!"
                     if reason
@@ -975,27 +919,12 @@ def localization_task(
                 current_app.lock_manager.unlock(lock)
                 current_app.logger.info(f"Removed lock {lock}")
                 lock = None
-                current_app.import_queue.enqueue_in(
+                return retry(
                     SPACE_WAIT,
-                    "app.videos.localization_task",
-                    file_path=file_path,
-                    transient_retries=transient_retries,
-                    completeness_retries=completeness_retries,
+                    "waits for space",
+                    level=None,
                     space_waits=space_waits + 1,
-                    tmdb_retries=tmdb_retries,
-                    job_timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
-                    job_id=retry_job_id(
-                        "localization_task",
-                        f"'{basename}'",
-                        transient_retries,
-                        completeness_retries,
-                        f"space{space_waits + 1}",
-                        f"t{tmdb_retries}",
-                    ),
-                    result_ttl=86400,
-                    description=f"'{basename}'",
                 )
-                return True
             if space_waits:
                 clear_space_wait(basename)
                 current_app.logger.info(
@@ -1031,27 +960,12 @@ def localization_task(
                 current_app.lock_manager.unlock(lock)
                 current_app.logger.info(f"Removed lock {lock}")
                 lock = None
-                current_app.import_queue.enqueue_in(
+                return retry(
                     SPACE_WAIT,
-                    "app.videos.localization_task",
-                    file_path=file_path,
-                    transient_retries=transient_retries,
-                    completeness_retries=completeness_retries,
+                    "waits for staging space",
+                    level=None,
                     space_waits=space_waits + 1,
-                    tmdb_retries=tmdb_retries,
-                    job_timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
-                    job_id=retry_job_id(
-                        "localization_task",
-                        f"'{basename}'",
-                        transient_retries,
-                        completeness_retries,
-                        f"staging{space_waits + 1}",
-                        f"t{tmdb_retries}",
-                    ),
-                    result_ttl=86400,
-                    description=f"'{basename}'",
                 )
-                return True
 
             if staging == "ok":
                 staged_path = os.path.join(staging_dir, basename)
@@ -1077,12 +991,6 @@ def localization_task(
                     # The source is not damaged. Thus, clean up and retry
                     # after the mount settles. Do not reject a good file.
 
-                    current_app.logger.warning(
-                        f"'{basename}' Staging copy failed with a transient "
-                        f"I/O error ({e}), returning to queue to try again in "
-                        f"5 minutes (attempt {transient_retries + 1} of "
-                        f"{MAX_TRANSIENT_RETRIES})"
-                    )
                     try:
                         os.remove(staged_path)
                     except OSError:
@@ -1090,27 +998,12 @@ def localization_task(
                     if lock:
                         current_app.lock_manager.unlock(lock)
                         current_app.logger.info(f"Removed lock {lock}")
-                    current_app.import_queue.enqueue_in(
+                    return retry(
                         timedelta(minutes=5),
-                        "app.videos.localization_task",
-                        file_path=source_path,
+                        f"Staging copy failed with a transient I/O error ({e}) "
+                        f"(attempt {transient_retries + 1} of {MAX_TRANSIENT_RETRIES})",
                         transient_retries=transient_retries + 1,
-                        completeness_retries=completeness_retries,
-                        space_waits=space_waits,
-                        tmdb_retries=tmdb_retries,
-                        job_timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
-                        job_id=retry_job_id(
-                            "localization_task",
-                            f"'{basename}'",
-                            transient_retries + 1,
-                            completeness_retries,
-                            f"s{space_waits}",
-                            f"t{tmdb_retries}",
-                        ),
-                        result_ttl=86400,
-                        description=f"'{basename}'",
                     )
-                    return True
 
                 record_task_stage("Copying to staging", "done")
                 file_path = staged_path
@@ -1871,22 +1764,42 @@ def move_localized_file(
             current_app.config["LIBRARY_DIR"], file_details.get("dirname")
         )
 
-        if not _hold_title_lock(lock, basename):
-            defer_for_title_lock(
-                current_app.handoff_queue,
+        # Every retry of the copy carries all 4 counters (#351). Each
+        # retry changes only its own counter.
+
+        move_args = (source_path, file_details, lock, hidden_output_file)
+        counters = {
+            "transient_retries": transient_retries,
+            "space_waits": space_waits,
+            "vanished_retries": vanished_retries,
+            "lock_waits": lock_waits,
+        }
+
+        def retry(delay, reason, level="warning", **changes):
+            requeue(
                 "app.videos.move_localized_file",
-                (source_path, file_details, lock, hidden_output_file),
-                {
-                    "transient_retries": transient_retries,
-                    "space_waits": space_waits,
-                    "vanished_retries": vanished_retries,
-                    "lock_waits": lock_waits,
-                },
-                source_path,
-                basename,
-                current_app.config["MOVE_TASK_TIMEOUT"],
+                key=source_path,
+                delay=delay,
+                reason=reason,
+                counters={**counters, **changes},
+                args=move_args,
+                description=f"'{basename}'",
+                level=level,
             )
             return False
+
+        def defer():
+            defer_for_title_lock(
+                "app.videos.move_localized_file",
+                move_args,
+                counters,
+                source_path,
+                basename,
+            )
+            return False
+
+        if not _hold_title_lock(lock, basename):
+            return defer()
 
         # Defer if a necessary volume is dead. The task keeps the title lock
         # for the retry.
@@ -1899,40 +1812,25 @@ def move_localized_file(
             ]
         )
         if dead:
-            current_app.logger.warning(
-                f"'{basename}' Volumes unavailable ({', '.join(dead)}), "
-                f"retrying the library copy in 5 minutes"
-            )
-            current_app.handoff_queue.enqueue_in(
+            return retry(
                 timedelta(minutes=5),
-                "app.videos.move_localized_file",
-                source_path,
-                file_details,
-                lock,
-                hidden_output_file,
-                transient_retries=transient_retries,
-                vanished_retries=vanished_retries,
-                job_timeout=current_app.config["MOVE_TASK_TIMEOUT"],
-                job_id=retry_job_id(
-                    "move_localized_file",
-                    f"'{basename}':{path_tag(source_path)}",
-                    transient_retries,
-                ),
-                result_ttl=86400,
-                description=f"'{basename}'",
+                f"Volumes unavailable ({', '.join(dead)}) for the library copy",
             )
-            return False
 
         destination_hidden = os.path.join(output_directory, f".{basename}")
 
         def wait_for_space(needed, shortfall, directory=None):
-            """Book the copy again after SPACE_WAIT. Keep the title lock."""
+            """Book the copy again after SPACE_WAIT. Keep the title lock.
 
+            If another task holds the title lock, the copy waits for the
+            lock instead (#353)."""
+
+            if not _hold_title_lock(lock, basename):
+                return defer()
             _log_space_wait(
                 basename, directory or output_directory, needed, shortfall, space_waits
             )
             mark_space_wait(os.path.basename(source_path))
-            _hold_title_lock(lock, basename)
 
             # The weekly sweep deletes a hidden staging file that is 1 week
             # old. A wait for space has no limit. Thus, each wait touches
@@ -1942,27 +1840,9 @@ def move_localized_file(
                 os.utime(hidden_output_file)
             except OSError:
                 pass
-            current_app.handoff_queue.enqueue_in(
-                SPACE_WAIT,
-                "app.videos.move_localized_file",
-                source_path,
-                file_details,
-                lock,
-                hidden_output_file,
-                transient_retries=transient_retries,
-                vanished_retries=vanished_retries,
-                space_waits=space_waits + 1,
-                job_timeout=current_app.config["MOVE_TASK_TIMEOUT"],
-                job_id=retry_job_id(
-                    "move_localized_file",
-                    f"'{basename}':{path_tag(source_path)}",
-                    transient_retries,
-                    f"space{space_waits + 1}",
-                ),
-                result_ttl=86400,
-                description=f"'{basename}'",
+            return retry(
+                SPACE_WAIT, "waits for space", level=None, space_waits=space_waits + 1
             )
-            return False
 
         # A copy to another volume needs space there. Check before the
         # inspection and the copy. Thus, a wait repeats neither.
@@ -2068,34 +1948,16 @@ def move_localized_file(
                 # the file and do the whole import again. The task keeps the
                 # title lock for the retry.
 
-                current_app.logger.warning(
-                    f"'{basename}' Library copy failed with a transient I/O "
-                    f"error ({e}), retrying in 5 minutes (attempt "
-                    f"{transient_retries + 1} of {MAX_TRANSIENT_RETRIES})"
-                )
                 try:
                     os.remove(destination_hidden)
                 except OSError:
                     pass
-                current_app.handoff_queue.enqueue_in(
+                return retry(
                     timedelta(minutes=5),
-                    "app.videos.move_localized_file",
-                    source_path,
-                    file_details,
-                    lock,
-                    hidden_output_file,
+                    f"Library copy failed with a transient I/O error ({e}) "
+                    f"(attempt {transient_retries + 1} of {MAX_TRANSIENT_RETRIES})",
                     transient_retries=transient_retries + 1,
-                    vanished_retries=vanished_retries,
-                    job_timeout=current_app.config["MOVE_TASK_TIMEOUT"],
-                    job_id=retry_job_id(
-                        "move_localized_file",
-                        f"'{basename}':{path_tag(source_path)}",
-                        transient_retries + 1,
-                    ),
-                    result_ttl=86400,
-                    description=f"'{basename}'",
                 )
-                return False
 
         except Exception:
             current_app.logger.error(traceback.format_exc())
@@ -2250,26 +2112,14 @@ def finalize_localization(
 
         dead = _dead_volumes([output_directory, os.path.dirname(file_path)])
         if dead:
-            current_app.logger.warning(
-                f"'{file_details.get('basename')}' Volumes unavailable "
-                f"({', '.join(dead)}), retrying finalization in 5 minutes"
-            )
-            current_app.sql_queue.enqueue_in(
-                timedelta(minutes=5),
+            requeue(
                 "app.videos.finalize_localization",
-                file_path,
-                file_details,
-                lock,
-                hidden_output_file,
-                inspection=inspection,
-                staged_output=staged_output,
-                vanished_retries=vanished_retries,
-                job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
-                job_id=safe_job_id(
-                    f"retry:finalize_localization:'{file_details.get('basename')}'"
-                    f":{path_tag(file_path)}"
-                ),
-                result_ttl=86400,
+                key=file_path,
+                delay=timedelta(minutes=5),
+                reason=f"Volumes unavailable ({', '.join(dead)}) for the cataloging",
+                counters={"vanished_retries": vanished_retries},
+                args=(file_path, file_details, lock, hidden_output_file),
+                kwargs={"inspection": inspection, "staged_output": staged_output},
                 description=f"'{file_details.get('basename')}'",
             )
             return False
@@ -2638,29 +2488,29 @@ def finalize_localization(
                 # staging. Copy it again. Keep the title lock. Wait 1 minute.
                 # Thus, the mount is back before the copy starts.
 
-                current_app.logger.warning(
-                    f"'{file_details.get('basename')}' The library copy "
-                    f"disappeared from '{os.path.dirname(hidden_output_file)}'. "
-                    f"Copying it again from staging in 1 minute (attempt "
-                    f"{vanished_retries + 1} of {MAX_VANISHED_RETRIES})"
-                )
                 db.session.rollback()
-                current_app.handoff_queue.enqueue_in(
-                    timedelta(minutes=1),
+
+                # The copy starts a new chain of the move. Its other
+                # counters start at 0. The vanished count keeps the ids of
+                # the new chain apart from the ids of the old one.
+
+                requeue(
                     "app.videos.move_localized_file",
-                    file_path,
-                    file_details,
-                    lock,
-                    staged_output,
-                    vanished_retries=vanished_retries + 1,
-                    job_timeout=current_app.config["MOVE_TASK_TIMEOUT"],
-                    job_id=retry_job_id(
-                        "move_localized_file",
-                        f"'{file_details.get('basename')}':{path_tag(file_path)}",
-                        0,
-                        f"vanished{vanished_retries + 1}",
+                    key=file_path,
+                    delay=timedelta(minutes=1),
+                    reason=(
+                        f"The library copy disappeared from "
+                        f"'{os.path.dirname(hidden_output_file)}'. The copy from "
+                        f"staging starts again (attempt {vanished_retries + 1} of "
+                        f"{MAX_VANISHED_RETRIES})"
                     ),
-                    result_ttl=86400,
+                    counters={
+                        "transient_retries": 0,
+                        "space_waits": 0,
+                        "vanished_retries": vanished_retries + 1,
+                        "lock_waits": 0,
+                    },
+                    args=(file_path, file_details, lock, staged_output),
                     description=f"'{file_details.get('basename')}'",
                 )
                 handed_off = True

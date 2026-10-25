@@ -485,13 +485,11 @@ def convert_localized_file(
 
         def defer():
             defer_for_title_lock(
-                current_app.transcode_queue,
                 "app.videos.convert_localized_file",
                 (source_path, file_details, lock, hidden_output_file, plan),
                 {"lock_waits": lock_waits},
                 source_path,
                 basename,
-                current_app.config["TRANSCODE_TASK_TIMEOUT"],
             )
             return False
 

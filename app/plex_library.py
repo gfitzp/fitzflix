@@ -45,7 +45,6 @@ DD+ Atmos 5.1. An analyze, by this task or by hand in Plex, does not
 change that.
 """
 
-import hashlib
 import os
 import traceback
 from datetime import timedelta
@@ -55,8 +54,8 @@ import requests
 from flask import current_app
 from werkzeug.local import LocalProxy
 
-from app.tasks import enqueue_task
-from app import get_app, path_tag, retry_job_id, safe_job_id
+from app.tasks import enqueue_task, requeue
+from app import get_app, path_tag, safe_job_id
 from app.maintenance import PLEX_TRASH_HELD_KEY, VOLUMES_ROOT, volume_alive
 from app.plex_titles import _plex_get
 from app.settings import get_setting
@@ -450,26 +449,19 @@ def analyze_plex_media(file_paths, retries=0):
         # forever.
 
         if retries < ANALYZE_MAX_RETRIES:
-            current_app.logger.info(
-                f"Plex analyze: nothing analyzed for {unmatched} — retrying "
-                f"in {ANALYZE_RETRY_MINUTES} minutes"
-            )
-            current_app.maintenance_queue.enqueue_in(
-                timedelta(minutes=ANALYZE_RETRY_MINUTES),
+            # The key is the whole batch, not its first basename (#242).
+            # Two different batches with the same first file must not
+            # collapse into one retry.
+
+            requeue(
                 "app.plex_library.analyze_plex_media",
-                sorted(wanted - analyzed),
-                retries=retries + 1,
-                job_timeout=1800,
-                # The key is the whole batch, not its first basename
-                # (#242). Two different batches with the same first file
-                # must not collapse into one retry.
-                job_id=retry_job_id(
-                    "analyze_plex_media",
-                    hashlib.sha256("|".join(unmatched).encode()).hexdigest()[:16],
-                    retries + 1,
-                ),
-                result_ttl=86400,
+                key="|".join(unmatched),
+                delay=timedelta(minutes=ANALYZE_RETRY_MINUTES),
+                reason=f"nothing analyzed for {unmatched}",
+                counters={"retries": retries + 1},
+                args=(sorted(wanted - analyzed),),
                 description=f"Re-analyzing {len(unmatched)} file(s) in Plex",
+                level="info",
             )
         else:
             current_app.logger.warning(

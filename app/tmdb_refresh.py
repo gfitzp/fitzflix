@@ -16,20 +16,19 @@ imports it lazily. Thus, the module import direction stays one-way.
 import gzip
 import json
 import os
-import random
 import shutil
 import traceback
 import zlib
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 from flask import current_app, render_template
 from rq.registry import ScheduledJobRegistry, StartedJobRegistry
 from unidecode import unidecode
 from werkzeug.local import LocalProxy
 
-from app.tasks import enqueue_task
-from app import db, get_app, safe_job_id
+from app.tasks import enqueue_task, requeue
+from app import db, get_app
 from app.aws_storage import rename_untouched_object, sanitize_s3_key
 from app.email import send_email as send_email_async
 from app.models import (
@@ -548,25 +547,18 @@ def apply_tmdb_refresh(
                         for held in locks:
                             current_app.lock_manager.unlock(held)
                         locks = []
-                        sleep_duration = random.randint(5, 15)
-                        current_app.logger.warning(
-                            f"'{movie.title} ({movie.year})' A file is locked "
-                            f"by another task, returning the TMDB refresh to "
-                            f"the queue after {sleep_duration} minutes"
-                        )
-                        current_app.sql_queue.enqueue_in(
-                            timedelta(minutes=sleep_duration),
+                        requeue(
                             "app.videos.apply_tmdb_refresh",
-                            library=library,
-                            id=id,
-                            tmdb_id=tmdb_id,
-                            tmdb_payload=tmdb_payload,
-                            notify_if_missing=notify_if_missing,
-                            job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
-                            job_id=safe_job_id(
-                                f"retry:apply_tmdb_refresh:{library}:{id}"
-                            ),
-                            result_ttl=86400,
+                            key=f"{library}:{id}",
+                            delay=(5, 15),
+                            reason="A file is locked by another task",
+                            kwargs={
+                                "library": library,
+                                "id": id,
+                                "tmdb_id": tmdb_id,
+                                "tmdb_payload": tmdb_payload,
+                                "notify_if_missing": notify_if_missing,
+                            },
                             description=(
                                 f"Updating '{movie.title} ({movie.year})' "
                                 f"with TMDB data"

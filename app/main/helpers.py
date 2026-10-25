@@ -88,10 +88,9 @@ def _enqueue_profile_recompute():
     elif current_app.redis.set(
         f"fitzflix:elicit:recompute:trailing:{user_id}", "1", nx=True, ex=300
     ):
-        current_app.maintenance_queue.enqueue_in(
-            timedelta(seconds=300),
+        enqueue_task(
             "app.recommendations.recompute_recommendations",
-            job_timeout="1h",
+            delay=timedelta(seconds=300),
             description="Recomputing film recommendations",
         )
 

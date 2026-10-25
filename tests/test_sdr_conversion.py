@@ -1056,7 +1056,7 @@ def test_a_conversion_waits_while_another_task_holds_the_title_lock(
     ]
     assert len(retries) == 1
     assert retries[0].kwargs == {"lock_waits": 1}
-    assert retries[0].id.endswith("lock1")
+    assert retries[0].id.endswith("lock_waits_1")
 
 
 def test_a_conversion_that_loses_its_lock_keeps_the_localized_file(

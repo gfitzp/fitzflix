@@ -19,7 +19,7 @@ import time
 import pytest
 
 from tests.test_scheduling import scheduled_jobs
-from app import path_tag, retry_job_id, safe_job_id
+from app import safe_job_id
 
 import app.videos as videos
 import app.maintenance as maintenance
@@ -28,6 +28,44 @@ from app.models import File
 from app.videos import finalize_localization, localization_task, move_to_rejects
 
 from tests.conftest import _TMP
+
+
+def loc_retry(source, **changes):
+    """Return the requeue id of a localization retry with these counters."""
+
+    from app.tasks import requeue_job_id
+
+    counters = {
+        "transient_retries": 0,
+        "completeness_retries": 0,
+        "space_waits": 0,
+        "tmdb_retries": 0,
+        **changes,
+    }
+    return requeue_job_id("app.videos.localization_task", source, counters)
+
+
+def move_retry(source, **changes):
+    """Return the requeue id of a move retry with these counters."""
+
+    from app.tasks import requeue_job_id
+
+    counters = {
+        "transient_retries": 0,
+        "space_waits": 0,
+        "vanished_retries": 0,
+        "lock_waits": 0,
+        **changes,
+    }
+    return requeue_job_id("app.videos.move_localized_file", source, counters)
+
+
+def requeue_job_id(*args, **kwargs):
+    """Return a requeue id. The import of app.tasks waits for the test app."""
+
+    from app.tasks import requeue_job_id as build
+
+    return build(*args, **kwargs)
 
 
 def settle(path, age_seconds=3600):
@@ -269,9 +307,7 @@ def test_a_dead_volume_defer_keeps_every_counter(app, incoming_dir, monkeypatch)
         ]
         assert job.kwargs["space_waits"] == 2
         assert job.kwargs["tmdb_retries"] == 3
-        assert job.id == retry_job_id(
-            "localization_task", f"'{basename}'", 0, 0, "s2", "t3"
-        )
+        assert job.id == loc_retry(source, space_waits=2, tmdb_retries=3)
     finally:
         os.remove(source)
 
@@ -292,9 +328,7 @@ def test_localization_defers_when_volumes_dead(app, incoming_dir, monkeypatch):
             for job in scheduled_jobs(app.import_queue)
             if job.id.startswith("retry_")
         ]
-        assert retries == [
-            retry_job_id("localization_task", f"'{basename}'", 0, 0, "s0", "t0")
-        ]
+        assert retries == [loc_retry(source)]
 
         # The task left the file untouched. It did not reject or stage it
         assert os.path.exists(source)
@@ -333,9 +367,7 @@ def test_staging_copy_transient_error_defers_and_retries(
             for job in scheduled_jobs(app.import_queue)
             if job.id.startswith("retry_")
         ]
-        assert [job.id for job in retries] == [
-            retry_job_id("localization_task", f"'{basename}'", 1, 0, "s0", "t0")
-        ]
+        assert [job.id for job in retries] == [loc_retry(source, transient_retries=1)]
 
         # The retry carries the increased attempt count and the original
         # flags. It binds to the signature of the task
@@ -402,10 +434,7 @@ def test_staging_copy_retries_advance_toward_the_budget(app, incoming_dir, monke
                     if job.id.startswith("retry_")
                 }
                 assert scheduled == {
-                    retry_job_id(
-                        "localization_task", f"'{basename}'", attempt + 1, 0, "s0", "t0"
-                    ): attempt
-                    + 1
+                    loc_retry(source, transient_retries=attempt + 1): attempt + 1
                 }, f"attempt {attempt} did not schedule attempt {attempt + 1}"
 
                 from rq.registry import ScheduledJobRegistry
@@ -523,9 +552,7 @@ def test_library_copy_transient_error_defers_and_keeps_lock(
             for job in scheduled_jobs(app.handoff_queue)
             if job.id.startswith("retry_")
         ]
-        assert [job.id for job in retries] == [
-            retry_job_id("move_localized_file", f"'{basename}':{path_tag(source)}", 1)
-        ]
+        assert [job.id for job in retries] == [move_retry(source, transient_retries=1)]
 
         # The retry carries the original chain, including the lock. It also
         # carries the increased attempt count. It binds to the signature of
@@ -533,7 +560,12 @@ def test_library_copy_transient_error_defers_and_keeps_lock(
 
         job = retries[0]
         assert list(job.args) == [source, file_details, "lock-sentinel", hidden]
-        assert job.kwargs == {"transient_retries": 1, "vanished_retries": 0}
+        assert job.kwargs == {
+            "transient_retries": 1,
+            "space_waits": 0,
+            "vanished_retries": 0,
+            "lock_waits": 0,
+        }
         inspect.signature(videos.move_localized_file).bind(
             *(job.args or ()), **(job.kwargs or {})
         )
@@ -617,9 +649,10 @@ def test_finalize_defers_when_volumes_dead(app, monkeypatch):
         if job.id.startswith("retry_finalize")
     ]
     assert [job.id for job in retries] == [
-        safe_job_id(
-            "retry:finalize_localization:'Deferred (2021) - [DVD].mkv':"
-            + path_tag("/nonexistent/source.mkv")
+        requeue_job_id(
+            "app.videos.finalize_localization",
+            "/nonexistent/source.mkv",
+            {"vanished_retries": 0},
         )
     ]
     # The retry keeps the inspection. It must not inspect again on the sql
@@ -1030,13 +1063,7 @@ def test_move_localized_file_defers_when_volumes_dead(app, tmp_path, monkeypatch
         for job in scheduled_jobs(app.handoff_queue)
         if job.id.startswith("retry_move_localized_file")
     ]
-    assert retries == [
-        retry_job_id(
-            "move_localized_file",
-            "'Move Defer (2021) - [DVD].mkv':" + path_tag("/nonexistent/source.mkv"),
-            0,
-        )
-    ]
+    assert retries == [move_retry("/nonexistent/source.mkv")]
 
 
 def test_same_named_extras_of_two_films_keep_their_own_move_retries(
@@ -1062,8 +1089,7 @@ def test_same_named_extras_of_two_films_keep_their_own_move_retries(
     retries = [
         job
         for job in scheduled_jobs(app.handoff_queue)
-        if job.id.startswith("retry_move_localized_file")
-        and "Theatrical_Trailer" in job.id
+        if job.id.startswith("retry_move_localized_file") and job.args[0] in sources
     ]
     assert sorted(job.args[0] for job in retries) == sources
 
@@ -1157,7 +1183,7 @@ def test_truncated_matroska_defers_even_when_size_is_stable(
             if job.id.startswith("retry_")
         ]
         assert [job.id for job in retries] == [
-            retry_job_id("localization_task", f"'{basename}'", 0, 1, "s0", "t0")
+            loc_retry(source, completeness_retries=1)
         ]
         job = retries[0]
         assert job.kwargs["completeness_retries"] == 1
@@ -1195,7 +1221,7 @@ def test_unprobeable_fresh_file_waits_out_the_quiet_period(app, incoming_dir):
             if job.id.startswith("retry_")
         ]
         assert [job.id for job in retries] == [
-            retry_job_id("localization_task", f"'{basename}'", 0, 1, "s0", "t0")
+            loc_retry(source, completeness_retries=1)
         ]
         assert retries[0].kwargs["completeness_retries"] == 1
         assert os.path.exists(source)
@@ -1271,9 +1297,7 @@ def test_localization_waits_for_library_space(app, sample_mkv, incoming_dir, cap
                 for job in scheduled_jobs(app.import_queue)
                 if job.id.startswith("retry_")
             ]
-            assert [job.id for job in waits] == [
-                retry_job_id("localization_task", f"'{basename}'", 0, 0, "space1", "t0")
-            ]
+            assert [job.id for job in waits] == [loc_retry(source, space_waits=1)]
             assert waits[0].kwargs["space_waits"] == 1
             inspect.signature(videos.localization_task).bind(
                 *(waits[0].args or ()), **(waits[0].kwargs or {})
@@ -1304,9 +1328,9 @@ def test_localization_waits_for_library_space(app, sample_mkv, incoming_dir, cap
             # A second wait gets its own id and logs at info level.
             caplog.clear()
             assert localization_task(source, space_waits=1) is True
-            assert retry_job_id(
-                "localization_task", f"'{basename}'", 0, 0, "space2", "t0"
-            ) in [job.id for job in scheduled_jobs(app.import_queue)]
+            assert loc_retry(source, space_waits=2) in [
+                job.id for job in scheduled_jobs(app.import_queue)
+            ]
             assert "waiting for free space" not in caplog.text
 
         # With space again, the import goes on to the library copy.
@@ -1377,16 +1401,13 @@ def test_library_copy_waits_for_space_before_copying(app, incoming_dir, monkeypa
             for job in scheduled_jobs(app.handoff_queue)
             if job.id.startswith("retry_")
         ]
-        assert [job.id for job in waits] == [
-            retry_job_id(
-                "move_localized_file", f"'{basename}':{path_tag(source)}", 0, "space1"
-            )
-        ]
+        assert [job.id for job in waits] == [move_retry(source, space_waits=1)]
         assert list(waits[0].args) == [source, details, "lock-sentinel", hidden]
         assert waits[0].kwargs == {
             "transient_retries": 0,
             "space_waits": 1,
             "vanished_retries": 0,
+            "lock_waits": 0,
         }
         inspect.signature(videos.move_localized_file).bind(
             *(waits[0].args or ()), **(waits[0].kwargs or {})
@@ -1431,9 +1452,9 @@ def test_library_copy_out_of_space_mid_copy_waits(app, incoming_dir, monkeypatch
         assert os.path.exists(hidden) and os.path.exists(source)
         assert basename not in rejected_files(app)
         assert len(app.sql_queue) == 0
-        assert retry_job_id(
-            "move_localized_file", f"'{basename}':{path_tag(source)}", 0, "space1"
-        ) in [job.id for job in scheduled_jobs(app.handoff_queue)]
+        assert move_retry(source, space_waits=1) in [
+            job.id for job in scheduled_jobs(app.handoff_queue)
+        ]
     finally:
         os.remove(source)
         os.remove(hidden)
@@ -1619,13 +1640,7 @@ def test_a_vanished_library_copy_is_copied_again_from_staging(
         (retry,) = [
             job
             for job in scheduled_jobs(app.handoff_queue)
-            if job.id
-            == retry_job_id(
-                "move_localized_file",
-                f"'{basename}':{path_tag(source)}",
-                0,
-                "vanished1",
-            )
+            if job.id == move_retry(source, vanished_retries=1)
         ]
         assert retry.args[3] == staged
         assert retry.kwargs["vanished_retries"] == 1
@@ -2085,11 +2100,7 @@ def test_a_staging_remux_short_of_space_waits_instead_of_rejecting(
             for job in scheduled_jobs(app.handoff_queue)
             if job.id.startswith("retry_")
         ]
-        assert waits == [
-            retry_job_id(
-                "move_localized_file", f"'{basename}':{path_tag(source)}", 0, "space1"
-            )
-        ]
+        assert waits == [move_retry(source, space_waits=1)]
         assert os.path.exists(hidden) and os.path.exists(source)
         assert basename not in rejected_files(app)
     finally:
@@ -2115,7 +2126,7 @@ def test_a_tmdb_outage_retries_instead_of_rejecting(
     try:
         with app.app_context():
             assert localization_task(source) is True
-            assert localization_pending(app.import_queue, basename)
+            assert localization_pending(app.import_queue, source)
 
             # The TMDB tries have their own count. The transient count of
             # the staging copy stays at 0.

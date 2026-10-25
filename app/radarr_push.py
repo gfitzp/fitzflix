@@ -33,6 +33,8 @@ import requests
 
 from flask import current_app
 
+from app.tasks import enqueue_task
+
 # This is the set of TMDB ids that Radarr manages, cached for 1 hour,
 # for the request badges. Fitzflix refreshes the set immediately after
 # each push or withdrawal.
@@ -207,13 +209,7 @@ def enqueue_radarr_push(func, *args, description):
     push runs after the commit, on its own. A failed push is logged.
     The nightly path check repairs what it left behind."""
 
-    current_app.request_queue.enqueue(
-        func,
-        args=args,
-        job_timeout=300,
-        result_ttl=86400,
-        description=description,
-    )
+    enqueue_task(func, *args, description=description, result_ttl=86400)
 
 
 def follow_rename_task(old_tmdb_id, new_tmdb_id, new_folder):

@@ -7,7 +7,7 @@ import time
 
 import pytest
 
-from app import importing, retry_job_id
+from app import importing
 from app.importing import (
     STAGING_MARGIN,
     STAGING_RESERVED_KEY,
@@ -182,6 +182,7 @@ def test_localization_waits_for_staging_space(
 ):
     """Another import holds the space. The import waits and keeps its source."""
 
+    from app import tasks
     from tests.test_localization import rejected_files
 
     basename = "Staging Wait (2021) - [DVD].mkv"
@@ -204,8 +205,15 @@ def test_localization_waits_for_staging_space(
 
             waits = [job.id for job in scheduled_jobs(app.import_queue)]
             assert (
-                retry_job_id(
-                    "localization_task", f"'{basename}'", 0, 0, "staging1", "t0"
+                tasks.requeue_job_id(
+                    "app.videos.localization_task",
+                    source,
+                    {
+                        "transient_retries": 0,
+                        "completeness_retries": 0,
+                        "space_waits": 1,
+                        "tmdb_retries": 0,
+                    },
                 )
                 in waits
             )
