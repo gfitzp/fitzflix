@@ -13,6 +13,8 @@ import urllib.parse
 
 import pytest
 
+from tests.fakes import S3, SQS
+
 
 class _FakeResponse:
     """A streamed HTTP response with a fixed status and body.
@@ -43,33 +45,6 @@ class _FakeResponse:
                 raise requests.exceptions.ConnectionError("dropped")
             sent += len(chunk)
             yield chunk
-
-
-class _FakeS3:
-    """Answer head_object with a fixed response. Record download_file."""
-
-    def __init__(self, head=None):
-        self.head = head if head is not None else {"ContentLength": 3, "ETag": '"v1"'}
-        self.downloads = []
-
-    def head_object(self, Bucket, Key):
-        if isinstance(self.head, Exception):
-            raise self.head
-        return self.head
-
-    def download_file(self, bucket, key, filename, Callback=None):
-        self.downloads.append(key)
-        with open(filename, "wb") as f:
-            f.write(b"s3!")
-
-
-class _FakeSQS:
-    def __init__(self):
-        self.deleted = []
-
-    def delete_message(self, QueueUrl=None, ReceiptHandle=None):
-        self.deleted.append(ReceiptHandle)
-        return {}
 
 
 @pytest.fixture
@@ -125,8 +100,8 @@ def test_flag_off_keeps_the_s3_transport(app, monkeypatch):
     monkeypatch.setattr(
         aws_storage, "CDN_HTTP_GET", lambda *a, **k: requested.append(a)
     )
-    s3 = _FakeS3()
-    _wire(monkeypatch, s3, _FakeSQS())
+    s3 = S3()
+    _wire(monkeypatch, s3, SQS())
 
     with app.app_context():
         assert (
@@ -150,8 +125,8 @@ def test_flag_on_without_settings_gives_up(app, monkeypatch):
 
     monkeypatch.setitem(app.config, "AWS_DOWNLOAD_VIA_CDN", True)
     monkeypatch.setitem(app.config, "CDN_DOMAIN", "d1.cloudfront.net")
-    s3 = _FakeS3()
-    sqs = _FakeSQS()
+    s3 = S3()
+    sqs = SQS()
     _wire(monkeypatch, s3, sqs)
 
     with app.app_context():
@@ -170,8 +145,8 @@ def test_cdn_download_lands_the_file(app, monkeypatch, cdn):
     from app import aws_storage
 
     cdn["responses"] = [_FakeResponse(200, b"cdn")]
-    s3 = _FakeS3()
-    sqs = _FakeSQS()
+    s3 = S3()
+    sqs = SQS()
     _wire(monkeypatch, s3, sqs)
 
     with app.app_context():
@@ -197,7 +172,7 @@ def test_cdn_retry_signs_a_new_url(app, monkeypatch, cdn):
     from app import aws_storage
 
     cdn["responses"] = [_FakeResponse(503), _FakeResponse(200, b"cdn")]
-    _wire(monkeypatch, _FakeS3(), _FakeSQS())
+    _wire(monkeypatch, S3(), SQS())
 
     with app.app_context():
         assert (
@@ -217,7 +192,7 @@ def test_cdn_short_body_is_retried(app, monkeypatch, cdn):
     short = _FakeResponse(200, b"cd")
     short.headers["Content-Length"] = "3"
     cdn["responses"] = [short, _FakeResponse(200, b"cdn")]
-    _wire(monkeypatch, _FakeS3(), _FakeSQS())
+    _wire(monkeypatch, S3(), SQS())
 
     with app.app_context():
         assert (
@@ -242,7 +217,7 @@ def test_cdn_short_body_without_content_length_is_retried(app, monkeypatch, cdn)
     short = _FakeResponse(200, b"cd")
     del short.headers["Content-Length"]
     cdn["responses"] = [short, _FakeResponse(200, b"cdn")]
-    _wire(monkeypatch, _FakeS3(head={"ContentLength": 3}), _FakeSQS())
+    _wire(monkeypatch, S3(head={"ContentLength": 3}), SQS())
 
     with app.app_context():
         assert (
@@ -264,8 +239,8 @@ def test_cdn_404_is_a_missing_object(app, monkeypatch, cdn):
     from app import aws_storage
 
     cdn["responses"] = [_FakeResponse(404)]
-    sqs = _FakeSQS()
-    _wire(monkeypatch, _FakeS3(), sqs)
+    sqs = SQS()
+    _wire(monkeypatch, S3(), sqs)
 
     with app.app_context():
         assert (
@@ -288,8 +263,8 @@ def test_cdn_403_on_a_cold_object_requests_a_restore(app, monkeypatch, cdn):
     from app import aws_storage
 
     cdn["responses"] = [_FakeResponse(403)]
-    s3 = _FakeS3(head={"ContentLength": 3, "StorageClass": "DEEP_ARCHIVE"})
-    sqs = _FakeSQS()
+    s3 = S3(head={"ContentLength": 3, "StorageClass": "DEEP_ARCHIVE"})
+    sqs = SQS()
     restored = []
     _wire(monkeypatch, s3, sqs)
     monkeypatch.setattr(
@@ -315,14 +290,14 @@ def test_cdn_403_during_a_restore_waits(app, monkeypatch, cdn):
     from app import aws_storage
 
     cdn["responses"] = [_FakeResponse(403)]
-    s3 = _FakeS3(
+    s3 = S3(
         head={
             "ContentLength": 3,
             "StorageClass": "DEEP_ARCHIVE",
             "Restore": 'ongoing-request="true"',
         }
     )
-    sqs = _FakeSQS()
+    sqs = SQS()
     restored = []
     _wire(monkeypatch, s3, sqs)
     monkeypatch.setattr(
@@ -351,14 +326,14 @@ def test_cdn_403_on_an_expired_restore_requests_a_restore(app, monkeypatch, cdn)
     from app import aws_storage
 
     cdn["responses"] = [_FakeResponse(403)]
-    s3 = _FakeS3(
+    s3 = S3(
         head={
             "ContentLength": 3,
             "StorageClass": "DEEP_ARCHIVE",
             "Restore": 'ongoing-request="false", expiry-date="Mon, 01 Sep 2025 00:00:00 GMT"',
         }
     )
-    sqs = _FakeSQS()
+    sqs = SQS()
     restored = []
     _wire(monkeypatch, s3, sqs)
     monkeypatch.setattr(
@@ -386,14 +361,14 @@ def test_cdn_403_on_a_readable_object_gives_up(app, monkeypatch, cdn):
     from app import aws_storage
 
     cdn["responses"] = [_FakeResponse(403)]
-    s3 = _FakeS3(
+    s3 = S3(
         head={
             "ContentLength": 3,
             "StorageClass": "DEEP_ARCHIVE",
             "Restore": 'ongoing-request="false", expiry-date="Fri, 01 Jan 2100 00:00:00 GMT"',
         }
     )
-    sqs = _FakeSQS()
+    sqs = SQS()
     restored = []
     _wire(monkeypatch, s3, sqs)
     monkeypatch.setattr(
@@ -421,7 +396,7 @@ def test_cdn_400_gives_up_without_retry(app, monkeypatch, cdn):
     from app import aws_storage
 
     cdn["responses"] = [_FakeResponse(400)]
-    _wire(monkeypatch, _FakeS3(), _FakeSQS())
+    _wire(monkeypatch, S3(), SQS())
 
     with app.app_context():
         assert aws_storage.aws_download("untouched/x.mkv", "x.mkv") is False
@@ -456,7 +431,7 @@ def test_cdn_transport_error_spends_a_retry(app, monkeypatch, cdn, caplog):
         return _FakeResponse(200, b"cdn")
 
     monkeypatch.setattr(aws_storage, "CDN_HTTP_GET", flaky_get)
-    _wire(monkeypatch, _FakeS3(), _FakeSQS())
+    _wire(monkeypatch, S3(), SQS())
 
     with app.app_context():
         with caplog.at_level(logging.ERROR):
@@ -579,8 +554,8 @@ def test_cdn_403_on_a_missing_object_is_a_missing_object(app, monkeypatch, cdn):
     from app import aws_storage
 
     cdn["responses"] = [_FakeResponse(403)]
-    sqs = _FakeSQS()
-    s3 = _FakeS3()
+    sqs = SQS()
+    s3 = S3()
     heads = [{"ContentLength": 3}, _client_error(404, "404")]
 
     def head_object(Bucket, Key):
@@ -612,7 +587,7 @@ def test_early_return_removes_the_partial_file(app, monkeypatch, cdn):
     from app import aws_storage
 
     cdn["responses"] = [_FakeResponse(200, b"cdn", fail_after=2), _FakeResponse(404)]
-    _wire(monkeypatch, _FakeS3(), _FakeSQS())
+    _wire(monkeypatch, S3(), SQS())
 
     with app.app_context():
         partial = os.path.join(app.config["IMPORT_DIR"], ".x.mkv")
@@ -633,7 +608,7 @@ def test_cdn_resumes_a_dropped_download_with_a_range(app, monkeypatch, cdn):
 
     rest = _FakeResponse(206, b"n")
     cdn["responses"] = [_FakeResponse(200, b"cdn", fail_after=2), rest]
-    _wire(monkeypatch, _FakeS3(), _FakeSQS())
+    _wire(monkeypatch, S3(), SQS())
 
     with app.app_context():
         assert (
@@ -655,7 +630,7 @@ def test_a_partial_of_an_older_version_starts_again(app, monkeypatch, cdn):
 
     from app import aws_storage
 
-    s3 = _FakeS3({"ContentLength": 3, "ETag": '"v1"'})
+    s3 = S3({"ContentLength": 3, "ETag": '"v1"'})
     cdn["responses"] = [
         _FakeResponse(200, b"old", fail_after=2),
         _FakeResponse(200, b"new"),
@@ -667,7 +642,7 @@ def test_a_partial_of_an_older_version_starts_again(app, monkeypatch, cdn):
         return head
 
     s3.head_object = head_object
-    _wire(monkeypatch, s3, _FakeSQS())
+    _wire(monkeypatch, s3, SQS())
 
     with app.app_context():
         assert (
@@ -700,7 +675,7 @@ def test_a_direct_restore_stages_under_its_key(app, monkeypatch, cdn):
     monkeypatch.setattr(aws_storage, "cdn_download", recording)
     monkeypatch.setattr(aws_storage, "place_in_library", lambda *a, **k: None)
     cdn["responses"] = [_FakeResponse(200, b"cdn"), _FakeResponse(200, b"cdn")]
-    _wire(monkeypatch, _FakeS3(), _FakeSQS())
+    _wire(monkeypatch, S3(), SQS())
 
     with app.app_context():
         for key in (
@@ -736,7 +711,7 @@ def test_cdn_body_with_no_known_size_is_not_trusted(app, monkeypatch, cdn):
         response.headers = {}
         responses.append(response)
     cdn["responses"] = responses
-    _wire(monkeypatch, _FakeS3(head={"ContentLength": 0}), _FakeSQS())
+    _wire(monkeypatch, S3(head={"ContentLength": 0}), SQS())
 
     with app.app_context():
         landed = os.path.join(app.config["IMPORT_DIR"], "x.mkv")
@@ -762,7 +737,7 @@ def test_unreadable_private_key_fails_fast(app, monkeypatch, tmp_path):
     monkeypatch.setattr(
         aws_storage, "CDN_HTTP_GET", lambda *a, **k: requested.append(a)
     )
-    _wire(monkeypatch, _FakeS3(), _FakeSQS())
+    _wire(monkeypatch, S3(), SQS())
 
     with app.app_context():
         assert "CDN_PRIVATE_KEY cannot be read" in aws_storage.cdn_settings_problem()

@@ -16,18 +16,9 @@ from app.importing import (
     staging_outstanding,
 )
 
-from tests.conftest import _TMP
-from tests.media import make_sample_mkv
 from tests.test_scheduling import scheduled_jobs
 
 GB = 1024**3
-
-
-@pytest.fixture(scope="session")
-def sample_mkv(app):
-    """Build a 1-second Matroska file with an English audio track."""
-
-    return make_sample_mkv(os.path.join(_TMP, "sample.mkv"))
 
 
 @pytest.fixture

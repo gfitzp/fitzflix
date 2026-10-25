@@ -434,6 +434,41 @@ def user_client(app):
 
 
 @pytest.fixture
+def held_lock(app):
+    """Hold a redlock for the duration of a test."""
+
+    locks = []
+
+    def hold(resource, ttl_ms=60000):
+        lock = app.lock_manager.lock(resource, ttl_ms)
+        assert lock, f"could not take test lock on {resource}"
+        locks.append(lock)
+        return lock
+
+    yield hold
+    for lock in locks:
+        app.lock_manager.unlock(lock)
+
+
+@pytest.fixture(scope="session")
+def sample_mkv(app):
+    """Build a 1-second Matroska file with an English audio track."""
+
+    from tests.media import make_sample_mkv
+
+    return make_sample_mkv(os.path.join(_TMP, "sample.mkv"))
+
+
+@pytest.fixture(scope="session")
+def sample_mp4(app):
+    """Build a 1-second MP4 file, a container that the import converts."""
+
+    from tests.media import make_sample_mp4
+
+    return make_sample_mp4(os.path.join(_TMP, "sample-base.mp4"))
+
+
+@pytest.fixture
 def incoming_dir():
     """Return a staging directory outside IMPORT_DIR, hidden from the watchdog."""
 

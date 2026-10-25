@@ -13,7 +13,6 @@ import errno
 import inspect
 import json
 import os
-import subprocess
 import time
 
 import pytest
@@ -27,8 +26,12 @@ import app.maintenance as maintenance
 from app.models import File
 from app.videos import finalize_localization, localization_task, move_to_rejects
 
-from tests.conftest import _TMP
-from tests.media import make_sample_mkv, make_sample_mp4
+from tests.localization_helpers import (
+    rejected_files,
+    run_full_chain,
+    separate_library_volume,
+    settle,
+)
 
 
 def loc_retry(source, **changes):
@@ -67,20 +70,6 @@ def requeue_job_id(*args, **kwargs):
     from app.tasks import requeue_job_id as build
 
     return build(*args, **kwargs)
-
-
-def settle(path, age_seconds=3600):
-    """Backdate the mtime of a file. Then the completeness gate trusts it."""
-
-    stamp = time.time() - age_seconds
-    os.utime(path, (stamp, stamp))
-
-
-@pytest.fixture(scope="session")
-def sample_mkv(app):
-    """Build a 1-second Matroska file with an English audio track."""
-
-    return make_sample_mkv(os.path.join(_TMP, "sample.mkv"))
 
 
 def test_localization_end_to_end_through_staging(app, sample_mkv, incoming_dir):
@@ -168,35 +157,6 @@ def test_localization_end_to_end_through_staging(app, sample_mkv, incoming_dir):
         app.lock_manager.unlock(lock)
 
     os.remove(output)
-
-
-@pytest.fixture(scope="session")
-def sample_mp4(app):
-    """Build a 1-second MP4 file, a container that the import converts."""
-
-    return make_sample_mp4(os.path.join(_TMP, "sample-base.mp4"))
-
-
-def run_full_chain(app, source):
-    """Run localization -> move -> finalize. Return the enqueued finalize args."""
-
-    assert localization_task(source) is True
-    move_jobs = [
-        job
-        for job in app.handoff_queue.jobs
-        if job.func_name == "app.videos.move_localized_file"
-    ]
-    assert len(move_jobs) == 1
-    assert videos.move_localized_file(*move_jobs[0].args) is True
-
-    finalize_jobs = [
-        job
-        for job in app.sql_queue.jobs
-        if job.func_name == "app.videos.finalize_localization"
-    ]
-    assert len(finalize_jobs) == 1
-    finalize_localization(*finalize_jobs[0].args)
-    return finalize_jobs[0].args
 
 
 def test_non_matroska_is_converted_to_mkv(app, sample_mp4, incoming_dir):
@@ -643,17 +603,6 @@ def test_move_to_rejects_survives_dead_volume(app, incoming_dir, monkeypatch):
         assert os.path.exists(source)
     finally:
         os.remove(source)
-
-
-def rejected_files(app):
-    """Return all real files under the rejects directory."""
-
-    return [
-        name
-        for _, _, files in os.walk(app.config["REJECTS_DIR"])
-        for name in files
-        if name != ".DS_Store"
-    ]
 
 
 def test_move_to_rejects_cross_volume_move_is_staged_atomically(
@@ -1519,31 +1468,6 @@ def test_trail_names_a_retry_that_passes_the_path_by_keyword(app):
     assert _stage_for(job) == ("Waiting (2021) - [DVD].mkv", "Localizing")
 
 
-def _separate_library_volume(app, monkeypatch):
-    """Make the library directories report a device of their own.
-
-    The test tree keeps staging and the library on 1 disk. Thus, the
-    library copy is a plain rename. The real library is on the NAS, so
-    move_localized_file copies across volumes. This fake makes the test
-    take that path."""
-
-    import stat as stat_module
-
-    real_stat = os.stat
-    library = app.config["LIBRARY_DIR"]
-
-    def fake_stat(path, *args, **kwargs):
-        result = real_stat(path, *args, **kwargs)
-        if str(path).startswith(library) and stat_module.S_ISDIR(result.st_mode):
-            values = list(result)
-            values[2] = result.st_dev + 1
-            return os.stat_result(values)
-        return result
-
-    monkeypatch.setattr(os, "stat", fake_stat)
-    monkeypatch.setattr(time, "sleep", lambda seconds: None)
-
-
 def _finalize_jobs(app, vanished_retries):
     return [
         job
@@ -1564,7 +1488,7 @@ def test_a_vanished_library_copy_is_copied_again_from_staging(
     out (Fort Apache, 2026-10-15). Now the output stays on staging until
     the rename. finalize gives the copy back to the handoff queue."""
 
-    _separate_library_volume(app, monkeypatch)
+    separate_library_volume(app, monkeypatch)
     basename = "Vanishing Copy (2021) - [DVD].mkv"
     source = os.path.join(incoming_dir, basename)
     with open(sample_mkv, "rb") as f_in, open(source, "wb") as f_out:
@@ -1631,7 +1555,7 @@ def test_a_library_copy_that_keeps_vanishing_fails_as_before(
 
     from app.importing import MAX_VANISHED_RETRIES
 
-    _separate_library_volume(app, monkeypatch)
+    separate_library_volume(app, monkeypatch)
     basename = "Always Vanishing (2021) - [DVD].mkv"
     source = os.path.join(incoming_dir, basename)
     with open(sample_mkv, "rb") as f_in, open(source, "wb") as f_out:
@@ -1681,7 +1605,7 @@ def test_finalize_gives_the_staged_copy_to_the_atmos_job(
 
     import app.atmos as atmos
 
-    _separate_library_volume(app, monkeypatch)
+    separate_library_volume(app, monkeypatch)
     monkeypatch.setattr(atmos, "STAGED_HANDOFF_RESERVE_BYTES", reserve)
     offers = []
     queues = []
@@ -1780,7 +1704,7 @@ def test_create_atmos_twins_off_turns_off_the_atmos_step(
 
     import app.atmos as atmos
 
-    _separate_library_volume(app, monkeypatch)
+    separate_library_volume(app, monkeypatch)
     monkeypatch.setitem(app.config, "CREATE_ATMOS_TWINS", False)
     monkeypatch.setattr(atmos, "STAGED_HANDOFF_RESERVE_BYTES", 0)
     offers = []
@@ -1956,7 +1880,7 @@ def test_a_lost_copy_keeps_the_file_of_the_worse_record(
     from app import db
     from tests.factories import make_movie, make_movie_file
 
-    _separate_library_volume(app, monkeypatch)
+    separate_library_volume(app, monkeypatch)
     with app.app_context():
         movie = make_movie("Kept Worse", 2021)
         worse = make_movie_file(movie, "SDTV")
@@ -2298,613 +2222,3 @@ def test_a_library_path_never_creates_a_directory_on_an_unmounted_volume(
         ):
             if os.path.exists(path):
                 os.remove(path)
-
-
-# The pins of the localization_task branches that had no test before the
-# seam split (tranche 3). Each test passed against the old function.
-
-
-def test_a_missing_source_stops_quietly(app, incoming_dir):
-    """A source that is gone returns False and queues nothing."""
-
-    source = os.path.join(incoming_dir, "Gone Already (2021) - [DVD].mkv")
-    with app.app_context():
-        assert localization_task(source) is False
-        assert scheduled_jobs(app.import_queue) == []
-        assert len(app.handoff_queue) == 0
-
-
-def test_a_temp_copy_name_is_ignored(app, incoming_dir):
-    """A name with "-temp-NNNN." is a copy in progress. The task leaves it."""
-
-    source = os.path.join(incoming_dir, "Temp Copy (2021) - [DVD]-temp-1234.mkv")
-    with open(source, "wb") as f:
-        f.write(b"video")
-    try:
-        with app.app_context():
-            assert localization_task(source) is False
-            assert scheduled_jobs(app.import_queue) == []
-        assert os.path.exists(source)
-        assert os.path.basename(source) not in rejected_files(app)
-    finally:
-        os.remove(source)
-
-
-def test_a_name_that_does_not_parse_goes_to_rejects(app, incoming_dir, caplog):
-    """A name with no known format goes to rejects as "incorrect filename"."""
-
-    basename = "no format at all.mkv"
-    source = os.path.join(incoming_dir, basename)
-    with open(source, "wb") as f:
-        f.write(b"video")
-    settle(source)
-    with app.app_context():
-        assert localization_task(source) is False
-    assert "doesn't match expected naming formats" in caplog.text
-    rejected = os.path.join(app.config["REJECTS_DIR"], "incorrect filename", basename)
-    assert os.path.exists(rejected)
-    os.remove(rejected)
-
-
-def test_an_inferior_file_goes_to_rejects_and_frees_the_lock(
-    app, sample_mkv, incoming_dir, monkeypatch
-):
-    """A better copy in the library rejects the import and emails the admin."""
-
-    from app import importing
-
-    basename = "Inferior Copy (2021) - [DVD].mkv"
-    source = os.path.join(incoming_dir, basename)
-    with open(sample_mkv, "rb") as f_in, open(source, "wb") as f_out:
-        f_out.write(f_in.read())
-
-    better = File(basename="Inferior Copy (2021) - [Bluray-1080p].mkv")
-    monkeypatch.setattr(importing, "find_better_files", lambda details: [better])
-    sent = []
-    monkeypatch.setattr(
-        importing, "notify_admin", lambda *args, **kwargs: sent.append((args, kwargs))
-    )
-    with app.app_context():
-        assert localization_task(source) is False
-        details = importing.evaluate_filename(
-            os.path.join(app.config["REJECTS_DIR"], "inferior quality", basename)
-        )
-        lock = app.lock_manager.lock(importing.lock_key_for_details(details), 1000)
-        assert lock
-        app.lock_manager.unlock(lock)
-    rejected = os.path.join(app.config["REJECTS_DIR"], "inferior quality", basename)
-    assert os.path.exists(rejected)
-    assert [args[1] for args, _ in sent] == ["inferior_warning"]
-    assert sent[0][1]["better_versions"] == [better]
-    assert os.listdir(app.config["STAGING_DIR"]) == []
-    os.remove(rejected)
-
-
-def test_a_file_too_big_for_staging_is_localized_beside_the_library(
-    app, sample_mkv, incoming_dir, monkeypatch
-):
-    """A file that cannot fit on staging is processed on its source volume.
-
-    The hidden output goes straight to its library directory. The move
-    finds it at its destination name already."""
-
-    from app import importing
-
-    monkeypatch.setattr(importing, "reserve_staging", lambda *args: "too big")
-    basename = "Too Big (2021) - [DVD].mkv"
-    source = os.path.join(incoming_dir, basename)
-    with open(sample_mkv, "rb") as f_in, open(source, "wb") as f_out:
-        f_out.write(f_in.read())
-
-    with app.app_context():
-        assert localization_task(source) is True
-        (move,) = [
-            job
-            for job in app.handoff_queue.jobs
-            if job.func_name == "app.videos.move_localized_file"
-        ]
-        hidden = move.args[3]
-        directory = os.path.join(app.config["LIBRARY_DIR"], "Movies/Too Big (2021)")
-        assert hidden == os.path.join(directory, f".{basename}")
-        assert os.listdir(app.config["STAGING_DIR"]) == []
-        assert videos.move_localized_file(*move.args) is True
-        (finalize,) = [
-            job
-            for job in app.sql_queue.jobs
-            if job.func_name == "app.videos.finalize_localization"
-        ]
-        assert finalize.args[3] == hidden
-        assert finalize.kwargs["staged_output"] is None
-        finalize_localization(*finalize.args, **finalize.kwargs)
-
-    output = os.path.join(directory, basename)
-    assert os.path.exists(output)
-    assert not os.path.exists(hidden)
-    assert not os.path.exists(source)
-    os.remove(output)
-
-
-def _track(language, streamorder):
-    """Return a track dict of the shape that get_*_tracks_from_file gives."""
-
-    return {"language": language, "streamorder": streamorder, "default": False}
-
-
-@pytest.mark.parametrize(
-    "native, audio, subtitles, expected",
-    [
-        # Native audio first, native subtitles: every native track is off.
-        (
-            "eng",
-            [_track("eng", 1)],
-            [_track("eng", 2), _track("fre", 3), _track("eng", 4)],
-            ["-a", "eng", "-s", "eng"]
-            + ["--default-track-flag", "2:0", "--default-track-flag", "4:0"],
-        ),
-        # Foreign audio first, native audio and subtitles present: the first
-        # native subtitle track is on, and the others are off.
-        (
-            "eng",
-            [_track("fre", 1), _track("eng", 2)],
-            [_track("fre", 3), _track("eng", 4), _track("eng", 5)],
-            ["-a", "fre,eng", "-s", "eng"]
-            + ["--default-track-flag", "4:1", "--default-track-flag", "5:0"],
-        ),
-        # Foreign audio only, no native subtitles.
-        (
-            "eng",
-            [_track("fre", 1)],
-            [_track("fre", 2)],
-            ["-a", "fre", "--no-subtitles"],
-        ),
-        # Native audio, no subtitles at all.
-        ("eng", [_track("eng", 1)], [], ["-a", "eng", "--no-subtitles"]),
-        # No audio tracks and no subtitles.
-        ("eng", [], [], ["-a", "1", "--no-subtitles"]),
-        # A MakeMKV file uses the ISO 639-3 code of the native language.
-        (
-            "fre",
-            [_track("fra", 1)],
-            [_track("fra", 2)],
-            ["-a", "fra", "-s", "fra", "--default-track-flag", "2:0"],
-        ),
-    ],
-)
-def test_the_mkvmerge_command_of_each_track_layout(
-    app, sample_mkv, incoming_dir, monkeypatch, native, audio, subtitles, expected
-):
-    """Pin the mkvmerge arguments that the localization builds for each layout."""
-
-    from app import importing
-
-    monkeypatch.setitem(app.config, "NATIVE_LANGUAGE", native)
-    monkeypatch.setattr(importing, "get_audio_tracks_from_file", lambda path: audio)
-    monkeypatch.setattr(
-        importing, "get_subtitle_tracks_from_file", lambda path: subtitles
-    )
-    if native == "fre":
-        real_parse = importing.MediaInfo.parse
-
-        class MakeMKVMediaInfo:
-            @staticmethod
-            def parse(path, **kwargs):
-                info = real_parse(path, **kwargs)
-                for track in info.tracks:
-                    if track.track_type == "General":
-                        track.writing_application = "MakeMKV v1.17.4"
-                return info
-
-        monkeypatch.setattr(importing, "MediaInfo", MakeMKVMediaInfo)
-
-    commands = []
-    real_popen = subprocess.Popen
-
-    def record(argv, **kwargs):
-        if argv[0] == app.config["MKVMERGE_BIN"] and "-a" in argv:
-            commands.append(argv)
-            argv = [argv[0], "-o", argv[2], argv[-1]]
-        return real_popen(argv, **kwargs)
-
-    monkeypatch.setattr(importing.subprocess, "Popen", record)
-    basename = "Track Layout (2021) - [DVD].mkv"
-    source = os.path.join(incoming_dir, basename)
-    with open(sample_mkv, "rb") as f_in, open(source, "wb") as f_out:
-        f_out.write(f_in.read())
-    try:
-        with app.app_context():
-            assert localization_task(source) is True
-            (move,) = [
-                job
-                for job in app.handoff_queue.jobs
-                if job.func_name == "app.videos.move_localized_file"
-            ]
-            hidden = move.args[3]
-        (command,) = commands
-        assert command[:3] == [app.config["MKVMERGE_BIN"], "-o", hidden]
-        assert command[3:-5] == expected
-        assert command[-5:-1] == ["--title", "", "--track-name", "-1:"]
-        assert command[-1].startswith(app.config["STAGING_DIR"])
-        os.remove(hidden)
-    finally:
-        if os.path.exists(source):
-            os.remove(source)
-
-
-def test_an_mp4_that_mkvmerge_cannot_carry_loses_its_metadata(
-    app, sample_mp4, incoming_dir, monkeypatch
-):
-    """An MPEG-4 file that cannot become Matroska goes through AtomicParsley.
-
-    Then the task copies it to its hidden output as it is. The job shows
-    each step on the queue page."""
-
-    from app import importing
-
-    monkeypatch.setattr(importing, "convert_to_matroska", lambda *args: False)
-    monkeypatch.setitem(app.config, "ATOMICPARSLEY_BIN", "/bin/echo")
-
-    from tests.fakes import Job
-
-    job = Job()
-    monkeypatch.setattr(importing, "get_current_job", lambda: job)
-    basename = "Plain Mp4 (2021) - [DVD].mp4"
-    source = os.path.join(incoming_dir, basename)
-    with open(sample_mp4, "rb") as f_in, open(source, "wb") as f_out:
-        f_out.write(f_in.read())
-    try:
-        with app.app_context():
-            assert localization_task(source) is True
-            (move,) = [
-                job
-                for job in app.handoff_queue.jobs
-                if job.func_name == "app.videos.move_localized_file"
-            ]
-            hidden = move.args[3]
-        assert hidden.endswith(".mp4")
-        assert os.path.getsize(hidden) == os.path.getsize(source)
-        staged = os.path.join(app.config["STAGING_DIR"], basename)
-        assert {
-            "description": f"'{basename}' — Removing MPEG-4 metadata",
-            "progress": -1,
-        } in job.saved
-        assert job.saved[-1] == {
-            "description": f"'{basename}' — Copying to destination",
-            "progress": -1,
-        }
-        assert not os.path.exists(staged)
-        os.remove(hidden)
-    finally:
-        if os.path.exists(source):
-            os.remove(source)
-
-
-@pytest.mark.parametrize(
-    "subtitles, foreign, expected",
-    [
-        # Foreign audio: the first native subtitle track is the default.
-        (
-            [_track("fre", 3), _track("eng", 4), _track("eng", 5)],
-            True,
-            ["-s", "eng", "--default-track-flag", "4:1", "--default-track-flag", "5:0"],
-        ),
-        # Native audio: no native subtitle track is a default.
-        (
-            [_track("eng", 2), _track("eng", 3)],
-            False,
-            ["-s", "eng", "--default-track-flag", "2:0", "--default-track-flag", "3:0"],
-        ),
-        # Foreign subtitles only, and no subtitles at all, build 1 command.
-        ([_track("fre", 2)], True, ["--no-subtitles"]),
-        ([_track("fre", 2)], False, ["--no-subtitles"]),
-        ([], True, ["--no-subtitles"]),
-        ([], False, ["--no-subtitles"]),
-    ],
-)
-def test_build_localize_command(app, subtitles, foreign, expected):
-    """The command builder is pure. It needs no file and no app context."""
-
-    from app.importing import build_localize_command
-
-    command = build_localize_command(
-        "mkvmerge", "/in.mkv", "/out.mkv", "fre,eng", "eng", subtitles, foreign
-    )
-    assert command == (
-        ["mkvmerge", "-o", "/out.mkv", "-a", "fre,eng"]
-        + expected
-        + ["--title", "", "--track-name", "-1:", "/in.mkv"]
-    )
-
-
-def test_report_progress_writes_the_queue_page_text(app):
-    """report_progress names the file and the activity, and saves the meta."""
-
-    from app.tasks import report_progress
-
-    from tests.fakes import Job
-
-    job = Job({"progress": 40})
-    report_progress(job, "Film.mkv", "Downloading from AWS", percent=None)
-    assert job.meta == {
-        "description": "'Film.mkv' — Downloading from AWS",
-        "progress": 40,
-    }
-    report_progress(job, None, "Pruning extra files", 7)
-    assert job.meta == {"description": "Pruning extra files", "progress": 7}
-    report_progress(job, "Film.mkv", "Cataloging")
-    assert job.meta["progress"] == -1
-    assert len(job.saved) == 3
-    report_progress(None, "Film.mkv", "Cataloging")
-
-
-# The pins of the finalize_localization follow-ups that the phase split
-# moves (tranche 3). Each test passed against the old function.
-
-
-def _roster_jobs(app, func_name):
-    """Return the queued jobs of func_name on every queue of the roster."""
-
-    from app.queues import roster_queues
-
-    return [
-        job
-        for queue in roster_queues(app)
-        for job in queue.jobs
-        if job.func_name == func_name
-    ]
-
-
-def _capture_emails(monkeypatch):
-    """Record each admin email and each direct email of the importing module."""
-
-    from app import importing
-
-    sent = []
-    monkeypatch.setattr(
-        importing,
-        "notify_admin",
-        lambda subject, template, **kwargs: sent.append(("notify", template)),
-    )
-
-    def admin_email(subject, template, **kwargs):
-        return lambda: sent.append(("admin", template))
-
-    monkeypatch.setattr(importing, "admin_email", admin_email)
-    monkeypatch.setattr(
-        importing,
-        "send_email",
-        lambda subject, **kwargs: sent.append(("todo", subject)),
-    )
-    return sent
-
-
-def _import(app, sample_mkv, directory, basename):
-    """Write a copy of the sample under basename and run the full chain."""
-
-    source = os.path.join(directory, basename)
-    os.makedirs(directory, exist_ok=True)
-    with open(sample_mkv, "rb") as f_in, open(source, "wb") as f_out:
-        f_out.write(f_in.read())
-    run_full_chain(app, source)
-    for job in app.handoff_queue.jobs + app.sql_queue.jobs:
-        job.delete()
-    return source
-
-
-def test_a_physical_replacement_runs_every_follow_up(
-    app, sample_mkv, incoming_dir, monkeypatch
-):
-    """A Blu-ray replaces a DVD: delete it, send 2 emails, and queue the TMDB refresh."""
-
-    monkeypatch.setitem(app.config, "TODO_EMAIL", "todo@example.test")
-    sent = _capture_emails(monkeypatch)
-    movies = os.path.join(app.config["LIBRARY_DIR"], "Movies/Replacement Pin (2021)")
-    dvd = os.path.join(movies, "Replacement Pin (2021) - [DVD].mkv")
-    bluray = os.path.join(movies, "Replacement Pin (2021) - [Bluray-1080p].mkv")
-    with app.app_context():
-        _import(app, sample_mkv, incoming_dir, os.path.basename(dvd))
-        assert os.path.exists(dvd)
-        sent.clear()
-        source = _import(app, sample_mkv, incoming_dir, os.path.basename(bluray))
-
-        assert not os.path.exists(dvd)
-        assert os.path.exists(bluray)
-        assert not os.path.exists(source)
-        assert [f.basename for f in File.query.all()] == [os.path.basename(bluray)]
-        assert ("admin", "replaced_physical_media") in sent
-        assert (
-            "todo",
-            "Find and dispose of the media for 'Replacement Pin (2021) - [DVD].mkv'",
-        ) in sent
-        # The DVD import queued the first refresh, and the Blu-ray the second.
-        refreshes = _roster_jobs(app, "app.videos.refresh_tmdb_info")
-        movie_id = File.query.one().movie_id
-        assert [job.args[:2] for job in refreshes] == [("Movies", movie_id)] * 2
-        assert refreshes[1].kwargs == {"notify_if_missing": True}
-        lock = app.lock_manager.lock(File.query.one().file_identifier(), 1000)
-        assert lock
-        app.lock_manager.unlock(lock)
-    os.remove(bluray)
-
-
-def test_a_tv_import_creates_its_series_and_queues_its_refresh(
-    app, sample_mkv, incoming_dir
-):
-    """An episode gets a TVSeries row and a TV Shows TMDB refresh."""
-
-    from app.models import TVSeries
-
-    basename = "Pin Show - S01E01 - [DVD].mkv"
-    with app.app_context():
-        _import(app, sample_mkv, incoming_dir, basename)
-        file = File.query.filter_by(basename=basename).one()
-        assert file.tv_series.title == "Pin Show"
-        assert TVSeries.query.count() == 1
-        refreshes = _roster_jobs(app, "app.videos.refresh_tmdb_info")
-        assert [job.args[:2] for job in refreshes] == [("TV Shows", file.series_id)]
-        output = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
-    assert os.path.exists(output)
-    os.remove(output)
-
-
-def test_finalize_gives_back_an_output_that_is_on_another_volume(
-    app, sample_mkv, incoming_dir, monkeypatch
-):
-    """The output is not on the library volume. The library copy is queued again.
-
-    The records roll back, and the title lock stays for the new chain."""
-
-    basename = "Wrong Volume (2021) - [DVD].mkv"
-    source = os.path.join(incoming_dir, basename)
-    with open(sample_mkv, "rb") as f_in, open(source, "wb") as f_out:
-        f_out.write(f_in.read())
-    with app.app_context():
-        assert localization_task(source) is True
-        (move,) = [
-            job
-            for job in app.handoff_queue.jobs
-            if job.func_name == "app.videos.move_localized_file"
-        ]
-        move.delete()
-        source_path, details, lock, hidden = move.args
-        inspection = videos.inspect_localized_file(hidden, "Matroska")
-        _separate_library_volume(app, monkeypatch)
-        assert (
-            finalize_localization(source_path, details, lock, hidden, inspection)
-            is False
-        )
-        (again,) = [
-            job
-            for job in app.handoff_queue.jobs
-            if job.func_name == "app.videos.move_localized_file"
-        ]
-        assert again.args[0] == source
-        assert again.args[3] == hidden
-        assert File.query.count() == 0
-        assert app.redis.get(lock[1]) is not None
-        app.lock_manager.unlock(lock)
-        again.delete()
-    os.remove(hidden)
-    os.remove(source)
-
-
-def test_foreign_and_lossy_audio_send_their_emails(
-    app, sample_mkv, incoming_dir, monkeypatch
-):
-    """A foreign first track with a second track emails, and so does a lossy lead."""
-
-    import copy
-
-    sent = _capture_emails(monkeypatch)
-    basename = "Audio Mails (2021) - [DVD].mkv"
-    source = os.path.join(incoming_dir, basename)
-    with open(sample_mkv, "rb") as f_in, open(source, "wb") as f_out:
-        f_out.write(f_in.read())
-    with app.app_context():
-        assert localization_task(source) is True
-        (move,) = list(app.handoff_queue.jobs)
-        assert videos.move_localized_file(*move.args) is True
-        (finalize,) = list(app.sql_queue.jobs)
-        args = list(finalize.args)
-        inspection = copy.deepcopy(args[4])
-        lead = inspection["audio_tracks"][0]
-        lead["language"] = "fre"
-        lead["compression_mode"] = "Lossy"
-        second = dict(lead, language="eng", compression_mode="Lossless")
-        inspection["audio_tracks"].append(second)
-        args[4] = inspection
-        finalize_localization(*args, **finalize.kwargs)
-        assert ("notify", "possibly_foreign_audio") in sent
-        assert ("notify", "lossy_audio") in sent
-        output = os.path.join(
-            app.config["LIBRARY_DIR"],
-            File.query.filter_by(basename=basename).one().file_path,
-        )
-    os.remove(output)
-
-
-def test_an_in_place_import_keeps_the_file_that_it_made(app, sample_mkv):
-    """The source is at its library path. The finished file replaces it there."""
-
-    directory = os.path.join(app.config["LIBRARY_DIR"], "Movies/In Place Pin (2021)")
-    basename = "In Place Pin (2021) - [DVD].mkv"
-    with app.app_context():
-        source = _import(app, sample_mkv, directory, basename)
-        assert os.path.exists(source)
-        assert File.query.filter_by(basename=basename).one()
-    assert os.listdir(directory) == [basename]
-    os.remove(source)
-
-
-def test_a_failed_follow_up_does_not_skip_the_next_ones(
-    app, sample_mkv, incoming_dir, monkeypatch
-):
-    """Each follow-up after the commit is best effort on its own.
-
-    Before the phase split, the first failure skipped every later step:
-    here the source removal and the TMDB refresh."""
-
-    import app.atmos as atmos
-
-    def broken(*args, **kwargs):
-        raise RuntimeError("Redis is not reachable")
-
-    monkeypatch.setattr(atmos, "staged_handoff", broken)
-    basename = "Later Steps (2021) - [DVD].mkv"
-    with app.app_context():
-        source = _import(app, sample_mkv, incoming_dir, basename)
-        file = File.query.filter_by(basename=basename).one()
-        output = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
-        assert [
-            job.args[:2] for job in _roster_jobs(app, "app.videos.refresh_tmdb_info")
-        ] == [("Movies", file.movie_id)]
-        lock = app.lock_manager.lock(file.file_identifier(), 1000)
-        assert lock
-        app.lock_manager.unlock(lock)
-    assert not os.path.exists(source)
-    assert os.listdir(app.config["STAGING_DIR"]) == []
-    os.remove(output)
-
-
-@pytest.mark.parametrize(
-    "tracks, expected",
-    [
-        ([], (False, False)),
-        ([{"language": "eng", "compression_mode": "Lossy"}], (False, False)),
-        ([{"language": "und"}, {"language": "fre"}], (False, False)),
-        ([{"language": "fre", "compression_mode": "Lossless"}], (True, False)),
-        (
-            [
-                {"language": "eng", "compression_mode": "Lossy"},
-                {"language": "eng", "compression_mode": "Lossless"},
-            ],
-            (False, True),
-        ),
-    ],
-)
-def test_audio_alerts(app, tracks, expected):
-    """The foreign-audio and lossy-lead flags of the import emails are pure."""
-
-    from app.importing import _audio_alerts
-
-    assert _audio_alerts(tracks, "eng") == expected
-
-
-def test_a_failed_radarr_report_does_not_skip_the_tmdb_refresh(
-    app, sample_mkv, incoming_dir, monkeypatch
-):
-    """The movie_id read of the Radarr report runs inside its own guarded step."""
-
-    from app import importing
-
-    def broken(*args, **kwargs):
-        raise RuntimeError("Radarr is away")
-
-    monkeypatch.setattr(importing, "_report_import_move_to_radarr", broken)
-    basename = "Radarr Away (2021) - [DVD].mkv"
-    with app.app_context():
-        _import(app, sample_mkv, incoming_dir, basename)
-        file = File.query.filter_by(basename=basename).one()
-        output = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
-        assert _roster_jobs(app, "app.videos.refresh_tmdb_info")
-    assert os.listdir(app.config["STAGING_DIR"]) == []
-    os.remove(output)
