@@ -69,7 +69,7 @@ from app.main import bp
 from app.main.helpers import (
     _ladder_fetch,
     _quick_rating,
-    _watched_timestamp,
+    apply_row_edit,
     decimal_id,
     ladder_payload,
 )
@@ -84,10 +84,7 @@ from app.email import send_email
 from app.streaming import (
     provider_registry,
 )
-from app.videos import (
-    parse_letterboxd_export,
-    star_rating_fields,
-)
+from app.videos import parse_letterboxd_export
 
 
 @bp.route("/review/<int:review_id>/edit", methods=["GET", "POST"])
@@ -144,74 +141,13 @@ def review_edit(review_id):
                 "warning",
             )
             return redirect(url_for("main.review_edit", review_id=review_id, page=page))
-        # Only a ladder tap changes the stars and the liked flag that
-        # follows them. A saved text or date edit must never delete the
-        # existing rating of the viewing. A tap on the CURRENT rating
-        # clears the stars instead. The viewing itself stays. This never
-        # deletes an explicit diary entry that the user edits.
-
-        # Each change stamps date_updated. The incremental Letterboxd
-        # export selects the changed rows by it. The first stars or the
-        # first text of a bare watch also set date_reviewed. The movie
-        # page and the engine select the current verdict by that date.
-
-        changed = False
-        if quick_rating is not None:
-            changed = True
-            if user_review.rating is not None and float(user_review.rating) == float(
-                quick_rating
-            ):
-                for field, value in star_rating_fields(None).items():
-                    setattr(user_review, field, value)
-                user_review.liked = False
-
-                # A row with no stars and no text is a bare watch again.
-                # A review date would make it outrank an older review.
-
-                if not (user_review.review or "").strip():
-                    user_review.date_reviewed = None
-            else:
-                for field, value in star_rating_fields(quick_rating).items():
-                    setattr(user_review, field, value)
-                user_review.liked = quick_rating >= 3
-                if user_review.date_reviewed is None:
-                    user_review.date_reviewed = datetime.now()
-
-        # The date and the text change only if their fields ARRIVED IN
-        # THE POST. The per-row forms of the history page and the
-        # star-only ladder taps carry no date field. An absent field
-        # must never read as "clear the watch date".
-
-        if "date_watched" in request.form:
-            # The date-only form field cannot improve a stored timestamp
-            # (for example, the actual clock time of a Plex watch).
-            # Thus, replace the value only if the calendar date changed.
-            new_date = movie_review_form.date_watched.data
-            if new_date is None:
-                changed = changed or user_review.date_watched is not None
-                user_review.date_watched = None
-            elif (
-                user_review.date_watched is None
-                or user_review.date_watched.date() != new_date
-            ):
-                user_review.date_watched = _watched_timestamp(new_date)
-                changed = True
-
-        # A text change on a row that already has a review keeps the
-        # original review date. A first review (no date_reviewed yet)
-        # sets the review date.
-
-        if "review" in request.form:
-            new_text = movie_review_form.review.data or ""
-            if new_text != (user_review.review or ""):
-                user_review.review = new_text
-                changed = True
-                if not user_review.date_reviewed:
-                    user_review.date_reviewed = datetime.now()
-
-        if changed:
-            user_review.date_updated = datetime.now()
-        db.session.commit()
+        apply_row_edit(
+            user_review,
+            quick_rating,
+            movie_review_form.review.data,
+            movie_review_form.date_watched.data,
+            request.form,
+        )
         if _ladder_fetch():
             # This page edits 1 viewing. Thus, the state of the row comes
             # from that row. It does not come from the latest-viewing

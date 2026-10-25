@@ -31,6 +31,7 @@ from app.models import (
     UserWatchlist,
     tv_file_rank,
 )
+from app.elicitation import set_last_response
 from app.recommendations import (
     RECOMPUTE_QUEUED_KEY,
     RECOMPUTE_TRAILING_KEY,
@@ -39,10 +40,12 @@ from app.recommendations import (
     stored_profile,
 )
 from app.videos import (
+    clear_not_interested,
     clear_watchlist,
     star_rating_fields,
 )
 
+from collections import namedtuple
 from functools import wraps
 
 
@@ -334,6 +337,277 @@ def _ladder_state(user_id, movie_id):
         is not None
     )
     return jsonify(ladder_payload(row, flagged, estimated, on_watchlist))
+
+
+# The result of apply_verdict. kind is "unflagged", "flagged",
+# "flag_refused", "locked", "removed", "corrected" or "logged". rating is
+# the rating of the post. is_review is True for a log with stars or text.
+
+Outcome = namedtuple("Outcome", "kind rating is_review")
+
+
+def apply_verdict(
+    user_id,
+    target,
+    rating,
+    review_text,
+    watched_date,
+    quick_present,
+    *,
+    allow_unflag,
+    allow_remove,
+    steer,
+    steer_flag,
+):
+    """Apply 1 verdict post on a film to the diary. Return an Outcome.
+
+    This is the database work of the movie page and of the TMDB log page.
+    A rating of 0 is the ✕: the not-interested flag, never a review. A
+    seen film cannot get the flag. With allow_unflag, a ✕ on a flagged
+    film removes the flag. A Letterboxd row cannot lose its stars or
+    change them in place. With allow_remove, a tap on the current rating
+    removes it. A bare star tap on a day that already has a review
+    corrects that review. Anything else logs a new viewing. steer and
+    steer_flag say if a rating and a ✕ move the last-response state of
+    the drive. The changes are committed."""
+
+    text = (review_text or "").strip()
+    if rating == 0:
+        return _apply_flag(user_id, target, allow_unflag, steer_flag)
+
+    bare_tap = (
+        quick_present and rating is not None and not text and watched_date is None
+    )
+    if _letterboxd_locked(
+        user_id, target.id, rating, removes=allow_remove, corrects=bare_tap
+    ):
+        return Outcome("locked", rating, False)
+
+    # A tap on your current rating removes it. A bare drive-style row (no
+    # watch date, no text) is deleted completely. A viewing with real
+    # history only loses its stars.
+
+    if allow_remove and rating is not None:
+        current_row = _latest_review_row(user_id, target.id)
+        if (
+            current_row is not None
+            and current_row.rating is not None
+            and float(current_row.rating) == rating
+        ):
+            bare = (
+                current_row.date_watched is None
+                and not (current_row.review or "").strip()
+            )
+            if bare:
+                db.session.delete(current_row)
+            else:
+                for field, value in star_rating_fields(None).items():
+                    setattr(current_row, field, value)
+                current_row.liked = False
+                current_row.date_updated = datetime.now()
+
+                # A watched row with no stars and no text is a bare watch
+                # again, the same as on the History page. A review date
+                # would make it outrank an older review.
+
+                if not (current_row.review or "").strip():
+                    current_row.date_reviewed = None
+            db.session.commit()
+            _enqueue_profile_recompute()
+            return Outcome("removed", rating, False)
+
+    # A different star on a day that you already reviewed corrects that
+    # review in place. Tastes change, but not 2 times in a day. A form
+    # with text or a watch date is a real new log. It skips this.
+
+    if bare_tap:
+        edited = _same_day_rerate(user_id, target.id, rating)
+        if edited is not None:
+            clear_watchlist(user_id, target.id)
+            clear_not_interested(user_id, target.id)
+            db.session.commit()
+            _steer_and_recompute(user_id, target, rating, steer)
+            return Outcome("corrected", rating, True)
+
+    # A bare submission (no rating or text) is a plain diary entry. It is
+    # a watch, not a review. Thus, it has no review date. The rewatch flag
+    # computes in the same way as for Plex watches. Any earlier row for
+    # this user and film makes this a repeat viewing.
+
+    is_review = bool(rating is not None or text)
+    rewatch = (
+        db.session.query(UserMovieReview.id)
+        .filter_by(user_id=user_id, movie_id=target.id)
+        .first()
+        is not None
+    )
+    db.session.add(
+        UserMovieReview(
+            user_id=user_id,
+            movie_id=target.id,
+            review=review_text,
+            liked=rating is not None and rating >= 3,
+            date_watched=_watched_timestamp(watched_date),
+            date_reviewed=datetime.now() if is_review else None,
+            rewatch=rewatch,
+            **star_rating_fields(rating),
+        )
+    )
+    clear_watchlist(user_id, target.id)
+    clear_not_interested(user_id, target.id)
+    db.session.commit()
+    if rating is not None:
+        _steer_and_recompute(user_id, target, rating, steer)
+    return Outcome("logged", rating, is_review)
+
+
+def _apply_flag(user_id, target, allow_unflag, steer_flag):
+    """Apply a ✕ post. Return an Outcome of "unflagged", "flagged", or "flag_refused"."""
+
+    existing_flag = UserMovieStatus.query.filter_by(
+        user_id=int(user_id), movie_id=target.id, kind="not_interested"
+    ).first()
+    if allow_unflag and existing_flag is not None:
+        db.session.delete(existing_flag)
+        db.session.commit()
+        _enqueue_profile_recompute()
+        return Outcome("unflagged", 0.0, False)
+    if _mark_not_interested(user_id, target.id):
+        if steer_flag:
+            set_last_response(current_app.redis, user_id, target.id, "not_interested")
+        _enqueue_profile_recompute()
+        return Outcome("flagged", 0.0, False)
+    return Outcome("flag_refused", 0.0, False)
+
+
+def _steer_and_recompute(user_id, target, rating, steer):
+    """Move the last-response state of the drive, if steer, and queue a recompute.
+
+    This is the same state that the rating drive keeps. A positive
+    rating shows the "since you liked…" strip on the movie page. It also
+    steers the next card of the drive."""
+
+    if steer:
+        set_last_response(
+            current_app.redis, user_id, target.id, "rated", positive=rating >= 3
+        )
+    _enqueue_profile_recompute()
+
+
+# The flash of each verdict that is not a background ladder post. name
+# is the title of the film.
+
+VERDICT_MESSAGES = {
+    "unflagged": ("'{name}' can be recommended again", "success"),
+    "flagged": ("Fitzflix will not recommend '{name}'", "info"),
+    "flag_refused": (
+        "You logged '{name}'. The lowest rating for a seen film is 1 star",
+        "warning",
+    ),
+    "locked": (
+        "'{name}' syncs from your Letterboxd account. "
+        "Change it on Letterboxd instead.",
+        "info",
+    ),
+    "removed": ("Removed your rating of '{name}'", "success"),
+    "rated": ("Rated '{name}' {rating:g} out of 5 stars", "success"),
+    "reviewed": ("Logged review for '{name}'", "success"),
+    "watched": ("Logged '{name}' in your history", "success"),
+}
+
+
+def verdict_response(outcome, target, name, fallback_url, messages=None):
+    """Answer a verdict post. A ladder fetch gets the star-row state as JSON.
+
+    Any other post gets a flash and a redirect to fallback_url. messages
+    replaces entries of VERDICT_MESSAGES for 1 page."""
+
+    if _ladder_fetch():
+        return _ladder_state(current_user.id, target.id)
+    key = outcome.kind
+    if key in ("corrected", "logged"):
+        if outcome.rating is not None:
+            key = "rated"
+        elif outcome.is_review:
+            key = "reviewed"
+        else:
+            key = "watched"
+    template, category = {**VERDICT_MESSAGES, **(messages or {})}[key]
+    flash(template.format(name=name, rating=outcome.rating), category)
+    return redirect(fallback_url)
+
+
+def apply_row_edit(row, quick_rating, review_text, watched_date, posted):
+    """Edit 1 logged viewing in place and commit. This is the database work of review_edit.
+
+    The verdict posts of the movie page and the TMDB log page log new
+    viewings through apply_verdict. This edits the given row only.
+    posted holds the names of the fields that arrived in the post. A
+    field that did not arrive stays as it is."""
+
+    # Only a ladder tap changes the stars and the liked flag that
+    # follows them. A saved text or date edit must never delete the
+    # existing rating of the viewing. A tap on the CURRENT rating
+    # clears the stars instead. The viewing itself stays. This never
+    # deletes an explicit diary entry that the user edits.
+
+    # Each change stamps date_updated. The incremental Letterboxd
+    # export selects the changed rows by it. The first stars or the
+    # first text of a bare watch also set date_reviewed. The movie
+    # page and the engine select the current verdict by that date.
+
+    changed = False
+    if quick_rating is not None:
+        changed = True
+        if row.rating is not None and float(row.rating) == float(quick_rating):
+            for field, value in star_rating_fields(None).items():
+                setattr(row, field, value)
+            row.liked = False
+
+            # A row with no stars and no text is a bare watch again.
+            # A review date would make it outrank an older review.
+
+            if not (row.review or "").strip():
+                row.date_reviewed = None
+        else:
+            for field, value in star_rating_fields(quick_rating).items():
+                setattr(row, field, value)
+            row.liked = quick_rating >= 3
+            if row.date_reviewed is None:
+                row.date_reviewed = datetime.now()
+
+    # The date and the text change only if their fields ARRIVED IN
+    # THE POST. The per-row forms of the history page and the
+    # star-only ladder taps carry no date field. An absent field
+    # must never read as "clear the watch date".
+
+    if "date_watched" in posted:
+        # The date-only form field cannot improve a stored timestamp
+        # (for example, the actual clock time of a Plex watch).
+        # Thus, replace the value only if the calendar date changed.
+        new_date = watched_date
+        if new_date is None:
+            changed = changed or row.date_watched is not None
+            row.date_watched = None
+        elif row.date_watched is None or row.date_watched.date() != new_date:
+            row.date_watched = _watched_timestamp(new_date)
+            changed = True
+
+    # A text change on a row that already has a review keeps the
+    # original review date. A first review (no date_reviewed yet)
+    # sets the review date.
+
+    if "review" in posted:
+        new_text = review_text or ""
+        if new_text != (row.review or ""):
+            row.review = new_text
+            changed = True
+            if not row.date_reviewed:
+                row.date_reviewed = datetime.now()
+
+    if changed:
+        row.date_updated = datetime.now()
+    db.session.commit()
 
 
 def _watched_timestamp(watched_date):

@@ -58,22 +58,18 @@ from app.plex_player import remote_playback_configured
 from app.queues import QUEUE_NAME
 from app.main.helpers import (
     _hold_verdict_lock,
+    apply_verdict,
+    verdict_response,
     _card_fetch,
     decimal_ids,
     season_episode_counts,
-    _enqueue_profile_recompute,
     _ladder_fetch,
-    _ladder_state,
-    _mark_not_interested,
     ladder_payload,
     _quick_rating,
-    _letterboxd_locked,
-    _same_day_rerate,
     _upgrade_threshold,
     library_upgradable,
     series_upgradable,
     tv_meta_line,
-    _watched_timestamp,
     admin_required,
 )
 from app.recommendations import (
@@ -99,7 +95,6 @@ from app.streaming import (
     user_provider_ids,
     user_streaming,
 )
-from app.elicitation import set_last_response
 from app.rec_shelves import build_shelves, parse_criteria, replacement_film
 from app.criterion_now import criterion_now_card, is_criterion_subscriber
 from app.radarr_push import (
@@ -124,10 +119,8 @@ from app.newly_added import (
 )
 from app.streaming_rail import ENRICHED_KEY, enriched_movie, stored_rail
 from app.videos import (
-    clear_not_interested,
     clear_watchlist,
     find_or_create_tmdb_movie,
-    star_rating_fields,
 )
 from rq.registry import ScheduledJobRegistry, StartedJobRegistry
 
@@ -2122,6 +2115,19 @@ def _namesake_refusal(film_title, year, tmdb_id):
     return redirect(url_for("main.review_tmdb", tmdb_id=tmdb_id))
 
 
+# The TMDB log page words 3 verdicts in its own way. Its star post is
+# always a logged review.
+
+TMDB_VERDICT_MESSAGES = {
+    "flagged": ("Fitzflix will not recommend '{name}'.", "info"),
+    "flag_refused": (
+        "You logged '{name}'. The lowest rating for a seen film is 1 star.",
+        "warning",
+    ),
+    "rated": ("Logged review for '{name}'", "success"),
+}
+
+
 @bp.route("/review/tmdb/<int:tmdb_id>", methods=["GET", "POST"])
 @login_required
 def review_tmdb(tmdb_id):
@@ -2274,113 +2280,26 @@ def review_tmdb(tmdb_id):
         if movie is None:
             return _namesake_refusal(film_title, year, tmdb_id)
 
-        # The ✕ of the ladder is the not-interested flag, never a
-        # review. This is the same flow as the dedicated button below.
+        # The TMDB page never removes a rating and never undoes a ✕. Its
+        # ✕ never steers the drive. A poster-card rating (#45c) never
+        # moves the anchor of the drive either. A positive rating steers
+        # the "since you liked…" strip of the movie page that the
+        # redirect goes to. A new record has no features yet. Thus, its
+        # strip stays empty until the enrichment arrives.
 
-        if quick_present and quick_rating == 0:
-            if _mark_not_interested(current_user.id, movie.id):
-                if created:
-                    enqueue_task(
-                        "app.videos.refresh_tmdb_info",
-                        "Movies",
-                        movie.id,
-                        tmdb_id,
-                        description=f"Refreshing TMDB data for '{movie.title} ({movie.year})'",
-                    )
-                _enqueue_profile_recompute()
-                if not _ladder_fetch():
-                    flash(
-                        f"Fitzflix will not recommend '{film_title} ({year})'.",
-                        "info",
-                    )
-            elif not _ladder_fetch():
-                flash(
-                    f"You logged '{film_title} ({year})'. The lowest "
-                    f"rating for a seen film is 1 star.",
-                    "warning",
-                )
-            if _ladder_fetch():
-                return _ladder_state(current_user.id, movie.id)
-            return redirect(url_for("main.movie", movie_id=movie.id))
-
-        rating = quick_rating
-        # A bare submission (no rating or text) is a plain diary entry.
-        # It is a watch, not a review. Thus, it carries no review date.
-        # Fitzflix computes rewatch the way it does for Plex watches. An
-        # earlier row for this user and film makes this a repeat viewing.
-
-        is_review = bool(
-            rating is not None or (movie_review_form.review.data or "").strip()
+        outcome = apply_verdict(
+            int(current_user.id),
+            movie,
+            quick_rating,
+            movie_review_form.review.data,
+            movie_review_form.date_watched.data,
+            quick_present,
+            allow_unflag=False,
+            allow_remove=False,
+            steer=not request.form.get("from_card"),
+            steer_flag=False,
         )
-
-        # A second star tap on a film already reviewed today corrects
-        # that review in place. This is the same rule as on the movie page.
-
-        correction = (
-            quick_present
-            and rating is not None
-            and not (movie_review_form.review.data or "").strip()
-            and movie_review_form.date_watched.data is None
-        )
-
-        # A Letterboxd row of today cannot change in place.
-
-        if _letterboxd_locked(
-            current_user.id, movie.id, rating, removes=False, corrects=correction
-        ):
-            if _ladder_fetch():
-                return _ladder_state(current_user.id, movie.id)
-            flash(
-                f"'{film_title} ({year})' syncs from your Letterboxd account. "
-                f"Change it on Letterboxd instead.",
-                "info",
-            )
-            return redirect(url_for("main.movie", movie_id=movie.id))
-
-        edited = None
-        if correction:
-            edited = _same_day_rerate(current_user.id, movie.id, rating)
-        if edited is None:
-            rewatch = (
-                db.session.query(UserMovieReview.id)
-                .filter_by(user_id=current_user.id, movie_id=movie.id)
-                .first()
-                is not None
-            )
-            db.session.add(
-                UserMovieReview(
-                    user_id=current_user.id,
-                    movie_id=movie.id,
-                    review=movie_review_form.review.data,
-                    liked=rating is not None and rating >= 3,
-                    date_watched=_watched_timestamp(
-                        movie_review_form.date_watched.data
-                    ),
-                    date_reviewed=datetime.now() if is_review else None,
-                    rewatch=rewatch,
-                    **star_rating_fields(rating),
-                )
-            )
-        clear_watchlist(current_user.id, movie.id)
-        clear_not_interested(current_user.id, movie.id)
-        db.session.commit()
-        if rating is not None:
-            # The redirect goes to the movie page. There, a positive
-            # rating gets the "since you liked…" strip. A new record has
-            # no features yet. Thus, its strip stays empty until the
-            # enrichment arrives. This is harmless. A poster-card rating
-            # (#45c) never moves the anchor of the drive.
-            if not request.form.get("from_card"):
-                set_last_response(
-                    current_app.redis,
-                    current_user.id,
-                    movie.id,
-                    "rated",
-                    positive=rating >= 3,
-                )
-            _enqueue_profile_recompute()
-
-        if created:
+        if created and outcome.kind in ("flagged", "corrected", "logged"):
             enqueue_task(
                 "app.videos.refresh_tmdb_info",
                 "Movies",
@@ -2388,14 +2307,13 @@ def review_tmdb(tmdb_id):
                 tmdb_id,
                 description=f"Refreshing TMDB data for '{movie.title} ({movie.year})'",
             )
-
-        if _ladder_fetch():
-            return _ladder_state(current_user.id, movie.id)
-        if is_review:
-            flash(f"Logged review for '{film_title} ({year})'", "success")
-        else:
-            flash(f"Logged '{film_title} ({year})' in your history", "success")
-        return redirect(url_for("main.movie", movie_id=movie.id))
+        return verdict_response(
+            outcome,
+            movie,
+            f"{film_title} ({year})",
+            url_for("main.movie", movie_id=movie.id),
+            messages=TMDB_VERDICT_MESSAGES,
+        )
 
     # The preview of the engine, as on the movie page. The TMDB-keyed
     # lane of the shared score source feeds the estimate of the ladder.

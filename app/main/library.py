@@ -86,24 +86,20 @@ from app.infuse_player import play_movie as infuse_play_movie
 from app.plex_player import play_movie, remote_playback_configured
 from app.main.helpers import (
     _hold_verdict_lock,
+    apply_verdict,
+    verdict_response,
     admin_required,
     flash_form_errors,
     season_episode_counts,
     _card_fetch,
-    _enqueue_profile_recompute,
     _ladder_fetch,
-    _ladder_state,
     _latest_review_row,
     decimal_id,
-    _mark_not_interested,
     _quick_rating,
-    _letterboxd_locked,
-    _same_day_rerate,
     _upgrade_threshold,
     library_upgradable,
     series_upgradable,
     tv_meta_line,
-    _watched_timestamp,
 )
 from app.recommendations import (
     CREW_ROLE_JOBS,
@@ -124,10 +120,7 @@ from app.streaming import (
     user_provider_ids,
     user_streaming,
 )
-from app.elicitation import (
-    set_last_response,
-    suggestions_after_rating,
-)
+from app.elicitation import suggestions_after_rating
 from app.radarr_push import (
     radarr_configured,
     radarr_tmdb_ids,
@@ -137,14 +130,12 @@ from app.triage import (
     lossy_audio_candidates,
 )
 from app.videos import (
-    clear_not_interested,
     clear_watchlist,
     criterion_release_lookups,
     language_names,
     stored_criterion_releases,
     library_language_choices,
     resolve_language_code,
-    star_rating_fields,
     track_metadata_scan,
     untouched_key_still_claimed,
 )
@@ -1388,186 +1379,29 @@ def movie(movie_id):
                     return redirect(url_for("main.movie", movie_id=movie.id))
             _hold_verdict_lock(f"movie:{target.id}")
 
-        # ✕ is "not interested, never saw it". It is a status flag, never
-        # a review. The film leaves each recommendation surface. A seen
-        # film cannot get the flag (its floor is 1 star). A tap on a lit
-        # ✕ removes the flag.
+        # A poster-card post (#45c) and a tap on a suggestion card never
+        # steer the drive. Only the own page of a film (and the featured
+        # card) moves the last-response state.
 
-        if rating == 0:
-            target_title = target.display_title
-            existing_flag = UserMovieStatus.query.filter_by(
-                user_id=int(current_user.id), movie_id=target.id, kind="not_interested"
-            ).first()
-            if existing_flag is not None:
-                db.session.delete(existing_flag)
-                db.session.commit()
-                _enqueue_profile_recompute()
-                if not _ladder_fetch():
-                    flash(f"'{target_title}' can be recommended again", "success")
-            elif _mark_not_interested(current_user.id, target.id):
-                # A poster-card post (#45c) never steers the drive. Only
-                # the own page of a film (and the featured card) moves
-                # the last-response state.
-                if target.id == movie.id and not request.form.get("from_card"):
-                    set_last_response(
-                        current_app.redis, current_user.id, movie.id, "not_interested"
-                    )
-                _enqueue_profile_recompute()
-                if not _ladder_fetch():
-                    flash(f"Fitzflix will not recommend '{target_title}'", "info")
-            elif not _ladder_fetch():
-                flash(
-                    f"You logged '{target_title}'. The lowest rating "
-                    f"for a seen film is 1 star",
-                    "warning",
-                )
-            if _ladder_fetch():
-                return _ladder_state(current_user.id, target.id)
-            return redirect(url_for("main.movie", movie_id=movie.id))
-
-        # A Letterboxd row cannot lose its stars or change them in place.
-
-        if _letterboxd_locked(
-            current_user.id,
-            target.id,
+        steer = target.id == movie.id and not request.form.get("from_card")
+        outcome = apply_verdict(
+            int(current_user.id),
+            target,
             rating,
-            removes=True,
-            corrects=quick_present
-            and not (movie_review_form.review.data or "").strip()
-            and movie_review_form.date_watched.data is None,
-        ):
-            if _ladder_fetch():
-                return _ladder_state(current_user.id, target.id)
-            flash(
-                f"'{title if target.id == movie.id else target.title}' syncs "
-                f"from your Letterboxd account. Change it on Letterboxd instead.",
-                "info",
-            )
-            return redirect(url_for("main.movie", movie_id=movie.id))
-
-        # A tap on your current rating removes it. A bare drive-style
-        # row (no watch date, no text) is deleted completely. A viewing
-        # with real history only loses its stars.
-
-        if rating is not None:
-            current_row = _latest_review_row(current_user.id, target.id)
-            if (
-                current_row is not None
-                and current_row.rating is not None
-                and float(current_row.rating) == rating
-            ):
-                target_title = target.display_title
-                bare = (
-                    current_row.date_watched is None
-                    and not (current_row.review or "").strip()
-                )
-                if bare:
-                    db.session.delete(current_row)
-                else:
-                    for field, value in star_rating_fields(None).items():
-                        setattr(current_row, field, value)
-                    current_row.liked = False
-                    current_row.date_updated = datetime.now()
-
-                    # A watched row with no stars and no text is a bare
-                    # watch again, the same as on the History page. A
-                    # review date would make it outrank an older review.
-
-                    if not (current_row.review or "").strip():
-                        current_row.date_reviewed = None
-                db.session.commit()
-                _enqueue_profile_recompute()
-                if _ladder_fetch():
-                    return _ladder_state(current_user.id, target.id)
-                flash(f"Removed your rating of '{target_title}'", "success")
-                return redirect(url_for("main.movie", movie_id=movie.id))
-
-        # A different star on a day that you already reviewed corrects
-        # that review in place. Tastes change, but not 2 times in a day.
-        # A form with text or a watch date is a real new log. It skips
-        # this.
-
-        if (
-            quick_present
-            and rating is not None
-            and not (movie_review_form.review.data or "").strip()
-            and movie_review_form.date_watched.data is None
-        ):
-            edited = _same_day_rerate(current_user.id, target.id, rating)
-            if edited is not None:
-                clear_watchlist(current_user.id, target.id)
-                clear_not_interested(current_user.id, target.id)
-                db.session.commit()
-                if target.id == movie.id and not request.form.get("from_card"):
-                    set_last_response(
-                        current_app.redis,
-                        current_user.id,
-                        movie.id,
-                        "rated",
-                        positive=rating >= 3,
-                    )
-                _enqueue_profile_recompute()
-                if _ladder_fetch():
-                    return _ladder_state(current_user.id, target.id)
-                target_title = target.display_title
-                flash(f"Rated '{target_title}' {rating:g} out of 5 stars", "success")
-                return redirect(url_for("main.movie", movie_id=movie.id))
-
-        # A bare submission (no rating or text) is a plain diary entry.
-        # It is a watch, not a review. Thus, it has no review date. The
-        # rewatch flag computes in the same way as for Plex watches. Any
-        # earlier row for this user and film makes this a repeat viewing.
-
-        is_review = bool(
-            rating is not None or (movie_review_form.review.data or "").strip()
+            movie_review_form.review.data,
+            movie_review_form.date_watched.data,
+            quick_present,
+            allow_unflag=True,
+            allow_remove=True,
+            steer=steer,
+            steer_flag=steer,
         )
-        rewatch = (
-            db.session.query(UserMovieReview.id)
-            .filter_by(user_id=current_user.id, movie_id=target.id)
-            .first()
-            is not None
+        return verdict_response(
+            outcome,
+            target,
+            target.display_title,
+            url_for("main.movie", movie_id=movie.id),
         )
-        review = UserMovieReview(
-            user_id=current_user.id,
-            movie_id=target.id,
-            review=movie_review_form.review.data,
-            liked=rating is not None and rating >= 3,
-            date_watched=_watched_timestamp(movie_review_form.date_watched.data),
-            date_reviewed=datetime.now() if is_review else None,
-            rewatch=rewatch,
-            **star_rating_fields(rating),
-        )
-        db.session.add(review)
-        clear_watchlist(current_user.id, target.id)
-        clear_not_interested(current_user.id, target.id)
-        db.session.commit()
-        target_title = target.display_title
-        if rating is not None:
-            # This is the same last-response state that the rating drive
-            # keeps. A positive rating shows the "since you liked…" strip
-            # on the redirect back here. It also steers the next card of
-            # the drive. A rating of a suggestion does not move the
-            # anchor. The strip refreshes in place without the rated
-            # film. A poster-card rating (#45c) does not move the anchor
-            # either.
-            if target.id == movie.id and not request.form.get("from_card"):
-                set_last_response(
-                    current_app.redis,
-                    current_user.id,
-                    movie.id,
-                    "rated",
-                    positive=rating >= 3,
-                )
-            _enqueue_profile_recompute()
-            if not _ladder_fetch():
-                flash(f"Rated '{target_title}' {rating:g} out of 5 stars", "success")
-        elif is_review:
-            flash(f"Logged review for '{title}'", "success")
-        else:
-            flash(f"Logged '{title}' in your history", "success")
-        if _ladder_fetch():
-            return _ladder_state(current_user.id, target.id)
-        return redirect(url_for("main.movie", movie_id=movie.id))
 
     # The watchlist toggle. An add is useful only for a film with no
     # local copy (the funnel stage before the shopping list). Removal is
