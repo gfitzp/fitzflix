@@ -37,6 +37,7 @@ from app.recommendations import (
     CREW_ROLE_JOBS,
     JOB_TO_CLASS,
     TOP_BILLING_CUTOFF,
+    features_from_parts,
     score_movie,
     stored_profile,
 )
@@ -384,34 +385,17 @@ def _payload_features(payload):
     library films and the streaming candidates score on the same
     affinities, crew roles included."""
 
-    features = []
-    for genre in payload.get("genres") or []:
-        features.append(("genre", f"genre:{genre['id']}", genre["name"]))
-    year = payload.get("year") or ""
-    if str(year).isdigit():
-        decade = int(year) // 10 * 10
-        features.append(("decade", f"decade:{decade}", f"{decade}s"))
-    language = payload.get("original_language")
-    if language:
-        features.append(
-            ("language", f"language:{language}", f"{language.upper()}-language")
-        )
-    for keyword in payload.get("keywords") or []:
-        features.append(("keyword", f"keyword:{keyword['id']}", keyword["name"]))
-    for actor in payload.get("cast") or []:
-        features.append(("actor", f"actor:{actor['id']}", actor["name"]))
-    for person in payload.get("crew") or []:
-        cls = JOB_TO_CLASS[person["job"]]
-        label = CREW_ROLE_JOBS[cls][1].format(name=person["name"])
-        features.append((cls, f"{cls}:{person['id']}", label))
-
-    seen = set()
-    unique = []
-    for row in features:
-        if row[1] not in seen:
-            seen.add(row[1])
-            unique.append(row)
-    return unique
+    return features_from_parts(
+        [(genre["id"], genre["name"]) for genre in payload.get("genres") or []],
+        [(keyword["id"], keyword["name"]) for keyword in payload.get("keywords") or []],
+        [(actor["id"], actor["name"]) for actor in payload.get("cast") or []],
+        [
+            (person["id"], person["name"], person["job"])
+            for person in payload.get("crew") or []
+        ],
+        payload.get("year"),
+        payload.get("original_language"),
+    )
 
 
 def compute_user_rail(user):

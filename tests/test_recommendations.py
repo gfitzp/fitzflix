@@ -1716,3 +1716,61 @@ def test_job_to_class_is_the_one_crew_job_map():
     assert JOB_TO_CLASS == expected
     assert JOB_TO_CLASS["Director of Photography"] == "cinematographer"
     assert CREW_ROLE_LABELS == {job: cls.capitalize() for job, cls in expected.items()}
+
+
+def test_the_library_and_the_payload_give_1_film_the_same_features(app):
+    """collect_features and the streaming rail agree on 1 fixture film.
+
+    The library reads the database rows. The rail reads an enriched
+    TMDB payload. Both go through features_from_parts."""
+
+    from app import db
+    from app.models import MovieCrew, TMDBKeyword
+    from app.recommendations import collect_features
+    from app.streaming_rail import _payload_features
+
+    with app.app_context():
+        movie = make_movie("Agreement Film", 1987, tmdb_original_language="fr")
+        movie.genres.append(genre(990201, "Agreement Drama"))
+        keyword = TMDBKeyword(id=990202, name="agreement keyword")
+        db.session.add(keyword)
+        movie.keywords.append(keyword)
+        star = make_person(990203, "Agreement Star", movies=[movie])
+        director = make_person(990204, "Agreement Director")
+        db.session.add(
+            MovieCrew(
+                movie_id=movie.id,
+                credit_id=director.id,
+                department="Directing",
+                job="Director",
+            )
+        )
+        db.session.flush()
+        library = collect_features([movie.id])[movie.id]
+
+    payload = {
+        "year": "1987",
+        "original_language": "fr",
+        "genres": [{"id": 990201, "name": "Agreement Drama"}],
+        "keywords": [{"id": 990202, "name": "agreement keyword"}],
+        "cast": [{"id": star.id, "name": "Agreement Star"}],
+        "crew": [{"id": director.id, "name": "Agreement Director", "job": "Director"}],
+    }
+    assert _payload_features(payload) == library
+    assert [row[0] for row in library] == [
+        "decade",
+        "language",
+        "genre",
+        "keyword",
+        "director",
+        "actor",
+    ]
+
+
+def test_features_from_parts_skips_a_missing_year_and_an_unknown_job(app):
+    from app.recommendations import features_from_parts
+
+    features = features_from_parts(
+        [], [], [(1, "A"), (1, "A")], [(2, "B", "Caterer")], None, None
+    )
+    assert features == [("actor", "actor:1", "A")]

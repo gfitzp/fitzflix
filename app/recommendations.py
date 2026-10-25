@@ -199,6 +199,48 @@ def marker_bar(profile):
     return max(MARKER_THRESHOLD, profile.get("marker_bar") or 0.0)
 
 
+def features_from_parts(genres, keywords, cast, crew, year, language):
+    """Return the (class, key, label) feature tuples of 1 film from its parts.
+
+    genres, keywords and cast hold (TMDB id, name) pairs. crew holds
+    (TMDB id, name, job) triples. A job that is not a crew role of the
+    profile does not count. year can be an int, a text of digits, or
+    None. The library films (collect_features) and the TMDB payloads
+    (the streaming rail) use this 1 function. Thus, a film gets the same
+    features, in the same order, from the 2 sources. A feature counts 1
+    time. An actor can appear 2 times on 1 film as different
+    characters."""
+
+    features = []
+    if str(year or "").isdigit():
+        decade = int(year) // 10 * 10
+        features.append(("decade", f"decade:{decade}", f"{decade}s"))
+    if language:
+        features.append(
+            ("language", f"language:{language}", f"{language.upper()}-language")
+        )
+    for genre_id, name in genres:
+        features.append(("genre", f"genre:{genre_id}", name))
+    for keyword_id, name in keywords:
+        features.append(("keyword", f"keyword:{keyword_id}", name))
+    for credit_id, name, job in crew:
+        cls = JOB_TO_CLASS.get(job)
+        if cls is None:
+            continue
+        label = CREW_ROLE_JOBS[cls][1].format(name=name)
+        features.append((cls, f"{cls}:{credit_id}", label))
+    for credit_id, name in cast:
+        features.append(("actor", f"actor:{credit_id}", name))
+
+    seen = set()
+    unique = []
+    for row in features:
+        if row[1] not in seen:
+            seen.add(row[1])
+            unique.append(row)
+    return unique
+
+
 def collect_features(movie_ids):
     """Return the (class, key, label) feature tuples for each movie id.
 
@@ -210,33 +252,39 @@ def collect_features(movie_ids):
     payloads against the same profile.
     """
 
-    features = {movie_id: [] for movie_id in movie_ids}
+    parts = {
+        movie_id: {
+            "genres": [],
+            "keywords": [],
+            "cast": [],
+            "crew": [],
+            "year": None,
+            "language": None,
+        }
+        for movie_id in movie_ids
+    }
     if not movie_ids:
-        return features
+        return {}
 
     for movie_id, year, language in db.session.query(
         Movie.id, Movie.year, Movie.tmdb_original_language
     ).filter(Movie.id.in_(movie_ids)):
-        decade = year // 10 * 10
-        features[movie_id].append(("decade", f"decade:{decade}", f"{decade}s"))
-        if language:
-            features[movie_id].append(
-                ("language", f"language:{language}", f"{language.upper()}-language")
-            )
+        parts[movie_id]["year"] = year
+        parts[movie_id]["language"] = language
 
     for movie_id, genre_id, name in (
         db.session.query(movie_genres.c.movie_id, TMDBGenre.id, TMDBGenre.name)
         .join(TMDBGenre, TMDBGenre.id == movie_genres.c.genre_id)
         .filter(movie_genres.c.movie_id.in_(movie_ids))
     ):
-        features[movie_id].append(("genre", f"genre:{genre_id}", name))
+        parts[movie_id]["genres"].append((genre_id, name))
 
     for movie_id, keyword_id, name in (
         db.session.query(movie_keywords.c.movie_id, TMDBKeyword.id, TMDBKeyword.name)
         .join(TMDBKeyword, TMDBKeyword.id == movie_keywords.c.keyword_id)
         .filter(movie_keywords.c.movie_id.in_(movie_ids))
     ):
-        features[movie_id].append(("keyword", f"keyword:{keyword_id}", name))
+        parts[movie_id]["keywords"].append((keyword_id, name))
 
     for movie_id, credit_id, name, job in (
         db.session.query(
@@ -247,9 +295,7 @@ def collect_features(movie_ids):
             MovieCrew.movie_id.in_(movie_ids), MovieCrew.job.in_(list(JOB_TO_CLASS))
         )
     ):
-        cls = JOB_TO_CLASS[job]
-        label = CREW_ROLE_JOBS[cls][1].format(name=name)
-        features[movie_id].append((cls, f"{cls}:{credit_id}", label))
+        parts[movie_id]["crew"].append((credit_id, name, job))
 
     for movie_id, credit_id, name in (
         db.session.query(MovieCast.movie_id, MovieCast.credit_id, TMDBCredit.name)
@@ -259,21 +305,12 @@ def collect_features(movie_ids):
             MovieCast.billing_order < TOP_BILLING_CUTOFF,
         )
     ):
-        features[movie_id].append(("actor", f"actor:{credit_id}", name))
+        parts[movie_id]["cast"].append((credit_id, name))
 
-    # An actor can appear 2 times on 1 film as different characters. A
-    # feature counts 1 time for each film.
-
-    for movie_id, rows in features.items():
-        seen = set()
-        unique = []
-        for row in rows:
-            if row[1] not in seen:
-                seen.add(row[1])
-                unique.append(row)
-        features[movie_id] = unique
-
-    return features
+    return {
+        movie_id: features_from_parts(**movie_parts)
+        for movie_id, movie_parts in parts.items()
+    }
 
 
 def latest_ratings(user_id):
