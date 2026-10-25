@@ -1439,29 +1439,11 @@ def localization_task(
 
         except Exception:
             current_app.logger.error(traceback.format_exc())
-            release_staging_reservation(os.path.basename(source_path))
 
             # Remove the staged copies. Fitzflix rejects the original source.
             # Nothing has changed the source since staging.
 
-            for stray in staging_paths:
-                try:
-                    os.remove(stray)
-                except OSError:
-                    pass
-
-            # A failed move to the rejects directory must not prevent the
-            # release of the lock. If it did, a re-import of this same title
-            # would stay blocked until the timeout of the lock expires.
-
-            try:
-                move_to_rejects(source_path, "exception")
-            except Exception:
-                current_app.logger.error(traceback.format_exc())
-
-            if lock:
-                current_app.lock_manager.unlock(lock)
-                current_app.logger.info(f"Removed lock {lock}")
+            abandon_import(source_path, lock, strays=staging_paths)
 
         else:
             # The working copy (the staged source or the conversion temp file)
@@ -1529,32 +1511,66 @@ def localization_task(
         return True
 
 
-def abandon_handoff(source_path, lock, staged_output, staged=True):
-    """Clean up after a stage could not queue the next stage (#340).
+def abandon_import(
+    source_path,
+    lock,
+    strays=(),
+    reservation=None,
+    reason="exception",
+    keep_source=False,
+):
+    """Clean up an import stage that failed. Each step is best effort.
 
-    Remove the staged output, release the staging reservation and the
-    title lock, and leave the source in place. The hourly sweep of the
-    import directory queues the source again. Each step is best effort."""
+    Remove the stray work files, release the staging reservation, move
+    the source to rejects with reason, and release the title lock. With
+    keep_source, the source stays in the import directory. A failed
+    step must not stop the next step. A lock that stays held blocks the
+    title until the TTL of the lock expires. reservation is the name of
+    the reservation. The default is the basename of the source."""
 
-    current_app.logger.error(
-        f"'{os.path.basename(source_path)}' The next stage could not be "
-        f"queued. The source stays for the next sweep: " + traceback.format_exc()
-    )
-    if staged and staged_output:
+    for stray in strays:
+        if not stray:
+            continue
         try:
-            os.remove(staged_output)
-        except OSError:
+            os.remove(stray)
+        except FileNotFoundError:
             pass
+        except OSError:
+            current_app.logger.warning(traceback.format_exc())
     try:
-        release_staging_reservation(os.path.basename(source_path))
+        release_staging_reservation(reservation or os.path.basename(source_path))
     except Exception:
         current_app.logger.warning(traceback.format_exc())
+    if not keep_source:
+        try:
+            move_to_rejects(source_path, reason)
+        except Exception:
+            current_app.logger.error(traceback.format_exc())
     if lock:
         try:
             current_app.lock_manager.unlock(lock)
             current_app.logger.info(f"Removed lock {lock}")
         except Exception:
             current_app.logger.warning(traceback.format_exc())
+
+
+def abandon_handoff(source_path, lock, staged_output, staged=True):
+    """Clean up after a stage could not queue the next stage (#340).
+
+    Remove the staged output, release the staging reservation and the
+    title lock, and leave the source in place. The hourly sweep of the
+    import directory queues the source again."""
+
+    current_app.logger.error(
+        f"'{os.path.basename(source_path)}' The next stage could not be "
+        f"queued. The source stays for the next sweep: " + traceback.format_exc()
+    )
+    abandon_import(
+        source_path,
+        lock,
+        strays=[staged_output] if staged else [],
+        keep_source=True,
+    )
 
 
 def _plan_conversion_or_reject(file_path, file_details):
@@ -1963,22 +1979,11 @@ def move_localized_file(
             current_app.logger.error(traceback.format_exc())
 
             # Remove both hidden copies. The original source is unchanged.
-            # Fitzflix rejects the source (best effort).
+            # Fitzflix rejects the source.
 
-            for stray in (hidden_output_file, destination_hidden):
-                try:
-                    os.remove(stray)
-                except OSError:
-                    pass
-
-            try:
-                move_to_rejects(source_path, "exception")
-            except Exception:
-                current_app.logger.error(traceback.format_exc())
-
-            if lock:
-                current_app.lock_manager.unlock(lock)
-                current_app.logger.info(f"Removed lock {lock}")
+            abandon_import(
+                source_path, lock, strays=(hidden_output_file, destination_hidden)
+            )
 
         else:
             enqueue_task(
@@ -2737,21 +2742,14 @@ def finalize_localization(
                 # and its record still points to it. For an in-place import
                 # the renamed file IS file_path, and it goes to rejects.
 
+                # The finally block below releases the lock.
+
                 stray = None
                 if not renamed:
                     stray = hidden_output_file
                 elif file_path != output_file and not replaced_existing:
                     stray = output_file
-                if stray:
-                    try:
-                        os.remove(stray)
-                        current_app.logger.info(f"Removed '{stray}'")
-                    except FileNotFoundError:
-                        pass
-                    except OSError:
-                        current_app.logger.warning(traceback.format_exc())
-                move_to_rejects(file_path, "exception")
-                _remove_staged_output(staged_output)
+                abandon_import(file_path, None, strays=(stray, staged_output))
 
         else:
             current_app.logger.info(f"'{file_path}' processed as '{output_file}'")

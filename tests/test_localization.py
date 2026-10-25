@@ -2192,8 +2192,13 @@ def test_a_failed_finalize_commit_leaves_no_library_copy(
             for job in app.sql_queue.jobs
             if job.func_name == "app.videos.finalize_localization"
         ]
+        # The localization reserved the space of its output. The failed
+        # cataloging frees the reservation (abandon_import).
+
+        assert app.redis.hexists(importing.STAGING_RESERVED_KEY, basename)
         monkeypatch.setattr(importing, "HeldImport", Failing)
         finalize_localization(*finalize.args)
+        assert not app.redis.hexists(importing.STAGING_RESERVED_KEY, basename)
 
         output = os.path.join(
             app.config["LIBRARY_DIR"],

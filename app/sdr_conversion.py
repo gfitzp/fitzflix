@@ -464,9 +464,8 @@ def convert_localized_file(
     from app.importing import (
         _hold_title_lock,
         abandon_handoff,
+        abandon_import,
         defer_for_title_lock,
-        move_to_rejects,
-        release_staging_reservation,
         set_staging_reservation,
     )
     from app.videos import wait_for_subprocess
@@ -572,15 +571,13 @@ def convert_localized_file(
 
         except Exception:
             current_app.logger.error(traceback.format_exc())
-            _remove_quietly(video_only, muxed, hidden_output_file)
-            release_staging_reservation(source_name)
-            try:
-                move_to_rejects(source_path, "conversion failed")
-            except Exception:
-                current_app.logger.error(traceback.format_exc())
-            if lock:
-                current_app.lock_manager.unlock(lock)
-                current_app.logger.info(f"Removed lock {lock}")
+            abandon_import(
+                source_path,
+                lock,
+                strays=(video_only, muxed, hidden_output_file),
+                reservation=source_name,
+                reason="conversion failed",
+            )
             return False
 
         current_app.logger.info(
