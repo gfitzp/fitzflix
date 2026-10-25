@@ -131,6 +131,13 @@ def register():
         flash("You are now a registered user.")
         return redirect(url_for("auth.login"))
 
+    # The page does not show the field errors. Thus, a refused field (for
+    # example, an email address that is too long, #329) gets a message.
+
+    for field, messages in form.errors.items():
+        if field != "csrf_token":
+            flash(f"{getattr(form, field).label.text}: {messages[0]}", "danger")
+
     return render_template("auth/register.html", title="Register", form=form)
 
 

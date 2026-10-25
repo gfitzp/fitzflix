@@ -907,6 +907,14 @@ def profile():
     if upload_response is not None:
         return upload_response
 
+    # The page does not show the field errors. Thus, a refused field (for
+    # example, a username longer than its column, #329) gets a message.
+
+    for form in (email_form, letterboxd_form, plex_form, plex_player_form, infuse_form):
+        for field, messages in form.errors.items():
+            if field != "csrf_token":
+                flash(f"{getattr(form, field).label.text}: {messages[0]}", "danger")
+
     return render_template(
         "profile.html",
         title="Profile",

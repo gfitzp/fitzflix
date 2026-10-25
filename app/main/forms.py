@@ -44,7 +44,11 @@ class ResetFrameScoresForm(FlaskForm):
 class EditProfileForm(FlaskForm):
     """Change the account email, on the Profile page."""
 
-    email = StringField("New Email Address", validators=[DataRequired(), Email()])
+    # The lengths match the VARCHAR columns of the user table (#329)
+
+    email = StringField(
+        "New Email Address", validators=[DataRequired(), Email(), Length(max=120)]
+    )
     email2 = StringField(
         "Confirm Email Address", validators=[DataRequired(), Email(), EqualTo("email")]
     )
@@ -76,7 +80,9 @@ class UpdateAPIKeyForm(FlaskForm):
 class PlexUsernameForm(FlaskForm):
     """Map this Fitzflix account to a Plex account for watch attribution."""
 
-    plex_username = StringField("Plex Username", validators=[Optional()])
+    plex_username = StringField(
+        "Plex Username", validators=[Optional(), Length(max=64)]
+    )
     plex_submit = SubmitField("Update Plex Mapping")
 
 
@@ -85,7 +91,9 @@ class LetterboxdUsernameForm(FlaskForm):
 
     A blank value disables the sync."""
 
-    letterboxd_username = StringField("Letterboxd Username", validators=[Optional()])
+    letterboxd_username = StringField(
+        "Letterboxd Username", validators=[Optional(), Length(max=64)]
+    )
     letterboxd_submit = SubmitField("Update Letterboxd Sync")
 
 
@@ -98,7 +106,7 @@ class PlexPlayerForm(FlaskForm):
     buttons with it."""
 
     plex_player_address = StringField(
-        "Playback Device Address", validators=[Optional()]
+        "Playback Device Address", validators=[Optional(), Length(max=64)]
     )
     plex_player_submit = SubmitField("Update Playback Device")
 
@@ -110,7 +118,9 @@ class InfusePlayerForm(FlaskForm):
     the user enters it through InfusePinForm. A blank value removes the
     device."""
 
-    infuse_player_address = StringField("Apple TV Address", validators=[Optional()])
+    infuse_player_address = StringField(
+        "Apple TV Address", validators=[Optional(), Length(max=64)]
+    )
     infuse_player_submit = SubmitField("Pair Apple TV for Infuse")
 
 
