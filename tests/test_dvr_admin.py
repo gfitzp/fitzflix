@@ -273,3 +273,23 @@ def test_manual_rebuild_reports_when_nothing_was_queued(app, admin_client):
     ).get_data(as_text=True)
     assert "No rebuild queued" in second
     assert len(rebuild_jobs(app)) == 1
+
+
+def test_delete_confirm_survives_a_quote_in_the_channel_name(app, admin_client):
+    """Test a channel named "Kids' Picks" (#347).
+
+    The browser decodes the attribute before the JavaScript parser reads
+    it. A raw quote ended the string, the handler did not compile, and
+    the button deleted the channel with no prompt."""
+
+    import html
+
+    with app.app_context():
+        db.session.add(DVRChannel(number=307, name="Kids' Picks", slug="kids-picks"))
+        db.session.commit()
+
+    page = admin_client.get("/dvr/channels").get_data(as_text=True)
+    onclick = re.search(r"onclick='([^']*Kids[^']*)'", page)
+    assert onclick, "no single-quoted onclick for the channel"
+    script = html.unescape(onclick.group(1))
+    assert script == 'return confirm("Delete channel 307 (Kids\\u0027 Picks)?");'

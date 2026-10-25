@@ -55,7 +55,9 @@
 				<form action="" method="post" class="d-inline">
 					{{ action_form.csrf_token() }}
 					<input type="hidden" name="channel_id" value="{{ channel.id }}">
-					<button class="btn btn-sm btn-danger" name="delete_submit" value="Delete" type="submit" onclick="return confirm('Delete channel {{ channel.number }} ({{ channel.name }})?');">Delete</button>
+					{# tojson makes the name a safe JavaScript string. A quote in the name
+					   broke the handler, and the button deleted with no prompt (#347) #}
+					<button class="btn btn-sm btn-danger" name="delete_submit" value="Delete" type="submit" onclick='return confirm({{ ("Delete channel " ~ channel.number ~ " (" ~ channel.name ~ ")?")|tojson }});'>Delete</button>
 				</form>
 			</td>
 		</tr>
