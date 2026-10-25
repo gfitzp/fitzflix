@@ -859,3 +859,17 @@ def test_file_activity_page_zero_is_page_one(app, admin_client):
         ).get_data(as_text=True)
     finally:
         os.remove(rejected)
+
+
+def test_the_queue_poll_stops_when_the_session_ends(admin_client):
+    """Test the queue badge poll of base.html (#348).
+
+    After a logout or an expired session, the answer is not queue data.
+    The poll must stop. Before the fix, .finally() armed the 5 s timer
+    again after every 401."""
+
+    body = admin_client.get("/").get_data(as_text=True)
+    assert "var pollStopped = false;" in body
+    assert "if (document.hidden || pollStopped) return;" in body
+    assert "if (!response.ok || response.redirected) {" in body
+    assert "if (!document.hidden && !pollStopped) poll();" in body

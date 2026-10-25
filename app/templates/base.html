@@ -781,32 +781,51 @@
 					});
 			}
 
+			// The poll stops for good when the answer is not queue data
+			// (#348). An expired session answers 401 or redirects to the
+			// login page. The next page load starts the poll again. A
+			// network failure is not a stop. The poll tries again
+
+			var pollStopped = false;
+
 			function scheduleNext() {
 				clearTimeout(pollTimer);
-				if (document.hidden) return;
+				if (document.hidden || pollStopped) return;
 				pollTimer = setTimeout(poll, POLL_MS);
 			}
 
 			function poll() {
 				fetch(QUEUE_URL, { credentials: "same-origin" })
-					.then(function(response) { return response.json(); })
+					.then(function(response) {
+						if (!response.ok || response.redirected) {
+							pollStopped = true;
+							return null;
+						}
+						return response.json();
+					})
 					.then(function(queue_details) {
-						// An expired session redirects to the login page. That
-						// page is not queue data. Never paint it into the badge
+						// The login page is not queue data. Never paint it
+						// into the badge
 
-						if (!queue_details || typeof queue_details.count !== "number") return;
+						if (!queue_details || typeof queue_details.count !== "number") {
+							pollStopped = true;
+							return;
+						}
 						setQueueCount(queue_details.count);
 						renderRunning(queue_details.running || []);
 						renderAll(queue_details.all || [], queue_details.files || []);
 						return refreshCards();
 					})
-					.catch(function() {})
+					.catch(function(error) {
+						// A body that is not JSON is not queue data
+						if (error instanceof SyntaxError) pollStopped = true;
+					})
 					.finally(scheduleNext);
 			}
 
 			document.addEventListener("visibilitychange", function() {
 				clearTimeout(pollTimer);
-				if (!document.hidden) poll();
+				if (!document.hidden && !pollStopped) poll();
 			});
 
 			poll();
