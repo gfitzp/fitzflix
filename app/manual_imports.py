@@ -423,7 +423,7 @@ def record_manual_interaction(service, payload):
         f"{service} cannot import '{title}' ({reason}); it waits on the "
         f"Manual imports page"
     )
-    notify_admin(service, title, reason)
+    email_manual_import_needed(service, title, reason)
     return True
 
 
@@ -450,7 +450,7 @@ def still_blocked(service, download_id):
     )
 
 
-def notify_admin(service, title, reason):
+def email_manual_import_needed(service, title, reason):
     """Email the admin about a download that waits for a manual import."""
 
     from app.email import send_email

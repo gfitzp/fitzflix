@@ -38,10 +38,11 @@ from datetime import datetime, timezone
 from pymediainfo import MediaInfo
 from rq import get_current_job
 
-from flask import current_app, render_template
+from flask import current_app
 from werkzeug.local import LocalProxy
 
 from app import db, get_app, makedirs_on_mounted_volume
+from app.email import notify_admin
 
 app = LocalProxy(get_app)
 
@@ -232,37 +233,6 @@ def held_decision(file_path):
     from app.models import HeldImport
 
     return HeldImport.query.filter_by(held_path=file_path, decision="import").first()
-
-
-def _admin_email():
-    """Return the email address of the first admin, or None."""
-
-    from app.models import User
-
-    admin_user = User.query.filter(User.admin == True).first()
-    return admin_user.email if admin_user else None
-
-
-def notify_admin(subject, template, **context):
-    """Send an email from a template pair in templates/email to the first admin."""
-
-    from app.email import send_email as send_email_async
-
-    # A failed email must not stop the import step that sends it.
-
-    try:
-        recipient = _admin_email()
-        if not recipient:
-            return
-        send_email_async(
-            f"Fitzflix - {subject}",
-            sender=("Fitzflix", current_app.config["SERVER_EMAIL"]),
-            recipients=[recipient],
-            text_body=render_template(f"email/{template}.txt", **context),
-            html_body=render_template(f"email/{template}.html", **context),
-        )
-    except Exception:
-        current_app.logger.error(traceback.format_exc())
 
 
 def hold_import(file_path, file_details, plan, blockers):

@@ -60,8 +60,8 @@ from app.criterion_catalog import (
     criterion_release_lookups,
     stored_criterion_releases,
 )
+from app.email import admin_email, notify_admin
 from app.email import send_email as send_email_async
-from app.email import task_send_email as send_email
 from app.models import (
     ArchivedOriginal,
     File,
@@ -72,7 +72,6 @@ from app.models import (
     RefFeatureType,
     RefQuality,
     TVSeries,
-    User,
     tmdb_get,
 )
 from app.pipeline import migrate_trail, record_task_stage
@@ -82,7 +81,6 @@ from app.sdr_conversion import (
     held_decision,
     hold_import,
     needs_placebo,
-    notify_admin,
     plan_conversion,
     real_rips_blocking,
 )
@@ -961,25 +959,12 @@ def localization_task(
                 move_to_rejects(file_path, "inferior quality")
                 current_app.lock_manager.unlock(lock)
                 current_app.logger.info(f"Removed lock {lock}")
-                admin_user = User.query.filter(User.admin == True).first()
-                send_email(
-                    "Fitzflix - Received an inferior-quality file",
-                    sender=("Fitzflix", current_app.config["SERVER_EMAIL"]),
-                    recipients=[admin_user.email],
-                    text_body=render_template(
-                        "email/inferior_warning.txt",
-                        user=admin_user.email,
-                        basename=basename,
-                        better_versions=better_versions,
-                        rejects_directory=current_app.config["REJECTS_DIR"],
-                    ),
-                    html_body=render_template(
-                        "email/inferior_warning.html",
-                        user=admin_user.email,
-                        basename=basename,
-                        better_versions=better_versions,
-                        rejects_directory=current_app.config["REJECTS_DIR"],
-                    ),
+                notify_admin(
+                    "Received an inferior-quality file",
+                    "inferior_warning",
+                    basename=basename,
+                    better_versions=better_versions,
+                    rejects_directory=current_app.config["REJECTS_DIR"],
                 )
 
                 return False
@@ -2618,44 +2603,34 @@ def finalize_localization(
                     and not worse.converted_from_quality
                     and not file.converted_from_quality
                 ):
-                    admin_user = User.query.filter(User.admin == True).first()
-                    pending_emails.append(
-                        partial(
-                            send_email_async,
-                            "Fitzflix - Replaced a physical media file",
-                            sender=("Fitzflix", current_app.config["SERVER_EMAIL"]),
-                            recipients=[admin_user.email],
-                            text_body=render_template(
-                                "email/replaced_physical_media.txt",
-                                user=admin_user.email,
-                                file=file,
-                                worse=worse,
-                            ),
-                            html_body=render_template(
-                                "email/replaced_physical_media.html",
-                                user=admin_user.email,
-                                file=file,
-                                worse=worse,
-                            ),
-                        )
+                    # The bodies render now, while the worse row is still
+                    # in the session. The send waits for the commit.
+                    send = admin_email(
+                        "Replaced a physical media file",
+                        "replaced_physical_media",
+                        file=file,
+                        worse=worse,
                     )
+                    if send is not None:
+                        pending_emails.append(send)
 
                     if current_app.config["TODO_EMAIL"]:
+                        todo_email = current_app.config["TODO_EMAIL"]
                         pending_emails.append(
                             partial(
                                 send_email_async,
                                 f"Find and dispose of the media for '{worse.untouched_basename}'",
                                 sender=("Fitzflix", current_app.config["SERVER_EMAIL"]),
-                                recipients=[current_app.config["TODO_EMAIL"]],
+                                recipients=[todo_email],
                                 text_body=render_template(
                                     "email/replaced_physical_media.txt",
-                                    user=admin_user.email,
+                                    user=todo_email,
                                     file=file,
                                     worse=worse,
                                 ),
                                 html_body=render_template(
                                     "email/replaced_physical_media.html",
-                                    user=admin_user.email,
+                                    user=todo_email,
                                     file=file,
                                     worse=worse,
                                 ),
@@ -2895,21 +2870,8 @@ def finalize_localization(
                 )
 
             if possibly_foreign_language == True and len(output_audio_tracks) > 1:
-                admin_user = User.query.filter(User.admin == True).first()
-                send_email_async(
-                    "Fitzflix - Foreign audio track added",
-                    sender=("Fitzflix", current_app.config["SERVER_EMAIL"]),
-                    recipients=[admin_user.email],
-                    text_body=render_template(
-                        "email/possibly_foreign_audio.txt",
-                        user=admin_user.email,
-                        file=file,
-                    ),
-                    html_body=render_template(
-                        "email/possibly_foreign_audio.html",
-                        user=admin_user.email,
-                        file=file,
-                    ),
+                notify_admin(
+                    "Foreign audio track added", "possibly_foreign_audio", file=file
                 )
 
             current_app.logger.info(f"{file} File ID {file.id}")
@@ -2924,21 +2886,10 @@ def finalize_localization(
             from app.triage import maybe_enqueue_triage_snapshots
 
             if maybe_enqueue_triage_snapshots(file.id):
-                admin_user = User.query.filter(User.admin == True).first()
-                send_email_async(
-                    "Fitzflix - Possibly forced subtitle track",
-                    sender=("Fitzflix", current_app.config["SERVER_EMAIL"]),
-                    recipients=[admin_user.email],
-                    text_body=render_template(
-                        "email/possibly_forced_subtitle.txt",
-                        user=admin_user.email,
-                        file=file,
-                    ),
-                    html_body=render_template(
-                        "email/possibly_forced_subtitle.html",
-                        user=admin_user.email,
-                        file=file,
-                    ),
+                notify_admin(
+                    "Possibly forced subtitle track",
+                    "possibly_forced_subtitle",
+                    file=file,
                 )
 
             # The candidates check inside maybe_enqueue prevents clips for the
@@ -2949,21 +2900,10 @@ def finalize_localization(
             maybe_enqueue_audio_comparison(file.id)
 
             if first_audio_track_lossy and lossless_audio_track_present:
-                admin_user = User.query.filter(User.admin == True).first()
-                send_email_async(
-                    "Fitzflix - Added a file that has a lossless audio track ",
-                    sender=("Fitzflix", current_app.config["SERVER_EMAIL"]),
-                    recipients=[admin_user.email],
-                    text_body=render_template(
-                        "email/lossy_audio.txt",
-                        user=admin_user.email,
-                        file=file,
-                    ),
-                    html_body=render_template(
-                        "email/lossy_audio.html",
-                        user=admin_user.email,
-                        file=file,
-                    ),
+                notify_admin(
+                    "Added a file that has a lossless audio track",
+                    "lossy_audio",
+                    file=file,
                 )
 
         except Exception:
