@@ -2400,7 +2400,7 @@ def test_an_inferior_file_goes_to_rejects_and_frees_the_lock(
         f_out.write(f_in.read())
 
     better = File(basename="Inferior Copy (2021) - [Bluray-1080p].mkv")
-    monkeypatch.setattr(File, "find_better_files", lambda self: [better])
+    monkeypatch.setattr(importing, "find_better_files", lambda details: [better])
     sent = []
     monkeypatch.setattr(
         importing, "notify_admin", lambda *args, **kwargs: sent.append((args, kwargs))

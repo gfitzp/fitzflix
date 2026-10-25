@@ -3,6 +3,7 @@
 import os
 
 from app import db
+from app.file_ranking import find_better_files, find_worse_files
 from app.models import File, Movie, RefQuality, TVSeries, movie_file_rank, tv_file_rank
 
 from tests.factories import make_movie, make_movie_file, make_tv_file, make_tv_series
@@ -110,7 +111,7 @@ def test_a_wider_span_replaces_a_narrower_file_only_at_the_same_quality(app):
         dvd_single = make_tv_file(series, 13, 1, "SDTV")
         dvd_span = make_tv_file(series, 13, 1, "DVD", last_episode=6)
 
-        worse = dvd_span.find_worse_files()
+        worse = find_worse_files(dvd_span)
         assert dvd_single in worse
         assert bluray_single not in worse
 
@@ -138,24 +139,26 @@ def test_tv_replacement_ignores_the_edition_title(app):
         )
 
         # The better release with the new title prunes the older release.
-        assert dvd in bluray.find_worse_files()
+        assert dvd in find_worse_files(bluray)
 
         # The worse release can never prune the better release.
-        assert bluray not in dvd.find_worse_files()
+        assert bluray not in find_worse_files(dvd)
 
         # A better release blocks an incoming file of the same episode.
         # The title that each disc gave the extra is not important.
-        blockers = File(
-            media_library="TV Shows",
-            dirname=dvd.dirname,
-            title="Doctor Who (1963)",
-            season=0,
-            episode=85007,
-            last_episode=85007,
-            edition="Yet Another Title",
-            quality_title="DVD",
-            fullscreen=False,
-        ).find_better_files()
+        blockers = find_better_files(
+            {
+                "media_library": "TV Shows",
+                "dirname": dvd.dirname,
+                "title": "Doctor Who (1963)",
+                "season": 0,
+                "episode": 85007,
+                "last_episode": 85007,
+                "edition": "Yet Another Title",
+                "quality_title": "DVD",
+                "fullscreen": False,
+            }
+        )
         assert bluray in blockers
 
 
@@ -168,8 +171,8 @@ def test_movie_replacement_still_respects_editions(app):
         movie = make_movie("Blade Runner", 1982)
         theatrical = make_movie_file(movie, "Bluray-1080p")
         final_cut = make_movie_file(movie, "DVD", edition="Final Cut")
-        assert final_cut not in theatrical.find_worse_files()
-        assert theatrical not in final_cut.find_worse_files()
+        assert final_cut not in find_worse_files(theatrical)
+        assert theatrical not in find_worse_files(final_cut)
 
 
 def test_a_tie_goes_to_the_lowest_file_id(app):
@@ -210,10 +213,29 @@ def test_a_tie_goes_to_the_lowest_file_id(app):
         assert (tv_ranks[episode.id], tv_ranks[copy.id]) == (1, 2)
 
 
+def test_a_file_from_details_keeps_only_the_columns(app):
+    """File.from_details drops the keys that belong to other rows (#367)."""
+
+    with app.app_context():
+        file = File.from_details(
+            {
+                "basename": "Kept Wide (2001) - [DVD].mkv",
+                "media_library": "Movies",
+                "title": "Kept Wide",
+                "year": 2001,
+                "quality_title": "DVD",
+                "replace_existing": True,
+            }
+        )
+    assert file.basename == "Kept Wide (2001) - [DVD].mkv"
+    assert file.media_library == "Movies"
+    assert not hasattr(file, "title")
+    assert not hasattr(file, "replace_existing")
+
+
 def test_a_widescreen_copy_blocks_a_full_screen_import(app):
     """A full screen file has the plex title and the edition of its widescreen copy."""
 
-    from app.models import File
     from app.videos import evaluate_filename
 
     with app.app_context():
@@ -223,7 +245,7 @@ def test_a_widescreen_copy_blocks_a_full_screen_import(app):
         details = evaluate_filename(
             "Kept Wide (2001) - Full Screen [DVD].mkv", log=False
         )
-        assert File(**details).find_better_files() == [widescreen]
+        assert find_better_files(details) == [widescreen]
 
 
 def test_display_title_prefers_the_tmdb_title_and_its_year(app):

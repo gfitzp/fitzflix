@@ -21,12 +21,12 @@ from app.models import (
     movie_file_rank,
     tv_file_rank,
 )
+from app.file_ranking import find_better_files, find_worse_files, real_rips_blocking
 from app.sdr_conversion import (
     converted_file_details,
     converted_quality_title,
     describe_color,
     needs_conversion,
-    real_rips_blocking,
 )
 
 from tests.conftest import _TMP
@@ -170,7 +170,11 @@ def test_a_real_rip_ranks_above_a_conversion_of_the_same_quality(app):
 
 
 def _incoming(movie, quality_title, **kwargs):
-    """Return a File like the one that finalize builds for an import, in the session."""
+    """Return (File, details) like the ones of an import, with the File in the session.
+
+    details is the dict that evaluate_filename gives. find_better_files
+    reads it. The File is the row that finalize builds. find_worse_files
+    reads it."""
 
     file = make_file(
         f"{movie.title} ({movie.year}) - [{quality_title}] (incoming).mkv",
@@ -179,12 +183,20 @@ def _incoming(movie, quality_title, **kwargs):
         "Movies",
         quality_title,
         movie_id=movie.id,
-        title=movie.title,
-        year=movie.year,
         **kwargs,
     )
-    file.quality_title = quality_title
-    return file
+    details = {
+        "media_library": "Movies",
+        "dirname": file.dirname,
+        "plex_title": file.plex_title,
+        "edition": None,
+        "fullscreen": False,
+        "title": movie.title,
+        "year": movie.year,
+        "quality_title": quality_title,
+        **kwargs,
+    }
+    return file, details
 
 
 def test_a_conversion_does_not_replace_a_real_rip_of_the_same_quality(app):
@@ -192,10 +204,10 @@ def test_a_conversion_does_not_replace_a_real_rip_of_the_same_quality(app):
         movie = make_movie("Saving Private Ryan", 1998)
         real = make_movie_file(movie, "Bluray-1080p")
         dvd = make_movie_file(movie, "DVD")
-        conversion = _incoming(
+        conversion, _ = _incoming(
             movie, "Bluray-1080p", converted_from_quality="Bluray-2160p"
         )
-        worse = conversion.find_worse_files()
+        worse = find_worse_files(conversion)
         assert real not in worse
         assert dvd in worse
 
@@ -204,12 +216,12 @@ def test_the_import_choice_replaces_the_real_rip(app):
     with app.app_context():
         movie = make_movie("Saving Private Ryan", 1998)
         real = make_movie_file(movie, "Bluray-1080p Remux")
-        conversion = _incoming(
+        conversion, details = _incoming(
             movie, "Bluray-1080p", converted_from_quality="Bluray-2160p"
         )
-        conversion.replace_existing = True
-        assert conversion.find_better_files() == []
-        assert real in conversion.find_worse_files()
+        details["replace_existing"] = True
+        assert find_better_files(details) == []
+        assert real in find_worse_files(conversion, replace_existing=True)
 
 
 def test_a_conversion_replaces_an_hdr_file_of_a_higher_quality(app):
@@ -221,21 +233,21 @@ def test_a_conversion_replaces_an_hdr_file_of_a_higher_quality(app):
             color_primaries="BT.2020",
             transfer_characteristics="BT.2020 (10-bit)",
         )
-        conversion = _incoming(
+        conversion, details = _incoming(
             movie, "Bluray-1080p", converted_from_quality="Bluray-2160p"
         )
-        assert conversion.find_better_files() == []
-        assert original in conversion.find_worse_files()
+        assert find_better_files(details) == []
+        assert original in find_worse_files(conversion)
 
 
 def test_an_sdr_4k_file_still_blocks_a_conversion(app):
     with app.app_context():
         movie = make_movie("Star Wars", 1977)
         sdr_4k = make_movie_file(movie, "WEBDL-2160p", color_primaries="BT.709")
-        conversion = _incoming(
+        _, details = _incoming(
             movie, "WEBDL-1080p", converted_from_quality="WEBDL-2160p"
         )
-        assert conversion.find_better_files() == [sdr_4k]
+        assert find_better_files(details) == [sdr_4k]
 
 
 def test_a_real_rip_replaces_a_conversion(app):
@@ -244,9 +256,9 @@ def test_a_real_rip_replaces_a_conversion(app):
         conversion = make_movie_file(
             movie, "Bluray-1080p", converted_from_quality="Bluray-2160p"
         )
-        real = _incoming(movie, "Bluray-1080p")
-        assert real.find_better_files() == []
-        assert conversion in real.find_worse_files()
+        real, details = _incoming(movie, "Bluray-1080p")
+        assert find_better_files(details) == []
+        assert conversion in find_worse_files(real)
 
 
 def test_a_later_conversion_replaces_an_earlier_conversion(app):
@@ -255,9 +267,11 @@ def test_a_later_conversion_replaces_an_earlier_conversion(app):
         earlier = make_movie_file(
             movie, "WEBDL-1080p", converted_from_quality="WEBDL-2160p"
         )
-        later = _incoming(movie, "Bluray-1080p", converted_from_quality="Bluray-2160p")
-        assert later.find_better_files() == []
-        assert earlier in later.find_worse_files()
+        later, details = _incoming(
+            movie, "Bluray-1080p", converted_from_quality="Bluray-2160p"
+        )
+        assert find_better_files(details) == []
+        assert earlier in find_worse_files(later)
 
 
 def test_real_rips_blocking(app):

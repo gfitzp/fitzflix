@@ -83,8 +83,8 @@ from app.sdr_conversion import (
     hold_import,
     needs_placebo,
     plan_conversion,
-    real_rips_blocking,
 )
+from app.file_ranking import find_better_files, find_worse_files, real_rips_blocking
 from app.tracks import (
     _extract_media_details,
     replace_track_rows,
@@ -970,7 +970,7 @@ def _quality_and_space_gate(file_path, file_details, conversion, run):
 
     # Look for better-quality versions of this file that already exist.
 
-    better_versions = File(**file_details).find_better_files()
+    better_versions = find_better_files(file_details)
     if better_versions:
         current_app.logger.info(
             f"Better versions of '{basename}' exist; skipping import"
@@ -2232,7 +2232,7 @@ def _build_records(file_details, inspection, output_name):
 
     kept_archives = []
     if not file:
-        file = File(**file_details)
+        file = File.from_details(file_details)
         current_app.logger.debug(vars(file))
         current_app.logger.info(f"{file} Creating File record")
         db.session.add(file)
@@ -2268,8 +2268,7 @@ def _build_records(file_details, inspection, output_name):
     current_app.logger.info(f"{file} Setting file_quality {quality}")
 
     # The conversion fields (#292). A real rip clears them on a reused
-    # record. replace_existing is the "Import" choice of an admin.
-    # find_worse_files reads it.
+    # record.
 
     file.converted_from_quality = file_details.get("converted_from_quality")
     file.converted_from_format = file_details.get("converted_from_format")
@@ -2288,7 +2287,6 @@ def _build_records(file_details, inspection, output_name):
 
     if file_details.get("untouched_basename"):
         file.untouched_basename = file_details["untouched_basename"]
-    file.replace_existing = file_details.get("replace_existing", False)
 
     # The media details arrive precomputed from move_localized_file. Set
     # the file video track info.
@@ -2334,8 +2332,11 @@ def _build_records(file_details, inspection, output_name):
     record_filesize(file, inspection["filesize_bytes"])
     current_app.logger.info(f"'{output_name}' {file.filesize_bytes} bytes")
 
+    # replace_existing is the "Import" choice of an admin for a held
+    # conversion.
+
     worse_local_copies, worse_aws_keys, pending_emails = _dispose_of_worse_files(
-        file, kept_archives
+        file, kept_archives, file_details.get("replace_existing", False)
     )
     if replaced_key:
         worse_aws_keys.insert(0, replaced_key)
@@ -2401,7 +2402,7 @@ def _attach_tv_series(file, file_details):
     current_app.logger.info(f"{file} Associating with {tv_series}")
 
 
-def _dispose_of_worse_files(file, kept_archives):
+def _dispose_of_worse_files(file, kept_archives, replace_existing=False):
     """Delete the rows of the worse files from the session. Return what waits for the commit.
 
     Return (worse_local_copies, worse_aws_keys, pending_emails). Their
@@ -2411,7 +2412,7 @@ def _dispose_of_worse_files(file, kept_archives):
     The disposal emails also wait for the commit. An archive-only
     original of a worse conversion goes in kept_archives."""
 
-    worse_files = file.find_worse_files()
+    worse_files = find_worse_files(file, replace_existing)
     current_app.logger.info(f"{file} worse files: {worse_files}")
 
     worse_local_copies = []

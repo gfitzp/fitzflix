@@ -194,41 +194,6 @@ def converted_file_details(file_details, plan):
     return details
 
 
-def real_rips_blocking(file_details):
-    """Return the real rips that make a conversion wait for a decision.
-
-    These are the library files of the same title, edition, or episode
-    span that are not conversions and have no HDR or BT.2020 colors.
-    Their quality is the quality of the conversion or better."""
-
-    from app.models import File, Movie, RefQuality, TVSeries
-
-    target = RefQuality.query.filter_by(
-        quality_title=file_details["quality_title"]
-    ).first()
-    query = File.query.join(RefQuality, (RefQuality.id == File.quality_id)).filter(
-        File.dirname == file_details["dirname"],
-        File.fullscreen == False,
-        File.converted_from_quality.is_(None),
-        RefQuality.preference >= target.preference,
-    )
-    if file_details["media_library"] == MOVIES:
-        query = query.join(Movie, (Movie.id == File.movie_id)).filter(
-            Movie.title == file_details["title"],
-            Movie.year == file_details["year"],
-            File.plex_title == file_details["plex_title"],
-            File.edition == file_details.get("edition"),
-        )
-    else:
-        query = query.join(TVSeries, (TVSeries.id == File.series_id)).filter(
-            TVSeries.title == file_details["title"],
-            File.season == file_details["season"],
-            File.episode == file_details["episode"],
-            File.last_episode >= file_details["last_episode"],
-        )
-    return [f for f in query.all() if not f.needs_sdr_conversion]
-
-
 def held_decision(file_path):
     """Return the HeldImport row of a held file that an admin chose to import, if any."""
 
