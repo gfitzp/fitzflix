@@ -88,6 +88,30 @@ def _update_sonarr_path(series, old_folder, new_folder):
     return False
 
 
+def _folder_title(title):
+    """Return the folder name of a title: no spaces or periods at the end.
+
+    evaluate_filename and Sonarr remove them the same way."""
+
+    while title.endswith(" ") or title.endswith("."):
+        title = title.strip(" ").strip(".")
+    return title
+
+
+def _renamed_folder(part, old_folder, new_folder):
+    """Return the new name of a series folder, or None if part is not it.
+
+    The folder is the title, or the title and an id tag such as
+    "{tmdb-1234}". The tag stays."""
+
+    if part == old_folder:
+        return new_folder
+    tail = part[len(old_folder) :]
+    if part.startswith(old_folder) and tail.startswith(" {") and tail.endswith("}"):
+        return new_folder + tail
+    return None
+
+
 def rename_tv_series_task(series_id, new_title):
     """Rename the folder, files, and database rows of a TV series.
 
@@ -121,21 +145,34 @@ def rename_tv_series_task(series_id, new_title):
 
         from app.videos import _rename_with_retries
 
-        moved = db_only = skipped = 0
-        old_dirs = set()
+        # Plan each file first. If 1 file does not carry the series title,
+        # nothing changes. A partial rename gave the series a title and a
+        # Sonarr path for a folder that did not exist (#317).
+
+        old_folder = _folder_title(old_title)
+        new_folder = _folder_title(new_title)
+        plan = []
+        unmatched = []
+        sonarr_folder = new_folder
         for file in series.files.all():
             parts = file.dirname.split("/")
-            if old_title not in parts or not file.basename.startswith(old_prefix):
-                current_app.logger.warning(
-                    f"Series rename: {file.file_path!r} doesn't carry the "
-                    f"series title, skipping"
-                )
-                skipped += 1
+            renamed = [_renamed_folder(part, old_folder, new_folder) for part in parts]
+            if not any(renamed) or not file.basename.startswith(old_prefix):
+                unmatched.append(file.file_path)
                 continue
-
-            new_dirname = "/".join(
-                new_title if part == old_title else part for part in parts
+            sonarr_folder = next(name for name in renamed if name)
+            new_dirname = "/".join(name or part for name, part in zip(renamed, parts))
+            plan.append((file, new_dirname))
+        if unmatched:
+            current_app.logger.warning(
+                f"Series rename: {len(unmatched)} file(s) don't carry the "
+                f"series title, so nothing changed: {unmatched[:5]}"
             )
+            return False
+
+        moved = db_only = 0
+        old_dirs = set()
+        for file, new_dirname in plan:
             new_basename = new_prefix + file.basename[len(old_prefix) :]
             new_path = f"{new_dirname}/{new_basename}"
             src = os.path.join(library_dir, file.file_path)
@@ -175,7 +212,7 @@ def rename_tv_series_task(series_id, new_title):
         db.session.commit()
 
         try:
-            _update_sonarr_path(series, old_title, new_title)
+            _update_sonarr_path(series, old_title, sonarr_folder)
         except Exception:
             current_app.logger.warning(traceback.format_exc())
 
@@ -188,6 +225,6 @@ def rename_tv_series_task(series_id, new_title):
 
         current_app.logger.info(
             f"Series rename: {old_title!r} -> {new_title!r}: {moved} files "
-            f"moved, {db_only} archived-only rows, {skipped} skipped"
+            f"moved, {db_only} archived-only rows"
         )
         return True
