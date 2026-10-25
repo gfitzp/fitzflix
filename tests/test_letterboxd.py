@@ -516,3 +516,20 @@ def test_review_text_removed_on_letterboxd_goes_away(app, monkeypatch):
         assert row.letterboxd_guid == "letterboxd-watch-78"
         assert row.rating is None
         assert row.review == ""
+
+
+def test_the_letterboxd_username_never_leaks_into_the_next_test(app):
+    """The fixture teardown resets the field on the kept user table (#333)."""
+
+    from tests.conftest import reset_user_state
+
+    with app.app_context():
+        for user in User.query.all():
+            user.letterboxd_username = "leaked"
+        db.session.commit()
+
+    reset_user_state(app)
+
+    with app.app_context():
+        db.session.expire_all()
+        assert {user.letterboxd_username for user in User.query.all()} == {None}

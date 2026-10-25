@@ -866,11 +866,14 @@ def test_a_failed_upload_never_moves_the_file(app, monkeypatch, tmp_path, error)
     path = tmp_path / "library.mkv"
     path.write_bytes(b"x")
 
+    uploads = []
+
     class FailingClient:
         def list_objects(self, **kwargs):
             return {}
 
         def upload_file(self, *args, **kwargs):
+            uploads.append(args)
             if error == "s3_failed":
                 raise boto3.exceptions.S3UploadFailedError("RequestTimeout")
             raise botocore.exceptions.EndpointConnectionError(endpoint_url="s3")
@@ -878,10 +881,19 @@ def test_a_failed_upload_never_moves_the_file(app, monkeypatch, tmp_path, error)
     monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kw: FailingClient())
     monkeypatch.setitem(app.config, "AWS_BUCKET", "test-bucket")
 
+    # Only the S3 errors may come out (#333). Any other error means that
+    # the function stopped before the upload, and the test proves nothing.
+
     with app.app_context():
-        with pytest.raises(Exception):
+        with pytest.raises(
+            (
+                boto3.exceptions.S3UploadFailedError,
+                botocore.exceptions.EndpointConnectionError,
+            )
+        ):
             aws_storage.aws_upload(str(path), "modified")
 
+    assert len(uploads) == 1
     assert path.exists()
 
 

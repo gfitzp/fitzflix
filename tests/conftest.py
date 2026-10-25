@@ -278,6 +278,22 @@ def clean_state(app):
             if table.name not in keep:
                 db.session.execute(table.delete())
         db.session.commit()
+    reset_user_state(app)
+
+
+def reset_user_state(app):
+    """Set the user columns that tests change back to the seed values (#333).
+
+    The user table stays between tests. test_letterboxd.py sets
+    letterboxd_username and does not reset it. Thus, a later test that
+    needs the field empty could fail, or pass for the wrong reason."""
+
+    from app import db
+    from app.models import User
+
+    with app.app_context():
+        User.query.update({User.letterboxd_username: None})
+        db.session.commit()
 
 
 @pytest.fixture(autouse=True)
