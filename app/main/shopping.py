@@ -709,7 +709,7 @@ def movie_shopping():
             if not movie:
                 title = f"Upgrade details for TMDB ID {tmdb_id}"
             else:
-                title = f"Upgrade details for \"{movie.tmdb_title if movie.tmdb_title else movie.title} ({movie.tmdb_release_date.strftime('%Y') if movie.tmdb_title and movie.tmdb_release_date else movie.year})\""
+                title = f'Upgrade details for "{movie.display_title}"'
             movies = (
                 db.session.query(
                     File,

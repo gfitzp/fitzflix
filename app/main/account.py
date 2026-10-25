@@ -102,7 +102,7 @@ def review_edit(review_id):
         id=review_id, user_id=current_user.id
     ).first_or_404()
     movie = user_review.movie
-    title = f"{movie.tmdb_title if movie.tmdb_title else movie.title} ({movie.tmdb_release_date.strftime('%Y') if movie.tmdb_title and movie.tmdb_release_date else movie.year})"
+    title = movie.display_title
 
     # The history page has pages. Its per-row forms and Edit-date links
     # carry the page number. Thus, each redirect goes back to the page

@@ -416,16 +416,10 @@ def search_json():
 
         for result in _movie_search_results(wildcard, limit=5, years=years):
             movie = result["movie"]
-            display_title = movie.tmdb_title if movie.tmdb_title else movie.title
-            display_year = (
-                movie.tmdb_release_date.year
-                if movie.tmdb_title and movie.tmdb_release_date
-                else movie.year
-            )
             results.append(
                 {
                     "type": "Movie",
-                    "title": f"{display_title} ({display_year})",
+                    "title": movie.display_title,
                     "detail": result["quality"],
                     "url": url_for("main.movie", movie_id=movie.id),
                 }
@@ -445,7 +439,7 @@ def search_json():
             results.append(
                 {
                     "type": "TV",
-                    "title": (series.tmdb_name if series.tmdb_name else series.title),
+                    "title": (series.display_title),
                     "detail": detail,
                     "url": url_for("main.tv", series_id=series.id),
                 }

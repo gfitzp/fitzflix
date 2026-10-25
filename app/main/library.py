@@ -1333,7 +1333,7 @@ def movie(movie_id):
     """Show details for a particular movie."""
 
     movie = Movie.query.filter_by(id=movie_id).first_or_404()
-    title = f"{movie.tmdb_title if movie.tmdb_title else movie.title} ({movie.tmdb_release_date.strftime('%Y') if movie.tmdb_title and movie.tmdb_release_date else movie.year})"
+    title = movie.display_title
     # Each credited actor in billing order, for the cast scroller
 
     cast = [
@@ -1450,14 +1450,7 @@ def movie(movie_id):
         # ✕ removes the flag.
 
         if rating == 0:
-            target_title = (
-                title
-                if target.id == movie.id
-                else (
-                    f"{target.tmdb_title if target.tmdb_title else target.title} "
-                    f"({target.tmdb_release_date.strftime('%Y') if target.tmdb_title and target.tmdb_release_date else target.year})"
-                )
-            )
+            target_title = target.display_title
             existing_flag = UserMovieStatus.query.filter_by(
                 user_id=int(current_user.id), movie_id=target.id, kind="not_interested"
             ).first()
@@ -1519,14 +1512,7 @@ def movie(movie_id):
                 and current_row.rating is not None
                 and float(current_row.rating) == rating
             ):
-                target_title = (
-                    title
-                    if target.id == movie.id
-                    else (
-                        f"{target.tmdb_title if target.tmdb_title else target.title} "
-                        f"({target.tmdb_release_date.strftime('%Y') if target.tmdb_title and target.tmdb_release_date else target.year})"
-                    )
-                )
+                target_title = target.display_title
                 bare = (
                     current_row.date_watched is None
                     and not (current_row.review or "").strip()
@@ -1579,14 +1565,7 @@ def movie(movie_id):
                 _enqueue_profile_recompute()
                 if _ladder_fetch():
                     return _ladder_state(current_user.id, target.id)
-                target_title = (
-                    title
-                    if target.id == movie.id
-                    else (
-                        f"{target.tmdb_title if target.tmdb_title else target.title} "
-                        f"({target.tmdb_release_date.strftime('%Y') if target.tmdb_title and target.tmdb_release_date else target.year})"
-                    )
-                )
+                target_title = target.display_title
                 flash(f"Rated '{target_title}' {rating:g} out of 5 stars", "success")
                 return redirect(url_for("main.movie", movie_id=movie.id))
 
@@ -1618,14 +1597,7 @@ def movie(movie_id):
         clear_watchlist(current_user.id, target.id)
         clear_not_interested(current_user.id, target.id)
         db.session.commit()
-        target_title = (
-            title
-            if target.id == movie.id
-            else (
-                f"{target.tmdb_title if target.tmdb_title else target.title} "
-                f"({target.tmdb_release_date.strftime('%Y') if target.tmdb_title and target.tmdb_release_date else target.year})"
-            )
-        )
+        target_title = target.display_title
         if rating is not None:
             # This is the same last-response state that the rating drive
             # keeps. A positive rating shows the "since you liked…" strip
@@ -1684,10 +1656,7 @@ def movie(movie_id):
             db.session.commit()
         if _card_fetch():
             return jsonify({"on_watchlist": True})
-        target_title = (
-            f"{target.tmdb_title if target.tmdb_title else target.title} "
-            f"({target.tmdb_release_date.strftime('%Y') if target.tmdb_title and target.tmdb_release_date else target.year})"
-        )
+        target_title = target.display_title
         flash(f"Added '{target_title}' to your watchlist", "success")
         return redirect(url_for("main.movie", movie_id=movie.id))
     if (
@@ -2208,7 +2177,7 @@ def movie_files(movie_id):
     file management pages. Those pages are admin tools."""
 
     movie = Movie.query.filter_by(id=movie_id).first_or_404()
-    title = f"Files for \"{movie.tmdb_title if movie.tmdb_title else movie.title} ({movie.tmdb_release_date.strftime('%Y') if movie.tmdb_title and movie.tmdb_release_date else movie.year})\""
+    title = f'Files for "{movie.display_title}"'
 
     # This subquery gets the ranking of each file of this movie.
 
@@ -2422,7 +2391,7 @@ def tv(series_id):
     """Show details for a particular TV series."""
 
     tv = TVSeries.query.filter_by(id=series_id).first_or_404()
-    title = f"{tv.tmdb_name if tv.tmdb_name else tv.title}"
+    title = tv.display_title
     seasons = []
     for file in tv.files:
         seasons.append(file.season)
@@ -2717,14 +2686,10 @@ def season(series_id, season):
     tv = TVSeries.query.filter_by(id=series_id).first_or_404()
 
     if season == 0:
-        title = (
-            f'Files for "{tv.tmdb_name if tv.tmdb_name else tv.title}" special episodes'
-        )
+        title = f'Files for "{tv.display_title}" special episodes'
 
     else:
-        title = (
-            f'Files for "{tv.tmdb_name if tv.tmdb_name else tv.title}", season {season}'
-        )
+        title = f'Files for "{tv.display_title}", season {season}'
 
     # This subquery gets the ranking of each file of this season.
 

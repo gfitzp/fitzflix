@@ -1894,6 +1894,22 @@ class Movie(db.Model, TMDBMixin, Utilities):
 
     __table_args__ = (db.UniqueConstraint("title", "year"),)
 
+    @property
+    def display_title(self):
+        """Return the site-wide display form: the TMDB title and year if known.
+
+        The year comes from the TMDB release date only when the TMDB
+        title is known. Without a TMDB title, the local title and year
+        show."""
+
+        title = self.tmdb_title or self.title
+        year = (
+            self.tmdb_release_date.strftime("%Y")
+            if self.tmdb_title and self.tmdb_release_date
+            else self.year
+        )
+        return f"{title} ({year})"
+
     def __repr__(self):
         return f"<Movie '{self.title} ({self.year})'>"
 
@@ -1993,6 +2009,12 @@ class TVSeries(db.Model, TMDBMixin):
         backref=db.backref("tv_series", lazy="dynamic"),
         lazy="dynamic",
     )
+
+    @property
+    def display_title(self):
+        """Return the site-wide display form: the TMDB name if known."""
+
+        return self.tmdb_name or self.title
 
     def __repr__(self):
         return f"<TVSeries '{self.title}'>"

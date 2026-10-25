@@ -170,18 +170,6 @@ NUMBER_WORDS = {
 }
 
 
-def _display_title(movie):
-    """Return the site-wide display form: the TMDB title and year if known."""
-
-    title = movie.tmdb_title or movie.title
-    year = (
-        movie.tmdb_release_date.strftime("%Y")
-        if movie.tmdb_title and movie.tmdb_release_date
-        else movie.year
-    )
-    return f"{title} ({year})"
-
-
 def _normalize(text):
     """Fold a title for fuzzy comparison.
 
@@ -214,7 +202,7 @@ def _fuzzy_match(guess, movie):
     normalized = _normalize(guess)
     if not normalized:
         return False
-    candidates = {movie.title, movie.tmdb_title, _display_title(movie)}
+    candidates = {movie.title, movie.tmdb_title, movie.display_title}
     for title in (movie.title, movie.tmdb_title):
         for separator in (":", " - "):
             if title and separator in title:
@@ -416,7 +404,7 @@ def _build_options(answer_id, difficulty, rated_only=False):
     ids = distractors + [answer_id]
     random.shuffle(ids)
     movies = {movie.id: movie for movie in Movie.query.filter(Movie.id.in_(ids)).all()}
-    return [(movie_id, _display_title(movies[movie_id])) for movie_id in ids]
+    return [(movie_id, movies[movie_id].display_title) for movie_id in ids]
 
 
 def _round_tokens(difficulty, rated_only=False):
@@ -790,7 +778,7 @@ def _extra_post(form, token, movie):
             "correct": correct,
             "guess": guessed or None,
             "movie_id": movie.id,
-            "answer": _display_title(movie),
+            "answer": movie.display_title,
             "new_best": new_best,
             "points_won": points_won,
             "doubled": doubled,
@@ -852,7 +840,7 @@ def name_that_frame():
             chosen = (
                 db.session.get(Movie, guessed_id) if guessed_id is not None else None
             )
-            guess_shown = _display_title(chosen) if chosen else None
+            guess_shown = chosen.display_title if chosen else None
 
         score = _score_row(difficulty)
         score.current_streak = score.current_streak + 1 if correct else 0
@@ -874,7 +862,7 @@ def name_that_frame():
                 "correct": correct,
                 "guess": guess_shown,
                 "movie_id": movie.id,
-                "answer": _display_title(movie),
+                "answer": movie.display_title,
                 "new_best": new_best,
             },
             # The reveal shows the answer as a standard poster tile: the

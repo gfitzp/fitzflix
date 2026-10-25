@@ -1075,10 +1075,7 @@ def movie_card():
         in_library = upgradable is not None
         return render_template(
             "_movie_card.html",
-            display_title=(
-                f"{movie.tmdb_title if movie.tmdb_title else movie.title} "
-                f"({movie.tmdb_release_date.strftime('%Y') if movie.tmdb_title and movie.tmdb_release_date else movie.year})"
-            ),
+            display_title=(movie.display_title),
             href=url_for("main.movie", movie_id=movie.id),
             runtime=movie.tmdb_runtime,
             genres=[genre.name for genre in movie.genres],
@@ -1254,7 +1251,7 @@ def tv_card():
             # No year is appended. Every other TV surface titles a series
             # by its TMDB name only. The meta line opens with the run of
             # years anyway.
-            display_title=series.tmdb_name if series.tmdb_name else series.title,
+            display_title=series.display_title,
             href=url_for("main.tv", series_id=series.id),
             meta_line=tv_meta_line(
                 (
@@ -1993,10 +1990,7 @@ def radarr_request():
         return redirect(origin or url_for("main.index"))
     movie = Movie.query.filter_by(id=radarr_form.movie_id.data).first_or_404()
     dest = redirect(origin or url_for("main.movie", movie_id=movie.id))
-    title = (
-        f"{movie.tmdb_title if movie.tmdb_title else movie.title} "
-        f"({movie.tmdb_release_date.strftime('%Y') if movie.tmdb_title and movie.tmdb_release_date else movie.year})"
-    )
+    title = movie.display_title
 
     if not radarr_configured():
         flash("Radarr is not configured. Fitzflix cannot request films.", "warning")

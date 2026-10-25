@@ -222,3 +222,33 @@ def test_a_widescreen_copy_blocks_a_full_screen_import(app):
             "Kept Wide (2001) - Full Screen [DVD].mkv", log=False
         )
         assert File(**details).find_better_files() == [widescreen]
+
+
+def test_display_title_prefers_the_tmdb_title_and_its_year(app):
+    """Test the one display form of a film and a series.
+
+    13 routes built this string inline before the property. The year
+    follows the TMDB release date only when the TMDB title is known."""
+
+    from datetime import datetime
+
+    from app.models import Movie, TVSeries
+
+    local = Movie(title="Local Title", year=1999)
+    assert local.display_title == "Local Title (1999)"
+
+    tmdb = Movie(
+        title="Local Title",
+        year=1999,
+        tmdb_title="TMDB Title",
+        tmdb_release_date=datetime(2000, 2, 1),
+    )
+    assert tmdb.display_title == "TMDB Title (2000)"
+
+    undated = Movie(title="Local Title", year=1999, tmdb_title="TMDB Title")
+    assert undated.display_title == "TMDB Title (1999)"
+
+    assert TVSeries(title="Local Name").display_title == "Local Name"
+    assert (
+        TVSeries(title="Local Name", tmdb_name="TMDB Name").display_title == "TMDB Name"
+    )
