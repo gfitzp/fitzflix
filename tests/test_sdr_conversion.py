@@ -323,7 +323,7 @@ def test_the_library_file_of_a_conversion_goes_to_transcoded(app, monkeypatch):
             aws_key="untouched/Amadeus (1984) - [Bluray-2160p].mkv",
         )
         db.session.commit()
-        assert aws_storage.upload_task(conversion.id, "untouched", True) is True
+        assert aws_storage.upload_task(conversion.id) is True
         db.session.expire_all()
         conversion = db.session.get(File, conversion.id)
         assert conversion.aws_key == ("untouched/Amadeus (1984) - [Bluray-2160p].mkv")

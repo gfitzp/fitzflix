@@ -3152,13 +3152,7 @@ def file(file_id):
 
         current_app.file_queue.enqueue(
             "app.videos.upload_task",
-            args=(
-                file.id,
-                current_app.config["AWS_UNTOUCHED_PREFIX"],
-                True,
-                True,
-                "DEEP_ARCHIVE",
-            ),
+            args=(file.id,),
             job_timeout=current_app.config["UPLOAD_TASK_TIMEOUT"],
             description=f"'{file.basename}'",
             at_front=True,

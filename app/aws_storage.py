@@ -490,11 +490,7 @@ def sync_aws_s3_storage_task():
 
                     current_app.file_queue.enqueue(
                         "app.videos.upload_task",
-                        args=(
-                            file.id,
-                            current_app.config["AWS_UNTOUCHED_PREFIX"],
-                            True,
-                        ),
+                        args=(file.id,),
                         job_timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
                         description=f"'{file.basename}'",
                     )
@@ -990,14 +986,8 @@ def sqs_retrieve_task():
         return True
 
 
-def upload_task(
-    file_id,
-    key_prefix="",
-    force_upload=False,
-    ignore_etag=False,
-    storage_class="STANDARD",
-):
-    """Upload a file to AWS S3 storage."""
+def upload_task(file_id):
+    """Upload the library file of a record to its AWS S3 archive."""
 
     with app.app_context():
         try:
@@ -1281,7 +1271,7 @@ def untouched_key_still_claimed(key):
     )
 
 
-def rename_untouched_object(file, new_key, defer_upload=False):
+def rename_untouched_object(file, new_key):
     """Move the untouched S3 archive of a file when its derived key changes.
 
     This keeps the invariant that aws_key only names a REAL
@@ -1298,7 +1288,7 @@ def rename_untouched_object(file, new_key, defer_upload=False):
     Before #299, the library file was uploaded under the new key. But
     the library file is not the rip. Thus, the rip keeps its old key,
     and the record keeps naming it. A restore imports it under the
-    untouched name of the record. defer_upload is no longer used.
+    untouched name of the record.
 
     Return True if the field now matches new_key.
     """
@@ -2107,7 +2097,7 @@ def aws_download(key, basename, sqs_receipt_handle=None, place_at=None):
     return False
 
 
-def aws_restore(key, days=RESTORE_DAYS, tier="Standard", record_request=True):
+def aws_restore(key, tier="Standard", record_request=True):
     """Request a restore of a file at AWS from Glacier status for a download.
 
     The request time goes to Redis. Then download_task can tell if an
@@ -2169,12 +2159,13 @@ def aws_restore(key, days=RESTORE_DAYS, tier="Standard", record_request=True):
                         Bucket=current_app.config["AWS_BUCKET"],
                         Key=key,
                         RestoreRequest={
-                            "Days": days,
+                            "Days": RESTORE_DAYS,
                             "GlacierJobParameters": {"Tier": tier},
                         },
                     )
                     current_app.logger.info(
-                        f"Requested '{key}' to be restored for {days} day(s) using tier '{tier}'"
+                        f"Requested '{key}' to be restored for {RESTORE_DAYS} "
+                        f"day(s) using tier '{tier}'"
                     )
                     if record_request:
                         record_restore_request(current_app.redis, key)

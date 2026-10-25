@@ -326,7 +326,7 @@ def test_staging_copy_transient_error_defers_and_retries(
     monkeypatch.setattr(videos, "copy_with_progress", revoked_handles)
     try:
         with app.app_context():
-            assert localization_task(source, ignore_etag=True) is True
+            assert localization_task(source) is True
 
         retries = [
             job
@@ -342,7 +342,6 @@ def test_staging_copy_transient_error_defers_and_retries(
 
         job = retries[0]
         assert job.kwargs["transient_retries"] == 1
-        assert job.kwargs["ignore_etag"] is True
         assert job.kwargs["file_path"] == source
         inspect.signature(localization_task).bind(
             *(job.args or ()), **(job.kwargs or {})

@@ -840,12 +840,10 @@ def apply_tmdb_refresh(
                     ):
                         # This moves the S3 object. The field changes only
                         # when the object really moved. An object that
-                        # cannot be copied server-side (Deep Archive) needs
-                        # an upload of the library copy instead. That is
-                        # too big for the budget of this queue. Thus,
-                        # defer_upload gives that to the file queue (#231).
+                        # cannot be copied server-side (Deep Archive) keeps
+                        # its key (#299).
                         try:
-                            rename_untouched_object(f, aws_key, defer_upload=True)
+                            rename_untouched_object(f, aws_key)
                         except Exception:
                             current_app.logger.error(traceback.format_exc())
 

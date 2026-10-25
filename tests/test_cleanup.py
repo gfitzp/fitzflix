@@ -414,12 +414,7 @@ def test_rename_untouched_object_moves_or_keeps(app, monkeypatch):
         file.aws_key = "untouched/frozen.mkv"
         fake = FakeS3(storage_class="DEEP_ARCHIVE")
         monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kw: fake)
-        assert (
-            videos.rename_untouched_object(
-                file, "untouched/thawed.mkv", defer_upload=True
-            )
-            is False
-        )
+        assert videos.rename_untouched_object(file, "untouched/thawed.mkv") is False
         assert file.aws_key == "untouched/frozen.mkv"
         assert fake.copied is None and fake.deleted is None
         assert not [

@@ -765,11 +765,7 @@ def register(app):
                 if enqueue:
                     current_app.file_queue.enqueue(
                         "app.videos.upload_task",
-                        args=(
-                            file.id,
-                            current_app.config["AWS_UNTOUCHED_PREFIX"],
-                            True,
-                        ),
+                        args=(file.id,),
                         job_timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
                         description=f"'{file.basename}'",
                     )
