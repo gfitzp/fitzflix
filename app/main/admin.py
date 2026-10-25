@@ -649,17 +649,16 @@ def maintenance():
         criterion_refresh_form.criterion_refresh.data
         and criterion_refresh_form.validate_on_submit()
     ):
-        # This job goes on the user-request queue. The monthly scheduled
-        # refresh runs on the maintenance queue in the same way. Otherwise,
-        # the forced Wikidata fetch would block the single sql worker on
-        # network I/O
+        # This job goes on the maintenance queue with the timeout of the
+        # monthly cron row and the CLI (#343). A full Wikidata pass takes
+        # longer than the request queue allows, and it must not hold the
+        # user-request worker.
 
-        current_app.request_queue.enqueue(
+        current_app.maintenance_queue.enqueue(
             "app.videos.refresh_criterion_collection_info",
             args=None,
-            job_timeout="1h",
+            job_timeout=3600,
             description="Refreshing Criterion Collection information for all movies in library",
-            at_front=True,
         )
         flash(
             "Refreshing Criterion Collection information for all movies in library",

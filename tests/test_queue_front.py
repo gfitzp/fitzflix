@@ -239,3 +239,25 @@ def test_the_head_job_of_each_queue_gets_no_button(app, admin_client):
     page = admin_client.get("/queue").get_data(as_text=True)
     assert page.count('class="queue-front"') == 1
     assert f'name="job_id" value="{first.id}"' in page
+
+
+def test_the_criterion_refresh_button_uses_the_maintenance_queue(app, admin_client):
+    """Test the admin producer of refresh_criterion_collection_info (#343).
+
+    The cron row and the CLI put the full Wikidata pass on the
+    maintenance queue with a 3600 s timeout. The Maintenance page button
+    must do the same. It put the job at the front of the request queue."""
+
+    from tests.test_streaming import csrf_token_from
+
+    page = admin_client.get("/maintenance").get_data(as_text=True)
+    response = admin_client.post(
+        "/maintenance",
+        data={"csrf_token": csrf_token_from(page), "criterion_refresh": "1"},
+    )
+    assert response.status_code == 302
+
+    func = "app.videos.refresh_criterion_collection_info"
+    assert [job for job in app.request_queue.jobs if job.func_name == func] == []
+    (job,) = [job for job in app.maintenance_queue.jobs if job.func_name == func]
+    assert job.timeout == 3600
