@@ -372,7 +372,7 @@ class ReviewExportForm(FlaskForm):
 class ReviewUploadForm(FlaskForm):
     """Import a Letterboxd zip or a legacy ratings file (History page)."""
 
-    file = FileField("Reviews File")
+    file = FileField("Reviews File", validators=[FileRequired()])
     upload_submit = SubmitField("Import Reviews")
 
 

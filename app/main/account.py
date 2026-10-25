@@ -7,6 +7,7 @@ import csv
 import io
 import json
 import secrets
+import zipfile
 
 
 from datetime import datetime
@@ -435,6 +436,10 @@ def _review_upload_response(review_upload_form):
 
     upload = request.files["file"]
     data = upload.read()
+    unreadable = (
+        "Fitzflix cannot read that file. Upload the Letterboxd export zip, "
+        "or a ratings file with 1 JSON object on each line."
+    )
 
     if data[:4] == b"PK\x03\x04" or (upload.filename or "").lower().endswith(".zip"):
         # A Letterboxd account export, imported as it is: the diary, the
@@ -442,7 +447,11 @@ def _review_upload_response(review_upload_form):
         # and fast. The match of unowned films needs TMDB. Thus, the
         # match runs as a task.
 
-        films = parse_letterboxd_export(data)
+        try:
+            films = parse_letterboxd_export(data)
+        except (zipfile.BadZipFile, ValueError, KeyError):
+            flash(unreadable, "warning")
+            return redirect(url_for("main.profile"))
         if films:
             current_app.request_queue.enqueue(
                 "app.videos.letterboxd_import_task",
@@ -456,21 +465,31 @@ def _review_upload_response(review_upload_form):
 
     else:
         # The legacy JSON-lines ratings file, with 1 film for each line.
+        # Read each line before the first enqueue. A bad line then stops
+        # the import with a message. Before, it gave a 500 after the good
+        # lines were already queued (#311).
 
-        for rating in data.splitlines():
-            if not rating.strip():
-                continue
-            movie_rating = json.loads(rating)
-            if movie_rating["rating"] >= 0:
+        ratings = []
+        try:
+            for line in data.splitlines():
+                if not line.strip():
+                    continue
+                entry = json.loads(line)
+                name, rating = entry["name"], entry["rating"]
+                if not isinstance(rating, (int, float)) or isinstance(rating, bool):
+                    raise TypeError(f"rating {rating!r} is not a number")
+                ratings.append((str(name), rating))
+        except (ValueError, KeyError, TypeError):
+            flash(unreadable, "warning")
+            return redirect(url_for("main.profile"))
+
+        for name, rating in ratings:
+            if rating >= 0:
                 current_app.sql_queue.enqueue(
                     "app.videos.review_task",
-                    args=(
-                        current_user.id,
-                        movie_rating["name"],
-                        movie_rating["rating"],
-                    ),
+                    args=(current_user.id, name, rating),
                     job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
-                    description=f"Reviewing {movie_rating['name']}",
+                    description=f"Reviewing {name}",
                 )
     return redirect(url_for("main.profile"))
 

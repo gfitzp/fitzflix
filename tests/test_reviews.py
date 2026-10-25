@@ -9,6 +9,8 @@ import io
 import re
 import zipfile
 
+import pytest
+
 from datetime import datetime
 
 from tests.factories import make_movie
@@ -2160,3 +2162,29 @@ def test_the_star_ladder_never_changes_a_letterboxd_row(app, admin_client):
     with app.app_context():
         assert float(db.session.get(UserMovieReview, row_id).rating) == 4.0
         assert UserMovieReview.query.filter_by(movie_id=movie_id).count() == 2
+
+
+@pytest.mark.parametrize(
+    "name, content",
+    [
+        ("ratings.csv", b"Date,Name,Year,Rating\n2026-01-01,Jaws,1975,4\n"),
+        ("ratings.json", b'{"name": "Jaws", "rating": 4}\n{"title": "no keys"}\n'),
+        ("broken.zip", b"PK\x03\x04 not really a zip"),
+    ],
+)
+def test_an_unreadable_upload_queues_nothing(app, admin_client, name, content):
+    """A bad file is a message. A good first line must not be queued (#311)."""
+
+    page = admin_client.get("/profile").get_data(as_text=True)
+    response = admin_client.post(
+        "/profile",
+        data={
+            "csrf_token": csrf_token_from(page),
+            "upload_submit": "Import Reviews",
+            "file": (io.BytesIO(content), name),
+        },
+        content_type="multipart/form-data",
+    )
+    assert response.status_code == 302
+    assert len(app.sql_queue) == 0
+    assert len(app.request_queue) == 0
