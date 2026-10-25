@@ -252,3 +252,21 @@ def test_display_title_prefers_the_tmdb_title_and_its_year(app):
     assert (
         TVSeries(title="Local Name", tmdb_name="TMDB Name").display_title == "TMDB Name"
     )
+
+
+def test_no_many_to_many_relationship_carries_a_delete_cascade(app):
+    """Test that no relationship with a secondary table cascades a delete.
+
+    A delete cascade on a many-to-many removes the SHARED rows: the
+    genre, the certification, the season (423b475, #305). The mapper
+    registry is the one place that sees every relationship."""
+
+    with app.app_context():
+        offenders = []
+        for mapper in db.Model.registry.mappers:
+            for relationship in mapper.relationships:
+                if relationship.secondary is None:
+                    continue
+                if relationship.cascade.delete or relationship.cascade.delete_orphan:
+                    offenders.append(f"{mapper.class_.__name__}.{relationship.key}")
+        assert offenders == []
