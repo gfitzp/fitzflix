@@ -68,6 +68,7 @@ from app.models import (
 from app.main import bp
 from app.main.helpers import (
     _ladder_fetch,
+    flash_form_errors,
     _quick_rating,
     apply_row_edit,
     decimal_id,
@@ -566,243 +567,220 @@ def history():
     )
 
 
-@bp.route("/profile", methods=["GET", "POST"])
-@login_required
-def profile():
-    """Show the user profile: the email address and the API key."""
+def _username_free(column, value):
+    """Return True if no other user maps this username. The match ignores case.
 
-    # The form to update the email address of the user.
+    A blank value is always free."""
 
-    email_form = EditProfileForm(current_user.email)
-    if email_form.submit.data and email_form.validate_on_submit():
-        current_user.email = email_form.email.data
-        db.session.commit()
-        flash("Updated your email address.", "success")
-        return redirect(url_for("main.profile"))
+    if not value:
+        return True
+    return (
+        User.query.filter(db.func.lower(column) == value.lower())
+        .filter(User.id != current_user.id)
+        .first()
+        is None
+    )
 
-    # The form to generate a new API key.
 
-    api_refresh_form = UpdateAPIKeyForm()
-    if (
-        api_refresh_form.regenerate_key_submit.data
-        and api_refresh_form.validate_on_submit()
-    ):
-        current_user.api_key = secrets.token_hex(16)
-        db.session.commit()
-        flash("Regenerated the API key.", "success")
-        return redirect(url_for("main.profile"))
+def _player_from_address(value, default_port=None):
+    """Return (blank, address) for the text of a player address field.
 
-    # This button deletes the Name That Frame standings of the user
-    # (requested by Glenn, 2026-08-27). It deletes the score rows. It keeps
-    # the record of the dealt frames. Thus, a new game does not show the
-    # frames that the user saw recently.
+    blank is True for an empty field. address is the normalized
+    private-network "ip:port", or None for a value that is not one.
+    Fitzflix refuses hostnames (refer to player_address)."""
 
-    reset_frames_form = ResetFrameScoresForm()
-    if (
-        reset_frames_form.reset_frames_submit.data
-        and reset_frames_form.validate_on_submit()
-    ):
-        UserFrameScore.query.filter_by(user_id=int(current_user.id)).delete()
-        db.session.commit()
-        flash("Reset your Name That Frame scores and statistics.", "success")
-        return redirect(url_for("main.profile"))
+    text = (value or "").strip() or None
+    if text is None:
+        return True, None
+    if default_port is None:
+        return False, player_address(text)
+    return False, player_address(text, default_port=default_port)
 
-    # The form to map this account to a Plex username. Thus, Plex
-    # watches go into the diary of this user.
 
-    letterboxd_form = LetterboxdUsernameForm()
-    if letterboxd_form.letterboxd_submit.data and letterboxd_form.validate_on_submit():
-        username = (letterboxd_form.letterboxd_username.data or "").strip() or None
+def _save_email(form):
+    """Update the email address of the user."""
 
-        # The guid of a Letterboxd entry is unique in the whole diary. A
-        # second account on the same feed would fail each sync on that
-        # key. The match ignores case, as Letterboxd usernames do.
+    current_user.email = form.email.data
+    db.session.commit()
+    flash("Updated your email address.", "success")
 
-        taken = (
-            User.query.filter(
-                db.func.lower(User.letterboxd_username) == username.lower()
-            )
-            .filter(User.id != current_user.id)
-            .first()
-            if username
-            else None
-        )
-        if taken:
-            flash(f"'{username}' is already mapped to another user.", "danger")
-            return redirect(url_for("main.profile"))
-        current_user.letterboxd_username = username
-        db.session.commit()
-        if username:
-            flash(
-                f"Letterboxd diary entries by '{username}' now sync into "
-                f"your history.",
-                "success",
-            )
-        else:
-            flash("Letterboxd sync disabled.", "info")
-        return redirect(url_for("main.profile"))
 
-    plex_form = PlexUsernameForm()
-    if plex_form.plex_submit.data and plex_form.validate_on_submit():
-        plex_username = (plex_form.plex_username.data or "").strip() or None
-        # This match ignores case, in the same way as the Plex Home match.
-        taken = (
-            User.query.filter(
-                db.func.lower(User.plex_username) == plex_username.lower()
-            )
-            .filter(User.id != current_user.id)
-            .first()
-            if plex_username
-            else None
-        )
-        if taken:
-            flash(f"'{plex_username}' is already mapped to another user.", "danger")
-        else:
-            current_user.plex_username = plex_username
-            db.session.commit()
-            # Plex minted the cached Home token for the OLD name.
-            forget_home_token(current_user.id)
-            if plex_username:
-                flash(
-                    f"Plex watches by '{plex_username}' now count as yours.", "success"
-                )
-            else:
-                flash("Removed your Plex username mapping.", "success")
-        return redirect(url_for("main.profile"))
+def _regenerate_api_key(form):
+    """Generate a new API key for the user."""
 
-    # The playback device of this user: the Plex player that the play
-    # buttons send films to. The user enters a private-network IP
-    # address with an optional port. The default port is 32500, the
-    # Companion port. Fitzflix refuses hostnames (refer to
-    # player_address). Fitzflix probes the address. It reads the machine
-    # id from the player itself. Thus, Fitzflix saves a device only if
-    # it is reachable. A blank address removes the device.
+    current_user.api_key = secrets.token_hex(16)
+    db.session.commit()
+    flash("Regenerated the API key.", "success")
 
-    plex_player_form = PlexPlayerForm()
-    if (
-        plex_player_form.plex_player_submit.data
-        and plex_player_form.validate_on_submit()
-    ):
-        address = (plex_player_form.plex_player_address.data or "").strip() or None
-        if address is None:
-            current_user.plex_player_address = None
-            current_user.plex_player_id = None
-            db.session.commit()
-            flash("Removed your playback device.", "success")
-        elif player_address(address) is None:
-            flash(
-                "That is not a private-network ip:port. Fitzflix does not "
-                "accept hostnames, because the play command carries a Plex "
-                "token.",
-                "danger",
-            )
-        else:
-            address = player_address(address)
-            player = probe_player(address)
-            if player is None:
-                flash(
-                    f"No Plex player answered at {address}. Make sure that "
-                    "the Plex app is open on the device with 'Advertise as "
-                    "Player' enabled. Make sure that the Fitzflix server "
-                    "can reach this address.",
-                    "danger",
-                )
-            else:
-                current_user.plex_player_address = address
-                current_user.plex_player_id = player["machine_id"]
-                db.session.commit()
-                flash(
-                    f"Play buttons now send films to '{player['name']}' "
-                    f"at {address}.",
-                    "success",
-                )
-        return redirect(url_for("main.profile"))
 
-    # The Infuse target of this user (#192): the same Apple TV, driven
-    # with the Companion protocol of Apple instead of Plex Companion. A
-    # saved address starts the one-time PIN pairing. The pairing must
-    # live in 1 process across the PIN round trip. Thus, it runs as a
-    # user-request queue task, and the PIN crosses through Redis. The
-    # PIN form below appears only while a pairing waits.
+def _reset_frame_scores(form):
+    """Delete the Name That Frame standings of the user.
 
-    infuse_form = InfusePlayerForm()
-    if infuse_form.infuse_player_submit.data and infuse_form.validate_on_submit():
-        address = (infuse_form.infuse_player_address.data or "").strip() or None
-        if address is None:
-            current_user.infuse_player_address = None
-            current_user.infuse_player_credentials = None
-            db.session.commit()
-            flash("Removed your Infuse player.", "success")
-        elif player_address(address, default_port=COMPANION_PORT) is None:
-            # This is the same fence as the Plex device. The server
-            # connects to this address. Thus, it must be a private-network
-            # literal.
-            flash(
-                "That is not a private-network ip:port. Fitzflix does not "
-                "accept hostnames.",
-                "danger",
-            )
-        else:
-            address = player_address(address, default_port=COMPANION_PORT)
-            if start_pairing(current_user.id, address):
-                flash(
-                    "Look at the Apple TV. It shows a PIN in some seconds. "
-                    "Enter the PIN below to complete the pairing.",
-                    "info",
-                )
-            else:
-                flash(
-                    "A pairing already waits for its PIN. Enter that PIN "
-                    "below, or wait 2 minutes for it to expire before you "
-                    "start again.",
-                    "warning",
-                )
-        return redirect(url_for("main.profile"))
+    This deletes the score rows (requested by Glenn, 2026-08-27). It
+    keeps the record of the dealt frames. Thus, a new game does not show
+    the frames that the user saw recently."""
 
-    infuse_pin_form = InfusePinForm()
-    if infuse_pin_form.infuse_pin_submit.data and infuse_pin_form.validate_on_submit():
-        # The PIN stays a string: a leading zero is part of it.
-        pin = (infuse_pin_form.infuse_pin.data or "").strip()
-        if decimal_id(pin) is None:
-            flash("The PIN is the number on the screen of the Apple TV.", "danger")
-        else:
-            submit_pin(current_user.id, pin)
-            ok, message = pairing_outcome(current_user.id)
-            flash(message, {True: "success", False: "danger", None: "info"}[ok])
-        return redirect(url_for("main.profile"))
+    UserFrameScore.query.filter_by(user_id=int(current_user.id)).delete()
+    db.session.commit()
+    flash("Reset your Name That Frame scores and statistics.", "success")
 
-    # The app that plain play buttons target. Fitzflix asks only while
-    # both apps are configured. With 1 app, there is no choice.
 
-    default_player_form = DefaultPlayerForm()
-    if (
-        default_player_form.default_player_submit.data
-        and default_player_form.validate_on_submit()
-    ):
-        current_user.default_player = default_player_form.default_player.data
-        db.session.commit()
+def _save_letterboxd_username(form):
+    """Map this account to a Letterboxd username. Its diary syncs into the history.
+
+    The guid of a Letterboxd entry is unique in the whole diary. A
+    second account on the same feed would fail each sync on that key."""
+
+    username = (form.letterboxd_username.data or "").strip() or None
+    if not _username_free(User.letterboxd_username, username):
+        flash(f"'{username}' is already mapped to another user.", "danger")
+        return
+    current_user.letterboxd_username = username
+    db.session.commit()
+    if username:
         flash(
-            f"Play buttons now default to "
-            f"{'Infuse' if current_user.default_player == 'infuse' else 'Plex'}.",
+            f"Letterboxd diary entries by '{username}' now sync into your history.",
             "success",
         )
-        return redirect(url_for("main.profile"))
-    if not default_player_form.default_player_submit.data:
-        default_player_form.default_player.data = current_user.preferred_player
+    else:
+        flash("Letterboxd sync disabled.", "info")
 
-    # The form to select the streaming services for the availability
-    # displays. This is a per-user setting, never a site-wide setting.
-    # The picker offers each registry provider, in alphabetical order.
 
-    registry = provider_registry()
-    subscribed = {row.provider_id: row for row in current_user.streaming_providers}
-    picker = sorted(registry, key=lambda p: (p["provider_name"] or "").lower())
-    streaming_form = StreamingProvidersForm()
-    streaming_form.providers.choices = [
-        (p["provider_id"], p["provider_name"]) for p in picker
-    ]
-    if streaming_form.providers_submit.data and streaming_form.validate_on_submit():
-        chosen = set(streaming_form.providers.data or [])
+def _save_plex_username(form):
+    """Map this account to a Plex username. Its Plex watches go into the diary."""
+
+    plex_username = (form.plex_username.data or "").strip() or None
+    if not _username_free(User.plex_username, plex_username):
+        flash(f"'{plex_username}' is already mapped to another user.", "danger")
+        return
+    current_user.plex_username = plex_username
+    db.session.commit()
+
+    # Plex minted the cached Home token for the OLD name.
+
+    forget_home_token(current_user.id)
+    if plex_username:
+        flash(f"Plex watches by '{plex_username}' now count as yours.", "success")
+    else:
+        flash("Removed your Plex username mapping.", "success")
+
+
+def _save_plex_player(form):
+    """Save the Plex player that the play buttons send films to.
+
+    The user enters a private-network IP address with an optional port.
+    The default port is 32500, the Companion port. Fitzflix probes the
+    address. It reads the machine id from the player itself. Thus,
+    Fitzflix saves a device only if it is reachable. A blank address
+    removes the device."""
+
+    blank, address = _player_from_address(form.plex_player_address.data)
+    if blank:
+        current_user.plex_player_address = None
+        current_user.plex_player_id = None
+        db.session.commit()
+        flash("Removed your playback device.", "success")
+        return
+    if address is None:
+        flash(
+            "That is not a private-network ip:port. Fitzflix does not "
+            "accept hostnames, because the play command carries a Plex "
+            "token.",
+            "danger",
+        )
+        return
+    player = probe_player(address)
+    if player is None:
+        flash(
+            f"No Plex player answered at {address}. Make sure that "
+            "the Plex app is open on the device with 'Advertise as "
+            "Player' enabled. Make sure that the Fitzflix server "
+            "can reach this address.",
+            "danger",
+        )
+        return
+    current_user.plex_player_address = address
+    current_user.plex_player_id = player["machine_id"]
+    db.session.commit()
+    flash(
+        f"Play buttons now send films to '{player['name']}' at {address}.",
+        "success",
+    )
+
+
+def _save_infuse_player(form):
+    """Save the Infuse target of the user, and start its PIN pairing (#192).
+
+    This is the same Apple TV, driven with the Companion protocol of
+    Apple instead of Plex Companion. The pairing must live in 1 process
+    across the PIN round trip. Thus, it runs as a user-request queue
+    task, and the PIN crosses through Redis. The PIN form appears only
+    while a pairing waits."""
+
+    blank, address = _player_from_address(
+        form.infuse_player_address.data, default_port=COMPANION_PORT
+    )
+    if blank:
+        current_user.infuse_player_address = None
+        current_user.infuse_player_credentials = None
+        db.session.commit()
+        flash("Removed your Infuse player.", "success")
+        return
+    if address is None:
+        # This is the same fence as the Plex device. The server connects
+        # to this address. Thus, it must be a private-network literal.
+        flash(
+            "That is not a private-network ip:port. Fitzflix does not "
+            "accept hostnames.",
+            "danger",
+        )
+        return
+    if start_pairing(current_user.id, address):
+        flash(
+            "Look at the Apple TV. It shows a PIN in some seconds. "
+            "Enter the PIN below to complete the pairing.",
+            "info",
+        )
+    else:
+        flash(
+            "A pairing already waits for its PIN. Enter that PIN "
+            "below, or wait 2 minutes for it to expire before you "
+            "start again.",
+            "warning",
+        )
+
+
+def _submit_infuse_pin(form):
+    """Give the PIN of the Apple TV to the waiting pairing.
+
+    The PIN stays a string: a leading zero is part of it."""
+
+    pin = (form.infuse_pin.data or "").strip()
+    if decimal_id(pin) is None:
+        flash("The PIN is the number on the screen of the Apple TV.", "danger")
+        return
+    submit_pin(current_user.id, pin)
+    ok, message = pairing_outcome(current_user.id)
+    flash(message, {True: "success", False: "danger", None: "info"}[ok])
+
+
+def _save_default_player(form):
+    """Save the app that plain play buttons target."""
+
+    current_user.default_player = form.default_player.data
+    db.session.commit()
+    flash(
+        f"Play buttons now default to "
+        f"{'Infuse' if current_user.default_player == 'infuse' else 'Plex'}.",
+        "success",
+    )
+
+
+def _streaming_saver(registry, subscribed):
+    """Return the handler that saves the streaming services of the user."""
+
+    def save(form):
+        chosen = set(form.providers.data or [])
         registry_by_id = {p["provider_id"]: p for p in registry}
         for provider_id, row in subscribed.items():
             if provider_id not in chosen:
@@ -819,21 +797,97 @@ def profile():
             )
         db.session.commit()
         flash("Updated your streaming services.", "success")
-        return redirect(url_for("main.profile"))
+
+    return save
+
+
+def _save_alerts(form):
+    """Save the opt-ins for the watchlist availability digest (#156/#230).
+
+    The nightly email is off unless the user asks for it. Rentals are a
+    second opt-in on top of it."""
+
+    current_user.notify_availability = bool(form.notify_availability.data)
+    current_user.notify_rentals = bool(form.notify_rentals.data)
+    db.session.commit()
+    flash("Updated your watchlist alerts.", "success")
+
+
+@bp.route("/profile", methods=["GET", "POST"])
+@login_required
+def profile():
+    """Show the user profile: the email address and the API key.
+
+    Each form of the page has a handler. A valid post of a form runs its
+    handler and goes back to the page."""
+
+    email_form = EditProfileForm(current_user.email)
+    api_refresh_form = UpdateAPIKeyForm()
+    reset_frames_form = ResetFrameScoresForm()
+    letterboxd_form = LetterboxdUsernameForm()
+    plex_form = PlexUsernameForm()
+    plex_player_form = PlexPlayerForm()
+    infuse_form = InfusePlayerForm()
+    infuse_pin_form = InfusePinForm()
+
+    # The app that plain play buttons target. Fitzflix asks only while
+    # both apps are configured. With 1 app, there is no choice.
+
+    default_player_form = DefaultPlayerForm()
+
+    # The streaming services for the availability displays. This is a
+    # per-user setting, never a site-wide setting. The picker offers each
+    # registry provider, in alphabetical order.
+
+    registry = provider_registry()
+    subscribed = {row.provider_id: row for row in current_user.streaming_providers}
+    picker = sorted(registry, key=lambda p: (p["provider_name"] or "").lower())
+    streaming_form = StreamingProvidersForm()
+    streaming_form.providers.choices = [
+        (p["provider_id"], p["provider_name"]) for p in picker
+    ]
+    alerts_form = AvailabilityAlertsForm()
+
+    handlers = (
+        (email_form, email_form.submit, _save_email),
+        (api_refresh_form, api_refresh_form.regenerate_key_submit, _regenerate_api_key),
+        (
+            reset_frames_form,
+            reset_frames_form.reset_frames_submit,
+            _reset_frame_scores,
+        ),
+        (
+            letterboxd_form,
+            letterboxd_form.letterboxd_submit,
+            _save_letterboxd_username,
+        ),
+        (plex_form, plex_form.plex_submit, _save_plex_username),
+        (plex_player_form, plex_player_form.plex_player_submit, _save_plex_player),
+        (infuse_form, infuse_form.infuse_player_submit, _save_infuse_player),
+        (infuse_pin_form, infuse_pin_form.infuse_pin_submit, _submit_infuse_pin),
+        (
+            default_player_form,
+            default_player_form.default_player_submit,
+            _save_default_player,
+        ),
+        (
+            streaming_form,
+            streaming_form.providers_submit,
+            _streaming_saver(registry, subscribed),
+        ),
+        (alerts_form, alerts_form.alerts_submit, _save_alerts),
+    )
+    for form, submit, handler in handlers:
+        if submit.data and form.validate_on_submit():
+            handler(form)
+            return redirect(url_for("main.profile"))
+
+    # A form that was not posted shows the stored values.
+
+    if not default_player_form.default_player_submit.data:
+        default_player_form.default_player.data = current_user.preferred_player
     if not streaming_form.providers_submit.data:
         streaming_form.providers.data = list(subscribed)
-
-    # The opt-ins for the watchlist availability digest (#156/#230). The
-    # nightly email is off unless the user asks for it. Rentals are a
-    # second opt-in on top of it.
-
-    alerts_form = AvailabilityAlertsForm()
-    if alerts_form.alerts_submit.data and alerts_form.validate_on_submit():
-        current_user.notify_availability = bool(alerts_form.notify_availability.data)
-        current_user.notify_rentals = bool(alerts_form.notify_rentals.data)
-        db.session.commit()
-        flash("Updated your watchlist alerts.", "success")
-        return redirect(url_for("main.profile"))
     if not alerts_form.alerts_submit.data:
         alerts_form.notify_availability.data = current_user.notify_availability
         alerts_form.notify_rentals.data = current_user.notify_rentals
@@ -854,10 +908,8 @@ def profile():
     # The page does not show the field errors. Thus, a refused field (for
     # example, a username longer than its column, #329) gets a message.
 
-    for form in (email_form, letterboxd_form, plex_form, plex_player_form, infuse_form):
-        for field, messages in form.errors.items():
-            if field != "csrf_token":
-                flash(f"{getattr(form, field).label.text}: {messages[0]}", "danger")
+    for form, _, _ in handlers:
+        flash_form_errors(form)
 
     return render_template(
         "profile.html",
