@@ -44,7 +44,14 @@ from unidecode import unidecode
 from flask import current_app, render_template
 from werkzeug.local import LocalProxy
 
-from app import db, get_app, importable_basename, retry_job_id, safe_job_id
+from app import (
+    db,
+    get_app,
+    importable_basename,
+    path_tag,
+    retry_job_id,
+    safe_job_id,
+)
 from app.aws_storage import aws_upload, untouched_key_still_claimed
 from app.settings import get_setting
 from app.criterion_catalog import (
@@ -1843,7 +1850,9 @@ def move_localized_file(
                 vanished_retries=vanished_retries,
                 job_timeout=current_app.config["MOVE_TASK_TIMEOUT"],
                 job_id=retry_job_id(
-                    "move_localized_file", f"'{basename}'", transient_retries
+                    "move_localized_file",
+                    f"'{basename}':{path_tag(source_path)}",
+                    transient_retries,
                 ),
                 result_ttl=86400,
                 description=f"'{basename}'",
@@ -1882,7 +1891,7 @@ def move_localized_file(
                 job_timeout=current_app.config["MOVE_TASK_TIMEOUT"],
                 job_id=retry_job_id(
                     "move_localized_file",
-                    f"'{basename}'",
+                    f"'{basename}':{path_tag(source_path)}",
                     transient_retries,
                     f"space{space_waits + 1}",
                 ),
@@ -2015,7 +2024,9 @@ def move_localized_file(
                     vanished_retries=vanished_retries,
                     job_timeout=current_app.config["MOVE_TASK_TIMEOUT"],
                     job_id=retry_job_id(
-                        "move_localized_file", f"'{basename}'", transient_retries + 1
+                        "move_localized_file",
+                        f"'{basename}':{path_tag(source_path)}",
+                        transient_retries + 1,
                     ),
                     result_ttl=86400,
                     description=f"'{basename}'",
@@ -2191,6 +2202,7 @@ def finalize_localization(
                 job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
                 job_id=safe_job_id(
                     f"retry:finalize_localization:'{file_details.get('basename')}'"
+                    f":{path_tag(file_path)}"
                 ),
                 result_ttl=86400,
                 description=f"'{file_details.get('basename')}'",
@@ -2608,7 +2620,7 @@ def finalize_localization(
                     job_timeout=current_app.config["MOVE_TASK_TIMEOUT"],
                     job_id=retry_job_id(
                         "move_localized_file",
-                        f"'{file_details.get('basename')}'",
+                        f"'{file_details.get('basename')}':{path_tag(file_path)}",
                         0,
                         f"vanished{vanished_retries + 1}",
                     ),

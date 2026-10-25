@@ -513,7 +513,7 @@ def test_rearchive_waits_for_the_path_commit(app, monkeypatch):
     up. The archive of the film kept the old name. Now the job returns
     to the queue and reads the record again after 5 minutes."""
 
-    from app import aws_storage, db, retry_job_id, videos
+    from app import aws_storage, db, path_tag, retry_job_id, videos
     from app.models import File
     from tests.factories import make_movie, make_movie_file
     from tests.test_scheduling import scheduled_jobs
@@ -542,7 +542,9 @@ def test_rearchive_waits_for_the_path_commit(app, monkeypatch):
             and job.args[0] == file_id
         ]
         assert [job.id for job in retries] == [
-            retry_job_id("rearchive_untouched_object", f"'{basename}'", 1)
+            retry_job_id(
+                "rearchive_untouched_object", f"'{basename}':{path_tag(file_id)}", 1
+            )
         ]
         assert retries[0].args[1] == new_key
         assert retries[0].kwargs == {"path_retries": 1}

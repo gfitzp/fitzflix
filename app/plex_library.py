@@ -55,7 +55,7 @@ import requests
 from flask import current_app
 from werkzeug.local import LocalProxy
 
-from app import get_app, retry_job_id, safe_job_id
+from app import get_app, path_tag, retry_job_id, safe_job_id
 from app.maintenance import PLEX_TRASH_HELD_KEY, VOLUMES_ROOT, volume_alive
 from app.plex_titles import _plex_get
 from app.settings import get_setting
@@ -494,7 +494,8 @@ def enqueue_plex_analyze(file_path):
         ):
             return False
         basename = os.path.basename(file_path)
-        job_id = safe_job_id(f"plex_analyze:{basename}")
+        # The path digest keeps apart 2 files with the same basename (#338)
+        job_id = safe_job_id(f"plex_analyze:{basename}:{path_tag(file_path)}")
         queue = current_app.maintenance_queue
 
         # A second edit while the first analyze is still queued needs no

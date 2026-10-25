@@ -24,7 +24,7 @@ from datetime import timedelta
 from flask import current_app
 from werkzeug.local import LocalProxy
 
-from app import get_app, safe_job_id
+from app import get_app, path_tag, safe_job_id
 from app.maintenance import VOLUMES_ROOT, volume_alive
 
 # The AWS storage layer moved to app.aws_storage. These re-exports keep
@@ -333,13 +333,15 @@ def acquire_lock_or_defer(
     description,
     args=(),
     kwargs=None,
+    key=None,
 ):
     """Take the redlock for a title, or schedule the task to retry later.
 
     This function returns the lock on success. It returns None after it
     schedules the retry. The retry goes into the native
     ScheduledJobRegistry of the queue. The mover in scheduler.py enqueues
-    the retry when it is due.
+    the retry when it is due. key makes the retry id unique to 1 file
+    (see schedule_retry).
     """
 
     lock = current_app.lock_manager.lock(resource, ttl_ms)
@@ -348,13 +350,21 @@ def acquire_lock_or_defer(
         return lock
 
     schedule_retry(
-        queue, func, minutes, timeout, description, "Lock exists", args, kwargs
+        queue,
+        func,
+        minutes,
+        timeout,
+        description,
+        "Lock exists",
+        args,
+        kwargs,
+        key=key,
     )
     return None
 
 
 def schedule_retry(
-    queue, func, minutes, timeout, description, reason, args=(), kwargs=None
+    queue, func, minutes, timeout, description, reason, args=(), kwargs=None, key=None
 ):
     """Put a task back on its queue after a random delay.
 
@@ -363,6 +373,10 @@ def schedule_retry(
     It does not add a new one. The result ttl of 1 day keeps the record
     of a finished retry alive. Thus, a retry that it scheduled itself can
     still find that record. The function returns the delay in minutes.
+
+    key (for example, a file id) goes into the id with a digest (#338). The
+    description holds a basename, and 2 files can have the same basename.
+    Without the key, the retry of 1 file replaces the retry of the other.
     """
 
     sleep_duration = random.randint(*minutes)
@@ -375,7 +389,11 @@ def schedule_retry(
         *args,
         **(kwargs or {}),
         job_timeout=timeout,
-        job_id=safe_job_id(f"retry:{func.rsplit('.', 1)[-1]}:{description}"),
+        job_id=safe_job_id(
+            f"retry:{func.rsplit('.', 1)[-1]}:"
+            + (f"{path_tag(key)}:" if key is not None else "")
+            + description
+        ),
         result_ttl=86400,
         description=description,
     )

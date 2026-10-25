@@ -857,6 +857,7 @@ def mkvpropedit_task(
                 track_languages,
             ),
             kwargs={"transient_retries": transient_retries},
+            key=int(file_id),
         )
         if not lock:
             return True
@@ -1273,6 +1274,7 @@ def mkvmerge_task(file_id, audio_tracks, subtitle_tracks):
             timeout=current_app.config["MKVPROPEDIT_TASK_TIMEOUT"],
             description=f"'{file.basename}'",
             args=(file_id, audio_tracks, subtitle_tracks),
+            key=int(file_id),
         )
         if not lock:
             return True
@@ -2013,6 +2015,7 @@ def remux_audio_plan_task(file_id, plan):
             timeout=current_app.config["TRANSCODE_TASK_TIMEOUT"],
             description=f"'{file.basename}'",
             args=(int(file_id), plan),
+            key=int(file_id),
         )
         if not lock:
             return True

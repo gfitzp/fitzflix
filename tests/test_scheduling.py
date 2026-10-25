@@ -18,7 +18,7 @@ import pytest
 from rq.exceptions import NoSuchJobError
 from rq.job import Job
 
-from app import cron_table, retry_job_id, safe_job_id
+from app import cron_table, path_tag, retry_job_id, safe_job_id
 from app.videos import (
     acquire_lock_or_defer,
     localization_task,
@@ -550,7 +550,12 @@ def test_download_transient_error_defers(app, monkeypatch):
         if job.id.startswith(safe_job_id("retry:download_task"))
     ]
     assert [job.id for job in retries] == [
-        retry_job_id("download_task", "'Thing (2021) - [DVD].mkv'", 1)
+        retry_job_id(
+            "download_task",
+            "'Thing (2021) - [DVD].mkv':"
+            + path_tag("untouched/Thing (2021) - [DVD].mkv"),
+            1,
+        )
     ]
     job = retries[0]
     assert list(job.args) == [

@@ -1,3 +1,4 @@
+import hashlib
 import json
 import logging
 import os
@@ -68,6 +69,17 @@ def safe_job_id(value):
     """
 
     return re.sub(r"[^A-Za-z0-9_-]", "_", value)
+
+
+def path_tag(value):
+    """Return a short digest that makes a job id unique to 1 file (#338).
+
+    The retry ids use basenames, and a basename is not unique. 2 films can
+    each have an extra named "Theatrical Trailer.mkv". A retry with the
+    same id replaces the payload of the other film. The digest of the
+    full path (or of a file id) keeps the 2 retries apart."""
+
+    return hashlib.sha1(str(value).encode("utf-8", "replace")).hexdigest()[:8]
 
 
 def importable_basename(basename):

@@ -513,6 +513,7 @@ def atmos_supplement_task(file_id, staged_source=None):
                 "A TMDB refresh of the movie is pending",
                 args=(int(file_id),),
                 kwargs=retry_kwargs,
+                key=int(file_id),
             )
             return True
 
@@ -529,6 +530,7 @@ def atmos_supplement_task(file_id, staged_source=None):
             description=f"'{file.basename}'",
             args=(int(file_id),),
             kwargs=retry_kwargs,
+            key=int(file_id),
         )
         if not lock:
             return True
@@ -569,6 +571,7 @@ def atmos_supplement_task(file_id, staged_source=None):
                 f"'{file.basename}'",
                 "Staging space is insufficient for the Atmos pipeline",
                 args=(int(file_id),),
+                key=int(file_id),
             )
             return True
         return outcome

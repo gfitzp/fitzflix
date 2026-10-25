@@ -19,7 +19,7 @@ import time
 import pytest
 
 from tests.test_scheduling import scheduled_jobs
-from app import retry_job_id, safe_job_id
+from app import path_tag, retry_job_id, safe_job_id
 
 import app.videos as videos
 import app.maintenance as maintenance
@@ -525,7 +525,7 @@ def test_library_copy_transient_error_defers_and_keeps_lock(
             if job.id.startswith("retry_")
         ]
         assert [job.id for job in retries] == [
-            retry_job_id("move_localized_file", f"'{basename}'", 1)
+            retry_job_id("move_localized_file", f"'{basename}':{path_tag(source)}", 1)
         ]
 
         # The retry carries the original chain, including the lock. It also
@@ -618,7 +618,10 @@ def test_finalize_defers_when_volumes_dead(app, monkeypatch):
         if job.id.startswith("retry_finalize")
     ]
     assert [job.id for job in retries] == [
-        safe_job_id("retry:finalize_localization:'Deferred (2021) - [DVD].mkv'")
+        safe_job_id(
+            "retry:finalize_localization:'Deferred (2021) - [DVD].mkv':"
+            + path_tag("/nonexistent/source.mkv")
+        )
     ]
     # The retry keeps the inspection. It must not inspect again on the sql
     # worker.
@@ -1029,8 +1032,67 @@ def test_move_localized_file_defers_when_volumes_dead(app, tmp_path, monkeypatch
         if job.id.startswith("retry_move_localized_file")
     ]
     assert retries == [
-        retry_job_id("move_localized_file", "'Move Defer (2021) - [DVD].mkv'", 0)
+        retry_job_id(
+            "move_localized_file",
+            "'Move Defer (2021) - [DVD].mkv':" + path_tag("/nonexistent/source.mkv"),
+            0,
+        )
     ]
+
+
+def test_same_named_extras_of_two_films_keep_their_own_move_retries(
+    app, tmp_path, monkeypatch
+):
+    """Test 2 films with an extra named "Theatrical Trailer.mkv" (#338).
+
+    Both moves defer on a dead volume. The retry of film B must not
+    replace the retry of film A. Each retry keeps its own source."""
+
+    monkeypatch.setattr(videos, "_dead_volumes", lambda paths: ["/Volumes/Movies"])
+
+    sources = ["/import/a/Theatrical Trailer.mkv", "/import/b/Theatrical Trailer.mkv"]
+    with app.app_context():
+        for source, film in zip(sources, ("Film A (2001)", "Film B (2002)")):
+            videos.move_localized_file(
+                source,
+                {"basename": "Theatrical Trailer.mkv", "dirname": f"Movies/{film}"},
+                None,
+                str(tmp_path / f".{film}.mkv"),
+            )
+
+    retries = [
+        job
+        for job in scheduled_jobs(app.handoff_queue)
+        if job.id.startswith("retry_move_localized_file")
+        and "Theatrical_Trailer" in job.id
+    ]
+    assert sorted(job.args[0] for job in retries) == sources
+
+
+def test_same_named_files_keep_their_own_lock_retries(app, monkeypatch):
+    """Test schedule_retry for 2 files with the same basename (#338)."""
+
+    from app.videos import schedule_retry
+
+    with app.app_context():
+        for file_id in (101, 202):
+            schedule_retry(
+                app.file_queue,
+                "app.videos.mkvpropedit_task",
+                (5, 15),
+                60,
+                "'Deleted Scenes.mkv'",
+                "Lock exists",
+                args=(file_id, None, None, [], {}),
+                key=file_id,
+            )
+
+    retries = [
+        job
+        for job in scheduled_jobs(app.file_queue)
+        if job.id.startswith("retry_mkvpropedit_task") and "Deleted_Scenes" in job.id
+    ]
+    assert sorted(job.args[0] for job in retries) == [101, 202]
 
 
 def test_rename_with_retries_rides_out_transient_errors(app, tmp_path, monkeypatch):
@@ -1317,7 +1379,9 @@ def test_library_copy_waits_for_space_before_copying(app, incoming_dir, monkeypa
             if job.id.startswith("retry_")
         ]
         assert [job.id for job in waits] == [
-            retry_job_id("move_localized_file", f"'{basename}'", 0, "space1")
+            retry_job_id(
+                "move_localized_file", f"'{basename}':{path_tag(source)}", 0, "space1"
+            )
         ]
         assert list(waits[0].args) == [source, details, "lock-sentinel", hidden]
         assert waits[0].kwargs == {
@@ -1368,9 +1432,9 @@ def test_library_copy_out_of_space_mid_copy_waits(app, incoming_dir, monkeypatch
         assert os.path.exists(hidden) and os.path.exists(source)
         assert basename not in rejected_files(app)
         assert len(app.sql_queue) == 0
-        assert retry_job_id("move_localized_file", f"'{basename}'", 0, "space1") in [
-            job.id for job in scheduled_jobs(app.handoff_queue)
-        ]
+        assert retry_job_id(
+            "move_localized_file", f"'{basename}':{path_tag(source)}", 0, "space1"
+        ) in [job.id for job in scheduled_jobs(app.handoff_queue)]
     finally:
         os.remove(source)
         os.remove(hidden)
@@ -1557,7 +1621,12 @@ def test_a_vanished_library_copy_is_copied_again_from_staging(
             job
             for job in scheduled_jobs(app.handoff_queue)
             if job.id
-            == retry_job_id("move_localized_file", f"'{basename}'", 0, "vanished1")
+            == retry_job_id(
+                "move_localized_file",
+                f"'{basename}':{path_tag(source)}",
+                0,
+                "vanished1",
+            )
         ]
         assert retry.args[3] == staged
         assert retry.kwargs["vanished_retries"] == 1
@@ -2018,7 +2087,9 @@ def test_a_staging_remux_short_of_space_waits_instead_of_rejecting(
             if job.id.startswith("retry_")
         ]
         assert waits == [
-            retry_job_id("move_localized_file", f"'{basename}'", 0, "space1")
+            retry_job_id(
+                "move_localized_file", f"'{basename}':{path_tag(source)}", 0, "space1"
+            )
         ]
         assert os.path.exists(hidden) and os.path.exists(source)
         assert basename not in rejected_files(app)

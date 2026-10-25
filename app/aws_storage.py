@@ -41,7 +41,7 @@ from s3transfer.utils import ChunksizeAdjuster
 from flask import current_app, render_template
 from werkzeug.local import LocalProxy
 
-from app import db, get_app, retry_job_id, safe_job_id
+from app import db, get_app, path_tag, retry_job_id, safe_job_id
 from app.email import task_send_email as send_email
 from app.settings import get_setting
 from app.models import (
@@ -829,7 +829,9 @@ def download_task(key, basename, sqs_receipt_handle=None, transient_retries=0):
                     transient_retries=transient_retries + 1,
                     job_timeout=current_app.config["TRANSCODE_TASK_TIMEOUT"],
                     job_id=retry_job_id(
-                        "download_task", f"'{basename}'", transient_retries + 1
+                        "download_task",
+                        f"'{basename}':{path_tag(key)}",
+                        transient_retries + 1,
                     ),
                     result_ttl=86400,
                     description=f"'{basename}' — Downloading from AWS",
@@ -1180,6 +1182,7 @@ def move_archive_to_modified_task(file_id):
             timeout=config["UPLOAD_TASK_TIMEOUT"],
             description=f"Move the archive of {file.basename} to modified/ (#299)",
             args=(file_id,),
+            key=int(file_id),
         )
         if not lock:
             return False
@@ -1406,7 +1409,7 @@ def rearchive_untouched_object(file_id, new_key, path_retries=0):
                     job_timeout=current_app.config["UPLOAD_TASK_TIMEOUT"],
                     job_id=retry_job_id(
                         "rearchive_untouched_object",
-                        f"'{file.basename}'",
+                        f"'{file.basename}':{path_tag(file_id)}",
                         path_retries + 1,
                     ),
                     result_ttl=86400,
