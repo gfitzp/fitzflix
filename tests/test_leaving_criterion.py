@@ -1164,3 +1164,85 @@ def test_an_earlier_set_never_replaces_the_stored_set(app, monkeypatch):
     with app.app_context():
         assert leaving_criterion.refresh_leaving_criterion() is True
     assert json.loads(app.redis.get(leaving_criterion.LEAVING_KEY)) == current
+
+
+# The match rules of match_tmdb_id, 1 at a time. The cases are the cases
+# of their docstrings.
+
+
+def _candidate(title, year, directors=None, tmdb_id=1):
+    from app.leaving_criterion import Candidate, _normalize
+
+    return Candidate(tmdb_id, _normalize(title), str(year), directors)
+
+
+def test_rank_puts_the_exact_title_and_the_near_year_first(app):
+    from app.leaving_criterion import rank
+
+    cases = [
+        (("Here", 2023), (False, False)),
+        (("Here", 2024), (False, False)),
+        (("Here", 2020), (False, True)),
+        (("Right Here, Right Now", 2023), (True, False)),
+        (("Right Here, Right Now", 2000), (True, True)),
+        (("Here", ""), (False, True)),
+    ]
+    for (title, year), key in cases:
+        assert rank(_candidate(title, year), "here", 2023) == key, title
+    assert rank(_candidate("Here", 2023), "here", None) == (False, True)
+
+
+def test_director_matches_strictly_loosely_and_without_crew(app):
+    from app.leaving_criterion import director_matches
+
+    vickers = _candidate("The Lodgers", 2021, ["lindsey c vickers"])
+    assert not director_matches(vickers, "lindsey vickers")
+    assert director_matches(vickers, "lindsey vickers", loose=True)
+
+    wingard = _candidate("Pop Skull", 2007, ["adam wingard"])
+    assert director_matches(wingard, "andrew wingard", loose=True)
+    assert not director_matches(wingard, "andrew wingard")
+
+    devos = _candidate("Here", 2023, ["bas devos"])
+    assert director_matches(devos, "bas devos")
+    assert director_matches(devos, "bas devos and someone else")
+    assert not director_matches(devos, "hal hartley", loose=True)
+
+    no_crew = _candidate("Opera No. 1", 1994, [])
+    assert director_matches(no_crew, "jane doe", exact=True)
+    assert not director_matches(no_crew, "jane doe", exact=False)
+
+    failed = _candidate("Kid", 1984, None)
+    assert not director_matches(failed, "hal hartley", loose=True, exact=True)
+
+
+def test_unique_exact_passes_only_1_exact_title_and_year(app):
+    from app.leaving_criterion import exact_title_and_year, unique_exact
+
+    soon = _candidate("Regarding Soon", 2004, tmdb_id=10)
+    other_year = _candidate("Regarding Soon", 2005, tmdb_id=11)
+    assert exact_title_and_year(soon, "regarding soon", 2004)
+    assert not exact_title_and_year(other_year, "regarding soon", 2004)
+    assert unique_exact([soon, other_year], "regarding soon", 2004) == soon
+    twin = _candidate("Regarding Soon", 2004, tmdb_id=12)
+    assert unique_exact([soon, twin], "regarding soon", 2004) is None
+    assert unique_exact([other_year], "regarding soon", 2004) is None
+
+
+def test_filmography_hit_reads_the_words_of_the_title(app):
+    from app.leaving_criterion import _title_words, filmography_hit
+
+    wanted = _title_words("Spider’s Eyes")
+    credit = {
+        "job": "Director",
+        "release_date": "1998-06-01",
+        "title": "Eyes of the Spider",
+    }
+    assert filmography_hit(credit, wanted, 1998)
+    assert filmography_hit(credit, wanted, 1999)
+    assert not filmography_hit(credit, wanted, 2000)
+    assert not filmography_hit(dict(credit, job="Writer"), wanted, 1998)
+    assert not filmography_hit(dict(credit, release_date=""), wanted, 1998)
+    original = dict(credit, title="Kumo no hitomi", original_title="Spider Eyes")
+    assert filmography_hit(original, wanted, 1998)
+    assert not filmography_hit(dict(credit, title="Serpent's Path"), wanted, 1998)

@@ -28,6 +28,7 @@ import re
 import traceback
 import unicodedata
 
+from collections import namedtuple
 from datetime import date, datetime
 
 import requests
@@ -265,6 +266,248 @@ def _same_person(wanted, name):
     return name_words[-1] in wanted_words or len(wanted_words & set(name_words)) >= 2
 
 
+# A search result of TMDB, reduced to what the match rules read. The
+# title is a comparison key from _normalize. The year is the first 4
+# characters of the release date. The directors are comparison keys,
+# None before the credits lookup or if it failed, and an empty list if
+# TMDB credits no director.
+
+Candidate = namedtuple("Candidate", "id title year directors")
+
+
+def candidate_of(result):
+    """Return the Candidate of a TMDB search result, with no directors yet."""
+
+    return Candidate(
+        result.get("id"),
+        _normalize(result.get("title")),
+        (result.get("release_date") or "")[:4],
+        None,
+    )
+
+
+def rank(candidate, wanted_title, year):
+    """Return the sort key of a candidate. (False, False) is the best.
+
+    Exact-title matches come first. Then come releases within 1 year of
+    the scraped date. Criterion and TMDB frequently differ by 1 year
+    (festival year versus release year)."""
+
+    exact = candidate.title == wanted_title
+    near = (
+        bool(year)
+        and candidate.year.isdigit()
+        and abs(int(candidate.year) - int(year)) <= 1
+    )
+    return (not exact, not near)
+
+
+def exact_title_and_year(candidate, wanted_title, year):
+    """Return True if the title and the year of a candidate agree exactly."""
+
+    return candidate.title == wanted_title and candidate.year == str(year)
+
+
+def director_matches(candidate, wanted_director, loose=False, exact=False):
+    """Return True if the credited directors of a candidate include the scraped director.
+
+    exact is the result of exact_title_and_year. A candidate with no
+    credited director passes on it. Shorts frequently have no crew on
+    TMDB. A candidate whose credits lookup failed never passes. The
+    strict test wants one name to contain the other. The loose test is
+    _same_person."""
+
+    directors = candidate.directors
+    if directors is None:
+        return False
+    if not directors:
+        return exact
+    if loose:
+        return any(_same_person(wanted_director, name) for name in directors)
+    return any(
+        name and (name in wanted_director or wanted_director in name)
+        for name in directors
+    )
+
+
+def unique_exact(candidates, wanted_title, year):
+    """Return the 1 candidate with exactly this title and year, or None.
+
+    Criterion and TMDB can credit a film differently. Criterion files
+    "Regarding Soon" under Hal Hartley, its subject. TMDB files it under
+    Richard Sylvarnes, who shot and cut it. The rule passes only if the
+    result is unique. Thus, an unrelated film with the same title and
+    year cannot get in."""
+
+    exact = [c for c in candidates if exact_title_and_year(c, wanted_title, year)]
+    return exact[0] if len(exact) == 1 else None
+
+
+def filmography_hit(credit, wanted_words, year):
+    """Return True if a crew credit of a person is the scraped film.
+
+    The credit must be a Director credit within 1 year of the scraped
+    date. Its significant words must contain those of the scraped
+    title, or the reverse. The title or the original title can pass."""
+
+    released = (credit.get("release_date") or "")[:4]
+    if credit.get("job") != "Director" or not released.isdigit():
+        return False
+    if abs(int(released) - int(year)) > 1:
+        return False
+    for credit_title in (credit.get("title"), credit.get("original_title")):
+        words = _title_words(credit_title)
+        if words and (words <= wanted_words or wanted_words <= words):
+            return True
+    return False
+
+
+class _MatchLookups:
+    """The TMDB reads of 1 match_tmdb_id call.
+
+    failed holds the path of each call that failed. A failed call must
+    not read as "TMDB has no such film". The credited directors of each
+    candidate are read 1 time."""
+
+    def __init__(self):
+        self.failed = []
+        self._directors = {}
+
+    def json(self, path, params):
+        """Return the JSON body of a TMDB call, or None if it failed."""
+
+        body = tmdb_json_or(path, params, None)
+        if body is None:
+            self.failed.append(path)
+        return body
+
+    def search(self, title, params, pages):
+        """Return the Candidates of up to pages pages of a title search."""
+
+        results = []
+        for page in range(1, pages + 1):
+            body = self.json("/search/movie", {"query": title, "page": page, **params})
+            page_results = (body or {}).get("results") or []
+            results.extend(page_results)
+            if len(page_results) < 20:
+                break
+        return [candidate_of(result) for result in results]
+
+    def with_directors(self, candidate):
+        """Return the candidate with its credited directors."""
+
+        if candidate.id not in self._directors:
+            body = self.json(f"/movie/{candidate.id}/credits", {})
+            self._directors[candidate.id] = (
+                None
+                if body is None
+                else [
+                    _normalize(person.get("name"))
+                    for person in body.get("crew") or []
+                    if person.get("job") == "Director"
+                ]
+            )
+        return candidate._replace(directors=self._directors[candidate.id])
+
+    def director_credits(self, name):
+        """Yield the crew credits of the people that TMDB knows by exactly this name.
+
+        Only the first 2 people of the person search count."""
+
+        wanted_name = _normalize(name)
+        if not wanted_name:
+            return
+        body = self.json("/search/person", {"query": name.strip()})
+        people = [
+            person
+            for person in (body or {}).get("results") or []
+            if _normalize(person.get("name")) == wanted_name
+        ]
+        for person in people[:2]:
+            body = self.json(f"/person/{person['id']}/movie_credits", {})
+            yield from (body or {}).get("crew") or []
+
+
+def _match_candidates(lookups, title, year, wanted_director, params):
+    """Return the search results that are worth a look, best first.
+
+    The list is limited to the few that are worth a credits lookup.
+    With a director to verify, only exact titles and near years are
+    candidates. The fallback without a year reads 2 pages. A popular
+    unrelated film must not cost a credits call."""
+
+    wanted_title = _normalize(title)
+    found = lookups.search(title, params, pages=1 if params else 2)
+    ordered = sorted(found, key=lambda c: rank(c, wanted_title, year))
+    if wanted_director:
+        ordered = [c for c in ordered if rank(c, wanted_title, year) != (True, True)]
+    return ordered[:MATCH_CANDIDATES]
+
+
+def _pick(lookups, title, year, director, params):
+    """Return the chosen candidate id for 1 search, or None.
+
+    The strict director test runs on each candidate first. The Channel
+    and TMDB can write the name of a person differently (a middle
+    initial, a wrong first name). Thus, the loose test runs next. Then
+    unique_exact is the last rule."""
+
+    wanted_title = _normalize(title)
+    wanted_director = _normalize(director) if director else None
+    found = _match_candidates(lookups, title, year, wanted_director, params)
+    if not wanted_director:
+        return found[0].id if found else None
+    for loose in (False, True):
+        for candidate in found:
+            candidate = lookups.with_directors(candidate)
+            exact = exact_title_and_year(candidate, wanted_title, year)
+            if director_matches(candidate, wanted_director, loose, exact):
+                return candidate.id
+    only = unique_exact(found, wanted_title, year)
+    if only is None:
+        return None
+    current_app.logger.info(
+        f"Leaving-Criterion: '{title}' ({year}) matched TMDB "
+        f"{only.id} by exact title and year; TMDB "
+        f"credits a director other than {director}"
+    )
+    return only.id
+
+
+def _by_filmography(lookups, title, year, director):
+    """Return the film of the scraped director that has this title under a different word order, or None.
+
+    The Channel and TMDB can give a film different English titles. The
+    Channel has "Spider’s Eyes". TMDB has "Eyes of the Spider". Then
+    the title search finds nothing. This reads the films of each
+    scraped director (filmography_hit). The answer must be 1 film
+    only."""
+
+    wanted_words = _title_words(title)
+    if not (director and year and wanted_words):
+        return None
+    hits = set()
+    for name in re.split(r",|&|\band\b", director):
+        for credit in lookups.director_credits(name):
+            if filmography_hit(credit, wanted_words, year):
+                hits.add(credit["id"])
+    if len(hits) != 1:
+        return None
+    (found_id,) = hits
+    current_app.logger.info(
+        f"Leaving-Criterion: '{title}' ({year}) matched TMDB {found_id} "
+        f"through the films of {director}"
+    )
+    return found_id
+
+
+def _match_slug(title, year, director):
+    """Return the slug of the match cache key. It carries the director."""
+
+    text = f"{title}-{year}-{director or ''}".lower()
+    return re.sub(r"[^a-z0-9]+", "-", text).strip("-")
+
+
 def match_tmdb_id(title, year, director=None, failures=None):
     """Return the TMDB id for a leaving film, or None if TMDB has no match.
 
@@ -279,7 +522,7 @@ def match_tmdb_id(title, year, director=None, failures=None):
     of each candidate. It tries exact-title candidates first. A strict
     name test runs first, then a loose one (_same_person). If no
     candidate passes, the films of the director are the last source
-    (by_filmography). If the director matches no film that TMDB
+    (_by_filmography). If the director matches no film that TMDB
     offers, the film stays unmatched (a plain "Also leaving" row). It does not become the
     wrong film. A candidate with no credited director passes on an
     exact title-and-year match. Shorts frequently have no crew on TMDB.
@@ -291,193 +534,24 @@ def match_tmdb_id(title, year, director=None, failures=None):
     the miss is not cached, and "tmdb" goes into failures, if given.
     """
 
-    slug = re.sub(r"[^a-z0-9]+", "-", f"{title}-{year}-{director or ''}".lower()).strip(
-        "-"
-    )
-    cache_key = MATCH_KEY.format(slug=slug)
+    cache_key = MATCH_KEY.format(slug=_match_slug(title, year, director))
     stored = cached_json(cache_key)
     if stored is not MISS:
         return stored or None
 
-    wanted_title = _normalize(title)
-    wanted_director = _normalize(director) if director else None
-
-    # A failed TMDB call must not read as "TMDB has no such film". The
-    # cache keeps a miss for 2 months.
-
-    failed = []
-
-    def tmdb_json(path, params):
-        body = tmdb_json_or(path, params, None)
-        if body is None:
-            failed.append(path)
-        return body
-
-    def candidates(params, pages):
-        """Return the search results that are worth a look.
-
-        Exact-title matches come first. Then come releases within 1
-        year of the scraped date. Criterion and TMDB frequently differ
-        by 1 year (festival year versus release year). The list is
-        limited to the few that are worth a credits lookup. With a
-        director to verify, only those 2 kinds are candidates. The
-        fallback without a year reads 2 pages. A popular unrelated film
-        must not cost a credits call."""
-
-        results = []
-        for page in range(1, pages + 1):
-            body = tmdb_json("/search/movie", {"query": title, "page": page, **params})
-            page_results = (body or {}).get("results") or []
-            results.extend(page_results)
-            if len(page_results) < 20:
-                break
-
-        def rank(result):
-            exact = _normalize(result.get("title")) == wanted_title
-            released = (result.get("release_date") or "")[:4]
-            near = (
-                bool(year)
-                and released.isdigit()
-                and abs(int(released) - int(year)) <= 1
-            )
-            return (not exact, not near)
-
-        ordered = sorted(results, key=rank)
-        if wanted_director:
-            ordered = [result for result in ordered if rank(result) != (True, True)]
-        return ordered[:MATCH_CANDIDATES]
-
-    credited = {}
-
-    def directed_by(result, loose=False):
-        """Return True if the credited directors of the candidate include
-        the scraped director.
-
-        This also returns True if no director is credited and the title
-        and the year agree exactly. The strict test wants one name to
-        contain the other. The loose test is _same_person."""
-
-        if result["id"] not in credited:
-            body = tmdb_json(f"/movie/{result['id']}/credits", {})
-            credited[result["id"]] = (
-                None
-                if body is None
-                else [
-                    _normalize(person.get("name"))
-                    for person in body.get("crew") or []
-                    if person.get("job") == "Director"
-                ]
-            )
-        directors = credited[result["id"]]
-        if directors is None:
-            return False
-        if not directors:
-            return _normalize(result.get("title")) == wanted_title and (
-                result.get("release_date") or ""
-            )[:4] == str(year)
-        if loose:
-            return any(_same_person(wanted_director, name) for name in directors)
-        return any(
-            name and (name in wanted_director or wanted_director in name)
-            for name in directors
-        )
-
-    def pick(params):
-        """Return the chosen candidate id for 1 search, or None.
-
-        If the director of no candidate agrees, the 1 result that TMDB
-        knows by exactly this title and year passes. Criterion and TMDB
-        can credit a film differently. Criterion files "Regarding Soon"
-        under Hal Hartley, its subject. TMDB files it under Richard
-        Sylvarnes, who shot and cut it. This passes only if the result
-        is unique. Thus, an unrelated film with the same title and year
-        cannot get in."""
-
-        found = candidates(params, pages=1 if params else 2)
-        if wanted_director:
-            for result in found:
-                if directed_by(result):
-                    return result.get("id")
-            # The Channel and TMDB can write the name of a person
-            # differently (a middle initial, a wrong first name). The
-            # loose test runs only after the strict test fails for each
-            # candidate.
-            for result in found:
-                if directed_by(result, loose=True):
-                    return result.get("id")
-            exact = [
-                result
-                for result in found
-                if _normalize(result.get("title")) == wanted_title
-                and (result.get("release_date") or "")[:4] == str(year)
-            ]
-            if len(exact) == 1:
-                current_app.logger.info(
-                    f"Leaving-Criterion: '{title}' ({year}) matched TMDB "
-                    f"{exact[0].get('id')} by exact title and year; TMDB "
-                    f"credits a director other than {director}"
-                )
-                return exact[0].get("id")
-            return None
-        return found[0].get("id") if found else None
-
-    def by_filmography():
-        """Return the film of the scraped director that has this title
-        under a different word order, or None.
-
-        The Channel and TMDB can give a film different English titles.
-        The Channel has "Spider’s Eyes". TMDB has "Eyes of the Spider".
-        Then the title search finds nothing. This reads the films that
-        the director made within 1 year of the scraped date. A film
-        passes if its significant words contain those of the scraped
-        title, or the reverse. The answer must be 1 film only."""
-
-        wanted_words = _title_words(title)
-        if not (director and year and wanted_words):
-            return None
-        hits = set()
-        for name in re.split(r",|&|\band\b", director):
-            wanted_name = _normalize(name)
-            if not wanted_name:
-                continue
-            body = tmdb_json("/search/person", {"query": name.strip()})
-            people = [
-                person
-                for person in (body or {}).get("results") or []
-                if _normalize(person.get("name")) == wanted_name
-            ]
-            for person in people[:2]:
-                body = tmdb_json(f"/person/{person['id']}/movie_credits", {})
-                for credit in (body or {}).get("crew") or []:
-                    released = (credit.get("release_date") or "")[:4]
-                    if credit.get("job") != "Director" or not released.isdigit():
-                        continue
-                    if abs(int(released) - int(year)) > 1:
-                        continue
-                    for credit_title in (
-                        credit.get("title"),
-                        credit.get("original_title"),
-                    ):
-                        words = _title_words(credit_title)
-                        if words and (words <= wanted_words or wanted_words <= words):
-                            hits.add(credit["id"])
-        if len(hits) != 1:
-            return None
-        (found_id,) = hits
-        current_app.logger.info(
-            f"Leaving-Criterion: '{title}' ({year}) matched TMDB {found_id} "
-            f"through the films of {director}"
-        )
-        return found_id
-
+    lookups = _MatchLookups()
     tmdb_id = None
     if year:
-        tmdb_id = pick({"primary_release_year": year})
+        tmdb_id = _pick(lookups, title, year, director, {"primary_release_year": year})
     if tmdb_id is None:
-        tmdb_id = pick({})
+        tmdb_id = _pick(lookups, title, year, director, {})
     if tmdb_id is None:
-        tmdb_id = by_filmography()
-    if tmdb_id is None and failed:
+        tmdb_id = _by_filmography(lookups, title, year, director)
+
+    # The cache keeps a miss for 2 months. Thus, a failed call does not
+    # store one.
+
+    if tmdb_id is None and lookups.failed:
         if failures is not None:
             failures.append("tmdb")
         return None
