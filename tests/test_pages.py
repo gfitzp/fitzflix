@@ -801,3 +801,25 @@ def test_a_superscript_id_is_not_an_id(app, admin_client, path):
     """ "²" passes isdigit(), and int() refuses it (#307)."""
 
     assert admin_client.get(path).status_code < 500
+
+
+def test_an_unparseable_form_value_is_a_form_error(app):
+    """Optional() lets a bad value through. The inline check must not crash (#308)."""
+
+    from werkzeug.datastructures import MultiDict
+
+    from app.main.forms import CriterionForm, MovieReviewForm
+
+    with app.test_request_context(method="POST"):
+        review = MovieReviewForm(
+            formdata=MultiDict({"date_watched": "2026-02-30"}), meta={"csrf": False}
+        )
+        assert review.validate() is False
+        assert review.date_watched.errors
+
+        criterion = CriterionForm(
+            formdata=MultiDict({"spine_number": "abc"}), meta={"csrf": False}
+        )
+        criterion.quality.choices = [("", "")]
+        criterion.validate()
+        assert criterion.spine_number.errors

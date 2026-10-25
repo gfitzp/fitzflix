@@ -167,6 +167,11 @@ class MovieReviewForm(FlaskForm):
     def validate_date_watched(self, date_watched):
         """Reject watch dates in the future."""
 
+        # A value that does not parse leaves no data. The field already
+        # has its "Not a valid date value" error (#308).
+
+        if date_watched.data is None:
+            return
         if datetime.strptime(str(date_watched.data), "%Y-%m-%d") > datetime.now():
             raise ValidationError("Enter a date in the past.")
 
@@ -240,6 +245,11 @@ class CriterionForm(FlaskForm):
     def validate_spine_number(self, spine_number):
         """Reject a spine number that is not positive."""
 
+        # A value that does not parse leaves no data. The field already
+        # has its "Not a valid integer value" error (#308).
+
+        if spine_number.data is None:
+            return
         if spine_number.data < 1:
             raise ValidationError("Enter a positive spine number.")
 
