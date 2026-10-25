@@ -78,7 +78,7 @@ def move_movie_rows(old_movie_id, new_movie_id):
     """Move the per-movie rows of a merged movie record to the survivor.
 
     These are the watchlist rows, the status flags, the awards, the
-    archive-only originals, and the DVR channel picks. A row that the
+    archive-only originals, the reviews, and the DVR channel picks. A row that the
     survivor already has stays behind. The delete of the
     old record removes it. Thus, no unique key fails."""
 
@@ -87,6 +87,8 @@ def move_movie_rows(old_movie_id, new_movie_id):
         (UserMovieStatus, ("user_id", "kind")),
         (MovieAward, ("award_id", "win", "year")),
         (ArchivedOriginal, ("id",)),
+        # A user can log a film many times. Each review moves.
+        (UserMovieReview, ("id",)),
     )
     for model, fields in keys:
         kept = {
@@ -284,6 +286,52 @@ def tmdb_refresh_pending(library, id):
 TMDB_NO_MATCH = "no-match"
 
 
+def _refresh_target(library, id, ignored="skipping TMDB refresh"):
+    """Return (record, description) of a TMDB refresh, or None.
+
+    Both phases of a refresh find their record here. The result is None
+    for a record that no longer exists. For example, an earlier job of a
+    bulk refresh merged it into a different record. It is None
+    for a record that is detached from TMDB on purpose. A fetch for it
+    would search by title and attach a wrong id. ignored is the end of
+    that log line. A series that shares its TMDB id with a canonical
+    record refreshes that record. description names the job."""
+
+    if library == MOVIES:
+        movie = Movie.query.filter_by(id=id).first()
+        if movie is None:
+            current_app.logger.warning(
+                f"Movie id {id} no longer exists, skipping TMDB refresh"
+            )
+            return None
+        if movie.tmdb_ignored:
+            current_app.logger.info(
+                f"{movie} is marked as having no TMDB match, {ignored}"
+            )
+            return None
+        return movie, f"Updating '{movie.title} ({movie.year})' with TMDB data"
+
+    if library == TV_SHOWS:
+        tv_show = TVSeries.query.filter_by(id=id).first()
+        if tv_show is None:
+            current_app.logger.warning(
+                f"TV series id {id} no longer exists, skipping TMDB refresh"
+            )
+            return None
+        if tv_show.tmdb_ignored:
+            current_app.logger.info(
+                f"{tv_show} is marked as having no TMDB match, {ignored}"
+            )
+            return None
+        if tv_show.tmdb_id != None:
+            existing_series = TVSeries.query.filter_by(tmdb_id=tv_show.tmdb_id).first()
+            if existing_series:
+                tv_show = existing_series
+        return tv_show, f"Updating '{tv_show.title}' with TMDB data"
+
+    return None
+
+
 def refresh_tmdb_info(
     library, id, tmdb_id=None, notify_if_missing=False, apply_at_front=False
 ):
@@ -305,56 +353,15 @@ def refresh_tmdb_info(
     with app.app_context():
         try:
 
-            if library == MOVIES:
-                movie = Movie.query.filter_by(id=id).first()
-                if movie is None:
-                    # For example, an earlier job in a bulk refresh merged
-                    # it into a different record.
-                    current_app.logger.warning(
-                        f"Movie id {id} no longer exists, skipping TMDB refresh"
-                    )
-                    return False
-                if movie.tmdb_ignored:
-                    # The record is detached from TMDB on purpose. A fetch
-                    # here would search by title and attach a wrong id.
-                    current_app.logger.info(
-                        f"{movie} is marked as having no TMDB match, "
-                        f"skipping TMDB refresh"
-                    )
-                    return False
-                description = f"Updating '{movie.title} ({movie.year})' with TMDB data"
-                current_app.logger.info(f"tmdb_id: {tmdb_id}")
-                tmdb_info = movie.tmdb_movie_fetch(tmdb_id)
-
-            elif library == TV_SHOWS:
-                tv_show = TVSeries.query.filter_by(id=id).first()
-                if tv_show is None:
-                    current_app.logger.warning(
-                        f"TV series id {id} no longer exists, skipping TMDB refresh"
-                    )
-                    return False
-
-                if tv_show.tmdb_ignored:
-                    current_app.logger.info(
-                        f"{tv_show} is marked as having no TMDB match, "
-                        f"skipping TMDB refresh"
-                    )
-                    return False
-
-                # If this series already shares a tmdb_id with a canonical
-                # record, search under the title of that record.
-
-                if tv_show.tmdb_id != None:
-                    existing_series = TVSeries.query.filter_by(
-                        tmdb_id=tv_show.tmdb_id
-                    ).first()
-                    if existing_series:
-                        tv_show = existing_series
-                description = f"Updating '{tv_show.title}' with TMDB data"
-                tmdb_info = tv_show.tmdb_tv_fetch(tmdb_id)
-
-            else:
+            target = _refresh_target(library, id)
+            if target is None:
                 return False
+            record, description = target
+            if library == MOVIES:
+                current_app.logger.info(f"tmdb_id: {tmdb_id}")
+                tmdb_info = record.tmdb_movie_fetch(tmdb_id)
+            else:
+                tmdb_info = record.tmdb_tv_fetch(tmdb_id)
 
             # Compress the payload for its trip through Redis. A details
             # response is small. But a bulk refresh can have thousands of
@@ -468,6 +475,352 @@ def _follow_rename_in_radarr(old_tmdb_id, new_tmdb_id, new_folder):
     )
 
 
+def _rename_movie_file(f, tmdb_id):
+    """Move 1 library file of a refreshed movie to the name of its new details.
+
+    The file keeps its place if its untouched name no longer evaluates,
+    if the new path is claimed, or if the move fails. The poster assets
+    of a main feature go with it. Return True if the file moved on
+    disk."""
+
+    # The filename plumbing lives in app.importing. The import is lazy.
+    # Thus, the module import direction stays one-way.
+
+    from app.importing import evaluate_filename
+
+    renamed = False
+    if tmdb_id != None:
+        file_details = evaluate_filename(f.untouched_basename, tmdb_id=tmdb_id)
+    else:
+        file_details = evaluate_filename(f.untouched_basename)
+
+    if not file_details:
+        # For example, an id tag in the untouched name no
+        # longer resolves. Leave the file where it is.
+        current_app.logger.warning(
+            f"'{f.untouched_basename}' no longer evaluates, " f"skipping its rename"
+        )
+        return False
+    file_details = library_name_details(f, file_details)
+
+    new_relative = file_details.get("file_path")
+    old_file = os.path.join(current_app.config["LIBRARY_DIR"], f.file_path)
+    old_directory = os.path.dirname(old_file)
+    new_file = os.path.join(current_app.config["LIBRARY_DIR"], new_relative)
+
+    # A merge can put this rename on a path that the target
+    # movie already owns (the 25 Cats incident: os.rename
+    # silently overwrote the file of the sibling, then the
+    # path UPDATE died on the unique index). Refuse loudly
+    # and leave both records untouched. The admin deletes
+    # one on purpose instead. One shape is benign: the old
+    # file is gone, the new file is already in place, and
+    # there is no sibling row. That shape falls through.
+    # Thus, an interrupted rename can heal its record.
+
+    sibling = (
+        File.query.filter(File.file_path == new_relative)
+        .filter(File.id != f.id)
+        .first()
+    )
+    collision = sibling is not None or (
+        new_file != old_file and os.path.exists(new_file) and os.path.exists(old_file)
+    )
+    if collision:
+        detail = (
+            f"file #{sibling.id} already claims that path"
+            if sibling
+            else "a file already exists at that path"
+        )
+        current_app.logger.error(
+            f"'{f.basename}' (file #{f.id}) not renamed to "
+            f"'{new_relative}': {detail}. Delete one copy, "
+            f"then re-assign the TMDB id."
+        )
+        notify_admin_text(
+            "Rename collision needs triage",
+            f"Renaming '{f.basename}' (file #{f.id}) to "
+            f"'{new_relative}' was refused: {detail}.\n\n"
+            f"Delete one of the copies, then re-assign "
+            f"the TMDB id to finish the rename.",
+            f"<p>Renaming '{f.basename}' (file #{f.id}) "
+            f"to '{new_relative}' was refused: {detail}."
+            f"</p><p>Delete one of the copies, then "
+            f"re-assign the TMDB id to finish the "
+            f"rename.</p>",
+        )
+        return False
+
+    os.makedirs(
+        os.path.join(
+            current_app.config["LIBRARY_DIR"],
+            file_details.get("dirname"),
+        ),
+        exist_ok=True,
+    )
+
+    # Database first, disk second. The path update flushes
+    # inside a savepoint. Thus, a unique-index conflict
+    # shows BEFORE the file moves, and a failed move rolls
+    # the record back immediately.
+
+    try:
+        with db.session.begin_nested():
+            f.file_path = new_relative
+            f.dirname = file_details.get("dirname")
+            f.basename = file_details.get("basename")
+            f.plex_title = file_details.get("plex_title")
+            db.session.flush()
+
+            if old_file != new_file and os.path.exists(old_file):
+                current_app.logger.info(f"Renaming '{old_file}' to '{new_file}'")
+                os.rename(old_file, new_file)
+                renamed = True
+    except Exception:
+        current_app.logger.error(traceback.format_exc())
+        return False
+
+    # Move or delete the old local assets.
+    try:
+        old_assets = os.listdir(old_directory)
+        new_directory = os.path.join(
+            current_app.config["LIBRARY_DIR"],
+            file_details.get("dirname"),
+        )
+        for old_asset in old_assets:
+            if (
+                old_asset.startswith(("cover", "default", "movie", "poster"))
+                and old_asset.endswith(("jpg", "jpeg", "png", "tbn"))
+                and f.feature_type_id is None
+                and os.path.join(old_directory, old_asset)
+                != os.path.join(new_directory, old_asset)
+                and os.path.isfile(os.path.join(old_directory, old_asset))
+            ):
+                current_app.logger.info(
+                    f"Renaming '{os.path.join(old_directory, old_asset)}' to '{os.path.join(new_directory, old_asset)}'"
+                )
+                os.rename(
+                    os.path.join(old_directory, old_asset),
+                    os.path.join(new_directory, old_asset),
+                )
+
+            elif old_asset == "@eaDir":
+                current_app.logger.info(
+                    f"Deleting '{os.path.join(old_directory, old_asset)}'"
+                )
+                shutil.rmtree(
+                    os.path.join(old_directory, old_asset),
+                    ignore_errors=True,
+                )
+
+    except FileNotFoundError:
+        pass
+
+    # Clear the old directory tree. This clear knows junk.
+    # It does not only clear an empty directory. The poster
+    # assets moved above. But OS metadata or a leftover
+    # image kept the empty shell alive for the weekly sweep
+    # before.
+
+    from app.maintenance import clear_leftover_directory
+
+    clear_leftover_directory(old_directory)
+
+    # The path fields were already updated inside the
+    # savepoint, before the physical rename.
+
+    try:
+        db.session.commit()
+
+    except Exception:
+        current_app.logger.error(traceback.format_exc())
+        db.session.rollback()
+
+    return renamed
+
+
+def _apply_movie_refresh(
+    movie, description, tmdb_id, tmdb_info, tmdb_payload, notify_if_missing, locks
+):
+    """Apply a movie payload: merge, rename the files, and move the rows.
+
+    locks collects the title locks that the driver releases. Return
+    False if the apply must stop. That is a busy lock (the apply is
+    booked again) or a file move that did not commit. Return True
+    otherwise. The driver commits the rest."""
+
+    from app.importing import reconstruct_filename
+
+    # Keep the original movie_id field, and the TMDB id
+    # before the apply. Radarr keys its entries by TMDB id.
+
+    original_movie_id = movie.id
+    original_tmdb_id = movie.tmdb_id
+
+    # Check if the requested tmdb_id already exists in the Movie
+    # table. If it does, use that existing Movie record.
+
+    existing_movie = None
+    if tmdb_id != None:
+        existing_movie = (
+            Movie.query.filter_by(tmdb_id=tmdb_id)
+            .order_by(Movie.date_created.asc())
+            .first()
+        )
+
+    # This task rewrites file paths. When the TMDB id shows a
+    # duplicate, it merges 2 movie records. Thus, it must not
+    # interleave with a localization chain that holds a lock
+    # on one of these titles. Take every lock that an import
+    # of one of the 2 movies can hold. Take them in sorted
+    # order, so concurrent refreshes cannot deadlock. If a
+    # lock is busy, retry later.
+
+    for resource in _movie_refresh_lock_resources(movie, existing_movie):
+        lock = current_app.lock_manager.lock(
+            resource, current_app.config["SQL_TASK_TIMEOUT"] * 1000
+        )
+        if not lock:
+            for held in locks:
+                current_app.lock_manager.unlock(held)
+            locks.clear()
+            requeue(
+                "app.videos.apply_tmdb_refresh",
+                key=f"{MOVIES}:{original_movie_id}",
+                delay=(5, 15),
+                reason="A file is locked by another task",
+                kwargs={
+                    "library": MOVIES,
+                    "id": original_movie_id,
+                    "tmdb_id": tmdb_id,
+                    "tmdb_payload": tmdb_payload,
+                    "notify_if_missing": notify_if_missing,
+                },
+                description=description,
+            )
+            return False
+        locks.append(lock)
+
+    if existing_movie:
+        movie = existing_movie
+        current_app.logger.info(f"Existing movie: {movie}")
+        existing_movie.tmdb_movie_apply(tmdb_info)
+        db.session.commit()
+    else:
+        movie.tmdb_movie_apply(tmdb_info)
+
+    if notify_if_missing and movie.tmdb_id == None:
+        notify_admin("Added a movie without a TMDB ID", "no_tmdb_id", movie=movie)
+
+    # Keep the updated movie_id field.
+
+    updated_movie_id = movie.id
+
+    # Move the files to the new movie record.
+
+    old_files = File.query.filter_by(movie_id=original_movie_id).all()
+
+    for old_record in old_files:
+        old_record.movie_id = updated_movie_id
+
+    # The merge below deletes the old record, and the files of
+    # a record go with it. Thus, stop if the files did not move.
+    # The next refresh tries again.
+
+    try:
+        db.session.commit()
+
+    except Exception:
+        current_app.logger.error(traceback.format_exc())
+        db.session.rollback()
+        if updated_movie_id != original_movie_id:
+            return False
+
+    # Reconstruct the untouched filenames with the new movie details.
+
+    files = File.query.filter_by(movie_id=updated_movie_id).all()
+
+    for f in files:
+        untouched_basename = reconstruct_filename(f.id)
+        f.untouched_basename = untouched_basename
+        current_app.logger.info(f"New untouched basename: '{untouched_basename}'")
+
+    # Commit the new basenames BEFORE you queue an archive
+    # move. A deferred re-archive reads the key that the record
+    # wants from its own session. Thus, it must not start while
+    # that key is only in this transaction.
+
+    try:
+        db.session.commit()
+
+    except Exception:
+        current_app.logger.error(traceback.format_exc())
+        db.session.rollback()
+
+    # Create new directories and move the files if necessary.
+
+    files = File.query.filter_by(movie_id=updated_movie_id).all()
+    renamed = False
+
+    for f in files:
+        renamed = _rename_movie_file(f, tmdb_id) or renamed
+
+    # Rename the archive objects LAST. The deferred re-archive
+    # reads the record path from its own session, then
+    # uploads that local file. On 2026-09-05 a job dequeued
+    # 11 ms after the disk rename, but before the path
+    # commit. It saw the old path, found no file, and gave
+    # up. Thus, the archive move is queued only after the
+    # path commit above.
+
+    for f in files:
+        aws_key = os.path.join(
+            current_app.config["AWS_UNTOUCHED_PREFIX"],
+            sanitize_s3_key(f.untouched_basename),
+        )
+
+        if f.aws_key != aws_key and os.path.exists(
+            os.path.join(current_app.config["LIBRARY_DIR"], f.file_path)
+        ):
+            # This moves the S3 object. The field changes only
+            # when the object really moved. An object that
+            # cannot be copied server-side (Deep Archive) keeps
+            # its key (#299).
+            try:
+                rename_untouched_object(f, aws_key)
+            except Exception:
+                current_app.logger.error(traceback.format_exc())
+
+    try:
+        db.session.commit()
+
+    except Exception:
+        current_app.logger.error(traceback.format_exc())
+        db.session.rollback()
+
+    # Radarr shares the library root. Thus, it must learn the
+    # new folder, or it downloads the film again.
+
+    if renamed or original_tmdb_id != movie.tmdb_id:
+        _follow_rename_in_radarr(original_tmdb_id, movie.tmdb_id, _movie_folder(files))
+
+    if updated_movie_id != original_movie_id:
+
+        # The reviews, the watchlist rows, the status flags, and the
+        # awards move to the new movie. The delete of the old record
+        # would delete them with it.
+
+        move_movie_rows(original_movie_id, movie.id)
+        db.session.flush()
+
+        # Delete the old movie record from the database.
+
+        original_movie_record = Movie.query.filter_by(id=original_movie_id).first()
+        db.session.delete(original_movie_record)
+
+    return True
+
+
 def apply_tmdb_refresh(
     library, id, tmdb_id=None, tmdb_payload=None, notify_if_missing=False
 ):
@@ -482,13 +835,9 @@ def apply_tmdb_refresh(
     for its duration. Thus, it cannot interleave with an import of the
     same title. With notify_if_missing (used for new imports), Fitzflix
     sends an email if the movie still has no TMDB match after the
-    payload is applied.
+    payload is applied. A payload whose apply raises goes to a file
+    (save_failed_payload).
     """
-
-    # The filename plumbing lives in app.importing. The import is lazy.
-    # Thus, the module import direction stays one-way.
-
-    from app.importing import evaluate_filename, reconstruct_filename
 
     with app.app_context():
         locks = []
@@ -497,399 +846,28 @@ def apply_tmdb_refresh(
             if tmdb_payload:
                 tmdb_info = json.loads(zlib.decompress(tmdb_payload).decode("utf-8"))
 
+            # The record can be detached from TMDB after the payload fetch.
+
+            target = _refresh_target(
+                library, id, ignored="discarding the fetched TMDB payload"
+            )
+            if target is None:
+                return False
+            record, description = target
+
             if library == MOVIES:
-                # Get the Movie record to update.
-
-                movie = Movie.query.filter_by(id=id).first()
-                if movie is None:
-                    current_app.logger.warning(
-                        f"Movie id {id} no longer exists, skipping TMDB refresh"
-                    )
+                if not _apply_movie_refresh(
+                    record,
+                    description,
+                    tmdb_id,
+                    tmdb_info,
+                    tmdb_payload,
+                    notify_if_missing,
+                    locks,
+                ):
                     return False
-
-                if movie.tmdb_ignored:
-                    # The record was detached from TMDB after the payload fetch.
-                    current_app.logger.info(
-                        f"{movie} is marked as having no TMDB match, "
-                        f"discarding the fetched TMDB payload"
-                    )
-                    return False
-
-                # Keep the original movie_id field, and the TMDB id
-                # before the apply. Radarr keys its entries by TMDB id.
-
-                original_movie_id = movie.id
-                original_tmdb_id = movie.tmdb_id
-
-                # Check if the requested tmdb_id already exists in the Movie
-                # table. If it does, use that existing Movie record.
-
-                existing_movie = None
-                if tmdb_id != None:
-                    existing_movie = (
-                        Movie.query.filter_by(tmdb_id=tmdb_id)
-                        .order_by(Movie.date_created.asc())
-                        .first()
-                    )
-
-                # This task rewrites file paths. When the TMDB id shows a
-                # duplicate, it merges 2 movie records. Thus, it must not
-                # interleave with a localization chain that holds a lock
-                # on one of these titles. Take every lock that an import
-                # of one of the 2 movies can hold. Take them in sorted
-                # order, so concurrent refreshes cannot deadlock. If a
-                # lock is busy, retry later.
-
-                for resource in _movie_refresh_lock_resources(movie, existing_movie):
-                    lock = current_app.lock_manager.lock(
-                        resource, current_app.config["SQL_TASK_TIMEOUT"] * 1000
-                    )
-                    if not lock:
-                        for held in locks:
-                            current_app.lock_manager.unlock(held)
-                        locks = []
-                        requeue(
-                            "app.videos.apply_tmdb_refresh",
-                            key=f"{library}:{id}",
-                            delay=(5, 15),
-                            reason="A file is locked by another task",
-                            kwargs={
-                                "library": library,
-                                "id": id,
-                                "tmdb_id": tmdb_id,
-                                "tmdb_payload": tmdb_payload,
-                                "notify_if_missing": notify_if_missing,
-                            },
-                            description=(
-                                f"Updating '{movie.title} ({movie.year})' "
-                                f"with TMDB data"
-                            ),
-                        )
-                        return False
-                    locks.append(lock)
-
-                if existing_movie:
-                    movie = existing_movie
-                    current_app.logger.info(f"Existing movie: {movie}")
-                    existing_movie.tmdb_movie_apply(tmdb_info)
-                    db.session.commit()
-                else:
-                    movie.tmdb_movie_apply(tmdb_info)
-
-                if notify_if_missing and movie.tmdb_id == None:
-                    notify_admin(
-                        "Added a movie without a TMDB ID", "no_tmdb_id", movie=movie
-                    )
-
-                # Keep the updated movie_id field.
-
-                updated_movie_id = movie.id
-
-                # Move the files to the new movie record.
-
-                old_files = File.query.filter_by(movie_id=original_movie_id).all()
-
-                for old_record in old_files:
-                    old_record.movie_id = updated_movie_id
-
-                # The merge below deletes the old record, and the files of
-                # a record go with it. Thus, stop if the files did not move.
-                # The next refresh tries again.
-
-                try:
-                    db.session.commit()
-
-                except Exception:
-                    current_app.logger.error(traceback.format_exc())
-                    db.session.rollback()
-                    if updated_movie_id != original_movie_id:
-                        return False
-
-                # Reconstruct the untouched filenames with the new movie details.
-
-                files = File.query.filter_by(movie_id=updated_movie_id).all()
-
-                for f in files:
-                    untouched_basename = reconstruct_filename(f.id)
-                    f.untouched_basename = untouched_basename
-                    current_app.logger.info(
-                        f"New untouched basename: '{untouched_basename}'"
-                    )
-
-                # Commit the new basenames BEFORE you queue an archive
-                # move. A deferred re-archive reads the key that the record
-                # wants from its own session. Thus, it must not start while
-                # that key is only in this transaction.
-
-                try:
-                    db.session.commit()
-
-                except Exception:
-                    current_app.logger.error(traceback.format_exc())
-                    db.session.rollback()
-
-                # Create new directories and move the files if necessary.
-
-                files = File.query.filter_by(movie_id=updated_movie_id).all()
-                renamed = False
-
-                for f in files:
-                    if tmdb_id != None:
-                        file_details = evaluate_filename(
-                            f.untouched_basename, tmdb_id=tmdb_id
-                        )
-                    else:
-                        file_details = evaluate_filename(f.untouched_basename)
-
-                    if not file_details:
-                        # For example, an id tag in the untouched name no
-                        # longer resolves. Leave the file where it is.
-                        current_app.logger.warning(
-                            f"'{f.untouched_basename}' no longer evaluates, "
-                            f"skipping its rename"
-                        )
-                        continue
-                    file_details = library_name_details(f, file_details)
-
-                    new_relative = file_details.get("file_path")
-                    old_file = os.path.join(
-                        current_app.config["LIBRARY_DIR"], f.file_path
-                    )
-                    old_directory = os.path.dirname(old_file)
-                    new_file = os.path.join(
-                        current_app.config["LIBRARY_DIR"], new_relative
-                    )
-
-                    # A merge can put this rename on a path that the target
-                    # movie already owns (the 25 Cats incident: os.rename
-                    # silently overwrote the file of the sibling, then the
-                    # path UPDATE died on the unique index). Refuse loudly
-                    # and leave both records untouched. The admin deletes
-                    # one on purpose instead. One shape is benign: the old
-                    # file is gone, the new file is already in place, and
-                    # there is no sibling row. That shape falls through.
-                    # Thus, an interrupted rename can heal its record.
-
-                    sibling = (
-                        File.query.filter(File.file_path == new_relative)
-                        .filter(File.id != f.id)
-                        .first()
-                    )
-                    collision = sibling is not None or (
-                        new_file != old_file
-                        and os.path.exists(new_file)
-                        and os.path.exists(old_file)
-                    )
-                    if collision:
-                        detail = (
-                            f"file #{sibling.id} already claims that path"
-                            if sibling
-                            else "a file already exists at that path"
-                        )
-                        current_app.logger.error(
-                            f"'{f.basename}' (file #{f.id}) not renamed to "
-                            f"'{new_relative}': {detail}. Delete one copy, "
-                            f"then re-assign the TMDB id."
-                        )
-                        notify_admin_text(
-                            "Rename collision needs triage",
-                            f"Renaming '{f.basename}' (file #{f.id}) to "
-                            f"'{new_relative}' was refused: {detail}.\n\n"
-                            f"Delete one of the copies, then re-assign "
-                            f"the TMDB id to finish the rename.",
-                            f"<p>Renaming '{f.basename}' (file #{f.id}) "
-                            f"to '{new_relative}' was refused: {detail}."
-                            f"</p><p>Delete one of the copies, then "
-                            f"re-assign the TMDB id to finish the "
-                            f"rename.</p>",
-                        )
-                        continue
-
-                    os.makedirs(
-                        os.path.join(
-                            current_app.config["LIBRARY_DIR"],
-                            file_details.get("dirname"),
-                        ),
-                        exist_ok=True,
-                    )
-
-                    # Database first, disk second. The path update flushes
-                    # inside a savepoint. Thus, a unique-index conflict
-                    # shows BEFORE the file moves, and a failed move rolls
-                    # the record back immediately.
-
-                    try:
-                        with db.session.begin_nested():
-                            f.file_path = new_relative
-                            f.dirname = file_details.get("dirname")
-                            f.basename = file_details.get("basename")
-                            f.plex_title = file_details.get("plex_title")
-                            db.session.flush()
-
-                            if old_file != new_file and os.path.exists(old_file):
-                                current_app.logger.info(
-                                    f"Renaming '{old_file}' to '{new_file}'"
-                                )
-                                os.rename(old_file, new_file)
-                                renamed = True
-                    except Exception:
-                        current_app.logger.error(traceback.format_exc())
-                        continue
-
-                    # Move or delete the old local assets.
-                    try:
-                        old_assets = os.listdir(old_directory)
-                        new_directory = os.path.join(
-                            current_app.config["LIBRARY_DIR"],
-                            file_details.get("dirname"),
-                        )
-                        for old_asset in old_assets:
-                            if (
-                                old_asset.startswith(
-                                    ("cover", "default", "movie", "poster")
-                                )
-                                and old_asset.endswith(("jpg", "jpeg", "png", "tbn"))
-                                and f.feature_type_id is None
-                                and os.path.join(old_directory, old_asset)
-                                != os.path.join(new_directory, old_asset)
-                                and os.path.isfile(
-                                    os.path.join(old_directory, old_asset)
-                                )
-                            ):
-                                current_app.logger.info(
-                                    f"Renaming '{os.path.join(old_directory, old_asset)}' to '{os.path.join(new_directory, old_asset)}'"
-                                )
-                                os.rename(
-                                    os.path.join(old_directory, old_asset),
-                                    os.path.join(new_directory, old_asset),
-                                )
-
-                            elif old_asset == "@eaDir":
-                                current_app.logger.info(
-                                    f"Deleting '{os.path.join(old_directory, old_asset)}'"
-                                )
-                                shutil.rmtree(
-                                    os.path.join(old_directory, old_asset),
-                                    ignore_errors=True,
-                                )
-
-                    except FileNotFoundError:
-                        pass
-
-                    # Clear the old directory tree. This clear knows junk.
-                    # It does not only clear an empty directory. The poster
-                    # assets moved above. But OS metadata or a leftover
-                    # image kept the empty shell alive for the weekly sweep
-                    # before.
-
-                    from app.maintenance import clear_leftover_directory
-
-                    clear_leftover_directory(old_directory)
-
-                    # The path fields were already updated inside the
-                    # savepoint, before the physical rename.
-
-                    try:
-                        db.session.commit()
-
-                    except Exception:
-                        current_app.logger.error(traceback.format_exc())
-                        db.session.rollback()
-
-                # Rename the archive objects LAST. The deferred re-archive
-                # reads the record path from its own session, then
-                # uploads that local file. On 2026-09-05 a job dequeued
-                # 11 ms after the disk rename, but before the path
-                # commit. It saw the old path, found no file, and gave
-                # up. Thus, the archive move is queued only after the
-                # path commit above.
-
-                for f in files:
-                    aws_key = os.path.join(
-                        current_app.config["AWS_UNTOUCHED_PREFIX"],
-                        sanitize_s3_key(f.untouched_basename),
-                    )
-
-                    if f.aws_key != aws_key and os.path.exists(
-                        os.path.join(current_app.config["LIBRARY_DIR"], f.file_path)
-                    ):
-                        # This moves the S3 object. The field changes only
-                        # when the object really moved. An object that
-                        # cannot be copied server-side (Deep Archive) keeps
-                        # its key (#299).
-                        try:
-                            rename_untouched_object(f, aws_key)
-                        except Exception:
-                            current_app.logger.error(traceback.format_exc())
-
-                try:
-                    db.session.commit()
-
-                except Exception:
-                    current_app.logger.error(traceback.format_exc())
-                    db.session.rollback()
-
-                # Radarr shares the library root. Thus, it must learn the
-                # new folder, or it downloads the film again.
-
-                if renamed or original_tmdb_id != movie.tmdb_id:
-                    _follow_rename_in_radarr(
-                        original_tmdb_id, movie.tmdb_id, _movie_folder(files)
-                    )
-
-                if updated_movie_id != original_movie_id:
-
-                    # Migrate the reviews to the new movie if the movie_id changed.
-
-                    reviews = UserMovieReview.query.filter_by(
-                        movie_id=original_movie_id
-                    ).all()
-                    for review in reviews:
-                        review.movie_id = movie.id
-
-                    # The watchlist rows, the status flags, and the awards
-                    # move too. The delete of the old record would delete
-                    # them with it.
-
-                    move_movie_rows(original_movie_id, movie.id)
-                    db.session.flush()
-
-                    # Delete the old movie record from the database.
-
-                    original_movie_record = Movie.query.filter_by(
-                        id=original_movie_id
-                    ).first()
-                    db.session.delete(original_movie_record)
-
-            elif library == TV_SHOWS:
-                # Get the TVSeries record to update.
-
-                tv_show = TVSeries.query.filter_by(id=id).first()
-                if tv_show is None:
-                    current_app.logger.warning(
-                        f"TV series id {id} no longer exists, skipping TMDB refresh"
-                    )
-                    return False
-
-                if tv_show.tmdb_ignored:
-                    current_app.logger.info(
-                        f"{tv_show} is marked as having no TMDB match, "
-                        f"discarding the fetched TMDB payload"
-                    )
-                    return False
-
-                # Check if the requested tmdb_id already exists in the
-                # TVSeries table. If it does, use that existing TVSeries record.
-
-                if tv_show.tmdb_id != None:
-                    existing_series = TVSeries.query.filter_by(
-                        tmdb_id=tv_show.tmdb_id
-                    ).first()
-                    current_app.logger.info(f"Existing TV Series: {existing_series}")
-                    if existing_series:
-                        tv_show = existing_series
-
-                tv_show.tmdb_tv_apply(tmdb_info)
+            else:
+                record.tmdb_tv_apply(tmdb_info)
 
             db.session.commit()
 
