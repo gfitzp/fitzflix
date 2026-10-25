@@ -39,11 +39,11 @@ from flask import current_app, g
 from werkzeug.local import LocalProxy
 
 from app import db, get_app
+from app.funnel import user_film_sets
 from app.leaving_criterion import (
     CRITERION_PROVIDER_ID,
     fetch_collection_films,
     match_tmdb_id,
-    user_film_sets,
 )
 from app.models import File, Movie, UserMovieReview, UserWatchlist
 from app.recommendations import score_movie, stored_profile

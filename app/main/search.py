@@ -26,8 +26,6 @@ from app.models import (
     TMDBCredit,
     TVSeries,
     UserMovieReview,
-    UserMovieStatus,
-    UserWatchlist,
     tmdb_get,
     ranked_tv_files,
 )
@@ -40,6 +38,7 @@ from app.main.helpers import (
     series_upgradable,
 )
 from app.main.library import _credited_film_pairs, _dominant_roles
+from app.funnel import might_interest, user_film_sets_by_id
 from app.recommendations import (
     coarse_interest_score,
     marker_bar,
@@ -368,19 +367,16 @@ def search():
                 # A later row wins, but a bare rewatch does not erase a rating.
                 if rating is not None or movie_id not in ratings:
                     ratings[movie_id] = rating
-            watchlisted = {
-                movie_id
-                for (movie_id,) in db.session.query(UserWatchlist.movie_id)
-                .filter(UserWatchlist.user_id == int(current_user.id))
-                .filter(UserWatchlist.movie_id.in_(result_ids))
-            }
+            sets = user_film_sets_by_id(current_user.id, result_ids)
             for result in movie_results:
                 movie_id = result["movie"].id
                 result["seen"] = movie_id in ratings
                 result["rating"] = ratings.get(movie_id)
-                result["watchlisted"] = movie_id in watchlisted
-                result["might_interest"] = (
-                    movie_id in rec_ids and movie_id not in ratings
+                result["watchlisted"] = movie_id in sets.watchlisted
+                result["might_interest"] = might_interest(
+                    seen=movie_id in ratings,
+                    refused=movie_id in sets.refused,
+                    recommended=movie_id in rec_ids,
                 )
 
     return render_template(
@@ -593,25 +589,12 @@ def search_tmdb():
         watchlisted_ids = set()
         refused_ids = set()
         if record_ids:
-            seen_ids = {
-                movie_id
-                for (movie_id,) in db.session.query(UserMovieReview.movie_id)
-                .filter(UserMovieReview.user_id == int(current_user.id))
-                .filter(UserMovieReview.movie_id.in_(list(record_ids.values())))
-            }
-            watchlisted_ids = {
-                movie_id
-                for (movie_id,) in db.session.query(UserWatchlist.movie_id)
-                .filter(UserWatchlist.user_id == int(current_user.id))
-                .filter(UserWatchlist.movie_id.in_(list(record_ids.values())))
-            }
-            refused_ids = {
-                movie_id
-                for (movie_id,) in db.session.query(UserMovieStatus.movie_id)
-                .filter(UserMovieStatus.user_id == int(current_user.id))
-                .filter(UserMovieStatus.kind == "not_interested")
-                .filter(UserMovieStatus.movie_id.in_(list(record_ids.values())))
-            }
+            sets = user_film_sets_by_id(current_user.id, list(record_ids.values()))
+            seen_ids, watchlisted_ids, refused_ids = (
+                sets.logged,
+                sets.watchlisted,
+                sets.refused,
+            )
 
         profile = stored_profile(current_app.redis, current_user.id)
         rec_ids = recommended_movie_ids(current_app.redis, current_user.id)
@@ -624,16 +607,25 @@ def search_tmdb():
             match["record_id"] = record_id
             match["seen"] = record_id in seen_ids
             match["watchlisted"] = record_id in watchlisted_ids
-            if match["seen"] or record_id in refused_ids:
-                continue
-            if match["library_id"] is not None:
-                if match["library_id"] in rec_ids:
-                    match["might_interest"] = True
-                continue
-            if profile is None:
-                continue
-            score = coarse_interest_score(profile, match["genre_ids"], match["year"])
-            if score > bar:
+            refused = record_id in refused_ids
+            score = None
+            if (
+                match["library_id"] is None
+                and profile is not None
+                and not match["seen"]
+                and not refused
+            ):
+                score = coarse_interest_score(
+                    profile, match["genre_ids"], match["year"]
+                )
+            if might_interest(
+                seen=match["seen"],
+                refused=refused,
+                recommended=match["library_id"] is not None
+                and match["library_id"] in rec_ids,
+                score=score,
+                bar=bar,
+            ):
                 match["might_interest"] = True
 
         # Streaming and rent/buy badges on unowned movie matches. Both use

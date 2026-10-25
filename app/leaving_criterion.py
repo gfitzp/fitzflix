@@ -36,7 +36,8 @@ from flask import current_app, g
 from werkzeug.local import LocalProxy
 
 from app import db, get_app
-from app.models import File, Movie, UserMovieReview, UserMovieStatus, UserWatchlist
+from app.models import File, Movie
+from app.funnel import user_film_sets
 from app.recommendations import score_movie, stored_profile
 from app.cache import MISS, cache_json, cached_json
 from app.streaming_rail import _payload_features, enriched_movie, movie_gone
@@ -601,45 +602,6 @@ def refresh_leaving_criterion():
         return True
 
 
-def user_film_sets(user, tmdb_ids):
-    """Return the (owned, logged, watchlisted, refused) tmdb-id sets for 1
-    user over the given films.
-
-    These are the exclusion inputs that the discovery shelves share
-    (the leaving shelf here, the newly-added shelves in
-    app.newly_added)."""
-
-    owned = {
-        tmdb_id
-        for (tmdb_id,) in db.session.query(Movie.tmdb_id)
-        .filter(Movie.tmdb_id.in_(tmdb_ids))
-        .filter(Movie.files.any(File.feature_type_id.is_(None)))
-    }
-    logged = {
-        tmdb_id
-        for (tmdb_id,) in db.session.query(Movie.tmdb_id)
-        .join(UserMovieReview, UserMovieReview.movie_id == Movie.id)
-        .filter(Movie.tmdb_id.in_(tmdb_ids))
-        .filter(UserMovieReview.user_id == int(user.id))
-    }
-    watchlisted = {
-        tmdb_id
-        for (tmdb_id,) in db.session.query(Movie.tmdb_id)
-        .join(UserWatchlist, UserWatchlist.movie_id == Movie.id)
-        .filter(Movie.tmdb_id.in_(tmdb_ids))
-        .filter(UserWatchlist.user_id == int(user.id))
-    }
-    refused = {
-        tmdb_id
-        for (tmdb_id,) in db.session.query(Movie.tmdb_id)
-        .join(UserMovieStatus, UserMovieStatus.movie_id == Movie.id)
-        .filter(Movie.tmdb_id.in_(tmdb_ids))
-        .filter(UserMovieStatus.user_id == int(user.id))
-        .filter(UserMovieStatus.kind == "not_interested")
-    }
-    return owned, logged, watchlisted, refused
-
-
 def leaving_shelf(user):
     """Return the taste-ranked departure shelf for 1 user, or None.
 
@@ -778,20 +740,7 @@ def leaving_inventory(user):
             .filter(Movie.tmdb_id.in_(tmdb_ids))
             .filter(Movie.files.any(File.feature_type_id.is_(None)))
         )
-        seen = {
-            tmdb_id
-            for (tmdb_id,) in db.session.query(Movie.tmdb_id)
-            .join(UserMovieReview, UserMovieReview.movie_id == Movie.id)
-            .filter(Movie.tmdb_id.in_(tmdb_ids))
-            .filter(UserMovieReview.user_id == int(user.id))
-        }
-        watchlisted = {
-            tmdb_id
-            for (tmdb_id,) in db.session.query(Movie.tmdb_id)
-            .join(UserWatchlist, UserWatchlist.movie_id == Movie.id)
-            .filter(Movie.tmdb_id.in_(tmdb_ids))
-            .filter(UserWatchlist.user_id == int(user.id))
-        }
+        _, seen, watchlisted, _ = user_film_sets(user, tmdb_ids)
 
     items = []
     for item in matched:

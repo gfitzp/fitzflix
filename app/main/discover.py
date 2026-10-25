@@ -48,7 +48,6 @@ from app.models import (
     TVCast,
     TVSeries,
     UserMovieReview,
-    UserMovieStatus,
     UserWatchlist,
     movie_genres,
     tmdb_get,
@@ -72,11 +71,11 @@ from app.main.helpers import (
     tv_meta_line,
     admin_required,
 )
+from app.funnel import user_film_sets, user_film_sets_by_id
 from app.recommendations import (
     TMDB_PATCH_SCORES_KEY,
     TOP_BILLING_CUTOFF,
     estimated_rating,
-    not_interested_movie_ids,
     resolved_score,
     resolved_tmdb_score,
     daily_shelf,
@@ -422,14 +421,9 @@ def index():
     computed_at = None
     if stored:
         computed_at = stored.get("computed_at")
-        seen = {
-            movie_id
-            for (movie_id,) in db.session.query(UserMovieReview.movie_id)
-            .filter(UserMovieReview.user_id == int(current_user.id))
-            .filter(UserMovieReview.movie_id.isnot(None))
-        }
-        seen |= not_interested_movie_ids(current_user.id)
         movie_ids = [item["movie_id"] for item in stored.get("items", [])]
+        sets = user_film_sets_by_id(current_user.id, movie_ids)
+        seen = sets.logged | sets.refused
         movies = {
             movie.id: movie
             for movie in Movie.query.filter(Movie.id.in_(movie_ids or [0]))
@@ -499,28 +493,8 @@ def index():
         rail_ids = [item["tmdb_id"] for item in rail_payload.get("items", [])]
         dropped = set()
         if rail_ids:
-            owned_now = db.session.query(Movie.tmdb_id).filter(
-                Movie.tmdb_id.in_(rail_ids),
-                Movie.files.any(File.feature_type_id.is_(None)),
-            )
-            logged_now = (
-                db.session.query(Movie.tmdb_id)
-                .join(UserMovieReview, UserMovieReview.movie_id == Movie.id)
-                .filter(Movie.tmdb_id.in_(rail_ids))
-                .filter(UserMovieReview.user_id == int(current_user.id))
-            )
-            refused_now = (
-                db.session.query(Movie.tmdb_id)
-                .join(UserMovieStatus, UserMovieStatus.movie_id == Movie.id)
-                .filter(Movie.tmdb_id.in_(rail_ids))
-                .filter(UserMovieStatus.user_id == int(current_user.id))
-                .filter(UserMovieStatus.kind == "not_interested")
-            )
-            dropped = (
-                {t for (t,) in owned_now}
-                | {t for (t,) in logged_now}
-                | {t for (t,) in refused_now}
-            )
+            sets = user_film_sets(current_user, rail_ids)
+            dropped = sets.owned | sets.logged | sets.refused
         rail_rows = [
             item
             for item in rail_payload.get("items", [])
@@ -1414,19 +1388,8 @@ def movie_states():
     flagged_ids = set()
     listed_ids = set()
     if all_ids:
-        flagged_ids = {
-            movie_id
-            for (movie_id,) in db.session.query(UserMovieStatus.movie_id)
-            .filter(UserMovieStatus.user_id == int(current_user.id))
-            .filter(UserMovieStatus.kind == "not_interested")
-            .filter(UserMovieStatus.movie_id.in_(all_ids))
-        }
-        listed_ids = {
-            movie_id
-            for (movie_id,) in db.session.query(UserWatchlist.movie_id)
-            .filter(UserWatchlist.user_id == int(current_user.id))
-            .filter(UserWatchlist.movie_id.in_(all_ids))
-        }
+        sets = user_film_sets_by_id(current_user.id, all_ids)
+        flagged_ids, listed_ids = sets.refused, sets.watchlisted
 
     # Poster folds (#197, plus the badge of #156/#230 and the feeds of
     # #246): the per-user corner overlays that every gallery tile paints

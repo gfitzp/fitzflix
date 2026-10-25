@@ -102,13 +102,13 @@ from app.main.helpers import (
     series_upgradable,
     tv_meta_line,
 )
+from app.funnel import might_interest, user_film_sets_by_id
 from app.recommendations import (
     JOB_TO_CLASS,
     coarse_interest_score,
     credit_interest_markers,
     estimated_rating,
     marker_bar,
-    not_interested_movie_ids,
     recommended_movie_ids,
     resolved_score,
     stored_profile,
@@ -423,16 +423,13 @@ def _filmography(credit):
     filmography = sorted(
         rows.values(), key=lambda row: (row["year"] is None, row["year"] or 0)
     )
-    watchlisted = {
-        movie_id
-        for (movie_id,) in db.session.query(UserWatchlist.movie_id)
-        .filter(UserWatchlist.user_id == int(current_user.id))
-        .filter(UserWatchlist.movie_id.in_(list(local.keys()) or [0]))
-    }
+    sets = user_film_sets_by_id(current_user.id, list(local.keys()))
     for row in filmography:
         row["seen"] = row["movie"] is not None and row["movie"].id in reviewed
         row["liked"] = bool(row["movie"] and reviewed.get(row["movie"].id))
-        row["watchlisted"] = row["movie"] is not None and row["movie"].id in watchlisted
+        row["watchlisted"] = (
+            row["movie"] is not None and row["movie"].id in sets.watchlisted
+        )
 
     # "Might interest you" markers. The unowned films score at render
     # time. The score uses the cached credits payload and the stored
@@ -443,19 +440,15 @@ def _filmography(credit):
 
     profile = stored_profile(current_app.redis, current_user.id)
     rec_ids = recommended_movie_ids(current_app.redis, current_user.id)
-    refused = not_interested_movie_ids(current_user.id)
     interesting = credit_interest_markers(profile, int(credit), filmography)
     for row in filmography:
-        if row["movie"] is not None and row["movie"].id in refused:
-            row["might_interest"] = False
-            continue
-        unowned_marker = (
-            row["quality"] is None and not row["seen"] and row["tmdb_id"] in interesting
+        movie = row["movie"]
+        row["might_interest"] = might_interest(
+            seen=row["seen"],
+            refused=movie is not None and movie.id in sets.refused,
+            recommended=(row["quality"] is None and row["tmdb_id"] in interesting)
+            or bool(movie and movie.id in rec_ids),
         )
-        owned_marker = bool(
-            row["movie"] and not row["seen"] and row["movie"].id in rec_ids
-        )
-        row["might_interest"] = unowned_marker or owned_marker
 
     # Streaming badges on the films without a local file, filtered to
     # the services of this user. Fitzflix reads the availability from
@@ -989,20 +982,13 @@ def criterion_collection():
     # score. It stays unmarked.
 
     funnel_ids = movie_ids + [record.id for record in records.values()]
-    seen_ids = {
-        movie_id
-        for (movie_id,) in db.session.query(UserMovieReview.movie_id)
-        .filter(UserMovieReview.user_id == int(current_user.id))
-        .filter(UserMovieReview.movie_id.in_(funnel_ids or [0]))
-    }
-    watchlisted_ids = {
-        movie_id
-        for (movie_id,) in db.session.query(UserWatchlist.movie_id)
-        .filter(UserWatchlist.user_id == int(current_user.id))
-        .filter(UserWatchlist.movie_id.in_(funnel_ids or [0]))
-    }
+    sets = user_film_sets_by_id(current_user.id, funnel_ids)
+    seen_ids, watchlisted_ids, refused_ids = (
+        sets.logged,
+        sets.watchlisted,
+        sets.refused,
+    )
     rec_ids = recommended_movie_ids(current_app.redis, current_user.id)
-    refused_ids = not_interested_movie_ids(current_user.id)
     profile = stored_profile(current_app.redis, current_user.id)
     bar = marker_bar(profile) if profile else None
 
@@ -1023,23 +1009,26 @@ def criterion_collection():
         movie_id = row["movie"].id
         row["seen"] = movie_id in seen_ids
         row["watchlisted"] = movie_id in watchlisted_ids
-        row["might_interest"] = (
-            movie_id in rec_ids
-            and movie_id not in seen_ids
-            and movie_id not in refused_ids
+        row["might_interest"] = might_interest(
+            seen=row["seen"],
+            refused=movie_id in refused_ids,
+            recommended=movie_id in rec_ids,
         )
     for row in catalog_rows:
         record = row["movie"]
         row["seen"] = record is not None and record.id in seen_ids
         row["watchlisted"] = record is not None and record.id in watchlisted_ids
-        row["might_interest"] = False
-        if record is not None and record.id in refused_ids:
-            continue
+        score = None
         if record is not None and profile is not None and not row["seen"]:
             genre_ids = genre_ids_by_movie.get(record.id, [])
             if genre_ids:
                 score = coarse_interest_score(profile, genre_ids, row["year"])
-                row["might_interest"] = score > bar
+        row["might_interest"] = might_interest(
+            seen=row["seen"],
+            refused=record is not None and record.id in refused_ids,
+            score=score,
+            bar=bar,
+        )
 
     # One spine order across owned and unowned rows. The set members
     # sort at the spine of their set (year, then title inside the set).
