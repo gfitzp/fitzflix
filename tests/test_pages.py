@@ -869,7 +869,37 @@ def test_the_queue_poll_stops_when_the_session_ends(admin_client):
     again after every 401."""
 
     body = admin_client.get("/").get_data(as_text=True)
-    assert "var pollStopped = false;" in body
-    assert "if (document.hidden || pollStopped) return;" in body
+
+    # The queue poll runs on the shared startPoll with stopOnFailure. A
+    # stopped poll never schedules again, and the tab coming back does
+    # not start it again
+
+    assert "startPoll(QUEUE_URL, POLL_MS, function(queue_details) {" in body
+    assert "stopOnFailure: true," in body
+    assert "if (document.hidden || stopped) return;" in body
     assert "if (!response.ok || response.redirected) {" in body
-    assert "if (!document.hidden && !pollStopped) poll();" in body
+    assert "if (options.stopOnFailure) {" in body
+    assert "if (!document.hidden && !stopped) poll();" in body
+
+
+def test_the_page_pollers_share_start_poll(app, admin_client):
+    """The queue badge, the Criterion card and the System metrics poll alike.
+
+    Each page script calls the startPoll of base.html after the page
+    script loads. The Recommendations refill paints a new tile through
+    the shared window.fitzflixHydrate."""
+
+    system = admin_client.get("/system").get_data(as_text=True)
+    assert "function startPoll(url, ms, onPayload, options) {" in system
+    assert 'document.addEventListener("DOMContentLoaded", function() {' in system
+    assert "after: markStaleness" in system
+    assert "window.fitzflixHydrate = function(movieIds, tmdbIds) {" in system
+
+    import pathlib
+
+    templates = pathlib.Path(__file__).resolve().parent.parent / "app" / "templates"
+    index = (templates / "index.html").read_text()
+    assert "startPoll(NOW_URL, nextDelay, paint, {" in index
+    recommendations = (templates / "recommendations.html").read_text()
+    assert "window.fitzflixHydrate([id], []);" in recommendations
+    assert "STATES_URL" not in recommendations

@@ -334,6 +334,106 @@
 
         {%if current_user.is_authenticated %}
 
+		// The shared poll of the live parts of the pages: the queue badge
+		// here, the Criterion card of the landing page, and the metrics of
+		// the System page. Each poll waits for the answer before it
+		// schedules the next one. Thus, slow answers cannot overlap or
+		// arrive out of order. A hidden tab stops the poll. The poll starts
+		// again when the tab shows. ms is a number, or a function that
+		// returns the next delay. onPayload gets the text or the JSON of a
+		// good answer, and returns false to stop the poll for good. With
+		// stopOnFailure, an answer that is not page data (an expired
+		// session answers 401 or redirects to the login page) also stops
+		// it. A network failure never stops it. after runs after each poll.
+
+		function startPoll(url, ms, onPayload, options) {
+			options = options || {};
+			var timer = null;
+			var stopped = false;
+
+			function schedule() {
+				clearTimeout(timer);
+				if (document.hidden || stopped) return;
+				timer = setTimeout(poll, typeof ms === "function" ? ms() : ms);
+			}
+
+			function poll() {
+				fetch(url, options.fetchOptions)
+					.then(function(response) {
+						if (!response.ok || response.redirected) {
+							if (options.stopOnFailure) {
+								stopped = true;
+								return null;
+							}
+							throw new Error(response.status);
+						}
+						return options.json ? response.json() : response.text();
+					})
+					.then(function(payload) {
+						if (payload === null) return;
+						var result = onPayload(payload);
+						if (result === false) {
+							stopped = true;
+							return;
+						}
+						return result;
+					})
+					.catch(function(error) {
+						// A body that is not JSON is not page data
+						if (options.stopOnFailure && error instanceof SyntaxError) stopped = true;
+					})
+					.finally(function() {
+						if (options.after) options.after();
+						schedule();
+					});
+			}
+
+			document.addEventListener("visibilitychange", function() {
+				clearTimeout(timer);
+				if (!document.hidden && !stopped) poll();
+			});
+			if (options.immediate) {
+				poll();
+			} else {
+				schedule();
+			}
+		}
+
+		// The shared background post of the live forms (the star row, the
+		// play buttons and the watchlist toggle). The post carries the
+		// X-Requested-With header of its kind, and the answer is the JSON
+		// state of the widget. With requireOk, an error status is a failure.
+
+		function postForState(url, kind, data, requireOk) {
+			return fetch(url, {
+				method: "POST",
+				body: data,
+				credentials: "same-origin",
+				headers: {"X-Requested-With": kind}
+			}).then(function(response) {
+				if (requireOk && !response.ok) throw new Error(kind + " post failed");
+				return response.json();
+			});
+		}
+
+		// A live form has no second post in flight (#337). Two quick taps
+		// could land out of order and paint the older state. A double tap
+		// on 1 star could write 2 rows. A tap during a post does nothing.
+		// onState paints the answer. On any failure, the form falls back
+		// to a normal submission.
+
+		function backgroundPost(form, url, kind, data, onState) {
+			if (form._postInFlight) return;
+			form._postInFlight = true;
+			postForState(url, kind, data, true).then(function(state) {
+				form._postInFlight = false;
+				onState(state);
+			}).catch(function() {
+				form._postInFlight = false;
+				form.submit();
+			});
+		}
+
 		// The queue badge and the task progress: this polls
 		// /api/queue_details. It pauses while the tab is hidden (a phone
 		// in a pocket must not poll forever). It schedules the next poll
@@ -346,7 +446,6 @@
 			var QUEUE_URL = '{{ url_for('api.queue_details') }}'
 				+ (window.pipelineTrailLimit ? '?files=' + window.pipelineTrailLimit : '');
 			var POLL_MS = 5000;
-			var pollTimer = null;
 			var queueBadge = document.getElementById("queue_count");
 			var lastCount = queueBadge ? parseInt(queueBadge.textContent, 10) : NaN;
 			var runningSignature = null;
@@ -786,49 +885,22 @@
 			// login page. The next page load starts the poll again. A
 			// network failure is not a stop. The poll tries again
 
-			var pollStopped = false;
-
-			function scheduleNext() {
-				clearTimeout(pollTimer);
-				if (document.hidden || pollStopped) return;
-				pollTimer = setTimeout(poll, POLL_MS);
-			}
-
-			function poll() {
-				fetch(QUEUE_URL, { credentials: "same-origin" })
-					.then(function(response) {
-						if (!response.ok || response.redirected) {
-							pollStopped = true;
-							return null;
-						}
-						return response.json();
-					})
-					.then(function(queue_details) {
-						// The login page is not queue data. Never paint it
-						// into the badge
-
-						if (!queue_details || typeof queue_details.count !== "number") {
-							pollStopped = true;
-							return;
-						}
-						setQueueCount(queue_details.count);
-						renderRunning(queue_details.running || []);
-						renderAll(queue_details.all || [], queue_details.files || []);
-						return refreshCards();
-					})
-					.catch(function(error) {
-						// A body that is not JSON is not queue data
-						if (error instanceof SyntaxError) pollStopped = true;
-					})
-					.finally(scheduleNext);
-			}
-
-			document.addEventListener("visibilitychange", function() {
-				clearTimeout(pollTimer);
-				if (!document.hidden && !pollStopped) poll();
+			startPoll(QUEUE_URL, POLL_MS, function(queue_details) {
+				// The login page is not queue data. Never paint it into the
+				// badge
+				if (!queue_details || typeof queue_details.count !== "number") {
+					return false;
+				}
+				setQueueCount(queue_details.count);
+				renderRunning(queue_details.running || []);
+				renderAll(queue_details.all || [], queue_details.files || []);
+				return refreshCards();
+			}, {
+				json: true,
+				stopOnFailure: true,
+				immediate: true,
+				fetchOptions: { credentials: "same-origin" }
 			});
-
-			poll();
 		})();
 
 		// The one-tap star row: the forms marked data-ladder-live post
@@ -920,10 +992,34 @@
 			cell.remove();
 		}
 
-		// A ladder or toggle post has no second post in flight for the
-		// same form (#337). Two quick taps could land out of order and
-		// paint the older state. A double tap on 1 star could write 2
-		// rows. A tap during a post does nothing
+		// The answer of a live tile post. The watchlist toggle that shares
+		// the scope of the form (a poster tile, or the data-watchlist-scope
+		// of the Criterion 24/7 card) follows the state, because a rating
+		// or a ✕ clears the watchlist entry of the film on the server. The
+		// cached popover card of the tile is stale. Pages that react to a
+		// changed tile verdict listen for the fitzflix:tile-state event.
+		// The Recommendations page swaps the acted-on tile for a new
+		// suggestion. On the watchlist page, a film that left the
+		// watchlist leaves the grid (#336)
+
+		function afterTileState(form, state) {
+			var scope = form.closest(".poster-actions, [data-watchlist-scope]");
+			if (scope && typeof state.on_watchlist !== "undefined") {
+				syncWatchlistForm(
+					scope.querySelector("[data-card-watchlist]"),
+					state.on_watchlist
+				);
+			}
+			invalidateCard(scope);
+			form.dispatchEvent(new CustomEvent("fitzflix:tile-state",
+				{bubbles: true, detail: state}));
+			if (state.on_watchlist === false) {
+				var cell = form.closest(".poster-cell");
+				if (cell && cell.querySelector("[data-watchlist-remove-cell]")) {
+					removeWatchlistCell(cell);
+				}
+			}
+		}
 
 		document.addEventListener("click", function(event) {
 			var button = event.target.closest("[data-ladder-live] button[name=quick_rating]");
@@ -931,51 +1027,13 @@
 			var form = button.closest("form");
 			if (!form) return;
 			event.preventDefault();
-			if (form._postInFlight) return;
-			form._postInFlight = true;
 			var data = new FormData(form);
 			data.set("quick_rating", button.value);
-			fetch(form.getAttribute("action") || window.location.href, {
-				method: "POST",
-				body: data,
-				credentials: "same-origin",
-				headers: {"X-Requested-With": "ladder"}
-			}).then(function(response) {
-				if (!response.ok) throw new Error("ladder post failed");
-				return response.json();
-			}).then(function(state) {
-				form._postInFlight = false;
-				paintLadder(button.closest(".star-row"), state);
-				// A rating or a ✕ clears the watchlist entry of the film
-				// on the server. The toggle that shares the scope of this
-				// widget (a poster tile, or the data-watchlist-scope of
-				// the Criterion 24/7 card) follows. The cached popover card
-				// of a tile is stale in both cases
-				var actions = form.closest(".poster-actions, [data-watchlist-scope]");
-				if (actions && typeof state.on_watchlist !== "undefined") {
-					syncWatchlistForm(
-						actions.querySelector("[data-card-watchlist]"),
-						state.on_watchlist
-					);
-					invalidateCard(actions);
-				}
-				// Pages that react to a changed tile verdict listen for
-				// this event. The Recommendations page swaps the acted-on
-				// tile for a new suggestion
-				form.dispatchEvent(new CustomEvent("fitzflix:tile-state",
-					{bubbles: true, detail: state}));
-				// On the watchlist page, a film that left the watchlist
-				// leaves the grid (#336)
-				if (state.on_watchlist === false) {
-					var cell = form.closest(".poster-cell");
-					if (cell && cell.querySelector("[data-watchlist-remove-cell]")) {
-						removeWatchlistCell(cell);
-					}
-				}
-			}).catch(function() {
-				form._postInFlight = false;
-				form.submit();
-			});
+			backgroundPost(form, form.getAttribute("action") || window.location.href,
+				"ladder", data, function(state) {
+					paintLadder(button.closest(".star-row"), state);
+					afterTileState(form, state);
+				});
 		});
 
 		// The poster popover (#45c): the anchors marked data-card-url
@@ -1159,14 +1217,7 @@
 			button.disabled = true;
 			button.innerHTML = "Starting…";
 			if (status) status.textContent = "";
-			fetch(form.getAttribute("action"), {
-				method: "POST",
-				body: new FormData(form),
-				credentials: "same-origin",
-				headers: {"X-Requested-With": "play"}
-			}).then(function(response) {
-				return response.json();
-			}).then(function(state) {
+			postForState(form.getAttribute("action"), "play", new FormData(form), false).then(function(state) {
 				if (!status) return;
 				status.classList.toggle("text-danger", !state.ok);
 				status.classList.toggle("text-muted", state.ok);
@@ -1189,38 +1240,59 @@
 			var form = event.target.closest("form[data-card-watchlist]");
 			if (!form) return;
 			event.preventDefault();
-			if (form._postInFlight) return;
-			form._postInFlight = true;
 			var data = new FormData(form);
 			if (event.submitter && event.submitter.name) {
 				data.set(event.submitter.name, event.submitter.value || "1");
 			}
-			fetch(form.getAttribute("action"), {
-				method: "POST",
-				body: data,
-				credentials: "same-origin",
-				headers: {"X-Requested-With": "card"}
-			}).then(function(response) {
-				if (!response.ok) throw new Error("watchlist post failed");
-				return response.json();
-			}).then(function(state) {
-				form._postInFlight = false;
+			backgroundPost(form, form.getAttribute("action"), "card", data, function(state) {
 				syncWatchlistForm(form, state.on_watchlist);
-				// The same scope as the ladder tap. Thus, a toggle tap on
-				// a control row refreshes its cached card too
-				invalidateCard(form.closest(".poster-actions, [data-watchlist-scope]"));
-				if (form.hasAttribute("data-watchlist-remove-cell") && !state.on_watchlist) {
-					removeWatchlistCell(form.closest(".poster-cell"));
-				}
-				// The Recommendations page swaps a banked suggestion
-				// for a new one on this event, as it does for a rating
-				form.dispatchEvent(new CustomEvent("fitzflix:tile-state",
-					{bubbles: true, detail: state}));
-			}).catch(function() {
-				form._postInFlight = false;
-				form.submit();
+				afterTileState(form, state);
 			});
 		});
+
+		// The batched state of the tiles. paintTileState paints the star
+		// row and the watchlist toggle of 1 tile from it.
+
+		var STATES_URL = {{ url_for('main.movie_states') | tojson }};
+
+		function fetchStates(movieIds, tmdbIds) {
+			var params = [];
+			if (movieIds.length) params.push("movie_ids=" + movieIds.join(","));
+			if (tmdbIds.length) params.push("tmdb_ids=" + tmdbIds.join(","));
+			return fetch(STATES_URL + "?" + params.join("&"), {credentials: "same-origin"})
+				.then(function(response) {
+					if (!response.ok) throw new Error("state fetch failed");
+					return response.json();
+				});
+		}
+
+		function paintTileState(tile, state) {
+			var row = tile.querySelector(".star-row");
+			if (row) paintLadder(row, state);
+			syncWatchlistForm(tile.querySelector("[data-card-watchlist]"), state.on_watchlist);
+		}
+
+		// A page that adds tiles after the load (the Recommendations
+		// refill) asks for their state here. Each tile on the page with
+		// one of the ids paints.
+
+		window.fitzflixHydrate = function(movieIds, tmdbIds) {
+			return fetchStates(movieIds, tmdbIds)
+				.then(function(payload) {
+					[
+						["data-state-movie", movieIds, payload.movies],
+						["data-state-tmdb", tmdbIds, payload.tmdb]
+					].forEach(function(kind) {
+						kind[1].forEach(function(id) {
+							var state = kind[2][id];
+							if (!state) return;
+							document.querySelectorAll("[" + kind[0] + '="' + id + '"]')
+								.forEach(function(tile) { paintTileState(tile, state); });
+						});
+					});
+				})
+				.catch(function() {});
+		};
 
 		// Gallery hydration (#45c, revision of 2026-08): the tiles
 		// render their star row blank and their toggle Add-first.
@@ -1318,13 +1390,7 @@
 					var state = tile.hasAttribute("data-state-movie")
 						? payload.movies[tile.getAttribute("data-state-movie")]
 						: payload.tmdb[tile.getAttribute("data-state-tmdb")];
-					if (!state) return;
-					var row = tile.querySelector(".star-row");
-					if (row) paintLadder(row, state);
-					syncWatchlistForm(
-						tile.querySelector("[data-card-watchlist]"),
-						state.on_watchlist
-					);
+					if (state) paintTileState(tile, state);
 				});
 				cards.forEach(function(card) {
 					var state = card.attr === "data-state-movie"
@@ -1364,16 +1430,8 @@
 			// passes stop when a pass makes no progress. Thus, every
 			// page fills with no reload
 			function hydrate(movieIds, tmdbIds, rounds) {
-				var params = [];
-				if (movieIds.length) params.push("movie_ids=" + movieIds.join(","));
-				if (tmdbIds.length) params.push("tmdb_ids=" + tmdbIds.join(","));
 				setLoading(movieIds, tmdbIds, true);
-				fetch("{{ url_for('main.movie_states') }}?" + params.join("&"),
-					{credentials: "same-origin"})
-					.then(function(response) {
-						if (!response.ok) throw new Error("state fetch failed");
-						return response.json();
-					})
+				fetchStates(movieIds, tmdbIds)
 					.then(function(payload) {
 						paintFrom(payload);
 						setLoading(movieIds, tmdbIds, false);

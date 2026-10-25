@@ -60,9 +60,9 @@
 {# The form around a star ladder in a control row. The star row drops
    its own bottom margin here. Thus, the row gap alone spaces the
    toggle beside it. card adds the from_card flag of a live card post.
-   The caller renders the ladder. #}
-{% macro ladder_form(action="", card=true) -%}
-<form action="{{ action }}" method="post" class="d-flex align-items-center mb-0 star-row-inline">
+   spacing is the margin under the form. The caller renders the ladder. #}
+{% macro ladder_form(action="", card=true, spacing="mb-0") -%}
+<form action="{{ action }}" method="post" class="d-flex align-items-center {{ spacing }} star-row-inline">
 	{% if card %}{{ card_post_fields() }}{% else %}<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">{% endif %}
 	{{ caller() }}
 </form>
@@ -130,10 +130,9 @@
 <div class="poster-actions pt-1"{% if movie_id %} data-state-movie="{{ movie_id }}"{% elif tmdb_id %} data-state-tmdb="{{ tmdb_id }}"{% endif %}>
 	{# The star row drops its own bottom margin. The form margin
 	   alone spaces the toggle. #}
-	<form action="{{ action }}" method="post" class="mb-2 d-flex align-items-center star-row-inline">
-		{{ card_post_fields() }}
-		{{ rating_ladder(compact=true, live=true) }}
-	</form>
+	{% call ladder_form(action, spacing="mb-2") %}
+	{{ rating_ladder(compact=true, live=true) }}
+	{% endcall %}
 	{% if watchlist %}
 	{# Outline: a gallery repeats this toggle under every poster
 	   (Glenn, 2026-08-31). #}

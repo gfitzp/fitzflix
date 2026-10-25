@@ -124,15 +124,23 @@ def test_page_script_guards_posts_and_clears_watchlist_tiles(app, admin_client):
 
     body = admin_client.get("/").get_data(as_text=True)
 
-    # Both live handlers ignore a tap while their post is in flight
+    # Both live handlers post through backgroundPost, which ignores a tap
+    # while the post of its form is in flight
 
-    assert body.count("if (form._postInFlight) return;") == 2
+    assert "function backgroundPost(form, url, kind, data, onState) {" in body
+    assert body.count("if (form._postInFlight) return;") == 1
+    assert (
+        'backgroundPost(form, form.getAttribute("action") || window.location.href,'
+        in body
+    )
+    assert 'backgroundPost(form, form.getAttribute("action"), "card", data,' in body
 
-    # The ladder handler removes a watchlist-page tile when the film left
-    # the watchlist. The Remove button shares the same removal, which
-    # counts down 1 time only
+    # Both handlers share afterTileState. It removes a watchlist-page tile
+    # when the film left the watchlist. The removal counts down 1 time
+    # only
 
     assert "function removeWatchlistCell(cell)" in body
     assert "cell._watchlistRemoved = true;" in body
     assert "if (state.on_watchlist === false) {" in body
-    assert body.count("removeWatchlistCell(") == 3
+    assert body.count("removeWatchlistCell(") == 2
+    assert body.count("afterTileState(form, state);") == 2

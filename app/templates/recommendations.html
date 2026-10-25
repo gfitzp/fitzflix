@@ -92,7 +92,6 @@
 	// the removal of a watchlist add) never replace the tile.
 	(function() {
 		var TILE_URL = {{ url_for('main.recommendations_tile') | tojson }};
-		var STATES_URL = {{ url_for('main.movie_states') | tojson }};
 
 		function shownIds() {
 			var ids = [];
@@ -102,23 +101,12 @@
 			return ids;
 		}
 
+		// base.html paints the star row and the toggle of the new tile.
+
 		function hydrate(cell) {
 			var actions = cell.querySelector("[data-state-movie]");
 			var id = actions && actions.getAttribute("data-state-movie");
-			if (!id) return;
-			fetch(STATES_URL + "?movie_ids=" + id, {credentials: "same-origin"})
-				.then(function(response) {
-					if (!response.ok) throw new Error("state fetch failed");
-					return response.json();
-				})
-				.then(function(payload) {
-					var state = payload.movies[id];
-					if (!state) return;
-					var row = cell.querySelector(".star-row");
-					if (row) paintLadder(row, state);
-					syncWatchlistForm(cell.querySelector("[data-card-watchlist]"), state.on_watchlist);
-				})
-				.catch(function() {});
+			if (id) window.fitzflixHydrate([id], []);
 		}
 
 		function replaceCell(shelf, cell) {
