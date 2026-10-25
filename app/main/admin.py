@@ -626,6 +626,136 @@ def settings():
     )
 
 
+def _refresh_criterion_post(form):
+    """Queue the Criterion Collection refresh of the whole movie library.
+
+    This job goes on the maintenance queue with the timeout of the
+    monthly cron row and the CLI (#343). A full Wikidata pass takes
+    longer than the request queue allows, and it must not hold the
+    user-request worker."""
+
+    enqueue_task(
+        "app.videos.refresh_criterion_collection_info",
+        description="Refreshing Criterion Collection information for all movies in library",
+    )
+    flash(
+        "Refreshing Criterion Collection information for all movies in library",
+        "info",
+    )
+
+
+def _refresh_tmdb_post(form):
+    """Queue a TMDB refresh of each movie and each TV show of the library.
+
+    This excludes the records detached from TMDB (#207).
+    refresh_tmdb_info would refuse them in any case. The detachment
+    exists to prevent a title search. These jobs go on the user-request
+    queue. Each job is a TMDB API call plus artwork downloads. Thousands
+    of them would block the import work of the single sql worker for the
+    whole run."""
+
+    movies = (
+        Movie.query.filter(Movie.tmdb_ignored == False)
+        .order_by(Movie.title.asc(), Movie.year.asc())
+        .all()
+    )
+    tv_shows = (
+        TVSeries.query.filter(TVSeries.tmdb_ignored == False)
+        .order_by(TVSeries.title.asc())
+        .all()
+    )
+    for movie in movies:
+        enqueue_task(
+            "app.videos.refresh_tmdb_info",
+            "Movies",
+            movie.id,
+            movie.tmdb_id,
+            description=f"Refreshing TMDB data for '{movie.title} ({movie.year})'",
+        )
+    for tv in tv_shows:
+        enqueue_task(
+            "app.videos.refresh_tmdb_info",
+            "TV Shows",
+            tv.id,
+            tv.tmdb_id,
+            description=f"Refreshing TMDB data for '{tv.title}'",
+        )
+    flash("Refreshing TMDB information for entire library", "info")
+
+
+def _sync_storage_post(form):
+    """Queue the S3 sync after a password check.
+
+    The sync runs for hours. The maintenance queue holds it, as in the
+    cron table. On the single sql worker it blocked the cataloging of
+    each import (#314)."""
+
+    if not current_user.check_password(form.password.data):
+        flash("Incorrect password provided!", "danger")
+        return
+    enqueue_task(
+        "app.videos.sync_aws_s3_storage_task",
+        description="Syncing files with AWS S3 storage",
+    )
+    flash("Syncing files with AWS S3 storage", "info")
+
+
+def _scan_library_post(form):
+    """Queue a scan of the track metadata of each file of the library."""
+
+    enqueue_task(
+        "app.videos.track_metadata_scan_library",
+        description="Scanning track metadata for all files in the library",
+    )
+    flash("Scanning track metadata for all files in the library", "info")
+
+
+def _scan_imports_post(form):
+    """Queue a scan of the import directory, at the front of the request queue."""
+
+    enqueue_import_scan(
+        current_app.request_queue,
+        description="Manually scanning import directory for files",
+        at_front=True,
+    )
+    current_app.logger.info("Manually scanning import directory for files")
+    flash("Manually scanning import directory for files", "info")
+
+
+def _merge_movies_post(form):
+    """Merge a group of movies that share a TMDB id into the oldest record.
+
+    Each duplicate goes through refresh_tmdb_info. Its merge path moves
+    the files and the reviews to the oldest record and deletes the
+    duplicate. Title locks serialize the merge path with the import
+    pipeline."""
+
+    merge_tmdb_id = int(form.merge_tmdb_id.data)
+    group = (
+        Movie.query.filter_by(tmdb_id=merge_tmdb_id)
+        .order_by(Movie.date_created.asc())
+        .all()
+    )
+    if len(group) < 2:
+        flash("No duplicates found for that TMDB id.", "danger")
+        return
+    canonical = group[0]
+    for duplicate in group[1:]:
+        enqueue_task(
+            "app.videos.refresh_tmdb_info",
+            "Movies",
+            duplicate.id,
+            merge_tmdb_id,
+            description=f"Merging '{duplicate.title} ({duplicate.year})' into "
+            f"'{canonical.title} ({canonical.year})'",
+        )
+    flash(
+        f"Merging {len(group) - 1} duplicate(s) into "
+        f"'{canonical.title} ({canonical.year})'",
+        "info",
+    )
+
+
 @bp.route("/maintenance", methods=["GET", "POST"])
 @login_required
 @admin_required
@@ -633,151 +763,34 @@ def maintenance():
     """Show the library maintenance page.
 
     The page has the rejected-file triage, the duplicate movies, the
-    filename tester, and the bulk operations for the whole library."""
-
-    # This form updates the Criterion Collection information for the whole
-    # movie library
+    filename tester, and the bulk operations for the whole library. Each
+    form of the page has a handler. A valid post of a form runs its
+    handler and goes back to the page. The filename test is not in the
+    table. It renders its result on the page."""
 
     criterion_refresh_form = CriterionRefreshForm()
-    if (
-        criterion_refresh_form.criterion_refresh.data
-        and criterion_refresh_form.validate_on_submit()
-    ):
-        # This job goes on the maintenance queue with the timeout of the
-        # monthly cron row and the CLI (#343). A full Wikidata pass takes
-        # longer than the request queue allows, and it must not hold the
-        # user-request worker.
-
-        enqueue_task(
-            "app.videos.refresh_criterion_collection_info",
-            description="Refreshing Criterion Collection information for all movies in library",
-        )
-        flash(
-            "Refreshing Criterion Collection information for all movies in library",
-            "info",
-        )
-        return redirect(url_for("main.maintenance"))
-
-    # This form updates the TMDB data for the whole library, both movies
-    # and TV shows
-
     tmdb_refresh_form = TMDBRefreshForm()
-    if tmdb_refresh_form.tmdb_refresh.data and tmdb_refresh_form.validate_on_submit():
-        # This excludes the records detached from TMDB (#207).
-        # refresh_tmdb_info would refuse them in any case. The detachment
-        # exists to prevent a title search
-
-        movies = (
-            Movie.query.filter(Movie.tmdb_ignored == False)
-            .order_by(Movie.title.asc(), Movie.year.asc())
-            .all()
-        )
-        tv_shows = (
-            TVSeries.query.filter(TVSeries.tmdb_ignored == False)
-            .order_by(TVSeries.title.asc())
-            .all()
-        )
-
-        # These jobs go on the user-request queue. Each job is a TMDB API
-        # call plus artwork downloads. Thousands of them would block the
-        # import work of the single sql worker for the whole run
-
-        for movie in movies:
-            enqueue_task(
-                "app.videos.refresh_tmdb_info",
-                "Movies",
-                movie.id,
-                movie.tmdb_id,
-                description=f"Refreshing TMDB data for '{movie.title} ({movie.year})'",
-            )
-
-        for tv in tv_shows:
-            enqueue_task(
-                "app.videos.refresh_tmdb_info",
-                "TV Shows",
-                tv.id,
-                tv.tmdb_id,
-                description=f"Refreshing TMDB data for '{tv.title}'",
-            )
-
-        flash("Refreshing TMDB information for entire library", "info")
-        return redirect(url_for("main.maintenance"))
-
     sync_form = SyncAWSStorageForm()
-    if sync_form.sync_submit.data and sync_form.validate_on_submit():
-        if current_user.check_password(sync_form.password.data):
-            # The sync runs for hours. The maintenance queue holds it, as
-            # in the cron table. On the single sql worker it blocked the
-            # cataloging of each import (#314).
-
-            enqueue_task(
-                "app.videos.sync_aws_s3_storage_task",
-                description="Syncing files with AWS S3 storage",
-            )
-            flash("Syncing files with AWS S3 storage", "info")
-
-        else:
-            flash("Incorrect password provided!", "danger")
-
-        return redirect(url_for("main.maintenance"))
-
-    # This form scans the metadata of all files again
-
     metadata_scan_form = TrackMetadataScanForm()
-
-    if metadata_scan_form.scan_submit.data and metadata_scan_form.validate_on_submit():
-        enqueue_task(
-            "app.videos.track_metadata_scan_library",
-            description="Scanning track metadata for all files in the library",
-        )
-        flash("Scanning track metadata for all files in the library", "info")
-        return redirect(url_for("main.maintenance"))
-
     import_form = ImportForm()
-    if import_form.submit.data and import_form.validate_on_submit():
-        enqueue_import_scan(
-            current_app.request_queue,
-            description="Manually scanning import directory for files",
-            at_front=True,
-        )
-        current_app.logger.info("Manually scanning import directory for files")
-        flash("Manually scanning import directory for files", "info")
-        return redirect(url_for("main.maintenance"))
-
-    # This form merges a group of movies that share a TMDB id. Each
-    # duplicate goes through refresh_tmdb_info. Its merge path moves the
-    # files and the reviews to the oldest record and deletes the
-    # duplicate. Title locks serialize the merge path with the import
-    # pipeline
-
     movie_merge_form = MovieMergeForm()
-    if movie_merge_form.merge_submit.data and movie_merge_form.validate_on_submit():
-        merge_tmdb_id = int(movie_merge_form.merge_tmdb_id.data)
-        group = (
-            Movie.query.filter_by(tmdb_id=merge_tmdb_id)
-            .order_by(Movie.date_created.asc())
-            .all()
-        )
-        if len(group) < 2:
-            flash("No duplicates found for that TMDB id.", "danger")
 
-        else:
-            canonical = group[0]
-            for duplicate in group[1:]:
-                enqueue_task(
-                    "app.videos.refresh_tmdb_info",
-                    "Movies",
-                    duplicate.id,
-                    merge_tmdb_id,
-                    description=f"Merging '{duplicate.title} ({duplicate.year})' into "
-                    f"'{canonical.title} ({canonical.year})'",
-                )
-            flash(
-                f"Merging {len(group) - 1} duplicate(s) into "
-                f"'{canonical.title} ({canonical.year})'",
-                "info",
-            )
-        return redirect(url_for("main.maintenance"))
+    handlers = (
+        (
+            criterion_refresh_form,
+            criterion_refresh_form.criterion_refresh,
+            _refresh_criterion_post,
+        ),
+        (tmdb_refresh_form, tmdb_refresh_form.tmdb_refresh, _refresh_tmdb_post),
+        (sync_form, sync_form.sync_submit, _sync_storage_post),
+        (metadata_scan_form, metadata_scan_form.scan_submit, _scan_library_post),
+        (import_form, import_form.submit, _scan_imports_post),
+        (movie_merge_form, movie_merge_form.merge_submit, _merge_movies_post),
+    )
+    for form, submit, handler in handlers:
+        if submit.data and form.validate_on_submit():
+            handler(form)
+            return redirect(url_for("main.maintenance"))
 
     # This form shows how Fitzflix would parse and file a filename on
     # import
