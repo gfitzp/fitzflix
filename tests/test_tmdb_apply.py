@@ -579,14 +579,14 @@ def test_a_tmdb_outage_sends_no_not_found_email(app, monkeypatch):
     Only a 404 means that the id does not exist. A 503 must not send the
     "TMDB ID not found" email, and the refresh queues no apply."""
 
-    import app.models as models
+    import app.tmdb_apply as tmdb_apply
     from app.tmdb_refresh import refresh_tmdb_info
 
     sent = []
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "key")
     monkeypatch.setattr("app.email.send_email", lambda *a, **k: sent.append(a))
     monkeypatch.setattr("app.email.render_template", lambda *a, **k: "")
-    monkeypatch.setattr(models, "tmdb_get", lambda url, **k: _ErrorAnswer(503))
+    monkeypatch.setattr(tmdb_apply, "tmdb_get", lambda url, **k: _ErrorAnswer(503))
     with app.app_context():
         movie = make_movie("Outage Film", 1999, tmdb_id=990021)
         db.session.commit()
@@ -602,7 +602,7 @@ def test_a_tmdb_outage_sends_no_not_found_email(app, monkeypatch):
 
     # A 404 still sends the email
 
-    monkeypatch.setattr(models, "tmdb_get", lambda url, **k: _ErrorAnswer(404))
+    monkeypatch.setattr(tmdb_apply, "tmdb_get", lambda url, **k: _ErrorAnswer(404))
     with app.app_context():
         assert db.session.get(Movie, movie_id).tmdb_movie_fetch(990021) is None
     assert len(sent) == 1
@@ -610,11 +610,12 @@ def test_a_tmdb_outage_sends_no_not_found_email(app, monkeypatch):
 
 def test_a_missing_id_with_no_admin_does_not_crash(app, monkeypatch):
     import app.models as models
+    import app.tmdb_apply as tmdb_apply
 
     sent = []
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "key")
     monkeypatch.setattr("app.email.send_email", lambda *a, **k: sent.append(a))
-    monkeypatch.setattr(models, "tmdb_get", lambda url, **k: _ErrorAnswer(404))
+    monkeypatch.setattr(tmdb_apply, "tmdb_get", lambda url, **k: _ErrorAnswer(404))
 
     class NoAdmin:
         def filter(self, *args):

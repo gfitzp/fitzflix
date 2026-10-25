@@ -414,7 +414,7 @@ def test_unknown_tmdb_id_rejected_loudly(app, monkeypatch):
 
     import requests
 
-    import app.models as fitzflix_models
+    import app.tmdb_apply as tmdb_apply
 
     class NotFoundResponse:
         status_code = 404
@@ -428,7 +428,7 @@ def test_unknown_tmdb_id_rejected_loudly(app, monkeypatch):
             raise error
 
     monkeypatch.setattr(
-        fitzflix_models.requests, "get", lambda *args, **kwargs: NotFoundResponse()
+        tmdb_apply.requests, "get", lambda *args, **kwargs: NotFoundResponse()
     )
 
     with app.app_context():
