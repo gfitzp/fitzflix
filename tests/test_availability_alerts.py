@@ -298,6 +298,58 @@ def test_cache_gap_never_fakes_a_debut(app, monkeypatch):
         reset_alert_users(app)
 
 
+def test_one_empty_payload_never_fakes_a_debut(app, monkeypatch):
+    """Test a film whose payload is empty for one night (#326).
+
+    TMDB can serve an empty watch/providers body. The snapshot keeps the
+    providers of the film. Thus, the real payload the next night reads as
+    no change."""
+
+    sent = capture_mail(monkeypatch)
+    set_alert_flags(app, MEMBER_EMAIL, availability=True)
+    try:
+        watchlist_movie(app, "Glitch", 9013)
+        subscribe(app, 258, "Criterion Channel", email=MEMBER_EMAIL)
+        plant_availability(app, 9013, {**EMPTY, "flatrate": [CRITERION]})
+        run_task(app, monkeypatch)
+
+        plant_availability(app, 9013, EMPTY)
+        run_task(app, monkeypatch)
+        plant_availability(app, 9013, {**EMPTY, "flatrate": [CRITERION]})
+        run_task(app, monkeypatch)
+        assert sent == []
+    finally:
+        reset_alert_users(app)
+
+
+def test_a_real_departure_and_return_still_notifies(app, monkeypatch):
+    """Test a film that is empty for EMPTY_RUNS_TO_ACCEPT runs in a row.
+
+    Then the empty state is real. A return after it is a new debut."""
+
+    from app.availability_alerts import EMPTY_RUNS_TO_ACCEPT
+
+    sent = capture_mail(monkeypatch)
+    set_alert_flags(app, MEMBER_EMAIL, availability=True)
+    try:
+        watchlist_movie(app, "Returns", 9014)
+        subscribe(app, 8, "Netflix", email=MEMBER_EMAIL)
+        plant_availability(app, 9014, {**EMPTY, "flatrate": [NETFLIX]})
+        run_task(app, monkeypatch)
+
+        plant_availability(app, 9014, EMPTY)
+        for _ in range(EMPTY_RUNS_TO_ACCEPT):
+            run_task(app, monkeypatch)
+        assert sent == []
+
+        plant_availability(app, 9014, {**EMPTY, "flatrate": [NETFLIX]})
+        run_task(app, monkeypatch)
+        assert len(sent) == 1
+        assert "Now on Netflix" in sent[0]["text_body"]
+    finally:
+        reset_alert_users(app)
+
+
 def test_leaving_criterion_warning_fires_once_per_set(app, monkeypatch):
     """Test the warning for a watchlisted, unowned film in the stored
     leaving set.

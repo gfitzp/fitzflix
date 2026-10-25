@@ -96,6 +96,12 @@ LEAVING_SOON_DAYS = 7
 
 NEW_IN_LIBRARY_LABEL = "New in library"
 
+# The number of empty availability payloads in a row that make the empty
+# state of a film real (#326). A smaller number of empty runs is a gap in
+# the TMDB data. Thus, the snapshot keeps the providers of the film.
+
+EMPTY_RUNS_TO_ACCEPT = 3
+
 
 def _text(value):
     """Return a str from a Redis field that can be bytes."""
@@ -113,7 +119,9 @@ def snapshot_provider_diff(tmdb_ids):
     rent list. provider_names maps a provider id to a display name. The
     names come from the registry and from the payloads. A film that is
     new to the snapshot only plants its entry. A film with no cached
-    availability keeps its previous entry and makes no diff. This
+    availability keeps its previous entry and makes no diff. An empty
+    payload after a non-empty entry is a gap until EMPTY_RUNS_TO_ACCEPT
+    runs in a row are empty. This
     prunes the snapshot entries of the films that nobody watchlists
     now.
     """
@@ -124,6 +132,11 @@ def snapshot_provider_diff(tmdb_ids):
         p["provider_id"]: p["provider_name"]
         for p in provider_registry()
         if p.get("provider_name")
+    }
+
+    previous = {
+        int(_text(field)): json.loads(value)
+        for field, value in (redis.hgetall(SNAPSHOT_KEY) or {}).items()
     }
 
     current = {}
@@ -144,10 +157,26 @@ def snapshot_provider_diff(tmdb_ids):
                     names[provider["provider_id"]] = provider["provider_name"]
         current[tmdb_id] = {"streaming": sorted(streaming), "rent": sorted(rent)}
 
-    previous = {
-        int(_text(field)): json.loads(value)
-        for field, value in (redis.hgetall(SNAPSHOT_KEY) or {}).items()
-    }
+        # TMDB can serve an empty payload for one night (#326, the same
+        # glitch as #251). An empty payload after a non-empty entry is a
+        # gap. The previous entry stays, and the film makes no diff. After
+        # EMPTY_RUNS_TO_ACCEPT empty runs in a row, the empty state is
+        # real, and the film left every service.
+
+        before = previous.get(int(tmdb_id))
+        if (
+            not streaming
+            and not rent
+            and before
+            and (before.get("streaming") or before.get("rent"))
+        ):
+            empty_runs = int(before.get("empty_runs") or 0) + 1
+            if empty_runs < EMPTY_RUNS_TO_ACCEPT:
+                current[tmdb_id] = {
+                    "streaming": before.get("streaming") or [],
+                    "rent": before.get("rent") or [],
+                    "empty_runs": empty_runs,
+                }
 
     newly_streaming, newly_rentable = {}, {}
     for tmdb_id, state in current.items():
