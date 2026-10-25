@@ -1915,7 +1915,8 @@ def move_localized_file(
                 makedirs_on_mounted_volume(output_directory)
 
                 if hidden_output_file == destination_hidden:
-                    # Legacy unstaged processing already put it at the destination.
+                    # A file too big for staging was localized at its
+                    # destination name already.
                     pass
 
                 elif (
@@ -2064,23 +2065,23 @@ def finalize_localization(
     file_path,
     file_details,
     lock,
-    hidden_output_file=None,
-    inspection=None,
+    hidden_output_file,
+    inspection,
     staged_output=None,
     vanished_retries=0,
 ):
     """Add a localized file to the database and move it into position.
 
-    - This task adds a record of the localized file to the database.
-    - It updates the movie or TV show with data from TheMovieDB or TheTVDB.
-    - It downloads the supplemental movie or TV show files (for example,
-      images).
-    - It moves the localized file into position.
-    - It commits the changes to the database.
+    The task runs in 3 phases. _build_records writes the File, Movie or
+    TVSeries, quality, and track rows to the session, and finds the
+    worse files. _place_file renames the hidden library copy into place,
+    or gives the copy back to move_localized_file. Then the task commits.
+    _after_commit does the follow-up work. Each follow-up is best effort.
+    A failure after the commit never moves the file, and never stops the
+    next follow-up.
 
-    hidden_output_file is where localization put the processed file. If
-    the caller omits it (a job from before local staging existed), the
-    task assumes that the file is hidden in the destination directory.
+    hidden_output_file is the hidden library copy that move_localized_file
+    made. inspection is the media details that it read from the file.
 
     staged_output is the same file on staging, when the library copy
     crossed volumes. The Movies NFS mount can drop at the end of a large
@@ -2091,7 +2092,7 @@ def finalize_localization(
     The task removes staged_output after the rename and the commit.
     """
 
-    from app.videos import _dead_volumes, _rename_with_retries
+    from app.videos import _dead_volumes
 
     with app.app_context():
         # The queue page lists this job with a banner and a row. Name the
@@ -2102,12 +2103,8 @@ def finalize_localization(
         output_directory = os.path.join(
             current_app.config["LIBRARY_DIR"], file_details.get("dirname")
         )
-        if hidden_output_file is None:
-            hidden_output_file = os.path.join(
-                output_directory, f".{file_details.get('basename')}"
-            )
 
-        # Defer if a necessary volume is dead. Do this before the try block.
+        # Defer if a necessary volume is dead. Do this before the records.
         # Then the task keeps the title lock for the retry and does not
         # release it.
 
@@ -2125,635 +2122,783 @@ def finalize_localization(
             )
             return False
 
-        # If the task gives the copy back to move_localized_file, the title
-        # lock must survive for the retried chain. The code below must not
-        # release it.
-
-        handed_off = False
-
-        # After the commit, the new file is the library file of its record.
-        # A later failure (a Redis enqueue, an email) must not move it to
-        # rejects. For an in-place import, file_path is that library file.
-
-        committed = False
+        output_file = os.path.join(
+            current_app.config["LIBRARY_DIR"], file_details.get("file_path")
+        )
 
         # A failure before the commit must not leave the new file in the
         # library with no record (#316). The handler needs to know if the
-        # rename happened, and if it replaced a file at that path.
+        # rename happened, and if it replaced a file at that path. None
+        # means that the rename did not happen.
 
-        renamed = False
-        replaced_existing = False
-        atmos_handoff = None
-        atmos_queued = False
-        worse_local_copies = []
-        pending_emails = []
-
+        placement = None
         try:
-
-            # Find the output file to make.
-
-            output_file = os.path.join(
-                current_app.config["LIBRARY_DIR"], file_details.get("file_path")
+            records = _build_records(
+                file_details, inspection, os.path.basename(hidden_output_file)
+            )
+            placement = _place_file(
+                file_path,
+                file_details,
+                lock,
+                hidden_output_file,
+                output_file,
+                output_directory,
+                staged_output,
+                vanished_retries,
             )
 
-            # Look for this File record in the database. If it does not exist,
-            # make a new one. If it exists, update that record.
+            # A copy that goes back to move_localized_file keeps the title
+            # lock for the retried chain.
 
-            file = File.query.filter_by(file_path=file_details.get("file_path")).first()
-
-            # A real rip that replaces a conversion keeps the original of
-            # the conversion in S3, as an archive-only original (#292).
-
-            kept_archives = []
-            if not file:
-                file = File(**file_details)
-                current_app.logger.debug(vars(file))
-                current_app.logger.info(f"{file} Creating File record")
-                db.session.add(file)
-
-            else:
-                current_app.logger.info(f"{file} Existing File record found")
-                if (
-                    file.converted_from_quality
-                    and not file_details.get("converted_from_quality")
-                    and file.aws_key
-                    and file.aws_date_uploaded
-                ):
-                    kept_archives.append(
-                        archived_original_from_file(file, "replaced by a real rip")
-                    )
-
-                # The track rows of the existing record go in the
-                # replace_track_rows call below.
-
-                file.date_updated = datetime.now(timezone.utc)
-
-            if file.media_library == "Movies":
-                # Look for a Movie record. If it does not exist, make one.
-
-                current_app.logger.info(
-                    f"{file} Searching in Movies table using "
-                    f"title='{file_details.get('title')}', year='{file_details.get('year')}'"
-                )
-                movie = Movie.query.filter_by(
-                    title=file_details.get("title"), year=file_details.get("year")
-                ).first()
-                if not movie:
-                    movie = Movie(
-                        title=file_details.get("title"), year=file_details.get("year")
-                    )
-                    current_app.logger.info(f"{file} Creating {movie}")
-
-                    # Check the new movie against the stored Criterion list.
-                    # The import never queries Wikidata (#283). The monthly
-                    # refresh updates the movie later.
-
-                    try:
-                        criterion_collection = stored_criterion_releases()
-                    except Exception:
-                        current_app.logger.warning(traceback.format_exc())
-                        criterion_collection = []
-
-                    assign_criterion_release(
-                        movie, *criterion_release_lookups(criterion_collection)
-                    )
-
-                    db.session.add(movie)
-
-                file.movie = movie
-                current_app.logger.info(f"{file} Associating with {movie}")
-
-                # Set the special feature type if the file is a special feature.
-
-                if file_details.get("feature_type_name"):
-                    feature_type = RefFeatureType.query.filter_by(
-                        feature_type=file_details.get("feature_type_name")
-                    ).first()
-                    file.feature_type = feature_type
-                    current_app.logger.info(f"{file} Marking as {feature_type}")
-
-            elif file.media_library == "TV Shows":
-                # Look for a TVSeries record. If it does not exist, make one.
-
-                current_app.logger.info(
-                    f"{file} Searching in TVSeries table using title='{file_details.get('title')}"
-                )
-                tv_series = TVSeries.query.filter_by(
-                    title=file_details.get("title")
-                ).first()
-                if not tv_series:
-                    tv_series = TVSeries(title=file_details.get("title"))
-                    current_app.logger.info(f"{file} Creating {tv_series}")
-                    db.session.add(tv_series)
-
-                file.tv_series = tv_series
-                current_app.logger.info(f"{file} Associating with {tv_series}")
-
-            # Set the file quality details.
-
-            quality = RefQuality.query.filter_by(
-                quality_title=file_details.get("quality_title")
-            ).first()
-            file.quality = quality
-            current_app.logger.info(f"{file} Setting file_quality {quality}")
-
-            # The conversion fields (#292). A real rip clears them on a
-            # reused record. replace_existing is the "Import" choice of an
-            # admin. find_worse_files reads it.
-
-            file.converted_from_quality = file_details.get("converted_from_quality")
-            file.converted_from_format = file_details.get("converted_from_format")
-
-            # A file that is not a conversion has no transcoded/ copy. The
-            # weekly S3 sync prunes the copy of a reused record (#299).
-
-            if not file.converted_from_quality:
-                file.aws_transcoded_key = None
-                file.aws_transcoded_date_uploaded = None
-                file.aws_transcoded_filesize_bytes = None
-
-            # A reused record gets the untouched name of the new source.
-            # A conversion that reuses the record of a real rip must not
-            # keep the name of the rip (#292).
-
-            if file_details.get("untouched_basename"):
-                file.untouched_basename = file_details["untouched_basename"]
-            file.replace_existing = file_details.get("replace_existing", False)
-
-            # The media details arrive precomputed from move_localized_file.
-            # The fallback inspection covers a job from before the split
-            # existed.
-
-            if inspection is None:
-                inspection = inspect_localized_file(
-                    hidden_output_file, file_details.get("container")
-                )
-
-            output_audio_tracks = inspection["audio_tracks"]
-            output_subtitle_tracks = inspection["subtitle_tracks"]
-
-            # Set the file video track info.
-
-            for field, value in inspection["video"].items():
-                setattr(file, field, value)
-
-            # Write the track rows. The flag pass inside marks the forced
-            # state of a suspicious subtitle track as unknown. The
-            # candidates query decides later if the file needs triage.
-            # Imported content is NEW evidence. A re-imported file first
-            # deletes an earlier reviewed verdict and the stale aids. A
-            # replacement can have a forced track that the original did
-            # not have.
-
-            from app.triage import reset_triage_state
-
-            reset_triage_state(file)
-            audio_rows = replace_track_rows(
-                file, output_audio_tracks, output_subtitle_tracks
-            )
-
-            # The admin emails of the finish read the audio layout.
-
-            native_like = [current_app.config["NATIVE_LANGUAGE"], "und", "zxx"]
-            possibly_foreign_language = (
-                bool(audio_rows) and audio_rows[0].language not in native_like
-            )
-            lossless = [
-                track.get("compression_mode", "Lossy") == "Lossless"
-                for track in output_audio_tracks
-            ]
-            first_audio_track_lossy = not (lossless and lossless[0])
-            lossless_audio_track_present = any(lossless)
-
-            # Set the localized date.
-
-            file.date_localized = datetime.now(timezone.utc)
-
-            # Set the AWS archived fields if the task uploaded the file to AWS
-            # S3 storage. A reused record can have the archive of its old file
-            # under a different key. No record claims that key after the
-            # commit. A later restore of that key would import the old file
-            # under the old name (Sapphire, 2026-10-20). Thus, the key goes
-            # with the archives of the worse files.
-
-            replaced_key = None
-            if (
-                file.aws_date_uploaded
-                and file.aws_key
-                and file.aws_key != file_details.get("aws_key")
-            ):
-                replaced_key = file.aws_key
-
-            file.aws_key = file_details.get("aws_key")
-            file.aws_date_uploaded = file_details.get("aws_date_uploaded")
-            file.aws_filesize_bytes = file_details.get("aws_filesize_bytes")
-
-            record_filesize(file, inspection["filesize_bytes"])
-            current_app.logger.info(
-                f"'{os.path.basename(hidden_output_file)}' {file.filesize_bytes} bytes"
-            )
-
-            # Find the worse-quality files. Their library copies are deleted
-            # only after the new file is in place and the commit succeeds.
-            # A rollback (an NFS hand-off, a lost copy, a failed rename)
-            # keeps their rows. Their files must still be there. The
-            # disposal emails also wait for the commit.
-
-            worse_files = file.find_worse_files()
-            current_app.logger.info(f"{file} worse files: {worse_files}")
-
-            worse_aws_keys = [replaced_key] if replaced_key else []
-
-            for worse in worse_files:
-                worse_local_copies.append(
-                    (
-                        os.path.join(
-                            current_app.config["LIBRARY_DIR"], worse.file_path
-                        ),
-                        worse.id,
-                    )
-                )
-
-                if (
-                    worse.converted_from_quality
-                    and not file.converted_from_quality
-                    and worse.aws_key
-                    and worse.aws_date_uploaded
-                ):
-                    kept_archives.append(
-                        archived_original_from_file(worse, "replaced by a real rip")
-                    )
-
-                # If the new file is from digital media, delete only the worse
-                # digital-media files. Fitzflix always keeps the best
-                # physical-media file.
-                #
-                # If the new file is from physical media, delete all worse
-                # files. The media source is not important.
-
-                if (
-                    worse.quality.physical_media == file.quality.physical_media
-                    or file.quality.physical_media == True
-                ):
-                    if worse.aws_date_uploaded:
-                        # Record the key now. Delete it from AWS only after the
-                        # database commit succeeds. Then a failed commit cannot
-                        # cost the backup of a record that rolled back.
-                        worse_aws_keys.append(worse.aws_key)
-
-                    db.session.delete(worse)
-
-                # The disc of a converted original stays on the shelf
-                # (#292). Thus, Fitzflix sends no disposal email when a
-                # conversion replaces a file or a file replaces a conversion.
-
-                if (
-                    worse.quality.physical_media == True
-                    and file.quality.physical_media == True
-                    and not worse.converted_from_quality
-                    and not file.converted_from_quality
-                ):
-                    # The bodies render now, while the worse row is still
-                    # in the session. The send waits for the commit.
-                    send = admin_email(
-                        "Replaced a physical media file",
-                        "replaced_physical_media",
-                        file=file,
-                        worse=worse,
-                    )
-                    if send is not None:
-                        pending_emails.append(send)
-
-                    if current_app.config["TODO_EMAIL"]:
-                        todo_email = current_app.config["TODO_EMAIL"]
-                        pending_emails.append(
-                            partial(
-                                send_email_async,
-                                f"Find and dispose of the media for '{worse.untouched_basename}'",
-                                sender=("Fitzflix", current_app.config["SERVER_EMAIL"]),
-                                recipients=[todo_email],
-                                text_body=render_template(
-                                    "email/replaced_physical_media.txt",
-                                    user=todo_email,
-                                    file=file,
-                                    worse=worse,
-                                ),
-                                html_body=render_template(
-                                    "email/replaced_physical_media.html",
-                                    user=todo_email,
-                                    file=file,
-                                    worse=worse,
-                                ),
-                            )
-                        )
-
-            # Move the new file into place. move_localized_file already put it
-            # on the destination volume. Thus, this is an immediate rename. If
-            # the file is not there, give the copy back to the file-operation
-            # queue. Do not do long file work on the sql queue.
-
-            makedirs_on_mounted_volume(output_directory)
-            if (
-                os.stat(os.path.dirname(hidden_output_file)).st_dev
-                != os.stat(output_directory).st_dev
-            ):
-                current_app.logger.warning(
-                    f"'{file_details.get('basename')}' isn't at the library "
-                    f"volume yet; re-queueing the library copy"
-                )
-                db.session.rollback()
-                # handed_off is set only after the enqueue. If the enqueue
-                # fails, the finally block releases the lock (#340)
-                enqueue_task(
-                    "app.videos.move_localized_file",
-                    file_path,
-                    file_details,
-                    lock,
-                    hidden_output_file,
-                    description=f"'{file_details.get('basename')}'",
-                )
-                handed_off = True
+            if placement == "handed_off":
                 return False
 
-            try:
-                replaced_existing = os.path.exists(output_file)
-                _rename_with_retries(hidden_output_file, output_file)
-                renamed = True
-            except OSError:
-                if not _copy_vanished(
-                    hidden_output_file, staged_output, vanished_retries
-                ):
-                    raise
-
-                # The mount lost the hidden copy, but the output is still on
-                # staging. Copy it again. Keep the title lock. Wait 1 minute.
-                # Thus, the mount is back before the copy starts.
-
-                db.session.rollback()
-
-                # The copy starts a new chain of the move. Its other
-                # counters start at 0. The vanished count keeps the ids of
-                # the new chain apart from the ids of the old one.
-
-                requeue(
-                    "app.videos.move_localized_file",
-                    key=file_path,
-                    delay=timedelta(minutes=1),
-                    reason=(
-                        f"The library copy disappeared from "
-                        f"'{os.path.dirname(hidden_output_file)}'. The copy from "
-                        f"staging starts again (attempt {vanished_retries + 1} of "
-                        f"{MAX_VANISHED_RETRIES})"
-                    ),
-                    counters={
-                        "transient_retries": 0,
-                        "space_waits": 0,
-                        "vanished_retries": vanished_retries + 1,
-                        "lock_waits": 0,
-                    },
-                    args=(file_path, file_details, lock, staged_output),
-                    description=f"'{file_details.get('basename')}'",
-                )
-                handed_off = True
-                return False
-
-            # The archive-only originals commit with the import. Their
-            # rows claim the keys. Thus, the delete of the worse keys below
-            # skips them. An archive-only row for the key of the new file
-            # is no longer necessary. The held row of an "Import" choice is
-            # done.
-
-            for archived in kept_archives:
-                db.session.add(archived)
-            if file.aws_key:
-                ArchivedOriginal.query.filter_by(aws_key=file.aws_key).delete()
-            HeldImport.query.filter_by(held_path=file_path).delete()
-
-            db.session.commit()
-            committed = True
-
-            # The new file is in place, and its record is committed. Now
-            # delete the library copies of the worse files and send their
-            # emails. The new file never has the path of a worse file. The
-            # check is a guard.
-
-            from app.triage import remove_triage_snapshots
-
-            for worse_path, worse_id in worse_local_copies:
-                if worse_path == output_file:
-                    continue
-                try:
-                    os.remove(worse_path)
-                    current_app.logger.info(f"Deleted local file '{worse_path}'")
-                except FileNotFoundError:
-                    pass
-                except OSError as e:
-                    # A share that remounts must not stop the rest of the
-                    # follow-up work. The orphan is visible on the share.
-                    current_app.logger.warning(
-                        f"'{worse_path}' Couldn't delete the replaced file: {e}"
-                    )
-                remove_triage_snapshots(worse_id)
-            for send in pending_emails:
-                send()
-
-            # The staged copy can go to the Atmos job of this file. Then
-            # that job does not read the file back from the NAS. The
-            # Atmos decision comes at the end of this task. Until then,
-            # keep the staged copy only if staging has space for it. With
-            # CREATE_ATMOS_TWINS off, no Atmos job comes. Thus, keep nothing.
-
-            from app.atmos import staged_handoff
-
-            atmos_handoff = (
-                staged_handoff(staged_output, output_file)
-                if get_setting("CREATE_ATMOS_TWINS")
-                else None
-            )
-            if atmos_handoff is None:
-                _remove_staged_output(staged_output)
-
-            # The commit succeeded. Thus, delete the AWS archives of the
-            # replaced files. Do it from the handoff queue. Then the sql
-            # worker does not wait on the network. The delete is the last
-            # step of a file in the pipeline. Thus, it does not wait in line
-            # behind long file work (Glenn, 2026-10-15).
-
-            for worse_key in worse_aws_keys:
-                # The new file can claim the same key that its predecessor
-                # held (a repointed key, or a re-import on the same basename).
-                # Never delete a key that a surviving row claims.
-                if untouched_key_still_claimed(worse_key):
-                    current_app.logger.info(
-                        f"Keeping '{worse_key}' in AWS — another file "
-                        f"record still claims it"
-                    )
-                    continue
-                enqueue_task(
-                    "app.videos.aws_delete",
-                    worse_key,
-                    description=f"Deleting '{worse_key}' from AWS",
-                )
-
-            # Remove the imported file, unless the localized file replaced it.
-            # Fitzflix must not remove the file that it just made.
-
-            if file_path != output_file:
-                try:
-                    os.remove(file_path)
-
-                except FileNotFoundError:
-                    pass
-
-            if file.movie_id:
-                _report_import_move_to_radarr(
-                    os.path.dirname(file_path), output_directory
-                )
-
-            # TMDB enrichment runs as its own task after the commit. Thus, this
-            # task never waits on the network. The enrichment sends an email
-            # if the movie still has no match. The fetch runs on the request
-            # queue. It gives its payload to the sql queue for the database
-            # writes.
-
-            # A filename id tag goes with the task. Then the enrichment fetches
-            # that exact title. It does not search by name (#155).
-
-            if file.movie_id and movie.tmdb_id == None and not movie.tmdb_ignored:
-                enqueue_task(
-                    "app.videos.refresh_tmdb_info",
-                    "Movies",
-                    movie.id,
-                    file_details.get("tmdb_id"),
-                    notify_if_missing=True,
-                    description=f"Refreshing TMDB data for '{movie.title} ({movie.year})'",
-                )
-            elif (
-                file.series_id
-                and tv_series.tmdb_id == None
-                and not tv_series.tmdb_ignored
-            ):
-                enqueue_task(
-                    "app.videos.refresh_tmdb_info",
-                    "TV Shows",
-                    tv_series.id,
-                    file_details.get("tmdb_id"),
-                    description=f"Refreshing TMDB data for '{tv_series.title}'",
-                )
-
-            # A TrueHD Atmos track without its E-AC-3 Atmos twin gets the
-            # MediaConvert supplement (#55b). The task queues it after the
-            # commit. Then the Atmos job sees the complete records. The job
-            # goes on the handoff queue. The file is already in the
-            # pipeline. Thus, its twin does not wait behind the new imports.
-            # CREATE_ATMOS_TWINS turns this step off for passthrough players.
-
-            from app.atmos import maybe_enqueue_atmos_supplement
-
-            if not get_setting("CREATE_ATMOS_TWINS"):
-                current_app.logger.info(
-                    f"'{file.basename}' CREATE_ATMOS_TWINS is off. No E-AC-3 Atmos twins"
-                )
-                _remove_staged_output(staged_output)
-            elif maybe_enqueue_atmos_supplement(
-                file.id,
-                staged_source=atmos_handoff,
-                queue=current_app.handoff_queue,
-            ):
-                atmos_queued = True
-            else:
-                _remove_staged_output(staged_output)
-
-            # A conversion archives its 1080p library file in transcoded/
-            # (#299). An Atmos job archives it when it finishes. Thus, the
-            # upload waits for that job.
-
-            if (
-                file.converted_from_quality
-                and get_setting("ARCHIVE_ORIGINAL_MEDIA")
-                and not atmos_queued
-            ):
-                enqueue_task(
-                    "app.videos.upload_task", file.id, description=f"'{file.basename}'"
-                )
-
-            if possibly_foreign_language == True and len(output_audio_tracks) > 1:
-                notify_admin(
-                    "Foreign audio track added", "possibly_foreign_audio", file=file
-                )
-
-            current_app.logger.info(f"{file} File ID {file.id}")
-
-            # Make the inspection aids of the triage page now, while the file
-            # is new and certainly local. The gate is the SAME candidates
-            # query that the triage page uses. It is not the
-            # first-track-baseline heuristic. That heuristic misses a file
-            # whose suspicious track comes FIRST. The tracks of Baby Driver
-            # read [49, 3110, 4334] elements, and nothing was flagged.
-
-            from app.triage import maybe_enqueue_triage_snapshots
-
-            if maybe_enqueue_triage_snapshots(file.id):
-                notify_admin(
-                    "Possibly forced subtitle track",
-                    "possibly_forced_subtitle",
-                    file=file,
-                )
-
-            # The candidates check inside maybe_enqueue prevents clips for the
-            # intentional E-AC-3 Atmos lead of the Atmos trio.
-
-            from app.triage import maybe_enqueue_audio_comparison
-
-            maybe_enqueue_audio_comparison(file.id)
-
-            if first_audio_track_lossy and lossless_audio_track_present:
-                notify_admin(
-                    "Added a file that has a lossless audio track",
-                    "lossy_audio",
-                    file=file,
-                )
+            file, worse_local_copies, worse_aws_keys, kept_archives, emails = records
+            _commit_records(file, kept_archives, file_path)
 
         except Exception:
             current_app.logger.error(traceback.format_exc())
             db.session.rollback()
-            if committed:
-                # The import itself succeeded. Only a follow-up step
-                # failed. Keep the file. Remove a staged copy that no
-                # Atmos job took.
-                current_app.logger.warning(
-                    f"'{output_file}' Was imported, but a follow-up step failed"
-                )
-                if not atmos_queued:
-                    _remove_staged_output(staged_output)
-                if file_path != output_file:
-                    try:
-                        os.remove(file_path)
-                    except FileNotFoundError:
-                        pass
-            else:
-                # The source goes to rejects. Remove the hidden library
-                # copy, or the renamed file when no record keeps it. A
-                # rename over an existing file already replaced that file,
-                # and its record still points to it. For an in-place import
-                # the renamed file IS file_path, and it goes to rejects.
 
-                # The finally block below releases the lock.
+            # The source goes to rejects. Remove the hidden library copy,
+            # or the renamed file when no record keeps it. A rename over an
+            # existing file already replaced that file, and its record
+            # still points to it. For an in-place import the renamed file
+            # IS file_path, and it goes to rejects.
 
-                stray = None
-                if not renamed:
-                    stray = hidden_output_file
-                elif file_path != output_file and not replaced_existing:
-                    stray = output_file
-                abandon_import(file_path, None, strays=(stray, staged_output))
+            stray = None
+            if placement is None:
+                stray = hidden_output_file
+            elif placement == "renamed" and file_path != output_file:
+                stray = output_file
+            abandon_import(file_path, None, strays=(stray, staged_output))
+            _release_title_lock(lock)
+            return None
 
+        # Each follow-up guards itself. This guard is for the code between
+        # them. Nothing after the commit moves the file.
+
+        try:
+            _after_commit(
+                file,
+                file_path,
+                file_details,
+                output_file,
+                output_directory,
+                staged_output,
+                worse_local_copies,
+                worse_aws_keys,
+                emails,
+                inspection["audio_tracks"],
+            )
+        except Exception:
+            current_app.logger.error(traceback.format_exc())
+            db.session.rollback()
+            current_app.logger.warning(
+                f"'{output_file}' Was imported, but a follow-up step failed"
+            )
         else:
             current_app.logger.info(f"'{file_path}' processed as '{output_file}'")
-
         finally:
-            if not handed_off:
-                current_app.lock_manager.unlock(lock)
-                current_app.logger.info(f"Removed lock {lock}")
+            _release_title_lock(lock)
+        return None
+
+
+def _release_title_lock(lock):
+    """Release the title lock of a finished cataloging and log it."""
+
+    current_app.lock_manager.unlock(lock)
+    current_app.logger.info(f"Removed lock {lock}")
+
+
+def _build_records(file_details, inspection, output_name):
+    """Write the records of a localized file to the session. Commit nothing.
+
+    Return (file, worse_local_copies, worse_aws_keys, kept_archives,
+    pending_emails). worse_local_copies holds (path, file id) of each
+    worse library file. worse_aws_keys holds the archive keys to delete
+    after the commit. kept_archives holds the archive-only originals to
+    add with the commit. pending_emails holds the sends that wait for the
+    commit. This function reads no file. output_name is for the log."""
+
+    # Look for this File record in the database. If it does not exist,
+    # make a new one. If it exists, update that record.
+
+    file = File.query.filter_by(file_path=file_details.get("file_path")).first()
+
+    # A real rip that replaces a conversion keeps the original of the
+    # conversion in S3, as an archive-only original (#292).
+
+    kept_archives = []
+    if not file:
+        file = File(**file_details)
+        current_app.logger.debug(vars(file))
+        current_app.logger.info(f"{file} Creating File record")
+        db.session.add(file)
+
+    else:
+        current_app.logger.info(f"{file} Existing File record found")
+        if (
+            file.converted_from_quality
+            and not file_details.get("converted_from_quality")
+            and file.aws_key
+            and file.aws_date_uploaded
+        ):
+            kept_archives.append(
+                archived_original_from_file(file, "replaced by a real rip")
+            )
+
+        # The track rows of the existing record go in the
+        # replace_track_rows call below.
+
+        file.date_updated = datetime.now(timezone.utc)
+
+    if file.media_library == "Movies":
+        _attach_movie(file, file_details)
+    elif file.media_library == "TV Shows":
+        _attach_tv_series(file, file_details)
+
+    # Set the file quality details.
+
+    quality = RefQuality.query.filter_by(
+        quality_title=file_details.get("quality_title")
+    ).first()
+    file.quality = quality
+    current_app.logger.info(f"{file} Setting file_quality {quality}")
+
+    # The conversion fields (#292). A real rip clears them on a reused
+    # record. replace_existing is the "Import" choice of an admin.
+    # find_worse_files reads it.
+
+    file.converted_from_quality = file_details.get("converted_from_quality")
+    file.converted_from_format = file_details.get("converted_from_format")
+
+    # A file that is not a conversion has no transcoded/ copy. The weekly
+    # S3 sync prunes the copy of a reused record (#299).
+
+    if not file.converted_from_quality:
+        file.aws_transcoded_key = None
+        file.aws_transcoded_date_uploaded = None
+        file.aws_transcoded_filesize_bytes = None
+
+    # A reused record gets the untouched name of the new source. A
+    # conversion that reuses the record of a real rip must not keep the
+    # name of the rip (#292).
+
+    if file_details.get("untouched_basename"):
+        file.untouched_basename = file_details["untouched_basename"]
+    file.replace_existing = file_details.get("replace_existing", False)
+
+    # The media details arrive precomputed from move_localized_file. Set
+    # the file video track info.
+
+    for field, value in inspection["video"].items():
+        setattr(file, field, value)
+
+    # Write the track rows. The flag pass inside marks the forced state of
+    # a suspicious subtitle track as unknown. The candidates query decides
+    # later if the file needs triage. Imported content is NEW evidence. A
+    # re-imported file first deletes an earlier reviewed verdict and the
+    # stale aids. A replacement can have a forced track that the original
+    # did not have.
+
+    from app.triage import reset_triage_state
+
+    reset_triage_state(file)
+    replace_track_rows(file, inspection["audio_tracks"], inspection["subtitle_tracks"])
+
+    # Set the localized date.
+
+    file.date_localized = datetime.now(timezone.utc)
+
+    # Set the AWS archived fields if the task uploaded the file to AWS S3
+    # storage. A reused record can have the archive of its old file under
+    # a different key. No record claims that key after the commit. A later
+    # restore of that key would import the old file under the old name
+    # (Sapphire, 2026-10-20). Thus, the key goes with the archives of the
+    # worse files.
+
+    replaced_key = None
+    if (
+        file.aws_date_uploaded
+        and file.aws_key
+        and file.aws_key != file_details.get("aws_key")
+    ):
+        replaced_key = file.aws_key
+
+    file.aws_key = file_details.get("aws_key")
+    file.aws_date_uploaded = file_details.get("aws_date_uploaded")
+    file.aws_filesize_bytes = file_details.get("aws_filesize_bytes")
+
+    record_filesize(file, inspection["filesize_bytes"])
+    current_app.logger.info(f"'{output_name}' {file.filesize_bytes} bytes")
+
+    worse_local_copies, worse_aws_keys, pending_emails = _dispose_of_worse_files(
+        file, kept_archives
+    )
+    if replaced_key:
+        worse_aws_keys.insert(0, replaced_key)
+    return file, worse_local_copies, worse_aws_keys, kept_archives, pending_emails
+
+
+def _attach_movie(file, file_details):
+    """Find or make the Movie of a film file and attach it, with its feature type."""
+
+    current_app.logger.info(
+        f"{file} Searching in Movies table using "
+        f"title='{file_details.get('title')}', year='{file_details.get('year')}'"
+    )
+    movie = Movie.query.filter_by(
+        title=file_details.get("title"), year=file_details.get("year")
+    ).first()
+    if not movie:
+        movie = Movie(title=file_details.get("title"), year=file_details.get("year"))
+        current_app.logger.info(f"{file} Creating {movie}")
+
+        # Check the new movie against the stored Criterion list. The
+        # import never queries Wikidata (#283). The monthly refresh
+        # updates the movie later.
+
+        try:
+            criterion_collection = stored_criterion_releases()
+        except Exception:
+            current_app.logger.warning(traceback.format_exc())
+            criterion_collection = []
+
+        assign_criterion_release(
+            movie, *criterion_release_lookups(criterion_collection)
+        )
+
+        db.session.add(movie)
+
+    file.movie = movie
+    current_app.logger.info(f"{file} Associating with {movie}")
+
+    # Set the special feature type if the file is a special feature.
+
+    if file_details.get("feature_type_name"):
+        feature_type = RefFeatureType.query.filter_by(
+            feature_type=file_details.get("feature_type_name")
+        ).first()
+        file.feature_type = feature_type
+        current_app.logger.info(f"{file} Marking as {feature_type}")
+
+
+def _attach_tv_series(file, file_details):
+    """Find or make the TVSeries of an episode file and attach it."""
+
+    current_app.logger.info(
+        f"{file} Searching in TVSeries table using title='{file_details.get('title')}"
+    )
+    tv_series = TVSeries.query.filter_by(title=file_details.get("title")).first()
+    if not tv_series:
+        tv_series = TVSeries(title=file_details.get("title"))
+        current_app.logger.info(f"{file} Creating {tv_series}")
+        db.session.add(tv_series)
+
+    file.tv_series = tv_series
+    current_app.logger.info(f"{file} Associating with {tv_series}")
+
+
+def _dispose_of_worse_files(file, kept_archives):
+    """Delete the rows of the worse files from the session. Return what waits for the commit.
+
+    Return (worse_local_copies, worse_aws_keys, pending_emails). Their
+    library copies are deleted only after the new file is in place and
+    the commit succeeds. A rollback (an NFS hand-off, a lost copy, a
+    failed rename) keeps their rows. Their files must still be there.
+    The disposal emails also wait for the commit. An archive-only
+    original of a worse conversion goes in kept_archives."""
+
+    worse_files = file.find_worse_files()
+    current_app.logger.info(f"{file} worse files: {worse_files}")
+
+    worse_local_copies = []
+    worse_aws_keys = []
+    pending_emails = []
+    for worse in worse_files:
+        worse_local_copies.append(
+            (os.path.join(current_app.config["LIBRARY_DIR"], worse.file_path), worse.id)
+        )
+
+        if (
+            worse.converted_from_quality
+            and not file.converted_from_quality
+            and worse.aws_key
+            and worse.aws_date_uploaded
+        ):
+            kept_archives.append(
+                archived_original_from_file(worse, "replaced by a real rip")
+            )
+
+        # If the new file is from digital media, delete only the worse
+        # digital-media files. Fitzflix always keeps the best
+        # physical-media file.
+        #
+        # If the new file is from physical media, delete all worse files.
+        # The media source is not important.
+
+        if (
+            worse.quality.physical_media == file.quality.physical_media
+            or file.quality.physical_media == True
+        ):
+            if worse.aws_date_uploaded:
+                # Record the key now. Delete it from AWS only after the
+                # database commit succeeds. Then a failed commit cannot
+                # cost the backup of a record that rolled back.
+                worse_aws_keys.append(worse.aws_key)
+
+            db.session.delete(worse)
+
+        # The disc of a converted original stays on the shelf (#292).
+        # Thus, Fitzflix sends no disposal email when a conversion
+        # replaces a file or a file replaces a conversion.
+
+        if (
+            worse.quality.physical_media == True
+            and file.quality.physical_media == True
+            and not worse.converted_from_quality
+            and not file.converted_from_quality
+        ):
+            pending_emails.extend(_disposal_emails(file, worse))
+    return worse_local_copies, worse_aws_keys, pending_emails
+
+
+def _disposal_emails(file, worse):
+    """Return the sends that tell the admin and the to-do list about a replaced disc.
+
+    The bodies render now, while the worse row is still in the session.
+    The sends wait for the commit."""
+
+    sends = []
+    send = admin_email(
+        "Replaced a physical media file",
+        "replaced_physical_media",
+        file=file,
+        worse=worse,
+    )
+    if send is not None:
+        sends.append(send)
+
+    if current_app.config["TODO_EMAIL"]:
+        todo_email = current_app.config["TODO_EMAIL"]
+        sends.append(
+            partial(
+                send_email_async,
+                f"Find and dispose of the media for '{worse.untouched_basename}'",
+                sender=("Fitzflix", current_app.config["SERVER_EMAIL"]),
+                recipients=[todo_email],
+                text_body=render_template(
+                    "email/replaced_physical_media.txt",
+                    user=todo_email,
+                    file=file,
+                    worse=worse,
+                ),
+                html_body=render_template(
+                    "email/replaced_physical_media.html",
+                    user=todo_email,
+                    file=file,
+                    worse=worse,
+                ),
+            )
+        )
+    return sends
+
+
+def _place_file(
+    file_path,
+    file_details,
+    lock,
+    hidden_output_file,
+    output_file,
+    output_directory,
+    staged_output,
+    vanished_retries,
+):
+    """Rename the hidden library copy into place. Return "renamed", "replaced", or "handed_off".
+
+    move_localized_file already put the file on the destination volume.
+    Thus, this is an immediate rename. "replaced" means that the rename
+    replaced a file at that path. The file can be on another volume, or
+    the mount can lose the copy. Then the session rolls back, and the
+    copy goes back to the file-operation queue. That is "handed_off".
+    Long file work never runs on the sql queue."""
+
+    from app.videos import _rename_with_retries
+
+    makedirs_on_mounted_volume(output_directory)
+    if (
+        os.stat(os.path.dirname(hidden_output_file)).st_dev
+        != os.stat(output_directory).st_dev
+    ):
+        current_app.logger.warning(
+            f"'{file_details.get('basename')}' isn't at the library "
+            f"volume yet; re-queueing the library copy"
+        )
+        db.session.rollback()
+
+        # The caller keeps the lock only after the enqueue returns. If
+        # the enqueue fails, the caller releases the lock (#340).
+
+        enqueue_task(
+            "app.videos.move_localized_file",
+            file_path,
+            file_details,
+            lock,
+            hidden_output_file,
+            description=f"'{file_details.get('basename')}'",
+        )
+        return "handed_off"
+
+    replaced_existing = os.path.exists(output_file)
+    try:
+        _rename_with_retries(hidden_output_file, output_file)
+    except OSError:
+        if not _copy_vanished(hidden_output_file, staged_output, vanished_retries):
+            raise
+
+        # The mount lost the hidden copy, but the output is still on
+        # staging. Copy it again. Keep the title lock. Wait 1 minute.
+        # Thus, the mount is back before the copy starts.
+
+        db.session.rollback()
+
+        # The copy starts a new chain of the move. Its other counters
+        # start at 0. The vanished count keeps the ids of the new chain
+        # apart from the ids of the old one.
+
+        requeue(
+            "app.videos.move_localized_file",
+            key=file_path,
+            delay=timedelta(minutes=1),
+            reason=(
+                f"The library copy disappeared from "
+                f"'{os.path.dirname(hidden_output_file)}'. The copy from "
+                f"staging starts again (attempt {vanished_retries + 1} of "
+                f"{MAX_VANISHED_RETRIES})"
+            ),
+            counters={
+                "transient_retries": 0,
+                "space_waits": 0,
+                "vanished_retries": vanished_retries + 1,
+                "lock_waits": 0,
+            },
+            args=(file_path, file_details, lock, staged_output),
+            description=f"'{file_details.get('basename')}'",
+        )
+        return "handed_off"
+    return "replaced" if replaced_existing else "renamed"
+
+
+def _commit_records(file, kept_archives, file_path):
+    """Commit the records of the import with its archive-only originals.
+
+    The archive-only originals commit with the import. Their rows claim
+    the keys. Thus, the delete of the worse keys skips them. An
+    archive-only row for the key of the new file is no longer necessary.
+    The held row of an "Import" choice is done."""
+
+    for archived in kept_archives:
+        db.session.add(archived)
+    if file.aws_key:
+        ArchivedOriginal.query.filter_by(aws_key=file.aws_key).delete()
+    HeldImport.query.filter_by(held_path=file_path).delete()
+    db.session.commit()
+
+
+def _follow_up(output_file, name, step, *args, **kwargs):
+    """Run 1 follow-up step of a committed import. Return its value, or None on a failure.
+
+    The import itself succeeded. A failed step is logged, and the
+    session rolls back. The file stays, and the next step runs."""
+
+    try:
+        return step(*args, **kwargs)
+    except Exception:
+        current_app.logger.error(traceback.format_exc())
+        db.session.rollback()
+        current_app.logger.warning(
+            f"'{output_file}' Was imported, but a follow-up step failed ({name})"
+        )
+        return None
+
+
+def _after_commit(
+    file,
+    file_path,
+    file_details,
+    output_file,
+    output_directory,
+    staged_output,
+    worse_local_copies,
+    worse_aws_keys,
+    pending_emails,
+    audio_tracks,
+):
+    """Do the follow-up work of a committed import. Each step is best effort.
+
+    The new file is in place, and its record is committed. The steps
+    delete the worse library copies and send the emails. They give the
+    staged copy to the Atmos job and delete the replaced archives. They
+    remove the source and tell Radarr. Then they queue the TMDB refresh,
+    the Atmos twin, the archive of a conversion, and the triage aids."""
+
+    step = partial(_follow_up, output_file)
+
+    step("worse copies", _delete_worse_copies, worse_local_copies, output_file)
+    for send in pending_emails:
+        step("email", send)
+
+    # The staged copy can go to the Atmos job of this file. Then that job
+    # does not read the file back from the NAS. The Atmos decision comes
+    # later. Until then, keep the staged copy only if staging has space
+    # for it. With CREATE_ATMOS_TWINS off, no Atmos job comes. Thus, keep
+    # nothing. A failed step keeps nothing either.
+
+    atmos_handoff = step("atmos handoff", _atmos_handoff, staged_output, output_file)
+    if atmos_handoff is None:
+        _remove_staged_output(staged_output)
+
+    # The commit succeeded. Thus, delete the AWS archives of the replaced
+    # files. Do it from the handoff queue. Then the sql worker does not
+    # wait on the network. The delete is the last step of a file in the
+    # pipeline. Thus, it does not wait in line behind long file work
+    # (Glenn, 2026-10-15).
+
+    for worse_key in worse_aws_keys:
+        step("archive delete", _delete_replaced_archive, worse_key)
+
+    # Remove the imported file, unless the localized file replaced it.
+    # Fitzflix must not remove the file that it just made.
+
+    if file_path != output_file:
+        step("source removal", _remove_source, file_path)
+
+    if file.movie_id:
+        step(
+            "radarr",
+            _report_import_move_to_radarr,
+            os.path.dirname(file_path),
+            output_directory,
+        )
+
+    step("tmdb refresh", _enqueue_tmdb_enrichment, file, file_details)
+
+    atmos_queued = step(
+        "atmos twin", _enqueue_atmos_twin, file, atmos_handoff, staged_output
+    )
+    if not atmos_queued:
+        _remove_staged_output(staged_output)
+
+    # A conversion archives its 1080p library file in transcoded/ (#299).
+    # An Atmos job archives it when it finishes. Thus, the upload waits
+    # for that job.
+
+    if (
+        file.converted_from_quality
+        and get_setting("ARCHIVE_ORIGINAL_MEDIA")
+        and not atmos_queued
+    ):
+        step(
+            "transcoded archive",
+            enqueue_task,
+            "app.videos.upload_task",
+            file.id,
+            description=f"'{file.basename}'",
+        )
+
+    possibly_foreign_language, lossy_lead = _audio_alerts(
+        audio_tracks, current_app.config["NATIVE_LANGUAGE"]
+    )
+    if possibly_foreign_language and len(audio_tracks) > 1:
+        step(
+            "foreign audio email",
+            notify_admin,
+            "Foreign audio track added",
+            "possibly_foreign_audio",
+            file=file,
+        )
+
+    current_app.logger.info(f"{file} File ID {file.id}")
+
+    step("triage snapshots", _enqueue_triage_snapshots, file)
+    step("audio comparison", _enqueue_audio_comparison, file)
+
+    if lossy_lead:
+        step(
+            "lossy audio email",
+            notify_admin,
+            "Added a file that has a lossless audio track",
+            "lossy_audio",
+            file=file,
+        )
+
+
+def _audio_alerts(audio_tracks, native_language):
+    """Return (possibly_foreign_language, lossy_lead) for the audio tracks of an import.
+
+    The first track is possibly foreign if its language is not native,
+    "und", or "zxx". The lead is lossy if the first track is lossy and
+    another track is lossless."""
+
+    native_like = [native_language, "und", "zxx"]
+    possibly_foreign_language = (
+        bool(audio_tracks) and audio_tracks[0].get("language") not in native_like
+    )
+    lossless = [
+        track.get("compression_mode", "Lossy") == "Lossless" for track in audio_tracks
+    ]
+    first_audio_track_lossy = not (lossless and lossless[0])
+    return possibly_foreign_language, first_audio_track_lossy and any(lossless)
+
+
+def _delete_worse_copies(worse_local_copies, output_file):
+    """Delete the library copies of the worse files and their triage snapshots.
+
+    The new file never has the path of a worse file. The check is a
+    guard."""
+
+    from app.triage import remove_triage_snapshots
+
+    for worse_path, worse_id in worse_local_copies:
+        if worse_path == output_file:
+            continue
+        try:
+            os.remove(worse_path)
+            current_app.logger.info(f"Deleted local file '{worse_path}'")
+        except FileNotFoundError:
+            pass
+        except OSError as e:
+            # A share that remounts must not stop the rest of the
+            # follow-up work. The orphan is visible on the share.
+            current_app.logger.warning(
+                f"'{worse_path}' Couldn't delete the replaced file: {e}"
+            )
+        remove_triage_snapshots(worse_id)
+
+
+def _atmos_handoff(staged_output, output_file):
+    """Return the staged copy for the Atmos job, or None with CREATE_ATMOS_TWINS off."""
+
+    from app.atmos import staged_handoff
+
+    if not get_setting("CREATE_ATMOS_TWINS"):
+        return None
+    return staged_handoff(staged_output, output_file)
+
+
+def _delete_replaced_archive(worse_key):
+    """Queue the AWS delete of a replaced archive that no row claims.
+
+    The new file can claim the same key that its predecessor held (a
+    repointed key, or a re-import on the same basename). Never delete a
+    key that a surviving row claims."""
+
+    if untouched_key_still_claimed(worse_key):
+        current_app.logger.info(
+            f"Keeping '{worse_key}' in AWS — another file record still claims it"
+        )
+        return
+    enqueue_task(
+        "app.videos.aws_delete",
+        worse_key,
+        description=f"Deleting '{worse_key}' from AWS",
+    )
+
+
+def _remove_source(file_path):
+    """Remove the source of an import. A source that is already gone is not an error."""
+
+    try:
+        os.remove(file_path)
+    except FileNotFoundError:
+        pass
+
+
+def _enqueue_tmdb_enrichment(file, file_details):
+    """Queue the TMDB refresh of a new film or series that has no match yet.
+
+    TMDB enrichment runs as its own task after the commit. Thus, the
+    cataloging never waits on the network. The enrichment sends an email
+    if the movie still has no match. The fetch runs on the request
+    queue. It gives its payload to the sql queue for the database writes.
+    A filename id tag goes with the task. Then the enrichment fetches
+    that exact title. It does not search by name (#155)."""
+
+    movie = file.movie
+    tv_series = file.tv_series
+    if file.movie_id and movie.tmdb_id == None and not movie.tmdb_ignored:
+        enqueue_task(
+            "app.videos.refresh_tmdb_info",
+            "Movies",
+            movie.id,
+            file_details.get("tmdb_id"),
+            notify_if_missing=True,
+            description=f"Refreshing TMDB data for '{movie.title} ({movie.year})'",
+        )
+    elif file.series_id and tv_series.tmdb_id == None and not tv_series.tmdb_ignored:
+        enqueue_task(
+            "app.videos.refresh_tmdb_info",
+            "TV Shows",
+            tv_series.id,
+            file_details.get("tmdb_id"),
+            description=f"Refreshing TMDB data for '{tv_series.title}'",
+        )
+
+
+def _enqueue_atmos_twin(file, atmos_handoff, staged_output):
+    """Queue the E-AC-3 Atmos twin of a TrueHD Atmos track. Return True if a job is queued.
+
+    A TrueHD Atmos track without its E-AC-3 Atmos twin gets the
+    MediaConvert supplement (#55b). The job comes after the commit. Then
+    it sees the complete records. It goes on the handoff queue. The file
+    is already in the pipeline. Thus, its twin does not wait behind the
+    new imports. CREATE_ATMOS_TWINS turns this step off for passthrough
+    players."""
+
+    from app.atmos import maybe_enqueue_atmos_supplement
+
+    if not get_setting("CREATE_ATMOS_TWINS"):
+        current_app.logger.info(
+            f"'{file.basename}' CREATE_ATMOS_TWINS is off. No E-AC-3 Atmos twins"
+        )
+        return False
+    return bool(
+        maybe_enqueue_atmos_supplement(
+            file.id, staged_source=atmos_handoff, queue=current_app.handoff_queue
+        )
+    )
+
+
+def _enqueue_triage_snapshots(file):
+    """Queue the triage snapshots of a new file, and tell the admin about a forced track.
+
+    Make the inspection aids of the triage page now, while the file is
+    new and certainly local. The gate is the SAME candidates query that
+    the triage page uses. It is not the first-track-baseline heuristic.
+    That heuristic misses a file whose suspicious track comes FIRST. The
+    tracks of Baby Driver read [49, 3110, 4334] elements, and nothing was
+    flagged."""
+
+    from app.triage import maybe_enqueue_triage_snapshots
+
+    if maybe_enqueue_triage_snapshots(file.id):
+        notify_admin(
+            "Possibly forced subtitle track",
+            "possibly_forced_subtitle",
+            file=file,
+        )
+
+
+def _enqueue_audio_comparison(file):
+    """Queue the audio comparison clips of a new file.
+
+    The candidates check inside maybe_enqueue prevents clips for the
+    intentional E-AC-3 Atmos lead of the Atmos trio."""
+
+    from app.triage import maybe_enqueue_audio_comparison
+
+    maybe_enqueue_audio_comparison(file.id)
 
 
 def manual_import_task():

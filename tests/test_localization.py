@@ -2819,8 +2819,12 @@ def test_finalize_gives_back_an_output_that_is_on_another_volume(
         ]
         move.delete()
         source_path, details, lock, hidden = move.args
+        inspection = videos.inspect_localized_file(hidden, "Matroska")
         _separate_library_volume(app, monkeypatch)
-        assert finalize_localization(source_path, details, lock, hidden) is False
+        assert (
+            finalize_localization(source_path, details, lock, hidden, inspection)
+            is False
+        )
         (again,) = [
             job
             for job in app.handoff_queue.jobs
@@ -2882,3 +2886,57 @@ def test_an_in_place_import_keeps_the_file_that_it_made(app, sample_mkv):
         assert File.query.filter_by(basename=basename).one()
     assert os.listdir(directory) == [basename]
     os.remove(source)
+
+
+def test_a_failed_follow_up_does_not_skip_the_next_ones(
+    app, sample_mkv, incoming_dir, monkeypatch
+):
+    """Each follow-up after the commit is best effort on its own.
+
+    Before the phase split, the first failure skipped every later step:
+    here the source removal and the TMDB refresh."""
+
+    import app.atmos as atmos
+
+    def broken(*args, **kwargs):
+        raise RuntimeError("Redis is not reachable")
+
+    monkeypatch.setattr(atmos, "staged_handoff", broken)
+    basename = "Later Steps (2021) - [DVD].mkv"
+    with app.app_context():
+        source = _import(app, sample_mkv, incoming_dir, basename)
+        file = File.query.filter_by(basename=basename).one()
+        output = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
+        assert [
+            job.args[:2] for job in _roster_jobs(app, "app.videos.refresh_tmdb_info")
+        ] == [("Movies", file.movie_id)]
+        lock = app.lock_manager.lock(file.file_identifier(), 1000)
+        assert lock
+        app.lock_manager.unlock(lock)
+    assert not os.path.exists(source)
+    assert os.listdir(app.config["STAGING_DIR"]) == []
+    os.remove(output)
+
+
+@pytest.mark.parametrize(
+    "tracks, expected",
+    [
+        ([], (False, False)),
+        ([{"language": "eng", "compression_mode": "Lossy"}], (False, False)),
+        ([{"language": "und"}, {"language": "fre"}], (False, False)),
+        ([{"language": "fre", "compression_mode": "Lossless"}], (True, False)),
+        (
+            [
+                {"language": "eng", "compression_mode": "Lossy"},
+                {"language": "eng", "compression_mode": "Lossless"},
+            ],
+            (False, True),
+        ),
+    ],
+)
+def test_audio_alerts(app, tracks, expected):
+    """The foreign-audio and lossy-lead flags of the import emails are pure."""
+
+    from app.importing import _audio_alerts
+
+    assert _audio_alerts(tracks, "eng") == expected
