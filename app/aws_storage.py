@@ -286,7 +286,8 @@ def sync_aws_s3_storage_task():
                 queue_name, connection=current_app.redis
             ).get_job_ids()
 
-            # This task itself is in the started registry of user-request.
+            # This task itself is in the started registry of maintenance
+            # (#314). Each producer and each retry uses that queue.
 
             if job:
                 started = [job_id for job_id in started if job_id != job.id]
@@ -296,14 +297,13 @@ def sync_aws_s3_storage_task():
                 busy.append(f"{queue_name}: {count}")
 
         if busy:
-            current_app.request_queue.enqueue_in(
+            current_app.maintenance_queue.enqueue_in(
                 timedelta(minutes=5),
                 "app.videos.sync_aws_s3_storage_task",
                 job_timeout="24h",
                 job_id=safe_job_id("retry:sync_aws_s3_storage_task"),
                 result_ttl=86400,
                 description="Syncing files with AWS S3 storage",
-                at_front=True,
             )
             current_app.logger.info(
                 f"Waiting 5 minutes for other tasks to finish "
@@ -321,14 +321,13 @@ def sync_aws_s3_storage_task():
             [current_app.config["MOVIE_LIBRARY"], current_app.config["TV_LIBRARY"]]
         )
         if dead:
-            current_app.request_queue.enqueue_in(
+            current_app.maintenance_queue.enqueue_in(
                 timedelta(minutes=30),
                 "app.videos.sync_aws_s3_storage_task",
                 job_timeout="24h",
                 job_id=safe_job_id("retry:sync_aws_s3_storage_task"),
                 result_ttl=86400,
                 description="Syncing files with AWS S3 storage",
-                at_front=True,
             )
             current_app.logger.warning(
                 f"Library volume(s) unavailable ({', '.join(dead)}); "

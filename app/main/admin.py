@@ -716,12 +716,15 @@ def maintenance():
             flash("Need to be an admin user for this task!", "danger")
 
         elif current_user.check_password(sync_form.password.data):
-            current_app.sql_queue.enqueue(
+            # The sync runs for hours. The maintenance queue holds it, as
+            # in the cron table. On the single sql worker it blocked the
+            # cataloging of each import (#314).
+
+            current_app.maintenance_queue.enqueue(
                 "app.videos.sync_aws_s3_storage_task",
                 args=None,
                 job_timeout="24h",
-                description="Syncing files from AWS S3 storage",
-                at_front=True,
+                description="Syncing files with AWS S3 storage",
             )
             flash("Syncing files with AWS S3 storage", "info")
 

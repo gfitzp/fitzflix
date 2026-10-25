@@ -101,14 +101,13 @@ def register(app):
     def sync():
         """Sync the library with the AWS storage."""
 
-        app.request_queue.enqueue(
+        app.maintenance_queue.enqueue(
             "app.videos.sync_aws_s3_storage_task",
             args=None,
             job_timeout="24h",
-            description="Pruning extra files from AWS S3 storage",
-            at_front=True,
+            description="Syncing files with AWS S3 storage",
         )
-        app.logger.info("Pruning extra files from AWS S3 storage")
+        app.logger.info("Queueing the AWS S3 storage sync")
 
     @app.cli.command()
     def scan():

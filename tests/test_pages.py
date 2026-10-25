@@ -762,3 +762,28 @@ def test_the_season_dropdown_is_in_season_order(app, admin_client):
     page = admin_client.get(f"/tv/{series_id}").get_data(as_text=True)
     listed = [int(n) for n in re.findall(r">Season (\d+)</a>", page)]
     assert listed == [5, 13, 2011, 2018]
+
+
+def test_the_maintenance_page_queues_the_sync_on_maintenance(app, admin_client):
+    """The 24-hour sync must not hold the single sql worker (#314)."""
+
+    from tests.conftest import ADMIN_PASSWORD
+
+    page = admin_client.get("/maintenance").get_data(as_text=True)
+    admin_client.post(
+        "/maintenance",
+        data={
+            "csrf_token": csrf_token_from(page),
+            "password": ADMIN_PASSWORD,
+            "sync_submit": "1",
+        },
+    )
+    names = [
+        job.func_name
+        for queue in (app.maintenance_queue, app.sql_queue, app.request_queue)
+        for job in queue.jobs
+    ]
+    assert [job.func_name for job in app.maintenance_queue.jobs] == [
+        "app.videos.sync_aws_s3_storage_task"
+    ]
+    assert names.count("app.videos.sync_aws_s3_storage_task") == 1

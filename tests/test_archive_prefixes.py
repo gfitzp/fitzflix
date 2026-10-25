@@ -553,7 +553,7 @@ def test_the_sync_waits_while_a_library_volume_is_dead(app, monkeypatch):
 
         assert [
             job.id
-            for job in scheduled_jobs(app.request_queue)
+            for job in scheduled_jobs(app.maintenance_queue)
             if job.func_name == "app.videos.sync_aws_s3_storage_task"
         ]
 
