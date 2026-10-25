@@ -38,6 +38,7 @@ import os
 import time
 import traceback
 
+from collections import namedtuple
 from datetime import datetime, timezone
 
 from rq import Queue, SimpleWorker
@@ -262,6 +263,22 @@ def _rerun_start(trail, index):
     return index
 
 
+# 1 stage event for _apply_stage_event. now is the local wall-clock stamp
+# of the chips. utc_now is the UTC stamp of first_enqueued, for an event
+# with no anchor.
+
+StageEvent = namedtuple(
+    "StageEvent",
+    "stage status job_id before_job sibling enqueued_at anchor now utc_now",
+)
+
+
+def _text(value):
+    """Return a Redis hash value as text, or None."""
+
+    return value.decode() if isinstance(value, bytes) else value
+
+
 def _write_trail_entry(
     connection,
     basename,
@@ -302,6 +319,9 @@ def _write_trail_entry(
     end of the localization (Gandhi, How to Train Your Dragon The Hidden
     World, Oct 2026). Now each stamp can fill a missing first_enqueued
     from anchor.
+
+    The rules are in _apply_stage_event. This function reads the trail
+    under WATCH, applies the event, and writes the result in 1 MULTI.
     """
 
     from redis import WatchError
@@ -311,213 +331,50 @@ def _write_trail_entry(
     key = FILE_KEY.format(digest=digest)
 
     for _ in range(10):
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        fresh_journey = False
+        event = StageEvent(
+            stage,
+            status,
+            job_id,
+            before_job,
+            sibling,
+            enqueued_at,
+            anchor,
+            now=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            utc_now=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+        )
         with connection.pipeline() as pipe:
             try:
                 pipe.watch(key)
                 trail = _decode_trail(pipe.hget(key, "trail"))
+                first_run = _text(pipe.hget(key, "first_run"))
+                first_enqueued = _text(pipe.hget(key, "first_enqueued"))
+                trail, new_first_run, new_first_enqueued, changed = _apply_stage_event(
+                    trail, first_run, first_enqueued, event
+                )
 
-                # A job that moves through its lifecycle updates its own
-                # entry. Thus, queued, started, and done are 1 line, not
-                # 3. A re-enqueued retry is a NEW job id. Thus, it appends
-                # a new entry, and the earlier failure stays visible. A
-                # sub-stage from a task shares the id of its job. It
-                # carries its own stage label. Thus, it is its own line.
+                # An event that leaves the trail as it is writes at most a
+                # missing first_enqueued.
 
-                rerun = False
-                append = True
-                for position in range(len(trail) - 1, -1, -1):
-                    entry = trail[position]
-                    if entry.get("job") == job_id and entry.get("stage") == stage:
-                        # The same job id runs again after its earlier run
-                        # settled. The worker stamps "started" again, or
-                        # the queue stamps a new enqueue that comes after
-                        # the settled stamp. Then the earlier run leaves
-                        # the trail.
-                        if not before_job and entry.get("status") in (
-                            "done",
-                            "failed",
-                            "deferred",
-                        ):
-                            if status == "started" or (
-                                status in ("queued", "scheduled")
-                                and enqueued_at is not None
-                                and entry.get("at", "") < enqueued_at
-                            ):
-                                del trail[_rerun_start(trail, position) :]
-                                rerun = True
-                                break
-
-                        # A job that booked its own retry is "deferred". Its
-                        # worker still stamps it done when it returns. The
-                        # retry chip already stands for the stage. Thus,
-                        # the stamp of the worker changes nothing.
-
-                        if entry.get("status") == "deferred" and status in (
-                            "done",
-                            "failed",
-                        ):
-                            return
-
-                        # A job can complete before its own enqueue-side
-                        # stamp is written. The deferred re-archive skips
-                        # a superseded key in milliseconds. A late
-                        # "queued" would pull the chip back and freeze it
-                        # there. The enqueue side never overrides a stamp
-                        # that the worker already made.
-                        if status in ("queued", "scheduled") and entry.get(
-                            "status"
-                        ) in ("started", "done", "failed", "deferred"):
-                            # Keep the enqueue time of the dropped stamp.
-                            # hsetnx never moves an anchor that is set.
-
-                            pipe.hsetnx(
-                                key,
-                                "first_enqueued",
-                                anchor
-                                or datetime.now(timezone.utc).strftime(
-                                    "%Y-%m-%d %H:%M:%S"
-                                ),
-                            )
-                            return
-                        entry["status"] = status
-                        entry["at"] = now
-                        append = False
-                        break
-
-                if append:
-                    # A sub-stage reports preparatory work inside its job.
-                    # The staging copy comes before the localization
-                    # itself. Thus, the sub-stage goes BEFORE the own
-                    # entry of the job. Then the chips read in pipeline
-                    # order, not in the order of the first stamp. The
-                    # job-level entry always wins that order, because it
-                    # exists from the enqueue time (Glenn, 2026-08).
-
-                    # A waiting stamp can arrive on an empty or fully
-                    # settled trail. Then it opens a NEW journey through
-                    # the pipeline (a re-import, or a later re-archive of
-                    # a file that arrived). Its enqueue anchor starts again.
-                    # A retry after a failure continues the same journey.
-                    # Thus, the anchor holds.
-
-                    if rerun:
-                        fresh_journey = True
-                    elif status in ("queued", "scheduled", "started") and not (
-                        before_job
-                    ):
-                        fresh_journey = not trail or all(
-                            existing.get("status") in ("done", "deferred")
-                            for existing in trail
-                        )
-
-                    # A running job that books a new job of its own stage
-                    # for the same file is deferring itself. Examples are a
-                    # file that is still copying in, a title lock that
-                    # another task holds, and a transient copy error. The
-                    # running job then returns without error, and its
-                    # worker stamped it done. A "Localized" chip showed
-                    # before "Localizing · waiting to retry" (NOVA,
-                    # 2026-10-15). Now the running entry is "deferred".
-                    # The trail does not show it. The retry chip stands for
-                    # the stage.
-
-                    if status in ("queued", "scheduled") and not before_job:
-                        for existing in trail:
-                            if (
-                                existing.get("stage") == stage
-                                and existing.get("job") != job_id
-                                and existing.get("status") == "started"
-                            ):
-                                existing["status"] = "deferred"
-                                existing["at"] = now
-
-                    # A job can report more than 1 sub-stage. Each one
-                    # goes directly before the own entry of the job.
-                    # Thus, the sub-stages keep the order of their first
-                    # stamps. The job entry carries the stage label of
-                    # the sibling.
-
-                    index = len(trail)
-                    if before_job:
-                        own_stage = sibling[0] if sibling is not None else None
-                        for position, existing in enumerate(trail):
-                            if existing.get("job") == job_id and (
-                                own_stage is None or existing.get("stage") == own_stage
-                            ):
-                                index = position
-                                break
-                    new_entry = {
-                        "stage": stage,
-                        "status": status,
-                        "at": now,
-                        "job": job_id,
-                    }
-
-                    # The first entry of a new journey carries a mark. The
-                    # Queue table shows the trail from the last mark only.
-                    # The File Activity page shows the full history (#297).
-
-                    if fresh_journey:
-                        new_entry["journey"] = True
-                    trail.insert(index, new_entry)
-
-                # A sub-stage event can change the own entry of its job in
-                # the same atomic write. Thus, only 1 chip reads "running"
-                # at a time (Glenn, 2026-08-20). The job chip goes to
-                # "queued" while its sub-stage runs. It returns to
-                # "started" after. This is an update only. This never
-                # creates a sibling.
-
-                if sibling is not None:
-                    sibling_stage, sibling_status = sibling
-                    for entry in reversed(trail):
-                        if (
-                            entry.get("job") == job_id
-                            and entry.get("stage") == sibling_stage
-                        ):
-                            entry["status"] = sibling_status
-                            entry["at"] = now
-                            break
-                del trail[:-40]
+                if not changed:
+                    if new_first_enqueued != first_enqueued:
+                        pipe.multi()
+                        pipe.hset(key, "first_enqueued", new_first_enqueued)
+                        pipe.execute()
+                    return
 
                 pipe.multi()
-
-                # The FIRST start of the file is the sort anchor of the
-                # running banners (the original banner-ordering request
-                # of Glenn). It does not move while the journey continues.
-                # Thus, a file that steps between queues keeps its place.
-                # A new journey (a re-import) sets it again.
-
-                if fresh_journey:
+                if new_first_run is None and first_run is not None:
                     pipe.hdel(key, "first_run")
-                if status == "started":
-                    pipe.hsetnx(key, "first_run", now)
-
-                # The first ENQUEUE of the file anchors the Enqueued
-                # column of the queue page in the same way. It stays still
-                # while the work steps between queues. Each step is a new
-                # job with its own enqueued_at. Fitzflix stores it as
-                # naive UTC to match the enqueued_at convention of rq.
-                # The other stamps of the trail are local wall clock, for
-                # the chips. See first_enqueued.
-
-                if status in ("queued", "scheduled", "started") or fresh_journey:
-                    stamp = anchor or datetime.now(timezone.utc).strftime(
-                        "%Y-%m-%d %H:%M:%S"
-                    )
-                    if fresh_journey:
-                        pipe.hset(key, "first_enqueued", stamp)
-                    else:
-                        pipe.hsetnx(key, "first_enqueued", stamp)
-
+                elif new_first_run != first_run:
+                    pipe.hset(key, "first_run", new_first_run)
+                if new_first_enqueued != first_enqueued:
+                    pipe.hset(key, "first_enqueued", new_first_enqueued)
                 pipe.hset(
                     key,
                     mapping={
                         "basename": basename,
                         "trail": json.dumps(trail),
-                        "updated": now,
+                        "updated": event.now,
                     },
                 )
                 pipe.expire(key, TRAIL_TTL_SECONDS)
@@ -527,6 +384,189 @@ def _write_trail_entry(
                 return
             except WatchError:
                 continue
+
+
+def _apply_stage_event(trail, first_run, first_enqueued, event):
+    """Apply 1 StageEvent to a trail. Return (trail, first_run, first_enqueued, changed).
+
+    This function is pure. It copies the trail and changes only the copy.
+    changed is False when the trail stays as it is. Then only
+    first_enqueued can change. first_run and first_enqueued are the
+    stamps of the file, or None."""
+
+    stage, status, job_id = event.stage, event.status, event.job_id
+    before_job, sibling, enqueued_at = (
+        event.before_job,
+        event.sibling,
+        event.enqueued_at,
+    )
+    now = event.now
+    trail = [dict(entry) for entry in trail]
+    fresh_journey = False
+
+    # A job that moves through its lifecycle updates its own entry. Thus,
+    # queued, started, and done are 1 line, not 3. A re-enqueued retry is
+    # a NEW job id. Thus, it appends a new entry, and the earlier failure
+    # stays visible. A sub-stage from a task shares the id of its job. It
+    # carries its own stage label. Thus, it is its own line.
+
+    rerun = False
+    append = True
+    for position in range(len(trail) - 1, -1, -1):
+        entry = trail[position]
+        if entry.get("job") == job_id and entry.get("stage") == stage:
+            # The same job id runs again after its earlier run settled. The
+            # worker stamps "started" again, or the queue stamps a new
+            # enqueue that comes after the settled stamp. Then the earlier
+            # run leaves the trail.
+            if not before_job and entry.get("status") in (
+                "done",
+                "failed",
+                "deferred",
+            ):
+                if status == "started" or (
+                    status in ("queued", "scheduled")
+                    and enqueued_at is not None
+                    and entry.get("at", "") < enqueued_at
+                ):
+                    del trail[_rerun_start(trail, position) :]
+                    rerun = True
+                    break
+
+            # A job that booked its own retry is "deferred". Its worker
+            # still stamps it done when it returns. The retry chip already
+            # stands for the stage. Thus, the stamp of the worker changes
+            # nothing.
+
+            if entry.get("status") == "deferred" and status in ("done", "failed"):
+                return trail, first_run, first_enqueued, False
+
+            # A job can complete before its own enqueue-side stamp is
+            # written. The deferred re-archive skips a superseded key in
+            # milliseconds. A late "queued" would pull the chip back and
+            # freeze it there. The enqueue side never overrides a stamp that
+            # the worker already made.
+            if status in ("queued", "scheduled") and entry.get("status") in (
+                "started",
+                "done",
+                "failed",
+                "deferred",
+            ):
+                # Keep the enqueue time of the dropped stamp. An anchor that
+                # is set never moves.
+
+                return (
+                    trail,
+                    first_run,
+                    first_enqueued or event.anchor or event.utc_now,
+                    False,
+                )
+            entry["status"] = status
+            entry["at"] = now
+            append = False
+            break
+
+    if append:
+        # A sub-stage reports preparatory work inside its job. The staging
+        # copy comes before the localization itself. Thus, the sub-stage
+        # goes BEFORE the own entry of the job. Then the chips read in
+        # pipeline order, not in the order of the first stamp. The
+        # job-level entry always wins that order, because it exists from
+        # the enqueue time (Glenn, 2026-08).
+
+        # A waiting stamp can arrive on an empty or fully settled trail.
+        # Then it opens a NEW journey through the pipeline (a re-import, or
+        # a later re-archive of a file that arrived). Its enqueue anchor
+        # starts again. A retry after a failure continues the same journey.
+        # Thus, the anchor holds.
+
+        if rerun:
+            fresh_journey = True
+        elif status in ("queued", "scheduled", "started") and not before_job:
+            fresh_journey = not trail or all(
+                existing.get("status") in ("done", "deferred") for existing in trail
+            )
+
+        # A running job that books a new job of its own stage for the same
+        # file is deferring itself. Examples are a file that is still
+        # copying in, a title lock that another task holds, and a transient
+        # copy error. The running job then returns without error, and its
+        # worker stamped it done. A "Localized" chip showed before
+        # "Localizing · waiting to retry" (NOVA, 2026-10-15). Now the
+        # running entry is "deferred". The trail does not show it. The
+        # retry chip stands for the stage.
+
+        if status in ("queued", "scheduled") and not before_job:
+            for existing in trail:
+                if (
+                    existing.get("stage") == stage
+                    and existing.get("job") != job_id
+                    and existing.get("status") == "started"
+                ):
+                    existing["status"] = "deferred"
+                    existing["at"] = now
+
+        # A job can report more than 1 sub-stage. Each one goes directly
+        # before the own entry of the job. Thus, the sub-stages keep the
+        # order of their first stamps. The job entry carries the stage
+        # label of the sibling.
+
+        index = len(trail)
+        if before_job:
+            own_stage = sibling[0] if sibling is not None else None
+            for position, existing in enumerate(trail):
+                if existing.get("job") == job_id and (
+                    own_stage is None or existing.get("stage") == own_stage
+                ):
+                    index = position
+                    break
+        new_entry = {"stage": stage, "status": status, "at": now, "job": job_id}
+
+        # The first entry of a new journey carries a mark. The Queue table
+        # shows the trail from the last mark only. The File Activity page
+        # shows the full history (#297).
+
+        if fresh_journey:
+            new_entry["journey"] = True
+        trail.insert(index, new_entry)
+
+    # A sub-stage event can change the own entry of its job in the same
+    # atomic write. Thus, only 1 chip reads "running" at a time (Glenn,
+    # 2026-08-20). The job chip goes to "queued" while its sub-stage runs.
+    # It returns to "started" after. This is an update only. This never
+    # creates a sibling.
+
+    if sibling is not None:
+        sibling_stage, sibling_status = sibling
+        for entry in reversed(trail):
+            if entry.get("job") == job_id and entry.get("stage") == sibling_stage:
+                entry["status"] = sibling_status
+                entry["at"] = now
+                break
+    del trail[:-40]
+
+    # The FIRST start of the file is the sort anchor of the running
+    # banners (the original banner-ordering request of Glenn). It does not
+    # move while the journey continues. Thus, a file that steps between
+    # queues keeps its place. A new journey (a re-import) sets it again.
+
+    if fresh_journey:
+        first_run = None
+    if status == "started":
+        first_run = first_run or now
+
+    # The first ENQUEUE of the file anchors the Enqueued column of the
+    # queue page in the same way. It stays still while the work steps
+    # between queues. Each step is a new job with its own enqueued_at.
+    # Fitzflix stores it as naive UTC to match the enqueued_at convention
+    # of rq. The other stamps of the trail are local wall clock, for the
+    # chips. See first_enqueued.
+
+    if status in ("queued", "scheduled", "started") or fresh_journey:
+        stamp = event.anchor or event.utc_now
+        first_enqueued = stamp if fresh_journey else (first_enqueued or stamp)
+
+    return trail, first_run, first_enqueued, True
 
 
 def migrate_trail(connection, old_basename, new_basename):

@@ -1550,3 +1550,175 @@ def test_a_journey_keeps_the_sub_stages_before_its_first_job(app):
         "Localizing",
     ]
     assert current_journey(entries[:1]) == entries[:1]
+
+
+# Direct tests of the pure state machine under _write_trail_entry
+# (tranche 3). They need no Redis.
+
+
+def _event(status, job="j1", stage="Localizing", **fields):
+    """Return a StageEvent at a fixed time."""
+
+    from app.pipeline import StageEvent
+
+    values = {
+        "before_job": False,
+        "sibling": None,
+        "enqueued_at": None,
+        "anchor": None,
+        "now": "2026-10-25 12:00:00",
+        "utc_now": "2026-10-25 16:00:00",
+        **fields,
+    }
+    return StageEvent(stage, status, job, **values)
+
+
+def _entry(stage, status, job, at="2026-10-25 11:00:00", **extra):
+    """Return 1 trail entry."""
+
+    return {"stage": stage, "status": status, "at": at, "job": job, **extra}
+
+
+def test_apply_stage_event_opens_a_journey_and_keeps_its_input(app):
+    from app.pipeline import _apply_stage_event
+
+    trail = []
+    result = _apply_stage_event(trail, None, None, _event("queued"))
+    assert trail == []
+    new_trail, first_run, first_enqueued, changed = result
+    assert changed
+    assert new_trail == [
+        _entry("Localizing", "queued", "j1", at="2026-10-25 12:00:00", journey=True)
+    ]
+    assert first_run is None
+    assert first_enqueued == "2026-10-25 16:00:00"
+
+
+def test_apply_stage_event_updates_the_own_entry_and_sets_first_run(app):
+    from app.pipeline import _apply_stage_event
+
+    trail = [_entry("Localizing", "queued", "j1", journey=True)]
+    new_trail, first_run, first_enqueued, changed = _apply_stage_event(
+        trail, None, "2026-10-25 15:00:00", _event("started")
+    )
+    assert changed
+    assert [e["status"] for e in new_trail] == ["started"]
+    assert first_run == "2026-10-25 12:00:00"
+    assert first_enqueued == "2026-10-25 15:00:00"
+
+    # A second start keeps the first one.
+    _, first_run, _, _ = _apply_stage_event(
+        new_trail, "2026-10-25 11:30:00", first_enqueued, _event("started")
+    )
+    assert first_run == "2026-10-25 11:30:00"
+
+
+def test_apply_stage_event_rerun_drops_the_earlier_run(app):
+    """A start of a settled job id removes that run and all after it."""
+
+    from app.pipeline import _apply_stage_event
+
+    trail = [
+        _entry("Copying to staging", "done", "j1", journey=True),
+        _entry("Localizing", "done", "j1"),
+        _entry("Moving into the library", "done", "j2"),
+    ]
+    new_trail, first_run, first_enqueued, changed = _apply_stage_event(
+        trail, "2026-10-24 09:00:00", "2026-10-24 13:00:00", _event("started")
+    )
+    assert changed
+    assert new_trail == [
+        _entry("Localizing", "started", "j1", at="2026-10-25 12:00:00", journey=True)
+    ]
+    assert first_run == "2026-10-25 12:00:00"
+    assert first_enqueued == "2026-10-25 16:00:00"
+
+
+def test_apply_stage_event_rerun_needs_a_newer_enqueue(app):
+    """A queued stamp reruns a settled entry only if its enqueue is newer."""
+
+    from app.pipeline import _apply_stage_event
+
+    trail = [_entry("Localizing", "done", "j1")]
+    newer = _event("queued", enqueued_at="2026-10-25 11:30:00")
+    new_trail, _, _, changed = _apply_stage_event(trail, None, None, newer)
+    assert changed
+    assert [e["status"] for e in new_trail] == ["queued"]
+
+    # An older enqueue is the late stamp of the same run. It is dropped,
+    # but it fills a missing first_enqueued from its anchor.
+    late = _event(
+        "queued", enqueued_at="2026-10-25 10:00:00", anchor="2026-10-25 14:00:00"
+    )
+    new_trail, first_run, first_enqueued, changed = _apply_stage_event(
+        trail, None, None, late
+    )
+    assert not changed
+    assert new_trail == trail
+    assert first_enqueued == "2026-10-25 14:00:00"
+
+    # A set first_enqueued never moves.
+    _, _, first_enqueued, _ = _apply_stage_event(
+        trail, None, "2026-10-25 13:00:00", late
+    )
+    assert first_enqueued == "2026-10-25 13:00:00"
+
+
+def test_apply_stage_event_ignores_the_done_stamp_of_a_deferred_job(app):
+    from app.pipeline import _apply_stage_event
+
+    trail = [_entry("Localizing", "deferred", "j1")]
+    result = _apply_stage_event(trail, "a", "b", _event("done"))
+    assert result == (trail, "a", "b", False)
+
+
+def test_apply_stage_event_defers_a_running_job_of_the_same_stage(app):
+    """A new job of the same stage marks the running one deferred."""
+
+    from app.pipeline import _apply_stage_event
+
+    trail = [_entry("Localizing", "started", "j1", journey=True)]
+    new_trail, _, _, changed = _apply_stage_event(
+        trail, "x", "y", _event("scheduled", job="retry-1")
+    )
+    assert changed
+    assert [(e["job"], e["status"]) for e in new_trail] == [
+        ("j1", "deferred"),
+        ("retry-1", "scheduled"),
+    ]
+    assert "journey" not in new_trail[1]
+
+
+def test_apply_stage_event_puts_a_sub_stage_before_its_job_and_updates_the_sibling(
+    app,
+):
+    """A sub-stage goes before the own entry of its job and moves that chip."""
+
+    from app.pipeline import _apply_stage_event
+
+    trail = [_entry("Localizing", "started", "j1", journey=True)]
+    event = _event(
+        "started",
+        stage="Copying to staging",
+        before_job=True,
+        sibling=("Localizing", "queued"),
+    )
+    new_trail, first_run, _, changed = _apply_stage_event(trail, "r", "e", event)
+    assert changed
+    assert [(e["stage"], e["status"]) for e in new_trail] == [
+        ("Copying to staging", "started"),
+        ("Localizing", "queued"),
+    ]
+    assert "journey" not in new_trail[0]
+    assert first_run == "r"
+
+
+def test_apply_stage_event_keeps_the_last_40_entries(app):
+    from app.pipeline import _apply_stage_event
+
+    trail = [_entry("Localizing", "failed", f"j{i}") for i in range(45)]
+    new_trail, _, _, _ = _apply_stage_event(
+        trail, None, None, _event("queued", job="new")
+    )
+    assert len(new_trail) == 40
+    assert new_trail[-1]["job"] == "new"
