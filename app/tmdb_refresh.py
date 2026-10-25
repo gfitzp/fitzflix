@@ -46,6 +46,7 @@ from app.models import (
     UserWatchlist,
 )
 from app.tmdb_apply import tmdb_json_or
+from app.naming import retag_quality, with_extension
 
 
 def library_name_details(file, file_details):
@@ -61,13 +62,13 @@ def library_name_details(file, file_details):
     details = dict(file_details)
     basename = details["basename"]
     if file.converted_from_quality and file.quality:
-        basename = basename.replace(
-            f"[{file.converted_from_quality}]", f"[{file.quality.quality_title}]"
+        basename = retag_quality(
+            basename, file.converted_from_quality, file.quality.quality_title
         )
-    stem, extension = os.path.splitext(basename)
+    extension = os.path.splitext(basename)[1]
     library_extension = os.path.splitext(file.basename or "")[1]
     if library_extension and extension != library_extension:
-        basename = f"{stem}{library_extension}"
+        basename = with_extension(basename, library_extension)
         details["extension"] = library_extension.lstrip(".")
     details["basename"] = basename
     details["file_path"] = os.path.join(details["dirname"], basename)

@@ -3,7 +3,8 @@
 This is the fix for Plex disambiguation (Batman becomes Batman (1966)).
 
 This task does NOT touch S3. This is intentional. A series rename
-changes the display name, not the identity. The aws_key
+changes the display name, not the identity. The untouched names get
+the new title (#362), but the aws_key column keeps the old key. That
 column is the authoritative pointer to a real archived object. A rename
 of the archived keys would force a new upload of every Deep Archive
 file (the fallback of rename_untouched_object). The weekly S3 sync
@@ -122,6 +123,7 @@ def rename_tv_series_task(series_id, new_title):
         old_prefix = f"{old_title} - "
         new_prefix = f"{new_title} - "
 
+        from app.importing import reconstruct_filename
         from app.videos import _rename_with_retries
 
         # Plan each file first. If 1 file does not carry the series title,
@@ -175,6 +177,9 @@ def rename_tv_series_task(series_id, new_title):
             file.file_path = new_path
             if file.plex_title.startswith(old_prefix):
                 file.plex_title = new_prefix + file.plex_title[len(old_prefix) :]
+            file.untouched_basename = reconstruct_filename(
+                file.id, series_title=new_title
+            )
             db.session.commit()
 
         # This step is aware of junk files. It is not a plain rmdir. The

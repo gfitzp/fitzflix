@@ -154,3 +154,51 @@ def test_rename_changes_nothing_when_a_file_does_not_match(app, monkeypatch):
         )
         assert os.path.isfile(good_path)
         assert sonarr == []
+
+
+def test_rename_gives_the_untouched_names_the_new_title(app):
+    """A rename changes the untouched names and the keys that they want (#362).
+
+    The stored key stays. It names the real archived object. The other
+    parts of an untouched name stay. A series id tag gets the TMDB id."""
+
+    from app.aws_storage import sanitize_s3_key
+
+    old_key = "untouched/Batman - S01E01 - Fullscreen [Bluray-1080p].mkv"
+    with app.app_context():
+        series = make_tv_series("Batman", tmdb_id=2287)
+        plain = make_tv_file(
+            series,
+            1,
+            1,
+            "Bluray-1080p",
+            untouched_basename="Batman - S01E01 - Fullscreen [Bluray-1080p].mkv",
+            aws_key=old_key,
+        )
+        tagged = make_tv_file(
+            series,
+            1,
+            2,
+            "Bluray-1080p",
+            untouched_basename="Batman {tvdb-77871} - S01E02 - [Bluray-1080p].m2ts",
+        )
+        db.session.commit()
+        _materialize(app, plain)
+
+        assert rename_tv_series_task(series.id, "Batman (1966)") is True
+        db.session.expire_all()
+        plain = db.session.get(File, plain.id)
+        assert plain.untouched_basename == (
+            "Batman (1966) - S01E01 - Fullscreen [Bluray-1080p].mkv"
+        )
+        wanted = os.path.join(
+            app.config["AWS_UNTOUCHED_PREFIX"],
+            sanitize_s3_key(plain.untouched_basename),
+        )
+        assert (
+            wanted == "untouched/Batman (1966) - S01E01 - Fullscreen [Bluray-1080p].mkv"
+        )
+        assert plain.aws_key == old_key
+        assert db.session.get(File, tagged.id).untouched_basename == (
+            "Batman (1966) {tmdb-2287} - S01E02 - [Bluray-1080p].m2ts"
+        )

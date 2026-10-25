@@ -37,6 +37,7 @@ from app.tasks import enqueue_task, report_progress, requeue
 from app import db, get_app
 from app.aws_storage import archive_library_file, mark_archive_stale
 from app.models import File, FileAudioTrack, FileSubtitleTrack
+from app.naming import hidden
 from app.cache import cached_fetch
 from app.settings import get_setting
 from app.plex_library import enqueue_plex_analyze
@@ -130,7 +131,7 @@ def remux_file(file_path, build_command, job, name, activity):
                 errno.ENOSPC,
                 f"'{name}' needs {needed} bytes for an in-place remux, {free} are free",
             )
-        hidden_output = os.path.join(directory, f".{basename}.remux.mkv")
+        hidden_output = hidden(os.path.join(directory, basename), ".remux.mkv")
         try:
             _run_mkvmerge(build_command(file_path, hidden_output), job, name, activity)
             os.replace(hidden_output, file_path)
@@ -142,7 +143,7 @@ def remux_file(file_path, build_command, job, name, activity):
 
     staged_source = os.path.join(staging_dir, f".src-{staged_name}")
     staged_output = os.path.join(staging_dir, f".remux-{staged_name}")
-    hidden_library = os.path.join(directory, f".{basename}")
+    hidden_library = hidden(os.path.join(directory, basename))
     try:
         copy_with_progress(
             file_path, staged_source, job, name, "Copying to local staging"
@@ -2050,7 +2051,7 @@ def _remux_audio_plan_unlocked(file_id, plan):
             # A failed copy leaves a partial hidden file next to the
             # library file. Remove it, as the other write-backs do.
 
-            hidden_library = os.path.join(os.path.dirname(file_path), f".{basename}")
+            hidden_library = hidden(os.path.join(os.path.dirname(file_path), basename))
             try:
                 copy_with_progress(
                     final_staging,

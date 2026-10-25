@@ -1068,3 +1068,31 @@ def test_reconstruct_filename_of_each_film_shape(app):
             "The Big Hit (1999) - [Bluray-2160p].mkv"
         )
         assert reconstruct_filename(999999) is False
+
+
+def test_reconstruct_filename_of_an_episode_takes_the_series_title(app):
+    """An episode gets the current title of its series (#362).
+
+    A name that does not parse stays as it is."""
+
+    from app.importing import reconstruct_filename
+    from tests.factories import make_tv_file, make_tv_series
+
+    with app.app_context():
+        series = make_tv_series("Planet Earth (2006)")
+        episode = make_tv_file(
+            series,
+            1,
+            5,
+            "Bluray-1080p",
+            last_episode=6,
+            untouched_basename="Planet Earth - S01E05-E06 - Pilot [Bluray-1080p].mkv",
+        )
+        odd = make_tv_file(series, 1, 7, "DVD", untouched_basename="odd name.mkv")
+        assert reconstruct_filename(episode.id) == (
+            "Planet Earth (2006) - S01E05-E06 - Pilot [Bluray-1080p].mkv"
+        )
+        assert reconstruct_filename(episode.id, series_title="Earth") == (
+            "Earth - S01E05-E06 - Pilot [Bluray-1080p].mkv"
+        )
+        assert reconstruct_filename(odd.id) == "odd name.mkv"

@@ -44,6 +44,7 @@ from werkzeug.local import LocalProxy
 from app.tasks import enqueue_task, report_progress
 from app import db, get_app, makedirs_on_mounted_volume
 from app.models import MOVIES
+from app.naming import retag_quality
 from app.email import notify_admin
 
 app = LocalProxy(get_app)
@@ -184,10 +185,9 @@ def converted_file_details(file_details, plan):
     """Return a copy of the file details, renamed to the quality of the conversion."""
 
     details = dict(file_details)
-    old_tag = f"[{plan['source_quality']}]"
-    new_tag = f"[{plan['target_quality']}]"
-    details["basename"] = details["basename"].replace(old_tag, new_tag)
-    details["file_path"] = details["file_path"].replace(old_tag, new_tag)
+    source, target = plan["source_quality"], plan["target_quality"]
+    details["basename"] = retag_quality(details["basename"], source, target)
+    details["file_path"] = retag_quality(details["file_path"], source, target)
     details["quality_title"] = plan["target_quality"]
     details["converted_from_quality"] = plan["source_quality"]
     details["converted_from_format"] = plan["source_format"]

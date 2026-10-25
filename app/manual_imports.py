@@ -33,6 +33,8 @@ from werkzeug.local import LocalProxy
 
 from app import get_app
 from app.api.arr import downgrade_quality_title
+from app import naming
+from app.models import MOVIES, TV_SHOWS
 
 # This is the app instance of this process. Fitzflix resolves it lazily.
 # Thus, the task can run on a worker without a second application
@@ -256,22 +258,23 @@ def proposed_name(entry, extension):
     record = entry.get("record")
     if not record or not record.get("title"):
         return f"{sanitize_string(entry.get('title') or 'Unknown')} - [{quality}].{extension}"
-    title = sanitize_string(record["title"])
+    parts = {
+        "title": sanitize_string(record["title"]),
+        "quality_title": quality,
+        "extension": extension,
+    }
     if record["kind"] == "movie":
-        year = record.get("year") or "0000"
-        return f"{title} ({year}) - [{quality}].{extension}"
+        parts.update(library=MOVIES, year=record.get("year") or "0000")
+        return naming.library_name(parts)[1]
     episodes = sorted(
         (season, number)
         for season, number in entry.get("episodes") or []
         if season is not None and number is not None
-    )
-    if not episodes:
-        return f"{title} - S00E00 - [{quality}].{extension}"
-    season, first = episodes[0]
-    code = f"S{season:02d}E{first:02d}"
+    ) or [(0, 0)]
+    parts.update(library=TV_SHOWS, season=episodes[0][0], episode=episodes[0][1])
     if len(episodes) > 1:
-        code = f"{code}-E{episodes[-1][1]:02d}"
-    return f"{title} - {code} - [{quality}].{extension}"
+        parts["last_episode"] = episodes[-1][1]
+    return naming.library_name(parts)[1]
 
 
 def fitzflix_basename(name):
@@ -519,7 +522,7 @@ def manual_import_task(service, download_id, output_path, relative, new_basename
                 fenced_path(os.path.join(output_path, relative)) if folder else None
             )
         import_dir = current_app.config["IMPORT_DIR"]
-        hidden = os.path.join(import_dir, f".{new_basename}")
+        hidden = naming.hidden(os.path.join(import_dir, new_basename))
         final = os.path.join(import_dir, new_basename)
         try:
             if source is None or not os.path.isfile(source):

@@ -62,6 +62,7 @@ from app.criterion_catalog import (
 )
 from app.email import admin_email, notify_admin
 from app.email import send_email
+from app.naming import hidden, library_name, with_extension
 from app.models import (
     MOVIES,
     TV_SHOWS,
@@ -417,8 +418,8 @@ def staged_output_path(staging_dir, source_basename, library_basename):
     library file."""
 
     extension = os.path.splitext(library_basename or "")[1] or ".mkv"
-    return os.path.join(
-        staging_dir, f".{_name_stem(source_basename)}.localized{extension}"
+    return hidden(
+        os.path.join(staging_dir, _name_stem(source_basename)), f".localized{extension}"
     )
 
 
@@ -1148,7 +1149,7 @@ def _localize(source_path, work_path, file_details, staged, job, strays):
     if file_details.get("container") != "Matroska":
         scratch_dir = staging_dir if staged else output_directory
         makedirs_on_mounted_volume(scratch_dir)
-        converted_file = os.path.join(scratch_dir, f".{basename}.convert.mkv")
+        converted_file = hidden(os.path.join(scratch_dir, basename), ".convert.mkv")
         strays.append(converted_file)
 
         if convert_to_matroska(work_path, converted_file, job, basename):
@@ -1162,8 +1163,7 @@ def _localize(source_path, work_path, file_details, staged, job, strays):
                     pass
             work_path = converted_file
             file_details["container"] = "Matroska"
-            stem = file_details["basename"].rsplit(".", 1)[0]
-            file_details["basename"] = f"{stem}.mkv"
+            file_details["basename"] = with_extension(file_details["basename"], "mkv")
             file_details["extension"] = "mkv"
             file_details["file_path"] = os.path.join(
                 file_details["dirname"], file_details["basename"]
@@ -1187,8 +1187,8 @@ def _localize(source_path, work_path, file_details, staged, job, strays):
         )
         strays.append(hidden_output_file)
     else:
-        hidden_output_file = os.path.join(
-            output_directory, f".{file_details.get('basename')}"
+        hidden_output_file = hidden(
+            os.path.join(output_directory, file_details.get("basename"))
         )
 
     # Export a localized version of the incoming file.
@@ -1835,7 +1835,7 @@ def move_localized_file(
                 f"Volumes unavailable ({', '.join(dead)}) for the library copy",
             )
 
-        destination_hidden = os.path.join(output_directory, f".{basename}")
+        destination_hidden = hidden(os.path.join(output_directory, basename))
 
         def wait_for_space(needed, shortfall, directory=None):
             """Book the copy again after SPACE_WAIT. Keep the title lock.
@@ -3232,13 +3232,7 @@ def _parse_tv(basename, log):
 
     season = int(tv.group("season"))
     episode = int(tv.group("episode"))
-    season_episode = f"S{tv.group('season').zfill(2)}E{tv.group('episode').zfill(2)}"
-    if tv.group("last_episode"):
-        last_episode = int(tv.group("last_episode"))
-        season_episode = f"{season_episode}-E{tv.group('last_episode').zfill(2)}"
-
-    else:
-        last_episode = int(tv.group("episode"))
+    last_episode = int(tv.group("last_episode") or tv.group("episode"))
 
     # If the file quality name is not an expected name, reject the file.
 
@@ -3275,18 +3269,27 @@ def _parse_tv(basename, log):
         )
 
     fullscreen = False
+    version = None
     if tv.group("version"):
         version_strings, fullscreen = _standard_full_screen(tv.group("version"))
         if fullscreen:
             _put_full_screen_last(version_strings)
         version = " - ".join(version_strings)
-        plex_title = f"{title} - {season_episode} - {version}"
-        basename = f"{plex_title} [{quality_title}].{extension}"
 
-    else:
-        version = None
-        plex_title = f"{title} - {season_episode}"
-        basename = f"{plex_title} - [{quality_title}].{extension}"
+    # The episode code keeps the digits of the name.
+
+    plex_title, basename = library_name(
+        {
+            "library": media_library,
+            "title": title,
+            "season": tv.group("season"),
+            "episode": tv.group("episode"),
+            "last_episode": tv.group("last_episode"),
+            "version": version,
+            "quality_title": quality_title,
+            "extension": extension,
+        }
+    )
 
     return _details(
         media_library,
@@ -3413,20 +3416,22 @@ def _parse_movie(basename, tmdb_id, log):
     # library paths. After the tag resolves, it has the canonical tmdb
     # form, with {edition-...} after it.
 
+    id_tag_text = None
     if id_tag:
         id_tag_text = f"{{tmdb-{tmdb_id}}}" if tmdb_id else id_tag[2]
-        display_title = f"{title} ({year}) {id_tag_text}"
-    else:
-        display_title = f"{title} ({year})"
 
     extension = movie.group("extension")
     dirname, plex_title, basename, version, feature_type, fullscreen = _movie_layout(
-        media_library,
-        display_title,
-        edition,
+        {
+            "library": media_library,
+            "title": title,
+            "year": year,
+            "id_tag": id_tag_text,
+            "edition": edition,
+            "quality_title": quality_title,
+            "extension": extension,
+        },
         movie.group("version"),
-        quality_title,
-        extension,
     )
     basename = sanitize_filename(unidecode(basename))
 
@@ -3446,39 +3451,26 @@ def _parse_movie(basename, tmdb_id, log):
     )
 
 
-def _movie_layout(
-    media_library, display_title, edition, version_text, quality_title, extension
-):
+def _movie_layout(parts, version_text):
     """Return (dirname, plex_title, basename, version, feature_type, fullscreen) of a film.
 
-    The basename is not sanitized yet. A special feature type in the
-    version text puts the file in the folder of that type, with only
-    its own name. "Full Screen" goes at the end of the version."""
+    parts holds the library_name parts of the film with no version. The
+    basename is not sanitized yet. A special feature type in the version
+    text puts the file in the folder of that type, with only its own
+    name. "Full Screen" goes at the end of the version."""
 
+    edition = parts["edition"]
     feature_type = None
     special_feature = None
-    fullscreen = False
-    version = None
 
-    if edition:
-        version = edition
-        dirname = os.path.join(
-            media_library,
-            sanitize_filename(unidecode(f"{display_title} {{edition-{edition}}}")),
-        )
+    # The folder is the plex title of the film with no version.
 
-    else:
-        dirname = os.path.join(
-            media_library, sanitize_filename(unidecode(display_title))
-        )
+    folder, _ = library_name(parts)
+    dirname = os.path.join(parts["library"], sanitize_filename(unidecode(folder)))
 
     if not version_text:
-        if edition:
-            plex_title = f"{display_title} {{edition-{edition}}}"
-        else:
-            plex_title = display_title
-        basename = f"{plex_title} - [{quality_title}].{extension}"
-        return dirname, plex_title, basename, version, feature_type, fullscreen
+        plex_title, basename = library_name(parts)
+        return dirname, plex_title, basename, edition, feature_type, False
 
     version_strings, fullscreen = _standard_full_screen(version_text)
 
@@ -3541,39 +3533,23 @@ def _movie_layout(
     # moves the extra out of its edition folder.
 
     if special_feature:
-        version = edition
-        plex_title = special_feature
-        basename = f"{special_feature}.{extension}"
+        plex_title, basename = library_name(
+            dict(parts, feature_type=feature_type, version=special_feature)
+        )
+        return dirname, plex_title, basename, edition, feature_type, fullscreen
 
-    elif fullscreen and len(version_strings) == 1:
-        if edition:
-            # The version string is only "Full Screen". Report the edition
-            # name as the edition, not the raw version.
-            version = edition
-            plex_title = f"{display_title} {{edition-{edition}}}"
-        else:
-            version = None
-            plex_title = display_title
-        basename = f"{plex_title} - Full Screen [{quality_title}].{extension}"
+    # "Full Screen" is not part of the version of a film. The name puts
+    # it before the quality tag. If the version string is only "Full
+    # Screen", report the edition name as the edition, not the raw
+    # version.
 
-    elif fullscreen:
-        version_strings.pop(version_strings.index("Full Screen"))
-        version = " - ".join(version_strings)
-        if edition:
-            plex_title = f"{display_title} {{edition-{edition}}} - {version}"
-        else:
-            plex_title = f"{display_title} - {version}"
-        basename = f"{plex_title} - Full Screen [{quality_title}].{extension}"
-
-    else:
-        version = " - ".join(version_strings)
-        if edition:
-            plex_title = f"{display_title} {{edition-{edition}}} - {version}"
-        else:
-            plex_title = f"{display_title} - {version}"
-        basename = f"{plex_title} [{quality_title}].{extension}"
-
-    return dirname, plex_title, basename, version, feature_type, fullscreen
+    if fullscreen:
+        version_strings.remove("Full Screen")
+    version = " - ".join(version_strings)
+    plex_title, basename = library_name(
+        dict(parts, version=version or None, fullscreen=fullscreen)
+    )
+    return dirname, plex_title, basename, version or edition, feature_type, fullscreen
 
 
 def _resolve_movie_identity(basename, title, year, id_tag, tmdb_id, log):
@@ -3815,7 +3791,7 @@ def move_to_rejects(file_path, reason=""):
     basename = os.path.basename(file_path)
     reject_directory = os.path.join(current_app.config["REJECTS_DIR"], reason)
     destination = os.path.join(reject_directory, basename)
-    hidden_destination = os.path.join(reject_directory, f".{basename}.partial")
+    hidden_destination = hidden(os.path.join(reject_directory, basename), ".partial")
 
     try:
         # The rejects directory is on the external SSD. The SSD can drop
@@ -3917,16 +3893,19 @@ def sanitize_string(
     return string
 
 
-def reconstruct_filename(file_id):
-    """Reconstruct the untouched filename from the current details."""
+def reconstruct_filename(file_id, series_title=None):
+    """Reconstruct the untouched filename from the current details.
 
-    # TODO: this function reconstructs only movie filenames.
+    A film gets the current title and year of its movie record. An
+    episode gets the current title of its series, or series_title (a
+    series rename passes the new title before it commits it). The other
+    parts of an episode name stay as the untouched name has them (#362)."""
 
     f = File.query.filter_by(id=file_id).first()
     if not f:
         return False
     if f.media_library != MOVIES:
-        return f.untouched_basename
+        return _reconstruct_episode_name(f, series_title)
 
     file = (
         db.session.query(File, Movie, RefQuality, RefFeatureType)
@@ -3945,13 +3924,23 @@ def reconstruct_filename(file_id):
     _, ext = os.path.splitext(f.untouched_basename)
 
     # TMDB can send a title with an empty release date. Then the year of
-    # the record stands in.
+    # the record stands in. The untouched file of a conversion is its
+    # original (#292). Its name keeps the quality of the original, not
+    # the 1080p quality of the library file. Else a rename moves the
+    # archive to the wrong key.
 
-    if m.tmdb_title == None:
-        beginning = f"{m.title} ({m.year})"
-    else:
-        year = m.tmdb_release_date.year if m.tmdb_release_date else m.year
-        beginning = f"{m.tmdb_title} ({year})"
+    parts = {
+        "library": MOVIES,
+        "title": m.title,
+        "year": m.year,
+        "edition": f.edition,
+        "quality_title": f.converted_from_quality or q.quality_title,
+        "fullscreen": f.fullscreen == True,
+        "extension": ext.lstrip("."),
+    }
+    if m.tmdb_title != None:
+        parts["title"] = m.tmdb_title
+        parts["year"] = m.tmdb_release_date.year if m.tmdb_release_date else m.year
 
     # Tag in, tag out (#155). An untouched name that had a Plex id tag
     # keeps one. If the current tmdb id of the record is known, the tag
@@ -3959,31 +3948,53 @@ def reconstruct_filename(file_id):
 
     id_tag = ID_TAG_RE.search(f.untouched_basename)
     if id_tag:
-        tag_text = f"{{tmdb-{m.tmdb_id}}}" if m.tmdb_id else id_tag.group(0)
-        beginning = f"{beginning} {tag_text}"
+        parts["id_tag"] = f"{{tmdb-{m.tmdb_id}}}" if m.tmdb_id else id_tag.group(0)
 
-    if f.edition != None:
-        beginning = f"{beginning} {{edition-{f.edition}}}"
+    # The untouched name of an extra holds its type and its name as the
+    # version. A full screen copy keeps only "Full Screen".
 
-    beginning = f"{beginning} - "
+    if f.fullscreen != True and f.feature_type_id != None:
+        parts["version"] = f"{ft.feature_type} - {f.plex_title}"
 
-    # The untouched file of a conversion is its original (#292). Its name
-    # keeps the quality of the original, not the 1080p quality of the
-    # library file. Else a rename moves the archive to the wrong key.
+    _, reconstructed_filename = library_name(parts)
+    reconstructed_filename = sanitize_filename(reconstructed_filename)
+    return " ".join(reconstructed_filename.split()).strip()
 
-    quality_title = f.converted_from_quality or q.quality_title
 
-    if f.fullscreen == True:
-        ending = f"Full Screen [{quality_title}]{ext}"
-    elif f.feature_type_id != None:
-        ending = f"{ft.feature_type} - {f.plex_title} [{quality_title}]{ext}"
-    else:
-        ending = f"[{quality_title}]{ext}"
+def _reconstruct_episode_name(f, series_title=None):
+    """Return the untouched name of an episode with the current title of its series.
 
-    reconstructed_filename = sanitize_filename(f"{beginning}{ending}")
-    reconstructed_filename = " ".join(reconstructed_filename.split()).strip()
+    The season, the episode numbers, the version, the quality and the
+    extension stay as the untouched name has them. An id tag on the
+    series part stays. It gets the current TMDB id of the series. A name
+    that does not parse stays as it is."""
 
-    return reconstructed_filename
+    match = TV_NAME_RE.match(f.untouched_basename or "")
+    series = f.tv_series
+    if match is None or series is None:
+        return f.untouched_basename
+
+    title = series_title or series.title
+    title_tags = re.fullmatch(
+        rf"(?P<base>.+?)(?P<tags>(?: {ID_TAG_BLOCK})+)", match.group("title")
+    )
+    if title_tags:
+        tags = f" {{tmdb-{series.tmdb_id}}}" if series.tmdb_id else title_tags["tags"]
+        title = f"{title}{tags}"
+
+    _, name = library_name(
+        {
+            "library": TV_SHOWS,
+            "title": title,
+            "season": match.group("season"),
+            "episode": match.group("episode"),
+            "last_episode": match.group("last_episode"),
+            "version": match.group("version"),
+            "quality_title": match.group("quality_title"),
+            "extension": match.group("extension"),
+        }
+    )
+    return sanitize_filename(name)
 
 
 # The app instance of this process. Fitzflix resolves it lazily. Thus, an

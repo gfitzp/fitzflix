@@ -46,6 +46,7 @@ from app.tasks import enqueue_task, report_progress, requeue
 from app import db, get_app
 from app.email import notify_admin, notify_admin_text
 from app import s3_layout
+from app import naming
 from app.queues import QUEUE_NAME, roster_queues
 from app.settings import get_setting
 from app.models import (
@@ -1064,8 +1065,8 @@ def archive_key_name(file, prefix):
         file.untouched_basename or file.basename
     )
     if file.converted_from_quality and file.quality:
-        name = name.replace(
-            f"[{file.converted_from_quality}]", f"[{file.quality.quality_title}]"
+        name = naming.retag_quality(
+            name, file.converted_from_quality, file.quality.quality_title
         )
     key = os.path.join(prefix, name)
     claimed = File.query.filter(
@@ -1857,7 +1858,7 @@ def place_in_library(downloaded, library_path, expected_size, name):
         )
     directory = os.path.dirname(library_path)
     os.makedirs(directory, exist_ok=True)
-    hidden = os.path.join(directory, f".{os.path.basename(library_path)}")
+    hidden = naming.hidden(library_path)
     try:
         copy_with_progress(downloaded, hidden, None, name, "Moving into the library")
         os.replace(hidden, library_path)
@@ -1928,7 +1929,7 @@ def aws_download(key, basename, sqs_receipt_handle=None, place_at=None):
     if place_at:
         staged_name = f".restore-{key.replace('/', '-')}"
     else:
-        staged_name = f".{basename}"
+        staged_name = naming.hidden(basename)
     destination = os.path.join(current_app.config["IMPORT_DIR"], staged_name)
     s3_client = aws_s3_client()
     sqs_client = aws_sqs_client()

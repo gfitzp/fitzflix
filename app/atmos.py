@@ -39,6 +39,7 @@ from app import s3_layout
 from app.tasks import enqueue_task, report_progress
 from app import db, get_app, safe_job_id
 from app.models import File, FileAudioTrack
+from app.naming import hidden
 from app.settings import get_setting
 from app.pipeline import TaskPhases, close_trail, keep_trail_open
 from app.plex_library import enqueue_plex_analyze
@@ -1047,7 +1048,7 @@ def _atmos_finish(state, phases):
             elif media_track.track_type == "Text":
                 text_orders.append(int(track_order))
 
-        staging_output = os.path.join(workspace, f".{basename}")
+        staging_output = hidden(os.path.join(workspace, basename))
         command = build_remux_command(
             current_app.config["MKVMERGE_BIN"],
             staging_output,
@@ -1129,7 +1130,7 @@ def _atmos_finish(state, phases):
         # place. The pipeline removes a failed copy. Thus, no partial file
         # sits next to the real file.
 
-        hidden_output = os.path.join(os.path.dirname(file_path), f".{basename}")
+        hidden_output = hidden(os.path.join(os.path.dirname(file_path), basename))
         phases.enter("Replacing the library file")
         try:
             copy_with_progress(
