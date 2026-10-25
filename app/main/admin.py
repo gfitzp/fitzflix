@@ -86,6 +86,7 @@ from app.manual_imports import (
     video_candidates,
 )
 from app.missing_files import missing_best_report, missing_best_summary
+from app.queue_page import listed_queues
 from app.queues import roster_queues
 from app.settings import (
     SETTINGS,
@@ -1780,7 +1781,7 @@ def queue_front():
 
     queue = None
     if job is not None:
-        for listed, only in current_user._listed_queues():
+        for listed, only in listed_queues():
             if listed.name == job.origin and (only is None or job.func_name in only):
                 queue = listed
                 break
