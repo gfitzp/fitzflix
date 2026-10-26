@@ -26,7 +26,7 @@ import zipfile
 
 from datetime import datetime, timedelta, timezone
 
-
+import requests
 from flask import current_app
 from werkzeug.local import LocalProxy
 
@@ -55,6 +55,19 @@ PLEX_TMDB_SECONDS = 604800
 
 PLEX_WATCH_KEY = "fitzflix:plex:watch:{username}:{tmdb_id}:{day}"
 PLEX_WATCH_SECONDS = 2 * 86400
+
+# The marker of 1 watch of the Plex history, by film and exact viewedAt
+# (#379). The history poll can read a watch again after the day marker
+# expired. This marker keeps the watch from adding to the priority again.
+
+PLEX_HISTORY_WATCH_KEY = "fitzflix:plex:history-watch:{tmdb_id}:{viewed_at}"
+PLEX_HISTORY_WATCH_SECONDS = 30 * 86400
+
+# The last Plex account names that the history poll read. A poll whose
+# /accounts call fails uses them. Then the username of the watch is the
+# name that the webhook gives, and the day marker matches.
+
+PLEX_ACCOUNTS_KEY = "fitzflix:plex:accounts"
 
 
 def clear_watchlist(user_id, movie_id):
@@ -513,7 +526,7 @@ def apply_plex_watch(tmdb_id, plex_username, viewed_at, source):
     """
 
     with app.app_context():
-        marker = None
+        marker = history_marker = None
         try:
             # This is the full timestamp in local wall-clock time, as in
             # each other diary writer. The calendar day for dedup and
@@ -524,6 +537,15 @@ def apply_plex_watch(tmdb_id, plex_username, viewed_at, source):
                 datetime.fromisoformat(viewed_at).astimezone().replace(tzinfo=None)
             )
             day_start = datetime(watched_at.year, watched_at.month, watched_at.day)
+            if source == "history":
+                history_marker = PLEX_HISTORY_WATCH_KEY.format(
+                    tmdb_id=tmdb_id, viewed_at=viewed_at
+                )
+                if not current_app.redis.set(
+                    history_marker, source, nx=True, ex=PLEX_HISTORY_WATCH_SECONDS
+                ):
+                    history_marker = None
+                    return True
             marker = PLEX_WATCH_KEY.format(
                 username=plex_username,
                 tmdb_id=tmdb_id,
@@ -600,11 +622,12 @@ def apply_plex_watch(tmdb_id, plex_username, viewed_at, source):
             # the other source (the webhook or the history poll) records
             # the watch. Else the marker blocks it for 2 days.
 
-            if marker:
-                try:
-                    current_app.redis.delete(marker)
-                except Exception:
-                    pass
+            for key in (marker, history_marker):
+                if key:
+                    try:
+                        current_app.redis.delete(key)
+                    except Exception:
+                        pass
             return False
 
         else:
@@ -616,7 +639,9 @@ def _plex_tmdb_id(entry, failures=None):
 
     Redis caches the result, because the rating keys are stable. A
     failed lookup appends the entry to failures, if given. Thus, the
-    caller can tell a failure from an entry with no TMDB guid."""
+    caller can tell a failure from an entry with no TMDB guid. Plex
+    keeps the history of a deleted item. Its lookup gives HTTP 404. That
+    is not a failure. The entry has no TMDB id (#379)."""
 
     rating_key = entry.get("ratingKey")
     if not rating_key:
@@ -638,13 +663,23 @@ def _plex_tmdb_id(entry, failures=None):
                 match = re.search(r"themoviedb://(\d+)", items[0].get("guid") or "")
                 if match:
                     tmdb_id = int(match.group(1))
+        except requests.HTTPError as e:
+            if e.response is None or e.response.status_code != 404:
+                return failed()
+            current_app.logger.info(
+                f"Plex history entry '{entry.get('title')}' names the deleted "
+                f"item {rating_key}; ignoring"
+            )
         except Exception:
-            # Do not cache a transient failure.
-            current_app.logger.warning(traceback.format_exc())
-            if failures is not None:
-                failures.append(entry)
-            return None, False
+            return failed()
         return tmdb_id, True
+
+    def failed():
+        # Do not cache a transient failure.
+        current_app.logger.warning(traceback.format_exc())
+        if failures is not None:
+            failures.append(entry)
+        return None, False
 
     # A null value means that the entry cannot resolve (no TMDB guid).
 
@@ -705,8 +740,16 @@ def plex_history_poll():
             body = plex_get("/accounts", timeout=30)
             for account in (body.get("MediaContainer") or {}).get("Account") or []:
                 accounts[account.get("id")] = account.get("name")
+            names = {str(key): name for key, name in accounts.items() if name}
+            if names:
+                redis_conn.delete(PLEX_ACCOUNTS_KEY)
+                redis_conn.hset(PLEX_ACCOUNTS_KEY, mapping=names)
         except Exception:
             current_app.logger.warning(traceback.format_exc())
+            accounts = {
+                int(key): name.decode()
+                for key, name in redis_conn.hgetall(PLEX_ACCOUNTS_KEY).items()
+            }
 
         # The cursor never passes an entry whose lookup failed. The next
         # poll reads it again. The entries after it are read again too.

@@ -632,3 +632,85 @@ def test_review_edit_preserves_plex_timestamp(app, admin_client):
         assert db.session.get(UserMovieReview, row_id).date_watched == datetime(
             2026, 8, 7
         )
+
+
+def test_a_deleted_history_item_does_not_hold_the_cursor(app, plex_server, monkeypatch):
+    """Plex keeps the history of a deleted item. Its lookup gives 404 (#379)."""
+
+    import requests
+
+    from app import plex_api
+
+    cursor = int(time.time()) - 3600
+    app.redis.set("fitzflix:plex:history-cursor", cursor)
+    plex_server.history = [
+        {"type": "movie", "viewedAt": cursor + 100, "accountID": 1, "ratingKey": "60"},
+        {"type": "movie", "viewedAt": cursor + 200, "accountID": 1, "ratingKey": "61"},
+    ]
+    plex_server.accounts = [{"id": 1, "name": "glenn-plex"}]
+    plex_server.guids = {"61": "tmdb://12"}
+    real_get = plex_server.get
+
+    def deleted_item(url, *args, **kwargs):
+        if url.endswith("/library/metadata/60"):
+            response = requests.Response()
+            response.status_code = 404
+            raise requests.HTTPError("404 Not Found", response=response)
+        return real_get(url, *args, **kwargs)
+
+    monkeypatch.setattr(plex_api.requests, "get", deleted_item)
+    with app.app_context():
+        assert plex_history_poll() is True
+
+    assert [job.args[0] for job in plex_jobs(app)] == [12]
+    assert int(app.redis.get("fitzflix:plex:history-cursor")) == cursor + 200
+
+
+def test_a_history_watch_read_again_adds_to_the_priority_once(app):
+    """The day marker lasts 2 days. A watch that the poll reads again later counts once (#379)."""
+
+    from app.diary import PLEX_WATCH_KEY
+
+    viewed_at = "2026-08-02T19:00:00+00:00"
+    with app.app_context():
+        movie = make_movie("Read Twice", 2001, tmdb_id=4801)
+        db.session.commit()
+        assert apply_plex_watch(4801, "glenn-plex", viewed_at, "history") is True
+        for key in app.redis.scan_iter(
+            PLEX_WATCH_KEY.format(username="*", tmdb_id=4801, day="*")
+        ):
+            app.redis.delete(key)
+        assert apply_plex_watch(4801, "account-1", viewed_at, "history") is True
+        db.session.expire_all()
+        assert db.session.get(Movie, movie.id).shopping_cart_priority == 1
+
+
+def test_a_failed_accounts_call_uses_the_last_names(app, plex_server, monkeypatch):
+    """The username of the watch stays the name the webhook gives (#379)."""
+
+    from app import plex_api
+
+    cursor = int(time.time()) - 3600
+    app.redis.set("fitzflix:plex:history-cursor", cursor)
+    plex_server.history = [
+        {"type": "movie", "viewedAt": cursor + 100, "accountID": 1, "ratingKey": "42"}
+    ]
+    plex_server.accounts = [{"id": 1, "name": "glenn-plex"}]
+    plex_server.guids = {"42": "tmdb://578"}
+    with app.app_context():
+        assert plex_history_poll() is True
+
+    real_get = plex_server.get
+
+    def accounts_down(url, *args, **kwargs):
+        if "/accounts" in url:
+            raise TimeoutError("Plex is busy")
+        return real_get(url, *args, **kwargs)
+
+    monkeypatch.setattr(plex_api.requests, "get", accounts_down)
+    plex_server.history.append(
+        {"type": "movie", "viewedAt": cursor + 200, "accountID": 1, "ratingKey": "42"}
+    )
+    with app.app_context():
+        assert plex_history_poll() is True
+    assert [job.args[1] for job in plex_jobs(app)] == ["glenn-plex", "glenn-plex"]
