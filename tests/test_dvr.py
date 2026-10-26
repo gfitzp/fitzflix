@@ -109,6 +109,46 @@ def test_build_makes_mix_channel_and_caches_durations(app, monkeypatch):
         assert dvr.build_channel_lineups() is True
 
 
+def test_reused_file_row_gets_a_new_probe(app, monkeypatch):
+    """Test that a reused File row does not keep its old duration (#395).
+
+    A same-name import keeps the id of the row and sets a new localized
+    date. The cached duration of the old media must not apply."""
+
+    from datetime import datetime, timezone
+
+    from app import dvr
+    from app.models import File
+
+    _build_library(app, monkeypatch, other_films=1, duration=3600.0)
+    with app.app_context():
+        file = File.query.one()
+        file.date_localized = datetime(2026, 10, 26, 12, 0, tzinfo=timezone.utc)
+        file.filesize_bytes = 123456789
+        db.session.commit()
+        monkeypatch.setattr(dvr, "_probe_duration", lambda path: 5400.0)
+        assert dvr.build_channel_lineups() is True
+
+    lineup = dvr.channel_lineup(app.redis, "fitzflix-mix")
+    assert [program["duration"] for program in lineup["programs"]] == [5400.0]
+
+
+def test_duration_entry_without_fingerprint_is_stale(app, monkeypatch):
+    """Test that a cache entry from before the fingerprint gets a new probe."""
+
+    from app import dvr
+    from app.models import File
+
+    monkeypatch.setattr(dvr, "_probe_duration", lambda path: 1800.0)
+    with app.app_context():
+        make_movie_file(make_movie("Old Entry", 1950), "Bluray-1080p")
+        db.session.commit()
+        file = File.query.one()
+        app.redis.hset(dvr.DURATIONS_KEY, str(file.id), "5400.000")
+        assert dvr._cached_duration(app.redis, file) == 1800.0
+        assert dvr._cached_duration(app.redis, file) == 1800.0
+
+
 def test_build_makes_genre_channels_from_deep_genres(app, monkeypatch):
     from app import dvr
 

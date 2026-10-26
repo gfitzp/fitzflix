@@ -169,21 +169,41 @@ def _probe_duration(file_path):
         return None
 
 
+def _duration_fingerprint(file):
+    """Return the text that identifies the media of a File row.
+
+    An import of the same name reuses the row, and the id stays the
+    same. The import sets a new localized date. A rewrite in place
+    records a new size. Thus, the size and the localized date change
+    when the media changes (#395)."""
+
+    localized = file.date_localized.isoformat() if file.date_localized else ""
+    return f"{file.filesize_bytes or 0}:{localized}"
+
+
 def _cached_duration(redis_client, file):
     """Return the real duration of the file in seconds, or None if the probe fails.
 
     This function probes the file on first sight. After that, it caches
-    the duration by file id."""
+    the duration by file id, with the fingerprint of the media. A cached
+    value with a different fingerprint is stale, and the file gets a new
+    probe. A value from before the fingerprint has no fingerprint, and it
+    is also stale."""
 
+    fingerprint = _duration_fingerprint(file)
     cached = redis_client.hget(DURATIONS_KEY, str(file.id))
     if cached is not None:
-        try:
-            return float(cached)
-        except ValueError:
-            pass
+        if isinstance(cached, bytes):
+            cached = cached.decode()
+        stored_fingerprint, _, value = cached.rpartition("|")
+        if stored_fingerprint == fingerprint:
+            try:
+                return float(value)
+            except ValueError:
+                pass
     duration = _probe_duration(library_path(file))
     if duration and duration > 0:
-        redis_client.hset(DURATIONS_KEY, str(file.id), f"{duration:.3f}")
+        redis_client.hset(DURATIONS_KEY, str(file.id), f"{fingerprint}|{duration:.3f}")
         return duration
     return None
 
