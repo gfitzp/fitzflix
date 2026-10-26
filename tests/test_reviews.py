@@ -2388,3 +2388,43 @@ def test_a_bare_undated_watch_does_not_claim_a_history_row(app, admin_client):
     with app.app_context():
         row = UserMovieReview.query.filter_by(movie_id=movie_id).one()
         assert row.date_watched is None
+
+
+def test_the_legacy_ratings_import_is_idempotent(app):
+    """Test that a second upload of the same ratings updates the rows (#426).
+
+    The import finds the undated row of the film and updates its stars.
+    A rating of 0 is the not-interested flag, never a 0-star row."""
+
+    from app import db
+    from app.models import User, UserMovieReview, UserMovieStatus
+    from app.videos import review_task
+
+    with app.app_context():
+        user_id = User.query.first().id
+        rated = make_movie("Legacy Rated Film", 1990)
+        refused = make_movie("Legacy Refused Film", 1991)
+        db.session.commit()
+        rated_id, refused_id = rated.id, refused.id
+
+    for stars in (3.5, 4.0):
+        assert review_task(user_id, "Legacy Rated Film", stars) is True
+        assert review_task(user_id, "Legacy Refused Film", 0) is True
+
+    with app.app_context():
+        (row,) = UserMovieReview.query.filter_by(
+            user_id=user_id, movie_id=rated_id
+        ).all()
+        assert float(row.rating) == 4.0 and row.date_watched is None
+        assert (
+            UserMovieReview.query.filter_by(
+                user_id=user_id, movie_id=refused_id
+            ).count()
+            == 0
+        )
+        assert (
+            UserMovieStatus.query.filter_by(
+                user_id=user_id, movie_id=refused_id, kind="not_interested"
+            ).count()
+            == 1
+        )

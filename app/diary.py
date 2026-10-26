@@ -1014,26 +1014,52 @@ def review_task(user_id, title, rating):
                                     current_app.logger.error(traceback.format_exc())
                                     db.session.rollback()
 
-            if movie:
-                modified_rating = round(rating * 2) / 2
-                whole_stars = math.floor(modified_rating)
-                if modified_rating % 1 == 0:
-                    half_stars = 0
-                else:
-                    half_stars = 1
+            if movie and round(rating * 2) / 2 == 0:
+                # 0 stars is the ✕ of the ladder: the not-interested flag,
+                # never a review (#426). A film with a diary row is seen.
+                # Thus, it gets no flag.
 
-                review = UserMovieReview(
-                    user_id=user_id,
-                    movie_id=movie.id,
-                    rating=rating,
-                    modified_rating=modified_rating,
-                    whole_stars=whole_stars,
-                    half_stars=half_stars,
-                    review="",
-                    date_watched=None,
-                    date_reviewed=None,
+                seen = (
+                    db.session.query(UserMovieReview.id)
+                    .filter_by(user_id=user_id, movie_id=movie.id)
+                    .first()
+                    is not None
                 )
-                db.session.add(review)
+                flagged = (
+                    UserMovieStatus.query.filter_by(
+                        user_id=user_id, movie_id=movie.id, kind="not_interested"
+                    ).first()
+                    is not None
+                )
+                if not seen and not flagged:
+                    db.session.add(
+                        UserMovieStatus(
+                            user_id=user_id, movie_id=movie.id, kind="not_interested"
+                        )
+                    )
+                    clear_watchlist(user_id, movie.id)
+                db.session.commit()
+                current_app.logger.info(f"Marked '{title}' as not interested")
+
+            elif movie:
+                # The import is a rating without a date. A second upload
+                # of the same file updates the undated row. It does not
+                # add a second row (#426).
+
+                review = UserMovieReview.query.filter_by(
+                    user_id=user_id, movie_id=movie.id, date_watched=None
+                ).first()
+                if review is None:
+                    review = UserMovieReview(
+                        user_id=user_id,
+                        movie_id=movie.id,
+                        review="",
+                        date_watched=None,
+                        date_reviewed=None,
+                    )
+                    db.session.add(review)
+                for field, value in star_rating_fields(rating).items():
+                    setattr(review, field, value)
                 db.session.commit()
                 current_app.logger.info(f"Rated '{title}' {rating} out of 5 stars")
 
