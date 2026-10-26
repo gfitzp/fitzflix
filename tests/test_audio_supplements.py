@@ -593,3 +593,101 @@ def test_the_cover_art_survives_the_ffmpeg_remux(app, tmp_path):
         for attachment in identity["attachments"]
     ] == [("cover.jpg", "image/jpeg")]
     assert not [p for p in os.listdir(tmp_path) if p.startswith(".attachments-")]
+
+
+def test_a_failed_ffmpeg_exit_never_replaces_the_source(app, monkeypatch, tmp_path):
+    """ffmpeg exits with 1 on a truncated file. The source stays, and the twin goes (#446).
+
+    The fake keeps the real wait_for_subprocess. Thus, the exit code is
+    checked as in production. The kill of a finished child is a no-op,
+    as in Popen."""
+
+    import subprocess
+
+    import pytest
+
+    import app.tracks as tracks
+
+    source = tmp_path / "broken.mkv"
+    source.write_bytes(b"source")
+    twin = tmp_path / ".broken.mkv"
+
+    class General:
+        track_type = "General"
+        format = "Matroska"
+        duration = None
+
+    class Info:
+        tracks = [General()]
+
+        def to_json(self):
+            return "{}"
+
+    class FailingProcess:
+        stdout = ["[matroska] Read error at pos. 1234\n"]
+        args = ["ffmpeg"]
+
+        def __init__(self, command, **kwargs):
+            twin.write_bytes(b"half a twin")
+            self.returncode = None
+
+        def poll(self):
+            return self.returncode
+
+        def wait(self, timeout=None):
+            self.returncode = 1
+            return 1
+
+        def kill(self):
+            pass
+
+    monkeypatch.setattr(
+        tracks,
+        "get_audio_tracks_from_file",
+        lambda path: [
+            {"streamorder": 1, "format": "MLP FBA", "compression_mode": "Lossless"}
+        ],
+    )
+    monkeypatch.setattr(tracks, "plan_audio_supplements", lambda audio: [("flac", 1)])
+    monkeypatch.setattr(tracks, "build_supplement_args", lambda plan: [])
+    monkeypatch.setattr(tracks.MediaInfo, "parse", lambda path: Info())
+    monkeypatch.setattr(tracks.subprocess, "Popen", FailingProcess)
+    monkeypatch.setattr(tracks, "copy_image_attachments", lambda *args: None)
+
+    with app.app_context(), pytest.raises(subprocess.CalledProcessError):
+        tracks.supplement_lossless_tracks(str(source))
+
+    assert source.read_bytes() == b"source"
+    assert not twin.exists()
+
+
+def test_a_real_truncated_sample_gets_its_twin_with_real_mediainfo(
+    app, monkeypatch, tmp_path
+):
+    """A truncated sample has no General duration in the real MediaInfo (#417, #446).
+
+    The FLAC pass reads it with the real MediaInfo and runs the real
+    ffmpeg. It must add the twin and not fail on the missing duration."""
+
+    from pymediainfo import MediaInfo
+
+    import app.tracks as tracks
+    from tests.media import make_sample_mkv
+
+    path = make_sample_mkv(str(tmp_path / "cut.mkv"), duration=3, truncate=True)
+    general = [t for t in MediaInfo.parse(path).tracks if t.track_type == "General"]
+    assert general and general[0].duration is None
+
+    # The sample has 1 AAC track. The plan treats it as lossless: a FLAC
+    # twin first, then the original.
+    monkeypatch.setattr(
+        tracks, "plan_audio_supplements", lambda audio: [("flac", 0), ("copy", 0)]
+    )
+    monkeypatch.setattr(tracks, "copy_image_attachments", lambda *args: None)
+    with app.app_context():
+        assert tracks.supplement_lossless_tracks(path) is True
+
+    formats = [
+        t.format for t in MediaInfo.parse(path).tracks if t.track_type == "Audio"
+    ]
+    assert "FLAC" in formats

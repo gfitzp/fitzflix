@@ -120,15 +120,73 @@ class S3:
 
 
 class SQS:
-    """A fake SQS client. It records the deleted receipt handles."""
+    """A fake SQS queue with receipt handles and a visibility timeout.
 
-    def __init__(self):
+    deleted records the receipt handle of each delete call. bodies are
+    the message bodies in the queue. clock returns the time in seconds.
+    As in SQS, a receive hides a message for its VisibilityTimeout and
+    gives it a new receipt handle. A message whose timeout ended comes
+    back with another handle. Then the old handle is stale: a change of
+    the visibility with it raises a ClientError, and a delete with it
+    leaves the message in the queue."""
+
+    def __init__(self, bodies=(), clock=None):
+        import time
+
+        self.clock = clock or time.monotonic
         self.deleted = []
+        self.visibility = []
+        self.handles = 0
+        self.messages = [
+            {"Body": body, "handle": None, "visible_at": 0.0} for body in bodies
+        ]
+
+    def receive_message(self, QueueUrl=None, VisibilityTimeout=30, **kwargs):
+        """Give the first visible message a new handle and hide it."""
+
+        now = self.clock()
+        for message in self.messages:
+            if message["visible_at"] <= now:
+                self.handles += 1
+                message["handle"] = f"handle-{self.handles}"
+                message["visible_at"] = now + VisibilityTimeout
+                return {
+                    "Messages": [
+                        {"Body": message["Body"], "ReceiptHandle": message["handle"]}
+                    ]
+                }
+        return {}
+
+    def _in_flight(self, handle):
+        now = self.clock()
+        for message in self.messages:
+            if message["handle"] == handle and message["visible_at"] > now:
+                return message
+        return None
+
+    def change_message_visibility(
+        self, QueueUrl=None, ReceiptHandle=None, VisibilityTimeout=0, **kwargs
+    ):
+        """Extend an in-flight message. A stale handle raises MessageNotInflight."""
+
+        import botocore.exceptions
+
+        message = self._in_flight(ReceiptHandle)
+        if message is None:
+            raise botocore.exceptions.ClientError(
+                {"Error": {"Code": "MessageNotInflight"}}, "ChangeMessageVisibility"
+            )
+        message["visible_at"] = self.clock() + VisibilityTimeout
+        self.visibility.append((ReceiptHandle, VisibilityTimeout))
+        return {}
 
     def delete_message(self, QueueUrl=None, ReceiptHandle=None, **kwargs):
-        """Record the receipt handle of the deleted message."""
+        """Record the handle. Remove the message only for its current handle."""
 
         self.deleted.append(ReceiptHandle)
+        self.messages = [
+            message for message in self.messages if message["handle"] != ReceiptHandle
+        ]
         return {}
 
 
@@ -162,16 +220,29 @@ class Sonarr:
     """A fake _sonarr for the series calls of the Sonarr path check (#370).
 
     series is a list of Sonarr series dicts. A GET of /api/v3/series
-    lists them, or the ones with the tvdbId of the query. A PUT replaces
-    a series and is recorded in puts. A command is recorded in commands.
-    down makes each call raise ConnectionError."""
+    lists them, or the ones with the tvdbId of the query. A GET of
+    /api/v3/series/<id> answers 1 series. A PUT replaces a series and is
+    recorded in puts. As in Sonarr, a GET or a PUT of an unknown id
+    raises requests.HTTPError with the status 404. An unknown query
+    parameter is an error of the test. A command is recorded in
+    commands. down makes each call raise ConnectionError. after_get runs
+    after each GET, for a change between 2 calls."""
 
-    def __init__(self, series=(), down=False):
+    def __init__(self, series=(), down=False, after_get=None):
         self.series = {entry["id"]: dict(entry) for entry in series}
         self.puts = []
         self.commands = []
         self.gets = []
         self.down = down
+        self.after_get = after_get
+
+    @staticmethod
+    def _not_found(path):
+        response = requests.Response()
+        response.status_code = 404
+        return requests.exceptions.HTTPError(
+            f"404 Not Found: {path}", response=response
+        )
 
     def __call__(self, method, path, payload=None):
         """Answer one Sonarr API call."""
@@ -180,19 +251,38 @@ class Sonarr:
             raise ConnectionError("Sonarr is down")
         if method == "GET" and path.startswith("/api/v3/series"):
             self.gets.append(path)
-            entries = [dict(entry) for entry in self.series.values()]
-            if "?tvdbId=" in path:
-                tvdb_id = int(path.split("?tvdbId=")[1])
-                entries = [e for e in entries if e.get("tvdbId") == tvdb_id]
-            return entries
+            try:
+                return self._get(path)
+            finally:
+                if self.after_get:
+                    self.after_get(self)
         if method == "PUT" and path.startswith("/api/v3/series/"):
+            series_id = int(path.rsplit("/", 1)[1])
+            if series_id not in self.series:
+                raise self._not_found(path)
+            assert payload["id"] == series_id, "the PUT body names another series"
             self.puts.append(dict(payload))
-            self.series[payload["id"]] = dict(payload)
+            self.series[series_id] = dict(payload)
             return payload
         if method == "POST" and path == "/api/v3/command":
             self.commands.append(payload)
             return {"id": len(self.commands)}
         raise AssertionError(f"unexpected Sonarr call {method} {path}")
+
+    def _get(self, path):
+        base, _, query = path.partition("?")
+        if base.startswith("/api/v3/series/"):
+            series_id = int(base.rsplit("/", 1)[1])
+            if series_id not in self.series:
+                raise self._not_found(path)
+            return dict(self.series[series_id])
+        entries = [dict(entry) for entry in self.series.values()]
+        for part in filter(None, query.split("&")):
+            name, _, value = part.partition("=")
+            if name != "tvdbId":
+                raise AssertionError(f"unexpected Sonarr query {part!r}")
+            entries = [e for e in entries if e.get("tvdbId") == int(value)]
+        return entries
 
 
 class ArchiveS3:

@@ -1180,21 +1180,34 @@ def test_a_move_waits_while_another_task_holds_the_title_lock(app, tmp_path):
 
 
 class _RunningProcess:
-    """A fake child process that runs until it is killed."""
+    """A fake child process that runs until it is killed.
 
-    def __init__(self, lines):
+    It has a pid, as a Popen has. With ignores_kill, the process stays
+    in uninterruptible I/O. Then the kill does not end it, and a wait
+    with a timeout raises subprocess.TimeoutExpired, as Popen.wait
+    does."""
+
+    def __init__(self, lines, ignores_kill=False):
         self.stdout = iter(lines)
+        self.pid = 4242
+        self.ignores_kill = ignores_kill
         self.killed = False
         self.waited = False
+        self.wait_timeouts = []
 
     def poll(self):
-        return -9 if self.killed else None
+        return -9 if self.killed and not self.ignores_kill else None
 
     def kill(self):
         self.killed = True
 
-    def wait(self, *args, **kwargs):
+    def wait(self, timeout=None):
+        import subprocess
+
         self.waited = True
+        self.wait_timeouts.append(timeout)
+        if self.ignores_kill:
+            raise subprocess.TimeoutExpired(["HandBrakeCLI"], timeout)
         return -9
 
 
@@ -1330,3 +1343,29 @@ def test_archive_only_keeps_a_different_file_at_the_held_path(app, monkeypatch):
         with open(held_path, "rb") as f:
             assert f.read() == b"a different, longer rip"
         os.remove(held_path)
+
+
+def test_a_child_that_ignores_the_kill_does_not_hide_the_fault(
+    app, monkeypatch, caplog
+):
+    """A kill that does not end the child: the wait has a limit (#424, #446).
+
+    The original fault still goes up, and the log names the pid."""
+
+    import pytest
+
+    import app.sdr_conversion as sdr_conversion
+    import app.tracks as tracks
+
+    process = _RunningProcess(["Encoding: task 1 of 1, 5.00 %\n"], ignores_kill=True)
+    monkeypatch.setattr(sdr_conversion.subprocess, "Popen", lambda *a, **k: process)
+
+    def broken(*args, **kwargs):
+        raise RuntimeError("redis down")
+
+    monkeypatch.setattr(sdr_conversion, "report_progress", broken)
+    with app.app_context(), pytest.raises(RuntimeError, match="redis down"):
+        sdr_conversion._run_encode(["HandBrakeCLI"], None, "Film.mkv", None, 100)
+    assert process.killed
+    assert process.wait_timeouts == [tracks.STOP_PROCESS_WAIT_SECONDS]
+    assert "Process 4242 did not end" in caplog.text

@@ -26,6 +26,7 @@ def make_sample_mkv(
     subtitles=(),
     size="320x240",
     duration=1,
+    truncate=False,
 ):
     """Build a short Matroska file at path and return path.
 
@@ -33,8 +34,11 @@ def make_sample_mkv(
     track is a sine tone with its own pitch. video is "h264" (a test
     pattern), "hdr10" (a 10-bit HEVC with HDR10 colors), or "black" (a
     black frame). attachments holds (file path, MIME type) pairs.
-    subtitles holds the paths of text subtitle files. A file that
-    exists already is returned as it is."""
+    subtitles holds the paths of text subtitle files. With truncate,
+    the file is cut as an interrupted copy leaves it: the segment has no
+    Duration element, and the end of the file is gone. Then MediaInfo
+    gives no General duration (#417). A file that exists already is
+    returned as it is."""
 
     if os.path.exists(path):
         return path
@@ -89,7 +93,26 @@ def make_sample_mkv(
     merge += [base]
     subprocess.run(merge, check=True, capture_output=True)
     os.remove(base)
+    if truncate:
+        _truncate_matroska(path)
     return path
+
+
+def _truncate_matroska(path, keep=0.6):
+    """Remove the segment Duration of a Matroska file, then cut off its end.
+
+    The Duration element (EBML id 0x4489) becomes a Void element of the
+    same length. Thus, the other offsets stay valid."""
+
+    with open(path, "rb") as handle:
+        data = bytearray(handle.read())
+    start = data.find(b"\x44\x89")
+    if start < 0:
+        raise ValueError(f"{path} has no Duration element")
+    total = 3 + (data[start + 2] & 0x7F)
+    data[start : start + total] = bytes([0xEC, 0x80 | (total - 2)]) + bytes(total - 2)
+    with open(path, "wb") as handle:
+        handle.write(data[: int(len(data) * keep)])
 
 
 def make_sample_mp4(path):
