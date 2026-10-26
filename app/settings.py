@@ -156,18 +156,20 @@ SETTINGS = {
         Setting(
             "DVR_GENRE_CHANNELS",
             "DVR movie genre channels",
-            "The number of movie genre channels that the first DVR build adds.",
+            "The number of movie genre channels that the first DVR build adds "
+            "(39 or fewer).",
             "int",
             minimum=0,
-            maximum=50,
+            maximum=39,
         ),
         Setting(
             "DVR_TV_CHANNELS",
             "DVR TV genre channels",
-            "The number of TV genre channels that the first DVR build adds.",
+            "The number of TV genre channels that the first DVR build adds "
+            "(40 or fewer).",
             "int",
             minimum=0,
-            maximum=50,
+            maximum=40,
         ),
         Setting(
             "DVR_CHANNEL_FILMS",

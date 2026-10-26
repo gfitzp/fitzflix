@@ -103,6 +103,13 @@ MIN_SPECIAL_FILMS = 3
 
 TV_CHANNEL_NUMBER = 200
 TV_THEME_NUMBER = 240
+
+# The seeded genre channels must stay below the fixed channels (#397).
+# The movie genres start at 101 and the TV genres at 200. The settings
+# page has the same limits, but a value from .env can be larger.
+
+MAX_GENRE_CHANNELS = CRITERION_CHANNEL_NUMBER - MIX_CHANNEL_NUMBER - 1
+MAX_TV_CHANNELS = TV_THEME_NUMBER - TV_CHANNEL_NUMBER
 MIN_SERIES_EPISODES = 8
 TV_BLOCK = 2
 
@@ -637,7 +644,9 @@ def seed_default_channels():
             counts[name] = counts.get(name, 0) + 1
     deep = [name for name, count in counts.items() if count >= MIN_GENRE_FILMS]
     top_movie = sorted(
-        sorted(deep, key=counts.get, reverse=True)[: get_setting("DVR_GENRE_CHANNELS")]
+        sorted(deep, key=counts.get, reverse=True)[
+            : min(get_setting("DVR_GENRE_CHANNELS"), MAX_GENRE_CHANNELS)
+        ]
     )
 
     rows = [
@@ -684,7 +693,9 @@ def seed_default_channels():
             totals[name] = totals.get(name, 0) + entry["episodes"]
     deep_tv = [name for name, count in totals.items() if count >= MIN_SERIES_EPISODES]
     top_tv = sorted(
-        sorted(deep_tv, key=totals.get, reverse=True)[: get_setting("DVR_TV_CHANNELS")]
+        sorted(deep_tv, key=totals.get, reverse=True)[
+            : min(get_setting("DVR_TV_CHANNELS"), MAX_TV_CHANNELS)
+        ]
     )
     for offset, name in enumerate(top_tv):
         # The "TV" suffix makes sure that the guide never shows a movie

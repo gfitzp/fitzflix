@@ -149,6 +149,51 @@ def test_duration_entry_without_fingerprint_is_stale(app, monkeypatch):
         assert dvr._cached_duration(app.redis, file) == 1800.0
 
 
+def test_seed_of_too_many_genres_stays_below_the_fixed_channels(app, monkeypatch):
+    """Test that a large genre count does not take the number 140 (#397).
+
+    A value from .env can be larger than the limit of the settings page."""
+
+    from app import dvr
+    from app.models import DVRChannel
+
+    real_setting = dvr.get_setting
+    monkeypatch.setattr(
+        dvr,
+        "get_setting",
+        lambda name, *args: (
+            50
+            if name in ("DVR_GENRE_CHANNELS", "DVR_TV_CHANNELS")
+            else real_setting(name, *args)
+        ),
+    )
+    monkeypatch.setattr(dvr, "MIN_GENRE_FILMS", 1)
+    monkeypatch.setattr(dvr, "_probe_duration", lambda path: 3600.0)
+    with app.app_context():
+        for n in range(45):
+            genre = TMDBGenre(id=1000 + n, name=f"Genre {n:02d}")
+            db.session.add(genre)
+            movie = make_movie(f"Film {n}", 1950 + n)
+            movie.genres.append(genre)
+            make_movie_file(movie, "Bluray-1080p")
+        db.session.commit()
+        assert dvr.build_channel_lineups() is True
+        numbers = [channel.number for channel in DVRChannel.query.all()]
+
+    assert len(numbers) == len(set(numbers))
+    genre_numbers = [n for n in numbers if 100 < n < dvr.CRITERION_CHANNEL_NUMBER]
+    assert len(genre_numbers) == dvr.MAX_GENRE_CHANNELS == 39
+    assert dvr.MAX_TV_CHANNELS == 40
+
+
+def test_settings_page_limits_match_the_channel_bands():
+    from app import dvr
+    from app.settings import SETTINGS
+
+    assert SETTINGS["DVR_GENRE_CHANNELS"].maximum == dvr.MAX_GENRE_CHANNELS
+    assert SETTINGS["DVR_TV_CHANNELS"].maximum == dvr.MAX_TV_CHANNELS
+
+
 def test_build_makes_genre_channels_from_deep_genres(app, monkeypatch):
     from app import dvr
 
