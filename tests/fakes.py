@@ -162,13 +162,22 @@ class ArchiveS3:
     Restore and VersionId. copy puts a STANDARD copy at the new key with
     a new version id. copy_etag is the ETag of each copy, for a copy
     that is not equal. A head with PartNumber answers part_size. events
-    records each call in order. on_copy runs at each copy."""
+    records each call in order. on_copy runs at each copy, and on_delete
+    at each delete, with the key."""
 
-    def __init__(self, objects=None, part_size=8388608, copy_etag=None, on_copy=None):
+    def __init__(
+        self,
+        objects=None,
+        part_size=8388608,
+        copy_etag=None,
+        on_copy=None,
+        on_delete=None,
+    ):
         self.objects = {key: dict(head) for key, head in (objects or {}).items()}
         self.part_size = part_size
         self.copy_etag = copy_etag
         self.on_copy = on_copy
+        self.on_delete = on_delete
         self.events = []
         self.copies = []
         self.configs = []
@@ -213,6 +222,8 @@ class ArchiveS3:
         """Remove the key. Record the key and the version id."""
 
         self.events.append(("delete", Key, VersionId))
+        if self.on_delete:
+            self.on_delete(Key)
         self.deletes.append((Key, VersionId))
         self.objects.pop(Key, None)
         return {}

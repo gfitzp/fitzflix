@@ -329,6 +329,23 @@ def sync_aws_s3_storage_task():
         return True
 
 
+ARCHIVE_MOVE_TASKS = (
+    "app.aws_storage.move_archive_object",
+    "app.videos.rearchive_untouched_object",
+)
+
+
+def _scheduled_moves(queue):
+    """Return the count of the archive moves in the ScheduledJobRegistry of a queue."""
+
+    count = 0
+    for job_id in ScheduledJobRegistry(queue=queue).get_job_ids():
+        job = queue.fetch_job(job_id)
+        if job is not None and job.func_name in ARCHIVE_MOVE_TASKS:
+            count += 1
+    return count
+
+
 def _sync_deferred(job):
     """Return True if the sync must wait. Then a retry is booked.
 
@@ -337,7 +354,12 @@ def _sync_deferred(job):
     exist at AWS without its final database record. The prune would see
     it as an extra file and delete it. Every queue of the roster counts.
     The maintenance queue runs the hourly import sweep. That sweep can
-    feed new files into the import pipeline during the sync."""
+    feed new files into the import pipeline during the sync.
+
+    An archive move that waits for a retry counts too (#369). It changes
+    a key between the listing and the pass over the rows. Other
+    scheduled retries do not count. A space wait has no limit, and it
+    would hold the sync off for days (Oct 24 2026)."""
 
     busy = []
     for queue in roster_queues(current_app):
@@ -352,7 +374,7 @@ def _sync_deferred(job):
         if job:
             started = [job_id for job_id in started if job_id != job.id]
 
-        count = len(queue.job_ids) + len(started)
+        count = len(queue.job_ids) + len(started) + _scheduled_moves(queue)
         if count:
             busy.append(f"{queue_name}: {count}")
 
@@ -512,7 +534,10 @@ def _reconcile_files(listing, job):
             )
 
         elif (
-            file.aws_key not in s3_keys
+            (
+                file.aws_key not in s3_keys
+                and not _appeared_after_listing(file.aws_key, file.aws_date_uploaded)
+            )
             or file.aws_date_uploaded == None
             or (file.aws_stale and file.archive_is_library_copy)
         ) and os.path.isfile(file_path):
@@ -569,6 +594,30 @@ def _reconcile_files(listing, job):
 
     current_app.logger.info(f"Orphaned files: {orphaned_files}")
     return inventory_export, orphaned_files
+
+
+def _appeared_after_listing(key, uploaded):
+    """Return True if an archived key that the listing did not show exists now.
+
+    An archive move (#369) can change the key of a row after the
+    listing. Then an upload would replace the moved rip with the library
+    file. A HEAD tells. A key with no upload date has no object to find."""
+
+    if not key or uploaded is None:
+        return False
+    try:
+        aws_s3_client(with_retries=True).head_object(
+            Bucket=current_app.config["AWS_BUCKET"], Key=key
+        )
+    except botocore.exceptions.ClientError as error:
+        if not _is_missing(error):
+            current_app.logger.warning(f"'{key}' Could not check the key: {error}")
+        return False
+    except Exception as error:
+        current_app.logger.warning(f"'{key}' Could not check the key: {error}")
+        return False
+    current_app.logger.info(f"'{key}' Arrived in S3 after the listing")
+    return True
 
 
 def _put_inventory(inventory_export):
@@ -1271,19 +1320,52 @@ def request_archive_move(file, claims=None):
     file.aws_key_target = target
     if claims is not None:
         claims.setdefault(target, set()).add(file.id)
-    current_app.redis.hsetnx(
-        ARCHIVE_MOVE_REQUESTED_KEY,
-        str(file.id),
-        datetime.now(timezone.utc).isoformat(),
-    )
     db.session.info.setdefault(_MOVES_AFTER_COMMIT, {})[file.id] = file.basename
+
+    # The request time is only for the System page. A Redis fault must not
+    # stop the move.
+
+    try:
+        current_app.redis.hsetnx(
+            ARCHIVE_MOVE_REQUESTED_KEY,
+            str(file.id),
+            datetime.now(timezone.utc).isoformat(),
+        )
+    except Exception:
+        current_app.logger.warning(traceback.format_exc())
     return True
+
+
+# The ids of the File rows that this session deleted. Their request
+# times leave the Redis hash at the commit.
+
+_PURGED_FILES = "fitzflix_purged_files"
+
+
+@sa_event.listens_for(File, "after_delete")
+def _note_purged_file(mapper, connection, target):
+    """Record a deleted File row. Its move request time goes at the commit."""
+
+    session = db.inspect(target).session
+    if session is not None:
+        session.info.setdefault(_PURGED_FILES, set()).add(target.id)
 
 
 @sa_event.listens_for(OrmSession, "after_commit")
 def _enqueue_requested_moves(session):
-    """Queue the archive moves that request_archive_move recorded in this session."""
+    """Queue the archive moves that request_archive_move recorded in this session.
 
+    Also remove the request times of the deleted File rows. Thus, the
+    oldest age on the System page cannot come from a purged row."""
+
+    purged = session.info.pop(_PURGED_FILES, None)
+    if purged:
+        try:
+            current_app.redis.hdel(
+                ARCHIVE_MOVE_REQUESTED_KEY, *[str(file_id) for file_id in purged]
+            )
+        except Exception:
+            current_app.logger.warning(traceback.format_exc())
     pending = session.info.pop(_MOVES_AFTER_COMMIT, None)
     for file_id, basename in sorted((pending or {}).items()):
         try:
@@ -1301,6 +1383,7 @@ def _forget_requested_moves(session):
     """Drop the archive moves of a transaction that rolled back."""
 
     session.info.pop(_MOVES_AFTER_COMMIT, None)
+    session.info.pop(_PURGED_FILES, None)
 
 
 def pending_archive_moves():
@@ -1410,8 +1493,12 @@ def archive_library_file(file, path, delete_replaced=True):
         file.aws_date_uploaded = uploaded
         file.aws_filesize_bytes = size
         file.aws_stale = False
+    # The upload took time. A second rename can have set a newer target
+    # meanwhile. The commit above loaded it. Thus, the target is computed
+    # again, not cleared. A target that the upload completed goes.
+
     if file.aws_key_target and _target_column(file) == column:
-        clear_archive_target(file)
+        request_archive_move(file)
     db.session.commit()
     current_app.logger.info(f"'{file.basename}' Archived the library file as '{key}'")
 
@@ -1612,10 +1699,10 @@ def _copy_config(s3_client, bucket, key, head):
         part_size = s3_client.head_object(Bucket=bucket, Key=key, PartNumber=1)[
             "ContentLength"
         ]
-    except Exception:
+    except Exception as error:
         current_app.logger.warning(
-            f"'{key}' S3 did not give the part size. Only the size can prove "
-            f"the copy"
+            f"'{key}' S3 did not give the part size ({error}). The copy has the "
+            f"default part layout. Only the size can prove it"
         )
         return TransferConfig()
     return TransferConfig(
@@ -1729,12 +1816,15 @@ def move_archive_object(file_id, sqs_receipt_handle=None):
             )
             _drop_message(sqs_receipt_handle, "archive move of a deleted record")
             return False
-        if not file.aws_key_target:
+        if not file.aws_key_target and archive_drift(file) is None:
             current_app.logger.info(
                 f"'{file.basename}' No archive move is pending. The job stops"
             )
             _drop_message(sqs_receipt_handle, "archive move with no target")
-            return archive_drift(file) is None
+            return True
+
+        # A row with no target and a key that differs from its rule lost
+        # its target to a race. The job computes the target again.
 
         # The poll records the handle of a later message for this job.
         sqs_receipt_handle = _latest_receipt_handle(sqs_receipt_handle)
@@ -1801,6 +1891,16 @@ def _move_archive(file, sqs_receipt_handle):
             delay=timedelta(minutes=30),
             reason=f"waits for the download of '{source}'",
             args=(file.id,),
+            kwargs=(
+                {"sqs_receipt_handle": sqs_receipt_handle}
+                if sqs_receipt_handle
+                else None
+            ),
+            meta=(
+                {"sqs_receipt_handle": sqs_receipt_handle, "archive_key": source}
+                if sqs_receipt_handle
+                else None
+            ),
             description=f"'{file.basename}' — Moving the archive",
             level="info",
         )
@@ -1851,12 +1951,14 @@ def _move_archive(file, sqs_receipt_handle):
     copied = s3_client.head_object(Bucket=bucket, Key=target)
     problem = _copy_problem(head, copied)
     if problem:
-        current_app.logger.error(
+        # The job fails loudly. The FailedJobRegistry and the badge of the
+        # System page show it. The target stays. flask aws converge-keys
+        # --apply requests the move again.
+        s3_layout.delete(s3_client, bucket, target, copied.get("VersionId"))
+        raise RuntimeError(
             f"'{file.basename}' The copy of '{source}' at '{target}' {problem}. "
             f"The archive keeps its key, and the copy is deleted"
         )
-        s3_layout.delete(s3_client, bucket, target, copied.get("VersionId"))
-        return False
 
     # An edit can archive the file during the copy. It clears the target.
     # Read the row again from a new snapshot. If the archive changed, the
@@ -1883,14 +1985,12 @@ def _move_archive(file, sqs_receipt_handle):
         + ("The ETags are equal" if proven else "The sizes are equal")
     )
 
-    # Equal ETags prove the bytes. Then the old version goes permanently.
-    # With a different part layout, only the size is proven. Then a
-    # plain delete keeps the old version for the noncurrent window.
+    # A plain delete keeps the old version for the noncurrent window of
+    # 180 days. That window rescued a lost archive before. Only the own
+    # failed copy of a move goes by its version id.
 
     if not untouched_key_still_claimed(source):
-        s3_layout.delete(
-            s3_client, bucket, source, head.get("VersionId") if proven else None
-        )
+        s3_layout.delete(s3_client, bucket, source)
     _download_after_move(file, source, target)
     _drop_message(sqs_receipt_handle, "archive move")
 

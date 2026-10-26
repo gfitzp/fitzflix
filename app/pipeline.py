@@ -159,6 +159,10 @@ STAGES = {
         "Re-archiving to S3",
         _basename_from_file_id,
     ),
+    "app.aws_storage.move_archive_object": (
+        "Moving the S3 archive",
+        _basename_from_file_id,
+    ),
     "app.videos.track_metadata_scan_task": (
         "Scanning track metadata",
         _basename_from_file_id,

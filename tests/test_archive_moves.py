@@ -103,9 +103,11 @@ def test_a_readable_archive_moves_and_the_row_changes_last(app, s3):
         new_key = "untouched/Moving Picture (1950) - [Bluray-1080p].mkv"
 
         seen = []
+        at_delete = []
         fake = s3(
             {old_key: readable()},
             on_copy=lambda source, target: seen.append(committed_key(app, file_id)),
+            on_delete=lambda key: at_delete.append((key, committed_key(app, file_id))),
         )
 
         assert aws_storage.request_archive_move(file) is True
@@ -125,8 +127,10 @@ def test_a_readable_archive_moves_and_the_row_changes_last(app, s3):
             ("copy", old_key, new_key)
         )
 
-        # Equal ETags prove the bytes. The old version goes by its id.
-        assert fake.deletes == [(old_key, "old-version")]
+        # The row names the new key before the old key goes. The delete
+        # is a plain delete. The old version stays for 180 days.
+        assert at_delete == [(old_key, new_key)]
+        assert fake.deletes == [(old_key, None)]
         db.session.expire_all()
         moved = db.session.get(File, file_id)
         assert moved.aws_key == new_key
@@ -146,13 +150,27 @@ def test_a_copy_that_differs_is_deleted_and_the_row_keeps_its_key(app, s3, caplo
         aws_storage.request_archive_move(file)
         db.session.commit()
 
-        assert aws_storage.move_archive_object(file_id) is False
+        # The job fails loudly, for the FailedJobRegistry. Only the own
+        # copy goes, by its version id.
+        with pytest.raises(RuntimeError, match="has the ETag"):
+            aws_storage.move_archive_object(file_id)
         target = "untouched/Bad Copy (1951) - [Bluray-1080p].mkv"
         assert fake.deletes == [(target, "copy-1")]
         db.session.expire_all()
         assert db.session.get(File, file_id).aws_key == old_key
         assert db.session.get(File, file_id).aws_key_target == target
-        assert "has the ETag" in caplog.text
+
+    # The backfill requests the stranded move again.
+    for job in move_jobs(app):
+        job.delete()
+    from app.cli import register
+
+    if "aws" not in app.cli.commands:
+        register(app)
+    result = app.test_cli_runner().invoke(args=["aws", "converge-keys", "--apply"])
+    assert "Requested 1 archive move(s)" in result.output
+    with app.app_context():
+        assert [job.args for job in move_jobs(app)] == [(file_id,)]
 
 
 def test_a_deep_archive_object_gets_a_bulk_restore_and_the_row_stays(app, s3):
@@ -758,3 +776,176 @@ def test_each_producer_leaves_the_key_of_the_untouched_name(
         assert "Producer Show (2020)" in row.aws_key
         for file_id in others:
             assert aws_storage.archive_drift(db.session.get(File, file_id)) is None
+
+
+def test_a_second_rename_during_an_upload_keeps_the_newest_target(app, s3, monkeypatch):
+    """An upload takes no title lock. A rename during it must survive its commit."""
+
+    from app import aws_storage, db
+    from app.models import File
+
+    with app.app_context():
+        file = archived_film("Upload Race", 1970)
+        file_id = file.id
+        file.aws_key = "modified/Upload Race Old (1970).mkv"
+        file.untouched_basename = "Upload Race One (1970) - [Bluray-1080p].mkv"
+        aws_storage.request_archive_move(file)
+        db.session.commit()
+        first = "modified/Upload Race One (1970) - [Bluray-1080p].mkv"
+        second = "modified/Upload Race Two (1970) - [Bluray-1080p].mkv"
+        assert file.aws_key_target == first
+
+        def slow_upload(path, key_prefix="", key_name=None, **kwargs):
+            # The second rename commits from another session during the upload.
+            with db.engine.begin() as connection:
+                connection.execute(
+                    db.text(
+                        "UPDATE file SET untouched_basename = :name, "
+                        "aws_key_target = :target WHERE id = :id"
+                    ),
+                    {
+                        "name": os.path.basename(second),
+                        "target": second,
+                        "id": file_id,
+                    },
+                )
+            return os.path.join(key_prefix, key_name), datetime.utcnow(), 7
+
+        monkeypatch.setattr(aws_storage, "aws_upload", slow_upload)
+        for job in move_jobs(app):
+            job.delete()
+        aws_storage.archive_library_file(file, "/library/file.mkv")
+
+        assert file.aws_key == first
+        assert file.aws_key_target == second
+        assert [job.args for job in move_jobs(app)] == [(file_id,)]
+
+    s3({first: readable()})
+    assert aws_storage.move_archive_object(file_id) is True
+    with app.app_context():
+        row = db.session.get(File, file_id)
+        assert (row.aws_key, row.aws_key_target) == (second, None)
+
+
+def test_a_move_with_a_lost_target_computes_it_again(app, s3):
+    """A queued move whose target a race cleared still moves the archive."""
+
+    from app import aws_storage, db
+    from app.models import File
+
+    with app.app_context():
+        file = archived_film("Lost Target", 1971, key_name="Lost Target Old.mkv")
+        file_id = file.id
+        old_key = file.aws_key
+        assert file.aws_key_target is None
+        fake = s3({old_key: readable()})
+
+        assert aws_storage.move_archive_object(file_id) is True
+        assert fake.copies == [
+            (old_key, "untouched/Lost Target (1971) - [Bluray-1080p].mkv")
+        ]
+        db.session.expire_all()
+        assert db.session.get(File, file_id).aws_key_target is None
+
+
+def test_the_sync_waits_for_a_scheduled_move(app):
+    from app import aws_storage
+
+    with app.app_context():
+        assert aws_storage._sync_deferred(None) is False
+        app.file_queue.enqueue_in(
+            timedelta(minutes=10), "app.aws_storage.move_archive_object", 1
+        )
+        assert aws_storage._sync_deferred(None) is True
+
+
+def test_the_sync_does_not_upload_over_a_key_that_moved_after_the_listing(
+    app, s3, monkeypatch
+):
+    from app import aws_storage, db
+
+    moved = "untouched/Moved Late (1972) - [DVD].mkv"
+    monkeypatch.setattr(
+        aws_storage, "get_matching_s3_objects", lambda bucket, prefix="": []
+    )
+    monkeypatch.setitem(app.config, "AWS_BUCKET", "test-bucket")
+    s3({moved: readable()})
+    with app.app_context():
+        file = archived_film("Moved Late", 1972, quality="DVD")
+        file.aws_key = moved
+        db.session.commit()
+        path = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        open(path, "wb").close()
+
+        listing = aws_storage._list_archives()
+        aws_storage._reconcile_files(listing, None)
+        uploads = [
+            job
+            for job in app.file_queue.jobs
+            if job.func_name == "app.videos.upload_task"
+        ]
+        os.remove(path)
+        assert uploads == []
+
+
+def test_a_download_wait_keeps_the_receipt_handle(app, s3):
+    from rq.registry import ScheduledJobRegistry
+
+    from app import aws_storage, db
+
+    with app.app_context():
+        file = archived_film("Handle Kept", 1973, key_name="Handle Kept Old.mkv")
+        aws_storage.request_archive_move(file)
+        db.session.commit()
+        app.file_queue.enqueue(
+            "app.videos.download_task", args=(file.aws_key, "Handle Kept Old.mkv")
+        )
+        s3({file.aws_key: readable()})
+
+        result = aws_storage.move_archive_object(file.id, sqs_receipt_handle="kept")
+        assert result == aws_storage.MOVE_WAITING
+        (retry,) = [
+            app.file_queue.fetch_job(job_id)
+            for job_id in ScheduledJobRegistry(queue=app.file_queue).get_job_ids()
+        ]
+        assert retry.func_name == "app.aws_storage.move_archive_object"
+        assert retry.kwargs == {"sqs_receipt_handle": "kept"}
+        assert retry.meta["archive_key"] == file.aws_key
+        assert s3.sqs.deleted == []
+
+
+def test_a_redis_fault_does_not_lose_the_move(app, monkeypatch):
+    from app import aws_storage, db
+
+    def broken(*args, **kwargs):
+        raise ConnectionError("redis down")
+
+    with app.app_context():
+        file = archived_film("Redis Fault", 1974, key_name="Redis Fault Old.mkv")
+        monkeypatch.setattr(app.redis, "hsetnx", broken)
+        assert aws_storage.request_archive_move(file) is True
+        db.session.commit()
+        assert [job.args for job in move_jobs(app)] == [(file.id,)]
+
+
+def test_a_purged_row_leaves_no_request_time(app):
+    from app import aws_storage, db
+
+    with app.app_context():
+        file = archived_film("Purged Move", 1975, key_name="Purged Old.mkv")
+        aws_storage.request_archive_move(file)
+        db.session.commit()
+        assert app.redis.hexists(aws_storage.ARCHIVE_MOVE_REQUESTED_KEY, str(file.id))
+
+        db.session.delete(file)
+        db.session.commit()
+        assert not app.redis.hexists(
+            aws_storage.ARCHIVE_MOVE_REQUESTED_KEY, str(file.id)
+        )
+
+
+def test_the_move_has_a_trail_stage(app):
+    from app.pipeline import STAGES
+
+    assert STAGES["app.aws_storage.move_archive_object"][0] == "Moving the S3 archive"
