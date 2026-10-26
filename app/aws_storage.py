@@ -25,6 +25,7 @@ import threading
 import time
 import traceback
 import urllib.parse
+import uuid
 
 from collections import namedtuple
 from datetime import datetime, timedelta, timezone
@@ -1369,13 +1370,33 @@ def _enqueue_requested_moves(session):
     pending = session.info.pop(_MOVES_AFTER_COMMIT, None)
     for file_id, basename in sorted((pending or {}).items()):
         try:
-            enqueue_task(
-                "app.aws_storage.move_archive_object",
-                file_id,
-                description=f"'{basename}' — Moving the archive",
-            )
+            _enqueue_move_once(file_id, basename)
         except Exception:
             current_app.logger.error(traceback.format_exc())
+
+
+def _enqueue_move_once(file_id, basename):
+    """Queue the move job of a file, unless a move of the file waits in the queue (#384).
+
+    The id is "archive-move-", the file id, and a random tag. A queued
+    move reads the target of the file when it runs. Thus, a second
+    request adds nothing. A running move does not count. It can hold an
+    older target. Each id is new, so no job takes the expiry of an old
+    finished job."""
+
+    from app.tasks import TASKS, resolve_queue
+
+    name = "app.aws_storage.move_archive_object"
+    prefix = f"archive-move-{int(file_id)}-"
+    queue = resolve_queue(TASKS[name].queue)
+    if any(job_id.startswith(prefix) for job_id in queue.job_ids):
+        return None
+    return enqueue_task(
+        name,
+        file_id,
+        description=f"'{basename}' — Moving the archive",
+        job_id=prefix + uuid.uuid4().hex[:12],
+    )
 
 
 @sa_event.listens_for(OrmSession, "after_rollback")

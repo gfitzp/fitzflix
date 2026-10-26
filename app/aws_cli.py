@@ -91,16 +91,31 @@ def register_cli(app):
         "--limit",
         type=int,
         default=None,
-        help="Request no more than this number of moves.",
+        help=(
+            "Request no more than this number of moves. The moves that are "
+            "pending already do not count."
+        ),
     )
-    def converge_keys(apply_moves, limit):
+    @click.option(
+        "--again",
+        "again",
+        is_flag=True,
+        help=(
+            "Request the pending moves again too. Use it for a move whose "
+            "job failed."
+        ),
+    )
+    def converge_keys(apply_moves, limit, again):
         """List the archives whose key differs from the key of their untouched name (#369).
 
         The key of an archive is its prefix and its sanitized untouched
         name. A rename before #369 kept the old key. With --apply, the
         command requests a move for each listed archive. The move jobs
         copy the objects on the server side. A Deep Archive object first
-        gets a Bulk restore. Without --apply, nothing changes."""
+        gets a Bulk restore. Without --apply, nothing changes. A move
+        that is pending already is listed, but not requested again
+        (#384). Thus, --limit takes the next batch on each run. With
+        --again, the pending moves are requested again too."""
 
         from app import db
         from app.aws_storage import archive_drifts, key_claims, request_archive_move
@@ -118,11 +133,15 @@ def register_cli(app):
         )
         for prefix, count in sorted(by_prefix.items()):
             click.echo(f"  {prefix}/: {count}")
-        selected = drifted if limit is None else drifted[: max(limit, 0)]
+        waiting = [row for row in drifted if again or row[0].aws_key_target != row[2]]
+        pending = len(drifted) - len(waiting)
+        if pending:
+            click.echo(f"  {pending} of them are pending already")
+        selected = waiting if limit is None else waiting[: max(limit, 0)]
         shown = selected if apply_moves else drifted[:5]
         for file, source, target, size in shown:
-            pending = " (pending)" if file.aws_key_target == target else ""
-            click.echo(f"  [{file.id}] {source} -> {target} ({size} bytes){pending}")
+            mark = " (pending)" if file.aws_key_target == target else ""
+            click.echo(f"  [{file.id}] {source} -> {target} ({size} bytes){mark}")
         if not apply_moves:
             click.echo(
                 f"Dry run: nothing changed. --apply requests {len(selected)} move(s)."

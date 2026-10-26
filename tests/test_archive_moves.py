@@ -160,14 +160,18 @@ def test_a_copy_that_differs_is_deleted_and_the_row_keeps_its_key(app, s3, caplo
         assert db.session.get(File, file_id).aws_key == old_key
         assert db.session.get(File, file_id).aws_key_target == target
 
-    # The backfill requests the stranded move again.
+    # The backfill requests the stranded move again with --again. A
+    # plain --apply skips a pending move (#384).
     for job in move_jobs(app):
         job.delete()
     from app.cli import register
 
     if "aws" not in app.cli.commands:
         register(app)
-    result = app.test_cli_runner().invoke(args=["aws", "converge-keys", "--apply"])
+    runner = app.test_cli_runner()
+    result = runner.invoke(args=["aws", "converge-keys", "--apply"])
+    assert "Requested 0 archive move(s)" in result.output
+    result = runner.invoke(args=["aws", "converge-keys", "--apply", "--again"])
     assert "Requested 1 archive move(s)" in result.output
     with app.app_context():
         assert [job.args for job in move_jobs(app)] == [(file_id,)]
@@ -645,11 +649,21 @@ def test_the_backfill_lists_the_drifted_rows_and_apply_requests_them(app):
         assert move_jobs(app) == []
         assert all(db.session.get(File, i).aws_key_target is None for i in ids)
 
+    # A pending move is not requested again. Thus, --limit takes the
+    # next row, and a repeat adds no second job (#384).
+
     result = runner.invoke(args=["aws", "converge-keys", "--apply", "--limit", "1"])
     assert result.exit_code == 0, result.output
     assert "Requested 1 archive move(s)" in result.output
+    with app.app_context():
+        first = {job.args[0] for job in move_jobs(app)}
+    result = runner.invoke(args=["aws", "converge-keys", "--apply", "--limit", "1"])
+    assert "1 of them are pending already" in result.output
+    assert "Requested 1 archive move(s)" in result.output
     result = runner.invoke(args=["aws", "converge-keys", "--apply"])
-    assert "Requested 2 archive move(s)" in result.output
+    assert "Requested 0 archive move(s)" in result.output
+    assert len(move_jobs(app)) == 2
+    assert first < {job.args[0] for job in move_jobs(app)}
     with app.app_context():
         db.session.expire_all()
         assert db.session.get(File, ids[0]).aws_key_target is None
@@ -990,3 +1004,24 @@ def test_a_move_waits_while_the_s3_sync_runs(app, s3):
         assert retry.kwargs == {"sqs_receipt_handle": "held"}
         assert retry.meta["archive_key"] == old_key
         assert s3.sqs.deleted == []
+
+
+def test_a_second_request_of_a_waiting_move_adds_no_job(app):
+    """A queued move reads the target when it runs (#384)."""
+
+    from app import aws_storage, db
+
+    with app.app_context():
+        file = archived_film("Twice Asked", 1967, key_name="Twice (1967).mkv")
+        assert aws_storage.request_archive_move(file)
+        db.session.commit()
+        assert aws_storage.request_archive_move(file)
+        db.session.commit()
+        (job,) = move_jobs(app)
+        assert job.id.startswith(f"archive-move-{file.id}-")
+
+        # A running move does not count. It can hold an older target.
+        app.file_queue.remove(job)
+        assert aws_storage.request_archive_move(file)
+        db.session.commit()
+        assert len(move_jobs(app)) == 1
