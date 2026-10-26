@@ -81,10 +81,13 @@ LEAVING_SENT_SECONDS = 60 * 86400
 
 # A digest that the mail server refused waits here for the next run
 # (#377). The snapshots moved on already, so the next diff does not find
-# the events again. The events of the next run join it.
+# the events again. The events of the next run join it. A digest older
+# than UNSENT_SECONDS is dropped with an error. The key lives 2 days
+# longer. Thus, the next run sees the age and logs the loss.
 
 UNSENT_KEY = "fitzflix:availability:unsent:{user_id}"
 UNSENT_SECONDS = 7 * 86400
+UNSENT_KEY_SECONDS = UNSENT_SECONDS + 2 * 86400
 
 # RECENT_DAYS is how long the watchlist badge calls an event "recent".
 # RECENT_KEY_SECONDS is the expiry of the badge store. It is a margin
@@ -250,20 +253,57 @@ def _leaving_set():
     )
 
 
-def _first_event(user_id, movie_id, kind, ttl=SENT_SECONDS):
-    """Return True 1 time per user, film, and kind in the dedup horizon.
+class _Marks:
+    """The sent markers and the badge stamps of the events of 1 user.
 
-    This is the Redis marker that prevents a second mail from a
-    provider that flaps."""
+    The SENT marker prevents a second mail from a provider that flaps.
+    The run plants the markers and the stamps only after the digest is
+    sent (#377 follow-up). A refused digest stores them with its events,
+    and the send that succeeds later plants them. A user without the
+    mail alerts gets them at once."""
 
-    return bool(
-        current_app.redis.set(
-            SENT_KEY.format(user_id=int(user_id), movie_id=int(movie_id), kind=kind),
-            "1",
-            nx=True,
-            ex=ttl,
-        )
-    )
+    def __init__(self, user_id):
+        self.user_id = int(user_id)
+        self.sent = {}
+        self.recent = []
+
+    def first(self, movie_id, kind, ttl=SENT_SECONDS):
+        """Return True 1 time per user, film, and kind in the dedup horizon."""
+
+        key = SENT_KEY.format(user_id=self.user_id, movie_id=int(movie_id), kind=kind)
+        if key in self.sent or current_app.redis.exists(key):
+            return False
+        self.sent[key] = ttl
+        return True
+
+    def badge(self, movie_id, label):
+        """Stamp the badge of 1 film when the marks are planted."""
+
+        self.recent.append((movie_id, label))
+
+    def to_json(self):
+        """Return the marks as a JSON value for an unsent digest."""
+
+        return {"sent": self.sent, "recent": self.recent}
+
+    def merge(self, stored, movie_ids):
+        """Add the marks of an unsent digest. Keep the stamps of movie_ids only."""
+
+        for key, ttl in (stored.get("sent") or {}).items():
+            self.sent.setdefault(key, ttl)
+        self.recent = [
+            (movie_id, label)
+            for movie_id, label in stored.get("recent") or []
+            if movie_id in movie_ids
+        ] + self.recent
+
+    def plant(self):
+        """Write the markers and the badge stamps."""
+
+        for key, ttl in self.sent.items():
+            current_app.redis.set(key, "1", ex=ttl)
+        for movie_id, label in self.recent:
+            _record_recent(self.user_id, movie_id, label)
 
 
 def _record_recent(user_id, movie_id, label):
@@ -360,24 +400,63 @@ def _send_digest(user, events):
     )
 
 
-def _with_unsent(user_id, events):
-    """Return the events of a user with the events of a digest that was not sent."""
+def _with_unsent(user_id, events, marks):
+    """Return (events, since): the events of a user and of a digest that was not sent.
 
-    key = UNSENT_KEY.format(user_id=int(user_id))
-    stored = current_app.redis.getdel(key)
+    since is the date of the oldest digest that waits, or today. A
+    stored film counts only while it is on the watchlist of the user. A
+    streaming, rent, or leaving event of a film that is in the library
+    now goes too. A film that is in a list 2 times stays 1 time. The
+    stored marks join marks. A digest older than UNSENT_SECONDS is lost.
+    That is an error in the log."""
+
+    today = date.today().isoformat()
+    stored = current_app.redis.getdel(UNSENT_KEY.format(user_id=int(user_id)))
     if not stored:
-        return events
+        return events, today
     unsent = json.loads(stored)
-    return {kind: unsent.get(kind, []) + items for kind, items in events.items()}
+    since = unsent.get("since") or today
+    if date.fromisoformat(since) < date.today() - timedelta(seconds=UNSENT_SECONDS):
+        current_app.logger.error(
+            f"Watchlist availability: the digest of user {user_id} waited "
+            f"since {since} and was never sent. Its events are lost"
+        )
+        return events, today
+    listed = {
+        movie_id
+        for (movie_id,) in db.session.query(UserWatchlist.movie_id).filter_by(
+            user_id=int(user_id)
+        )
+    }
+    owned = {
+        movie_id
+        for (movie_id,) in db.session.query(Movie.id).filter(
+            Movie.id.in_(listed or [0]),
+            Movie.files.any(File.feature_type_id.is_(None)),
+        )
+    }
+    merged = {}
+    for kind, items in events.items():
+        kept = [
+            item
+            for item in (unsent.get("events") or {}).get(kind, [])
+            if item.get("movie_id") in listed
+            and (kind == "local" or item.get("movie_id") not in owned)
+        ]
+        seen = {item["movie_id"] for item in kept}
+        merged[kind] = kept + [item for item in items if item["movie_id"] not in seen]
+    kept_ids = {item["movie_id"] for items in merged.values() for item in items}
+    marks.merge(unsent.get("marks") or {}, kept_ids)
+    return merged, since
 
 
-def _keep_unsent(user_id, events):
-    """Keep the events of a digest that was not sent for the next run."""
+def _keep_unsent(user_id, events, since, marks):
+    """Keep the events and the marks of a digest that was not sent for the next run."""
 
     current_app.redis.set(
         UNSENT_KEY.format(user_id=int(user_id)),
-        json.dumps(events),
-        ex=UNSENT_SECONDS,
+        json.dumps({"since": since, "events": events, "marks": marks.to_json()}),
+        ex=UNSENT_KEY_SECONDS,
     )
 
 
@@ -418,6 +497,7 @@ def notify_watchlist_availability():
         users = User.query.filter(User.id.in_(list(by_user) or [0])).all()
         for user in users:
             provider_ids = user_provider_ids(user)
+            marks = _Marks(user.id)
             events = {"local": [], "streaming": [], "rent": [], "leaving": []}
             for movie in by_user[user.id]:
                 title = movie.tmdb_title or movie.title
@@ -434,9 +514,9 @@ def notify_watchlist_availability():
                 # owned film reports only its own arrival.
 
                 if movie.id in newly_owned:
-                    if _first_event(user.id, movie.id, "local"):
+                    if marks.first(movie.id, "local"):
                         events["local"].append({**item, "note": "Added to the library"})
-                        _record_recent(user.id, movie.id, NEW_IN_LIBRARY_LABEL)
+                        marks.badge(movie.id, NEW_IN_LIBRARY_LABEL)
                     continue
                 if movie.id in owned_ids or not movie.tmdb_id:
                     continue
@@ -444,17 +524,17 @@ def notify_watchlist_availability():
                 new_streaming = newly_streaming.get(movie.tmdb_id, set()) & provider_ids
                 new_rent = newly_rentable.get(movie.tmdb_id, set()) & provider_ids
                 if new_streaming:
-                    if _first_event(user.id, movie.id, "streaming"):
+                    if marks.first(movie.id, "streaming"):
                         labels = _provider_labels(new_streaming, provider_names)
                         events["streaming"].append({**item, "note": f"Now on {labels}"})
-                        _record_recent(user.id, movie.id, f"New on {labels}")
+                        marks.badge(movie.id, f"New on {labels}")
                 elif new_rent and user.notify_rentals:
-                    if _first_event(user.id, movie.id, "rent"):
+                    if marks.first(movie.id, "rent"):
                         labels = _provider_labels(new_rent, provider_names)
                         events["rent"].append(
                             {**item, "note": f"Available to rent on {labels}"}
                         )
-                        _record_recent(user.id, movie.id, "New to rent")
+                        marks.badge(movie.id, "New to rent")
 
             # This is the leaving-Criterion warning (#156). It occurs 1
             # time when the set first arrives, and 1 more time inside
@@ -473,9 +553,7 @@ def notify_watchlist_availability():
                     fired = [
                         kind
                         for kind in kinds
-                        if _first_event(
-                            user.id, movie.id, kind, ttl=LEAVING_SENT_SECONDS
-                        )
+                        if marks.first(movie.id, kind, ttl=LEAVING_SENT_SECONDS)
                     ]
                     if fired:
                         events["leaving"].append(
@@ -491,21 +569,29 @@ def notify_watchlist_availability():
                         )
 
             events_total += sum(len(items) for items in events.values())
-            if user.notify_availability and user.email:
-                events = _with_unsent(user.id, events)
-                if any(events.values()):
-                    outbox.append((user, events))
+            mailed = user.notify_availability and user.email
+            if mailed:
+                events, since = _with_unsent(user.id, events, marks)
+            if mailed and any(events.values()):
+                outbox.append((user, events, since, marks))
+            else:
+                marks.plant()
 
-        for user, events in outbox:
+        # Only a sent digest plants its markers. A refused digest keeps
+        # them with its events for the next run.
+
+        for user, events, since, marks in outbox:
             try:
                 _send_digest(user, events)
-                digests += 1
             except Exception as e:
                 current_app.logger.warning(
                     f"Watchlist availability: the digest of user {user.id} was "
                     f"not sent. It waits for the next run: {e}"
                 )
-                _keep_unsent(user.id, events)
+                _keep_unsent(user.id, events, since, marks)
+                continue
+            marks.plant()
+            digests += 1
 
         current_app.logger.info(
             f"Watchlist availability: {events_total} event(s) across "

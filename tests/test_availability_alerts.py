@@ -593,16 +593,94 @@ def test_a_refused_mail_stops_no_other_digest_and_waits_for_the_next_run(
         assert refused
         assert [mail["recipients"] for mail in sent] == [[MEMBER_EMAIL]]
         with app.app_context():
-            from app.availability_alerts import recent_availability
+            from app.availability_alerts import SENT_KEY, recent_availability
 
             admin = User.query.filter_by(email=ADMIN_EMAIL).one()
-            assert recent_availability(admin)[movie_id]["label"] == "New on Netflix"
+            marker = SENT_KEY.format(
+                user_id=admin.id, movie_id=movie_id, kind="streaming"
+            )
+            # A refused digest plants no marker and no badge (#377 follow-up).
+            assert not app.redis.exists(marker)
+            assert recent_availability(admin) == {}
 
         # The next run finds no new event, but it sends the digest that waited.
         run_task(app, monkeypatch)
         assert [mail["recipients"] for mail in sent] == [[MEMBER_EMAIL], [ADMIN_EMAIL]]
         assert "Now on Netflix" in sent[1]["text_body"]
+        with app.app_context():
+            assert app.redis.exists(marker)
+            assert recent_availability(admin)[movie_id]["label"] == "New on Netflix"
         run_task(app, monkeypatch)
         assert len(sent) == 2
     finally:
         reset_alert_users(app)
+
+
+def test_a_resent_digest_drops_a_film_that_left_the_watchlist(app, monkeypatch):
+    """The stored events are checked again at the resend (#377 follow-up)."""
+
+    import app.availability_alerts as alerts
+
+    from app import db
+    from app.models import User, UserWatchlist
+
+    sent, refuse = [], [True]
+
+    def send(subject, **kwargs):
+        if refuse[0]:
+            raise ConnectionRefusedError("the mail server refused the message")
+        sent.append({"subject": subject, **kwargs})
+
+    monkeypatch.setattr(alerts, "task_send_email", send)
+    set_alert_flags(app, MEMBER_EMAIL, availability=True)
+    try:
+        kept_id = watchlist_movie(app, "Kept Debut", 9041)
+        gone_id = watchlist_movie(app, "Removed Debut", 9042)
+        subscribe(app, 8, "Netflix", email=MEMBER_EMAIL)
+        for tmdb_id in (9041, 9042):
+            plant_availability(app, tmdb_id, EMPTY)
+        run_task(app, monkeypatch)
+        for tmdb_id in (9041, 9042):
+            plant_availability(app, tmdb_id, {**EMPTY, "flatrate": [NETFLIX]})
+        run_task(app, monkeypatch)
+        assert sent == []
+
+        with app.app_context():
+            user = User.query.filter_by(email=MEMBER_EMAIL).one()
+            UserWatchlist.query.filter_by(user_id=user.id, movie_id=gone_id).delete()
+            db.session.commit()
+        refuse[0] = False
+        run_task(app, monkeypatch)
+        (mail,) = sent
+        assert "Kept Debut (2020)" in mail["text_body"]
+        assert "Removed Debut" not in mail["text_body"]
+        with app.app_context():
+            from app.availability_alerts import recent_availability
+
+            user = User.query.filter_by(email=MEMBER_EMAIL).one()
+            assert set(recent_availability(user)) == {kept_id}
+    finally:
+        reset_alert_users(app)
+
+
+def test_an_unsent_digest_that_expires_is_an_error(app, monkeypatch, caplog):
+    """A digest that waited longer than UNSENT_SECONDS is lost, loudly (#377 follow-up)."""
+
+    from app.availability_alerts import UNSENT_KEY, _Marks, _with_unsent
+    from app.models import User
+
+    with app.app_context():
+        user = User.query.filter_by(email=MEMBER_EMAIL).one()
+        old = (date.today() - timedelta(days=8)).isoformat()
+        app.redis.set(
+            UNSENT_KEY.format(user_id=user.id),
+            json.dumps({"since": old, "events": {"streaming": [{"movie_id": 1}]}}),
+        )
+        events = {"local": [], "streaming": [], "rent": [], "leaving": []}
+        merged, since = _with_unsent(user.id, events, _Marks(user.id))
+    assert merged == events
+    assert since == date.today().isoformat()
+    assert any(
+        record.levelname == "ERROR" and "was never sent" in record.getMessage()
+        for record in caplog.records
+    )

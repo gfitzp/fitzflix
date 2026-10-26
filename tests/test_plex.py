@@ -629,6 +629,43 @@ def test_a_reimport_finds_the_scrobble_that_the_feed_gave_to_the_day_before(app)
         assert days == [datetime(2026, 10, 6), datetime(2026, 10, 7, 0, 10)]
 
 
+def test_a_scrobble_twin_goes_to_1_entry_of_an_import(app):
+    """Entries of 10-06 and 10-08 and a 00:10 scrobble on 10-07 (#381 follow-up).
+
+    The scrobble is the twin of 10-06 only. The 10-08 entry gets its own
+    row, and it does not overwrite the verdict of 10-06."""
+
+    from app.videos import apply_letterboxd_import
+
+    with app.app_context():
+        user = User.query.first()
+        movie = make_movie("Late Show Twice", 1978, tmdb_id=77402)
+        db.session.add(
+            UserMovieReview(
+                user_id=user.id,
+                movie_id=movie.id,
+                review="",
+                date_watched=datetime(2026, 10, 7, 0, 10),
+                letterboxd_guid="letterboxd-watch-9002",
+            )
+        )
+        db.session.commit()
+        movie_id = movie.id
+
+        film = _letterboxd_film(movie_id, "2026-10-06", "2026-10-08")
+        film["entries"][0]["rating"] = 3.0
+        film["entries"][1]["rating"] = 5.0
+        assert apply_letterboxd_import(user.id, [film])
+        rows = sorted(
+            UserMovieReview.query.filter_by(user_id=user.id, movie_id=movie_id),
+            key=lambda row: row.date_watched,
+        )
+        assert [(row.date_watched, row.rating) for row in rows] == [
+            (datetime(2026, 10, 7, 0, 10), 3.0),
+            (datetime(2026, 10, 8), 5.0),
+        ]
+
+
 def test_review_edit_preserves_plex_timestamp(app, admin_client):
     """Make sure a review edit keeps the Plex timestamp.
 
@@ -717,11 +754,53 @@ def test_a_deleted_history_item_does_not_hold_the_cursor(app, plex_server, monke
         return real_get(url, *args, **kwargs)
 
     monkeypatch.setattr(plex_api.requests, "get", deleted_item)
+
+    # A restored library can bring the item back with the same key. Thus,
+    # 2 polls hold the cursor before the 404 (#379 follow-up).
+
+    with app.app_context():
+        for _ in range(2):
+            assert plex_history_poll() is True
+            assert int(app.redis.get("fitzflix:plex:history-cursor")) == cursor + 99
+        assert plex_history_poll() is True
+    assert int(app.redis.get("fitzflix:plex:history-cursor")) == cursor + 200
+    assert 0 < app.redis.ttl("fitzflix:plex:tmdb:60") <= 3600
+    assert {job.args[0] for job in plex_jobs(app)} == {12}
+
+
+def test_an_item_that_comes_back_after_a_404_is_recorded(app, plex_server, monkeypatch):
+    """The Oct 16 shape: the item is missing for 1 poll, then restored (#379 follow-up)."""
+
+    import requests
+
+    from app import plex_api
+
+    cursor = int(time.time()) - 3600
+    app.redis.set("fitzflix:plex:history-cursor", cursor)
+    plex_server.history = [
+        {"type": "movie", "viewedAt": cursor + 100, "accountID": 1, "ratingKey": "62"}
+    ]
+    plex_server.accounts = [{"id": 1, "name": "glenn-plex"}]
+    plex_server.guids = {"62": "tmdb://13"}
+    real_get = plex_server.get
+    missing = [True]
+
+    def wiped(url, *args, **kwargs):
+        if url.endswith("/library/metadata/62") and missing[0]:
+            response = requests.Response()
+            response.status_code = 404
+            raise requests.HTTPError("404 Not Found", response=response)
+        return real_get(url, *args, **kwargs)
+
+    monkeypatch.setattr(plex_api.requests, "get", wiped)
     with app.app_context():
         assert plex_history_poll() is True
-
-    assert [job.args[0] for job in plex_jobs(app)] == [12]
-    assert int(app.redis.get("fitzflix:plex:history-cursor")) == cursor + 200
+        assert plex_jobs(app) == []
+        missing[0] = False
+        assert plex_history_poll() is True
+    assert [job.args[0] for job in plex_jobs(app)] == [13]
+    assert int(app.redis.get("fitzflix:plex:history-cursor")) == cursor + 100
+    assert not app.redis.exists("fitzflix:plex:missing:62")
 
 
 def test_a_history_watch_read_again_adds_to_the_priority_once(app):

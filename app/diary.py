@@ -30,7 +30,7 @@ import requests
 from flask import current_app
 from werkzeug.local import LocalProxy
 
-from app.cache import cached_fetch
+from app.cache import cache_json, cached_fetch
 from app.tasks import enqueue_task
 from app import db, get_app
 from app.models import (
@@ -68,6 +68,21 @@ PLEX_HISTORY_WATCH_SECONDS = 30 * 86400
 # name that the webhook gives, and the day marker matches.
 
 PLEX_ACCOUNTS_KEY = "fitzflix:plex:accounts"
+
+# The polls in which a history ratingKey answered HTTP 404. A restored
+# Plex library can bring a missing item back with the same ratingKey
+# (the Oct 16 restore). Thus, the poll holds its cursor for a 404 until
+# PLEX_MISSING_POLLS polls in a row saw it (#379 follow-up). Then the
+# entry counts as "no TMDB id" for PLEX_MISSING_CACHE_SECONDS.
+
+PLEX_MISSING_KEY = "fitzflix:plex:missing:{rating_key}"
+PLEX_MISSING_POLLS = 3
+PLEX_MISSING_SECONDS = 86400
+PLEX_MISSING_CACHE_SECONDS = 3600
+
+# The number of each history poll. A 404 counts once in each poll.
+
+PLEX_POLL_COUNT_KEY = "fitzflix:plex:history-polls"
 
 
 def clear_watchlist(user_id, movie_id):
@@ -366,14 +381,17 @@ def letterboxd_import_task(user_id, films):
             return True
 
 
-def _feed_claimed_twin(user_id, movie_id, date_watched, import_days):
+def _feed_claimed_twin(user_id, movie_id, date_watched, import_days, claimed):
     """Return the feed row of a watch 1 day away from a Letterboxd date, or None.
 
     The feed sync gives a Plex scrobble near midnight to the Letterboxd
     entry of the next or previous date. The row keeps its clock time,
-    for example 00:10 on 10-07 for the entry of 10-06 (#381). A row
-    with a guid and a clock time 1 day away is such a twin. A day that
-    has its own entry in the import is not a twin."""
+    for example 00:10 on 10-07 for the entry of 10-06 (#381). A twin is
+    a row with a guid on the next day before noon, or on the day before
+    at noon or later. Thus, a twin is next to 1 date only. A day that
+    has its own entry in the import is not a twin. claimed holds the ids
+    of the rows that this import gave to an entry already. Such a row
+    is not a twin again. The function adds the id of the twin."""
 
     rows = UserMovieReview.query.filter(
         UserMovieReview.user_id == user_id,
@@ -383,12 +401,16 @@ def _feed_claimed_twin(user_id, movie_id, date_watched, import_days):
         UserMovieReview.date_watched < date_watched + timedelta(days=2),
     ).order_by(UserMovieReview.date_watched)
     for row in rows:
-        day = row.date_watched.date()
+        day, clock = row.date_watched.date(), row.date_watched.time()
+        offset = (day - date_watched.date()).days
+        early = clock.hour < 12
         if (
-            day != date_watched.date()
+            row.id not in claimed
             and day not in import_days
-            and row.date_watched.time() != datetime.min.time()
+            and clock != datetime.min.time()
+            and ((offset == 1 and early) or (offset == -1 and not early))
         ):
+            claimed.add(row.id)
             return row
     return None
 
@@ -433,6 +455,7 @@ def apply_letterboxd_import(user_id, films):
                 if movie is None:
                     continue
 
+                claimed = set()
                 import_days = {
                     datetime.strptime(entry["watched"], "%Y-%m-%d").date()
                     for entry in film["entries"]
@@ -469,7 +492,7 @@ def apply_letterboxd_import(user_id, films):
                             UserMovieReview.date_watched
                             < date_watched + timedelta(days=1),
                         ).first() or _feed_claimed_twin(
-                            user_id, movie.id, date_watched, import_days
+                            user_id, movie.id, date_watched, import_days, claimed
                         )
                     else:
                         review = UserMovieReview.query.filter_by(
@@ -670,14 +693,16 @@ def apply_plex_watch(tmdb_id, plex_username, viewed_at, source):
             return True
 
 
-def _plex_tmdb_id(entry, failures=None):
+def _plex_tmdb_id(entry, failures=None, poll=None):
     """Resolve a Plex history entry to a TMDB id through its Guid list.
 
     Redis caches the result, because the rating keys are stable. A
     failed lookup appends the entry to failures, if given. Thus, the
     caller can tell a failure from an entry with no TMDB guid. Plex
-    keeps the history of a deleted item. Its lookup gives HTTP 404. That
-    is not a failure. The entry has no TMDB id (#379)."""
+    keeps the history of a deleted item. Its lookup gives HTTP 404. A
+    404 is a failure until PLEX_MISSING_POLLS different polls saw it.
+    poll names the current poll. Then the entry has no TMDB id for
+    PLEX_MISSING_CACHE_SECONDS, and the cursor can pass it (#379)."""
 
     rating_key = entry.get("ratingKey")
     if not rating_key:
@@ -702,12 +727,25 @@ def _plex_tmdb_id(entry, failures=None):
         except requests.HTTPError as e:
             if e.response is None or e.response.status_code != 404:
                 return failed()
+            missing = PLEX_MISSING_KEY.format(rating_key=rating_key)
+            redis = current_app.redis
+            redis.sadd(missing, str(poll))
+            redis.expire(missing, PLEX_MISSING_SECONDS)
+            if redis.scard(missing) < PLEX_MISSING_POLLS:
+                return failed()
+            redis.delete(missing)
             current_app.logger.info(
-                f"Plex history entry '{entry.get('title')}' names the deleted "
-                f"item {rating_key}; ignoring"
+                f"Plex history entry '{entry.get('title')}' names the item "
+                f"{rating_key}, which {PLEX_MISSING_POLLS} polls did not find; "
+                f"ignoring"
             )
+            # The short cache of this answer. An entry with no TMDB guid
+            # keeps the long cache of cached_fetch.
+            cache_json(cache_key, None, PLEX_MISSING_CACHE_SECONDS)
+            return None, False
         except Exception:
             return failed()
+        current_app.redis.delete(PLEX_MISSING_KEY.format(rating_key=rating_key))
         return tmdb_id, True
 
     def failed():
@@ -719,9 +757,8 @@ def _plex_tmdb_id(entry, failures=None):
 
     # A null value means that the entry cannot resolve (no TMDB guid).
 
-    return cached_fetch(
-        PLEX_TMDB_KEY.format(rating_key=rating_key), PLEX_TMDB_SECONDS, fetch
-    )
+    cache_key = PLEX_TMDB_KEY.format(rating_key=rating_key)
+    return cached_fetch(cache_key, PLEX_TMDB_SECONDS, fetch)
 
 
 def plex_history_poll():
@@ -751,6 +788,7 @@ def plex_history_poll():
             )
             return True
         cursor = int(cursor)
+        poll = redis_conn.incr(PLEX_POLL_COUNT_KEY)
 
         try:
             body = plex_get(
@@ -806,7 +844,7 @@ def plex_history_poll():
             if entry.get("live"):
                 continue
             failures = []
-            tmdb_id = _plex_tmdb_id(entry, failures)
+            tmdb_id = _plex_tmdb_id(entry, failures, poll=poll)
             if failures:
                 failed_at = (
                     viewed_at if failed_at is None else min(failed_at, viewed_at)
