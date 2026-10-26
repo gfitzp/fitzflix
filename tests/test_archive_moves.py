@@ -949,3 +949,44 @@ def test_the_move_has_a_trail_stage(app):
     from app.pipeline import STAGES
 
     assert STAGES["app.aws_storage.move_archive_object"][0] == "Moving the S3 archive"
+
+
+def test_a_move_waits_while_the_s3_sync_runs(app, s3):
+    """A move that starts after the idle check of the sync waits for it."""
+
+    import time
+
+    from rq.registry import ScheduledJobRegistry, StartedJobRegistry
+
+    from app import aws_storage, db
+    from app.models import File
+
+    with app.app_context():
+        file = archived_film("Sync Wait", 1974, key_name="Sync Wait Old.mkv")
+        aws_storage.request_archive_move(file)
+        db.session.commit()
+        old_key, target = file.aws_key, file.aws_key_target
+        fake = s3({file.aws_key: readable()})
+        sync = app.maintenance_queue.enqueue(
+            "app.videos.sync_aws_s3_storage_task",
+            description="Syncing files with AWS S3 storage",
+        )
+        # StartedJobRegistry.add raises NotImplementedError in rq 2. Thus,
+        # the test writes the sorted set of the registry directly
+        registry = StartedJobRegistry(queue=app.maintenance_queue)
+        app.redis.zadd(registry.key, {sync.id: int(time.time()) + 300})
+
+        result = aws_storage.move_archive_object(file.id, sqs_receipt_handle="held")
+        assert result == aws_storage.MOVE_WAITING
+        assert fake.copies == []
+        db.session.expire_all()
+        file = db.session.get(File, file.id)
+        assert (file.aws_key, file.aws_key_target) == (old_key, target)
+        (retry,) = [
+            app.file_queue.fetch_job(job_id)
+            for job_id in ScheduledJobRegistry(queue=app.file_queue).get_job_ids()
+        ]
+        assert retry.func_name == "app.aws_storage.move_archive_object"
+        assert retry.kwargs == {"sqs_receipt_handle": "held"}
+        assert retry.meta["archive_key"] == old_key
+        assert s3.sqs.deleted == []

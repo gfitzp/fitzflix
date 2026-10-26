@@ -1797,6 +1797,8 @@ def move_archive_object(file_id, sqs_receipt_handle=None):
     - The old object is in Deep Archive with no restored copy, or the
       copy expired: a Bulk restore is requested. Its notification starts
       this job again. Return MOVE_WAITING.
+    - A download of the old key is queued, or the weekly S3 sync runs: the
+      job waits 30 minutes. Return MOVE_WAITING.
     - The old object is readable: a server-side copy goes to the target.
       The size and the ETag of the copy are verified. Then the row names
       the new key, and the old key is deleted. Return True.
@@ -1853,6 +1855,44 @@ def move_archive_object(file_id, sqs_receipt_handle=None):
             current_app.lock_manager.unlock(lock)
 
 
+def _sync_is_running():
+    """Return True if the weekly S3 sync job runs on the maintenance queue."""
+
+    queue = current_app.maintenance_queue
+    for job_id in StartedJobRegistry(queue=queue).get_job_ids():
+        job = queue.fetch_job(job_id)
+        if job is not None and job.func_name == "app.videos.sync_aws_s3_storage_task":
+            return True
+    return False
+
+
+def _wait_move(file, source, sqs_receipt_handle, waits_for):
+    """Book the archive move again in 30 minutes, and return MOVE_WAITING.
+
+    The retry keeps the receipt handle of the restore notification. Then
+    the poll can extend the restore and the message, and the retry
+    deletes the message when the move is done."""
+
+    requeue(
+        "app.aws_storage.move_archive_object",
+        key=file.id,
+        delay=timedelta(minutes=30),
+        reason=f"waits for {waits_for}",
+        args=(file.id,),
+        kwargs=(
+            {"sqs_receipt_handle": sqs_receipt_handle} if sqs_receipt_handle else None
+        ),
+        meta=(
+            {"sqs_receipt_handle": sqs_receipt_handle, "archive_key": source}
+            if sqs_receipt_handle
+            else None
+        ),
+        description=f"'{file.basename}' — Moving the archive",
+        level="info",
+    )
+    return MOVE_WAITING
+
+
 def _move_archive(file, sqs_receipt_handle):
     """Do the work of move_archive_object under the lock of the title."""
 
@@ -1885,26 +1925,17 @@ def _move_archive(file, sqs_receipt_handle):
     # breaks the download. Thus, the move waits.
 
     if _download_job_for(source):
-        requeue(
-            "app.aws_storage.move_archive_object",
-            key=file.id,
-            delay=timedelta(minutes=30),
-            reason=f"waits for the download of '{source}'",
-            args=(file.id,),
-            kwargs=(
-                {"sqs_receipt_handle": sqs_receipt_handle}
-                if sqs_receipt_handle
-                else None
-            ),
-            meta=(
-                {"sqs_receipt_handle": sqs_receipt_handle, "archive_key": source}
-                if sqs_receipt_handle
-                else None
-            ),
-            description=f"'{file.basename}' — Moving the archive",
-            level="info",
+        return _wait_move(
+            file, source, sqs_receipt_handle, f"the download of '{source}'"
         )
-        return MOVE_WAITING
+
+    # The weekly sync lists the bucket, then compares the rows with the
+    # listing. A key that changes between the 2 steps looks absent or
+    # extra. The sync waits for queued moves. A move that starts after
+    # the idle check of the sync waits for the sync in return.
+
+    if _sync_is_running():
+        return _wait_move(file, source, sqs_receipt_handle, "the S3 sync")
 
     s3_client = aws_s3_client(with_retries=True)
     bucket = config["AWS_BUCKET"]
