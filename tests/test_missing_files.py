@@ -78,6 +78,48 @@ def test_scan_refuses_to_run_while_a_volume_is_down(app, monkeypatch, caplog):
     assert "not mounted" in caplog.text
 
 
+def test_scan_abandons_the_result_when_a_volume_drops_mid_scan(
+    app, monkeypatch, caplog
+):
+    """Test that a volume that drops during the stats keeps the old result (#396)."""
+
+    from app import missing_files
+
+    answers = iter([[], ["/Volumes/TV Shows"]])
+    monkeypatch.setattr(missing_files, "missing_volumes", lambda config: next(answers))
+    app.redis.set(missing_files.MISSING_KEY, json.dumps({"keep": True}))
+    with app.app_context():
+        make_movie_file(make_movie("Dropped", 1960), "WEBRip-1080p")
+        db.session.commit()
+        missing_files.missing_best_files_task()
+
+    assert json.loads(app.redis.get(missing_files.MISSING_KEY)) == {"keep": True}
+    assert "Abandoning the missing-file scan" in caplog.text
+
+
+def test_scan_abandons_the_result_after_a_remount(app, monkeypatch, caplog):
+    """Test that a library root with a new device id abandons the scan (#396).
+
+    A quick remount answers again before the last check. The device id
+    of the root shows the change."""
+
+    from app import missing_files
+
+    monkeypatch.setattr(missing_files, "missing_volumes", lambda config: [])
+    devices = iter([{"MOVIE_LIBRARY": 1, "TV_LIBRARY": 2}])
+    monkeypatch.setattr(
+        missing_files,
+        "_library_devices",
+        lambda config: next(devices, {"MOVIE_LIBRARY": 9, "TV_LIBRARY": 2}),
+    )
+    with app.app_context():
+        touch(app, make_movie_file(make_movie("Present", 1961), "WEBRip-1080p"))
+        db.session.commit()
+        assert missing_files.scan_missing_best_files() is None
+
+    assert "mounted again" in caplog.text
+
+
 def test_task_stores_the_result_and_the_report_loads_the_rows(app, monkeypatch):
     from app import missing_files
 

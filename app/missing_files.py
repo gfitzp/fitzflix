@@ -17,7 +17,11 @@ the scan again on demand.
 
 A missing mount makes every file look absent. The scan refuses to run
 while a monitored volume does not respond. The stored result of the
-previous run stays in place.
+previous run stays in place. A volume can also drop during the scan
+(#396). Thus, the scan checks the volumes again at the first absent
+file and after the last stat. It also compares the device id of each
+library root before and after the stats. A remount gives the root a
+new device id. A changed id or a dead volume abandons the result.
 """
 
 import json
@@ -90,6 +94,29 @@ def ranked_file_rows():
     return rows
 
 
+def _library_devices(config):
+    """Return the device id of each library root, or None for a root that has no stat."""
+
+    devices = {}
+    for key in ("MOVIE_LIBRARY", "TV_LIBRARY"):
+        try:
+            devices[key] = os.stat(config[key]).st_dev
+        except OSError:
+            devices[key] = None
+    return devices
+
+
+def _volumes_dropped(config, devices_before):
+    """Return a reason text if a volume dropped after the scan started, or None."""
+
+    dead = missing_volumes(config)
+    if dead:
+        return f"{', '.join(dead)} not mounted"
+    if _library_devices(config) != devices_before:
+        return "a library volume was mounted again"
+    return None
+
+
 def scan_missing_best_files():
     """Stat every best file and return the scan result, or None.
 
@@ -106,6 +133,7 @@ def scan_missing_best_files():
             f"Skipping the missing-file scan: {', '.join(dead)} not mounted"
         )
         return None
+    devices_before = _library_devices(current_app.config)
 
     library_dir = current_app.config["LIBRARY_DIR"]
     rows = ranked_file_rows()
@@ -143,11 +171,29 @@ def scan_missing_best_files():
         best_rank, best_id = members[0]
         if is_present(best_id):
             continue
+
+        # The first absent file can be the first sign of a dropped
+        # volume. Then all later files also look absent.
+
+        if not missing:
+            reason = _volumes_dropped(current_app.config, devices_before)
+            if reason:
+                current_app.logger.warning(
+                    f"Abandoning the missing-file scan: {reason} during the scan"
+                )
+                return None
         missing.append(best_id)
         for rank, file_id in members[1:]:
             if is_present(file_id):
                 fallbacks[best_id] = quality_titles[file_id]
                 break
+
+    reason = _volumes_dropped(current_app.config, devices_before)
+    if reason:
+        current_app.logger.warning(
+            f"Abandoning the missing-file scan: {reason} during the scan"
+        )
+        return None
 
     return {
         "checked": datetime.now(timezone.utc).isoformat(),
