@@ -870,3 +870,77 @@ def test_the_build_prunes_the_durations_of_deleted_files(app, monkeypatch):
     fields = {field.decode() for field in app.redis.hkeys(dvr.DURATIONS_KEY)}
     assert "987654" not in fields
     assert fields == live
+
+
+def _window_days(monkeypatch, sizes, cap, days):
+    """Run _channel_window over consecutive days. Return (windows, the episode lists)."""
+
+    from datetime import date, timedelta
+    from types import SimpleNamespace
+
+    from app import dvr
+
+    lists = {
+        index: [f"{index}:{number}" for number in range(size)]
+        for index, size in enumerate(sizes)
+    }
+    monkeypatch.setattr(
+        dvr, "_series_episodes", lambda series_id: list(lists[series_id])
+    )
+    members = [
+        {
+            "series": SimpleNamespace(id=index, title=f"Series {index:02d}"),
+            "episodes": size,
+        }
+        for index, size in enumerate(sizes)
+    ]
+    first = date(2026, 10, 26)
+    windows = [
+        dvr._channel_window(members, first + timedelta(days=offset), cap)
+        for offset in range(days)
+    ]
+    return windows, lists
+
+
+def _assert_no_skips(windows, lists):
+    """Each series airs its episodes in order across the days, with no gap."""
+
+    aired = {}
+    for window in windows:
+        for series, episode in window:
+            aired.setdefault(series.id, []).append(episode)
+    assert set(aired) == set(lists)
+    for series_id, episodes in aired.items():
+        order = lists[series_id]
+        positions = [order.index(episode) for episode in episodes]
+        for before, after in zip(positions, positions[1:]):
+            assert after == (before + 1) % len(order), (series_id, episodes)
+
+
+def test_tv_quotas_fill_the_cap_and_late_series_air(app, monkeypatch):
+    """The rounded quotas were 18 for a cap of 12. The late series lost their slots (#427)."""
+
+    sizes = [2, 2, 2, 2, 2, 2, 2, 2, 40, 44]
+    windows, lists = _window_days(monkeypatch, sizes, cap=12, days=6)
+    for window in windows:
+        assert len(window) == 12
+        assert {series.id for series, _ in window} == set(lists)
+    _assert_no_skips(windows, lists)
+
+
+def test_more_series_than_the_cap_take_turns_with_no_skips(app, monkeypatch):
+    """7 series share 3 slots. Each series airs in turn, and its cursor follows (#427)."""
+
+    sizes = [5, 9, 4, 12, 6, 3, 8]
+    windows, lists = _window_days(monkeypatch, sizes, cap=3, days=21)
+    for window in windows:
+        assert len(window) == 3
+    _assert_no_skips(windows, lists)
+
+
+def test_the_apportioned_quotas_add_up_to_the_cap():
+    from app.dvr import _apportion
+
+    assert _apportion([2] * 8 + [40, 44], 12) == [1] * 8 + [2, 2]
+    assert sum(_apportion([81, 3, 7, 1, 1, 30], 60)) == 60
+    assert _apportion([3, 4], 10) == [3, 4]

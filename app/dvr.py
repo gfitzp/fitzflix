@@ -29,6 +29,8 @@ import subprocess
 import uuid
 
 from datetime import date, datetime, timezone
+from fractions import Fraction
+from math import floor, gcd
 from random import Random
 
 from flask import current_app
@@ -530,24 +532,77 @@ def _channel_members(channel, ctx):
     return sorted(movie_ids), [ctx["catalog"][series_id] for series_id in chosen]
 
 
+def _apportion(sizes, cap):
+    """Return the daily slots of each series. The slots add up to exactly the cap (#427).
+
+    sizes is the episode count of each series. When all the episodes fit
+    in the cap, each series airs all of them. Otherwise each series gets
+    1 slot, and the rest of the cap goes in proportion to the remaining
+    episodes, by the largest remainder. A series never gets more slots
+    than it has episodes. The caller gives at most cap series."""
+
+    total = sum(sizes)
+    if total <= cap:
+        return list(sizes)
+    rest = cap - len(sizes)
+    spare = [size - 1 for size in sizes]
+    spare_total = sum(spare)
+    shares = [Fraction(rest * extra, spare_total) for extra in spare]
+    quotas = [1 + floor(share) for share in shares]
+    order = sorted(
+        range(len(sizes)), key=lambda i: (-(shares[i] - floor(shares[i])), i)
+    )
+    for i in order[: cap - sum(quotas)]:
+        quotas[i] += 1
+    return quotas
+
+
+def _rotation_turns(index, days, count, cap):
+    """Return the days before day number days on which series index had its slot.
+
+    With more series than the cap, a window of cap series moves along the
+    list by cap each day. Each series gets 1 slot when the window
+    covers it. The count is the cursor of the series. Thus, each episode
+    airs in its turn."""
+
+    period = count // gcd(count, cap)
+    per_period = cap // gcd(count, cap)
+    full, rest = divmod(days, period)
+    return full * per_period + sum(
+        1 for day in range(rest) if (index - day * cap) % count < cap
+    )
+
+
 def _channel_window(members, day, cap):
     """Return the program window of the day for a multi-series channel.
 
     The window is a list of (series, file) pairs. Each series gets
-    slots proportional to its depth. They air as short interleaved
-    blocks, like syndication. The cursor of each series starts a
-    little further into the broadcast order each day."""
+    slots proportional to its depth, and the slots fill the cap exactly
+    (#427). They air as short interleaved blocks, like syndication. The
+    cursor of each series moves each day by the slots that the series
+    aired. Thus, no episode is skipped. With more series than the cap,
+    the series take 1 slot each in turn."""
 
-    members = sorted(members, key=lambda m: m["series"].title.lower())
-    total = sum(m["episodes"] for m in members)
+    members = sorted(members, key=lambda m: (m["series"].title.lower(), m["series"].id))
+    lists = [(m["series"], _series_episodes(m["series"].id)) for m in members]
+    lists = [(series, episodes) for series, episodes in lists if episodes]
+    if not lists or cap <= 0:
+        return []
+
+    ordinal = day.toordinal()
     cursors = []
-    for member in members:
-        episodes = _series_episodes(member["series"].id)
-        if not episodes:
-            continue
-        quota = min(len(episodes), max(1, round(cap * len(episodes) / total)))
-        start = (day.toordinal() * quota) % len(episodes)
-        cursors.append([member["series"], episodes[start:] + episodes[:start], quota])
+    if len(lists) <= cap:
+        quotas = _apportion([len(episodes) for _, episodes in lists], cap)
+        for (series, episodes), quota in zip(lists, quotas):
+            start = (ordinal * quota) % len(episodes)
+            cursors.append([series, episodes[start:] + episodes[:start], quota])
+    else:
+        count = len(lists)
+        for index, (series, episodes) in enumerate(lists):
+            if (index - ordinal * cap) % count >= cap:
+                continue
+            start = _rotation_turns(index, ordinal, count, cap) % len(episodes)
+            cursors.append([series, episodes[start:] + episodes[:start], 1])
 
     window = []
     while len(window) < cap:
