@@ -28,7 +28,7 @@ from werkzeug.local import LocalProxy
 
 from app.tasks import enqueue_task, requeue
 from app import db, get_app
-from app.aws_storage import rename_untouched_object, sanitize_s3_key
+from app.aws_storage import request_archive_move
 from app.email import notify_admin, notify_admin_text
 from app.models import (
     MOVIES,
@@ -766,31 +766,16 @@ def _apply_movie_refresh(
     for f in files:
         renamed = _rename_movie_file(f, tmdb_id) or renamed
 
-    # Rename the archive objects LAST. The deferred re-archive
-    # reads the record path from its own session, then
-    # uploads that local file. On 2026-09-05 a job dequeued
-    # 11 ms after the disk rename, but before the path
-    # commit. It saw the old path, found no file, and gave
-    # up. Thus, the archive move is queued only after the
-    # path commit above.
+    # Request the archive moves LAST, after the path commit above. The
+    # move job does not need the library file. It copies the S3 object
+    # to the key of the new untouched name (#369). The jobs go to the
+    # queue at the commit below.
 
     for f in files:
-        aws_key = os.path.join(
-            current_app.config["AWS_UNTOUCHED_PREFIX"],
-            sanitize_s3_key(f.untouched_basename),
-        )
-
-        if f.aws_key != aws_key and os.path.exists(
-            os.path.join(current_app.config["LIBRARY_DIR"], f.file_path)
-        ):
-            # This moves the S3 object. The field changes only
-            # when the object really moved. An object that
-            # cannot be copied server-side (Deep Archive) keeps
-            # its key (#299).
-            try:
-                rename_untouched_object(f, aws_key)
-            except Exception:
-                current_app.logger.error(traceback.format_exc())
+        try:
+            request_archive_move(f)
+        except Exception:
+            current_app.logger.error(traceback.format_exc())
 
     try:
         db.session.commit()

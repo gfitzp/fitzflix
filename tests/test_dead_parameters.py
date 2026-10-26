@@ -3,7 +3,8 @@
 upload_task took a key prefix, 2 upload flags and a storage class. Its
 body read none of them: archive_library_file decides the prefix and the
 class. aws_restore took days, and every caller used the default.
-rename_untouched_object took defer_upload, which #299 made dead.
+rename_untouched_object took defer_upload, which #299 made dead. The
+function itself went with #369.
 localization_task carried force_upload and ignore_etag through 8
 self-requeues and never read them."""
 
@@ -19,7 +20,7 @@ def test_the_task_signatures_carry_only_live_parameters():
 
     assert _params(aws_storage.upload_task) == ["file_id"]
     assert _params(aws_storage.aws_restore) == ["key", "tier", "record_request"]
-    assert _params(aws_storage.rename_untouched_object) == ["file", "new_key"]
+    assert not hasattr(aws_storage, "rename_untouched_object")
     assert _params(importing.localization_task) == [
         "file_path",
         "transient_retries",

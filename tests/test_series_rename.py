@@ -1,7 +1,8 @@
 """Test the series rename.
 
 The tests cover the disk moves, the row rewrites, the resume semantics,
-and the refusal guards. The S3 keys must never change."""
+and the refusal guards. The rename never writes aws_key. It requests
+the archive moves, and the move job writes the key (#369)."""
 
 import os
 

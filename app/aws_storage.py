@@ -40,6 +40,8 @@ from rq.registry import ScheduledJobRegistry, StartedJobRegistry
 from s3transfer.utils import ChunksizeAdjuster
 
 from flask import current_app
+from sqlalchemy import event as sa_event
+from sqlalchemy.orm import Session as OrmSession
 from werkzeug.local import LocalProxy
 
 from app.tasks import enqueue_task, report_progress, requeue
@@ -58,10 +60,6 @@ from app.models import (
 )
 
 EIGHT_MEGABYTES = 8388608
-
-# A re-archive whose record path has no file waits this many times for
-# the path commit of the refresh that queued it.
-MAX_REARCHIVE_PATH_RETRIES = 2
 
 
 def aws_s3_client(with_retries=False):
@@ -611,7 +609,8 @@ def _claimed_keys():
     """Return the archive keys that a record claims.
 
     The archive-only originals (#292) have no File row. Their keys are
-    claimed too."""
+    claimed too. So is the target of a pending move (#369). The copy is
+    at the target before the row names it."""
 
     return (
         {aws_key for (aws_key,) in db.session.query(File.aws_key).all()}
@@ -620,6 +619,12 @@ def _claimed_keys():
             key
             for (key,) in db.session.query(File.aws_transcoded_key)
             .filter(File.aws_transcoded_key.isnot(None))
+            .all()
+        }
+        | {
+            key
+            for (key,) in db.session.query(File.aws_key_target)
+            .filter(File.aws_key_target.isnot(None))
             .all()
         }
     )
@@ -1053,31 +1058,254 @@ def restores_directly(key):
     )
 
 
-def archive_key_name(file, prefix):
-    """Return a new key name in modified/ or transcoded/ for a file (#299).
+def _archive_prefix_of(key):
+    """Return the archive prefix (untouched, modified, transcoded) that holds key, or None."""
 
-    The basename of an extra is not unique. Many films have a
-    "Trailer.mkv". The untouched/ name holds the title of the film or
-    series. Thus, the new name is the untouched/ name. A conversion
-    changes the quality of its original to the quality of its library
-    file. If another record claims the key, the record id is added."""
+    entry = s3_layout.prefix_of(key)
+    if entry is None or entry.lifecycle != "archive":
+        return None
+    return s3_layout.prefix_value(entry)
 
-    name = os.path.basename(file.aws_key or "") or sanitize_s3_key(
-        file.untouched_basename or file.basename
+
+def key_claims():
+    """Return {key: set of claimant ids} for each archive key that a record claims.
+
+    A File row claims its aws_key, its aws_transcoded_key and its pending
+    aws_key_target. An archive-only original claims its key with the id
+    None. The backfill reads this 1 time for all rows."""
+
+    claims = {}
+    for row in db.session.query(
+        File.id, File.aws_key, File.aws_transcoded_key, File.aws_key_target
+    ).all():
+        for key in row[1:]:
+            if key:
+                claims.setdefault(key, set()).add(row[0])
+    for (key,) in db.session.query(ArchivedOriginal.aws_key).all():
+        claims.setdefault(key, set()).add(None)
+    return claims
+
+
+def _claimed_by_another(file, key, claims=None):
+    """Return True if a record other than file claims key."""
+
+    if claims is not None:
+        return bool(claims.get(key, set()) - {file.id})
+    return (
+        File.query.filter(
+            File.id != file.id,
+            db.or_(
+                File.aws_key == key,
+                File.aws_transcoded_key == key,
+                File.aws_key_target == key,
+            ),
+        ).first()
+        is not None
+        or ArchivedOriginal.query.filter_by(aws_key=key).first() is not None
     )
-    if file.converted_from_quality and file.quality:
+
+
+def archive_key_for(file, prefix, claims=None):
+    """Return the archive key of a file under prefix (#369).
+
+    The key is the prefix and the sanitized untouched name of the file.
+    The untouched name holds the title of the film or the series. The
+    basename of an extra is not unique, because many films have a
+    "Trailer.mkv". A conversion keeps the quality of its original in its
+    untouched name. Its transcoded/ copy has the quality of its library
+    file. Thus, the tag changes for each prefix but untouched/.
+
+    A key that the file holds already is its own. If another record
+    claims the key, the record id goes into the name. claims is the
+    result of key_claims, for a pass over many rows."""
+
+    config = current_app.config
+    name = sanitize_s3_key(file.untouched_basename or file.basename)
+    if (
+        file.converted_from_quality
+        and file.quality
+        and prefix != config["AWS_UNTOUCHED_PREFIX"]
+    ):
         name = naming.retag_quality(
             name, file.converted_from_quality, file.quality.quality_title
         )
     key = os.path.join(prefix, name)
-    claimed = File.query.filter(
-        File.id != file.id,
-        db.or_(File.aws_key == key, File.aws_transcoded_key == key),
-    ).first()
-    if claimed:
+    if key in (file.aws_key, file.aws_transcoded_key, file.aws_key_target):
+        return key
+    if _claimed_by_another(file, key, claims):
         stem, extension = os.path.splitext(name)
-        name = f"{stem} ({file.id}){extension}"
-    return name
+        key = os.path.join(prefix, f"{stem} ({file.id}){extension}")
+    return key
+
+
+def archive_drift(file, claims=None):
+    """Return (key, rule key) of the first archive of a file that has the wrong key.
+
+    The archive in aws_key comes first. Then the transcoded/ copy of a
+    conversion. Return None when each archive has the key of its
+    untouched name. A deleted archive, or one with no upload, does not
+    count."""
+
+    config = current_app.config
+    if file.aws_key and file.aws_date_uploaded and file.aws_date_deleted is None:
+        prefix = _archive_prefix_of(file.aws_key)
+        if prefix:
+            wanted = archive_key_for(file, prefix, claims)
+            if wanted != file.aws_key:
+                return file.aws_key, wanted
+    if (
+        file.converted_from_quality
+        and file.aws_transcoded_key
+        and file.aws_transcoded_date_uploaded
+        and _in_prefix(file.aws_transcoded_key, config["AWS_TRANSCODED_PREFIX"])
+    ):
+        wanted = archive_key_for(file, config["AWS_TRANSCODED_PREFIX"], claims)
+        if wanted != file.aws_transcoded_key:
+            return file.aws_transcoded_key, wanted
+    return None
+
+
+def _target_column(file):
+    """Return the name of the key column that the pending target of a file replaces."""
+
+    if _in_prefix(file.aws_key_target, current_app.config["AWS_TRANSCODED_PREFIX"]):
+        return "aws_transcoded_key"
+    return "aws_key"
+
+
+def move_source(file):
+    """Return the current key of the archive that the pending move of a file moves."""
+
+    if not file.aws_key_target:
+        return None
+    return getattr(file, _target_column(file))
+
+
+# The time of the first request of each pending move, by file id. The
+# System page shows the oldest. The row has no column for it.
+
+ARCHIVE_MOVE_REQUESTED_KEY = "fitzflix:archive-move:requested"
+
+# The session info key of the moves that wait for the commit of the
+# session. A move job that starts before the commit reads no target.
+
+_MOVES_AFTER_COMMIT = "fitzflix_archive_moves"
+
+
+def clear_archive_target(file):
+    """Clear the pending target of a file. The caller commits."""
+
+    file.aws_key_target = None
+    try:
+        current_app.redis.hdel(ARCHIVE_MOVE_REQUESTED_KEY, str(file.id))
+    except Exception:
+        current_app.logger.warning(traceback.format_exc())
+
+
+def request_archive_move(file, claims=None):
+    """Request the move of the archive of a file to the key of its untouched name (#369).
+
+    Set aws_key_target, and queue move_archive_object after the next
+    commit of the session. The caller commits. A pending target is
+    replaced. The job reads the current target when it runs. A file
+    whose archives have their keys loses its pending target. Return True
+    if a move is pending."""
+
+    drift = archive_drift(file, claims)
+    if drift is None:
+        if file.aws_key_target:
+            clear_archive_target(file)
+        return False
+    source, target = drift
+    if file.aws_key_target != target:
+        current_app.logger.info(
+            f"'{file.basename}' The archive '{source}' moves to '{target}'"
+        )
+    file.aws_key_target = target
+    if claims is not None:
+        claims.setdefault(target, set()).add(file.id)
+    current_app.redis.hsetnx(
+        ARCHIVE_MOVE_REQUESTED_KEY,
+        str(file.id),
+        datetime.now(timezone.utc).isoformat(),
+    )
+    db.session.info.setdefault(_MOVES_AFTER_COMMIT, {})[file.id] = file.basename
+    return True
+
+
+@sa_event.listens_for(OrmSession, "after_commit")
+def _enqueue_requested_moves(session):
+    """Queue the archive moves that request_archive_move recorded in this session."""
+
+    pending = session.info.pop(_MOVES_AFTER_COMMIT, None)
+    for file_id, basename in sorted((pending or {}).items()):
+        try:
+            enqueue_task(
+                "app.aws_storage.move_archive_object",
+                file_id,
+                description=f"'{basename}' — Moving the archive",
+            )
+        except Exception:
+            current_app.logger.error(traceback.format_exc())
+
+
+@sa_event.listens_for(OrmSession, "after_rollback")
+def _forget_requested_moves(session):
+    """Drop the archive moves of a transaction that rolled back."""
+
+    session.info.pop(_MOVES_AFTER_COMMIT, None)
+
+
+def pending_archive_moves():
+    """Return the count of the pending archive moves and the oldest request time."""
+
+    ids = [
+        file_id
+        for (file_id,) in db.session.query(File.id)
+        .filter(File.aws_key_target.isnot(None))
+        .all()
+    ]
+    oldest = None
+    if ids:
+        stamps = current_app.redis.hmget(
+            ARCHIVE_MOVE_REQUESTED_KEY, [str(file_id) for file_id in ids]
+        )
+        times = [
+            datetime.fromisoformat(
+                stamp.decode() if isinstance(stamp, bytes) else stamp
+            )
+            for stamp in stamps
+            if stamp
+        ]
+        oldest = min(times) if times else None
+    return {"count": len(ids), "oldest": oldest}
+
+
+def archive_drifts(claims=None):
+    """Return (file, key, rule key, bytes) for each archive that has the wrong key.
+
+    This is the census of the backfill (flask aws converge-keys)."""
+
+    claims = claims if claims is not None else key_claims()
+    drifted = []
+    for file in (
+        File.query.filter(
+            db.or_(File.aws_key.isnot(None), File.aws_transcoded_key.isnot(None))
+        )
+        .order_by(File.id)
+        .all()
+    ):
+        drift = archive_drift(file, claims)
+        if drift is None:
+            continue
+        source, target = drift
+        size = (
+            file.aws_transcoded_filesize_bytes
+            if source == file.aws_transcoded_key
+            else file.aws_filesize_bytes
+        )
+        drifted.append((file, source, target, size or 0))
+    return drifted
 
 
 def archive_library_file(file, path, delete_replaced=True):
@@ -1088,20 +1316,27 @@ def archive_library_file(file, path, delete_replaced=True):
     original in untouched/ never changes. A normal file uploads to
     modified/. The first time, the untouched/ rip is deleted after the
     commit. Versioning keeps it for 180 days. Later changes overwrite the
-    modified/ object. Return the new key."""
+    modified/ object. Return the new key.
+
+    A pending move of the same archive (#369) ends here. The upload goes
+    to the key of the new name, the old key is deleted, and the target
+    is cleared. Thus, an edit completes the move."""
 
     config = current_app.config
     converted = bool(file.converted_from_quality)
     if converted:
         prefix = config["AWS_TRANSCODED_PREFIX"]
         existing = file.aws_transcoded_key
+        column = "aws_transcoded_key"
     else:
         prefix = config["AWS_MODIFIED_PREFIX"]
         existing = file.aws_key if _in_prefix(file.aws_key, prefix) else None
-    if existing:
+        column = "aws_key"
+    pending = bool(file.aws_key_target) and _target_column(file) == column
+    if existing and not pending:
         key_prefix, key_name = os.path.split(existing)
     else:
-        key_prefix, key_name = prefix, archive_key_name(file, prefix)
+        key_prefix, key_name = prefix, os.path.basename(archive_key_for(file, prefix))
 
     key, uploaded, size = aws_upload(
         path, key_prefix, key_name=key_name, force_upload=True, ignore_etag=True
@@ -1115,19 +1350,21 @@ def archive_library_file(file, path, delete_replaced=True):
 
     db.session.commit()
 
-    replaced = None
+    replaced = getattr(file, column)
+    if replaced == key:
+        replaced = None
     if converted:
         file.aws_transcoded_key = key
         file.aws_transcoded_date_uploaded = uploaded
         file.aws_transcoded_filesize_bytes = size
         file.aws_stale = False
     else:
-        if file.aws_key and file.aws_key != key:
-            replaced = file.aws_key
         file.aws_key = key
         file.aws_date_uploaded = uploaded
         file.aws_filesize_bytes = size
         file.aws_stale = False
+    if file.aws_key_target and _target_column(file) == column:
+        clear_archive_target(file)
     db.session.commit()
     current_app.logger.info(f"'{file.basename}' Archived the library file as '{key}'")
 
@@ -1216,7 +1453,7 @@ def move_archive_to_modified_task(file_id):
             key, uploaded, size = aws_upload(
                 path,
                 prefix,
-                key_name=archive_key_name(file, prefix),
+                key_name=os.path.basename(archive_key_for(file, prefix)),
                 force_upload=True,
                 ignore_etag=True,
             )
@@ -1235,6 +1472,8 @@ def move_archive_to_modified_task(file_id):
             file.aws_date_uploaded = uploaded
             file.aws_filesize_bytes = size
             file.aws_stale = False
+            if file.aws_key_target and _target_column(file) == "aws_key":
+                clear_archive_target(file)
             db.session.commit()
             if not untouched_key_still_claimed(old_key):
                 # The old version goes permanently. The table entry of
@@ -1258,7 +1497,8 @@ def untouched_key_still_claimed(key):
     claimed key would strand the archive of the survivor behind a
     delete marker (the Bambi II incident, 2026-08). The caller must
     check AFTER its own deletes commit. Thus, the purged rows no longer
-    count. An archive-only original (#292) claims its key too."""
+    count. An archive-only original (#292) claims its key too. So does
+    the target of a pending move (#369)."""
 
     return (
         db.session.query(File.id)
@@ -1274,157 +1514,360 @@ def untouched_key_still_claimed(key):
         is not None
         or db.session.query(File.id).filter(File.aws_transcoded_key == key).first()
         is not None
+        or db.session.query(File.id).filter(File.aws_key_target == key).first()
+        is not None
     )
 
 
-def rename_untouched_object(file, new_key):
-    """Move the untouched S3 archive of a file when its derived key changes.
+# The status of a move that waits for a restore of its object. It is
+# truthy, as the pending status of a download is. The job ran, and
+# nothing failed. The restore notification starts the move again.
 
-    This keeps the invariant that aws_key only names a REAL
-    object. The old flow rewrote the database field and moved nothing.
-    That stranded the 1,184 keys that the 2026-08-17 audit found.
+MOVE_WAITING = "waiting"
 
-    Only a rip in untouched/ moves. A modified/ or transcoded/ object
-    keeps its key. A direct restore uses the path of the record, not the
-    key (#299). A STANDARD (or restored) rip is copied on the server
-    side. Then the copy is verified, and the old key is deleted. Only
-    then does the field change.
 
-    A Deep Archive rip without a completed restore cannot be copied.
-    Before #299, the library file was uploaded under the new key. But
-    the library file is not the rip. Thus, the rip keeps its old key,
-    and the record keeps naming it. A restore imports it under the
-    untouched name of the record.
+def _is_missing(error):
+    """Return True if a botocore ClientError says that the object does not exist."""
 
-    Return True if the field now matches new_key.
-    """
+    code = str(error.response.get("Error", {}).get("Code", ""))
+    status = error.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+    return code in ("404", "NoSuchKey", "NotFound") or status == 404
 
-    old_key = file.aws_key
-    if not old_key or old_key == new_key:
-        return old_key == new_key
-    if not _in_prefix(old_key, current_app.config["AWS_UNTOUCHED_PREFIX"]):
-        return False
-    basename = file.basename
-    s3_client = aws_s3_client(with_retries=True)
-    bucket = current_app.config["AWS_BUCKET"]
 
-    head = None
+def _part_count(etag):
+    """Return the part count of a multipart ETag, or None for a single-part object."""
+
+    etag = (etag or "").strip('"')
+    if "-" not in etag:
+        return None
     try:
-        head = s3_client.head_object(Bucket=bucket, Key=old_key)
+        return int(etag.rsplit("-", 1)[1])
+    except ValueError:
+        return None
+
+
+def _copy_config(s3_client, bucket, key, head):
+    """Return the TransferConfig that copies key in the part layout of its upload.
+
+    The ETag of a multipart object depends on its parts. A copy with the
+    same part size has the same ETag. Thus, the ETag proves the copy. A
+    single-part object (5 GB or less) goes in 1 CopyObject request. The
+    first part of a multipart object gives the part size. If S3 does not
+    give it, the default layout applies, and only the size proves the
+    copy."""
+
+    from boto3.s3.transfer import TransferConfig
+
+    size = head["ContentLength"]
+    if _part_count(head.get("ETag")) is None:
+        return TransferConfig(multipart_threshold=size + 1)
+    try:
+        part_size = s3_client.head_object(Bucket=bucket, Key=key, PartNumber=1)[
+            "ContentLength"
+        ]
     except Exception:
         current_app.logger.warning(
-            f"'{basename}' archive object '{old_key}' not found. The S3 sync "
-            f"reports it"
+            f"'{key}' S3 did not give the part size. Only the size can prove "
+            f"the copy"
         )
-        return False
+        return TransferConfig()
+    return TransferConfig(
+        multipart_threshold=min(part_size, size), multipart_chunksize=part_size
+    )
 
-    if not _object_is_readable(head):
-        current_app.logger.info(
-            f"'{basename}' archive '{old_key}' can't be copied "
-            f"({head.get('StorageClass') or 'STANDARD'}). It keeps its key"
+
+def _copy_problem(original, copied):
+    """Return the text of a difference between an object and its copy, or None.
+
+    The sizes must be equal. The ETags must be equal when the 2 objects
+    have the same part count."""
+
+    if copied.get("ContentLength") != original.get("ContentLength"):
+        return (
+            f"has {copied.get('ContentLength')} bytes, not "
+            f"{original.get('ContentLength')}"
         )
-        return False
-
-    current_app.logger.info(f"'{basename}' moving archive '{old_key}' -> '{new_key}'")
-    s3_client.copy({"Bucket": bucket, "Key": old_key}, bucket, new_key)
-    verify = s3_client.head_object(Bucket=bucket, Key=new_key)
-    if verify["ContentLength"] != head["ContentLength"]:
-        raise RuntimeError(
-            f"'{basename}' archive copy size mismatch: "
-            f"{verify['ContentLength']} vs {head['ContentLength']}"
-        )
-    s3_layout.delete(s3_client, bucket, old_key)
-    file.aws_key = new_key
-    return True
+    if _part_count(copied.get("ETag")) == _part_count(original.get("ETag")) and (
+        copied.get("ETag") != original.get("ETag")
+    ):
+        return f"has the ETag {copied.get('ETag')}, not {original.get('ETag')}"
+    return None
 
 
-def rearchive_untouched_object(file_id, new_key, path_retries=0):
-    """Force-upload the local library copy of a file under the new key.
+def _drop_message(sqs_receipt_handle, note):
+    """Delete the SQS message of a move, if the move came from a notification."""
 
-    This is the file-queue half of an archive rename that could not be
-    copied on the server side. It is deferred off the sql queue because
-    the upload is multi-gigabyte. The 10-minute budget of the sql queue
-    is sized for database work. A 43.9 GB re-archive was killed at 84%
-    during a refresh, silently. That left the movie record pointed at
-    one film, and its archive key at a different film (#231). The
-    budget of the file queue is 6 hours.
+    if sqs_receipt_handle:
+        delete_sqs_message(aws_sqs_client(), sqs_receipt_handle, note=note)
 
-    This reads the File record again. Thus, the uploaded path includes
-    a disk rename that the refresh did after the enqueue. If the path
-    on the record has no file, the record may be behind a rename
-    that is not committed yet. Then the job waits 5 minutes and
-    reads the record again, up to MAX_REARCHIVE_PATH_RETRIES times.
-    """
+
+def _file_queue_jobs():
+    """Return the jobs of the file queue that wait, run, or wait for a retry."""
+
+    queue = current_app.file_queue
+    job_ids = (
+        StartedJobRegistry(
+            QUEUE_NAME["file"], connection=current_app.redis
+        ).get_job_ids()
+        + list(queue.job_ids)
+        + ScheduledJobRegistry(queue=queue).get_job_ids()
+    )
+    jobs = []
+    for job_id in job_ids:
+        job = queue.fetch_job(job_id)
+        if job is not None:
+            jobs.append(job)
+    return jobs
+
+
+def _download_job_for(key):
+    """Return True if a download of key waits, runs, or waits for a retry."""
+
+    return any(
+        job.func_name == "app.videos.download_task" and job.args and job.args[0] == key
+        for job in _file_queue_jobs()
+    )
+
+
+def _download_after_move(file, source, target):
+    """Download the moved archive if a restore for a download preceded the move.
+
+    The restore notification of the old key went to the move. A request
+    for a download records its time. If the library file is still
+    missing, the download of the new key starts now. The copy is in
+    STANDARD storage. Thus, it needs no restore."""
+
+    requested = restore_requested_at(current_app.redis, source)
+    if requested is None:
+        return
+    if os.path.isfile(os.path.join(current_app.config["LIBRARY_DIR"], file.file_path)):
+        return
+    record_restore_request(current_app.redis, target, requested)
+    enqueue_task(
+        "app.videos.download_task",
+        target,
+        os.path.basename(target),
+        description=f"'{os.path.basename(target)}' — Downloading from AWS",
+    )
+
+
+def move_archive_object(file_id, sqs_receipt_handle=None):
+    """Move the archive of a file to its pending target key (#369).
+
+    The job holds the lock of the title. It reads the row and computes
+    the key again. A later rename can have changed the target. Then the
+    newest target applies.
+
+    - The old object is missing: the target is cleared. The S3 sync
+      reports the key. Return False.
+    - The old object is in Deep Archive with no restored copy, or the
+      copy expired: a Bulk restore is requested. Its notification starts
+      this job again. Return MOVE_WAITING.
+    - The old object is readable: a server-side copy goes to the target.
+      The size and the ETag of the copy are verified. Then the row names
+      the new key, and the old key is deleted. Return True.
+
+    aws_key names a real object during the whole move. sqs_receipt_handle
+    is the restore notification that started the job. The job deletes it
+    when the notification is handled."""
+
+    from app.videos import acquire_lock_or_defer
 
     with app.app_context():
-        file = File.query.filter_by(id=file_id).first()
+        config = current_app.config
+        file = db.session.get(File, int(file_id))
         if file is None:
             current_app.logger.warning(
-                f"File id {file_id} no longer exists, skipping the "
-                f"re-archive as '{new_key}'"
+                f"File id {file_id} no longer exists. Its archive move stops"
             )
+            _drop_message(sqs_receipt_handle, "archive move of a deleted record")
             return False
+        if not file.aws_key_target:
+            current_app.logger.info(
+                f"'{file.basename}' No archive move is pending. The job stops"
+            )
+            _drop_message(sqs_receipt_handle, "archive move with no target")
+            return archive_drift(file) is None
 
-        if file.aws_key == new_key:
-            current_app.logger.info(f"'{file.basename}' archive is already '{new_key}'")
-            return True
-
-        # This is the key that the record wants NOW. It differs if the
-        # refresh that queued this job rolled back, or if a later refresh
-        # queued a newer key behind this one. In the two cases, an upload
-        # of tens of gigabytes under an old key is waste.
-        expected_key = os.path.join(
-            current_app.config["AWS_UNTOUCHED_PREFIX"],
-            sanitize_s3_key(file.untouched_basename or ""),
+        # The poll records the handle of a later message for this job.
+        sqs_receipt_handle = _latest_receipt_handle(sqs_receipt_handle)
+        lock = acquire_lock_or_defer(
+            file.file_identifier(),
+            config["UPLOAD_TASK_TIMEOUT"] * 1000,
+            current_app.file_queue,
+            "app.aws_storage.move_archive_object",
+            minutes=(5, 15),
+            timeout=config["UPLOAD_TASK_TIMEOUT"],
+            description=f"'{file.basename}' — Moving the archive",
+            args=(file.id,),
+            kwargs=(
+                {"sqs_receipt_handle": sqs_receipt_handle}
+                if sqs_receipt_handle
+                else None
+            ),
+            key=file.id,
         )
-        if expected_key != new_key:
-            current_app.logger.warning(
-                f"'{file.basename}' skipping the re-archive as '{new_key}': "
-                f"the record now wants '{expected_key}'"
-            )
-            return False
-
-        local_path = os.path.join(current_app.config["LIBRARY_DIR"], file.file_path)
-        if not os.path.isfile(local_path):
-            if path_retries < MAX_REARCHIVE_PATH_RETRIES:
-                # The refresh that queued this job may still hold the
-                # path rename in an open transaction. Read the record
-                # again after the rename has time to land.
-                requeue(
-                    "app.videos.rearchive_untouched_object",
-                    key=int(file_id),
-                    delay=timedelta(minutes=5),
-                    reason=(
-                        f"'{local_path}' is not present locally for the "
-                        f"re-archive as '{new_key}' (attempt {path_retries + 1} "
-                        f"of {MAX_REARCHIVE_PATH_RETRIES})"
-                    ),
-                    counters={"path_retries": path_retries + 1},
-                    args=(file_id, new_key),
-                    description=f"'{file.basename}'",
-                )
-                return False
-
-            # There is nothing to upload again. The record keeps the old
-            # key. That key still names a real object. Thus, the invariant
-            # holds.
-            current_app.logger.error(
-                f"'{file.basename}' can't be re-archived as '{new_key}': "
-                f"'{local_path}' isn't present locally"
-            )
+        if not lock:
             return False
 
         try:
-            renamed = rename_untouched_object(file, new_key)
+            return _move_archive(file, sqs_receipt_handle)
+        finally:
+            current_app.lock_manager.unlock(lock)
+
+
+def _move_archive(file, sqs_receipt_handle):
+    """Do the work of move_archive_object under the lock of the title."""
+
+    config = current_app.config
+    db.session.refresh(file)
+    drift = archive_drift(file)
+    if drift is None:
+        if file.aws_key_target:
+            clear_archive_target(file)
             db.session.commit()
+        current_app.logger.info(
+            f"'{file.basename}' Each archive has the key of its name already"
+        )
+        _drop_message(sqs_receipt_handle, "archive move with no work")
+        return True
+    source, target = drift
+    if file.aws_key_target != target:
+        current_app.logger.info(
+            f"'{file.basename}' The archive '{source}' now moves to '{target}'"
+        )
+        file.aws_key_target = target
+    column = _target_column(file)
 
-        except Exception:
-            # Let the job fail loudly. A half-applied rename is exactly the
-            # problem of #231. FailedJobRegistry is the trace.
-            db.session.rollback()
+    # This commit records the newest target. It also ends the snapshot of
+    # this session before the slow copy (MariaDB error 1020).
+
+    db.session.commit()
+
+    # A download of the old key reads it in parts. A delete in the middle
+    # breaks the download. Thus, the move waits.
+
+    if _download_job_for(source):
+        requeue(
+            "app.aws_storage.move_archive_object",
+            key=file.id,
+            delay=timedelta(minutes=30),
+            reason=f"waits for the download of '{source}'",
+            args=(file.id,),
+            description=f"'{file.basename}' — Moving the archive",
+            level="info",
+        )
+        return MOVE_WAITING
+
+    s3_client = aws_s3_client(with_retries=True)
+    bucket = config["AWS_BUCKET"]
+    try:
+        head = s3_client.head_object(Bucket=bucket, Key=source)
+    except botocore.exceptions.ClientError as error:
+        if not _is_missing(error):
             raise
+        current_app.logger.warning(
+            f"'{file.basename}' The archive '{source}' is not in S3. The move to "
+            f"'{target}' stops. The S3 sync reports the key"
+        )
+        clear_archive_target(file)
+        db.session.commit()
+        _drop_message(sqs_receipt_handle, "archive move of a missing object")
+        return False
 
-        return renamed
+    if not _object_is_readable(head):
+        if 'ongoing-request="true"' in (head.get("Restore") or ""):
+            current_app.logger.info(
+                f"'{file.basename}' The move of '{source}' waits for the "
+                f"restore in progress"
+            )
+        else:
+            current_app.logger.info(
+                f"'{file.basename}' The archive '{source}' is in "
+                f"{head.get('StorageClass') or 'cold storage'}. A Bulk restore "
+                f"is requested for the move to '{target}'"
+            )
+            aws_restore(source, tier="Bulk", record_request=False)
+        _drop_message(sqs_receipt_handle, "stale message")
+        return MOVE_WAITING
+
+    report_progress(get_current_job(), file.basename, "Moving the archive", None)
+    current_app.logger.info(
+        f"'{file.basename}' Copying the archive '{source}' to '{target}'"
+    )
+    s3_client.copy(
+        {"Bucket": bucket, "Key": source},
+        bucket,
+        target,
+        Config=_copy_config(s3_client, bucket, source, head),
+    )
+    copied = s3_client.head_object(Bucket=bucket, Key=target)
+    problem = _copy_problem(head, copied)
+    if problem:
+        current_app.logger.error(
+            f"'{file.basename}' The copy of '{source}' at '{target}' {problem}. "
+            f"The archive keeps its key, and the copy is deleted"
+        )
+        s3_layout.delete(s3_client, bucket, target, copied.get("VersionId"))
+        return False
+
+    # An edit can archive the file during the copy. It clears the target.
+    # Read the row again from a new snapshot. If the archive changed, the
+    # copy is not needed. Its own version goes, and an object of the edit
+    # at the same key stays.
+
+    db.session.commit()
+    db.session.refresh(file)
+    if getattr(file, column) != source or file.aws_key_target != target:
+        current_app.logger.warning(
+            f"'{file.basename}' The archive changed during the copy to "
+            f"'{target}'. The copy is deleted"
+        )
+        if copied.get("VersionId") or not untouched_key_still_claimed(target):
+            s3_layout.delete(s3_client, bucket, target, copied.get("VersionId"))
+        return False
+
+    proven = copied.get("ETag") == head.get("ETag")
+    setattr(file, column, target)
+    clear_archive_target(file)
+    db.session.commit()
+    current_app.logger.info(
+        f"'{file.basename}' Moved the archive '{source}' to '{target}'. "
+        + ("The ETags are equal" if proven else "The sizes are equal")
+    )
+
+    # Equal ETags prove the bytes. Then the old version goes permanently.
+    # With a different part layout, only the size is proven. Then a
+    # plain delete keeps the old version for the noncurrent window.
+
+    if not untouched_key_still_claimed(source):
+        s3_layout.delete(
+            s3_client, bucket, source, head.get("VersionId") if proven else None
+        )
+    _download_after_move(file, source, target)
+    _drop_message(sqs_receipt_handle, "archive move")
+
+    # A conversion has a second archive. Its move comes next.
+
+    if request_archive_move(file):
+        db.session.commit()
+    return True
+
+
+def rearchive_untouched_object(file_id, new_key=None, path_retries=0):
+    """Request the archive move of a file. This is the old task of a rename.
+
+    A job of the old task can still wait in a queue. It names the task
+    by this name. The move job computes the new key from the row. Thus,
+    new_key and path_retries are not read (#369)."""
+
+    with app.app_context():
+        file = db.session.get(File, int(file_id))
+        if file is None:
+            return False
+        moving = request_archive_move(file)
+        db.session.commit()
+        return moving
 
 
 def aws_delete(key):

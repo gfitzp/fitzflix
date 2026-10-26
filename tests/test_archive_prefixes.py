@@ -69,6 +69,7 @@ def test_an_extra_keeps_the_title_of_its_film_in_modified(app, uploads):
             "Bluray-1080p",
             "Trailers",
             plex_title="Trailer",
+            untouched_basename="Extra Archive (1955) - Trailers - Trailer [Bluray-1080p].mkv",
             aws_key="untouched/Extra Archive (1955) - Trailers - Trailer [Bluray-1080p].mkv",
         )
         second = make_movie_file(
@@ -100,6 +101,7 @@ def test_a_claimed_modified_key_gets_the_record_id(app, uploads):
             movie,
             "DVD",
             plex_title="Shared Archive (1957) - copy",
+            untouched_basename=name,
             aws_key=f"untouched/{name}",
         )
         db.session.commit()

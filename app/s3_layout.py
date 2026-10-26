@@ -38,7 +38,9 @@ PREFIXES = (
     # move_archive_to_modified_task deletes the
     # old untouched/ version permanently (by version id). The ETag-equal
     # bytes are in modified/, and a marker would keep a second copy for
-    # 180 days for no use.
+    # 180 days for no use. move_archive_object (#369) does the same after
+    # a copy with an equal ETag. A copy that only the size proves gets a
+    # plain delete.
     Prefix(
         "untouched",
         config_key="AWS_UNTOUCHED_PREFIX",

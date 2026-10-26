@@ -53,7 +53,12 @@ from app import (
     retry_job_id,
     safe_job_id,
 )
-from app.aws_storage import aws_upload, untouched_key_still_claimed
+from app.aws_storage import (
+    aws_upload,
+    clear_archive_target,
+    request_archive_move,
+    untouched_key_still_claimed,
+)
 from app.settings import get_setting
 from app.criterion_catalog import (
     assign_criterion_release,
@@ -2328,6 +2333,16 @@ def _build_records(file_details, inspection, output_name):
     file.aws_key = file_details.get("aws_key")
     file.aws_date_uploaded = file_details.get("aws_date_uploaded")
     file.aws_filesize_bytes = file_details.get("aws_filesize_bytes")
+
+    # A pending move of the old archive does not apply to the new one
+    # (#369). A reused conversion can keep a transcoded/ copy under the
+    # old name. Its move is requested here, and it goes to the queue at
+    # the commit.
+
+    if file.aws_key_target:
+        clear_archive_target(file)
+    if file.converted_from_quality and file.aws_transcoded_key:
+        request_archive_move(file)
 
     record_filesize(file, inspection["filesize_bytes"])
     current_app.logger.info(f"'{output_name}' {file.filesize_bytes} bytes")

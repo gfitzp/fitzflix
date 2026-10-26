@@ -160,6 +160,14 @@ TASKS = {
     # The file operations.
     "app.videos.upload_task": TaskSpec("file", "UPLOAD_TASK_TIMEOUT"),
     "app.videos.rearchive_untouched_object": TaskSpec("file", "UPLOAD_TASK_TIMEOUT"),
+    # A move is 1 server-side copy (#369). For 100 GiB, s3transfer sends
+    # 6,400 UploadPartCopy requests of 16 MiB, 10 at a time. The estimate
+    # at 50 MB/s for each request is 4 minutes. FILE_TASK_TIMEOUT
+    # (10 minutes) leaves too small a margin for a slow region. Thus, the
+    # move has the budget of an upload.
+    "app.aws_storage.move_archive_object": TaskSpec(
+        "file", "UPLOAD_TASK_TIMEOUT", "Moving an archive to its new key"
+    ),
     "app.videos.archive_held_task": TaskSpec("file", "UPLOAD_TASK_TIMEOUT"),
     "app.aws_storage.move_archive_to_modified_task": TaskSpec(
         "file", "UPLOAD_TASK_TIMEOUT"

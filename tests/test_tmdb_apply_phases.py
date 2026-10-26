@@ -81,18 +81,18 @@ def test_apply_tmdb_refresh_round_trips_payload(app):
         assert refreshed.tmdb_name == "Payload Show Canonical"
 
 
-def test_tmdb_apply_queues_the_archive_rename_after_the_path_commit(app, monkeypatch):
-    """Test that the archive rename is queued after the path commit.
+def test_tmdb_apply_requests_the_archive_move_after_the_commit(app, monkeypatch):
+    """Test that a movie rename requests the archive move, and queues it at the commit.
 
-    The deferred re-archive reads the record path from its own session.
-    On 2026-09-05 it dequeued 11 ms after the disk rename, but before the
-    path commit. It saw the old path and gave up. Thus, the refresh must
-    rename the file, commit the path, and only then ask for the archive
-    move."""
+    The move job reads the target from its own session. On 2026-09-05 a
+    job dequeued 11 ms after the disk rename, before the commit. Thus,
+    the job goes to the queue only when the target is committed (#369).
+    A Deep Archive object moves too: the move does not need the
+    library file."""
 
     from datetime import date
 
-    from app import db, tmdb_refresh
+    from app import db
     from app.models import File
     from app.videos import apply_tmdb_refresh
     from tests.factories import make_movie, make_movie_file
@@ -102,6 +102,7 @@ def test_tmdb_apply_queues_the_archive_rename_after_the_path_commit(app, monkeyp
         file = make_movie_file(movie, "HDTV-720p")
         file.untouched_basename = file.basename
         file.aws_key = f"untouched/{file.basename}"
+        file.aws_date_uploaded = date(2026, 1, 1)
         movie.tmdb_title = "Desert Tune"
         movie.tmdb_release_date = date(1944, 1, 1)
         db.session.commit()
@@ -114,33 +115,29 @@ def test_tmdb_apply_queues_the_archive_rename_after_the_path_commit(app, monkeyp
             handle.write(b"payload")
 
         seen = []
+        real_enqueue = app.file_queue.enqueue
 
-        def fake_rename(f, new_key, defer_upload=False):
-            # Record what a deferred job on another worker sees: the
-            # committed path, and the file at that path.
-            committed = db.session.execute(
-                db.text("SELECT file_path FROM file WHERE id = :id"),
-                {"id": f.id},
-            ).scalar()
-            seen.append(
-                (
-                    new_key,
-                    committed,
-                    os.path.isfile(os.path.join(app.config["LIBRARY_DIR"], committed)),
-                )
-            )
-            return False
+        def spy(name, *args, **kwargs):
+            if name == "app.aws_storage.move_archive_object":
+                # Record what the job sees from another connection.
+                with db.engine.connect() as connection:
+                    committed = connection.execute(
+                        db.text("SELECT aws_key_target FROM file WHERE id = :id"),
+                        {"id": file_id},
+                    ).scalar()
+                seen.append((kwargs["args"], committed))
+            return real_enqueue(name, *args, **kwargs)
 
-        monkeypatch.setattr(tmdb_refresh, "rename_untouched_object", fake_rename)
+        monkeypatch.setattr(app.file_queue, "enqueue", spy)
 
         assert apply_tmdb_refresh("Movies", movie_id) is True
 
-        new_relative = "Movies/Desert Tune (1944)/Desert Tune (1944) - [HDTV-720p].mkv"
-        assert seen == [
-            ("untouched/Desert Tune (1944) - [HDTV-720p].mkv", new_relative, True)
-        ]
+        new_key = "untouched/Desert Tune (1944) - [HDTV-720p].mkv"
+        assert seen == [((file_id,), new_key)]
         db.session.expire_all()
-        assert db.session.get(File, file_id).file_path == new_relative
+        moved = db.session.get(File, file_id)
+        assert moved.aws_key == "untouched/Desert Tune (1943) - [HDTV-720p].mkv"
+        assert moved.aws_key_target == new_key
         assert not os.path.exists(old_path)
 
 

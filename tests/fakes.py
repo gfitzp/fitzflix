@@ -1,5 +1,7 @@
 """The shared stand-ins of the tests: an HTTP answer, a TMDB router, S3, SQS, rq.
 
+ArchiveS3 holds archive objects for the archive moves (#369).
+
 Import them inside a test or at the top of a test module. This module
 imports no application module. Thus, it is safe at collection time."""
 
@@ -151,3 +153,91 @@ class RecordingQueue:
         """Record the call."""
 
         self.calls.append((args, kwargs))
+
+
+class ArchiveS3:
+    """A fake boto3 S3 client that holds the archive objects in a dict.
+
+    objects maps a key to its head: ContentLength, ETag, StorageClass,
+    Restore and VersionId. copy puts a STANDARD copy at the new key with
+    a new version id. copy_etag is the ETag of each copy, for a copy
+    that is not equal. A head with PartNumber answers part_size. events
+    records each call in order. on_copy runs at each copy."""
+
+    def __init__(self, objects=None, part_size=8388608, copy_etag=None, on_copy=None):
+        self.objects = {key: dict(head) for key, head in (objects or {}).items()}
+        self.part_size = part_size
+        self.copy_etag = copy_etag
+        self.on_copy = on_copy
+        self.events = []
+        self.copies = []
+        self.configs = []
+        self.deletes = []
+        self.restores = []
+        self.versions = 0
+
+    def head_object(self, Bucket=None, Key=None, PartNumber=None, **kwargs):
+        """Answer the head of the key, or raise a 404 ClientError."""
+
+        import botocore.exceptions
+
+        self.events.append(("head", Key))
+        if Key not in self.objects:
+            raise botocore.exceptions.ClientError(
+                {"Error": {"Code": "404"}, "ResponseMetadata": {"HTTPStatusCode": 404}},
+                "HeadObject",
+            )
+        head = dict(self.objects[Key])
+        if PartNumber:
+            head["ContentLength"] = min(self.part_size, head["ContentLength"])
+        return head
+
+    def copy(self, CopySource, Bucket, Key, ExtraArgs=None, Config=None, **kwargs):
+        """Copy the source object to Key as a new STANDARD version."""
+
+        source = self.objects[CopySource["Key"]]
+        self.versions += 1
+        self.events.append(("copy", CopySource["Key"], Key))
+        self.copies.append((CopySource["Key"], Key))
+        self.configs.append(Config)
+        if self.on_copy:
+            self.on_copy(CopySource["Key"], Key)
+        self.objects[Key] = {
+            "ContentLength": source["ContentLength"],
+            "ETag": self.copy_etag or source["ETag"],
+            "StorageClass": "STANDARD",
+            "VersionId": f"copy-{self.versions}",
+        }
+
+    def delete_object(self, Bucket=None, Key=None, VersionId=None, **kwargs):
+        """Remove the key. Record the key and the version id."""
+
+        self.events.append(("delete", Key, VersionId))
+        self.deletes.append((Key, VersionId))
+        self.objects.pop(Key, None)
+        return {}
+
+    def list_objects(self, Bucket=None, Prefix="", MaxKeys=1000, **kwargs):
+        """List the keys that start with Prefix."""
+
+        keys = sorted(key for key in self.objects if key.startswith(Prefix))[:MaxKeys]
+        if not keys:
+            return {}
+        return {
+            "Contents": [
+                {
+                    "Key": key,
+                    "StorageClass": self.objects[key].get("StorageClass", "STANDARD"),
+                }
+                for key in keys
+            ]
+        }
+
+    def restore_object(self, Bucket=None, Key=None, RestoreRequest=None, **kwargs):
+        """Record the restore request and its tier."""
+
+        self.events.append(("restore", Key))
+        self.restores.append((Key, RestoreRequest["GlacierJobParameters"]["Tier"]))
+        if Key in self.objects:
+            self.objects[Key]["Restore"] = 'ongoing-request="true"'
+        return {}

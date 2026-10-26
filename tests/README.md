@@ -10,7 +10,7 @@ The suite has approximately 1,800 tests. It takes approximately 50 seconds. The 
 
 - `conftest.py`: the session app, the clean state of each test, the signed-in clients, `held_lock`, `sample_mkv`, `sample_mp4`, `csrf_token_from`, and `page_csrf_token`
 - `factories.py`: the records (`make_movie`, `make_movie_file`, `make_tv_series`, `make_tv_file`, `make_person`)
-- `fakes.py`: the stand-ins (`Response`, `tmdb_router`, `S3`, `SQS`, `Job`, `RecordingQueue`)
+- `fakes.py`: the stand-ins (`Response`, `tmdb_router`, `S3`, `ArchiveS3`, `SQS`, `Job`, `RecordingQueue`)
 - `media.py`: the sample media (`make_sample_mkv`, `make_sample_mp4`)
 - `localization_helpers.py`: the helpers of the 3 localization test files
 

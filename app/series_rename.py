@@ -2,14 +2,13 @@
 
 This is the fix for Plex disambiguation (Batman becomes Batman (1966)).
 
-This task does NOT touch S3. This is intentional. A series rename
-changes the display name, not the identity. The untouched names get
-the new title (#362), but the aws_key column keeps the old key. That
-column is the authoritative pointer to a real archived object. A rename
-of the archived keys would force a new upload of every Deep Archive
-file (the fallback of rename_untouched_object). The weekly S3 sync
-compares the stored keys. It never compares a key against a basename.
-Thus, the old keys stay green forever.
+The archive keys follow the untouched names (#369). A rename rewrites
+the untouched name of each file. Then it requests the move of each
+archive to the key of the new name. The move job copies the S3 object
+on the server side, after a restore from Deep Archive when necessary.
+aws_key changes only after the copy is verified. Thus, aws_key names a
+real object at every moment. No S3 work starts before the check that
+each file carries the series title (#317).
 
 The task is resumable. Each file commits after its own disk move. A
 file that is already at its target counts as moved. A record whose
@@ -28,6 +27,7 @@ from unidecode import unidecode
 from werkzeug.local import LocalProxy
 
 from app.tasks import enqueue_task
+from app.aws_storage import request_archive_move
 from app.pipeline import migrate_trail
 from app import db, get_app
 from app.models import TVSeries
@@ -170,7 +170,7 @@ def rename_tv_series_task(series_id, new_title):
                 moved += 1
             else:
                 # There is no local copy. This is an archived-only record.
-                # The rows get the new name. The S3 key stays as it is.
+                # The rows get the new name. The archive moves too.
                 db_only += 1
 
             file.dirname = new_dirname
@@ -187,6 +187,8 @@ def rename_tv_series_task(series_id, new_title):
             )
             if file.untouched_basename != old_untouched:
                 migrate_trail(current_app.redis, old_untouched, file.untouched_basename)
+            # The move job goes to the queue at this commit.
+            request_archive_move(file)
             db.session.commit()
 
         # This step is aware of junk files. It is not a plain rmdir. The
