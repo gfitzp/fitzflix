@@ -75,6 +75,38 @@ class TestWebhookAuth:
         )
         assert response.status_code == 403
 
+    def test_rejects_missing_auth_before_it_reads_the_body(
+        self, client, endpoint, caplog
+    ):
+        # An unauthenticated caller gets 401, also with a bad body. The
+        # body never goes to the log (#398).
+        response = client.post(
+            endpoint, data="{not json SECRET-BODY", content_type="application/json"
+        )
+        assert response.status_code == 401
+        assert "SECRET-BODY" not in caplog.text
+        response = client.post(endpoint, data="SECRET-BODY", content_type="text/plain")
+        assert response.status_code == 401
+
+    def test_rejects_a_bad_body_after_auth(self, client, endpoint):
+        response = client.post(
+            endpoint,
+            data="{not json",
+            content_type="application/json",
+            headers=auth_header(),
+        )
+        assert response.status_code == 400
+
+    def test_caps_the_logged_payload(self, client, endpoint, caplog):
+        response = client.post(
+            endpoint,
+            json={"eventType": "Grab", "pad": "x" * 20000},
+            headers=auth_header(),
+        )
+        assert response.status_code == 202
+        assert "[cut]" in caplog.text
+        assert "x" * 5000 not in caplog.text
+
     def test_accepts_test_event(self, client, endpoint):
         response = client.post(
             endpoint, json={"eventType": "Test"}, headers=auth_header()

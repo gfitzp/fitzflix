@@ -11,6 +11,11 @@ from flask import current_app, jsonify, request
 
 from app.api.auth import authenticate_api_request
 
+# The webhook writes at most this many characters of a payload to the log.
+# An event of Radarr or Sonarr is some kilobytes.
+
+LOGGED_PAYLOAD_CHARS = 4000
+
 
 def import_event_webhook(service, observe=None):
     """Wrap a webhook handler with authentication and an import-event filter.
@@ -21,15 +26,15 @@ def import_event_webhook(service, observe=None):
     ignores them. observe is a function of the payload. It sees each
     authenticated event except a test before the filter. A failure of
     observe is logged and does not change the answer.
+
+    The authentication runs before the wrapper reads the body (#398). A
+    caller without a valid key gets 401, and nothing of the body goes to
+    the log. The log line holds only the first part of a large payload.
     """
 
     def decorator(handler):
         @functools.wraps(handler)
         def wrapper():
-            current_app.logger.info(
-                f"Authorization: *redacted*, Request: {request.get_json()}"
-            )
-            payload = request.get_json()
             response = jsonify({})
 
             if not request.authorization:
@@ -59,6 +64,15 @@ def import_event_webhook(service, observe=None):
                     f"'{user.email}'; the webhook needs an admin's API key"
                 )
                 response.status_code = 403
+                return response
+
+            payload = request.get_json(silent=True)
+            logged = str(payload)
+            if len(logged) > LOGGED_PAYLOAD_CHARS:
+                logged = logged[:LOGGED_PAYLOAD_CHARS] + " [cut]"
+            current_app.logger.info(f"Authorization: *redacted*, Request: {logged}")
+            if not isinstance(payload, dict):
+                response.status_code = 400
                 return response
 
             # If the service only confirms the connection, return a valid
