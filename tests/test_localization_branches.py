@@ -143,6 +143,34 @@ def test_a_file_too_big_for_staging_is_localized_beside_the_library(
     os.remove(output)
 
 
+def test_an_unstaged_localization_that_fails_removes_its_partial_output(
+    app, sample_mkv, incoming_dir, monkeypatch
+):
+    """Without staging, the partial output is a hidden library file (#389)."""
+
+    from app import importing
+
+    monkeypatch.setattr(importing, "reserve_staging", lambda *args: "too big")
+    basename = "Half Written (2021) - [DVD].mkv"
+    source = os.path.join(incoming_dir, basename)
+    with open(sample_mkv, "rb") as f_in, open(source, "wb") as f_out:
+        f_out.write(f_in.read())
+    directory = os.path.join(app.config["LIBRARY_DIR"], "Movies/Half Written (2021)")
+    hidden = os.path.join(directory, f".{basename}")
+
+    def half_written(work_path, hidden_output_file, *args):
+        os.makedirs(os.path.dirname(hidden_output_file), exist_ok=True)
+        with open(hidden_output_file, "wb") as handle:
+            handle.write(b"partial")
+        raise subprocess.CalledProcessError(2, "mkvmerge")
+
+    monkeypatch.setattr(importing, "_localize_matroska", half_written)
+    with app.app_context():
+        assert localization_task(source) is True
+    assert not os.path.exists(hidden)
+    assert basename in rejected_files(app)
+
+
 def _track(language, streamorder):
     """Return a track dict of the shape that get_*_tracks_from_file gives."""
 

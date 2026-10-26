@@ -1258,15 +1258,18 @@ def _localize(source_path, work_path, file_details, staged, job, strays):
     # extra is only the extra, for example "Trailer.mkv". The extras of 2
     # films would then write the same staging file.
 
+    # The partial output of a failed step is a stray in both places
+    # (#389). Without staging, it is a hidden file in the library folder.
+
     if staged:
         hidden_output_file = staged_output_path(
             staging_dir, basename, file_details.get("basename")
         )
-        strays.append(hidden_output_file)
     else:
         hidden_output_file = hidden(
             os.path.join(output_directory, file_details.get("basename"))
         )
+    strays.append(hidden_output_file)
 
     # Export a localized version of the incoming file.
 
@@ -1585,7 +1588,7 @@ def _hand_off(run, work_path, file_details, hidden_output_file, staged, conversi
                 description=f"'{basename}'",
             )
     except Exception:
-        abandon_handoff(source_path, lock, hidden_output_file, staged)
+        abandon_handoff(source_path, lock, hidden_output_file)
         return False
     return True
 
@@ -1633,23 +1636,19 @@ def abandon_import(
             current_app.logger.warning(traceback.format_exc())
 
 
-def abandon_handoff(source_path, lock, staged_output, staged=True):
+def abandon_handoff(source_path, lock, staged_output):
     """Clean up after a stage could not queue the next stage (#340).
 
-    Remove the staged output, release the staging reservation and the
+    Remove the localized output, release the staging reservation and the
     title lock, and leave the source in place. The hourly sweep of the
-    import directory queues the source again."""
+    import directory queues the source again. Without staging, the
+    output is a hidden file in the library folder (#389). It goes too."""
 
     current_app.logger.error(
         f"'{os.path.basename(source_path)}' The next stage could not be "
         f"queued. The source stays for the next sweep: " + traceback.format_exc()
     )
-    abandon_import(
-        source_path,
-        lock,
-        strays=[staged_output] if staged else [],
-        keep_source=True,
-    )
+    abandon_import(source_path, lock, strays=[staged_output], keep_source=True)
 
 
 def _plan_conversion_or_reject(file_path, file_details):
