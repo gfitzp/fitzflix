@@ -139,3 +139,37 @@ def test_the_sweep_queues_a_failed_in_place_import_again(app, tmp_path):
         fail_once()
         importing._retry_failed_in_place_imports()
         assert queued() == []
+
+
+def test_an_in_place_retry_counts_only_a_queued_job_in_a_fixed_window(
+    app, tmp_path, monkeypatch
+):
+    """A sweep that queues nothing does not count, and the window does not move (follow-up #437)."""
+
+    from rq.job import JobStatus
+    from rq.registry import FailedJobRegistry
+
+    import app.importing as importing
+    from app import path_tag
+
+    library_file = tmp_path / "Window In Place (2021) - [WEBDL-1080p].mkv"
+    library_file.write_bytes(b"arr import")
+    queue = app.import_queue
+    job = queue.enqueue("app.videos.localization_task", str(library_file))
+    queue.remove(job)
+    job.set_status(JobStatus.FAILED)
+    FailedJobRegistry(queue=queue).add(job, ttl=3600, exc_string="killed")
+    counter = importing.IN_PLACE_RETRIES_KEY.format(path_tag(str(library_file)))
+
+    with app.app_context():
+        monkeypatch.setattr(importing, "enqueue_localization", lambda *a, **k: None)
+        importing._retry_failed_in_place_imports()
+        assert app.redis.get(counter) is None
+
+        monkeypatch.setattr(importing, "enqueue_localization", lambda *a, **k: object())
+        importing._retry_failed_in_place_imports()
+        assert app.redis.get(counter) == b"1"
+        app.redis.expire(counter, 100)
+        importing._retry_failed_in_place_imports()
+        assert app.redis.get(counter) == b"2"
+        assert app.redis.ttl(counter) <= 100

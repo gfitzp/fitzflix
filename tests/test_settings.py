@@ -472,3 +472,38 @@ def test_the_startup_check_reads_archival_from_the_page(app, monkeypatch, caplog
     with caplog.at_level(logging.WARNING):
         check_config(app)
     assert "ARCHIVE_ORIGINAL_MEDIA is set, but uploads will fail" in caplog.text
+
+
+def test_a_database_fault_keeps_the_last_values_for_some_seconds(
+    app, monkeypatch, caplog
+):
+    """Redis answers and the table read fails. The warning comes 1 time (follow-up #440)."""
+
+    from sqlalchemy.exc import OperationalError
+
+    from app import db, settings
+
+    clock = [1000.0]
+    monkeypatch.setattr(settings.time, "monotonic", lambda: clock[0])
+    with app.app_context():
+        app.redis.set(settings.SETTINGS_VERSION_KEY, 7)
+        assert settings.get_setting("CREATE_FLAC_TWINS") is True
+        clock[0] += settings.VERSIONED_CACHE_SECONDS + 1
+
+        def broken_connect(*args, **kwargs):
+            raise OperationalError("SELECT", {}, Exception("MariaDB is away"))
+
+        monkeypatch.setattr(db.engine, "connect", broken_connect)
+        caplog.clear()
+        for _ in range(5):
+            assert settings.get_setting("CREATE_FLAC_TWINS") is True
+        warnings = [
+            r for r in caplog.records if "Cannot read the page settings" in r.message
+        ]
+        assert len(warnings) == 1
+        clock[0] += settings.CACHE_SECONDS
+        settings.get_setting("CREATE_FLAC_TWINS")
+        warnings = [
+            r for r in caplog.records if "Cannot read the page settings" in r.message
+        ]
+        assert len(warnings) == 2

@@ -22,11 +22,15 @@ from flask import current_app
 # (noncurrent_days of retention), "scratch" (an expiry of the current and
 # the noncurrent objects), or None.
 
+# current_days is the expiry of the current objects of a scratch area.
+# None means the default of aws_setup (SCRATCH_CURRENT_DAYS). synced
+# means that the weekly S3 sync lists the prefix with the archives.
+
 Prefix = namedtuple(
     "Prefix",
     "name config_key fixed lifecycle rule_ids noncurrent_days "
-    "restore_notification delete",
-    defaults=(None, None, None, (), None, False, "marker"),
+    "restore_notification delete current_days synced",
+    defaults=(None, None, None, (), None, False, "marker", None, False),
 )
 
 PREFIXES = (
@@ -90,6 +94,27 @@ PREFIXES = (
         ),
         noncurrent_days=1,
         delete="versions",
+    ),
+    # The run-scoped uploads of the imports (#430). A re-rip whose bytes
+    # differ from a claimed untouched/ archive uploads here first. After
+    # the commit, an archive move copies it to untouched/ and deletes each
+    # version here. The prefix is outside untouched/. Thus, the Deep
+    # Archive rule of untouched/ never moves an upload that waits for its
+    # import. A move then never needs a restore. A failed run leaves its
+    # upload. The sync prunes it after its grace, and the expiry removes
+    # what stays after 14 days.
+    Prefix(
+        "pending-untouched",
+        fixed="pending-untouched",
+        lifecycle="scratch",
+        rule_ids=(
+            "fitzflix-pending-untouched-expire",
+            "fitzflix-pending-untouched-markers",
+        ),
+        noncurrent_days=1,
+        delete="versions",
+        current_days=14,
+        synced=True,
     ),
     # The nightly database dumps. The backup task deletes the old versions
     # by version id (#318).

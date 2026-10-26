@@ -994,3 +994,20 @@ def test_the_stream_keeps_the_lfe_of_3_1_and_4_1(app, channels, expected):
     else:
         assert command[command.index("-ac") + 1] == expected
     assert command[-3:] == ["-f", "mpegts", "pipe:1"]
+
+
+def test_the_catalog_count_ties_a_single_and_a_span_as_the_dvr_airs_them(app):
+    """A single S05E25 and the span S05E25-E26 count as the 1 program that airs (follow-up #428)."""
+
+    from app import dvr
+
+    with app.app_context():
+        series = make_tv_series("Span Tie Show")
+        make_tv_file(series, 5, 25, "WEBDL-1080p")
+        make_tv_file(series, 5, 25, "WEBDL-1080p", last_episode=26)
+        make_tv_file(series, 5, 26, "WEBDL-1080p")
+        db.session.commit()
+
+        episodes = dvr._series_episodes(series.id)
+        assert [(f.episode, f.last_episode) for f in episodes] == [(25, 26)]
+        assert dvr._series_catalog()[series.id]["episodes"] == len(episodes)

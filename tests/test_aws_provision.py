@@ -235,6 +235,8 @@ def test_provision_preserves_existing_hand_made_configuration(tmp_path):
         "bucket restore-completed notification for transcoded/": "created",
         "lifecycle: mediaconvert-scratch/ expiry (7 days, noncurrent 1 day)": "created",
         "lifecycle: mediaconvert-scratch/ expired delete markers": "created",
+        "lifecycle: pending-untouched/ expiry (14 days, noncurrent 1 day)": "created",
+        "lifecycle: pending-untouched/ expired delete markers": "created",
     }
 
     # The hand-made untouched/ rule keeps every field except the increased
@@ -256,6 +258,8 @@ def test_provision_preserves_existing_hand_made_configuration(tmp_path):
         "transcoded/",
         "mediaconvert-scratch/",
         "mediaconvert-scratch/",
+        "pending-untouched/",
+        "pending-untouched/",
     ]
     queue_configurations = s3.notification["QueueConfigurations"]
     assert queue_configurations[0] == notification["QueueConfigurations"][0]

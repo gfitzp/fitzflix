@@ -392,3 +392,20 @@ def test_cleanup_keeps_the_input_of_a_waiting_conversion(app, monkeypatch):
         for path in (waiting, stray, moving):
             if os.path.exists(path):
                 os.remove(path)
+
+
+def test_cleanup_keeps_a_restored_copy_that_waits_for_the_admin(app, monkeypatch):
+    """A restore whose import name stayed taken keeps its copy past 7 days (follow-up #433)."""
+
+    monkeypatch.setattr(maintenance, "task_send_email", lambda *a, **k: None)
+    waiting = plant(
+        os.path.join(
+            app.config["IMPORT_DIR"], ".restore-untouched-Kept (2020) - [DVD].mkv"
+        ),
+        30,
+    )
+    try:
+        maintenance.cleanup_orphaned_files()
+        assert os.path.exists(waiting)
+    finally:
+        os.remove(waiting)

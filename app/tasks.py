@@ -395,13 +395,28 @@ def start_bulk_run(prefix, *names):
     A run is pending while a job of it waits or runs. The gate covers
     the time that a post takes to queue its jobs."""
 
-    gate = BULK_GATE_KEY.format(prefix if isinstance(prefix, str) else prefix[0])
+    gate = _bulk_gate(prefix)
     if not current_app.redis.set(gate, "1", nx=True, ex=BULK_GATE_SECONDS):
         return False
     if bulk_run_pending(prefix, *names):
         current_app.redis.delete(gate)
         return False
     return True
+
+
+def finish_bulk_run(prefix):
+    """Release the gate of a bulk post after it queued its jobs (follow-up #439).
+
+    The queued jobs now keep a second post out. A run that fails at once
+    can then start again at once, not after BULK_GATE_SECONDS."""
+
+    current_app.redis.delete(_bulk_gate(prefix))
+
+
+def _bulk_gate(prefix):
+    """Return the Redis key of the gate of a bulk run."""
+
+    return BULK_GATE_KEY.format(prefix if isinstance(prefix, str) else prefix[0])
 
 
 def requeue_job_id(name, key=None, counters=None):

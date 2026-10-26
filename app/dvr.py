@@ -432,13 +432,17 @@ def _series_catalog():
     # A span file counts 1 time. A single file of an episode that a span
     # covers is not a program of its own (#428).
 
+    # The order is the order of _series_episodes. Thus, a single file and
+    # a span with the same first episode tie the same way in both. The
+    # count then agrees with the programs that air (follow-up #428).
+
     episodes_by_series = {}
     for series_id, season, episode, last_episode in (
         db.session.query(File.series_id, File.season, File.episode, File.last_episode)
+        .join(RefQuality, RefQuality.id == File.quality_id)
         .filter(File.series_id != None)  # noqa: E711
         .filter(File.season > 0)
-        .order_by(File.series_id, File.season, File.episode)
-        .distinct()
+        .order_by(File.series_id, File.season, File.episode, *TV_BEST_ORDER)
         .all()
     ):
         episodes_by_series.setdefault(series_id, []).append(

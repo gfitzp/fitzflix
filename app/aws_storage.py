@@ -274,7 +274,14 @@ ARTWORK_PREFIXES = ("cover", "default", "folder", "movie", "poster")
 ARTWORK_SUFFIXES = ("jpg", "jpeg", "png", "tbn")
 
 
-def sync_aws_s3_storage_task():
+# A library volume that drops during the file pass books the sync again
+# after this wait, up to MAX_SYNC_VOLUME_DROPS times (follow-up #431).
+
+SYNC_VOLUME_DROP_WAIT = timedelta(minutes=30)
+MAX_SYNC_VOLUME_DROPS = 6
+
+
+def sync_aws_s3_storage_task(volume_drops=0):
     """Add the files to AWS, and remove the files that are not in the library.
 
     The sync runs in phases (#358). Each phase has its own error
@@ -291,12 +298,17 @@ def sync_aws_s3_storage_task():
             return True
 
         failures = []
+        dropped = []
 
         def phase(name, func, *args):
             """Run 1 phase. Return (ok, result). Log and record a failure."""
 
             try:
                 return True, func(*args)
+            except LibraryVolumeDropped as error:
+                db.session.rollback()
+                dropped.append(error)
+                return False, None
             except Exception as error:
                 db.session.rollback()
                 current_app.logger.error(
@@ -310,6 +322,8 @@ def sync_aws_s3_storage_task():
         unreferenced_files = []
         if listed:
             reconciled, result = phase("file records", _reconcile_files, listing, job)
+            if dropped:
+                return _retry_after_volume_drop(dropped[0], volume_drops)
             if reconciled:
                 inventory_export, orphaned_files = result
                 phase("inventory", _put_inventory, inventory_export)
@@ -422,7 +436,7 @@ def _list_archives():
     prefixes = [
         f"{s3_layout.prefix_value(entry)}/"
         for entry in s3_layout.PREFIXES
-        if entry.lifecycle == "archive"
+        if entry.lifecycle == "archive" or entry.synced
     ]
     listed = [
         entry
@@ -436,6 +450,29 @@ def _list_archives():
 
 class LibraryVolumeDropped(RuntimeError):
     """A library volume dropped or was mounted again during the file pass (#431)."""
+
+
+def _retry_after_volume_drop(error, volume_drops):
+    """Book the sync again after a volume drop in its file pass. Return True.
+
+    A short NFS drop must not cost the weekly sync (follow-up #431). The
+    retry comes after SYNC_VOLUME_DROP_WAIT. After MAX_SYNC_VOLUME_DROPS
+    drops, the sync fails loudly."""
+
+    if volume_drops + 1 >= MAX_SYNC_VOLUME_DROPS:
+        current_app.logger.error(
+            f"{error}. That was drop {volume_drops + 1} of "
+            f"{MAX_SYNC_VOLUME_DROPS}. The sync stops"
+        )
+        raise error
+    requeue(
+        "app.videos.sync_aws_s3_storage_task",
+        key=None,
+        delay=SYNC_VOLUME_DROP_WAIT,
+        reason=f"stopped its file pass ({error})",
+        counters={"volume_drops": volume_drops + 1},
+    )
+    return True
 
 
 def _library_devices():
@@ -1268,8 +1305,13 @@ def restores_directly(key):
 
 
 def _archive_prefix_of(key):
-    """Return the archive prefix (untouched, modified, transcoded) that holds key, or None."""
+    """Return the archive prefix (untouched, modified, transcoded) that holds key, or None.
 
+    A run-scoped upload of an import (#430) belongs to untouched/. Its
+    archive move goes there."""
+
+    if is_pending_archive(key):
+        return current_app.config["AWS_UNTOUCHED_PREFIX"]
     entry = s3_layout.prefix_of(key)
     if entry is None or entry.lifecycle != "archive":
         return None
@@ -3221,17 +3263,17 @@ def aws_upload(
 
 
 # A same-name import whose bytes differ from a claimed untouched/ object
-# uploads below this folder of untouched/ first (#430). The final key
-# changes only after the records commit.
+# uploads below this prefix first (#430). The final key changes only
+# after the records commit. The prefix is outside untouched/. Thus, the
+# day-0 Deep Archive rule of untouched/ never applies to it.
 
-PENDING_ARCHIVE_FOLDER = ".pending"
+PENDING_ARCHIVE_PREFIX = s3_layout.PREFIX_BY_NAME["pending-untouched"].fixed
 
 
 def is_pending_archive(key):
     """Return True if key is a run-scoped upload of an import (#430)."""
 
-    prefix = current_app.config["AWS_UNTOUCHED_PREFIX"]
-    return _in_prefix(key, os.path.join(prefix, PENDING_ARCHIVE_FOLDER))
+    return _in_prefix(key, PENDING_ARCHIVE_PREFIX)
 
 
 def _head_or_none(s3_client, key):
@@ -3297,9 +3339,7 @@ def pending_archive_key(key, run_id):
     """Return the run-scoped key of an import upload for the normal key (#430)."""
 
     prefix = current_app.config["AWS_UNTOUCHED_PREFIX"]
-    return os.path.join(
-        prefix, PENDING_ARCHIVE_FOLDER, run_id, os.path.relpath(key, prefix)
-    )
+    return os.path.join(PENDING_ARCHIVE_PREFIX, run_id, os.path.relpath(key, prefix))
 
 
 def discard_pending_archive(key):

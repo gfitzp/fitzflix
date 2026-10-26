@@ -191,3 +191,40 @@ def test_maintenance_page_links_to_rejects(app, admin_client):
     page = admin_client.get("/maintenance").get_data(as_text=True)
     assert "Triage rejected files" in page
     assert "/rejects" in page
+
+
+def test_a_failed_rename_after_the_move_puts_the_file_back(
+    app, admin_client, monkeypatch
+):
+    """The copy arrived, then the rename failed. The file goes back to rejects (follow-up #441)."""
+
+    import app.main.admin as admin
+
+    name = "Rename Fault (2021) - [DVD].mkv"
+    source = reject_a_file(app, "exception", name)
+    real_rename = os.rename
+
+    def failing_rename(src, dst):
+        if dst == os.path.join(app.config["IMPORT_DIR"], name):
+            raise OSError(5, "Input/output error")
+        return real_rename(src, dst)
+
+    monkeypatch.setattr(admin.os, "rename", failing_rename)
+    page = admin_client.get("/rejects").get_data(as_text=True)
+    body = admin_client.post(
+        "/rejects",
+        data={
+            "csrf_token": csrf_token_from(page),
+            "file_path": os.path.join("exception", name),
+            "reimport_submit": "Re-import",
+        },
+        follow_redirects=True,
+    ).get_data(as_text=True)
+    try:
+        assert "could not be moved" in body
+        assert os.path.exists(source)
+        assert not os.path.exists(os.path.join(app.config["IMPORT_DIR"], f".{name}"))
+        assert not os.path.exists(os.path.join(app.config["IMPORT_DIR"], name))
+    finally:
+        if os.path.exists(source):
+            os.remove(source)

@@ -52,6 +52,7 @@ from app import (
     get_app,
     importable_basename,
     makedirs_on_mounted_volume,
+    path_tag,
     retry_job_id,
     safe_job_id,
 )
@@ -1228,7 +1229,7 @@ def _archive_original(work_path, file_details):
     """Upload the untouched file to AWS S3 storage as a backup, if the setting is on.
 
     A surviving record can claim the untouched key for different bytes.
-    Then the upload goes to a run-scoped key below untouched/.pending/
+    Then the upload goes to a run-scoped key below pending-untouched/
     (#430). The record of the import claims that key. After the commit,
     an archive move takes it to its final key. A failed import deletes
     it. Thus, a failure never replaces the archive of a good rip."""
@@ -3291,9 +3292,11 @@ def manual_import_task():
             return True
 
 
-# The retries of the failed in-place localization of 1 path, for 7 days.
+# The retries of the failed in-place localization of 1 path. The window
+# is a fixed 7 days from the first retry (follow-up #437).
 
-IN_PLACE_RETRIES_KEY = "fitzflix:in-place-import-retries"
+IN_PLACE_RETRIES_KEY = "fitzflix:in-place-import-retries:{}"
+IN_PLACE_RETRY_WINDOW = 7 * 86400
 MAX_IN_PLACE_RETRIES = 3
 
 
@@ -3323,15 +3326,20 @@ def _retry_failed_in_place_imports():
             continue
         if localization_pending(queue, path):
             continue
-        tries = redis.hincrby(IN_PLACE_RETRIES_KEY, path, 1)
-        redis.expire(IN_PLACE_RETRIES_KEY, 7 * 86400)
-        if tries > MAX_IN_PLACE_RETRIES:
+        counter = IN_PLACE_RETRIES_KEY.format(path_tag(path))
+        if int(redis.get(counter) or 0) >= MAX_IN_PLACE_RETRIES:
             continue
-        if enqueue_localization(path, quiet=True):
-            current_app.logger.warning(
-                f"'{path}' Its in-place localization failed. It is queued again "
-                f"(retry {tries} of {MAX_IN_PLACE_RETRIES})"
-            )
+        if not enqueue_localization(path, quiet=True):
+            continue
+        # Only a queued retry counts. The first retry starts the window,
+        # and the later retries do not move it.
+        tries = redis.incr(counter)
+        if tries == 1:
+            redis.expire(counter, IN_PLACE_RETRY_WINDOW)
+        current_app.logger.warning(
+            f"'{path}' Its in-place localization failed. It is queued again "
+            f"(retry {tries} of {MAX_IN_PLACE_RETRIES})"
+        )
 
 
 # Plex external-id tags (#155). A movie name or a show-folder name can

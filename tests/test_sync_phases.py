@@ -206,13 +206,47 @@ def test_a_volume_that_drops_in_the_file_pass_stops_the_restores(app, monkeypatc
         return [] if len(checks) == 1 else ["/Volumes/Movies"]
 
     monkeypatch.setattr("app.videos._dead_volumes", dead_after_the_idle_check)
+    errors = []
+    monkeypatch.setattr(app.logger, "error", lambda *a, **k: errors.append(a))
 
-    with pytest.raises(RuntimeError, match="file records"):
-        aws_storage.sync_aws_s3_storage_task()
+    # A drop is a short NFS fault. The sync books itself again in 30
+    # minutes, with no ERROR record (follow-up #431).
+    with app.app_context():
+        assert aws_storage.sync_aws_s3_storage_task() is True
 
     assert restores == []
     assert calls["deletes"] == []
+    assert calls["uncataloged"] == []
     assert len(checks) == 2
+    assert errors == []
+    from tests.test_scheduling import scheduled_jobs
+
+    (retry,) = [
+        job
+        for job in scheduled_jobs(app.maintenance_queue)
+        if job.func_name == "app.videos.sync_aws_s3_storage_task"
+    ]
+    assert retry.kwargs == {"volume_drops": 1}
+
+
+def test_the_sixth_volume_drop_fails_the_sync(app, monkeypatch):
+    """The retries have a limit. The last drop is an ERROR and fails the job (follow-up #431)."""
+
+    from app import aws_storage
+
+    _absent_archived_film(app, "Dropped Six Times", 2003)
+    _sync_env(app, monkeypatch, {})
+    checks = []
+
+    def dead_after_the_idle_check(paths):
+        checks.append(paths)
+        return [] if len(checks) == 1 else ["/Volumes/Movies"]
+
+    monkeypatch.setattr("app.videos._dead_volumes", dead_after_the_idle_check)
+    with app.app_context(), pytest.raises(aws_storage.LibraryVolumeDropped):
+        aws_storage.sync_aws_s3_storage_task(
+            volume_drops=aws_storage.MAX_SYNC_VOLUME_DROPS - 1
+        )
 
 
 def test_a_remount_in_the_file_pass_fails_the_pass(app, monkeypatch):

@@ -1071,6 +1071,9 @@ def review_task(user_id, title, rating):
                     user_id=user_id, movie_id=movie.id, date_watched=None
                 ).first()
                 stars = star_rating_fields(rating)
+                # The liked flag follows the stars only when the stars
+                # change. An unchanged rating keeps a liked flag from
+                # Letterboxd (follow-up #442).
                 if review is None:
                     review = UserMovieReview(
                         user_id=user_id,
@@ -1078,6 +1081,7 @@ def review_task(user_id, title, rating):
                         review="",
                         date_watched=None,
                         date_reviewed=None,
+                        liked=rating >= 3,
                     )
                     db.session.add(review)
                 elif _stars_changed(review, stars):
@@ -1087,9 +1091,9 @@ def review_task(user_id, title, rating):
                     review.date_updated = datetime.now()
                     if review.date_reviewed is None:
                         review.date_reviewed = review.date_updated
+                    review.liked = rating >= 3
                 for field, value in stars.items():
                     setattr(review, field, value)
-                review.liked = rating >= 3
                 db.session.commit()
                 current_app.logger.info(f"Rated '{title}' {rating} out of 5 stars")
 

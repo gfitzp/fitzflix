@@ -2421,10 +2421,16 @@ def test_the_legacy_ratings_import_is_idempotent(app):
         assert row.liked is False and row.date_updated is None
 
     # The same rating again changes nothing. Thus, it is not exported again.
+    # A liked flag from Letterboxd on the row stays (follow-up #442).
+    with app.app_context():
+        row = UserMovieReview.query.filter_by(user_id=user_id, movie_id=rated_id).one()
+        row.liked = True
+        db.session.commit()
     assert review_task(user_id, "Legacy Rated Film", 2.5) is True
     with app.app_context():
         row = UserMovieReview.query.filter_by(user_id=user_id, movie_id=rated_id).one()
         assert row.date_updated is None
+        assert row.liked is True
 
     before = datetime.now() - timedelta(seconds=1)
     for stars in (3.5, 4.0):

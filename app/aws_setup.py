@@ -319,13 +319,14 @@ def provision(config, s3, sqs, echo=print, force=False):
             continue
         scratch_prefix = table_prefix(entry)
         expire_id, markers_id = entry.rule_ids
+        current_days = entry.current_days or SCRATCH_CURRENT_DAYS
         scratch_rules = (
             (
                 expire_id,
-                f"lifecycle: {scratch_prefix} expiry ({SCRATCH_CURRENT_DAYS} days, "
+                f"lifecycle: {scratch_prefix} expiry ({current_days} days, "
                 f"noncurrent {entry.noncurrent_days} day)",
                 {
-                    "Expiration": {"Days": SCRATCH_CURRENT_DAYS},
+                    "Expiration": {"Days": current_days},
                     "NoncurrentVersionExpiration": {
                         "NoncurrentDays": entry.noncurrent_days
                     },

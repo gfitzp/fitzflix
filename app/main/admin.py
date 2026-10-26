@@ -5,6 +5,7 @@ maintenance, the triage pages, the queue, and the pipeline trails."""
 
 import os
 import shutil
+import traceback
 import time
 
 
@@ -26,6 +27,7 @@ from flask_login import current_user, login_required
 from app.tasks import (
     bulk_job_id,
     enqueue_task,
+    finish_bulk_run,
     free_job_id,
     requeue_job_id,
     start_bulk_run,
@@ -687,6 +689,7 @@ def _refresh_criterion_post(form):
         description="Refreshing Criterion Collection information for all movies in library",
         job_id=bulk_job_id(CRITERION_RUN),
     )
+    finish_bulk_run(CRITERION_RUN)
     flash(
         "Refreshing Criterion Collection information for all movies in library",
         "info",
@@ -734,6 +737,7 @@ def _refresh_tmdb_post(form):
             description=f"Refreshing TMDB data for '{tv.title}'",
             job_id=bulk_job_id(TMDB_RUN),
         )
+    finish_bulk_run(TMDB_RUN)
     flash("Refreshing TMDB information for entire library", "info")
 
 
@@ -757,6 +761,7 @@ def _sync_storage_post(form):
         description="Syncing files with AWS S3 storage",
         job_id=bulk_job_id(SYNC_RUN),
     )
+    finish_bulk_run(SYNC_RUN)
     flash("Syncing files with AWS S3 storage", "info")
 
 
@@ -775,6 +780,7 @@ def _scan_library_post(form):
         description="Scanning track metadata for all files in the library",
         job_id=bulk_job_id(TRACK_SCAN_RUN),
     )
+    finish_bulk_run(TRACK_SCAN_RUN)
     flash("Scanning track metadata for all files in the library", "info")
 
 
@@ -926,6 +932,7 @@ def missing_files():
             at_front=True,
             job_id=bulk_job_id(MISSING_SCAN_RUN),
         )
+        finish_bulk_run(MISSING_SCAN_RUN)
         flash("Scanning the library for best files that have no local copy", "info")
         return redirect(url_for("main.missing_files"))
 
@@ -1800,11 +1807,26 @@ def rejects():
             staged = hidden(destination)
             try:
                 shutil.move(requested, staged)
-                os.rename(staged, destination)
             except OSError:
                 if os.path.exists(staged) and os.path.exists(requested):
                     os.remove(staged)
                 raise
+            try:
+                os.rename(staged, destination)
+            except OSError:
+                # The file is under its hidden name, and nothing imports
+                # it. It goes back to rejects (follow-up #441).
+                current_app.logger.error(
+                    f"'{basename}' Could not take its import name. It goes back "
+                    f"to rejects: " + traceback.format_exc()
+                )
+                shutil.move(staged, requested)
+                flash(
+                    f"'{basename}' could not be moved to the import directory. "
+                    f"It is still in the rejects directory.",
+                    "danger",
+                )
+                return redirect(url_for("main.rejects"))
             current_app.logger.info(
                 f"'{basename}' Moved from rejects to the import directory"
             )

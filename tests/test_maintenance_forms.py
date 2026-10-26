@@ -180,3 +180,21 @@ def test_a_second_missing_scan_queues_nothing(app, admin_client):
     scan()
     assert "already queued or running" in scan()
     assert _queued_names(app).count("app.missing_files.missing_best_files_task") == 1
+
+
+def test_a_run_that_failed_at_once_can_start_again(app, admin_client):
+    """The gate goes after the post queued its job (follow-up #439).
+
+    The job fails within the gate time. A new post queues a new run."""
+
+    _post(admin_client, {"scan_submit": "1"})
+    (job,) = [
+        job
+        for job in app.sql_queue.jobs
+        if job.func_name == "app.videos.track_metadata_scan_library"
+    ]
+    job.delete()
+
+    body = _post(admin_client, {"scan_submit": "1"}).get_data(as_text=True)
+    assert "already queued or running" not in body
+    assert _queued_names(app).count("app.videos.track_metadata_scan_library") == 1

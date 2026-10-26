@@ -254,13 +254,15 @@ def _page_values():
         loaded = _cache["loaded"]
         if loaded is not None:
             age = now - loaded
-            if version is None and age < CACHE_SECONDS:
-                return _cache["values"]
-            if (
-                version is not None
-                and version == _cache["version"]
-                and age < VERSIONED_CACHE_SECONDS
-            ):
+            cached_version = _cache["version"]
+            # A cache with no version (a failed table read, or no Redis at
+            # the read) holds for CACHE_SECONDS whatever the version says.
+            # Thus, a database fault does not cause a read and a warning
+            # at each call (follow-up #440).
+            if cached_version is None or version is None:
+                if age < CACHE_SECONDS:
+                    return _cache["values"]
+            elif version == cached_version and age < VERSIONED_CACHE_SECONDS:
                 return _cache["values"]
     try:
         with db.engine.connect() as connection:

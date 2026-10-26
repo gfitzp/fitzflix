@@ -1172,6 +1172,12 @@ ORPHAN_MAX_AGE_DAYS = 7
 ORPHAN_IGNORED_NAMES = {".DS_Store", ".localized"}
 ORPHAN_IGNORED_PREFIXES = ("._",)
 
+# A restored copy whose import name stayed taken waits under its staging
+# name for the admin (#433). The age of the file does not make it a
+# leftover. Thus, the file pass keeps it.
+
+ORPHAN_KEPT_PREFIXES = (".restore-",)
+
 # These are the contents that a directory can hold and still count as
 # removable leftovers (specified by Glenn): the @eaDir metadata trees of
 # Synology, macOS metadata, and stray image files. An example is a
@@ -1345,7 +1351,7 @@ def cleanup_orphaned_files():
                     if not name.startswith("."):
                         continue
                     if name in ORPHAN_IGNORED_NAMES or name.startswith(
-                        ORPHAN_IGNORED_PREFIXES
+                        ORPHAN_IGNORED_PREFIXES + ORPHAN_KEPT_PREFIXES
                     ):
                         continue
                     path = os.path.join(dirpath, name)

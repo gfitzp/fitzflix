@@ -54,7 +54,7 @@ def _incoming(sample_mkv, incoming_dir):
 
 
 def _pending_keys(fake):
-    return [key for key in fake.uploads if key.startswith("untouched/.pending/")]
+    return [key for key in fake.uploads if key.startswith("pending-untouched/")]
 
 
 def test_a_failed_rerip_leaves_the_claimed_archive_current(
@@ -118,8 +118,11 @@ def test_a_finished_rerip_moves_its_upload_to_the_final_key(
             if job.func_name == "app.videos.aws_delete" and job.args == (KEY,)
         ]
 
+        # The upload stays in S3 Standard. The move needs no restore.
+        assert fake.objects[pending[0]]["StorageClass"] == "STANDARD"
         new_etag = fake.objects[pending[0]]["ETag"]
         assert aws_storage.move_archive_object(row_id) is True
+        assert fake.restores == []
 
         db.session.expire_all()
         row = db.session.get(File, row_id)
@@ -211,3 +214,31 @@ def test_the_sync_warns_when_a_claimed_object_changed_after_its_upload(app, capl
         assert _replaced_after_upload(Row(), 55, later) is True
         assert "changed after the upload" in caplog.text
         assert _replaced_after_upload(Row(), 55, earlier) is False
+
+
+def test_the_pending_uploads_live_outside_untouched(app, monkeypatch):
+    """The run-scoped key is outside untouched/ and its Deep Archive rule (follow-up #430).
+
+    The weekly sync lists the prefix. Thus, it prunes a leftover upload
+    with every version, and a claim on it does not read as dangling."""
+
+    from app import aws_storage, s3_layout
+
+    with app.app_context():
+        key = aws_storage.pending_archive_key(KEY, "run1")
+        assert key == f"pending-untouched/run1/{BASENAME}"
+        assert not key.startswith("untouched/")
+        entry = s3_layout.prefix_of(key)
+        assert entry.name == "pending-untouched"
+        assert entry.lifecycle == "scratch" and entry.delete == "versions"
+        assert entry.current_days == 14
+        assert aws_storage._archive_prefix_of(key) == "untouched"
+
+        listed = []
+        monkeypatch.setattr(
+            aws_storage,
+            "get_matching_s3_objects",
+            lambda bucket, prefix="": listed.append(prefix) or [],
+        )
+        aws_storage._list_archives()
+        assert "pending-untouched/" in listed
