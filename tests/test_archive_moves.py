@@ -1025,3 +1025,29 @@ def test_a_second_request_of_a_waiting_move_adds_no_job(app):
         assert aws_storage.request_archive_move(file)
         db.session.commit()
         assert len(move_jobs(app)) == 1
+
+
+def test_a_restore_of_a_shared_key_goes_to_the_row_that_moves_it(app, s3):
+    """Rows A and B share key K. Only B has a pending move of K (#385)."""
+
+    from app import aws_storage, db
+
+    with app.app_context():
+        first = archived_film("Shared Stay", 1958, key_name="Shared (1958).mkv")
+        mover = archived_film("Shared Move", 1959, key_name="Shared (1958).mkv")
+        key = first.aws_key
+        assert mover.aws_key == key and first.id < mover.id
+        assert aws_storage.request_archive_move(mover)
+        db.session.commit()
+        for job in move_jobs(app):
+            job.delete()
+
+        downloads, moves = {}, {}
+        aws_storage._route_restore(s3.sqs, key, "handle-9", downloads, moves)
+        assert downloads == {}
+        assert moves[key].args == (mover.id,)
+        assert [
+            job
+            for job in app.file_queue.jobs
+            if job.func_name == "app.videos.download_task"
+        ] == []

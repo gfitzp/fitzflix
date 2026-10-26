@@ -1050,8 +1050,18 @@ def sqs_retrieve_task():
 
 
 def _file_claiming(key):
-    """Return the File row whose archive or transcoded/ copy is key, or None."""
+    """Return the File row whose archive or transcoded/ copy is key, or None.
 
+    2 rows can share a key. A row with a pending move of the key comes
+    first (#385). Else the restore of the move goes to a download."""
+
+    claimants = File.query.filter(
+        db.or_(File.aws_key == key, File.aws_transcoded_key == key)
+    ).order_by(File.id)
+    moving = claimants.filter(File.aws_key_target.isnot(None)).all()
+    for file in moving:
+        if move_source(file) == key:
+            return file
     return (
         File.query.filter_by(aws_key=key).first()
         or File.query.filter_by(aws_transcoded_key=key).first()
