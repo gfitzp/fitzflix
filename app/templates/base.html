@@ -420,9 +420,13 @@
 		// could land out of order and paint the older state. A double tap
 		// on 1 star could write 2 rows. A tap during a post does nothing.
 		// onState paints the answer. On any failure, the form falls back
-		// to a normal submission.
+		// to a normal submission. The tapped button is only on the
+		// FormData. form.submit() sends no submitter. Thus, the fallback
+		// first adds the name and the value of the button as a hidden
+		// input (#406). requestSubmit is not used, because it would start
+		// the submit handler of the form again.
 
-		function backgroundPost(form, url, kind, data, onState) {
+		function backgroundPost(form, url, kind, data, onState, submitter) {
 			if (form._postInFlight) return;
 			form._postInFlight = true;
 			postForState(url, kind, data, true).then(function(state) {
@@ -430,6 +434,16 @@
 				onState(state);
 			}).catch(function() {
 				form._postInFlight = false;
+				form.querySelectorAll("input[data-fallback-submitter]").forEach(
+					function(input) { input.remove(); });
+				if (submitter && submitter.name) {
+					var input = document.createElement("input");
+					input.type = "hidden";
+					input.name = submitter.name;
+					input.value = submitter.value;
+					input.setAttribute("data-fallback-submitter", "");
+					form.appendChild(input);
+				}
 				form.submit();
 			});
 		}
@@ -690,7 +704,7 @@
 				"ladder", data, function(state) {
 					paintLadder(button.closest(".star-row"), state);
 					afterTileState(form, state);
-				});
+				}, {name: "quick_rating", value: button.value});
 		});
 
 		// The poster popover (#45c): the anchors marked data-card-url
@@ -898,13 +912,15 @@
 			if (!form) return;
 			event.preventDefault();
 			var data = new FormData(form);
+			var submitter = null;
 			if (event.submitter && event.submitter.name) {
-				data.set(event.submitter.name, event.submitter.value || "1");
+				submitter = {name: event.submitter.name, value: event.submitter.value || "1"};
+				data.set(submitter.name, submitter.value);
 			}
 			backgroundPost(form, form.getAttribute("action"), "card", data, function(state) {
 				syncWatchlistForm(form, state.on_watchlist);
 				afterTileState(form, state);
-			});
+			}, submitter);
 		});
 
 		// The batched state of the tiles. paintTileState paints the star

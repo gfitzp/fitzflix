@@ -127,13 +127,27 @@ def test_page_script_guards_posts_and_clears_watchlist_tiles(app, admin_client):
     # Both live handlers post through backgroundPost, which ignores a tap
     # while the post of its form is in flight
 
-    assert "function backgroundPost(form, url, kind, data, onState) {" in body
+    assert (
+        "function backgroundPost(form, url, kind, data, onState, submitter) {" in body
+    )
     assert body.count("if (form._postInFlight) return;") == 1
     assert (
         'backgroundPost(form, form.getAttribute("action") || window.location.href,'
         in body
     )
     assert 'backgroundPost(form, form.getAttribute("action"), "card", data,' in body
+
+    # The fallback submission carries the tapped button (#406). Both
+    # handlers pass it, and the fallback adds it as a hidden input before
+    # form.submit()
+
+    fallback = body[body.index("function backgroundPost(") :]
+    fallback = fallback[: fallback.index("form.submit();")]
+    assert "input.name = submitter.name;" in fallback
+    assert "input.value = submitter.value;" in fallback
+    assert "form.appendChild(input);" in fallback
+    assert '}, {name: "quick_rating", value: button.value});' in body
+    assert "}, submitter);" in body
 
     # Both handlers share afterTileState. It removes a watchlist-page tile
     # when the film left the watchlist. The removal counts down 1 time
