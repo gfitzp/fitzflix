@@ -4,6 +4,8 @@ The tests cover the candidate pool exclusions, the adjacency-ranked
 suggestions after a positive movie-page rating, and the background
 posts of the ladder."""
 
+from datetime import datetime
+
 from app import db
 from app.models import MovieCrew, UserMovieReview, UserWatchlist
 from tests.factories import make_movie, make_movie_file
@@ -15,7 +17,7 @@ from tests.conftest import csrf_token_from
 def make_candidate(title, year, genre_row=None, director=None):
     """Create a library film that is eligible for the drive, with optional features."""
 
-    movie = make_movie(title, year)
+    movie = make_movie(title, year, tmdb_data_as_of=datetime.utcnow())
     make_movie_file(movie, "Bluray-1080p")
     if genre_row is not None:
         movie.genres.append(genre_row)

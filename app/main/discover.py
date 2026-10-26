@@ -1491,6 +1491,14 @@ def movie_states():
             if score is not None:
                 scores[movie.id] = score
 
+        # An older nightly map can hold a decade-only score for a film
+        # without TMDB data. That film gets no estimate (#414).
+
+        for (movie_id,) in db.session.query(Movie.id).filter(
+            Movie.id.in_(ordered_ids or [0]), Movie.tmdb_data_as_of.is_(None)
+        ):
+            scores.pop(movie_id, None)
+
     # The tmdb-keyed lane: ids with no record at all (most of a
     # filmography page) still get an estimate. The estimate comes from
     # the overlay when the overlay holds them. Otherwise, they score

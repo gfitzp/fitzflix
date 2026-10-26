@@ -5,6 +5,7 @@ into Redis, the landing page, and the interest markers on the
 filmography."""
 
 import json
+from datetime import datetime
 
 import pytest
 
@@ -143,11 +144,15 @@ def test_recommendations_prefer_matching_features_and_say_why(app, admin_id):
         liked_comedy.genres.append(comedy)
         log_watch(user_id, liked_comedy, liked=True)
 
-        candidate_comedy = make_movie("Rec Candidate Comedy", 1995)
+        candidate_comedy = make_movie(
+            "Rec Candidate Comedy", 1995, tmdb_data_as_of=datetime.utcnow()
+        )
         candidate_comedy.genres.append(comedy)
         make_movie_file(candidate_comedy, "Bluray-1080p")
 
-        candidate_drama = make_movie("Rec Candidate Drama", 1953)
+        candidate_drama = make_movie(
+            "Rec Candidate Drama", 1953, tmdb_data_as_of=datetime.utcnow()
+        )
         candidate_drama.genres.append(drama)
         make_movie_file(candidate_drama, "Bluray-1080p")
 
@@ -174,7 +179,9 @@ def test_crew_roles_are_separate_feature_classes(app, admin_id):
         dp = make_person(888001, "Famous DP")
         liked = make_movie("Crew Liked", 1990)
         log_watch(user_id, liked, liked=True)
-        candidate = make_movie("Crew Candidate", 1991)
+        candidate = make_movie(
+            "Crew Candidate", 1991, tmdb_data_as_of=datetime.utcnow()
+        )
         make_movie_file(candidate, "Bluray-1080p")
         candidate_id = candidate.id
         for movie in (liked, candidate):
@@ -222,7 +229,9 @@ def test_recompute_task_stores_recs_and_profile(app, admin_id):
         liked = make_movie("Store Liked", 1994)
         liked.genres.append(comedy)
         log_watch(user_id, liked, liked=True)
-        candidate = make_movie("Store Candidate", 1995)
+        candidate = make_movie(
+            "Store Candidate", 1995, tmdb_data_as_of=datetime.utcnow()
+        )
         candidate.genres.append(comedy)
         make_movie_file(candidate, "Bluray-1080p")
         candidate_id = candidate.id
@@ -922,11 +931,15 @@ def test_copref_reranks_and_explains(app, admin_id):
         liked.genres.append(comedy)
         log_watch(user_id, liked, liked=True)
 
-        similar = make_movie("Copref Similar", 1991, tmdb_id=702)
+        similar = make_movie(
+            "Copref Similar", 1991, tmdb_id=702, tmdb_data_as_of=datetime.utcnow()
+        )
         similar.genres.append(comedy)
         make_movie_file(similar, "Bluray-1080p")
 
-        plain = make_movie("Copref Plain", 1992, tmdb_id=703)
+        plain = make_movie(
+            "Copref Plain", 1992, tmdb_id=703, tmdb_data_as_of=datetime.utcnow()
+        )
         plain.genres.append(comedy)
         make_movie_file(plain, "Bluray-1080p")
 
@@ -1131,7 +1144,7 @@ def test_movie_page_shows_estimated_rating(app, admin_client, admin_id):
 
     with app.app_context():
         user_id = admin_id
-        pick = make_movie("Estimate Pick", 1995)
+        pick = make_movie("Estimate Pick", 1995, tmdb_data_as_of=datetime.utcnow())
         make_movie_file(pick, "Bluray-1080p")
         db.session.commit()
         pick_id = pick.id
@@ -1480,7 +1493,9 @@ def test_stored_cut_deepens_by_watchlisted_candidates(app, admin_id):
         log_watch(user_id, liked, liked=True)
 
         for n in range(5):
-            movie = make_movie(f"Depth Candidate {n}", 1991 + n)
+            movie = make_movie(
+                f"Depth Candidate {n}", 1991 + n, tmdb_data_as_of=datetime.utcnow()
+            )
             movie.genres.append(comedy)
             make_movie_file(movie, "Bluray-1080p")
             if n == 0:
@@ -1551,7 +1566,7 @@ def test_marker_bar_rides_with_the_profile(app, admin_id):
         liked = make_movie("Bar Liked", 1994)
         liked.genres.append(comedy)
         log_watch(user_id, liked, liked=True)
-        candidate = make_movie("Bar Candidate", 1995)
+        candidate = make_movie("Bar Candidate", 1995, tmdb_data_as_of=datetime.utcnow())
         candidate.genres.append(comedy)
         make_movie_file(candidate, "Bluray-1080p")
         db.session.commit()
@@ -1774,3 +1789,75 @@ def test_features_from_parts_skips_a_missing_year_and_an_unknown_job(app):
         [], [], [(1, "A"), (1, "A")], [(2, "B", "Caterer")], None, None
     )
     assert features == [("actor", "actor:1", "A")]
+
+
+def test_films_without_tmdb_data_stay_out_of_the_stored_map(app, admin_id):
+    """Keep an owned film without TMDB data out of the ranking and the map.
+
+    The film has only its decade for a score. That reads as a taste
+    mismatch and shows as a low estimate (#414). A film with TMDB data
+    in the same decade stays in."""
+
+    from app import db
+    from app.recommendations import compute_user_recommendations
+
+    with app.app_context():
+        user_id = admin_id
+        comedy = genre(35, "Comedy")
+        liked = make_movie("No Data Liked", 1994)
+        liked.genres.append(comedy)
+        log_watch(user_id, liked, liked=True)
+        bare = make_movie("No Data Concert", 1995)
+        make_movie_file(bare, "Bluray-1080p")
+        refreshed = make_movie(
+            "No Data Refreshed", 1996, tmdb_data_as_of=datetime.utcnow()
+        )
+        refreshed.genres.append(comedy)
+        make_movie_file(refreshed, "Bluray-1080p")
+        db.session.commit()
+
+        bare_id, refreshed_id = bare.id, refreshed.id
+        _, ranked, scores = compute_user_recommendations(user_id)
+
+    assert bare_id not in scores
+    assert bare_id not in [rec["movie_id"] for rec in ranked]
+    assert refreshed_id in scores
+
+
+def test_resolved_score_ignores_a_map_entry_without_tmdb_data(app, admin_id):
+    """Return no score for a film without TMDB data, also from an old map.
+
+    An older nightly map can hold a decade-only score for the film. It
+    must not show as an estimate. After the TMDB refresh, the film
+    scores live into the patch overlay."""
+
+    import json as jsonlib
+
+    from app import db
+    from app.recommendations import (
+        PATCH_SCORES_KEY,
+        SCORES_KEY,
+        compute_user_recommendations,
+        resolved_score,
+    )
+
+    with app.app_context():
+        user_id = admin_id
+        comedy = genre(35, "Comedy")
+        liked = make_movie("Stale Map Liked", 1990)
+        liked.genres.append(comedy)
+        log_watch(user_id, liked, rating=5.0, liked=True)
+        pick = make_movie("Stale Map Pick", 1992)
+        pick.genres.append(comedy)
+        db.session.commit()
+
+        profile, _, _ = compute_user_recommendations(user_id)
+        app.redis.set(
+            SCORES_KEY.format(user_id=user_id), jsonlib.dumps({str(pick.id): 0.05})
+        )
+
+        assert resolved_score(app.redis, user_id, pick, profile) is None
+        assert (
+            app.redis.hget(PATCH_SCORES_KEY.format(user_id=user_id), str(pick.id))
+            is None
+        )

@@ -1697,8 +1697,10 @@ def test_history_previews_estimates_for_unrated_viewings(app, admin_client):
 
     with app.app_context():
         user_id = User.query.first().id
-        watched = make_movie("History Bare Watch", 1994)
-        rated = make_movie("History Rated", 1995)
+        watched = make_movie(
+            "History Bare Watch", 1994, tmdb_data_as_of=datetime.utcnow()
+        )
+        rated = make_movie("History Rated", 1995, tmdb_data_as_of=datetime.utcnow())
         db.session.add(
             UserMovieReview(
                 user_id=user_id, movie_id=watched.id, date_watched=datetime.now()
@@ -1756,7 +1758,7 @@ def test_clearing_stars_repaints_back_to_the_estimate(app, admin_client):
 
     with app.app_context():
         user_id = User.query.first().id
-        movie = make_movie("Clear To Estimate", 1996)
+        movie = make_movie("Clear To Estimate", 1996, tmdb_data_as_of=datetime.utcnow())
         review = UserMovieReview(
             user_id=user_id,
             movie_id=movie.id,

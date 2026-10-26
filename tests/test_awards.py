@@ -280,11 +280,15 @@ def test_award_prior_reranks_and_explains(app, admin_id):
         liked.genres.append(comedy)
         log_watch(user_id, liked, liked=True)
 
-        plain = make_movie("Prior Plain Comedy", 1991)
+        plain = make_movie(
+            "Prior Plain Comedy", 1991, tmdb_data_as_of=datetime.utcnow()
+        )
         plain.genres.append(comedy)
         make_movie_file(plain, "Bluray-1080p")
 
-        awarded = make_movie("Prior Awarded Comedy", 1992)
+        awarded = make_movie(
+            "Prior Awarded Comedy", 1992, tmdb_data_as_of=datetime.utcnow()
+        )
         awarded.genres.append(comedy)
         make_movie_file(awarded, "Bluray-1080p")
         db.session.add(
@@ -302,7 +306,9 @@ def test_award_prior_reranks_and_explains(app, admin_id):
         # tests). The taste gates the prior.
 
         drama = genre(18, "Drama")
-        mismatched = make_movie("Prior Awarded Mismatch", 1953)
+        mismatched = make_movie(
+            "Prior Awarded Mismatch", 1953, tmdb_data_as_of=datetime.utcnow()
+        )
         mismatched.genres.append(drama)
         make_movie_file(mismatched, "Bluray-1080p")
         db.session.add(

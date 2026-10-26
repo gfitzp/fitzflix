@@ -789,6 +789,20 @@ def local_candidates(user_id):
     return [movie_id for (movie_id,) in rows]
 
 
+def _with_tmdb_data(movie_ids):
+    """Return the movie ids from the list that have TMDB data, in order."""
+
+    if not movie_ids:
+        return []
+    refreshed = {
+        movie_id
+        for (movie_id,) in db.session.query(Movie.id).filter(
+            Movie.id.in_(movie_ids), Movie.tmdb_data_as_of.isnot(None)
+        )
+    }
+    return [movie_id for movie_id in movie_ids if movie_id in refreshed]
+
+
 def scoreable_records(user_id):
     """Return the movie records without files that have refreshed TMDB
     data and that the user did not log or refuse.
@@ -828,7 +842,12 @@ def compute_user_recommendations(user_id, limit=STORED_RECOMMENDATIONS):
     if not weights:
         return None, [], {}
 
-    candidates = local_candidates(user_id)
+    # An owned film without TMDB data has only its decade for a score.
+    # That reads as a taste mismatch. Thus, it stays out of the ranking,
+    # the baseline, and the stored map until its TMDB data arrives (the
+    # same rule as single_movie_score).
+
+    candidates = _with_tmdb_data(local_candidates(user_id))
     extras = scoreable_records(user_id)
     scoreable = list(dict.fromkeys(candidates + extras))
     features = collect_features(list(set(scoreable) | set(weights)))
@@ -1355,6 +1374,13 @@ def resolved_score(redis, user_id, movie, profile, scores=None):
     score yet (no profile, or TMDB data not arrived). A batch caller
     passes its `scores` map to skip the Redis read for each film."""
 
+    # A film without TMDB data gets no score, also if an older map has
+    # an entry for it. Thus, a film imported before the nightly run
+    # scores live after its TMDB refresh, and the decade-only number of
+    # the map does not show.
+
+    if movie.tmdb_data_as_of is None:
+        return None
     if scores is None:
         scores = stored_scores(redis, user_id)
     if movie.id in scores:

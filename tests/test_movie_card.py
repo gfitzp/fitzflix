@@ -792,3 +792,46 @@ def test_an_unrated_theatrical_entry_does_not_hide_the_mpaa_mark():
         }
     }
     assert us_certification_from(theatrical) == "PG-13"
+
+
+def test_movie_states_drops_a_stale_score_without_tmdb_data(
+    app, admin_client, admin_id
+):
+    """Test that a map entry for a film without TMDB data shows no estimate.
+
+    An older nightly map can hold a decade-only score for the film
+    (#414). A film with TMDB data keeps its estimate."""
+
+    from app.recommendations import PROFILE_KEY, SCORES_KEY
+
+    with app.app_context():
+        user_id = admin_id
+        bare = make_movie("States No Data", 1990)
+        kept = make_movie("States With Data", 1991, tmdb_data_as_of=datetime.now())
+        db.session.commit()
+        bare_id, kept_id = bare.id, kept.id
+
+    app.redis.set(
+        SCORES_KEY.format(user_id=user_id),
+        json.dumps({str(bare_id): 9.0, str(kept_id): 9.0}),
+    )
+    app.redis.set(
+        PROFILE_KEY.format(user_id=user_id),
+        json.dumps(
+            {
+                "affinities": {},
+                "movies": 3,
+                "calibration": {
+                    "scores": [0.0, 1.0, 2.0, 3.0],
+                    "stars": [1.0, 2.0, 4.0, 4.5],
+                },
+            }
+        ),
+    )
+
+    payload = admin_client.get(
+        f"/movie_states?movie_ids={bare_id},{kept_id}"
+    ).get_json()
+
+    assert payload["movies"][str(bare_id)]["estimated"] is None
+    assert payload["movies"][str(kept_id)]["estimated"] == 4.5
