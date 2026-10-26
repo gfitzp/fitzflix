@@ -379,3 +379,76 @@ def test_a_rename_onto_a_claimed_path_is_refused(app, monkeypatch):
 
         assert db.session.get(File, file_id).file_path == old_path
     assert sent == ["Rename collision needs triage"]
+
+
+def _failing_commits(monkeypatch, failures):
+    """Make the next failures commits of the session raise. Return the call list."""
+
+    real_commit = db.session.commit
+    calls = []
+
+    def commit():
+        calls.append(1)
+        if len(calls) <= failures:
+            raise RuntimeError("Lock wait timeout exceeded")
+        return real_commit()
+
+    monkeypatch.setattr(db.session, "commit", commit)
+    return calls
+
+
+def test_a_rename_whose_commit_fails_moves_the_file_back(app, monkeypatch):
+    """The row rolls back. The file must not stay at the new path (#380)."""
+
+    from app.tmdb_refresh import _rename_movie_file
+
+    with app.app_context():
+        movie = make_movie("Desert Tune", 1943)
+        file = make_movie_file(movie, "HDTV-720p")
+        file.untouched_basename = "Desert Tune (1944) - [HDTV-720p].mkv"
+        db.session.commit()
+        old_path = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
+        os.makedirs(os.path.dirname(old_path), exist_ok=True)
+        with open(old_path, "wb") as handle:
+            handle.write(b"payload")
+        new_path = os.path.join(
+            app.config["LIBRARY_DIR"],
+            "Movies/Desert Tune (1944)/Desert Tune (1944) - [HDTV-720p].mkv",
+        )
+
+        # The SQLite driver of the tests releases a savepoint as a commit.
+        # Thus, the test checks the disk. MariaDB rolls the row back.
+
+        calls = _failing_commits(monkeypatch, 1)
+        assert _rename_movie_file(file, None) is False
+        assert calls
+        assert os.path.isfile(old_path)
+        assert not os.path.exists(new_path)
+
+
+def test_an_apply_whose_commit_fails_stops(app, monkeypatch):
+    """The new details rolled back. The names must not come from the old ones (#380)."""
+
+    from app.tmdb_refresh import _apply_movie_refresh
+
+    with app.app_context():
+        movie = make_movie("Old Name", 1999)
+        make_movie_file(movie, "DVD")
+        db.session.commit()
+
+        _failing_commits(monkeypatch, 1)
+        locks = []
+        try:
+            result = _apply_movie_refresh(
+                movie,
+                "Refreshing 'Old Name (1999)'",
+                None,
+                {"id": 778, "title": "New Name", "release_date": "1999-02-02"},
+                None,
+                False,
+                locks,
+            )
+        finally:
+            for lock in locks:
+                app.lock_manager.unlock(lock)
+        assert result is False

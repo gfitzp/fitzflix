@@ -482,7 +482,8 @@ def _rename_movie_file(f, tmdb_id):
     The file keeps its place if its untouched name no longer evaluates,
     if the new path is claimed, or if the move fails. The poster assets
     of a main feature go with it. Return True if the file moved on
-    disk."""
+    disk. The row commits right after the move. If that commit fails,
+    the file goes back to its old path (#380)."""
 
     # The filename plumbing lives in app.importing. The import is lazy.
     # Thus, the module import direction stays one-way.
@@ -581,6 +582,26 @@ def _rename_movie_file(f, tmdb_id):
         current_app.logger.error(traceback.format_exc())
         return False
 
+    # The path fields were updated inside the savepoint, before the
+    # physical rename. A failed commit rolls them back. Then the file
+    # must go back too, or the row names a path with no file.
+
+    try:
+        db.session.commit()
+    except Exception:
+        current_app.logger.error(traceback.format_exc())
+        db.session.rollback()
+        if renamed:
+            try:
+                os.rename(new_file, old_file)
+                current_app.logger.warning(
+                    f"'{new_file}' moved back to '{old_file}', because its "
+                    f"record did not commit"
+                )
+            except OSError:
+                current_app.logger.error(traceback.format_exc())
+        return False
+
     # Move or delete the old local assets.
     try:
         old_assets = os.listdir(old_directory)
@@ -626,17 +647,6 @@ def _rename_movie_file(f, tmdb_id):
     from app.maintenance import clear_leftover_directory
 
     clear_leftover_directory(old_directory)
-
-    # The path fields were already updated inside the
-    # savepoint, before the physical rename.
-
-    try:
-        db.session.commit()
-
-    except Exception:
-        current_app.logger.error(traceback.format_exc())
-        db.session.rollback()
-
     return renamed
 
 
@@ -647,7 +657,7 @@ def _apply_movie_refresh(
 
     locks collects the title locks that the driver releases. Return
     False if the apply must stop. That is a busy lock (the apply is
-    booked again) or a file move that did not commit. Return True
+    booked again) or a commit that failed (#380). Return True
     otherwise. The driver commits the rest."""
 
     from app.importing import reconstruct_filename
@@ -726,7 +736,9 @@ def _apply_movie_refresh(
 
     # The merge below deletes the old record, and the files of
     # a record go with it. Thus, stop if the files did not move.
-    # The next refresh tries again.
+    # This commit also holds the new TMDB details of the record. The
+    # names below come from them. Thus, a failed commit always stops
+    # the apply. The next refresh tries again.
 
     try:
         db.session.commit()
@@ -734,8 +746,7 @@ def _apply_movie_refresh(
     except Exception:
         current_app.logger.error(traceback.format_exc())
         db.session.rollback()
-        if updated_movie_id != original_movie_id:
-            return False
+        return False
 
     # Reconstruct the untouched filenames with the new movie details.
 
@@ -757,6 +768,7 @@ def _apply_movie_refresh(
     except Exception:
         current_app.logger.error(traceback.format_exc())
         db.session.rollback()
+        return False
 
     # Create new directories and move the files if necessary.
 
