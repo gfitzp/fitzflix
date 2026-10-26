@@ -215,6 +215,20 @@ def _track(language, streamorder):
             [_track("fra", 2)],
             ["-a", "fra", "-s", "fra", "--default-track-flag", "2:0"],
         ),
+        # A file that mkvmerge wrote reads back with the terminological
+        # code. "ger" and "deu" are the same language (#423).
+        (
+            "ger",
+            [_track("deu", 1)],
+            [_track("deu", 2)],
+            ["-a", "deu", "-s", "deu", "--default-track-flag", "2:0"],
+        ),
+        (
+            "fre",
+            [_track("eng", 1), _track("fra", 2)],
+            [_track("fra", 3)],
+            ["-a", "eng,fra", "-s", "fra", "--default-track-flag", "3:1"],
+        ),
     ],
 )
 def test_the_mkvmerge_command_of_each_track_layout(
@@ -229,7 +243,7 @@ def test_the_mkvmerge_command_of_each_track_layout(
     monkeypatch.setattr(
         importing, "get_subtitle_tracks_from_file", lambda path: subtitles
     )
-    if native == "fre":
+    if native == "fre" and audio[0]["language"] == "fra":
         real_parse = importing.MediaInfo.parse
 
         class MakeMKVMediaInfo:
@@ -360,6 +374,20 @@ def test_build_localize_command(app, subtitles, foreign, expected):
         + expected
         + ["--title", "", "--track-name", "-1:", "/in.mkv"]
     )
+
+
+def test_the_two_spellings_of_a_language_match():
+    """The terminological and bibliographic codes name 1 language (#423)."""
+
+    from app.tracks import file_language_spelling, same_language
+
+    assert same_language("ger", "deu") and same_language("fra", "fre")
+    assert same_language("ENG", "eng")
+    assert not same_language("ger", "eng")
+    assert not same_language(None, "und")
+    tracks = [{"language": "fra"}, {"language": "deu"}]
+    assert file_language_spelling("ger", tracks) == "deu"
+    assert file_language_spelling("eng", tracks) == "eng"
 
 
 def test_report_progress_writes_the_queue_page_text(app):

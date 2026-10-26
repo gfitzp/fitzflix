@@ -94,6 +94,8 @@ from app.sdr_conversion import (
 from app.file_ranking import find_better_files, find_worse_files, real_rips_blocking
 from app.tracks import (
     _extract_media_details,
+    file_language_spelling,
+    same_language,
     replace_track_rows,
     get_audio_tracks_from_file,
     get_subtitle_tracks_from_file,
@@ -1340,21 +1342,18 @@ def _localize_matroska(work_path, hidden_output_file, output_directory, basename
     audio_tracks = get_audio_tracks_from_file(work_path)
     subtitle_tracks = get_subtitle_tracks_from_file(work_path)
 
-    # Change the ISO-639-2 language code to the ISO-639-3 code if MakeMKV
-    # wrote the file.
+    # ISO 639-2 gives 20 languages 2 codes. MediaInfo reports the
+    # terminological code for each file with a LanguageIETF element,
+    # whatever wrote it ("deu" for a track written as "ger"). Thus, the
+    # comparisons use same_language, and the mkvmerge filters use the
+    # spelling of the file (#423).
 
-    native_language = current_app.config["NATIVE_LANGUAGE"]
-
-    for track in media_info.tracks:
-        if track.writing_application:
-            if track.track_type == "General" and "MakeMKV" in track.writing_application:
-                native_language = iso_639_3_native_language()
-                current_app.logger.warning(
-                    f"'{basename}' was created with MakeMKV. Will use ISO-639-3 "
-                    f"code '{native_language}' instead of user-supplied "
-                    f"ISO-639-2 '{current_app.config['NATIVE_LANGUAGE']}' when "
-                    f"processing this file with mkvmerge"
-                )
+    native_language = file_language_spelling(
+        current_app.config["NATIVE_LANGUAGE"], audio_tracks
+    )
+    native_subtitle_language = file_language_spelling(
+        current_app.config["NATIVE_LANGUAGE"], subtitle_tracks
+    )
 
     # Find the audio tracks to export.
 
@@ -1374,7 +1373,9 @@ def _localize_matroska(work_path, hidden_output_file, output_directory, basename
     # If the first audio track is in the native language, remove all other
     # languages.
 
-    if len(audio_tracks) >= 1 and first_audio_track_language == native_language:
+    if len(audio_tracks) >= 1 and same_language(
+        first_audio_track_language, native_language
+    ):
         current_app.logger.info(
             f"'{basename}' First audio track matches native language "
             f"'{native_language}'"
@@ -1386,7 +1387,9 @@ def _localize_matroska(work_path, hidden_output_file, output_directory, basename
     # tracks in the first language and all native-language audio. The
     # file is probably a dub, or it has native-language commentary tracks.
 
-    elif native_language in [track["language"] for track in audio_tracks]:
+    elif any(
+        same_language(track["language"], native_language) for track in audio_tracks
+    ):
         current_app.logger.info(
             f"'{basename}' First audio track is foreign, "
             f"but '{native_language}' audio is present"
@@ -1405,12 +1408,12 @@ def _localize_matroska(work_path, hidden_output_file, output_directory, basename
 
     makedirs_on_mounted_volume(output_directory)
 
-    first_audio_foreign = (
-        len(audio_tracks) >= 1 and first_audio_track_language != native_language
+    first_audio_foreign = len(audio_tracks) >= 1 and not same_language(
+        first_audio_track_language, native_language
     )
-    native_subtitles = native_language in [
-        track["language"] for track in subtitle_tracks
-    ]
+    native_subtitles = any(
+        same_language(track["language"], native_language) for track in subtitle_tracks
+    )
     if first_audio_foreign and native_subtitles:
         current_app.logger.info(
             f"'{basename}' Non-native audio, "
@@ -1429,7 +1432,7 @@ def _localize_matroska(work_path, hidden_output_file, output_directory, basename
             work_path,
             hidden_output_file,
             output_audio_langs,
-            native_language,
+            native_subtitle_language,
             subtitle_tracks,
             first_audio_foreign,
         ),
@@ -1462,7 +1465,9 @@ def build_localize_command(
     names. This function reads nothing and runs nothing."""
 
     native_tracks = [
-        track for track in subtitle_tracks if track["language"] == native_language
+        track
+        for track in subtitle_tracks
+        if same_language(track["language"], native_language)
     ]
     if native_tracks:
         flags = []
@@ -1471,7 +1476,8 @@ def build_localize_command(
             flags.extend(
                 ["--default-track-flag", f"{track['streamorder']}:{1 if on else 0}"]
             )
-        subtitles = ["-s", native_language] + flags
+        spellings = list(dict.fromkeys(track["language"] for track in native_tracks))
+        subtitles = ["-s", ",".join(spellings)] + flags
     else:
         subtitles = ["--no-subtitles"]
     return (
@@ -1706,7 +1712,6 @@ def inspect_localized_file(file_path, container, job=None):
     name = os.path.basename(file_path)
 
     if container == "Matroska":
-        media_info = MediaInfo.parse(file_path)
         audio_tracks = get_audio_tracks_from_file(file_path)
         subtitle_tracks = get_subtitle_tracks_from_file(file_path)
 
@@ -1752,24 +1757,10 @@ def inspect_localized_file(file_path, container, job=None):
 
             wait_for_subprocess(mkvpropedit_process, ok_returncodes=(0, 1))
 
-        # Change the ISO-639-2 language code to the ISO-639-3 code if
-        # MakeMKV wrote the file.
+        # The 2 spellings of a dual-code language are the same language
+        # (#423).
 
         native_language = current_app.config["NATIVE_LANGUAGE"]
-
-        for track in media_info.tracks:
-            if (
-                track.track_type == "General"
-                and track.writing_application
-                and "MakeMKV" in track.writing_application
-            ):
-                native_language = iso_639_3_native_language()
-                current_app.logger.warning(
-                    f"'{name}' was created with MakeMKV. Will use ISO-639-3 "
-                    f"code '{native_language}' instead of user-supplied "
-                    f"ISO-639-2 '{current_app.config['NATIVE_LANGUAGE']}' when "
-                    f"processing this file with mkvmerge"
-                )
 
         # Set the first subtitle track as the default if the first audio is
         # foreign and if there is no default subtitle track.
@@ -1781,7 +1772,7 @@ def inspect_localized_file(file_path, container, job=None):
         if (
             len(subtitle_tracks) >= 1
             and len(audio_tracks) >= 1
-            and audio_tracks[0].get("language") != native_language
+            and not same_language(audio_tracks[0].get("language"), native_language)
             and audio_tracks[0].get("language") != "und"
             and not existing_default_subtitle_track
         ):
@@ -2946,9 +2937,10 @@ def _audio_alerts(audio_tracks, native_language):
     "und", or "zxx". The lead is lossy if the first track is lossy and
     another track is lossless."""
 
-    native_like = [native_language, "und", "zxx"]
-    possibly_foreign_language = (
-        bool(audio_tracks) and audio_tracks[0].get("language") not in native_like
+    first_language = audio_tracks[0].get("language") if audio_tracks else None
+    possibly_foreign_language = bool(audio_tracks) and not (
+        same_language(first_language, native_language)
+        or first_language in ("und", "zxx")
     )
     lossless = [
         track.get("compression_mode", "Lossy") == "Lossless" for track in audio_tracks

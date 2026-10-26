@@ -555,6 +555,37 @@ ISO_639_2_TERMINOLOGIC = {
 }
 
 
+def language_key(code):
+    """Return the bibliographic ISO 639-2 spelling of a language code.
+
+    A terminological code ("deu", "fra") becomes its bibliographic code
+    ("ger", "fre"). Any other value comes back in lower case. Thus, 2
+    spellings of the same language give the same key (#423)."""
+
+    code = str(code or "").strip().lower()
+    return ISO_639_2_TERMINOLOGIC.get(code, code)
+
+
+def same_language(first, second):
+    """Return True if 2 language codes name the same language."""
+
+    return bool(first) and bool(second) and language_key(first) == language_key(second)
+
+
+def file_language_spelling(code, tracks):
+    """Return the spelling of a language as the tracks of a file write it.
+
+    MediaInfo reports the terminological code for some writers, and
+    the bibliographic code for others. The mkvmerge language filters
+    match the spelling in the file. This returns code if no track has
+    the language."""
+
+    for track in tracks:
+        if same_language(track.get("language"), code):
+            return track["language"]
+    return code
+
+
 @lru_cache(maxsize=1)
 def _language_table():
     """Return the language table of mkvtoolnix as (name, 639-3, 639-2, 639-1) rows.
