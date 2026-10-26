@@ -42,7 +42,7 @@ from werkzeug.local import LocalProxy
 
 from app.tasks import enqueue_task
 from app.aws_storage import request_archive_move
-from app.pipeline import migrate_trail
+from app.pipeline import migrate_renamed_file
 from app import db, get_app, safe_job_id
 from app.models import TVSeries
 
@@ -319,18 +319,19 @@ def _move_series(series, new_title):
             # The rows get the new name. The archive moves too.
             db_only += 1
 
+        old_names = (file.basename, file.untouched_basename)
         file.dirname = new_dirname
         file.basename = new_basename
         file.file_path = new_path
         if file.plex_title.startswith(old_prefix):
             file.plex_title = new_prefix + file.plex_title[len(old_prefix) :]
-        # The File Activity trail is keyed by the import name. Thus,
-        # the trail follows the new untouched name, or the card loses
-        # its chips for the life of the trail.
-        old_untouched = file.untouched_basename
+        # The File Activity trail is keyed by the import name or by the
+        # library name. Thus, the trail follows the new names, or the
+        # card loses its chips for the life of the trail (#375).
         file.untouched_basename = reconstruct_filename(file.id, series_title=new_title)
-        if file.untouched_basename != old_untouched:
-            migrate_trail(current_app.redis, old_untouched, file.untouched_basename)
+        migrate_renamed_file(
+            current_app.redis, old_names, (file.basename, file.untouched_basename)
+        )
         # The move job goes to the queue at this commit.
         request_archive_move(file)
         db.session.commit()

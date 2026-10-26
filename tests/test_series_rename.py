@@ -315,3 +315,64 @@ def test_the_rename_time_limit_grows_with_the_files(app, monkeypatch):
         retry_id = requeue_job_id("app.series_rename.rename_tv_series_task", series.id)
         assert retry_id in ScheduledJobRegistry(queue=app.file_queue).get_job_ids()
         assert app.file_queue.fetch_job(retry_id).timeout == 1200
+
+
+def _trail_of(app, *names):
+    from app.pipeline import index_trails, pipeline_trails, trail_entries_for
+
+    return trail_entries_for(index_trails(pipeline_trails(app.redis)), *names)
+
+
+def _imported(app, source, library_name):
+    """Record the trail of an import of source that the import named library_name."""
+
+    from app.pipeline import migrate_trail, record_job_event
+
+    job = app.import_queue.enqueue(
+        "app.videos.localization_task", args=(f"/import/{source}",)
+    )
+    record_job_event(app.redis, job, "started")
+    migrate_trail(app.redis, source, library_name)
+    app.import_queue.remove(job)
+
+
+def test_rename_moves_the_trail_of_a_remuxed_episode(app):
+    """The import keyed the trail under the .mkv name. The untouched name is .mp4 (#375)."""
+
+    mp4 = "Show - S01E01 - [WEBDL-1080p].mp4"
+    with app.app_context():
+        series = make_tv_series("Show", tmdb_id=4242)
+        episode = make_tv_file(series, 1, 1, "WEBDL-1080p", untouched_basename=mp4)
+        db.session.commit()
+        _materialize(app, episode)
+        _imported(app, mp4, episode.basename)
+        assert _trail_of(app, episode.basename, episode.untouched_basename)
+
+        assert rename_tv_series_task(series.id, "Show (2005)") is True
+        db.session.expire_all()
+        episode = db.session.get(File, episode.id)
+        assert episode.basename == "Show (2005) - S01E01 - [WEBDL-1080p].mkv"
+        assert episode.untouched_basename == "Show (2005) - S01E01 - [WEBDL-1080p].mp4"
+        assert _trail_of(app, episode.basename, episode.untouched_basename)
+
+
+def test_rename_back_to_the_import_name_keeps_the_trail(app):
+    """The import made "Batman (1966)" canonical as "Batman". A rename goes back (#375)."""
+
+    from app.pipeline import ALIAS_KEY, _digest
+
+    source = "Batman (1966) - S01E01 - [Bluray-1080p].mkv"
+    with app.app_context():
+        series = make_tv_series("Batman", tmdb_id=2287)
+        episode = make_tv_file(series, 1, 1, "Bluray-1080p", untouched_basename=source)
+        db.session.commit()
+        _materialize(app, episode)
+        _imported(app, source, episode.basename)
+
+        assert rename_tv_series_task(series.id, "Batman (1966)") is True
+        db.session.expire_all()
+        episode = db.session.get(File, episode.id)
+        assert episode.basename == source
+        assert _trail_of(app, episode.basename, episode.untouched_basename)
+        # The new home of the trail has no redirect away from itself.
+        assert not app.redis.exists(ALIAS_KEY.format(digest=_digest(source)))

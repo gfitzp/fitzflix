@@ -679,6 +679,9 @@ def migrate_trail(connection, old_basename, new_basename):
                 )
                 pipe.expire(new_key, TRAIL_TTL_SECONDS)
                 pipe.set(alias_key, new_basename, ex=TRAIL_TTL_SECONDS)
+                # The new name holds the trail now. An old redirect away
+                # from it (a rename back to an earlier name) must go.
+                pipe.delete(ALIAS_KEY.format(digest=new_digest))
                 pipe.delete(old_key)
                 pipe.zrem(ACTIVE_KEY, old_digest)
                 pipe.zadd(ACTIVE_KEY, {new_digest: time.time()})
@@ -687,6 +690,27 @@ def migrate_trail(connection, old_basename, new_basename):
                 return
             except WatchError:
                 continue
+
+
+@_best_effort()
+def migrate_renamed_file(connection, old_names, new_names):
+    """Merge the trail of a renamed File row under its new names (#375).
+
+    old_names and new_names are (basename, untouched_basename) pairs.
+    The import keeps the trail under the library name when the import
+    name differs from it (an .mp4 remuxed to .mkv, a canonical series
+    title). Thus, the library name moves first. The untouched name moves
+    only when it has no redirect of its own. A redirect already follows
+    the library name."""
+
+    (old_basename, old_untouched), (new_basename, new_untouched) = old_names, new_names
+    migrate_trail(connection, old_basename, new_basename)
+    if (
+        old_untouched
+        and old_untouched != old_basename
+        and _resolve_basename(connection, old_untouched) == old_untouched
+    ):
+        migrate_trail(connection, old_untouched, new_untouched)
 
 
 @_best_effort()
