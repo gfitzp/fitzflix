@@ -434,7 +434,7 @@ def test_cdn_transport_error_spends_a_retry(app, monkeypatch, cdn, caplog):
     _wire(monkeypatch, S3(), SQS())
 
     with app.app_context():
-        with caplog.at_level(logging.ERROR):
+        with caplog.at_level(logging.WARNING):
             assert (
                 aws_storage.aws_download("untouched/x.mkv", "x.mkv")
                 == aws_storage.DOWNLOAD_COMPLETE
@@ -761,3 +761,51 @@ def test_archive_rename_defers_on_an_expired_restore(app):
         "Restore": 'ongoing-request="false", expiry-date="Fri, 01 Jan 2021 00:00:00 GMT"',
     }
     assert not _object_is_readable(head)
+
+
+def test_a_retried_fault_writes_no_error_record(app, monkeypatch, cdn, caplog):
+    """Test that a retried 503 and a dropped body log WARNING, not ERROR.
+
+    The SMTP handler mails each ERROR record. A transient that the next
+    attempt clears must not send a failure mail (#411)."""
+
+    import logging
+
+    from app import aws_storage
+
+    cdn["responses"] = [
+        _FakeResponse(503),
+        _FakeResponse(200, b"cdn", fail_after=1),
+        _FakeResponse(200, b"cdn"),
+    ]
+    _wire(monkeypatch, S3(), SQS())
+
+    with caplog.at_level(logging.INFO), app.app_context():
+        assert (
+            aws_storage.aws_download("untouched/x.mkv", "x.mkv")
+            == aws_storage.DOWNLOAD_COMPLETE
+        )
+
+    assert [r for r in caplog.records if r.levelno >= logging.ERROR] == []
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert any("attempt 1 of 10" in message for message in warnings)
+    assert any("attempt 2 of 10" in message for message in warnings)
+
+
+def test_the_give_up_writes_one_error_record(app, monkeypatch, cdn, caplog):
+    """Test that a download that spends each retry writes 1 ERROR record."""
+
+    import logging
+
+    from app import aws_storage
+
+    cdn["responses"] = [
+        _FakeResponse(503) for _ in range(aws_storage.MAX_DOWNLOAD_RETRIES)
+    ]
+    _wire(monkeypatch, S3(), SQS())
+
+    with caplog.at_level(logging.INFO), app.app_context():
+        assert aws_storage.aws_download("untouched/x.mkv", "x.mkv") is False
+
+    errors = [r.getMessage() for r in caplog.records if r.levelno >= logging.ERROR]
+    assert len(errors) == 1 and "giving up" in errors[0]
