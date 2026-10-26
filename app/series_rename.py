@@ -29,6 +29,8 @@ occupies one queue.
 """
 
 import os
+import re
+import time
 import traceback
 
 from flask import current_app
@@ -157,101 +159,160 @@ def rename_tv_series_task(series_id, new_title):
             )
             return False
 
-        library_dir = current_app.config["LIBRARY_DIR"]
-        old_prefix = f"{old_title} - "
-        new_prefix = f"{new_title} - "
-
-        from app.importing import reconstruct_filename
-        from app.videos import _rename_with_retries
-
-        # Plan each file first. If 1 file does not carry the series title,
-        # nothing changes. A partial rename gave the series a title and a
-        # Sonarr path for a folder that did not exist (#317).
-
-        plan = []
-        unmatched = []
-        sonarr_folder = _folder_title(new_title)
-        for file in series.files.all():
-            target = _planned_target(file, old_title, new_title)
-            if target is None:
-                unmatched.append(file.file_path)
-                continue
-            sonarr_folder, new_dirname, new_basename = target
-            plan.append((file, new_dirname, new_basename))
-        if unmatched:
-            current_app.logger.warning(
-                f"Series rename: {len(unmatched)} file(s) don't carry the "
-                f"series title, so nothing changed: {unmatched[:5]}"
-            )
+        locks = _take_series_locks(series, new_title)
+        if locks is None:
             return False
+        try:
+            return _move_series(series, new_title)
+        finally:
+            for lock in locks:
+                current_app.lock_manager.unlock(lock)
 
-        moved = db_only = 0
-        old_dirs = set()
-        for file, new_dirname, new_basename in plan:
-            new_path = f"{new_dirname}/{new_basename}"
-            src = os.path.join(library_dir, file.file_path)
-            dst = os.path.join(library_dir, new_path)
 
-            if os.path.isfile(src):
-                os.makedirs(os.path.dirname(dst), exist_ok=True)
-                _rename_with_retries(src, dst)
-                old_dirs.add(os.path.dirname(src))
-                moved += 1
-            elif os.path.isfile(dst):
-                # A previous partial run moved the file. Complete the row.
-                moved += 1
-            else:
-                # There is no local copy. This is an archived-only record.
-                # The rows get the new name. The archive moves too.
-                db_only += 1
+# A rename waits this many minutes when an import of the series is not
+# done. It also waits when another task holds an episode lock.
 
-            file.dirname = new_dirname
-            file.basename = new_basename
-            file.file_path = new_path
-            if file.plex_title.startswith(old_prefix):
-                file.plex_title = new_prefix + file.plex_title[len(old_prefix) :]
-            # The File Activity trail is keyed by the import name. Thus,
-            # the trail follows the new untouched name, or the card loses
-            # its chips for the life of the trail.
-            old_untouched = file.untouched_basename
-            file.untouched_basename = reconstruct_filename(
-                file.id, series_title=new_title
-            )
-            if file.untouched_basename != old_untouched:
-                migrate_trail(current_app.redis, old_untouched, file.untouched_basename)
-            # The move job goes to the queue at this commit.
-            request_archive_move(file)
-            db.session.commit()
+RENAME_WAIT_MINUTES = (5, 15)
 
-        # This step is aware of junk files. It is not a plain rmdir. The
-        # old series folder usually keeps a poster.png (from Sonarr or
-        # placed by hand). Before, that file kept the empty folder alive
-        # until the weekly sweep.
 
-        from app.maintenance import clear_leftover_directory
+def _take_series_locks(series, new_title):
+    """Take the title lock of each episode of a series. Return the locks.
 
-        for old_dir in sorted(old_dirs, key=len, reverse=True):
-            clear_leftover_directory(old_dir)
+    Return None after the rename goes back on its queue. An import takes
+    the lock of its episode. A new episode has no lock yet, so the
+    rename also waits for each import of the series that is not done.
+    Else the import attaches by the old title at its end and makes a
+    second series (#370)."""
 
-        series.title = new_title
+    from app.importing import series_import_in_flight
+    from app.models import TV_SHOWS, title_lock_key
+    from app.tasks import requeue
+
+    reason = None
+    source = series_import_in_flight({series.title, new_title})
+    if source:
+        reason = f"waits for the import of '{os.path.basename(source)}'"
+    locks = []
+    episodes = {(file.season, file.episode) for file in series.files}
+    ttl_ms = current_app.config["SQL_TASK_TIMEOUT"] * 1000
+    for season, episode in [] if reason else sorted(episodes, key=str):
+        key = title_lock_key(TV_SHOWS, series.title, season=season, episode=episode)
+        lock = current_app.lock_manager.lock(key, ttl_ms)
+        if not lock:
+            reason = f"waits for the title lock of {key}"
+            break
+        locks.append(lock)
+    if reason is None:
+        return locks
+    for lock in locks:
+        current_app.lock_manager.unlock(lock)
+    requeue(
+        "app.series_rename.rename_tv_series_task",
+        key=series.id,
+        delay=RENAME_WAIT_MINUTES,
+        reason=f"Series rename of {series.title!r} {reason}",
+        args=(series.id, new_title),
+    )
+    return None
+
+
+def _move_series(series, new_title):
+    """Move the files and rewrite the rows of a series. The caller holds the locks."""
+
+    old_title = series.title
+    library_dir = current_app.config["LIBRARY_DIR"]
+    old_prefix = f"{old_title} - "
+    new_prefix = f"{new_title} - "
+
+    from app.importing import reconstruct_filename
+    from app.videos import _rename_with_retries
+
+    # Plan each file first. If 1 file does not carry the series title,
+    # nothing changes. A partial rename gave the series a title and a
+    # Sonarr path for a folder that did not exist (#317).
+
+    plan = []
+    unmatched = []
+    sonarr_folder = _folder_title(new_title)
+    for file in series.files.all():
+        target = _planned_target(file, old_title, new_title)
+        if target is None:
+            unmatched.append(file.file_path)
+            continue
+        sonarr_folder, new_dirname, new_basename = target
+        plan.append((file, new_dirname, new_basename))
+    if unmatched:
+        current_app.logger.warning(
+            f"Series rename: {len(unmatched)} file(s) don't carry the "
+            f"series title, so nothing changed: {unmatched[:5]}"
+        )
+        return False
+
+    moved = db_only = 0
+    old_dirs = set()
+    for file, new_dirname, new_basename in plan:
+        new_path = f"{new_dirname}/{new_basename}"
+        src = os.path.join(library_dir, file.file_path)
+        dst = os.path.join(library_dir, new_path)
+
+        if os.path.isfile(src):
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            _rename_with_retries(src, dst)
+            old_dirs.add(os.path.dirname(src))
+            moved += 1
+        elif os.path.isfile(dst):
+            # A previous partial run moved the file. Complete the row.
+            moved += 1
+        else:
+            # There is no local copy. This is an archived-only record.
+            # The rows get the new name. The archive moves too.
+            db_only += 1
+
+        file.dirname = new_dirname
+        file.basename = new_basename
+        file.file_path = new_path
+        if file.plex_title.startswith(old_prefix):
+            file.plex_title = new_prefix + file.plex_title[len(old_prefix) :]
+        # The File Activity trail is keyed by the import name. Thus,
+        # the trail follows the new untouched name, or the card loses
+        # its chips for the life of the trail.
+        old_untouched = file.untouched_basename
+        file.untouched_basename = reconstruct_filename(file.id, series_title=new_title)
+        if file.untouched_basename != old_untouched:
+            migrate_trail(current_app.redis, old_untouched, file.untouched_basename)
+        # The move job goes to the queue at this commit.
+        request_archive_move(file)
         db.session.commit()
 
-        try:
-            _update_sonarr_path(series, old_title, sonarr_folder)
-        except Exception:
-            current_app.logger.warning(traceback.format_exc())
+    # This step is aware of junk files. It is not a plain rmdir. The
+    # old series folder usually keeps a poster.png (from Sonarr or
+    # placed by hand). Before, that file kept the empty folder alive
+    # until the weekly sweep.
 
-        if current_app.config.get("PLEX_URL") and current_app.config.get("PLEX_TOKEN"):
-            enqueue_task(
-                "app.plex_library.refresh_plex_libraries",
-                description="Refreshing Plex libraries",
-            )
+    from app.maintenance import clear_leftover_directory
 
-        current_app.logger.info(
-            f"Series rename: {old_title!r} -> {new_title!r}: {moved} files "
-            f"moved, {db_only} archived-only rows"
+    for old_dir in sorted(old_dirs, key=len, reverse=True):
+        clear_leftover_directory(old_dir)
+
+    series.title = new_title
+    db.session.commit()
+
+    try:
+        _update_sonarr_path(series, old_title, sonarr_folder)
+    except Exception:
+        current_app.logger.warning(traceback.format_exc())
+
+    if current_app.config.get("PLEX_URL") and current_app.config.get("PLEX_TOKEN"):
+        enqueue_task(
+            "app.plex_library.refresh_plex_libraries",
+            description="Refreshing Plex libraries",
         )
-        return True
+
+    current_app.logger.info(
+        f"Series rename: {old_title!r} -> {new_title!r}: {moved} files "
+        f"moved, {db_only} archived-only rows"
+    )
+    return True
 
 
 # The Sonarr path check (#370). Sonarr is where a series gets renamed.
@@ -269,6 +330,14 @@ MAX_SONARR_FIXES = 20
 # folder of each one before it acknowledges the event.
 
 SONARR_SERIES_EVENTS = ("Rename", "Download", "SeriesAdd")
+
+# A series with a conflict gets this marker for 1 day. While it stands,
+# a Download event of the series queues no check. A Rename and a
+# SeriesAdd still do. Thus, a series that stays in conflict does not
+# write a warning for each episode.
+
+SONARR_CONFLICT_KEY = "fitzflix:sonarr:conflict:{series_id}"
+SONARR_CONFLICT_TTL = 86400
 
 
 def _summary(**counts):
@@ -395,6 +464,22 @@ def _rename_title(series, folder, sonarr_folder):
     return title
 
 
+def _conflict(series):
+    """Return the conflict branch and mark the series for SONARR_CONFLICT_TTL.
+
+    A Redis fault does not stop the check."""
+
+    try:
+        current_app.redis.set(
+            SONARR_CONFLICT_KEY.format(series_id=series.id),
+            "1",
+            ex=SONARR_CONFLICT_TTL,
+        )
+    except Exception:
+        current_app.logger.warning(traceback.format_exc())
+    return "conflict", None
+
+
 def _sonarr_branch(series, entry):
     """Compare the Sonarr folder of a series with its Fitzflix folder.
 
@@ -413,7 +498,7 @@ def _sonarr_branch(series, entry):
             f"Sonarr path check: the files of {series.title!r} are in more "
             f"than one show folder. Not changed"
         )
-        return "conflict", None
+        return _conflict(series)
     (folder,) = folders
     if folder == sonarr_folder:
         return "equal", folder
@@ -422,14 +507,25 @@ def _sonarr_branch(series, entry):
             f"Sonarr path check: Sonarr gives no folder for {series.title!r}. "
             f"Not changed"
         )
-        return "conflict", None
+        return _conflict(series)
+
+    # The check reads the folders under TV_LIBRARY, and a repoint keeps
+    # the parent of the Sonarr path. Thus, a series on another Sonarr
+    # root folder is a conflict. A repoint there names a missing folder.
 
     library = current_app.config["TV_LIBRARY"]
+    parent = os.path.dirname(os.path.normpath(entry.get("path") or "/"))
+    if os.path.realpath(parent) != os.path.realpath(library):
+        current_app.logger.warning(
+            f"Sonarr path check: Sonarr holds {series.title!r} under "
+            f"{parent!r}, not under the TV library. Not changed"
+        )
+        return _conflict(series)
     fitzflix_exists = os.path.isdir(os.path.join(library, folder))
     sonarr_exists = os.path.isdir(os.path.join(library, sonarr_folder))
     if sonarr_exists and not fitzflix_exists:
         title = _rename_title(series, folder, sonarr_folder)
-        return ("rename", title) if title else ("conflict", None)
+        return ("rename", title) if title else _conflict(series)
     if fitzflix_exists and not sonarr_exists:
         return "repoint", folder
     current_app.logger.warning(
@@ -437,7 +533,7 @@ def _sonarr_branch(series, entry):
         f"Sonarr and at {folder!r} in Fitzflix. Not changed (Sonarr folder "
         f"exists: {sonarr_exists}, Fitzflix folder exists: {fitzflix_exists})"
     )
-    return "conflict", None
+    return _conflict(series)
 
 
 def _tv_library_missing():
@@ -454,8 +550,10 @@ def _tv_library_missing():
     return True
 
 
-def _job_pending(queue, job_id):
-    """Return True if the job with this id waits, runs, or is scheduled."""
+def _job_pending(queue, *job_ids):
+    """Return True if a job with one of these ids waits, runs, or is scheduled.
+
+    An id with a time tag (the id, "_", and digits) counts as the id."""
 
     from rq.registry import ScheduledJobRegistry, StartedJobRegistry
 
@@ -463,40 +561,77 @@ def _job_pending(queue, job_id):
     ids.update(queue.intermediate_queue.get_job_ids())
     ids.update(StartedJobRegistry(queue=queue).get_job_ids())
     ids.update(ScheduledJobRegistry(queue=queue).get_job_ids())
-    return job_id in ids
+    return any(
+        found == job_id or re.fullmatch(re.escape(job_id) + r"_\d+", found)
+        for found in ids
+        for job_id in job_ids
+    )
 
 
-def _enqueue_once(name, job_id, *args, description):
+def _enqueue_once(name, job_id, *args, description, also=()):
     """Queue a task with a fixed job id, once. Return the job, or None.
 
-    The function does nothing if the job waits or runs. Otherwise it
-    removes an old entry of the id from the finished and failed
-    registries. Without that, the expiry of the old entry deletes the
-    new job by its id."""
+    The function does nothing if the job, or a job with an id in also,
+    waits or runs. The finished job of the id is deleted first. Else the
+    new job keeps the expiry of the old hash and can vanish in the
+    queue. A failed job stays in the failed jobs for the sweep. Then the
+    new job gets the id with a time tag."""
 
-    from rq.registry import FailedJobRegistry, FinishedJobRegistry
+    from rq.exceptions import NoSuchJobError
+    from rq.job import Job
 
     from app.tasks import TASKS, resolve_queue
 
     queue = resolve_queue(TASKS[name].queue)
-    if _job_pending(queue, job_id):
+    if _job_pending(queue, job_id, *also):
         return None
-    FinishedJobRegistry(queue=queue).remove(job_id)
-    FailedJobRegistry(queue=queue).remove(job_id)
+    try:
+        old = Job.fetch(job_id, connection=queue.connection)
+    except NoSuchJobError:
+        old = None
+    if old is not None and old.is_failed:
+        job_id = f"{job_id}_{int(time.time())}"
+    elif old is not None:
+        old.delete()
     return enqueue_task(name, *args, description=description, job_id=job_id)
+
+
+def _adopt_tvdb_id(series, entry):
+    """Give a series the TheTVDB id of its Sonarr series, if it has none.
+
+    A series that the TMDB id matched has no TheTVDB id. Without one,
+    Fitzflix cannot find the Sonarr series to repoint or rescan it. The
+    id is set only when no other series holds it."""
+
+    tvdb_id = entry.get("tvdbId")
+    if series.tvdb_id or not tvdb_id:
+        return
+    if TVSeries.query.filter_by(tvdb_id=tvdb_id).first() is not None:
+        return
+    series.tvdb_id = tvdb_id
+    db.session.commit()
+    current_app.logger.info(
+        f"Sonarr path check: {series.title!r} takes the TheTVDB id {tvdb_id} "
+        f"of its Sonarr series"
+    )
 
 
 def _apply_branch(series, entry, branch, value):
     """Carry out a rename or a repoint. Return True if it was done or queued."""
 
+    from app.tasks import requeue_job_id
+
     sonarr_folder = sonarr_folder_of(entry)
+    _adopt_tvdb_id(series, entry)
     if branch == "rename":
+        name = "app.series_rename.rename_tv_series_task"
         job = _enqueue_once(
-            "app.series_rename.rename_tv_series_task",
+            name,
             safe_job_id(f"sonarr-rename:{series.id}"),
             series.id,
             value,
             description=f"Renaming TV series {series.id} to '{value}' after Sonarr",
+            also=(requeue_job_id(name, series.id),),
         )
         current_app.logger.info(
             f"Sonarr path check: Sonarr moved {series.title!r} to "
@@ -761,6 +896,9 @@ def queue_series_reconcile(event, sonarr_series, renamed_files=None):
 
     series = find_series(sonarr_series)
     if series is None:
+        return None
+    marker = SONARR_CONFLICT_KEY.format(series_id=series.id)
+    if event == "Download" and current_app.redis.exists(marker):
         return None
     folder = sonarr_folder_of(sonarr_series)
     folders = fitzflix_folders(series)

@@ -233,6 +233,49 @@ def later_stage_holds(path):
     return False
 
 
+def _series_title_of_name(basename):
+    """Return the title of the series record that an episode name names, or None.
+
+    This is the title rule of the parse, with no TMDB call. An id tag is
+    removed. A name that is not an episode name gives None."""
+
+    if not TV_NAME_SEARCH_RE.search(basename):
+        return None
+    tv = TV_NAME_RE.match(basename)
+    if not tv:
+        return None
+    title = tv.group("title")
+    tagged = re.fullmatch(rf"(?P<base>.+?)(?: {ID_TAG_BLOCK})+", title)
+    return _canonical_series_title(tagged.group("base") if tagged else title)
+
+
+def series_import_in_flight(titles):
+    """Return the source path of an import of a series that is not done, or None.
+
+    titles holds the series titles that count. The localization can be
+    queued, running, or scheduled for a retry. A later stage counts too.
+    A series rename waits for such an import (#370). The import attaches
+    the episode to the series by its title at the end."""
+
+    names = {"app.videos.localization_task": "import_queue", **LATER_STAGES}
+    for queue_attr in set(names.values()):
+        queue = getattr(current_app, queue_attr)
+        ids = set(queue.job_ids)
+        ids.update(queue.intermediate_queue.get_job_ids())
+        ids.update(StartedJobRegistry(queue=queue).get_job_ids())
+        ids.update(ScheduledJobRegistry(queue=queue).get_job_ids())
+        for job in Job.fetch_many(list(ids), connection=current_app.redis):
+            if job is None or job.func_name not in names:
+                continue
+            source = job.args[0] if job.args else job.kwargs.get("source_path")
+            if not isinstance(source, str):
+                continue
+            title = _series_title_of_name(os.path.basename(source))
+            if title is not None and title in titles:
+                return source
+    return None
+
+
 def enqueue_localization(path, at_front=False, quiet=False):
     """Queue the localization of a file once. Return the job, or None (#287).
 
@@ -2402,12 +2445,26 @@ def _attach_movie(file, file_details):
 
 
 def _attach_tv_series(file, file_details):
-    """Find or make the TVSeries of an episode file and attach it."""
+    """Find or make the TVSeries of an episode file and attach it.
 
-    current_app.logger.info(
-        f"{file} Searching in TVSeries table using title='{file_details.get('title')}"
-    )
-    tv_series = TVSeries.query.filter_by(title=file_details.get("title")).first()
+    The series is found again at this point, at the end of the import.
+    A series rename can change the title after the parse (#370). Thus,
+    the TMDB id of an id tag comes first. Then the parsed title. Then
+    the title of the record that the parsed title names now. Only after
+    that does the import make a new series."""
+
+    title = file_details.get("title")
+    current_app.logger.info(f"{file} Searching in TVSeries table using title='{title}")
+    tv_series = None
+    if file_details.get("tmdb_id"):
+        found = TVSeries.query.filter_by(tmdb_id=file_details["tmdb_id"]).all()
+        tv_series = found[0] if len(found) == 1 else None
+    if tv_series is None:
+        tv_series = TVSeries.query.filter_by(title=title).first()
+    if tv_series is None and title:
+        tv_series = TVSeries.query.filter_by(
+            title=_canonical_series_title(title)
+        ).first()
     if not tv_series:
         tv_series = TVSeries(title=file_details.get("title"))
         current_app.logger.info(f"{file} Creating {tv_series}")

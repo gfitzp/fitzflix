@@ -225,6 +225,9 @@ def test_rename_moves_the_trail_to_the_new_untouched_name(app):
             "app.videos.localization_task", args=(f"/import/{old}",)
         )
         record_job_event(app.redis, job, "started")
+        # The import is done. A rename waits for an import of the series
+        # that is still in a queue (#370).
+        app.import_queue.remove(job)
 
         assert rename_tv_series_task(series.id, "Batman (1966)") is True
         db.session.expire_all()
