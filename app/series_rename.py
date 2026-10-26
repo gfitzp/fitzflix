@@ -35,7 +35,7 @@ import re
 import time
 import traceback
 
-from flask import current_app
+from flask import current_app, g
 from pathvalidate import sanitize_filename
 from unidecode import unidecode
 from werkzeug.local import LocalProxy
@@ -219,7 +219,7 @@ def _take_series_locks(series, new_title):
         reason = f"waits for the import of '{os.path.basename(source)}'"
     locks = []
     episodes = {(file.season, file.episode) for file in series.files}
-    ttl_ms = rename_timeout(series) * 1000
+    ttl_ms = _lock_seconds(series) * 1000
     for season, episode in [] if reason else sorted(episodes, key=str):
         key = title_lock_key(TV_SHOWS, series.title, season=season, episode=episode)
         lock = current_app.lock_manager.lock(key, ttl_ms)
@@ -233,6 +233,22 @@ def _take_series_locks(series, new_title):
         current_app.lock_manager.unlock(lock)
     _requeue_rename(series, new_title, reason)
     return None
+
+
+def _lock_seconds(series):
+    """Return the TTL of the episode locks of a rename, in seconds.
+
+    Under rq, it is the timeout of the running job. The job got that
+    timeout from the file count when it was queued. A file that left
+    the series since then must not make the locks shorter than the job
+    (#374 follow-up). Outside rq, it is rename_timeout(series)."""
+
+    from rq import get_current_job
+
+    job = get_current_job()
+    if job is not None and job.timeout:
+        return max(int(job.timeout), rename_timeout(series))
+    return rename_timeout(series)
 
 
 def _requeue_rename(series, new_title, reason):
@@ -339,6 +355,10 @@ def _move_series(series, new_title):
     # An import can start during the loop. It can attach a file under the
     # old title at its end (#373). Then the title stays, and the rename
     # goes back on its queue. The retry counts the renamed rows as done.
+    # A known and accepted gap stays: an import that starts after this
+    # check and before the title commit below. The window is the time of
+    # 1 commit and the leftover-folder pass. The nightly check reports
+    # such a series as a conflict (review of 2026-10-26).
 
     source = series_import_in_flight({old_title, new_title})
     left = _rows_not_renamed(series, old_title, new_title)
@@ -667,23 +687,38 @@ def _series_of_pending_rename(title):
     return None
 
 
+def _sonarr_series_list():
+    """Return the Sonarr series list, or None after a fault. Read it 1 time per app context.
+
+    The cataloging reads it before its records (#372 follow-up). Thus,
+    a slow Sonarr does not hold the open write transaction."""
+
+    from app.sonarr_push import _sonarr
+
+    if "sonarr_series" not in g:
+        try:
+            g.sonarr_series = _sonarr("GET", "/api/v3/series") or []
+        except Exception as e:
+            current_app.logger.warning(
+                f"Sonarr path check: couldn't list the Sonarr series: {e}"
+            )
+            g.sonarr_series = None
+    return g.sonarr_series
+
+
 def _series_of_sonarr_folder(folder):
-    """Return the series that Sonarr keeps in a show folder of the TV library, or None.
+    """Return (series, ok) for the series that Sonarr keeps in a show folder.
 
-    The Sonarr series must match exactly 1 series by its ids. A Sonarr
-    fault gives None and one warning."""
+    The Sonarr series must match exactly 1 series by its ids. ok is
+    False when Sonarr is configured but did not answer."""
 
-    from app.sonarr_push import _sonarr, sonarr_configured
+    from app.sonarr_push import sonarr_configured
 
     if not folder or not sonarr_configured():
-        return None
-    try:
-        entries = _sonarr("GET", "/api/v3/series") or []
-    except Exception as e:
-        current_app.logger.warning(
-            f"Sonarr path check: couldn't list the series for {folder!r}: {e}"
-        )
-        return None
+        return None, True
+    entries = _sonarr_series_list()
+    if entries is None:
+        return None, False
     library = os.path.realpath(current_app.config["TV_LIBRARY"])
     found = set()
     for entry in entries:
@@ -692,20 +727,24 @@ def _series_of_sonarr_folder(folder):
             series = find_series(entry)
             if series is not None:
                 found.add(series)
-    return found.pop() if len(found) == 1 else None
+    return (found.pop() if len(found) == 1 else None), True
 
 
 def series_for_import(title, folder):
-    """Return the series that a new episode title belongs to, or None (#372).
+    """Return (series, ok) for the series that a new episode title belongs to (#372).
 
     The import calls this function before it makes a new series. A
     rename to the title can wait for the import. Then the episode goes
     to the series of that rename. Else Sonarr can keep the show folder
     of the file for a series. Sonarr renames a series folder, for
     example "Batman" to "Batman (1966)", and the TMDB first-air year
-    cannot always confirm the year. The Sonarr ids can."""
+    cannot always confirm the year. The Sonarr ids can. ok is False
+    when Sonarr did not answer."""
 
-    return _series_of_pending_rename(title) or _series_of_sonarr_folder(folder)
+    series = _series_of_pending_rename(title)
+    if series is not None:
+        return series, True
+    return _series_of_sonarr_folder(folder)
 
 
 def _enqueue_once(name, job_id, *args, description, also=(), timeout=None):

@@ -858,15 +858,18 @@ def test_an_import_in_the_sonarr_folder_attaches_to_its_series(app, sonarr, firs
     """The TMDB year cannot fold "Batman (1966)". The Sonarr folder can."""
 
     from app import db
-    from app.importing import _attach_tv_series
+    from app.importing import _attach_tv_series, resolve_import_series
     from app.models import File, TVSeries
 
     with app.app_context():
         series_id, _file_id = batman(app, tmdb_first_air_date=first_air)
         sonarr(sonarr_series("Batman (1966)"))
+        details = {"title": "Batman (1966)", "dirname": NEW_FOLDER}
+        verdict, found = resolve_import_series(details)
+        assert (verdict, found) == ("ok", series_id)
         with db.session.no_autoflush:
             file = File()
-            _attach_tv_series(file, {"title": "Batman (1966)", "dirname": NEW_FOLDER})
+            _attach_tv_series(file, details, found)
             assert file.tv_series.id == series_id
             assert TVSeries.query.count() == 1
         db.session.rollback()
@@ -876,8 +879,8 @@ def test_an_import_attaches_to_the_series_of_a_waiting_rename(app, sonarr):
     """Sonarr is down. The rename that waits for the import names the series."""
 
     from app import db
-    from app.importing import _attach_tv_series
-    from app.models import File, TVSeries
+    from app.importing import _attach_tv_series, resolve_import_series
+    from app.models import File
     from app.tasks import enqueue_task
 
     sonarr(down=True)
@@ -886,16 +889,16 @@ def test_an_import_attaches_to_the_series_of_a_waiting_rename(app, sonarr):
         enqueue_task(
             "app.series_rename.rename_tv_series_task", series_id, "Batman (1966)"
         )
+        details = {"title": "Batman (1966)", "dirname": NEW_FOLDER}
+        assert resolve_import_series(details) == ("ok", series_id)
+
+        # Another title is still a new series.
+        other = {"title": "Robin", "dirname": "TV Shows/Robin"}
+        assert resolve_import_series(other) == ("ok", None)
         with db.session.no_autoflush:
             file = File()
-            _attach_tv_series(file, {"title": "Batman (1966)", "dirname": NEW_FOLDER})
-            assert file.tv_series.id == series_id
-            assert TVSeries.query.count() == 1
-
-            # Another title is still a new series.
-            other = File()
-            _attach_tv_series(other, {"title": "Robin", "dirname": "TV Shows/Robin"})
-            assert other.tv_series.id != series_id
+            _attach_tv_series(file, other, None)
+            assert file.tv_series.title == "Robin"
         db.session.rollback()
 
 
@@ -990,3 +993,43 @@ def test_an_import_that_starts_in_the_loop_holds_the_title(app, monkeypatch):
     assert rename_tv_series_task(series_id, "Batman (1966)") is True
     with app.app_context():
         assert db.session.get(TVSeries, series_id).title == "Batman (1966)"
+
+
+def test_a_cataloging_waits_for_sonarr_before_it_splits_a_series(
+    app, sonarr, monkeypatch
+):
+    """Sonarr is down, and "Batman" exists. The cataloging waits (#372 follow-up)."""
+
+    from rq.registry import ScheduledJobRegistry
+
+    from app.models import TVSeries
+    from app.tasks import requeue_job_id
+    from app.videos import finalize_localization
+
+    monkeypatch.setattr("app.videos._dead_volumes", lambda paths: [])
+    sonarr(down=True)
+    with app.app_context():
+        batman(app)
+    source = "/import/Batman (1966) - S01E05 - [WEBDL-1080p].mkv"
+    details = {
+        "media_library": "TV Shows",
+        "title": "Batman (1966)",
+        "dirname": NEW_FOLDER,
+        "basename": "Batman (1966) - S01E05 - [WEBDL-1080p].mkv",
+        "file_path": f"{NEW_FOLDER}/Batman (1966) - S01E05 - [WEBDL-1080p].mkv",
+    }
+
+    assert finalize_localization(source, details, None, "/hidden", {}) is False
+    retry = requeue_job_id(
+        "app.videos.finalize_localization",
+        source,
+        {"vanished_retries": 0, "sonarr_waits": 1},
+    )
+    assert retry in ScheduledJobRegistry(queue=app.sql_queue).get_job_ids()
+    with app.app_context():
+        assert TVSeries.query.count() == 1
+        # A known series needs no Sonarr answer.
+        from app.importing import resolve_import_series
+
+        bare = {**details, "title": "Batman", "dirname": "TV Shows/Batman/Season 01"}
+        assert resolve_import_series(bare)[0] == "ok"

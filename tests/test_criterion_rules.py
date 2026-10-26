@@ -88,6 +88,25 @@ def test_a_set_member_without_a_tmdb_id_does_not_repeat_a_release_with_one(app):
     ]
 
 
+def test_a_set_member_first_in_the_cache_is_still_dropped(app):
+    """The plain row comes before the release with a TMDB id (#382 follow-up)."""
+
+    from app.main.library import catalog_rows_for
+
+    releases = [
+        {
+            "tmdb_id": None,
+            "title": "Lonesome",
+            "year": 1928,
+            "spine_number": 624,
+            "set_title": "Lonesome collector's set",
+        },
+        {"tmdb_id": 31417, "title": "Lonesome", "year": 1928, "spine_number": 623},
+    ]
+    rows = catalog_rows_for(releases, set(), set(), set())
+    assert [(row["tmdb_id"], row["title"]) for row in rows] == [(31417, "Lonesome")]
+
+
 def test_criterion_sort_key_puts_set_members_at_the_spine_of_their_set(app):
     from app.main.library import criterion_sort_key
 

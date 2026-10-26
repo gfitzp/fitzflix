@@ -376,3 +376,33 @@ def test_rename_back_to_the_import_name_keeps_the_trail(app):
         assert _trail_of(app, episode.basename, episode.untouched_basename)
         # The new home of the trail has no redirect away from itself.
         assert not app.redis.exists(ALIAS_KEY.format(digest=_digest(source)))
+
+
+def test_the_episode_locks_last_as_long_as_the_job(app, monkeypatch):
+    """A file left the series after the enqueue. The TTL follows the job (#374 follow-up)."""
+
+    import rq
+
+    from app import series_rename
+
+    class RunningJob:
+        timeout = 5400
+
+    taken = []
+    real_lock = app.lock_manager.lock
+
+    def recording_lock(key, ttl):
+        taken.append(ttl)
+        return real_lock(key, ttl)
+
+    monkeypatch.setattr(rq, "get_current_job", lambda: RunningJob())
+    monkeypatch.setattr(app.lock_manager, "lock", recording_lock)
+    monkeypatch.setitem(app.config, "SQL_TASK_TIMEOUT", 600)
+    with app.app_context():
+        series = make_tv_series("Batman", tmdb_id=2287)
+        make_tv_file(series, 1, 1, "Bluray-1080p")
+        db.session.commit()
+        locks = series_rename._take_series_locks(series, "Batman (1966)")
+        for lock in locks:
+            app.lock_manager.unlock(lock)
+    assert taken == [5400 * 1000]

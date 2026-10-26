@@ -1075,10 +1075,28 @@ def _route_restore(sqs_client, key, receipt_handle, downloads_by_key, moves_by_k
     happens while the restored copy is readable. A key that no record
     claims gets nothing. A moved archive leaves such a key, and a
     download of it would import an old file under its key name. The
-    message is deleted. Each other key gets a download."""
+    message is deleted. Each other key gets a download.
+
+    2 rows can share a key. A user can request the download of the key
+    while a move of it waits (#385 follow-up). Then the key gets both
+    jobs. The download goes first and has no receipt handle. The move
+    waits for the download, and then it deletes the message."""
 
     file = _file_claiming(key)
     if file is not None and file.aws_key_target and move_source(file) == key:
+        if restore_requested_at(
+            current_app.redis, key
+        ) is not None and not _download_job_for(key):
+            downloads_by_key[key] = enqueue_task(
+                "app.videos.download_task",
+                key,
+                os.path.basename(key),
+                None,
+                description=f"'{os.path.basename(key)}' — Downloading from AWS",
+            )
+            current_app.logger.info(
+                f"'{key}' Restored for a requested download and for an archive move"
+            )
         moves_by_key[key] = enqueue_task(
             "app.aws_storage.move_archive_object",
             file.id,
@@ -1392,7 +1410,14 @@ def _enqueue_move_once(file_id, basename):
     move reads the target of the file when it runs. Thus, a second
     request adds nothing. A running move does not count. It can hold an
     older target. Each id is new, so no job takes the expiry of an old
-    finished job."""
+    finished job.
+
+    A known and accepted gap stays (review of 2026-10-26). A move that
+    waits as a scheduled retry, or a move that a restore notification
+    queued with its receipt handle, does not count. A new request (a
+    rename, or converge-keys with --again) can add 1 more job for such a
+    file. That job finds the
+    restore in progress or the move done, and it changes nothing."""
 
     from app.tasks import TASKS, resolve_queue
 

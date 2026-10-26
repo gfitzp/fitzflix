@@ -1051,3 +1051,36 @@ def test_a_restore_of_a_shared_key_goes_to_the_row_that_moves_it(app, s3):
             for job in app.file_queue.jobs
             if job.func_name == "app.videos.download_task"
         ] == []
+
+
+def test_a_requested_download_of_a_shared_key_runs_beside_the_move(app, s3):
+    """A user asked for the download of key K, and a move of K waits (#385 follow-up)."""
+
+    from app import aws_storage, db
+
+    with app.app_context():
+        first = archived_film("Shared Ask", 1960, key_name="Asked (1960).mkv")
+        mover = archived_film("Shared Moving", 1961, key_name="Asked (1960).mkv")
+        key = first.aws_key
+        assert aws_storage.request_archive_move(mover)
+        db.session.commit()
+        for job in move_jobs(app):
+            job.delete()
+        aws_storage.record_restore_request(app.redis, key)
+
+        downloads, moves = {}, {}
+        aws_storage._route_restore(s3.sqs, key, "handle-7", downloads, moves)
+        assert moves[key].args == (mover.id,)
+        assert moves[key].kwargs == {"sqs_receipt_handle": "handle-7"}
+        (download,) = [
+            job
+            for job in app.file_queue.jobs
+            if job.func_name == "app.videos.download_task"
+        ]
+        assert download.args == (key, os.path.basename(key), None)
+        assert downloads[key].id == download.id
+
+        # The move waits while the download is in the queue.
+        assert aws_storage.move_archive_object(mover.id, "handle-7") == (
+            aws_storage.MOVE_WAITING
+        )

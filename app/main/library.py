@@ -727,6 +727,13 @@ def catalog_rows_for(releases, consumed_tmdb, consumed_title_year, excluded_tmdb
     set_spines = {
         release["spine_number"] for release in releases if release.get("set_title")
     }
+    # The first pass takes the title and year of each release with a
+    # TMDB id. Thus, the order of the cache does not matter (#382).
+    tmdb_title_years = {
+        (release.get("title"), release.get("year"))
+        for release in releases
+        if release.get("tmdb_id") and release.get("tmdb_id") not in excluded_tmdb
+    }
     rows = []
     keys = set()
     for release in releases:
@@ -738,17 +745,16 @@ def catalog_rows_for(releases, consumed_tmdb, consumed_title_year, excluded_tmdb
         ):
             continue
         title_year = (release.get("title"), release.get("year"))
-        if tmdb_id and tmdb_id in excluded_tmdb:
-            continue
-        if tmdb_id and tmdb_id in consumed_tmdb:
-            keys.add(title_year)
+        if tmdb_id and (tmdb_id in excluded_tmdb or tmdb_id in consumed_tmdb):
             continue
         if title_year in consumed_title_year:
+            continue
+        if not tmdb_id and title_year in tmdb_title_years:
             continue
         key = tmdb_id or title_year
         if key in keys:
             continue
-        keys.update({key, title_year})
+        keys.add(key)
         rows.append(
             {
                 "kind": "tmdb" if tmdb_id else "plain",
