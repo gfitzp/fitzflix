@@ -185,8 +185,8 @@ def register(app):
     def rename(series_id, new_title):
         """Rename a TV series on the disk and in the database.
 
-        This is the Plex-disambiguation fix. The S3 keys deliberately
-        stay the same."""
+        This is the Plex-disambiguation fix. The untouched names get the
+        new title (#362), and the archive keys follow them (#369)."""
 
         job = enqueue_task(
             "app.series_rename.rename_tv_series_task",
