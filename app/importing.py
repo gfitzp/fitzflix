@@ -249,15 +249,27 @@ def _series_title_of_name(basename):
     return _canonical_series_title(tagged.group("base") if tagged else title)
 
 
+# The Sonarr adopt task comes before the localization (#289). It waits
+# for the Sonarr rename of the file and then queues the localization.
+# Its third argument is the path of the download (#373).
+
+ADOPT_EPISODE_TASK = "app.sonarr_push.adopt_episode_task"
+
+
 def series_import_in_flight(titles):
     """Return the source path of an import of a series that is not done, or None.
 
     titles holds the series titles that count. The localization can be
-    queued, running, or scheduled for a retry. A later stage counts too.
-    A series rename waits for such an import (#370). The import attaches
-    the episode to the series by its title at the end."""
+    queued, running, or scheduled for a retry. A later stage counts too,
+    and the Sonarr adopt task before the localization (#373). A series
+    rename waits for such an import (#370). The import attaches the
+    episode to the series by its title at the end."""
 
-    names = {"app.videos.localization_task": "import_queue", **LATER_STAGES}
+    names = {
+        "app.videos.localization_task": "import_queue",
+        ADOPT_EPISODE_TASK: "request_queue",
+        **LATER_STAGES,
+    }
     for queue_attr in set(names.values()):
         queue = getattr(current_app, queue_attr)
         ids = set(queue.job_ids)
@@ -267,7 +279,10 @@ def series_import_in_flight(titles):
         for job in Job.fetch_many(list(ids), connection=current_app.redis):
             if job is None or job.func_name not in names:
                 continue
-            source = job.args[0] if job.args else job.kwargs.get("source_path")
+            if job.func_name == ADOPT_EPISODE_TASK:
+                source = job.args[2] if len(job.args) > 2 else None
+            else:
+                source = job.args[0] if job.args else job.kwargs.get("source_path")
             if not isinstance(source, str):
                 continue
             title = _series_title_of_name(os.path.basename(source))
@@ -2450,8 +2465,11 @@ def _attach_tv_series(file, file_details):
     The series is found again at this point, at the end of the import.
     A series rename can change the title after the parse (#370). Thus,
     the TMDB id of an id tag comes first. Then the parsed title. Then
-    the title of the record that the parsed title names now. Only after
-    that does the import make a new series."""
+    the title of the record that the parsed title names now. Then the
+    series of a rename to the title that waits, and the series that
+    Sonarr keeps in the show folder of the file (#372). Only after that
+    does the import make a new series. Else a Sonarr rename that adds a
+    year splits the show."""
 
     title = file_details.get("title")
     current_app.logger.info(f"{file} Searching in TVSeries table using title='{title}")
@@ -2465,6 +2483,16 @@ def _attach_tv_series(file, file_details):
         tv_series = TVSeries.query.filter_by(
             title=_canonical_series_title(title)
         ).first()
+    if tv_series is None and title:
+        from app.series_rename import series_for_import
+
+        parts = (file_details.get("dirname") or "").split("/")
+        folder = parts[1] if len(parts) > 1 and parts[0] == TV_SHOWS else None
+        tv_series = series_for_import(title, folder)
+        if tv_series is not None:
+            current_app.logger.info(
+                f"{file} The show folder {folder!r} belongs to {tv_series}"
+            )
     if not tv_series:
         tv_series = TVSeries(title=file_details.get("title"))
         current_app.logger.info(f"{file} Creating {tv_series}")

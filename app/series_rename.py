@@ -182,6 +182,8 @@ def rename_tv_series_task(series_id, new_title):
 
 RENAME_WAIT_MINUTES = (5, 15)
 
+RENAME_TASK = "app.series_rename.rename_tv_series_task"
+
 # The time limit of a rename grows with the number of files (#374). A
 # move on NFS can take 25 seconds with its retries. The episode locks
 # have the same time limit as the job.
@@ -210,7 +212,6 @@ def _take_series_locks(series, new_title):
 
     from app.importing import series_import_in_flight
     from app.models import TV_SHOWS, title_lock_key
-    from app.tasks import requeue
 
     reason = None
     source = series_import_in_flight({series.title, new_title})
@@ -230,15 +231,34 @@ def _take_series_locks(series, new_title):
         return locks
     for lock in locks:
         current_app.lock_manager.unlock(lock)
+    _requeue_rename(series, new_title, reason)
+    return None
+
+
+def _requeue_rename(series, new_title, reason):
+    """Put the rename of a series back on its queue after RENAME_WAIT_MINUTES."""
+
+    from app.tasks import requeue
+
     requeue(
-        "app.series_rename.rename_tv_series_task",
+        RENAME_TASK,
         key=series.id,
         delay=RENAME_WAIT_MINUTES,
         reason=f"Series rename of {series.title!r} {reason}",
         args=(series.id, new_title),
         timeout=rename_timeout(series),
     )
-    return None
+
+
+def _rows_not_renamed(series, old_title, new_title):
+    """Return the paths of the files of a series that do not have the new title yet."""
+
+    left = []
+    for file in series.files.all():
+        target = _planned_target(file, old_title, new_title)
+        if target is None or target[1:] != (file.dirname, file.basename):
+            left.append(file.file_path)
+    return left
 
 
 def _move_series(series, new_title):
@@ -249,7 +269,7 @@ def _move_series(series, new_title):
     old_prefix = f"{old_title} - "
     new_prefix = f"{new_title} - "
 
-    from app.importing import reconstruct_filename
+    from app.importing import reconstruct_filename, series_import_in_flight
     from app.videos import _rename_with_retries
 
     # Plan each file first. If 1 file does not carry the series title,
@@ -314,6 +334,21 @@ def _move_series(series, new_title):
         # The move job goes to the queue at this commit.
         request_archive_move(file)
         db.session.commit()
+
+    # An import can start during the loop. It can attach a file under the
+    # old title at its end (#373). Then the title stays, and the rename
+    # goes back on its queue. The retry counts the renamed rows as done.
+
+    source = series_import_in_flight({old_title, new_title})
+    left = _rows_not_renamed(series, old_title, new_title)
+    if source or left:
+        reason = (
+            f"waits for the import of '{os.path.basename(source)}'"
+            if source
+            else f"found {len(left)} file(s) with the old title: {left[:5]}"
+        )
+        _requeue_rename(series, new_title, reason)
+        return False
 
     # This step is aware of junk files. It is not a plain rmdir. The
     # old series folder usually keeps a poster.png (from Sonarr or
@@ -524,7 +559,15 @@ def _sonarr_branch(series, entry):
     folders = fitzflix_folders(series)
     if not folders:
         return "no files", None
-    if len(folders) > 1 or None in folders:
+
+    # An import can attach an episode in the Sonarr folder before the
+    # rename (#372). Then the series has the Sonarr folder and 1 other
+    # folder. Only the rename branch can join them.
+
+    split = len(folders) == 2 and sonarr_folder in folders and None not in folders
+    if split:
+        folders = folders - {sonarr_folder}
+    elif len(folders) > 1 or None in folders:
         current_app.logger.warning(
             f"Sonarr path check: the files of {series.title!r} are in more "
             f"than one show folder. Not changed"
@@ -557,7 +600,7 @@ def _sonarr_branch(series, entry):
     if sonarr_exists and not fitzflix_exists:
         title = _rename_title(series, folder, sonarr_folder)
         return ("rename", title) if title else _conflict(series)
-    if fitzflix_exists and not sonarr_exists:
+    if fitzflix_exists and not sonarr_exists and not split:
         return "repoint", folder
     current_app.logger.warning(
         f"Sonarr path check: {series.title!r} is at {sonarr_folder!r} in "
@@ -581,10 +624,8 @@ def _tv_library_missing():
     return True
 
 
-def _job_pending(queue, *job_ids):
-    """Return True if a job with one of these ids waits, runs, or is scheduled.
-
-    An id with a time tag (the id, "_", and digits) counts as the id."""
+def _job_ids(queue):
+    """Return the ids of the jobs of a queue that wait, run, or are scheduled."""
 
     from rq.registry import ScheduledJobRegistry, StartedJobRegistry
 
@@ -592,11 +633,78 @@ def _job_pending(queue, *job_ids):
     ids.update(queue.intermediate_queue.get_job_ids())
     ids.update(StartedJobRegistry(queue=queue).get_job_ids())
     ids.update(ScheduledJobRegistry(queue=queue).get_job_ids())
+    return ids
+
+
+def _job_pending(queue, *job_ids):
+    """Return True if a job with one of these ids waits, runs, or is scheduled.
+
+    An id with a time tag (the id, "_", and digits) counts as the id."""
+
     return any(
         found == job_id or re.fullmatch(re.escape(job_id) + r"_\d+", found)
-        for found in ids
+        for found in _job_ids(queue)
         for job_id in job_ids
     )
+
+
+def _series_of_pending_rename(title):
+    """Return the series that a rename to this title waits for, or None (#372)."""
+
+    from rq.job import Job
+
+    from app.tasks import TASKS, resolve_queue
+
+    queue = resolve_queue(TASKS[RENAME_TASK].queue)
+    for job in Job.fetch_many(list(_job_ids(queue)), connection=queue.connection):
+        if job is None or job.func_name != RENAME_TASK or len(job.args) < 2:
+            continue
+        if job.args[1] == title:
+            series = db.session.get(TVSeries, job.args[0])
+            if series is not None:
+                return series
+    return None
+
+
+def _series_of_sonarr_folder(folder):
+    """Return the series that Sonarr keeps in a show folder of the TV library, or None.
+
+    The Sonarr series must match exactly 1 series by its ids. A Sonarr
+    fault gives None and one warning."""
+
+    from app.sonarr_push import _sonarr, sonarr_configured
+
+    if not folder or not sonarr_configured():
+        return None
+    try:
+        entries = _sonarr("GET", "/api/v3/series") or []
+    except Exception as e:
+        current_app.logger.warning(
+            f"Sonarr path check: couldn't list the series for {folder!r}: {e}"
+        )
+        return None
+    library = os.path.realpath(current_app.config["TV_LIBRARY"])
+    found = set()
+    for entry in entries:
+        parent = os.path.dirname(os.path.normpath(entry.get("path") or "/"))
+        if sonarr_folder_of(entry) == folder and os.path.realpath(parent) == library:
+            series = find_series(entry)
+            if series is not None:
+                found.add(series)
+    return found.pop() if len(found) == 1 else None
+
+
+def series_for_import(title, folder):
+    """Return the series that a new episode title belongs to, or None (#372).
+
+    The import calls this function before it makes a new series. A
+    rename to the title can wait for the import. Then the episode goes
+    to the series of that rename. Else Sonarr can keep the show folder
+    of the file for a series. Sonarr renames a series folder, for
+    example "Batman" to "Batman (1966)", and the TMDB first-air year
+    cannot always confirm the year. The Sonarr ids can."""
+
+    return _series_of_pending_rename(title) or _series_of_sonarr_folder(folder)
 
 
 def _enqueue_once(name, job_id, *args, description, also=(), timeout=None):
@@ -658,7 +766,7 @@ def _apply_branch(series, entry, branch, value):
     sonarr_folder = sonarr_folder_of(entry)
     _adopt_tvdb_id(series, entry)
     if branch == "rename":
-        name = "app.series_rename.rename_tv_series_task"
+        name = RENAME_TASK
         job = _enqueue_once(
             name,
             safe_job_id(f"sonarr-rename:{series.id}"),

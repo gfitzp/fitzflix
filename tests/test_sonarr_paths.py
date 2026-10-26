@@ -844,3 +844,149 @@ def test_a_converted_episode_keeps_the_quality_of_its_library_name(app, sonarr):
     assert summary["adopted"] == 1
     with app.app_context():
         assert db.session.get(File, file_id).edition == "Pilot"
+
+
+# The series split of a Sonarr year (#372) and the adopt stage (#373).
+
+NEW_FOLDER = "TV Shows/Batman (1966)/Season 01"
+
+
+@pytest.mark.parametrize(
+    "first_air", [date(1965, 9, 1), None], ids=["other year", "no first-air date"]
+)
+def test_an_import_in_the_sonarr_folder_attaches_to_its_series(app, sonarr, first_air):
+    """The TMDB year cannot fold "Batman (1966)". The Sonarr folder can."""
+
+    from app import db
+    from app.importing import _attach_tv_series
+    from app.models import File, TVSeries
+
+    with app.app_context():
+        series_id, _file_id = batman(app, tmdb_first_air_date=first_air)
+        sonarr(sonarr_series("Batman (1966)"))
+        with db.session.no_autoflush:
+            file = File()
+            _attach_tv_series(file, {"title": "Batman (1966)", "dirname": NEW_FOLDER})
+            assert file.tv_series.id == series_id
+            assert TVSeries.query.count() == 1
+        db.session.rollback()
+
+
+def test_an_import_attaches_to_the_series_of_a_waiting_rename(app, sonarr):
+    """Sonarr is down. The rename that waits for the import names the series."""
+
+    from app import db
+    from app.importing import _attach_tv_series
+    from app.models import File, TVSeries
+    from app.tasks import enqueue_task
+
+    sonarr(down=True)
+    with app.app_context():
+        series_id, _file_id = batman(app)
+        enqueue_task(
+            "app.series_rename.rename_tv_series_task", series_id, "Batman (1966)"
+        )
+        with db.session.no_autoflush:
+            file = File()
+            _attach_tv_series(file, {"title": "Batman (1966)", "dirname": NEW_FOLDER})
+            assert file.tv_series.id == series_id
+            assert TVSeries.query.count() == 1
+
+            # Another title is still a new series.
+            other = File()
+            _attach_tv_series(other, {"title": "Robin", "dirname": "TV Shows/Robin"})
+            assert other.tv_series.id != series_id
+        db.session.rollback()
+
+
+def test_an_episode_attached_before_the_rename_joins_the_renamed_series(app, sonarr):
+    """The split branch: the old folder is gone, 1 row is in the Sonarr folder.
+
+    The nightly check queues the rename, and the rename counts that row
+    as done (#372, #374)."""
+
+    from app import db
+    from app.models import TVSeries
+    from app.series_rename import fitzflix_folders, reconcile_sonarr_paths
+    from tests.factories import make_file
+
+    with app.app_context():
+        series_id, file_id = batman(app, on_disk=False)
+        series = db.session.get(TVSeries, series_id)
+        make_file(
+            "Batman (1966) - S01E02 - [Bluray-1080p].mkv",
+            NEW_FOLDER,
+            "Batman (1966) - S01E02",
+            "TV Shows",
+            "Bluray-1080p",
+            series_id=series_id,
+            season=1,
+            episode=2,
+            last_episode=2,
+        )
+        db.session.commit()
+    place(app, MOVED)
+    place(app, f"{NEW_FOLDER}/Batman (1966) - S01E02 - [Bluray-1080p].mkv")
+    sonarr(sonarr_series("Batman (1966)"))
+
+    assert reconcile_sonarr_paths()["renamed"] == 1
+    (job,) = rename_jobs(app)
+    assert job.func(*job.args) is True
+    with app.app_context():
+        series = db.session.get(TVSeries, series_id)
+        assert series.title == "Batman (1966)"
+        assert fitzflix_folders(series) == {"Batman (1966)"}
+    assert reconcile_sonarr_paths()["conflicts"] == 0
+
+
+def test_a_rename_waits_for_a_sonarr_adopt(app):
+    """The adopt task queues the localization after the Sonarr rename (#373)."""
+
+    from app import db
+    from app.models import TVSeries
+    from app.series_rename import rename_tv_series_task
+
+    with app.app_context():
+        series_id, _file_id = batman(app)
+    download = "/Volumes/TV Shows/Batman/Season 01/Batman - S01E03 - [Bluray-1080p].mkv"
+    app.request_queue.enqueue(
+        "app.sonarr_push.adopt_episode_task",
+        args=(5, 9, download, download.replace("Bluray", "WEBDL"), "WEBDL-1080p"),
+    )
+
+    assert rename_tv_series_task(series_id, "Batman (1966)") is False
+    assert scheduled_rename_retry(app, series_id)
+    with app.app_context():
+        assert db.session.get(TVSeries, series_id).title == "Batman"
+
+
+def test_an_import_that_starts_in_the_loop_holds_the_title(app, monkeypatch):
+    """The rename checks again before the title changes (#373)."""
+
+    import app.videos as videos
+
+    from app import db
+    from app.models import TVSeries
+    from app.series_rename import rename_tv_series_task
+
+    real_rename = videos._rename_with_retries
+    queued = []
+
+    def import_arrives(src, dst, *args, **kwargs):
+        if not queued:
+            queued.append(localizing(app, "Batman - S01E04 - [WEBDL-1080p].mkv"))
+        return real_rename(src, dst, *args, **kwargs)
+
+    monkeypatch.setattr(videos, "_rename_with_retries", import_arrives)
+    with app.app_context():
+        series_id, _file_id = batman(app)
+
+    assert rename_tv_series_task(series_id, "Batman (1966)") is False
+    assert scheduled_rename_retry(app, series_id)
+    with app.app_context():
+        assert db.session.get(TVSeries, series_id).title == "Batman"
+
+    app.import_queue.remove(queued[0])
+    assert rename_tv_series_task(series_id, "Batman (1966)") is True
+    with app.app_context():
+        assert db.session.get(TVSeries, series_id).title == "Batman (1966)"
