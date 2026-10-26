@@ -1307,10 +1307,25 @@ def cleanup_orphaned_files():
     directories. The task sends a summary by email.
     """
 
+    from app.importing import paths_held_by_later_stages
+
     with app.app_context():
         config = current_app.config
         cutoff = time.time() - ORPHAN_MAX_AGE_DAYS * 86400
         removed = []
+
+        # A conversion or a move can wait for more than 7 days. Its hidden
+        # input is not residue (#436). If the queues cannot be read, no
+        # hidden file is deleted.
+
+        try:
+            held = paths_held_by_later_stages()
+        except Exception:
+            current_app.logger.warning(
+                "Could not read the queued pipeline jobs. The orphan sweep "
+                "deletes no partial file this time: " + traceback.format_exc()
+            )
+            held = None
 
         roots = (
             config["STAGING_DIR"],
@@ -1339,6 +1354,8 @@ def cleanup_orphaned_files():
                     except OSError:
                         continue
                     if stats.st_mtime > cutoff:
+                        continue
+                    if held is None or os.path.abspath(path) in held:
                         continue
                     try:
                         os.remove(path)

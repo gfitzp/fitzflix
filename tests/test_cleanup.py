@@ -355,3 +355,40 @@ def test_shared_untouched_key_is_never_deleted(app):
         keeper.aws_date_deleted = datetime.now()
         db.session.commit()
         assert untouched_key_still_claimed(shared) is False
+
+
+def test_cleanup_keeps_the_input_of_a_waiting_conversion(app, monkeypatch):
+    """A conversion that waits over 7 days keeps its hidden input (#436)."""
+
+    from datetime import timedelta
+
+    monkeypatch.setattr(maintenance, "task_send_email", lambda *a, **k: None)
+    staging = app.config["STAGING_DIR"]
+    waiting = plant(os.path.join(staging, ".Waiting (2020) - [DVD].mkv"), 9)
+    stray = plant(os.path.join(staging, ".Stray (2020) - [DVD].mkv"), 9)
+    moving = plant(os.path.join(staging, ".Deferred (2020) - [DVD].mkv"), 9)
+    app.transcode_queue.enqueue(
+        "app.videos.convert_localized_file",
+        "/import/Waiting (2020) - [Remux-2160p].mkv",
+        {},
+        None,
+        waiting,
+        {},
+    )
+    app.handoff_queue.enqueue_in(
+        timedelta(minutes=30),
+        "app.videos.move_localized_file",
+        "/import/Deferred (2020) - [DVD].mkv",
+        {},
+        None,
+        moving,
+    )
+    try:
+        maintenance.cleanup_orphaned_files()
+        assert os.path.exists(waiting)
+        assert os.path.exists(moving)
+        assert not os.path.exists(stray)
+    finally:
+        for path in (waiting, stray, moving):
+            if os.path.exists(path):
+                os.remove(path)

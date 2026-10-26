@@ -244,6 +244,28 @@ def later_stage_holds(path):
     return False
 
 
+def paths_held_by_later_stages():
+    """Return each path argument of the conversion, move and cataloging jobs (#436).
+
+    A job counts when it is queued, running, or scheduled for a retry.
+    The weekly orphan sweep must not delete the input of such a job. A
+    conversion can wait in the transcode queue for more than 7 days."""
+
+    held = set()
+    for queue_attr in set(LATER_STAGES.values()):
+        queue = getattr(current_app, queue_attr)
+        ids = set(queue.job_ids)
+        ids.update(StartedJobRegistry(queue=queue).get_job_ids())
+        ids.update(ScheduledJobRegistry(queue=queue).get_job_ids())
+        for job in Job.fetch_many(list(ids), connection=current_app.redis):
+            if job is None or job.func_name not in LATER_STAGES:
+                continue
+            for value in list(job.args) + list((job.kwargs or {}).values()):
+                if isinstance(value, str):
+                    held.add(os.path.abspath(value))
+    return held
+
+
 def _series_title_of_name(basename):
     """Return the title of the series record that an episode name names, or None.
 
