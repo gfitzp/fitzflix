@@ -188,11 +188,18 @@ def register(app):
         This is the Plex-disambiguation fix. The untouched names get the
         new title (#362), and the archive keys follow them (#369)."""
 
+        from app import db
+        from app.series_rename import rename_timeout
+
+        series = db.session.get(TVSeries, series_id)
+        if series is None:
+            raise click.ClickException(f"No TV series {series_id}")
         job = enqueue_task(
             "app.series_rename.rename_tv_series_task",
             series_id,
             new_title,
             description=f"Renaming TV series {series_id} to '{new_title}'",
+            timeout=rename_timeout(series),
         )
         click.echo(f"Enqueued series rename as {job.id}")
 

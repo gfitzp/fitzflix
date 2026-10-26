@@ -21,7 +21,9 @@ real object at every moment. No S3 work starts before the check that
 each file carries the series title (#317).
 
 The task is resumable. Each file commits after its own disk move. A
-file that is already at its target counts as moved. A record whose
+file that is already at its target counts as moved. A row that already
+has its new folder and name counts as done (#374). Thus, a retry after
+a stop in the loop completes the series. A record whose
 local file was deleted intentionally (archived-only physical media)
 gets new rows with no disk operation. The weekly sync cannot run during
 a rename. The sync defers unless every queue is idle, and this task
@@ -118,7 +120,10 @@ def _planned_target(file, old_title, new_title):
     """Return the show folder, dirname and basename of a file after a rename.
 
     Return None if the file does not carry the series title in its show
-    folder and in its name. The rename task changes nothing then (#317)."""
+    folder and in its name. The rename task changes nothing then (#317).
+    A row that already carries the new title in both places is done. An
+    earlier run of the task stopped after it (#374). Its target is its
+    own dirname and basename."""
 
     old_folder = _folder_title(old_title)
     new_folder = _folder_title(new_title)
@@ -126,6 +131,9 @@ def _planned_target(file, old_title, new_title):
     parts = file.dirname.split("/")
     renamed = [_renamed_folder(part, old_folder, new_folder) for part in parts]
     if not any(renamed) or not file.basename.startswith(old_prefix):
+        done = [part for part in parts if _renamed_folder(part, new_folder, new_folder)]
+        if done and file.basename.startswith(f"{new_title} - "):
+            return done[0], file.dirname, file.basename
         return None
     folder = next(name for name in renamed if name)
     new_dirname = "/".join(name or part for name, part in zip(renamed, parts))
@@ -174,6 +182,22 @@ def rename_tv_series_task(series_id, new_title):
 
 RENAME_WAIT_MINUTES = (5, 15)
 
+# The time limit of a rename grows with the number of files (#374). A
+# move on NFS can take 25 seconds with its retries. The episode locks
+# have the same time limit as the job.
+
+RENAME_SECONDS_PER_FILE = 30
+
+
+def rename_timeout(series):
+    """Return the time limit of the rename of a series, in seconds.
+
+    It is SQL_TASK_TIMEOUT, or RENAME_SECONDS_PER_FILE for each file if
+    that is longer."""
+
+    floor = current_app.config["SQL_TASK_TIMEOUT"]
+    return max(floor, RENAME_SECONDS_PER_FILE * series.files.count())
+
 
 def _take_series_locks(series, new_title):
     """Take the title lock of each episode of a series. Return the locks.
@@ -194,7 +218,7 @@ def _take_series_locks(series, new_title):
         reason = f"waits for the import of '{os.path.basename(source)}'"
     locks = []
     episodes = {(file.season, file.episode) for file in series.files}
-    ttl_ms = current_app.config["SQL_TASK_TIMEOUT"] * 1000
+    ttl_ms = rename_timeout(series) * 1000
     for season, episode in [] if reason else sorted(episodes, key=str):
         key = title_lock_key(TV_SHOWS, series.title, season=season, episode=episode)
         lock = current_app.lock_manager.lock(key, ttl_ms)
@@ -212,6 +236,7 @@ def _take_series_locks(series, new_title):
         delay=RENAME_WAIT_MINUTES,
         reason=f"Series rename of {series.title!r} {reason}",
         args=(series.id, new_title),
+        timeout=rename_timeout(series),
     )
     return None
 
@@ -255,7 +280,13 @@ def _move_series(series, new_title):
         src = os.path.join(library_dir, file.file_path)
         dst = os.path.join(library_dir, new_path)
 
-        if os.path.isfile(src):
+        if new_path == file.file_path:
+            # An earlier run renamed this row (#374).
+            if os.path.isfile(dst):
+                moved += 1
+            else:
+                db_only += 1
+        elif os.path.isfile(src):
             os.makedirs(os.path.dirname(dst), exist_ok=True)
             _rename_with_retries(src, dst)
             old_dirs.add(os.path.dirname(src))
@@ -568,14 +599,15 @@ def _job_pending(queue, *job_ids):
     )
 
 
-def _enqueue_once(name, job_id, *args, description, also=()):
+def _enqueue_once(name, job_id, *args, description, also=(), timeout=None):
     """Queue a task with a fixed job id, once. Return the job, or None.
 
     The function does nothing if the job, or a job with an id in also,
     waits or runs. The finished job of the id is deleted first. Else the
     new job keeps the expiry of the old hash and can vanish in the
     queue. A failed job stays in the failed jobs for the sweep. Then the
-    new job gets the id with a time tag."""
+    new job gets the id with a time tag. A timeout replaces the timeout
+    of the task."""
 
     from rq.exceptions import NoSuchJobError
     from rq.job import Job
@@ -593,7 +625,9 @@ def _enqueue_once(name, job_id, *args, description, also=()):
         job_id = f"{job_id}_{int(time.time())}"
     elif old is not None:
         old.delete()
-    return enqueue_task(name, *args, description=description, job_id=job_id)
+    return enqueue_task(
+        name, *args, description=description, job_id=job_id, timeout=timeout
+    )
 
 
 def _adopt_tvdb_id(series, entry):
@@ -632,6 +666,7 @@ def _apply_branch(series, entry, branch, value):
             value,
             description=f"Renaming TV series {series.id} to '{value}' after Sonarr",
             also=(requeue_job_id(name, series.id),),
+            timeout=rename_timeout(series),
         )
         current_app.logger.info(
             f"Sonarr path check: Sonarr moved {series.title!r} to "

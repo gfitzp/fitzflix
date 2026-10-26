@@ -238,3 +238,80 @@ def test_rename_moves_the_trail_to_the_new_untouched_name(app):
         index = index_trails(pipeline_trails(app.redis))
         entries = trail_entries_for(index, episode.basename, episode.untouched_basename)
         assert entries, "the renamed episode lost its trail"
+
+
+def test_a_rename_stopped_in_the_loop_completes_on_the_retry(app, monkeypatch):
+    """Rows of an earlier run carry the new title. The retry treats them as done (#374)."""
+
+    import app.videos as videos
+
+    from app.series_rename import fitzflix_folders
+
+    real_rename = videos._rename_with_retries
+    calls = []
+
+    def stop_on_the_second_file(src, dst, *args, **kwargs):
+        calls.append(src)
+        if len(calls) == 2:
+            raise OSError("the NFS share stopped")
+        return real_rename(src, dst, *args, **kwargs)
+
+    with app.app_context():
+        series = make_tv_series("Batman", tmdb_id=2287)
+        files = [make_tv_file(series, 1, n, "Bluray-1080p") for n in (1, 2, 3)]
+        db.session.commit()
+        for file in files:
+            _materialize(app, file)
+        series_id = series.id
+
+        monkeypatch.setattr(videos, "_rename_with_retries", stop_on_the_second_file)
+        try:
+            rename_tv_series_task(series_id, "Batman (1966)")
+        except OSError:
+            pass
+        db.session.expire_all()
+        series = db.session.get(type(series), series_id)
+        assert series.title == "Batman"
+        assert len(fitzflix_folders(series)) == 2
+
+        monkeypatch.setattr(videos, "_rename_with_retries", real_rename)
+        assert rename_tv_series_task(series_id, "Batman (1966)") is True
+        db.session.expire_all()
+        series = db.session.get(type(series), series_id)
+        assert series.title == "Batman (1966)"
+        assert fitzflix_folders(series) == {"Batman (1966)"}
+        for file in series.files:
+            assert file.basename.startswith("Batman (1966) - S01E0")
+            assert os.path.isfile(
+                os.path.join(app.config["LIBRARY_DIR"], file.file_path)
+            )
+
+
+def test_the_rename_time_limit_grows_with_the_files(app, monkeypatch):
+    """The job and the episode locks get 30 seconds for each file (#374)."""
+
+    from rq.registry import ScheduledJobRegistry
+
+    from app.series_rename import RENAME_SECONDS_PER_FILE, rename_timeout
+    from app.tasks import requeue_job_id
+
+    monkeypatch.setitem(app.config, "SQL_TASK_TIMEOUT", 600)
+    with app.app_context():
+        series = make_tv_series("Batman", tmdb_id=2287)
+        make_tv_file(series, 1, 1, "Bluray-1080p")
+        db.session.commit()
+        assert rename_timeout(series) == 600
+        for n in range(2, 41):
+            make_tv_file(series, 1, n, "Bluray-1080p")
+        db.session.commit()
+        assert rename_timeout(series) == 40 * RENAME_SECONDS_PER_FILE
+
+        # A retry of the rename keeps the long limit.
+        app.import_queue.enqueue(
+            "app.videos.localization_task",
+            args=("/import/Batman - S01E41 - [WEBDL-1080p].mkv",),
+        )
+        assert rename_tv_series_task(series.id, "Batman (1966)") is False
+        retry_id = requeue_job_id("app.series_rename.rename_tv_series_task", series.id)
+        assert retry_id in ScheduledJobRegistry(queue=app.file_queue).get_job_ids()
+        assert app.file_queue.fetch_job(retry_id).timeout == 1200
