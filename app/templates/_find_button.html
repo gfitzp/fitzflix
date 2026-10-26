@@ -43,6 +43,8 @@
    list row. The standalone movie page uses the amber and green faces.
    block fills the column of that page. #}
 {% macro cart_toggle(form, movie, light=true, block=false) -%}
+{# The shopping list is shared. Only an admin sees the toggle. #}
+{% if current_user.admin %}
 <form action="" method="post">
 	{{ form.csrf_token() }}
 	{{ form.movie_id(value=movie.id) }}
@@ -62,4 +64,5 @@
 	</button>
 	{% endif %}
 </form>
+{% endif %}
 {%- endmacro %}

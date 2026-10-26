@@ -5,7 +5,7 @@ import) appear as items to buy. They appear next to the owned upgrade
 candidates."""
 
 from app import db
-from app.models import User, UserMovieReview
+from app.models import Movie, User, UserMovieReview
 from app.videos import star_rating_fields
 from tests.factories import make_movie, make_movie_file, make_tv_file, make_tv_series
 
@@ -477,3 +477,54 @@ def test_sort_title_and_display_year(app):
         TVSeries(title="Columbo", tmdb_first_air_date=date(1971, 9, 15)).display_year
         == 1971
     )
+
+
+def test_a_member_cannot_change_the_shopping_list(app, admin_client, user_client):
+    """The shopping list is shared. Only an admin can add or remove a film."""
+
+    from tests.conftest import csrf_token_from
+
+    with app.app_context():
+        film = make_movie("Shared List Film", 1999)
+        movie_id = film.id
+        db.session.commit()
+
+    page = user_client.get("/shopping-list/movie").get_data(as_text=True)
+    assert 'name="exclude_submit"' not in page
+    assert 'name="add_submit"' not in page
+    response = user_client.post(
+        "/shopping-list/movie",
+        data={
+            "csrf_token": csrf_token_from(page),
+            "movie_id": str(movie_id),
+            "exclude_submit": "1",
+        },
+        follow_redirects=True,
+    )
+    assert response.status_code == 200
+    assert "Only an admin user can change the shopping list." in response.get_data(
+        as_text=True
+    )
+
+    movie_page = user_client.get(f"/movie/{movie_id}").get_data(as_text=True)
+    assert 'name="exclude_submit"' not in movie_page
+    response = user_client.post(
+        f"/movie/{movie_id}",
+        data={"csrf_token": csrf_token_from(movie_page), "exclude_submit": "1"},
+        follow_redirects=True,
+    )
+    assert "Only an admin user can change the shopping list." in response.get_data(
+        as_text=True
+    )
+
+    with app.app_context():
+        assert not db.session.get(Movie, movie_id).shopping_list_exclude
+
+    admin_page = admin_client.get(f"/movie/{movie_id}").get_data(as_text=True)
+    assert 'name="exclude_submit"' in admin_page
+    admin_client.post(
+        f"/movie/{movie_id}",
+        data={"csrf_token": csrf_token_from(admin_page), "exclude_submit": "1"},
+    )
+    with app.app_context():
+        assert db.session.get(Movie, movie_id).shopping_list_exclude == 1

@@ -240,9 +240,11 @@
 		{{ find_button(movie, block=true, radarr_requestable=radarr_requestable, in_radarr=in_radarr) }}
 
 	</div>
+	{% if current_user.admin %}
 	<div class="col-sm-3 col-md-2">
 		{{ cart_toggle(movie_shopping_exclude_form, movie, light=false, block=true) }}
 	</div>
+	{% endif %}
 	<div class="col-md">
 		{# mt-0: the gutter of the row already gives 16 pixels above
 		   this rule when a phone stacks the columns. #}

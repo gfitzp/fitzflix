@@ -762,6 +762,16 @@ def movie_shopping():
             flash("That film is not in the library.", "warning")
         return movie
 
+    # The shopping list is shared by every user. Thus, only an admin can
+    # add a film to it or remove a film from it.
+
+    if (
+        movie_shopping_exclude_form.add_submit.data
+        or movie_shopping_exclude_form.exclude_submit.data
+    ) and not current_user.admin:
+        flash("Only an admin user can change the shopping list.", "warning")
+        return redirect(url_for("main.movie_shopping", page=page, **filters))
+
     if (
         movie_shopping_exclude_form.add_submit.data
         and movie_shopping_exclude_form.validate_on_submit()

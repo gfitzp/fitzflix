@@ -1159,7 +1159,17 @@ def movie(movie_id):
     review = _latest_review_row(current_user.id, movie.id)
     films, features = _films_and_features(movie_id)
 
+    # The shopping list is shared by every user. Thus, only an admin can
+    # add a film to it or remove a film from it.
+
     movie_shopping_exclude_form = MovieShoppingExcludeForm()
+    if (
+        movie_shopping_exclude_form.add_submit.data
+        or movie_shopping_exclude_form.exclude_submit.data
+    ) and not current_user.admin:
+        flash("Only an admin user can change the shopping list.", "warning")
+        return redirect(url_for("main.movie", movie_id=movie.id))
+
     if (
         movie_shopping_exclude_form.add_submit.data
         and movie_shopping_exclude_form.validate_on_submit()
