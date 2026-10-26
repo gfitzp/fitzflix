@@ -877,39 +877,41 @@ def sqs_retrieve_task():
         s3_client = aws_s3_client(with_retries=True)
 
         # Extend the timeout and the restore period of a message whose
-        # download runs or waits in the download queue.
-
-        file_operations = StartedJobRegistry(
-            QUEUE_NAME["file"], connection=current_app.redis
-        )
-        download_job_ids = (
-            file_operations.get_job_ids()
-            + list(current_app.file_queue.job_ids)
-            + ScheduledJobRegistry(queue=current_app.file_queue).get_job_ids()
-        )
+        # download or archive move (#369) runs or waits in the file queue.
 
         # The download job of each key that waits, runs, or waits for a
         # retry. A message that comes back for such a key gets no second
-        # download. Its new receipt handle goes to that job.
+        # download. Its new receipt handle goes to that job. The move jobs
+        # are keyed the same way, by the key that they move.
 
         downloads_by_key = {}
+        moves_by_key = {}
         # The message stays hidden for SQS_VISIBILITY_SECONDS. That is
         # longer than the hourly poll. Thus, a message is still in flight
         # here, and the change succeeds. A failure on 1 message must not
         # stop the poll (MessageNotInflight, an expired receipt handle).
 
-        for job_id in download_job_ids:
-            job = current_app.file_queue.fetch_job(job_id)
-            if job and job.func_name == "app.videos.download_task" and job.args:
+        for job in _file_queue_jobs():
+            restore_key = None
+            handle = job.meta.get("sqs_receipt_handle")
+            if job.func_name == "app.videos.download_task" and job.args:
                 downloads_by_key[job.args[0]] = job
-            if job and job.meta.get("sqs_receipt_handle"):
+                restore_key = job.args[0]
+            elif job.func_name == "app.aws_storage.move_archive_object" and job.args:
+                # A lock retry of a move keeps its handle in its kwargs.
+                handle = handle or (job.kwargs or {}).get("sqs_receipt_handle")
+                restore_key = job.meta.get("archive_key")
+                if restore_key is None:
+                    moving = db.session.get(File, int(job.args[0]))
+                    restore_key = move_source(moving) if moving else None
+                if restore_key:
+                    moves_by_key[restore_key] = job
+            if handle and restore_key:
                 job_description = job.meta.get("description", job.description)
                 try:
                     sqs_client.change_message_visibility(
                         QueueUrl=current_app.config["AWS_SQS_URL"],
-                        ReceiptHandle=_latest_receipt_handle(
-                            job.meta.get("sqs_receipt_handle"), job_id=job.id
-                        ),
+                        ReceiptHandle=_latest_receipt_handle(handle, job_id=job.id),
                         VisibilityTimeout=SQS_VISIBILITY_SECONDS,
                     )
                     current_app.logger.info(
@@ -922,14 +924,14 @@ def sqs_retrieve_task():
 
                     s3_client.restore_object(
                         Bucket=current_app.config["AWS_BUCKET"],
-                        Key=job.args[0],
+                        Key=restore_key,
                         RestoreRequest={
                             "Days": RESTORE_DAYS,
                             "GlacierJobParameters": {"Tier": "Standard"},
                         },
                     )
                     current_app.logger.info(
-                        f"'{job.args[0]}' Renewing the restored copy for "
+                        f"'{restore_key}' Renewing the restored copy for "
                         f"{RESTORE_DAYS} days from now"
                     )
                 except botocore.exceptions.ClientError as error:
@@ -969,26 +971,21 @@ def sqs_retrieve_task():
                     QueueUrl=current_app.config["AWS_SQS_URL"],
                     ReceiptHandle=receipt_handle,
                 )
-            elif key in downloads_by_key:
+            elif key in downloads_by_key or key in moves_by_key:
+                waiting = downloads_by_key.get(key) or moves_by_key[key]
                 current_app.redis.set(
-                    SQS_HANDLE_KEY.format(job_id=downloads_by_key[key].id),
+                    SQS_HANDLE_KEY.format(job_id=waiting.id),
                     receipt_handle,
                     ex=SQS_HANDLE_SECONDS,
                 )
                 current_app.logger.info(
-                    f"'{key}' Already has a download job. Recorded the new "
-                    f"receipt handle of its message"
+                    f"'{key}' Already has a job. Recorded the new receipt "
+                    f"handle of its message"
                 )
             else:
-                job = enqueue_task(
-                    "app.videos.download_task",
-                    key,
-                    os.path.basename(key),
-                    receipt_handle,
-                    description=f"'{os.path.basename(key)}' — Downloading from AWS",
-                    meta={"sqs_receipt_handle": receipt_handle},
+                _route_restore(
+                    sqs_client, key, receipt_handle, downloads_by_key, moves_by_key
                 )
-                downloads_by_key[key] = job
 
             response = sqs_client.receive_message(
                 QueueUrl=current_app.config["AWS_SQS_URL"],
@@ -1000,6 +997,56 @@ def sqs_retrieve_task():
             )
 
         return True
+
+
+def _file_claiming(key):
+    """Return the File row whose archive or transcoded/ copy is key, or None."""
+
+    return (
+        File.query.filter_by(aws_key=key).first()
+        or File.query.filter_by(aws_transcoded_key=key).first()
+    )
+
+
+def _route_restore(sqs_client, key, receipt_handle, downloads_by_key, moves_by_key):
+    """Queue the job of a completed restore of key.
+
+    A row with a pending move of key gets the move (#369). The copy then
+    happens while the restored copy is readable. A key that no record
+    claims gets nothing. A moved archive leaves such a key, and a
+    download of it would import an old file under its key name. The
+    message is deleted. Each other key gets a download."""
+
+    file = _file_claiming(key)
+    if file is not None and file.aws_key_target and move_source(file) == key:
+        moves_by_key[key] = enqueue_task(
+            "app.aws_storage.move_archive_object",
+            file.id,
+            sqs_receipt_handle=receipt_handle,
+            description=f"'{file.basename}' — Moving the archive",
+            meta={"sqs_receipt_handle": receipt_handle, "archive_key": key},
+        )
+        current_app.logger.info(
+            f"'{key}' Restored for the archive move to '{file.aws_key_target}'"
+        )
+        return
+    if file is None and ArchivedOriginal.query.filter_by(aws_key=key).first() is None:
+        current_app.logger.info(
+            f"'{key}' No record claims this key. Deleting its restore message"
+        )
+        sqs_client.delete_message(
+            QueueUrl=current_app.config["AWS_SQS_URL"],
+            ReceiptHandle=receipt_handle,
+        )
+        return
+    downloads_by_key[key] = enqueue_task(
+        "app.videos.download_task",
+        key,
+        os.path.basename(key),
+        receipt_handle,
+        description=f"'{os.path.basename(key)}' — Downloading from AWS",
+        meta={"sqs_receipt_handle": receipt_handle},
+    )
 
 
 def upload_task(file_id):

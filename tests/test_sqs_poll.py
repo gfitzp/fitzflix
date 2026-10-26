@@ -49,6 +49,21 @@ def restore_event(key):
     }
 
 
+def claim(app, key):
+    """Make a File row that claims key. A key with no claim gets no download (#369)."""
+
+    import os
+
+    from app import db
+    from tests.factories import make_movie, make_movie_file
+
+    title = os.path.splitext(os.path.basename(key))[0]
+    with app.app_context():
+        file = make_movie_file(make_movie(title, 2000), "DVD", aws_key=key)
+        db.session.commit()
+        return file.id
+
+
 def downloads(app):
     return [
         job.args[0]
@@ -68,6 +83,7 @@ def test_a_test_event_is_deleted_and_the_restores_behind_it_run(app, monkeypatch
     )
     monkeypatch.setattr(aws_storage, "aws_sqs_client", lambda: sqs)
     monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kw: FakeS3())
+    claim(app, "untouched/Some Film (2001) - [DVD].mkv")
 
     assert aws_storage.sqs_retrieve_task() is True
     assert sqs.deleted == ["r0"]
@@ -83,6 +99,7 @@ def test_a_failed_extension_does_not_stop_the_poll(app, monkeypatch):
     sqs.fail_visibility = True
     monkeypatch.setattr(aws_storage, "aws_sqs_client", lambda: sqs)
     monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kw: FakeS3())
+    claim(app, "untouched/New Film (2002) - [DVD].mkv")
 
     with app.app_context():
         app.file_queue.enqueue(

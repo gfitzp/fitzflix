@@ -266,6 +266,111 @@ def test_a_rename_back_clears_the_target(app, s3):
         assert file.aws_key_target is None
 
 
+def test_the_poll_routes_a_restored_key_with_a_target_to_the_move(app, s3, monkeypatch):
+    """A restore-ready notification of a pending move goes to the move job."""
+
+    import json
+
+    from app import aws_storage, db
+
+    class Poll:
+        def __init__(self, keys):
+            self.messages = [
+                {
+                    "Body": json.dumps({"Records": [{"s3": {"object": {"key": key}}}]}),
+                    "ReceiptHandle": f"handle-{n}",
+                }
+                for n, key in enumerate(keys)
+            ]
+            self.deleted = []
+
+        def receive_message(self, **kwargs):
+            return {"Messages": [self.messages.pop(0)]} if self.messages else {}
+
+        def delete_message(self, QueueUrl=None, ReceiptHandle=None):
+            self.deleted.append(ReceiptHandle)
+
+        def change_message_visibility(self, **kwargs):
+            pass
+
+    with app.app_context():
+        file = archived_film("Restored Move", 1957, key_name="Restored (1957).mkv")
+        file_id = file.id
+        old_key = file.aws_key
+        aws_storage.request_archive_move(file)
+        db.session.commit()
+        for job in move_jobs(app):
+            job.delete()
+
+    poll = Poll([old_key, "untouched/Nobody Claims (1900).mkv"])
+    monkeypatch.setattr(aws_storage, "aws_sqs_client", lambda: poll)
+    assert aws_storage.sqs_retrieve_task() is True
+
+    with app.app_context():
+        downloads = [
+            job
+            for job in app.file_queue.jobs
+            if job.func_name == "app.videos.download_task"
+        ]
+        assert downloads == []
+        (job,) = move_jobs(app)
+        assert job.args == (file_id,)
+        assert job.kwargs == {"sqs_receipt_handle": "handle-0"}
+        assert job.meta["archive_key"] == old_key
+
+        # The key that no record claims: its message goes, with no job.
+        assert poll.deleted == ["handle-1"]
+
+        # The move deletes its message when it is done.
+        fake = s3(
+            {
+                old_key: frozen(
+                    Restore='ongoing-request="false", '
+                    'expiry-date="Fri, 01 Jan 2100 00:00:00 GMT"'
+                )
+            }
+        )
+        assert aws_storage.move_archive_object(file_id, "handle-0") is True
+        assert fake.copies == [
+            (old_key, "untouched/Restored Move (1957) - [Bluray-1080p].mkv")
+        ]
+        assert poll.deleted == ["handle-1", "handle-0"]
+
+
+def test_the_poll_extends_the_restore_of_a_queued_move(app, s3, monkeypatch):
+    from app import aws_storage, db
+
+    class Poll:
+        def __init__(self):
+            self.visibility = []
+
+        def receive_message(self, **kwargs):
+            return {}
+
+        def change_message_visibility(self, ReceiptHandle=None, **kwargs):
+            self.visibility.append(ReceiptHandle)
+
+    with app.app_context():
+        file = archived_film("Waiting Move", 1958, key_name="Waiting (1958).mkv")
+        aws_storage.request_archive_move(file)
+        db.session.commit()
+        for job in move_jobs(app):
+            job.delete()
+        app.file_queue.enqueue(
+            "app.aws_storage.move_archive_object",
+            args=(file.id,),
+            kwargs={"sqs_receipt_handle": "held"},
+        )
+        old_key = file.aws_key
+
+    poll = Poll()
+    fake = s3({old_key: frozen()})
+    monkeypatch.setattr(aws_storage, "aws_sqs_client", lambda: poll)
+    assert aws_storage.sqs_retrieve_task() is True
+    assert poll.visibility == ["held"]
+    assert fake.restores == [(old_key, "Standard")]
+
+
 def test_a_move_waits_for_a_download_of_the_old_key(app, s3):
     from app import aws_storage, db
 
