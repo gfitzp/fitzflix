@@ -11,7 +11,7 @@ import zipfile
 
 import pytest
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from tests.factories import make_movie
 from tests.conftest import csrf_token_from
@@ -2411,6 +2411,20 @@ def test_the_legacy_ratings_import_is_idempotent(app):
         db.session.commit()
         rated_id, refused_id = rated.id, refused.id
 
+    assert review_task(user_id, "Legacy Rated Film", 2.5) is True
+    with app.app_context():
+        (row,) = UserMovieReview.query.filter_by(
+            user_id=user_id, movie_id=rated_id
+        ).all()
+        assert row.liked is False and row.date_updated is None
+
+    # The same rating again changes nothing. Thus, it is not exported again.
+    assert review_task(user_id, "Legacy Rated Film", 2.5) is True
+    with app.app_context():
+        row = UserMovieReview.query.filter_by(user_id=user_id, movie_id=rated_id).one()
+        assert row.date_updated is None
+
+    before = datetime.now() - timedelta(seconds=1)
     for stars in (3.5, 4.0):
         assert review_task(user_id, "Legacy Rated Film", stars) is True
         assert review_task(user_id, "Legacy Refused Film", 0) is True
@@ -2420,6 +2434,10 @@ def test_the_legacy_ratings_import_is_idempotent(app):
             user_id=user_id, movie_id=rated_id
         ).all()
         assert float(row.rating) == 4.0 and row.date_watched is None
+        # A changed rating reaches the incremental export and the profile (#442).
+        assert row.date_updated is not None and row.date_updated >= before
+        assert row.date_reviewed is not None
+        assert row.liked is True
         assert (
             UserMovieReview.query.filter_by(
                 user_id=user_id, movie_id=refused_id

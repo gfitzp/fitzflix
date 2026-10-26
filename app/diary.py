@@ -111,6 +111,21 @@ def clear_not_interested(user_id, movie_id):
     ).delete()
 
 
+def _stars_changed(review, stars):
+    """Return True if the rating columns of a review differ from stars.
+
+    A Numeric column reads back as a Decimal. Thus, the values compare
+    as floats."""
+
+    for field, value in stars.items():
+        current = getattr(review, field)
+        if (current is None) != (value is None):
+            return True
+        if current is not None and float(current) != float(value):
+            return True
+    return False
+
+
 def star_rating_fields(rating):
     """Return the UserMovieReview rating columns for a 0-5 star rating.
 
@@ -1055,6 +1070,7 @@ def review_task(user_id, title, rating):
                 review = UserMovieReview.query.filter_by(
                     user_id=user_id, movie_id=movie.id, date_watched=None
                 ).first()
+                stars = star_rating_fields(rating)
                 if review is None:
                     review = UserMovieReview(
                         user_id=user_id,
@@ -1064,8 +1080,16 @@ def review_task(user_id, title, rating):
                         date_reviewed=None,
                     )
                     db.session.add(review)
-                for field, value in star_rating_fields(rating).items():
+                elif _stars_changed(review, stars):
+                    # A changed rating must reach the incremental
+                    # Letterboxd export, which reads date_updated (#442).
+                    # This agrees with apply_row_edit.
+                    review.date_updated = datetime.now()
+                    if review.date_reviewed is None:
+                        review.date_reviewed = review.date_updated
+                for field, value in stars.items():
                     setattr(review, field, value)
+                review.liked = rating >= 3
                 db.session.commit()
                 current_app.logger.info(f"Rated '{title}' {rating} out of 5 stars")
 
