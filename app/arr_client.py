@@ -215,7 +215,26 @@ def rename_download_locally(arr, downloaded_path, new_path, owner_id, title=None
         )
 
 
-def fallback_rename(downloaded_path, new_path, arr_path, rename_locally):
+def fenced_arr_path(service, path):
+    """Return the path that an arr reports if it is under a root folder, or None.
+
+    The webhook payload goes through the root-folder fence of
+    downloaded_path. The path of an arr file record must go through the
+    same fence (#399). A misconfigured arr must not point an import at a
+    file outside the root folders. A refusal is logged."""
+
+    from app.api.arr import folder_under_roots
+
+    if path and folder_under_roots(service, path) is not None:
+        return path
+    current_app.logger.warning(
+        f"{service} reports {path!r}, which is not under a root folder. "
+        f"Fitzflix does not use it"
+    )
+    return None
+
+
+def fallback_rename(downloaded_path, new_path, arr_path, rename_locally, service=None):
     """Rename a download in Fitzflix after the arr rename failed, and return
     the path to import.
 
@@ -224,7 +243,8 @@ def fallback_rename(downloaded_path, new_path, arr_path, rename_locally):
     the download is not at its old path. Fitzflix asks the arr for the path
     of its record, then looks for the new name. A failure is logged, and
     the error goes to the job. Thus, the job stays in the failed jobs for a
-    retry."""
+    retry. With a service name, the path of the record must be under a
+    root folder of that service."""
 
     try:
         if os.path.exists(downloaded_path):
@@ -238,6 +258,8 @@ def fallback_rename(downloaded_path, new_path, arr_path, rename_locally):
                 f"is not available: {e}"
             )
             path = None
+        if path and service:
+            path = fenced_arr_path(service, path)
         for candidate in (path, new_path):
             if candidate and os.path.exists(candidate):
                 current_app.logger.info(
@@ -279,6 +301,8 @@ def adopt_download(
 
     try:
         path = rename_to_quality(arr, call, owner_id, file_id, quality, wait)
+        if fenced_arr_path(arr.name, path) is None:
+            raise arr.error(f"{arr.name} reports {path!r}, outside the root folders")
         if not os.path.exists(path):
             raise arr.error(f"{arr.name} reports {path!r}, which does not exist")
         current_app.logger.info(
@@ -294,6 +318,7 @@ def adopt_download(
             new_path,
             lambda: call("GET", f"/api/v3/{arr.record}/{int(file_id)}")["path"],
             rename_locally,
+            service=arr.name,
         )
     queued = (
         enqueue_localization(path, at_front=True)

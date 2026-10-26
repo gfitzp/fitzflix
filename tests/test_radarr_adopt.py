@@ -195,3 +195,54 @@ def test_a_lost_download_fails_the_task_and_queues_nothing(app, monkeypatch, tmp
             3, 7, str(folder / ORIGINAL), str(folder / RENAMED), "WEBDL-1080p"
         )
     assert app.import_queue.job_ids == []
+
+
+def test_a_radarr_path_outside_the_root_is_not_imported(
+    app, monkeypatch, tmp_path, caplog
+):
+    """Test that the path of the Radarr record goes through the fence (#399).
+
+    Radarr reports a file outside the root folders. Fitzflix renames the
+    download itself and imports that file."""
+
+    import app.radarr_push as radarr_push
+
+    folder = _download(tmp_path)
+    monkeypatch.setitem(app.config, "RADARR_ROOT_FOLDERS", [str(folder)])
+    outside = tmp_path / "outside" / RENAMED
+    outside.parent.mkdir()
+    outside.write_bytes(b"other")
+    fake = FakeRadarr(folder, renames=False)
+    fake.record["path"] = str(outside)
+    monkeypatch.setattr(radarr_push, "_radarr", fake)
+    monkeypatch.setattr(radarr_push.time, "sleep", lambda seconds: None)
+    monkeypatch.setattr("app.api.arr.send_arr_command", lambda *args: None)
+
+    assert radarr_push.adopt_download_task(
+        3, 7, str(folder / ORIGINAL), str(folder / RENAMED), "WEBDL-1080p"
+    )
+
+    assert app.import_queue.fetch_job(safe_job_id(RENAMED)).args == (
+        str(folder / RENAMED),
+    )
+    assert "not under a root folder" in caplog.text
+
+
+def test_a_late_rename_outside_the_root_is_refused(app, monkeypatch, tmp_path, caplog):
+    from app.arr_client import fallback_rename
+
+    folder = _download(tmp_path)
+    (folder / ORIGINAL).unlink()
+    monkeypatch.setitem(app.config, "RADARR_ROOT_FOLDERS", [str(folder)])
+    outside = tmp_path / "outside" / RENAMED
+    outside.parent.mkdir()
+    outside.write_bytes(b"other")
+    with app.app_context(), pytest.raises(FileNotFoundError):
+        fallback_rename(
+            str(folder / ORIGINAL),
+            str(folder / RENAMED),
+            lambda: str(outside),
+            lambda: None,
+            service="Radarr",
+        )
+    assert "not under a root folder" in caplog.text
