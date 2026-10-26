@@ -74,6 +74,48 @@ def test_reimport_moves_file_to_import_directory(app, admin_client):
     assert not os.path.isdir(os.path.join(app.config["REJECTS_DIR"], "exception"))
 
 
+def test_reimport_copies_under_a_hidden_name_first(app, admin_client, monkeypatch):
+    """A cross-volume move is a copy. The importable name appears only when it is done (#441)."""
+
+    import shutil
+
+    import app.main.admin as admin
+
+    name = "Cross Volume (2021) - [DVD].mkv"
+    source = reject_a_file(app, "exception", name)
+    destination = os.path.join(app.config["IMPORT_DIR"], name)
+    seen = []
+
+    def copying_move(src, dst):
+        # The copy of shutil.move across volumes, with a look at the
+        # import directory while the bytes arrive.
+        shutil.copy2(src, dst)
+        seen.append((os.path.basename(dst), os.path.exists(destination)))
+        os.remove(src)
+        return dst
+
+    monkeypatch.setattr(admin.shutil, "move", copying_move)
+    page = admin_client.get("/rejects").get_data(as_text=True)
+    response = admin_client.post(
+        "/rejects",
+        data={
+            "csrf_token": csrf_token_from(page),
+            "file_path": os.path.join("exception", name),
+            "reimport_submit": "Re-import",
+        },
+        follow_redirects=True,
+    )
+    try:
+        assert "Moved" in response.get_data(as_text=True)
+        assert seen == [(f".{name}", False)]
+        assert os.path.exists(destination)
+        assert not os.path.exists(os.path.join(app.config["IMPORT_DIR"], f".{name}"))
+        assert not os.path.exists(source)
+    finally:
+        if os.path.exists(destination):
+            os.remove(destination)
+
+
 def test_reimport_refuses_to_overwrite_import_file(app, admin_client):
     source = reject_a_file(app, "exception", "Duplicate (2021) - [DVD].mkv")
     existing = os.path.join(app.config["IMPORT_DIR"], "Duplicate (2021) - [DVD].mkv")

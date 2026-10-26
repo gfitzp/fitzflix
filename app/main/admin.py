@@ -31,6 +31,7 @@ from app.tasks import (
     start_bulk_run,
 )
 from app import db, enqueue_import_scan, local_path, safe_job_id
+from app.naming import hidden
 from app.main.forms import (
     ArchivedRestoreForm,
     CriterionRefreshForm,
@@ -1793,7 +1794,17 @@ def rejects():
                     "danger",
                 )
                 return redirect(url_for("main.rejects"))
-            shutil.move(requested, destination)
+            # The move goes to a hidden name first. Across volumes it is a
+            # copy, and the import watcher must not see a growing file
+            # under an importable name (#441).
+            staged = hidden(destination)
+            try:
+                shutil.move(requested, staged)
+                os.rename(staged, destination)
+            except OSError:
+                if os.path.exists(staged) and os.path.exists(requested):
+                    os.remove(staged)
+                raise
             current_app.logger.info(
                 f"'{basename}' Moved from rejects to the import directory"
             )
