@@ -280,11 +280,27 @@ def test_backup_uploads_encrypted_env(app, mysqldump_stub, monkeypatch, tmp_path
         lambda bucket, prefix="", suffix="": iter([]),
     )
 
+    import app.maintenance as maintenance
+
+    kept = []
+    real_prune = maintenance._prune_backup_versions
+
+    def recorded_prune(*args, keep=(), **kwargs):
+        kept.append(set(keep))
+        return real_prune(*args, keep=keep, **kwargs)
+
+    monkeypatch.setattr(maintenance, "_prune_backup_versions", recorded_prune)
+
     with app.app_context():
         backup_database()
 
     env_keys = [k for k in captured if "/dotenv-" in k and k.endswith(".enc")]
     assert len(env_keys) == 1
+
+    # The prune of the same run protects the env backup that it just
+    # uploaded, as it protects the dump (#432).
+
+    assert len(kept) == 1 and env_keys[0] in kept[0]
 
     # The file is encrypted. The exact command in the runbook recovers it
 

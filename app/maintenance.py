@@ -859,6 +859,7 @@ def backup_database():
         # when it deletes the unreferenced media keys.
 
         uploaded_key = None
+        env_key = None
         remote_deleted = []
         if current_app.config["AWS_BUCKET"]:
             # Import here, because app.videos imports this module.
@@ -979,7 +980,9 @@ def backup_database():
                     current_app.config["AWS_BUCKET"],
                     f"{backup_prefix}/",
                     datetime.now(timezone.utc) - timedelta(days=retention_days),
-                    keep={uploaded_key, f"{backup_prefix}/"},
+                    # The env backup of this run stays too, whatever the
+                    # clocks say (#432).
+                    keep={uploaded_key, env_key, f"{backup_prefix}/"} - {None},
                 )
             )
 
