@@ -14,6 +14,7 @@ viewing stays one row when each system reports it.
 import html
 import re
 import traceback
+import urllib.parse
 import xml.etree.ElementTree as ET
 
 from datetime import datetime, timedelta
@@ -159,7 +160,9 @@ def fetch_letterboxd_feed(username):
 
     try:
         r = requests.get(
-            FEED_URL.format(username=username), headers=FEED_HEADERS, timeout=30
+            FEED_URL.format(username=urllib.parse.quote(username, safe="")),
+            headers=FEED_HEADERS,
+            timeout=30,
         )
         r.raise_for_status()
         return r.text

@@ -89,10 +89,20 @@ class PlexUsernameForm(FlaskForm):
 class LetterboxdUsernameForm(FlaskForm):
     """Name the Letterboxd account whose RSS feed syncs into the diary.
 
-    A blank value disables the sync."""
+    A blank value disables the sync. A Letterboxd username has only
+    letters, digits, and underscores. The feed URL contains the name.
+    Thus, a slash or a question mark would fetch a different page (#400)."""
 
     letterboxd_username = StringField(
-        "Letterboxd Username", validators=[Optional(), Length(max=64)]
+        "Letterboxd Username",
+        validators=[
+            Optional(),
+            Length(max=64),
+            Regexp(
+                r"^\s*[A-Za-z0-9_]+\s*$",
+                message="Use only letters, digits, and underscores.",
+            ),
+        ],
     )
     letterboxd_submit = SubmitField("Update Letterboxd Sync")
 

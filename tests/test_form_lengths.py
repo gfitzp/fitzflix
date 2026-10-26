@@ -34,6 +34,51 @@ def test_profile_refuses_a_letterboxd_username_longer_than_64(app):
         )
 
 
+def test_profile_refuses_a_letterboxd_username_with_a_slash(app):
+    """Test that a name outside letters, digits, and underscores is refused (#400)."""
+
+    from app.models import User
+
+    client = _signed_in_client(app, MEMBER_EMAIL)
+    for value in ("alice/following", "alice?x=1", "al ice"):
+        token = _token(client.get("/profile").get_data(as_text=True))
+        response = client.post(
+            "/profile",
+            data={
+                "csrf_token": token,
+                "letterboxd_username": value,
+                "letterboxd_submit": "Update Letterboxd Sync",
+            },
+        )
+        assert response.status_code == 200
+        assert "Use only letters, digits, and underscores." in response.get_data(
+            as_text=True
+        )
+    with app.app_context():
+        assert (
+            User.query.filter_by(email=MEMBER_EMAIL).one().letterboxd_username is None
+        )
+
+
+def test_letterboxd_feed_url_quotes_the_username(app, monkeypatch):
+    from app import letterboxd
+
+    urls = []
+
+    class Answer:
+        text = "<rss/>"
+
+        def raise_for_status(self):
+            pass
+
+    monkeypatch.setattr(
+        letterboxd.requests, "get", lambda url, **kwargs: urls.append(url) or Answer()
+    )
+    with app.app_context():
+        assert letterboxd.fetch_letterboxd_feed("alice/following?x=1") == "<rss/>"
+    assert urls == ["https://letterboxd.com/alice%2Ffollowing%3Fx%3D1/rss/"]
+
+
 def test_profile_refuses_a_plex_username_longer_than_64(app):
     from app.models import User
 
