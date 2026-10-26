@@ -479,6 +479,66 @@ def test_the_flac_pass_keeps_the_attachments(app, monkeypatch, tmp_path):
     assert ("-map", "0:V") in pairs
 
 
+def test_a_truncated_matroska_without_a_duration_still_gets_its_twins(
+    app, monkeypatch, tmp_path
+):
+    """A truncated Matroska has no General duration (#417).
+
+    The FLAC pass must run without a progress percentage. It must not
+    raise TypeError and send an imported file to rejects."""
+
+    import app.tracks as tracks
+    import app.videos as videos
+
+    source = tmp_path / "truncated.mkv"
+    source.write_bytes(b"source")
+    commands = []
+
+    class General:
+        track_type = "General"
+        format = "Matroska"
+        duration = None
+
+    class Info:
+        tracks = [General()]
+
+        def to_json(self):
+            return "{}"
+
+    class FakeProcess:
+        stdout = ["size=1kB time=00:00:05.00 bitrate=1kbits/s\n"]
+
+        def __init__(self, command, **kwargs):
+            commands.append(command)
+            (tmp_path / ".truncated.mkv").write_bytes(b"twin")
+
+        def poll(self):
+            return 0
+
+        def kill(self):
+            pass
+
+    monkeypatch.setattr(
+        tracks,
+        "get_audio_tracks_from_file",
+        lambda path: [
+            {"streamorder": 1, "format": "MLP FBA", "compression_mode": "Lossless"}
+        ],
+    )
+    monkeypatch.setattr(tracks, "plan_audio_supplements", lambda audio: [("flac", 1)])
+    monkeypatch.setattr(tracks, "build_supplement_args", lambda plan: [])
+    monkeypatch.setattr(tracks.MediaInfo, "parse", lambda path: Info())
+    monkeypatch.setattr(tracks.subprocess, "Popen", FakeProcess)
+    monkeypatch.setattr(videos, "wait_for_subprocess", lambda process, *a, **k: None)
+    monkeypatch.setattr(tracks, "copy_image_attachments", lambda *args: None)
+
+    with app.app_context():
+        tracks.supplement_lossless_tracks(str(source))
+
+    assert len(commands) == 1
+    assert source.read_bytes() == b"twin"
+
+
 def test_the_cover_art_survives_the_ffmpeg_remux(app, tmp_path):
     """The "0:V" map drops an image attachment. The cover must come back."""
 

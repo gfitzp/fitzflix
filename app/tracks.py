@@ -1811,8 +1811,10 @@ def supplement_lossless_tracks(file_path, file_id=None):
                     container = track.format
                     current_app.logger.info(f"'{basename}' File container {container}")
 
-                    # Convert the file duration from milliseconds to seconds
-                    file_duration = int(track.duration) / 1000
+                    # Convert the file duration from milliseconds to
+                    # seconds. A truncated Matroska has no duration. 0
+                    # means no progress percentage.
+                    file_duration = int(track.duration) / 1000 if track.duration else 0
                     current_app.logger.info(f"'{basename}' Duration: {file_duration}s")
 
             if container != "Matroska":
@@ -1982,7 +1984,11 @@ def _remux_audio_plan_unlocked(file_id, plan):
             for track in media_info.tracks:
                 if track.track_type == "General" and track.format:
                     container = track.format
-                    file_duration = int(track.duration) / 1000
+                    # A truncated Matroska has no duration. The drift
+                    # check below accepts None.
+                    file_duration = (
+                        int(track.duration) / 1000 if track.duration else None
+                    )
             if container != "Matroska":
                 raise RuntimeError(f"'{basename}' is not a Matroska file")
 
