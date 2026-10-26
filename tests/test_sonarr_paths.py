@@ -1,0 +1,468 @@
+"""Test the Sonarr path check and its webhook trigger (#370).
+
+Sonarr is where a series gets renamed. The nightly check compares the
+folder of each Sonarr series with the Fitzflix folder of the series. It
+renames the series when only the Sonarr folder exists. It repoints
+Sonarr when only the Fitzflix folder exists. It changes nothing in the
+other cases. The webhook queues the check of one series when a Rename,
+Download or SeriesAdd event names a different folder. A Sonarr rename
+of episode files in the same folder changes only the rows."""
+
+import os
+
+from datetime import datetime
+
+import pytest
+
+from app import safe_job_id
+from tests.factories import make_tv_file, make_tv_series
+from tests.fakes import Sonarr
+
+TVDB = 77871
+
+
+@pytest.fixture
+def sonarr(app, monkeypatch):
+    """Install a fake Sonarr. Return a function that sets its series list."""
+
+    import app.sonarr_push as sonarr_push
+
+    holder = {}
+
+    def install(*series, down=False):
+        holder["fake"] = Sonarr(series, down=down)
+        monkeypatch.setattr(sonarr_push, "_sonarr", holder["fake"])
+        return holder["fake"]
+
+    install()
+    return install
+
+
+def sonarr_series(folder, series_id=5, tvdb_id=TVDB, **extra):
+    """Return a Sonarr series dict at a folder of the Sonarr root."""
+
+    return {
+        "id": series_id,
+        "tvdbId": tvdb_id,
+        "title": folder,
+        "path": f"/Volumes/TV Shows/{folder}",
+        **extra,
+    }
+
+
+def place(app, relative):
+    """Put a file at a path under the library directory. Return the path."""
+
+    path = os.path.join(app.config["LIBRARY_DIR"], relative)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w") as handle:
+        handle.write("video")
+    return path
+
+
+def tv_folder(app, name):
+    """Make an empty show folder in the TV library."""
+
+    os.makedirs(os.path.join(app.config["TV_LIBRARY"], name), exist_ok=True)
+
+
+def batman(app, on_disk=True, **kwargs):
+    """Make the series Batman with one episode. Return the series id and file id."""
+
+    from app import db
+
+    series = make_tv_series("Batman", tvdb_id=TVDB, tmdb_id=2287, **kwargs)
+    file = make_tv_file(series, 1, 1, "Bluray-1080p")
+    file.untouched_basename = file.basename
+    db.session.commit()
+    if on_disk:
+        place(app, file.file_path)
+    return series.id, file.id
+
+
+def rename_jobs(app):
+    return [
+        job
+        for job in app.file_queue.jobs
+        if job.func_name == "app.series_rename.rename_tv_series_task"
+    ]
+
+
+MOVED = "TV Shows/Batman (1966)/Season 01/Batman (1966) - S01E01 - [Bluray-1080p].mkv"
+
+
+# The nightly check, branch by branch.
+
+
+def test_equal_folders_change_nothing(app, sonarr):
+    from app.series_rename import reconcile_sonarr_paths
+
+    with app.app_context():
+        batman(app)
+    fake = sonarr(sonarr_series("Batman"))
+
+    assert reconcile_sonarr_paths() == {
+        "checked": 1,
+        "renamed": 0,
+        "repointed": 0,
+        "conflicts": 0,
+    }
+    assert fake.puts == [] and fake.commands == []
+    assert rename_jobs(app) == []
+
+
+def test_a_folder_that_sonarr_moved_queues_the_rename_once(app, sonarr, caplog):
+    """Sonarr moved the folder. The rename task carries the title over.
+
+    A second run finds the rename in the queue and adds no second job."""
+
+    from app.series_rename import reconcile_sonarr_paths
+
+    with app.app_context():
+        series_id, _file_id = batman(app, on_disk=False)
+    place(app, MOVED)
+    sonarr(sonarr_series("Batman (1966)"))
+
+    assert reconcile_sonarr_paths()["renamed"] == 1
+    (job,) = rename_jobs(app)
+    assert job.args == (series_id, "Batman (1966)")
+    assert job.id == safe_job_id(f"sonarr-rename:{series_id}")
+    assert "Sonarr moved 'Batman' to 'Batman (1966)'. Renaming" in caplog.text
+
+    assert reconcile_sonarr_paths()["renamed"] == 0
+    assert len(rename_jobs(app)) == 1
+    assert "A rename is already queued" in caplog.text
+
+
+def test_a_lost_push_repoints_sonarr(app, sonarr):
+    """Only the Fitzflix folder exists. Sonarr goes back to it (#266 case)."""
+
+    from app.series_rename import reconcile_sonarr_paths
+
+    with app.app_context():
+        batman(app)
+    fake = sonarr(sonarr_series("Batman (Old)"))
+
+    assert reconcile_sonarr_paths()["repointed"] == 1
+    (put,) = fake.puts
+    assert put["path"] == "/Volumes/TV Shows/Batman"
+    assert fake.commands == [{"name": "RescanSeries", "seriesId": 5}]
+    assert rename_jobs(app) == []
+
+
+@pytest.mark.parametrize("both", [True, False], ids=["both exist", "neither exists"])
+def test_two_or_no_folders_change_nothing(app, sonarr, caplog, both):
+    from app.series_rename import reconcile_sonarr_paths
+
+    with app.app_context():
+        batman(app, on_disk=both)
+    if both:
+        tv_folder(app, "Batman (1966)")
+    fake = sonarr(sonarr_series("Batman (1966)"))
+
+    summary = reconcile_sonarr_paths()
+    assert (summary["conflicts"], summary["renamed"], summary["repointed"]) == (
+        1,
+        0,
+        0,
+    )
+    assert fake.puts == [] and rename_jobs(app) == []
+    assert f"Sonarr folder exists: {both}, Fitzflix folder exists: {both}" in (
+        caplog.text
+    )
+
+
+def test_a_series_that_sonarr_does_not_manage_is_untouched(app, sonarr):
+    from app.series_rename import reconcile_sonarr_paths
+
+    with app.app_context():
+        batman(app)
+    fake = sonarr(sonarr_series("Other Show", tvdb_id=1))
+
+    assert reconcile_sonarr_paths()["checked"] == 0
+    assert fake.puts == [] and rename_jobs(app) == []
+
+
+def test_a_series_without_files_is_not_checked(app, sonarr):
+    from app import db
+    from app.series_rename import reconcile_sonarr_paths
+
+    with app.app_context():
+        make_tv_series("Batman", tvdb_id=TVDB)
+        db.session.commit()
+    fake = sonarr(sonarr_series("Batman (1966)"))
+
+    assert reconcile_sonarr_paths()["checked"] == 0
+    assert fake.puts == [] and rename_jobs(app) == []
+
+
+def test_the_tmdb_id_matches_a_series_without_a_tvdb_id(app, sonarr):
+    from app import db
+    from app.series_rename import reconcile_sonarr_paths
+
+    with app.app_context():
+        series = make_tv_series("Batman", tmdb_id=2287)
+        make_tv_file(series, 1, 1, "Bluray-1080p")
+        db.session.commit()
+        series_id = series.id
+    place(app, MOVED)
+    sonarr(sonarr_series("Batman (1966)", tvdb_id=999, tmdbId=2287))
+
+    assert reconcile_sonarr_paths()["renamed"] == 1
+    assert rename_jobs(app)[0].args == (series_id, "Batman (1966)")
+
+
+def test_a_sonarr_folder_that_the_rename_cannot_give_is_a_conflict(app, sonarr, caplog):
+    """The folder goes through the checks of the rename task first.
+
+    An accented folder is not safe for the task. A folder with no file at
+    its new path would leave the rows at a folder with no files."""
+
+    from app.series_rename import reconcile_sonarr_paths
+
+    with app.app_context():
+        batman(app, on_disk=False)
+    tv_folder(app, "Batmán (1966)")
+    tv_folder(app, "Batman (1967)")
+    sonarr(
+        sonarr_series("Batmán (1966)"),
+        sonarr_series("Batman (1967)", series_id=6, tvdb_id=TVDB),
+    )
+
+    summary = reconcile_sonarr_paths()
+    assert summary["conflicts"] == 2 and summary["renamed"] == 0
+    assert rename_jobs(app) == []
+    assert "is not safe as a folder name" in caplog.text
+    assert "no file is at its new path in the Sonarr folder" in caplog.text
+
+
+def test_the_check_changes_nothing_over_the_limit(app, sonarr, caplog, monkeypatch):
+    import app.series_rename as series_rename
+
+    monkeypatch.setattr(series_rename, "MAX_SONARR_FIXES", 0)
+    with app.app_context():
+        batman(app)
+    fake = sonarr(sonarr_series("Batman (Old)"))
+
+    summary = series_rename.reconcile_sonarr_paths()
+    assert summary["over_limit"] == 1 and summary["repointed"] == 0
+    assert fake.puts == []
+    assert "more than 0. Nothing changed" in caplog.text
+
+
+def test_the_check_survives_a_sonarr_outage(app, sonarr):
+    from app.series_rename import reconcile_sonarr_paths
+
+    sonarr(down=True)
+    assert reconcile_sonarr_paths()["error"] == "Sonarr unreachable"
+
+
+def test_the_check_changes_nothing_without_the_tv_library(
+    app, sonarr, caplog, monkeypatch, tmp_path
+):
+    """A dropped mount hides both folders. One warning, no 'neither' per series."""
+
+    from app.series_rename import reconcile_sonarr_paths, reconcile_sonarr_series
+
+    with app.app_context():
+        series_id, _file_id = batman(app, on_disk=False)
+    monkeypatch.setitem(app.config, "TV_LIBRARY", str(tmp_path / "unmounted"))
+    fake = sonarr(sonarr_series("Batman (1966)"))
+
+    assert reconcile_sonarr_paths()["error"] == "TV library not mounted"
+    assert reconcile_sonarr_series(series_id)["error"] == "TV library not mounted"
+    assert fake.gets == []
+    assert "Fitzflix folder exists" not in caplog.text
+
+
+def test_the_rename_task_completes_a_series_that_sonarr_moved(app, sonarr):
+    """The full chain: the files are at the new paths before the task runs.
+
+    The task completes the rows, rewrites the untouched names, requests
+    the archive moves, and puts the same path back to Sonarr."""
+
+    from app import db
+    from app.models import File, TVSeries
+    from app.series_rename import reconcile_sonarr_paths
+
+    with app.app_context():
+        series = make_tv_series("Batman", tvdb_id=TVDB, tmdb_id=2287)
+        files = [make_tv_file(series, 1, n, "Bluray-1080p") for n in (1, 2)]
+        for file in files:
+            file.untouched_basename = file.basename
+            file.aws_key = f"untouched/{file.basename}"
+            file.aws_date_uploaded = datetime(2026, 1, 1)
+        db.session.commit()
+        ids = [file.id for file in files]
+        series_id = series.id
+    for n in (1, 2):
+        place(
+            app,
+            f"TV Shows/Batman (1966)/Season 01/"
+            f"Batman (1966) - S01E0{n} - [Bluray-1080p].mkv",
+        )
+    fake = sonarr(sonarr_series("Batman (1966)"))
+
+    assert reconcile_sonarr_paths()["renamed"] == 1
+    (job,) = rename_jobs(app)
+    assert job.func(*job.args) is True
+
+    moves = [
+        job.args[0]
+        for job in app.file_queue.jobs
+        if job.func_name == "app.aws_storage.move_archive_object"
+    ]
+    assert sorted(moves) == sorted(ids)
+    with app.app_context():
+        assert db.session.get(TVSeries, series_id).title == "Batman (1966)"
+        for file_id in ids:
+            row = db.session.get(File, file_id)
+            assert row.dirname == "TV Shows/Batman (1966)/Season 01"
+            assert row.basename.startswith("Batman (1966) - S01E0")
+            assert row.untouched_basename == row.basename
+            assert row.aws_key_target == f"untouched/{row.untouched_basename}"
+            assert os.path.isfile(
+                os.path.join(app.config["LIBRARY_DIR"], row.file_path)
+            )
+    assert [put["path"] for put in fake.puts] == ["/Volumes/TV Shows/Batman (1966)"]
+
+    # The next check finds the folders equal.
+    assert reconcile_sonarr_paths()["renamed"] == 0
+
+
+# The episode-path adoption of a Sonarr rename.
+
+
+def test_a_renamed_episode_file_in_the_same_folder_is_adopted(app, sonarr):
+    from app import db
+    from app.models import File
+    from app.series_rename import reconcile_sonarr_series
+
+    with app.app_context():
+        series_id, file_id = batman(app)
+        old_path = os.path.join(
+            app.config["LIBRARY_DIR"], db.session.get(File, file_id).file_path
+        )
+    new = "TV Shows/Batman/Season 01/Batman - S01E01 - Pilot [Bluray-1080p].mkv"
+    new_path = place(app, new)
+    os.remove(old_path)
+    sonarr(sonarr_series("Batman"))
+
+    summary = reconcile_sonarr_series(
+        series_id, [{"previousPath": old_path, "path": new_path}]
+    )
+    assert summary["adopted"] == 1
+    with app.app_context():
+        row = db.session.get(File, file_id)
+        assert row.file_path == new
+        assert row.dirname == "TV Shows/Batman/Season 01"
+        assert row.basename == "Batman - S01E01 - Pilot [Bluray-1080p].mkv"
+        assert row.plex_title == "Batman - S01E01 - Pilot"
+        assert row.edition == "Pilot"
+        assert row.untouched_basename == "Batman - S01E01 - [Bluray-1080p].mkv"
+
+
+@pytest.mark.parametrize(
+    "new, exists, reason",
+    [
+        (
+            "TV Shows/Batman/Season 01/Batman - S01E01 - Pilot [Bluray-1080p].mkv",
+            False,
+            "it does not exist",
+        ),
+        (
+            "TV Shows/Batman/Season 01/Batman S01E01 Pilot.mkv",
+            True,
+            "its name is not in the Fitzflix form",
+        ),
+        (
+            "TV Shows/Batman/Season 01/Batman - S01E02 - [Bluray-1080p].mkv",
+            True,
+            "its name changes the episode",
+        ),
+        (
+            "TV Shows/Batman/Season 01/Batman (1966) - S01E01 - [Bluray-1080p].mkv",
+            True,
+            "its name does not give this path",
+        ),
+    ],
+    ids=["missing", "not a Fitzflix name", "other episode", "year added"],
+)
+def test_a_renamed_episode_file_that_does_not_fit_is_skipped(
+    app, sonarr, caplog, new, exists, reason
+):
+    from app import db
+    from app.models import File
+    from app.series_rename import reconcile_sonarr_series
+
+    with app.app_context():
+        series_id, file_id = batman(app)
+        old = db.session.get(File, file_id).file_path
+    old_path = os.path.join(app.config["LIBRARY_DIR"], old)
+    new_path = os.path.join(app.config["LIBRARY_DIR"], new)
+    if exists:
+        place(app, new)
+    sonarr(sonarr_series("Batman"))
+
+    summary = reconcile_sonarr_series(
+        series_id, [{"previousPath": old_path, "path": new_path}]
+    )
+    assert summary["adopted"] == 0
+    assert f"because {reason}" in caplog.text
+    with app.app_context():
+        assert db.session.get(File, file_id).file_path == old
+
+
+def test_a_held_title_lock_skips_the_adoption(app, sonarr, caplog, held_lock):
+    from app import db
+    from app.models import File
+    from app.series_rename import reconcile_sonarr_series
+
+    with app.app_context():
+        series_id, file_id = batman(app)
+        file = db.session.get(File, file_id)
+        old, identifier = file.file_path, file.file_identifier()
+    held_lock(identifier)
+    new = "TV Shows/Batman/Season 01/Batman - S01E01 - Pilot [Bluray-1080p].mkv"
+    new_path = place(app, new)
+    sonarr(sonarr_series("Batman"))
+
+    summary = reconcile_sonarr_series(
+        series_id,
+        [
+            {
+                "previousPath": os.path.join(app.config["LIBRARY_DIR"], old),
+                "path": new_path,
+            }
+        ],
+    )
+    assert summary["adopted"] == 0
+    assert "another task holds its title lock" in caplog.text
+
+
+def test_a_folder_change_runs_before_the_adoption(app, sonarr, caplog):
+    """A rename that also moved the folder adopts no episode path."""
+
+    from app import db
+    from app.models import File
+    from app.series_rename import reconcile_sonarr_series
+
+    with app.app_context():
+        series_id, file_id = batman(app, on_disk=False)
+        old = db.session.get(File, file_id).file_path
+    new_path = place(app, MOVED)
+    sonarr(sonarr_series("Batman (1966)"))
+
+    summary = reconcile_sonarr_series(
+        series_id,
+        [
+            {
+                "previousPath": os.path.join(app.config["LIBRARY_DIR"], old),
+                "path": new_path,
+            }
+        ],
+    )
+    assert summary["renamed"] == 1 and summary["adopted"] == 0
+    assert "The episode paths are not adopted" in caplog.text
+    with app.app_context():
+        assert db.session.get(File, file_id).file_path == old

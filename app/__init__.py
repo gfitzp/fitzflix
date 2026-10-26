@@ -354,6 +354,13 @@ def cron_table(config):
     if config.get("RADARR_URL") and config.get("RADARR_API_KEY"):
         table.append(("40 5 * * *", "app.radarr_push.reconcile_radarr_paths"))
 
+    # Check the Sonarr series paths nightly (#370), 5 minutes after the
+    # Radarr check. Sonarr sends no event for a folder move. Thus, a
+    # series that Sonarr moved gets its new title here.
+
+    if config.get("SONARR_URL") and config.get("SONARR_API_KEY"):
+        table.append(("45 5 * * *", "app.series_rename.reconcile_sonarr_paths"))
+
     # Rebuild the virtual DVR channel lineups nightly (#182). The task
     # rotates them the same way as the landing-page shelves rotate. The
     # per-file duration cache makes every build after the first

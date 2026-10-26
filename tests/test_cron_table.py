@@ -200,3 +200,23 @@ def test_an_hourly_job_keeps_its_runs_in_the_repeated_hour(monkeypatch):
         runs.append(t.strftime("%H:%M"))
         t += timedelta(seconds=1)
     assert runs == ["05:00", "06:00", "07:00", "08:00"]
+
+
+def test_the_sonarr_path_check_runs_after_the_radarr_check(app):
+    """Test the cron row and the spec of the Sonarr path check (#370).
+
+    The row needs the Sonarr settings, as the Radarr row needs the
+    Radarr settings. The spec takes the queue and the timeout of the
+    Radarr check."""
+
+    from app.tasks import TASKS
+
+    name = "app.series_rename.reconcile_sonarr_paths"
+    rows = cron_table({"SONARR_URL": "http://sonarr", "SONARR_API_KEY": "key"})
+    assert [row["cron"] for row in rows if row["func"] == name] == ["45 5 * * *"]
+    assert name not in {row["func"] for row in cron_table({"SONARR_URL": "x"})}
+
+    radarr = TASKS["app.radarr_push.reconcile_radarr_paths"]
+    for task in (name, "app.series_rename.reconcile_sonarr_series"):
+        assert TASKS[task].queue == radarr.queue == "maintenance"
+        assert TASKS[task].timeout == radarr.timeout

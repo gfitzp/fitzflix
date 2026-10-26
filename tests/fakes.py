@@ -1,6 +1,7 @@
 """The shared stand-ins of the tests: an HTTP answer, a TMDB router, S3, SQS, rq.
 
-ArchiveS3 holds archive objects for the archive moves (#369).
+ArchiveS3 holds archive objects for the archive moves (#369). Sonarr
+holds the series list of the Sonarr path check (#370).
 
 Import them inside a test or at the top of a test module. This module
 imports no application module. Thus, it is safe at collection time."""
@@ -153,6 +154,43 @@ class RecordingQueue:
         """Record the call."""
 
         self.calls.append((args, kwargs))
+
+
+class Sonarr:
+    """A fake _sonarr for the series calls of the Sonarr path check (#370).
+
+    series is a list of Sonarr series dicts. A GET of /api/v3/series
+    lists them, or the ones with the tvdbId of the query. A PUT replaces
+    a series and is recorded in puts. A command is recorded in commands.
+    down makes each call raise ConnectionError."""
+
+    def __init__(self, series=(), down=False):
+        self.series = {entry["id"]: dict(entry) for entry in series}
+        self.puts = []
+        self.commands = []
+        self.gets = []
+        self.down = down
+
+    def __call__(self, method, path, payload=None):
+        """Answer one Sonarr API call."""
+
+        if self.down:
+            raise ConnectionError("Sonarr is down")
+        if method == "GET" and path.startswith("/api/v3/series"):
+            self.gets.append(path)
+            entries = [dict(entry) for entry in self.series.values()]
+            if "?tvdbId=" in path:
+                tvdb_id = int(path.split("?tvdbId=")[1])
+                entries = [e for e in entries if e.get("tvdbId") == tvdb_id]
+            return entries
+        if method == "PUT" and path.startswith("/api/v3/series/"):
+            self.puts.append(dict(payload))
+            self.series[payload["id"]] = dict(payload)
+            return payload
+        if method == "POST" and path == "/api/v3/command":
+            self.commands.append(payload)
+            return {"id": len(self.commands)}
+        raise AssertionError(f"unexpected Sonarr call {method} {path}")
 
 
 class ArchiveS3:

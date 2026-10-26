@@ -134,6 +134,12 @@ TASKS = {
     "app.radarr_push.reconcile_radarr_paths": TaskSpec(
         "maintenance", 900, "Checking the Radarr movie paths"
     ),
+    "app.series_rename.reconcile_sonarr_paths": TaskSpec(
+        "maintenance", 900, "Checking the Sonarr series paths"
+    ),
+    "app.series_rename.reconcile_sonarr_series": TaskSpec(
+        "maintenance", 900, "Checking the Sonarr path of a series"
+    ),
     "app.dvr.build_channel_lineups": TaskSpec(
         "maintenance", 3600, "Building virtual DVR channel lineups"
     ),

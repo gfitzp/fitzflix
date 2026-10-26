@@ -10,9 +10,9 @@ wrappers. The stored rq job names and the test patch points use them.
 
 The 2 apps really differ in 4 places, and those stay explicit at the
 callers. A recent Sonarr episode goes to the front of the import queue.
-Only Radarr has the request, the withdraw, the badge cache and the
-nightly path check. Radarr finds a film by tmdbId. Sonarr finds a
-series by tvdbId.
+Only Radarr has the request, the withdraw and the badge cache. Each app
+has its own nightly path check (app.radarr_push, app.series_rename).
+Radarr finds a film by tmdbId. Sonarr finds a series by tvdbId.
 
 The HTTP library (decided 2026-10-25): the API calls use requests. An
 old note said that requests crashed this machine with a segmentation
