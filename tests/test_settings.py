@@ -140,8 +140,8 @@ def test_page_value_that_does_not_parse_uses_the_default(app, monkeypatch):
         assert resolve("DVR_CHANNEL_FILMS") == (40, "default")
 
 
-def test_cache_holds_for_some_seconds(app, monkeypatch):
-    """Each process reads the table at most one time in CACHE_SECONDS."""
+def test_cache_holds_while_the_version_agrees(app, monkeypatch):
+    """Each process reads the table again when the version changes, or after a minute."""
 
     from app import settings
 
@@ -150,9 +150,51 @@ def test_cache_holds_for_some_seconds(app, monkeypatch):
     with app.app_context():
         assert settings.get_setting("CREATE_FLAC_TWINS") is True
         _store(app, "CREATE_FLAC_TWINS", "0", expire=False)
+        clock[0] += settings.CACHE_SECONDS
+        assert settings.get_setting("CREATE_FLAC_TWINS") is True
+        clock[0] += settings.VERSIONED_CACHE_SECONDS
+        assert settings.get_setting("CREATE_FLAC_TWINS") is False
+
+
+def test_cache_holds_for_some_seconds_without_redis(app, monkeypatch):
+    """Without Redis, each process reads the table at most 1 time in CACHE_SECONDS."""
+
+    from app import settings
+
+    clock = [1000.0]
+    monkeypatch.setattr(settings.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(settings, "_settings_version", lambda: None)
+    with app.app_context():
+        assert settings.get_setting("CREATE_FLAC_TWINS") is True
+        _store(app, "CREATE_FLAC_TWINS", "0", expire=False)
         assert settings.get_setting("CREATE_FLAC_TWINS") is True
         clock[0] += settings.CACHE_SECONDS
         assert settings.get_setting("CREATE_FLAC_TWINS") is False
+
+
+def test_a_save_in_another_worker_reaches_this_cache_at_once(app, monkeypatch):
+    """The save of another web worker bumps the Redis version (#440).
+
+    Before, this worker showed the old value for CACHE_SECONDS. A save
+    from that render could store the old value again."""
+
+    from app import settings
+
+    clock = [1000.0]
+    monkeypatch.setattr(settings.time, "monotonic", lambda: clock[0])
+    with app.app_context():
+        assert settings.get_setting("CREATE_FLAC_TWINS") is True
+
+        # The other worker stores the row and bumps the version. It
+        # clears only its own cache, not this one.
+        real_clear = settings.clear_cache
+        monkeypatch.setattr(settings, "clear_cache", lambda: None)
+        settings.set_setting("CREATE_FLAC_TWINS", False, "other-worker")
+        monkeypatch.setattr(settings, "clear_cache", real_clear)
+
+        assert settings.get_setting("CREATE_FLAC_TWINS") is False
+        settings.clear_setting("CREATE_FLAC_TWINS", "other-worker")
+        assert app.redis.get(settings.SETTINGS_VERSION_KEY) == b"2"
 
 
 def _row(page, name):
