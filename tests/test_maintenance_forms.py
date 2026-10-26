@@ -70,6 +70,19 @@ def test_the_merge_form_needs_a_duplicate(app, admin_client, queued):
     assert "No duplicates found for that TMDB id." in response.get_data(as_text=True)
 
 
+def test_a_tampered_merge_id_flashes_instead_of_a_500(app, admin_client):
+    """The hidden field is not a number. The handler must not raise (#390)."""
+
+    for value in ("abc", "12x", "²"):
+        response = _post(
+            admin_client, {"merge_tmdb_id": value, "merge_submit": "Merge"}
+        )
+        assert response.status_code == 200
+        assert "No duplicates found for that TMDB id." in response.get_data(
+            as_text=True
+        )
+
+
 def test_each_post_goes_back_to_the_page_but_the_filename_test(app, admin_client):
     redirected = _post(admin_client, {"scan_submit": "Rescan"}, follow=False)
     assert redirected.status_code == 302

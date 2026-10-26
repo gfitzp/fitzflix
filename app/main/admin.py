@@ -730,11 +730,13 @@ def _merge_movies_post(form):
     duplicate. Title locks serialize the merge path with the import
     pipeline."""
 
-    merge_tmdb_id = int(form.merge_tmdb_id.data)
+    merge_tmdb_id = decimal_id(form.merge_tmdb_id.data)
     group = (
         Movie.query.filter_by(tmdb_id=merge_tmdb_id)
         .order_by(Movie.date_created.asc())
         .all()
+        if merge_tmdb_id is not None
+        else []
     )
     if len(group) < 2:
         flash("No duplicates found for that TMDB id.", "danger")
