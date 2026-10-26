@@ -115,6 +115,37 @@ def test_alert_lifecycle(health_env):
     assert health_env.run() == []
 
 
+def test_a_raising_collector_is_a_problem_and_the_run_completes(
+    app, health_env, monkeypatch
+):
+    """The nightly prune removed a dump between the glob and the stat (#391).
+
+    The run records the failed collector as a problem and goes on. The
+    collectors after it and the probe alerts still work."""
+
+    real_backup_health = maintenance.backup_health
+
+    def vanished(config):
+        raise FileNotFoundError("fitzflix_db-2026-10-01.sql.gz")
+
+    monkeypatch.setattr(maintenance, "backup_health", vanished)
+    health_env.failing.add("TMDB")
+    (first,) = health_env.run()
+    assert "The health check could not read 'backup'" in first["body"]
+    issues = health_env.redis.hgetall("fitzflix:health:issues")
+    assert b"collector:backup" in issues
+    assert b"observers" not in issues and b"scheduler" not in issues
+
+    (second,) = health_env.run()
+    assert "TMDB has failed 2 consecutive probes" in second["body"]
+
+    monkeypatch.setattr(maintenance, "backup_health", real_backup_health)
+    health_env.failing.clear()
+    (recovery,) = health_env.run()
+    assert "Recovered:" in recovery["body"]
+    assert not health_env.redis.hgetall("fitzflix:health:issues")
+
+
 def test_disk_floor_alerts_and_recovers(app, health_env, monkeypatch):
     monkeypatch.setitem(app.config, "DISK_ALERT_FREE_GB", 10**6)
     emails = health_env.run()

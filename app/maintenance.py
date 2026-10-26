@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import threading
 import time
+import traceback
 
 from datetime import datetime, timedelta, timezone
 from urllib.parse import unquote
@@ -1752,9 +1753,9 @@ def _self_heal(config, redis, seen):
     queue is short. Remount the dead network volumes."""
 
     actions = repair_worker_registry(redis)
-    if any(not entry["ok"] for entry in seen["workers"]):
+    if any(not entry["ok"] for entry in seen.get("workers") or []):
         actions += heal_worker_processes(redis, config)
-    if seen["mounts"]:
+    if seen.get("mounts"):
         actions += heal_mounts(seen["mounts"], redis, config)
     for action in actions:
         current_app.logger.warning(f"Health self-heal: {action}")
@@ -1890,12 +1891,24 @@ def health_probe():
 
         # Collect every current problem as condition -> message.
 
+        # A collector that raises is a problem of its own (#391). The
+        # run goes on, so the other problems, the recoveries and the
+        # mail are still recorded.
+
         issues = dict(_probe_issues(results, redis))
         seen = {}
         for name, read, collector_issues in HEALTH_COLLECTORS:
-            seen[name] = read(config, redis, seen)
-            issues.update(collector_issues(seen[name], config))
-        heal_actions = seen["self-heal"]
+            try:
+                seen[name] = read(config, redis, seen)
+                issues.update(collector_issues(seen[name], config))
+            except Exception as e:
+                current_app.logger.warning(traceback.format_exc())
+                seen[name] = None
+                issues[f"collector:{name}"] = (
+                    f"The health check could not read '{name}': "
+                    f"{type(e).__name__}: {e}"[:300]
+                )
+        heal_actions = seen.get("self-heal") or []
 
         # Compare with the problems known from the previous run to find
         # what is new and what recovered. Fitzflix reports a continued
