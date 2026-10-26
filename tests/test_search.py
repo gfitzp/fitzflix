@@ -215,7 +215,7 @@ def test_search_funnel_badges_coexist_and_exclude(app, admin_client):
 
     page = admin_client.get("/search?q=funnel").get_data(as_text=True)
     assert "On your watchlist" not in page
-    assert "Seen &mdash; rated" not in page
+    assert 'mb-1">Seen</span>' not in page
     assert page.count("Might interest you") == 1
     assert page.index("Might interest you") < page.index("Funnel Seen Rewatch (1991)")
     # Both tiles are wired for the state hydration instead
@@ -284,6 +284,12 @@ def test_search_tmdb_funnel_badges(app, admin_client, monkeypatch):
                     },
                 ]
             },
+            # The TV search is routed too (#392).
+            "/search/tv": {
+                "results": [
+                    {"id": 9401, "name": "Funnel Show", "first_air_date": "1999-01-01"}
+                ]
+            },
         },
         default={"results": []},
     )
@@ -292,6 +298,8 @@ def test_search_tmdb_funnel_badges(app, admin_client, monkeypatch):
     monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_get)
 
     page = admin_client.get("/search/tmdb?q=funnel").get_data(as_text=True)
+    assert "TV shows on TMDB" in page
+    assert "Funnel Show (1999)" in page
     assert page.count("Might interest you") == 0
     assert page.count('text-bg-info me-1 mb-1">Seen') == 1
     # The row carries no watchlist badge. The face of the toggle is

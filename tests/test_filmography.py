@@ -8,7 +8,7 @@ of each film. The badge color shows if the film is upgradable."""
 from app import db
 from app.models import Movie, MovieCrew, TMDBCredit, User, UserMovieReview
 from app.videos import star_rating_fields
-from tests.factories import make_movie, make_movie_file
+from tests.factories import make_movie, make_movie_file, make_tv_file, make_tv_series
 from tests.factories import make_cast
 from tests.fakes import tmdb_router
 
@@ -72,10 +72,33 @@ def test_filmography_merges_full_tmdb_career(app, admin_client, monkeypatch):
         db.session.flush()
         make_cast(person, owned)
         make_cast(person, seen)
+        show = make_tv_series("Career Owned Show", tmdb_id=9301)
+        make_tv_file(show, 1, 1, "WEBDL-1080p")
         db.session.commit()
+        show_id = show.id
+
+    # The TV career is routed too (#392). The default answers only the
+    # person details.
 
     fake_tmdb_get = tmdb_router(
         {
+            "/person/535353/tv_credits": {
+                "cast": [
+                    {
+                        "id": 9301,
+                        "name": "Career Owned Show",
+                        "first_air_date": "1985-01-01",
+                        "character": "Detective Shaw",
+                    },
+                    {
+                        "id": 9302,
+                        "name": "Career Guest Show",
+                        "first_air_date": "1991-01-01",
+                        "character": "The Visitor",
+                    },
+                ],
+                "crew": [],
+            },
             "/movie_credits": {
                 "cast": [
                     {
@@ -130,6 +153,13 @@ def test_filmography_merges_full_tmdb_career(app, admin_client, monkeypatch):
     assert "Career Unknown Film" in page
     assert "/review/tmdb/200" in page
     assert "The Cameo" in page
+    # The owned series links to its page. The other one has no link.
+    assert "Television" in page
+    assert f'href="/tv/{show_id}"' in page
+    assert "Career Owned Show (1985)" in page
+    assert "as Detective Shaw" in page
+    assert "Career Guest Show (1991)" in page
+    assert 'data-card-url="/tv_card?tmdb_id=9302"' in page
 
     # The synopsis is now in the poster popover (#45d). Each tile has a
     # data-card-url. The key is the movie_id for a record and the

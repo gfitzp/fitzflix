@@ -71,6 +71,35 @@ def test_the_supervisor_queues_are_in_the_roster():
     assert named == set(QUEUE_NAMES)
 
 
+def test_the_program_roster_matches_the_supervisor_programs(app):
+    """Test PROGRAM_QUEUES and PROGRAM_COUNTS against fitzflix_supervisor.ini (#392).
+
+    The health check expects EXPECTED_WORKERS from them. Each worker
+    program of the ini must have its queue arguments in PROGRAM_QUEUES
+    and its numprocs in PROGRAM_COUNTS (1 when absent)."""
+
+    import configparser
+
+    from app.maintenance import PROGRAM_COUNTS, PROGRAM_QUEUES
+
+    ini = configparser.ConfigParser(interpolation=None)
+    ini.read(ROOT / "fitzflix_supervisor.ini")
+    programs = {}
+    for section in ini.sections():
+        command = ini[section].get("command", "")
+        if section.startswith("program:") and "supervisor.py" in command:
+            name = section.split(":", 1)[1]
+            queues = command.split("supervisor.py", 1)[1].split()
+            programs[name] = (queues, ini[section].getint("numprocs", 1))
+    assert programs
+    assert {name: queues for name, (queues, _) in programs.items()} == {
+        name: list(queues) for name, queues in PROGRAM_QUEUES.items()
+    }
+    assert {name: count for name, (_, count) in programs.items()} == {
+        name: PROGRAM_COUNTS.get(name, 1) for name in PROGRAM_QUEUES
+    }
+
+
 def test_the_program_roster_uses_only_roster_queues(app):
     """Test that PROGRAM_QUEUES and EXPECTED_WORKERS name only roster queues."""
 

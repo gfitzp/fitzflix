@@ -594,12 +594,12 @@ def test_runtime_filter_says_when_nothing_fits(app, admin_client):
 
     body = admin_client.get("/?minutes=10").get_data(as_text=True)
     assert "No recommended film fits in 10 minutes" in body
-    assert "check back in a few minutes" not in body
+    assert "Come back in some minutes" not in body
     assert ">Clear</a>" in body
 
     body = admin_client.get("/").get_data(as_text=True)
     assert "Nothing Fits Long (1991)" in body
-    assert "No recommended films fit" not in body
+    assert "No recommended film fits" not in body
 
 
 def test_runtime_filter_says_when_the_rewatch_shelf_empties(
@@ -637,7 +637,7 @@ def test_runtime_filter_says_when_the_rewatch_shelf_empties(
 
     body = admin_client.get("/").get_data(as_text=True)
     assert "Again Nothing Fits (1975)" in body
-    assert "Nothing you'd rewatch fits" not in body
+    assert "No film that you can watch again fits" not in body
 
 
 def test_search_results_mark_might_interest(app, admin_client, monkeypatch):
