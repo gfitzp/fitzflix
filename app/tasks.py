@@ -180,6 +180,7 @@ TASKS = {
         "file", "UPLOAD_TASK_TIMEOUT"
     ),
     "app.videos.download_task": TaskSpec("file", "TRANSCODE_TASK_TIMEOUT"),
+    "app.aws_storage.place_restored_import_task": TaskSpec("file", "FILE_TASK_TIMEOUT"),
     "app.videos.mkvpropedit_task": TaskSpec("file", "MKVPROPEDIT_TASK_TIMEOUT"),
     "app.videos.track_metadata_scan_task": TaskSpec("file", "MKVPROPEDIT_TASK_TIMEOUT"),
     "app.series_rename.rename_tv_series_task": TaskSpec("file", "SQL_TASK_TIMEOUT"),

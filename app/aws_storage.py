@@ -2677,6 +2677,77 @@ def place_in_library(downloaded, library_path, expected_size, name):
     enqueue_plex_analyze(library_path)
 
 
+# A restored rip waits this long when a file with its untouched name
+# waits in the import directory (#433). It tries again up to
+# MAX_RESTORED_IMPORT_WAITS times.
+
+RESTORED_IMPORT_WAIT = timedelta(minutes=10)
+MAX_RESTORED_IMPORT_WAITS = 36
+
+
+def _rename_without_replace(source, target):
+    """Rename source to target. Return False, and change nothing, if target exists.
+
+    A hard link fails when the target exists. Thus, 2 renames to 1 name
+    cannot both succeed. A volume with no hard links falls back to a
+    check and a rename."""
+
+    try:
+        os.link(source, target)
+    except FileExistsError:
+        return False
+    except OSError:
+        if os.path.lexists(target):
+            return False
+        os.rename(source, target)
+        return True
+    os.remove(source)
+    return True
+
+
+def place_restored_import(staged, basename):
+    """Give a restored rip its untouched name in the import directory. Return False if the name is taken.
+
+    Another restore with the same untouched name can wait there for its
+    import (#433). That file stays. The caller tries again later."""
+
+    target = os.path.join(current_app.config["IMPORT_DIR"], basename)
+    if _rename_without_replace(staged, target):
+        return True
+    current_app.logger.warning(
+        f"'{basename}' A file with this name waits in the import directory. "
+        f"The restored copy waits as '{os.path.basename(staged)}'"
+    )
+    return False
+
+
+def place_restored_import_task(staged, basename, waits=0):
+    """Try again to give a restored rip its untouched name (#433)."""
+
+    with app.app_context():
+        if not os.path.exists(staged):
+            current_app.logger.warning(f"'{staged}' is gone. Nothing to place")
+            return False
+        if place_restored_import(staged, basename):
+            current_app.logger.info(f"'{basename}' The restored copy is in place")
+            return True
+        if waits + 1 >= MAX_RESTORED_IMPORT_WAITS:
+            current_app.logger.error(
+                f"'{basename}' The import name stayed taken. The restored copy "
+                f"stays as '{staged}' for the admin"
+            )
+            return False
+        enqueue_task(
+            "app.aws_storage.place_restored_import_task",
+            staged,
+            basename,
+            waits=waits + 1,
+            delay=RESTORED_IMPORT_WAIT,
+            description=f"'{basename}' — Waiting for the import name",
+        )
+        return True
+
+
 def aws_download(key, basename, sqs_receipt_handle=None, place_at=None):
     """Download an object from AWS S3 storage.
 
@@ -2725,17 +2796,16 @@ def aws_download(key, basename, sqs_receipt_handle=None, place_at=None):
     current_app.logger.info(f"'{basename}' downloading from {source}")
 
     bucket = current_app.config["AWS_BUCKET"]
-    # A restore into the library is not imported. Its library basename is
-    # not unique: many films have a "Restoration Demonstration.mkv". The
-    # untouched name is not sufficient either. The 2 archives of a
-    # conversion share it. Thus, the staging name is the downloaded key,
-    # with its prefix: 1 file for each object. An import download keeps
-    # its name. The rename to that name starts the import.
+    # A library basename is not unique: many films have a "Restoration
+    # Demonstration.mkv". The untouched name is not sufficient either. The
+    # 2 archives of a conversion share it, and 2 keys can share 1
+    # untouched name (#433). Thus, the staging name is the downloaded key,
+    # with its prefix: 1 file for each object. An import download then
+    # takes its untouched name, because the import parses that name. The
+    # rename never replaces a file of that name. The rename starts the
+    # import.
 
-    if place_at:
-        staged_name = f".restore-{key.replace('/', '-')}"
-    else:
-        staged_name = naming.hidden(basename)
+    staged_name = f".restore-{key.replace('/', '-')}"
     destination = os.path.join(current_app.config["IMPORT_DIR"], staged_name)
     s3_client = aws_s3_client()
     sqs_client = aws_sqs_client()
@@ -2876,10 +2946,13 @@ def aws_download(key, basename, sqs_receipt_handle=None, place_at=None):
 
             if place_at:
                 place_in_library(destination, place_at, progress.size, basename)
-            else:
-                os.rename(
+            elif not place_restored_import(destination, basename):
+                enqueue_task(
+                    "app.aws_storage.place_restored_import_task",
                     destination,
-                    os.path.join(current_app.config["IMPORT_DIR"], f"{basename}"),
+                    basename,
+                    delay=RESTORED_IMPORT_WAIT,
+                    description=f"'{basename}' — Waiting for the import name",
                 )
 
             if sqs_receipt_handle:

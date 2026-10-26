@@ -56,6 +56,12 @@ def cdn(app, monkeypatch):
 
     from app import aws_storage
 
+    # A restored rip never replaces a file of its name in the import
+    # directory (#433). An earlier test can leave x.mkv there.
+    for name in os.listdir(app.config["IMPORT_DIR"]):
+        if name in ("x.mkv", ".restore-untouched-x.mkv"):
+            os.remove(os.path.join(app.config["IMPORT_DIR"], name))
+
     monkeypatch.setitem(app.config, "AWS_DOWNLOAD_VIA_CDN", True)
     monkeypatch.setitem(app.config, "CDN_DOMAIN", "d1.cloudfront.net")
     monkeypatch.setitem(app.config, "CDN_KEY_PAIR_ID", "KTEST")

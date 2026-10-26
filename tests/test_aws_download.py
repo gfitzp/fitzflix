@@ -542,3 +542,53 @@ def test_download_task_keeps_a_restore_of_an_absent_file(app, monkeypatch):
         assert videos.download_task(key, os.path.basename(key), "receipt-3") is True
 
     assert len(downloads) == 1
+
+
+def test_two_restores_with_one_untouched_name_never_overwrite(app, monkeypatch):
+    """The second restore waits under its own staging name (#433).
+
+    Before, both staged as the hidden untouched name, and the second
+    rename replaced the first file before the import took it."""
+
+    from app import aws_storage
+
+    name = "Shared Name (1999) - [DVD].mkv"
+    import_dir = app.config["IMPORT_DIR"]
+    first = S3(download=b"first rip")
+    second = S3(download=b"second rip")
+    monkeypatch.setattr(aws_storage, "aws_sqs_client", lambda: SQS())
+
+    with app.app_context():
+        monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kw: first)
+        assert (
+            aws_storage.aws_download(f"untouched/{name}", name)
+            == aws_storage.DOWNLOAD_COMPLETE
+        )
+        monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kw: second)
+        sibling = "untouched/Shared Name (1999) - [DVD] (12).mkv"
+        assert aws_storage.aws_download(sibling, name) == aws_storage.DOWNLOAD_COMPLETE
+
+        target = os.path.join(import_dir, name)
+        staged = os.path.join(import_dir, f".restore-{sibling.replace('/', '-')}")
+        try:
+            with open(target, "rb") as f:
+                assert f.read() == b"first rip"
+            with open(staged, "rb") as f:
+                assert f.read() == b"second rip"
+            (job,) = [
+                job
+                for job in scheduled_jobs(app.file_queue)
+                if job.func_name == "app.aws_storage.place_restored_import_task"
+            ]
+            assert job.args == (staged, name)
+
+            # The import takes the first file. The wait then places the second.
+            os.remove(target)
+            assert aws_storage.place_restored_import_task(staged, name) is True
+            with open(target, "rb") as f:
+                assert f.read() == b"second rip"
+            assert not os.path.exists(staged)
+        finally:
+            for path in (target, staged):
+                if os.path.exists(path):
+                    os.remove(path)
