@@ -323,6 +323,33 @@ def _submit(
     return target.enqueue_in(delay, name, **options)
 
 
+# The states of a job that still waits or runs.
+
+LIVE_JOB_STATES = ("queued", "started", "scheduled", "deferred")
+
+
+def free_job_id(name, job_id):
+    """Make the fixed id of a task free for a new job. Return False if a job under it is live.
+
+    A finished, failed, stopped or canceled job under the id is deleted,
+    with its registry entry. A new job under the same id must not stay
+    in the FailedJobRegistry, and must not take the expiry of the old
+    hash (#371, #438). A job that waits or runs keeps the id."""
+
+    from rq.exceptions import NoSuchJobError
+    from rq.job import Job
+
+    queue = resolve_queue(TASKS[name].queue)
+    try:
+        old = Job.fetch(job_id, connection=queue.connection)
+    except NoSuchJobError:
+        return True
+    if old.get_status(refresh=False) in LIVE_JOB_STATES:
+        return False
+    old.delete()
+    return True
+
+
 def requeue_job_id(name, key=None, counters=None):
     """Return the id of a retry of the task called name.
 

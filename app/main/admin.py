@@ -23,7 +23,7 @@ from flask import (
 # Flask 2.4 removed flask.Markup. Import it from its real module
 from flask_login import current_user, login_required
 
-from app.tasks import enqueue_task
+from app.tasks import enqueue_task, free_job_id
 from app import db, enqueue_import_scan, local_path, safe_job_id
 from app.main.forms import (
     ArchivedRestoreForm,
@@ -1132,6 +1132,14 @@ def manual_imports():
             )
             return redirect(url_for("main.manual_imports"))
 
+        # A failed import keeps its job under the fixed id. Delete that
+        # job first. Otherwise the retry stays in the failed jobs, and
+        # "Forget" on the System page deletes the live retry (#438).
+
+        job_id = safe_job_id(f"manual-import:{download_id}")
+        if not free_job_id("app.manual_imports.manual_import_task", job_id):
+            flash("That import is already queued.", "info")
+            return redirect(url_for("main.manual_imports"))
         current_app.redis.set(
             STARTED_KEY.format(download_id=download_id), "1", ex=STARTED_TTL
         )
@@ -1143,7 +1151,7 @@ def manual_imports():
             relative,
             new_name,
             description=f"'{new_name}'",
-            job_id=safe_job_id(f"manual-import:{download_id}"),
+            job_id=job_id,
         )
         current_app.logger.info(
             f"'{new_name}' Manual import of '{relative}' requested by "

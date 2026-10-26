@@ -455,3 +455,71 @@ def test_a_single_file_download_imports(app, downloads, fake_queues):
     final = os.path.join(app.config["IMPORT_DIR"], "M (1931) - [WEBDL-1080p].mkv")
     assert os.path.getsize(final) == 4096
     assert not os.path.exists(output_path)
+
+
+def test_a_retry_after_a_failure_leaves_the_failed_jobs(
+    app, admin_client, downloads, fake_queues
+):
+    """The retry deletes the failed job of the fixed id first (#438).
+
+    Before, the new job kept the id in the FailedJobRegistry. Then
+    "Forget" on the System page deleted the live retry."""
+
+    from rq.job import JobStatus
+    from rq.registry import FailedJobRegistry
+
+    from tests.conftest import csrf_token_from
+
+    output_path = make_download(downloads)
+    fake_queues["Radarr"] = [radarr_item(output_path)]
+    job_id = safe_job_id(f"manual-import:{DOWNLOAD_ID}")
+    queue = app.file_queue
+    registry = FailedJobRegistry(queue=queue)
+    old = queue.enqueue("app.manual_imports.manual_import_task", job_id=job_id)
+    queue.remove(old)
+    old.set_status(JobStatus.FAILED)
+    registry.add(old, ttl=3600, exc_string="already exists in the import directory")
+    assert job_id in registry.get_job_ids()
+
+    try:
+        page = admin_client.get("/maintenance/manual-imports").get_data(as_text=True)
+        body = admin_client.post(
+            "/maintenance/manual-imports",
+            data={
+                "csrf_token": csrf_token_from(page),
+                "service": "Radarr",
+                "download_id": DOWNLOAD_ID,
+                "source": "M.Eine.Stadt.1931.mkv",
+                "new_name": "M (1931) - [WEBDL-1080p].mkv",
+                "import_submit": "Import",
+            },
+            follow_redirects=True,
+        ).get_data(as_text=True)
+        assert "Copying" in body
+
+        assert job_id not in registry.get_job_ids()
+        retry = queue.fetch_job(job_id)
+        assert retry.get_status() == JobStatus.QUEUED
+        assert retry.args[0] == "Radarr"
+    finally:
+        job = queue.fetch_job(job_id)
+        if job is not None:
+            job.delete()
+
+
+def test_a_live_job_under_the_fixed_id_is_not_replaced(app):
+    """A queued job keeps the id. free_job_id says so (#438)."""
+
+    from app.tasks import free_job_id
+
+    job_id = safe_job_id("manual-import:live-test")
+    with app.app_context():
+        job = app.file_queue.enqueue(
+            "app.manual_imports.manual_import_task", job_id=job_id
+        )
+        try:
+            assert free_job_id("app.manual_imports.manual_import_task", job_id) is False
+            assert app.file_queue.fetch_job(job_id) is not None
+        finally:
+            job.delete()
+        assert free_job_id("app.manual_imports.manual_import_task", job_id) is True
