@@ -565,7 +565,9 @@ def _reconcile_files(listing, job):
             # not have it, or if the size changed after the record.
 
             remote_size = s3_objects[file.aws_key]
-            if file.aws_filesize_bytes != remote_size:
+            if file.aws_filesize_bytes != remote_size and not _replaced_after_upload(
+                file, remote_size, listing.modified.get(file.aws_key)
+            ):
                 file.aws_filesize_bytes = remote_size
 
             if rank == 1 and not use_transcoded:
@@ -596,6 +598,33 @@ def _reconcile_files(listing, job):
 
     current_app.logger.info(f"Orphaned files: {orphaned_files}")
     return inventory_export, orphaned_files
+
+
+def _replaced_after_upload(file, remote_size, modified):
+    """Return True, and warn, if the claimed object of a file changed after its upload (#430).
+
+    Each upload of Fitzflix records its date and size. An object with a
+    new size and a later date than the record holds bytes that the
+    record did not upload. The record keeps its size as the evidence.
+    Thus, the warning comes again at each sync until an admin looks. A
+    server-side move keeps the size, so it never warns."""
+
+    uploaded = file.aws_date_uploaded
+    if file.aws_filesize_bytes is None or uploaded is None or modified is None:
+        return False
+    if uploaded.tzinfo is None:
+        uploaded = uploaded.replace(tzinfo=timezone.utc)
+    if modified.tzinfo is None:
+        modified = modified.replace(tzinfo=timezone.utc)
+    if modified <= uploaded:
+        return False
+    current_app.logger.warning(
+        f"'{file.aws_key}' The object changed after the upload of its record "
+        f"({file.aws_filesize_bytes} bytes on {uploaded.isoformat()}). It now has "
+        f"{remote_size} bytes from {modified.isoformat()}. Another upload can "
+        f"have replaced the archive of '{file.basename}'"
+    )
+    return True
 
 
 def _appeared_after_listing(key, uploaded):
@@ -2104,7 +2133,14 @@ def _move_archive(file, sqs_receipt_handle):
     # failed copy of a move goes by its version id.
 
     if not untouched_key_still_claimed(source):
-        s3_layout.delete(s3_client, bucket, source)
+        # The run-scoped upload of an import (#430) was never an archive
+        # of its own. Its version goes permanently.
+        s3_layout.delete(
+            s3_client,
+            bucket,
+            source,
+            head.get("VersionId") if is_pending_archive(source) else None,
+        )
     _download_after_move(file, source, target)
     _drop_message(sqs_receipt_handle, "archive move")
 
@@ -3055,6 +3091,103 @@ def aws_upload(
     raise RuntimeError(
         f"Unable to upload '{file_path}' to AWS after {MAX_RETRY_COUNT} attempts"
     )
+
+
+# A same-name import whose bytes differ from a claimed untouched/ object
+# uploads below this folder of untouched/ first (#430). The final key
+# changes only after the records commit.
+
+PENDING_ARCHIVE_FOLDER = ".pending"
+
+
+def is_pending_archive(key):
+    """Return True if key is a run-scoped upload of an import (#430)."""
+
+    prefix = current_app.config["AWS_UNTOUCHED_PREFIX"]
+    return _in_prefix(key, os.path.join(prefix, PENDING_ARCHIVE_FOLDER))
+
+
+def _head_or_none(s3_client, key):
+    """Return the head of key, or None when the object does not exist."""
+
+    try:
+        return s3_client.head_object(Bucket=current_app.config["AWS_BUCKET"], Key=key)
+    except botocore.exceptions.ClientError as error:
+        if _is_missing(error):
+            return None
+        raise
+
+
+def upload_untouched(file_path, other_key):
+    """Upload an untouched rip to untouched/. Never replace a claimed archive (#430).
+
+    Return (key, date_uploaded, filesize_bytes). The normal key is the
+    prefix and the sanitized basename. A surviving record can claim that
+    key for different bytes, for example a re-rip with the same name.
+    Then the upload goes to other_key, and the claimed object stays. A
+    failed import cannot leave foreign bytes under the key of a good
+    rip. other_key is a function of the normal key that returns the
+    other key."""
+
+    config = current_app.config
+    prefix = config["AWS_UNTOUCHED_PREFIX"]
+    key = os.path.join(prefix, sanitize_s3_key(os.path.basename(file_path)))
+    if config["IGNORE_ETAGS"] or not untouched_key_still_claimed(key):
+        return aws_upload(file_path, prefix)
+
+    head = _head_or_none(aws_s3_client(with_retries=True), key)
+    if head is None:
+        return aws_upload(file_path, prefix)
+    if not config["FORCE_UPLOAD"]:
+        remote_etag = (head.get("ETag") or "").replace('"', "")
+        if calculate_etag(file_path) == remote_etag:
+            current_app.logger.info(
+                f"'{file_path}' is the same as '{key}', no need to re-upload"
+            )
+            return key, head.get("LastModified"), head.get("ContentLength")
+
+    target = other_key(key)
+    current_app.logger.warning(
+        f"'{file_path}' A record claims '{key}' for different bytes. The "
+        f"upload goes to '{target}', and the claimed archive stays"
+    )
+    return aws_upload(
+        file_path,
+        os.path.dirname(target),
+        key_name=os.path.basename(target),
+        force_upload=True,
+    )
+
+
+def pending_archive_of(file_details):
+    """Return the run-scoped upload key of an import, or None (#430)."""
+
+    key = (file_details or {}).get("aws_key")
+    return key if key and is_pending_archive(key) else None
+
+
+def pending_archive_key(key, run_id):
+    """Return the run-scoped key of an import upload for the normal key (#430)."""
+
+    prefix = current_app.config["AWS_UNTOUCHED_PREFIX"]
+    return os.path.join(
+        prefix, PENDING_ARCHIVE_FOLDER, run_id, os.path.relpath(key, prefix)
+    )
+
+
+def discard_pending_archive(key):
+    """Delete each version of a run-scoped import upload. Ignore a key that is not one.
+
+    A failed import calls this. The upload never became the archive of a
+    record. Thus, no version of it must stay."""
+
+    if not key or not is_pending_archive(key):
+        return
+    s3_client = aws_s3_client(with_retries=True)
+    bucket = current_app.config["AWS_BUCKET"]
+    if not s3_layout.delete_every_version(s3_client, bucket, key):
+        s3_client.delete_object(Bucket=bucket, Key=key)
+    current_app.logger.info(f"'{key}' The upload of a failed import is deleted")
 
 
 def mark_archive_stale(file_id, reason=""):

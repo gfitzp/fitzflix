@@ -387,8 +387,10 @@ def archive_on(monkeypatch):
         key = f"{prefix}/{os.path.basename(path)}"
         return key, datetime.utcnow(), os.path.getsize(path)
 
+    import app.aws_storage as aws_storage
+
     monkeypatch.setattr(importing, "get_setting", get_setting)
-    monkeypatch.setattr(importing, "aws_upload", fake_upload)
+    monkeypatch.setattr(aws_storage, "aws_upload", fake_upload)
     return uploads
 
 

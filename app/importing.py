@@ -25,6 +25,7 @@ import shutil
 import subprocess
 import time
 import traceback
+import uuid
 
 from datetime import datetime, timedelta, timezone
 from functools import partial
@@ -55,10 +56,14 @@ from app import (
     safe_job_id,
 )
 from app.aws_storage import (
-    aws_upload,
     clear_archive_target,
+    discard_pending_archive,
+    is_pending_archive,
+    pending_archive_key,
+    pending_archive_of,
     request_archive_move,
     untouched_key_still_claimed,
+    upload_untouched,
 )
 from app.settings import get_setting
 from app.criterion_catalog import (
@@ -794,6 +799,7 @@ def localization_task(
 
         try:
             run.job = get_current_job()
+            file_details = None
 
             verdict = _admission_gate(file_path, run)
             if verdict != "ok":
@@ -838,7 +844,12 @@ def localization_task(
             # untouched archive goes up first, so the original bytes stay
             # in S3.
 
-            abandon_import(run.source_path, run.lock, strays=run.strays)
+            abandon_import(
+                run.source_path,
+                run.lock,
+                strays=run.strays,
+                pending_archive=pending_archive_of(file_details),
+            )
 
         else:
             return _hand_off(
@@ -1188,14 +1199,21 @@ def _stage_source(file_path, run):
 
 
 def _archive_original(work_path, file_details):
-    """Upload the untouched file to AWS S3 storage as a backup, if the setting is on."""
+    """Upload the untouched file to AWS S3 storage as a backup, if the setting is on.
+
+    A surviving record can claim the untouched key for different bytes.
+    Then the upload goes to a run-scoped key below untouched/.pending/
+    (#430). The record of the import claims that key. After the commit,
+    an archive move takes it to its final key. A failed import deletes
+    it. Thus, a failure never replaces the archive of a good rip."""
 
     if get_setting("ARCHIVE_ORIGINAL_MEDIA"):
+        run_id = uuid.uuid4().hex[:12]
         (
             file_details["aws_key"],
             file_details["aws_date_uploaded"],
             file_details["aws_filesize_bytes"],
-        ) = aws_upload(work_path, current_app.config["AWS_UNTOUCHED_PREFIX"])
+        ) = upload_untouched(work_path, lambda key: pending_archive_key(key, run_id))
 
 
 def _localize(source_path, work_path, file_details, staged, job, strays):
@@ -1599,7 +1617,12 @@ def _hand_off(run, work_path, file_details, hidden_output_file, staged, conversi
                 description=f"'{basename}'",
             )
     except Exception:
-        abandon_handoff(source_path, lock, hidden_output_file)
+        abandon_handoff(
+            source_path,
+            lock,
+            hidden_output_file,
+            pending_archive=pending_archive_of(file_details),
+        )
         return False
     return True
 
@@ -1611,6 +1634,7 @@ def abandon_import(
     reservation=None,
     reason="exception",
     keep_source=False,
+    pending_archive=None,
 ):
     """Clean up an import stage that failed. Each step is best effort.
 
@@ -1619,7 +1643,15 @@ def abandon_import(
     keep_source, the source stays in the import directory. A failed
     step must not stop the next step. A lock that stays held blocks the
     title until the TTL of the lock expires. reservation is the name of
-    the reservation. The default is the basename of the source."""
+    the reservation. The default is the basename of the source.
+    pending_archive is the run-scoped S3 upload of the import (#430). It
+    is deleted."""
+
+    if pending_archive:
+        try:
+            discard_pending_archive(pending_archive)
+        except Exception:
+            current_app.logger.warning(traceback.format_exc())
 
     for stray in strays:
         if not stray:
@@ -1647,7 +1679,7 @@ def abandon_import(
             current_app.logger.warning(traceback.format_exc())
 
 
-def abandon_handoff(source_path, lock, staged_output):
+def abandon_handoff(source_path, lock, staged_output, pending_archive=None):
     """Clean up after a stage could not queue the next stage (#340).
 
     Remove the localized output, release the staging reservation and the
@@ -1659,7 +1691,13 @@ def abandon_handoff(source_path, lock, staged_output):
         f"'{os.path.basename(source_path)}' The next stage could not be "
         f"queued. The source stays for the next sweep: " + traceback.format_exc()
     )
-    abandon_import(source_path, lock, strays=[staged_output], keep_source=True)
+    abandon_import(
+        source_path,
+        lock,
+        strays=[staged_output],
+        keep_source=True,
+        pending_archive=pending_archive,
+    )
 
 
 def _plan_conversion_or_reject(file_path, file_details):
@@ -2057,7 +2095,10 @@ def move_localized_file(
             # Fitzflix rejects the source.
 
             abandon_import(
-                source_path, lock, strays=(hidden_output_file, destination_hidden)
+                source_path,
+                lock,
+                strays=(hidden_output_file, destination_hidden),
+                pending_archive=pending_archive_of(file_details),
             )
 
         else:
@@ -2289,7 +2330,12 @@ def finalize_localization(
                 stray = hidden_output_file
             elif placement == "renamed" and file_path != output_file:
                 stray = output_file
-            abandon_import(file_path, None, strays=(stray, staged_output))
+            abandon_import(
+                file_path,
+                None,
+                strays=(stray, staged_output),
+                pending_archive=pending_archive_of(file_details),
+            )
             _release_title_lock(lock)
             return None
 
@@ -2883,6 +2929,12 @@ def _after_commit(
     # pipeline. Thus, it does not wait in line behind long file work
     # (Glenn, 2026-10-15).
 
+    # A run-scoped upload (#430) moves to its final key now. The target
+    # claims that key first. Thus, the delete of a replaced archive with
+    # the same key below skips it.
+
+    step("archive key", _request_final_archive_key, file)
+
     for worse_key in worse_aws_keys:
         step("archive delete", _delete_replaced_archive, worse_key)
 
@@ -3007,6 +3059,18 @@ def _atmos_handoff(staged_output, output_file):
     if not get_setting("CREATE_ATMOS_TWINS"):
         return None
     return staged_handoff(staged_output, output_file)
+
+
+def _request_final_archive_key(file):
+    """Request the archive move of a run-scoped upload to its final key (#430).
+
+    The records are committed. Thus, a replaced record no longer claims
+    the key, and the move can take it. A record that still claims the
+    key keeps it. Then the move gives this file the key with its id."""
+
+    if file.aws_key and is_pending_archive(file.aws_key):
+        request_archive_move(file)
+        db.session.commit()
 
 
 def _delete_replaced_archive(worse_key):

@@ -6,6 +6,8 @@ holds the series list of the Sonarr path check (#370).
 Import them inside a test or at the top of a test module. This module
 imports no application module. Thus, it is safe at collection time."""
 
+from datetime import datetime, timezone
+
 import requests
 
 
@@ -194,14 +196,24 @@ class Sonarr:
 
 
 class ArchiveS3:
-    """A fake boto3 S3 client that holds the archive objects in a dict.
+    """A fake versioned boto3 S3 client that holds the archive objects in a dict.
 
-    objects maps a key to its head: ContentLength, ETag, StorageClass,
-    Restore and VersionId. copy puts a STANDARD copy at the new key with
-    a new version id. copy_etag is the ETag of each copy, for a copy
-    that is not equal. A head with PartNumber answers part_size. events
-    records each call in order. on_copy runs at each copy, and on_delete
-    at each delete, with the key."""
+    objects maps a key to its current head: ContentLength, ETag,
+    StorageClass, Restore and VersionId. noncurrent maps a key to its
+    older versions, newest last. markers maps a key to the version ids
+    of its delete markers. As in a versioned bucket, a new object or a
+    plain delete keeps the old version as noncurrent. A delete with a
+    VersionId removes that 1 version, and the newest older version
+    becomes current again.
+
+    copy puts a STANDARD copy at the new key with a new version id. A
+    missing source raises NoSuchKey, and a Deep Archive source with no
+    finished restore raises InvalidObjectState, as S3 does. copy_etag is
+    the ETag of each copy, for a copy that is not equal. upload_file
+    stores the bytes of a local file with an ETag of their MD5. A head
+    with PartNumber answers part_size. events records each call in
+    order. on_copy runs at each copy, and on_delete at each delete, with
+    the key."""
 
     def __init__(
         self,
@@ -212,6 +224,8 @@ class ArchiveS3:
         on_delete=None,
     ):
         self.objects = {key: dict(head) for key, head in (objects or {}).items()}
+        self.noncurrent = {}
+        self.markers = {}
         self.part_size = part_size
         self.copy_etag = copy_etag
         self.on_copy = on_copy
@@ -221,19 +235,31 @@ class ArchiveS3:
         self.configs = []
         self.deletes = []
         self.restores = []
+        self.uploads = []
         self.versions = 0
+
+    @staticmethod
+    def _error(code, operation, status=400):
+        import botocore.exceptions
+
+        return botocore.exceptions.ClientError(
+            {"Error": {"Code": code}, "ResponseMetadata": {"HTTPStatusCode": status}},
+            operation,
+        )
+
+    def _put(self, key, head):
+        """Make head the current version of key. The old one becomes noncurrent."""
+
+        if key in self.objects:
+            self.noncurrent.setdefault(key, []).append(self.objects[key])
+        self.objects[key] = head
 
     def head_object(self, Bucket=None, Key=None, PartNumber=None, **kwargs):
         """Answer the head of the key, or raise a 404 ClientError."""
 
-        import botocore.exceptions
-
         self.events.append(("head", Key))
         if Key not in self.objects:
-            raise botocore.exceptions.ClientError(
-                {"Error": {"Code": "404"}, "ResponseMetadata": {"HTTPStatusCode": 404}},
-                "HeadObject",
-            )
+            raise self._error("404", "HeadObject", 404)
         head = dict(self.objects[Key])
         if PartNumber:
             head["ContentLength"] = min(self.part_size, head["ContentLength"])
@@ -242,32 +268,130 @@ class ArchiveS3:
     def copy(self, CopySource, Bucket, Key, ExtraArgs=None, Config=None, **kwargs):
         """Copy the source object to Key as a new STANDARD version."""
 
-        source = self.objects[CopySource["Key"]]
+        source = self.objects.get(CopySource["Key"])
+        if source is None:
+            raise self._error("NoSuchKey", "CopyObject", 404)
+        if source.get("StorageClass") in (
+            "GLACIER",
+            "DEEP_ARCHIVE",
+        ) and 'ongoing-request="false"' not in (source.get("Restore") or ""):
+            raise self._error("InvalidObjectState", "CopyObject", 403)
         self.versions += 1
         self.events.append(("copy", CopySource["Key"], Key))
         self.copies.append((CopySource["Key"], Key))
         self.configs.append(Config)
         if self.on_copy:
             self.on_copy(CopySource["Key"], Key)
-        self.objects[Key] = {
-            "ContentLength": source["ContentLength"],
-            "ETag": self.copy_etag or source["ETag"],
-            "StorageClass": "STANDARD",
-            "VersionId": f"copy-{self.versions}",
-        }
+        self._put(
+            Key,
+            {
+                "ContentLength": source["ContentLength"],
+                "ETag": self.copy_etag or source["ETag"],
+                "StorageClass": "STANDARD",
+                "VersionId": f"copy-{self.versions}",
+                "LastModified": datetime.now(timezone.utc),
+            },
+        )
+
+    def upload_file(self, Filename, Bucket, Key, ExtraArgs=None, Callback=None, **kw):
+        """Store a local file as a new version of Key, with the MD5 as its ETag."""
+
+        import hashlib
+
+        with open(Filename, "rb") as handle:
+            body = handle.read()
+        self.versions += 1
+        self.events.append(("upload", Key))
+        self.uploads.append(Key)
+        self._put(
+            Key,
+            {
+                "ContentLength": len(body),
+                "ETag": f'"{hashlib.md5(body).hexdigest()}"',
+                "StorageClass": (ExtraArgs or {}).get("StorageClass", "STANDARD"),
+                "VersionId": f"upload-{self.versions}",
+                "LastModified": datetime.now(timezone.utc),
+            },
+        )
 
     def delete_object(self, Bucket=None, Key=None, VersionId=None, **kwargs):
-        """Remove the key. Record the key and the version id."""
+        """Delete the key as a versioned bucket does. Record the key and the version id."""
 
         self.events.append(("delete", Key, VersionId))
         if self.on_delete:
             self.on_delete(Key)
         self.deletes.append((Key, VersionId))
-        self.objects.pop(Key, None)
+        self._delete(Key, VersionId)
         return {}
 
+    def _delete(self, key, version_id):
+        if version_id is None:
+            # A plain delete adds a marker. The current version stays as
+            # a noncurrent version.
+            if key in self.objects:
+                self.noncurrent.setdefault(key, []).append(self.objects.pop(key))
+            self.versions += 1
+            self.markers.setdefault(key, []).append(f"marker-{self.versions}")
+            return
+        if version_id in self.markers.get(key, []):
+            self.markers[key].remove(version_id)
+            if not self.markers[key] and self.noncurrent.get(key):
+                self.objects[key] = self.noncurrent[key].pop()
+            return
+        current = self.objects.get(key)
+        if current is not None and current.get("VersionId") == version_id:
+            del self.objects[key]
+            if self.noncurrent.get(key) and not self.markers.get(key):
+                self.objects[key] = self.noncurrent[key].pop()
+            return
+        self.noncurrent[key] = [
+            head
+            for head in self.noncurrent.get(key, [])
+            if head.get("VersionId") != version_id
+        ]
+
+    def delete_objects(self, Bucket=None, Delete=None, **kwargs):
+        """Delete each {"Key", "VersionId"} entry."""
+
+        for entry in Delete["Objects"]:
+            self.delete_object(Key=entry["Key"], VersionId=entry.get("VersionId"))
+        return {}
+
+    def get_paginator(self, name):
+        """Return a paginator for list_object_versions."""
+
+        assert name == "list_object_versions"
+        fake = self
+
+        class Paginator:
+            def paginate(self, Bucket=None, Prefix=""):
+                yield fake.list_object_versions(Prefix=Prefix)
+
+        return Paginator()
+
+    def list_object_versions(self, Bucket=None, Prefix="", **kwargs):
+        """List every version and delete marker of the keys that start with Prefix."""
+
+        versions = []
+        for key in sorted(set(self.objects) | set(self.noncurrent)):
+            if not key.startswith(Prefix):
+                continue
+            for head in self.noncurrent.get(key, []):
+                versions.append({"Key": key, "VersionId": head.get("VersionId")})
+            if key in self.objects:
+                versions.append(
+                    {"Key": key, "VersionId": self.objects[key].get("VersionId")}
+                )
+        markers = [
+            {"Key": key, "VersionId": marker}
+            for key, ids in sorted(self.markers.items())
+            if key.startswith(Prefix)
+            for marker in ids
+        ]
+        return {"Versions": versions, "DeleteMarkers": markers}
+
     def list_objects(self, Bucket=None, Prefix="", MaxKeys=1000, **kwargs):
-        """List the keys that start with Prefix."""
+        """List the current keys that start with Prefix."""
 
         keys = sorted(key for key in self.objects if key.startswith(Prefix))[:MaxKeys]
         if not keys:
@@ -276,6 +400,9 @@ class ArchiveS3:
             "Contents": [
                 {
                     "Key": key,
+                    "ETag": self.objects[key].get("ETag", '""'),
+                    "Size": self.objects[key].get("ContentLength"),
+                    "LastModified": self.objects[key].get("LastModified"),
                     "StorageClass": self.objects[key].get("StorageClass", "STANDARD"),
                 }
                 for key in keys

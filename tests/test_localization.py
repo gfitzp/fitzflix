@@ -1814,7 +1814,7 @@ def test_a_reused_records_old_archive_key_is_deleted(
 
     from datetime import datetime, timezone
 
-    from app import db, importing
+    from app import aws_storage, db
     from app.models import File
     from tests.factories import make_movie, make_movie_file
 
@@ -1833,7 +1833,7 @@ def test_a_reused_records_old_archive_key_is_deleted(
 
     monkeypatch.setitem(app.config, "ARCHIVE_ORIGINAL_MEDIA", True)
     monkeypatch.setattr(
-        importing,
+        aws_storage,
         "aws_upload",
         lambda *a, **k: (new_key, datetime.now(timezone.utc), 1),
     )

@@ -444,6 +444,7 @@ def convert_localized_file(
         defer_for_title_lock,
         set_staging_reservation,
     )
+    from app.aws_storage import pending_archive_of
     from app.videos import wait_for_subprocess
 
     with app.app_context():
@@ -550,6 +551,7 @@ def convert_localized_file(
                 strays=(video_only, muxed, hidden_output_file),
                 reservation=source_name,
                 reason="conversion failed",
+                pending_archive=pending_archive_of(file_details),
             )
             return False
 
@@ -569,7 +571,12 @@ def convert_localized_file(
                 description=f"'{basename}'",
             )
         except Exception:
-            abandon_handoff(source_path, lock, hidden_output_file)
+            abandon_handoff(
+                source_path,
+                lock,
+                hidden_output_file,
+                pending_archive=pending_archive_of(file_details),
+            )
             return False
         return True
 
@@ -608,7 +615,7 @@ def archive_held_task(held_id):
     This is the "Archive only" choice. The library does not change. The
     held file is deleted after the upload."""
 
-    from app.aws_storage import aws_upload
+    from app.aws_storage import upload_untouched
     from app.models import ArchivedOriginal, HeldImport, Movie, TVSeries
 
     with app.app_context():
@@ -617,9 +624,15 @@ def archive_held_task(held_id):
             return False
         details = held.details()
         try:
-            key, uploaded, size = aws_upload(
-                held.held_path, current_app.config["AWS_UNTOUCHED_PREFIX"]
-            )
+            # A held HDR rip can have the name of a real rip, because a
+            # Fitzflix name has no HDR tag. Its upload never replaces the
+            # claimed archive of that rip (#430). It gets its own key.
+
+            def own_key(claimed):
+                stem, extension = os.path.splitext(claimed)
+                return f"{stem} (held {held_id}){extension}"
+
+            key, uploaded, size = upload_untouched(held.held_path, own_key)
             archived = ArchivedOriginal.query.filter_by(aws_key=key).first()
             if archived is None:
                 archived = ArchivedOriginal(aws_key=key)

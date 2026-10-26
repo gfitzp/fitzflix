@@ -149,6 +149,17 @@ def _versions_of(client, bucket, key):
     return found
 
 
+def delete_every_version(client, bucket, key):
+    """Delete each version and delete marker of exactly key. Return the count."""
+
+    found = [
+        {"Key": entry["Key"], "VersionId": entry["VersionId"]}
+        for entry in _versions_of(client, bucket, key)
+    ]
+    delete_versions(client, bucket, found)
+    return len(found)
+
+
 def delete(client, bucket, key, version_id=None):
     """Delete key with the policy of its prefix.
 
