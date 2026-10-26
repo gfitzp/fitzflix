@@ -713,10 +713,18 @@ def apply_row_edit(row, quick_rating, review_text, watched_date, posted):
     if quick_rating is not None and _is_latest_viewing(row):
         clear_not_interested(row.user_id, row.movie_id)
         if row.date_watched is not None:
+            # A row at midnight has a date and no time (#444). An entry
+            # from the same day can come before or after the viewing.
+            # Thus, the whole day counts as before it.
+            watched = row.date_watched
+            if watched.time() == datetime.min.time():
+                entry_before = UserWatchlist.date_added < watched + timedelta(days=1)
+            else:
+                entry_before = UserWatchlist.date_added <= watched
             UserWatchlist.query.filter(
                 UserWatchlist.user_id == row.user_id,
                 UserWatchlist.movie_id == row.movie_id,
-                UserWatchlist.date_added <= row.date_watched,
+                entry_before,
             ).delete()
     if changed:
         row.date_updated = datetime.now()

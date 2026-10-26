@@ -2513,3 +2513,59 @@ def test_a_star_edit_of_an_old_viewing_keeps_a_rewatch_entry(app, admin_client):
         assert float(db.session.get(UserMovieReview, older_id).rating) == 4.0
         for movie_id in film_ids:
             assert UserWatchlist.query.filter_by(movie_id=movie_id).count() == 1
+
+
+def test_a_star_edit_of_a_date_only_row_removes_a_same_day_add(app, admin_client):
+    """A midnight row and a watchlist add later that day: the entry goes (#444).
+
+    The row has a date and no time. Thus, the add of the same day counts
+    as before the viewing. An add on the next day stays."""
+
+    from app import db
+    from app.models import User, UserMovieReview, UserWatchlist
+    from app.videos import star_rating_fields
+
+    with app.app_context():
+        user_id = User.query.first().id
+        same_day = make_movie("Same Day Add Film", 1982)
+        next_day = make_movie("Next Day Add Film", 1983)
+        rows = [
+            UserMovieReview(
+                user_id=user_id,
+                movie_id=film.id,
+                date_watched=datetime(2026, 10, 20),
+                **star_rating_fields(3.0),
+            )
+            for film in (same_day, next_day)
+        ]
+        db.session.add_all(rows)
+        db.session.add_all(
+            [
+                UserWatchlist(
+                    user_id=user_id,
+                    movie_id=same_day.id,
+                    date_added=datetime(2026, 10, 20, 15, 30),
+                ),
+                UserWatchlist(
+                    user_id=user_id,
+                    movie_id=next_day.id,
+                    date_added=datetime(2026, 10, 21, 9, 0),
+                ),
+            ]
+        )
+        db.session.commit()
+        row_ids = [row.id for row in rows]
+        same_id, next_id = same_day.id, next_day.id
+
+    for row_id in row_ids:
+        page = admin_client.get(f"/review/{row_id}/edit").get_data(as_text=True)
+        response = admin_client.post(
+            f"/review/{row_id}/edit",
+            data={"csrf_token": csrf_token_from(page), "quick_rating": "4"},
+            headers={"X-Requested-With": "ladder"},
+        )
+        assert response.status_code == 200
+
+    with app.app_context():
+        assert UserWatchlist.query.filter_by(movie_id=same_id).count() == 0
+        assert UserWatchlist.query.filter_by(movie_id=next_id).count() == 1
