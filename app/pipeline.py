@@ -556,18 +556,21 @@ def _apply_stage_event(trail, first_run, first_enqueued, event):
     # banners (the original banner-ordering request of Glenn). It does not
     # move while the journey continues. Thus, a file that steps between
     # queues keeps its place. A new journey (a re-import) sets it again.
+    # The anchor is UTC with an explicit offset (#405). A local wall-clock
+    # time is ambiguous in the repeated hour of the fall-back night. The
+    # offset also tells a new anchor from a local one of an older trail.
 
     if fresh_journey:
         first_run = None
     if status == "started":
-        first_run = first_run or now
+        first_run = first_run or f"{event.utc_now}+00:00"
 
     # The first ENQUEUE of the file anchors the Enqueued column of the
     # queue page in the same way. It stays still while the work steps
     # between queues. Each step is a new job with its own enqueued_at.
     # Fitzflix stores it as naive UTC to match the enqueued_at convention
-    # of rq. The other stamps of the trail are local wall clock, for the
-    # chips. See first_enqueued.
+    # of rq. The stamps of the chips are local wall clock. See
+    # first_enqueued.
 
     if status in ("queued", "scheduled", "started") or fresh_journey:
         stamp = event.anchor or event.utc_now

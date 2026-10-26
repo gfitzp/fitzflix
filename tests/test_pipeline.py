@@ -1603,7 +1603,9 @@ def test_apply_stage_event_updates_the_own_entry_and_sets_first_run(app):
     )
     assert changed
     assert [e["status"] for e in new_trail] == ["started"]
-    assert first_run == "2026-10-25 12:00:00"
+    # The anchor is UTC with an offset (#405). The chip keeps local time.
+    assert first_run == "2026-10-25 16:00:00+00:00"
+    assert new_trail[0]["at"] == "2026-10-25 12:00:00"
     assert first_enqueued == "2026-10-25 15:00:00"
 
     # A second start keeps the first one.
@@ -1630,7 +1632,7 @@ def test_apply_stage_event_rerun_drops_the_earlier_run(app):
     assert new_trail == [
         _entry("Localizing", "started", "j1", at="2026-10-25 12:00:00", journey=True)
     ]
-    assert first_run == "2026-10-25 12:00:00"
+    assert first_run == "2026-10-25 16:00:00+00:00"
     assert first_enqueued == "2026-10-25 16:00:00"
 
 
@@ -1785,3 +1787,39 @@ def test_a_best_effort_trail_function_logs_and_returns_its_fallback(app, caplog)
     with caplog.at_level(logging.WARNING, logger="app.pipeline"):
         assert broken(3) == 6
     assert "trail write failed" in caplog.text
+
+
+def test_a_fall_back_hour_anchor_reads_as_the_right_utc_instant(app, admin_client):
+    """Test that a start in the repeated hour shows the right instant (#405).
+
+    01:20 EST on 2026-11-01 is 06:20 UTC. A local anchor would read as
+    05:20 UTC, the first 01:20 of that night."""
+
+    import time
+
+    from rq.job import Job
+
+    from app.pipeline import FILE_KEY, _digest
+
+    basename = "Fall Back (2026) - [DVD].mkv"
+    with app.app_context():
+        app.redis.hset(
+            FILE_KEY.format(digest=_digest(basename)),
+            "first_run",
+            "2026-11-01 06:20:00+00:00",
+        )
+        job = Job.create(
+            "app.videos.localization_task",
+            args=(f"/import/{basename}",),
+            id="fall-back-localize",
+            origin="fitzflix-import",
+            connection=app.redis,
+        )
+        job.save()
+        app.redis.zadd(
+            "rq:wip:fitzflix-import", {"fall-back-localize:test": time.time() + 600}
+        )
+
+    payload = admin_client.get("/api/queue-details").get_json()
+    (item,) = [item for item in payload["all"] if item["id"] == "fall-back-localize"]
+    assert item["started_at"] == "Sun, 01 Nov 2026 06:20:00 GMT"

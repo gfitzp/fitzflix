@@ -74,17 +74,20 @@ def queue_details():
     def file_started(job):
         """Return the time that the FILE of the job first started to run.
 
-        The anchor of the trail is local wall clock. The value is
-        aware UTC, the same as the own started_at of rq. flask-moment
-        reads each time as UTC."""
+        The anchor of the trail is UTC with an offset (#405). An anchor
+        of an older trail has no offset and is local wall clock. The
+        value is aware UTC, the same as the own started_at of rq.
+        flask-moment reads each time as UTC."""
 
         anchor = first_run(current_app.redis, job)
         if anchor:
             try:
-                local = datetime.strptime(anchor, "%Y-%m-%d %H:%M:%S")
-                return local.astimezone().astimezone(timezone.utc)
+                stamp = datetime.fromisoformat(anchor)
             except ValueError:
-                pass
+                return job.started_at
+            if stamp.tzinfo is None:
+                stamp = stamp.astimezone()
+            return stamp.astimezone(timezone.utc)
         return job.started_at
 
     def enqueue_anchor(job):

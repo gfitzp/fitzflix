@@ -698,7 +698,7 @@ You can rebuild Fitzflix on a new machine from three items that you keep away fr
 
 All processes write to one log, `logs/fitzflix.log`. The setting `LOG_FILE` gives the location. Fitzflix reports configuration problems in the log as warnings at startup. Examples are missing binaries, media directories that Fitzflix cannot reach, and incomplete AWS or mail settings. Thus, look in the log first when a function does not operate.
 
-The log rotates automatically each night at midnight. Fitzflix compresses the file of the day to `fitzflix.log.<date>.gz` in the same directory. It deletes the archives that are older than `LOG_RETENTION_DAYS` (default 14).
+The log rotates automatically each night at midnight. Fitzflix compresses the log to `fitzflix.log.<date>.gz` in the same directory. The date is the date of the rotation run. Thus, the archive of a date holds the entries of the day before. It deletes the archives that are older than `LOG_RETENTION_DAYS` (default 14).
 
 Fitzflix backs up the database each night at 00:30 to a compressed dump in `DB_BACKUP_DIR`. The default directory is `backups/` in the project root. Fitzflix keeps `DB_BACKUP_RETENTION_DAYS` (default 14) days of dumps. The media files are in the AWS archive, but the reviews, the Criterion details, and the shopping priorities are only in the database. When AWS is configured, Fitzflix also uploads each dump to the S3 bucket under `AWS_BACKUP_PREFIX` (default `backup`), in Standard storage. It removes the remote dumps that are older than the retention period on the same schedule. Thus, the loss of the machine is not the loss of the database.
 
