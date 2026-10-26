@@ -1003,6 +1003,14 @@ class File(db.Model):
     # original here and its library file in aws_transcoded_key.
 
     aws_key = db.Column(db.String(255), index=True)
+
+    # The key that the archive moves to after a rename (#369). The move
+    # job copies the object, verifies the copy, and only then writes the
+    # key to aws_key. Thus, aws_key names a real object during the whole
+    # move. A target in transcoded/ is the move of aws_transcoded_key.
+    # None when no move is pending.
+
+    aws_key_target = db.Column(db.String(255), index=True)
     aws_filesize_bytes = db.Column(db.BigInteger)
     aws_date_uploaded = db.Column(db.DateTime)
     aws_date_deleted = db.Column(db.DateTime)
