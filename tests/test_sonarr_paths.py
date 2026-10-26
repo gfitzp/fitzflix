@@ -8,13 +8,15 @@ other cases. The webhook queues the check of one series when a Rename,
 Download or SeriesAdd event names a different folder. A Sonarr rename
 of episode files in the same folder changes only the rows."""
 
+import base64
 import os
 
-from datetime import datetime
+from datetime import date, datetime
 
 import pytest
 
 from app import safe_job_id
+from tests.conftest import ADMIN_API_KEY, ADMIN_EMAIL
 from tests.factories import make_tv_file, make_tv_series
 from tests.fakes import Sonarr
 
@@ -85,6 +87,14 @@ def rename_jobs(app):
         job
         for job in app.file_queue.jobs
         if job.func_name == "app.series_rename.rename_tv_series_task"
+    ]
+
+
+def check_jobs(app):
+    return [
+        job
+        for job in app.maintenance_queue.jobs
+        if job.func_name == "app.series_rename.reconcile_sonarr_series"
     ]
 
 
@@ -466,3 +476,130 @@ def test_a_folder_change_runs_before_the_adoption(app, sonarr, caplog):
     assert "The episode paths are not adopted" in caplog.text
     with app.app_context():
         assert db.session.get(File, file_id).file_path == old
+
+
+# The webhook trigger.
+
+
+def auth_header():
+    token = base64.b64encode(f"{ADMIN_EMAIL}:{ADMIN_API_KEY}".encode()).decode()
+    return {"Authorization": f"Basic {token}"}
+
+
+def event(app, event_type, folder, **extra):
+    """Return a Sonarr event payload for the series Batman at a folder."""
+
+    return {
+        "eventType": event_type,
+        "series": {
+            "id": 5,
+            "tvdbId": TVDB,
+            "title": "Batman",
+            "path": os.path.join(app.config["TV_LIBRARY"], folder),
+        },
+        **extra,
+    }
+
+
+def download_fields(app, folder):
+    """Return the file fields of a Download event, with the file on disk."""
+
+    name = f"{folder} - S01E01 - [WEBDL-1080p].mkv"
+    place(app, f"TV Shows/{folder}/Season 01/{name}")
+    return {
+        "episodes": [{"airDate": date(2000, 1, 1).isoformat()}],
+        "episodeFile": {
+            "id": 9,
+            "relativePath": f"Season 01/{name}",
+            "quality": "WEBDL-1080p",
+        },
+    }
+
+
+@pytest.mark.parametrize("event_type", ["Rename", "Download", "SeriesAdd"])
+def test_an_event_with_a_different_folder_queues_the_check(app, client, event_type):
+    with app.app_context():
+        series_id, _file_id = batman(app)
+    extra = download_fields(app, "Batman (1966)") if event_type == "Download" else {}
+
+    response = client.post(
+        "/api/sonarr/add",
+        json=event(app, event_type, "Batman (1966)", **extra),
+        headers=auth_header(),
+    )
+    # The import handler answers a Download. The wrapper answers the rest.
+    assert response.status_code == (200 if event_type == "Download" else 202)
+    (job,) = check_jobs(app)
+    assert job.args == (series_id, [])
+    assert job.id == safe_job_id(f"sonarr-reconcile:{series_id}")
+
+    # A repeat of the event adds no second job.
+    client.post(
+        "/api/sonarr/add",
+        json=event(app, event_type, "Batman (1966)", **extra),
+        headers=auth_header(),
+    )
+    assert len(check_jobs(app)) == 1
+
+
+@pytest.mark.parametrize("event_type", ["Rename", "SeriesAdd", "Grab"])
+def test_an_event_with_the_same_folder_queues_nothing(app, client, event_type):
+    with app.app_context():
+        batman(app)
+
+    response = client.post(
+        "/api/sonarr/add",
+        json=event(app, event_type, "Batman"),
+        headers=auth_header(),
+    )
+    assert response.status_code == 202
+    assert check_jobs(app) == []
+
+
+def test_a_grab_with_a_different_folder_stays_ignored(app, client):
+    with app.app_context():
+        batman(app)
+
+    response = client.post(
+        "/api/sonarr/add",
+        json=event(app, "Grab", "Batman (1966)"),
+        headers=auth_header(),
+    )
+    assert response.status_code == 202
+    assert check_jobs(app) == []
+
+
+def test_a_series_path_outside_the_roots_is_ignored(app, client, caplog):
+    with app.app_context():
+        batman(app)
+    payload = event(app, "Rename", "Batman (1966)")
+    payload["series"]["path"] = "/elsewhere/Batman (1966)"
+
+    response = client.post("/api/sonarr/add", json=payload, headers=auth_header())
+    assert response.status_code == 202
+    assert check_jobs(app) == []
+    assert "outside SONARR_ROOT_FOLDERS. Ignored" in caplog.text
+
+
+def test_a_rename_of_episode_files_queues_the_check_with_the_files(app, client):
+    from app import db
+    from app.models import File
+
+    with app.app_context():
+        series_id, file_id = batman(app)
+        old = os.path.join(
+            app.config["LIBRARY_DIR"], db.session.get(File, file_id).file_path
+        )
+    renamed = [
+        {"previousPath": old, "path": old.replace(" - [", " - Pilot [")},
+        {"previousPath": "/Volumes/TV Shows/Batman/unknown.mkv", "path": "/x.mkv"},
+    ]
+
+    response = client.post(
+        "/api/sonarr/add",
+        json=event(app, "Rename", "Batman", renamedEpisodeFiles=renamed),
+        headers=auth_header(),
+    )
+    assert response.status_code == 202
+    (job,) = check_jobs(app)
+    assert job.args == (series_id, renamed[:1])

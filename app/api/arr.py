@@ -3,6 +3,7 @@
 import functools
 import json
 import os
+import traceback
 
 import urllib3
 
@@ -11,13 +12,15 @@ from flask import current_app, jsonify, request
 from app.api.auth import authenticate_api_request
 
 
-def import_event_webhook(service):
+def import_event_webhook(service, observe=None):
     """Wrap a webhook handler with authentication and an import-event filter.
 
     The wrapper calls the handler with the request payload only for an
     authenticated "Download" (import or upgrade) event. The wrapper
     acknowledges a connection test and all other event types. Then it
-    ignores them.
+    ignores them. observe is a function of the payload. It sees each
+    authenticated event except a test before the filter. A failure of
+    observe is logged and does not change the answer.
     """
 
     def decorator(handler):
@@ -74,6 +77,18 @@ def import_event_webhook(service):
                 record_manual_interaction(service, payload)
                 return response
 
+            # Sonarr compares the series folder of an event here (#370).
+            # The answer to an ignored event stays 202.
+
+            if observe is not None:
+                try:
+                    observe(payload)
+                except Exception:
+                    current_app.logger.warning(
+                        f"{service} webhook: the event check failed: "
+                        + traceback.format_exc()
+                    )
+
             # Only an import event carries the file fields that the handlers
             # use. Acknowledge and ignore all other events.
 
@@ -90,6 +105,31 @@ def import_event_webhook(service):
     return decorator
 
 
+def _root_folders(service):
+    """Return the real paths of the root folders of Radarr or Sonarr."""
+
+    roots = current_app.config[
+        "RADARR_ROOT_FOLDERS" if service == "Radarr" else "SONARR_ROOT_FOLDERS"
+    ]
+    return [os.path.realpath(root) for root in roots]
+
+
+def folder_under_roots(service, folder):
+    """Return the real path of a folder below a root folder, or None.
+
+    This is the fence of downloaded_path for a folder that a payload
+    names, for example series.path (#370). The folder must be absolute.
+    A root folder itself is not the folder of a series or a movie."""
+
+    if not folder or not os.path.isabs(folder):
+        return None
+    path = os.path.realpath(folder)
+    for root in _root_folders(service):
+        if path != root and os.path.commonpath([path, root]) == root:
+            return path
+    return None
+
+
 def downloaded_path(service, folder, relative):
     """Return the absolute path of the file that a webhook payload names.
 
@@ -103,16 +143,12 @@ def downloaded_path(service, folder, relative):
     relativePath that steps into a parent directory. It refuses a
     folder outside every root (security review, 2026-09)."""
 
-    roots = current_app.config[
-        "RADARR_ROOT_FOLDERS" if service == "Radarr" else "SONARR_ROOT_FOLDERS"
-    ]
     if not folder or not relative or os.path.isabs(relative):
         return None
     if os.pardir in relative.split(os.sep):
         return None
     path = os.path.realpath(os.path.join(folder, relative))
-    for root in roots:
-        root = os.path.realpath(root)
+    for root in _root_folders(service):
         if os.path.commonpath([path, root]) == root:
             return path
     return None
