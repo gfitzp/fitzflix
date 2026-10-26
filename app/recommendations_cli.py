@@ -121,7 +121,13 @@ def register_cli(app):
                 cls, _, value = pair.partition("=")
                 if cls.strip() not in class_weights:
                     raise click.ClickException(f"Unknown feature class '{cls}'")
-                class_weights[cls.strip()] = float(value)
+                try:
+                    class_weights[cls.strip()] = float(value)
+                except ValueError:
+                    raise click.ClickException(
+                        f"The weight of '{cls.strip()}' must be a number, "
+                        f"for example '{cls.strip()}=1.5'"
+                    )
         click.echo(f"Class weights: {class_weights}")
 
         user_ids = [

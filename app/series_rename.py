@@ -140,6 +140,30 @@ def _planned_target(file, old_title, new_title):
     return folder, new_dirname, f"{new_title} - {file.basename[len(old_prefix):]}"
 
 
+def rename_refusal(series, new_title):
+    """Return the reason that the rename task refuses a new title, or None.
+
+    The task and the `flask tv rename` command use the same checks.
+    Thus, the command can refuse a title before it queues the task."""
+
+    if new_title == series.title:
+        return "the title does not change"
+    if not _filesystem_safe(new_title):
+        return f"{new_title!r} is not safe as a folder name"
+
+    # The title column compares without case and accents (MySQL
+    # general_ci). Thus, the check must not match the series itself.
+
+    if (
+        TVSeries.query.filter(
+            TVSeries.title == new_title, TVSeries.id != series.id
+        ).first()
+        is not None
+    ):
+        return f"a series titled {new_title!r} already exists"
+    return None
+
+
 def rename_tv_series_task(series_id, new_title):
     """Rename the folder, files, and database rows of a TV series.
 
@@ -152,27 +176,9 @@ def rename_tv_series_task(series_id, new_title):
             current_app.logger.warning(f"Series rename: no series {series_id}")
             return False
 
-        old_title = series.title
-        if new_title == old_title:
-            current_app.logger.warning("Series rename: title unchanged")
-            return False
-        if not _filesystem_safe(new_title):
-            current_app.logger.warning(
-                f"Series rename: {new_title!r} isn't filesystem-safe"
-            )
-            return False
-        # The title column compares without case and accents (MySQL
-        # general_ci). Thus, the check must not match the series itself.
-
-        if (
-            TVSeries.query.filter(
-                TVSeries.title == new_title, TVSeries.id != series.id
-            ).first()
-            is not None
-        ):
-            current_app.logger.warning(
-                f"Series rename: a series titled {new_title!r} already exists"
-            )
+        refusal = rename_refusal(series, new_title)
+        if refusal:
+            current_app.logger.warning(f"Series rename: {refusal}")
             return False
 
         locks = _take_series_locks(series, new_title)

@@ -28,8 +28,29 @@ def register_cli(app):
         """
 
         from app import db
-        from app.atmos import TRUEHD_ATMOS_CODEC, maybe_enqueue_atmos_supplement
+        from app.atmos import (
+            TRUEHD_ATMOS_CODEC,
+            atmos_supplement_candidates,
+            maybe_enqueue_atmos_supplement,
+        )
         from app.models import File, FileAudioTrack
+
+        def skip_reason(fid):
+            """Return the reason that the sweep did not queue a file."""
+
+            codecs = [
+                {"codec": codec, "language": language}
+                for codec, language in db.session.query(
+                    FileAudioTrack.codec, FileAudioTrack.language
+                )
+                .filter(FileAudioTrack.file_id == fid)
+                .order_by(FileAudioTrack.track)
+            ]
+            if not any(track["codec"] == TRUEHD_ATMOS_CODEC for track in codecs):
+                return "no TrueHD Atmos track"
+            if not atmos_supplement_candidates(codecs):
+                return "twin present"
+            return "already queued or running"
 
         if file_id is not None:
             candidates = [file_id]
@@ -51,7 +72,5 @@ def register_cli(app):
                 queued += 1
                 click.echo(f"{fid}: queued '{file.basename}'")
             else:
-                click.echo(
-                    f"{fid}: skipped '{file.basename}' (twin present or already queued)"
-                )
+                click.echo(f"{fid}: skipped '{file.basename}' ({skip_reason(fid)})")
         click.echo(f"Queued {queued} of {len(candidates)} candidate file(s)")

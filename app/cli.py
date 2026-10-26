@@ -42,18 +42,24 @@ def register(app):
         With a library, it refreshes only that library. With a TMDB id
         too, it refreshes only that title."""
 
+        # An id of 0 must not read as "no id". That refreshed the whole
+        # library (#409).
+
+        if tmdb_id is not None and tmdb_id < 1:
+            raise click.ClickException(f"A TMDB id is 1 or more, not {tmdb_id}")
+
         movies = []
         tv_shows = []
 
         if library in (None, "movie"):
             query = Movie.query.filter(Movie.tmdb_id != None)
-            if tmdb_id:
+            if tmdb_id is not None:
                 query = query.filter(Movie.tmdb_id == tmdb_id)
             movies = query.order_by(Movie.title.asc(), Movie.year.asc()).all()
 
         if library in (None, "tv"):
             query = TVSeries.query.filter(TVSeries.tmdb_id != None)
-            if tmdb_id:
+            if tmdb_id is not None:
                 query = query.filter(TVSeries.tmdb_id == tmdb_id)
             tv_shows = query.order_by(TVSeries.title.asc()).all()
 
@@ -189,11 +195,14 @@ def register(app):
         new title (#362), and the archive keys follow them (#369)."""
 
         from app import db
-        from app.series_rename import rename_timeout
+        from app.series_rename import rename_refusal, rename_timeout
 
         series = db.session.get(TVSeries, series_id)
         if series is None:
             raise click.ClickException(f"No TV series {series_id}")
+        refusal = rename_refusal(series, new_title)
+        if refusal:
+            raise click.ClickException(f"Not renamed, because {refusal}")
         job = enqueue_task(
             "app.series_rename.rename_tv_series_task",
             series_id,
