@@ -32,10 +32,10 @@ from functools import partial
 from pathvalidate import sanitize_filename
 from pymediainfo import MediaInfo
 from rq import get_current_job
+from rq.exceptions import NoSuchJobError
 from rq.job import Job
 from rq.timeouts import BaseTimeoutException
 from rq.registry import (
-    FailedJobRegistry,
     FinishedJobRegistry,
     ScheduledJobRegistry,
     StartedJobRegistry,
@@ -172,7 +172,8 @@ def localization_pending(queue, path):
     The fixed job id of the file can be in the queue list or in the
     StartedJobRegistry. It can also be in the intermediate queue, which
     is the gap between the list and the worker. A retry of the file has
-    its own id. It can be scheduled, queued, or running."""
+    its own id. It can be scheduled, queued, or running. The fixed id
+    with a time tag counts as the fixed id (#371)."""
 
     basename = os.path.basename(path)
     job_id = safe_job_id(basename)
@@ -196,10 +197,12 @@ def localization_pending(queue, path):
     ids.update(queue.intermediate_queue.get_job_ids())
     ids.update(StartedJobRegistry(queue=queue).get_job_ids())
     ids.update(ScheduledJobRegistry(queue=queue).get_job_ids())
+    tagged = re.compile(re.escape(job_id) + r"_\d{10}")
     return any(
         i in (job_id, lock_retry_id, retry_id)
         or i.startswith(retry_id + "_")
         or i.startswith(legacy_prefix)
+        or tagged.fullmatch(i)
         for i in ids
     )
 
@@ -296,11 +299,13 @@ def enqueue_localization(path, at_front=False, quiet=False):
     """Queue the localization of a file once. Return the job, or None (#287).
 
     The function does nothing if a localization of the same file waits or
-    runs, or if a space wait holds it. Otherwise it removes an old entry
-    of the fixed job id from the finished and failed registries. Without
-    that, the expiry of the old entry deletes the new job by its id. With
-    quiet, a skip writes no log line. The import watcher uses it, because
-    it sees many events for 1 file."""
+    runs, or if a space wait holds it. Otherwise it deletes the finished
+    job of the fixed job id. A removal from its registry is not enough.
+    The job hash keeps its expiry, and the new job under the id takes it
+    and can expire in the queue (#371). A failed job stays in the failed
+    jobs for the sweep. Then the new job gets the id with a time tag.
+    With quiet, a skip writes no log line. The import watcher uses it,
+    because it sees many events for 1 file."""
 
     queue = current_app.import_queue
     basename = os.path.basename(path)
@@ -314,8 +319,16 @@ def enqueue_localization(path, at_front=False, quiet=False):
         return None
 
     job_id = safe_job_id(basename)
-    FinishedJobRegistry(queue=queue).remove(job_id)
-    FailedJobRegistry(queue=queue).remove(job_id)
+    try:
+        old = Job.fetch(job_id, connection=queue.connection)
+    except NoSuchJobError:
+        old = None
+    if old is None:
+        FinishedJobRegistry(queue=queue).remove(job_id)
+    elif old.is_failed:
+        job_id = f"{job_id}_{int(time.time())}"
+    else:
+        old.delete()
     return enqueue_task(
         "app.videos.localization_task",
         path,

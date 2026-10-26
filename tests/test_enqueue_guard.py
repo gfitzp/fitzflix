@@ -145,3 +145,45 @@ def test_enqueue_skips_a_source_that_a_later_stage_holds(app, tmp_path):
             "app.videos.convert_localized_file", args=(other, details, None, "/x")
         )
         assert enqueue_localization(path) is not None
+
+
+def test_a_quick_reimport_gets_a_job_that_does_not_expire(app, tmp_path):
+    """The finished hash of the id keeps its expiry. It must go first (#371)."""
+
+    from app.importing import enqueue_localization
+
+    path = str(tmp_path / NAME)
+    job_id = safe_job_id(NAME)
+    with app.app_context():
+        first = enqueue_localization(path)
+        app.import_queue.remove(first)
+        first.set_status("finished")
+        FinishedJobRegistry(queue=app.import_queue).add(first, 500)
+        app.redis.expire(first.key, 500)
+
+        second = enqueue_localization(path)
+        assert second.id == job_id
+        assert app.redis.ttl(second.key) == -1
+        assert job_id not in FinishedJobRegistry(queue=app.import_queue)
+
+
+def test_a_failed_first_run_stays_for_the_sweep(app, tmp_path):
+    """The failed job keeps its id. The new job gets a time tag and counts (#371)."""
+
+    from rq.registry import FailedJobRegistry
+
+    from app.importing import enqueue_localization
+
+    path = str(tmp_path / NAME)
+    job_id = safe_job_id(NAME)
+    failed = FailedJobRegistry(queue=app.import_queue)
+    with app.app_context():
+        first = enqueue_localization(path)
+        app.import_queue.remove(first)
+        first.set_status("failed")
+        failed.add(first, 500)
+
+        second = enqueue_localization(path)
+        assert second.id.startswith(job_id + "_")
+        assert job_id in failed.get_job_ids()
+        assert enqueue_localization(path) is None
