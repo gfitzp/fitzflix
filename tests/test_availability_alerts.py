@@ -310,15 +310,22 @@ def test_one_empty_payload_never_fakes_a_debut(app, monkeypatch):
     set_alert_flags(app, MEMBER_EMAIL, availability=True)
     try:
         watchlist_movie(app, "Glitch", 9013)
+        # The positive control debuts in the same run. Thus, a run that
+        # mails nothing at all cannot pass the test.
+        watchlist_movie(app, "Glitch Control", 9017)
         subscribe(app, 258, "Criterion Channel", email=MEMBER_EMAIL)
         plant_availability(app, 9013, {**EMPTY, "flatrate": [CRITERION]})
+        plant_availability(app, 9017, EMPTY)
         run_task(app, monkeypatch)
 
         plant_availability(app, 9013, EMPTY)
         run_task(app, monkeypatch)
         plant_availability(app, 9013, {**EMPTY, "flatrate": [CRITERION]})
+        plant_availability(app, 9017, {**EMPTY, "flatrate": [CRITERION]})
         run_task(app, monkeypatch)
-        assert sent == []
+        assert len(sent) == 1
+        assert "Glitch Control" in sent[0]["text_body"]
+        assert "Glitch (" not in sent[0]["text_body"]
     finally:
         reset_alert_users(app)
 

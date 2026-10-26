@@ -659,3 +659,9 @@ def test_the_rail_orders_by_the_number_that_its_tiles_show(app, monkeypatch):
     assert [item["tmdb_id"] for item in items][:2] == [5002, 5001]
     for item in items:
         assert item["score"] == expected[item["tmdb_id"]]
+    # The literal numbers keep the test honest. The expected map above
+    # comes from the same function that the fix wires in.
+    assert {item["tmdb_id"]: item["score"] for item in items} == {
+        5002: 2.0,
+        5001: 0.45,
+    }

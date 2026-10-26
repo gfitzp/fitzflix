@@ -431,10 +431,14 @@ def test_an_apply_whose_commit_fails_stops(app, monkeypatch):
 
     from app.tmdb_refresh import _apply_movie_refresh
 
+    from app.models import File
+    from app.queues import roster_queues
+
     with app.app_context():
         movie = make_movie("Old Name", 1999)
-        make_movie_file(movie, "DVD")
+        file = make_movie_file(movie, "DVD")
         db.session.commit()
+        file_id, old_path = file.id, file.file_path
 
         _failing_commits(monkeypatch, 1)
         locks = []
@@ -452,3 +456,11 @@ def test_an_apply_whose_commit_fails_stops(app, monkeypatch):
             for lock in locks:
                 app.lock_manager.unlock(lock)
         assert result is False
+
+        # The run stopped. The record keeps its path, and no follow-up job
+        # is queued with the old details.
+        monkeypatch.undo()
+        db.session.rollback()
+        db.session.expire_all()
+        assert db.session.get(File, file_id).file_path == old_path
+        assert [job for queue in roster_queues(app) for job in queue.jobs] == []

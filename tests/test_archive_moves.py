@@ -455,10 +455,27 @@ def test_a_move_goes_on_when_the_sync_stops_after_the_pause(app, s3, monkeypatch
 
 
 def test_a_move_waits_while_the_sync_still_runs_after_the_pause(app, s3, monkeypatch):
+    """The move pauses and checks again before it books its wait (#404)."""
+
     from app import aws_storage, db
 
-    monkeypatch.setattr(aws_storage, "_sync_is_running", lambda: True)
-    monkeypatch.setattr(aws_storage.time, "sleep", lambda seconds: None)
+    events = []
+
+    def sync_runs():
+        events.append("check")
+        return True
+
+    monkeypatch.setattr(aws_storage, "_sync_is_running", sync_runs)
+    monkeypatch.setattr(
+        aws_storage.time, "sleep", lambda seconds: events.append(("sleep", seconds))
+    )
+    real_wait = aws_storage._wait_move
+
+    def recorded_wait(*args, **kwargs):
+        events.append("wait")
+        return real_wait(*args, **kwargs)
+
+    monkeypatch.setattr(aws_storage, "_wait_move", recorded_wait)
     with app.app_context():
         file = archived_film("Slow Sync", 1962, key_name="Slow (1962).mkv")
         aws_storage.request_archive_move(file)
@@ -467,6 +484,13 @@ def test_a_move_waits_while_the_sync_still_runs_after_the_pause(app, s3, monkeyp
 
         assert aws_storage.move_archive_object(file.id) == aws_storage.MOVE_WAITING
         assert fake.copies == []
+
+    assert events == [
+        "check",
+        ("sleep", aws_storage.SYNC_RECHECK_SECONDS),
+        "check",
+        "wait",
+    ]
 
 
 def test_an_edit_during_an_untouched_move_goes_to_modified_under_the_new_name(

@@ -190,11 +190,14 @@ def test_a_lost_download_fails_the_task_and_queues_nothing(app, monkeypatch, tmp
     monkeypatch.setattr(radarr_push, "_radarr", fake)
     monkeypatch.setattr(radarr_push.time, "sleep", lambda seconds: None)
 
-    with pytest.raises(FileNotFoundError):
+    with pytest.raises(FileNotFoundError, match="is not at its path, at the arr path"):
         radarr_push.adopt_download_task(
             3, 7, str(folder / ORIGINAL), str(folder / RENAMED), "WEBDL-1080p"
         )
     assert app.import_queue.job_ids == []
+    # The task asked Radarr for the path of its record before it gave up (#325).
+    gets = [call for call in fake.calls if call == ("GET", "/api/v3/moviefile/7")]
+    assert len(gets) >= 2
 
 
 def test_a_radarr_path_outside_the_root_is_not_imported(

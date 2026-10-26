@@ -632,26 +632,25 @@ def test_a_tmdb_outage_sends_no_not_found_email(app, monkeypatch):
     assert len(sent) == 1
 
 
-def test_a_missing_id_with_no_admin_does_not_crash(app, monkeypatch):
-    import app.models as models
+def test_a_tv_outage_raises_and_sends_no_not_found_email(app, monkeypatch):
+    """The TV fetch treats a 503 as an outage, not as a missing id (#342).
+
+    This is the own hunk of the fix on the TV side. The email path
+    without an admin is a test of app/email.py, in test_admin_email."""
+
+    import pytest
+
+    from app.tmdb_apply import TMDBUnavailable
 
     sent = []
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "key")
     monkeypatch.setattr("app.email.send_email", lambda *a, **k: sent.append(a))
-    monkeypatch.setattr("app.tmdb_apply.tmdb_get", lambda url, **k: _ErrorAnswer(404))
-
-    class NoAdmin:
-        def filter(self, *args):
-            return self
-
-        def first(self):
-            return None
-
+    monkeypatch.setattr("app.tmdb_apply.tmdb_get", lambda url, **k: _ErrorAnswer(503))
     with app.app_context():
-        series = make_tv_series("No Admin Series")
+        series = make_tv_series("Outage Series")
         db.session.commit()
-        monkeypatch.setattr(models.User, "query", NoAdmin())
-        assert series.tmdb_tv_fetch(990022) is None
+        with pytest.raises(TMDBUnavailable, match="503"):
+            series.tmdb_tv_fetch(990023)
     assert sent == []
 
 

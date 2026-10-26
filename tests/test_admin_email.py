@@ -201,3 +201,35 @@ def test_manual_import_email_without_an_admin_still_returns(app, no_admin, monke
     with app.test_request_context():
         assert email_manual_import_needed("Radarr", "A Title", "a reason") is None
     assert no_admin == []
+
+
+def test_a_tmdb_not_found_email_without_an_admin_does_not_crash(app, monkeypatch):
+    """A 404 for a TV id with no admin row logs and sends nothing (#342).
+
+    This test moved here from test_tmdb_apply. It tests the email path."""
+
+    import app.models as models
+    from tests.factories import make_tv_series
+    from tests.fakes import Response
+
+    sent = _collect(app, monkeypatch)
+    monkeypatch.setitem(app.config, "TMDB_API_KEY", "key")
+    monkeypatch.setattr(
+        "app.tmdb_apply.tmdb_get", lambda url, **k: Response({}, status=404)
+    )
+
+    class NoAdmin:
+        def filter(self, *args):
+            return self
+
+        def first(self):
+            return None
+
+    with app.app_context():
+        from app import db
+
+        series = make_tv_series("No Admin Series")
+        db.session.commit()
+        monkeypatch.setattr(models.User, "query", NoAdmin())
+        assert series.tmdb_tv_fetch(990022) is None
+    assert sent == []

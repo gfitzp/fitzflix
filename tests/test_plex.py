@@ -257,7 +257,11 @@ def test_apply_watch_of_unknown_movie_is_ignored(app):
 
 
 class FakePlexServer:
-    """Give canned responses for the 3 Plex endpoints of the poller."""
+    """Give canned responses for the 3 Plex endpoints of the poller.
+
+    The history answer honours the viewedAt> filter of the query, as a
+    real server does. Then a poll that asks for too late a start loses
+    the entries before it (#425)."""
 
     def __init__(self, history=None, accounts=None, guids=None):
         self.history = history or []
@@ -279,7 +283,12 @@ class FakePlexServer:
                 return self._payload
 
         if "/status/sessions/history/all" in url:
-            return Response({"MediaContainer": {"Metadata": self.history}})
+            params = kwargs.get("params") or {}
+            history = self.history
+            if "viewedAt>" in params:
+                after = int(params["viewedAt>"])
+                history = [e for e in history if int(e.get("viewedAt", 0)) > after]
+            return Response({"MediaContainer": {"Metadata": history}})
         if "/accounts" in url:
             return Response({"MediaContainer": {"Account": self.accounts}})
         match = re.search(r"/library/metadata/(\w+)", url)

@@ -1123,6 +1123,35 @@ def test_a_conversion_that_loses_its_lock_keeps_the_localized_file(
     )
 
 
+def test_the_encode_watch_stops_when_another_task_takes_the_lock(app, monkeypatch):
+    """_watch_encode itself raises TitleLockLost on a foreign lock (#339).
+
+    The test above patches _run_encode. This test drives the progress
+    loop with a real lock check. A negative refresh period makes the
+    loop check the lock at the first line."""
+
+    import pytest
+
+    from app import sdr_conversion
+
+    monkeypatch.setattr(sdr_conversion, "LOCK_REFRESH_SECONDS", -1)
+    reported = []
+    monkeypatch.setattr(
+        sdr_conversion, "report_progress", lambda *args: reported.append(args[-1])
+    )
+
+    class Encoder:
+        stdout = iter(["Encoding: task 1 of 1, 10.00 %\n", "never read\n"])
+
+    with app.app_context():
+        lock = _foreign_lock(app, '{"title": "Watched Encode"}')
+        with pytest.raises(sdr_conversion.TitleLockLost):
+            sdr_conversion._watch_encode(Encoder(), None, "Watched.mkv", lock, 100)
+        # The lock of the other task stays.
+        assert app.redis.get('{"title": "Watched Encode"}') == b"other-task-token"
+    assert reported == [10]
+
+
 def test_a_move_waits_while_another_task_holds_the_title_lock(app, tmp_path):
     import app.videos as videos
 

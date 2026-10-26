@@ -139,14 +139,25 @@ def test_duration_entry_without_fingerprint_is_stale(app, monkeypatch):
     from app import dvr
     from app.models import File
 
-    monkeypatch.setattr(dvr, "_probe_duration", lambda path: 1800.0)
+    probes = []
+
+    def probe(path):
+        probes.append(path)
+        return 1800.0
+
+    monkeypatch.setattr(dvr, "_probe_duration", probe)
     with app.app_context():
         make_movie_file(make_movie("Old Entry", 1950), "Bluray-1080p")
         db.session.commit()
         file = File.query.one()
         app.redis.hset(dvr.DURATIONS_KEY, str(file.id), "5400.000")
         assert dvr._cached_duration(app.redis, file) == 1800.0
+        # The new probe is cached with the fingerprint. The second read
+        # does not probe again (#395).
         assert dvr._cached_duration(app.redis, file) == 1800.0
+        assert len(probes) == 1
+        stored = app.redis.hget(dvr.DURATIONS_KEY, str(file.id)).decode()
+        assert stored == f"{dvr._duration_fingerprint(file)}|1800.000"
 
 
 def test_seed_of_too_many_genres_stays_below_the_fixed_channels(app, monkeypatch):

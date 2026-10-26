@@ -44,8 +44,11 @@ class Stop(Exception):
     """Stop the task after the command is built."""
 
 
-def _remux_command(app, monkeypatch, audio, subtitles, info=FakeInfo):
-    """Run the track edit up to the remux. Return the mkvmerge command."""
+def _remux_command(app, monkeypatch, audio, subtitles, info=FakeInfo, refused=False):
+    """Run the track edit up to the remux. Return the mkvmerge command.
+
+    With refused, the edit must stop with the "no stream order" error
+    before the remux. Otherwise it must reach the remux."""
 
     import app.tracks as tracks
     from app import db
@@ -64,8 +67,12 @@ def _remux_command(app, monkeypatch, audio, subtitles, info=FakeInfo):
 
     monkeypatch.setattr(tracks.MediaInfo, "parse", lambda path: info())
     monkeypatch.setattr(tracks, "remux_file", fake_remux)
-    with pytest.raises((Stop, RuntimeError)):
-        tracks.mkvmerge_unlocked(file_id, audio, subtitles)
+    if refused:
+        with pytest.raises(RuntimeError, match="no stream order"):
+            tracks.mkvmerge_unlocked(file_id, audio, subtitles)
+    else:
+        with pytest.raises(Stop):
+            tracks.mkvmerge_unlocked(file_id, audio, subtitles)
     return commands
 
 
@@ -77,4 +84,4 @@ def test_the_track_edit_uses_the_stream_order(app, monkeypatch):
 
 
 def test_an_unknown_track_stops_the_remux(app, monkeypatch):
-    assert _remux_command(app, monkeypatch, ["3"], []) == []
+    assert _remux_command(app, monkeypatch, ["3"], [], refused=True) == []

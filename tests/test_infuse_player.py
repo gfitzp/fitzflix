@@ -855,7 +855,10 @@ def test_pair_task_reports_an_apple_tv_that_never_answers(app, monkeypatch):
     monkeypatch.setattr(infuse_player, "CONNECT_TIMEOUT", 0.05)
     monkeypatch.setattr(infuse_player.pyatv, "pair", fake_pair)
     with app.app_context():
-        asyncio.run(infuse_player._pair(app, user_id, "192.168.1.63:49153"))
+        # A missing timeout must fail the test, not hang it for an hour.
+        asyncio.run(
+            asyncio.wait_for(infuse_player._pair(app, user_id, "192.168.1.63:49153"), 5)
+        )
 
     state = app.redis.get(f"fitzflix:infuse-pair:{user_id}:state").decode()
     assert state.startswith("error:Could not reach the Apple TV")
