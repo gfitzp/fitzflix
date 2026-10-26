@@ -555,6 +555,31 @@ def test_tmdb_strings_fit_their_columns(app):
         )
 
 
+def test_a_long_tmdb_title_fits_the_record_title(app):
+    """Movie.title is 220 wide, tmdb_title 256 (#383).
+
+    MariaDB in strict mode refuses the commit of a 240-character title.
+    SQLite does not. Thus, the test checks the value against the MySQL
+    column type."""
+
+    from sqlalchemy.dialects import mysql
+
+    title_type = Movie.__table__.c.title.type
+    assert title_type.compile(dialect=mysql.dialect()) == "VARCHAR(220)"
+    long_title = "A Very Long Title " * 13 + "End"
+    assert len(long_title) == 237
+    with app.app_context():
+        movie = make_movie("Short Title", 1985, tmdb_id=990013)
+        movie.tmdb_movie_apply(
+            {"id": 990013, "title": long_title, "release_date": "1985-03-01"}
+        )
+        db.session.commit()
+        stored = db.session.get(Movie, movie.id)
+        assert stored.tmdb_title == long_title
+        assert len(stored.title) <= title_type.length
+        assert long_title.startswith(stored.title)
+
+
 class _ErrorAnswer:
     """A TMDB response whose raise_for_status raises for its status."""
 

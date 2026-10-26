@@ -535,7 +535,19 @@ class TMDBMixin(object):
         # movie merges them through the existing duplicate-tmdb_id
         # handling.
 
+        # Movie.title is narrower than tmdb_title. The title goes into
+        # the library names, which have a byte limit. Thus, the record
+        # title is shortened to its column, as _fit_tmdb_strings does for
+        # the TMDB columns (#383).
+
         canonical_title = tmdb_info.get("title")
+        title_length = Movie.__table__.c.title.type.length
+        if canonical_title and len(canonical_title) > title_length:
+            current_app.logger.warning(
+                f"{self} TMDB title has {len(canonical_title)} characters, "
+                f"more than {title_length}. The record title is shortened"
+            )
+            canonical_title = canonical_title[:title_length].rstrip()
 
         duplicate = Movie.query.filter(
             Movie.title == canonical_title, Movie.year == canonical_year
