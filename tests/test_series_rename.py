@@ -4,7 +4,10 @@ The tests cover the disk moves, the row rewrites, the resume semantics,
 and the refusal guards. The rename never writes aws_key. It requests
 the archive moves, and the move job writes the key (#369)."""
 
+import contextlib
 import os
+
+from sqlalchemy import event
 
 from app import db
 from app.models import File
@@ -19,6 +22,27 @@ def _materialize(app, file):
     with open(path, "w") as handle:
         handle.write("video")
     return path
+
+
+@contextlib.contextmanager
+def case_blind_titles(app):
+    """Compare tv_series.title without case, as the MySQL general_ci
+    collation does. SQLite compares it byte for byte."""
+
+    def rewrite(conn, cursor, statement, parameters, context, executemany):
+        return (
+            statement.replace(
+                "tv_series.title = ?", "tv_series.title = ? COLLATE NOCASE"
+            ),
+            parameters,
+        )
+
+    engine = db.engine
+    event.listen(engine, "before_cursor_execute", rewrite, retval=True)
+    try:
+        yield
+    finally:
+        event.remove(engine, "before_cursor_execute", rewrite)
 
 
 def test_rename_moves_files_and_rewrites_rows(app):
@@ -97,6 +121,47 @@ def test_rename_refuses_collisions_and_bad_names(app):
         assert rename_tv_series_task(series.id, "Batman") is False
         assert rename_tv_series_task(series.id, "Batman: 1966?") is False
         assert db.session.get(type(series), series.id).title == "Batman"
+
+
+def test_a_case_only_rename_is_not_a_collision_with_itself(app):
+    """Rename a series when only the case of the title changes (#408).
+
+    The title check compares without case. It must not find the series
+    itself."""
+
+    with app.app_context():
+        series = make_tv_series("The office", tmdb_id=2316)
+        file = make_tv_file(series, 1, 1, "Bluray-1080p")
+        db.session.commit()
+        _materialize(app, file)
+        series_id = series.id
+
+        with case_blind_titles(app):
+            assert rename_tv_series_task(series_id, "The Office") is True
+
+        db.session.expire_all()
+        assert db.session.get(type(series), series_id).title == "The Office"
+
+
+def test_an_accent_only_rename_moves_the_files(app):
+    """Rename an accented title to its plain form (#408).
+
+    A rename never writes accented letters. The reverse direction is
+    the accent-only rename that the task can do."""
+
+    with app.app_context():
+        series = make_tv_series("Les Misérables", tmdb_id=2317)
+        file = make_tv_file(series, 1, 1, "Bluray-1080p")
+        db.session.commit()
+        _materialize(app, file)
+        series_id, file_id = series.id, file.id
+
+        with case_blind_titles(app):
+            assert rename_tv_series_task(series_id, "Les Miserables") is True
+
+        db.session.expire_all()
+        assert db.session.get(type(series), series_id).title == "Les Miserables"
+        assert db.session.get(File, file_id).basename.startswith("Les Miserables")
 
 
 def test_rename_keeps_the_id_tag_of_the_folder(app, monkeypatch):

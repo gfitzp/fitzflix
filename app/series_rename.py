@@ -161,7 +161,15 @@ def rename_tv_series_task(series_id, new_title):
                 f"Series rename: {new_title!r} isn't filesystem-safe"
             )
             return False
-        if TVSeries.query.filter_by(title=new_title).first() is not None:
+        # The title column compares without case and accents (MySQL
+        # general_ci). Thus, the check must not match the series itself.
+
+        if (
+            TVSeries.query.filter(
+                TVSeries.title == new_title, TVSeries.id != series.id
+            ).first()
+            is not None
+        ):
             current_app.logger.warning(
                 f"Series rename: a series titled {new_title!r} already exists"
             )
@@ -527,7 +535,10 @@ def _rename_title(series, folder, sonarr_folder):
         reason = f"{title!r} is not safe as a folder name"
     elif _renamed_folder(folder, old_folder, _folder_title(title)) != sonarr_folder:
         reason = f"the title {title!r} does not give the folder {sonarr_folder!r}"
-    elif TVSeries.query.filter_by(title=title).first() is not None:
+    elif (
+        TVSeries.query.filter(TVSeries.title == title, TVSeries.id != series.id).first()
+        is not None
+    ):
         reason = f"a series titled {title!r} exists"
     else:
         library_dir = current_app.config["LIBRARY_DIR"]

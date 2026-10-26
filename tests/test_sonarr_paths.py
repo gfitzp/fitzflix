@@ -1067,3 +1067,26 @@ def test_a_dead_volume_retry_keeps_the_sonarr_wait_count(app, monkeypatch):
     assert retry in ScheduledJobRegistry(queue=app.sql_queue).get_job_ids()
     job = app.sql_queue.fetch_job(retry)
     assert job.kwargs["sonarr_waits"] == 7
+
+
+def test_a_case_only_sonarr_folder_gives_the_new_title(app):
+    """A Sonarr folder that changes only the case gives a rename (#408).
+
+    The title column compares without case on MySQL. The free-title
+    check must not find the series itself."""
+
+    from app import db
+    from app.series_rename import _rename_title
+    from tests.test_series_rename import case_blind_titles
+
+    with app.app_context():
+        series = make_tv_series("The office", tvdb_id=73244, tmdb_id=2316)
+        make_tv_file(series, 1, 1, "Bluray-1080p")
+        db.session.commit()
+        place(
+            app,
+            "TV Shows/The Office/Season 01/The Office - S01E01 - [Bluray-1080p].mkv",
+        )
+
+        with case_blind_titles(app):
+            assert _rename_title(series, "The office", "The Office") == "The Office"
