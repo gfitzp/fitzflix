@@ -110,21 +110,25 @@ var OFFLINE_PAGE =
 
 self.addEventListener("fetch", function (event) {
 	var request = event.request;
+	var url = new URL(request.url);
+
+	// A logout deletes the kept pages. Thus, the next user of the browser
+	// cannot see them offline. A logout is a POST (#401). The request
+	// still goes to the network
+
+	if (
+		request.method === "POST" &&
+		url.origin === location.origin &&
+		url.pathname === LOGOUT_PAGE
+	) {
+		event.waitUntil(caches.delete(PAGES));
+		return;
+	}
 
 	// Only GET requests are cacheable. Shopping-cart toggles and other POST
 	// requests always go to the network
 
 	if (request.method !== "GET") return;
-
-	var url = new URL(request.url);
-
-	// A logout deletes the kept pages. Thus, the next user of the browser
-	// cannot see them offline
-
-	if (url.origin === location.origin && url.pathname === LOGOUT_PAGE) {
-		event.waitUntil(caches.delete(PAGES));
-		return;
-	}
 
 	// The manifest must stay network-first, although it is under /static/.
 	// If the worker served it cache-first, an installed app would never see

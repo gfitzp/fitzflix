@@ -77,7 +77,7 @@ vm.runInNewContext(source, {
 (async () => {
     for (const item of requests) {
         respond = () => item.response || { headers: { "Content-Type": "text/html; charset=utf-8" } };
-        const request = { url: "https://fitzflix.test" + item.path, method: "GET", mode: item.mode || "navigate" };
+        const request = { url: "https://fitzflix.test" + item.path, method: item.method || "GET", mode: item.mode || "navigate" };
         const waits = [];
         handlers.fetch({
             request,
@@ -170,7 +170,16 @@ def test_logout_deletes_the_kept_pages(app, tmp_path):
         [
             {"path": "/"},
             {"path": "/shopping-list/movie"},
-            {"path": "/auth/logout"},
+            {"path": "/auth/logout", "method": "POST"},
         ],
     )
     assert kept == []
+
+
+def test_a_get_of_the_logout_page_keeps_the_pages(app, tmp_path):
+    # A logout is a POST (#401). A prefetch GET is not a logout.
+    kept = run_worker(
+        tmp_path,
+        [{"path": "/shopping-list/movie"}, {"path": "/auth/logout"}],
+    )
+    assert kept

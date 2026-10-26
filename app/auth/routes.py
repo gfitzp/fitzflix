@@ -1,6 +1,8 @@
 import secrets
 
 from flask import render_template, flash, redirect, url_for, request
+from flask_wtf.csrf import validate_csrf
+from wtforms.validators import ValidationError
 from flask_login import current_user, login_user, logout_user
 
 from app import db, local_path
@@ -83,10 +85,20 @@ def login():
     )
 
 
-@bp.route("/logout")
+@bp.route("/logout", methods=["POST"])
 def logout():
-    """Log a user out."""
+    """Log a user out.
 
+    A logout is a POST with the csrf token (#401). A prefetch, a link
+    preview, or an image tag makes a GET. That GET must not end the
+    session. The route reads no FlaskForm. Thus, it checks the token by
+    hand."""
+
+    try:
+        validate_csrf(request.form.get("csrf_token"))
+    except ValidationError:
+        flash("That page was out of date. Try again.", "warning")
+        return redirect(url_for("main.index"))
     logout_user()
     return redirect(url_for("main.index"))
 

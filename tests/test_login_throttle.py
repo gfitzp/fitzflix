@@ -262,3 +262,23 @@ def test_sign_in_follows_only_a_local_next_path(app, target, expected):
     assert response.status_code == 302
     location = response.headers["Location"]
     assert location == expected or location.endswith(f"//localhost{expected}")
+
+
+def test_logout_needs_a_post_with_the_csrf_token(app, admin_client):
+    """Test that a GET or a POST without the token does not end the session (#401)."""
+
+    assert admin_client.get("/auth/logout").status_code == 405
+    assert admin_client.post("/auth/logout").status_code == 302
+    assert admin_client.get("/profile").status_code == 200
+
+    page = admin_client.get("/profile").get_data(as_text=True)
+    assert 'action="/auth/logout"' in page
+    token = page_csrf_token(admin_client, "/profile")
+    response = admin_client.post("/auth/logout", data={"csrf_token": token})
+    assert response.status_code == 302
+    assert admin_client.get("/profile").status_code == 302
+
+
+def test_history_answers_only_a_get(admin_client):
+    assert admin_client.get("/history").status_code == 200
+    assert admin_client.post("/history").status_code == 405

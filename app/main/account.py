@@ -432,7 +432,7 @@ def _review_upload_response(review_upload_form):
     return redirect(url_for("main.profile"))
 
 
-@bp.route("/history", methods=["GET", "POST"])
+@bp.route("/history")
 @login_required
 def history():
     """Show all the viewings and the reviews of a user."""
