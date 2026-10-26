@@ -14,6 +14,7 @@ a number of seconds or the name of a config setting, for example
 """
 
 import random
+import uuid
 
 from collections import namedtuple
 from datetime import timedelta
@@ -347,6 +348,58 @@ def free_job_id(name, job_id):
     if old.get_status(refresh=False) in LIVE_JOB_STATES:
         return False
     old.delete()
+    return True
+
+
+# A bulk post of a maintenance page takes this gate for a short time.
+# Thus, a double click cannot pass the queue check two times (#439).
+
+BULK_GATE_KEY = "fitzflix:bulk-gate:{}"
+BULK_GATE_SECONDS = 60
+
+
+def bulk_job_id(prefix):
+    """Return a new job id for 1 job of a bulk run. Each id is used only 1 time."""
+
+    return f"{prefix}{uuid.uuid4().hex[:12]}"
+
+
+def bulk_run_pending(prefix, *names):
+    """Return True if a job with an id that starts with prefix waits or runs.
+
+    prefix is a string or a tuple of strings. names are the tasks of the
+    run. The check reads the queue, the started jobs and the scheduled
+    jobs of the queue of each task."""
+
+    from rq.registry import ScheduledJobRegistry, StartedJobRegistry
+
+    queues = {}
+    for name in names:
+        queue = resolve_queue(TASKS[name].queue)
+        queues[queue.name] = queue
+    for queue in queues.values():
+        ids = (
+            list(queue.job_ids)
+            + StartedJobRegistry(queue=queue).get_job_ids()
+            + ScheduledJobRegistry(queue=queue).get_job_ids()
+        )
+        if any(job_id.startswith(prefix) for job_id in ids):
+            return True
+    return False
+
+
+def start_bulk_run(prefix, *names):
+    """Return True if a new bulk run can start. Return False if one waits or runs (#439).
+
+    A run is pending while a job of it waits or runs. The gate covers
+    the time that a post takes to queue its jobs."""
+
+    gate = BULK_GATE_KEY.format(prefix if isinstance(prefix, str) else prefix[0])
+    if not current_app.redis.set(gate, "1", nx=True, ex=BULK_GATE_SECONDS):
+        return False
+    if bulk_run_pending(prefix, *names):
+        current_app.redis.delete(gate)
+        return False
     return True
 
 

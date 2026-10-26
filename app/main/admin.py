@@ -23,7 +23,13 @@ from flask import (
 # Flask 2.4 removed flask.Markup. Import it from its real module
 from flask_login import current_user, login_required
 
-from app.tasks import enqueue_task, free_job_id
+from app.tasks import (
+    bulk_job_id,
+    enqueue_task,
+    free_job_id,
+    requeue_job_id,
+    start_bulk_run,
+)
 from app import db, enqueue_import_scan, local_path, safe_job_id
 from app.main.forms import (
     ArchivedRestoreForm,
@@ -652,6 +658,17 @@ def settings():
     )
 
 
+# The job id prefixes of the bulk maintenance runs (#439). A post
+# queues nothing while a job of its run waits or runs.
+
+CRITERION_RUN = "bulk-criterion-refresh-"
+TMDB_RUN = "bulk-tmdb-refresh-"
+SYNC_RUN = "bulk-s3-sync-"
+TRACK_SCAN_RUN = "bulk-track-scan-"
+MISSING_SCAN_RUN = "bulk-missing-scan-"
+ALREADY_QUEUED = "That run is already queued or running. Nothing new was queued."
+
+
 def _refresh_criterion_post(form):
     """Queue the Criterion Collection refresh of the whole movie library.
 
@@ -660,9 +677,14 @@ def _refresh_criterion_post(form):
     longer than the request queue allows, and it must not hold the
     user-request worker."""
 
+    name = "app.videos.refresh_criterion_collection_info"
+    if not start_bulk_run(CRITERION_RUN, name):
+        flash(ALREADY_QUEUED, "info")
+        return
     enqueue_task(
-        "app.videos.refresh_criterion_collection_info",
+        name,
         description="Refreshing Criterion Collection information for all movies in library",
+        job_id=bulk_job_id(CRITERION_RUN),
     )
     flash(
         "Refreshing Criterion Collection information for all movies in library",
@@ -680,6 +702,9 @@ def _refresh_tmdb_post(form):
     of them would block the import work of the single sql worker for the
     whole run."""
 
+    if not start_bulk_run(TMDB_RUN, "app.videos.refresh_tmdb_info"):
+        flash(ALREADY_QUEUED, "info")
+        return
     movies = (
         Movie.query.filter(Movie.tmdb_ignored == False)
         .order_by(Movie.title.asc(), Movie.year.asc())
@@ -697,6 +722,7 @@ def _refresh_tmdb_post(form):
             movie.id,
             movie.tmdb_id,
             description=f"Refreshing TMDB data for '{movie.title} ({movie.year})'",
+            job_id=bulk_job_id(TMDB_RUN),
         )
     for tv in tv_shows:
         enqueue_task(
@@ -705,6 +731,7 @@ def _refresh_tmdb_post(form):
             tv.id,
             tv.tmdb_id,
             description=f"Refreshing TMDB data for '{tv.title}'",
+            job_id=bulk_job_id(TMDB_RUN),
         )
     flash("Refreshing TMDB information for entire library", "info")
 
@@ -719,9 +746,15 @@ def _sync_storage_post(form):
     if not current_user.check_password(form.password.data):
         flash("Incorrect password provided!", "danger")
         return
+    name = "app.videos.sync_aws_s3_storage_task"
+    # A sync that waits for idle queues books its retry under this id.
+    if not start_bulk_run((SYNC_RUN, requeue_job_id(name)), name):
+        flash(ALREADY_QUEUED, "info")
+        return
     enqueue_task(
-        "app.videos.sync_aws_s3_storage_task",
+        name,
         description="Syncing files with AWS S3 storage",
+        job_id=bulk_job_id(SYNC_RUN),
     )
     flash("Syncing files with AWS S3 storage", "info")
 
@@ -729,9 +762,17 @@ def _sync_storage_post(form):
 def _scan_library_post(form):
     """Queue a scan of the track metadata of each file of the library."""
 
-    enqueue_task(
+    names = (
         "app.videos.track_metadata_scan_library",
+        "app.videos.track_metadata_scan_task",
+    )
+    if not start_bulk_run(TRACK_SCAN_RUN, *names):
+        flash(ALREADY_QUEUED, "info")
+        return
+    enqueue_task(
+        names[0],
         description="Scanning track metadata for all files in the library",
+        job_id=bulk_job_id(TRACK_SCAN_RUN),
     )
     flash("Scanning track metadata for all files in the library", "info")
 
@@ -874,10 +915,15 @@ def missing_files():
 
     scan_form = MissingScanForm()
     if scan_form.missing_scan_submit.data and scan_form.validate_on_submit():
+        name = "app.missing_files.missing_best_files_task"
+        if not start_bulk_run(MISSING_SCAN_RUN, name):
+            flash(ALREADY_QUEUED, "info")
+            return redirect(url_for("main.missing_files"))
         enqueue_task(
-            "app.missing_files.missing_best_files_task",
+            name,
             description="Scanning for best files that have no local copy",
             at_front=True,
+            job_id=bulk_job_id(MISSING_SCAN_RUN),
         )
         flash("Scanning the library for best files that have no local copy", "info")
         return redirect(url_for("main.missing_files"))

@@ -33,7 +33,7 @@ from rq import get_current_job
 from flask import current_app
 from werkzeug.local import LocalProxy
 
-from app.tasks import enqueue_task, report_progress, requeue
+from app.tasks import bulk_job_id, enqueue_task, report_progress, requeue
 from app import db, get_app
 from app.aws_storage import archive_library_file, mark_archive_stale
 from app.models import File, FileAudioTrack, FileSubtitleTrack
@@ -320,11 +320,19 @@ def extract_track_metadata(file_path):
     return details
 
 
+# The job id prefix of the per-file jobs of a library scan. It starts
+# with the prefix of the scan run of the maintenance page (#439).
+
+TRACK_SCAN_FILE_RUN = "bulk-track-scan-file-"
+
+
 def track_metadata_scan_library():
     """Add all the files in the library to the metadata scan queue."""
 
     with app.app_context():
         try:
+
+            # The ids let the scan button see a run that waits (#439).
 
             files = File.query.all()
             for file in files:
@@ -332,6 +340,7 @@ def track_metadata_scan_library():
                     "app.videos.track_metadata_scan_task",
                     file.id,
                     description=f"{file.basename} – Scanning track metadata",
+                    job_id=bulk_job_id(TRACK_SCAN_FILE_RUN),
                 )
 
         except Exception:
