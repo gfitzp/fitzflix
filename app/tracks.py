@@ -1740,6 +1740,31 @@ def build_supplement_args(plan):
     return args
 
 
+# The time stamp of an ffmpeg progress line, for example "time=01:02:03".
+
+FFMPEG_TIME_RE = re.compile(
+    r"time\=(?P<hour>\d{2})\:(?P<minute>\d{2}):(?P<seconds>\d{2})"
+)
+
+
+def ffmpeg_progress(line, duration, previous):
+    """Return the percent of an ffmpeg progress line, or previous.
+
+    The percent stops at 99 (#388). A stream can run past the duration
+    in the container header. The SDR conversion stops at 99 the same
+    way. A line with no time stamp, or no duration, gives previous."""
+
+    match = FFMPEG_TIME_RE.search(line)
+    if not match or not duration:
+        return previous
+    elapsed = (
+        int(match.group("hour")) * 3600
+        + int(match.group("minute")) * 60
+        + int(match.group("seconds"))
+    )
+    return min(99, int(elapsed / duration * 100))
+
+
 def supplement_lossless_tracks(file_path, file_id=None):
     """Give each lossless non-FLAC/PCM audio track a FLAC twin before it.
 
@@ -1841,18 +1866,7 @@ def supplement_lossless_tracks(file_path, file_id=None):
             progress = 0
             previous_percent = None
             for line in flac_track_process.stdout:
-                progress_match = re.search(
-                    r"time\=(?P<hour>\d{2})\:(?P<minute>\d{2}):(?P<seconds>\d{2})",
-                    line,
-                )
-                if progress_match and file_duration:
-                    hour = int(progress_match.group("hour"))
-                    minutes = int(progress_match.group("minute"))
-                    seconds = int(progress_match.group("seconds"))
-                    progress = int(
-                        (((hour * 3600) + (minutes * 60) + seconds) / file_duration)
-                        * 100
-                    )
+                progress = ffmpeg_progress(line, file_duration, progress)
                 if previous_percent != progress:
                     current_app.logger.info(
                         f"'{basename}' Supplementing lossless tracks with FLAC: {progress}%"
