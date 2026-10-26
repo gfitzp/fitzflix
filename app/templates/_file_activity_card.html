@@ -32,10 +32,10 @@
 			<span class="badge text-bg-{{ 'warning' if card_upgradable.get(file.id) else 'success' }}">{% if file.fullscreen %}Full&nbsp;Screen&nbsp;{% endif %}{{ file.quality.quality_title }}</span><br/>
 			{% endif %}
 			{% if file.audiotrack %}Audio tracks: {% for track in file.audiotrack %}
-				{% if track.default == 1 and track.language not in native_language %}<span class="badge text-bg-warning me-1 mb-1">
+				{% if track.default == 1 and track.language|language_key not in native_language %}<span class="badge text-bg-warning me-1 mb-1">
 				{% elif track.default == 1 %}<span class="badge text-bg-success me-1 mb-1">
 				{% else %}<span class="badge text-bg-light me-1 mb-1">
-				{% endif %}{{ track.language }}{% if track.default == 1 and track.language not in native_language %} (foreign){% endif %}</span> {% endfor %}<br/>{% endif %}
+				{% endif %}{{ track.language }}{% if track.default == 1 and track.language|language_key not in native_language %} (foreign){% endif %}</span> {% endfor %}<br/>{% endif %}
 			{% if file.subtrack|length > 0 %}Subtitle tracks: {% for track in file.subtrack %}
 				{% if track.default == 1 %}<span class="badge text-bg-success me-1 mb-1">
 				{% elif track.forced == 1 %}<span class="badge text-bg-warning me-1 mb-1">
@@ -59,10 +59,10 @@
 			   the DVD-green rule of the search page. #}
 			<span class="badge text-bg-{{ 'warning' if card_upgradable.get(file.id) else 'success' }}">{{ file.quality.quality_title }}</span><br/>
 			{% if file.audiotrack %}Audio tracks: {% for track in file.audiotrack %}
-				{% if track.default == 1 and track.language not in native_language %}<span class="badge text-bg-warning me-1 mb-1">
+				{% if track.default == 1 and track.language|language_key not in native_language %}<span class="badge text-bg-warning me-1 mb-1">
 				{% elif track.default == 1 %}<span class="badge text-bg-success me-1 mb-1">
 				{% else %}<span class="badge text-bg-light me-1 mb-1">
-				{% endif %}{{ track.language }}{% if track.default == 1 and track.language not in native_language %} (foreign){% endif %}</span> {% endfor %}<br/>{% endif %}
+				{% endif %}{{ track.language }}{% if track.default == 1 and track.language|language_key not in native_language %} (foreign){% endif %}</span> {% endfor %}<br/>{% endif %}
 			{% if file.subtrack|length > 0 %}Subtitle tracks: {% for track in file.subtrack %}
 				{% if track.default == 1 %}<span class="badge text-bg-success me-1 mb-1">
 				{% elif track.forced == 1 %}<span class="badge text-bg-warning me-1 mb-1">

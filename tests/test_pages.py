@@ -446,6 +446,45 @@ def test_file_activity_cards_match_the_page(app, admin_client):
     assert len(re.findall(pattern, cards)) >= 3
 
 
+def test_file_activity_card_reads_deu_as_native_ger(app, admin_client, monkeypatch):
+    """NATIVE_LANGUAGE=ger and a "deu" default track: no foreign badge (#443).
+
+    The import compares through language_key. The card must agree."""
+
+    from app import db
+    from app.models import FileAudioTrack
+    from tests.factories import make_movie, make_movie_file
+
+    monkeypatch.setitem(app.config, "NATIVE_LANGUAGE", "ger")
+    with app.app_context():
+        file = make_movie_file(make_movie("Deutsche Spur", 2004), "DVD")
+        db.session.add(
+            FileAudioTrack(
+                file_id=file.id,
+                track=1,
+                language="deu",
+                language_name="German",
+                default=True,
+            )
+        )
+        foreign = make_movie_file(make_movie("Fremde Spur", 2005), "DVD")
+        db.session.add(
+            FileAudioTrack(
+                file_id=foreign.id,
+                track=1,
+                language="fra",
+                language_name="French",
+                default=True,
+            )
+        )
+        db.session.commit()
+
+    for url in ("/file-activity", "/file-activity/cards"):
+        body = admin_client.get(url).get_data(as_text=True)
+        assert "deu (foreign)" not in body
+        assert "fra (foreign)" in body
+
+
 def test_genre_links_filter_the_library(app, admin_client):
     """Test that the genre links filter the library.
 

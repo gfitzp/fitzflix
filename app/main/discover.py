@@ -829,7 +829,7 @@ def file_activity():
         "file_activity.html",
         title="File Activity",
         recently_added=recently_added.items,
-        native_language=[current_app.config["NATIVE_LANGUAGE"], "und", "zxx"],
+        native_language=_native_language_keys(),
         import_activity=import_activity,
         next_url=next_url,
         prev_url=prev_url,
@@ -863,6 +863,17 @@ def _recent_files(query):
     return query.filter(
         recency >= db.func.adddate(db.func.current_date(), -7)
     ).order_by(recency.desc(), File.id.desc())
+
+
+def _native_language_keys():
+    """Return the language keys that a File Activity card does not flag as foreign.
+
+    The card compares the key of each track. Thus, "deu" and "ger" are
+    the same language there, as in the import (#443)."""
+
+    from app.tracks import language_key
+
+    return [language_key(current_app.config["NATIVE_LANGUAGE"]), "und", "zxx"]
 
 
 def _card_upgradable(files):
@@ -992,7 +1003,7 @@ def file_activity_cards():
         render_template(
             "_file_activity_cards.html",
             recently_added=files,
-            native_language=[current_app.config["NATIVE_LANGUAGE"], "und", "zxx"],
+            native_language=_native_language_keys(),
             card_upgradable=_card_upgradable(files),
             trail_for=trail_for,
             card_version=card_version,

@@ -41,6 +41,19 @@ def register_template_helpers(app):
     app.jinja_env.filters["display_title"] = display_title
     app.jinja_env.filters["display_year"] = display_year
 
+    # The bibliographic key of a language code (#443). "deu" and "ger"
+    # give the same key. The import is lazy. Thus, the app factory does
+    # not load the track layer.
+
+    def language_key_filter(code):
+        """Return the language key of a track language for a template."""
+
+        from app.tracks import language_key
+
+        return language_key(code)
+
+    app.jinja_env.filters["language_key"] = language_key_filter
+
     # The action forms of the poster tiles render their own csrf inputs.
     # They do not need a form object passed through every gallery route.
     # This is the same name that CSRFProtect would register, without its
