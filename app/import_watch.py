@@ -104,7 +104,11 @@ def start_import_watch(app):
         return observer
 
     def enqueue_import_sweep():
-        enqueue_import_scan(app.import_queue)
+        # The keeper thread has no app context of its own (#394). The
+        # enqueue reads the task spec, and a timeout can be the name of
+        # a config setting.
+        with app.app_context():
+            enqueue_import_scan(app.import_queue)
 
     def write_observer_heartbeat():
         # This is a per-process heartbeat that expires. The admin

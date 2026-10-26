@@ -29,3 +29,45 @@ def test_the_handler_queues_new_and_renamed_files_only(app, incoming_dir):
     finally:
         for path in (visible, hidden, renamed):
             os.remove(path)
+
+
+def test_the_keeper_sweep_works_without_an_app_context(app, monkeypatch):
+    """The keeper thread enqueues the sweep with no app context (#394).
+
+    A task spec with a config-named timeout reads current_app.config."""
+
+    import threading
+
+    from flask import has_app_context
+
+    import app.import_watch as import_watch
+    from app.tasks import TASKS, TaskSpec
+
+    class Observer:
+        emitters = ()
+
+        def schedule(self, *args, **kwargs):
+            pass
+
+        def start(self):
+            pass
+
+        def is_alive(self):
+            return True
+
+    class Thread:
+        def __init__(self, target=None, args=(), **kwargs):
+            self.target = target
+
+        def start(self):
+            pass
+
+    name = "app.videos.manual_import_task"
+    monkeypatch.setitem(TASKS, name, TaskSpec("maintenance", "SQL_TASK_TIMEOUT"))
+    monkeypatch.setattr(import_watch, "PollingObserver", Observer)
+    monkeypatch.setattr(threading, "Thread", Thread)
+    assert not has_app_context()
+
+    import_watch.start_import_watch(app)
+    (job,) = [job for job in app.import_queue.jobs if job.func_name == name]
+    assert job.timeout == app.config["SQL_TASK_TIMEOUT"]
