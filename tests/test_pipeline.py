@@ -1823,3 +1823,61 @@ def test_a_fall_back_hour_anchor_reads_as_the_right_utc_instant(app, admin_clien
     payload = admin_client.get("/api/queue-details").get_json()
     (item,) = [item for item in payload["all"] if item["id"] == "fall-back-localize"]
     assert item["started_at"] == "Sun, 01 Nov 2026 06:20:00 GMT"
+
+
+def test_the_trail_write_stores_the_first_run_as_utc(app):
+    """The write path of the #405 anchor: a real trail write, read back from Redis (#447)."""
+
+    from datetime import datetime, timedelta, timezone
+
+    from app.pipeline import FILE_KEY, _digest, _write_trail_entry
+
+    basename = "Anchor Write (2026) - [DVD].mkv"
+    with app.app_context():
+        before = datetime.now(timezone.utc).replace(microsecond=0)
+        _write_trail_entry(app.redis, basename, "Localizing", "started", "anchor-1")
+        after = datetime.now(timezone.utc)
+        stored = app.redis.hget(FILE_KEY.format(digest=_digest(basename)), "first_run")
+
+    anchor = datetime.fromisoformat(stored.decode())
+    assert stored.decode().endswith("+00:00")
+    assert anchor.utcoffset() == timedelta(0)
+    assert before <= anchor <= after
+
+
+def test_a_legacy_local_anchor_still_reads_as_local_time(app, admin_client):
+    """An anchor of an older trail has no offset. It reads as local wall clock (#405, #447)."""
+
+    import time
+    from datetime import datetime, timezone
+
+    from rq.job import Job
+
+    from app.pipeline import FILE_KEY, _digest
+
+    basename = "Legacy Anchor (2026) - [DVD].mkv"
+    local = "2026-10-20 12:00:00"
+    expected = (
+        datetime.strptime(local, "%Y-%m-%d %H:%M:%S")
+        .astimezone()
+        .astimezone(timezone.utc)
+        .strftime("%a, %d %b %Y %H:%M:%S GMT")
+    )
+    with app.app_context():
+        app.redis.hset(FILE_KEY.format(digest=_digest(basename)), "first_run", local)
+        job = Job.create(
+            "app.videos.localization_task",
+            args=(f"/import/{basename}",),
+            id="legacy-anchor-localize",
+            origin="fitzflix-import",
+            connection=app.redis,
+        )
+        job.save()
+        app.redis.zadd(
+            "rq:wip:fitzflix-import",
+            {"legacy-anchor-localize:test": time.time() + 600},
+        )
+
+    payload = admin_client.get("/api/queue-details").get_json()
+    (item,) = [i for i in payload["all"] if i["id"] == "legacy-anchor-localize"]
+    assert item["started_at"] == expected

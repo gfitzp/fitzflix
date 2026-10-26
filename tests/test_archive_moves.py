@@ -1049,8 +1049,12 @@ def test_the_move_has_a_trail_stage(app):
     assert STAGES["app.aws_storage.move_archive_object"][0] == "Moving the S3 archive"
 
 
-def test_a_move_waits_while_the_s3_sync_runs(app, s3):
-    """A move that starts after the idle check of the sync waits for it."""
+def test_a_move_waits_while_the_s3_sync_runs(app, s3, monkeypatch):
+    """A move that starts after the idle check of the sync waits for it.
+
+    The pause of SYNC_RECHECK_SECONDS is patched out (#447). A real sleep
+    of 10 seconds let another user of the test Redis change the
+    registries during the pause."""
 
     import time
 
@@ -1059,6 +1063,8 @@ def test_a_move_waits_while_the_s3_sync_runs(app, s3):
     from app import aws_storage, db
     from app.models import File
 
+    pauses = []
+    monkeypatch.setattr(aws_storage.time, "sleep", pauses.append)
     with app.app_context():
         file = archived_film("Sync Wait", 1974, key_name="Sync Wait Old.mkv")
         aws_storage.request_archive_move(file)
@@ -1076,6 +1082,7 @@ def test_a_move_waits_while_the_s3_sync_runs(app, s3):
 
         result = aws_storage.move_archive_object(file.id, sqs_receipt_handle="held")
         assert result == aws_storage.MOVE_WAITING
+        assert pauses == [aws_storage.SYNC_RECHECK_SECONDS]
         assert fake.copies == []
         db.session.expire_all()
         file = db.session.get(File, file.id)

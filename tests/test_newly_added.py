@@ -236,10 +236,15 @@ def test_a_match_without_a_payload_keeps_its_tmdb_id(app, monkeypatch):
         make_movie_file(make_movie("The Searchers", 1956, tmdb_id=3110), "DVD")
         db.session.commit()
 
+    # The day is read before the run. A midnight during the test then
+    # still matches 1 of the 2 days (#447).
+    days = {date.today().isoformat()}
     assert refresh_newly_added() is True
+    days.add(date.today().isoformat())
     (item,) = json.loads(app.redis.get(key))["items"]
     assert item["tmdb_id"] == 3110
-    assert item["first_seen"] == date.today().isoformat()
+    assert item["first_seen"] in days
+    first_seen = item["first_seen"]
     with app.app_context():
         assert newly_added_since(3110, CRITERION_PROVIDER_ID) is not None
     assert len(dvr_rebuild_jobs(app)) == 1
@@ -250,7 +255,7 @@ def test_a_match_without_a_payload_keeps_its_tmdb_id(app, monkeypatch):
     assert item["tmdb_id"] == 3110
     assert not item.get("payload_missing")
     assert item["title"] == "The Searchers"
-    assert item["first_seen"] == date.today().isoformat()
+    assert item["first_seen"] == first_seen
     assert len(dvr_rebuild_jobs(app)) == 1
 
 

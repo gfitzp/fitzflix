@@ -2242,7 +2242,9 @@ def test_log_watch_with_a_future_date_says_why(app, admin_client):
 
     page = admin_client.get(f"/movie/{movie_id}").get_data(as_text=True)
     token = csrf_token_from(page)
-    tomorrow = (date.today() + timedelta(days=1)).isoformat()
+    # 2 days ahead: a midnight between this line and the check of the
+    # validator cannot make the date valid (#447).
+    tomorrow = (date.today() + timedelta(days=2)).isoformat()
     form = {
         "csrf_token": token,
         "review_submit": "Log Watch",
@@ -2296,7 +2298,7 @@ def test_tmdb_log_watch_with_a_future_date_says_why(app, admin_client, monkeypat
         data={
             "csrf_token": token,
             "review_submit": "Log Watch",
-            "date_watched": (date.today() + timedelta(days=1)).isoformat(),
+            "date_watched": (date.today() + timedelta(days=2)).isoformat(),
         },
     )
     assert response.status_code == 302
