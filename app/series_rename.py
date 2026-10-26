@@ -28,6 +28,7 @@ from unidecode import unidecode
 from werkzeug.local import LocalProxy
 
 from app.tasks import enqueue_task
+from app.pipeline import migrate_trail
 from app import db, get_app
 from app.models import TVSeries
 
@@ -177,9 +178,15 @@ def rename_tv_series_task(series_id, new_title):
             file.file_path = new_path
             if file.plex_title.startswith(old_prefix):
                 file.plex_title = new_prefix + file.plex_title[len(old_prefix) :]
+            # The File Activity trail is keyed by the import name. Thus,
+            # the trail follows the new untouched name, or the card loses
+            # its chips for the life of the trail.
+            old_untouched = file.untouched_basename
             file.untouched_basename = reconstruct_filename(
                 file.id, series_title=new_title
             )
+            if file.untouched_basename != old_untouched:
+                migrate_trail(current_app.redis, old_untouched, file.untouched_basename)
             db.session.commit()
 
         # This step is aware of junk files. It is not a plain rmdir. The

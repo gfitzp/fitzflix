@@ -202,3 +202,35 @@ def test_rename_gives_the_untouched_names_the_new_title(app):
         assert db.session.get(File, tagged.id).untouched_basename == (
             "Batman (1966) {tmdb-2287} - S01E02 - [Bluray-1080p].m2ts"
         )
+
+
+def test_rename_moves_the_trail_to_the_new_untouched_name(app):
+    """The File Activity trail follows the renamed untouched name."""
+
+    from app.pipeline import (
+        index_trails,
+        pipeline_trails,
+        record_job_event,
+        trail_entries_for,
+    )
+
+    old = "Batman - S01E03 - [Bluray-1080p].mkv"
+    with app.app_context():
+        series = make_tv_series("Batman", tmdb_id=2287)
+        episode = make_tv_file(series, 1, 3, "Bluray-1080p", untouched_basename=old)
+        db.session.commit()
+        _materialize(app, episode)
+        job = app.import_queue.enqueue(
+            "app.videos.localization_task", args=(f"/import/{old}",)
+        )
+        record_job_event(app.redis, job, "started")
+
+        assert rename_tv_series_task(series.id, "Batman (1966)") is True
+        db.session.expire_all()
+        episode = db.session.get(File, episode.id)
+        assert (
+            episode.untouched_basename == "Batman (1966) - S01E03 - [Bluray-1080p].mkv"
+        )
+        index = index_trails(pipeline_trails(app.redis))
+        entries = trail_entries_for(index, episode.basename, episode.untouched_basename)
+        assert entries, "the renamed episode lost its trail"
