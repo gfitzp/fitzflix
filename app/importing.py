@@ -831,7 +831,12 @@ def localization_task(
             current_app.logger.error(traceback.format_exc())
 
             # Remove the staged copies. Fitzflix rejects the original source.
-            # Nothing has changed the source since staging.
+            # Nothing has changed a staged source. A file too large for the
+            # staging volume is the exception (#424). It is processed in
+            # place, and the track statistics, the FLAC twins, or the MP4
+            # metadata removal can rewrite it before a failure. The
+            # untouched archive goes up first, so the original bytes stay
+            # in S3.
 
             abandon_import(run.source_path, run.lock, strays=run.strays)
 

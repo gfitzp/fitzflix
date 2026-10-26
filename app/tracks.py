@@ -165,19 +165,37 @@ def remux_file(file_path, build_command, job, name, activity):
         release_staging_reservation(reservation)
 
 
+def stop_process(process):
+    """Kill a child process that still runs, and wait for it to end.
+
+    A task can fail during the read loop of a child. Examples are a job
+    timeout and a Redis fault in report_progress. The child must not
+    then write into an output that the cleanup deletes (#424)."""
+
+    if process is not None and process.poll() is None:
+        process.kill()
+        process.wait()
+
+
 def watch_mkvmerge_progress(process, job, name, activity):
-    """Stream the output of a process. Log its progress and update the job meta."""
+    """Stream the output of a process. Log its progress and update the job meta.
+
+    A failure in the loop kills the process before it goes up."""
 
     previous_percent = None
-    for line in process.stdout:
-        progress_match = re.search(r"Progress\: \d+\%", line)
-        if progress_match:
-            progress_match = re.match(r"^Progress\: (?P<percent>\d+)\%", line)
-            percent = int(progress_match.group("percent"))
-            if previous_percent != percent:
-                current_app.logger.info(f"'{name}' {activity}: {percent}%")
-                previous_percent = percent
-            report_progress(job, name, activity, percent)
+    try:
+        for line in process.stdout:
+            progress_match = re.search(r"Progress\: \d+\%", line)
+            if progress_match:
+                progress_match = re.match(r"^Progress\: (?P<percent>\d+)\%", line)
+                percent = int(progress_match.group("percent"))
+                if previous_percent != percent:
+                    current_app.logger.info(f"'{name}' {activity}: {percent}%")
+                    previous_percent = percent
+                report_progress(job, name, activity, percent)
+    except BaseException:
+        stop_process(process)
+        raise
 
 
 def parse_dolby_vision_profile(hdr_format):

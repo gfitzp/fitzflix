@@ -1102,3 +1102,62 @@ def test_a_move_waits_while_another_task_holds_the_title_lock(app, tmp_path):
     assert len(retries) == 1
     assert retries[0].kwargs["lock_waits"] == 1
     assert app.redis.get(resource) == b"other-task-token"
+
+
+class _RunningProcess:
+    """A fake child process that runs until it is killed."""
+
+    def __init__(self, lines):
+        self.stdout = iter(lines)
+        self.killed = False
+        self.waited = False
+
+    def poll(self):
+        return -9 if self.killed else None
+
+    def kill(self):
+        self.killed = True
+
+    def wait(self, *args, **kwargs):
+        self.waited = True
+        return -9
+
+
+def test_any_failure_in_the_encode_loop_kills_the_encoder(app, monkeypatch):
+    """A failure other than a lost lock also stops the encoder (#424).
+
+    A job timeout or a Redis fault in report_progress went up and left
+    the encoder writing into an output that the cleanup unlinks."""
+
+    import pytest
+
+    import app.sdr_conversion as sdr_conversion
+
+    process = _RunningProcess(["Encoding: task 1 of 1, 5.00 %\n"])
+    monkeypatch.setattr(sdr_conversion.subprocess, "Popen", lambda *a, **k: process)
+
+    def broken(*args, **kwargs):
+        raise RuntimeError("redis down")
+
+    monkeypatch.setattr(sdr_conversion, "report_progress", broken)
+    with app.app_context(), pytest.raises(RuntimeError):
+        sdr_conversion._run_encode(["HandBrakeCLI"], None, "Film.mkv", None, 100)
+    assert process.killed and process.waited
+
+
+def test_a_failure_in_the_mkvmerge_loop_kills_mkvmerge(app, monkeypatch):
+    """The shared mkvmerge progress loop stops its process on a failure (#424)."""
+
+    import pytest
+
+    import app.tracks as tracks
+
+    process = _RunningProcess(["Progress: 5%\n"])
+
+    def broken(*args, **kwargs):
+        raise RuntimeError("redis down")
+
+    monkeypatch.setattr(tracks, "report_progress", broken)
+    with app.app_context(), pytest.raises(RuntimeError):
+        tracks.watch_mkvmerge_progress(process, None, "Film.mkv", "Remuxing")
+    assert process.killed and process.waited

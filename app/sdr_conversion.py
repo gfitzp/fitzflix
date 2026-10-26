@@ -42,6 +42,7 @@ from flask import current_app
 from werkzeug.local import LocalProxy
 
 from app.tasks import enqueue_task, report_progress
+from app.tracks import stop_process
 from app import db, get_app, makedirs_on_mounted_volume
 from app.models import MOVIES
 from app.naming import retag_quality
@@ -369,7 +370,6 @@ def _run_encode(command, job, basename, lock, total_seconds):
     If another task took the title lock, the encode stops, and this
     raises TitleLockLost."""
 
-    from app.importing import _hold_title_lock
     from app.videos import wait_for_subprocess
 
     current_app.logger.info(f"'{basename}' {command}")
@@ -380,6 +380,22 @@ def _run_encode(command, job, basename, lock, total_seconds):
         universal_newlines=True,
         bufsize=1,
     )
+    try:
+        _watch_encode(process, job, basename, lock, total_seconds)
+    except BaseException:
+        # Any failure, not only a lost lock, stops the encoder. Without
+        # this, a job timeout left HandBrakeCLI or ffmpeg encoding into
+        # an output that the cleanup unlinks (#424).
+        stop_process(process)
+        raise
+    wait_for_subprocess(process)
+
+
+def _watch_encode(process, job, basename, lock, total_seconds):
+    """Read the progress of an encode, and keep the title lock alive."""
+
+    from app.importing import _hold_title_lock
+
     last_refresh = time.monotonic()
     previous_percent = None
     for line in process.stdout:
@@ -400,11 +416,8 @@ def _run_encode(command, job, basename, lock, total_seconds):
             report_progress(job, basename, "Converting to SDR", percent)
         if time.monotonic() - last_refresh > LOCK_REFRESH_SECONDS:
             if not _hold_title_lock(lock, basename):
-                process.kill()
-                process.wait()
                 raise TitleLockLost(basename)
             last_refresh = time.monotonic()
-    wait_for_subprocess(process)
 
 
 def convert_localized_file(
