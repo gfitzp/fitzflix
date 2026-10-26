@@ -977,3 +977,20 @@ def test_a_span_file_and_its_last_single_episode_air_once(app):
             (27, 27),
         ]
         assert dvr._series_catalog()[series.id]["episodes"] == 3
+
+
+@pytest.mark.parametrize(
+    "channels, expected",
+    [(4, None), (5, None), (2, None), (6, "6"), (8, "6"), (None, "6")],
+)
+def test_the_stream_keeps_the_lfe_of_3_1_and_4_1(app, channels, expected):
+    """A 3.1 or 4.1 track keeps its layout. Only 6 or more channels get -ac 6 (#429)."""
+
+    from app.main.dvr import _ffmpeg_command
+
+    command = _ffmpeg_command(app.config, "/library/x.mkv", 0, channels)
+    if expected is None:
+        assert "-ac" not in command
+    else:
+        assert command[command.index("-ac") + 1] == expected
+    assert command[-3:] == ["-f", "mpegts", "pipe:1"]

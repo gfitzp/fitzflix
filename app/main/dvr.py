@@ -36,7 +36,13 @@ from xml.etree import ElementTree
 
 from flask import Response, current_app, request, url_for
 
-from app.dvr import channel_index, channel_lineup, program_at, programs_between
+from app.dvr import (
+    AC3_MAX_CHANNELS,
+    channel_index,
+    channel_lineup,
+    program_at,
+    programs_between,
+)
 from app.main import bp
 
 # How much guide to publish: some history and 2 days forward. The
@@ -267,6 +273,13 @@ def _ffmpeg_command(config, path, offset, audio_channels):
 
     It maps the first video track and the first audio track. The first
     audio track is always the default track (the house rule).
+
+    A track with fewer than 6 channels keeps its own layout. Without a
+    layout, "-ac 4" and "-ac 5" give the 4.0 and 5.0 layouts of ffmpeg.
+    Those have no LFE, and the subwoofer of a 3.1 or 4.1 track was mixed
+    out (#429). The AC-3 encoder takes 3.1 and 4.1 as they are. A track
+    with 6 channels or more gets "-ac 6", the 5.1 layout. A stored count
+    of 6 can also be a 7.1 track that the lineup capped.
     """
 
     bitrate = config["DVR_VIDEO_BITRATE_KBPS"]
@@ -297,12 +310,10 @@ def _ffmpeg_command(config, path, offset, audio_channels):
         "ac3",
         "-b:a",
         "448k",
-        "-ac",
-        str(audio_channels),
-        "-f",
-        "mpegts",
-        "pipe:1",
     ]
+    if not audio_channels or audio_channels >= AC3_MAX_CHANNELS:
+        command += ["-ac", str(AC3_MAX_CHANNELS)]
+    command += ["-f", "mpegts", "pipe:1"]
     return command
 
 
