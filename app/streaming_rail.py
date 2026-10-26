@@ -40,6 +40,7 @@ from app.recommendations import (
     features_from_parts,
     score_movie,
     stored_profile,
+    tmdb_taste_score,
 )
 from app.streaming import (
     batch_title_availability,
@@ -488,7 +489,11 @@ def compute_user_rail(user):
         payload = payloads.get(tmdb_id)
         if not payload:
             continue
-        score, contributions = score_movie(_payload_features(payload), profile)
+        # The rail orders by the TMDB-lane number, the same as the other
+        # discovery shelves. Taste alone disagreed with the estimates on
+        # the tiles, which add the co-preference (#420).
+
+        score, contributions = tmdb_taste_score(user.id, tmdb_id, payload, profile)
         because = [entry["sources"][0]]
         because += [
             label for contribution, label in contributions[:3] if contribution > 0

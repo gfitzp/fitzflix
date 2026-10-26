@@ -617,3 +617,45 @@ def test_a_user_with_no_services_has_no_rail(app, admin_client):
 
     assert recompute_streaming_rail() is True
     assert app.redis.get(RAIL_KEY.format(user_id=user_id)) is None
+
+
+def test_the_rail_orders_by_the_number_that_its_tiles_show(app, monkeypatch):
+    """The rail ranks with the TMDB-lane score: taste plus co-preference (#420).
+
+    A strong co-preference lifts the drama above the comedy, as it does
+    on the tiles. The stored score is the tmdb_taste_score number."""
+
+    import app.recommendations as recommendations
+
+    from app import db
+    from app.models import User
+    from app.streaming_rail import compute_user_rail, enriched_movie
+
+    user_id = subscribe(app, 8, "Netflix")
+    plant_profile(app, user_id, COMEDY_PROFILE)
+    install_rail_fakes(app, monkeypatch)
+    plant_availability(app, 5001, [NETFLIX])
+    plant_availability(app, 5002, [NETFLIX])
+    monkeypatch.setattr(
+        recommendations,
+        "_tmdb_copref",
+        lambda user, tmdb_id: 2.0 if int(tmdb_id) == 5002 else 0.0,
+    )
+
+    with app.app_context():
+        user = db.session.get(User, user_id)
+        items = compute_user_rail(user)
+        profile = recommendations.stored_profile(app.redis, user_id)
+        expected = {
+            item["tmdb_id"]: recommendations.tmdb_taste_score(
+                user_id,
+                item["tmdb_id"],
+                enriched_movie(item["tmdb_id"]),
+                profile,
+            )[0]
+            for item in items
+        }
+
+    assert [item["tmdb_id"] for item in items][:2] == [5002, 5001]
+    for item in items:
+        assert item["score"] == expected[item["tmdb_id"]]
