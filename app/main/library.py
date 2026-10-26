@@ -719,7 +719,10 @@ def catalog_rows_for(releases, consumed_tmdb, consumed_title_year, excluded_tmdb
     show the set title. Thus, a row without a TMDB id, whose spine
     belongs to a set, would only shadow its own members ("#88 Ivan the
     Terrible" between the actual Parts I–III). The hand-excluded ids
-    (Wikidata junk, see CatalogExclusion) do not render."""
+    (Wikidata junk, see CatalogExclusion) do not render. A row without a
+    TMDB id does not render when a release with a TMDB id has its title
+    and year (#382). Wikidata can hold a film as a standalone release
+    with a TMDB id and as a set member without one."""
 
     set_spines = {
         release["spine_number"] for release in releases if release.get("set_title")
@@ -734,15 +737,18 @@ def catalog_rows_for(releases, consumed_tmdb, consumed_title_year, excluded_tmdb
             and release.get("spine_number") in set_spines
         ):
             continue
-        if tmdb_id and (tmdb_id in excluded_tmdb or tmdb_id in consumed_tmdb):
-            continue
         title_year = (release.get("title"), release.get("year"))
+        if tmdb_id and tmdb_id in excluded_tmdb:
+            continue
+        if tmdb_id and tmdb_id in consumed_tmdb:
+            keys.add(title_year)
+            continue
         if title_year in consumed_title_year:
             continue
         key = tmdb_id or title_year
         if key in keys:
             continue
-        keys.add(key)
+        keys.update({key, title_year})
         rows.append(
             {
                 "kind": "tmdb" if tmdb_id else "plain",

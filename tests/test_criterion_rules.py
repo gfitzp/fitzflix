@@ -46,6 +46,48 @@ def test_catalog_rows_for_skips_the_consumed_the_excluded_and_the_set_shells(app
     ]
 
 
+def test_a_set_member_without_a_tmdb_id_does_not_repeat_a_release_with_one(app):
+    """Wikidata holds Lonesome (1928) as #623 and in its collector's set (#382)."""
+
+    from app.main.library import catalog_rows_for
+
+    releases = [
+        {"tmdb_id": 31417, "title": "Lonesome", "year": 1928, "spine_number": 623},
+        {"tmdb_id": 9, "title": "Owned", "year": 1930, "spine_number": 700},
+        {
+            "tmdb_id": None,
+            "title": "Lonesome",
+            "year": 1928,
+            "spine_number": 624,
+            "set_title": "Lonesome collector's set",
+        },
+        {
+            "tmdb_id": None,
+            "title": "Owned",
+            "year": 1930,
+            "spine_number": 701,
+            "set_title": "Owned set",
+        },
+        {
+            "tmdb_id": None,
+            "title": "The Last Performance",
+            "year": 1929,
+            "spine_number": 624,
+            "set_title": "Lonesome collector's set",
+        },
+        # 2 TMDB ids with 1 title and year are 2 films.
+        {"tmdb_id": 41, "title": "Threepenny", "year": 1931, "spine_number": 9},
+        {"tmdb_id": 42, "title": "Threepenny", "year": 1931, "spine_number": 9},
+    ]
+    rows = catalog_rows_for(releases, {9}, set(), set())
+    assert [(row["tmdb_id"], row["title"]) for row in rows] == [
+        (31417, "Lonesome"),
+        (None, "The Last Performance"),
+        (41, "Threepenny"),
+        (42, "Threepenny"),
+    ]
+
+
 def test_criterion_sort_key_puts_set_members_at_the_spine_of_their_set(app):
     from app.main.library import criterion_sort_key
 
