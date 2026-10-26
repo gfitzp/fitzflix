@@ -2354,3 +2354,37 @@ def test_a_star_edit_on_history_queues_the_profile_recompute(app, admin_client):
     with app.app_context():
         assert float(db.session.get(UserMovieReview, row_id).rating) == 2.0
         assert UserWatchlist.query.filter_by(movie_id=movie_id).first() is None
+
+
+def test_a_bare_undated_watch_does_not_claim_a_history_row(app, admin_client):
+    """Test the flash of a bare Log Watch without a date (#421).
+
+    History lists dated rows only. Thus, the message says that the film
+    is marked as seen and asks for a date. The row stays a preference
+    signal."""
+
+    from app import db
+    from app.models import UserMovieReview
+
+    with app.app_context():
+        movie = make_movie("Undated Bare Film", 1996)
+        db.session.commit()
+        movie_id = movie.id
+
+    page = admin_client.get(f"/movie/{movie_id}").get_data(as_text=True)
+    body = admin_client.post(
+        f"/movie/{movie_id}",
+        data={
+            "csrf_token": csrf_token_from(page),
+            "review_submit": "Log Watch",
+            "review": "",
+            "date_watched": "",
+        },
+        follow_redirects=True,
+    ).get_data(as_text=True)
+    assert "Logged &#39;Undated Bare Film (1996)&#39; in your history" not in body
+    assert "Marked &#39;Undated Bare Film (1996)&#39; as seen. Add a date" in body
+
+    with app.app_context():
+        row = UserMovieReview.query.filter_by(movie_id=movie_id).one()
+        assert row.date_watched is None

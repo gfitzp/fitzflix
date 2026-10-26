@@ -599,6 +599,10 @@ VERDICT_MESSAGES = {
     "rated": ("Rated '{name}' {rating:g} out of 5 stars", "success"),
     "reviewed": ("Logged review for '{name}'", "success"),
     "watched": ("Logged '{name}' in your history", "success"),
+    "watched_undated": (
+        "Marked '{name}' as seen. Add a date to show it in your history.",
+        "success",
+    ),
 }
 
 
@@ -618,6 +622,13 @@ def verdict_response(outcome, target, name, fallback_url, messages=None):
             key = "reviewed"
         else:
             key = "watched"
+
+            # A bare watch without a date is a preference signal. The
+            # History page lists dated rows only. Thus, the message must
+            # not say "in your history" (#421).
+
+            if not (request.form.get("date_watched") or "").strip():
+                key = "watched_undated"
     template, category = {**VERDICT_MESSAGES, **(messages or {})}[key]
     flash(template.format(name=name, rating=outcome.rating), category)
     return redirect(fallback_url)
