@@ -206,8 +206,12 @@ def held_decision(file_path):
 def hold_import(file_path, file_details, plan, blockers):
     """Move a conversion candidate to HELD_DIR and record it for a decision.
 
-    Return the HeldImport row."""
+    Return the HeldImport row. A held file with the same name can wait
+    already. Then the newcomer goes to rejects with the reason "already
+    held", and the function returns None (#435). The held original, its
+    decision and its date stay."""
 
+    from app.importing import move_to_rejects
     from app.models import HeldImport
     from app.pipeline import record_task_stage
 
@@ -219,6 +223,13 @@ def hold_import(file_path, file_details, plan, blockers):
     basename = os.path.basename(file_path)
     held_path = os.path.join(held_dir, basename)
     if os.path.abspath(file_path) != os.path.abspath(held_path):
+        if os.path.lexists(held_path):
+            current_app.logger.warning(
+                f"'{basename}' A held file with this name waits for a decision "
+                f"already. The new file goes to rejects"
+            )
+            move_to_rejects(file_path, "already held")
+            return None
         shutil.move(file_path, held_path)
 
     held = HeldImport.query.filter_by(held_path=held_path).first()
@@ -624,6 +635,9 @@ def archive_held_task(held_id):
             return False
         details = held.details()
         try:
+            # The delete after the upload must remove the uploaded file
+            # only (#435). A different file at the path stays.
+            uploaded_stat = os.stat(held.held_path)
             # A held HDR rip can have the name of a real rip, because a
             # Fitzflix name has no HDR tag. Its upload never replaces the
             # claimed archive of that rip (#430). It gets its own key.
@@ -672,12 +686,34 @@ def archive_held_task(held_id):
                 db.session.commit()
             return False
 
-        _remove_quietly(held_path)
+        if _same_file(held_path, uploaded_stat):
+            _remove_quietly(held_path)
+        else:
+            current_app.logger.warning(
+                f"'{held_path}' Changed during the upload. It is not the "
+                f"archived file. Thus, it stays"
+            )
         current_app.logger.info(
             f"'{archived.untouched_basename}' Archived to S3 as '{key}'. "
             f"The library did not change"
         )
         return True
+
+
+def _same_file(path, before):
+    """Return True if path is still the file of the stat result before.
+
+    The inode, the device, and the size must agree."""
+
+    try:
+        now = os.stat(path)
+    except OSError:
+        return False
+    return (now.st_ino, now.st_dev, now.st_size) == (
+        before.st_ino,
+        before.st_dev,
+        before.st_size,
+    )
 
 
 def prune_held_imports():

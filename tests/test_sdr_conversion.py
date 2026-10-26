@@ -1242,3 +1242,62 @@ def test_a_child_that_ignores_the_kill_does_not_hold_the_task(app, monkeypatch, 
     assert process.killed
     assert process.timeout == tracks.STOP_PROCESS_WAIT_SECONDS
     assert "Process 4242 did not end" in caplog.text
+
+
+def test_a_same_name_rerip_never_replaces_a_held_original(
+    app, hdr10_mkv, incoming_dir, archive_on, monkeypatch
+):
+    """The newcomer goes to rejects. The held file and its decision stay (#435)."""
+
+    monkeypatch.setattr("app.email.send_email", lambda *a, **k: None)
+    basename = "Held Twice (2020) - [Bluray-2160p].mkv"
+    with app.app_context():
+        make_movie_file(make_movie("Held Twice", 2020), "Bluray-1080p")
+        db.session.commit()
+        held_id, held_path = _held_row(app, basename, decision="archive")
+        source = _place(incoming_dir, hdr10_mkv, basename)
+
+        assert importing.localization_task(source) is False
+
+        with open(held_path, "rb") as f:
+            assert f.read() == b"4k original"
+        held = db.session.get(HeldImport, held_id)
+        assert held.decision == "archive"
+        assert HeldImport.query.filter_by(held_path=held_path).count() == 1
+        rejected = os.path.join(app.config["REJECTS_DIR"], "already held", basename)
+        assert os.path.exists(rejected)
+        assert not os.path.exists(source)
+        os.remove(rejected)
+        os.remove(held_path)
+
+
+def test_archive_only_keeps_a_different_file_at_the_held_path(app, monkeypatch):
+    """A file that replaced the held file during the upload stays (#435)."""
+
+    import app.aws_storage as aws_storage
+    from app.sdr_conversion import archive_held_task
+
+    with app.app_context():
+        held_id, held_path = _held_row(app, "Swapped Held (1999) - [Bluray-2160p].mkv")
+        held = db.session.get(HeldImport, held_id)
+        held.file_details = json.dumps(
+            {
+                "media_library": "Movies",
+                "title": "Swapped Held",
+                "year": 1999,
+                "quality_title": "Bluray-2160p",
+            }
+        )
+        db.session.commit()
+
+        def swapping_upload(path, prefix="", **kwargs):
+            os.remove(path)
+            with open(path, "wb") as f:
+                f.write(b"a different, longer rip")
+            return f"{prefix}/{os.path.basename(path)}", datetime.utcnow(), 11
+
+        monkeypatch.setattr(aws_storage, "aws_upload", swapping_upload)
+        assert archive_held_task(held_id) is True
+        with open(held_path, "rb") as f:
+            assert f.read() == b"a different, longer rip"
+        os.remove(held_path)
