@@ -1061,6 +1061,9 @@ def _quality_and_space_gate(file_path, file_details, conversion, run):
             blockers = real_rips_blocking(file_details)
             if blockers:
                 hold_import(file_path, file_details, conversion, blockers)
+                # A held file no longer waits for space. A stale mark
+                # would block the "Import" choice of the Held page (#434).
+                clear_space_wait(basename)
                 run.release_lock()
                 return "hold"
 
@@ -1075,6 +1078,7 @@ def _quality_and_space_gate(file_path, file_details, conversion, run):
             current_app.logger.debug(vars(better))
 
         move_to_rejects(file_path, "inferior quality")
+        clear_space_wait(basename)
         run.release_lock()
         notify_admin(
             "Received an inferior-quality file",

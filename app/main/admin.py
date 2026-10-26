@@ -991,7 +991,19 @@ def held_imports():
         held.date_decided = datetime.now(timezone.utc)
         db.session.commit()
         if held.decision == "import":
-            enqueue_localization(held.held_path, at_front=True)
+            # The import reads the decision. Thus, the decision commits
+            # first. If no job is queued, the decision goes back. Then the
+            # admin can choose again (#434).
+            if enqueue_localization(held.held_path, at_front=True) is None:
+                held.decision = None
+                held.date_decided = None
+                db.session.commit()
+                flash(
+                    f"'{name}' is not queued. An import of the file waits or "
+                    f"runs already. Try again later.",
+                    "warning",
+                )
+                return redirect(url_for("main.held_imports"))
             flash(
                 f"Importing '{name}'. Its conversion replaces the library file.",
                 "info",
