@@ -629,3 +629,34 @@ def test_plex_outage_logs_one_line_and_keeps_the_snapshot(app, monkeypatch, capl
         assert fitzflix_watchlist_tmdb_ids(user_id) == {471060}
         assert json.loads(app.redis.get(plex_watchlist.SNAPSHOT_KEY)) == snapshot
         assert fake.removes == []
+
+
+def test_removing_one_of_two_films_of_a_shared_plex_item_keeps_the_other(
+    app, monkeypatch
+):
+    """Plex item X carries the guids of A and S1. Both are on the Fitzflix list (#387).
+
+    A removal of A in Fitzflix must not remove X from Plex, and the next
+    run must not delete the S1 row."""
+
+    import app.plex_watchlist as plex_watchlist
+
+    with app.app_context():
+        user_id = setup_user(app)
+        film_a = make_movie("Film A", 2003, tmdb_id=55941)
+        film_s = make_movie("Segment S1", 2003, tmdb_id=55942)
+        for movie in (film_a, film_s):
+            db.session.add(UserWatchlist(user_id=user_id, movie_id=movie.id))
+        db.session.commit()
+        fake = FakePlex({}, composites=[("compX", [55941, 55942], True)])
+        wire(app, monkeypatch, fake)
+        assert plex_watchlist.sync_plex_watchlist() is True
+        assert fitzflix_watchlist_tmdb_ids(user_id) == {55941, 55942}
+
+        UserWatchlist.query.filter_by(user_id=user_id, movie_id=film_a.id).delete()
+        db.session.commit()
+        for _ in range(3):
+            assert plex_watchlist.sync_plex_watchlist() is True
+        assert fake.removes == []
+        assert fake.items["compX"]["listed"] is True
+        assert fitzflix_watchlist_tmdb_ids(user_id) == {55942}
