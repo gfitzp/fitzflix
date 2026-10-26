@@ -832,3 +832,31 @@ def test_play_refuses_a_stored_hostname(app, monkeypatch):
         )
     assert ok is False and "private-network" in message
     assert launched == []
+
+
+def test_pair_task_reports_an_apple_tv_that_never_answers(app, monkeypatch):
+    """A connect that never answers ends at CONNECT_TIMEOUT with an error (#412).
+
+    The Profile page can then offer a retry. It does not wait for the
+    PAIR_TTL of a state that stays at "queued"."""
+
+    import app.infuse_player as infuse_player
+
+    user_id = _member_id(app)
+    log = []
+
+    class SilentPairing(FakePairing):
+        async def begin(self):
+            await asyncio.sleep(3600)
+
+    async def fake_pair(device, protocol, loop):
+        return SilentPairing(log)
+
+    monkeypatch.setattr(infuse_player, "CONNECT_TIMEOUT", 0.05)
+    monkeypatch.setattr(infuse_player.pyatv, "pair", fake_pair)
+    with app.app_context():
+        asyncio.run(infuse_player._pair(app, user_id, "192.168.1.63:49153"))
+
+    state = app.redis.get(f"fitzflix:infuse-pair:{user_id}:state").decode()
+    assert state.startswith("error:Could not reach the Apple TV")
+    assert "close" in log

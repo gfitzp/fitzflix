@@ -311,8 +311,17 @@ async def _pair(app, user_id, address, attempt=None):
         if not owns():
             return
         loop = asyncio.get_running_loop()
-        pairing = await pyatv.pair(_device_config(address), Protocol.Companion, loop)
-        await pairing.begin()
+
+        # pyatv has no connect timeout of its own. An Apple TV that is
+        # asleep or absent held the job until the rq timeout. That
+        # timeout skips the report below, and the Profile page refused a
+        # retry for PAIR_TTL. The same limit as play_movie applies here.
+
+        pairing = await asyncio.wait_for(
+            pyatv.pair(_device_config(address), Protocol.Companion, loop),
+            timeout=CONNECT_TIMEOUT,
+        )
+        await asyncio.wait_for(pairing.begin(), timeout=CONNECT_TIMEOUT)
         report("show-pin")
 
         for _ in range(PIN_WAIT_SECONDS):
@@ -341,6 +350,12 @@ async def _pair(app, user_id, address, attempt=None):
         user.infuse_player_credentials = str(pairing.service.credentials)
         db.session.commit()
         report("ok")
+    except TimeoutError:
+        app.logger.warning("Infuse pairing with %s timed out", address)
+        report(
+            "error:Could not reach the Apple TV. Make sure that it is awake "
+            "and on the network, and try again."
+        )
     except exceptions.PairingError:
         app.logger.warning("Infuse pairing with %s failed", address, exc_info=True)
         report(
