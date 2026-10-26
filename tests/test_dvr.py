@@ -955,3 +955,25 @@ def test_the_apportioned_quotas_add_up_to_the_cap():
     assert _apportion([2] * 8 + [40, 44], 12) == [1] * 8 + [2, 2]
     assert sum(_apportion([81, 3, 7, 1, 1, 30], 60)) == 60
     assert _apportion([3, 4], 10) == [3, 4]
+
+
+def test_a_span_file_and_its_last_single_episode_air_once(app):
+    """S05E25-E26 and S05E26 are both on disk. E26 airs 1 time only (#428)."""
+
+    from app import dvr
+
+    with app.app_context():
+        series = make_tv_series("Span Twice Show")
+        make_tv_file(series, 5, 24, "WEBDL-1080p")
+        make_tv_file(series, 5, 25, "WEBDL-1080p", last_episode=26)
+        make_tv_file(series, 5, 26, "WEBDL-1080p")
+        make_tv_file(series, 5, 27, "WEBDL-1080p")
+        db.session.commit()
+
+        episodes = dvr._series_episodes(series.id)
+        assert [(f.episode, f.last_episode) for f in episodes] == [
+            (24, 24),
+            (25, 26),
+            (27, 27),
+        ]
+        assert dvr._series_catalog()[series.id]["episodes"] == 3

@@ -398,6 +398,29 @@ def _leaving_owned(best):
     return ids, departs
 
 
+def _span_of(season, episode, last_episode):
+    """Return the (season, episode) pairs of a file. A span file has more than 1."""
+
+    last = last_episode if last_episode and last_episode > episode else episode
+    return {(season, number) for number in range(episode, last + 1)}
+
+
+def _program_count(rows):
+    """Return the programs of (season, episode, last_episode) rows in broadcast order.
+
+    A row whose first episode is in a span that came before it is not a
+    new program (#428)."""
+
+    covered = set()
+    count = 0
+    for season, episode, last_episode in rows:
+        if (season, episode) in covered:
+            continue
+        covered |= _span_of(season, episode, last_episode)
+        count += 1
+    return count
+
+
 def _series_catalog():
     """Return each series with owned regular episodes, with annotations.
 
@@ -406,16 +429,25 @@ def _series_catalog():
     that each TV channel selects from. This function builds it in 4
     queries."""
 
-    counts = dict(
-        db.session.query(
-            File.series_id,
-            db.func.count(db.func.distinct(File.season * 1000 + File.episode)),
-        )
+    # A span file counts 1 time. A single file of an episode that a span
+    # covers is not a program of its own (#428).
+
+    episodes_by_series = {}
+    for series_id, season, episode, last_episode in (
+        db.session.query(File.series_id, File.season, File.episode, File.last_episode)
         .filter(File.series_id != None)  # noqa: E711
         .filter(File.season > 0)
-        .group_by(File.series_id)
+        .order_by(File.series_id, File.season, File.episode)
+        .distinct()
         .all()
-    )
+    ):
+        episodes_by_series.setdefault(series_id, []).append(
+            (season, episode, last_episode)
+        )
+    counts = {
+        series_id: _program_count(rows)
+        for series_id, rows in episodes_by_series.items()
+    }
     if not counts:
         return {}
     catalog = {
@@ -642,12 +674,15 @@ def _series_episodes(series_id):
         )
         .all()
     )
+    # A span file covers each episode of its span. A single file of an
+    # episode in an aired span would air it two times (#428).
+
     episodes = []
-    seen = set()
+    covered = set()
     for file in rows:
         key = (file.season, file.episode)
-        if key not in seen and _on_disk(file):
-            seen.add(key)
+        if key not in covered and _on_disk(file):
+            covered |= _span_of(file.season, file.episode, file.last_episode)
             episodes.append(file)
     return episodes
 
