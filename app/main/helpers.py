@@ -691,9 +691,19 @@ def apply_row_edit(row, quick_rating, review_text, watched_date, posted):
             if not row.date_reviewed:
                 row.date_reviewed = datetime.now()
 
+    # A star change is a new verdict, as on the movie page. Thus, it
+    # completes the watchlist entry, removes a stray not-interested
+    # flag, and queues the profile recompute. Without the recompute,
+    # the old stars stay in each estimate until the nightly run.
+
+    if quick_rating is not None:
+        clear_watchlist(row.user_id, row.movie_id)
+        clear_not_interested(row.user_id, row.movie_id)
     if changed:
         row.date_updated = datetime.now()
     db.session.commit()
+    if quick_rating is not None:
+        _enqueue_profile_recompute()
 
 
 def _watched_timestamp(watched_date):

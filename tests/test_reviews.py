@@ -2303,3 +2303,54 @@ def test_tmdb_log_watch_with_a_future_date_says_why(app, admin_client, monkeypat
     assert response.headers["Location"].endswith("/review/tmdb/579")
     page = admin_client.get("/review/tmdb/579").get_data(as_text=True)
     assert "Enter a date in the past." in page
+
+
+def test_a_star_edit_on_history_queues_the_profile_recompute(app, admin_client):
+    """Test that a star tap on a History row queues the recompute (#416).
+
+    The movie page does the same for the same gesture. A text-only save
+    queues nothing. A star change also completes the watchlist entry."""
+
+    from app import db
+    from app.models import User, UserMovieReview, UserWatchlist
+    from app.videos import star_rating_fields
+
+    def recomputes():
+        return [
+            job
+            for job in app.maintenance_queue.jobs
+            if job.func_name == "app.recommendations.recompute_recommendations"
+        ]
+
+    with app.app_context():
+        user_id = User.query.first().id
+        movie = make_movie("Recompute Edit Film", 1995)
+        row = UserMovieReview(
+            user_id=user_id,
+            movie_id=movie.id,
+            date_watched=datetime(2024, 1, 5),
+            **star_rating_fields(5.0),
+        )
+        db.session.add(row)
+        db.session.add(UserWatchlist(user_id=user_id, movie_id=movie.id))
+        db.session.commit()
+        row_id, movie_id = row.id, movie.id
+
+    page = admin_client.get(f"/review/{row_id}/edit").get_data(as_text=True)
+    token = csrf_token_from(page)
+    admin_client.post(
+        f"/review/{row_id}/edit",
+        data={"csrf_token": token, "review": "Text only.", "review_submit": "y"},
+    )
+    assert recomputes() == []
+
+    response = admin_client.post(
+        f"/review/{row_id}/edit",
+        data={"csrf_token": token, "quick_rating": "2"},
+        headers={"X-Requested-With": "ladder"},
+    )
+    assert response.status_code == 200
+    assert len(recomputes()) == 1
+    with app.app_context():
+        assert float(db.session.get(UserMovieReview, row_id).rating) == 2.0
+        assert UserWatchlist.query.filter_by(movie_id=movie_id).first() is None
