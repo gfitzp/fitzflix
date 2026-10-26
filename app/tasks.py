@@ -10,7 +10,9 @@ in a comment.
 
 The queue of a spec is a key of the roster of queues. The timeout is
 a number of seconds or the name of a config setting, for example
-"SQL_TASK_TIMEOUT". The setting is read at enqueue time.
+"SQL_TASK_TIMEOUT". The setting is read at enqueue time. The command
+of a spec is the CLI command that does the same work, when there is
+one. The System page shows it next to the scheduled task.
 """
 
 import random
@@ -24,7 +26,9 @@ from flask import current_app
 from app import path_tag, safe_job_id
 from app.queues import QUEUE_NAME
 
-TaskSpec = namedtuple("TaskSpec", "queue timeout description", defaults=(None,))
+TaskSpec = namedtuple(
+    "TaskSpec", "queue timeout description command", defaults=(None, None)
+)
 
 TASKS = {
     # The recurring maintenance jobs of cron_table. Each one runs on the
@@ -39,13 +43,19 @@ TASKS = {
         "maintenance", 3600, "Backing up the database"
     ),
     "app.videos.manual_import_task": TaskSpec(
-        "maintenance", 3600, "Scanning import directory for files"
+        "maintenance",
+        3600,
+        "Scanning import directory for files",
+        command="flask scan",
     ),
     "app.maintenance.restore_drill": TaskSpec(
         "maintenance", 3600, "Verifying the offsite database backup restores"
     ),
     "app.videos.refresh_criterion_collection_info": TaskSpec(
-        "maintenance", 3600, "Refreshing Criterion Collection information"
+        "maintenance",
+        3600,
+        "Refreshing Criterion Collection information",
+        command="flask refresh criterion",
     ),
     "app.criterion_catalog.refresh_criterion_releases": TaskSpec(
         "maintenance",
@@ -56,10 +66,16 @@ TASKS = {
         "maintenance", 3600, "Cleaning up orphaned partial files"
     ),
     "app.videos.sync_aws_s3_storage_task": TaskSpec(
-        "maintenance", 86400, "Syncing files with AWS S3 storage"
+        "maintenance",
+        86400,
+        "Syncing files with AWS S3 storage",
+        command="flask sync",
     ),
     "app.maintenance.smb_handle_sweep": TaskSpec(
-        "maintenance", 3600, "Probing library files for lost SMB handles"
+        "maintenance",
+        3600,
+        "Probing library files for lost SMB handles",
+        command="flask smb probe --all",
     ),
     "app.maintenance.health_probe": TaskSpec(
         "maintenance", 600, "Probing system health"
@@ -76,31 +92,49 @@ TASKS = {
         "maintenance", 1800, "Scanning for best files that have no local copy"
     ),
     "app.recommendations.recompute_recommendations": TaskSpec(
-        "maintenance", 3600, "Recomputing film recommendations"
+        "maintenance",
+        3600,
+        "Recomputing film recommendations",
+        command="flask recs recompute",
     ),
     "app.criterion_now.heartbeat_criterion_now": TaskSpec(
         "maintenance", 300, "Checking the Criterion 24/7 poller's pulse"
     ),
     "app.leaving_criterion.refresh_leaving_criterion": TaskSpec(
-        "maintenance", 3600, "Refreshing the leaving-Criterion film set"
+        "maintenance",
+        3600,
+        "Refreshing the leaving-Criterion film set",
+        command="flask recs leaving",
     ),
     "app.newly_added.refresh_newly_added": TaskSpec(
-        "maintenance", 1800, "Refreshing the newly-added streaming feeds"
+        "maintenance",
+        1800,
+        "Refreshing the newly-added streaming feeds",
+        command="flask recs newly-added",
     ),
     "app.tmdb_refresh.sync_certification_list": TaskSpec(
         "maintenance", 600, "Syncing the TMDB certification list"
     ),
     "app.awards.refresh_awards": TaskSpec(
-        "maintenance", 7200, "Refreshing film awards from Wikidata"
+        "maintenance",
+        7200,
+        "Refreshing film awards from Wikidata",
+        command="flask recs awards",
     ),
     "app.streaming_rail.recompute_streaming_rail": TaskSpec(
-        "maintenance", 3600, "Recomputing the streaming rail"
+        "maintenance",
+        3600,
+        "Recomputing the streaming rail",
+        command="flask recs streaming",
     ),
     "app.estimate_warm.warm_estimates": TaskSpec(
         "maintenance", 3600, "Pre-warming estimate payloads"
     ),
     "app.frames.refresh_frame_pool_task": TaskSpec(
-        "maintenance", 3600, "Refreshing the Name That Frame pool"
+        "maintenance",
+        3600,
+        "Refreshing the Name That Frame pool",
+        command="flask frames refresh",
     ),
     "app.tmdb_changes.refresh_changed_records": TaskSpec(
         "maintenance", 1800, "Refreshing TMDB-changed records"
@@ -112,10 +146,16 @@ TASKS = {
         "maintenance", 3600, "Refreshing streaming availability"
     ),
     "app.availability_alerts.notify_watchlist_availability": TaskSpec(
-        "maintenance", 1800, "Checking watchlisted films for new availability"
+        "maintenance",
+        1800,
+        "Checking watchlisted films for new availability",
+        command="flask alerts availability",
     ),
     "app.videos.sqs_retrieve_task": TaskSpec(
-        "maintenance", 7200, "Polling AWS SQS for files to download"
+        "maintenance",
+        7200,
+        "Polling AWS SQS for files to download",
+        command="flask sqs",
     ),
     "app.videos.plex_history_poll": TaskSpec(
         "maintenance", 900, "Polling Plex for watch history"
@@ -328,6 +368,24 @@ def _submit(
 # The states of a job that still waits or runs.
 
 LIVE_JOB_STATES = ("queued", "started", "scheduled", "deferred")
+
+
+def live_task_job(name):
+    """Return a job of the task called name that waits or runs on its queue, or None.
+
+    The Run now button of the System page asks this before it queues a
+    scheduled task. A second copy of a maintenance task behind the first
+    one does the same work 2 times (the import sweep, the S3 sync)."""
+
+    from rq.job import Job
+    from rq.registry import StartedJobRegistry
+
+    queue = resolve_queue(TASKS[name].queue)
+    ids = list(queue.job_ids) + StartedJobRegistry(queue=queue).get_job_ids()
+    for job in Job.fetch_many(ids, connection=queue.connection):
+        if job is not None and job.func_name == name:
+            return job
+    return None
 
 
 def free_job_id(name, job_id):

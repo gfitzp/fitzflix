@@ -30,6 +30,8 @@ def test_cron_table_entries_are_well_formed(app):
         assert entry["queue"] == "fitzflix-maintenance"
         assert entry["description"]
         assert isinstance(entry["timeout"], int)
+        # The command column of the System page shows a flask command
+        assert entry["command"] is None or entry["command"].startswith("flask ")
 
 
 def test_every_cron_table_schedule_gets_a_written_description():

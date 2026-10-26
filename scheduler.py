@@ -119,7 +119,15 @@ for entry in cron_table(app.config):
         queue_name=entry["queue"],
         cron=entry["cron"],
         job_timeout=entry["timeout"],
-        meta={"cron_string": entry["cron"], "description": entry["description"]},
+        # The System page reads the name of the table from the meta. The
+        # func_name of rq is the module that defines the function. For a
+        # function that app.videos exports from another module, that is
+        # not the name of the table.
+        meta={
+            "cron_string": entry["cron"],
+            "description": entry["description"],
+            "func": entry["func"],
+        },
         result_ttl=86400,
     )
     # Change the class for local-time evaluation. Then compute the first

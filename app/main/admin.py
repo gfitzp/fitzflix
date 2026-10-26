@@ -25,14 +25,16 @@ from flask import (
 from flask_login import current_user, login_required
 
 from app.tasks import (
+    TASKS,
     bulk_job_id,
     enqueue_task,
     finish_bulk_run,
     free_job_id,
+    live_task_job,
     requeue_job_id,
     start_bulk_run,
 )
-from app import db, enqueue_import_scan, local_path, safe_job_id
+from app import cron_table, db, enqueue_import_scan, local_path, safe_job_id
 from app.naming import hidden
 from app.main.forms import (
     ArchivedRestoreForm,
@@ -52,6 +54,7 @@ from app.main.forms import (
     MovieMergeForm,
     RejectActionForm,
     ResetSettingForm,
+    RunScheduledTaskForm,
     SettingsForm,
     SyncAWSStorageForm,
     QualityFilterForm,
@@ -158,6 +161,26 @@ def system():
 
         return redirect(url_for("main.system"))
 
+    # This form queues a scheduled task now. Only a task of the cron
+    # table can be queued here. A task that waits or runs already is not
+    # queued a second time.
+
+    run_form = RunScheduledTaskForm()
+    if run_form.run_submit.data and run_form.validate_on_submit():
+        func = run_form.task_func.data
+        scheduled = {entry["func"] for entry in cron_table(current_app.config)}
+        if func not in scheduled:
+            flash("That task is not a scheduled task.", "warning")
+        elif live_task_job(func) is not None:
+            flash(f"'{TASKS[func].description}' waits or runs already.", "warning")
+        else:
+            enqueue_task(func)
+            flash(f"Queued '{TASKS[func].description}'", "info")
+            current_app.logger.info(
+                f"{current_user.email} queued the scheduled task {func} now"
+            )
+        return redirect(url_for("main.system"))
+
     failed_jobs = []
     for queue_name, queue in queues_by_name.items():
         registry = FailedJobRegistry(queue=queue)
@@ -207,6 +230,7 @@ def system():
         local_time=_local_time_text,
         failed_jobs=failed_jobs,
         failed_job_form=failed_job_form,
+        run_form=run_form,
         log_digest=stored_digest(current_app.redis),
     )
 
@@ -224,9 +248,18 @@ def _scheduled_tasks():
             meta = cron_job.job_options.get("meta") or {}
             cron_string = cron_job.cron or meta.get("cron_string", "")
             next_run = cron_job.next_enqueue_time or cron_job.get_next_enqueue_time()
+            # The func of the meta is the name of the cron table. The
+            # func_name of rq is the module that defines the function.
+            # The command comes from the task registry of this process,
+            # not from the job data of the scheduler. Thus, a new command
+            # shows without a restart of the scheduler.
+            func = meta.get("func") or cron_job.func_name
+            spec = TASKS.get(func)
             scheduled_tasks.append(
                 {
                     "name": meta.get("description") or cron_job.func_name,
+                    "func": func,
+                    "command": spec.command if spec else None,
                     "schedule": _cron_description(cron_string),
                     "cron_string": cron_string,
                     # rq.cron records the enqueue times. Thus, "last ran"
@@ -525,6 +558,7 @@ def system_metrics():
         scheduled_tasks=_scheduled_tasks(),
         relative_time=_relative_time,
         local_time=_local_time_text,
+        run_form=RunScheduledTaskForm(),
     )
     response = make_response(fragment)
     response.headers["Cache-Control"] = "no-store"

@@ -372,9 +372,9 @@ def cron_table(config):
     if config.get("DVR_TOKEN"):
         table.append(("30 6 * * *", "app.dvr.build_channel_lineups"))
 
-    # The queue, the timeout and the description of each row come from
-    # the task registry. A third element in a row is a description of
-    # its own.
+    # The queue, the timeout, the description and the CLI command of
+    # each row come from the task registry. A third element in a row is
+    # a description of its own.
 
     entries = []
     for cron_string, func, *own_description in table:
@@ -386,6 +386,7 @@ def cron_table(config):
                 "queue": QUEUE_NAME[spec.queue],
                 "timeout": task_timeout(spec, config),
                 "description": (own_description or [spec.description])[0],
+                "command": spec.command,
             }
         )
     return entries

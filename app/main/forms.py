@@ -511,6 +511,13 @@ class FailedJobForm(FlaskForm):
     forget_submit = SubmitField("Forget")
 
 
+class RunScheduledTaskForm(FlaskForm):
+    """Queue a scheduled task now (System page)."""
+
+    task_func = HiddenField(validators=[DataRequired()])
+    run_submit = SubmitField("Run now")
+
+
 class QueueFrontForm(FlaskForm):
     """Move a waiting job to the front of its queue (Queue page, #236)."""
 
