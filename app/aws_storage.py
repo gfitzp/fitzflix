@@ -1855,7 +1855,7 @@ def move_archive_object(file_id, sqs_receipt_handle=None):
       copy expired: a Bulk restore is requested. Its notification starts
       this job again. Return MOVE_WAITING.
     - A download of the old key is queued, or the weekly S3 sync runs: the
-      job waits 30 minutes. Return MOVE_WAITING.
+      job waits 25 to 35 minutes. Return MOVE_WAITING.
     - The old object is readable: a server-side copy goes to the target.
       The size and the ETag of the copy are verified. Then the row names
       the new key, and the old key is deleted. Return True.

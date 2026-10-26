@@ -227,6 +227,37 @@ def test_save_stores_only_the_changes_and_logs_them(app, admin_client, log_captu
         assert get_setting("DVR_CHANNEL_FILMS") == 25
 
 
+def test_a_stored_value_above_a_new_limit_does_not_block_a_save(
+    app, admin_client, log_capture
+):
+    """Test that a value stored before the DVR cap does not block the page (#397).
+
+    The field shows the cap. A save of a different setting goes through,
+    and it stores the cap."""
+
+    import re
+
+    _store(app, "DVR_GENRE_CHANNELS", "50")
+    _store(app, "DVR_TV_CHANNELS", "50")
+
+    page = admin_client.get("/settings").get_data(as_text=True)
+    shown = {
+        name: re.search(rf'name="{name}"[^>]*value="(\d+)"', page).group(1)
+        for name in ("DVR_GENRE_CHANNELS", "DVR_TV_CHANNELS")
+    }
+    assert shown == {"DVR_GENRE_CHANNELS": "39", "DVR_TV_CHANNELS": "40"}
+    assert any("outside the page limits" in r.getMessage() for r in log_capture)
+
+    data = _form(app, admin_client, DVR_CHANNEL_FILMS=25)
+    data.update(shown)
+    response = admin_client.post("/settings", data=data)
+
+    assert response.status_code == 302
+    assert _stored(app, "DVR_CHANNEL_FILMS") == "25"
+    assert _stored(app, "DVR_GENRE_CHANNELS") == "39"
+    assert _stored(app, "DVR_TV_CHANNELS") == "40"
+
+
 def test_post_that_changes_a_locked_setting_is_refused(app, admin_client, monkeypatch):
     monkeypatch.setitem(app.config, "ENV_LOCKED", frozenset({"CREATE_FLAC_TWINS"}))
     data = _form(app, admin_client, CREATE_ATMOS_TWINS=False)

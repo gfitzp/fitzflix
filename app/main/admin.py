@@ -522,6 +522,32 @@ def system_metrics():
     return response
 
 
+def _in_page_range(name, value):
+    """Return the value of a setting inside the limits of its page field.
+
+    A limit can become smaller after a value was stored. For example,
+    the DVR genre channels allowed 50 before #397. The page validates
+    each field on a save. Thus, a stored value outside the limits would
+    block the save of every other setting. The field shows the nearest
+    limit, and the next save stores it. The stored value stays until
+    that save. An info line records the change."""
+
+    setting = SETTINGS[name]
+    if setting.kind != "int" or not isinstance(value, int):
+        return value
+    clamped = value
+    if setting.maximum is not None:
+        clamped = min(clamped, setting.maximum)
+    if setting.minimum is not None:
+        clamped = max(clamped, setting.minimum)
+    if clamped != value:
+        current_app.logger.info(
+            f"Settings: {name} is {value}, outside the page limits. "
+            f"The field shows {clamped}"
+        )
+    return clamped
+
+
 @bp.route("/settings", methods=["GET", "POST"])
 @login_required
 @admin_required
@@ -602,7 +628,7 @@ def settings():
     elif request.method == "GET":
         for name in SETTINGS:
             if name not in locked_names:
-                form[name].data = resolve(name)[0]
+                form[name].data = _in_page_range(name, resolve(name)[0])
 
     rows = []
     for name, setting in SETTINGS.items():

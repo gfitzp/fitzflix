@@ -710,6 +710,57 @@ def test_an_unsent_digest_keeps_its_marks_when_mail_goes_off(app, monkeypatch, c
         reset_alert_users(app)
 
 
+def test_an_unsent_digest_keeps_its_marks_after_the_watchlist_empties(
+    app, monkeypatch, caplog
+):
+    """Test the stored digest of a user that the run no longer visits (#403 follow-up).
+
+    The digest is refused. Then the user turns the mail off and empties
+    the watchlist. The run visits only watchlist users, but the marks
+    are still planted."""
+
+    import app.availability_alerts as alerts
+
+    from app import db
+    from app.models import User, UserWatchlist
+
+    def refuse(subject, **kwargs):
+        raise ConnectionRefusedError("the mail server refused the message")
+
+    monkeypatch.setattr(alerts, "task_send_email", refuse)
+    set_alert_flags(app, MEMBER_EMAIL, availability=True)
+    try:
+        movie_id = watchlist_movie(app, "Emptied Debut", 9061)
+        subscribe(app, 8, "Netflix", email=MEMBER_EMAIL)
+        plant_availability(app, 9061, EMPTY)
+        run_task(app, monkeypatch)
+        plant_availability(app, 9061, {**EMPTY, "flatrate": [NETFLIX]})
+        run_task(app, monkeypatch)
+
+        from app.availability_alerts import SENT_KEY, UNSENT_KEY
+
+        with app.app_context():
+            user = User.query.filter_by(email=MEMBER_EMAIL).one()
+            unsent = UNSENT_KEY.format(user_id=user.id)
+            marker = SENT_KEY.format(
+                user_id=user.id, movie_id=movie_id, kind="streaming"
+            )
+            assert app.redis.exists(unsent)
+            UserWatchlist.query.filter_by(user_id=user.id).delete()
+            db.session.commit()
+            # A digest of a deleted user goes away.
+            app.redis.set(UNSENT_KEY.format(user_id=987654), "{}")
+
+        set_alert_flags(app, MEMBER_EMAIL, availability=False)
+        run_task(app, monkeypatch)
+        assert not app.redis.exists(unsent)
+        assert app.redis.exists(marker)
+        assert not app.redis.exists(UNSENT_KEY.format(user_id=987654))
+        assert "the watchlist of the user is empty" in caplog.text
+    finally:
+        reset_alert_users(app)
+
+
 def test_an_unsent_digest_that_expires_is_an_error(app, monkeypatch, caplog):
     """A digest that waited longer than UNSENT_SECONDS is lost, loudly (#377 follow-up)."""
 

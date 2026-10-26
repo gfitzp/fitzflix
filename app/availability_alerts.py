@@ -450,7 +450,7 @@ def _with_unsent(user_id, events, marks):
     return merged, since
 
 
-def _drop_unsent(user_id, marks):
+def _drop_unsent(user_id, marks, reason="the user gets no mail"):
     """Take the stored digest of a user who gets no mail, and keep its marks.
 
     A digest can be refused, and then the user turns the alerts off or
@@ -471,8 +471,42 @@ def _drop_unsent(user_id, marks):
     marks.merge(unsent.get("marks") or {}, movie_ids)
     current_app.logger.info(
         f"Watchlist availability: the digest of user {user_id} that waited "
-        f"since {unsent.get('since')} is dropped, because the user gets no mail"
+        f"since {unsent.get('since')} is dropped, because {reason}"
     )
+
+
+def _drop_unvisited_unsent(visited_ids):
+    """Plant the marks of the stored digests of the users that the run did not visit.
+
+    The run visits only the users with watchlist rows. A user can empty
+    the watchlist after a refused digest (#403 follow-up). Then no film
+    of the digest is on the watchlist, and the digest cannot go. Its
+    markers and badge stamps must still go in. A digest of a user that
+    no longer exists is only deleted."""
+
+    pattern = UNSENT_KEY.format(user_id="*")
+    prefix = UNSENT_KEY.format(user_id="")
+    stored_ids = set()
+    for key in current_app.redis.scan_iter(match=pattern):
+        key = key.decode() if isinstance(key, bytes) else key
+        try:
+            stored_ids.add(int(key[len(prefix) :]))
+        except ValueError:
+            continue
+    unvisited = stored_ids - set(visited_ids)
+    if not unvisited:
+        return
+    existing = {
+        user_id
+        for (user_id,) in db.session.query(User.id).filter(User.id.in_(unvisited))
+    }
+    for user_id in sorted(unvisited):
+        if user_id not in existing:
+            current_app.redis.delete(UNSENT_KEY.format(user_id=user_id))
+            continue
+        marks = _Marks(user_id)
+        _drop_unsent(user_id, marks, reason="the watchlist of the user is empty")
+        marks.plant()
 
 
 def _keep_unsent(user_id, events, since, marks):
@@ -603,6 +637,7 @@ def notify_watchlist_availability():
                 outbox.append((user, events, since, marks))
             else:
                 marks.plant()
+        _drop_unvisited_unsent(user.id for user in users)
 
         # Only a sent digest plants its markers. A refused digest keeps
         # them with its events for the next run.
