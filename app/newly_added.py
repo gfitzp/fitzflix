@@ -47,7 +47,7 @@ from app.leaving_criterion import (
 )
 from app.models import File, Movie, UserMovieReview, UserWatchlist
 from app.recommendations import stored_profile, tmdb_taste_score
-from app.streaming_rail import enriched_movie
+from app.streaming_rail import enriched_movie, movie_gone
 
 # The app instance of this process. Fitzflix resolves it lazily. Thus, the
 # nightly task can run on a worker without a second application.
@@ -159,12 +159,16 @@ def _refresh_feed(provider_id, feed):
             # that is still unmatched also costs a lookup, but the 60-day
             # match cache absorbs the retry. A matched film with no
             # payload yet tries the payload again (#386).
+            # A film that TMDB deleted (a cached 404) never gets its
+            # payload. Thus, it goes back to unmatched (#419).
             if prior.get("payload_missing"):
                 payload = enriched_movie(prior["tmdb_id"])
                 if payload:
                     prior = _stored_entry(
                         film, prior["tmdb_id"], payload, prior.get("first_seen")
                     )
+                elif movie_gone(prior["tmdb_id"]):
+                    prior = _stored_entry(film, None, None, prior.get("first_seen"))
             items.append(prior)
             continue
         if prior is not None:
@@ -175,6 +179,8 @@ def _refresh_feed(provider_id, feed):
                 fresh += 1
         tmdb_id = match_tmdb_id(film["title"], film["year"], film["director"])
         payload = enriched_movie(tmdb_id) if tmdb_id is not None else None
+        if tmdb_id is not None and not payload and movie_gone(tmdb_id):
+            tmdb_id = None
         if previous is not None and tmdb_id is not None:
             # The film is new to the page, or it was on the page but
             # unmatched until this run. In both cases, the film counts
@@ -233,10 +239,14 @@ def newly_added_shelves(user):
         if not raw:
             continue
         stored = json.loads(raw)
+        # A film without its payload has no poster and no features. It
+        # would score on its decade only and show as a placeholder card
+        # (#419). It joins the shelf when its payload arrives.
+
         recent = [
             item
             for item in stored.get("items", [])
-            if item.get("tmdb_id") and _recent(item)
+            if item.get("tmdb_id") and not item.get("payload_missing") and _recent(item)
         ]
         if not recent:
             continue
@@ -307,8 +317,19 @@ def newly_added_inventory(user):
             continue
         stored = json.loads(raw)
         recent = [item for item in stored.get("items", []) if _recent(item)]
-        matched = [item for item in recent if item.get("tmdb_id")]
-        unmatched = [item for item in recent if not item.get("tmdb_id")]
+        # A film without its payload lists as a plain scraped row, the
+        # same as an unmatched film. It has no poster or details yet.
+
+        matched = [
+            item
+            for item in recent
+            if item.get("tmdb_id") and not item.get("payload_missing")
+        ]
+        unmatched = [
+            item
+            for item in recent
+            if not item.get("tmdb_id") or item.get("payload_missing")
+        ]
         if not matched and not unmatched:
             continue
         tmdb_ids = [item["tmdb_id"] for item in matched]

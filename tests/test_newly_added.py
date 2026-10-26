@@ -729,3 +729,83 @@ def test_newly_added_page_says_when_nothing_is_new(app, admin_client):
     body = admin_client.get("/newly-added").get_data(as_text=True)
     assert "There is nothing new now." in body
     assert "Inventory Quiet" not in body
+
+
+def test_a_film_without_its_payload_is_no_placeholder_card(app, admin_client):
+    """A matched film whose payload failed stays off the shelf (#419).
+
+    It has no poster and no features. The inventory lists it as a plain
+    scraped row with the unmatched films."""
+
+    subscribe_criterion(app)
+    today = date.today().isoformat()
+    plant_feed(
+        app,
+        [
+            new_item(9701, "Payload Fresh", first_seen=today),
+            {
+                "title": "Payload Missing",
+                "director": "Jane Doe",
+                "year": 1963,
+                "tmdb_id": 9702,
+                "payload_missing": True,
+                "first_seen": today,
+                "scraped_title": "Payload Missing",
+                "scraped_year": 1963,
+            },
+        ],
+    )
+
+    body = admin_client.get("/").get_data(as_text=True)
+    shelf = body.split('id="newly-added-shelf-258"')[1].split("<h4 ")[0]
+    assert "Payload Fresh (1956)" in shelf
+    assert "Payload Missing" not in shelf
+
+    body = admin_client.get("/newly-added").get_data(as_text=True)
+    assert "Also new" in body
+    unmatched = body.split("Also new")[1]
+    assert "Payload Missing (1963)" in unmatched
+
+
+def test_a_film_that_tmdb_deleted_goes_back_to_unmatched(app, monkeypatch):
+    """A cached TMDB 404 never gets a payload. The id goes away (#419)."""
+
+    import app.newly_added as newly_added
+
+    from app.leaving_criterion import CRITERION_PROVIDER_ID
+    from app.newly_added import NEWLY_ADDED_KEY, refresh_newly_added
+
+    scraped = [
+        {"title": "Gone Film", "director": "John Ford", "year": 1956},
+        {"title": "Gone Later", "director": "John Ford", "year": 1957},
+    ]
+    monkeypatch.setattr(newly_added, "fetch_collection_films", lambda url: scraped)
+    monkeypatch.setattr(newly_added, "match_tmdb_id", lambda *args: 3111)
+    monkeypatch.setattr(newly_added, "enriched_movie", lambda i: None)
+    monkeypatch.setattr(newly_added, "movie_gone", lambda i: i == 3111)
+
+    key = NEWLY_ADDED_KEY.format(provider_id=CRITERION_PROVIDER_ID)
+    app.redis.set(
+        key,
+        json.dumps(
+            {
+                "items": [
+                    {
+                        "title": "Gone Later",
+                        "year": 1957,
+                        "tmdb_id": 3111,
+                        "payload_missing": True,
+                        "first_seen": "2026-10-01",
+                        "scraped_title": "Gone Later",
+                        "scraped_year": 1957,
+                    }
+                ]
+            }
+        ),
+    )
+
+    assert refresh_newly_added() is True
+    items = json.loads(app.redis.get(key))["items"]
+    assert [item["tmdb_id"] for item in items] == [None, None]
+    assert not any(item.get("payload_missing") for item in items)
+    assert items[1]["first_seen"] == "2026-10-01"
