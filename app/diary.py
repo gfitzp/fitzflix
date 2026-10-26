@@ -63,6 +63,11 @@ PLEX_WATCH_SECONDS = 2 * 86400
 PLEX_HISTORY_WATCH_KEY = "fitzflix:plex:history-watch:{tmdb_id}:{viewed_at}"
 PLEX_HISTORY_WATCH_SECONDS = 30 * 86400
 
+# The history entries at the second of the poll cursor that a poll has
+# handled (#425).
+
+PLEX_CURSOR_SEEN_KEY = "fitzflix:plex:history-cursor-seen"
+
 # The last Plex account names that the history poll read. A poll whose
 # /accounts call fails uses them. Then the username of the watch is the
 # name that the webhook gives, and the day marker matches.
@@ -648,6 +653,20 @@ def apply_plex_watch(tmdb_id, plex_username, viewed_at, source):
                     UserMovieReview.date_watched >= day_start,
                     UserMovieReview.date_watched < day_start + timedelta(days=1),
                 ).first()
+
+                # A film that runs past midnight is logged on Letterboxd
+                # for the day before. The feed row of that day has a
+                # midnight stamp. A watch before noon is the same viewing
+                # (the mirror of #381). Without this, the diary got 2
+                # rows (#425).
+
+                if existing is None and watched_at.hour < 12:
+                    existing = UserMovieReview.query.filter(
+                        UserMovieReview.user_id == user.id,
+                        UserMovieReview.movie_id == movie.id,
+                        UserMovieReview.letterboxd_guid.isnot(None),
+                        UserMovieReview.date_watched == day_start - timedelta(days=1),
+                    ).first()
                 if existing is None:
                     rewatch = (
                         db.session.query(UserMovieReview.id)
@@ -691,6 +710,15 @@ def apply_plex_watch(tmdb_id, plex_username, viewed_at, source):
 
         else:
             return True
+
+
+def _history_identity(entry):
+    """Return the text that names 1 Plex history entry."""
+
+    key = entry.get("historyKey")
+    if key:
+        return str(key)
+    return f"{entry.get('ratingKey')}:{entry.get('accountID')}:{entry.get('viewedAt')}"
 
 
 def _plex_tmdb_id(entry, failures=None, poll=None):
@@ -790,11 +818,21 @@ def plex_history_poll():
         cursor = int(cursor)
         poll = redis_conn.incr(PLEX_POLL_COUNT_KEY)
 
+        # A second watch can share the second of the cursor, and Plex can
+        # list it only on the next poll. A read after the cursor second
+        # lost it (#425). Thus, the poll reads the cursor second again.
+        # It skips the entries of that second that it handled already.
+
+        seen_at_cursor = {
+            member.decode() if isinstance(member, bytes) else member
+            for member in redis_conn.smembers(PLEX_CURSOR_SEEN_KEY)
+        }
+
         try:
             body = plex_get(
                 "/status/sessions/history/all",
                 {
-                    "viewedAt>": cursor,
+                    "viewedAt>": cursor - 1,
                     "sort": "viewedAt:asc",
                     "X-Plex-Container-Size": "500",
                 },
@@ -835,7 +873,9 @@ def plex_history_poll():
         for entry in entries:
             viewed_at = int(entry.get("viewedAt") or 0)
             newest = max(newest, viewed_at)
-            if entry.get("type") != "movie" or viewed_at <= cursor:
+            if entry.get("type") != "movie" or viewed_at < cursor:
+                continue
+            if viewed_at == cursor and _history_identity(entry) in seen_at_cursor:
                 continue
 
             # A live TV airing also has the type movie (#182). A
@@ -874,7 +914,23 @@ def plex_history_poll():
                 "Plex history poll: a TMDB lookup failed. The next poll reads "
                 "that watch again"
             )
-        redis_conn.set(cursor_key, newest)
+        # The entries of the cursor second that this poll handled go in
+        # the seen set. The next poll reads that second again and skips
+        # only them.
+
+        seen_now = {
+            _history_identity(entry)
+            for entry in entries
+            if int(entry.get("viewedAt") or 0) == newest
+        }
+        if newest == cursor:
+            seen_now |= seen_at_cursor
+        pipeline = redis_conn.pipeline()
+        pipeline.set(cursor_key, newest)
+        pipeline.delete(PLEX_CURSOR_SEEN_KEY)
+        if seen_now:
+            pipeline.sadd(PLEX_CURSOR_SEEN_KEY, *seen_now)
+        pipeline.execute()
         if queued:
             current_app.logger.info(f"Plex history poll: {queued} new watch(es)")
         return True

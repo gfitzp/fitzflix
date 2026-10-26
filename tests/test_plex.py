@@ -851,3 +851,76 @@ def test_a_failed_accounts_call_uses_the_last_names(app, plex_server, monkeypatc
     with app.app_context():
         assert plex_history_poll() is True
     assert [job.args[1] for job in plex_jobs(app)] == ["glenn-plex", "glenn-plex"]
+
+
+def test_a_scrobble_after_midnight_joins_the_letterboxd_row_of_the_day_before(
+    app, mapped_admin
+):
+    """A film that ran past midnight has its Letterboxd row on the day before (#425).
+
+    The feed row has a midnight stamp. A Plex watch before noon of the
+    next day is the same viewing. A watch in the afternoon is a new
+    viewing."""
+
+    from app.videos import star_rating_fields
+
+    with app.app_context():
+        movie = make_movie("Past Midnight", 1982, tmdb_id=4425)
+        db.session.add(
+            UserMovieReview(
+                user_id=mapped_admin,
+                movie_id=movie.id,
+                letterboxd_guid="letterboxd-review-4425",
+                date_watched=datetime(2026, 7, 18),
+                **star_rating_fields(4.0),
+            )
+        )
+        db.session.commit()
+        movie_id = movie.id
+
+        after_midnight = datetime(2026, 7, 19, 0, 10).astimezone().isoformat()
+        assert apply_plex_watch(4425, "glenn-plex", after_midnight, "webhook") is True
+        db.session.expire_all()
+        assert UserMovieReview.query.filter_by(movie_id=movie_id).count() == 1
+
+        afternoon = datetime(2026, 7, 20, 15, 0).astimezone().isoformat()
+        assert apply_plex_watch(4425, "glenn-plex", afternoon, "webhook") is True
+        db.session.expire_all()
+        assert UserMovieReview.query.filter_by(movie_id=movie_id).count() == 2
+
+
+def test_a_watch_in_the_cursor_second_is_not_lost(app, plex_server):
+    """Plex can list a second watch of the cursor second only on the next poll (#425).
+
+    The next poll reads that second again. It queues the new watch and
+    skips the watch that it queued already."""
+
+    cursor = int(time.time()) - 3600
+    app.redis.set("fitzflix:plex:history-cursor", cursor)
+    plex_server.accounts = [{"id": 1, "name": "glenn-plex"}]
+    plex_server.guids = {"11": "tmdb://578", "12": "tmdb://11"}
+    first = {
+        "type": "movie",
+        "viewedAt": cursor + 100,
+        "accountID": 1,
+        "ratingKey": "11",
+        "historyKey": "/status/sessions/history/11",
+    }
+    plex_server.history = [first]
+    with app.app_context():
+        assert plex_history_poll() is True
+
+    plex_server.history = [
+        first,
+        {**first, "ratingKey": "12", "historyKey": "/status/sessions/history/12"},
+    ]
+    with app.app_context():
+        assert plex_history_poll() is True
+
+    assert [job.args[0] for job in plex_jobs(app)] == [578, 11]
+    assert int(app.redis.get("fitzflix:plex:history-cursor")) == cursor + 100
+
+    # A third poll with no new entry queues nothing.
+    with app.app_context():
+        assert plex_history_poll() is True
+    assert len(plex_jobs(app)) == 2
