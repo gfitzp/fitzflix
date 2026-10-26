@@ -2128,17 +2128,30 @@ def move_localized_file(
             )
 
         else:
-            enqueue_task(
-                "app.videos.finalize_localization",
-                source_path,
-                file_details,
-                lock,
-                destination_hidden,
-                inspection,
-                staged_output=staged_output,
-                vanished_retries=vanished_retries,
-                description=f"'{basename}'",
-            )
+            # A failed enqueue must not keep the title lock for its full
+            # TTL, or leave the copies behind (#437). The source stays in
+            # the import directory for the hourly sweep.
+            try:
+                enqueue_task(
+                    "app.videos.finalize_localization",
+                    source_path,
+                    file_details,
+                    lock,
+                    destination_hidden,
+                    inspection,
+                    staged_output=staged_output,
+                    vanished_retries=vanished_retries,
+                    description=f"'{basename}'",
+                )
+            except Exception:
+                _remove_staged_output(destination_hidden)
+                abandon_handoff(
+                    source_path,
+                    lock,
+                    hidden_output_file,
+                    pending_archive=pending_archive_of(file_details),
+                )
+                return False
 
         return True
 
@@ -2263,21 +2276,32 @@ def finalize_localization(
 
         dead = _dead_volumes([output_directory, os.path.dirname(file_path)])
         if dead:
-            requeue(
-                "app.videos.finalize_localization",
-                key=file_path,
-                delay=timedelta(minutes=5),
-                reason=f"Volumes unavailable ({', '.join(dead)}) for the cataloging",
-                # The Sonarr wait count goes with the retry. Otherwise each
-                # volume drop starts the limit of the waits again (#402).
-                counters={
-                    "vanished_retries": vanished_retries,
-                    "sonarr_waits": sonarr_waits,
-                },
-                args=(file_path, file_details, lock, hidden_output_file),
-                kwargs={"inspection": inspection, "staged_output": staged_output},
-                description=f"'{file_details.get('basename')}'",
-            )
+            try:
+                requeue(
+                    "app.videos.finalize_localization",
+                    key=file_path,
+                    delay=timedelta(minutes=5),
+                    reason=f"Volumes unavailable ({', '.join(dead)}) for the cataloging",
+                    # The Sonarr wait count goes with the retry. Otherwise each
+                    # volume drop starts the limit of the waits again (#402).
+                    counters={
+                        "vanished_retries": vanished_retries,
+                        "sonarr_waits": sonarr_waits,
+                    },
+                    args=(file_path, file_details, lock, hidden_output_file),
+                    kwargs={"inspection": inspection, "staged_output": staged_output},
+                    description=f"'{file_details.get('basename')}'",
+                )
+            except Exception:
+                # The retry could not be booked (#437). The source stays
+                # for the hourly sweep, and the lock and the copies go.
+                _remove_staged_output(hidden_output_file)
+                abandon_handoff(
+                    file_path,
+                    lock,
+                    staged_output,
+                    pending_archive=pending_archive_of(file_details),
+                )
             return False
 
         # A failure before the commit must not leave the new file in the
@@ -3258,11 +3282,56 @@ def manual_import_task():
 
                             current_app.lock_manager.unlock(lock)
 
+            _retry_failed_in_place_imports()
+
         except Exception:
             current_app.logger.error(traceback.format_exc())
 
         else:
             return True
+
+
+# The retries of the failed in-place localization of 1 path, for 7 days.
+
+IN_PLACE_RETRIES_KEY = "fitzflix:in-place-import-retries"
+MAX_IN_PLACE_RETRIES = 3
+
+
+def _retry_failed_in_place_imports():
+    """Queue again the failed localizations of the files outside the import directory (#437).
+
+    A Sonarr or Radarr import reads the file at its library path. A kill
+    or a timeout of its localization leaves the file in the library with
+    no record, and the arr event does not come again. The scan of the
+    import directory above never sees such a file. A path gets at most
+    MAX_IN_PLACE_RETRIES retries."""
+
+    from rq.registry import FailedJobRegistry
+
+    queue = current_app.import_queue
+    import_dir = os.path.abspath(current_app.config["IMPORT_DIR"])
+    redis = current_app.redis
+    for job in Job.fetch_many(
+        FailedJobRegistry(queue=queue).get_job_ids(), connection=redis
+    ):
+        if job is None or job.func_name != "app.videos.localization_task":
+            continue
+        path = job.args[0] if job.args else job.kwargs.get("file_path")
+        if not path or os.path.abspath(os.path.dirname(path)) == import_dir:
+            continue
+        if not os.path.isfile(path) or already_cataloged(path):
+            continue
+        if localization_pending(queue, path):
+            continue
+        tries = redis.hincrby(IN_PLACE_RETRIES_KEY, path, 1)
+        redis.expire(IN_PLACE_RETRIES_KEY, 7 * 86400)
+        if tries > MAX_IN_PLACE_RETRIES:
+            continue
+        if enqueue_localization(path, quiet=True):
+            current_app.logger.warning(
+                f"'{path}' Its in-place localization failed. It is queued again "
+                f"(retry {tries} of {MAX_IN_PLACE_RETRIES})"
+            )
 
 
 # Plex external-id tags (#155). A movie name or a show-folder name can
