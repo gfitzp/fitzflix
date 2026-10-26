@@ -211,6 +211,49 @@ def test_refresh_plants_first_then_stamps_and_prunes(app, monkeypatch):
     assert json.loads(app.redis.get(key))["items"] == stored["items"]
 
 
+def test_a_match_without_a_payload_keeps_its_tmdb_id(app, monkeypatch):
+    """A TMDB timeout must not drop the matched id from the store (#386).
+
+    The fold, the DVR and the shelves read the id. The next run gets the
+    payload and does not count the film as new again."""
+
+    import app.newly_added as newly_added
+
+    scraped = [{"title": "The Searchers", "director": "John Ford", "year": 1956}]
+    payloads = {}
+    monkeypatch.setattr(newly_added, "fetch_collection_films", lambda url: scraped)
+    monkeypatch.setattr(newly_added, "match_tmdb_id", lambda *args: 3110)
+    monkeypatch.setattr(newly_added, "enriched_movie", lambda i: payloads.get(i))
+
+    from app.leaving_criterion import CRITERION_PROVIDER_ID
+    from app.newly_added import NEWLY_ADDED_KEY, newly_added_since, refresh_newly_added
+
+    from app import db
+
+    key = NEWLY_ADDED_KEY.format(provider_id=CRITERION_PROVIDER_ID)
+    app.redis.set(key, json.dumps({"items": []}))
+    with app.app_context():
+        make_movie_file(make_movie("The Searchers", 1956, tmdb_id=3110), "DVD")
+        db.session.commit()
+
+    assert refresh_newly_added() is True
+    (item,) = json.loads(app.redis.get(key))["items"]
+    assert item["tmdb_id"] == 3110
+    assert item["first_seen"] == date.today().isoformat()
+    with app.app_context():
+        assert newly_added_since(3110, CRITERION_PROVIDER_ID) is not None
+    assert len(dvr_rebuild_jobs(app)) == 1
+
+    payloads[3110] = shelf_item(3110, "The Searchers")
+    assert refresh_newly_added() is True
+    (item,) = json.loads(app.redis.get(key))["items"]
+    assert item["tmdb_id"] == 3110
+    assert not item.get("payload_missing")
+    assert item["title"] == "The Searchers"
+    assert item["first_seen"] == date.today().isoformat()
+    assert len(dvr_rebuild_jobs(app)) == 1
+
+
 def test_shelf_surfaces_recent_arrivals_and_excludes(app, admin_client):
     from app import db
     from app.models import UserMovieReview, UserWatchlist

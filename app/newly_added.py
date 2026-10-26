@@ -106,6 +106,29 @@ def refresh_newly_added():
         return True
 
 
+def _stored_entry(film, tmdb_id, payload, first_seen):
+    """Return the stored entry of one scraped film.
+
+    A matched film keeps its TMDB id when its payload is not available
+    (#386). A TMDB timeout or a cached 404 gives no payload. The fold,
+    the DVR and the shelves read the id. The entry then has the scraped
+    fields and the payload_missing flag. The next run tries the payload
+    again."""
+
+    if payload:
+        base = {**payload, "tmdb_id": tmdb_id}
+    elif tmdb_id is not None:
+        base = {**film, "tmdb_id": tmdb_id, "payload_missing": True}
+    else:
+        base = {**film, "tmdb_id": None}
+    return {
+        **base,
+        "first_seen": first_seen,
+        "scraped_title": film["title"],
+        "scraped_year": film["year"],
+    }
+
+
 def _refresh_feed(provider_id, feed):
     """Scrape, diff, and store the feed of one provider."""
 
@@ -134,7 +157,14 @@ def _refresh_feed(provider_id, feed):
             # The stored payload of a matched film goes with it unchanged.
             # Only a film that is new to the page costs a lookup. A film
             # that is still unmatched also costs a lookup, but the 60-day
-            # match cache absorbs the retry.
+            # match cache absorbs the retry. A matched film with no
+            # payload yet tries the payload again (#386).
+            if prior.get("payload_missing"):
+                payload = enriched_movie(prior["tmdb_id"])
+                if payload:
+                    prior = _stored_entry(
+                        film, prior["tmdb_id"], payload, prior.get("first_seen")
+                    )
             items.append(prior)
             continue
         if prior is not None:
@@ -145,20 +175,12 @@ def _refresh_feed(provider_id, feed):
                 fresh += 1
         tmdb_id = match_tmdb_id(film["title"], film["year"], film["director"])
         payload = enriched_movie(tmdb_id) if tmdb_id is not None else None
-        base = {**payload, "tmdb_id": tmdb_id} if payload else {**film, "tmdb_id": None}
         if previous is not None and tmdb_id is not None:
             # The film is new to the page, or it was on the page but
             # unmatched until this run. In both cases, the film counts
             # as streaming here only from now.
             arrived.append(tmdb_id)
-        items.append(
-            {
-                **base,
-                "first_seen": first_seen,
-                "scraped_title": film["title"],
-                "scraped_year": film["year"],
-            }
-        )
+        items.append(_stored_entry(film, tmdb_id, payload, first_seen))
 
     current_app.redis.set(
         key,
