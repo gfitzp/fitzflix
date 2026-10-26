@@ -180,10 +180,11 @@ def _find_merge_target(user_id, movie_id, watched_date):
     row for the same film on the SAME calendar day, with any content.
     This is the CSV-imported twin of this entry. The sync must adopt it,
     not duplicate it. The importer matches per film and day for the
-    same reason. Second: a BARE row (no rating, no text) within 1 day in
-    either direction. This is the Plex scrobble whose clock crossed the
-    Letterboxd calendar date near midnight. An item without a date
-    matches only a row without a date."""
+    same reason. Second: a BARE row (no rating, no text) on the next day
+    before noon, or on the day before at noon or later. This is the Plex
+    scrobble whose clock crossed the Letterboxd calendar date near
+    midnight. An item without a date matches only a row without a
+    date."""
 
     base = UserMovieReview.query.filter_by(
         user_id=user_id, movie_id=movie_id, letterboxd_guid=None
@@ -198,12 +199,29 @@ def _find_merge_target(user_id, movie_id, watched_date):
     if exact is not None:
         return exact
 
-    return base.filter(
+    # The second tier follows the clock rule of the CSV twin finder
+    # (#381). A row on the next day counts only before noon. A row on
+    # the day before counts only at noon or later. A midnight stamp on
+    # the next day is a CSV row with the UTC drift, and it counts. The
+    # nearest row to the Letterboxd day wins.
+
+    day_start = datetime.combine(watched_date.date(), datetime.min.time())
+    day_end = day_start + timedelta(days=1)
+    candidates = []
+    for row in base.filter(
         UserMovieReview.rating.is_(None),
         db.or_(UserMovieReview.review.is_(None), UserMovieReview.review == ""),
-        UserMovieReview.date_watched >= watched_date - timedelta(days=1),
-        UserMovieReview.date_watched < watched_date + timedelta(days=2),
-    ).first()
+        UserMovieReview.date_watched >= day_start - timedelta(days=1),
+        UserMovieReview.date_watched < day_end + timedelta(days=1),
+    ):
+        stamp = row.date_watched
+        if day_end <= stamp and stamp.hour < 12:
+            candidates.append((stamp - day_end, row.id, row))
+        elif stamp < day_start and stamp.hour >= 12:
+            candidates.append((day_start - stamp, row.id, row))
+    if not candidates:
+        return None
+    return min(candidates, key=lambda item: item[:2])[2]
 
 
 def _apply_entry_fields(row, entry, owned=False):

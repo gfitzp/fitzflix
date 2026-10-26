@@ -529,3 +529,48 @@ def test_the_letterboxd_username_never_leaks_into_the_next_test(app):
     with app.app_context():
         db.session.expire_all()
         assert {user.letterboxd_username for user in User.query.all()} == {None}
+
+
+def test_the_feed_claims_no_bare_row_of_the_wrong_day(app, monkeypatch):
+    """A bare Plex row on Tuesday at 15:00 is not the twin of a Monday entry (#418).
+
+    The merge follows the clock rule of the CSV twin finder (#381). A
+    row on the next day counts only before noon. The Monday viewing gets
+    its own row. The nearest qualifying row wins."""
+
+    with app.app_context():
+        user = User.query.first()
+        user.letterboxd_username = "test"
+        movie = make_movie("Two Days", 2001, tmdb_id=880418)
+        afternoon = UserMovieReview(
+            user_id=user.id, movie_id=movie.id, date_watched=datetime(2026, 7, 21, 15)
+        )
+        late = UserMovieReview(
+            user_id=user.id, movie_id=movie.id, date_watched=datetime(2026, 7, 19, 13)
+        )
+        later = UserMovieReview(
+            user_id=user.id, movie_id=movie.id, date_watched=datetime(2026, 7, 19, 22)
+        )
+        db.session.add_all([afternoon, late, later])
+        db.session.commit()
+        afternoon_id, later_id, movie_id = afternoon.id, later.id, movie.id
+
+        xml = build_feed(
+            feed_item(
+                "letterboxd-review-418",
+                880418,
+                title="Two Days",
+                year=2001,
+                watched="2026-07-20",
+                rating="4",
+            )
+        )
+        run_sync(app, xml, monkeypatch)
+        db.session.expire_all()
+
+        claimed = UserMovieReview.query.filter_by(
+            letterboxd_guid="letterboxd-review-418"
+        ).one()
+        assert claimed.id == later_id
+        assert db.session.get(UserMovieReview, afternoon_id).letterboxd_guid is None
+        assert UserMovieReview.query.filter_by(movie_id=movie_id).count() == 3
