@@ -703,18 +703,44 @@ def apply_row_edit(row, quick_rating, review_text, watched_date, posted):
                 row.date_reviewed = datetime.now()
 
     # A star change is a new verdict, as on the movie page. Thus, it
-    # completes the watchlist entry, removes a stray not-interested
-    # flag, and queues the profile recompute. Without the recompute,
-    # the old stars stay in each estimate until the nightly run.
+    # queues the profile recompute. Without the recompute, the old stars
+    # stay in each estimate until the nightly run. An edit of the latest
+    # viewing also removes a stray not-interested flag, and it completes
+    # a watchlist entry from before that viewing. An edit of an older
+    # viewing, or an entry added after the viewing, is a wish to watch
+    # the film again. That entry stays.
 
-    if quick_rating is not None:
-        clear_watchlist(row.user_id, row.movie_id)
+    if quick_rating is not None and _is_latest_viewing(row):
         clear_not_interested(row.user_id, row.movie_id)
+        if row.date_watched is not None:
+            UserWatchlist.query.filter(
+                UserWatchlist.user_id == row.user_id,
+                UserWatchlist.movie_id == row.movie_id,
+                UserWatchlist.date_added <= row.date_watched,
+            ).delete()
     if changed:
         row.date_updated = datetime.now()
     db.session.commit()
     if quick_rating is not None:
         _enqueue_profile_recompute()
+
+
+def _is_latest_viewing(row):
+    """Return True if no other diary row of the film has a later watch date.
+
+    A row without a date is the latest only if the film has no dated
+    row."""
+
+    later = UserMovieReview.query.filter(
+        UserMovieReview.user_id == row.user_id,
+        UserMovieReview.movie_id == row.movie_id,
+        UserMovieReview.id != row.id,
+    )
+    if row.date_watched is None:
+        later = later.filter(UserMovieReview.date_watched.isnot(None))
+    else:
+        later = later.filter(UserMovieReview.date_watched > row.date_watched)
+    return later.first() is None
 
 
 def _watched_timestamp(watched_date):

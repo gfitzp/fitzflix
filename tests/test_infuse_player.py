@@ -860,3 +860,28 @@ def test_pair_task_reports_an_apple_tv_that_never_answers(app, monkeypatch):
     state = app.redis.get(f"fitzflix:infuse-pair:{user_id}:state").decode()
     assert state.startswith("error:Could not reach the Apple TV")
     assert "close" in log
+
+
+def test_a_pair_call_past_the_timeout_is_closed(app, monkeypatch):
+    """A pair call that answers after CONNECT_TIMEOUT has its handler closed (follow-up #412).
+
+    The page still gets the "Could not reach the Apple TV" error."""
+
+    import app.infuse_player as infuse_player
+
+    user_id = _member_id(app)
+    log = []
+
+    async def slow_pair(device, protocol, loop):
+        await asyncio.sleep(0.1)
+        return FakePairing(log)
+
+    monkeypatch.setattr(infuse_player, "CONNECT_TIMEOUT", 0.02)
+    monkeypatch.setattr(infuse_player, "LATE_PAIR_GRACE_SECONDS", 1)
+    monkeypatch.setattr(infuse_player.pyatv, "pair", slow_pair)
+    with app.app_context():
+        asyncio.run(infuse_player._pair(app, user_id, "192.168.1.63:49153"))
+
+    state = app.redis.get(f"fitzflix:infuse-pair:{user_id}:state").decode()
+    assert state.startswith("error:Could not reach the Apple TV")
+    assert log == ["close"]

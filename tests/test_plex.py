@@ -924,3 +924,52 @@ def test_a_watch_in_the_cursor_second_is_not_lost(app, plex_server):
     with app.app_context():
         assert plex_history_poll() is True
     assert len(plex_jobs(app)) == 2
+
+
+def test_a_failed_lookup_in_the_cursor_second_queues_no_repeats(
+    app, plex_server, monkeypatch
+):
+    """A failed lookup in the cursor second holds the cursor there (follow-up #425).
+
+    The cursor never goes back, and the seen set keeps the handled
+    entries. Thus, the next polls read only the failed entry again."""
+
+    from app import plex_api
+
+    cursor = int(time.time()) - 3600
+    app.redis.set("fitzflix:plex:history-cursor", cursor)
+    handled = {
+        "type": "movie",
+        "viewedAt": cursor,
+        "accountID": 1,
+        "ratingKey": "21",
+        "historyKey": "/status/sessions/history/21",
+    }
+    failing = {
+        **handled,
+        "ratingKey": "22",
+        "historyKey": "/status/sessions/history/22",
+    }
+    plex_server.history = [handled, failing]
+    plex_server.accounts = [{"id": 1, "name": "glenn-plex"}]
+    plex_server.guids = {"21": "tmdb://578", "22": "tmdb://11"}
+    real_get = plex_server.get
+    state = {"down": True}
+
+    def flaky_get(url, *args, **kwargs):
+        if state["down"] and url.endswith("/library/metadata/22"):
+            raise TimeoutError("Plex is busy")
+        return real_get(url, *args, **kwargs)
+
+    monkeypatch.setattr(plex_api.requests, "get", flaky_get)
+    for _ in range(3):
+        with app.app_context():
+            assert plex_history_poll() is True
+        assert int(app.redis.get("fitzflix:plex:history-cursor")) == cursor
+    assert [job.args[0] for job in plex_jobs(app)] == [578]
+
+    state["down"] = False
+    for _ in range(2):
+        with app.app_context():
+            assert plex_history_poll() is True
+    assert [job.args[0] for job in plex_jobs(app)] == [578, 11]

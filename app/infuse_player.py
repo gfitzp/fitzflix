@@ -282,6 +282,32 @@ def pair_task(user_id, address, attempt=None):
         asyncio.run(_pair(app, user_id, address, attempt))
 
 
+# A pair call that misses CONNECT_TIMEOUT gets this many more seconds to
+# hand back its handler. The handler is then closed. Without this, a
+# cancelled pair call could leave its session open.
+
+LATE_PAIR_GRACE_SECONDS = 5
+
+
+async def _bounded_pair(config, loop):
+    """Return the pairing handler of pyatv.pair, with CONNECT_TIMEOUT as the limit.
+
+    On a timeout, a handler that arrives in the grace period is closed,
+    and the TimeoutError goes up."""
+
+    task = asyncio.ensure_future(pyatv.pair(config, Protocol.Companion, loop))
+    try:
+        return await asyncio.wait_for(asyncio.shield(task), timeout=CONNECT_TIMEOUT)
+    except TimeoutError:
+        try:
+            late = await asyncio.wait_for(task, timeout=LATE_PAIR_GRACE_SECONDS)
+        except BaseException:
+            pass
+        else:
+            await late.close()
+        raise
+
+
 async def _pair(app, user_id, address, attempt=None):
     """Run the body of pair_task.
 
@@ -317,10 +343,7 @@ async def _pair(app, user_id, address, attempt=None):
         # timeout skips the report below, and the Profile page refused a
         # retry for PAIR_TTL. The same limit as play_movie applies here.
 
-        pairing = await asyncio.wait_for(
-            pyatv.pair(_device_config(address), Protocol.Companion, loop),
-            timeout=CONNECT_TIMEOUT,
-        )
+        pairing = await _bounded_pair(_device_config(address), loop)
         await asyncio.wait_for(pairing.begin(), timeout=CONNECT_TIMEOUT)
         report("show-pin")
 

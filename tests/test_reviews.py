@@ -2332,7 +2332,11 @@ def test_a_star_edit_on_history_queues_the_profile_recompute(app, admin_client):
             **star_rating_fields(5.0),
         )
         db.session.add(row)
-        db.session.add(UserWatchlist(user_id=user_id, movie_id=movie.id))
+        db.session.add(
+            UserWatchlist(
+                user_id=user_id, movie_id=movie.id, date_added=datetime(2023, 6, 1)
+            )
+        )
         db.session.commit()
         row_id, movie_id = row.id, movie.id
 
@@ -2428,3 +2432,66 @@ def test_the_legacy_ratings_import_is_idempotent(app):
             ).count()
             == 1
         )
+
+
+def test_a_star_edit_of_an_old_viewing_keeps_a_rewatch_entry(app, admin_client):
+    """Test that a star edit keeps a watchlist entry for a rewatch (follow-up #416).
+
+    The entry stays when the edited row is not the latest viewing, and
+    when the user added the entry after the viewing. The recompute is
+    still queued."""
+
+    from app import db
+    from app.models import User, UserMovieReview, UserWatchlist
+    from app.videos import star_rating_fields
+
+    with app.app_context():
+        user_id = User.query.first().id
+        old_film = make_movie("Rewatch Old Row Film", 1980)
+        older = UserMovieReview(
+            user_id=user_id,
+            movie_id=old_film.id,
+            date_watched=datetime(2019, 3, 1),
+            **star_rating_fields(3.0),
+        )
+        newer = UserMovieReview(
+            user_id=user_id,
+            movie_id=old_film.id,
+            date_watched=datetime(2022, 3, 1),
+            **star_rating_fields(3.0),
+        )
+        wish_film = make_movie("Rewatch Wish Film", 1981)
+        only = UserMovieReview(
+            user_id=user_id,
+            movie_id=wish_film.id,
+            date_watched=datetime(2019, 3, 1),
+            **star_rating_fields(3.0),
+        )
+        db.session.add_all([older, newer, only])
+        db.session.add_all(
+            [
+                UserWatchlist(
+                    user_id=user_id,
+                    movie_id=old_film.id,
+                    date_added=datetime(2018, 1, 1),
+                ),
+                UserWatchlist(user_id=user_id, movie_id=wish_film.id),
+            ]
+        )
+        db.session.commit()
+        older_id, only_id = older.id, only.id
+        film_ids = (old_film.id, wish_film.id)
+
+    for row_id in (older_id, only_id):
+        page = admin_client.get(f"/review/{row_id}/edit").get_data(as_text=True)
+        response = admin_client.post(
+            f"/review/{row_id}/edit",
+            data={"csrf_token": csrf_token_from(page), "quick_rating": "4"},
+            headers={"X-Requested-With": "ladder"},
+        )
+        assert response.status_code == 200
+
+    with app.app_context():
+        assert float(db.session.get(UserMovieReview, older_id).rating) == 4.0
+        for movie_id in film_ids:
+            assert UserWatchlist.query.filter_by(movie_id=movie_id).count() == 1

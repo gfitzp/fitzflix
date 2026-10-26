@@ -869,6 +869,7 @@ def plex_history_poll():
 
         newest = cursor
         failed_at = None
+        failed_ids = set()
         queued = 0
         for entry in entries:
             viewed_at = int(entry.get("viewedAt") or 0)
@@ -886,6 +887,7 @@ def plex_history_poll():
             failures = []
             tmdb_id = _plex_tmdb_id(entry, failures, poll=poll)
             if failures:
+                failed_ids.add(_history_identity(entry))
                 failed_at = (
                     viewed_at if failed_at is None else min(failed_at, viewed_at)
                 )
@@ -908,8 +910,12 @@ def plex_history_poll():
             )
             queued += 1
 
+        # The cursor never goes back. A failed lookup in the cursor second
+        # holds the cursor there, and the entry stays out of the seen set.
+        # The next poll then reads only that entry again.
+
         if failed_at is not None:
-            newest = min(newest, failed_at - 1)
+            newest = max(cursor, min(newest, failed_at - 1))
             current_app.logger.info(
                 "Plex history poll: a TMDB lookup failed. The next poll reads "
                 "that watch again"
@@ -922,8 +928,8 @@ def plex_history_poll():
             _history_identity(entry)
             for entry in entries
             if int(entry.get("viewedAt") or 0) == newest
-        }
-        if newest == cursor:
+        } - failed_ids
+        if newest <= cursor:
             seen_now |= seen_at_cursor
         pipeline = redis_conn.pipeline()
         pipeline.set(cursor_key, newest)

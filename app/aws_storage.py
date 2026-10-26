@@ -2195,24 +2195,26 @@ NON_RETRYABLE_DOWNLOAD_ERRORS = (
 DOWNLOAD_RETRY_SLEEP = time.sleep
 
 
-def _spend_download_retry(retry, basename=None, detail=None):
+def _spend_download_retry(retry, basename, detail=None):
     """Spend 1 in-place download retry, and wait before the next attempt.
 
-    The wait grows exponentially (1s, 2s, 4s, ...) with a cap at 60s.
-    With a basename, this writes a WARNING with the attempt count. A
+    Return (retry, fault). fault is the text of the fault, for the
+    give-up message. The wait grows exponentially (1s, 2s, 4s, ...)
+    with a cap at 60s. This writes a WARNING with the attempt count. A
     retried fault is a transient. Only the give-up path of the loop
     writes an ERROR, which sends the failure mail."""
 
-    if basename is not None:
-        attempt = MAX_DOWNLOAD_RETRIES - retry + 1
-        current_app.logger.warning(
-            f"'{basename}' download attempt {attempt} of {MAX_DOWNLOAD_RETRIES} "
-            f"failed, retrying: {detail if detail is not None else traceback.format_exc()}"
-        )
+    fault = str(detail) if detail is not None else traceback.format_exc().strip()
+    attempt = MAX_DOWNLOAD_RETRIES - retry + 1
     retry -= 1
+    outcome = "retrying" if retry > 0 else "no retries left"
+    current_app.logger.warning(
+        f"'{basename}' download attempt {attempt} of {MAX_DOWNLOAD_RETRIES} "
+        f"failed, {outcome}: {fault}"
+    )
     if retry > 0:
         DOWNLOAD_RETRY_SLEEP(min(2 ** (MAX_DOWNLOAD_RETRIES - 1 - retry), 60))
-    return retry
+    return retry, fault
 
 
 # CloudFront answers with these codes for a fault that a later attempt can
@@ -2648,6 +2650,10 @@ def aws_download(key, basename, sqs_receipt_handle=None, place_at=None):
     s3_client = aws_s3_client()
     sqs_client = aws_sqs_client()
 
+    # The give-up ERROR names the last fault. The failure mail then says
+    # why, not only which file.
+
+    last_fault = None
     while retry > 0:
         try:
             progress = DownloadProgressPercentage(s3_client, bucket, key, basename)
@@ -2681,7 +2687,7 @@ def aws_download(key, basename, sqs_receipt_handle=None, place_at=None):
                     # A failed status check spends a retry, as each other
                     # error does. It does not exit the loop.
 
-                    retry = _spend_download_retry(retry, basename)
+                    retry, last_fault = _spend_download_retry(retry, basename)
                     continue
                 _discard_partial(destination)
                 return _defer_to_restore(
@@ -2697,7 +2703,7 @@ def aws_download(key, basename, sqs_receipt_handle=None, place_at=None):
                 retry = 0
 
             else:
-                retry = _spend_download_retry(retry, basename)
+                retry, last_fault = _spend_download_retry(retry, basename)
 
         except CdnDownloadError as error:
             if error.status_code == 404:
@@ -2729,10 +2735,10 @@ def aws_download(key, basename, sqs_receipt_handle=None, place_at=None):
                         return _resolve_missing_object(
                             sqs_client, basename, sqs_receipt_handle
                         )
-                    retry = _spend_download_retry(retry, basename)
+                    retry, last_fault = _spend_download_retry(retry, basename)
                     continue
                 except Exception:
-                    retry = _spend_download_retry(retry, basename)
+                    retry, last_fault = _spend_download_retry(retry, basename)
                     continue
                 if _object_is_readable(head_response):
                     _discard_partial(destination)
@@ -2746,7 +2752,7 @@ def aws_download(key, basename, sqs_receipt_handle=None, place_at=None):
                     )
 
             elif error.status_code in RETRYABLE_CDN_STATUS_CODES:
-                retry = _spend_download_retry(retry, basename, error)
+                retry, last_fault = _spend_download_retry(retry, basename, error)
 
             else:
                 current_app.logger.error(f"'{basename}' {error}; giving up")
@@ -2756,7 +2762,7 @@ def aws_download(key, basename, sqs_receipt_handle=None, place_at=None):
             # A transport fault (connection, timeout, a broken body) spends
             # a retry. The next attempt signs a new URL.
 
-            retry = _spend_download_retry(retry, basename)
+            retry, last_fault = _spend_download_retry(retry, basename)
 
         except OSError as e:
             if e.errno in TRANSIENT_COPY_ERRNOS:
@@ -2770,10 +2776,10 @@ def aws_download(key, basename, sqs_receipt_handle=None, place_at=None):
                 except OSError:
                     pass
                 raise
-            retry = _spend_download_retry(retry, basename)
+            retry, last_fault = _spend_download_retry(retry, basename)
 
         except Exception:
-            retry = _spend_download_retry(retry, basename)
+            retry, last_fault = _spend_download_retry(retry, basename)
 
         else:
             current_app.logger.info(f"'{basename}' downloaded from {source}")
@@ -2794,6 +2800,7 @@ def aws_download(key, basename, sqs_receipt_handle=None, place_at=None):
 
     current_app.logger.error(
         f"'{basename}' could not be downloaded from {source}; giving up"
+        + (f". Last fault: {last_fault}" if last_fault else "")
     )
 
     _discard_partial(destination)

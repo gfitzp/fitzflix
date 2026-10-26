@@ -37,7 +37,6 @@ import traceback
 
 from flask import current_app, g
 from pathvalidate import sanitize_filename
-from unidecode import unidecode
 from werkzeug.local import LocalProxy
 
 from app.tasks import enqueue_task
@@ -96,10 +95,12 @@ def _folder_title(title):
 def _filesystem_safe(title):
     """Return True if a title is a folder name as the rename task writes it.
 
-    A title with accented letters or with characters that a filesystem
-    refuses is not safe. The rename task refuses it."""
+    A title with characters that a filesystem refuses is not safe. The
+    rename task refuses it. Accented letters are safe. The TV import
+    keeps them in the show folder and the episode names, for example
+    "Les Misérables (2018)" (#408)."""
 
-    return sanitize_filename(unidecode(title)) == title
+    return sanitize_filename(title) == title
 
 
 def _renamed_folder(part, old_folder, new_folder):

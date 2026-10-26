@@ -45,6 +45,39 @@ def case_blind_titles(app):
         event.remove(engine, "before_cursor_execute", rewrite)
 
 
+@contextlib.contextmanager
+def accent_blind_titles(app):
+    """Compare tv_series.title without case and accents, as general_ci does."""
+
+    import unicodedata
+
+    def fold(value):
+        text = unicodedata.normalize("NFKD", value or "")
+        return "".join(c for c in text if not unicodedata.combining(c)).lower()
+
+    def collate(first, second):
+        first, second = fold(first), fold(second)
+        return (first > second) - (first < second)
+
+    def rewrite(conn, cursor, statement, parameters, context, executemany):
+        if "tv_series.title = ?" not in statement:
+            return statement, parameters
+        cursor.connection.create_collation("GENERAL_CI", collate)
+        return (
+            statement.replace(
+                "tv_series.title = ?", "tv_series.title = ? COLLATE GENERAL_CI"
+            ),
+            parameters,
+        )
+
+    engine = db.engine
+    event.listen(engine, "before_cursor_execute", rewrite, retval=True)
+    try:
+        yield
+    finally:
+        event.remove(engine, "before_cursor_execute", rewrite)
+
+
 def test_rename_moves_files_and_rewrites_rows(app):
     with app.app_context():
         series = make_tv_series("Batman", tmdb_id=2287)
@@ -144,24 +177,28 @@ def test_a_case_only_rename_is_not_a_collision_with_itself(app):
 
 
 def test_an_accent_only_rename_moves_the_files(app):
-    """Rename an accented title to its plain form (#408).
+    """Rename a plain title to its accented form (#408).
 
-    A rename never writes accented letters. The reverse direction is
-    the accent-only rename that the task can do."""
+    The TV import keeps accents in the show folder. The title column
+    compares without accents, so the check must not find the series
+    itself."""
 
     with app.app_context():
-        series = make_tv_series("Les Misérables", tmdb_id=2317)
+        series = make_tv_series("Les Miserables (2018)", tmdb_id=2317)
         file = make_tv_file(series, 1, 1, "Bluray-1080p")
         db.session.commit()
         _materialize(app, file)
         series_id, file_id = series.id, file.id
 
-        with case_blind_titles(app):
-            assert rename_tv_series_task(series_id, "Les Miserables") is True
+        with accent_blind_titles(app):
+            assert rename_tv_series_task(series_id, "Les Misérables (2018)") is True
 
         db.session.expire_all()
-        assert db.session.get(type(series), series_id).title == "Les Miserables"
-        assert db.session.get(File, file_id).basename.startswith("Les Miserables")
+        row = db.session.get(File, file_id)
+        assert db.session.get(type(series), series_id).title == "Les Misérables (2018)"
+        assert row.basename.startswith("Les Misérables (2018) - S01E01")
+        assert row.dirname == "TV Shows/Les Misérables (2018)/Season 01"
+        assert os.path.isfile(os.path.join(app.config["LIBRARY_DIR"], row.file_path))
 
 
 def test_rename_keeps_the_id_tag_of_the_folder(app, monkeypatch):

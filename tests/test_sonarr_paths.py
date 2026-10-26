@@ -230,17 +230,18 @@ def test_the_tmdb_id_matches_a_series_without_a_tvdb_id(app, sonarr):
 def test_a_sonarr_folder_that_the_rename_cannot_give_is_a_conflict(app, sonarr, caplog):
     """The folder goes through the checks of the rename task first.
 
-    An accented folder is not safe for the task. A folder with no file at
-    its new path would leave the rows at a folder with no files."""
+    A folder with a character that a filesystem refuses is not safe for
+    the task. A folder with no file at its new path would leave the rows
+    at a folder with no files."""
 
     from app.series_rename import reconcile_sonarr_paths
 
     with app.app_context():
         batman(app, on_disk=False)
-    tv_folder(app, "Batmán (1966)")
+    tv_folder(app, "Batman? (1966)")
     tv_folder(app, "Batman (1967)")
     sonarr(
-        sonarr_series("Batmán (1966)"),
+        sonarr_series("Batman? (1966)"),
         sonarr_series("Batman (1967)", series_id=6, tvdb_id=TVDB),
     )
 
@@ -1090,3 +1091,31 @@ def test_a_case_only_sonarr_folder_gives_the_new_title(app):
 
         with case_blind_titles(app):
             assert _rename_title(series, "The office", "The Office") == "The Office"
+
+
+def test_an_accented_sonarr_folder_gives_the_new_title(app):
+    """A Sonarr folder that adds only an accent gives a rename (#408).
+
+    The TV library keeps accents in show folders. The check must not
+    call the folder unsafe, and the free-title check must not find the
+    series itself."""
+
+    from app import db
+    from app.series_rename import _rename_title
+    from tests.test_series_rename import accent_blind_titles
+
+    with app.app_context():
+        series = make_tv_series("Les Miserables (2018)", tvdb_id=356319)
+        make_tv_file(series, 1, 1, "Bluray-1080p")
+        db.session.commit()
+        place(
+            app,
+            "TV Shows/Les Misérables (2018)/Season 01/"
+            "Les Misérables (2018) - S01E01 - [Bluray-1080p].mkv",
+        )
+
+        with accent_blind_titles(app):
+            title = _rename_title(
+                series, "Les Miserables (2018)", "Les Misérables (2018)"
+            )
+        assert title == "Les Misérables (2018)"

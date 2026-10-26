@@ -165,6 +165,9 @@ def remux_file(file_path, build_command, job, name, activity):
         release_staging_reservation(reservation)
 
 
+STOP_PROCESS_WAIT_SECONDS = 60
+
+
 def stop_process(process):
     """Kill a child process that still runs, and wait for it to end.
 
@@ -174,7 +177,18 @@ def stop_process(process):
 
     if process is not None and process.poll() is None:
         process.kill()
-        process.wait()
+
+        # A child in uninterruptible NFS I/O ignores SIGKILL until the
+        # I/O returns. The wait has a limit. Thus, the original fault
+        # still goes up to the task handler.
+
+        try:
+            process.wait(timeout=STOP_PROCESS_WAIT_SECONDS)
+        except subprocess.TimeoutExpired:
+            current_app.logger.warning(
+                f"Process {process.pid} did not end within "
+                f"{STOP_PROCESS_WAIT_SECONDS} seconds of the kill"
+            )
 
 
 def watch_mkvmerge_progress(process, job, name, activity):

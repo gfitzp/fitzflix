@@ -809,3 +809,11 @@ def test_the_give_up_writes_one_error_record(app, monkeypatch, cdn, caplog):
 
     errors = [r.getMessage() for r in caplog.records if r.levelno >= logging.ERROR]
     assert len(errors) == 1 and "giving up" in errors[0]
+
+    # The failure mail names the cause. The last WARNING does not promise
+    # a retry that never comes.
+
+    assert "Last fault:" in errors[0] and "503" in errors[0]
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert "attempt 10 of 10 failed, no retries left" in warnings[-1]
+    assert all("retrying" in message for message in warnings[:-1])
