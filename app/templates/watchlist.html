@@ -166,13 +166,20 @@
 	</div>
 	{% endfor %}
 </div>
-{% elif total %}
+{% endif %}
+{# Both empty states render, hidden while the grid has tiles (#407).
+   The live removal of the last tile shows the correct one. The filter
+   state applies while other films stay on the watchlist. #}
+{% if total %}
+<div data-watchlist-empty="filter" data-watchlist-total="{{ total }}"{% if rows %} hidden{% endif %}>
 <p class="lead">No watchlisted films match {% if q or minutes or genre %}this search{% else %}this filter{% endif %}.</p>
-<p class="text-muted"><a href="{{ url_for('main.watchlist') }}">Show all {{ total }} watchlisted film{{ "s" if total != 1 }}</a> instead.</p>
-{% else %}
+<p class="text-muted"><a href="{{ url_for('main.watchlist') }}" data-watchlist-total-link>Show all {{ total }} watchlisted film{{ "s" if total != 1 }}</a> instead.</p>
+</div>
+{% endif %}
+<div data-watchlist-empty="all"{% if rows or total %} hidden{% endif %}>
 <p class="lead">Your watchlist is empty.</p>
 <p class="text-muted">Add films from their pages. Search TMDB for each film that you want to watch, owned or not. When you watch a film, Fitzflix removes it from the list automatically.</p>
-{% endif %}
+</div>
 {% endblock %}
 
 {% block scripts %}

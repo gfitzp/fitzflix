@@ -664,6 +664,29 @@
 				});
 			}
 			cell.remove();
+
+			// The film left the watchlist. When the grid is empty, the
+			// page shows the empty state that applies (#407). The filter
+			// state applies while other films stay on the watchlist
+			var filtered = document.querySelector('[data-watchlist-empty="filter"]');
+			var left = 0;
+			if (filtered) {
+				left = Math.max(0, parseInt(filtered.getAttribute("data-watchlist-total"), 10) - 1);
+				filtered.setAttribute("data-watchlist-total", left);
+				var link = filtered.querySelector("[data-watchlist-total-link]");
+				if (link) {
+					link.textContent = "Show all " + left + " watchlisted film" + (left !== 1 ? "s" : "");
+				}
+			}
+			if (!document.querySelector(".poster-cell")) {
+				var empty = document.querySelector('[data-watchlist-empty="all"]');
+				if (filtered && left > 0) {
+					filtered.hidden = false;
+				} else if (empty) {
+					if (filtered) filtered.hidden = true;
+					empty.hidden = false;
+				}
+			}
 		}
 
 		// The answer of a live tile post. The watchlist toggle that shares

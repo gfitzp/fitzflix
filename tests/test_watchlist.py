@@ -1263,3 +1263,90 @@ def test_watchlist_search_ignores_accents_and_word_gaps(app, admin_client, admin
     assert "Amélie" in page and "Other Film" not in page
     page = admin_client.get("/watchlist?q=spider man").get_data(as_text=True)
     assert "Spider-Man" in page and "Other Film" not in page
+
+
+def test_last_tile_removal_reveals_the_empty_state(app, admin_client, admin_id):
+    """Test that the live removal of the last tile shows an empty state (#407).
+
+    Both empty states render hidden while the grid has tiles. The script
+    runs in Node with a small fake document. It skips when Node is not
+    installed."""
+
+    import json
+    import re
+    import shutil
+    import subprocess
+
+    import pytest
+
+    from app import db
+    from app.models import UserWatchlist
+
+    with app.app_context():
+        movie = make_movie("Last Tile", 1990)
+        db.session.add(UserWatchlist(user_id=admin_id, movie_id=movie.id))
+        db.session.commit()
+
+    page = admin_client.get("/watchlist").get_data(as_text=True)
+    assert re.search(
+        r'<div data-watchlist-empty="filter" data-watchlist-total="1" hidden>', page
+    )
+    assert re.search(r'<div data-watchlist-empty="all" hidden>', page)
+    page = admin_client.get("/watchlist?q=zzzzzz").get_data(as_text=True)
+    assert '<div data-watchlist-empty="filter" data-watchlist-total="1">' in page
+
+    if shutil.which("node") is None:
+        pytest.skip("Node is not installed")
+    start = page.index("function removeWatchlistCell(cell) {")
+    end = page.index("// The answer of a live tile post.", start)
+    source = page[start:end]
+
+    harness = r"""
+    function element(attrs) {
+        return {
+            attrs: attrs, hidden: true, textContent: "",
+            getAttribute(name) { return name in this.attrs ? this.attrs[name] : null; },
+            setAttribute(name, value) { this.attrs[name] = String(value); },
+            querySelector(selector) { return selector === "[data-watchlist-total-link]" ? this.link : null; },
+        };
+    }
+    const scenario = JSON.parse(process.argv[1]);
+    const filtered = element({"data-watchlist-total": String(scenario.total)});
+    filtered.link = element({});
+    const empty = element({});
+    let cells = 1;
+    const cell = element({"data-bucket": "unavailable"});
+    cell.remove = () => { cells = 0; };
+    global.document = {
+        querySelector(selector) {
+            if (selector === '[data-watchlist-empty="filter"]') return filtered;
+            if (selector === '[data-watchlist-empty="all"]') return empty;
+            if (selector === ".poster-cell") return cells ? cell : null;
+            return null;
+        },
+    };
+    eval(SOURCE + "; removeWatchlistCell(cell);");
+    console.log(JSON.stringify({filter: !filtered.hidden, empty: !empty.hidden, link: filtered.link.textContent}));
+    """.replace("SOURCE", json.dumps(source))
+
+    def run(total):
+        result = subprocess.run(
+            ["node", "-e", harness, json.dumps({"total": total})],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return json.loads(result.stdout)
+
+    # The last film of the watchlist: the empty watchlist state
+    assert run(1) == {
+        "filter": False,
+        "empty": True,
+        "link": "Show all 0 watchlisted films",
+    }
+    # Other films stay on the watchlist: the filter state with the new count
+    assert run(3) == {
+        "filter": True,
+        "empty": False,
+        "link": "Show all 2 watchlisted films",
+    }
