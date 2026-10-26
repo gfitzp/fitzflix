@@ -254,7 +254,7 @@
 	</div>
 	{% endfor %}
 </div>
-<p class="small text-muted">Films on your streaming services, picked by the same taste profile as your library recommendations{% if rail_computed_at %}; last run {{ rail_computed_at }}{% endif %}. Streaming data by JustWatch.</p>
+<p class="small text-muted">Films on your streaming services, picked by the same taste profile as your library recommendations.{% if rail_computed_at %} Last run {{ rail_computed_at }}.{% endif %} Streaming data by JustWatch.</p>
 {% endif %}
 {% endif %}
 {% if again or again_filtered_out %}

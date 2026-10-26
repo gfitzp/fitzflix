@@ -6,6 +6,6 @@ The file '{{ basename }}' was not added because these better-quality files exist
   {{ file.quality.quality_title }}	- {{ file.basename }}
 {% endfor %}
 
-It's been moved to {{ rejects_directory }}
+Fitzflix moved it to {{ rejects_directory }}.
 
 - Fitzflix

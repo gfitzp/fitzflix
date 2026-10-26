@@ -114,7 +114,7 @@ def test_request_uses_the_house_settings(app, admin_client, monkeypatch):
     # returns to the plain Radarr link. The withdrawal occurs in Radarr
 
     page = admin_client.get(f"/movie/{movie_id}").get_data(as_text=True)
-    assert "Requested via Radarr" in page
+    assert "Requested through Radarr" in page
     assert 'title="Radarr is monitoring this film">Radarr</a>' in page
     assert "radarr_request_submit" not in page
     assert "radarr_remove_submit" not in page

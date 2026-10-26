@@ -1671,7 +1671,7 @@ def movie_play(movie_id):
                 ),
                 400,
             )
-        flash("That page had gone stale — please try again.", "warning")
+        flash("That page was out of date. Try again.", "warning")
         return redirect(url_for("main.movie", movie_id=movie_id))
 
     movie = Movie.query.filter_by(id=movie_id).first_or_404()

@@ -100,9 +100,9 @@ def register_cli(app):
     @click.option(
         "--weights",
         default=None,
-        help="Trial class weights as a comma list, e.g. "
-        "'genre=1.2,director=2.0'; unlisted classes keep their "
-        "current weight.",
+        help="Trial class weights as a comma list, for example "
+        "'genre=1.2,director=2.0'. A class that is not in the list keeps "
+        "its current weight.",
     )
     def evaluate(weights):
         """Show the leave-one-out ranking metrics per user.

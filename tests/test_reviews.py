@@ -1420,7 +1420,7 @@ def test_review_edit_keeps_review_date_and_stamps_updated(app, admin_client):
     # page shows both dates
 
     page = admin_client.get("/history").get_data(as_text=True)
-    assert "; updated" in page
+    assert ". Updated" in page
 
 
 def test_history_hides_update_date_from_the_same_day(app, admin_client):
@@ -1446,7 +1446,7 @@ def test_history_hides_update_date_from_the_same_day(app, admin_client):
 
     page = admin_client.get("/history").get_data(as_text=True)
     assert "Reviewed and touched up within the day." in page
-    assert "; updated" not in page
+    assert ". Updated" not in page
 
 
 def test_history_orders_by_watch_date_with_unreviewed_on_top(app, admin_client):

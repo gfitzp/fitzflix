@@ -80,7 +80,7 @@
 						<span class="text-nowrap">{{ word }}{{ moment(stamp).fromNow() }}</span>
 					{%- endfor -%}
 				{%- else -%}
-					No job in queue; last update {{ row.trail.updated }}
+					No job in queue. Last update {{ row.trail.updated }}
 				{%- endif -%}
 				</div>
 			</td>
@@ -93,7 +93,7 @@
 			{% endif %}
 			{% else %}
 			<td class="col-3 col-sm-3 col-lg-2 queue-enqueued"></td>
-			<td class="col-3 col-sm-3 col-lg-2 queue-started small text-muted">No job in queue; last update {{ row.trail.updated }}</td>
+			<td class="col-3 col-sm-3 col-lg-2 queue-started small text-muted">No job in queue. Last update {{ row.trail.updated }}</td>
 			{% endif %}
 		</tr>
 		{% endfor %}
@@ -183,7 +183,7 @@
 			var line = document.createElement("div");
 			line.className = "queue-times d-sm-none small text-body-secondary";
 			if (!task) {
-				line.textContent = "No job in queue; last update " + trail.updated;
+				line.textContent = "No job in queue. Last update " + trail.updated;
 				return line;
 			}
 			var phrases = [];
@@ -333,7 +333,7 @@
 				row.appendChild(timeCell(null, "", "queue-enqueued"));
 				var updated = timeCell(null, "", "queue-started");
 				updated.className += " small text-muted";
-				updated.textContent = "No job in queue; last update " + trail.updated;
+				updated.textContent = "No job in queue. Last update " + trail.updated;
 				row.appendChild(updated);
 				tbody.appendChild(row);
 			});

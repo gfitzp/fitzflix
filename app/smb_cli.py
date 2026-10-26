@@ -312,14 +312,14 @@ def register_cli(app):
                 "file_ids",
                 multiple=True,
                 type=int,
-                help="Probe these file ids; repeatable.",
+                help="Probe these file ids. You can give the option more than 1 time.",
             ),
             click.option(
                 "--since",
                 default=None,
                 type=int,
-                help="Probe every file written in the last N minutes — the way to "
-                "ask a finished batch which files it broke.",
+                help="Probe every file written in the last N minutes. Use it "
+                "to find the files that a finished batch broke.",
             ),
             click.option(
                 "--all", "everything", is_flag=True, help="Probe the whole library."

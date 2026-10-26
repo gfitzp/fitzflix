@@ -4,7 +4,7 @@
 {% block app_content %}
 {{ page_header('About Fitzflix') }}
 <img src="{{ url_for('static', filename='fitzflix_logo.svg') }}" width="128px" class="float-start me-1">
-<p><strong><a href="https://github.com/gfitzp/fitzflix" rel="noreferrer">Fitzflix</a></strong> was created by <a href="https://glennfitzpatrick.com/" rel="noreferrer">Glenn Fitzpatrick</a> so he would know what was in his family's library when browsing for movies at thrift shops, and to keep track of his <a href="https://letterboxd.com/gfitzp/reviews/" rel="noreferrer">movie reviews</a>.</p>
+<p><a href="https://glennfitzpatrick.com/" rel="noreferrer">Glenn Fitzpatrick</a> made <strong><a href="https://github.com/gfitzp/fitzflix" rel="noreferrer">Fitzflix</a></strong>. With it, he knows what is in the library of his family when he looks for movies at thrift shops. It also keeps a record of his <a href="https://letterboxd.com/gfitzp/reviews/" rel="noreferrer">movie reviews</a>.</p>
 {# The license box fills the column and scrolls inside itself. It
    never sets a minimum width. Thus, a phone never scrolls the page
    sideways for it. #}
@@ -52,7 +52,7 @@ SOFTWARE.
 	</div>
 	<div class="col-12 col-lg-3">
 		<div class="text-lg-center"><a rel="license noreferrer" href="https://creativecommons.org/publicdomain/zero/1.0/"><img alt="Creative Commons Zero" style="border-width:0" src="{{ url_for('static', filename='creativecommons_logo_pd.png') }}" height="31px" /></a></div>
-		<p><small><em>Criterion Collection release data &mdash; spine numbers, film pages, and box&nbsp;set memberships &mdash; is from <a href="https://www.wikidata.org" rel="noreferrer">Wikidata</a>, whose data is dedicated to the public domain under <a rel="license" href="https://creativecommons.org/publicdomain/zero/1.0/">Creative Commons CC0</a>.</em></small></p>
+		<p><small><em>The Criterion Collection release data (the spine numbers, the film pages, and the box&nbsp;set memberships) is from <a href="https://www.wikidata.org" rel="noreferrer">Wikidata</a>. Wikidata dedicates its data to the public domain under <a rel="license" href="https://creativecommons.org/publicdomain/zero/1.0/">Creative Commons CC0</a>.</em></small></p>
 	</div>
 </div>
 {% endblock %}

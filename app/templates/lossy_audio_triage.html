@@ -87,7 +87,7 @@
 		<h6 class="mb-1">Track {{ pair.lossy_track }} (lossy) vs track {{ pair.lossless_track }} (lossless)
 			{% if pair.percent is not none %}<span class="text-muted fw-normal ms-1">full-track correlation {{ pair.percent }}%</span>{% endif %}
 			{% if pair.verdict == "match" %}<span class="badge text-bg-success ms-1">Same programme audio</span>
-			{% elif pair.verdict == "differs" %}<span class="badge text-bg-danger ms-1">Diverging &mdash; possibly a commentary</span>
+			{% elif pair.verdict == "differs" %}<span class="badge text-bg-danger ms-1">Diverging, possibly a commentary</span>
 			{% endif %}
 		</h6>
 		<div class="row g-3 mb-2">

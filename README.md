@@ -772,7 +772,7 @@ The suite covers:
 
 ## Language notes
 
-This document, the page text, and the code comments use ASD-STE100 Simplified Technical English. The test `tests/test_ste.py` checks the prose for these mechanical rules:
+This document, the page text, the flash messages, the command help, the email templates, and the code comments use ASD-STE100 Simplified Technical English. The test `tests/test_ste.py` checks the prose for these mechanical rules:
 
 - no contractions
 - no em dashes

@@ -1317,7 +1317,7 @@ def test_rated_default_empty_state_offers_the_way_out(app, admin_client):
     seed_frame(app, unrated_id)
     page = admin_client.get("/game?difficulty=siracusa").get_data(as_text=True)
     assert "There are no frames for this difficulty yet." in page
-    assert "Include films I haven&rsquo;t rated" in page
+    assert "Include films that I have not rated" in page
     assert "Rate some more films" in page
     assert 'id="include-unrated" checked' not in page
 

@@ -7,11 +7,15 @@ contractions, em dashes and semicolons that join clauses, some words
 that STE does not permit, and sentences of more than 25 words. It does
 not check the STE dictionary.
 
-The checks apply to Python comments and docstrings (app/, tests/, and
-the root scripts). They apply to Jinja, HTML, CSS, and JavaScript
-comments under app/templates and app/static. They apply to the README
-prose. Text in double
-quotes or backticks is quoted material, so the test ignores it. The
+The checks apply to Python comments and docstrings (app/, tests/,
+scripts/, and the root scripts). They apply to the text of each flash
+call and each help argument (#393). They apply to the Jinja, HTML, CSS,
+and JavaScript comments of the templates and of the static files. They
+apply to the page text of the templates, to the text that their scripts
+write into the page, and to the email templates. A preformatted block
+is not page text. They apply to the prose of each Markdown file. Text
+in double quotes or backticks is quoted material, so the test ignores
+it. The
 exempt marker (the EXEMPT constant) skips the rest of its block, from
 the line that holds it. Use it only for text that must stay as it is,
 for example a licence notice. A semicolon inside code-like text (a
@@ -27,10 +31,27 @@ import re
 import tokenize
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PY_DIRS = ("app", "tests")
-ROOT_SCRIPTS = ("config.py", "fitzflix.py", "scheduler.py", "supervisor.py")
+PY_DIRS = ("app", "tests", "scripts")
+ROOT_SCRIPTS = (
+    "config.py",
+    "fitzflix.py",
+    "scheduler.py",
+    "supervisor.py",
+    ".claude/mint_session_cookie.py",
+)
 TEMPLATE_DIRS = ("app/templates", "app/static")
+PAGE_TEXT_DIR = "app/templates"
 SKIP_DIRS = {"__pycache__", "node_modules"}
+# The Markdown walk skips these directories. They hold no repository
+# prose: the virtual environment, the caches, and the local notes.
+MARKDOWN_SKIP_DIRS = SKIP_DIRS | {
+    ".git",
+    ".claude",
+    ".pytest_cache",
+    "venv",
+    ".venv",
+    "migrations",
+}
 MAX_WORDS = 25
 
 CONTRACTION = re.compile(
@@ -134,7 +155,7 @@ def _violations(text, path, line):
 
 
 def _python_prose(path):
-    """Yield (line, text) for each comment block and docstring in a Python file."""
+    """Yield (line, text) for each comment, docstring and message of a Python file."""
     source = open(path, encoding="utf-8").read()
     block, start = [], None
     for tok in tokenize.generate_tokens(io.StringIO(source).readline):
@@ -168,6 +189,110 @@ def _python_prose(path):
             if doc:
                 first = node.body[0]
                 yield first.lineno, doc
+    yield from _message_prose(tree)
+
+
+def _literal_text(node):
+    """Return the text of a string literal, an f-string, or a sum of them, or None.
+
+    A replacement field of an f-string becomes the word X."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    if isinstance(node, ast.JoinedStr):
+        return "".join(
+            part.value if isinstance(part, ast.Constant) else "X"
+            for part in node.values
+        )
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        left, right = _literal_text(node.left), _literal_text(node.right)
+        if left is not None and right is not None:
+            return left + right
+    return None
+
+
+def _message_prose(tree):
+    """Yield (line, text) for the text of each flash call and help argument."""
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        name = getattr(node.func, "id", None) or getattr(node.func, "attr", None)
+        values = [node.args[0]] if name == "flash" and node.args else []
+        values += [kw.value for kw in node.keywords if kw.arg == "help"]
+        for value in values:
+            text = _literal_text(value)
+            if text:
+                yield value.lineno, text
+
+
+# A block tag of HTML ends a run of page text. The other tags do not.
+BLOCK_TAG = re.compile(
+    r"</?(?:p|div|li|ul|ol|h[1-6]|br|hr|tr|td|th|table|thead|tbody|section|"
+    r"header|footer|nav|main|form|button|label|option|select|dl|dt|dd|"
+    r"blockquote|figure|figcaption|title|textarea|summary|details|span)\b[^>]*>",
+    re.I,
+)
+# The entities that stand for punctuation that the rules check.
+PUNCTUATION_ENTITIES = {
+    "&mdash;": "—",
+    "&#8212;": "—",
+    "&rsquo;": "’",
+    "&#39;": "'",
+    "&apos;": "'",
+    "&ldquo;": "“",
+    "&rdquo;": "”",
+    "&nbsp;": " ",
+}
+
+
+def _page_text(path):
+    """Yield (line, text) for each run of page text in a template (#393).
+
+    The comments, the scripts, the styles, the preformatted blocks, and
+    the tags go first. A Jinja expression becomes the word Xxx. A block
+    tag, a span, or a Jinja statement ends a run. Thus, a row of badges
+    is not 1 long sentence. In a plain text template, a blank line or a
+    Jinja statement ends a run."""
+    source = open(path, encoding="utf-8").read()
+
+    def blank(match):
+        return re.sub(r"[^\n]", " ", match.group(0))
+
+    text = re.sub(
+        r"\{#.*?#\}|<!--.*?-->|<script\b.*?</script>|<style\b.*?</style>"
+        r"|<pre\b.*?</pre>",
+        blank,
+        source,
+        flags=re.S | re.I,
+    )
+    text = re.sub(r"\{\{.*?\}\}", lambda m: "Xxx" + blank(m)[3:], text, flags=re.S)
+    text = re.sub(r"\{%.*?%\}", lambda m: "\x00" + blank(m)[1:], text, flags=re.S)
+    if path.endswith(".txt"):
+        text = re.sub(r"\n([ \t]*)\n", "\n\\1\x00\n", text)
+    else:
+        text = BLOCK_TAG.sub(lambda m: "\x00" + blank(m)[1:], text)
+        text = re.sub(r"<[^>]*>", blank, text, flags=re.S)
+        for entity, character in PUNCTUATION_ENTITIES.items():
+            text = text.replace(entity, character)
+    position = 0
+    for run in text.split("\x00"):
+        if run.strip():
+            offset = len(run) - len(run.lstrip())
+            line = text.count("\n", 0, position + offset) + 1
+            yield line, run
+        position += len(run) + 1
+
+
+# A script line that puts a literal into the page as text.
+SCRIPT_TEXT = re.compile(
+    r"\.(?:textContent|innerText)\s*=\s*(?P<quote>[\"'])(?P<text>.*?)(?<!\\)(?P=quote)"
+)
+
+
+def _script_text(path):
+    """Yield (line, text) for each literal that a script writes as page text."""
+    source = open(path, encoding="utf-8").read()
+    for match in SCRIPT_TEXT.finditer(source):
+        yield source.count("\n", 0, match.start()) + 1, match.group("text")
 
 
 def _template_prose(path):
@@ -182,7 +307,7 @@ def _template_prose(path):
 
 
 def _readme_prose(path):
-    """Yield (line, text) for each prose paragraph of the README."""
+    """Yield (line, text) for each prose paragraph of a Markdown file."""
     in_code = False
     for number, line in enumerate(open(path, encoding="utf-8"), 1):
         if line.startswith("```"):
@@ -221,10 +346,27 @@ def ste_violations(root=ROOT):
     for path in _files(TEMPLATE_DIRS, (".html", ".js", ".css"), root):
         for line, text in _template_prose(path):
             found.extend(_violations(text, os.path.relpath(path, root), line))
-    readme = os.path.join(root, "README.md")
-    for line, text in _readme_prose(readme):
-        found.extend(_violations(text, "README.md", line))
+    for path in _files((PAGE_TEXT_DIR,), (".html", ".txt"), root):
+        for line, text in list(_page_text(path)) + list(_script_text(path)):
+            found.extend(_violations(text, os.path.relpath(path, root), line))
+    for path in _markdown_files(root):
+        for line, text in _readme_prose(path):
+            found.extend(_violations(text, os.path.relpath(path, root), line))
     return found
+
+
+def _markdown_files(root=ROOT):
+    """Return each Markdown file of the repository, the root README first."""
+    paths = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = sorted(d for d in dirnames if d not in MARKDOWN_SKIP_DIRS)
+        paths.extend(
+            os.path.join(dirpath, name)
+            for name in sorted(filenames)
+            if name.endswith(".md")
+        )
+    readme = os.path.join(root, "README.md")
+    return [readme] + [path for path in paths if path != readme]
 
 
 def test_prose_follows_simplified_technical_english():
@@ -295,3 +437,39 @@ def test_root_parameter_selects_the_tree(tmp_path):
     assert [(path, rule) for path, _, rule, _ in found] == [
         (os.path.join("app", "m.py"), "contraction")
     ]
+
+
+def test_the_gate_reads_page_text_messages_emails_and_markdown(tmp_path):
+    """The page text, flash and help text, emails and Markdown are prose (#393)."""
+    templates = tmp_path / "app" / "templates"
+    (templates / "email").mkdir(parents=True)
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "README.md").write_text("Fine.\n")
+    (tmp_path / "tests" / "README.md").write_text("It isn't checked yet.\n")
+    (tmp_path / "app" / "m.py").write_text(
+        'flash(f"{name} won\'t import.")\n'
+        'click.option("--x", help="A dash — here.")\n'
+        'log("It isn\'t a message.")\n'
+    )
+    (templates / "page.html").write_text(
+        "<p>This film won&rsquo;t show.</p>\n"
+        "<pre>It isn't prose.</pre>\n"
+        '<script>el.textContent = "Couldn\'t reach it.";</script>\n'
+        '<span title="It\'s a title">{{ "Didn\'t like it" }}</span>\n'
+        "<span>Database {{ a }} ms</span><span>Redis {{ b }} ms</span>\n"
+    )
+    (templates / "email" / "note.txt").write_text("Hello,\n\nIt's been moved.\n")
+    found = sorted(
+        (path, line, rule) for path, line, rule, _ in ste_violations(str(tmp_path))
+    )
+    page = os.path.join("app", "templates", "page.html")
+    assert found == sorted(
+        [
+            (os.path.join("app", "m.py"), 1, "contraction"),
+            (os.path.join("app", "m.py"), 2, "em dash"),
+            (page, 1, "contraction"),
+            (page, 3, "contraction"),
+            (os.path.join("app", "templates", "email", "note.txt"), 3, "contraction"),
+            (os.path.join("tests", "README.md"), 1, "contraction"),
+        ]
+    )

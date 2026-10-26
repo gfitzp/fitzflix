@@ -19,8 +19,9 @@ def register_cli(app):
     @click.option(
         "--force",
         is_flag=True,
-        help="Proceed even if the bucket reports fewer lifecycle rules "
-        "than the newest local snapshot (i.e. the reduction is intended).",
+        help="Continue when the bucket reports fewer lifecycle rules "
+        "than the newest local snapshot. Use it when the reduction is "
+        "intentional.",
     )
     def provision(force):
         """Create the AWS components that the README describes, idempotently.

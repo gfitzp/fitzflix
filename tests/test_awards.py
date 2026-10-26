@@ -356,7 +356,7 @@ def test_movie_page_shows_award_strip(app, admin_client):
 
     page = admin_client.get(f"/movie/{movie_id}").get_data(as_text=True)
     assert "Academy Award for Best Picture (1955)" in page
-    assert "BAFTA Award for Best Film (1955) &mdash; nominated" in page
+    assert "BAFTA Award for Best Film (1955) (nominated)" in page
     assert "bi-trophy-fill" in page
     assert "Award data from Wikidata" in page
 

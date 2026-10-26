@@ -51,7 +51,7 @@
 				{% for movie in group %}
 				{% set file_count = movie.files.count() %}
 				<a href="{{ url_for('main.movie', movie_id=movie.id) }}">{{ movie.title }} ({{ movie.year }})</a>
-				<span class="text-muted small">{{ file_count }} file{{ "s" if file_count != 1 }}{% if loop.first %} &mdash; kept{% endif %}</span><br>
+				<span class="text-muted small">{{ file_count }} file{{ "s" if file_count != 1 }}{% if loop.first %} (kept){% endif %}</span><br>
 				{% endfor %}
 			</td>
 			<td>

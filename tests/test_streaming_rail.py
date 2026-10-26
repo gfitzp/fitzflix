@@ -407,7 +407,7 @@ def test_landing_page_renders_the_rail(app, admin_client):
     assert 'data-state-tmdb="6001"' in body
     assert 'data-card-reasons=\'["popular on Netflix", "Comedy"]\'' in body
     assert "Streaming data by JustWatch" in body
-    assert "last run 2026-08-12 02:15" in body
+    assert "Last run 2026-08-12 02:15." in body
     assert "Rail Acquired Since" not in body
     assert "Rail Logged Since" not in body
 

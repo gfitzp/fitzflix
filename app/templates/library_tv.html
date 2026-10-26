@@ -15,7 +15,7 @@
 <p class="lead">No TV series match &lsquo;<strong>{{ q }}</strong>&rsquo;.</p>
 <p class="text-muted"><a href="{{ url_for('main.tv_library') }}">Show the whole TV library</a> instead.</p>
 {% elif q %}
-<p class="small text-muted">{{ series|length }} series title{{ "s" if series|length != 1 }} match &mdash; <a href="{{ url_for('main.tv_library') }}">show the whole TV library</a> instead.</p>
+<p class="small text-muted">{{ series|length }} series title{{ "s" if series|length != 1 }} match. <a href="{{ url_for('main.tv_library') }}">Show the whole TV library</a> instead.</p>
 {% endif %}
 {% if series %}
 {% for tv in series %}

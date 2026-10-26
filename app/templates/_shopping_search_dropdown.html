@@ -35,7 +35,7 @@
 			<form action="{{ url_for('main.radarr_request', origin=(request.full_path if request.query_string else request.path)) }}" method="post">
 				{{ radarr_form.csrf_token }}
 				{{ radarr_form.movie_id(value=movie.id) }}
-				<button type="submit" name="radarr_request_submit" value="Request via Radarr" class="dropdown-item">Request via Radarr</button>
+				<button type="submit" name="radarr_request_submit" value="Request via Radarr" class="dropdown-item">Request through Radarr</button>
 			</form>
 		{% elif radarr_proxy_url %}
 			<a class="dropdown-item" target="_blank" rel="noreferrer" href="{{ radarr_proxy_url }}/movie/{{ movie.tmdb_id }}"{% if in_radarr %} title="Radarr is monitoring this film"{% endif %}>Radarr</a>

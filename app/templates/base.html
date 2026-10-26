@@ -882,7 +882,7 @@
 			}).catch(function() {
 				if (!status) return;
 				status.classList.add("text-danger");
-				status.textContent = "Couldn't reach Fitzflix.";
+				status.textContent = "Fitzflix did not answer.";
 			}).finally(function() {
 				button.disabled = false;
 				button.innerHTML = label;

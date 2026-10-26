@@ -27,6 +27,6 @@ repos:
         name: simplified technical english
         entry: venv/bin/python tests/test_ste.py
         language: system
-        files: \.(py|html|js|css|md)$
+        files: \.(py|html|js|css|md|txt)$
         exclude: ^migrations/
         pass_filenames: false

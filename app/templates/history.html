@@ -89,7 +89,7 @@
 		   hold local wall-clock values, and imported rows hold bare
 		   calendar dates. The naive-means-UTC conversion of moment would
 		   move them 1 day early for viewers west of UTC. #}
-		{% if review.date_watched %}Watched {{ review.date_watched.strftime("%b %-d, %Y") }}. {% endif %}{% if review.date_reviewed %}Reviewed {{ review.date_reviewed.strftime("%b %-d, %Y") }}{% if review.date_updated and review.date_updated.date() != review.date_reviewed.date() %}; updated {{ review.date_updated.strftime("%b %-d, %Y") }}{% endif %}<br/>{% endif %}
+		{% if review.date_watched %}Watched {{ review.date_watched.strftime("%b %-d, %Y") }}. {% endif %}{% if review.date_reviewed %}Reviewed {{ review.date_reviewed.strftime("%b %-d, %Y") }}{% if review.date_updated and review.date_updated.date() != review.date_reviewed.date() %}. Updated {{ review.date_updated.strftime("%b %-d, %Y") }}{% endif %}<br/>{% endif %}
 		{# review_html renders the inline subset of Letterboxd (<i>, <b>,
 		   …) as real formatting. It keeps everything else escaped. The
 		   textarea below stays raw markup, because that is what the user
@@ -99,7 +99,7 @@
 		{# No local editors on a feed row, because the sync would revert
 		   them. The tmdb redirect goes to the Letterboxd page of the
 		   film, where the diary entry lives. #}
-		<div class="mt-1 small text-muted">Synced from Letterboxd{% if review.movie.tmdb_id %} — <a href="https://letterboxd.com/tmdb/{{ review.movie.tmdb_id }}/" target="_blank" rel="noreferrer">edit it there</a>{% endif %}</div>
+		<div class="mt-1 small text-muted">Synced from Letterboxd.{% if review.movie.tmdb_id %} <a href="https://letterboxd.com/tmdb/{{ review.movie.tmdb_id }}/" target="_blank" rel="noreferrer">Edit it there</a>.{% endif %}</div>
 		{% else %}
 		{# Freeform text lives in its own per-row form (#58c), separate
 		   from the star form. Thus, a star tap can never silently save
