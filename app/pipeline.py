@@ -44,6 +44,7 @@ from collections import namedtuple
 from datetime import datetime, timezone
 
 from rq import Queue, SimpleWorker
+from rq.timeouts import BaseTimeoutException
 
 FILE_KEY = "fitzflix:pipeline:file:{digest}"
 ALIAS_KEY = "fitzflix:pipeline:alias:{digest}"
@@ -595,13 +596,17 @@ def _best_effort(fallback=None):
     """Decorate a trail function. An exception in it only logs a warning.
 
     On an exception, the function returns fallback(*args, **kwargs), or
-    None with no fallback."""
+    None with no fallback. The timeout of rq and an interrupt are not
+    caught (#376). The worker raises the timeout in the task process.
+    If a trail call catches it, the job runs on with no time limit."""
 
     def decorate(function):
         @functools.wraps(function)
         def wrapper(*args, **kwargs):
             try:
                 return function(*args, **kwargs)
+            except (BaseTimeoutException, KeyboardInterrupt):
+                raise
             except Exception:
                 _log_traceback()
                 return fallback(*args, **kwargs) if fallback else None

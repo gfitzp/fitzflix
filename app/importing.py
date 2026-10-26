@@ -33,6 +33,7 @@ from pathvalidate import sanitize_filename
 from pymediainfo import MediaInfo
 from rq import get_current_job
 from rq.job import Job
+from rq.timeouts import BaseTimeoutException
 from rq.registry import (
     FailedJobRegistry,
     FinishedJobRegistry,
@@ -2712,10 +2713,13 @@ def _follow_up(output_file, name, step, *args, **kwargs):
     """Run 1 follow-up step of a committed import. Return its value, or None on a failure.
 
     The import itself succeeded. A failed step is logged, and the
-    session rolls back. The file stays, and the next step runs."""
+    session rolls back. The file stays, and the next step runs. The
+    timeout of rq and an interrupt are not caught (#376)."""
 
     try:
         return step(*args, **kwargs)
+    except (BaseTimeoutException, KeyboardInterrupt):
+        raise
     except Exception:
         current_app.logger.error(traceback.format_exc())
         db.session.rollback()
