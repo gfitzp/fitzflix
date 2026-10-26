@@ -571,6 +571,64 @@ def test_letterboxd_import_merges_with_plex_timed_row(app):
             db.session.commit()
 
 
+def _letterboxd_film(movie_id, *watched):
+    return {
+        "title": "Late Show",
+        "year": 1977,
+        "movie_id": movie_id,
+        "rating": 4.0,
+        "liked": False,
+        "entries": [
+            {
+                "watched": day,
+                "logged": day,
+                "rating": 4.0,
+                "review": "",
+                "rewatch": False,
+            }
+            for day in watched
+        ],
+    }
+
+
+def test_a_reimport_finds_the_scrobble_that_the_feed_gave_to_the_day_before(app):
+    """The feed gave a 00:10 scrobble of 10-07 to the entry of 10-06 (#381).
+
+    A CSV import of 10-06 updates that row. It does not add a no-guid
+    row that the export sends back to Letterboxd. A CSV entry of 10-07
+    keeps its own row."""
+
+    from app.videos import apply_letterboxd_import
+
+    with app.app_context():
+        user = User.query.first()
+        movie = make_movie("Late Show", 1977, tmdb_id=77401)
+        db.session.add(
+            UserMovieReview(
+                user_id=user.id,
+                movie_id=movie.id,
+                review="",
+                date_watched=datetime(2026, 10, 7, 0, 10),
+                letterboxd_guid="letterboxd-watch-9001",
+                rating=4.0,
+            )
+        )
+        db.session.commit()
+        movie_id = movie.id
+
+        assert apply_letterboxd_import(
+            user.id, [_letterboxd_film(movie_id, "2026-10-06")]
+        )
+        rows = UserMovieReview.query.filter_by(user_id=user.id, movie_id=movie_id)
+        assert rows.count() == 1
+
+        assert apply_letterboxd_import(
+            user.id, [_letterboxd_film(movie_id, "2026-10-06", "2026-10-07")]
+        )
+        days = sorted(row.date_watched for row in rows)
+        assert days == [datetime(2026, 10, 6), datetime(2026, 10, 7, 0, 10)]
+
+
 def test_review_edit_preserves_plex_timestamp(app, admin_client):
     """Make sure a review edit keeps the Plex timestamp.
 

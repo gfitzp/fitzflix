@@ -366,6 +366,33 @@ def letterboxd_import_task(user_id, films):
             return True
 
 
+def _feed_claimed_twin(user_id, movie_id, date_watched, import_days):
+    """Return the feed row of a watch 1 day away from a Letterboxd date, or None.
+
+    The feed sync gives a Plex scrobble near midnight to the Letterboxd
+    entry of the next or previous date. The row keeps its clock time,
+    for example 00:10 on 10-07 for the entry of 10-06 (#381). A row
+    with a guid and a clock time 1 day away is such a twin. A day that
+    has its own entry in the import is not a twin."""
+
+    rows = UserMovieReview.query.filter(
+        UserMovieReview.user_id == user_id,
+        UserMovieReview.movie_id == movie_id,
+        UserMovieReview.letterboxd_guid.isnot(None),
+        UserMovieReview.date_watched >= date_watched - timedelta(days=1),
+        UserMovieReview.date_watched < date_watched + timedelta(days=2),
+    ).order_by(UserMovieReview.date_watched)
+    for row in rows:
+        day = row.date_watched.date()
+        if (
+            day != date_watched.date()
+            and day not in import_days
+            and row.date_watched.time() != datetime.min.time()
+        ):
+            return row
+    return None
+
+
 def apply_letterboxd_import(user_id, films):
     """Run the database phase of a Letterboxd import.
 
@@ -406,6 +433,11 @@ def apply_letterboxd_import(user_id, films):
                 if movie is None:
                     continue
 
+                import_days = {
+                    datetime.strptime(entry["watched"], "%Y-%m-%d").date()
+                    for entry in film["entries"]
+                    if entry["watched"]
+                }
                 for entry in film["entries"]:
                     date_watched = (
                         datetime.strptime(entry["watched"], "%Y-%m-%d")
@@ -426,6 +458,8 @@ def apply_letterboxd_import(user_id, films):
                     # Match per calendar day. A watch that Plex recorded has
                     # a time of day. A second import of the same Letterboxd
                     # date must update that row, not add a row next to it.
+                    # Then the scrobble that the feed gave to this date
+                    # from the day next to it (#381).
 
                     if date_watched is not None:
                         review = UserMovieReview.query.filter(
@@ -434,7 +468,9 @@ def apply_letterboxd_import(user_id, films):
                             UserMovieReview.date_watched >= date_watched,
                             UserMovieReview.date_watched
                             < date_watched + timedelta(days=1),
-                        ).first()
+                        ).first() or _feed_claimed_twin(
+                            user_id, movie.id, date_watched, import_days
+                        )
                     else:
                         review = UserMovieReview.query.filter_by(
                             user_id=user_id, movie_id=movie.id, date_watched=None
