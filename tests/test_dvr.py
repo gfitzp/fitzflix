@@ -851,3 +851,22 @@ def test_playlist_escapes_quotes_and_line_breaks_in_channel_names(
         'tvg-chno="7" tvg-logo="'
     )
     assert extinf[0].endswith(',"Golden Age" Westerns')
+
+
+def test_the_build_prunes_the_durations_of_deleted_files(app, monkeypatch):
+    """A cached duration of a File row that no longer exists goes away (#413).
+
+    The durations of live rows stay, also of rows that air on no channel."""
+
+    from app import dvr
+
+    app.redis.hset(dvr.DURATIONS_KEY, "987654", "1:2026-01-01|5400.000")
+    _build_library(app, monkeypatch, other_films=2)
+
+    with app.app_context():
+        from app.models import File
+
+        live = {str(file_id) for (file_id,) in db.session.query(File.id)}
+    fields = {field.decode() for field in app.redis.hkeys(dvr.DURATIONS_KEY)}
+    assert "987654" not in fields
+    assert fields == live

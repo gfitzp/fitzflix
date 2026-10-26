@@ -215,6 +215,26 @@ def _cached_duration(redis_client, file):
     return None
 
 
+def _prune_durations(redis_client):
+    """Remove the cached durations of the File rows that no longer exist.
+
+    The import deletes rows of worse copies and of recordings. Without
+    this, their fields stay in the hash without end (#413)."""
+
+    live = {str(file_id) for (file_id,) in db.session.query(File.id)}
+    dead = []
+    for field in redis_client.hkeys(DURATIONS_KEY):
+        name = field.decode() if isinstance(field, bytes) else field
+        if name not in live:
+            dead.append(name)
+    for start in range(0, len(dead), 1000):
+        redis_client.hdel(DURATIONS_KEY, *dead[start : start + 1000])
+    if dead:
+        current_app.logger.info(
+            f"DVR: removed {len(dead)} cached durations of deleted files"
+        )
+
+
 def _first_audio_channels(file_id):
     """Return the channel count of the first audio track of the file.
 
@@ -936,6 +956,8 @@ def build_channel_lineups(day=None):
         for key in redis_client.scan_iter(match=LINEUP_KEY.format(slug="*")):
             if key.decode() not in kept:
                 redis_client.delete(key)
+
+        _prune_durations(redis_client)
 
         current_app.logger.info(
             f"DVR: built {len(index)} channel lineups "
