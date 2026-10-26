@@ -67,6 +67,13 @@ def login():
         if user is None or not user.check_password(form.password.data):
             record_login_failure(form.email.data)
             flash("Invalid username or password")
+
+            # The next page stays for the second try (#422). Only a local
+            # path goes into the redirect.
+
+            next_page = request.args.get("next")
+            if local_path(next_page):
+                return redirect(url_for("auth.login", next=next_page))
             return redirect(url_for("auth.login"))
 
         record_login_success(form.email.data)

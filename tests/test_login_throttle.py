@@ -282,3 +282,34 @@ def test_logout_needs_a_post_with_the_csrf_token(app, admin_client):
 def test_history_answers_only_a_get(admin_client):
     assert admin_client.get("/history").status_code == 200
     assert admin_client.post("/history").status_code == 405
+
+
+def test_a_wrong_password_keeps_the_next_path(app):
+    """A mistyped password keeps the next path for the second try (#422).
+
+    A next path that leaves the site does not go into the redirect."""
+
+    from urllib.parse import parse_qs, urlparse
+
+    client = app.test_client()
+    token = page_csrf_token(client, "/auth/login?next=/history")
+    response = client.post(
+        "/auth/login?next=/history",
+        data={"csrf_token": token, "email": ADMIN_EMAIL, "password": "wrong"},
+    )
+    assert response.status_code == 302
+    location = urlparse(response.headers["Location"])
+    assert location.path == "/auth/login"
+    assert parse_qs(location.query)["next"] == ["/history"]
+
+    response = client.post(
+        "/auth/login?next=//evil.example",
+        data={"csrf_token": token, "email": ADMIN_EMAIL, "password": "wrong"},
+    )
+    assert "evil" not in response.headers["Location"]
+
+    response = client.post(
+        "/auth/login?next=/history",
+        data={"csrf_token": token, "email": ADMIN_EMAIL, "password": ADMIN_PASSWORD},
+    )
+    assert response.headers["Location"].endswith("/history")
