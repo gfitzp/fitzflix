@@ -409,6 +409,66 @@ def test_a_move_waits_for_a_download_of_the_old_key(app, s3):
         assert fake.copies == []
 
 
+def test_a_move_that_waits_books_a_random_retry_delay(app, monkeypatch):
+    """Test that the retry delay of a waiting move is not a fixed period (#404).
+
+    A fixed period can stay aligned with the 5-minute retry of the sync."""
+
+    from datetime import timedelta
+
+    from app import aws_storage, db
+
+    delays = []
+    monkeypatch.setattr(
+        aws_storage, "requeue", lambda *args, **kwargs: delays.append(kwargs["delay"])
+    )
+    with app.app_context():
+        file = archived_film("Random Reel", 1960, key_name="Random (1960).mkv")
+        db.session.commit()
+        for _ in range(20):
+            result = aws_storage._wait_move(file, file.aws_key, None, "the S3 sync")
+            assert result == aws_storage.MOVE_WAITING
+
+    assert all(timedelta(minutes=25) <= d <= timedelta(minutes=35) for d in delays)
+    assert len(set(delays)) > 1
+
+
+def test_a_move_goes_on_when_the_sync_stops_after_the_pause(app, s3, monkeypatch):
+    """Test that a sync that stops at once does not hold the move (#404)."""
+
+    from app import aws_storage, db
+
+    answers = iter([True, False])
+    pauses = []
+    monkeypatch.setattr(aws_storage, "_sync_is_running", lambda: next(answers))
+    monkeypatch.setattr(aws_storage.time, "sleep", pauses.append)
+    with app.app_context():
+        file = archived_film("Quick Sync", 1961, key_name="Quick (1961).mkv")
+        aws_storage.request_archive_move(file)
+        db.session.commit()
+        fake = s3({file.aws_key: readable()})
+
+        assert aws_storage.move_archive_object(file.id) != aws_storage.MOVE_WAITING
+        assert fake.copies
+
+    assert pauses == [aws_storage.SYNC_RECHECK_SECONDS]
+
+
+def test_a_move_waits_while_the_sync_still_runs_after_the_pause(app, s3, monkeypatch):
+    from app import aws_storage, db
+
+    monkeypatch.setattr(aws_storage, "_sync_is_running", lambda: True)
+    monkeypatch.setattr(aws_storage.time, "sleep", lambda seconds: None)
+    with app.app_context():
+        file = archived_film("Slow Sync", 1962, key_name="Slow (1962).mkv")
+        aws_storage.request_archive_move(file)
+        db.session.commit()
+        fake = s3({file.aws_key: readable()})
+
+        assert aws_storage.move_archive_object(file.id) == aws_storage.MOVE_WAITING
+        assert fake.copies == []
+
+
 def test_an_edit_during_an_untouched_move_goes_to_modified_under_the_new_name(
     app, monkeypatch
 ):

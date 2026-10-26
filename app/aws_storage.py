@@ -20,6 +20,7 @@ import hashlib
 import io
 import json
 import os
+import random
 import re
 import threading
 import time
@@ -1922,8 +1923,30 @@ def _sync_is_running():
     return False
 
 
+# A move that waits books its retry at a random time in this range, in
+# minutes. The sync books its own retry 5 minutes after it sees a move.
+# With 2 fixed periods, the 2 retries can fall due in the same tick of
+# the scheduler again and again. Then each sees the other and waits
+# (#404). The random delay breaks that alignment.
+
+MOVE_RETRY_MINUTES = (25, 35)
+
+# A sync that sees a move in the registries books a retry and stops in
+# less than a second. A move that sees the sync waits this many seconds
+# and checks again before it books its own retry.
+
+SYNC_RECHECK_SECONDS = 10
+
+
+def _move_retry_delay():
+    """Return the random delay before the retry of a move that waits."""
+
+    low, high = MOVE_RETRY_MINUTES
+    return timedelta(seconds=random.uniform(low * 60, high * 60))
+
+
 def _wait_move(file, source, sqs_receipt_handle, waits_for):
-    """Book the archive move again in 30 minutes, and return MOVE_WAITING.
+    """Book the archive move again in 25 to 35 minutes, and return MOVE_WAITING.
 
     The retry keeps the receipt handle of the restore notification. Then
     the poll can extend the restore and the message, and the retry
@@ -1932,7 +1955,7 @@ def _wait_move(file, source, sqs_receipt_handle, waits_for):
     requeue(
         "app.aws_storage.move_archive_object",
         key=file.id,
-        delay=timedelta(minutes=30),
+        delay=_move_retry_delay(),
         reason=f"waits for {waits_for}",
         args=(file.id,),
         kwargs=(
@@ -1988,10 +2011,14 @@ def _move_archive(file, sqs_receipt_handle):
     # The weekly sync lists the bucket, then compares the rows with the
     # listing. A key that changes between the 2 steps looks absent or
     # extra. The sync waits for queued moves. A move that starts after
-    # the idle check of the sync waits for the sync in return.
+    # the idle check of the sync waits for the sync in return. A sync
+    # that started in the same tick as this move sees the move and stops
+    # at once. Thus, a short pause and a second check let the move go on.
 
     if _sync_is_running():
-        return _wait_move(file, source, sqs_receipt_handle, "the S3 sync")
+        time.sleep(SYNC_RECHECK_SECONDS)
+        if _sync_is_running():
+            return _wait_move(file, source, sqs_receipt_handle, "the S3 sync")
 
     s3_client = aws_s3_client(with_retries=True)
     bucket = config["AWS_BUCKET"]
