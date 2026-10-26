@@ -158,3 +158,83 @@ def test_the_uncataloged_import_walks_each_root_once(app, monkeypatch, tmp_path)
         str(movies / "Film (2001) - [DVD].mkv"),
         str(shows / "Show - S01E01 - [DVD].mkv"),
     ]
+
+
+def _absent_archived_film(app, title, year):
+    """Make a rank-1 film whose archive is in S3 and whose library file is absent."""
+
+    from app import db
+    from tests.factories import make_movie, make_movie_file
+
+    key = f"untouched/{title} ({year}) - [DVD].mkv"
+    with app.app_context():
+        make_movie_file(
+            make_movie(title, year),
+            "DVD",
+            aws_key=key,
+            aws_date_uploaded=OLD,
+            aws_filesize_bytes=1,
+        )
+        db.session.commit()
+    return key
+
+
+def test_a_volume_that_drops_in_the_file_pass_stops_the_restores(app, monkeypatch):
+    """The volume dies after the idle check. The first absent file stops the pass (#431)."""
+
+    from app import aws_storage
+
+    key = _absent_archived_film(app, "Dropped Mid Pass", 2001)
+    calls = _sync_env(
+        app,
+        monkeypatch,
+        {
+            "untouched/": [
+                {"Key": key, "Size": 1, "LastModified": OLD},
+                {"Key": "untouched/E Stray (2001) - [DVD].mkv", "Size": 1},
+            ]
+        },
+    )
+    restores = []
+    monkeypatch.setattr(
+        aws_storage, "aws_restore", lambda key, **kw: restores.append(key)
+    )
+    checks = []
+
+    def dead_after_the_idle_check(paths):
+        checks.append(paths)
+        return [] if len(checks) == 1 else ["/Volumes/Movies"]
+
+    monkeypatch.setattr("app.videos._dead_volumes", dead_after_the_idle_check)
+
+    with pytest.raises(RuntimeError, match="file records"):
+        aws_storage.sync_aws_s3_storage_task()
+
+    assert restores == []
+    assert calls["deletes"] == []
+    assert len(checks) == 2
+
+
+def test_a_remount_in_the_file_pass_fails_the_pass(app, monkeypatch):
+    """A new device id of a library root abandons the result (#431)."""
+
+    from app import aws_storage
+
+    _absent_archived_film(app, "Remounted Pass", 2002)
+    seen = []
+
+    def devices():
+        seen.append(1)
+        return {"MOVIE_LIBRARY": 1 if len(seen) == 1 else 2}
+
+    monkeypatch.setattr(aws_storage, "_library_devices", devices)
+    monkeypatch.setattr(aws_storage, "aws_restore", lambda key, **kw: None)
+    monkeypatch.setattr(
+        aws_storage, "get_matching_s3_objects", lambda bucket, prefix="": []
+    )
+    monkeypatch.setitem(app.config, "AWS_BUCKET", "test-bucket")
+
+    with app.app_context():
+        listing = aws_storage._list_archives()
+        with pytest.raises(aws_storage.LibraryVolumeDropped, match="mounted again"):
+            aws_storage._reconcile_files(listing, None)

@@ -434,15 +434,62 @@ def _list_archives():
     return Listing(prefixes, sizes, modified, set(sizes))
 
 
+class LibraryVolumeDropped(RuntimeError):
+    """A library volume dropped or was mounted again during the file pass (#431)."""
+
+
+def _library_devices():
+    """Return the device id of each library root, or None for a root with no stat."""
+
+    devices = {}
+    for key in ("MOVIE_LIBRARY", "TV_LIBRARY"):
+        try:
+            devices[key] = os.stat(current_app.config[key]).st_dev
+        except OSError:
+            devices[key] = None
+    return devices
+
+
+def _check_library_volumes(devices_before):
+    """Raise LibraryVolumeDropped if a library volume dropped after the pass started.
+
+    A dead volume makes each of its files look absent. A remount gives
+    the root a new device id. In both cases, an absent file is not
+    evidence. The sync must not restore it or report it as orphaned."""
+
+    from app.videos import _dead_volumes
+
+    config = current_app.config
+    dead = _dead_volumes([config["MOVIE_LIBRARY"], config["TV_LIBRARY"]])
+    if dead:
+        reason = f"{', '.join(dead)} not mounted"
+    elif _library_devices() != devices_before:
+        reason = "a library volume was mounted again"
+    else:
+        return
+    raise LibraryVolumeDropped(
+        f"S3 sync: {reason} during the file pass. The pass stops, and nothing "
+        f"is pruned"
+    )
+
+
 def _reconcile_files(listing, job):
     """Compare each file record with the listing. Return (inventory, orphans).
 
     The pass queues the uploads of the missing archives, requests the
     restores of the missing best files, and stores the object sizes.
-    The inventory lists the best files for a bulk restore."""
+    The inventory lists the best files for a bulk restore.
+
+    A library volume can drop during the pass (#431). Then each later
+    file looks absent, and the pass would request a paid restore of
+    each. Thus, the pass checks the volumes and the device ids of the
+    library roots at each absent file and after the last file. A drop
+    raises LibraryVolumeDropped. Then the phase fails, and the prune and
+    the inventory do not run."""
 
     s3_objects = listing.sizes
     s3_keys = listing.keys
+    devices_before = _library_devices()
 
     movie_rank = ranked_movie_files()
 
@@ -488,6 +535,8 @@ def _reconcile_files(listing, job):
         # uploads again, and the sync never restores it.
 
         local = os.path.isfile(file_path)
+        if not local:
+            _check_library_volumes(devices_before)
         use_transcoded = bool(
             file.converted_from_quality
             and file.aws_transcoded_key in s3_keys
@@ -585,12 +634,17 @@ def _reconcile_files(listing, job):
                     aws_restore(file.aws_key, tier="Bulk")
 
         # The file is not in S3 and does not exist in the filesystem.
-        elif file.aws_key not in s3_keys and not os.path.isfile(file_path):
+        elif file.aws_key not in s3_keys and not local:
 
             # Flag the file as an orphaned file.
 
             current_app.logger.info(f"'{file.aws_key}' has no associated files")
             orphaned_files.append([file.id, file.untouched_basename])
+
+    # A drop after the last absent file can still hide a later absent
+    # file. Check again before the result counts.
+
+    _check_library_volumes(devices_before)
 
     # Store the AWS object sizes that this filled in.
 
