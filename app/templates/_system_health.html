@@ -17,6 +17,9 @@
 	{% if health.held_imports %}
 	<a class="badge text-bg-warning text-decoration-none me-1 mb-1" href="{{ url_for('main.held_imports') }}" title="HDR imports that wait because a real rip exists">{{ health.held_imports }} held import{{ 's' if health.held_imports != 1 }}</a>
 	{% endif %}
+	{% if health.archive_moves and health.archive_moves.count %}
+	<span class="badge text-bg-info me-1 mb-1" title="Archives that move to the key of their new name. A move from Deep Archive waits for a Bulk restore of up to 48 hours.">Archive moves pending: {{ health.archive_moves.count }}{% if health.archive_moves.oldest %}, oldest {{ relative_time(health.archive_moves.oldest) }}{% endif %}</span>
+	{% endif %}
 	{% for mount in health.missing_mounts %}
 	<span class="badge text-bg-danger me-1 mb-1">{{ mount }} not mounted</span>
 	{% endfor %}

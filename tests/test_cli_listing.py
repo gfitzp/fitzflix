@@ -27,7 +27,7 @@ LISTING = {
     ],
     "alerts": ["availability"],
     "audio": ["atmos"],
-    "aws": ["cdn-url", "provision"],
+    "aws": ["cdn-url", "converge-keys", "provision"],
     "catalog": ["exclude"],
     "db": [
         "branches",

@@ -79,3 +79,63 @@ def register_cli(app):
         if missing:
             raise click.ClickException(f"{', '.join(missing)} must be set in .env")
         click.echo(cdn_signed_url(key, expires))
+
+    @aws.command("converge-keys")
+    @click.option(
+        "--apply",
+        "apply_moves",
+        is_flag=True,
+        help="Request the moves. Without this flag, the command only lists them.",
+    )
+    @click.option(
+        "--limit",
+        type=int,
+        default=None,
+        help="Request no more than this number of moves.",
+    )
+    def converge_keys(apply_moves, limit):
+        """List the archives whose key differs from the key of their untouched name (#369).
+
+        The key of an archive is its prefix and its sanitized untouched
+        name. A rename before #369 kept the old key. With --apply, the
+        command requests a move for each listed archive. The move jobs
+        copy the objects on the server side. A Deep Archive object first
+        gets a Bulk restore. Without --apply, nothing changes."""
+
+        from app import db
+        from app.aws_storage import archive_drifts, key_claims, request_archive_move
+
+        claims = key_claims()
+        drifted = archive_drifts(claims)
+        total = sum(size for _, _, _, size in drifted)
+        by_prefix = {}
+        for _, source, _, _ in drifted:
+            prefix = source.split("/", 1)[0]
+            by_prefix[prefix] = by_prefix.get(prefix, 0) + 1
+        click.echo(
+            f"{len(drifted)} archive key(s) differ from the key of their "
+            f"untouched name: {total} bytes ({total / 1024**3:.1f} GiB)"
+        )
+        for prefix, count in sorted(by_prefix.items()):
+            click.echo(f"  {prefix}/: {count}")
+        selected = drifted if limit is None else drifted[: max(limit, 0)]
+        shown = selected if apply_moves else drifted[:5]
+        for file, source, target, size in shown:
+            pending = " (pending)" if file.aws_key_target == target else ""
+            click.echo(f"  [{file.id}] {source} -> {target} ({size} bytes){pending}")
+        if not apply_moves:
+            click.echo(
+                f"Dry run: nothing changed. --apply requests {len(selected)} move(s)."
+            )
+            return
+
+        requested = 0
+        try:
+            for file, _, _, _ in selected:
+                if request_archive_move(file, claims):
+                    requested += 1
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            raise
+        click.echo(f"Requested {requested} archive move(s).")

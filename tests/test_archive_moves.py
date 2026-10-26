@@ -7,7 +7,7 @@ the move back. aws_key names a real object at every moment."""
 
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -593,6 +593,73 @@ def test_a_conversion_rename_moves_the_original_and_then_the_transcoded_copy(app
             "transcoded/Converted Move (2001) - [Bluray-1080p].mkv",
             retagged,
         )
+
+
+def test_the_backfill_lists_the_drifted_rows_and_apply_requests_them(app):
+    from app import db
+    from app.cli import register
+    from app.models import File
+
+    if "aws" not in app.cli.commands:
+        register(app)
+    with app.app_context():
+        good = archived_film("Good Key", 1964)
+        drifted = archived_film("Drifted Key", 1965, key_name="Old Drift (1965).mkv")
+        tv = make_tv_file(make_tv_series("Drift Show"), 1, 1, "WEBDL-1080p")
+        tv.untouched_basename = tv.basename
+        tv.aws_key = "untouched/Drift Show - S01E01.mkv"
+        tv.aws_date_uploaded = datetime(2026, 1, 1)
+        tv.aws_filesize_bytes = 5
+        db.session.commit()
+        ids = (good.id, drifted.id, tv.id)
+
+    runner = app.test_cli_runner()
+    result = runner.invoke(args=["aws", "converge-keys"])
+    assert result.exit_code == 0, result.output
+    assert "2 archive key(s) differ" in result.output
+    assert f"{SIZE + 5} bytes" in result.output
+    assert (
+        "untouched/Old Drift (1965).mkv -> untouched/Drifted Key (1965)"
+        in result.output
+    )
+    assert "Dry run" in result.output
+    with app.app_context():
+        assert move_jobs(app) == []
+        assert all(db.session.get(File, i).aws_key_target is None for i in ids)
+
+    result = runner.invoke(args=["aws", "converge-keys", "--apply", "--limit", "1"])
+    assert result.exit_code == 0, result.output
+    assert "Requested 1 archive move(s)" in result.output
+    result = runner.invoke(args=["aws", "converge-keys", "--apply"])
+    assert "Requested 2 archive move(s)" in result.output
+    with app.app_context():
+        db.session.expire_all()
+        assert db.session.get(File, ids[0]).aws_key_target is None
+        assert db.session.get(File, ids[1]).aws_key_target == (
+            "untouched/Drifted Key (1965) - [Bluray-1080p].mkv"
+        )
+        assert db.session.get(File, ids[2]).aws_key_target == (
+            f"untouched/{db.session.get(File, ids[2]).untouched_basename}"
+        )
+        assert {job.args[0] for job in move_jobs(app)} == {ids[1], ids[2]}
+
+
+def test_the_system_page_shows_the_pending_moves(app, admin_client):
+    from app import aws_storage, db
+
+    with app.app_context():
+        file = archived_film("Pending Page", 1966, key_name="Pending (1966).mkv")
+        aws_storage.request_archive_move(file)
+        db.session.commit()
+        app.redis.hset(
+            aws_storage.ARCHIVE_MOVE_REQUESTED_KEY,
+            str(file.id),
+            (datetime.now(timezone.utc) - timedelta(hours=3)).isoformat(),
+        )
+        assert aws_storage.pending_archive_moves()["count"] == 1
+
+    page = admin_client.get("/system").get_data(as_text=True)
+    assert "Archive moves pending: 1, oldest 3 hours ago" in page
 
 
 def test_the_old_rearchive_task_requests_a_move(app):
