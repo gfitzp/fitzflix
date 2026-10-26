@@ -2220,3 +2220,86 @@ def test_an_unreadable_upload_queues_nothing(app, admin_client, name, content):
     assert response.status_code == 302
     assert len(app.sql_queue) == 0
     assert len(app.request_queue) == 0
+
+
+def test_log_watch_with_a_future_date_says_why(app, admin_client):
+    """Test that a Log Watch post that fails validation gives a message (#415).
+
+    The page goes back to itself with the field error. It does not
+    render again silently with no row. A background ladder post gets a
+    JSON error. Thus, its fallback submission shows the message."""
+
+    from datetime import date, timedelta
+
+    from app import db
+    from app.models import User, UserMovieReview
+
+    with app.app_context():
+        user_id = User.query.first().id
+        movie = make_movie("Future Date Film", 1990)
+        db.session.commit()
+        movie_id = movie.id
+
+    page = admin_client.get(f"/movie/{movie_id}").get_data(as_text=True)
+    token = csrf_token_from(page)
+    tomorrow = (date.today() + timedelta(days=1)).isoformat()
+    form = {
+        "csrf_token": token,
+        "review_submit": "Log Watch",
+        "date_watched": tomorrow,
+        "review": "Great.",
+    }
+
+    response = admin_client.post(f"/movie/{movie_id}", data=form)
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith(f"/movie/{movie_id}")
+    page = admin_client.get(f"/movie/{movie_id}").get_data(as_text=True)
+    assert "Enter a date in the past." in page
+
+    response = admin_client.post(
+        f"/movie/{movie_id}",
+        data={**form, "quick_rating": "4"},
+        headers={"X-Requested-With": "ladder"},
+    )
+    assert response.status_code == 400
+    assert response.get_json()["fields"] == ["date_watched"]
+
+    response = admin_client.post(
+        f"/movie/{movie_id}", data={**form, "csrf_token": "stale", "date_watched": ""}
+    )
+    assert response.status_code == 302
+    page = admin_client.get(f"/movie/{movie_id}").get_data(as_text=True)
+    assert "The page was out of date." in page
+
+    with app.app_context():
+        assert (
+            UserMovieReview.query.filter_by(user_id=user_id, movie_id=movie_id).count()
+            == 0
+        )
+
+
+def test_tmdb_log_watch_with_a_future_date_says_why(app, admin_client, monkeypatch):
+    """Test the same refusal on the TMDB log page (#415)."""
+
+    from datetime import date, timedelta
+
+    from tests.fakes import Response
+
+    monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
+    monkeypatch.setattr(
+        "app.tmdb_apply.tmdb_get", lambda *a, **k: Response(JAWS_2_DETAILS)
+    )
+
+    token = csrf_token_from(admin_client.get("/review/tmdb/579").get_data(as_text=True))
+    response = admin_client.post(
+        "/review/tmdb/579",
+        data={
+            "csrf_token": token,
+            "review_submit": "Log Watch",
+            "date_watched": (date.today() + timedelta(days=1)).isoformat(),
+        },
+    )
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith("/review/tmdb/579")
+    page = admin_client.get("/review/tmdb/579").get_data(as_text=True)
+    assert "Enter a date in the past." in page

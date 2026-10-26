@@ -103,6 +103,7 @@ from app.main.helpers import (
     _latest_review_row,
     decimal_id,
     _verdict_post,
+    refused_verdict,
     MOVIE_PAGE_POLICY,
     _upgrade_threshold,
     library_upgradable,
@@ -1230,6 +1231,11 @@ def movie(movie_id):
             target.display_title,
             url_for("main.movie", movie_id=movie.id),
         )
+    refused = refused_verdict(
+        movie_review_form, url_for("main.movie", movie_id=movie.id)
+    )
+    if refused is not None:
+        return refused
 
     # The watchlist toggle. An add is useful only for a film with no
     # local copy (the funnel stage before the shopping list). Removal is

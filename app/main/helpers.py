@@ -393,6 +393,27 @@ def _verdict_post(form):
     )
 
 
+def refused_verdict(form, back_url):
+    """Return the response to a review post that did not validate, or None.
+
+    The result is None if the user posted neither the form nor a ladder
+    tap. A background post gets a JSON error. Thus, the page falls back
+    to a normal submission. A normal submission flashes each field
+    error and goes back to the page. Without this, the page renders
+    again with no row and no message, and the user thinks that the
+    viewing is logged."""
+
+    quick_present, _ = _quick_rating()
+    if request.method != "POST" or not (form.review_submit.data or quick_present):
+        return None
+    if request.headers.get("X-Requested-With"):
+        return jsonify({"error": "not valid", "fields": sorted(form.errors)}), 400
+    if "csrf_token" in form.errors:
+        flash("The page was out of date. Load it again and try again.", "warning")
+    flash_form_errors(form)
+    return redirect(back_url)
+
+
 # The rules of a verdict on 1 page. allow_unflag lets a ✕ on a flagged
 # film remove the flag. allow_remove lets a tap on the current rating
 # remove it. steer and steer_flag say if a rating and a ✕ move the

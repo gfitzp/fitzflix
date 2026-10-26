@@ -66,6 +66,7 @@ from app.main.helpers import (
     _ladder_fetch,
     ladder_payload,
     _verdict_post,
+    refused_verdict,
     TMDB_PAGE_POLICY,
     _upgrade_threshold,
     library_upgradable,
@@ -2251,6 +2252,11 @@ def review_tmdb(tmdb_id):
             url_for("main.movie", movie_id=movie.id),
             messages=TMDB_VERDICT_MESSAGES,
         )
+    refused = refused_verdict(
+        movie_review_form, url_for("main.review_tmdb", tmdb_id=tmdb_id)
+    )
+    if refused is not None:
+        return refused
 
     # The preview of the engine, as on the movie page. The TMDB-keyed
     # lane of the shared score source feeds the estimate of the ladder.
