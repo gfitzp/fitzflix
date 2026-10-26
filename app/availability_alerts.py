@@ -79,6 +79,13 @@ RECENT_KEY = "fitzflix:availability:recent:{user_id}"
 SENT_SECONDS = 180 * 86400
 LEAVING_SENT_SECONDS = 60 * 86400
 
+# A digest that the mail server refused waits here for the next run
+# (#377). The snapshots moved on already, so the next diff does not find
+# the events again. The events of the next run join it.
+
+UNSENT_KEY = "fitzflix:availability:unsent:{user_id}"
+UNSENT_SECONDS = 7 * 86400
+
 # RECENT_DAYS is how long the watchlist badge calls an event "recent".
 # RECENT_KEY_SECONDS is the expiry of the badge store. It is a margin
 # past the badge window. Thus, the prune step has something to prune,
@@ -353,13 +360,36 @@ def _send_digest(user, events):
     )
 
 
+def _with_unsent(user_id, events):
+    """Return the events of a user with the events of a digest that was not sent."""
+
+    key = UNSENT_KEY.format(user_id=int(user_id))
+    stored = current_app.redis.getdel(key)
+    if not stored:
+        return events
+    unsent = json.loads(stored)
+    return {kind: unsent.get(kind, []) + items for kind, items in events.items()}
+
+
+def _keep_unsent(user_id, events):
+    """Keep the events of a digest that was not sent for the next run."""
+
+    current_app.redis.set(
+        UNSENT_KEY.format(user_id=int(user_id)),
+        json.dumps(events),
+        ex=UNSENT_SECONDS,
+    )
+
+
 def notify_watchlist_availability():
     """Run the nightly alert task, after the availability refresh.
 
     This compares the availability and the library presence of each
     watchlisted film with the stored snapshots. It stamps the per-user
     badge records. It sends each opted-in user a maximum of 1 digest
-    email."""
+    email. The mails go out after the events of all the users are
+    recorded. A mail that fails stops no other mail (#377). Its events
+    wait for the next run."""
 
     with app.app_context():
         entries = (
@@ -384,6 +414,7 @@ def notify_watchlist_availability():
 
         digests = 0
         events_total = 0
+        outbox = []
         users = User.query.filter(User.id.in_(list(by_user) or [0])).all()
         for user in users:
             provider_ids = user_provider_ids(user)
@@ -459,11 +490,22 @@ def notify_watchlist_availability():
                             }
                         )
 
-            count = sum(len(items) for items in events.values())
-            events_total += count
-            if count and user.notify_availability and user.email:
+            events_total += sum(len(items) for items in events.values())
+            if user.notify_availability and user.email:
+                events = _with_unsent(user.id, events)
+                if any(events.values()):
+                    outbox.append((user, events))
+
+        for user, events in outbox:
+            try:
                 _send_digest(user, events)
                 digests += 1
+            except Exception as e:
+                current_app.logger.warning(
+                    f"Watchlist availability: the digest of user {user.id} was "
+                    f"not sent. It waits for the next run: {e}"
+                )
+                _keep_unsent(user.id, events)
 
         current_app.logger.info(
             f"Watchlist availability: {events_total} event(s) across "

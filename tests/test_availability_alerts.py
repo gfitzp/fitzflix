@@ -554,3 +554,55 @@ def test_profile_saves_alert_opt_ins(app, user_client):
             assert user.notify_rentals is False
     finally:
         reset_alert_users(app)
+
+
+def test_a_refused_mail_stops_no_other_digest_and_waits_for_the_next_run(
+    app, monkeypatch
+):
+    """The snapshots move on before the mails. A refused mail must not lose the arrival (#377)."""
+
+    import app.availability_alerts as alerts
+
+    from app import db
+    from app.models import User, UserWatchlist
+
+    sent, refused = [], []
+
+    def send(subject, **kwargs):
+        if kwargs["recipients"] == [ADMIN_EMAIL] and not refused:
+            refused.append(subject)
+            raise ConnectionRefusedError("the mail server refused the message")
+        sent.append({"subject": subject, **kwargs})
+
+    monkeypatch.setattr(alerts, "task_send_email", send)
+    set_alert_flags(app, MEMBER_EMAIL, availability=True)
+    set_alert_flags(app, ADMIN_EMAIL, availability=True)
+    try:
+        movie_id = watchlist_movie(app, "Shared Debut", 9031)
+        with app.app_context():
+            admin = User.query.filter_by(email=ADMIN_EMAIL).one()
+            db.session.add(UserWatchlist(user_id=admin.id, movie_id=movie_id))
+            db.session.commit()
+        subscribe(app, 8, "Netflix", email=MEMBER_EMAIL)
+        subscribe(app, 8, "Netflix", email=ADMIN_EMAIL)
+        plant_availability(app, 9031, EMPTY)
+        run_task(app, monkeypatch)
+
+        plant_availability(app, 9031, {**EMPTY, "flatrate": [NETFLIX]})
+        run_task(app, monkeypatch)
+        assert refused
+        assert [mail["recipients"] for mail in sent] == [[MEMBER_EMAIL]]
+        with app.app_context():
+            from app.availability_alerts import recent_availability
+
+            admin = User.query.filter_by(email=ADMIN_EMAIL).one()
+            assert recent_availability(admin)[movie_id]["label"] == "New on Netflix"
+
+        # The next run finds no new event, but it sends the digest that waited.
+        run_task(app, monkeypatch)
+        assert [mail["recipients"] for mail in sent] == [[MEMBER_EMAIL], [ADMIN_EMAIL]]
+        assert "Now on Netflix" in sent[1]["text_body"]
+        run_task(app, monkeypatch)
+        assert len(sent) == 2
+    finally:
+        reset_alert_users(app)
