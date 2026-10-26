@@ -174,6 +174,43 @@ def test_refresh_keeps_the_trash_for_one_run_after_a_remount(
     assert fake.trashed == ["5", "5"]
 
 
+def test_a_failed_scan_request_keeps_the_remount_signal(app, monkeypatch, tmp_path):
+    """The new device number is stored only after a scan request succeeded (#378)."""
+
+    plex_library, fake = _guarded_refresh(app, monkeypatch, tmp_path)
+    devices = iter(["1", "2", "2", "2"])
+    monkeypatch.setattr(
+        plex_library,
+        "_mount_ids",
+        lambda targets: {target: next(devices) for target in targets},
+    )
+    assert plex_library.refresh_plex_libraries() is True
+    assert fake.trashed == ["5"]
+
+    # The share came back with a new number, and Plex refused the scan.
+
+    real_command = fake.command
+
+    def refused(method, path):
+        if path.endswith("/refresh"):
+            raise ConnectionError("Plex is starting")
+        return real_command(method, path)
+
+    monkeypatch.setattr(plex_library, "plex_command", refused)
+    assert plex_library.refresh_plex_libraries() is True
+    assert fake.trashed == ["5"]
+
+    # The next run still sees the remount. It scans and keeps the trash.
+
+    monkeypatch.setattr(plex_library, "plex_command", real_command)
+    assert plex_library.refresh_plex_libraries() is True
+    assert fake.refreshed == ["5", "5"]
+    assert fake.trashed == ["5"]
+
+    assert plex_library.refresh_plex_libraries() is True
+    assert fake.trashed == ["5", "5"]
+
+
 def test_refresh_keeps_the_trash_when_the_count_fails(app, monkeypatch, tmp_path):
     """No count means no empty (#280)."""
 

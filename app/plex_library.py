@@ -169,6 +169,7 @@ def refresh_plex_libraries():
             for mount, device in redis.hgetall(MOUNT_IDS_KEY).items()
         }
         seen_ids = {}
+        unscanned = set()
         titles = set()
         limit = get_setting("PLEX_TRASH_LIMIT")
 
@@ -201,18 +202,23 @@ def refresh_plex_libraries():
             # items in the trash. The next scan restores them.
 
             ids = _mount_ids(sorted({_probe_target(path) for path in locations}))
-            seen_ids.update(ids)
             remounted = sorted(
                 mount
                 for mount, device in ids.items()
                 if previous_ids.get(mount) not in (None, device)
             )
 
+            # The new device number of a mount is stored only after a scan
+            # request succeeded (#378). Else the next run sees no remount
+            # and empties the trash of the scan during the drop.
+
             try:
                 plex_command("GET", f"/library/sections/{key}/refresh")
             except Exception:
                 current_app.logger.warning(traceback.format_exc())
+                unscanned.update(ids)
                 continue
+            seen_ids.update(ids)
 
             if remounted:
                 current_app.logger.warning(
@@ -257,6 +263,11 @@ def refresh_plex_libraries():
             except Exception:
                 current_app.logger.warning(traceback.format_exc())
 
+        seen_ids = {
+            mount: device
+            for mount, device in seen_ids.items()
+            if mount not in unscanned
+        }
         if seen_ids:
             redis.hset(MOUNT_IDS_KEY, mapping=seen_ids)
 
