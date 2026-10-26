@@ -450,6 +450,31 @@ def _with_unsent(user_id, events, marks):
     return merged, since
 
 
+def _drop_unsent(user_id, marks):
+    """Take the stored digest of a user who gets no mail, and keep its marks.
+
+    A digest can be refused, and then the user turns the alerts off or
+    clears the address (#403). The markers and the badge stamps of its
+    events must still go in. Otherwise the badges and the dedup of those
+    events are lost. The events themselves are dropped, with an info
+    line."""
+
+    stored = current_app.redis.getdel(UNSENT_KEY.format(user_id=int(user_id)))
+    if not stored:
+        return
+    unsent = json.loads(stored)
+    movie_ids = {
+        item.get("movie_id")
+        for items in (unsent.get("events") or {}).values()
+        for item in items
+    }
+    marks.merge(unsent.get("marks") or {}, movie_ids)
+    current_app.logger.info(
+        f"Watchlist availability: the digest of user {user_id} that waited "
+        f"since {unsent.get('since')} is dropped, because the user gets no mail"
+    )
+
+
 def _keep_unsent(user_id, events, since, marks):
     """Keep the events and the marks of a digest that was not sent for the next run."""
 
@@ -572,6 +597,8 @@ def notify_watchlist_availability():
             mailed = user.notify_availability and user.email
             if mailed:
                 events, since = _with_unsent(user.id, events, marks)
+            else:
+                _drop_unsent(user.id, marks)
             if mailed and any(events.values()):
                 outbox.append((user, events, since, marks))
             else:

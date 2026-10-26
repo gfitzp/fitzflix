@@ -663,6 +663,53 @@ def test_a_resent_digest_drops_a_film_that_left_the_watchlist(app, monkeypatch):
         reset_alert_users(app)
 
 
+def test_an_unsent_digest_keeps_its_marks_when_mail_goes_off(app, monkeypatch, caplog):
+    """Test that a refused digest plants its marks after the user stops the mail (#403)."""
+
+    import app.availability_alerts as alerts
+
+    from app.models import User
+
+    def refuse(subject, **kwargs):
+        raise ConnectionRefusedError("the mail server refused the message")
+
+    monkeypatch.setattr(alerts, "task_send_email", refuse)
+    set_alert_flags(app, MEMBER_EMAIL, availability=True)
+    try:
+        movie_id = watchlist_movie(app, "Quiet Debut", 9051)
+        subscribe(app, 8, "Netflix", email=MEMBER_EMAIL)
+        plant_availability(app, 9051, EMPTY)
+        run_task(app, monkeypatch)
+        plant_availability(app, 9051, {**EMPTY, "flatrate": [NETFLIX]})
+        run_task(app, monkeypatch)
+
+        with app.app_context():
+            from app.availability_alerts import (
+                SENT_KEY,
+                UNSENT_KEY,
+                recent_availability,
+            )
+
+            user = User.query.filter_by(email=MEMBER_EMAIL).one()
+            unsent = UNSENT_KEY.format(user_id=user.id)
+            marker = SENT_KEY.format(
+                user_id=user.id, movie_id=movie_id, kind="streaming"
+            )
+            assert app.redis.exists(unsent)
+            assert not app.redis.exists(marker)
+
+        set_alert_flags(app, MEMBER_EMAIL, availability=False)
+        run_task(app, monkeypatch)
+        with app.app_context():
+            user = User.query.filter_by(email=MEMBER_EMAIL).one()
+            assert not app.redis.exists(unsent)
+            assert app.redis.exists(marker)
+            assert recent_availability(user)[movie_id]["label"] == "New on Netflix"
+        assert "because the user gets no mail" in caplog.text
+    finally:
+        reset_alert_users(app)
+
+
 def test_an_unsent_digest_that_expires_is_an_error(app, monkeypatch, caplog):
     """A digest that waited longer than UNSENT_SECONDS is lost, loudly (#377 follow-up)."""
 
