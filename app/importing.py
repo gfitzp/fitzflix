@@ -2205,7 +2205,12 @@ def finalize_localization(
                 key=file_path,
                 delay=timedelta(minutes=5),
                 reason=f"Volumes unavailable ({', '.join(dead)}) for the cataloging",
-                counters={"vanished_retries": vanished_retries},
+                # The Sonarr wait count goes with the retry. Otherwise each
+                # volume drop starts the limit of the waits again (#402).
+                counters={
+                    "vanished_retries": vanished_retries,
+                    "sonarr_waits": sonarr_waits,
+                },
                 args=(file_path, file_details, lock, hidden_output_file),
                 kwargs={"inspection": inspection, "staged_output": staged_output},
                 description=f"'{file_details.get('basename')}'",

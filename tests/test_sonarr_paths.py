@@ -1033,3 +1033,37 @@ def test_a_cataloging_waits_for_sonarr_before_it_splits_a_series(
 
         bare = {**details, "title": "Batman", "dirname": "TV Shows/Batman/Season 01"}
         assert resolve_import_series(bare)[0] == "ok"
+
+
+def test_a_dead_volume_retry_keeps_the_sonarr_wait_count(app, monkeypatch):
+    """Test that the dead-volume retry of a cataloging keeps sonarr_waits (#402).
+
+    Otherwise each volume drop gives the file 12 more Sonarr waits."""
+
+    from rq.registry import ScheduledJobRegistry
+
+    from app.tasks import requeue_job_id
+    from app.videos import finalize_localization
+
+    monkeypatch.setattr("app.videos._dead_volumes", lambda paths: ["/Volumes/TV"])
+    source = "/import/Batman (1966) - S01E06 - [WEBDL-1080p].mkv"
+    details = {
+        "media_library": "TV Shows",
+        "title": "Batman (1966)",
+        "dirname": NEW_FOLDER,
+        "basename": "Batman (1966) - S01E06 - [WEBDL-1080p].mkv",
+        "file_path": f"{NEW_FOLDER}/Batman (1966) - S01E06 - [WEBDL-1080p].mkv",
+    }
+
+    assert (
+        finalize_localization(source, details, None, "/hidden", {}, sonarr_waits=7)
+        is False
+    )
+    retry = requeue_job_id(
+        "app.videos.finalize_localization",
+        source,
+        {"vanished_retries": 0, "sonarr_waits": 7},
+    )
+    assert retry in ScheduledJobRegistry(queue=app.sql_queue).get_job_ids()
+    job = app.sql_queue.fetch_job(retry)
+    assert job.kwargs["sonarr_waits"] == 7
