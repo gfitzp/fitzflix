@@ -434,3 +434,24 @@ def test_an_empty_object_at_a_list_path_keeps_the_links(app):
         assert _names(stored.genres) == ["Horror"]
         assert stored.collections.count() == 0
         assert TMDBGenre.query.filter_by(name=None).count() == nameless_before
+
+
+def test_a_canceled_series_gets_its_counts(app):
+    """A Canceled run is over, as an Ended one is (#482)."""
+
+    with app.app_context():
+        series = make_tv_series("Canceled Series Local")
+        db.session.commit()
+        series.tmdb_tv_apply(
+            dict(
+                TV_PAYLOAD,
+                id=992002,
+                name="Canceled Series",
+                status="Canceled",
+                external_ids={},
+            )
+        )
+        db.session.commit()
+        stored = db.session.get(TVSeries, series.id)
+        assert stored.tmdb_number_of_episodes == 40
+        assert stored.tmdb_number_of_seasons == 2

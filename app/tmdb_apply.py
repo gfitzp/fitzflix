@@ -224,6 +224,11 @@ class TMDBAssociation:
 
 MPAA_RATINGS = frozenset({"G", "PG", "PG-13", "R", "NC-17", "X"})
 
+# The TMDB statuses of a TV series whose run is over. Its season and
+# episode counts are final (#482).
+
+FINISHED_TV_STATUSES = ("Ended", "Canceled")
+
 
 def release_certification(country_release):
     """Return the rating of 1 country entry of the TMDB release dates, or None.
@@ -722,7 +727,10 @@ class TMDBMixin(object):
             return self
 
         self._apply_scalars(tmdb_info)
-        if tmdb_info.get("status") == "Ended":
+        # A finished run has final counts. TMDB marks it Ended or Canceled
+        # (#482). A running series keeps no counts.
+
+        if tmdb_info.get("status") in FINISHED_TV_STATUSES:
             self.tmdb_number_of_episodes = tmdb_info.get("number_of_episodes")
             self.tmdb_number_of_seasons = tmdb_info.get("number_of_seasons")
 

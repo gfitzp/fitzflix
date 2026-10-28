@@ -92,3 +92,15 @@ def test_the_parse_uses_the_record_title_for_names_and_lock_key(app, mariadb_col
             )
         finally:
             db.session.rollback()
+
+
+def test_a_reversed_span_is_rejected(app):
+    """A span that ends before it starts is a bad name (#482)."""
+
+    from app.importing import FilenameRejection, evaluate_filename
+
+    with app.app_context():
+        details = evaluate_filename("Monk - S01E05-E03 - [DVD].mkv", log=False)
+        assert isinstance(details, FilenameRejection)
+        assert details.detail == "reversed episode span"
+        assert evaluate_filename("Monk - S01E03-E05 - [DVD].mkv", log=False)

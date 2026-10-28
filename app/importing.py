@@ -3637,6 +3637,17 @@ def _parse_tv(basename, log):
     episode = int(tv.group("episode"))
     last_episode = int(tv.group("last_episode") or tv.group("episode"))
 
+    # A reversed span ("S01E05-E03") is a bad name (#482). The row, the
+    # lock key, and the worse-file rule would all see a bad span.
+
+    if last_episode < episode:
+        if log:
+            current_app.logger.error(
+                f"'{basename}' has a reversed episode span, "
+                f"E{episode:02d} to E{last_episode:02d}"
+            )
+        return FilenameRejection(None, "reversed episode span")
+
     # If the file quality name is not an expected name, reject the file.
 
     quality_title = tv.group("quality_title")
