@@ -994,6 +994,7 @@ def localization_task(
                 keep_source=True,
                 pending_archive=pending_archive_of(file_details),
             )
+            _clear_space_wait_quietly(run.source_path)
             return False
 
         except BaseException as error:
@@ -1942,7 +1943,9 @@ def abandon_handoff(source_path, lock, staged_output, pending_archive=None):
     Remove the localized output, release the staging reservation and the
     title lock, and leave the source in place. The hourly sweep of the
     import directory queues the source again. Without staging, the
-    output is a hidden file in the library folder (#389). It goes too."""
+    output is a hidden file in the library folder (#389). It goes too.
+    The space-wait marker goes as well (#568). A stale marker would hold
+    the source back from the sweep."""
 
     current_app.logger.error(
         f"'{os.path.basename(source_path)}' The next stage could not be "
@@ -1955,6 +1958,16 @@ def abandon_handoff(source_path, lock, staged_output, pending_archive=None):
         keep_source=True,
         pending_archive=pending_archive,
     )
+    _clear_space_wait_quietly(source_path)
+
+
+def _clear_space_wait_quietly(source_path):
+    """Remove the space-wait marker of a kept source. This is best effort."""
+
+    try:
+        clear_space_wait(os.path.basename(source_path))
+    except Exception:
+        current_app.logger.warning(traceback.format_exc())
 
 
 def _plan_conversion_or_reject(file_path, file_details):
@@ -2557,7 +2570,20 @@ def finalize_localization(
         # can take the lock. This check comes first. Thus, each retry
         # extends the lock, or waits for the other task (#520).
 
-        if not _hold_title_lock(lock, basename):
+        try:
+            held = _hold_title_lock(lock, basename)
+        except Exception:
+            # A Redis fault of the lock extension (#568). The source stays
+            # for the hourly sweep, as after a failed retry (#521).
+            _remove_staged_output(hidden_output_file)
+            abandon_handoff(
+                file_path,
+                lock,
+                staged_output,
+                pending_archive=pending_archive_of(file_details),
+            )
+            return False
+        if not held:
             try:
                 defer_for_title_lock(
                     "app.videos.finalize_localization",

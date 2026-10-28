@@ -19,7 +19,9 @@ def _has_subtitle_aids(snapshot_dir):
 
     try:
         return any(name != "audio" for name in os.listdir(snapshot_dir))
-    except FileNotFoundError:
+    except OSError:
+        # A missing directory, or one that cannot be read (#568). The
+        # backfill then queues the aids again.
         return False
 
 

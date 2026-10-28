@@ -395,3 +395,113 @@ def test_a_failed_title_lock_keeps_the_source(app, tmp_path, monkeypatch):
     with app.app_context():
         assert importing.localization_task(str(source)) is False
     _assert_not_rejected(app, str(source))
+
+
+def test_a_failed_lock_extension_of_the_cataloging_keeps_the_source(
+    app, tmp_path, monkeypatch
+):
+    """A Redis fault while finalize extends its lock keeps the source (#568)."""
+
+    import app.importing as importing
+    import app.videos as videos
+
+    monkeypatch.setattr(importing, "_hold_title_lock", _refuse)
+    unlocked = _lock_watch(app, monkeypatch)
+    with app.app_context():
+        source, hidden, staged, details, lock = _finalize_fixture(
+            app, tmp_path, "Extend Fault (2021) - [DVD].mkv"
+        )
+        result = videos.finalize_localization(
+            str(source), details, lock, str(hidden), {}, staged_output=str(staged)
+        )
+    assert result is False
+    _assert_kept(app, lock, unlocked, source, hidden, staged)
+
+
+def test_a_failed_lock_extension_of_the_conversion_keeps_the_source(
+    app, tmp_path, monkeypatch
+):
+    """The SDR conversion has the same shape as the cataloging (#568)."""
+
+    import app.importing as importing
+    from app import sdr_conversion
+
+    monkeypatch.setattr(importing, "_hold_title_lock", _refuse)
+    hidden = tmp_path / ".Convert Fault (2001) - [Bluray-1080p].mkv"
+    hidden.write_bytes(b"localized")
+    source = tmp_path / "Convert Fault (2001) - [Remux-2160p].mkv"
+    source.write_bytes(b"source")
+    unlocked = _lock_watch(app, monkeypatch)
+    with app.app_context():
+        lock = app.lock_manager.lock('{"title": "Convert Fault"}', 60000)
+        result = sdr_conversion.convert_localized_file(
+            str(source),
+            {"basename": hidden.name[1:]},
+            lock,
+            str(hidden),
+            {"source_format": "HDR10", "source_quality": "x", "target_quality": "y"},
+        )
+    assert result is False
+    assert lock in unlocked
+    assert source.exists()
+    assert not hidden.exists()
+    _assert_not_rejected(app, str(source))
+
+
+def test_a_failed_lock_refresh_during_the_encode_keeps_the_source(
+    app, tmp_path, monkeypatch
+):
+    """A Redis fault of the refresh in the encode loop is no reject (#568)."""
+
+    import app.importing as importing
+    from app import sdr_conversion
+
+    class Encode:
+        stdout = iter(["Encoding: task 1 of 1, 5.00 %\n"])
+
+    def encode(command, job, basename, lock, total_seconds):
+        sdr_conversion._watch_encode(Encode(), job, basename, lock, total_seconds)
+
+    monkeypatch.setattr(sdr_conversion, "LOCK_REFRESH_SECONDS", -1)
+    monkeypatch.setattr(sdr_conversion, "_run_encode", encode)
+    monkeypatch.setattr(sdr_conversion, "probe_video", lambda path: {})
+    hidden = tmp_path / ".Refresh Fault (2001) - [Bluray-1080p].mkv"
+    hidden.write_bytes(b"localized")
+    source = tmp_path / "Refresh Fault (2001) - [Remux-2160p].mkv"
+    source.write_bytes(b"source")
+    with app.app_context():
+        lock = app.lock_manager.lock('{"title": "Refresh Fault"}', 60000)
+        real_hold = importing._hold_title_lock
+        calls = []
+
+        def hold_then_fail(lock, basename):
+            calls.append(basename)
+            if len(calls) > 1:
+                raise ConnectionError("Redis is away")
+            return real_hold(lock, basename)
+
+        monkeypatch.setattr(importing, "_hold_title_lock", hold_then_fail)
+        result = sdr_conversion.convert_localized_file(
+            str(source),
+            {"basename": hidden.name[1:]},
+            lock,
+            str(hidden),
+            {"source_format": "HDR10", "source_quality": "x", "target_quality": "y"},
+        )
+    assert result is False
+    assert len(calls) == 2
+    _assert_not_rejected(app, str(source))
+
+
+def test_a_failed_hand_off_clears_the_space_wait_marker(app, tmp_path):
+    """A stale marker held the kept source back from the sweep (#568)."""
+
+    import app.importing as importing
+
+    source = tmp_path / "Marker Fault (2021) - [DVD].mkv"
+    source.write_bytes(b"source")
+    with app.app_context():
+        importing.mark_space_wait(source.name)
+        importing.abandon_handoff(str(source), None, None)
+        assert not app.redis.exists(importing.SPACE_WAIT_KEY.format(source.name))
+    assert source.exists()

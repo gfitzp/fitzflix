@@ -35,28 +35,34 @@ class ImportEventHandler(FileSystemEventHandler):
         # workers from getting the same file at one time.
 
         app = self.app
-        lock = app.lock_manager.lock(os.path.basename(path), 30000)
-        if lock:
-            # The job id is the file basename. enqueue_localization adds
-            # the file only if no localization of it waits or runs, and
-            # no space wait holds it (#262 review, #287).
 
-            from app.importing import enqueue_localization
+        # The job id is the file basename. enqueue_localization adds the
+        # file only if no localization of it waits or runs, and no space
+        # wait holds it (#262 review, #287).
 
-            # A failed enqueue must not keep the lock or stop the dispatch
-            # thread of watchdog (#523). The sweep of the keeper finds
-            # the file again.
+        from app.importing import enqueue_localization
 
-            try:
+        # A failed lock or enqueue must not keep the lock or stop the
+        # dispatch thread of watchdog (#523, #568). The sweep of the
+        # keeper finds the file again.
+
+        lock = None
+        try:
+            lock = app.lock_manager.lock(os.path.basename(path), 30000)
+            if lock:
                 with app.app_context():
                     if enqueue_localization(path, quiet=True):
                         app.logger.info(
                             f"'{os.path.basename(path)}' Found in import directory"
                         )
-            except Exception:
-                app.logger.error(traceback.format_exc())
-            finally:
-                app.lock_manager.unlock(lock)
+        except Exception:
+            app.logger.error(traceback.format_exc())
+        finally:
+            if lock:
+                try:
+                    app.lock_manager.unlock(lock)
+                except Exception:
+                    app.logger.warning(traceback.format_exc())
 
     def on_moved(self, event):
         """Process a file when it is moved in the watched directory."""

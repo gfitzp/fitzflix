@@ -405,7 +405,7 @@ def _run_encode(command, job, basename, lock, total_seconds):
 def _watch_encode(process, job, basename, lock, total_seconds):
     """Read the progress of an encode, and keep the title lock alive."""
 
-    from app.importing import _hold_title_lock
+    from app.importing import HandoffFailed, _hold_title_lock
 
     last_refresh = time.monotonic()
     previous_percent = None
@@ -426,7 +426,12 @@ def _watch_encode(process, job, basename, lock, total_seconds):
                 current_app.logger.info(f"'{basename}' Converting to SDR: {percent}%")
             report_progress(job, basename, "Converting to SDR", percent)
         if time.monotonic() - last_refresh > LOCK_REFRESH_SECONDS:
-            if not _hold_title_lock(lock, basename):
+            try:
+                held = _hold_title_lock(lock, basename)
+            except Exception as e:
+                # A Redis fault is no fault of the source (#568).
+                raise HandoffFailed(f"{type(e).__name__}: {e}") from e
+            if not held:
                 raise TitleLockLost(basename)
             last_refresh = time.monotonic()
 
@@ -449,6 +454,7 @@ def convert_localized_file(
     again later (#339). It does not convert without the lock."""
 
     from app.importing import (
+        HandoffFailed,
         _hold_title_lock,
         abandon_failed_stage,
         abandon_handoff,
@@ -480,8 +486,19 @@ def convert_localized_file(
             )
             return False
 
-        if not _hold_title_lock(lock, basename):
-            return defer()
+        try:
+            if not _hold_title_lock(lock, basename):
+                return defer()
+        except Exception:
+            # A Redis fault of the lock extension or of the deferral
+            # (#568). The source stays for the hourly sweep.
+            abandon_handoff(
+                source_path,
+                lock,
+                hidden_output_file,
+                pending_archive=pending_archive_of(file_details),
+            )
+            return False
 
         try:
             source_video = probe_video(hidden_output_file) or {}
@@ -559,6 +576,16 @@ def convert_localized_file(
 
             _remove_quietly(video_only, muxed)
             return defer()
+
+        except HandoffFailed:
+            _remove_quietly(video_only, muxed)
+            abandon_handoff(
+                source_path,
+                lock,
+                hidden_output_file,
+                pending_archive=pending_archive_of(file_details),
+            )
+            return False
 
         except BaseException as error:
             # A stop signal keeps the source for the next sweep (#497).

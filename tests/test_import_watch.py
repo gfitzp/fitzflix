@@ -121,3 +121,16 @@ def test_a_failed_enqueue_releases_the_basename_lock(app, incoming_dir, monkeypa
     lock = app.lock_manager.lock(os.path.basename(path), 1000)
     assert lock
     app.lock_manager.unlock(lock)
+
+
+def test_a_failed_basename_lock_does_not_raise(app, incoming_dir, monkeypatch):
+    """A Redis fault at the lock call escaped the handler of #523 (#568)."""
+
+    from app.import_watch import ImportEventHandler
+
+    def broken(resource, ttl):
+        raise ConnectionError("Redis went away")
+
+    monkeypatch.setattr(app.lock_manager, "lock", broken)
+    path = os.path.join(incoming_dir, "Broken Lock (2021) - [DVD].mkv")
+    ImportEventHandler(app).process_new_file(path)

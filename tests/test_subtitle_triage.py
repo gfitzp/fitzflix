@@ -583,3 +583,13 @@ def test_the_backfill_ignores_the_audio_comparison_child(app, tmp_path):
     assert not _has_subtitle_aids(str(snapshots))
     (snapshots / "3").mkdir()
     assert _has_subtitle_aids(str(snapshots))
+
+
+def test_an_unreadable_aids_path_counts_as_no_aids(tmp_path):
+    """Only a missing directory was caught (#568). A file in its place raised."""
+
+    from app.triage_cli import _has_subtitle_aids
+
+    blocker = tmp_path / "12"
+    blocker.write_text("not a directory")
+    assert _has_subtitle_aids(str(blocker)) is False
