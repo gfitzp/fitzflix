@@ -544,7 +544,9 @@ def _rename_movie_file(f, tmdb_id):
             if sibling
             else "a file already exists at that path"
         )
-        current_app.logger.error(
+        # The notification is the alert. An ERROR record would mail the
+        # admin a second time (#453).
+        current_app.logger.warning(
             f"'{f.basename}' (file #{f.id}) not renamed to "
             f"'{new_relative}': {detail}. Delete one copy, "
             f"then re-assign the TMDB id."

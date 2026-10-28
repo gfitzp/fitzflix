@@ -8,7 +8,17 @@ file, or a visible file.
 import os
 import time
 
+import pytest
+
 import app.maintenance as maintenance
+
+
+@pytest.fixture(autouse=True)
+def mail_configured(app, monkeypatch):
+    """The cleanup mails its report only with a mail server and an admin (#453)."""
+
+    monkeypatch.setitem(app.config, "MAIL_SERVER", "smtp.test")
+    monkeypatch.setitem(app.config, "ADMIN_EMAIL", "admin@example.test")
 
 
 def plant(path, age_days=0):
@@ -409,3 +419,54 @@ def test_cleanup_keeps_a_restored_copy_that_waits_for_the_admin(app, monkeypatch
         assert os.path.exists(waiting)
     finally:
         os.remove(waiting)
+
+
+def test_cleanup_without_a_mail_server_does_not_fail(app, monkeypatch):
+    """The deletes are done. A site with no mail server gets no report (#453)."""
+
+    def no_mail(*args, **kwargs):
+        raise AssertionError("no mail server is set")
+
+    monkeypatch.setattr(maintenance, "task_send_email", no_mail)
+    monkeypatch.setitem(app.config, "MAIL_SERVER", None)
+    doomed = plant(
+        os.path.join(app.config["STAGING_DIR"], ".Mailless (2020) - [DVD].mkv"), 8
+    )
+    maintenance.cleanup_orphaned_files()
+    assert not os.path.exists(doomed)
+
+
+def test_the_double_mail_sites_log_a_warning(app, monkeypatch, tmp_path, caplog):
+    """The notification is the alert. The log record is not an ERROR (#453)."""
+
+    import logging
+
+    from app.api import arr as arr_module
+
+    monkeypatch.setattr(arr_module, "mark_grab_failed", lambda *args: False)
+    monkeypatch.setattr("app.email.notify_admin_text", lambda *args: None)
+    junk = tmp_path / "Junk (1999) - [WEBDL-1080p].mkv"
+    junk.write_bytes(b"partial")
+    with app.app_context(), caplog.at_level(logging.INFO, logger="app"):
+        arr_module.reject_incomplete_download(
+            "Radarr", {"downloadId": "abc"}, str(junk), None
+        )
+    records = [r for r in caplog.records if "structurally incomplete" in r.message]
+    assert records and all(r.levelno == logging.WARNING for r in records)
+
+
+def test_the_trail_fallback_logs_through_the_app_logger(caplog):
+    """Outside an app context, the trail warning passes the redactor of "app" (#453)."""
+
+    import logging
+
+    from app.pipeline import _log_traceback
+
+    with caplog.at_level(logging.WARNING, logger="app"):
+        try:
+            raise RuntimeError("trail write failed")
+        except RuntimeError:
+            _log_traceback()
+    assert [r.name for r in caplog.records if "trail write failed" in r.message] == [
+        "app"
+    ]

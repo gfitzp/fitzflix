@@ -317,7 +317,9 @@ def reject_incomplete_download(service, payload, file_path, refresh_command):
     basename = os.path.basename(file_path)
     base_url = current_app.config.get(f"{service.upper()}_URL")
     api_key = current_app.config.get(f"{service.upper()}_API_KEY")
-    current_app.logger.error(
+    # The notification below is the alert. An ERROR record would mail the
+    # admin a second time (#453).
+    current_app.logger.warning(
         f"'{basename}' is structurally incomplete (truncated per its "
         f"container); refusing to import it"
     )

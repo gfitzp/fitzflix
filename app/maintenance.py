@@ -1429,6 +1429,16 @@ def cleanup_orphaned_files():
             current_app.logger.info("Orphan cleanup found nothing to delete")
             return
 
+        # A site without a mail server or an admin address gets no report.
+        # The deletes are done. The task must not fail after them (#453).
+
+        if not (config["MAIL_SERVER"] and config["ADMIN_EMAIL"]):
+            current_app.logger.info(
+                f"Orphan cleanup removed {len(removed)} file(s) and "
+                f"{len(removed_dirs)} directory(ies). No mail server is set"
+            )
+            return
+
         lines = []
         if removed:
             lines.append(

@@ -1758,7 +1758,9 @@ def _plan_conversion_or_reject(file_path, file_details):
         else:
             return plan
 
-    current_app.logger.error(f"'{basename}' rejected: {reason}")
+    # The notification is the alert. An ERROR record would mail the admin
+    # a second time (#453).
+    current_app.logger.warning(f"'{basename}' rejected: {reason}")
     move_to_rejects(file_path, "conversion not possible")
     notify_admin(
         "A conversion is not possible",

@@ -584,7 +584,7 @@ def _log_traceback():
 
     The trail is advisory. A failure here must never fail the task or the
     page that wrote or read it. Outside an app context, the warning goes
-    to the logger of this module."""
+    to the "app" logger. Its records pass the secret redactor (#453)."""
 
     message = traceback.format_exc()
     try:
@@ -592,7 +592,7 @@ def _log_traceback():
 
         current_app.logger.warning(message)
     except Exception:
-        logging.getLogger(__name__).warning(message)
+        logging.getLogger("app").warning(message)
 
 
 def _best_effort(fallback=None):
