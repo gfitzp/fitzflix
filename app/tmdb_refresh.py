@@ -23,6 +23,7 @@ import zlib
 from datetime import datetime, timezone
 
 from flask import current_app
+from markupsafe import escape
 from rq.registry import ScheduledJobRegistry, StartedJobRegistry
 from werkzeug.local import LocalProxy
 
@@ -545,8 +546,8 @@ def _rename_movie_file(f, tmdb_id):
             f"'{new_relative}' was refused: {detail}.\n\n"
             f"Delete one of the copies, then re-assign "
             f"the TMDB id to finish the rename.",
-            f"<p>Renaming '{f.basename}' (file #{f.id}) "
-            f"to '{new_relative}' was refused: {detail}."
+            f"<p>Renaming '{escape(f.basename)}' (file #{f.id}) "
+            f"to '{escape(new_relative)}' was refused: {escape(detail)}."
             f"</p><p>Delete one of the copies, then "
             f"re-assign the TMDB id to finish the "
             f"rename.</p>",

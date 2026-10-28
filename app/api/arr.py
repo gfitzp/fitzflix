@@ -8,6 +8,7 @@ import traceback
 import urllib3
 
 from flask import current_app, jsonify, request
+from markupsafe import escape
 
 from app.api.auth import authenticate_api_request
 
@@ -311,8 +312,8 @@ def reject_incomplete_download(service, payload, file_path, refresh_command):
         "Incomplete download rejected",
         f"'{basename}' arrived structurally incomplete and was not "
         f"imported.\n\n{outcome}",
-        f"<p>'{basename}' arrived structurally incomplete and was "
-        f"not imported.</p><p>{outcome}</p>",
+        f"<p>'{escape(basename)}' arrived structurally incomplete and was "
+        f"not imported.</p><p>{escape(outcome)}</p>",
     )
     return failed
 

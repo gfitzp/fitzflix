@@ -456,19 +456,27 @@ def still_blocked(service, download_id):
 def email_manual_import_needed(service, title, reason):
     """Email the admin about a download that waits for a manual import."""
 
+    from markupsafe import escape
+
     from app.email import notify_admin_text
 
     if not current_app.config.get("MAIL_SERVER"):
         return
     page = url_for("main.manual_imports", _external=True)
+
+    # The title and the reason come from the arr. The HTML part escapes
+    # them (#450).
+
     notify_admin_text(
         f"{service} needs a manual import",
         f"{service} downloaded '{title}' but cannot import it.\n\n"
         f"Reason: {reason}\n\n"
         f"Finish the import at {page}",
-        f"<p>{service} downloaded '{title}' but cannot import it.</p>"
-        f"<p>Reason: {reason}</p>"
-        f'<p><a href="{page}">Finish the import on the Manual imports page</a></p>',
+        f"<p>{escape(service)} downloaded '{escape(title)}' but cannot "
+        f"import it.</p>"
+        f"<p>Reason: {escape(reason)}</p>"
+        f'<p><a href="{escape(page)}">Finish the import on the Manual imports '
+        f"page</a></p>",
     )
 
 

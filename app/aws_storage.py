@@ -42,6 +42,7 @@ from rq.registry import ScheduledJobRegistry, StartedJobRegistry
 from s3transfer.utils import ChunksizeAdjuster
 
 from flask import current_app
+from markupsafe import escape
 from sqlalchemy import event as sa_event
 from sqlalchemy.orm import Session as OrmSession
 from werkzeug.local import LocalProxy
@@ -833,7 +834,7 @@ def _report_dangling_claims(listing):
             "<p>These file records claim untouched archive "
             "keys that don't exist in S3 — a restore would "
             "fail:</p><ul>"
-            + "".join(f"<li>{key}</li>" for key in dangling_claims)
+            + "".join(f"<li>{escape(key)}</li>" for key in dangling_claims)
             + "</ul>",
         )
 
