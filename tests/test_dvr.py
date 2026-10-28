@@ -1011,3 +1011,56 @@ def test_the_catalog_count_ties_a_single_and_a_span_as_the_dvr_airs_them(app):
         episodes = dvr._series_episodes(series.id)
         assert [(f.episode, f.last_episode) for f in episodes] == [(25, 26)]
         assert dvr._series_catalog()[series.id]["episodes"] == len(episodes)
+
+
+def test_a_new_episode_does_not_move_the_series_cursor(app, monkeypatch):
+    """The next window continues after the last episode that aired (#460).
+
+    The day formula re-mapped the cursor when the episode count changed.
+    One import made the series jump far ahead. The stored cursor keeps
+    the order."""
+
+    from datetime import timedelta
+
+    from app import dvr
+
+    real_setting = dvr.get_setting
+    monkeypatch.setattr(
+        dvr,
+        "get_setting",
+        lambda name: 4 if name == "DVR_CHANNEL_EPISODES" else real_setting(name),
+    )
+    monkeypatch.setattr(dvr, "_probe_duration", lambda path: 1500.0)
+    day = date(2026, 11, 1)
+
+    def aired(title):
+        programs = dvr.channel_lineup(app.redis, "tv-animation")["programs"]
+        return [p["episode_num"] for p in programs if p["title"] == title]
+
+    with app.app_context():
+        animation = TMDBGenre(id=16, name="Animation")
+        db.session.add(animation)
+        first = make_tv_series("Gamma Toons")
+        second = make_tv_series("Delta Toons")
+        for series in (first, second):
+            series.genres.append(animation)
+            for episode in range(1, 21):
+                make_tv_file(series, 1, episode, "Bluray-1080p")
+        db.session.commit()
+        first_id = first.id
+        assert dvr.build_channel_lineups(day=day) is True
+        before = aired("Gamma Toons")
+        assert len(before) == 2
+
+        # A rebuild on the same day gives the same window.
+        assert dvr.build_channel_lineups(day=day) is True
+        assert aired("Gamma Toons") == before
+
+        series = db.session.get(dvr.TVSeries, first_id)
+        make_tv_file(series, 1, 21, "Bluray-1080p")
+        db.session.commit()
+        assert dvr.build_channel_lineups(day=day + timedelta(days=1)) is True
+        after = aired("Gamma Toons")
+
+    last = int(before[-1][-2:])
+    assert after == [f"S01E{(last % 21) + 1:02d}", f"S01E{((last + 1) % 21) + 1:02d}"]

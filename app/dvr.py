@@ -69,6 +69,12 @@ app = LocalProxy(get_app)
 CHANNELS_KEY = "fitzflix:dvr:channels"
 LINEUP_KEY = "fitzflix:dvr:lineup:{slug}"
 DURATIONS_KEY = "fitzflix:dvr:durations"
+
+# The series cursors of each channel (#460). The hash maps a series id
+# to its cursor. The cursor holds the day of the last window, the first
+# episode of that window, and the next episode to air.
+
+CURSORS_KEY = "fitzflix:dvr:cursors:{slug}"
 REBUILD_FUNC = "app.dvr.build_channel_lineups"
 REBUILD_JOB_ID = "dvr-lineup-rebuild"
 
@@ -609,7 +615,46 @@ def _rotation_turns(index, days, count, cap):
     )
 
 
-def _channel_window(members, day, cap):
+def _episode_key(file):
+    """Return the broadcast position of an episode file as [season, episode]."""
+
+    return [file.season, file.episode]
+
+
+def _locate(episodes, key):
+    """Return the position of the first episode at or after key. Return 0 if none is.
+
+    An episode that left the library leaves no gap. The next one takes
+    its place. A new episode before the key does not move the cursor."""
+
+    target = tuple(key)
+    for position, file in enumerate(episodes):
+        if (file.season, file.episode) >= target:
+            return position
+    return 0
+
+
+def _stored_start(cursor, day, episodes):
+    """Return the start position of a series from its stored cursor, or None (#460).
+
+    A rebuild on the same day starts where the first build of the day
+    started. A later day starts after the last episode that aired. A
+    cursor from a later day, or a damaged one, gives None."""
+
+    if not cursor:
+        return None
+    try:
+        stored_day = date.fromisoformat(cursor["day"])
+        if stored_day == day:
+            return _locate(episodes, cursor["start"])
+        if stored_day < day:
+            return _locate(episodes, cursor["next"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    return None
+
+
+def _channel_window(members, day, cap, cursors=None):
     """Return the program window of the day for a multi-series channel.
 
     The window is a list of (series, file) pairs. Each series gets
@@ -617,7 +662,13 @@ def _channel_window(members, day, cap):
     (#427). They air as short interleaved blocks, like syndication. The
     cursor of each series moves each day by the slots that the series
     aired. Thus, no episode is skipped. With more series than the cap,
-    the series take 1 slot each in turn."""
+    the series take 1 slot each in turn.
+
+    cursors maps a series id to its stored cursor (#460). A series with
+    a cursor continues after the last episode that aired, also when the
+    series gained or lost an episode. A series with no cursor starts at
+    the position of the day formula. The function writes the new
+    cursor of each series that airs into cursors."""
 
     members = sorted(members, key=lambda m: (m["series"].title.lower(), m["series"].id))
     lists = [(m["series"], _series_episodes(m["series"].id)) for m in members]
@@ -625,25 +676,38 @@ def _channel_window(members, day, cap):
     if not lists or cap <= 0:
         return []
 
+    def start_of(series, episodes, formula):
+        if cursors is not None:
+            stored = _stored_start(cursors.get(series.id), day, episodes)
+            if stored is not None:
+                return stored
+        return formula % len(episodes)
+
     ordinal = day.toordinal()
-    cursors = []
+    cursor_rows = []
     if len(lists) <= cap:
         quotas = _apportion([len(episodes) for _, episodes in lists], cap)
         for (series, episodes), quota in zip(lists, quotas):
-            start = (ordinal * quota) % len(episodes)
-            cursors.append([series, episodes[start:] + episodes[:start], quota])
+            start = start_of(series, episodes, ordinal * quota)
+            cursor_rows.append([series, episodes, start, quota])
     else:
         count = len(lists)
         for index, (series, episodes) in enumerate(lists):
             if (index - ordinal * cap) % count >= cap:
                 continue
-            start = _rotation_turns(index, ordinal, count, cap) % len(episodes)
-            cursors.append([series, episodes[start:] + episodes[:start], 1])
+            start = start_of(
+                series, episodes, _rotation_turns(index, ordinal, count, cap)
+            )
+            cursor_rows.append([series, episodes, start, 1])
+    cursors_now = [
+        [series, episodes[start:] + episodes[:start], quota]
+        for series, episodes, start, quota in cursor_rows
+    ]
 
     window = []
     while len(window) < cap:
         progressed = False
-        for cursor in cursors:
+        for cursor in cursors_now:
             series, rotated, remaining = cursor
             if remaining <= 0:
                 continue
@@ -656,6 +720,17 @@ def _channel_window(members, day, cap):
                 break
         if not progressed:
             break
+
+    if cursors is not None:
+        for (series, episodes, start, quota), (_, _, remaining) in zip(
+            cursor_rows, cursors_now
+        ):
+            aired = quota - remaining
+            cursors[series.id] = {
+                "day": day.isoformat(),
+                "start": _episode_key(episodes[start]),
+                "next": _episode_key(episodes[(start + aired) % len(episodes)]),
+            }
     return window
 
 
@@ -1014,8 +1089,28 @@ def build_channel_lineups(day=None):
                     program["overview"] = f"{note} {program['overview']}".strip()
                 movie_programs.append(program)
 
+            # The cursors of the series continue from the last build (#460).
+
+            cursors_key = CURSORS_KEY.format(slug=channel.slug)
+            cursors = {}
+            for field, raw in redis_client.hgetall(cursors_key).items():
+                try:
+                    cursors[int(field)] = json.loads(raw)
+                except ValueError:
+                    continue
+            window = _channel_window(series_entries, day, episode_cap, cursors)
+            member_ids = {entry["series"].id for entry in series_entries}
+            redis_client.delete(cursors_key)
+            kept_cursors = {
+                str(series_id): json.dumps(cursor)
+                for series_id, cursor in cursors.items()
+                if series_id in member_ids
+            }
+            if kept_cursors:
+                redis_client.hset(cursors_key, mapping=kept_cursors)
+
             episode_programs = []
-            for series, file in _channel_window(series_entries, day, episode_cap):
+            for series, file in window:
                 duration = _cached_duration(redis_client, file)
                 if duration is None:
                     current_app.logger.warning(
@@ -1049,6 +1144,10 @@ def build_channel_lineups(day=None):
         kept = {LINEUP_KEY.format(slug=entry["slug"]) for entry in index}
         for key in redis_client.scan_iter(match=LINEUP_KEY.format(slug="*")):
             if key.decode() not in kept:
+                redis_client.delete(key)
+        kept_cursors = {CURSORS_KEY.format(slug=entry["slug"]) for entry in index}
+        for key in redis_client.scan_iter(match=CURSORS_KEY.format(slug="*")):
+            if key.decode() not in kept_cursors:
                 redis_client.delete(key)
 
         _prune_durations(redis_client)
