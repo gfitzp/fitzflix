@@ -1851,7 +1851,14 @@ def _run_probe(check, config):
         check(config)
         ok, detail = True, "ok"
     except Exception as e:
-        ok, detail = False, f"{type(e).__name__}: {e}"[:200]
+        # requests puts the full URL into the message of a fault. The
+        # TMDB key is a query parameter of that URL. The detail goes to
+        # Redis, the System page and the health email. Thus, the key is
+        # removed before the cut, so a partial key cannot stay (#529).
+        from app.redaction import SecretRedactor
+
+        detail = SecretRedactor(config).redact(f"{type(e).__name__}: {e}")
+        ok, detail = False, detail[:200]
     return {
         "ok": ok,
         "detail": detail,

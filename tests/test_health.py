@@ -730,3 +730,29 @@ def time_of(*parts):
     from datetime import timezone
 
     return datetime(*parts, tzinfo=timezone.utc).timestamp()
+
+
+def test_a_failed_probe_keeps_the_api_key_out_of_redis_and_the_mail(
+    app, health_env, monkeypatch
+):
+    """requests puts the full URL, query included, into its fault (#529)."""
+
+    key = "tmdb-test-key"
+
+    def leaky_probe_http(url, **kwargs):
+        if "tmdb" in url.lower():
+            raise ConnectionError(
+                "HTTPConnectionPool(host='tmdb.test'): Max retries exceeded "
+                f"with url: /3/configuration?api_key={key}"
+            )
+
+    monkeypatch.setattr(maintenance, "_probe_http", leaky_probe_http)
+    health_env.run()
+    (mail,) = health_env.run()
+    assert "TMDB has failed 2 consecutive probes" in mail["body"]
+    assert key not in mail["body"]
+    probes = health_env.redis.hgetall("fitzflix:health:probes")
+    assert key.encode() not in probes[b"TMDB"]
+    assert b"api_key=[redacted]" in probes[b"TMDB"]
+    issues = health_env.redis.hgetall("fitzflix:health:issues")
+    assert all(key.encode() not in message for message in issues.values())
