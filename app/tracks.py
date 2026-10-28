@@ -79,7 +79,7 @@ def _run_mkvmerge(command, job, name, activity):
     wait_for_subprocess(process, ok_returncodes=(0, 1))
 
 
-def remux_file(file_path, build_command, job, name, activity):
+def remux_file(file_path, build_command, job, name, activity, before_replace=None):
     """Remux a Matroska file and replace it with the result (#298).
 
     build_command(source, output) returns the mkvmerge command. A file on
@@ -90,7 +90,11 @@ def remux_file(file_path, build_command, job, name, activity):
     remux leaves its partial on staging.
 
     A file that is already on staging is remuxed in place. Without
-    staging space, the remux also runs in place, as before."""
+    staging space, the remux also runs in place, as before.
+
+    before_replace runs right before the rename over the file. A library
+    rewrite uses it to mark the archive stale before the bytes change
+    (#517)."""
 
     from app.importing import release_staging_reservation, reserve_staging
     from app.videos import copy_with_progress
@@ -134,6 +138,8 @@ def remux_file(file_path, build_command, job, name, activity):
         hidden_output = hidden(os.path.join(directory, basename), ".remux.mkv")
         try:
             _run_mkvmerge(build_command(file_path, hidden_output), job, name, activity)
+            if before_replace:
+                before_replace()
             os.replace(hidden_output, file_path)
         except BaseException:
             if os.path.exists(hidden_output):
@@ -153,6 +159,8 @@ def remux_file(file_path, build_command, job, name, activity):
         copy_with_progress(
             staged_output, hidden_library, job, name, "Moving into the library"
         )
+        if before_replace:
+            before_replace()
         os.replace(hidden_library, file_path)
     except BaseException:
         if os.path.exists(hidden_library):
@@ -301,18 +309,26 @@ def _extract_media_details(file_path):
     }
 
 
-def extract_track_metadata(file_path):
+def extract_track_metadata(file_path, file_id=None):
     """Remove the empty subtitle tracks and return the media details of a library file.
 
     This is the file half of a track scan. The returned details go to
-    save_track_metadata on the sql queue.
+    save_track_metadata on the sql queue. With file_id, the archive of
+    that row is marked stale before the remux replaces the file (#517).
     """
 
     media_info = MediaInfo.parse(file_path)
     rewritten = False
     for track in media_info.tracks:
         if track.track_type == "General" and track.format == "Matroska":
-            rewritten = remove_empty_subtitle_tracks(file_path)
+            rewritten = remove_empty_subtitle_tracks(
+                file_path,
+                before_replace=(
+                    (lambda: flag_archive_before_rewrite(file_id))
+                    if file_id is not None
+                    else None
+                ),
+            )
             break
 
     details = _extract_media_details(file_path)
@@ -385,7 +401,7 @@ def track_metadata_scan_task(file_id):
                 return True
 
             try:
-                details = extract_track_metadata(file_path)
+                details = extract_track_metadata(file_path, file_id)
             except Exception:
                 current_app.lock_manager.unlock(lock)
                 raise
@@ -468,6 +484,19 @@ def _flag_rewritten_archive(file_id):
         current_app.logger.warning(traceback.format_exc())
 
 
+def flag_archive_before_rewrite(file_id):
+    """Mark the archive stale right before a library rewrite (#517).
+
+    A failure after the write and before the commit leaves the new bytes
+    on disk and the old row. Without the flag, the weekly sync never
+    uploads the file again, and a restore would bring back the older
+    bytes. archive_library_file clears the flag after a good upload. The
+    flag is set only when Fitzflix archives the library files."""
+
+    if get_setting("ARCHIVE_ORIGINAL_MEDIA"):
+        _flag_rewritten_archive(file_id)
+
+
 def save_track_metadata(file_id, details, lock=None, archive=False):
     """Write the extracted track metadata to the database.
 
@@ -536,7 +565,7 @@ def track_metadata_scan(file_id):
 
     try:
         details = extract_track_metadata(
-            os.path.join(current_app.config["LIBRARY_DIR"], file.file_path)
+            os.path.join(current_app.config["LIBRARY_DIR"], file.file_path), file_id
         )
     except Exception:
         current_app.lock_manager.unlock(lock)
@@ -1101,6 +1130,9 @@ def mkvpropedit_unlocked(
 
             if localization_arguments:
 
+                # mkvpropedit writes the file in place (#517).
+
+                flag_archive_before_rewrite(file_id)
                 mkvpropedit_task = subprocess.Popen(
                     [
                         current_app.config["MKVPROPEDIT_BIN"],
@@ -1150,12 +1182,15 @@ def mkvpropedit_unlocked(
                         job,
                         file.basename,
                         "Remuxing",
+                        before_replace=lambda: flag_archive_before_rewrite(file_id),
                     )
                     reordered = True
 
             # Remove the subtitle tracks that have zero elements
 
-            remove_empty_subtitle_tracks(file_path)
+            remove_empty_subtitle_tracks(
+                file_path, before_replace=lambda: flag_archive_before_rewrite(file_id)
+            )
 
             # Build the audio and subtitle track info again after the changes
 
@@ -1346,11 +1381,14 @@ def mkvmerge_unlocked(file_id, audio_tracks, subtitle_tracks):
                 job,
                 file.basename,
                 "Remuxing",
+                before_replace=lambda: flag_archive_before_rewrite(file_id),
             )
 
             # Remove the subtitle tracks that have zero elements
 
-            remove_empty_subtitle_tracks(file_path)
+            remove_empty_subtitle_tracks(
+                file_path, before_replace=lambda: flag_archive_before_rewrite(file_id)
+            )
 
             # Build the audio and subtitle track info again after the changes
 
@@ -1622,7 +1660,7 @@ def flag_possibly_forced_subtitles(file, subtitle_tracks):
     return possibly_forced_subtitle
 
 
-def remove_empty_subtitle_tracks(file_path):
+def remove_empty_subtitle_tracks(file_path, before_replace=None):
     """Remux a Matroska file in place to remove the subtitle tracks with zero elements.
 
     This function removes only the tracks whose statistics tags report
@@ -1630,7 +1668,7 @@ def remove_empty_subtitle_tracks(file_path):
     Fitzflix cannot know if that track is empty.
 
     Return True if the function rewrote the file. Return False if there
-    was nothing to remove.
+    was nothing to remove. before_replace goes to remux_file.
     """
 
     basename = os.path.basename(file_path)
@@ -1685,6 +1723,7 @@ def remove_empty_subtitle_tracks(file_path):
         job,
         basename,
         "Removing empty subtitle tracks",
+        before_replace=before_replace,
     )
     return True
 
@@ -2157,6 +2196,7 @@ def _remux_audio_plan_unlocked(file_id, plan):
                     basename,
                     "Moving into the library",
                 )
+                flag_archive_before_rewrite(int(file_id))
                 os.replace(hidden_library, file_path)
             except BaseException:
                 if os.path.exists(hidden_library):

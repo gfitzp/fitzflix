@@ -201,3 +201,99 @@ def test_audio_in_a_language_with_no_2_letter_code_keeps_its_code(app, tmp_path)
         capture_output=True,
     )
     assert [language for language, _default in _audio(app, str(tagged))] == ["yue"]
+
+
+def _stale_after_failed_commit(app, monkeypatch, three_audio_mkv, title, run):
+    """Run a library rewrite whose row write fails after the file changed.
+
+    Return the aws_stale flag of the row afterwards (#517)."""
+
+    from app import db
+    from app.models import File
+    import app.tracks as tracks
+    from tests.factories import make_movie, make_movie_file
+
+    monkeypatch.setitem(app.config, "ARCHIVE_ORIGINAL_MEDIA", True)
+    with app.app_context():
+        movie = make_movie(title, 2021)
+        file = make_movie_file(movie, "Bluray-1080p")
+        db.session.commit()
+        file_id = file.id
+        library_path = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
+
+    os.makedirs(os.path.dirname(library_path), exist_ok=True)
+    shutil.copy(three_audio_mkv, library_path)
+    before = os.stat(library_path).st_ino
+
+    def lost_row(file_id):
+        raise RuntimeError("1020 record has changed since last read")
+
+    with app.app_context():
+        with monkeypatch.context() as patch:
+            patch.setattr(tracks, "_fresh_file", lost_row)
+            with pytest.raises(RuntimeError):
+                run(tracks, file_id)
+        # The remux renamed a new file over the old one.
+        assert os.stat(library_path).st_ino != before
+        return db.session.get(File, file_id).aws_stale
+
+
+def test_a_reorder_that_fails_its_commit_marks_the_archive_stale(
+    app, monkeypatch, three_audio_mkv
+):
+    """The file on disk is new and the row is old. The sync must upload it (#517)."""
+
+    assert _stale_after_failed_commit(
+        app,
+        monkeypatch,
+        three_audio_mkv,
+        "Stale Reorder",
+        lambda tracks, file_id: tracks.mkvpropedit_unlocked(file_id, 2, None, None),
+    )
+
+
+def test_a_remux_that_fails_its_commit_marks_the_archive_stale(
+    app, monkeypatch, three_audio_mkv
+):
+    assert _stale_after_failed_commit(
+        app,
+        monkeypatch,
+        three_audio_mkv,
+        "Stale Remux",
+        lambda tracks, file_id: tracks.mkvmerge_unlocked(file_id, [1, 2, 3], []),
+    )
+
+
+def test_the_scan_marks_the_archive_stale_before_its_remux(app, monkeypatch):
+    """A scan that fails after the empty-subtitle remux keeps the flag (#517)."""
+
+    from app import db
+    from app.models import File
+    import app.tracks as tracks
+    from tests.factories import make_movie, make_movie_file
+
+    monkeypatch.setitem(app.config, "ARCHIVE_ORIGINAL_MEDIA", True)
+    with app.app_context():
+        file = make_movie_file(make_movie("Stale Scan", 2021), "Bluray-1080p")
+        db.session.commit()
+        file_id = file.id
+
+    class Matroska:
+        track_type, format = "General", "Matroska"
+
+    def remux(path, before_replace=None):
+        before_replace()
+        return True
+
+    def unreadable(path):
+        raise OSError("the volume went away")
+
+    monkeypatch.setattr(
+        tracks.MediaInfo, "parse", lambda path: type("I", (), {"tracks": [Matroska]})
+    )
+    monkeypatch.setattr(tracks, "remove_empty_subtitle_tracks", remux)
+    monkeypatch.setattr(tracks, "_extract_media_details", unreadable)
+    with app.app_context():
+        with pytest.raises(OSError):
+            tracks.extract_track_metadata("/nowhere.mkv", file_id)
+        assert db.session.get(File, file_id).aws_stale

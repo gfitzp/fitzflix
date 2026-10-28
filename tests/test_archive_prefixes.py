@@ -438,7 +438,9 @@ def test_the_backfill_keeps_an_archive_with_different_bytes(
 def test_a_scan_that_rewrites_the_file_queues_its_archive(app, monkeypatch):
     import app.tracks as tracks
 
-    monkeypatch.setattr(tracks, "remove_empty_subtitle_tracks", lambda path: True)
+    monkeypatch.setattr(
+        tracks, "remove_empty_subtitle_tracks", lambda path, before_replace=None: True
+    )
     monkeypatch.setattr(
         tracks,
         "_extract_media_details",

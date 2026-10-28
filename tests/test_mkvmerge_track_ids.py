@@ -61,7 +61,7 @@ def _remux_command(app, monkeypatch, audio, subtitles, info=FakeInfo, refused=Fa
 
     commands = []
 
-    def fake_remux(file_path, build, job, basename, label):
+    def fake_remux(file_path, build, job, basename, label, before_replace=None):
         commands.append(build("in.mkv", "out.mkv"))
         raise Stop()
 
