@@ -338,3 +338,51 @@ def test_provision_refuses_a_suspected_stale_read(tmp_path):
     results = dict(provision(config, stale, sqs, echo=lambda *_: None, force=True))
     assert "put_lifecycle" in stale.writes
     assert any(status != "present" for status in results.values())
+
+
+def test_provision_updates_an_own_rule_whose_days_changed(tmp_path):
+    """Replace an own rule in place when its managed fields differ (#466).
+
+    The pending-untouched expiry went from 14 to 60 days. A provision run
+    must update the rule on the bucket, not report it as present."""
+
+    s3 = FakeS3(exists=False)
+    sqs = FakeSQS()
+    config = dict(CONFIG, LOG_FILE=str(tmp_path / "app.log"))
+    provision(config, s3, sqs, echo=lambda *_: None)
+
+    expire = next(
+        rule for rule in s3.rules if rule["ID"] == "fitzflix-pending-untouched-expire"
+    )
+    position = s3.rules.index(expire)
+    expire["Expiration"] = {"Days": 14}
+    rule_count = len(s3.rules)
+    s3.writes.clear()
+
+    results = dict(provision(config, s3, sqs, echo=lambda *_: None))
+
+    label = "lifecycle: pending-untouched/ expiry (60 days, noncurrent 1 day)"
+    assert results[label] == "updated"
+    assert s3.writes == ["put_lifecycle"]
+    assert len(s3.rules) == rule_count
+    assert s3.rules[position]["ID"] == "fitzflix-pending-untouched-expire"
+    assert s3.rules[position]["Expiration"] == {"Days": 60}
+    others = {key: value for key, value in results.items() if key != label}
+    assert all(status == "present" for status in others.values())
+
+
+def test_provision_treats_an_empty_prefix_as_no_filter(tmp_path):
+    """Do not rewrite the bucket-wide abort rule over an empty prefix."""
+
+    s3 = FakeS3(exists=False)
+    sqs = FakeSQS()
+    config = dict(CONFIG, LOG_FILE=str(tmp_path / "app.log"))
+    provision(config, s3, sqs, echo=lambda *_: None)
+    abort = next(rule for rule in s3.rules if rule["ID"] == ABORT_RULE_ID)
+    abort["Filter"] = {"Prefix": ""}
+    s3.writes.clear()
+
+    results = dict(provision(config, s3, sqs, echo=lambda *_: None))
+
+    assert results["lifecycle: bucket-wide incomplete-multipart abort"] == "present"
+    assert s3.writes == []

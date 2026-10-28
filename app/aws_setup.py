@@ -83,16 +83,64 @@ def _newest_snapshot_rule_count(config):
         return len(json.load(f).get("lifecycle_rules", []))
 
 
+# The fields of a lifecycle rule that Fitzflix manages. Provision compares
+# these fields on its own rules and replaces a rule that differs (#466)
+
+MANAGED_RULE_FIELDS = (
+    "Filter",
+    "Status",
+    "Expiration",
+    "NoncurrentVersionExpiration",
+    "Transitions",
+    "AbortIncompleteMultipartUpload",
+)
+MANAGED_RULE_PREFIX = "fitzflix-"
+
+
+def _rule_body(rule):
+    """Return the managed fields of a lifecycle rule in a comparable form.
+
+    S3 can return a rule with no filter as an empty prefix. It can also
+    return the legacy top-level Prefix. Both forms compare as one filter."""
+
+    body = {field: rule.get(field) for field in MANAGED_RULE_FIELDS}
+    rule_filter = rule.get("Filter")
+    if rule_filter is None and "Prefix" in rule:
+        rule_filter = {"Prefix": rule["Prefix"]}
+    rule_filter = dict(rule_filter or {})
+    if rule_filter.get("Prefix") == "":
+        rule_filter.pop("Prefix")
+    body["Filter"] = rule_filter
+    return body
+
+
 def _ensure_rule(rules, label, present, build, report):
-    """Append build() to rules if no rule passes present. Report the result.
+    """Make sure that rules holds the rule that build() returns.
 
-    Return True if this function appended a rule. A rule is detected by
-    content or by id. Thus, an existing hand-made rule counts."""
+    A rule that Fitzflix owns has an id that starts with "fitzflix-". If
+    rules holds a rule with that id, this function compares its managed
+    fields with the built rule. If they differ, it replaces the rule in
+    place and reports "updated". Other rules are detected with present,
+    by content or by id. Thus, an existing hand-made rule counts.
 
+    Return True if this function appended or replaced a rule."""
+
+    built = build()
+    rule_id = built.get("ID", "")
+    if rule_id.startswith(MANAGED_RULE_PREFIX):
+        for index, rule in enumerate(rules):
+            if rule.get("ID") != rule_id:
+                continue
+            if _rule_body(rule) == _rule_body(built):
+                report(label, "present")
+                return False
+            rules[index] = built
+            report(label, "updated")
+            return True
     if any(present(rule) for rule in rules):
         report(label, "present")
         return False
-    rules.append(build())
+    rules.append(built)
     report(label, "created")
     return True
 
