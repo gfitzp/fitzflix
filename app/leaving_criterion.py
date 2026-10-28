@@ -42,6 +42,7 @@ from app.recommendations import (
     record_lane_scores,
     stored_profile,
     tmdb_taste_score,
+    user_tmdb_weights,
 )
 from app.cache import MISS, cache_json, cached_json
 from app.streaming_rail import enriched_movie, movie_gone
@@ -699,6 +700,7 @@ def leaving_shelf(user):
     recorded = record_lane_scores(current_app.redis, user.id, tmdb_ids, profile)
 
     items = []
+    tmdb_weights = None
     for item in stored.get("items", []):
         tmdb_id = item["tmdb_id"]
         if tmdb_id is None:
@@ -709,7 +711,11 @@ def leaving_shelf(user):
             continue
         if tmdb_id in logged or tmdb_id in watchlisted:
             continue
-        score, contributions = tmdb_taste_score(user.id, tmdb_id, item, profile)
+        if tmdb_weights is None:
+            tmdb_weights = user_tmdb_weights(user.id)
+        score, contributions = tmdb_taste_score(
+            user.id, tmdb_id, item, profile, tmdb_weights
+        )
         score = recorded.get(tmdb_id, score)
         items.append(
             {
@@ -811,10 +817,13 @@ def leaving_inventory(user):
         _, seen, watchlisted, _ = user_film_sets(user, tmdb_ids)
 
     items = []
+    tmdb_weights = user_tmdb_weights(user.id) if profile else None
     for item in matched:
         tmdb_id = item["tmdb_id"]
         if profile:
-            score, contributions = tmdb_taste_score(user.id, tmdb_id, item, profile)
+            score, contributions = tmdb_taste_score(
+                user.id, tmdb_id, item, profile, tmdb_weights
+            )
         else:
             score, contributions = 0.0, []
         items.append(

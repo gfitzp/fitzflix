@@ -50,6 +50,7 @@ from app.recommendations import (
     record_lane_scores,
     stored_profile,
     tmdb_taste_score,
+    user_tmdb_weights,
 )
 from app.streaming_rail import enriched_movie, movie_gone
 
@@ -241,6 +242,7 @@ def newly_added_shelves(user):
 
     subscribed = {row.provider_id for row in user.streaming_providers}
     profile = None
+    tmdb_weights = None
     shelves = []
     for provider_id, feed in FEEDS.items():
         if provider_id not in subscribed:
@@ -273,13 +275,17 @@ def newly_added_shelves(user):
         recorded = record_lane_scores(current_app.redis, user.id, tmdb_ids, profile)
 
         rows = []
+        if tmdb_weights is None:
+            tmdb_weights = user_tmdb_weights(user.id)
         for item in recent:
             tmdb_id = item["tmdb_id"]
             if tmdb_id in owned or tmdb_id in refused:
                 continue
             if tmdb_id in logged or tmdb_id in watchlisted:
                 continue
-            score, contributions = tmdb_taste_score(user.id, tmdb_id, item, profile)
+            score, contributions = tmdb_taste_score(
+                user.id, tmdb_id, item, profile, tmdb_weights
+            )
             score = recorded.get(tmdb_id, score)
             rows.append(
                 {
@@ -325,6 +331,7 @@ def newly_added_inventory(user):
     """
 
     profile = stored_profile(current_app.redis, user.id)
+    tmdb_weights = None
     sections = []
     for provider_id, feed in FEEDS.items():
         raw = current_app.redis.get(NEWLY_ADDED_KEY.format(provider_id=provider_id))
@@ -374,10 +381,14 @@ def newly_added_inventory(user):
             }
 
         films = []
+        if profile and tmdb_weights is None:
+            tmdb_weights = user_tmdb_weights(user.id)
         for item in matched:
             tmdb_id = item["tmdb_id"]
             if profile:
-                score, contributions = tmdb_taste_score(user.id, tmdb_id, item, profile)
+                score, contributions = tmdb_taste_score(
+                    user.id, tmdb_id, item, profile, tmdb_weights
+                )
             else:
                 score, contributions = 0.0, []
             films.append(

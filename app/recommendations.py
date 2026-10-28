@@ -682,7 +682,26 @@ def estimated_rating(profile, score):
     return max(0.5, min(5.0, round(value, 2)))
 
 
-def _tmdb_copref(user_id, tmdb_id):
+def user_tmdb_weights(user_id):
+    """Return {tmdb_id: sentiment weight} of the weighted films of a user (#538).
+
+    A loop that scores many films reads this 1 time and gives it to
+    _tmdb_copref or tmdb_taste_score. Before, each film paid for
+    user_movie_weights and a Movie query again. The landing page made
+    about 6 queries per newly-added film."""
+
+    weights = user_movie_weights(user_id)
+    if not weights:
+        return {}
+    return {
+        tmdb_id: weights[movie_id]
+        for movie_id, tmdb_id in db.session.query(Movie.id, Movie.tmdb_id)
+        .filter(Movie.id.in_(list(weights)))
+        .filter(Movie.tmdb_id.isnot(None))
+    }
+
+
+def _tmdb_copref(user_id, tmdb_id, tmdb_weights=None):
     """Return the co-preference for 1 film from its own side of the pair
     table.
 
@@ -690,7 +709,8 @@ def _tmdb_copref(user_id, tmdb_id):
     films of the user. These are the same entries that
     compute_user_recommendations builds on the anchor side. This does
     not fetch the full neighbor list of each anchor. All keys are TMDB
-    ids. Thus, films without a record carry the signal too."""
+    ids. Thus, films without a record carry the signal too. tmdb_weights
+    is the result of user_tmdb_weights, if the caller has it."""
 
     if not tmdb_id:
         return 0.0
@@ -701,12 +721,12 @@ def _tmdb_copref(user_id, tmdb_id):
     )
     if not neighbor_sims:
         return 0.0
-    weights = user_movie_weights(user_id)
+    if tmdb_weights is None:
+        tmdb_weights = user_tmdb_weights(user_id)
     weights_by_tmdb = {
-        neighbor_id: weights[movie_id]
-        for movie_id, neighbor_id in db.session.query(Movie.id, Movie.tmdb_id)
-        .filter(Movie.id.in_(list(weights) or [0]))
-        .filter(Movie.tmdb_id.in_(list(neighbor_sims)))
+        neighbor_id: tmdb_weights[neighbor_id]
+        for neighbor_id in neighbor_sims
+        if neighbor_id in tmdb_weights
     }
     entries = sorted(
         (
@@ -982,10 +1002,11 @@ REWATCH_STALENESS_HORIZON_YEARS = 10
 def watch_again_shelf(user_id, today=None):
     """Return the ranked rewatch candidates for 1 user.
 
-    These are owned films that the user liked (the liked flag, or a
-    rating above the own mean of the user). The last recorded watch, if
-    there is one, is at least the staleness bar in the past. The most
-    liked and longest unseen films come first."""
+    These are owned films that the user liked: the liked flag, or a
+    rating above the mean. The mean is of the owned films that the user
+    rated, not of all rated films as in user_movie_weights (#538). The
+    last recorded watch, if there is one, is at least the staleness bar
+    in the past. The most liked and longest unseen films come first."""
 
     today = today or datetime.now()
     rows = (
@@ -1402,14 +1423,15 @@ def resolved_score(redis, user_id, movie, profile, scores=None):
     return score
 
 
-def tmdb_taste_score(user_id, tmdb_id, payload, profile):
+def tmdb_taste_score(user_id, tmdb_id, payload, profile, tmdb_weights=None):
     """Return (score, contributions) of a film through the TMDB-keyed lane.
 
     This is the one writer of the TMDB-lane number: the taste score of
     the enriched payload plus the tmdb-keyed co-preference, rounded to
     4 places. The tile (resolved_tmdb_score), the warm pre-score and
     the discovery shelves all read it. Thus, a shelf orders by the
-    number that its tiles show."""
+    number that its tiles show. A loop gives tmdb_weights from
+    user_tmdb_weights (#538)."""
 
     # streaming_rail owns the enriched-payload cache and its feature
     # extraction. This imports it lazily because it imports this module.
@@ -1417,7 +1439,8 @@ def tmdb_taste_score(user_id, tmdb_id, payload, profile):
     from app.streaming_rail import _payload_features
 
     taste, contributions = score_movie(_payload_features(payload), profile)
-    return round(taste + _tmdb_copref(user_id, int(tmdb_id)), 4), contributions
+    copref = _tmdb_copref(user_id, int(tmdb_id), tmdb_weights)
+    return round(taste + copref, 4), contributions
 
 
 def record_lane_scores(redis, user_id, tmdb_ids, profile):

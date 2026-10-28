@@ -42,6 +42,7 @@ from app.recommendations import (
     stored_profile,
     record_lane_scores,
     tmdb_taste_score,
+    user_tmdb_weights,
 )
 from app.streaming import (
     batch_title_availability,
@@ -88,8 +89,9 @@ NEGATIVE_GENRE_THRESHOLD = -0.08
 # against the per-title availability cache. Then it enriches them with
 # credits. The depth feeds the runtime filter of the landing page. A
 # tight minute limit thins the rail. Thus, the rail stores many more
-# films than the 12 that it displays. The enrichment is cached for 1
-# week. Thus, the extra depth costs 1 burst on the first night.
+# films than the 12 that it displays. The enrichment is cached for 30
+# days (ENRICHED_CACHE_SECONDS). Thus, the extra depth costs 1 burst on
+# the first night.
 
 VERIFY_DEPTH = 100
 ENRICH_DEPTH = 50
@@ -303,7 +305,7 @@ def enriched_movie(tmdb_id):
     """Return the trimmed movie payload that the rail scores and displays.
 
     It holds the genres, keywords, top cast, role-mapped crew, and
-    runtime. Fitzflix caches it for 1 week (credits and runtimes are
+    runtime. Fitzflix caches it for 30 days (credits and runtimes are
     stable). The result is None for a film that TMDB deleted and after
     a transient error. enriched_movie_state tells the 2 apart."""
 
@@ -493,6 +495,7 @@ def compute_user_rail(user):
     )
 
     items = []
+    tmdb_weights = None
     for tmdb_id, entry, matches in verified:
         payload = payloads.get(tmdb_id)
         if not payload:
@@ -501,7 +504,11 @@ def compute_user_rail(user):
         # discovery shelves. Taste alone disagreed with the estimates on
         # the tiles, which add the co-preference (#420).
 
-        score, contributions = tmdb_taste_score(user.id, tmdb_id, payload, profile)
+        if tmdb_weights is None:
+            tmdb_weights = user_tmdb_weights(user.id)
+        score, contributions = tmdb_taste_score(
+            user.id, tmdb_id, payload, profile, tmdb_weights
+        )
         score = recorded.get(tmdb_id, score)
         because = [entry["sources"][0]]
         because += [

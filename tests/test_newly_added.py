@@ -890,3 +890,44 @@ def test_a_failed_film_page_leaves_the_arrival_unmatched_for_a_day(app, monkeypa
         assert [item["tmdb_id"] for item in stored["items"]] == [None, None]
     finally:
         app.redis.delete(key)
+
+
+def test_the_shelf_reads_the_weights_1_time_per_call(app, monkeypatch):
+    """The landing shelf pays about 1 query per film, not 6 (#538).
+
+    Each film has co-preference neighbors. Thus, the score reads them.
+    The weights of the user come once per call."""
+
+    from app import db
+    from app.models import MovieCopref, User, UserMovieReview
+    from app.newly_added import newly_added_shelves
+    from app.videos import star_rating_fields
+    from tests.test_tmdb_apply import _count_queries
+
+    user_id = subscribe_criterion(app)
+    today = date.today().isoformat()
+    with app.app_context():
+        liked = make_movie("Weighted Western", 1950, tmdb_id=9300)
+        db.session.add(
+            UserMovieReview(user_id=user_id, movie_id=liked.id, **star_rating_fields(5))
+        )
+        for tmdb_id in range(9301, 9321):
+            db.session.add(
+                MovieCopref(tmdb_id_a=tmdb_id, tmdb_id_b=9300, similarity=0.5)
+            )
+        db.session.commit()
+
+    def queries_for(count):
+        plant_feed(
+            app,
+            [
+                new_item(tmdb_id, f"Weighted Arrival {tmdb_id}", first_seen=today)
+                for tmdb_id in range(9301, 9301 + count)
+            ],
+        )
+        with app.app_context():
+            user = db.session.get(User, user_id)
+            return _count_queries(lambda: newly_added_shelves(user))
+
+    extra = queries_for(15) - queries_for(5)
+    assert extra <= 12, f"{extra} queries for 10 more films"

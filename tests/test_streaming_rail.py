@@ -639,7 +639,7 @@ def test_the_rail_orders_by_the_number_that_its_tiles_show(app, monkeypatch):
     monkeypatch.setattr(
         recommendations,
         "_tmdb_copref",
-        lambda user, tmdb_id: 2.0 if int(tmdb_id) == 5002 else 0.0,
+        lambda user, tmdb_id, tmdb_weights=None: 2.0 if int(tmdb_id) == 5002 else 0.0,
     )
 
     with app.app_context():
