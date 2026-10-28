@@ -995,3 +995,76 @@ def test_tv_shopping_counts_a_blu_ray_disc_tier_as_owned(app, admin_client):
     ):
         start = page.index(f">{title}</a>")
         assert advice in page[start : start + 600], title
+
+
+def test_file_activity_survives_a_retry_that_leaves_the_schedule(
+    app, admin_client, monkeypatch
+):
+    """A retry that the scheduler moves between 2 reads is not a 500 (#511).
+
+    The fake makes get_scheduled_time raise as rq does when the score
+    is gone. The page reads the score with the id instead."""
+
+    from datetime import timedelta
+
+    from rq.exceptions import NoSuchJobError
+    from rq.registry import ScheduledJobRegistry
+
+    app.import_queue.enqueue_in(
+        timedelta(minutes=5),
+        "app.videos.localization_task",
+        "/nowhere/Retry Me (2001) - [DVD].mkv",
+        description="'Retry Me (2001) - [DVD].mkv' waits",
+    )
+
+    def gone(self, job_or_id):
+        raise NoSuchJobError
+
+    monkeypatch.setattr(ScheduledJobRegistry, "get_scheduled_time", gone)
+    response = admin_client.get("/file-activity")
+    assert response.status_code == 200
+    assert "Retry Me (2001)" in response.get_data(as_text=True)
+
+
+def test_file_activity_skips_a_reject_that_moves_before_its_stat(
+    app, admin_client, monkeypatch
+):
+    """A reject that a worker moves after the scandir is skipped (#511)."""
+
+    import os
+
+    rejects_dir = app.config["REJECTS_DIR"]
+    kept = os.path.join(rejects_dir, "Kept (2001) - [DVD].mkv")
+    with open(kept, "wb") as handle:
+        handle.write(b"video")
+
+    class Moved:
+        name = "Moved (2001) - [DVD].mkv"
+        path = os.path.join(rejects_dir, name)
+
+        def is_file(self):
+            return True
+
+        def is_dir(self):
+            return False
+
+        def stat(self):
+            raise FileNotFoundError(self.path)
+
+    real_scandir = os.scandir
+
+    def scandir(path):
+        entries = list(real_scandir(path))
+        if path == rejects_dir:
+            entries.append(Moved())
+        return iter(entries)
+
+    monkeypatch.setattr(os, "scandir", scandir)
+    try:
+        response = admin_client.get("/file-activity")
+        assert response.status_code == 200
+        page = response.get_data(as_text=True)
+        assert "Kept (2001)" in page
+        assert "Moved (2001)" not in page
+    finally:
+        os.remove(kept)

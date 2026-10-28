@@ -700,6 +700,17 @@ def criterion_now():
     )
 
 
+def _entry_ctime(entry):
+    """Return the change time of a rejects entry, or None when it is gone.
+
+    A worker can move a reject between the scandir and the stat (#511)."""
+
+    try:
+        return entry.stat().st_ctime
+    except OSError:
+        return None
+
+
 @bp.route("/file-activity")
 @login_required
 def file_activity():
@@ -755,16 +766,17 @@ def file_activity():
                 }
             )
 
+        # Read the ids and their times in 1 call (#511)
+
+        from app.queue_page import scheduled_entries
+
         deferred = []
         registry = ScheduledJobRegistry(queue=current_app.import_queue)
-        for job_id in registry.get_job_ids():
+        for job_id, next_run in scheduled_entries(registry):
             job = current_app.import_queue.fetch_job(job_id)
             if job is not None and job.func_name == "app.videos.localization_task":
                 deferred.append(
-                    {
-                        "description": job.description or job.id,
-                        "next_run": registry.get_scheduled_time(job_id),
-                    }
+                    {"description": job.description or job.id, "next_run": next_run}
                 )
         deferred.sort(key=lambda entry: entry["next_run"])
 
@@ -784,23 +796,27 @@ def file_activity():
         if os.path.isdir(rejects_dir):
             for entry in os.scandir(rejects_dir):
                 if entry.is_file() and not entry.name.startswith("."):
-                    rejects.append(
-                        {
-                            "basename": entry.name,
-                            "reason": "",
-                            "when": entry.stat().st_ctime,
-                        }
-                    )
+                    when = _entry_ctime(entry)
+                    if when is not None:
+                        rejects.append(
+                            {"basename": entry.name, "reason": "", "when": when}
+                        )
                 elif entry.is_dir():
-                    for file_entry in os.scandir(entry.path):
+                    try:
+                        file_entries = list(os.scandir(entry.path))
+                    except OSError:
+                        continue
+                    for file_entry in file_entries:
                         if file_entry.is_file() and not file_entry.name.startswith("."):
-                            rejects.append(
-                                {
-                                    "basename": file_entry.name,
-                                    "reason": entry.name,
-                                    "when": file_entry.stat().st_ctime,
-                                }
-                            )
+                            when = _entry_ctime(file_entry)
+                            if when is not None:
+                                rejects.append(
+                                    {
+                                        "basename": file_entry.name,
+                                        "reason": entry.name,
+                                        "when": when,
+                                    }
+                                )
         rejects.sort(key=lambda entry: entry["when"], reverse=True)
         reject_count = len(rejects)
         rejects = rejects[:10]

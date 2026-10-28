@@ -10,6 +10,24 @@ from flask import current_app
 from rq.registry import ScheduledJobRegistry, StartedJobRegistry
 
 
+def scheduled_entries(registry):
+    """Return (job id, aware UTC time) for each job of a scheduled registry.
+
+    One zrange reads the ids and the times together (#511). The
+    scheduler can remove a due job between 2 reads. Then rq's
+    get_scheduled_time raised NoSuchJobError, and a page answered 500."""
+
+    return [
+        (
+            registry.parse_job_id(raw_id),
+            datetime.fromtimestamp(score, tz=timezone.utc),
+        )
+        for raw_id, score in registry.connection.zrange(
+            registry.key, 0, -1, withscores=True
+        )
+    ]
+
+
 def listed_queues():
     """Return the queues that the queue page lists, each with a job filter.
 
@@ -212,13 +230,13 @@ def queue_details():
     scheduled = []
     for queue, only in listed_queues():
         registry = ScheduledJobRegistry(queue=queue)
-        for job_id in registry.get_job_ids():
+        for job_id, scheduled_for in scheduled_entries(registry):
             job = queue.fetch_job(job_id)
             if job is not None and (only is None or job.func_name in only):
                 item = row(job, None)
                 item["status"] = "scheduled"
                 item["ended_at"] = None
-                item["scheduled_for"] = registry.get_scheduled_time(job_id)
+                item["scheduled_for"] = scheduled_for
                 item["position"] = None
                 scheduled.append(item)
 

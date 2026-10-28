@@ -263,13 +263,17 @@ def tmdb_refresh_status(library, id):
         found = _refresh_job_target(job)
         return found is not None and (found[0], int(found[1])) == target
 
-    scheduled = ScheduledJobRegistry(queue=current_app.sql_queue)
-    scheduled_ids = scheduled.get_job_ids()
+    from app.queue_page import scheduled_entries
+
+    # The ids and the times come from 1 read (#511)
+    scheduled = dict(
+        scheduled_entries(ScheduledJobRegistry(queue=current_app.sql_queue))
+    )
     for job in current_app.sql_queue.job_class.fetch_many(
-        scheduled_ids, connection=current_app.sql_queue.connection
+        list(scheduled), connection=current_app.sql_queue.connection
     ):
-        if _matches(job):
-            retry_at = scheduled.get_scheduled_time(job.id)
+        if job is not None and _matches(job):
+            retry_at = scheduled[job.id]
             return {
                 "state": "deferred",
                 "retry_at": retry_at.astimezone(timezone.utc).replace(tzinfo=None),
