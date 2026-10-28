@@ -490,6 +490,8 @@ cp fitzflix_supervisor.ini /opt/homebrew/etc/supervisor.d/ &&
 brew services start supervisor
 ```
 
+A stop of the import, transcode, and file-operation programs sends SIGTERM to the worker only, not to its child tools. The worker finishes its job, then stops. Supervisor waits 10 minutes for the import and file-operation workers and 30 minutes for the transcode worker. After that time, it stops the worker and its tools. A stage that a stop signal interrupts keeps its source in the import directory for the next hourly sweep.
+
 ## Worker queues
 
 Fitzflix divides the background work across seven Redis queues. The supervisor configuration and the manual worker commands below decide the number of workers for each queue. The queues are:

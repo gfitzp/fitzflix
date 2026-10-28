@@ -450,8 +450,8 @@ def convert_localized_file(
 
     from app.importing import (
         _hold_title_lock,
+        abandon_failed_stage,
         abandon_handoff,
-        abandon_import,
         defer_for_title_lock,
         set_staging_reservation,
     )
@@ -554,9 +554,10 @@ def convert_localized_file(
             _remove_quietly(video_only, muxed)
             return defer()
 
-        except Exception:
-            current_app.logger.error(traceback.format_exc())
-            abandon_import(
+        except BaseException as error:
+            # A stop signal keeps the source for the next sweep (#497).
+            abandon_failed_stage(
+                error,
                 source_path,
                 lock,
                 strays=(video_only, muxed, hidden_output_file),

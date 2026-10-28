@@ -22,6 +22,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import time
 import traceback
@@ -818,6 +819,9 @@ class _LocalizationRun:
         self.job = None
         self.lock = None
         self.strays = []
+        # An in-place import rewrites the source itself (#424). A stop
+        # signal during that rewrite must not leave it for a re-import.
+        self.in_place = False
 
     def retry(self, delay, reason, level="warning", **changes):
         """Book the task again after delay. Every retry carries all 4 counters.
@@ -909,26 +913,27 @@ def localization_task(
             if staging is None:
                 return True
             work_path, staged = staging
+            run.in_place = not staged
 
             _archive_original(work_path, file_details)
             work_path, hidden_output_file = _localize(
                 file_path, work_path, file_details, staged, run.job, run.strays
             )
 
-        except Exception:
-            current_app.logger.error(traceback.format_exc())
-
+        except BaseException as error:
             # Remove the staged copies. Fitzflix rejects the original source.
             # Nothing has changed a staged source. A file too large for the
             # staging volume is the exception (#424). It is processed in
             # place, and the track statistics, the FLAC twins, or the MP4
             # metadata removal can rewrite it before a failure. The
             # untouched archive goes up first, so the original bytes stay
-            # in S3.
+            # in S3. A stop signal keeps the source (#497).
 
-            abandon_import(
+            abandon_failed_stage(
+                error,
                 run.source_path,
                 run.lock,
+                may_keep=not run.in_place,
                 strays=run.strays,
                 pending_archive=pending_archive_of(file_details),
             )
@@ -1724,6 +1729,49 @@ def _hand_off(run, work_path, file_details, hidden_output_file, staged, conversi
     return True
 
 
+# A supervisor stop, a restart, or a shutdown sends these signals. The
+# file is good. Thus, a stage that they stop keeps its source (#497).
+
+INTERRUPT_SIGNALS = frozenset({signal.SIGTERM, signal.SIGINT, signal.SIGHUP})
+
+
+def interrupted(error):
+    """Return True if a stop signal ended the task or its child process (#497).
+
+    A child that a signal stops has a negative return code. A second
+    SIGTERM to an rq worker raises SystemExit inside the job."""
+
+    if isinstance(error, (SystemExit, KeyboardInterrupt)):
+        return True
+    code = getattr(error, "returncode", None)
+    return (
+        isinstance(error, subprocess.CalledProcessError)
+        and isinstance(code, int)
+        and -code in INTERRUPT_SIGNALS
+    )
+
+
+def abandon_failed_stage(error, source_path, lock, may_keep=True, **kwargs):
+    """Clean up a stage after error. Re-raise an error that is not an Exception.
+
+    A stop signal keeps the source in the import directory for the
+    hourly sweep (#497). Any other error rejects the source. With
+    may_keep False, a stop signal rejects the source too."""
+
+    stop = may_keep and interrupted(error)
+    if stop:
+        current_app.logger.warning(
+            f"'{os.path.basename(source_path)}' A stop signal interrupted "
+            f"the import ({error!r}). The source stays for the next sweep"
+        )
+        kwargs["keep_source"] = True
+    else:
+        current_app.logger.error(traceback.format_exc())
+    abandon_import(source_path, lock, **kwargs)
+    if not isinstance(error, Exception):
+        raise error
+
+
 def abandon_import(
     source_path,
     lock,
@@ -1735,15 +1783,22 @@ def abandon_import(
 ):
     """Clean up an import stage that failed. Each step is best effort.
 
-    Remove the stray work files, release the staging reservation, move
-    the source to rejects with reason, and release the title lock. With
-    keep_source, the source stays in the import directory. A failed
+    Release the title lock, remove the stray work files, release the
+    staging reservation, and move the source to rejects with reason.
+    With keep_source, the source stays in the import directory. A failed
     step must not stop the next step. A lock that stays held blocks the
-    title until the TTL of the lock expires. reservation is the name of
-    the reservation. The default is the basename of the source.
-    pending_archive is the run-scoped S3 upload of the import (#430). It
-    is deleted."""
+    title until the TTL of the lock expires. The lock goes first (#497).
+    The S3 and file steps can take longer than the stop wait of
+    supervisor. reservation is the name of the reservation. The default
+    is the basename of the source. pending_archive is the run-scoped S3
+    upload of the import (#430). It is deleted."""
 
+    if lock:
+        try:
+            current_app.lock_manager.unlock(lock)
+            current_app.logger.info(f"Removed lock {lock}")
+        except Exception:
+            current_app.logger.warning(traceback.format_exc())
     if pending_archive:
         try:
             discard_pending_archive(pending_archive)
@@ -1768,12 +1823,6 @@ def abandon_import(
             move_to_rejects(source_path, reason)
         except Exception:
             current_app.logger.error(traceback.format_exc())
-    if lock:
-        try:
-            current_app.lock_manager.unlock(lock)
-            current_app.logger.info(f"Removed lock {lock}")
-        except Exception:
-            current_app.logger.warning(traceback.format_exc())
 
 
 def abandon_handoff(source_path, lock, staged_output, pending_archive=None):
@@ -2191,13 +2240,12 @@ def move_localized_file(
                     transient_retries=transient_retries + 1,
                 )
 
-        except Exception:
-            current_app.logger.error(traceback.format_exc())
-
+        except BaseException as error:
             # Remove both hidden copies. The original source is unchanged.
-            # Fitzflix rejects the source.
+            # Fitzflix rejects the source. A stop signal keeps it (#497).
 
-            abandon_import(
+            abandon_failed_stage(
+                error,
                 source_path,
                 lock,
                 strays=(hidden_output_file, destination_hidden),
@@ -2442,28 +2490,29 @@ def finalize_localization(
             file, worse_local_copies, worse_aws_keys, kept_archives, emails = records
             _commit_records(file, kept_archives, file_path)
 
-        except Exception:
-            current_app.logger.error(traceback.format_exc())
+        except BaseException as error:
             db.session.rollback()
 
             # The source goes to rejects. Remove the hidden library copy,
             # or the renamed file when no record keeps it. A rename over an
             # existing file already replaced that file, and its record
             # still points to it. For an in-place import the renamed file
-            # IS file_path, and it goes to rejects.
+            # IS file_path, and it goes to rejects. A stop signal keeps
+            # the source (#497).
 
             stray = None
             if placement is None:
                 stray = hidden_output_file
             elif placement == "renamed" and file_path != output_file:
                 stray = output_file
-            abandon_import(
+            _release_title_lock(lock)
+            abandon_failed_stage(
+                error,
                 file_path,
                 None,
                 strays=(stray, staged_output),
                 pending_archive=pending_archive_of(file_details),
             )
-            _release_title_lock(lock)
             return None
 
         # Each follow-up guards itself. This guard is for the code between
