@@ -1881,3 +1881,34 @@ def test_a_legacy_local_anchor_still_reads_as_local_time(app, admin_client):
     payload = admin_client.get("/api/queue-details").get_json()
     (item,) = [i for i in payload["all"] if i["id"] == "legacy-anchor-localize"]
     assert item["started_at"] == expected
+
+
+def test_a_requeue_after_a_failure_keeps_the_journey(app):
+    """The System page Requeue pushes the same job id again (#548).
+
+    The failed chip takes the new status in place. The earlier chips
+    stay, and the anchors do not move."""
+
+    from app.pipeline import _apply_stage_event
+
+    trail = [
+        _entry("Localizing", "done", "j1", journey=True),
+        _entry("Moving into the library", "done", "j2"),
+        _entry("Cataloging", "failed", "j3"),
+    ]
+    new_trail, first_run, first_enqueued, changed = _apply_stage_event(
+        trail,
+        "2026-10-24 09:00:00",
+        "2026-10-24 08:00:00",
+        _event("started", job="j3", stage="Cataloging"),
+    )
+    assert changed
+    assert [(e["stage"], e["status"]) for e in new_trail] == [
+        ("Localizing", "done"),
+        ("Moving into the library", "done"),
+        ("Cataloging", "started"),
+    ]
+    assert new_trail[0].get("journey") is True
+    assert not any(e.get("journey") for e in new_trail[1:])
+    assert first_run == "2026-10-24 09:00:00"
+    assert first_enqueued == "2026-10-24 08:00:00"

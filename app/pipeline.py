@@ -426,19 +426,26 @@ def _apply_stage_event(trail, first_run, first_enqueued, event):
             # worker stamps "started" again, or the queue stamps a new
             # enqueue that comes after the settled stamp. Then the earlier
             # run leaves the trail.
-            if not before_job and entry.get("status") in (
-                "done",
-                "failed",
-                "deferred",
-            ):
-                if status == "started" or (
-                    status in ("queued", "scheduled")
-                    and enqueued_at is not None
-                    and entry.get("at", "") < enqueued_at
-                ):
-                    del trail[_rerun_start(trail, position) :]
-                    rerun = True
-                    break
+            again = status == "started" or (
+                status in ("queued", "scheduled")
+                and enqueued_at is not None
+                and entry.get("at", "") < enqueued_at
+            )
+            if not before_job and again and entry.get("status") in ("done", "deferred"):
+                del trail[_rerun_start(trail, position) :]
+                rerun = True
+                break
+
+            # The Requeue of a failed job on the System page pushes the
+            # same job id again (#548). That is a retry after a failure.
+            # It continues the same journey. Thus, the failed entry takes
+            # the new status in place, and the anchors hold.
+
+            if not before_job and again and entry.get("status") == "failed":
+                entry["status"] = status
+                entry["at"] = now
+                append = False
+                break
 
             # A job that booked its own retry is "deferred". Its worker
             # still stamps it done when it returns. The retry chip already
