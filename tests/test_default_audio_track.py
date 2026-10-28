@@ -299,36 +299,107 @@ def test_the_scan_marks_the_archive_stale_before_its_remux(app, monkeypatch):
         assert db.session.get(File, file_id).aws_stale
 
 
-def test_a_failed_mkvpropedit_leaves_the_archive_current(
-    app, monkeypatch, three_audio_mkv, tmp_path
-):
-    """The stale flag waits for the success of the tool (follow-up #517).
-
-    The flag was committed before mkvpropedit started. A tool that exited
-    without a write left a stale row. That row refused a direct restore."""
-
+def _propedit_fixture(app, monkeypatch, three_audio_mkv, title, binary):
     from app import db
-    from app.models import File
-    import app.tracks as tracks
     from tests.factories import make_movie, make_movie_file
 
-    broken = tmp_path / "mkvpropedit"
-    broken.write_text("#!/bin/sh\necho 'Error: the file is locked'\nexit 2\n")
-    broken.chmod(0o755)
-    monkeypatch.setitem(app.config, "MKVPROPEDIT_BIN", str(broken))
+    monkeypatch.setitem(app.config, "MKVPROPEDIT_BIN", str(binary))
     monkeypatch.setitem(app.config, "ARCHIVE_ORIGINAL_MEDIA", True)
     with app.app_context():
-        file = make_movie_file(make_movie("Failed Propedit", 2021), "Bluray-1080p")
+        file = make_movie_file(make_movie(title, 2021), "Bluray-1080p")
         db.session.commit()
         file_id = file.id
         library_path = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
     os.makedirs(os.path.dirname(library_path), exist_ok=True)
     shutil.copy(three_audio_mkv, library_path)
+    return file_id, library_path
 
+
+def test_a_mkvpropedit_that_cannot_start_leaves_the_archive_current(
+    app, monkeypatch, three_audio_mkv, tmp_path
+):
+    """The stale flag waits for the tool to run (follow-up #517, #581).
+
+    The flag was committed before mkvpropedit started. A tool that never
+    wrote left a stale row. That row refused a direct restore."""
+
+    from app import db
+    from app.models import File
+    import app.tracks as tracks
+
+    file_id, library_path = _propedit_fixture(
+        app, monkeypatch, three_audio_mkv, "Absent Propedit", tmp_path / "absent"
+    )
     with app.app_context():
-        try:
+        with pytest.raises(FileNotFoundError):
             tracks.mkvpropedit_unlocked(file_id, 2, None, None)
-        except Exception:
-            pass
         db.session.expire_all()
         assert not db.session.get(File, file_id).aws_stale
+    assert os.path.exists(library_path)
+
+
+def test_a_failed_mkvpropedit_marks_the_archive_stale(
+    app, monkeypatch, three_audio_mkv, tmp_path
+):
+    """A tool that ran and failed can have written the file (#561).
+
+    mkvpropedit writes in place. An error exit after its first write
+    left new bytes under a clean flag. The flag now goes on once the
+    tool ran."""
+
+    import subprocess
+
+    from app import db
+    from app.models import File
+    import app.tracks as tracks
+
+    broken = tmp_path / "mkvpropedit"
+    broken.write_text("#!/bin/sh\necho 'Error: the file is locked'\nexit 2\n")
+    broken.chmod(0o755)
+    file_id, library_path = _propedit_fixture(
+        app, monkeypatch, three_audio_mkv, "Failed Propedit", broken
+    )
+    with app.app_context():
+        with pytest.raises(subprocess.CalledProcessError):
+            tracks.mkvpropedit_unlocked(file_id, 2, None, None)
+        db.session.expire_all()
+        assert db.session.get(File, file_id).aws_stale
+
+
+def test_a_failed_stale_flag_stops_the_remux_before_the_rename(
+    app, monkeypatch, three_audio_mkv, tmp_path
+):
+    """A flag that cannot commit stops the rewrite (#561).
+
+    Before, the flag swallowed the fault and the rename went on. The
+    same database fault then broke the commit after the rewrite."""
+
+    import app.tracks as tracks
+
+    def lost(*args, **kwargs):
+        raise RuntimeError("Lost connection to MySQL server")
+
+    library_path = tmp_path / "Flag Fault (2021) - [Bluray-1080p].mkv"
+    shutil.copy(three_audio_mkv, library_path)
+    before = library_path.read_bytes()
+    monkeypatch.setitem(app.config, "ARCHIVE_ORIGINAL_MEDIA", True)
+    monkeypatch.setitem(app.config, "STAGING_DIR", str(tmp_path / "staging"))
+    os.makedirs(app.config["STAGING_DIR"], exist_ok=True)
+    with app.app_context():
+        monkeypatch.setattr(tracks.db.session, "commit", lost)
+        with pytest.raises(RuntimeError):
+            tracks.remux_file(
+                str(library_path),
+                lambda source, output: [
+                    app.config["MKVMERGE_BIN"],
+                    "-o",
+                    output,
+                    source,
+                ],
+                None,
+                library_path.name,
+                "Remuxing",
+                before_replace=lambda: tracks.flag_archive_before_rewrite(1),
+            )
+    assert library_path.read_bytes() == before
+    assert [p.name for p in tmp_path.iterdir() if p.name.startswith(".")] == []

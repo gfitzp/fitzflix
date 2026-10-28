@@ -467,13 +467,15 @@ def _fresh_file(file_id):
     return db.session.get(File, file_id)
 
 
-def _flag_rewritten_archive(file_id):
+def _flag_rewritten_archive(file_id, strict=False):
     """Mark the archive of a rewritten library file as stale.
 
     The upload after the save clears the flag. If the save or the
     upload fails, the flag stays, and the weekly S3 sync uploads the
     file. The scan read the row before its long rewrite. Thus, a new
-    transaction makes the change (MariaDB error 1020)."""
+    transaction makes the change (MariaDB error 1020). After a scan,
+    the rewrite is done, and a failed flag only logs. With strict, a
+    failed flag raises after the rollback (#561)."""
 
     try:
         db.session.rollback()
@@ -481,6 +483,8 @@ def _flag_rewritten_archive(file_id):
         db.session.commit()
     except Exception:
         db.session.rollback()
+        if strict:
+            raise
         current_app.logger.warning(traceback.format_exc())
 
 
@@ -491,10 +495,27 @@ def flag_archive_before_rewrite(file_id):
     on disk and the old row. Without the flag, the weekly sync never
     uploads the file again, and a restore would bring back the older
     bytes. archive_library_file clears the flag after a good upload. The
-    flag is set only when Fitzflix archives the library files."""
+    flag is set only when Fitzflix archives the library files.
+
+    A failed flag raises (#561). The caller has not written yet. Thus,
+    the rewrite stops and the library file stays as it was. The same
+    database fault would fail the commit after the rewrite."""
 
     if get_setting("ARCHIVE_ORIGINAL_MEDIA"):
-        _flag_rewritten_archive(file_id)
+        _flag_rewritten_archive(file_id, strict=True)
+
+
+def _flag_after_a_failed_rewrite(file_id):
+    """Mark the archive stale after a tool that can have written failed (#561).
+
+    mkvpropedit writes the file in place. A kill or an error exit after
+    its first write leaves new bytes on disk. This is best effort. The
+    original error of the tool is the one that the caller raises."""
+
+    try:
+        flag_archive_before_rewrite(file_id)
+    except Exception:
+        current_app.logger.warning(traceback.format_exc())
 
 
 def save_track_metadata(file_id, details, lock=None, archive=False):
@@ -1164,20 +1185,29 @@ def mkvpropedit_unlocked(
                     bufsize=1,
                 )
                 try:
-                    for line in mkvpropedit_task.stdout:
-                        line = line.replace("\n", "")
-                        current_app.logger.info(f"'{file.basename}' {line}")
+                    try:
+                        for line in mkvpropedit_task.stdout:
+                            line = line.replace("\n", "")
+                            current_app.logger.info(f"'{file.basename}' {line}")
+                    except BaseException:
+                        # The child must not keep writing after a fault (#499).
+                        stop_process(mkvpropedit_task)
+                        raise
+
+                    wait_for_subprocess(mkvpropedit_task, ok_returncodes=(0, 1))
                 except BaseException:
-                    # The child must not keep writing after a fault (#499).
-                    stop_process(mkvpropedit_task)
+                    # The tool ran. It can have written the file before the
+                    # kill or the error exit (#561). Thus, the archive is
+                    # marked stale in this case too.
+
+                    _flag_after_a_failed_rewrite(file_id)
                     raise
 
-                wait_for_subprocess(mkvpropedit_task, ok_returncodes=(0, 1))
-
                 # mkvpropedit writes the file in place (#517). The flag goes
-                # on after the tool reports success (follow-up #517). A
-                # tool that failed before it wrote left a stale row. That
-                # row refused a direct restore and cost an upload.
+                # on after the tool reports success (follow-up #517), or
+                # after a failure once the tool ran (#561). A tool that
+                # could not start leaves the row clean. A stale row refuses
+                # a direct restore and costs an upload.
 
                 flag_archive_before_rewrite(file_id)
 
@@ -2063,7 +2093,8 @@ def remux_audio_plan_task(file_id, plan):
     The task copies first, like the atmos task. One staging copy comes
     in. The remux and the verification run on the local disk. The
     verified result replaces the library copy. The track rows are
-    built again. The untouched archive is replaced by force.
+    built again. The rebuilt file goes to modified/, or to transcoded/
+    for a conversion (#299). The rip in untouched/ never changes.
     """
 
     from app.videos import acquire_lock_or_defer

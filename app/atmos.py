@@ -1376,7 +1376,7 @@ def _atmos_finish(state, phases):
     The library share carries 1 write here: the verified result."""
 
     from app.aws_storage import archive_library_file, mark_archive_stale
-    from app.tracks import replace_track_rows
+    from app.tracks import flag_archive_before_rewrite, replace_track_rows
     from app.videos import (
         aws_s3_client,
         copy_with_progress,
@@ -1446,6 +1446,10 @@ def _atmos_finish(state, phases):
 
         hidden_output = hidden(os.path.join(os.path.dirname(file_path), basename))
         phases.enter("Replacing the library file")
+
+        # The flag below rolls the session back. Thus, read the id first.
+
+        file_id = file.id
         with _transient_step("library copy"):
             try:
                 copy_with_progress(
@@ -1455,6 +1459,13 @@ def _atmos_finish(state, phases):
                     basename,
                     "Replacing the library file with the supplemented file",
                 )
+
+                # A stop between the rename and the commit leaves the
+                # twin in the library and the old rows (#561). The flag
+                # makes the weekly sync upload the file. A good archive
+                # below clears it.
+
+                flag_archive_before_rewrite(file_id)
                 os.rename(hidden_output, file_path)
             except BaseException:
                 try:
@@ -1475,7 +1486,6 @@ def _atmos_finish(state, phases):
     # staging copy. It is byte-identical to the file that was renamed
     # into the library. Thus, the share is not touched again.
 
-    file_id = file.id
     try:
         db.session.rollback()
         file = db.session.get(File, file_id)

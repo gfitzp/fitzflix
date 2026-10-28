@@ -450,3 +450,65 @@ def test_a_failed_first_check_booking_cleans_up_the_run(app, monkeypatch):
         lock = app.lock_manager.lock(file.file_identifier(), 1000)
         assert lock
         app.lock_manager.unlock(lock)
+
+
+def test_a_stop_after_the_atmos_rename_leaves_the_archive_stale(
+    app, monkeypatch, tmp_path
+):
+    """The Atmos finish flags the archive before its rename (#561).
+
+    A stop between the rename and the commit left the twin in the
+    library, the old rows, and a clean flag. Then the weekly sync never
+    uploaded the new file."""
+
+    import pytest
+
+    from app import db
+    from app.models import File
+
+    import app.atmos as atmos
+    import app.videos as videos
+
+    class Phases:
+        def enter(self, name):
+            pass
+
+    monkeypatch.setitem(app.config, "ARCHIVE_ORIGINAL_MEDIA", True)
+    monkeypatch.setattr(videos, "aws_s3_client", lambda: None)
+    monkeypatch.setattr(videos, "get_audio_tracks_from_file", lambda path: [])
+    monkeypatch.setattr(videos, "get_subtitle_tracks_from_file", lambda path: [])
+    with app.app_context():
+        file = make_movie_file(make_movie("Atmos Stop", 2021), "Bluray-1080p")
+        db.session.commit()
+        file_id = file.id
+        library_path = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
+    os.makedirs(os.path.dirname(library_path), exist_ok=True)
+    with open(library_path, "wb") as handle:
+        handle.write(b"old bytes")
+    staged = tmp_path / "staged.mkv"
+    staged.write_bytes(b"new bytes with the twin")
+
+    real_rename = os.rename
+
+    def rename_then_stop(src, dst):
+        real_rename(src, dst)
+        raise SystemExit("the worker stops")
+
+    monkeypatch.setattr(atmos.os, "rename", rename_then_stop)
+    state = {
+        "file_id": file_id,
+        "basename": os.path.basename(library_path),
+        "workspace": str(tmp_path),
+        "staging_source": str(staged),
+        "bucket": "fitzflix-test",
+        "prefix": "atmos/test",
+        "remuxed": True,
+    }
+    try:
+        with app.app_context():
+            with pytest.raises(SystemExit):
+                atmos._atmos_finish(state, Phases())
+            db.session.expire_all()
+            assert db.session.get(File, file_id).aws_stale
+    finally:
+        os.remove(library_path)
