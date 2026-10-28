@@ -233,3 +233,38 @@ def test_a_tmdb_not_found_email_without_an_admin_does_not_crash(app, monkeypatch
         monkeypatch.setattr(models.User, "query", NoAdmin())
         assert series.tmdb_tv_fetch(990022) is None
     assert sent == []
+
+
+def test_a_failed_admin_mail_from_a_task_is_logged(app, monkeypatch, caplog):
+    """A worker sends outside a request. The SMTP error reaches the app logger (#451)."""
+
+    import logging
+
+    import app.email as email_module
+
+    def refuse(msg):
+        raise ConnectionRefusedError("mail server down")
+
+    monkeypatch.setattr(email_module.mail, "send", refuse)
+    with app.app_context(), caplog.at_level(logging.ERROR, logger="app"):
+        email_module.notify_admin_text("Held import", "plain", "<p>html</p>")
+    assert "mail server down" in caplog.text
+
+
+def test_a_failed_mail_in_the_request_thread_is_logged(app, monkeypatch, caplog):
+    """The thread of a request mail logs its error through the app logger (#451)."""
+
+    import logging
+
+    import app.email as email_module
+
+    def refuse(msg):
+        raise ConnectionRefusedError("mail server down")
+
+    monkeypatch.setattr(email_module.mail, "send", refuse)
+    with app.app_context():
+        msg = email_module.build_message("Subject", "a@b.test", ["c@d.test"], "t", "h")
+    with caplog.at_level(logging.ERROR, logger="app"):
+        email_module.send_async_email(app, msg)
+    assert "mail server down" in caplog.text
+    assert "Subject" in caplog.text

@@ -2,17 +2,26 @@ import traceback
 from functools import partial
 from threading import Thread
 
-from flask import current_app, render_template
+from flask import current_app, has_request_context, render_template
 from flask_mail import Message
 
 from app import mail
 
 
 def send_async_email(app, msg):
-    """Send an email asynchronously in an application thread."""
+    """Send an email asynchronously in an application thread.
+
+    An error in the thread goes to the app logger (#451). Without this,
+    it went only to the standard error of the process."""
 
     with app.app_context():
-        mail.send(msg)
+        try:
+            mail.send(msg)
+        except Exception:
+            app.logger.error(
+                f"Could not send the email '{msg.subject}':\n"
+                f"{traceback.format_exc()}"
+            )
 
 
 def build_message(subject, sender, recipients, text_body, html_body, attachments=None):
@@ -28,8 +37,15 @@ def build_message(subject, sender, recipients, text_body, html_body, attachments
 
 
 def send_email(subject, sender, recipients, text_body, html_body, attachments=None):
-    """Send an email from a request. Do not wait for the mail server."""
+    """Send an email. In a request, do not wait for the mail server.
 
+    Outside a request, the email goes synchronously (#451). The workers
+    do not fork. Thus, the caller gets the error and logs it. A thread
+    would hide the error from the task."""
+
+    if not has_request_context():
+        task_send_email(subject, sender, recipients, text_body, html_body, attachments)
+        return
     msg = build_message(subject, sender, recipients, text_body, html_body, attachments)
     Thread(
         target=send_async_email, args=(current_app._get_current_object(), msg)
