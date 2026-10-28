@@ -26,6 +26,7 @@ import re
 import shutil
 import subprocess
 import threading
+import time
 import traceback
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -404,6 +405,10 @@ def _transient_step(step):
         raise FinishInterrupted(f"{step}: {error!r}") from error
 
 
+class AtmosRunEnded(RuntimeError):
+    """The run ended on purpose: an encode failed, or the checks ran out."""
+
+
 def _cancel_encodes(job_ids):
     """Cancel the MediaConvert encodes of a failed run.
 
@@ -576,6 +581,7 @@ def atmos_supplement_task(file_id, staged_source=None):
 
         phases = TaskPhases()
         handed_off = False
+        outcome = None
         try:
             outcome = _atmos_prepare(int(file_id), phases, staged_source)
             if isinstance(outcome, dict):
@@ -588,6 +594,8 @@ def atmos_supplement_task(file_id, staged_source=None):
         finally:
             if not handed_off:
                 current_app.lock_manager.unlock(lock)
+                if outcome != NO_STAGING_SPACE:
+                    archive_after_early_end(file_id)
 
             # A used staged copy is in the workspace now. This removes an
             # unused one.
@@ -894,10 +902,16 @@ def _book_check(state, lock, checks, percent):
     )
 
 
-def _close_run(state, lock):
-    """Release the title lock and remove the workspace and the S3 scratch area."""
+def _close_run(state, lock, ended_early=True):
+    """Release the title lock and remove the workspace and the S3 scratch area.
+
+    A run that ended before its archive step queues the archive of a
+    conversion (#505). The import left that upload to the run."""
 
     from app.videos import aws_s3_client
+
+    if ended_early:
+        archive_after_early_end(state["file_id"])
 
     shutil.rmtree(state["workspace"], ignore_errors=True)
     try:
@@ -908,6 +922,80 @@ def _close_run(state, lock):
     close_trail(current_app.redis, state["trail_job"])
     if lock:
         current_app.lock_manager.unlock(lock)
+
+
+def archive_after_early_end(file_id):
+    """Queue the transcoded/ archive of a conversion whose Atmos run ended early (#505).
+
+    The import skips that upload while an Atmos job is queued. The run
+    archives the file at its end. Some runs end before that point: no
+    local copy, a MediaConvert error, a remux fault, the cancel after
+    the last check. They left the conversion with no transcoded/
+    archive."""
+
+    try:
+        file = db.session.get(File, int(file_id))
+        if (
+            file is not None
+            and file.converted_from_quality
+            and get_setting("ARCHIVE_ORIGINAL_MEDIA")
+        ):
+            enqueue_task(
+                "app.videos.upload_task", file.id, description=f"'{file.basename}'"
+            )
+    except Exception:
+        current_app.logger.error(traceback.format_exc())
+
+
+# A workspace with no run is stale after this time with no change.
+
+STALE_WORKSPACE_SECONDS = 24 * 3600
+
+
+def sweep_stale_atmos_workspaces():
+    """Remove each staging/atmos-<id> workspace that no run owns (#505). Return the paths.
+
+    A run owns its workspace while its chain key exists. It also owns it
+    while the title lock of its file is held (the decode before the
+    chain starts).
+    A workspace also stays while a file in it changed in the last
+    STALE_WORKSPACE_SECONDS. A workspace holds a full staged copy, tens
+    of GB, that nothing else removes."""
+
+    staging_dir = current_app.config["STAGING_DIR"]
+    removed = []
+    try:
+        names = os.listdir(staging_dir)
+    except OSError:
+        return removed
+    now = time.time()
+    for name in names:
+        match = re.fullmatch(r"atmos-(\d+)", name)
+        path = os.path.join(staging_dir, name)
+        if not match or not os.path.isdir(path):
+            continue
+        file_id = int(match.group(1))
+        if current_app.redis.exists(CHAIN_KEY.format(file_id=file_id)):
+            continue
+        file = db.session.get(File, file_id)
+        if file is not None and current_app.redis.exists(file.file_identifier()):
+            continue
+        try:
+            newest = max(
+                [os.stat(path).st_mtime]
+                + [
+                    os.stat(os.path.join(path, entry)).st_mtime
+                    for entry in os.listdir(path)
+                ]
+            )
+        except OSError:
+            continue
+        if now - newest < STALE_WORKSPACE_SECONDS:
+            continue
+        shutil.rmtree(path, ignore_errors=True)
+        current_app.logger.warning(f"'{path}' Removed a stale Atmos workspace")
+        removed.append(path)
+    return removed
 
 
 def _trail_phases(state, current):
@@ -925,85 +1013,105 @@ def atmos_check_task(state, lock, checks=0):
     in MEDIACONVERT_CHECK_SECONDS. When each encode is complete, it
     queues atmos_finish_task. A network error only books the next
     check. An encode that fails, or a run longer than
-    MEDIACONVERT_CHECK_LIMIT checks, ends the run."""
+    MEDIACONVERT_CHECK_LIMIT checks, ends the run. Any other fault
+    books the next check too (#505). Without it, the chain had no owner:
+    the lock, the encodes and the workspace stayed for days."""
 
     with app.app_context():
-        job = get_current_job()
-        basename = state["basename"]
         try:
-            client = mediaconvert_client()
-            results = [
-                client.get_job(Id=track["mc_job_id"])["Job"]
-                for track in state["tracks"]
-            ]
-        except Exception as e:
-            current_app.logger.warning(
-                f"'{basename}' MediaConvert status unavailable ({e}). " f"Asking again"
-            )
-            results = None
-
-        percent = None
-        if results is not None:
-            failed = [
-                result
-                for result in results
-                if result.get("Status") in ("ERROR", "CANCELED")
-            ]
-            if failed:
-                _trail_phases(state, "Encoding E-AC-3 Atmos").fail()
-                _trail_phases(state, None).close("failed")
-                _cancel_encodes(
-                    [
-                        result.get("Id")
-                        for result in results
-                        if result.get("Status") not in ("COMPLETE", "ERROR", "CANCELED")
-                    ]
-                )
-                _close_run(state, lock)
-                raise RuntimeError(
-                    "; ".join(
-                        f"MediaConvert job {result.get('Id')} "
-                        f"{result.get('Status')}: {result.get('ErrorCode')} "
-                        f"{result.get('ErrorMessage')}"
-                        for result in failed
-                    )
-                )
-            percent = min(
-                (
-                    100
-                    if result.get("Status") == "COMPLETE"
-                    else int(result.get("JobPercentComplete") or 0)
-                )
-                for result in results
-            )
-            _set_stage(job, basename, "MediaConvert encoding E-AC-3 Atmos", percent)
-            if all(result.get("Status") == "COMPLETE" for result in results):
-                current_app.logger.info(
-                    f"'{basename}' MediaConvert finished the E-AC-3 Atmos twin"
-                )
-                enqueue_task(
-                    "app.atmos.atmos_finish_task",
-                    state,
-                    lock,
-                    description=f"E-AC-3 Atmos twin for '{basename}'",
-                    job_id=safe_job_id(
-                        f"atmos_finish:{state['file_id']}:{state['chain']}"
-                    ),
-                    meta=_continuation_meta(state, "retries"),
-                )
-                return True
-
-        if checks + 1 >= MEDIACONVERT_CHECK_LIMIT:
-            _trail_phases(state, "Encoding E-AC-3 Atmos").fail()
+            return _check_once(state, lock, checks)
+        except AtmosRunEnded:
+            raise
+        except Exception:
+            current_app.logger.error(traceback.format_exc())
+            if checks + 1 < MEDIACONVERT_CHECK_LIMIT:
+                try:
+                    _book_check(state, lock, checks + 1, None)
+                    return True
+                except Exception:
+                    current_app.logger.error(traceback.format_exc())
             _trail_phases(state, None).close("failed")
             _cancel_encodes([track["mc_job_id"] for track in state["tracks"]])
             _close_run(state, lock)
-            raise RuntimeError(
-                f"MediaConvert did not finish the encode of '{basename}' "
-                f"after {checks + 1} checks"
+            raise
+
+
+def _check_once(state, lock, checks):
+    """Ask MediaConvert 1 time, and book the next step of the run."""
+
+    job = get_current_job()
+    basename = state["basename"]
+    try:
+        client = mediaconvert_client()
+        results = [
+            client.get_job(Id=track["mc_job_id"])["Job"] for track in state["tracks"]
+        ]
+    except Exception as e:
+        current_app.logger.warning(
+            f"'{basename}' MediaConvert status unavailable ({e}). " f"Asking again"
+        )
+        results = None
+
+    percent = None
+    if results is not None:
+        failed = [
+            result
+            for result in results
+            if result.get("Status") in ("ERROR", "CANCELED")
+        ]
+        if failed:
+            _trail_phases(state, "Encoding E-AC-3 Atmos").fail()
+            _trail_phases(state, None).close("failed")
+            _cancel_encodes(
+                [
+                    result.get("Id")
+                    for result in results
+                    if result.get("Status") not in ("COMPLETE", "ERROR", "CANCELED")
+                ]
             )
-        _book_check(state, lock, checks + 1, percent)
-        return True
+            _close_run(state, lock)
+            raise AtmosRunEnded(
+                "; ".join(
+                    f"MediaConvert job {result.get('Id')} "
+                    f"{result.get('Status')}: {result.get('ErrorCode')} "
+                    f"{result.get('ErrorMessage')}"
+                    for result in failed
+                )
+            )
+        percent = min(
+            (
+                100
+                if result.get("Status") == "COMPLETE"
+                else int(result.get("JobPercentComplete") or 0)
+            )
+            for result in results
+        )
+        _set_stage(job, basename, "MediaConvert encoding E-AC-3 Atmos", percent)
+        if all(result.get("Status") == "COMPLETE" for result in results):
+            current_app.logger.info(
+                f"'{basename}' MediaConvert finished the E-AC-3 Atmos twin"
+            )
+            enqueue_task(
+                "app.atmos.atmos_finish_task",
+                state,
+                lock,
+                description=f"E-AC-3 Atmos twin for '{basename}'",
+                job_id=safe_job_id(f"atmos_finish:{state['file_id']}:{state['chain']}"),
+                meta=_continuation_meta(state, "retries"),
+            )
+            return True
+
+    if checks + 1 >= MEDIACONVERT_CHECK_LIMIT:
+        _trail_phases(state, "Encoding E-AC-3 Atmos").fail()
+        _trail_phases(state, None).close("failed")
+        _cancel_encodes([track["mc_job_id"] for track in state["tracks"]])
+        _close_run(state, lock)
+        raise AtmosRunEnded(
+            f"MediaConvert did not finish the encode of '{basename}' "
+            f"after {checks + 1} checks"
+        )
+    _book_check(state, lock, checks + 1, percent)
+    return True
 
 
 def atmos_finish_task(state, lock, finish_retries=0):
@@ -1033,7 +1141,7 @@ def atmos_finish_task(state, lock, finish_retries=0):
             phases.close("failed")
             _close_run(state, lock)
             raise
-        _close_run(state, lock)
+        _close_run(state, lock, ended_early=False)
         phases.finish()
         phases.close("done")
         return result

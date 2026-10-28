@@ -41,4 +41,13 @@ with flask_app.app_context():
     except Exception:
         flask_app.logger.error(traceback.format_exc())
 
+    # An Atmos run that broke left its workspace on staging (#505).
+
+    try:
+        from app.atmos import sweep_stale_atmos_workspaces
+
+        sweep_stale_atmos_workspaces()
+    except Exception:
+        flask_app.logger.error(traceback.format_exc())
+
 w.work()

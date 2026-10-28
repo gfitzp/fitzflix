@@ -245,3 +245,74 @@ def test_a_failed_remove_after_the_submit_still_cancels_the_encode(app, monkeypa
         with pytest.raises(OSError):
             atmos.atmos_supplement_task(file.id)
         assert getattr(mediaconvert, "canceled", []) == ["mc-1"]
+
+
+def test_an_unexpected_fault_in_a_check_books_the_next_check(app, monkeypatch):
+    """The chain keeps its owner after a fault in the check body (#505)."""
+
+    import app.atmos as atmos
+
+    with app.app_context():
+        file, job, mediaconvert = _setup(app, monkeypatch, "Check Fault")
+        assert atmos.atmos_supplement_task(file.id) is True
+        (check,) = _scheduled(app, "app.atmos.atmos_check_task")
+
+        def broken(*args, **kwargs):
+            raise ConnectionError("redis blip")
+
+        monkeypatch.setattr(atmos, "_set_stage", broken)
+        assert atmos.atmos_check_task(*check.args, **check.kwargs) is True
+        checks = [
+            j.kwargs["checks"] for j in _scheduled(app, "app.atmos.atmos_check_task")
+        ]
+        assert sorted(checks) == [0, 1]
+        assert app.redis.exists(atmos.CHAIN_KEY.format(file_id=file.id))
+
+
+def test_the_sweep_removes_only_the_stale_workspaces(app, monkeypatch, tmp_path):
+    import app.atmos as atmos
+
+    monkeypatch.setitem(app.config, "STAGING_DIR", str(tmp_path))
+    old = 1_000_000_000
+    with app.app_context():
+        for file_id in (901, 902, 903):
+            workspace = tmp_path / f"atmos-{file_id}"
+            workspace.mkdir()
+            (workspace / "copy.mkv").write_bytes(b"x")
+            if file_id != 903:
+                os.utime(workspace / "copy.mkv", (old, old))
+                os.utime(workspace, (old, old))
+        app.redis.set(atmos.CHAIN_KEY.format(file_id=902), "chain")
+        (tmp_path / "atmos-notes").mkdir()
+
+        removed = atmos.sweep_stale_atmos_workspaces()
+
+    assert removed == [str(tmp_path / "atmos-901")]
+    assert (tmp_path / "atmos-902").exists() and (tmp_path / "atmos-903").exists()
+
+
+def test_an_early_end_of_a_conversion_queues_its_archive(app, monkeypatch):
+    """A run that ends before its archive step queues upload_task (#505)."""
+
+    import app.atmos as atmos
+    from app import db
+
+    with app.app_context():
+        file, job, mediaconvert = _setup(app, monkeypatch, "Early End")
+        file.converted_from_quality = "Remux-2160p"
+        db.session.commit()
+        monkeypatch.setattr(atmos, "get_setting", lambda name: True)
+        assert atmos.atmos_supplement_task(file.id) is True
+        (check,) = _scheduled(app, "app.atmos.atmos_check_task")
+
+        mediaconvert.status = {"Status": "ERROR", "ErrorCode": 1030}
+        with pytest.raises(atmos.AtmosRunEnded):
+            atmos.atmos_check_task(*check.args, **check.kwargs)
+
+        uploads = [
+            j
+            for queue in (app.file_queue, app.handoff_queue)
+            for j in queue.jobs
+            if j.func_name == "app.videos.upload_task"
+        ]
+        assert [j.args for j in uploads] == [(file.id,)]

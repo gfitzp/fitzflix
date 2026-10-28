@@ -1502,7 +1502,23 @@ def cleanup_orphaned_files():
 
         dropped_scratch_db = _drop_leftover_restore_database()
 
-        if not removed and not removed_dirs and not dropped_scratch_db:
+        # An Atmos run that broke left its workspace with a full staged
+        # copy (#505). Each worker start sweeps them too.
+
+        from app.atmos import sweep_stale_atmos_workspaces
+
+        try:
+            atmos_dirs = sweep_stale_atmos_workspaces()
+        except Exception:
+            current_app.logger.error(traceback.format_exc())
+            atmos_dirs = []
+
+        if (
+            not removed
+            and not removed_dirs
+            and not dropped_scratch_db
+            and not atmos_dirs
+        ):
             current_app.logger.info("Orphan cleanup found nothing to delete")
             return
 
@@ -1511,8 +1527,9 @@ def cleanup_orphaned_files():
 
         if not (config["MAIL_SERVER"] and config["ADMIN_EMAIL"]):
             current_app.logger.info(
-                f"Orphan cleanup removed {len(removed)} file(s) and "
-                f"{len(removed_dirs)} directory(ies). No mail server is set"
+                f"Orphan cleanup removed {len(removed)} file(s), "
+                f"{len(removed_dirs)} directory(ies) and {len(atmos_dirs)} "
+                f"Atmos workspace(s). No mail server is set"
             )
             return
 
@@ -1531,6 +1548,9 @@ def cleanup_orphaned_files():
                 f"for {ORPHAN_MAX_AGE_DAYS} days:"
             )
             lines.extend(f"  {entry}" for entry in removed_dirs)
+        if atmos_dirs:
+            lines.append(f"Removed {len(atmos_dirs)} stale Atmos workspace(s):")
+            lines.extend(f"  {entry}" for entry in atmos_dirs)
         if dropped_scratch_db:
             lines.append(
                 f"Dropped the leftover {RESTORE_CHECK_DATABASE} scratch database "
