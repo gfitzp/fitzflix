@@ -28,7 +28,7 @@ from app import db
 from app.dvr import _slugify, channel_lineup
 from app.main import bp
 from app.main.forms import DVRChannelActionForm, DVRChannelForm, DVRMemberForm
-from app.main.helpers import admin_required
+from app.main.helpers import admin_required, flash_form_errors
 from app.models import DVRChannel, Movie, TMDBGenre, TVSeries
 
 
@@ -230,6 +230,11 @@ def dvr_channels():
             flash(f"Channel {channel.number} ({channel.name}) created.", "success")
             return redirect(url_for("main.dvr_channel_edit", channel_id=channel.id))
         return redirect(url_for("main.dvr_channels"))
+    if form.save_submit.data:
+        # The page renders again with the posted values. The template
+        # shows no field errors. Thus, each refused field gets a message
+        # (#546).
+        flash_form_errors(form)
 
     if action_form.delete_submit.data and action_form.validate_on_submit():
         channel = db.session.get(DVRChannel, action_form.channel_id.data or 0)
@@ -307,6 +312,8 @@ def dvr_channel_edit(channel_id):
             _enqueue_rebuild(f"edited {channel.name}")
             flash(f"Channel {channel.number} ({channel.name}) saved.", "success")
         return redirect(url_for("main.dvr_channel_edit", channel_id=channel.id))
+    if form.save_submit.data:
+        flash_form_errors(form)
 
     if member_form.add_movie_submit.data and member_form.validate_on_submit():
         movie, error = _resolve_movie(member_form.member_title.data)
@@ -349,6 +356,12 @@ def dvr_channel_edit(channel_id):
             _enqueue_rebuild(f"edited {channel.name}")
             flash("Removed.", "success")
         return redirect(url_for("main.dvr_channel_edit", channel_id=channel.id))
+    if (
+        member_form.add_movie_submit.data
+        or member_form.add_series_submit.data
+        or member_form.remove_submit.data
+    ):
+        flash_form_errors(member_form)
 
     genre_names = [
         name

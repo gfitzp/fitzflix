@@ -289,3 +289,30 @@ def test_delete_confirm_survives_a_quote_in_the_channel_name(app, admin_client):
     assert onclick, "no single-quoted onclick for the channel"
     script = html.unescape(onclick.group(1))
     assert script == 'return confirm("Delete channel 307 (Kids\\u0027 Picks)?");'
+
+
+def test_an_invalid_channel_post_explains_itself(app, admin_client):
+    """An empty name and number 0 get a message, not a silent page (#546).
+
+    The re-render keeps a cleared Enabled box clear."""
+
+    import re
+
+    page = admin_client.get("/dvr/channels").get_data(as_text=True)
+    response = admin_client.post(
+        "/dvr/channels",
+        data={
+            "csrf_token": csrf_token_from(page),
+            "name": "",
+            "number": "0",
+            "save_submit": "Save channel",
+        },
+    )
+    assert response.status_code == 200
+    body = response.get_data(as_text=True)
+    assert "Name: This field is required." in body
+    assert "Number:" in body
+    enabled = re.search(r'<input[^>]*id="enabled"[^>]*>', body).group(0)
+    assert "checked" not in enabled
+    with app.app_context():
+        assert DVRChannel.query.count() == 0
