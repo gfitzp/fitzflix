@@ -511,3 +511,75 @@ def test_a_sync_defer_keeps_the_volume_drop_count(app, monkeypatch):
         finally:
             app.maintenance_queue.empty()
     assert booked[0]["counters"] == {"volume_drops": 5}
+
+
+def _failing_commit(patch):
+    """Make the next commit of the request fail, as a MariaDB 1020 does."""
+
+    from app import db
+
+    def refuse():
+        raise RuntimeError("1020 record has changed since last read")
+
+    patch.setattr(db.session, "commit", refuse)
+
+
+def test_a_failed_series_delete_keeps_the_library_files(app, admin_client, monkeypatch):
+    """The rollback keeps every row. Thus, every file must stay too (#513)."""
+
+    from app import db
+    from app.models import File
+    from tests.factories import make_tv_file, make_tv_series
+
+    with app.app_context():
+        series = make_tv_series("Kept On Rollback")
+        files = [make_tv_file(series, 1, n, "HDTV-720p") for n in (1, 2)]
+        db.session.commit()
+        series_id = series.id
+        paths = [f.file_path for f in files]
+
+    lib = app.config["LIBRARY_DIR"]
+    for path in paths:
+        plant(os.path.join(lib, path))
+
+    token = _admin_csrf_token(admin_client, f"/tv/{series_id}")
+    with monkeypatch.context() as patch:
+        _failing_commit(patch)
+        response = admin_client.post(
+            f"/tv/{series_id}/delete",
+            data={"csrf_token": token, "delete_submit": "Delete Series"},
+        )
+    assert response.status_code == 302
+    for path in paths:
+        assert os.path.exists(os.path.join(lib, path))
+    with app.app_context():
+        assert File.query.filter_by(series_id=series_id).count() == 2
+
+
+def test_a_failed_file_delete_keeps_the_library_file(app, admin_client, monkeypatch):
+    """The single-file delete has the same order (#513)."""
+
+    from app import db
+    from app.models import File
+    from tests.factories import make_movie, make_movie_file
+
+    with app.app_context():
+        movie = make_movie("Kept File", 2002)
+        file = make_movie_file(movie, "DVD")
+        db.session.commit()
+        file_id = file.id
+        file_path = file.file_path
+
+    lib = app.config["LIBRARY_DIR"]
+    plant(os.path.join(lib, file_path))
+
+    token = _admin_csrf_token(admin_client, f"/file/{file_id}")
+    with monkeypatch.context() as patch:
+        _failing_commit(patch)
+        admin_client.post(
+            f"/file/{file_id}",
+            data={"csrf_token": token, "delete_submit": "Delete File"},
+        )
+    assert os.path.exists(os.path.join(lib, file_path))
+    with app.app_context():
+        assert db.session.get(File, file_id) is not None

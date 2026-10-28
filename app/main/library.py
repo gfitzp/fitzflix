@@ -2219,6 +2219,7 @@ def tv_delete(series_id):
     aws_keys = []
     leftover_dirs = set()
     file_ids = []
+    local_copies = []
 
     try:
         files = File.query.filter(File.series_id == series_id).all()
@@ -2229,7 +2230,7 @@ def tv_delete(series_id):
             leftover_dirs.add(
                 os.path.join(current_app.config["LIBRARY_DIR"], file.dirname)
             )
-            file.delete_local_file(delete_directory_tree=True)
+            local_copies.append((file.file_path, file.id))
             db.session.delete(file)
 
         # The archive-only originals of the series go with it (#464). With
@@ -2248,6 +2249,14 @@ def tv_delete(series_id):
         flash(f"Unable to delete TV series '{title}'!", "danger")
         return redirect(url_for("main.tv", series_id=series_id))
 
+    # Delete the library files only after the commit (#513). A failed
+    # commit keeps every row. Thus, it must also keep every file. A
+    # stray file is what the weekly orphan sweep is for. A row with no
+    # file is a ghost.
+
+    for file_path, file_id in local_copies:
+        File.delete_library_copy(file_path, file_id, delete_directory_tree=True)
+
     # Delete the AWS copies only after the database delete is committed.
     # Thus, a failed commit cannot leave database records whose backups
     # are gone.
@@ -2263,7 +2272,7 @@ def tv_delete(series_id):
             queue="request",
         )
 
-    # The folders themselves. delete_local_file removes only EMPTY
+    # The folders themselves. delete_library_copy removes only EMPTY
     # directories. Poster art sits beside the episodes (placed by Fitzflix
     # for movies, by Sonarr or by hand for TV). Thus, that art used to
     # leave husks for the weekly sweep. An explicit delete clears the
@@ -2651,8 +2660,8 @@ def _delete_file_post(file, form):
     file_id = file.id
     leftover_dir = os.path.join(current_app.config["LIBRARY_DIR"], file.dirname)
 
+    file_path = file.file_path
     try:
-        file.delete_local_file(delete_directory_tree=True)
         db.session.delete(file)
         db.session.commit()
 
@@ -2660,6 +2669,10 @@ def _delete_file_post(file, form):
         db.session.rollback()
         flash(f"Unable to delete '{file.basename}'!", "danger")
         return None
+
+    # The library file goes only after the commit, as in tv_delete (#513).
+
+    File.delete_library_copy(file_path, file_id, delete_directory_tree=True)
 
     # Delete the AWS copy only after the database delete is committed.
     # Thus, a failed commit cannot leave a database record whose backup is

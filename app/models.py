@@ -1122,7 +1122,18 @@ class File(db.Model):
         method also deletes the folders that became empty.
         """
 
-        file_to_delete = os.path.join(current_app.config["LIBRARY_DIR"], self.file_path)
+        File.delete_library_copy(self.file_path, self.id, delete_directory_tree)
+        return self
+
+    @staticmethod
+    def delete_library_copy(file_path, file_id, delete_directory_tree=False):
+        """Delete the library copy at file_path, for the row file_id.
+
+        A delete of a record calls this after its commit. Thus, the
+        caller keeps only the path and the id, not the deleted row
+        (#513)."""
+
+        file_to_delete = os.path.join(current_app.config["LIBRARY_DIR"], file_path)
         try:
             os.remove(file_to_delete)
 
@@ -1136,7 +1147,7 @@ class File(db.Model):
 
         from app.triage import remove_triage_snapshots
 
-        remove_triage_snapshots(self.id)
+        remove_triage_snapshots(file_id)
 
         # As an option, delete the directory tree, even if the library file
         # itself was already gone. Thus, a record delete also removes its
@@ -1153,8 +1164,6 @@ class File(db.Model):
                 current_app.logger.info(
                     f"Deleted the directory tree '{os.path.dirname(file_to_delete)}'"
                 )
-
-        return self
 
     def file_identifier(self):
         """Return the JSON identity that is the cross-task lock key of this file.
