@@ -153,15 +153,48 @@ def _live_workers(connection):
     return workers
 
 
-def expected_workers(config):
+# The worker roster of the last supervisor status that answered. A
+# timeout of supervisorctl keeps it (#571). The key has no TTL.
+
+EXPECTED_WORKERS_KEY = "fitzflix:health:expected-workers"
+
+# The status argument default of expected_workers and expected_watchers:
+# read the supervisor status in the call.
+
+READ_STATUS = object()
+
+
+def expected_workers(config, connection=None, status=READ_STATUS):
     """Return the expected worker count of each queue (#501).
 
     Under supervisor, the roster of fitzflix_supervisor.ini applies. A
     manual layout runs as many workers as the admin wants. Then only a
-    queue with no worker is a problem."""
+    queue with no worker is a problem. A supervisorctl that timed out is
+    not a manual layout (#571). With connection, the roster of the last
+    answer then stays, as for the watchers. status is a supervisor
+    status that the caller already read."""
 
-    if _supervisor_status(config):
+    if status is READ_STATUS:
+        status = _supervisor_status(config)
+    if status:
+        if connection is not None:
+            try:
+                connection.set(EXPECTED_WORKERS_KEY, json.dumps(EXPECTED_WORKERS))
+            except Exception:
+                pass
         return EXPECTED_WORKERS
+    remembered = None
+    if connection is not None:
+        try:
+            remembered = connection.get(EXPECTED_WORKERS_KEY)
+        except Exception:
+            remembered = None
+    if remembered:
+        current_app.logger.warning(
+            "The supervisor status is not available. The health check expects "
+            "the worker roster of the last status"
+        )
+        return json.loads(remembered)
     return {name: 1 for name in EXPECTED_WORKERS}
 
 
@@ -374,16 +407,18 @@ def backup_health(config):
 EXPECTED_WATCHERS_KEY = "fitzflix:health:expected-watchers"
 
 
-def expected_watchers(connection, config):
+def expected_watchers(connection, config, status=READ_STATUS):
     """Return the number of import-directory watchers that should be alive.
 
     Under supervisor, it is the numprocs of the import program. A manual
     layout runs plain rq workers with no observer (#531). Then it is 0.
     A supervisorctl that timed out or answered nothing is not a manual
     layout. Then the count of the last answer stays, with a warning
-    (follow-up #531). Before, a supervisor fault hid a blind pipeline."""
+    (follow-up #531). Before, a supervisor fault hid a blind pipeline.
+    status is a supervisor status that the caller already read."""
 
-    status = _supervisor_status(config)
+    if status is READ_STATUS:
+        status = _supervisor_status(config)
     if status is not None:
         count = PROGRAM_COUNTS.get("fitzflix-import", 1)
         try:
@@ -831,15 +866,23 @@ def system_health(flask_app):
     db.session.execute(text("SELECT 1"))
     db_ms = round((time.perf_counter() - started) * 1000, 1)
 
+    # 1 supervisorctl run for each render (#571). The 5 second poll of
+    # /system/metrics renders this too.
+
+    status = _supervisor_status(flask_app.config)
     return {
         "redis_ms": redis_ms,
         "db_ms": db_ms,
-        "workers": worker_health(flask_app.redis, expected_workers(flask_app.config)),
+        "workers": worker_health(
+            flask_app.redis,
+            expected_workers(flask_app.config, flask_app.redis, status=status),
+        ),
         "disks": disk_health(flask_app.config),
         "missing_mounts": missing_volumes(flask_app.config),
         "backup": backup_health(flask_app.config),
         "observer": observer_health(
-            flask_app.redis, expected_watchers(flask_app.redis, flask_app.config)
+            flask_app.redis,
+            expected_watchers(flask_app.redis, flask_app.config, status=status),
         ),
         "scheduler": scheduler_health(flask_app.redis),
         "probes": probe_health(flask_app.redis),
@@ -2122,7 +2165,9 @@ HEALTH_COLLECTORS = (
     ("backup", lambda config, redis, seen: backup_health(config), _backup_issues),
     (
         "workers",
-        lambda config, redis, seen: worker_health(redis, expected_workers(config)),
+        lambda config, redis, seen: worker_health(
+            redis, expected_workers(config, redis)
+        ),
         _worker_issues,
     ),
     ("mounts", lambda config, redis, seen: missing_volumes(config), _mount_issues),

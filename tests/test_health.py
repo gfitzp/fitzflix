@@ -886,3 +886,35 @@ def test_a_supervisor_timeout_keeps_the_expected_watchers(
         health_env.run()
     assert b"observer" in health_env.redis.hgetall("fitzflix:health:issues")
     assert "supervisor status is not available" in caplog.text
+
+
+def test_a_supervisor_timeout_keeps_the_worker_roster(app, monkeypatch):
+    """expected_workers dropped to 1 per queue on a supervisorctl fault (#571).
+
+    Then the same fault hid 1 dead process of a 2-process program."""
+
+    answered = {"fitzflix:fitzflix-sql_00": ("RUNNING", 1)}
+    monkeypatch.setattr(maintenance, "_supervisor_status", lambda config: answered)
+    with app.app_context():
+        app.redis.delete(maintenance.EXPECTED_WORKERS_KEY)
+        assert (
+            maintenance.expected_workers(app.config, app.redis)
+            == maintenance.EXPECTED_WORKERS
+        )
+        monkeypatch.setattr(maintenance, "_supervisor_status", lambda config: None)
+        assert (
+            maintenance.expected_workers(app.config, app.redis)
+            == maintenance.EXPECTED_WORKERS
+        )
+
+
+def test_the_system_health_reads_the_supervisor_status_once(app, monkeypatch):
+    """The System page and its 5 second poll ran supervisorctl two times (#571)."""
+
+    calls = []
+    monkeypatch.setattr(
+        maintenance, "_supervisor_status", lambda config: calls.append(1) or None
+    )
+    with app.app_context():
+        maintenance.system_health(app)
+    assert calls == [1]
