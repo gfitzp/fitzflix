@@ -19,6 +19,7 @@ Thus, a re-import never pays 2 times. DAMF intermediate files are about
 if the job succeeds or fails.
 """
 
+import contextlib
 import glob
 import os
 import re
@@ -371,6 +372,38 @@ def _cleanup_s3_prefix(s3_client, bucket, prefix):
         current_app.logger.error(traceback.format_exc())
 
 
+class FinishInterrupted(Exception):
+    """A transient fault stopped the finish before the library file changed (#502).
+
+    The download, the remux and the library copy can fail for a short
+    time (a dead remount, a network fault). A later try can succeed.
+    The paid encode stays in the S3 scratch area for the retry."""
+
+
+# The finish tries again after a transient fault, up to this number of
+# times, after FINISH_RETRY_DELAY each time. Then the run ends.
+
+MAX_FINISH_RETRIES = 3
+FINISH_RETRY_DELAY = timedelta(minutes=10)
+
+
+@contextlib.contextmanager
+def _transient_step(step):
+    """Raise FinishInterrupted for an I/O, tool or AWS fault inside the step."""
+
+    import botocore.exceptions
+
+    try:
+        yield
+    except (
+        OSError,
+        subprocess.CalledProcessError,
+        botocore.exceptions.BotoCoreError,
+        botocore.exceptions.ClientError,
+    ) as error:
+        raise FinishInterrupted(f"{step}: {error!r}") from error
+
+
 def _cancel_encodes(job_ids):
     """Cancel the MediaConvert encodes of a failed run.
 
@@ -583,7 +616,13 @@ def _atmos_prepare(file_id, phases, staged_source=None):
     Thus, the workspace holds only the staged source during the encode.
     """
 
-    from app.videos import aws_s3_client, copy_with_progress, get_audio_tracks_from_file
+    from app.tracks import replace_track_rows
+    from app.videos import (
+        aws_s3_client,
+        copy_with_progress,
+        get_audio_tracks_from_file,
+        get_subtitle_tracks_from_file,
+    )
 
     job = get_current_job()
     file = db.session.get(File, int(file_id))
@@ -667,9 +706,19 @@ def _atmos_prepare(file_id, phases, staged_source=None):
         audio_tracks = get_audio_tracks_from_file(staging_source)
         wanting = atmos_supplement_candidates(audio_tracks)
         if not wanting:
+            # The stored rows said that a twin is missing, but the file
+            # has its twins. A finish that failed after its rename leaves
+            # this state (#503). The rows follow the staged copy now.
+            # Without this, each sweep copied the whole file again.
+
             current_app.logger.info(
-                f"'{basename}' TrueHD Atmos tracks already have E-AC-3 twins"
+                f"'{basename}' TrueHD Atmos tracks already have E-AC-3 twins. "
+                f"Rebuilding the track rows from the file"
             )
+            replace_track_rows(
+                file, audio_tracks, get_subtitle_tracks_from_file(staging_source)
+            )
+            db.session.commit()
             shutil.rmtree(workspace, ignore_errors=True)
             return True
 
@@ -946,26 +995,193 @@ def atmos_check_task(state, lock, checks=0):
         return True
 
 
-def atmos_finish_task(state, lock):
+def atmos_finish_task(state, lock, finish_retries=0):
     """Mux the finished E-AC-3 Atmos twins in and move the file into the library.
 
     This is the last of the 3 jobs. It releases the title lock and
     removes the workspace and the S3 scratch area. It closes the chips
-    of the first job."""
+    of the first job. A transient fault before the library file changes
+    books the finish again (#502). The retry keeps the lock, the
+    workspace and the encode. finish_retries counts the retries."""
 
     with app.app_context():
         phases = _trail_phases(state, "Encoding E-AC-3 Atmos")
         try:
             result = _atmos_finish(state, phases)
+        except FinishInterrupted as error:
+            if finish_retries < MAX_FINISH_RETRIES and _book_finish_retry(
+                state, lock, finish_retries + 1, error
+            ):
+                return False
+            phases.fail()
+            phases.close("failed")
+            _close_run(state, lock)
+            raise
         except BaseException:
             phases.fail()
             phases.close("failed")
-            raise
-        finally:
             _close_run(state, lock)
+            raise
+        _close_run(state, lock)
         phases.finish()
         phases.close("done")
         return result
+
+
+def _book_finish_retry(state, lock, retries, error):
+    """Book atmos_finish_task again after FINISH_RETRY_DELAY. Return True if it is booked."""
+
+    current_app.logger.warning(
+        f"'{state['basename']}' The Atmos finish stopped ({error}). Trying again "
+        f"in {int(FINISH_RETRY_DELAY.total_seconds() // 60)} minutes (attempt "
+        f"{retries} of {MAX_FINISH_RETRIES})"
+    )
+    try:
+        current_app.redis.expire(
+            CHAIN_KEY.format(file_id=state["file_id"]),
+            current_app.config["TRANSCODE_TASK_TIMEOUT"],
+        )
+        enqueue_task(
+            "app.atmos.atmos_finish_task",
+            state,
+            lock,
+            finish_retries=retries,
+            delay=FINISH_RETRY_DELAY,
+            description=f"E-AC-3 Atmos twin for '{state['basename']}'",
+            job_id=safe_job_id(
+                f"atmos_finish:{state['file_id']}:{state['chain']}:{retries}"
+            ),
+            meta=_continuation_meta(state, "retries"),
+        )
+    except Exception:
+        current_app.logger.error(traceback.format_exc())
+        return False
+    return True
+
+
+def _remux_twins(state, phases, inserts, job):
+    """Remux the downloaded twins into the staged copy and verify the result.
+
+    Return (audio tracks, subtitle tracks) of the output. The verified
+    output takes the name of the staged copy, and state["remuxed"]
+    becomes True. A tool or I/O fault raises FinishInterrupted (#502). A
+    failed verification raises RuntimeError."""
+
+    from app.videos import (
+        get_audio_tracks_from_file,
+        get_subtitle_tracks_from_file,
+        remove_empty_subtitle_tracks,
+        wait_for_subprocess,
+        watch_mkvmerge_progress,
+    )
+
+    basename = state["basename"]
+    workspace = state["workspace"]
+    staging_source = state["staging_source"]
+    audio_tracks = state["audio_tracks"]
+    phases.enter("Remuxing")
+
+    # Remux the twins into place: [E-AC-3 Atmos, FLAC, TrueHD]. This
+    # reads the staged source and writes next to it. All of this is
+    # local.
+
+    inserts.sort(key=lambda insert: insert[0])
+    media_info = MediaInfo.parse(staging_source)
+    video_orders, audio_orders, text_orders = [], [], []
+    for media_track in media_info.tracks:
+        track_order = media_track.to_data().get("streamorder")
+        if not str(track_order).isdigit():
+            continue
+        if media_track.track_type == "Video":
+            video_orders.append(int(track_order))
+        elif media_track.track_type == "Audio":
+            audio_orders.append(int(track_order))
+        elif media_track.track_type == "Text":
+            text_orders.append(int(track_order))
+
+    staging_output = hidden(os.path.join(workspace, basename))
+    command = build_remux_command(
+        current_app.config["MKVMERGE_BIN"],
+        staging_output,
+        staging_source,
+        video_orders,
+        audio_orders,
+        text_orders,
+        inserts,
+    )
+    current_app.logger.info(f"'{basename}' Running mkvmerge: {command}")
+    with _transient_step("remux"):
+        mkvmerge_process = subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            universal_newlines=True,
+            bufsize=1,
+        )
+        watch_mkvmerge_progress(
+            mkvmerge_process, job, basename, "Muxing E-AC-3 Atmos twin"
+        )
+        wait_for_subprocess(mkvmerge_process, ok_returncodes=(0, 1))
+
+        remove_empty_subtitle_tracks(staging_output)
+
+    # The first audio track gets the default flag. Each other track
+    # has the flag cleared. This is the library convention. The
+    # pipeline applies it while the file is on the local disk.
+
+    total_audio = len(audio_orders) + len(inserts)
+    flag_args = []
+    for track_number in range(1, total_audio + 1):
+        flag_args.extend(
+            [
+                "--edit",
+                f"track:a{track_number}",
+                "--set",
+                f"flag-default={'1' if track_number == 1 else '0'}",
+            ]
+        )
+    with _transient_step("remux"):
+        _run_step(
+            [current_app.config["MKVPROPEDIT_BIN"], staging_output] + flag_args,
+            job,
+            basename,
+            "Setting default audio flag",
+            ok_returncodes=(0, 1),
+        )
+
+    # Never replace the library copy with a mux that failed. The
+    # output must carry each expected twin and all of the original
+    # lossless tracks.
+
+    new_audio_tracks = get_audio_tracks_from_file(staging_output)
+    new_subtitle_tracks = get_subtitle_tracks_from_file(staging_output)
+    originals_before = sum(
+        1 for track in audio_tracks if track.get("codec") == TRUEHD_ATMOS_CODEC
+    )
+    originals_after = sum(
+        1 for track in new_audio_tracks if track.get("codec") == TRUEHD_ATMOS_CODEC
+    )
+    if (
+        atmos_supplement_candidates(new_audio_tracks)
+        or originals_after != originals_before
+    ):
+        raise RuntimeError(
+            f"'{basename}' remux did not produce the expected "
+            f"E-AC-3 Atmos twins; library copy left untouched"
+        )
+
+    # The staged source is not necessary now. The verified output
+    # takes its name. Thus, the untouched-archive upload gets the same
+    # S3 key that the library file would get.
+
+    with _transient_step("remux"):
+        os.replace(staging_output, staging_source)
+
+    # A retry of the finish starts after this point (#502). The staged
+    # copy is the verified output now.
+
+    state["remuxed"] = True
+    return new_audio_tracks, new_subtitle_tracks
 
 
 def _atmos_finish(state, phases):
@@ -974,16 +1190,13 @@ def _atmos_finish(state, phases):
     The library share carries 1 write here: the verified result."""
 
     from app.aws_storage import archive_library_file, mark_archive_stale
+    from app.tracks import replace_track_rows
     from app.videos import (
         aws_s3_client,
         copy_with_progress,
-        replace_track_rows,
         get_audio_tracks_from_file,
         get_subtitle_tracks_from_file,
         record_filesize,
-        remove_empty_subtitle_tracks,
-        wait_for_subprocess,
-        watch_mkvmerge_progress,
     )
 
     job = get_current_job()
@@ -994,18 +1207,24 @@ def _atmos_finish(state, phases):
     file_path = os.path.join(current_app.config["LIBRARY_DIR"], file.file_path)
     workspace = state["workspace"]
     staging_source = state["staging_source"]
-    audio_tracks = state["audio_tracks"]
     s3_client = aws_s3_client()
     bucket = state["bucket"]
     prefix = state["prefix"]
     inserts = []
 
+    final_staging = staging_source
     try:
-        for track in state["tracks"]:
+        if state.get("remuxed"):
+            # A retry after the remux (#502). The staged copy is the
+            # verified output already.
+            new_audio_tracks = get_audio_tracks_from_file(final_staging)
+            new_subtitle_tracks = get_subtitle_tracks_from_file(final_staging)
+        for track in [] if state.get("remuxed") else state["tracks"]:
             streamorder = track["streamorder"]
-            listed = s3_client.list_objects_v2(
-                Bucket=bucket, Prefix=f"{prefix}/out{streamorder}/"
-            )
+            with _transient_step("download"):
+                listed = s3_client.list_objects_v2(
+                    Bucket=bucket, Prefix=f"{prefix}/out{streamorder}/"
+                )
             ec3_key = next(
                 (
                     obj["Key"]
@@ -1021,109 +1240,18 @@ def _atmos_finish(state, phases):
                 )
             ec3_path = os.path.join(workspace, f"track{streamorder}.ec3")
             _set_stage(job, basename, "Downloading E-AC-3 Atmos twin")
-            s3_client.download_file(bucket, ec3_key, ec3_path)
+            with _transient_step("download"):
+                s3_client.download_file(bucket, ec3_key, ec3_path)
             current_app.logger.info(
                 f"'{basename}' Downloaded E-AC-3 Atmos twin "
                 f"({os.path.getsize(ec3_path) / 1e6:.0f} MB)"
             )
             inserts.append((track["insert_at"], ec3_path, track["language"]))
 
-        phases.enter("Remuxing")
-
-        # Remux the twins into place: [E-AC-3 Atmos, FLAC, TrueHD]. This
-        # reads the staged source and writes next to it. All of this is
-        # local.
-
-        inserts.sort(key=lambda insert: insert[0])
-        media_info = MediaInfo.parse(staging_source)
-        video_orders, audio_orders, text_orders = [], [], []
-        for media_track in media_info.tracks:
-            track_order = media_track.to_data().get("streamorder")
-            if not str(track_order).isdigit():
-                continue
-            if media_track.track_type == "Video":
-                video_orders.append(int(track_order))
-            elif media_track.track_type == "Audio":
-                audio_orders.append(int(track_order))
-            elif media_track.track_type == "Text":
-                text_orders.append(int(track_order))
-
-        staging_output = hidden(os.path.join(workspace, basename))
-        command = build_remux_command(
-            current_app.config["MKVMERGE_BIN"],
-            staging_output,
-            staging_source,
-            video_orders,
-            audio_orders,
-            text_orders,
-            inserts,
-        )
-        current_app.logger.info(f"'{basename}' Running mkvmerge: {command}")
-        mkvmerge_process = subprocess.Popen(
-            command,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            universal_newlines=True,
-            bufsize=1,
-        )
-        watch_mkvmerge_progress(
-            mkvmerge_process, job, basename, "Muxing E-AC-3 Atmos twin"
-        )
-        wait_for_subprocess(mkvmerge_process, ok_returncodes=(0, 1))
-
-        remove_empty_subtitle_tracks(staging_output)
-
-        # The first audio track gets the default flag. Each other track
-        # has the flag cleared. This is the library convention. The
-        # pipeline applies it while the file is on the local disk.
-
-        total_audio = len(audio_orders) + len(inserts)
-        flag_args = []
-        for track_number in range(1, total_audio + 1):
-            flag_args.extend(
-                [
-                    "--edit",
-                    f"track:a{track_number}",
-                    "--set",
-                    f"flag-default={'1' if track_number == 1 else '0'}",
-                ]
+        if not state.get("remuxed"):
+            new_audio_tracks, new_subtitle_tracks = _remux_twins(
+                state, phases, inserts, job
             )
-        _run_step(
-            [current_app.config["MKVPROPEDIT_BIN"], staging_output] + flag_args,
-            job,
-            basename,
-            "Setting default audio flag",
-            ok_returncodes=(0, 1),
-        )
-
-        # Never replace the library copy with a mux that failed. The
-        # output must carry each expected twin and all of the original
-        # lossless tracks.
-
-        new_audio_tracks = get_audio_tracks_from_file(staging_output)
-        new_subtitle_tracks = get_subtitle_tracks_from_file(staging_output)
-        originals_before = sum(
-            1 for track in audio_tracks if track.get("codec") == TRUEHD_ATMOS_CODEC
-        )
-        originals_after = sum(
-            1 for track in new_audio_tracks if track.get("codec") == TRUEHD_ATMOS_CODEC
-        )
-        if (
-            atmos_supplement_candidates(new_audio_tracks)
-            or originals_after != originals_before
-        ):
-            raise RuntimeError(
-                f"'{basename}' remux did not produce the expected "
-                f"E-AC-3 Atmos twins; library copy left untouched"
-            )
-
-        # The staged source is not necessary now. The verified output
-        # takes its name. Thus, the untouched-archive upload gets the same
-        # S3 key that the library file would get.
-
-        os.remove(staging_source)
-        final_staging = staging_source
-        os.rename(staging_output, final_staging)
 
         # The 1 write that the library share carries. The verified result
         # crosses as a hidden dotfile. Then the pipeline renames it into
@@ -1132,43 +1260,56 @@ def _atmos_finish(state, phases):
 
         hidden_output = hidden(os.path.join(os.path.dirname(file_path), basename))
         phases.enter("Replacing the library file")
-        try:
-            copy_with_progress(
-                final_staging,
-                hidden_output,
-                job,
-                basename,
-                "Replacing the library file with the supplemented file",
-            )
-            os.rename(hidden_output, file_path)
-        except BaseException:
+        with _transient_step("library copy"):
             try:
-                os.remove(hidden_output)
-            except OSError:
-                pass
-            raise
-
-        # Rebuild the track records because the file changed. The run took
-        # minutes since the File row was read. A new transaction avoids
-        # MariaDB error 1020 when a triage click or an upload changed it.
-
-        db.session.rollback()
-        file = db.session.get(File, file.id)
-        replace_track_rows(file, new_audio_tracks, new_subtitle_tracks)
-
-        # Read from the staging copy. It is byte-identical to the file that
-        # was renamed into the library. Thus, the share is not touched
-        # again.
-
-        record_filesize(file, os.path.getsize(final_staging))
-        file.date_updated = datetime.now(timezone.utc)
+                copy_with_progress(
+                    final_staging,
+                    hidden_output,
+                    job,
+                    basename,
+                    "Replacing the library file with the supplemented file",
+                )
+                os.rename(hidden_output, file_path)
+            except BaseException:
+                try:
+                    os.remove(hidden_output)
+                except OSError:
+                    pass
+                raise
 
     except Exception:
         current_app.logger.error(traceback.format_exc())
         db.session.rollback()
         raise
 
-    db.session.commit()
+    # The library file carries the twins now. Rebuild the track records
+    # because the file changed. The run took minutes since the File row
+    # was read. A new transaction avoids MariaDB error 1020 when a
+    # triage click or an upload changed it. The size comes from the
+    # staging copy. It is byte-identical to the file that was renamed
+    # into the library. Thus, the share is not touched again.
+
+    file_id = file.id
+    try:
+        db.session.rollback()
+        file = db.session.get(File, file_id)
+        replace_track_rows(file, new_audio_tracks, new_subtitle_tracks)
+        record_filesize(file, os.path.getsize(final_staging))
+        file.date_updated = datetime.now(timezone.utc)
+        db.session.commit()
+    except Exception:
+        # The archive is behind the library file now (#503). The weekly
+        # sync uploads a stale archive. The rows get 1 more try. Without
+        # it, the next sweep copies the whole file again and changes
+        # nothing. A second failure fails the job.
+
+        current_app.logger.error(traceback.format_exc())
+        db.session.rollback()
+        mark_archive_stale(file_id, reason="the Atmos twin replaced the library file")
+        file = db.session.get(File, file_id)
+        replace_track_rows(file, new_audio_tracks, new_subtitle_tracks)
+        record_filesize(file, os.path.getsize(final_staging))
+        db.session.commit()
 
     # The film gained a track under a path that Plex already knows. Thus,
     # nothing tells Plex to look again until its next scan. Ask for the
