@@ -169,7 +169,9 @@ def test_download_task_routes_by_prefix(app, monkeypatch, key, direct):
     monkeypatch.setattr(
         aws_storage,
         "aws_download",
-        lambda key, basename, receipt=None, place_at=None: calls.append(place_at)
+        lambda key, basename, receipt=None, place_at=None, **kwargs: calls.append(
+            place_at
+        )
         or aws_storage.DOWNLOAD_COMPLETE,
     )
     with app.app_context():

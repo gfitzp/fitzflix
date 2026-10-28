@@ -28,7 +28,7 @@ def test_download_transient_error_defers(app, monkeypatch):
 
     from app import aws_storage
 
-    def flaky_download(key, basename, sqs_receipt_handle=None, place_at=None):
+    def flaky_download(key, basename, sqs_receipt_handle=None, **kwargs):
         raise OSError(errno.EBADF, "Bad file descriptor")
 
     monkeypatch.setattr(aws_storage, "aws_download", flaky_download)
@@ -50,7 +50,7 @@ def test_download_transient_error_defers(app, monkeypatch):
         requeue_id(
             "app.videos.download_task",
             "untouched/Thing (2021) - [DVD].mkv",
-            {"transient_retries": 1},
+            {"transient_retries": 1, "volume_waits": 0},
         )
     ]
     job = retries[0]
@@ -59,7 +59,7 @@ def test_download_transient_error_defers(app, monkeypatch):
         "Thing (2021) - [DVD].mkv",
         "receipt-123",
     ]
-    assert job.kwargs == {"transient_retries": 1}
+    assert job.kwargs == {"transient_retries": 1, "volume_waits": 0}
     assert_binds(job)
 
 
@@ -75,7 +75,7 @@ def test_download_gives_up_after_max_retries(app, monkeypatch):
 
     from app import aws_storage
 
-    def flaky_download(key, basename, sqs_receipt_handle=None, place_at=None):
+    def flaky_download(key, basename, sqs_receipt_handle=None, **kwargs):
         raise OSError(errno.EBADF, "Bad file descriptor")
 
     monkeypatch.setattr(aws_storage, "aws_download", flaky_download)
@@ -636,3 +636,133 @@ def test_a_restore_already_in_progress_still_records_the_request(app, monkeypatc
         aws_storage.record_restore_request(app.redis, key, earlier)
         aws_storage.aws_restore(key)
         assert aws_storage.restore_requested_at(app.redis, key) == earlier
+
+
+def _direct_restore_row(app, title):
+    """Return (key, library path) of a row whose archive is a modified/ object."""
+
+    from app import db
+    from tests.factories import make_movie, make_movie_file
+
+    with app.app_context():
+        file = make_movie_file(make_movie(title, 1952), "DVD")
+        key = f"modified/{file.basename}"
+        file.aws_key = key
+        db.session.commit()
+        return key, os.path.join(app.config["LIBRARY_DIR"], file.file_path)
+
+
+def _volume_retries(app):
+    return [
+        job
+        for job in scheduled_jobs(app.file_queue)
+        if job.id.startswith(safe_job_id("retry:download_task"))
+        and job.kwargs.get("volume_waits")
+    ]
+
+
+def test_a_direct_restore_waits_for_a_dead_library_volume(app, monkeypatch):
+    """A dropped share is a plain folder on the boot disk (#533).
+
+    The restore must not download into it or place a file there."""
+
+    import app.videos as videos
+    from app import aws_storage
+
+    key, library_path = _direct_restore_row(app, "Dead Share Before")
+    downloads = []
+    monkeypatch.setattr(
+        aws_storage, "aws_download", lambda *a, **k: downloads.append(a) or True
+    )
+    monkeypatch.setattr(videos, "_dead_volumes", lambda paths: ["/Volumes/Movies"])
+    with app.app_context():
+        assert videos.download_task(key, os.path.basename(key), "receipt-1") is False
+    assert downloads == []
+    (retry,) = _volume_retries(app)
+    assert retry.kwargs == {"transient_retries": 0, "volume_waits": 1}
+    retry.delete()
+
+
+def test_a_volume_that_drops_during_the_download_defers_the_placement(app, monkeypatch):
+    import app.videos as videos
+    from app import aws_storage
+
+    key, library_path = _direct_restore_row(app, "Dead Share During")
+    answers = [[], ["/Volumes/Movies"]]
+    monkeypatch.setattr(videos, "_dead_volumes", lambda paths: answers.pop(0))
+    placed = []
+
+    def download(key, basename, handle=None, place_at=None, before_place=None):
+        before_place()
+        placed.append(place_at)
+        return aws_storage.DOWNLOAD_COMPLETE
+
+    monkeypatch.setattr(aws_storage, "aws_download", download)
+    with app.app_context():
+        assert videos.download_task(key, os.path.basename(key), "receipt-2") is False
+    assert placed == []
+    (retry,) = _volume_retries(app)
+    assert retry.kwargs["volume_waits"] == 1
+    retry.delete()
+
+
+def test_a_track_edit_during_the_download_refuses_the_placement(app, monkeypatch):
+    """The archive became older than the library file during the download (#533)."""
+
+    from app import db
+    from app.models import File
+    import app.videos as videos
+    from app import aws_storage
+
+    key, library_path = _direct_restore_row(app, "Edited During")
+    os.makedirs(os.path.dirname(library_path), exist_ok=True)
+    with open(library_path, "wb") as f:
+        f.write(b"newer library file")
+    placed = []
+
+    def download(key, basename, handle=None, place_at=None, before_place=None):
+        # A track edit on another worker marks the archive stale.
+        db.session.execute(
+            db.update(File).where(File.aws_key == key).values(aws_stale=True)
+        )
+        db.session.commit()
+        before_place()
+        placed.append(place_at)
+        return aws_storage.DOWNLOAD_COMPLETE
+
+    monkeypatch.setattr(aws_storage, "aws_download", download)
+    try:
+        with app.app_context():
+            assert videos.download_task(key, os.path.basename(key)) is True
+        assert placed == []
+        with open(library_path, "rb") as f:
+            assert f.read() == b"newer library file"
+    finally:
+        os.remove(library_path)
+
+
+def test_a_refused_placement_discards_the_download(app, monkeypatch):
+    import app.videos as videos
+    from app import aws_storage
+
+    s3 = S3(head={"ContentLength": 3})
+    monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kwargs: s3)
+    monkeypatch.setattr(aws_storage, "aws_sqs_client", lambda: None)
+
+    def refuse():
+        raise aws_storage.PlacementDeferred(["/Volumes/Movies"])
+
+    with app.app_context():
+        with pytest.raises(aws_storage.PlacementDeferred):
+            videos.aws_download(
+                "modified/y.mkv",
+                "y.mkv",
+                place_at=os.path.join(app.config["LIBRARY_DIR"], "Movies/y.mkv"),
+                before_place=refuse,
+            )
+        assert s3.downloads == ["modified/y.mkv"]
+        staged = os.path.join(app.config["IMPORT_DIR"], ".restore-modified-y.mkv")
+        assert not os.path.exists(staged)
+        assert not os.path.exists(
+            os.path.join(app.config["LIBRARY_DIR"], "Movies/y.mkv")
+        )

@@ -1031,13 +1031,36 @@ def _import_uncataloged(roots):
                 )
 
 
-def download_task(key, basename, sqs_receipt_handle=None, transient_retries=0):
-    """Download a file from AWS S3 storage."""
+class PlacementDeferred(Exception):
+    """A volume of a direct restore is not available at the placement (#533)."""
+
+
+class PlacementRefused(Exception):
+    """A direct restore must not replace the library file any more (#533)."""
+
+
+# A direct restore waits for a dead volume at most this many times, 5
+# minutes each. 288 waits are 1 day. The SQS message then comes back.
+
+MAX_VOLUME_WAITS = 288
+
+
+def download_task(
+    key, basename, sqs_receipt_handle=None, transient_retries=0, volume_waits=0
+):
+    """Download a file from AWS S3 storage.
+
+    A direct restore writes into the library. A dropped share leaves its
+    mountpoint as a plain directory on the boot disk, and a write there
+    succeeds with no error. Thus, the task waits while a volume is dead,
+    before the download and again before the placement (#533). The
+    newer-file guards also run again before the placement. A track edit
+    during a long download can make the archive older than the file."""
 
     # The retry constants still live in app.videos. Import them lazily.
     # Thus, the module import direction stays videos to aws_storage.
 
-    from app.videos import MAX_TRANSIENT_RETRIES, TRANSIENT_COPY_ERRNOS
+    from app.videos import MAX_TRANSIENT_RETRIES, TRANSIENT_COPY_ERRNOS, _dead_volumes
 
     with app.app_context():
         job = get_current_job()
@@ -1089,6 +1112,60 @@ def download_task(key, basename, sqs_receipt_handle=None, transient_retries=0):
                 )
             return True
 
+        def dead_volumes():
+            paths = [current_app.config["IMPORT_DIR"]]
+            if place_at:
+                paths.append(os.path.dirname(place_at))
+            return _dead_volumes(paths)
+
+        def wait_for_volumes(dead):
+            """Book the download again after 5 minutes, or give up."""
+
+            if volume_waits >= MAX_VOLUME_WAITS:
+                current_app.logger.error(
+                    f"'{basename}' Volumes unavailable ({', '.join(dead)}) for "
+                    f"the restore after {volume_waits} waits; giving up"
+                )
+                return False
+            handle = _latest_receipt_handle(sqs_receipt_handle)
+            requeue(
+                "app.videos.download_task",
+                key=key,
+                delay=timedelta(minutes=5),
+                reason=f"Volumes unavailable ({', '.join(dead)}) for the restore",
+                counters={
+                    "transient_retries": transient_retries,
+                    "volume_waits": volume_waits + 1,
+                },
+                args=(key, basename, handle),
+                description=f"'{basename}' — Downloading from AWS",
+                meta={"sqs_receipt_handle": handle},
+            )
+            return False
+
+        dead = dead_volumes()
+        if dead:
+            return wait_for_volumes(dead)
+
+        def before_place():
+            """Check the volumes and the newer-file guards again (#533)."""
+
+            dead = dead_volumes()
+            if dead:
+                raise PlacementDeferred(dead)
+            db.session.rollback()
+            fresh = db.session.get(File, file.id)
+            if fresh is None or restore_would_replace_newer(fresh, key):
+                raise PlacementRefused(
+                    f"'{basename}' The library file changed during the download. "
+                    f"The restore does not replace it"
+                )
+            if overtaken_by_import(current_app.redis, fresh, key):
+                raise PlacementRefused(
+                    f"'{basename}' was imported again during the download. "
+                    f"The restore does not replace it"
+                )
+
         report_progress(job, basename, "Downloading from AWS", percent=None)
 
         try:
@@ -1096,8 +1173,23 @@ def download_task(key, basename, sqs_receipt_handle=None, transient_retries=0):
                 f"Starting download of '{basename}' from AWS S3 storage"
             )
             downloaded = aws_download(
-                key, basename, sqs_receipt_handle, place_at=place_at
+                key,
+                basename,
+                sqs_receipt_handle,
+                place_at=place_at,
+                before_place=before_place if place_at else None,
             )
+
+        except PlacementDeferred as e:
+            return wait_for_volumes(e.args[0])
+
+        except PlacementRefused as e:
+            current_app.logger.warning(str(e))
+            if sqs_receipt_handle:
+                return delete_sqs_message(
+                    aws_sqs_client(), sqs_receipt_handle, note="stale restore"
+                )
+            return True
 
         except OSError as e:
             if (
@@ -1119,7 +1211,10 @@ def download_task(key, basename, sqs_receipt_handle=None, transient_retries=0):
                         f"Download failed with a transient I/O error ({e}) "
                         f"(attempt {transient_retries + 1} of {MAX_TRANSIENT_RETRIES})"
                     ),
-                    counters={"transient_retries": transient_retries + 1},
+                    counters={
+                        "transient_retries": transient_retries + 1,
+                        "volume_waits": volume_waits,
+                    },
                     args=(key, basename, sqs_receipt_handle),
                     description=f"'{basename}' — Downloading from AWS",
                     meta={"sqs_receipt_handle": sqs_receipt_handle},
@@ -3065,7 +3160,9 @@ def place_restored_import_task(staged, basename, waits=0):
         return True
 
 
-def aws_download(key, basename, sqs_receipt_handle=None, place_at=None):
+def aws_download(
+    key, basename, sqs_receipt_handle=None, place_at=None, before_place=None
+):
     """Download an object from AWS S3 storage.
 
     Return DOWNLOAD_COMPLETE if the file arrived in the import directory.
@@ -3080,6 +3177,10 @@ def aws_download(key, basename, sqs_receipt_handle=None, place_at=None):
     When AWS_DOWNLOAD_VIA_CDN is set, the bytes come through CloudFront
     with a signed URL. The object size check and the restore-state
     checks still use the S3 API.
+
+    before_place runs after the download and before a direct placement.
+    If it raises, the download is deleted and the error propagates. The
+    SQS message stays (#533).
     """
 
     # The retry constants still live in app.videos. Import them lazily.
@@ -3262,6 +3363,12 @@ def aws_download(key, basename, sqs_receipt_handle=None, place_at=None):
             current_app.logger.info(f"'{basename}' downloaded from {source}")
 
             if place_at:
+                if before_place:
+                    try:
+                        before_place()
+                    except BaseException:
+                        _discard_partial(destination)
+                        raise
                 place_in_library(destination, place_at, progress.size, basename)
             elif not place_restored_import(destination, basename):
                 enqueue_task(
