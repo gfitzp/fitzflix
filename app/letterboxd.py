@@ -230,12 +230,22 @@ def _apply_entry_fields(row, entry, owned=False):
     Fitzflix stores liked VERBATIM. This is the rule of Glenn: a
     Letterboxd like is its own signal. A guilty pleasure below 3 stars
     keeps its heart. The rewatch flag of the feed is authoritative when
-    it is present. An owned row already belongs to this feed entry."""
+    it is present. An owned row already belongs to this feed entry. A
+    claim of a row by an unrated entry keeps the stars of the row."""
 
     from app.videos import star_rating_fields
 
     changed = False
-    fields = dict(star_rating_fields(entry["rating"]))
+
+    # An unrated entry that claims a rated row keeps the stars of the row.
+    # The other merge order keeps them too (#542). An owned row follows
+    # the feed, unrated included.
+
+    fields = (
+        dict(star_rating_fields(entry["rating"]))
+        if owned or entry["rating"] is not None
+        else {}
+    )
     fields["liked"] = entry["liked"]
     fields["contains_spoilers"] = entry["contains_spoilers"]
     fields["review"] = entry["review"] or row.review or ""

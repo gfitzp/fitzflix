@@ -296,6 +296,10 @@ def test_sync_adopts_csv_twin_and_completes_plex_watch(app, monkeypatch):
         adopted = UserMovieReview.query.filter_by(movie_id=csv_id).one()
         assert adopted.letterboxd_guid == "letterboxd-watch-20"
 
+        # The unrated feed item keeps the stars of the CSV row (#542)
+        assert float(adopted.rating) == 4.0
+        assert adopted.whole_stars == 4 and adopted.half_stars == 0
+
         # The sync completed the Plex bare watch across the midnight
         # straddle. The watch keeps its clock-accurate timestamp
         assert UserMovieReview.query.filter_by(movie_id=plex_id).count() == 1
