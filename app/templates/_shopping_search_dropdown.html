@@ -1,3 +1,13 @@
+{# The eBay format filter of the instruction (#255). The movie rows and
+   the TV season rows both use it (#556). #}
+{% set ebay_format = '&Format=DVD%7CBlu%252Dray%7C4K%2520UHD%2520Blu%252Dray' %}
+{% if instruction %}
+	{% if instruction.endswith('on Blu-Ray') %}
+		{% set ebay_format = '&Format=Blu%252Dray%7C4K%2520UHD%2520Blu%252Dray' %}
+	{% elif instruction.endswith('4K UHD Blu-Ray') %}
+		{% set ebay_format = '&Format=4K%2520UHD%2520Blu%252Dray' %}
+	{% endif %}
+{% endif %}
 {% if movie %}
 	{% set title = movie|display_title %}
 	{% set year = movie|display_year %}
@@ -6,15 +16,6 @@
 	{% set criterion = '' %}
 	{% if (movie.criterion_spine_number or movie.criterion_set_title) %}
 		{% set criterion = ' Criterion Collection' %}
-	{% endif %}
-
-	{% set ebay_format = '&Format=DVD%7CBlu%252Dray%7C4K%2520UHD%2520Blu%252Dray' %}
-	{% if instruction %}
-		{% if instruction.endswith('on Blu-Ray') %}
-			{% set ebay_format = '&Format=Blu%252Dray%7C4K%2520UHD%2520Blu%252Dray' %}
-		{% elif instruction.endswith('4K UHD Blu-Ray') %}
-			{% set ebay_format = '&Format=4K%2520UHD%2520Blu%252Dray' %}
-		{% endif %}
 	{% endif %}
 
 	<div class="dropdown-menu" aria-labelledby="dropdownMenuLink">
@@ -47,6 +48,6 @@
 		<a class="dropdown-item" target="_blank" href="https://www.amazon.com/s?k={{ tv.tmdb_name|urlencode if tv.tmdb_name else tv.title|urlencode }}{% if season %}{% if season.season and season.season > 0 %} Season {{ season.season }}{% endif %}{% endif %}&i=movies-tv" rel="noreferrer">Amazon</a>
 		<a class="dropdown-item" target="_blank" href="https://www.blu-ray.com/movies/search.php?action=search&keyword={{ tv.tmdb_name|urlencode if tv.tmdb_name else tv.title|urlencode }}&television=on" rel="noreferrer">Blu-ray.com</a>
         <a class="dropdown-item" target="_blank" href="https://www.deepdiscount.com/search?mod=AV&q={{ tv.tmdb_name|urlencode if tv.tmdb_name else tv.title|urlencode }}" rel="noreferrer">DeepDiscount.com</a>
-		<a class="dropdown-item" target="_blank" href="https://www.ebay.com/sch/617/i.html?_nkw={{ tv.tmdb_name|urlencode if tv.tmdb_name else tv.title|urlencode }}{% if season %}{% if season.season and season.season > 0 %} Season {{ season.season }}{% endif %}{% endif %}{{ format|urlencode }}&_sop=15" rel="noreferrer">eBay</a>
+		<a class="dropdown-item" target="_blank" href="https://www.ebay.com/sch/617/i.html?_nkw={{ tv.tmdb_name|urlencode if tv.tmdb_name else tv.title|urlencode }}{% if season %}{% if season.season and season.season > 0 %} Season {{ season.season }}{% endif %}{% endif %}{{ ebay_format }}&_sop=15" rel="noreferrer">eBay</a>
 	</div>
 {% endif %}

@@ -54,7 +54,7 @@
 				<a href="{{ url_for('main.file', file_id=file.id) }}">{{ file.basename }}</a>
 			</h5>
 			<a href="{{ url_for('main.tv', series_id=file.series_id) }}">{{ file.tv_series.tmdb_name if file.tv_series.tmdb_name else file.tv_series.title }}</a><br/>
-			<a href="{{ url_for('main.season', series_id=file.series_id, season=file.season) }}">Season {{ file.season }}, {% if file.last_episode == file.episode %}Episode {{ file.episode }}{% else %}Episodes {{ file.episode }}–{{ file.last_episode }}{% endif %}</a><br/>
+			<a href="{{ url_for('main.season', series_id=file.series_id, season=file.season) }}">Season {{ file.season }}, {% if not file.last_episode or file.last_episode == file.episode %}Episode {{ file.episode }}{% else %}Episodes {{ file.episode }}–{{ file.last_episode }}{% endif %}</a><br/>
 			{# Physical-media TV seasons count as final. This matches
 			   the DVD-green rule of the search page. #}
 			<span class="badge text-bg-{{ 'warning' if card_upgradable.get(file.id) else 'success' }}">{{ file.quality.quality_title }}</span><br/>

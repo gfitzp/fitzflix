@@ -1068,3 +1068,44 @@ def test_file_activity_skips_a_reject_that_moves_before_its_stat(
         assert "Moved (2001)" not in page
     finally:
         os.remove(kept)
+
+
+def test_the_tv_ebay_link_carries_the_format_filter(app, admin_client):
+    """The TV season search carries the format filter of the movie rows (#556).
+
+    The link appended an undefined variable. Thus, it had no filter."""
+
+    import re
+
+    from app import db
+    from tests.factories import make_tv_file, make_tv_series
+
+    with app.app_context():
+        series = make_tv_series("Ebay Show")
+        make_tv_file(series, 1, 1, "DVD")
+        db.session.commit()
+
+    page = admin_client.get("/shopping-list/tv").get_data(as_text=True)
+    links = re.findall(r'href="(https://www\.ebay\.com/[^"]*Ebay[^"]*)"', page)
+    assert links
+    assert all("&amp;Format=" in link or "&Format=" in link for link in links)
+
+
+def test_a_file_with_no_last_episode_shows_1_episode(app, admin_client):
+    """A legacy row with a null last_episode is not "Episodes 3 to None" (#556)."""
+
+    from app import db
+    from tests.factories import make_tv_file, make_tv_series
+
+    with app.app_context():
+        series = make_tv_series("Legacy Span Show")
+        file = make_tv_file(series, 1, 3, "DVD")
+        file.last_episode = None
+        db.session.commit()
+        series_id = series.id
+
+    season = admin_client.get(f"/tv/{series_id}/1").get_data(as_text=True)
+    assert "-None" not in season
+    activity = admin_client.get("/file-activity").get_data(as_text=True)
+    assert "None" not in activity.split("Legacy Span Show")[1][:300]
+    assert "Episode 3" in activity

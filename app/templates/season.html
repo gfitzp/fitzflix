@@ -21,7 +21,7 @@
 		{% for file, tv, quality, rank in files %}
 		<tr>
 			<th scope="row" class="align-middle">{{ file.id }}</th>
-			<td class="align-middle">{{ file.episode }}{% if file.episode != file.last_episode %}-{{ file.last_episode }}{% endif %}</td>
+			<td class="align-middle">{{ file.episode }}{% if file.last_episode and file.episode != file.last_episode %}-{{ file.last_episode }}{% endif %}</td>
 			{# The edition IS the title where one exists (the curated
 			   specials). Fitzflix stores no other episode titles. #}
 			<td class="align-middle">{% if file.edition %}{{ file.edition }}{% endif %}</td>
