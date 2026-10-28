@@ -21,7 +21,7 @@ from tests.factories import make_movie, make_movie_file
 def test_frozen_shelf_replays_and_replaces_in_slot(app):
     calls = []
 
-    def pick():
+    def pick(excluded):
         calls.append(1)
         return [3, 1, 4, 5]
 
@@ -67,7 +67,9 @@ def test_frozen_shelf_replays_and_replaces_in_slot(app):
 
     # Each shelf and each user has a different key
 
-    other = frozen_shelf(app.redis, 2, "unit", eligible, lambda: [7], day="2026-08-26")
+    other = frozen_shelf(
+        app.redis, 2, "unit", eligible, lambda excluded: [7], day="2026-08-26"
+    )
     assert other == [7]
 
 
@@ -310,19 +312,24 @@ def test_a_new_eligible_film_fills_an_empty_slot_at_the_end(app):
         day = "2026-10-24"
 
         # The first visit of the day finds nothing to show.
-        assert frozen_shelf(redis, 1, "watch", [], lambda: [], day=day, size=3) == []
+        assert (
+            frozen_shelf(redis, 1, "watch", [], lambda excluded: [], day=day, size=3)
+            == []
+        )
 
         # A watchlist add makes a film eligible. It shows at once.
-        assert frozen_shelf(redis, 1, "watch", [7], lambda: [], day=day, size=3) == [7]
+        assert frozen_shelf(
+            redis, 1, "watch", [7], lambda excluded: [], day=day, size=3
+        ) == [7]
 
         # 2 more films. The first card keeps its slot. The others follow.
         assert frozen_shelf(
-            redis, 1, "watch", [9, 8, 7], lambda: [], day=day, size=3
+            redis, 1, "watch", [9, 8, 7], lambda excluded: [], day=day, size=3
         ) == [7, 9, 8]
 
         # A full shelf takes no more.
         assert frozen_shelf(
-            redis, 1, "watch", [6, 9, 8, 7], lambda: [], day=day, size=3
+            redis, 1, "watch", [6, 9, 8, 7], lambda excluded: [], day=day, size=3
         ) == [7, 9, 8]
 
 
@@ -400,13 +407,45 @@ def test_a_snapshot_from_before_the_index_is_protected(app):
     app.redis.set(f"fitzflix:shelf:old-b:1:{day}", json.dumps([3, 4]))
 
     # Shelf b replays first, and it records itself in the index.
-    assert frozen_shelf(app.redis, 1, "old-b", [3, 4, 5], lambda: [], day=day) == [
+    assert frozen_shelf(
+        app.redis, 1, "old-b", [3, 4, 5], lambda excluded: [], day=day
+    ) == [
         3,
         4,
     ]
 
     # Film 1 is watched. Its replacement skips 3 and 4 of shelf b.
-    assert frozen_shelf(app.redis, 1, "old-a", [2, 3, 4, 5], lambda: [], day=day) == [
+    assert frozen_shelf(
+        app.redis, 1, "old-a", [2, 3, 4, 5], lambda excluded: [], day=day
+    ) == [
         5,
         2,
     ]
+
+
+def test_a_shelf_that_first_renders_mid_day_leaves_the_frozen_cards_alone(app):
+    """Shelf B froze in the morning. Shelf A gets rows later in the day (#536).
+
+    A must not take the cards of B. If it did, B would replace them on
+    its replay, and 3 of its 5 slots would move."""
+
+    day = date(2026, 10, 28)
+    rows_b = [6, 2, 14, 18, 10, 1, 3, 4]
+    rows_a = [14, 18, 6, 100, 102, 104, 106]
+    with app.app_context():
+        shown = set()
+        b_morning = daily_shelf(
+            app.redis, 1, "unit-536-b", rows_b, shown, key=lambda r: r, day=day, count=5
+        )
+
+        # The afternoon render: A has rows now and renders first.
+        shown = set()
+        a_first = daily_shelf(
+            app.redis, 1, "unit-536-a", rows_a, shown, key=lambda r: r, day=day, count=5
+        )
+        b_replay = daily_shelf(
+            app.redis, 1, "unit-536-b", rows_b, shown, key=lambda r: r, day=day, count=5
+        )
+
+    assert not set(a_first) & set(b_morning)
+    assert b_replay == b_morning

@@ -1170,8 +1170,11 @@ def _other_shelf_cards(redis_client, user_id, shelf, day):
 def frozen_shelf(redis_client, user_id, shelf, eligible_ids, pick, day=None, size=None):
     """Return the stable ordered card ids of the day for 1 shelf.
 
-    The first render of the day calls pick() for the baseline and
-    stores a snapshot. Later renders replay the snapshot in slot order.
+    The first render of the day calls pick(excluded) for the baseline
+    and stores a snapshot. excluded holds the cards that the other
+    shelves of the day hold already. A shelf that first renders in the
+    middle of the day must not take them (#536). If it did, those shelves
+    would read the cards as not eligible and replace them. Later renders replay the snapshot in slot order.
     A card can stop being eligible (watched, refused, acquired). Then
     the first id from eligible_ids that does not show yet replaces it
     IN ITS SLOT. Each other card keeps its position. The rule of Glenn:
@@ -1199,7 +1202,8 @@ def frozen_shelf(redis_client, user_id, shelf, eligible_ids, pick, day=None, siz
         except (TypeError, ValueError):
             snapshot = None
     if snapshot is None:
-        snapshot = list(pick())
+        others = _other_shelf_cards(redis_client, user_id, shelf, day)
+        snapshot = [card_id for card_id in pick(others) if card_id not in others]
         _store_shelf_snapshot(redis_client, user_id, shelf, day, snapshot)
         return snapshot
 
@@ -1282,11 +1286,15 @@ def daily_shelf(
 
     day = day or date.today()
 
-    def pick():
-        """Return the baseline card ids of the day for this shelf."""
+    def pick(excluded=frozenset()):
+        """Return the baseline card ids of the day for this shelf.
 
-        lead = [row for row in urgent if key(row) not in shown][:count]
-        pool = [row for row in rows if key(row) not in shown]
+        excluded holds the cards of the other frozen shelves of the day
+        (#536)."""
+
+        taken = shown | set(excluded)
+        lead = [row for row in urgent if key(row) not in taken][:count]
+        pool = [row for row in rows if key(row) not in taken]
         sampled = rotate_partition(pool, count - len(lead), day.toordinal())
         mixed = shuffle_daily(sampled, f"mix:{shelf}:{int(user_id)}:{day.isoformat()}")
         return [key(row) for row in lead + mixed]
