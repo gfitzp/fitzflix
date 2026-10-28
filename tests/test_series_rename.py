@@ -639,13 +639,19 @@ def test_the_sonarr_path_of_a_folder_with_a_slash_at_the_end(app, monkeypatch):
     assert put["path"] == "/tv/Batman (1966)"
 
 
-def test_a_rename_never_replaces_a_file_at_the_target(app):
+def test_a_rename_never_replaces_a_file_at_the_target(app, monkeypatch):
     """Both the old and the new file exist. The rename refuses (#554).
 
-    os.rename replaced the file at the target without a word."""
+    os.rename replaced the file at the target without a word. A retry
+    cannot clear this. The refusal tells the admin 1 time and books no
+    retry (#575). Before, it requeued for ever with no notification."""
 
     from tests.test_scheduling import scheduled_jobs
 
+    sent = []
+    monkeypatch.setattr(
+        "app.email.notify_admin_text", lambda subject, *bodies: sent.append(subject)
+    )
     with app.app_context():
         series = make_tv_series("Batman", tmdb_id=2287)
         one = make_tv_file(series, 1, 1, "Bluray-1080p")
@@ -672,9 +678,52 @@ def test_a_rename_never_replaces_a_file_at_the_target(app):
             for job in scheduled_jobs(queue)
             if job.func_name == "app.series_rename.rename_tv_series_task"
         ]
-        assert retries
-        for job in retries:
-            job.delete()
+        assert retries == []
+        assert sent == ["Rename collision needs triage"]
+
+
+def test_a_series_rename_stops_after_the_volume_wait_limit(app, monkeypatch):
+    """A permanent EACCES or EROFS looped for ever as a volume wait (#575).
+
+    The waits now count, as the movie rename waits do."""
+
+    import errno
+
+    import app.videos as videos
+    from app.tmdb_refresh import MAX_RENAME_VOLUME_WAITS
+    from tests.test_scheduling import scheduled_jobs
+
+    def refused(src, dst):
+        raise OSError(errno.EROFS, "Read-only file system")
+
+    monkeypatch.setattr(videos, "_rename_with_retries", refused)
+    with app.app_context():
+        series = make_tv_series("Batman", tmdb_id=2287)
+        one = make_tv_file(series, 1, 1, "Bluray-1080p")
+        db.session.commit()
+        _materialize(app, one)
+        series_id = series.id
+
+        def retries():
+            return [
+                job
+                for queue in (app.file_queue, app.request_queue, app.maintenance_queue)
+                for job in scheduled_jobs(queue)
+                if job.func_name == "app.series_rename.rename_tv_series_task"
+            ]
+
+        assert rename_tv_series_task(series_id, "Batman (1966)") is False
+        (first,) = retries()
+        assert first.kwargs == {"volume_waits": 1}
+        first.delete()
+
+        assert (
+            rename_tv_series_task(
+                series_id, "Batman (1966)", volume_waits=MAX_RENAME_VOLUME_WAITS
+            )
+            is False
+        )
+        assert retries() == []
 
 
 def test_a_share_that_drops_inside_the_loop_books_the_rename_again(app, monkeypatch):

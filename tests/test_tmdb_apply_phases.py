@@ -526,3 +526,84 @@ def test_a_movie_rename_on_a_dead_volume_books_the_apply_again(app, monkeypatch)
         assert db.session.get(File, file.id).file_path == old_path
         for job in retries:
             job.delete()
+
+
+def test_a_movie_apply_probes_the_volume_once_before_any_stat(app, monkeypatch):
+    """The collision stat ran before the dead-volume probe (#575).
+
+    A hung share blocks that stat. Each file also probed on its own
+    while the title locks were held. Now 1 probe runs first."""
+
+    import app.tmdb_refresh as tmdb_refresh
+    import app.videos as videos
+
+    probes = []
+    monkeypatch.setattr(
+        videos, "_dead_volumes", lambda paths: probes.append(paths) or ["/Volumes/M"]
+    )
+    stats = []
+    real_exists = os.path.exists
+    monkeypatch.setattr(
+        tmdb_refresh.os.path,
+        "exists",
+        lambda path: stats.append(path) or real_exists(path),
+    )
+    renames = []
+    monkeypatch.setattr(
+        tmdb_refresh,
+        "_rename_movie_file",
+        lambda f, tmdb_id, probe=True: renames.append(f.id),
+    )
+    monkeypatch.setattr(tmdb_refresh, "_requeue_for_the_volume", lambda *a: None)
+    with app.app_context():
+        movie = make_movie("Probe Once", 1960)
+        for quality in ("DVD", "Bluray-1080p"):
+            file = make_movie_file(movie, quality)
+            file.untouched_basename = file.basename
+        db.session.commit()
+        locks = []
+        try:
+            tmdb_refresh._apply_movie_refresh(
+                movie,
+                "Refreshing 'Probe Once (1960)'",
+                None,
+                {"id": 779, "title": "Probe Once", "release_date": "1960-02-02"},
+                None,
+                False,
+                locks,
+            )
+        finally:
+            for lock in locks:
+                app.lock_manager.unlock(lock)
+    assert len(probes) == 1
+    assert renames == []
+
+
+def test_a_dead_volume_skips_the_collision_stat_of_a_rename(app, monkeypatch):
+    """The probe of _rename_movie_file comes before os.path.exists (#575)."""
+
+    import app.tmdb_refresh as tmdb_refresh
+    import app.videos as videos
+    from app.tmdb_refresh import VOLUME_DOWN, _rename_movie_file
+
+    monkeypatch.setattr(videos, "_dead_volumes", lambda paths: ["/Volumes/Movies"])
+    with app.app_context():
+        movie = make_movie("Hung Tune", 1943)
+        file = make_movie_file(movie, "HDTV-720p")
+        file.untouched_basename = "Hung Tune (1944) - [HDTV-720p].mkv"
+        db.session.commit()
+
+        library = app.config["LIBRARY_DIR"]
+        real_exists = os.path.exists
+        stats = []
+
+        def hung(path):
+            if str(path).startswith(library):
+                stats.append(path)
+            return real_exists(path)
+
+        monkeypatch.setattr(tmdb_refresh.os.path, "exists", hung)
+        outcome = _rename_movie_file(file, None)
+        monkeypatch.undo()
+        assert outcome == VOLUME_DOWN
+        assert stats == []

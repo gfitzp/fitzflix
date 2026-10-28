@@ -173,11 +173,12 @@ def rename_refusal(series, new_title):
     return None
 
 
-def rename_tv_series_task(series_id, new_title):
+def rename_tv_series_task(series_id, new_title, volume_waits=0):
     """Rename the folder, files, and database rows of a TV series.
 
     This is a task. After the rename, it updates the Sonarr path and
-    queues a Plex rescan."""
+    queues a Plex rescan. volume_waits counts the retries for the TV
+    library volume (#575). It stops at MAX_RENAME_VOLUME_WAITS."""
 
     with app.app_context():
         series = db.session.get(TVSeries, series_id)
@@ -190,11 +191,11 @@ def rename_tv_series_task(series_id, new_title):
             current_app.logger.warning(f"Series rename: {refusal}")
             return False
 
-        locks = _take_series_locks(series, new_title)
+        locks = _take_series_locks(series, new_title, volume_waits)
         if locks is None:
             return False
         try:
-            return _move_series(series, new_title)
+            return _move_series(series, new_title, volume_waits)
         finally:
             for lock in locks:
                 current_app.lock_manager.unlock(lock)
@@ -224,7 +225,7 @@ def rename_timeout(series):
     return max(floor, RENAME_SECONDS_PER_FILE * series.files.count())
 
 
-def _take_series_locks(series, new_title):
+def _take_series_locks(series, new_title, volume_waits=0):
     """Take the title lock of each episode of a series. Return the locks.
 
     Return None after the rename goes back on its queue. An import takes
@@ -254,7 +255,7 @@ def _take_series_locks(series, new_title):
         return locks
     for lock in locks:
         current_app.lock_manager.unlock(lock)
-    _requeue_rename(series, new_title, reason)
+    _requeue_rename(series, new_title, reason, volume_waits=volume_waits)
     return None
 
 
@@ -274,18 +275,54 @@ def _lock_seconds(series):
     return rename_timeout(series)
 
 
-def _requeue_rename(series, new_title, reason):
-    """Put the rename of a series back on its queue after RENAME_WAIT_MINUTES."""
+def _requeue_rename(series, new_title, reason, volume_waits=0, volume=False):
+    """Put the rename of a series back on its queue after RENAME_WAIT_MINUTES.
+
+    A wait for the volume counts (#575). After MAX_RENAME_VOLUME_WAITS
+    waits, the rename stops with an ERROR, as the movie rename does.
+    Each retry carries the count."""
 
     from app.tasks import requeue
+    from app.tmdb_refresh import MAX_RENAME_VOLUME_WAITS
 
+    if volume:
+        if volume_waits >= MAX_RENAME_VOLUME_WAITS:
+            current_app.logger.error(
+                f"Series rename of {series.title!r} {reason} after "
+                f"{volume_waits} waits. It stops. Rename the series again later"
+            )
+            return
+        volume_waits += 1
     requeue(
         RENAME_TASK,
         key=series.id,
         delay=RENAME_WAIT_MINUTES,
         reason=f"Series rename of {series.title!r} {reason}",
+        counters={"volume_waits": volume_waits} if volume_waits else None,
         args=(series.id, new_title),
         timeout=rename_timeout(series),
+    )
+
+
+def _refuse_duplicate_target(series, src_relative, dst_relative):
+    """Stop a series rename whose target file exists already, and tell the admin (#575).
+
+    A retry cannot clear this. Only the admin can, by deleting 1 copy.
+    The movie rename refuses the same shape in the same way."""
+
+    from markupsafe import escape
+
+    from app.email import notify_admin_text
+
+    detail = f"'{dst_relative}' exists, and so does '{src_relative}'"
+    current_app.logger.warning(f"Series rename: {detail}. Nothing replaced")
+    notify_admin_text(
+        "Rename collision needs triage",
+        f"Renaming the series '{series.title}' was refused: {detail}.\n\n"
+        f"Delete one of the copies, then rename the series again.",
+        f"<p>Renaming the series '{escape(series.title)}' was refused: "
+        f"{escape(detail)}.</p><p>Delete one of the copies, then rename "
+        f"the series again.</p>",
     )
 
 
@@ -312,14 +349,20 @@ def _tv_library_down():
     return not os.path.isdir(tv_library) or bool(_dead_volumes([tv_library]))
 
 
-def _move_series(series, new_title):
+def _move_series(series, new_title, volume_waits=0):
     """Move the files and rewrite the rows of a series. The caller holds the locks.
 
     An unmounted TV library defers the rename. It must not rewrite the
     rows of files that it cannot see (#551)."""
 
     if _tv_library_down():
-        _requeue_rename(series, new_title, "waits for the TV library volume")
+        _requeue_rename(
+            series,
+            new_title,
+            "waits for the TV library volume",
+            volume_waits=volume_waits,
+            volume=True,
+        )
         return False
 
     old_title = series.title
@@ -369,11 +412,8 @@ def _move_series(series, new_title):
             # movie rename refuses this shape (#554). A case-only rename
             # on a case-insensitive volume is the same file. It goes on.
             if os.path.exists(dst) and not os.path.samefile(src, dst):
-                current_app.logger.warning(
-                    f"Series rename: {new_path!r} exists, and so does "
-                    f"{file.file_path!r}. Nothing replaced"
-                )
-                _requeue_rename(series, new_title, "waits for a duplicate file")
+                # A retry cannot clear this (#575). Notify 1 time and stop.
+                _refuse_duplicate_target(series, file.file_path, new_path)
                 return False
             try:
                 makedirs_on_mounted_volume(os.path.dirname(dst))
@@ -385,7 +425,13 @@ def _move_series(series, new_title):
                     f"Series rename: {file.file_path!r} not moved: "
                     f"{type(error).__name__}: {error}"
                 )
-                _requeue_rename(series, new_title, "waits for the TV library volume")
+                _requeue_rename(
+                    series,
+                    new_title,
+                    "waits for the TV library volume",
+                    volume_waits=volume_waits,
+                    volume=True,
+                )
                 return False
             # The episode thumb goes with its video (#469)
             move_episode_thumb(src, dst)
@@ -397,7 +443,13 @@ def _move_series(series, new_title):
         elif _tv_library_down():
             # The volume dropped during the loop. The rows that are
             # renamed already stay renamed. The retry does the rest.
-            _requeue_rename(series, new_title, "waits for the TV library volume")
+            _requeue_rename(
+                series,
+                new_title,
+                "waits for the TV library volume",
+                volume_waits=volume_waits,
+                volume=True,
+            )
             return False
         else:
             # There is no local copy. This is an archived-only record.
@@ -437,7 +489,7 @@ def _move_series(series, new_title):
             if source
             else f"found {len(left)} file(s) with the old title: {left[:5]}"
         )
-        _requeue_rename(series, new_title, reason)
+        _requeue_rename(series, new_title, reason, volume_waits=volume_waits)
         return False
 
     # This step is aware of junk files. It is not a plain rmdir. The

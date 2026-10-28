@@ -460,7 +460,10 @@ def find_better_files(details):
     #
     # - If the existing file is a full screen version, always replace
     #   it with a non-full screen version. Do this even if the quality
-    #   is lower, or if a multi-episode file loses episodes.
+    #   is lower. The removal covers only the full screen files inside
+    #   the episode span of the new file (#575). A full screen file
+    #   with a wider span stays, because no other copy has its other
+    #   episodes.
     #
     # - If the existing file is a non-full screen version, and the new
     #   file is full screen, always reject the new full screen file.
@@ -741,6 +744,9 @@ def find_worse_files(file, replace_existing=False):
                 or f.needs_sdr_conversion
                 or f.quality.preference < file.quality.preference
                 or (file.media_library == TV_SHOWS and _narrower_span(f, file))
+                # A widescreen file replaces a full screen copy at any
+                # quality (#553). A conversion is no exception (#575).
+                or (f.fullscreen and not file.fullscreen)
             ]
         worse_files += [
             f

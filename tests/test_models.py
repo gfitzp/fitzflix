@@ -493,3 +493,17 @@ def test_a_widescreen_copy_replaces_a_better_fullscreen_copy(app, library):
             widescreen_dvd = make_tv_file(series, 1, 1, "DVD")
         assert fullscreen_bluray in find_worse_files(widescreen_dvd)
         assert widescreen_dvd not in find_worse_files(fullscreen_bluray)
+
+
+def test_a_widescreen_conversion_replaces_a_better_fullscreen_copy(app):
+    """The conversion filter kept a full screen copy of a higher tier (#575).
+
+    The any-tier rule of #553 applies to a conversion too."""
+
+    with app.app_context():
+        movie = make_movie("Fullscreen Converted Film", 1991)
+        fullscreen_remux = make_movie_file(movie, "Bluray-2160p", fullscreen=True)
+        conversion = make_movie_file(movie, "Bluray-1080p")
+        conversion.converted_from_quality = "Bluray-2160p Remux"
+        db.session.flush()
+        assert fullscreen_remux in find_worse_files(conversion)

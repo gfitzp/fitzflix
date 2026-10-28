@@ -13,7 +13,6 @@ resolve. The filename plumbing lives in app.importing. This module
 imports it lazily. Thus, the module import direction stays one-way.
 """
 
-import errno
 import gzip
 import json
 import os
@@ -512,14 +511,15 @@ VOLUME_DOWN = "volume-down"
 MAX_RENAME_VOLUME_WAITS = 72
 
 
-def _rename_movie_file(f, tmdb_id):
+def _rename_movie_file(f, tmdb_id, probe=True):
     """Move 1 library file of a refreshed movie to the name of its new details.
 
     The file keeps its place if its untouched name no longer evaluates,
     if the new path is claimed, or if the move fails. The poster assets
     of a main feature go with it. Return True if the file moved on
     disk. The row commits right after the move. If that commit fails,
-    the file goes back to its old path (#380)."""
+    the file goes back to its old path (#380). With probe False, the
+    caller probed the volumes already (#575)."""
 
     # The filename plumbing lives in app.importing. The import is lazy.
     # Thus, the module import direction stays one-way.
@@ -545,6 +545,23 @@ def _rename_movie_file(f, tmdb_id):
     old_file = os.path.join(current_app.config["LIBRARY_DIR"], f.file_path)
     old_directory = os.path.dirname(old_file)
     new_file = os.path.join(current_app.config["LIBRARY_DIR"], new_relative)
+    new_directory = os.path.dirname(new_file)
+
+    # A dropped share leaves its mountpoint as a plain folder on the boot
+    # disk. Then neither path exists, and the row would move with no file
+    # (#551). Thus, the rename waits for the volume. The probe comes
+    # before the collision check (#575). A hung share blocks the stat of
+    # that check. A row with no local copy on a live volume still gets
+    # its new name.
+
+    from app.videos import _dead_volumes
+
+    if probe and _dead_volumes([new_directory, old_directory]):
+        current_app.logger.warning(
+            f"'{f.basename}' (file #{f.id}) not renamed to '{new_relative}': "
+            f"the library volume does not answer"
+        )
+        return VOLUME_DOWN
 
     # A merge can put this rename on a path that the target
     # movie already owns (the 25 Cats incident: os.rename
@@ -591,17 +608,7 @@ def _rename_movie_file(f, tmdb_id):
         )
         return False
 
-    # A dropped share leaves its mountpoint as a plain folder on the boot
-    # disk. Then neither path exists, and the row would move with no file
-    # (#551). Thus, the rename waits for the volume. A row with no local
-    # copy on a live volume still gets its new name.
-
-    from app.videos import _dead_volumes
-
-    new_directory = os.path.dirname(new_file)
     try:
-        if _dead_volumes([new_directory, old_directory]):
-            raise OSError(errno.ENODEV, "volume does not answer", new_directory)
         makedirs_on_mounted_volume(new_directory)
     except OSError as e:
         current_app.logger.warning(
@@ -885,10 +892,23 @@ def _apply_movie_refresh(
 
     files = File.query.filter_by(movie_id=updated_movie_id).all()
     renamed = False
-    volume_down = False
 
-    for f in files:
-        outcome = _rename_movie_file(f, tmdb_id)
+    # 1 volume probe for the apply, not 1 for each file while the title
+    # locks are held (#575). The files of a movie share the library mount.
+
+    from app.videos import _dead_volumes
+
+    volume_down = bool(files) and bool(
+        _dead_volumes(
+            [current_app.config["MOVIE_LIBRARY"]]
+            + [
+                os.path.join(current_app.config["LIBRARY_DIR"], f.file_path)
+                for f in files
+            ]
+        )
+    )
+    for f in [] if volume_down else files:
+        outcome = _rename_movie_file(f, tmdb_id, probe=False)
         if outcome == VOLUME_DOWN:
             volume_down = True
         else:
