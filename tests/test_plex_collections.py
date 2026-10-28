@@ -523,5 +523,29 @@ def test_a_set_that_shrank_under_the_minimum_empties_its_collection(app, monkeyp
     )
     fake.collections["5"] = {"Lonely Set": ["700", {"34", "35"}]}
 
+    # The sync filled the set while it had 2 films (#558).
+    app.redis.sadd(plex_collections.SYNCED_SETS_KEY, "Lonely Set")
+
     assert plex_collections.sync_criterion_collection() is True
     assert fake.collections["5"]["Lonely Set"][1] == set()
+    assert not app.redis.sismember(plex_collections.SYNCED_SETS_KEY, "Lonely Set")
+    assert app.redis.sismember(plex_collections.SYNCED_SETS_KEY, "Olympia Films")
+
+
+def test_a_hand_made_collection_named_like_a_small_set_stays(app, monkeypatch):
+    """The sync never filled this set. Its collection is not ours (#558).
+
+    Before, every set title counted. A hand-made Plex collection with the
+    name of a single-film set was emptied every night."""
+
+    paths = _box_sets(app)
+    plex_collections, fake = _setup(
+        app,
+        monkeypatch,
+        {"5": ("movie", "Movies", {"31": paths["web"], "34": paths["lonely"]})},
+    )
+    fake.collections["5"] = {"Lonely Set": ["700", {"34", "35"}]}
+    app.redis.delete(plex_collections.SYNCED_SETS_KEY)
+
+    assert plex_collections.sync_criterion_collection() is True
+    assert fake.collections["5"]["Lonely Set"][1] == {"34", "35"}

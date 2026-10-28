@@ -159,11 +159,18 @@ def box_set_groups():
     }
 
 
+# The box sets that the sync made or filled. Only such a set empties
+# its Plex collection when it shrinks (#558). A hand-made collection
+# with the name of a single-film set is not ours. The key has no TTL.
+
+SYNCED_SETS_KEY = "fitzflix:plex:synced-box-sets"
+
+
 def box_set_titles():
     """Return the title of each Criterion box set that a movie record names.
 
     A set under BOX_SET_MIN_FILMS has no group in box_set_groups. Its
-    Plex collection must still empty (#544)."""
+    Plex collection must still empty (#544), if the sync filled it."""
 
     return {
         title
@@ -335,19 +342,31 @@ def sync_criterion_collection():
             qualifying = box_set_groups()
             for set_title, groups in sorted(qualifying.items()):
                 plans.append((set_title, groups, SORT_RELEASE))
+            redis = current_app.redis
+            if qualifying:
+                redis.sadd(SYNCED_SETS_KEY, *qualifying)
             # A set that shrank under BOX_SET_MIN_FILMS kept its Plex
             # collection with every former member (#544). An empty plan
-            # empties a collection that exists. It makes no new one.
-            shrunk = sorted(box_set_titles() - set(qualifying))
+            # empties a collection that exists. It makes no new one. Only
+            # a set that the sync filled before shrinks (#558).
+            synced = {
+                name.decode() if isinstance(name, bytes) else name
+                for name in redis.smembers(SYNCED_SETS_KEY)
+            }
+            shrunk = sorted((box_set_titles() - set(qualifying)) & synced)
             machine = _server_machine_id()
             sections = plex_get("/library/sections").get("MediaContainer", {})
         except Exception:
             current_app.logger.warning(traceback.format_exc())
             return True
 
-        for section in sections.get("Directory", []) or []:
-            if section.get("type") != "movie":
-                continue
+        sections = [
+            section
+            for section in sections.get("Directory", []) or []
+            if section.get("type") == "movie"
+        ]
+        failed = set() if sections else set(shrunk)
+        for section in sections:
             try:
                 by_path = _items_by_path(section["key"])
                 collections = {
@@ -361,6 +380,7 @@ def sync_criterion_collection():
                 }
             except Exception:
                 current_app.logger.warning(traceback.format_exc())
+                failed.update(shrunk)
                 continue
             stale = [(name, [], SORT_RELEASE) for name in shrunk if name in collections]
             for name, groups, sort in plans + stale:
@@ -370,6 +390,15 @@ def sync_criterion_collection():
                     )
                 except Exception:
                     current_app.logger.warning(traceback.format_exc())
+                    failed.add(name)
+
+        # An emptied set is no longer ours. A later collection of that
+        # name is left alone. A failed section keeps the name for the
+        # next run.
+
+        emptied = [name for name in shrunk if name not in failed]
+        if emptied:
+            current_app.redis.srem(SYNCED_SETS_KEY, *emptied)
         return True
 
 

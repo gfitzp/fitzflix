@@ -247,8 +247,12 @@ def _apply_entry_fields(row, entry, owned=False):
         else {}
     )
     fields["liked"] = entry["liked"]
-    fields["contains_spoilers"] = entry["contains_spoilers"]
     fields["review"] = entry["review"] or row.review or ""
+
+    # The spoiler flag goes with the text (#558). A row that keeps its
+    # own text keeps its own flag.
+
+    spoilers_follow = bool(entry["review"]) or not row.review
 
     # A row that the feed claims now keeps its local text when the entry
     # has none. A row that the feed owns follows the feed. A "watch" guid
@@ -257,6 +261,9 @@ def _apply_entry_fields(row, entry, owned=False):
 
     if owned and (entry["guid"] or "").startswith("letterboxd-watch-"):
         fields["review"] = entry["review"] or ""
+        spoilers_follow = True
+    if spoilers_follow:
+        fields["contains_spoilers"] = entry["contains_spoilers"]
     if entry["rewatch"] is not None:
         fields["rewatch"] = entry["rewatch"]
     for field, value in fields.items():

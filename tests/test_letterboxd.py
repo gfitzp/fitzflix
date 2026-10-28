@@ -578,3 +578,49 @@ def test_the_feed_claims_no_bare_row_of_the_wrong_day(app, monkeypatch):
         assert claimed.id == later_id
         assert db.session.get(UserMovieReview, afternoon_id).letterboxd_guid is None
         assert UserMovieReview.query.filter_by(movie_id=movie_id).count() == 3
+
+
+def test_a_text_less_claim_keeps_the_spoiler_flag_of_the_kept_text(app):
+    """The spoiler flag goes with the review text (#558).
+
+    A watch entry with no text claimed a row with a spoiler review. The
+    row kept its text but took the False flag of the entry."""
+
+    from types import SimpleNamespace
+
+    from app.letterboxd import _apply_entry_fields
+
+    row = SimpleNamespace(
+        review="The twist is that he was dead.",
+        contains_spoilers=True,
+        liked=False,
+        rewatch=False,
+        date_watched=None,
+        date_reviewed=datetime(2026, 7, 1),
+        rating=None,
+        modified_rating=None,
+        whole_stars=None,
+        half_stars=None,
+    )
+    entry = {
+        "guid": "letterboxd-watch-40",
+        "rating": None,
+        "liked": True,
+        "contains_spoilers": False,
+        "review": "",
+        "rewatch": None,
+        "watched_date": None,
+        "logged_at": None,
+    }
+    with app.app_context():
+        _apply_entry_fields(row, entry)
+    assert row.review == "The twist is that he was dead."
+    assert row.contains_spoilers is True
+    assert row.liked is True
+
+    # A row that the feed owns follows a watch guid: the text and the
+    # flag were removed on Letterboxd.
+    with app.app_context():
+        _apply_entry_fields(row, entry, owned=True)
+    assert row.review == ""
+    assert row.contains_spoilers is False
