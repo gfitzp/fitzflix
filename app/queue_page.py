@@ -7,6 +7,7 @@ User.get_queue_details and User.get_queue_count call this module."""
 from datetime import datetime, timezone
 
 from flask import current_app
+from rq.exceptions import InvalidJobOperation, NoSuchJobError
 from rq.registry import ScheduledJobRegistry, StartedJobRegistry
 
 
@@ -139,9 +140,12 @@ def queue_details():
     def row(job, started_at):
         """Return the queue-page fields of 1 job."""
 
+        # fetch_many already read the status. A second read would fail
+        # for a hash that a Forget or a flush deleted meanwhile (#565).
+
         return {
             "id": job.id,
-            "status": job.get_status(),
+            "status": job.get_status(refresh=False),
             "enqueued_at": enqueue_anchor(job),
             "started_at": started_at,
             "ended_at": job.ended_at,
@@ -162,8 +166,12 @@ def queue_details():
 
     running = []
     for job in running_jobs:
-        started_at = file_started(job)
-        item = row(job, started_at)
+        try:
+            started_at = file_started(job)
+            item = row(job, started_at)
+        except (InvalidJobOperation, NoSuchJobError):
+            # The job went away between the reads (#565). Skip its row.
+            continue
         item["first_run"] = (
             started_at.astimezone().strftime("%Y-%m-%d %H:%M:%S")
             if started_at
@@ -196,7 +204,10 @@ def queue_details():
             heads.add(head.decode() if isinstance(head, bytes) else head)
     queued = []
     for job in queued_jobs:
-        item = row(job, None)
+        try:
+            item = row(job, None)
+        except (InvalidJobOperation, NoSuchJobError):
+            continue
         item["fronted"] = job.id in fronted
         item["at_head"] = job.id in heads
         queued.append(item)
@@ -232,10 +243,20 @@ def queue_details():
     scheduled = []
     for queue, only in listed_queues():
         registry = ScheduledJobRegistry(queue=queue)
-        for job_id, scheduled_for in scheduled_entries(registry):
-            job = queue.fetch_job(job_id)
+        entries = scheduled_entries(registry)
+
+        # 1 pipeline, as listed_jobs does (#565). fetch_job removes a
+        # missing id from the queue list. That is a write from a page view.
+
+        jobs = queue.job_class.fetch_many(
+            [job_id for job_id, _ in entries], connection=queue.connection
+        )
+        for job, (job_id, scheduled_for) in zip(jobs, entries):
             if job is not None and (only is None or job.func_name in only):
-                item = row(job, None)
+                try:
+                    item = row(job, None)
+                except (InvalidJobOperation, NoSuchJobError):
+                    continue
                 item["status"] = "scheduled"
                 item["ended_at"] = None
                 item["scheduled_for"] = scheduled_for

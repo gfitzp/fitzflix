@@ -309,3 +309,40 @@ def test_each_first_paint_tooltip_has_a_stamp_for_the_local_time(app, admin_clie
     assert abbrs
     assert all("data-timestamp=" in abbr for abbr in abbrs)
     assert 'abbr.querySelector("[data-timestamp]")' in body
+
+
+def test_a_job_deleted_after_the_listing_does_not_break_the_page(app, monkeypatch):
+    """row() read the status again with a second HGET (#565).
+
+    A Forget or a flush between the 2 reads made rq raise
+    InvalidJobOperation, and every page answered 500. The scheduled
+    rows read their hashes in 1 pipeline, not 1 fetch_job per id."""
+
+    from datetime import timedelta
+
+    from rq.queue import Queue
+
+    import app.queue_page as queue_page
+
+    kept = app.import_queue.enqueue("app.videos.localization_task", "/import/kept.mkv")
+    gone = app.import_queue.enqueue("app.videos.localization_task", "/import/gone.mkv")
+    later = app.file_queue.enqueue_in(
+        timedelta(minutes=5), "app.videos.download_task", "modified/x.mkv", "x.mkv"
+    )
+    real_listed_jobs = queue_page.listed_jobs
+
+    def listed_then_deleted():
+        listed = real_listed_jobs()
+        app.redis.delete(gone.key)
+        return listed
+
+    def no_single_fetch(self, job_id):
+        raise AssertionError("a fetch per job")
+
+    monkeypatch.setattr(queue_page, "listed_jobs", listed_then_deleted)
+    monkeypatch.setattr(Queue, "fetch_job", no_single_fetch)
+    with app.app_context():
+        details = queue_page.queue_details()
+    ids = [task["id"] for task in details["all"]]
+    assert kept.id in ids
+    assert later.id in ids
