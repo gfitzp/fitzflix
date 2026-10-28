@@ -1356,8 +1356,12 @@ class RefFeatureType(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     feature_type = db.Column(db.String(32), nullable=False, unique=True)
+    # No delete cascade (#508). The delete of a lookup row deleted each
+    # file of its type. passive_deletes="all" also keeps the ORM from a
+    # silent null of the foreign keys. Thus, the foreign key refuses the
+    # delete while a file uses the row.
     files = db.relationship(
-        "File", backref="feature_type", lazy="dynamic", cascade="all,delete"
+        "File", backref="feature_type", lazy="dynamic", passive_deletes="all"
     )
 
     def __repr__(self):
@@ -1375,11 +1379,14 @@ class RefQuality(db.Model):
     preference = db.Column(db.Integer, nullable=False)
     physical_media = db.Column(db.Boolean, nullable=False, default=False)
     date_updated = db.Column(db.DateTime)
+    # No delete cascade (#508). The delete of a tier deleted each file of
+    # the tier and each movie with that Criterion format, with their
+    # files. The foreign keys refuse the delete instead.
     files = db.relationship(
-        "File", backref="quality", lazy="dynamic", cascade="all,delete"
+        "File", backref="quality", lazy="dynamic", passive_deletes="all"
     )
     movies = db.relationship(
-        "Movie", backref="format", lazy="dynamic", cascade="all,delete"
+        "Movie", backref="format", lazy="dynamic", passive_deletes="all"
     )
 
     def __repr__(self):

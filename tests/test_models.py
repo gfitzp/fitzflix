@@ -2,6 +2,8 @@
 
 import os
 
+import pytest
+
 from app import db
 from app.file_ranking import find_better_files, find_worse_files
 from app.models import File, Movie, RefQuality, TVSeries, movie_file_rank, tv_file_rank
@@ -391,3 +393,47 @@ def test_a_file_from_details_refuses_an_unknown_key(app):
                     "converted_from_qualty": "Bluray-2160p",
                 }
             )
+
+
+@pytest.mark.parametrize("holder", ["file", "movie"])
+def test_a_lookup_row_in_use_refuses_its_delete(app, holder):
+    """The delete of a quality tier in use raises. It deletes nothing (#508).
+
+    The cascade deleted each file of the tier and each movie with that
+    Criterion format. The test turns on the foreign keys of SQLite for
+    its connection, as MariaDB has them."""
+
+    from sqlalchemy import text
+    from sqlalchemy.exc import IntegrityError
+
+    from app import db
+    from tests.factories import make_movie, make_movie_file
+
+    with app.app_context():
+        tier = RefQuality(quality_title="Test tier", preference=99)
+        db.session.add(tier)
+        db.session.commit()
+        try:
+            db.session.execute(text("PRAGMA foreign_keys=ON"))
+            movie = make_movie("Jaws", 1975)
+            file = make_movie_file(movie, "DVD")
+            if holder == "file":
+                file.quality_id = tier.id
+            else:
+                movie.criterion_quality_id = tier.id
+            db.session.commit()
+            file_id = file.id
+
+            with pytest.raises(IntegrityError):
+                db.session.delete(tier)
+                db.session.commit()
+            db.session.rollback()
+            assert db.session.get(File, file_id) is not None
+            assert Movie.query.filter_by(title="Jaws").count() == 1
+        finally:
+            db.session.rollback()
+            db.session.execute(text("PRAGMA foreign_keys=OFF"))
+            File.query.delete()
+            Movie.query.delete()
+            RefQuality.query.filter_by(quality_title="Test tier").delete()
+            db.session.commit()
