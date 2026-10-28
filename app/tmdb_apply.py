@@ -573,6 +573,8 @@ class TMDBMixin(object):
             self.year = canonical_year
         if tmdb_info.get("id"):
             self.tmdb_data_as_of = datetime.now(timezone.utc)
+            # The record page shows "last updated" from this column (#465).
+            self.date_updated = self.tmdb_data_as_of
 
         for spec in self.TMDB_ASSOCIATIONS:
             self._apply_association(spec, tmdb_info)
@@ -742,6 +744,8 @@ class TMDBMixin(object):
         self._fit_tmdb_strings()
         if tmdb_info.get("id"):
             self.tmdb_data_as_of = datetime.now(timezone.utc)
+            # The record page shows "last updated" from this column (#465).
+            self.date_updated = self.tmdb_data_as_of
 
         for spec in self.TMDB_ASSOCIATIONS:
             self._apply_association(spec, tmdb_info)

@@ -35,6 +35,8 @@ import re
 import time
 import traceback
 
+from datetime import datetime, timezone
+
 from flask import current_app, g
 from pathvalidate import sanitize_filename
 from werkzeug.local import LocalProxy
@@ -397,6 +399,7 @@ def _move_series(series, new_title):
         clear_leftover_directory(old_dir)
 
     series.title = new_title
+    series.date_updated = datetime.now(timezone.utc)
     db.session.commit()
 
     try:

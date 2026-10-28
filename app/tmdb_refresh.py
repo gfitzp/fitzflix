@@ -821,6 +821,7 @@ def _apply_movie_refresh(
         # would delete them with it.
 
         move_movie_rows(original_movie_id, movie.id)
+        movie.date_updated = datetime.now(timezone.utc)
         db.session.flush()
 
         # Delete the old movie record from the database.

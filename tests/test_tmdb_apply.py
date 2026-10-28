@@ -684,3 +684,52 @@ def test_tv_series_declares_each_column_once():
     source = inspect.getsource(TVSeries)
     names = re.findall(r"^    (\w+) = db\.Column\(", source, re.M)
     assert len(names) == len(set(names)), [n for n in names if names.count(n) > 1]
+
+
+def test_a_refresh_stamps_date_updated(app):
+    """The record pages show "last updated" from date_updated (#465)."""
+
+    with app.app_context():
+        movie = make_movie("Stamped Film", 2010)
+        series = make_tv_series("Stamped Series")
+        db.session.commit()
+        assert movie.date_updated is None and series.date_updated is None
+
+        movie.tmdb_movie_apply(
+            {"id": 465001, "title": "Stamped Film", "release_date": "2010-05-05"}
+        )
+        series.tmdb_tv_apply({"id": 465002})
+        db.session.commit()
+        assert db.session.get(Movie, movie.id).date_updated is not None
+        assert db.session.get(TVSeries, series.id).date_updated is not None
+
+
+def test_a_merge_stamps_the_survivor(app):
+    """A merge into an older record changes the survivor (#465)."""
+
+    import json
+    import zlib
+
+    from app.tmdb_refresh import apply_tmdb_refresh
+    from tests.factories import make_movie_file
+
+    with app.app_context():
+        older = make_movie("Merge Stamp", 2011, tmdb_id=465003)
+        newer = make_movie("Merge Stamp Copy", 2011)
+        file = make_movie_file(newer, "DVD")
+        file.untouched_basename = file.basename
+        db.session.commit()
+        older_id, newer_id = older.id, newer.id
+
+    payload = zlib.compress(
+        json.dumps(
+            {"id": 465003, "title": "Merge Stamp", "release_date": "2011-01-01"}
+        ).encode("utf-8")
+    )
+    assert (
+        apply_tmdb_refresh("Movies", newer_id, tmdb_id=465003, tmdb_payload=payload)
+        is True
+    )
+    with app.app_context():
+        assert db.session.get(Movie, newer_id) is None
+        assert db.session.get(Movie, older_id).date_updated is not None
