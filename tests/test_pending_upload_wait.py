@@ -149,3 +149,47 @@ def test_a_missing_pending_upload_with_no_library_file_stops_the_move(
         assert row.aws_key == PENDING
         assert row.aws_key_target is None
         assert fake.uploads == []
+
+
+def test_the_prune_keeps_the_upload_of_a_scheduled_conversion_retry(app, monkeypatch):
+    """A conversion retry has no marker. Its file_details key is safe (#493)."""
+
+    from app import aws_storage
+
+    old = datetime.now(timezone.utc) - timedelta(days=30)
+    parked = "pending-untouched/run3/Parked Rerip (2024) - [UHD].mkv"
+    stray = "pending-untouched/run2/Old Stray (2020) - [DVD].mkv"
+    objects = {
+        "pending-untouched/": [
+            {"Key": parked, "Size": 5, "LastModified": old},
+            {"Key": stray, "Size": 5, "LastModified": old},
+        ],
+    }
+    monkeypatch.setattr(
+        aws_storage,
+        "get_matching_s3_objects",
+        lambda bucket, prefix="": objects.get(prefix, []),
+    )
+    deletes = []
+    monkeypatch.setattr(aws_storage, "aws_delete", lambda key: deletes.append(key))
+    monkeypatch.setattr(aws_storage, "aws_restore", lambda key, **kw: None)
+    monkeypatch.setattr("app.email.send_email", lambda *a, **k: None)
+
+    class FakeClient:
+        def put_object(self, **kwargs):
+            pass
+
+    monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kw: FakeClient())
+    with app.app_context():
+        app.transcode_queue.enqueue_in(
+            timedelta(minutes=30),
+            "app.videos.convert_localized_file",
+            "/import/Parked Rerip (2024) - [UHD].mkv",
+            {"basename": "Parked Rerip (2024) - [UHD].mkv", "aws_key": parked},
+            "lock",
+            "/staging/.Parked Rerip (2024) - [UHD].mkv",
+            {},
+        )
+    aws_storage.sync_aws_s3_storage_task()
+
+    assert deletes == [stray]

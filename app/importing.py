@@ -252,10 +252,10 @@ LATER_STAGES = {
 }
 
 
-def later_stage_holds(path):
-    """Return True if a conversion, move, or cataloging job still holds this source (#296).
+def _later_stage_jobs():
+    """Yield each conversion, move and cataloging job.
 
-    The job can be queued, running, or scheduled for a retry."""
+    A job counts when it is queued, running, or scheduled for a retry."""
 
     for queue_attr in set(LATER_STAGES.values()):
         queue = getattr(current_app, queue_attr)
@@ -265,9 +265,18 @@ def later_stage_holds(path):
         for job in Job.fetch_many(list(ids), connection=current_app.redis):
             if job is None or job.func_name not in LATER_STAGES:
                 continue
-            source = job.args[0] if job.args else job.kwargs.get("source_path")
-            if source == path:
-                return True
+            yield job
+
+
+def later_stage_holds(path):
+    """Return True if a conversion, move, or cataloging job still holds this source (#296).
+
+    The job can be queued, running, or scheduled for a retry."""
+
+    for job in _later_stage_jobs():
+        source = job.args[0] if job.args else job.kwargs.get("source_path")
+        if source == path:
+            return True
     return False
 
 
@@ -279,17 +288,26 @@ def paths_held_by_later_stages():
     conversion can wait in the transcode queue for more than 7 days."""
 
     held = set()
-    for queue_attr in set(LATER_STAGES.values()):
-        queue = getattr(current_app, queue_attr)
-        ids = set(queue.job_ids)
-        ids.update(StartedJobRegistry(queue=queue).get_job_ids())
-        ids.update(ScheduledJobRegistry(queue=queue).get_job_ids())
-        for job in Job.fetch_many(list(ids), connection=current_app.redis):
-            if job is None or job.func_name not in LATER_STAGES:
-                continue
-            for value in list(job.args) + list((job.kwargs or {}).values()):
-                if isinstance(value, str):
-                    held.add(os.path.abspath(value))
+    for job in _later_stage_jobs():
+        for value in list(job.args) + list((job.kwargs or {}).values()):
+            if isinstance(value, str):
+                held.add(os.path.abspath(value))
+    return held
+
+
+def keys_held_by_later_stages():
+    """Return the archive key of each conversion, move and cataloging job (#493).
+
+    The key is the aws_key of the file_details argument. The import
+    gives the key to its File row only at the cataloging. A conversion
+    or a move that waits for a retry can wait for more than 8 days. The
+    weekly prune must not delete its upload."""
+
+    held = set()
+    for job in _later_stage_jobs():
+        for value in list(job.args) + list((job.kwargs or {}).values()):
+            if isinstance(value, dict) and isinstance(value.get("aws_key"), str):
+                held.add(value["aws_key"])
     return held
 
 
