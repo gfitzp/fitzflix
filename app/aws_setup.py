@@ -94,7 +94,7 @@ MANAGED_RULE_FIELDS = (
     "Transitions",
     "AbortIncompleteMultipartUpload",
 )
-MANAGED_RULE_PREFIX = "fitzflix-"
+MANAGED_RULE_ID_START = "fitzflix-"
 
 
 def _rule_body(rule):
@@ -127,7 +127,7 @@ def _ensure_rule(rules, label, present, build, report):
 
     built = build()
     rule_id = built.get("ID", "")
-    if rule_id.startswith(MANAGED_RULE_PREFIX):
+    if rule_id.startswith(MANAGED_RULE_ID_START):
         for index, rule in enumerate(rules):
             if rule.get("ID") != rule_id:
                 continue
