@@ -143,30 +143,38 @@ self.addEventListener("fetch", function (event) {
 		!isManifest &&
 		(url.pathname.startsWith("/static/") || url.origin !== location.origin)
 	) {
+		// Stale-while-revalidate: the cached copy answers immediately.
+		// The background fetch replaces it for the next time. These URLs
+		// are stable, but their contents are not. A custom poster and the
+		// CSS of the site are both replaced in place. Thus, an entry that
+		// never refreshed would serve the old bytes until the cache
+		// version changed.
+
+		// The write of the new copy is held open with waitUntil (#547).
+		// Else the browser can stop the worker before the write lands.
+		// A put can fail with QuotaExceeded on an opaque cross-origin
+		// response. That failure is caught. It only skips the copy.
+
+		var network = fetch(request);
+		event.waitUntil(
+			network
+				.then(function (response) {
+					if (!isCacheable(response)) return;
+					var copy = response.clone();
+					return caches.open(CACHE).then(function (cache) {
+						return cache.put(request, copy);
+					});
+				})
+				.catch(function () {})
+		);
 		event.respondWith(
 			caches.match(request).then(function (cached) {
-				// Stale-while-revalidate: the cached copy answers
-				// immediately. The background fetch replaces it for the
-				// next time. These URLs are stable, but their contents are
-				// not. A custom poster and the CSS of the site are both
-				// replaced in place. Thus, an entry that never refreshed
-				// would serve the old bytes until the cache version changed
-
-				var revalidated = fetch(request)
-					.then(function (response) {
-						if (isCacheable(response)) {
-							var copy = response.clone();
-							caches.open(CACHE).then(function (cache) {
-								cache.put(request, copy);
-							});
-						}
-						return response;
+				return (
+					cached ||
+					network.catch(function () {
+						return Response.error();
 					})
-					.catch(function () {
-						return cached || Response.error();
-					});
-
-				return cached || revalidated;
+				);
 			})
 		);
 		return;
@@ -191,19 +199,25 @@ self.addEventListener("fetch", function (event) {
 	// copy answers when offline. An explanation answers when the user never
 	// visited the page online
 
-	event.respondWith(
-		fetch(request)
+	// The write of the kept copy is held open with waitUntil, and a
+	// failed put is caught, as for the static files (#547).
+
+	var network = fetch(request);
+	event.waitUntil(
+		network
 			.then(function (response) {
-				if (isCacheable(response) && isKeepablePage(response)) {
-					var copy = response.clone();
-					caches.open(PAGES).then(function (cache) {
-						return cache.put(request, copy).then(function () {
-							return trimSearchPages(cache);
-						});
+				if (!(isCacheable(response) && isKeepablePage(response))) return;
+				var copy = response.clone();
+				return caches.open(PAGES).then(function (cache) {
+					return cache.put(request, copy).then(function () {
+						return trimSearchPages(cache);
 					});
-				}
-				return response;
+				});
 			})
+			.catch(function () {})
+	);
+	event.respondWith(
+		network
 			.catch(function () {
 				return caches.open(PAGES).then(function (cache) {
 					return cache.match(request).then(function (cached) {

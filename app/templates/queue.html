@@ -107,6 +107,18 @@
 
 		var allSignature = null;
 
+		// The server rows carry the raw UTC stamp in each tooltip. The
+		// poll paints local times, but it skips a table with the same
+		// signature (#547). Thus, the first paint gets the local times
+		// here, from the stamp of the flask-moment span.
+
+		document.querySelectorAll("#all-tasks abbr").forEach(function(abbr) {
+			var span = abbr.querySelector("[data-timestamp]");
+			if (span) {
+				abbr.setAttribute("title", moment(span.getAttribute("data-timestamp")).format("LLL"));
+			}
+		});
+
 		// The table of the queue page has 1 row per running, queued, or
 		// deferred job. Each row carries the pipeline trail of its FILE
 		// as stage chips below the description. The chips were in a

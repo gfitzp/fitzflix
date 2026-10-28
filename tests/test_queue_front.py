@@ -293,3 +293,19 @@ def test_the_badge_counts_a_seeded_queue_without_a_fetch_per_job(app, monkeypatc
         assert queue_count() == 6
         running, queued = listed_jobs()
     assert running == [] and len(queued) == 6
+
+
+def test_each_first_paint_tooltip_has_a_stamp_for_the_local_time(app, admin_client):
+    """The first paint localizes each tooltip from its moment stamp (#547).
+
+    The rows carried the raw UTC stamp. The poll skips an unchanged
+    table. Thus, an idle queue kept the UTC tooltips."""
+
+    import re
+
+    app.import_queue.enqueue("app.videos.localization_task", "/import/Tip (2001).mkv")
+    body = admin_client.get("/queue").get_data(as_text=True)
+    abbrs = re.findall(r"<abbr [^>]*>.*?</abbr>", body, re.S)
+    assert abbrs
+    assert all("data-timestamp=" in abbr for abbr in abbrs)
+    assert 'abbr.querySelector("[data-timestamp]")' in body

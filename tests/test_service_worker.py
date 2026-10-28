@@ -183,3 +183,57 @@ def test_a_get_of_the_logout_page_keeps_the_pages(app, tmp_path):
         [{"path": "/shopping-list/movie"}, {"path": "/auth/logout"}],
     )
     assert kept
+
+
+def _run_with_put(tmp_path, put, requests):
+    """Run the worker with a different cache put. Return the kept URLs."""
+
+    if shutil.which("node") is None:
+        pytest.skip("Node is not installed")
+    original = (
+        "put: (req, res) => { map.set(req.url, res); return Promise.resolve(); },"
+    )
+    assert original in HARNESS
+    harness = tmp_path / "harness.js"
+    harness.write_text(HARNESS.replace(original, put))
+    result = subprocess.run(
+        ["node", str(harness), SW_PATH, json.dumps(requests)],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    kept = json.loads(result.stdout)
+    return sorted(url for urls in kept.values() for url in urls)
+
+
+def test_the_cache_writes_are_held_open_with_wait_until(app, tmp_path):
+    """A slow write still lands. The event waits for it (#547).
+
+    The harness waits only for the promises of the event. A write
+    outside waitUntil had not landed when the worker could stop."""
+
+    slow = (
+        "put: (req, res) => new Promise((done) => setTimeout(() => "
+        "{ map.set(req.url, res); done(); }, 30)),"
+    )
+    kept = _run_with_put(
+        tmp_path,
+        slow,
+        [{"path": "/"}, {"path": "/static/site.css", "mode": "no-cors"}],
+    )
+    assert kept == ["https://fitzflix.test/", "https://fitzflix.test/static/site.css"]
+
+
+def test_a_refused_cache_write_is_caught(app, tmp_path):
+    """A QuotaExceeded put is no unhandled rejection (#547)."""
+
+    refused = "put: (req, res) => Promise.reject(new Error('QuotaExceededError')),"
+    assert (
+        _run_with_put(
+            tmp_path,
+            refused,
+            [{"path": "/"}, {"path": "/static/site.css", "mode": "no-cors"}],
+        )
+        == []
+    )
