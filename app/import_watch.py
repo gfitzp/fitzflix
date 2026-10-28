@@ -43,13 +43,20 @@ class ImportEventHandler(FileSystemEventHandler):
 
             from app.importing import enqueue_localization
 
-            with app.app_context():
-                if enqueue_localization(path, quiet=True):
-                    app.logger.info(
-                        f"'{os.path.basename(path)}' Found in import directory"
-                    )
+            # A failed enqueue must not keep the lock or stop the dispatch
+            # thread of watchdog (#523). The sweep of the keeper finds
+            # the file again.
 
-            app.lock_manager.unlock(lock)
+            try:
+                with app.app_context():
+                    if enqueue_localization(path, quiet=True):
+                        app.logger.info(
+                            f"'{os.path.basename(path)}' Found in import directory"
+                        )
+            except Exception:
+                app.logger.error(traceback.format_exc())
+            finally:
+                app.lock_manager.unlock(lock)
 
     def on_moved(self, event):
         """Process a file when it is moved in the watched directory."""
@@ -127,20 +134,21 @@ def start_import_watch(app):
         except Exception:
             pass
 
+    def observer_healthy(observer):
+        # The failed emitter thread stays in the emitters set after it
+        # dies. Thus, check if it is alive, not if it is present.
+
+        return bool(
+            observer.is_alive()
+            and observer.emitters
+            and all(emitter.is_alive() for emitter in observer.emitters)
+        )
+
     def keep_observer_alive(observer):
         while True:
             time.sleep(60)
             try:
-                # The failed emitter thread stays in the emitters set
-                # after it dies. Thus, check if it is alive, not if it
-                # is present.
-
-                healthy = (
-                    observer.is_alive()
-                    and observer.emitters
-                    and all(emitter.is_alive() for emitter in observer.emitters)
-                )
-                if not healthy:
+                if not observer_healthy(observer):
                     app.logger.warning(
                         "Import directory observer died; "
                         "rebuilding it and sweeping for missed files"
@@ -160,7 +168,8 @@ def start_import_watch(app):
                         observer = PollingObserver()
                         continue
                     enqueue_import_sweep()
-                write_observer_heartbeat()
+                if observer_healthy(observer):
+                    write_observer_heartbeat()
             except Exception:
                 app.logger.error(traceback.format_exc())
 
@@ -176,7 +185,12 @@ def start_import_watch(app):
             f"({app.config['IMPORT_DIR']}); trying again every minute"
         )
         observer = PollingObserver()
-    write_observer_heartbeat()
+
+    # A process whose observer did not start is blind. The health card
+    # must not count it (#523).
+
+    if observer_healthy(observer):
+        write_observer_heartbeat()
     threading.Thread(
         target=keep_observer_alive,
         args=(observer,),

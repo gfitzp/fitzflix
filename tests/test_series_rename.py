@@ -570,3 +570,27 @@ def test_a_dead_tv_library_defers_the_rename(app, monkeypatch):
         ]
         for job in retries:
             job.delete()
+
+
+def test_a_tagged_episode_name_names_the_series_that_owns_the_id(app):
+    """The tag of an in-flight name resolves as in the parse (#523).
+
+    Before, the helper gave "Doctor Who". That matched neither record.
+    Thus, a rename of the 2005 series ran beside its import."""
+
+    from app.importing import _series_title_of_name, series_import_in_flight
+
+    name = "Doctor Who {tmdb-57243} - S01E01 - [WEBDL-1080p].mkv"
+    with app.app_context():
+        make_tv_series("Doctor Who (1963)", tmdb_id=121)
+        make_tv_series("Doctor Who (2005)", tmdb_id=57243)
+        db.session.commit()
+        assert _series_title_of_name(name) == "Doctor Who (2005)"
+        assert (
+            _series_title_of_name("Doctor Who {tvdb-78804} - S01E01 - [DVD].mkv")
+            == "Doctor Who"
+        )
+        path = os.path.join(app.config["IMPORT_DIR"], name)
+        app.import_queue.enqueue("app.videos.localization_task", path)
+        assert series_import_in_flight({"Doctor Who (2005)"}) == path
+        assert series_import_in_flight({"Doctor Who (1963)"}) is None

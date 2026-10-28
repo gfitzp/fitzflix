@@ -258,11 +258,14 @@ LATER_STAGES = {
 def _later_stage_jobs():
     """Yield each conversion, move and cataloging job.
 
-    A job counts when it is queued, running, or scheduled for a retry."""
+    A job counts when it is queued, running, or scheduled for a retry.
+    A job in the dequeue gap (the intermediate queue of rq) counts too
+    (#523)."""
 
     for queue_attr in set(LATER_STAGES.values()):
         queue = getattr(current_app, queue_attr)
         ids = set(queue.job_ids)
+        ids.update(queue.intermediate_queue.get_job_ids())
         ids.update(StartedJobRegistry(queue=queue).get_job_ids())
         ids.update(ScheduledJobRegistry(queue=queue).get_job_ids())
         for job in Job.fetch_many(list(ids), connection=current_app.redis):
@@ -318,7 +321,9 @@ def _series_title_of_name(basename):
     """Return the title of the series record that an episode name names, or None.
 
     This is the title rule of the parse, with no TMDB call. An id tag is
-    removed. A name that is not an episode name gives None."""
+    removed. A series record that owns the id of the tag gives its title,
+    as in _parse_tv (#523). Thus, "Doctor Who {tmdb-57243}" gives "Doctor
+    Who (2005)". A name that is not an episode name gives None."""
 
     if not TV_NAME_SEARCH_RE.search(basename):
         return None
@@ -326,8 +331,14 @@ def _series_title_of_name(basename):
     if not tv:
         return None
     title = tv.group("title")
-    tagged = re.fullmatch(rf"(?P<base>.+?)(?: {ID_TAG_BLOCK})+", title)
-    return _canonical_series_title(tagged.group("base") if tagged else title)
+    tagged = re.fullmatch(rf"(?P<base>.+?)(?P<tags>(?: {ID_TAG_BLOCK})+)", title)
+    if tagged:
+        title = tagged.group("base")
+        tag = preferred_id_tag(parse_name_tags(tagged.group("tags"))[0])
+        owner = _series_record_of_tag(tag) if tag else None
+        if owner is not None:
+            title = owner.title
+    return _canonical_series_title(title)
 
 
 # The Sonarr adopt task comes before the localization (#289). It waits
@@ -4008,6 +4019,26 @@ def _parse_tv(basename, log):
     )
 
 
+def _series_record_of_tag(series_id_tag):
+    """Return the matched series record that owns the id of a tag, or None.
+
+    This makes no network call. An imdb or tvdb tag matches the stored
+    external id of a record that has a TMDB id."""
+
+    source, value, _ = series_id_tag
+    if source == "tmdb":
+        return TVSeries.query.filter_by(tmdb_id=int(value)).first()
+    return (
+        TVSeries.query.filter(
+            (TVSeries.tvdb_id == int(value))
+            if source == "tvdb"
+            else (TVSeries.imdb_id == value)
+        )
+        .filter(TVSeries.tmdb_id != None)
+        .first()
+    )
+
+
 def _resolve_series_tag(series_id_tag, basename, log):
     """Return the TMDB id that a series id tag names, None, or a FilenameRejection.
 
@@ -4018,15 +4049,7 @@ def _resolve_series_tag(series_id_tag, basename, log):
     source, value, _ = series_id_tag
     if source == "tmdb":
         return int(value)
-    existing = (
-        TVSeries.query.filter(
-            (TVSeries.tvdb_id == int(value))
-            if source == "tvdb"
-            else (TVSeries.imdb_id == value)
-        )
-        .filter(TVSeries.tmdb_id != None)
-        .first()
-    )
+    existing = _series_record_of_tag(series_id_tag)
     if existing:
         return existing.tmdb_id
     resolved = resolve_external_id_tag(source, value, "tv", log=log)

@@ -6,6 +6,8 @@ failed entry of the id deletes a new job with the same id when it
 expires. A late run can import a file that is already in the library.
 """
 
+import os
+
 from datetime import timedelta
 
 from rq.registry import FinishedJobRegistry, ScheduledJobRegistry
@@ -187,3 +189,23 @@ def test_a_failed_first_run_stays_for_the_sweep(app, tmp_path):
         assert second.id.startswith(job_id + "_")
         assert job_id in failed.get_job_ids()
         assert enqueue_localization(path) is None
+
+
+def test_a_later_stage_in_the_dequeue_gap_holds_its_source(app, tmp_path):
+    """A move job in the intermediate queue of rq holds its source (#523).
+
+    A worker moves the id there between the pop and the start."""
+
+    from app.importing import later_stage_holds, paths_held_by_later_stages
+
+    path = str(tmp_path / NAME)
+    with app.app_context():
+        job = app.handoff_queue.enqueue(
+            "app.videos.move_localized_file",
+            args=(path, {"basename": NAME}, None, "/staging/x"),
+        )
+        app.redis.lrem(app.handoff_queue.key, 0, job.id)
+        app.redis.rpush(app.handoff_queue.intermediate_queue.key, job.id)
+        assert job.id not in app.handoff_queue.job_ids
+        assert later_stage_holds(path)
+        assert os.path.abspath(path) in paths_held_by_later_stages()
