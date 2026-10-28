@@ -44,6 +44,7 @@ from app.models import (
     UserMovieReview,
     UserMovieStatus,
     UserWatchlist,
+    clip_movie_title,
 )
 from app.tmdb_apply import tmdb_json_or
 from app.naming import retag_quality, with_extension
@@ -133,6 +134,7 @@ def find_or_create_tmdb_movie(tmdb_id, film_title, year, details=None):
     stamps it.
     """
 
+    film_title = clip_movie_title(film_title)
     movie = Movie.query.filter_by(tmdb_id=tmdb_id).first()
     if movie is None:
         movie = Movie.query.filter_by(title=film_title, year=year).first()
@@ -161,7 +163,8 @@ def find_or_create_tmdb_movie(tmdb_id, film_title, year, details=None):
         except ValueError:
             release_date = None
         if release_date is not None:
-            movie.tmdb_title = details.get("title")
+            title_length = Movie.__table__.c.tmdb_title.type.length
+            movie.tmdb_title = (details.get("title") or "")[:title_length] or None
             movie.tmdb_release_date = release_date
         movie.tmdb_overview = movie.tmdb_overview or details.get("overview")
         movie.tmdb_poster_path = movie.tmdb_poster_path or details.get("poster_path")

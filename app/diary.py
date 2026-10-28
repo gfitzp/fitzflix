@@ -39,6 +39,7 @@ from app.models import (
     UserMovieReview,
     UserMovieStatus,
     UserWatchlist,
+    clip_movie_title,
 )
 from app.plex_api import plex_get
 from app.tmdb_apply import tmdb_json
@@ -1000,7 +1001,7 @@ def review_task(user_id, title, rating):
                         tmdb_info = tmdb_json(f"/movie/{tmdb_id}", timeout=30)
                         current_app.logger.debug(f"/movie/{tmdb_id}: {tmdb_info}")
 
-                        tmdb_title = tmdb_info.get("title")
+                        tmdb_title = clip_movie_title(tmdb_info.get("title"))
                         tmdb_year = None
                         if tmdb_info.get("release_date"):
                             tmdb_release_date = datetime.strptime(

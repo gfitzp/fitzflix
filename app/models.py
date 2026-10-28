@@ -670,6 +670,20 @@ class Movie(db.Model, TMDBMixin):
         return f"<Movie '{self.title} ({self.year})'>"
 
 
+def clip_movie_title(title):
+    """Return a TMDB title shortened to fit Movie.title (#383, #462).
+
+    MariaDB runs with STRICT_TRANS_TABLES. A longer title stops the
+    INSERT with error 1406, and the whole batch of the caller fails. A
+    later refresh shortens the title in the same way. Thus, it finds the
+    same row."""
+
+    length = Movie.__table__.c.title.type.length
+    if title and len(title) > length:
+        return title[:length].rstrip()
+    return title
+
+
 class TVSeries(db.Model, TMDBMixin):
     """A TV series and its TMDB enrichment."""
 
