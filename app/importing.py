@@ -1130,18 +1130,17 @@ def _take_title_lock(file_details, run):
 
 
 def _note_title_lock(job, lock):
-    """Keep the title lock in the meta of the job, best effort (#498).
+    """Keep the title lock of the job in Redis, best effort (#498).
 
     A worker that dies takes the token of the lock with it. The worker
     that reclaims the dead job reads the lock here and releases it."""
 
-    from app.worker_recovery import TITLE_LOCK_META
+    from app.worker_recovery import note_job_lock
 
     if job is None:
         return
     try:
-        job.meta[TITLE_LOCK_META] = [lock.resource, lock.key]
-        job.save_meta()
+        note_job_lock(job.id, lock, current_app.config["LOCALIZATION_TASK_TIMEOUT"])
     except Exception:
         current_app.logger.warning(traceback.format_exc())
 

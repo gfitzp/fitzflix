@@ -17,6 +17,7 @@ source stays in the import directory for the hourly sweep. Then the
 hash gets its death.
 """
 
+import json
 import os
 import socket
 import traceback
@@ -36,10 +37,10 @@ DEAD_WORKER_REASON = (
     "kill). A new worker reclaimed it at its start (#498)."
 )
 
-# The title lock of a localization lives in the meta of its job. The
+# The title lock of a localization lives in this key, by job id. The
 # later stages carry the lock as their third argument.
 
-TITLE_LOCK_META = "title_lock"
+JOB_LOCK_KEY = "fitzflix:worker-reclaim:lock:{job_id}"
 LATER_STAGE_LOCK_ARGUMENT = {
     "app.videos.convert_localized_file",
     "app.videos.move_localized_file",
@@ -74,13 +75,33 @@ def _dead_workers(connection, worker_class):
         yield worker
 
 
+def note_job_lock(job_id, lock, ttl_seconds):
+    """Record the title lock that a job took. Its key expires with the lock."""
+
+    current_app.redis.set(
+        JOB_LOCK_KEY.format(job_id=job_id),
+        json.dumps([lock.resource, _text(lock.key)]),
+        ex=ttl_seconds,
+    )
+
+
+def _text(value):
+    """Return value as text. A redlock token can be bytes."""
+
+    return value.decode() if isinstance(value, bytes) else value
+
+
 def _job_lock(job):
     """Return the title lock that the job holds, or None."""
 
     if job.func_name in LATER_STAGE_LOCK_ARGUMENT:
         lock = job.args[2] if len(job.args) > 2 else job.kwargs.get("lock")
         return lock or None
-    held = (job.meta or {}).get(TITLE_LOCK_META)
+    payload = current_app.redis.get(JOB_LOCK_KEY.format(job_id=job.id))
+    try:
+        held = json.loads(payload) if payload else None
+    except ValueError:
+        held = None
     if held and len(held) == 2:
         return Lock(0, held[0], held[1])
     return None

@@ -13,7 +13,7 @@ def _dead_pid():
     return process.pid
 
 
-def _plant_dead_worker(app, queue, func, args, meta=None):
+def _plant_dead_worker(app, queue, func, args):
     """Make a worker hash with a dead pid that runs a started job of func."""
 
     from rq.executions import Execution
@@ -28,9 +28,6 @@ def _plant_dead_worker(app, queue, func, args, meta=None):
     )
     job = queue.enqueue(func, *args, job_timeout=600)
     queue.remove(job)
-    if meta:
-        job.meta.update(meta)
-        job.save_meta()
     with app.redis.pipeline() as pipeline:
         job.prepare_for_execution(worker.name, pipeline)
         Execution.create(job, ttl=600, pipeline=pipeline)
@@ -87,19 +84,19 @@ def test_a_dead_conversion_is_failed_and_its_lock_and_reservation_go(app, tmp_pa
 
 def test_a_dead_localization_releases_the_lock_from_its_meta(app, tmp_path):
     from app.pipeline import PipelineWorker
-    from app.worker_recovery import TITLE_LOCK_META, reclaim_dead_workers
+    from app.worker_recovery import note_job_lock, reclaim_dead_workers
 
     source = tmp_path / "Dead Import (2002) - [DVD].mkv"
     source.write_bytes(b"source")
     with app.app_context():
         lock = app.lock_manager.lock('{"title": "Dead Import"}', 600000)
-        _plant_dead_worker(
+        _, job = _plant_dead_worker(
             app,
             app.import_queue,
             "app.videos.localization_task",
             (str(source),),
-            meta={TITLE_LOCK_META: [lock.resource, lock.key]},
         )
+        note_job_lock(job.id, lock, 600)
         reclaim_dead_workers(app.redis, PipelineWorker)
         assert app.redis.get('{"title": "Dead Import"}') is None
         assert source.exists()
