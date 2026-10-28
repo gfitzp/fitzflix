@@ -803,8 +803,10 @@ def test_each_producer_leaves_the_key_of_the_untouched_name(
     from app.series_rename import rename_tv_series_task
 
     class UploadS3:
-        def list_objects(self, **kwargs):
-            return {}
+        def head_object(self, **kwargs):
+            from tests.fakes import missing_object
+
+            raise missing_object()
 
         def upload_file(self, *args, **kwargs):
             return None

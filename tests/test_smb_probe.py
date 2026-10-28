@@ -510,8 +510,10 @@ def test_a_transient_mount_error_does_not_reject_the_file(app, tmp_path, monkeyp
     )
 
     class ExplodingClient:
-        def list_objects(self, **kwargs):
-            return {}
+        def head_object(self, **kwargs):
+            from tests.fakes import missing_object
+
+            raise missing_object()
 
         def upload_file(self, *args, **kwargs):
             raise OSError(errno.EBADF, "Bad file descriptor")
@@ -869,8 +871,10 @@ def test_a_failed_upload_never_moves_the_file(app, monkeypatch, tmp_path, error)
     uploads = []
 
     class FailingClient:
-        def list_objects(self, **kwargs):
-            return {}
+        def head_object(self, **kwargs):
+            from tests.fakes import missing_object
+
+            raise missing_object()
 
         def upload_file(self, *args, **kwargs):
             uploads.append(args)

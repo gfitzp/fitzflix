@@ -218,6 +218,11 @@ def _as_list(value):
     return value if isinstance(value, list) else [value]
 
 
+# The Sid of the queue policy statement that Fitzflix owns.
+
+MANAGED_POLICY_SID = "fitzflix-allow-s3-restore-events"
+
+
 def _statement_allows_s3(statement, bucket_arn):
     """Return True if a queue policy statement lets the bucket send messages (#534).
 
@@ -226,6 +231,10 @@ def _statement_allows_s3(statement, bucket_arn):
     each of them and crashed the provision."""
 
     if not isinstance(statement, dict):
+        return False
+    # A Deny statement with the same principal and source does not let
+    # the bucket send (#572).
+    if statement.get("Effect") != "Allow":
         return False
     principal = statement.get("Principal")
     services = _as_list(principal.get("Service")) if isinstance(principal, dict) else []
@@ -467,16 +476,25 @@ def provision(config, s3, sqs, echo=print, force=False):
     if allows_s3:
         report("sqs queue policy allows S3", "present")
     else:
-        statements.append(
-            {
-                "Sid": "fitzflix-allow-s3-restore-events",
-                "Effect": "Allow",
-                "Principal": {"Service": "s3.amazonaws.com"},
-                "Action": "sqs:SendMessage",
-                "Resource": queue_arn,
-                "Condition": {"ArnLike": {"aws:SourceArn": bucket_arn}},
-            }
-        )
+        built = {
+            "Sid": MANAGED_POLICY_SID,
+            "Effect": "Allow",
+            "Principal": {"Service": "s3.amazonaws.com"},
+            "Action": "sqs:SendMessage",
+            "Resource": queue_arn,
+            "Condition": {"ArnLike": {"aws:SourceArn": bucket_arn}},
+        }
+        # SQS refuses 2 statements with 1 Sid (#572). A statement with the
+        # managed Sid in a form that the check does not read is replaced
+        # in place, as _ensure_rule replaces a managed rule.
+        for index, statement in enumerate(statements):
+            if isinstance(statement, dict) and statement.get("Sid") == (
+                MANAGED_POLICY_SID
+            ):
+                statements[index] = built
+                break
+        else:
+            statements.append(built)
         sqs.set_queue_attributes(
             QueueUrl=queue_url, Attributes={"Policy": json.dumps(policy)}
         )

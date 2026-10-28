@@ -112,6 +112,19 @@ def _latest_receipt_handle(receipt_handle, job_id=None):
     return latest.decode() if latest else receipt_handle
 
 
+def delete_download_message(receipt_handle, note="message", sqs_client=None):
+    """Delete the SQS message of a download job, if the job has one (#572).
+
+    A job that started with no handle can get one later through
+    SQS_HANDLE_KEY. Thus, the newest handle decides. Return True if the
+    job has no message, else the result of delete_sqs_message."""
+
+    handle = _latest_receipt_handle(receipt_handle)
+    if not handle:
+        return True
+    return delete_sqs_message(sqs_client or aws_sqs_client(), handle, note=note)
+
+
 def delete_sqs_message(sqs_client, receipt_handle, note="message"):
     """Delete a message from the SQS queue. Return False if the delete fails."""
 
@@ -1100,22 +1113,14 @@ def download_task(
                 f"'{key}'. The restore does not replace it. Archive the file "
                 f"again first"
             )
-            if sqs_receipt_handle:
-                return delete_sqs_message(
-                    aws_sqs_client(), sqs_receipt_handle, note="stale restore"
-                )
-            return True
+            return delete_download_message(sqs_receipt_handle, note="stale restore")
 
         if overtaken_by_import(current_app.redis, file, key):
             current_app.logger.info(
                 f"'{basename}' was imported again after its restore request, "
                 f"skipping the download"
             )
-            if sqs_receipt_handle:
-                return delete_sqs_message(
-                    aws_sqs_client(), sqs_receipt_handle, note="overtaken restore"
-                )
-            return True
+            return delete_download_message(sqs_receipt_handle, note="overtaken restore")
 
         def dead_volumes():
             paths = [current_app.config["IMPORT_DIR"]]
@@ -1218,11 +1223,7 @@ def download_task(
 
         except PlacementRefused as e:
             current_app.logger.warning(str(e))
-            if sqs_receipt_handle:
-                return delete_sqs_message(
-                    aws_sqs_client(), sqs_receipt_handle, note="stale restore"
-                )
-            return True
+            return delete_download_message(sqs_receipt_handle, note="stale restore")
 
         except OSError as e:
             if (
@@ -3068,9 +3069,8 @@ def _resolve_missing_object(sqs_client, basename, sqs_receipt_handle):
     Return DOWNLOAD_OBJECT_MISSING, or False if the delete failed."""
 
     current_app.logger.info(f"'{basename}' doesn't exist in AWS S3")
-    if sqs_receipt_handle:
-        if not delete_sqs_message(sqs_client, sqs_receipt_handle):
-            return False
+    if not delete_download_message(sqs_receipt_handle, sqs_client=sqs_client):
+        return False
     return DOWNLOAD_OBJECT_MISSING
 
 
@@ -3089,11 +3089,10 @@ def _refuse_access_fault(sqs_client, basename, sqs_receipt_handle):
         f"readable at S3; check the key pair, the key group, and the WAF "
         f"allowlist, then request the restore again"
     )
-    if sqs_receipt_handle:
-        if not delete_sqs_message(
-            sqs_client, sqs_receipt_handle, note="CloudFront access fault"
-        ):
-            return False
+    if not delete_download_message(
+        sqs_receipt_handle, note="CloudFront access fault", sqs_client=sqs_client
+    ):
+        return False
     return DOWNLOAD_ACCESS_DENIED
 
 
@@ -3119,9 +3118,10 @@ def _defer_to_restore(sqs_client, key, basename, sqs_receipt_handle, head_respon
         )
         aws_restore(key, record_request=False)
 
-    if sqs_receipt_handle:
-        if not delete_sqs_message(sqs_client, sqs_receipt_handle, note="stale message"):
-            return False
+    if not delete_download_message(
+        sqs_receipt_handle, note="stale message", sqs_client=sqs_client
+    ):
+        return False
     return DOWNLOAD_RESTORE_PENDING
 
 
@@ -3473,9 +3473,8 @@ def aws_download(
                     description=f"'{basename}' — Waiting for the import name",
                 )
 
-            if sqs_receipt_handle:
-                if not delete_sqs_message(sqs_client, sqs_receipt_handle):
-                    return False
+            if not delete_download_message(sqs_receipt_handle, sqs_client=sqs_client):
+                return False
 
             return DOWNLOAD_COMPLETE
 
@@ -3500,39 +3499,24 @@ def aws_restore(key, tier="Standard", record_request=True):
         try:
             s3_client = aws_s3_client(with_retries=True)
 
-            # Make sure that the key exists in the AWS bucket.
+            # Make sure that the key exists in the AWS bucket. A HEAD of
+            # the key, not a listing of the prefix (#572). The listing of
+            # 1 key returned an id-suffixed sibling first ("stem (2).mkv"
+            # sorts before "stem.mkv").
 
-            response = s3_client.list_objects(
-                Bucket=current_app.config["AWS_BUCKET"], Prefix=key, MaxKeys=1
-            )
-
-            # The listing has no "Contents" key if nothing matches.
-
-            contents = response.get("Contents")
+            head_response = _head_or_none(s3_client, key)
 
             # The key exists.
 
-            if contents and contents[0].get("Key"):
-                head_response = s3_client.head_object(
-                    Bucket=current_app.config["AWS_BUCKET"], Key=key
-                )
-
+            if head_response is not None:
                 # S3 keeps the Restore header for a while after the
                 # restored copy expires. A test of the header alone sent
                 # an expired copy to a download that failed and asked for
-                # a restore again, without a delay.
+                # a restore again, without a delay. S3 leaves StorageClass
+                # out of the HEAD of a STANDARD object. _object_is_readable
+                # reads that as STANDARD.
 
-                # S3 leaves StorageClass out of a HEAD for some objects.
-                # The listing has it.
-
-                head_response = {
-                    **head_response,
-                    "StorageClass": head_response.get("StorageClass")
-                    or contents[0].get("StorageClass"),
-                }
-                if contents[0].get("StorageClass") == "STANDARD" or (
-                    _object_is_readable(head_response)
-                ):
+                if _object_is_readable(head_response):
                     current_app.logger.info(
                         f"'{key}' doesn't need to be restored; attempting to download"
                     )
@@ -3546,7 +3530,7 @@ def aws_restore(key, tier="Standard", record_request=True):
                     return
 
                 else:
-                    response = s3_client.restore_object(
+                    s3_client.restore_object(
                         Bucket=current_app.config["AWS_BUCKET"],
                         Key=key,
                         RestoreRequest={
@@ -3628,29 +3612,24 @@ def aws_upload(
 
     s3_client = aws_s3_client(with_retries=True)
 
-    # Find out if the key already exists in the AWS bucket.
-
-    response = s3_client.list_objects(
-        Bucket=current_app.config["AWS_BUCKET"], Prefix=key, MaxKeys=1
-    )
-
     # If the key already exists, compare the local and the remote ETags. If
     # the ETags match, the files are the same, and a new upload is not
     # necessary. If the IGNORE_ETAGS flag is set, compare only the file and
     # key names, not their data.
 
     if not force_upload and not current_app.config["FORCE_UPLOAD"]:
-        # Look for an object with this exact key. The listing is a Prefix
-        # search. Thus, it can return a different, longer key instead.
+        # A HEAD of this exact key (#572). A listing of the prefix with
+        # MaxKeys=1 returned an id-suffixed sibling first. Then the
+        # upload did not see the key and uploaded the file again.
 
         remote_etag = None
         date_uploaded = None
         remote_size = None
-        for object in response.get("Contents") or []:
-            if object.get("Key") == key:
-                remote_etag = object.get("ETag").replace('"', "")
-                date_uploaded = object.get("LastModified")
-                remote_size = object.get("Size")
+        head = _head_or_none(s3_client, key)
+        if head is not None:
+            remote_etag = (head.get("ETag") or "").replace('"', "")
+            date_uploaded = head.get("LastModified")
+            remote_size = head.get("ContentLength")
 
         if remote_etag is not None:
             if ignore_etag or current_app.config["IGNORE_ETAGS"]:
@@ -3696,7 +3675,7 @@ def aws_upload(
 
     while retry > 0:
         try:
-            response = s3_client.upload_file(
+            s3_client.upload_file(
                 file_path,
                 current_app.config["AWS_BUCKET"],
                 key,

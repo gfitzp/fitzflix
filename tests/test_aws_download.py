@@ -437,13 +437,8 @@ def test_aws_restore_records_the_request_time(app, monkeypatch):
     from app import aws_storage
 
     class FakeS3:
-        def list_objects(self, **kwargs):
-            return {
-                "Contents": [{"Key": kwargs["Prefix"], "StorageClass": "DEEP_ARCHIVE"}]
-            }
-
         def head_object(self, **kwargs):
-            return {}
+            return {"StorageClass": "DEEP_ARCHIVE"}
 
         def restore_object(self, **kwargs):
             return {}
@@ -608,13 +603,8 @@ def test_a_restore_already_in_progress_still_records_the_request(app, monkeypatc
     from app import aws_storage
 
     class InProgressS3:
-        def list_objects(self, **kwargs):
-            return {
-                "Contents": [{"Key": kwargs["Prefix"], "StorageClass": "DEEP_ARCHIVE"}]
-            }
-
         def head_object(self, **kwargs):
-            return {}
+            return {"StorageClass": "DEEP_ARCHIVE"}
 
         def restore_object(self, **kwargs):
             raise botocore.exceptions.ClientError(
@@ -866,3 +856,68 @@ def test_a_new_archive_during_the_download_refuses_the_placement(app, monkeypatc
         assert not os.path.exists(staged)
     finally:
         os.remove(library_path)
+
+
+def test_a_handle_that_arrives_during_the_download_deletes_the_message(
+    app, monkeypatch
+):
+    """A download queued with no handle can get one later (#572).
+
+    sqs_retrieve_task stores it under SQS_HANDLE_KEY. Every delete site
+    tested the original argument. Then the message came back and a
+    second full download ran."""
+
+    from types import SimpleNamespace
+
+    import app.videos as videos
+    from app import aws_storage
+
+    s3 = S3()
+    sqs = SQS()
+    monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kwargs: s3)
+    monkeypatch.setattr(aws_storage, "aws_sqs_client", lambda: sqs)
+    monkeypatch.setattr(
+        aws_storage.rq, "get_current_job", lambda: SimpleNamespace(id="late-job")
+    )
+    monkeypatch.setattr(aws_storage, "place_restored_import", lambda *a: True)
+    handle_key = aws_storage.SQS_HANDLE_KEY.format(job_id="late-job")
+    app.redis.set(handle_key, "late-handle")
+    staged = os.path.join(app.config["IMPORT_DIR"], ".restore-untouched-late.mkv")
+    try:
+        with app.app_context():
+            assert (
+                videos.aws_download("untouched/late.mkv", "late.mkv")
+                == aws_storage.DOWNLOAD_COMPLETE
+            )
+        assert sqs.deleted == ["late-handle"]
+    finally:
+        app.redis.delete(handle_key)
+        if os.path.exists(staged):
+            os.remove(staged)
+
+
+def test_a_restore_of_a_missing_key_with_a_longer_sibling_does_nothing(
+    app, monkeypatch
+):
+    """The listing of the prefix with MaxKeys=1 can name another key (#572).
+
+    It listed a longer key that starts with the missing key. Then the
+    HEAD of the missing key raised, or the shortcut read the storage
+    class of the sibling. A HEAD of the key itself decides now."""
+
+    from app import aws_storage
+    from tests.fakes import ArchiveS3
+
+    key = "untouched/Sibling (1950) - [DVD].mkv"
+    s3 = ArchiveS3(
+        objects={f"{key}.etag": {"ContentLength": 3, "StorageClass": "STANDARD"}}
+    )
+    monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kwargs: s3)
+    with app.app_context():
+        aws_storage.aws_restore(key)
+        assert s3.restores == []
+        assert not [
+            job
+            for job in app.file_queue.jobs
+            if job.func_name == "app.videos.download_task"
+        ]

@@ -507,3 +507,17 @@ class ArchiveS3:
         if Key in self.objects:
             self.objects[Key]["Restore"] = 'ongoing-request="true"'
         return {}
+
+
+def missing_object(operation="HeadObject"):
+    """Return the 404 ClientError of S3 for a key that does not exist.
+
+    The ad-hoc S3 fakes of the upload and restore tests raise it from
+    head_object. Both functions prove a key with a HEAD (#572)."""
+
+    import botocore.exceptions
+
+    return botocore.exceptions.ClientError(
+        {"Error": {"Code": "404"}, "ResponseMetadata": {"HTTPStatusCode": 404}},
+        operation,
+    )

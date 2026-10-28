@@ -443,3 +443,31 @@ def test_the_edition_rewrite_stops_at_its_own_parenthesis(app):
         "Apostrophe(') Ad [Bluray-1080p].mkv"
     )
     assert brace_edition_tags("Jaws (1975) - [DVD].mkv") == "Jaws (1975) - [DVD].mkv"
+
+
+def test_a_managed_sid_in_another_form_is_replaced_not_duplicated(tmp_path):
+    """SQS refuses 2 statements with 1 Sid (#572).
+
+    The check read only Service plus ArnLike. A managed statement in
+    another valid form got a second statement with the same Sid, and
+    every provision crashed. A Deny statement never counts as present."""
+
+    config = dict(CONFIG, LOG_FILE=str(tmp_path / "app.log"))
+    managed = dict(s3_policy_statement(), Sid="fitzflix-allow-s3-restore-events")
+    other_form = dict(
+        managed,
+        Principal="*",
+        Condition={"ArnEquals": {"aws:SourceArn": "arn:aws:s3:::test-bucket"}},
+    )
+    deny = dict(s3_policy_statement(), Effect="Deny", Sid="hand-made-deny")
+    for statements in ([other_form], [deny, other_form]):
+        sqs = FakeSQS(policy={"Version": "2012-10-17", "Statement": statements})
+        results = dict(provision(config, FakeS3(), sqs, echo=lambda *_: None))
+        assert results["sqs queue policy allows S3"] == "updated"
+        sids = [statement.get("Sid") for statement in sqs.policy["Statement"]]
+        assert len(sids) == len(set(sids)), sids
+        assert sqs.policy["Statement"][-1] == managed
+
+    sqs = FakeSQS(policy={"Version": "2012-10-17", "Statement": [deny]})
+    results = dict(provision(config, FakeS3(), sqs, echo=lambda *_: None))
+    assert results["sqs queue policy allows S3"] == "updated"
