@@ -1048,7 +1048,7 @@ def test_a_decision_with_no_job_is_cleared_on_the_page(
     The page clears it. Thus, the admin can choose again, Discard too. A
     decision whose job still waits keeps its badge."""
 
-    from datetime import datetime, timedelta
+    from datetime import datetime, timedelta, timezone
 
     import app.videos as videos
     from app import db
@@ -1058,7 +1058,9 @@ def test_a_decision_with_no_job_is_cleared_on_the_page(
     held_dir.mkdir()
     monkeypatch.setitem(app.config, "HELD_DIR", str(held_dir))
     monkeypatch.setattr(videos, "_dead_volumes", lambda paths: [])
-    long_ago = datetime.now() - timedelta(hours=1)
+    # clear_stuck_decisions compares against the UTC clock (#581). A
+    # local seed failed east of UTC.
+    long_ago = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=1)
 
     with app.app_context():
         for name, decision in (

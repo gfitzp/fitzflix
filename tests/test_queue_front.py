@@ -296,19 +296,28 @@ def test_the_badge_counts_a_seeded_queue_without_a_fetch_per_job(app, monkeypatc
 
 
 def test_each_first_paint_tooltip_has_a_stamp_for_the_local_time(app, admin_client):
-    """The first paint localizes each tooltip from its moment stamp (#547).
+    """Each first-paint tooltip carries the stamp of its own time (#547).
 
-    The rows carried the raw UTC stamp. The poll skips an unchanged
-    table. Thus, an idle queue kept the UTC tooltips."""
+    The rows carried the raw UTC stamp only. The poll skips an unchanged
+    table. Thus, an idle queue kept the UTC tooltips. This test checks
+    the markup of the server. The script that reads the stamps runs in
+    tests/test_page_scripts.py (#581). A search for its source text here
+    passed while the page threw a ReferenceError."""
 
     import re
+    from datetime import datetime
 
     app.import_queue.enqueue("app.videos.localization_task", "/import/Tip (2001).mkv")
     body = admin_client.get("/queue").get_data(as_text=True)
     abbrs = re.findall(r"<abbr [^>]*>.*?</abbr>", body, re.S)
     assert abbrs
-    assert all("data-timestamp=" in abbr for abbr in abbrs)
-    assert 'abbr.querySelector("[data-timestamp]")' in body
+    for abbr in abbrs:
+        title = re.search(r'title="([^"]+)"', abbr)[1]
+        stamp = re.search(r'data-timestamp="([^"]+)"', abbr)
+        assert stamp, f"no stamp in {abbr}"
+        assert datetime.fromisoformat(stamp[1].replace("Z", "+00:00")) == (
+            datetime.fromisoformat(title)
+        ), abbr
 
 
 def test_a_job_deleted_after_the_listing_does_not_break_the_page(app, monkeypatch):

@@ -592,10 +592,27 @@ def test_finalize_waits_when_another_task_took_its_title_lock(app, tmp_path):
 
     from app.models import File
 
+    # The details can make a record (#581). With the fix reverted, the
+    # old details died on a NOT NULL constraint. Then the test failed on
+    # the return value, not on the row count that it is for.
+
     file_details = {
         "basename": "Retaken (2021) - [DVD].mkv",
         "dirname": "Movies/Retaken (2021)",
         "file_path": "Movies/Retaken (2021)/Retaken (2021) - [DVD].mkv",
+        "media_library": "Movies",
+        "title": "Retaken",
+        "year": 2021,
+        "plex_title": "Retaken (2021)",
+        "quality_title": "DVD",
+        "container": "Matroska",
+        "fullscreen": False,
+    }
+    inspection = {
+        "video": {},
+        "audio_tracks": [],
+        "subtitle_tracks": [],
+        "filesize_bytes": 5,
     }
     hidden_copy = tmp_path / ".Retaken (2021) - [DVD].mkv"
     hidden_copy.write_bytes(b"video")
@@ -609,13 +626,13 @@ def test_finalize_waits_when_another_task_took_its_title_lock(app, tmp_path):
                 file_details,
                 lock,
                 str(hidden_copy),
-                inspection={"filesize_bytes": 5},
+                inspection=inspection,
             )
-            assert result is False
             assert (
                 File.query.filter_by(file_path=file_details["file_path"]).count() == 0
             )
             assert app.redis.get(lock[1]) == b"token-of-the-new-import"
+            assert result is False
         finally:
             app.redis.delete(lock[1])
 
@@ -626,7 +643,7 @@ def test_finalize_waits_when_another_task_took_its_title_lock(app, tmp_path):
         if job.id.startswith("retry_finalize") and job.args and job.args[0] == source
     ]
     assert retry.kwargs["lock_waits"] == 1
-    assert retry.args[2] == lock and retry.args[4] == {"filesize_bytes": 5}
+    assert retry.args[2] == lock and retry.args[4] == inspection
 
 
 def test_move_to_rejects_survives_dead_volume(app, incoming_dir, monkeypatch):

@@ -425,12 +425,19 @@ def test_a_lookup_row_in_use_refuses_its_delete(app, holder):
             else:
                 movie.criterion_quality_id = tier.id
             db.session.flush()
-            file_id = file.id
+            file_id, movie_id, tier_id = file.id, movie.id, tier.id
 
-            db.session.delete(tier)
+            # The savepoint keeps the transaction usable after the refusal.
+            # Thus, the test reads the rows again on the same connection
+            # (#581). The tier, the file and the movie all survive.
+
             with pytest.raises(IntegrityError):
-                db.session.flush()
-            assert file_id is not None
+                with db.session.begin_nested():
+                    db.session.delete(tier)
+                    db.session.flush()
+            assert db.session.query(File).filter_by(id=file_id).count() == 1
+            assert db.session.query(Movie).filter_by(id=movie_id).count() == 1
+            assert db.session.query(RefQuality).filter_by(id=tier_id).count() == 1
         finally:
             connection.invalidate()
             db.session.rollback()
