@@ -102,7 +102,10 @@ PREFIXES = (
     # Archive rule of untouched/ never moves an upload that waits for its
     # import. A move then never needs a restore. A failed run leaves its
     # upload. The sync prunes it after its grace, and the expiry removes
-    # what stays after 14 days.
+    # what stays after 60 days. An import that waits for library space
+    # keeps its upload. The lifecycle rule cannot see that wait. Thus,
+    # the expiry is long (#455). A move that finds no upload archives
+    # the library file instead.
     Prefix(
         "pending-untouched",
         fixed="pending-untouched",
@@ -113,7 +116,7 @@ PREFIXES = (
         ),
         noncurrent_days=1,
         delete="versions",
-        current_days=14,
+        current_days=60,
         synced=True,
     ),
     # The nightly database dumps. The backup task deletes the old versions

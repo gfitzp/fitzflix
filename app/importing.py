@@ -152,12 +152,16 @@ return 0
 """
 
 
-def mark_space_wait(basename):
-    """Mark a source file as waiting for space, for 1 wait and a margin."""
+def mark_space_wait(basename, aws_key=None):
+    """Mark a source file as waiting for space, for 1 wait and a margin.
+
+    aws_key is the run-scoped upload of the import (#430), if it has one.
+    No record claims that key until finalize. The weekly S3 sync reads
+    the key from the marker and keeps the upload (#455)."""
 
     current_app.redis.set(
         SPACE_WAIT_KEY.format(basename),
-        "1",
+        aws_key or "1",
         ex=int(SPACE_WAIT_MARK.total_seconds()),
     )
 
@@ -1985,7 +1989,9 @@ def move_localized_file(
             _log_space_wait(
                 basename, directory or output_directory, needed, shortfall, space_waits
             )
-            mark_space_wait(os.path.basename(source_path))
+            mark_space_wait(
+                os.path.basename(source_path), pending_archive_of(file_details)
+            )
 
             # The weekly sweep deletes a hidden staging file that is 1 week
             # old. A wait for space has no limit. Thus, each wait touches

@@ -845,7 +845,8 @@ def _prune_unclaimed(listing, job, unreferenced_files):
     also after a failure in the middle of the prune. An import that
     waits for library space has no File row yet. Its wait has no limit.
     Its marker names its source, and the key of its untouched/ upload
-    comes from that name."""
+    comes from that name. A same-name re-rip uploads to a run-scoped key
+    below pending-untouched/ (#430). Its marker holds that key (#455)."""
 
     s3_keys = listing.keys
     s3_modified = listing.modified
@@ -855,13 +856,17 @@ def _prune_unclaimed(listing, job, unreferenced_files):
     from app.importing import SPACE_WAIT_KEY
 
     marker_prefix = SPACE_WAIT_KEY.format("")
-    waiting_keys = {
-        os.path.join(
-            current_app.config["AWS_UNTOUCHED_PREFIX"],
-            sanitize_s3_key(marker.decode()[len(marker_prefix) :]),
+    waiting_keys = set()
+    for marker in current_app.redis.scan_iter(f"{marker_prefix}*"):
+        waiting_keys.add(
+            os.path.join(
+                current_app.config["AWS_UNTOUCHED_PREFIX"],
+                sanitize_s3_key(marker.decode()[len(marker_prefix) :]),
+            )
         )
-        for marker in current_app.redis.scan_iter(f"{marker_prefix}*")
-    }
+        upload_key = current_app.redis.get(marker)
+        if upload_key and is_pending_archive(upload_key.decode()):
+            waiting_keys.add(upload_key.decode())
 
     for i, remote_key in enumerate(s3_keys):
         if remote_key in waiting_keys:
@@ -2097,6 +2102,31 @@ def _wait_move(file, source, sqs_receipt_handle, waits_for):
     return MOVE_WAITING
 
 
+def _archive_lost_upload(file, source, column):
+    """Archive the library file of a record whose run-scoped upload is gone (#455).
+
+    A lifecycle expiry or a prune can remove the pending upload of an
+    import before its move. The untouched rip is then lost. The library
+    file is the best copy that remains. It goes to modified/, and the
+    record names that key. Return True if the upload occurred."""
+
+    if column != "aws_key" or not is_pending_archive(source):
+        return False
+    if file.converted_from_quality:
+        return False
+    path = os.path.join(current_app.config["LIBRARY_DIR"], file.file_path)
+    if not os.path.isfile(path):
+        return False
+    current_app.logger.warning(
+        f"'{file.basename}' The pending upload '{source}' is not in S3. The "
+        f"library file is archived instead"
+    )
+    clear_archive_target(file)
+    db.session.commit()
+    archive_library_file(file, path, delete_replaced=False)
+    return True
+
+
 def _move_archive(file, sqs_receipt_handle):
     """Do the work of move_archive_object under the lock of the title."""
 
@@ -2152,6 +2182,9 @@ def _move_archive(file, sqs_receipt_handle):
     except botocore.exceptions.ClientError as error:
         if not _is_missing(error):
             raise
+        if _archive_lost_upload(file, source, column):
+            _drop_message(sqs_receipt_handle, "archive move of a missing object")
+            return True
         current_app.logger.warning(
             f"'{file.basename}' The archive '{source}' is not in S3. The move to "
             f"'{target}' stops. The S3 sync reports the key"

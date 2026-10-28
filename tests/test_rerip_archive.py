@@ -231,7 +231,7 @@ def test_the_pending_uploads_live_outside_untouched(app, monkeypatch):
         entry = s3_layout.prefix_of(key)
         assert entry.name == "pending-untouched"
         assert entry.lifecycle == "scratch" and entry.delete == "versions"
-        assert entry.current_days == 14
+        assert entry.current_days == 60
         assert aws_storage._archive_prefix_of(key) == "untouched"
 
         listed = []
