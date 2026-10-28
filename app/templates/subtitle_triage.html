@@ -83,7 +83,7 @@
 								   place through the shared modal below,
 								   instead of leaving the page. #}
 								{% for snap in item.aids.snapshots %}
-								<img src="{{ url_for('static', filename='triage/' + file.id|string + '/' + item.track.track|string + '/' + snap) }}" loading="lazy" style="height: 72px; cursor: zoom-in;" class="border rounded me-1 mb-1 triage-snapshot" alt="Track {{ item.track.track }} burned onto the film" role="button" tabindex="0">
+								<img src="{{ url_for('main.triage_aid', file_id=file.id, name=item.track.track|string + '/' + snap) }}" loading="lazy" style="height: 72px; cursor: zoom-in;" class="border rounded me-1 mb-1 triage-snapshot" alt="Track {{ item.track.track }} burned onto the film" role="button" tabindex="0">
 								{% endfor %}
 							</div>
 						</td>

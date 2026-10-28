@@ -13,3 +13,4 @@ app.db
 /infra/iam-cdn-admin-policy.json
 app/frame_pool/
 .claude
+/triage

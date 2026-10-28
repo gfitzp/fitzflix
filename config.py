@@ -275,10 +275,13 @@ class Config(object):
     ENV_FILE                            = os.environ.get("ENV_FILE") or os.path.join(basedir, ".env")
     CUSTOM_ARTWORK_DIR                  = os.environ.get("CUSTOM_ARTWORK_DIR") or os.path.join(basedir, "app", "static", "custom")
 
-    # Subtitle-triage inspection aids. Fitzflix serves them as static files.
-    # They are outside the custom-artwork tree. Thus, backups ignore them.
+    # Subtitle-triage inspection aids. They show frames and sound of library
+    # films. Thus, they are outside the public static tree, and an
+    # authenticated route serves them (#468). They are outside the
+    # custom-artwork tree. Thus, backups ignore them.
 
-    TRIAGE_SNAPSHOT_DIR                 = os.environ.get("TRIAGE_SNAPSHOT_DIR") or os.path.join(basedir, "app", "static", "triage")
+    TRIAGE_SNAPSHOT_DIR                 = os.environ.get("TRIAGE_SNAPSHOT_DIR") or os.path.join(basedir, "triage")
+
 
     # Name That Frame: the nightly pre-extracted frame pool. Fitzflix serves
     # it through an authenticated route, never through the public static

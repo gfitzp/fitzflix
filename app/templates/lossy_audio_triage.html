@@ -96,11 +96,11 @@
 				<p class="small text-muted mb-1">At {{ sample.clock }}{% if sample.percent is not none %} &middot; correlation {{ sample.percent }}%{% endif %}</p>
 				<div class="d-flex align-items-center mb-1">
 					<span class="small me-2" style="width: 4.5rem;">Lossy</span>
-					<audio controls preload="none" class="w-100" style="height: 2rem;" src="{{ url_for('static', filename='triage/' + file.id|string + '/audio/' + sample.lossy) }}"></audio>
+					<audio controls preload="none" class="w-100" style="height: 2rem;" src="{{ url_for('main.triage_aid', file_id=file.id, name='audio/' + sample.lossy) }}"></audio>
 				</div>
 				<div class="d-flex align-items-center">
 					<span class="small me-2" style="width: 4.5rem;">Lossless</span>
-					<audio controls preload="none" class="w-100" style="height: 2rem;" src="{{ url_for('static', filename='triage/' + file.id|string + '/audio/' + sample.lossless) }}"></audio>
+					<audio controls preload="none" class="w-100" style="height: 2rem;" src="{{ url_for('main.triage_aid', file_id=file.id, name='audio/' + sample.lossless) }}"></audio>
 				</div>
 			</div>
 			{% endfor %}
