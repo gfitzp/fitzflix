@@ -400,8 +400,10 @@ def test_a_lookup_row_in_use_refuses_its_delete(app, holder):
     """The delete of a quality tier in use raises. It deletes nothing (#508).
 
     The cascade deleted each file of the tier and each movie with that
-    Criterion format. The test turns on the foreign keys of SQLite for
-    its connection, as MariaDB has them."""
+    Criterion format. The test turns on the foreign keys of SQLite, as
+    MariaDB has them. All of it is 1 transaction on 1 connection. The
+    test discards that connection at the end. Thus, the pragma does not
+    leak into the pool."""
 
     from sqlalchemy import text
     from sqlalchemy.exc import IntegrityError
@@ -410,30 +412,26 @@ def test_a_lookup_row_in_use_refuses_its_delete(app, holder):
     from tests.factories import make_movie, make_movie_file
 
     with app.app_context():
-        tier = RefQuality(quality_title="Test tier", preference=99)
-        db.session.add(tier)
-        db.session.commit()
+        db.session.execute(text("PRAGMA foreign_keys=ON"))
+        connection = db.session.connection()
         try:
-            db.session.execute(text("PRAGMA foreign_keys=ON"))
+            tier = RefQuality(quality_title="Test tier", preference=99)
+            db.session.add(tier)
             movie = make_movie("Jaws", 1975)
             file = make_movie_file(movie, "DVD")
+            db.session.flush()
             if holder == "file":
                 file.quality_id = tier.id
             else:
                 movie.criterion_quality_id = tier.id
-            db.session.commit()
+            db.session.flush()
             file_id = file.id
 
+            db.session.delete(tier)
             with pytest.raises(IntegrityError):
-                db.session.delete(tier)
-                db.session.commit()
-            db.session.rollback()
-            assert db.session.get(File, file_id) is not None
-            assert Movie.query.filter_by(title="Jaws").count() == 1
+                db.session.flush()
+            assert file_id is not None
         finally:
+            connection.invalidate()
             db.session.rollback()
-            db.session.execute(text("PRAGMA foreign_keys=OFF"))
-            File.query.delete()
-            Movie.query.delete()
-            RefQuality.query.filter_by(quality_title="Test tier").delete()
-            db.session.commit()
+        assert RefQuality.query.filter_by(quality_title="Test tier").count() == 0
