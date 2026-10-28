@@ -1147,3 +1147,37 @@ def test_an_adopted_episode_rename_takes_its_thumb(app, sonarr):
     assert summary["adopted"] == 1
     assert not os.path.exists(old_thumb)
     assert os.path.isfile(os.path.splitext(new_path)[0] + ".jpg")
+
+
+def test_an_adopted_rename_takes_the_trail_of_the_file(app, sonarr):
+    """The card of the adopted name keeps the chips of the file (#554).
+
+    The adoption set the new basename without migrate_renamed_file. The
+    rename task migrates since #375."""
+
+    from app import db
+    from app.models import File
+    from app.pipeline import pipeline_trails, record_job_event
+    from app.series_rename import reconcile_sonarr_series
+
+    with app.app_context():
+        series_id, file_id = batman(app)
+        row = db.session.get(File, file_id)
+        old_basename = row.basename
+        old_path = os.path.join(app.config["LIBRARY_DIR"], row.file_path)
+        job = app.import_queue.enqueue(
+            "app.videos.localization_task", args=(f"/import/{old_basename}",)
+        )
+        record_job_event(app.redis, job, "done")
+        job.delete()
+    new = "TV Shows/Batman/Season 01/Batman - S01E01 - Pilot [Bluray-1080p].mkv"
+    new_path = place(app, new)
+    os.remove(old_path)
+    sonarr(sonarr_series("Batman"))
+
+    summary = reconcile_sonarr_series(
+        series_id, [{"previousPath": old_path, "path": new_path}]
+    )
+    assert summary["adopted"] == 1
+    trails = pipeline_trails(app.redis)
+    assert [trail["basename"] for trail in trails] == [os.path.basename(new)]

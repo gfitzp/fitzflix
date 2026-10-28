@@ -353,7 +353,7 @@ def test_a_full_tv_apply_stores_every_field_and_link(app):
         ] == [(7102, "Writing", "Writer")]
 
         # The season fields refresh on every apply. An unlinked season goes
-        # (#305). A running series keeps its stored episode counts.
+        # (#305). A series that runs again loses its final counts (#554).
 
         second = dict(
             TV_PAYLOAD,
@@ -366,7 +366,8 @@ def test_a_full_tv_apply_stores_every_field_and_link(app):
         stored = db.session.get(TVSeries, series.id)
         assert [(s.id, s.episode_count) for s in stored.seasons] == [(78001, 22)]
         assert db.session.get(TMDBSeason, 78002) is None
-        assert stored.tmdb_number_of_episodes == 40
+        assert stored.tmdb_number_of_episodes is None
+        assert stored.tmdb_number_of_seasons is None
 
         # A glitched payload keeps every stored link (#251).
 
@@ -455,3 +456,28 @@ def test_a_canceled_series_gets_its_counts(app):
         stored = db.session.get(TVSeries, series.id)
         assert stored.tmdb_number_of_episodes == 40
         assert stored.tmdb_number_of_seasons == 2
+
+
+def test_a_bare_association_entry_is_skipped_not_fatal(app):
+    """1 bare value in the genres or the networks does not lose the apply (#554)."""
+
+    from app.models import TVSeries
+
+    with app.app_context():
+        series = make_tv_series("Bare Entry Local")
+        db.session.commit()
+        series.tmdb_tv_apply(
+            dict(
+                TV_PAYLOAD,
+                id=992003,
+                external_ids={},
+                genres=[{"id": 18, "name": "Drama"}, "Comedy"],
+                networks=[17, {"id": 49, "name": "HBO", "logo_path": None}],
+                seasons=[5, {"id": 78005, "season_number": 1, "episode_count": 9}],
+            )
+        )
+        db.session.commit()
+        stored = db.session.get(TVSeries, series.id)
+        assert _names(stored.genres) == ["Drama"]
+        assert [network.name for network in stored.networks] == ["HBO"]
+        assert [season.id for season in stored.seasons] == [78005]

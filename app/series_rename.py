@@ -77,7 +77,9 @@ def _update_sonarr_path(series, old_folder, new_folder):
         return False
 
     old_path = entry.get("path") or ""
-    new_path = os.path.join(os.path.dirname(old_path), new_folder)
+    # A path with a slash at the end gave the old folder itself as its
+    # dirname (#554). normpath removes the slash first.
+    new_path = os.path.join(os.path.dirname(os.path.normpath(old_path)), new_folder)
     entry["path"] = new_path
     _sonarr("PUT", f"/api/v3/series/{entry['id']}", entry)
     current_app.logger.info(f"Series rename: Sonarr path {old_path!r} -> {new_path!r}")
@@ -363,6 +365,16 @@ def _move_series(series, new_title):
             else:
                 db_only += 1
         elif os.path.isfile(src):
+            # os.rename replaces a file at the target without a word. The
+            # movie rename refuses this shape (#554). A case-only rename
+            # on a case-insensitive volume is the same file. It goes on.
+            if os.path.exists(dst) and not os.path.samefile(src, dst):
+                current_app.logger.warning(
+                    f"Series rename: {new_path!r} exists, and so does "
+                    f"{file.file_path!r}. Nothing replaced"
+                )
+                _requeue_rename(series, new_title, "waits for a duplicate file")
+                return False
             makedirs_on_mounted_volume(os.path.dirname(dst))
             _rename_with_retries(src, dst)
             # The episode thumb goes with its video (#469)
@@ -1057,11 +1069,17 @@ def _adopt_episode_paths(series, renamed_files):
             )
             continue
         old_basename = file.basename
+        old_names = (file.basename, file.untouched_basename)
         old_video = os.path.join(current_app.config["LIBRARY_DIR"], file.file_path)
         try:
             for key in ("dirname", "basename", "file_path", "plex_title", "edition"):
                 setattr(file, key, details[key])
             db.session.commit()
+            # The card of the new name keeps the chips of the file, as in
+            # the rename task (#375, #554). The untouched name stays.
+            migrate_renamed_file(
+                current_app.redis, old_names, (file.basename, file.untouched_basename)
+            )
             # Sonarr moved the video. The episode thumb follows (#469).
             move_episode_thumb(
                 old_video,

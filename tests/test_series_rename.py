@@ -614,3 +614,64 @@ def test_a_title_with_a_period_at_the_end_is_safe(app):
         assert _filesystem_safe(title.replace(":", " -")), title
     assert not _filesystem_safe("Bad/Name")
     assert not _filesystem_safe("...")
+
+
+def test_the_sonarr_path_of_a_folder_with_a_slash_at_the_end(app, monkeypatch):
+    """A Sonarr path with a slash at the end gets the right new folder (#554)."""
+
+    import app.sonarr_push as sonarr_push
+    from app.series_rename import _update_sonarr_path
+
+    calls = []
+
+    def fake_sonarr(method, path, body=None):
+        calls.append((method, path, body))
+        if method == "GET":
+            return [{"id": 7, "tvdbId": 77, "path": "/tv/Batman/"}]
+        return {}
+
+    monkeypatch.setattr(sonarr_push, "_sonarr", fake_sonarr)
+    monkeypatch.setattr(sonarr_push, "sonarr_configured", lambda: True)
+    with app.app_context():
+        series = make_tv_series("Batman", tvdb_id=77)
+        assert _update_sonarr_path(series, "Batman", "Batman (1966)") is True
+    (put,) = [body for method, _, body in calls if method == "PUT"]
+    assert put["path"] == "/tv/Batman (1966)"
+
+
+def test_a_rename_never_replaces_a_file_at_the_target(app):
+    """Both the old and the new file exist. The rename refuses (#554).
+
+    os.rename replaced the file at the target without a word."""
+
+    from tests.test_scheduling import scheduled_jobs
+
+    with app.app_context():
+        series = make_tv_series("Batman", tmdb_id=2287)
+        one = make_tv_file(series, 1, 1, "Bluray-1080p")
+        db.session.commit()
+        old_path = _materialize(app, one)
+        target = os.path.join(
+            app.config["LIBRARY_DIR"],
+            "TV Shows/Batman (1966)/Season 01/"
+            "Batman (1966) - S01E01 - [Bluray-1080p].mkv",
+        )
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        with open(target, "w") as handle:
+            handle.write("other video")
+        series_id, file_id = series.id, one.id
+
+        assert rename_tv_series_task(series_id, "Batman (1966)") is False
+        db.session.expire_all()
+        assert open(target).read() == "other video"
+        assert open(old_path).read() == "video"
+        assert db.session.get(File, file_id).file_path == one.file_path
+        retries = [
+            job
+            for queue in (app.file_queue, app.request_queue, app.maintenance_queue)
+            for job in scheduled_jobs(queue)
+            if job.func_name == "app.series_rename.rename_tv_series_task"
+        ]
+        assert retries
+        for job in retries:
+            job.delete()

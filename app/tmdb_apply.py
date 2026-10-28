@@ -389,7 +389,10 @@ class TMDBMixin(object):
         anomaly. A spec with no_guard skips this check. Each clear-out
         goes through the links of this record only (#295)."""
 
-        entries = spec.entries(tmdb_info)
+        # A bare value in the list is skipped and logged, as for the
+        # credits (#554). Before, 1 bare entry raised, and the whole
+        # apply was lost until the next run.
+        entries = list(tmdb_objects(spec.entries(tmdb_info), self, spec.label))
         links = getattr(self, spec.rel)
         if entries or spec.no_guard or links.count() == 0:
             _clear_links(links)
@@ -728,11 +731,17 @@ class TMDBMixin(object):
 
         self._apply_scalars(tmdb_info)
         # A finished run has final counts. TMDB marks it Ended or Canceled
-        # (#482). A running series keeps no counts.
+        # (#482). A running series keeps no counts. A series that runs
+        # again loses its old final counts (#554). A payload with no
+        # status (a glitch) changes nothing.
 
-        if tmdb_info.get("status") in FINISHED_TV_STATUSES:
+        status = tmdb_info.get("status")
+        if status in FINISHED_TV_STATUSES:
             self.tmdb_number_of_episodes = tmdb_info.get("number_of_episodes")
             self.tmdb_number_of_seasons = tmdb_info.get("number_of_seasons")
+        elif status:
+            self.tmdb_number_of_episodes = None
+            self.tmdb_number_of_seasons = None
 
         # The US content rating is in the appended content_ratings block.
         # A payload with no US entry keeps the stored rating, the same as
