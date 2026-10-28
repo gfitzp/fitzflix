@@ -806,6 +806,20 @@ def probe_file_completeness(file_path):
 # Tasks
 
 
+class _NotedStrays(list):
+    """The work files of a run. Each new one goes into the note of the run."""
+
+    def __init__(self, run):
+        super().__init__()
+        self.run = run
+
+    def append(self, path):
+        """Add a work file, and note the run again."""
+
+        super().append(path)
+        self.run.note()
+
+
 class _LocalizationRun:
     """Hold the state that the phases of 1 localization run share.
 
@@ -819,10 +833,33 @@ class _LocalizationRun:
         self.counters = counters
         self.job = None
         self.lock = None
-        self.strays = []
+        self.strays = _NotedStrays(self)
+        self.pending = None
         # An in-place import rewrites the source itself (#424). A stop
         # signal during that rewrite must not leave it for a re-import.
         self.in_place = False
+
+    def note(self):
+        """Keep the lock, the pending upload and the strays in Redis (#498).
+
+        A worker that dies takes them with it. The worker that reclaims
+        the dead job reads them here. This is best effort."""
+
+        from app.worker_recovery import note_job_state
+
+        job_id = getattr(self.job, "id", None)
+        if job_id is None:
+            return
+        try:
+            note_job_state(
+                job_id,
+                current_app.config["LOCALIZATION_TASK_TIMEOUT"],
+                lock=self.lock,
+                pending=self.pending,
+                strays=list(self.strays),
+            )
+        except Exception:
+            current_app.logger.warning(traceback.format_exc())
 
     def retry(self, delay, reason, level="warning", **changes):
         """Book the task again after delay. Every retry carries all 4 counters.
@@ -900,7 +937,6 @@ def localization_task(
             run.lock = _take_title_lock(file_details, run)
             if not run.lock:
                 return False
-            _note_title_lock(run.job, run.lock)
 
             verdict = _quality_and_space_gate(file_path, file_details, conversion, run)
             if verdict != "ok":
@@ -915,9 +951,14 @@ def localization_task(
             if staging is None:
                 return True
             work_path, staged = staging
-            run.in_place = not staged
 
             _archive_original(work_path, file_details)
+            run.pending = pending_archive_of(file_details)
+            run.note()
+
+            # The untouched upload does not change the source. Only the
+            # localization of an in-place import rewrites it (#497).
+            run.in_place = not staged
             work_path, hidden_output_file = _localize(
                 file_path, work_path, file_details, staged, run.job, run.strays
             )
@@ -1117,7 +1158,11 @@ def _take_title_lock(file_details, run):
 
     file_identifier = lock_key_for_details(file_details)
     current_app.logger.debug(f"'{run.basename}' Lock identifier: {file_identifier}")
-    return acquire_lock_or_defer(
+
+    # The note of the lock follows the take in the same call (#498). A
+    # worker that dies after this still leaves its lock token behind.
+
+    lock = acquire_lock_or_defer(
         file_identifier,
         current_app.config["LOCALIZATION_TASK_TIMEOUT"] * 1000,
         current_app.import_queue,
@@ -1127,22 +1172,10 @@ def _take_title_lock(file_details, run):
         description=f"'{run.basename}'",
         kwargs={"file_path": run.source_path, **run.counters},
     )
-
-
-def _note_title_lock(job, lock):
-    """Keep the title lock of the job in Redis, best effort (#498).
-
-    A worker that dies takes the token of the lock with it. The worker
-    that reclaims the dead job reads the lock here and releases it."""
-
-    from app.worker_recovery import note_job_lock
-
-    if job is None:
-        return
-    try:
-        note_job_lock(job.id, lock, current_app.config["LOCALIZATION_TASK_TIMEOUT"])
-    except Exception:
-        current_app.logger.warning(traceback.format_exc())
+    if lock:
+        run.lock = lock
+        run.note()
+    return lock
 
 
 def _quality_and_space_gate(file_path, file_details, conversion, run):
@@ -3145,8 +3178,18 @@ def _after_commit(
     # claims that key first. Thus, the delete of a replaced archive with
     # the same key below skips it.
 
-    source = file_path if file_path != output_file else None
-    source_can_go = step("archive key", _request_final_archive_key, file, source)
+    # The move runs later, and the source is removed now. Thus, the
+    # pending object must exist first (#494). A missing object gets a new
+    # upload of the source. The check is its own step. The source goes
+    # only if that step returned True. A failure in the step, or in the
+    # move request after it, keeps the source.
+
+    source_can_go = True
+    if file_path != output_file and file.aws_key and is_pending_archive(file.aws_key):
+        source_can_go = (
+            step("pending upload", ensure_pending_upload, file, file_path) is True
+        )
+    step("archive key", _request_final_archive_key, file)
 
     for worse_key in worse_aws_keys:
         step("archive delete", _delete_replaced_archive, worse_key)
@@ -3158,7 +3201,7 @@ def _after_commit(
     # new upload failed, the source is the only copy of the rip (#494).
     # Then it goes to rejects/unarchived, out of the import sweep.
 
-    if file_path != output_file and source_can_go is False:
+    if file_path != output_file and not source_can_go:
         step("source hold", move_to_rejects, file_path, "unarchived")
     elif file_path != output_file:
         step("source removal", _remove_source, file_path)
@@ -3286,25 +3329,16 @@ def _atmos_handoff(staged_output, output_file):
     return staged_handoff(staged_output, output_file)
 
 
-def _request_final_archive_key(file, source_path=None):
+def _request_final_archive_key(file):
     """Request the archive move of a run-scoped upload to its final key (#430).
 
     The records are committed. Thus, a replaced record no longer claims
     the key, and the move can take it. A record that still claims the
-    key keeps it. Then the move gives this file the key with its id.
+    key keeps it. Then the move gives this file the key with its id."""
 
-    Return False if the source must stay (#494). The move runs later,
-    and the source is removed now. Thus, the pending object must exist
-    first. A missing object gets a new upload of the source."""
-
-    if not (file.aws_key and is_pending_archive(file.aws_key)):
-        return True
-    source_can_go = True
-    if source_path is not None:
-        source_can_go = ensure_pending_upload(file, source_path)
-    request_archive_move(file)
-    db.session.commit()
-    return source_can_go
+    if file.aws_key and is_pending_archive(file.aws_key):
+        request_archive_move(file)
+        db.session.commit()
 
 
 def _delete_replaced_archive(worse_key):

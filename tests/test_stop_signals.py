@@ -228,3 +228,55 @@ def test_a_fault_in_the_atomicparsley_loop_stops_the_child(app, monkeypatch):
             None,
         )
     assert children[0].killed
+
+
+def _in_place_run(app, sample_mkv, incoming_dir, monkeypatch, failing_phase):
+    """Run an in-place import whose failing_phase raises SystemExit."""
+
+    from app import importing
+
+    basename = "In Place Stop (2003) - [DVD].mkv"
+    os.makedirs(incoming_dir, exist_ok=True)
+    source = os.path.join(incoming_dir, basename)
+    with open(sample_mkv, "rb") as f_in, open(source, "wb") as f_out:
+        f_out.write(f_in.read())
+
+    def stopped(*args, **kwargs):
+        raise SystemExit(1)
+
+    monkeypatch.setattr(importing, "_stage_source", lambda path, run: (path, False))
+    monkeypatch.setattr(importing, failing_phase, stopped)
+    with app.app_context(), pytest.raises(SystemExit):
+        importing.localization_task(source)
+    rejected = os.path.join(app.config["REJECTS_DIR"], "exception", basename)
+    return source, rejected
+
+
+def test_a_stop_during_the_untouched_upload_keeps_an_in_place_source(
+    app, sample_mkv, incoming_dir, monkeypatch
+):
+    """The upload does not change the rip. The source stays (#497 follow-up)."""
+
+    source, rejected = _in_place_run(
+        app, sample_mkv, incoming_dir, monkeypatch, "_archive_original"
+    )
+    try:
+        assert os.path.exists(source) and not os.path.exists(rejected)
+    finally:
+        for path in (source, rejected):
+            if os.path.exists(path):
+                os.remove(path)
+
+
+def test_a_stop_during_an_in_place_localization_still_rejects(
+    app, sample_mkv, incoming_dir, monkeypatch
+):
+    source, rejected = _in_place_run(
+        app, sample_mkv, incoming_dir, monkeypatch, "_localize"
+    )
+    try:
+        assert os.path.exists(rejected) and not os.path.exists(source)
+    finally:
+        for path in (source, rejected):
+            if os.path.exists(path):
+                os.remove(path)

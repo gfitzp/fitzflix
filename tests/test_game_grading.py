@@ -33,6 +33,10 @@ LIBRARY = [
     ("Batman", 1989, {}),
     ("Bicycle Thieves", 1948, {"tmdb_original_title": "Ladri di biciclette"}),
     ("The Taking of Pelham One Two Three", 1974, {}),
+    ("John Wick: Chapter 2", 2017, {}),
+    ("The Godfather Part II", 1974, {}),
+    ("Malcolm X", 1992, {}),
+    ("American History X", 1998, {}),
 ]
 
 

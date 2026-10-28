@@ -608,7 +608,11 @@ def heal_mounts(dead_mounts, connection, config):
         # of the healthy share then breaks the Plex streams and the
         # library copies on it (#487).
 
+        # The share is healthy. It must not hold the cooldown. A real
+        # death some minutes later still gets its heal.
+
         if volume_alive(mount):
+            connection.delete(cooldown_key)
             actions.append(f"{mount} came back on its own")
             continue
 

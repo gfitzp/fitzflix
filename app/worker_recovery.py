@@ -37,10 +37,16 @@ DEAD_WORKER_REASON = (
     "kill). A new worker reclaimed it at its start (#498)."
 )
 
-# The title lock of a localization lives in this key, by job id. The
-# later stages carry the lock as their third argument.
+# The title lock, the pending upload and the work files of a
+# localization live in this key, by job id. The later stages carry the
+# lock as their third argument.
 
 JOB_LOCK_KEY = "fitzflix:worker-reclaim:lock:{job_id}"
+
+# The Atmos jobs after the first one carry (state, lock). The lock and
+# the chain key stay for the 2-day transcode timeout after a SIGKILL.
+
+ATMOS_CHAIN_TASKS = {"app.atmos.atmos_check_task", "app.atmos.atmos_finish_task"}
 LATER_STAGE_LOCK_ARGUMENT = {
     "app.videos.convert_localized_file",
     "app.videos.move_localized_file",
@@ -75,14 +81,33 @@ def _dead_workers(connection, worker_class):
         yield worker
 
 
-def note_job_lock(job_id, lock, ttl_seconds):
-    """Record the title lock that a job took. Its key expires with the lock."""
+def note_job_state(job_id, ttl_seconds, lock=None, pending=None, strays=()):
+    """Record the lock, the pending upload and the work files of a job.
+
+    The key expires with the lock."""
 
     current_app.redis.set(
         JOB_LOCK_KEY.format(job_id=job_id),
-        json.dumps([lock.resource, _text(lock.key)]),
+        json.dumps(
+            {
+                "lock": [lock.resource, _text(lock.key)] if lock else None,
+                "pending": pending,
+                "strays": [path for path in strays if path],
+            }
+        ),
         ex=ttl_seconds,
     )
+
+
+def _job_note(job):
+    """Return the note of a job, or an empty dict."""
+
+    payload = current_app.redis.get(JOB_LOCK_KEY.format(job_id=job.id))
+    try:
+        note = json.loads(payload) if payload else {}
+    except ValueError:
+        note = {}
+    return note if isinstance(note, dict) else {}
 
 
 def _text(value):
@@ -97,11 +122,7 @@ def _job_lock(job):
     if job.func_name in LATER_STAGE_LOCK_ARGUMENT:
         lock = job.args[2] if len(job.args) > 2 else job.kwargs.get("lock")
         return lock or None
-    payload = current_app.redis.get(JOB_LOCK_KEY.format(job_id=job.id))
-    try:
-        held = json.loads(payload) if payload else None
-    except ValueError:
-        held = None
+    held = _job_note(job).get("lock")
     if held and len(held) == 2:
         return Lock(0, held[0], held[1])
     return None
@@ -141,6 +162,9 @@ def abandon_dead_job(job):
     if job.func_name == MANUAL_IMPORT_TASK and len(job.args) > 1:
         current_app.redis.delete(STARTED_KEY.format(download_id=job.args[1]))
         return
+    if job.func_name in ATMOS_CHAIN_TASKS:
+        _abandon_atmos_job(job)
+        return
 
     lock = _job_lock(job)
     source = _source_of(job)
@@ -151,7 +175,14 @@ def abandon_dead_job(job):
     if source and _next_stage_holds(job, source):
         return
     if job.func_name == "app.videos.localization_task" and source:
-        abandon_import(source, lock, keep_source=True)
+        note = _job_note(job)
+        abandon_import(
+            source,
+            lock,
+            strays=note.get("strays") or (),
+            keep_source=True,
+            pending_archive=note.get("pending"),
+        )
         return
     if job.func_name not in LATER_STAGE_LOCK_ARGUMENT or not source:
         return
@@ -187,6 +218,44 @@ def abandon_dead_job(job):
         keep_source=True,
         pending_archive=pending_archive_of(details),
     )
+
+
+def _abandon_atmos_job(job):
+    """Release the title lock and the chain key of a dead Atmos check or finish.
+
+    A later job of the same chain can be queued or booked already. Then
+    the chain goes on, and nothing is released. The workspace stays. The
+    sweep of stale workspaces removes it."""
+
+    from app.atmos import CHAIN_KEY
+    from app.pipeline import close_trail
+    from app.queues import roster_queues
+    from rq.job import Job
+    from rq.registry import ScheduledJobRegistry, StartedJobRegistry
+
+    state = job.args[0] if job.args else None
+    lock = job.args[1] if len(job.args) > 1 else None
+    if not isinstance(state, dict):
+        return
+    for queue in roster_queues(current_app):
+        ids = set(queue.job_ids)
+        ids.update(StartedJobRegistry(queue=queue).get_job_ids())
+        ids.update(ScheduledJobRegistry(queue=queue).get_job_ids())
+        ids.discard(job.id)
+        for other in Job.fetch_many(list(ids), connection=current_app.redis):
+            if (
+                other is not None
+                and other.func_name in ATMOS_CHAIN_TASKS
+                and other.args
+                and isinstance(other.args[0], dict)
+                and other.args[0].get("chain") == state.get("chain")
+            ):
+                return
+    current_app.redis.delete(CHAIN_KEY.format(file_id=state.get("file_id")))
+    if state.get("trail_job"):
+        close_trail(current_app.redis, state["trail_job"])
+    if lock:
+        current_app.lock_manager.unlock(lock)
 
 
 def reclaim_dead_workers(connection, worker_class):

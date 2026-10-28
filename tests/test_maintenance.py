@@ -888,6 +888,11 @@ def test_heal_mounts_leaves_a_share_that_came_back_on_its_own(
     assert actions == ["/Volumes/Movies came back on its own"]
     assert calls == []
 
+    # The blip took no cooldown. A real death later is healed.
+    monkeypatch.setattr(maintenance, "volume_alive", lambda mount, timeout=10: False)
+    actions = maintenance.heal_mounts(["/Volumes/Movies"], app.redis, app.config)
+    assert any(command[0] == "osascript" for command in calls)
+
 
 def test_heal_mounts_unmounts_a_dead_nfs_mount_that_lstat_cannot_read(
     app, monkeypatch, tmp_path

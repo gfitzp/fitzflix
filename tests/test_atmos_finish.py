@@ -316,3 +316,126 @@ def test_an_early_end_of_a_conversion_queues_its_archive(app, monkeypatch):
             if j.func_name == "app.videos.upload_task"
         ]
         assert [j.args for j in uploads] == [(file.id,)]
+
+
+def _uploads(app):
+    return [
+        j
+        for queue in (app.file_queue, app.handoff_queue)
+        for j in queue.jobs
+        if j.func_name == "app.videos.upload_task"
+    ]
+
+
+def test_no_local_copy_queues_no_archive(app, monkeypatch):
+    """A run that ends on 'no local copy' uploads nothing (#505 follow-up)."""
+
+    import app.atmos as atmos
+    from app import db
+
+    with app.app_context():
+        file, job, _ = _setup(app, monkeypatch, "No Copy End")
+        file.converted_from_quality = "Remux-2160p"
+        db.session.commit()
+        os.remove(os.path.join(app.config["LIBRARY_DIR"], file.file_path))
+        monkeypatch.setattr(atmos, "get_setting", lambda name: True)
+        assert atmos.atmos_supplement_task(file.id) is False
+        assert _uploads(app) == []
+
+
+def test_a_current_transcoded_archive_is_not_uploaded_again(app, monkeypatch):
+    from datetime import datetime
+
+    import app.atmos as atmos
+    from app import db
+
+    with app.app_context():
+        file, job, _ = _setup(app, monkeypatch, "Current Archive")
+        file.converted_from_quality = "Remux-2160p"
+        file.aws_transcoded_key = "transcoded/Current Archive.mkv"
+        file.aws_transcoded_date_uploaded = datetime(2026, 10, 1)
+        file.aws_stale = False
+        db.session.commit()
+        monkeypatch.setattr(atmos, "get_setting", lambda name: True)
+        atmos.archive_after_early_end(file.id)
+        assert _uploads(app) == []
+
+        file.aws_stale = True
+        db.session.commit()
+        atmos.archive_after_early_end(file.id)
+        assert [j.args for j in _uploads(app)] == [(file.id,)]
+
+
+def test_the_row_rebuild_of_a_twinned_file_starts_a_new_transaction(app, monkeypatch):
+    """The rebuild after the long copy runs after a rollback (#503 follow-up)."""
+
+    import app.atmos as atmos
+    import app.tracks as tracks
+    import app.videos as videos
+    from app import db
+
+    with app.app_context():
+        file, job, _ = _setup(app, monkeypatch, "Fresh Snapshot")
+        monkeypatch.setattr(
+            videos,
+            "get_audio_tracks_from_file",
+            lambda path: [
+                {"codec": TWIN, "language": "eng", "language_name": "English"},
+                {"codec": ATMOS, "language": "eng", "language_name": "English"},
+            ],
+        )
+        monkeypatch.setattr(videos, "get_subtitle_tracks_from_file", lambda path: [])
+        events = []
+        real_rollback = db.session.rollback
+        real_replace = tracks.replace_track_rows
+
+        def rollback():
+            events.append("rollback")
+            return real_rollback()
+
+        def replace(*args, **kwargs):
+            events.append("replace")
+            return real_replace(*args, **kwargs)
+
+        monkeypatch.setattr(db.session, "rollback", rollback)
+        monkeypatch.setattr(tracks, "replace_track_rows", replace)
+        assert atmos.atmos_supplement_task(file.id) is True
+        assert "replace" in events
+        assert events[events.index("replace") - 1] == "rollback"
+
+
+def test_a_failed_remux_tool_ends_the_run_with_no_retry(app, monkeypatch):
+    """mkvpropedit exit 2 is final. The finish does not book itself again (#502)."""
+
+    import subprocess
+
+    import app.atmos as atmos
+
+    with app.app_context():
+        file, finish = _finish_job(app, monkeypatch, "Remux Error")
+
+        def failing_step(*args, **kwargs):
+            raise subprocess.CalledProcessError(2, ["mkvpropedit"])
+
+        monkeypatch.setattr(atmos, "_run_step", failing_step)
+        with pytest.raises(subprocess.CalledProcessError):
+            atmos.atmos_finish_task(*finish.args)
+        assert _scheduled(app, "app.atmos.atmos_finish_task") == []
+        assert not app.redis.exists(atmos.CHAIN_KEY.format(file_id=file.id))
+
+
+def test_a_remux_tool_ended_by_sigterm_tries_again(app, monkeypatch):
+    import signal
+    import subprocess
+
+    import app.atmos as atmos
+
+    with app.app_context():
+        file, finish = _finish_job(app, monkeypatch, "Remux Stopped")
+
+        def stopped_step(*args, **kwargs):
+            raise subprocess.CalledProcessError(-signal.SIGTERM, ["mkvpropedit"])
+
+        monkeypatch.setattr(atmos, "_run_step", stopped_step)
+        assert atmos.atmos_finish_task(*finish.args) is False
+        assert len(_scheduled(app, "app.atmos.atmos_finish_task")) == 1

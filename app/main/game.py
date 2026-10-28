@@ -209,8 +209,11 @@ def _normalize(text):
 # A sequel number decides the film. 'Iron Man 2' does not name Iron
 # Man 3, and 'Mockingjay Part 1' does not name Part 2 (#491). The number
 # is a 'part N' (or vol, volume, chapter, episode) phrase, a trailing
-# Roman numeral, or the trailing digits of the squeezed title. A lone
-# 'i' is a word, not a numeral, except after 'part' and the others.
+# Roman numeral, or the trailing digits of the squeezed title. Each
+# side becomes a digit before the compare. Thus, 'godfather 2' names
+# The Godfather Part II. A lone 'i' is a word, not a numeral, except
+# after 'part' and the others. A trailing 'x' is a numeral only when
+# the guess has a numeral too. Thus, 'malcolm' names Malcolm X.
 
 PART_RE = re.compile(r"\b(?:part|vol|volume|chapter|episode) (\d+|[ivx]+)\b")
 ROMAN = {
@@ -222,31 +225,73 @@ ROMAN = {
 YEAR_RE = re.compile(r"\b(?:18|19|20)\d\d\b")
 
 
-def _sequel_number(normalized):
-    """Return the sequel number of a normalized title, or None."""
+def _sequel_number(normalized, x_numeral=True):
+    """Return the sequel number of a normalized title as an int, or None."""
 
     match = PART_RE.search(normalized)
     if match:
         value = match.group(1)
         return int(value) if value.isdigit() else ROMAN.get(value)
     words = normalized.split()
-    if words and words[-1] in ROMAN and words[-1] != "i":
+    if (
+        words
+        and words[-1] in ROMAN
+        and words[-1] != "i"
+        and (x_numeral or words[-1] != "x")
+    ):
         return ROMAN[words[-1]]
     match = re.search(r"(\d+)$", normalized.replace(" ", ""))
     return int(match.group(1)) if match else None
 
 
-def _similarity(normalized, candidate):
-    """Return the best ratio of the 2 passes. A different sequel number gives 0."""
+def _without_number(normalized, x_numeral=True):
+    """Return a normalized title without its sequel number phrase or numeral."""
 
-    if _sequel_number(normalized) != _sequel_number(candidate):
-        return 0.0
+    if PART_RE.search(normalized):
+        return " ".join(PART_RE.sub(" ", normalized).split())
+    words = normalized.split()
+    if (
+        words
+        and words[-1] in ROMAN
+        and words[-1] != "i"
+        and (x_numeral or words[-1] != "x")
+    ):
+        return " ".join(words[:-1])
+    while words and words[-1].isdigit():
+        words.pop()
+    return " ".join(words)
+
+
+def _ratio(normalized, candidate):
+    """Return the best ratio of the 2 passes: words, and squeezed."""
+
     return max(
         SequenceMatcher(None, normalized, candidate).ratio(),
         SequenceMatcher(
             None, normalized.replace(" ", ""), candidate.replace(" ", "")
         ).ratio(),
     )
+
+
+def _similarity(normalized, candidate, x_numeral=True):
+    """Return the ratio of a guess and a title. A different sequel number gives 0.
+
+    With equal numbers, the ratio compares the 2 sides without them.
+    Thus, 'John Wick 2' names John Wick: Chapter 2."""
+
+    number = _sequel_number(normalized, x_numeral)
+    if number != _sequel_number(candidate, x_numeral):
+        return 0.0
+    if number is not None:
+        normalized = _without_number(normalized, x_numeral)
+        candidate = _without_number(candidate, x_numeral)
+    return _ratio(normalized, candidate)
+
+
+def _guess_has_numeral(normalized):
+    """Return True if the guess carries a sequel numeral that is not a trailing 'x'."""
+
+    return _sequel_number(normalized, x_numeral=False) is not None
 
 
 def _could_beat(normalized, candidate, score):
@@ -279,7 +324,7 @@ def _title_candidates(movie):
     return {_normalize(c) for c in candidates if c} - {""}
 
 
-def _other_film_scores_higher(normalized, movie, score):
+def _other_film_scores_higher(normalized, movie, score, x_numeral=True):
     """Return True if a different library film matches the guess better (#491).
 
     'Aliens' names Aliens, not Alien. 'Hoot' names Hoot, not Hook. A
@@ -299,7 +344,7 @@ def _other_film_scores_higher(normalized, movie, score):
             candidate = _normalize(title)
             if not candidate or not _could_beat(normalized, candidate, score):
                 continue
-            if _similarity(normalized, candidate) > score:
+            if _similarity(normalized, candidate, x_numeral) > score:
                 return True
     return False
 
@@ -334,10 +379,30 @@ def _fuzzy_match(guess, movie):
     }
     if set(YEAR_RE.findall(normalized)) - film_years - title_words:
         return False
-    score = max((_similarity(normalized, c) for c in candidates), default=0.0)
+    x_numeral = _guess_has_numeral(normalized)
+    score = max(
+        (_similarity(normalized, c, x_numeral) for c in candidates), default=0.0
+    )
+
+    # A subtitle half with no number ('Kill Bill' of 'Kill Bill: Vol. 2')
+    # names the film when the number of the guess is the number of the
+    # full title.
+
+    number = _sequel_number(normalized, x_numeral)
+    if number is not None:
+        title_numbers = {
+            _sequel_number(_normalize(title), x_numeral)
+            for title in (movie.title, movie.tmdb_title, movie.tmdb_original_title)
+            if title
+        }
+        if number in title_numbers:
+            bare = _without_number(normalized, x_numeral)
+            for candidate in candidates:
+                if _sequel_number(candidate, x_numeral) is None:
+                    score = max(score, _ratio(bare, candidate))
     if score < FUZZY_THRESHOLD:
         return False
-    return not _other_film_scores_higher(normalized, movie, score)
+    return not _other_film_scores_higher(normalized, movie, score, x_numeral)
 
 
 def _include_unrated(difficulty):

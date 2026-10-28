@@ -397,15 +397,24 @@ FINISH_RETRY_DELAY = timedelta(minutes=10)
 
 @contextlib.contextmanager
 def _transient_step(step):
-    """Raise FinishInterrupted for an I/O, tool or AWS fault inside the step."""
+    """Raise FinishInterrupted for an I/O or AWS fault inside the step.
+
+    A tool that exits with an error (corrupt input) gives the same error
+    again. Thus, its error is final. Only a tool that a stop signal ended
+    can try again (#502)."""
 
     import botocore.exceptions
 
+    from app.importing import INTERRUPT_SIGNALS
+
     try:
         yield
+    except subprocess.CalledProcessError as error:
+        if -(error.returncode or 0) in INTERRUPT_SIGNALS:
+            raise FinishInterrupted(f"{step}: {error!r}") from error
+        raise
     except (
         OSError,
-        subprocess.CalledProcessError,
         botocore.exceptions.BotoCoreError,
         botocore.exceptions.ClientError,
     ) as error:
@@ -601,7 +610,9 @@ def atmos_supplement_task(file_id, staged_source=None):
         finally:
             if not handed_off:
                 current_app.lock_manager.unlock(lock)
-                if outcome != NO_STAGING_SPACE:
+                # False is "no local copy". An upload of a file that is
+                # not there only marks the row stale for nothing.
+                if outcome is not False and outcome != NO_STAGING_SPACE:
                     archive_after_early_end(file_id)
 
             # A used staged copy is in the workspace now. This removes an
@@ -737,9 +748,12 @@ def _atmos_prepare(file_id, phases, staged_source=None):
                 f"'{basename}' TrueHD Atmos tracks already have E-AC-3 twins. "
                 f"Rebuilding the track rows from the file"
             )
-            replace_track_rows(
-                file, audio_tracks, get_subtitle_tracks_from_file(staging_source)
-            )
+            # The copy took long inside the read snapshot of the row. A
+            # new transaction avoids MariaDB error 1020.
+            subtitle_tracks = get_subtitle_tracks_from_file(staging_source)
+            db.session.rollback()
+            file = db.session.get(File, int(file_id))
+            replace_track_rows(file, audio_tracks, subtitle_tracks)
             db.session.commit()
             shutil.rmtree(workspace, ignore_errors=True)
             return True
@@ -942,9 +956,17 @@ def archive_after_early_end(file_id):
 
     try:
         file = db.session.get(File, int(file_id))
+        # A current transcoded/ archive needs no new upload.
+        current = bool(
+            file is not None
+            and file.aws_transcoded_key
+            and file.aws_transcoded_date_uploaded
+            and not file.aws_stale
+        )
         if (
             file is not None
             and file.converted_from_quality
+            and not current
             and get_setting("ARCHIVE_ORIGINAL_MEDIA")
         ):
             enqueue_task(

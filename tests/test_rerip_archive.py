@@ -245,17 +245,17 @@ def test_the_pending_uploads_live_outside_untouched(app, monkeypatch):
 
 
 def _drop_pending_before_the_follow_up(monkeypatch, fake):
-    """Delete the run-scoped upload just before the archive key step."""
+    """Delete the run-scoped upload just before the pending upload check."""
 
     from app import importing
 
-    real = importing._request_final_archive_key
+    real = importing.ensure_pending_upload
 
-    def dropped(file, source_path=None):
+    def dropped(file, source_path):
         fake.objects.pop(file.aws_key, None)
         return real(file, source_path)
 
-    monkeypatch.setattr(importing, "_request_final_archive_key", dropped)
+    monkeypatch.setattr(importing, "ensure_pending_upload", dropped)
 
 
 def test_a_missing_pending_upload_goes_up_again_before_the_source_goes(
@@ -306,4 +306,49 @@ def test_a_failed_new_upload_keeps_the_source_in_rejects(
 
         kept = os.path.join(app.config["REJECTS_DIR"], "unarchived", BASENAME)
         assert not os.path.exists(source)
+        assert os.path.exists(kept)
+
+
+def test_a_failed_move_request_after_a_failed_new_upload_keeps_the_source(
+    app, sample_mkv, incoming_dir, monkeypatch
+):
+    """The move request raises after the check said False. The rip stays (#494)."""
+
+    from app import importing
+    from tests.localization_helpers import run_full_chain
+
+    _claimed_rip(app, monkeypatch)
+    source = _incoming(sample_mkv, incoming_dir)
+    monkeypatch.setattr(importing, "ensure_pending_upload", lambda file, path: False)
+
+    def broken(file):
+        raise RuntimeError("(1020, 'Record has changed since last read')")
+
+    monkeypatch.setattr(importing, "_request_final_archive_key", broken)
+
+    with app.app_context():
+        run_full_chain(app, source)
+
+        kept = os.path.join(app.config["REJECTS_DIR"], "unarchived", BASENAME)
+        assert os.path.exists(kept)
+
+
+def test_a_raising_pending_check_keeps_the_source(
+    app, sample_mkv, incoming_dir, monkeypatch
+):
+    from app import importing
+    from tests.localization_helpers import run_full_chain
+
+    _claimed_rip(app, monkeypatch)
+    source = _incoming(sample_mkv, incoming_dir)
+
+    def broken(file, path):
+        raise ConnectionError("redis down")
+
+    monkeypatch.setattr(importing, "ensure_pending_upload", broken)
+
+    with app.app_context():
+        run_full_chain(app, source)
+
+        kept = os.path.join(app.config["REJECTS_DIR"], "unarchived", BASENAME)
         assert os.path.exists(kept)
