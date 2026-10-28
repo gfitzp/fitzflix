@@ -22,6 +22,23 @@ from flask_migrate import Migrate
 from flask_login import LoginManager
 from flask_moment import Moment
 
+
+class FitzflixFlask(Flask):
+    """The Flask app class. Each external URL uses PREFERRED_URL_SCHEME (#454).
+
+    Inside a request, Flask builds an external URL with the scheme of the
+    request. gunicorn sees plain http from the proxy. Thus, a mailed
+    link of a request (the password reset, the review export) was an
+    http link."""
+
+    def url_for(self, endpoint, *, _external=None, _scheme=None, **values):
+        """Build a URL. An external URL gets PREFERRED_URL_SCHEME by default."""
+
+        if _external and _scheme is None:
+            _scheme = self.config.get("PREFERRED_URL_SCHEME")
+        return super().url_for(endpoint, _external=_external, _scheme=_scheme, **values)
+
+
 db = SQLAlchemy()
 migrate = Migrate(compare_type=True)
 login = LoginManager()
@@ -570,7 +587,7 @@ def create_app(config_class=Config, watch_import_dir=False):
     from app.logging_setup import configure_logging
     from app.templating import register_template_helpers
 
-    app = Flask(__name__)
+    app = FitzflixFlask(__name__)
 
     # Build the application configuration from the config.py file.
 
@@ -627,9 +644,10 @@ def create_app(config_class=Config, watch_import_dir=False):
     # CloudFront can forge the header. The lock per account does not
     # use the address, so it still holds for such a request. Before
     # #263 this call did not wrap wsgi_app, so it had no effect. The
-    # proto, host, and prefix options stay off. They never had an
-    # effect, and SERVER_NAME and PREFERRED_URL_SCHEME already set
-    # those values.
+    # proto, host, and prefix options stay off. Inside a request, an
+    # external URL takes the scheme of the request, not
+    # PREFERRED_URL_SCHEME. FitzflixFlask.url_for sets the scheme of
+    # each external URL (#454). Only the mails build external URLs.
 
     app.wsgi_app = ProxyFix(app.wsgi_app, x_for=app.config["PROXY_HOPS"])
 

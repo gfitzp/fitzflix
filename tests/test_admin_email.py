@@ -300,3 +300,16 @@ def test_the_smtp_connection_has_a_timeout(app, monkeypatch):
         assert isinstance(connection, TimeoutConnection)
         connection.configure_host()
     assert opened[0][2] == 7
+
+
+def test_a_mailed_link_of_a_request_uses_the_preferred_scheme(app, monkeypatch):
+    """gunicorn sees plain http from the proxy. The mailed link is still https (#454)."""
+
+    from flask import render_template, url_for
+
+    monkeypatch.setitem(app.config, "PREFERRED_URL_SCHEME", "https")
+    with app.test_request_context(base_url="http://fitzflix.test/"):
+        assert url_for("main.index", _external=True).startswith("https://")
+        assert url_for("main.index").startswith("/")
+        body = render_template("email/reset_password.txt", user=None, token="abc")
+    assert "https://fitzflix.test/auth/reset-password/abc" in body
