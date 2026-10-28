@@ -321,8 +321,10 @@ def test_entering_an_id_by_hand_reattaches_an_ignored_series(
         follow_redirects=True,
     )
 
+    # The flag stays until a payload for the id applies (#514)
+
     with app.app_context():
-        assert db.session.get(TVSeries, series_id).tmdb_ignored is False
+        assert db.session.get(TVSeries, series_id).tmdb_ignored is True
 
     jobs = [
         job
@@ -330,6 +332,102 @@ def test_entering_an_id_by_hand_reattaches_an_ignored_series(
         if job.func_name == "app.videos.refresh_tmdb_info"
     ]
     assert jobs and jobs[0].args == ("TV Shows", series_id, 110230)
+    assert jobs[0].kwargs["rematch"] is True
+
+
+def _run_rematch(app, monkeypatch, series_id, payload):
+    """Run both phases of a hand-entered id refresh with a fake fetch."""
+
+    from app.models import TVSeries as Series
+    from app.videos import apply_tmdb_refresh, refresh_tmdb_info
+
+    monkeypatch.setattr(Series, "tmdb_tv_fetch", lambda self, tmdb_id=None: payload)
+    result = refresh_tmdb_info("TV Shows", series_id, 110230, rematch=True)
+    applies = [
+        job
+        for job in app.sql_queue.jobs
+        if job.func_name == "app.videos.apply_tmdb_refresh"
+    ]
+    assert len(applies) == 1
+    apply_tmdb_refresh(**applies[0].kwargs)
+    return result
+
+
+def test_a_hand_entered_id_with_data_reattaches_the_series(app, monkeypatch):
+    """The apply of a payload clears the detachment (#514)."""
+
+    with app.app_context():
+        series = make_tv_series("Rifftrax", tmdb_ignored=True)
+        db.session.commit()
+        series_id = series.id
+
+    payload = {"id": 110230, "name": "RiffTrax", "status": "Returning Series"}
+    assert _run_rematch(app, monkeypatch, series_id, payload) is True
+    with app.app_context():
+        stored = db.session.get(TVSeries, series_id)
+        assert stored.tmdb_ignored is False
+        assert stored.tmdb_id == 110230
+
+
+def test_a_hand_entered_id_with_no_match_stays_detached(app, monkeypatch):
+    """A mistyped id leaves the detachment in place (#514).
+
+    Before, the route cleared the flag before the fetch. Then the triage
+    page and a later blank refresh treated the record as unmatched."""
+
+    from app.tmdb_refresh import TMDB_NO_MATCH
+
+    with app.app_context():
+        series = make_tv_series("Rifftrax", tmdb_ignored=True)
+        db.session.commit()
+        series_id = series.id
+
+    assert _run_rematch(app, monkeypatch, series_id, None) == TMDB_NO_MATCH
+    with app.app_context():
+        stored = db.session.get(TVSeries, series_id)
+        assert stored.tmdb_ignored is True
+        assert stored.tmdb_id is None
+
+
+def test_a_failed_interactive_fetch_flashes_a_failure(app, admin_client, monkeypatch):
+    """A fetch that returns False is a failure, not a refresh in flight (#514)."""
+
+    import app.main.library as library
+
+    monkeypatch.setattr(library, "_wait_for_refresh", lambda job: False)
+    with app.app_context():
+        series = make_tv_series("Rifftrax", tmdb_id=110230)
+        db.session.commit()
+        series_id = series.id
+
+    page = admin_client.get(f"/tv/{series_id}").get_data(as_text=True)
+    response = admin_client.post(
+        f"/tv/{series_id}/tmdb",
+        data={
+            "csrf_token": csrf_token_from(page),
+            "tmdb_id": "110230",
+            "lookup_submit": "Refresh TMDB Data",
+        },
+        follow_redirects=True,
+    )
+    text = response.get_data(as_text=True)
+    assert "could not get TMDB data for &#39;Rifftrax&#39;" in text
+    assert "is refreshing TMDB data" not in text
+
+
+def test_the_wait_reads_a_failed_job_as_false(app):
+    """A refresh job that raised returns False at once (#514)."""
+
+    from app.main.library import _wait_for_refresh
+
+    class FailedJob:
+        def get_status(self, refresh=True):
+            return "failed"
+
+        def return_value(self, refresh=False):
+            raise AssertionError("a failed job has no return value")
+
+    assert _wait_for_refresh(FailedJob()) is False
 
 
 def test_tv_clear_invalidates_the_people_ranking(app):

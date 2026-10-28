@@ -306,7 +306,7 @@ def tmdb_refresh_pending(library, id):
 TMDB_NO_MATCH = "no-match"
 
 
-def _refresh_target(library, id, ignored="skipping TMDB refresh"):
+def _refresh_target(library, id, ignored="skipping TMDB refresh", rematch=False):
     """Return (record, description) of a TMDB refresh, or None.
 
     Both phases of a refresh find their record here. The result is None
@@ -315,7 +315,8 @@ def _refresh_target(library, id, ignored="skipping TMDB refresh"):
     for a record that is detached from TMDB on purpose. A fetch for it
     would search by title and attach a wrong id. ignored is the end of
     that log line. A series that shares its TMDB id with a canonical
-    record refreshes that record. description names the job."""
+    record refreshes that record. description names the job. rematch
+    accepts a detached record: an admin entered an id by hand (#514)."""
 
     if library == MOVIES:
         movie = Movie.query.filter_by(id=id).first()
@@ -324,7 +325,7 @@ def _refresh_target(library, id, ignored="skipping TMDB refresh"):
                 f"Movie id {id} no longer exists, skipping TMDB refresh"
             )
             return None
-        if movie.tmdb_ignored:
+        if movie.tmdb_ignored and not rematch:
             current_app.logger.info(
                 f"{movie} is marked as having no TMDB match, {ignored}"
             )
@@ -338,7 +339,7 @@ def _refresh_target(library, id, ignored="skipping TMDB refresh"):
                 f"TV series id {id} no longer exists, skipping TMDB refresh"
             )
             return None
-        if tv_show.tmdb_ignored:
+        if tv_show.tmdb_ignored and not rematch:
             current_app.logger.info(
                 f"{tv_show} is marked as having no TMDB match, {ignored}"
             )
@@ -353,7 +354,12 @@ def _refresh_target(library, id, ignored="skipping TMDB refresh"):
 
 
 def refresh_tmdb_info(
-    library, id, tmdb_id=None, notify_if_missing=False, apply_at_front=False
+    library,
+    id,
+    tmdb_id=None,
+    notify_if_missing=False,
+    apply_at_front=False,
+    rematch=False,
 ):
     """Run the network phase of a TMDB refresh.
 
@@ -367,13 +373,15 @@ def refresh_tmdb_info(
 
     Return True when TMDB sent data, TMDB_NO_MATCH when it sent nothing,
     and False on a failure. A page that waits for the refresh puts the
-    apply at the front of the sql queue (apply_at_front).
+    apply at the front of the sql queue (apply_at_front). rematch is an
+    id that an admin entered by hand. It fetches a detached record. The
+    apply clears the detachment only when a payload applies (#514).
     """
 
     with app.app_context():
         try:
 
-            target = _refresh_target(library, id)
+            target = _refresh_target(library, id, rematch=rematch)
             if target is None:
                 return False
             record, description = target
@@ -398,6 +406,7 @@ def refresh_tmdb_info(
                 tmdb_id=tmdb_id,
                 tmdb_payload=tmdb_payload,
                 notify_if_missing=notify_if_missing,
+                rematch=rematch,
                 description=description,
                 at_front=apply_at_front,
             )
@@ -872,7 +881,12 @@ def _apply_movie_refresh(
 
 
 def apply_tmdb_refresh(
-    library, id, tmdb_id=None, tmdb_payload=None, notify_if_missing=False
+    library,
+    id,
+    tmdb_id=None,
+    tmdb_payload=None,
+    notify_if_missing=False,
+    rematch=False,
 ):
     """Run the database phase of a TMDB refresh.
 
@@ -886,7 +900,9 @@ def apply_tmdb_refresh(
     same title. With notify_if_missing (used for new imports), Fitzflix
     sends an email if the movie still has no TMDB match after the
     payload is applied. A payload whose apply raises goes to a file
-    (save_failed_payload).
+    (save_failed_payload). With rematch, a payload clears the
+    detachment of the record. No payload leaves the record detached
+    (#514).
     """
 
     with app.app_context():
@@ -899,11 +915,16 @@ def apply_tmdb_refresh(
             # The record can be detached from TMDB after the payload fetch.
 
             target = _refresh_target(
-                library, id, ignored="discarding the fetched TMDB payload"
+                library,
+                id,
+                ignored="discarding the fetched TMDB payload",
+                rematch=rematch and tmdb_info is not None,
             )
             if target is None:
                 return False
             record, description = target
+            if rematch and tmdb_info is not None:
+                record.tmdb_ignored = False
 
             if library == MOVIES:
                 if not _apply_movie_refresh(

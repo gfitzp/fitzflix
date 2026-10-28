@@ -1099,12 +1099,20 @@ def _flash_tmdb_refresh(result, title, reload_url):
     """Flash the state of an interactive TMDB refresh.
 
     The refresh job only fetches. The apply runs next on the sql queue.
-    Thus, a fetched result does not say that the page has the new data."""
+    Thus, a fetched result does not say that the page has the new data.
+    None is a job that still runs. False is a failed fetch (#514). Then
+    nothing is queued, and a reload shows no change."""
 
     from app.tmdb_refresh import TMDB_NO_MATCH
 
     if result == TMDB_NO_MATCH:
         flash(f"TMDB has no data for '{title}' with that ID.", "warning")
+    elif result is False:
+        flash(
+            f"Fitzflix could not get TMDB data for '{title}'. The log has "
+            f"the reason. Try again later.",
+            "danger",
+        )
     elif result:
         flash(
             Markup(
@@ -1492,11 +1500,20 @@ def _wait_for_refresh(refresh_job):
     If the refresh completes in that time, the redirect shows the
     updated page. If not, the page gives the user a link to reload."""
 
+    from rq.job import JobStatus
+
     waited_seconds = 0
-    while refresh_job.result == None and waited_seconds < 10:
+    while True:
+        status = refresh_job.get_status(refresh=True)
+        # A job that raised has no return value. It is a failure, not a
+        # refresh that still runs (#514).
+        if status in (JobStatus.FAILED, JobStatus.STOPPED, JobStatus.CANCELED):
+            return False
+        result = refresh_job.return_value(refresh=True)
+        if result is not None or waited_seconds >= 10:
+            return result
         time.sleep(1)
         waited_seconds = waited_seconds + 1
-    return refresh_job.result
 
 
 @bp.route("/movie/<int:movie_id>/tmdb", methods=["POST"])
@@ -1592,11 +1609,9 @@ def movie_tmdb(movie_id):
 
     # An id entered by hand is an intentional new match. It undoes a
     # previous removal. Only an actual id clears the flag. A blank submit
-    # cannot get here on a detached record, because of the guard.
-
-    if tmdb_lookup_form.tmdb_id.data is not None:
-        movie.tmdb_ignored = False
-        db.session.commit()
+    # cannot get here on a detached record, because of the guard. The
+    # apply clears the flag when TMDB sends data for the id. A wrong id
+    # leaves the record detached (#514).
 
     # Add a task to the fitzflix-sql queue to check TMDB and update the
     # database. Add it to the front of the queue, because the user added
@@ -1608,6 +1623,7 @@ def movie_tmdb(movie_id):
         movie.id,
         tmdb_lookup_form.tmdb_id.data,
         apply_at_front=True,
+        rematch=tmdb_lookup_form.tmdb_id.data is not None,
         # The page waits for this refresh. Thus, it goes to the front of
         # the sql queue, not behind the bulk refreshes of the request
         # queue.
@@ -2341,11 +2357,9 @@ def tv_tmdb(series_id):
 
     # An id entered by hand is an intentional new match. It undoes a
     # previous removal. Only an actual id clears the flag. A blank submit
-    # cannot get here on a detached record, because of the guard.
-
-    if tmdb_lookup_form.tmdb_id.data is not None:
-        tv.tmdb_ignored = False
-        db.session.commit()
+    # cannot get here on a detached record, because of the guard. The
+    # apply clears the flag when TMDB sends data for the id. A wrong id
+    # leaves the record detached (#514).
 
     # Add a task to the fitzflix-sql queue to check TMDB and update the
     # database. Add it to the front of the queue, because the user added
@@ -2357,6 +2371,7 @@ def tv_tmdb(series_id):
         tv.id,
         tmdb_lookup_form.tmdb_id.data,
         apply_at_front=True,
+        rematch=tmdb_lookup_form.tmdb_id.data is not None,
         # The page waits for this refresh. Thus, it goes to the front of
         # the sql queue, not behind the bulk refreshes of the request
         # queue.
