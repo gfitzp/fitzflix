@@ -2298,3 +2298,57 @@ def test_apply_outcome_updates_the_score_row(app):
 
     assert apply_outcome(score, Outcome(True, None, 6, True)) is False
     assert (score.points, score.current_streak, score.rounds_won) == (6, 1, 2)
+
+
+def test_two_overlapping_extra_posts_grade_the_round_once(
+    app, admin_client, admin_id, monkeypatch
+):
+    """Two posts of 1 token both read the live round. Only 1 banks (#477).
+
+    The test makes both posts see the round at its final stage, as two
+    overlapping requests on two workers do."""
+
+    import re
+
+    from app import db
+    from app.main import game
+    from app.models import UserFrameScore
+
+    with app.app_context():
+        movie = make_movie("Double Tap Film", 2003)
+        make_movie_file(movie, "Bluray-1080p")
+        db.session.commit()
+        movie_id = movie.id
+
+    token = seed_image_frame(app, movie_id, size=(120, 80))
+    page = admin_client.get("/game?difficulty=extra&unrated=1").get_data(as_text=True)
+    csrf = re.search(r'name="csrf_token"[^>]*value="([^"]+)"', page).group(1)
+    live = {"token": token, "stage": game.EXTRA_STAGES}
+    monkeypatch.setattr(game, "_extra_round", lambda: dict(live))
+
+    def post():
+        return admin_client.post(
+            "/game",
+            data={
+                "csrf_token": csrf,
+                "token": token,
+                "difficulty": "extra",
+                "guess": "Double Tap Film",
+                "guess_submit": "y",
+            },
+        )
+
+    first = post()
+    assert first.status_code == 200
+    assert "Correct" in first.get_data(as_text=True)
+    with app.app_context():
+        score = UserFrameScore.query.filter_by(difficulty="extra").one()
+        banked = (score.points, score.current_streak)
+    assert banked[0] > 0 and banked[1] == 1
+
+    second = post()
+    assert second.status_code == 302
+    with app.app_context():
+        db.session.expire_all()
+        score = UserFrameScore.query.filter_by(difficulty="extra").one()
+        assert (score.points, score.current_streak) == banked

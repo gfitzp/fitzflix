@@ -529,6 +529,26 @@ def _save_extra_round(token, stage):
     )
 
 
+def _take_extra_round(token):
+    """Delete the live round atomically. Return True if it was the round of token.
+
+    If a different round was live, put it back. Only the post that
+    removed the round of token can grade its end."""
+
+    key = EXTRA_ROUND_KEY.format(user_id=int(current_user.id))
+    payload = current_app.redis.getdel(key)
+    if not payload:
+        return False
+    try:
+        round_ = json.loads(payload)
+    except (ValueError, UnicodeDecodeError):
+        return False
+    if not isinstance(round_, dict) or round_.get("token") != token:
+        current_app.redis.set(key, payload, ex=DEALT_TTL, nx=True)
+        return False
+    return True
+
+
 def _clear_extra_round():
     """Delete the live round of the current user. It ended or was skipped."""
 
@@ -805,7 +825,13 @@ def _extra_post(form, token, movie):
         missed = None if zoom_out else guessed or None
         return _render_extra_round(token, outcome.next_stage, form, missed=missed)
 
-    _clear_extra_round()
+    # Only 1 post can end the round (#477). Two overlapping posts (a
+    # double tap, or 2 tabs) both read the live round. The atomic GETDEL
+    # gives the round to 1 of them. The other one deals or resumes, and
+    # banks nothing.
+
+    if not _take_extra_round(token):
+        return redirect(url_for("main.name_that_frame", difficulty="extra"))
     # A correct guess while zoomed in is the feat worth a brag. A
     # full-frame win is only a win.
     brag = _stash_brag_crop(token, stage) if correct and stage < EXTRA_STAGES else None
