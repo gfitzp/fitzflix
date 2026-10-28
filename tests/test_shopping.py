@@ -100,6 +100,44 @@ def test_liked_unowned_movie_stays_off_digital_list(app, admin_client):
     assert "Not a Digital Copy" not in page
 
 
+def test_shopping_search_keeps_the_criterion_view(app, admin_client):
+    """A search in the Criterion view lists no film without a Criterion release (#458)."""
+
+    with app.app_context():
+        user_id = User.query.first().id
+        spine = make_movie("Alpha Spine Search", 1960)
+        spine.criterion_spine_number = 77
+        make_movie_file(spine, "DVD")
+        make_movie_file(make_movie("Alpha Plain Search", 1961), "DVD")
+        make_liked_review(user_id, make_movie("Alpha Liked Search", 1962))
+        db.session.commit()
+
+    page = admin_client.get("/shopping-list/movie?library=criterion&q=alpha").get_data(
+        as_text=True
+    )
+    assert "Alpha Spine Search" in page
+    assert "Alpha Plain Search" not in page
+    assert "Alpha Liked Search" not in page
+
+
+def test_shopping_search_keeps_the_digital_view(app, admin_client):
+    """A search in the digital view lists no physical copy and no unowned film (#458)."""
+
+    with app.app_context():
+        user_id = User.query.first().id
+        make_movie_file(make_movie("Beta Digital Search", 1970), "WEBDL-1080p")
+        make_movie_file(make_movie("Beta Disc Search", 1971), "Bluray-1080p")
+        make_liked_review(user_id, make_movie("Beta Liked Search", 1972))
+        db.session.commit()
+
+    page = admin_client.get("/shopping-list/movie?media=digital&q=beta").get_data(
+        as_text=True
+    )
+    assert "Beta Digital Search" in page
+    assert "Beta Disc Search" not in page
+    assert "Beta Liked Search" not in page
+
+
 def test_unliked_unowned_review_stays_off_shopping_list(app, admin_client):
     """Test that a seen, unowned, unliked movie is history, not wishlist."""
 

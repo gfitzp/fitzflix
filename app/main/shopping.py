@@ -629,6 +629,27 @@ def movie_shopping():
             query = query.filter(HAS_CRITERION_RELEASE)
         return query
 
+    # The digital view keeps only the films with no physical-media,
+    # SDTV or HDTV copy.
+
+    def digital_only(query):
+        physical_media = (
+            db.session.query(
+                File.movie_id,
+            )
+            .join(Movie, (Movie.id == File.movie_id))
+            .join(RefQuality, (RefQuality.id == File.quality_id))
+            .filter(
+                db.or_(
+                    RefQuality.physical_media == True,
+                    RefQuality.quality_title == "SDTV",
+                    RefQuality.quality_title.ilike("HDTV-%"),
+                )
+            )
+            .subquery()
+        )
+        return query.filter(Movie.id.not_in(db.select(physical_media.c.movie_id)))
+
     watchlist_groups = None
 
     if q:
@@ -657,8 +678,14 @@ def movie_shopping():
                 Movie.title.ilike(f"%{pattern}%"),
                 Movie.tmdb_title.ilike(f"%{pattern}%"),
             )
-            owned_matches = shopping_rows().filter(title_matches)
-            liked_matches = liked_unowned_query().filter(title_matches)
+            # The search narrows the selected view (#458). The Criterion
+            # view keeps its filter. The digital view keeps only the owned
+            # films with no physical copy, as when it has no search.
+
+            owned_matches = criterion_only(shopping_rows().filter(title_matches))
+            liked_matches = criterion_only(liked_unowned_query().filter(title_matches))
+            if media == "digital":
+                owned_matches = digital_only(owned_matches)
 
             # A film with no local copy counts as the virtual bottom
             # quality. Thus, it appears only if the minimum of the range
@@ -666,7 +693,7 @@ def movie_shopping():
 
             candidates = (
                 owned_matches.union_all(liked_matches)
-                if min_preference <= bottom_quality
+                if min_preference <= bottom_quality and media != "digital"
                 else owned_matches
             )
             movies = candidates.order_by(*TITLE_ORDER).paginate(
@@ -685,28 +712,8 @@ def movie_shopping():
         movies = None
 
     elif media == "digital":
-        physical_media = (
-            db.session.query(
-                File.movie_id,
-            )
-            .join(Movie, (Movie.id == File.movie_id))
-            .join(RefQuality, (RefQuality.id == File.quality_id))
-            .filter(
-                db.or_(
-                    RefQuality.physical_media == True,
-                    RefQuality.quality_title == "SDTV",
-                    RefQuality.quality_title.ilike("HDTV-%"),
-                )
-            )
-            .subquery()
-        )
-
         movies = (
-            criterion_only(
-                shopping_rows().filter(
-                    Movie.id.not_in(db.select(physical_media.c.movie_id))
-                )
-            )
+            criterion_only(digital_only(shopping_rows()))
             .order_by(*urgency_order)
             .paginate(page=page, per_page=100, error_out=False)
         )
