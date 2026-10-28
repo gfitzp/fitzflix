@@ -46,6 +46,7 @@ from unidecode import unidecode
 from flask import current_app, render_template
 from werkzeug.local import LocalProxy
 
+from app.custom_artwork import remove_episode_thumb_of
 from app.tasks import (
     delete_job,
     enqueue_task,
@@ -627,8 +628,16 @@ def _staging_usage(staging_dir):
     return usage.total, usage.free
 
 
+# The delay before an import tries the staging reservation lock again.
+
+STAGING_LOCK_RETRY = timedelta(minutes=1)
+
+
 def reserve_staging(basename, needed_bytes, names, staging_dir):
-    """Reserve staging space for an import. Return "ok", "wait", or "too big".
+    """Reserve staging space for an import. Return "ok", "wait", "lock", or "too big".
+
+    "lock" means that the reservation lock stayed busy. Nothing about
+    the space is known then.
 
     "too big" means that the file cannot fit on the staging volume even
     with nothing else there. A short Redis lock makes the check and the
@@ -649,14 +658,11 @@ def reserve_staging(basename, needed_bytes, names, staging_dir):
         time.sleep(0.5)
 
     # Without the lock, the check and the reservation are not 1 step.
-    # Then 2 imports can take the same space (#478). The import waits.
+    # Then 2 imports can take the same space (#478). The import tries
+    # again soon. It is not a wait for space.
 
     if not lock:
-        current_app.logger.warning(
-            f"'{basename}' Cannot get the staging reservation lock. "
-            f"The import waits"
-        )
-        return "wait"
+        return "lock"
     try:
         total, free = _staging_usage(staging_dir)
         available = (
@@ -1198,6 +1204,17 @@ def _stage_source(file_path, run):
     staging_dir = current_app.config["STAGING_DIR"]
     staging_needed = int(os.path.getsize(file_path) * STAGING_FACTOR)
     staging = reserve_staging(basename, staging_needed, [basename], staging_dir)
+    if staging == "lock":
+        # The space was not checked. Thus, this is no space wait, and the
+        # space-wait counter and marker stay as they are (#478).
+        current_app.logger.info(
+            f"'{basename}' The staging lock is busy. Trying again in "
+            f"{int(STAGING_LOCK_RETRY.total_seconds() // 60)} minute"
+        )
+        run.release_lock()
+        run.lock = None
+        run.retry(STAGING_LOCK_RETRY, "waits for the staging lock", level=None)
+        return None
     if staging == "wait":
         current_app.logger.info(
             f"'{basename}' Needs {_gigabytes(staging_needed)} on staging. "
@@ -3148,6 +3165,12 @@ def _delete_worse_copies(worse_local_copies, output_file):
                 f"'{worse_path}' Couldn't delete the replaced file: {e}"
             )
         remove_triage_snapshots(worse_id)
+
+        # The episode thumb of a deleted TV file has no video left (#469)
+
+        tv_library = os.path.abspath(current_app.config["TV_LIBRARY"])
+        if os.path.abspath(worse_path).startswith(tv_library + os.sep):
+            remove_episode_thumb_of(worse_path)
 
 
 def _atmos_handoff(staged_output, output_file):

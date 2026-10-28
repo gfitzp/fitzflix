@@ -234,7 +234,50 @@ def test_no_reservation_without_the_lock(app, staging, volume, monkeypatch):
         assert held
         try:
             name = "Locked (2020) - [Bluray-2160p].mkv"
-            assert reserve_staging(name, 10 * GB, [name], staging) == "wait"
+            assert reserve_staging(name, 10 * GB, [name], staging) == "lock"
             assert not app.redis.hexists(STAGING_RESERVED_KEY, name)
         finally:
             app.lock_manager.unlock(held)
+
+
+def test_a_busy_staging_lock_is_not_a_space_wait(
+    app, sample_mkv, incoming_dir, staging, volume, monkeypatch, caplog
+):
+    """The import tries again soon. The space-wait counter and marker stay (#478)."""
+
+    import logging
+
+    from app import tasks
+
+    monkeypatch.setattr(importing, "reserve_staging", lambda *args: "lock")
+    basename = "Lock Wait (2021) - [DVD].mkv"
+    source = os.path.join(incoming_dir, basename)
+    os.makedirs(incoming_dir, exist_ok=True)
+    with open(sample_mkv, "rb") as f_in, open(source, "wb") as f_out:
+        f_out.write(f_in.read())
+    stamp = time.time() - 3600
+    os.utime(source, (stamp, stamp))
+    try:
+        with app.app_context(), caplog.at_level(logging.INFO):
+            assert importing.localization_task(source) is True
+            waits = [job.id for job in scheduled_jobs(app.import_queue)]
+            assert (
+                tasks.requeue_job_id(
+                    "app.videos.localization_task",
+                    source,
+                    {
+                        "transient_retries": 0,
+                        "completeness_retries": 0,
+                        "space_waits": 0,
+                        "tmdb_retries": 0,
+                    },
+                )
+                in waits
+            )
+            assert not importing.space_wait_pending(app.redis, basename)
+            assert "The staging lock is busy" in caplog.text
+            assert "on staging. The other imports" not in caplog.text
+            assert os.path.exists(source)
+    finally:
+        if os.path.exists(source):
+            os.remove(source)

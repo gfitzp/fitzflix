@@ -54,12 +54,12 @@ from app import s3_layout
 from app import naming
 from app.queues import QUEUE_NAME, roster_queues
 from app.settings import get_setting
+from app.file_ranking import tv_best_holder_ids
 from app.models import (
     ArchivedOriginal,
     File,
     RefQuality,
     ranked_movie_files,
-    ranked_tv_files,
 )
 
 EIGHT_MEGABYTES = 8388608
@@ -537,21 +537,23 @@ def _reconcile_files(listing, job):
 
     movie_rank = ranked_movie_files()
 
-    tv_rank = ranked_tv_files()
+    # A TV file is a best copy when it is the best holder of at least 1
+    # episode number (#479). A single that a better span holds is not.
+    # The sync never pays to restore it.
 
-    files = (
-        db.session.query(
+    tv_best = tv_best_holder_ids()
+
+    files = [
+        (file, 1 if rank == 1 or file.id in tv_best else 0)
+        for file, rank in db.session.query(
             File,
-            db.case(
-                (movie_rank.c.rank == 1, 1), (tv_rank.c.rank == 1, 1), else_=0
-            ).label("rank"),
+            db.case((movie_rank.c.rank == 1, 1), else_=0).label("rank"),
         )
         .join(RefQuality, (RefQuality.id == File.quality_id))
         .outerjoin(movie_rank, (movie_rank.c.id == File.id))
-        .outerjoin(tv_rank, (tv_rank.c.id == File.id))
         .order_by(RefQuality.preference.asc(), File.aws_key.asc())
         .all()
-    )
+    ]
 
     current_app.logger.info(f"Evaluating {len(files)} files for S3 sync")
 

@@ -789,3 +789,68 @@ def test_an_unsent_digest_that_expires_is_an_error(app, monkeypatch, caplog):
         record.levelname == "ERROR" and "was never sent" in record.getMessage()
         for record in caplog.records
     )
+
+
+def test_the_digest_never_links_a_login_gated_custom_poster(app, monkeypatch, tmp_path):
+    """A mail client has no session. /static/custom/ answers it 401 (#468).
+
+    A film with a TMDB poster uses the TMDB rendition. A film with only
+    a custom poster carries it inline, under a Content-ID."""
+
+    import os
+
+    from app.email import build_message
+
+    monkeypatch.setitem(app.config, "CUSTOM_ARTWORK_DIR", str(tmp_path))
+    sent = capture_mail(monkeypatch)
+    set_alert_flags(app, MEMBER_EMAIL, availability=True)
+    try:
+        both = watchlist_movie(
+            app,
+            "Both Posters",
+            9468,
+            tmdb_poster_path="/both.jpg",
+            custom_poster="poster.jpg",
+        )
+        custom_only = watchlist_movie(
+            app, "Custom Only", 9469, custom_poster="poster.png"
+        )
+        for movie_id, name in ((both, "poster.jpg"), (custom_only, "poster.png")):
+            directory = tmp_path / "movie" / str(movie_id) / "w342"
+            os.makedirs(directory)
+            (directory / name).write_bytes(b"poster bytes")
+        subscribe(app, 8, "Netflix", email=MEMBER_EMAIL)
+        for tmdb_id in (9468, 9469):
+            plant_availability(app, tmdb_id, EMPTY)
+        run_task(app, monkeypatch)
+        for tmdb_id in (9468, 9469):
+            plant_availability(app, tmdb_id, {**EMPTY, "flatrate": [NETFLIX]})
+        run_task(app, monkeypatch)
+
+        assert len(sent) == 1
+        html = sent[0]["html_body"]
+        assert app.config["TMDB_IMAGE_URL"] + "/w154/both.jpg" in html
+        assert f"cid:poster-{custom_only}@fitzflix" in html
+        assert "/static/custom/" not in html
+        (attachment,) = sent[0]["attachments"]
+        name, content_type, data, disposition, headers = attachment
+        assert (name, content_type, data, disposition) == (
+            "poster.png",
+            "image/png",
+            b"poster bytes",
+            "inline",
+        )
+        assert headers == {"Content-ID": f"<poster-{custom_only}@fitzflix>"}
+
+        with app.app_context():
+            message = build_message(
+                "Digest",
+                "a@example.test",
+                ["b@example.test"],
+                "text",
+                html,
+                sent[0]["attachments"],
+            ).as_string()
+        assert f"Content-ID: <poster-{custom_only}@fitzflix>" in message
+    finally:
+        reset_alert_users(app)

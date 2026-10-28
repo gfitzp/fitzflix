@@ -1119,3 +1119,31 @@ def test_an_accented_sonarr_folder_gives_the_new_title(app):
                 series, "Les Miserables (2018)", "Les Misérables (2018)"
             )
         assert title == "Les Misérables (2018)"
+
+
+def test_an_adopted_episode_rename_takes_its_thumb(app, sonarr):
+    """Sonarr moved the video. The episode thumb follows (follow-up #469)."""
+
+    from app import db
+    from app.models import File
+    from app.series_rename import reconcile_sonarr_series
+
+    with app.app_context():
+        series_id, file_id = batman(app)
+        old_path = os.path.join(
+            app.config["LIBRARY_DIR"], db.session.get(File, file_id).file_path
+        )
+    old_thumb = os.path.splitext(old_path)[0] + ".jpg"
+    with open(old_thumb, "wb") as handle:
+        handle.write(b"thumb")
+    new = "TV Shows/Batman/Season 01/Batman - S01E01 - Pilot [Bluray-1080p].mkv"
+    new_path = place(app, new)
+    os.remove(old_path)
+    sonarr(sonarr_series("Batman"))
+
+    summary = reconcile_sonarr_series(
+        series_id, [{"previousPath": old_path, "path": new_path}]
+    )
+    assert summary["adopted"] == 1
+    assert not os.path.exists(old_thumb)
+    assert os.path.isfile(os.path.splitext(new_path)[0] + ".jpg")

@@ -59,3 +59,10 @@ def test_a_page_renders_without_the_queue_badge(app, user_client, redis_down):
     response = user_client.get("/library/tv")
     assert response.status_code == 200
     assert 'id="running-tasks"' in response.get_data(as_text=True)
+
+
+def test_the_queue_page_renders_without_rows(app, user_client, redis_down):
+    """The Queue page shows an empty table while Redis is down (#476)."""
+
+    response = user_client.get("/queue")
+    assert response.status_code == 200

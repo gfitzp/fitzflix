@@ -215,6 +215,70 @@ def best_episode_holders(pairs):
     return best
 
 
+def episode_rankings(pairs):
+    """Return {(series id, season, number): [(File, RefQuality), ...]}, best first.
+
+    Each episode number of a span is its own group (#479). The order in
+    a group is TV_BEST_ORDER."""
+
+    groups = {}
+    for file, quality in pairs:
+        for number in episode_numbers(file.episode, file.last_episode):
+            groups.setdefault((file.series_id, file.season, number), []).append(
+                (file, quality)
+            )
+    for members in groups.values():
+        members.sort(key=lambda pair: tv_best_key(*pair))
+    return groups
+
+
+# 1 TV file and its quality tier, as plain values. A row stands for the
+# File and for the RefQuality of a pair. Thus, the rankers read it
+# without the cost of 2 ORM objects for each of the 16,000 TV files.
+
+TVRankRow = namedtuple(
+    "TVRankRow",
+    "id series_id season episode last_episode fullscreen converted_from_quality "
+    "preference physical_media quality_title quality_id",
+)
+
+
+def tv_rank_rows(series_ids=None, season=None):
+    """Return the TVRankRow of each TV file, from 1 column query."""
+
+    query = (
+        db.session.query(
+            File.id,
+            File.series_id,
+            File.season,
+            File.episode,
+            File.last_episode,
+            File.fullscreen,
+            File.converted_from_quality,
+            RefQuality.preference,
+            RefQuality.physical_media,
+            RefQuality.quality_title,
+            RefQuality.id,
+        )
+        .join(RefQuality, RefQuality.id == File.quality_id)
+        .filter(File.series_id.isnot(None))
+    )
+    if series_ids is not None:
+        query = query.filter(File.series_id.in_(list(series_ids)))
+    if season is not None:
+        query = query.filter(File.season == season)
+    return [TVRankRow(*row) for row in query.all()]
+
+
+def tv_best_holder_ids(series_ids=None, season=None):
+    """Return the ids of the TV files that are the best holder of an episode number."""
+
+    rows = tv_rank_rows(series_ids, season)
+    return {
+        file.id for file, _ in best_episode_holders((row, row) for row in rows).values()
+    }
+
+
 SeasonGrade = namedtuple(
     "SeasonGrade", "preference physical_media quality_title quality_id episodes"
 )
@@ -228,20 +292,14 @@ def season_grades(series_ids=None):
     holder. The grade of the season is its worst episode. At the same
     preference, the non-physical tier counts as the worse one. Thus, a
     season that still has an episode worth an upgrade shows it. episodes
-    is the number of episode numbers that the season holds."""
+    is the number of episode numbers that the season holds. The query
+    reads columns only, not ORM objects."""
 
-    query = (
-        db.session.query(File, RefQuality)
-        .join(RefQuality, RefQuality.id == File.quality_id)
-        .filter(File.series_id.isnot(None))
-    )
-    if series_ids is not None:
-        query = query.filter(File.series_id.in_(list(series_ids)))
-
+    rows = tv_rank_rows(series_ids)
     grades = {}
     numbers = {}
     for (series_id, season, number), (_, quality) in best_episode_holders(
-        query.all()
+        (row, row) for row in rows
     ).items():
         key = (series_id, season)
         if number is not None:
@@ -259,7 +317,7 @@ def season_grades(series_ids=None):
                 preference,
                 bool(quality.physical_media),
                 quality.quality_title,
-                quality.id,
+                quality.quality_id,
                 0,
             )
     return {key: grade._replace(episodes=numbers[key]) for key, grade in grades.items()}

@@ -1932,13 +1932,20 @@ def queue():
     """
 
     from app.pipeline import pipeline_trails, queue_rows
+    from app.redis_guard import REDIS_DOWN_ERRORS, warn_redis_down
+
+    # A Redis outage gives an empty table, not a 500 (#476).
 
     details = current_user.get_queue_details()
-    trails = pipeline_trails(current_app.redis, limit=100, journey_only=True)
+    try:
+        trails = pipeline_trails(current_app.redis, limit=100, journey_only=True)
+    except REDIS_DOWN_ERRORS as error:
+        warn_redis_down("The Queue page", error)
+        trails = []
     return render_template(
         "queue.html",
         title="Queue",
-        rows=queue_rows(details["all"], trails),
+        rows=queue_rows(details.get("all", []), trails),
         front_form=QueueFrontForm() if current_user.admin else None,
         dismiss_form=QueueDismissForm() if current_user.admin else None,
     )

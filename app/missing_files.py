@@ -2,7 +2,8 @@
 
 A library file is the best copy of its title when it has rank 1 in the
 quality ranking of the application. The ranking is movie_file_rank()
-for the movies and tv_file_rank() for the TV episodes. Fitzflix
+for the movies. For the TV episodes, it is the best holder of each
+episode number (episode_rankings). Fitzflix
 deletes a local copy when the archive at AWS is complete and the disk
 is full, or when a person deletes it. Thus, a best copy can be absent
 from the library disk. Then the title plays only after a restore from
@@ -33,13 +34,12 @@ from werkzeug.local import LocalProxy
 
 from app import db, get_app
 from app.maintenance import missing_volumes
+from app.file_ranking import episode_rankings, tv_rank_rows
 from app.models import (
     File,
     Movie,
     RefQuality,
-    TVSeries,
     movie_file_rank,
-    tv_file_rank,
 )
 
 # This is the app instance of this process. Fitzflix resolves it lazily.
@@ -54,8 +54,8 @@ def ranked_file_rows():
     """Return (file_id, group_key, rank) for every movie and TV file.
 
     The group key names the title group of the ranking. Two files with
-    the same group key compete for rank 1. The TV group key does not
-    include the edition, the same as tv_file_rank().
+    the same group key compete for rank 1. The TV group key is 1 episode
+    number. It does not include the edition.
     """
 
     movie_rows = (
@@ -71,26 +71,23 @@ def ranked_file_rows():
         .join(RefQuality, RefQuality.id == File.quality_id)
         .all()
     )
-    tv_rows = (
-        db.session.query(
-            File.id,
-            TVSeries.id,
-            File.season,
-            File.episode,
-            tv_file_rank(),
-        )
-        .join(TVSeries, TVSeries.id == File.series_id)
-        .join(RefQuality, RefQuality.id == File.quality_id)
-        .all()
-    )
     rows = [
         (file_id, ("movie", movie_id, feature, plex_title, edition), rank)
         for file_id, movie_id, feature, plex_title, edition, rank in movie_rows
     ]
-    rows.extend(
-        (file_id, ("tv", series_id, season, episode), rank)
-        for file_id, series_id, season, episode, rank in tv_rows
-    )
+
+    # Each episode number of a TV span is its own group (#479). A span
+    # competes with the singles of each episode that it holds. A file
+    # can thus be in more than 1 group.
+
+    tv_rows = tv_rank_rows()
+    for (series_id, season, number), members in episode_rankings(
+        (row, row) for row in tv_rows
+    ).items():
+        rows.extend(
+            (row.id, ("tv", series_id, season, number), rank)
+            for rank, (row, _) in enumerate(members, start=1)
+        )
     return rows
 
 
@@ -182,6 +179,8 @@ def scan_missing_best_files():
                     f"Abandoning the missing-file scan: {reason} during the scan"
                 )
                 return None
+        if best_id in missing:
+            continue
         missing.append(best_id)
         for rank, file_id in members[1:]:
             if is_present(file_id):

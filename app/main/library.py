@@ -2119,21 +2119,31 @@ def _series_restorable(series_id):
 
 
 def _season_files(series_id, season):
-    """Return (File, TVSeries, RefQuality, rank) for each file of a season."""
+    """Return (File, TVSeries, RefQuality, rank) for each file of a season.
 
-    # This subquery gets the ranking of each file of this season.
+    rank is 1 for a file that is the best holder of at least 1 episode
+    number (#479). A span competes with the singles of each episode that
+    it holds. The other files get rank 2 or more, in TV_BEST_ORDER."""
 
-    ranked_files = ranked_tv_files()
-    return (
-        db.session.query(File, TVSeries, RefQuality, ranked_files.c.rank)
+    rows = (
+        db.session.query(File, TVSeries, RefQuality)
         .join(TVSeries, (TVSeries.id == File.series_id))
         .join(RefQuality, (RefQuality.id == File.quality_id))
-        .join(ranked_files, (ranked_files.c.id == File.id))
         .filter(TVSeries.id == series_id)
         .filter(File.season == season)
         .order_by(File.episode.asc(), *TV_BEST_ORDER)
         .all()
     )
+    holders = {
+        file.id
+        for file, _ in best_episode_holders(
+            (file, quality) for file, _, quality in rows
+        ).values()
+    }
+    return [
+        (file, series, quality, 1 if file.id in holders else 2)
+        for file, series, quality in rows
+    ]
 
 
 def _season_restorable(files):

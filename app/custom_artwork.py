@@ -52,6 +52,52 @@ def library_poster_original(file):
     return None
 
 
+# The extensions of an episode thumb, "<video name without extension>.<ext>"
+# beside the episode file (#469).
+
+EPISODE_THUMB_EXTENSIONS = (".jpg", ".jpeg", ".png", ".tbn")
+
+
+def move_episode_thumb(old_video, new_video):
+    """Move the episode thumb of a TV file from its old video path to its new one.
+
+    A rename of the episode must take its thumb. Plex finds the thumb by
+    the name of the video. Return the number of thumbs that moved."""
+
+    old_stem, new_stem = os.path.splitext(old_video)[0], os.path.splitext(new_video)[0]
+    if old_stem == new_stem:
+        return 0
+    moved = 0
+    for ext in EPISODE_THUMB_EXTENSIONS:
+        source = old_stem + ext
+        if not os.path.isfile(source):
+            continue
+        target = new_stem + ext
+        try:
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            os.replace(source, target)
+            moved += 1
+            current_app.logger.info(f"Moved the episode thumb '{source}' to '{target}'")
+        except OSError:
+            current_app.logger.warning(traceback.format_exc())
+    return moved
+
+
+def remove_episode_thumb_of(video):
+    """Delete the episode thumb beside a TV video path, if it exists."""
+
+    stem = os.path.splitext(video)[0]
+    for ext in EPISODE_THUMB_EXTENSIONS:
+        path = stem + ext
+        try:
+            os.remove(path)
+            current_app.logger.info(f"Deleted the episode thumb '{path}'")
+        except FileNotFoundError:
+            continue
+        except OSError:
+            current_app.logger.warning(traceback.format_exc())
+
+
 def remove_custom_artwork(scope, record_id):
     """Remove the custom poster tree of a record now. A missing tree is not an error."""
 

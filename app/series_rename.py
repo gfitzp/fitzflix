@@ -41,6 +41,7 @@ from flask import current_app, g
 from pathvalidate import sanitize_filename
 from werkzeug.local import LocalProxy
 
+from app.custom_artwork import move_episode_thumb
 from app.tasks import delete_job, enqueue_task
 from app.aws_storage import request_archive_move
 from app.pipeline import migrate_renamed_file
@@ -342,6 +343,8 @@ def _move_series(series, new_title):
         elif os.path.isfile(src):
             os.makedirs(os.path.dirname(dst), exist_ok=True)
             _rename_with_retries(src, dst)
+            # The episode thumb goes with its video (#469)
+            move_episode_thumb(src, dst)
             old_dirs.add(os.path.dirname(src))
             moved += 1
         elif os.path.isfile(dst):
@@ -1027,10 +1030,16 @@ def _adopt_episode_paths(series, renamed_files):
             )
             continue
         old_basename = file.basename
+        old_video = os.path.join(current_app.config["LIBRARY_DIR"], file.file_path)
         try:
             for key in ("dirname", "basename", "file_path", "plex_title", "edition"):
                 setattr(file, key, details[key])
             db.session.commit()
+            # Sonarr moved the video. The episode thumb follows (#469).
+            move_episode_thumb(
+                old_video,
+                os.path.join(current_app.config["LIBRARY_DIR"], file.file_path),
+            )
         finally:
             current_app.lock_manager.unlock(lock)
         adopted += 1

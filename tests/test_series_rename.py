@@ -508,3 +508,29 @@ def test_the_episode_locks_last_as_long_as_the_job(app, monkeypatch):
         for lock in locks:
             app.lock_manager.unlock(lock)
     assert taken == [5400 * 1000]
+
+
+def test_a_rename_moves_the_episode_thumb_with_its_file(app):
+    """Plex finds an episode thumb by the video name (follow-up #469)."""
+
+    with app.app_context():
+        series = make_tv_series("Thumbed Show", tmdb_id=4690)
+        file = make_tv_file(series, 1, 1, "DVD", custom_poster="poster.png")
+        db.session.commit()
+        video = _materialize(app, file)
+        thumb = os.path.splitext(video)[0] + ".png"
+        with open(thumb, "wb") as handle:
+            handle.write(b"thumb")
+        series_id, file_id = series.id, file.id
+
+        assert rename_tv_series_task(series_id, "Thumbed Show (2001)") is True
+
+        db.session.expire_all()
+        moved = os.path.join(
+            app.config["LIBRARY_DIR"], db.session.get(File, file_id).file_path
+        )
+        assert not os.path.exists(thumb)
+        with open(os.path.splitext(moved)[0] + ".png", "rb") as handle:
+            assert handle.read() == b"thumb"
+        os.remove(moved)
+        os.remove(os.path.splitext(moved)[0] + ".png")

@@ -43,15 +43,18 @@ available" event when the payload returns.
 """
 
 import json
+import mimetypes
+import os
 
 from collections import defaultdict
 from datetime import date, timedelta
 
-from flask import current_app, render_template, url_for
+from flask import current_app, render_template
 from sqlalchemy.orm import contains_eager
 from werkzeug.local import LocalProxy
 
 from app import db, get_app
+from app.custom_artwork import custom_artwork_dir
 from app.email import task_send_email
 from app.models import File, Movie, User, UserWatchlist
 from app.streaming import (
@@ -352,24 +355,72 @@ def _provider_labels(provider_ids, names):
     )
 
 
+# The Content-ID of an inline custom poster in the digest (#468).
+
+POSTER_CID = "poster-{movie_id}@fitzflix"
+
+
+def _custom_poster_file(movie):
+    """Return the path of the w342 custom poster of a movie, or None."""
+
+    if not movie or not movie.custom_poster:
+        return None
+    path = os.path.join(
+        custom_artwork_dir("movie", movie.id), "w342", movie.custom_poster
+    )
+    return path if os.path.isfile(path) else None
+
+
 def _poster_url(movie):
-    """Return an absolute artwork URL for the digest email.
+    """Return the artwork URL for the digest email, or None.
 
-    The source order is the same as in the tile macro. The custom poster
-    comes first. This site serves it. Thus, it needs the external static
-    URL. If there is no custom poster, use the rendition that TMDB
-    hosts. Return None if there is no artwork. Then the template drops
-    the image cell and does not send a placeholder."""
+    A mail client fetches an image with no session. The custom posters
+    of this site need a signed-in user (#468). Thus, the TMDB rendition
+    comes first. A film with only a custom poster gets a cid: URL. The
+    digest attaches that poster inline. Return None if there is no
+    artwork. Then the template drops the image cell and does not send a
+    placeholder."""
 
-    if movie.custom_poster:
-        return url_for(
-            "static",
-            filename=f"custom/movie/{movie.id}/w342/{movie.custom_poster}",
-            _external=True,
-        )
     if movie.tmdb_poster_path:
         return current_app.config["TMDB_IMAGE_URL"] + "/w154" + movie.tmdb_poster_path
+    if _custom_poster_file(movie):
+        return "cid:" + POSTER_CID.format(movie_id=movie.id)
     return None
+
+
+def _inline_posters(events):
+    """Set the poster of each digest item again, and return the inline attachments.
+
+    An event that waited unsent in Redis can hold an old poster URL.
+    Thus, each item gets the URL of its record now. Each cid: poster
+    becomes 1 inline attachment, in the (filename, content type, data,
+    disposition, headers) form of build_message."""
+
+    attachments = []
+    attached = set()
+    for items in events.values():
+        for item in items:
+            movie = db.session.get(Movie, item["movie_id"])
+            item["poster"] = _poster_url(movie) if movie else None
+            if not (item["poster"] or "").startswith("cid:"):
+                continue
+            if movie.id in attached:
+                continue
+            path = _custom_poster_file(movie)
+            with open(path, "rb") as handle:
+                data = handle.read()
+            content_type = mimetypes.guess_type(path)[0] or "image/jpeg"
+            attachments.append(
+                (
+                    os.path.basename(path),
+                    content_type,
+                    data,
+                    "inline",
+                    {"Content-ID": f"<{POSTER_CID.format(movie_id=movie.id)}>"},
+                )
+            )
+            attached.add(movie.id)
+    return attachments
 
 
 def _send_digest(user, events):
@@ -387,6 +438,7 @@ def _send_digest(user, events):
         )
     else:
         subject = "Fitzflix - Watchlist films leaving the Criterion Channel"
+    attachments = _inline_posters(events)
     task_send_email(
         subject,
         sender=("Fitzflix", current_app.config["SERVER_EMAIL"]),
@@ -397,6 +449,7 @@ def _send_digest(user, events):
         html_body=render_template(
             "email/availability_digest.html", user=user, events=events
         ),
+        attachments=attachments or None,
     )
 
 
