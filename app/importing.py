@@ -2424,6 +2424,14 @@ def finalize_localization(
             current_app.logger.info(f"'{file_path}' processed as '{output_file}'")
         finally:
             _release_title_lock(lock)
+
+            # The import is done. Its staging reservation goes now, not
+            # at the grace sweep of a later reservation (#461).
+
+            try:
+                release_staging_reservation(os.path.basename(file_path))
+            except Exception:
+                current_app.logger.warning(traceback.format_exc())
         return None
 
 
