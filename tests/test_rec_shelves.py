@@ -842,3 +842,25 @@ def test_shelf_kinds_mix_positions_across_draws(app):
             if leaders == {"copref", "criteria"}:
                 break
         assert leaders == {"copref", "criteria"}
+
+
+def test_an_owned_film_with_no_tmdb_data_is_not_in_the_pool(app):
+    """A TMDb-less film has only a decade feature (#537).
+
+    It landed in a decade shelf at a score of 0.0. The engine filters it
+    since #414. The shelves filter it too."""
+
+    from tests.factories import make_movie_file
+
+    with app.app_context():
+        user = admin_user(app)
+        owned = make_candidate("Pool With Data", 2012)
+        bare = make_movie("Pool Without Data", 2013)
+        make_movie_file(bare, "Bluray-1080p")
+        db.session.commit()
+
+        from app.rec_shelves import eligible_films
+
+        pool = set(eligible_films(user))
+        assert owned.id in pool
+        assert bare.id not in pool

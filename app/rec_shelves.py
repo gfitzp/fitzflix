@@ -52,6 +52,7 @@ from app.models import (
 from app.recommendations import (
     CREW_ROLE_JOBS,
     TOP_BILLING_CUTOFF,
+    _with_tmdb_data,
     collect_features,
     copref_anchor_sims,
     local_candidates,
@@ -312,8 +313,9 @@ def _watchlisted_ids(user_id):
 def eligible_films(user):
     """Return the movie ids that a shelf can suggest.
 
-    These are the local full-feature films that the user did not log,
-    dismiss, or put on the watchlist. They also include the films with
+    These are the local full-feature films with TMDB data that the user
+    did not log, dismiss, or put on the watchlist. They also include the
+    films with
     records that stream now on one of the services of the user. The
     answer comes only from the availability cache. Thus, if Fitzflix
     did not fetch the availability of a film yet, it does not suggest
@@ -321,9 +323,12 @@ def eligible_films(user):
 
     user_id = int(user.id)
     watchlisted = _watchlisted_ids(user_id)
+    # A film with no TMDB data carries only a decade feature. It landed
+    # in a decade shelf at a score of 0.0 (#537). The engine filters it
+    # since #414. The shelves filter it here.
     pool = [
         movie_id
-        for movie_id in local_candidates(user_id)
+        for movie_id in _with_tmdb_data(local_candidates(user_id))
         if movie_id not in watchlisted
     ]
 

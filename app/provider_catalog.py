@@ -191,21 +191,40 @@ def _process_pending(subscribed):
     The number of records is capped. This function returns the number
     of records created."""
 
-    # The TMDB record code stays in app.videos. The import is lazy. Thus,
-    # the module import direction stays one-way
-
-    from app.videos import find_or_create_tmdb_movie
-
     redis = current_app.redis
     popped = redis.spop(PENDING_KEY, PROCESS_CAP)
     ids = sorted(int(member) for member in popped or [])
     if not ids:
         return 0
 
+    # A raise after the pop lost the whole batch (#537): the seen set
+    # holds each id. Thus, every popped id goes back. An id that this
+    # run decided is decided again on the next run. A committed record
+    # is "existing" then.
+
+    try:
+        return _process_popped(ids, subscribed)
+    except Exception:
+        db.session.rollback()
+        redis.sadd(PENDING_KEY, *ids)
+        raise
+
+
+def _process_popped(ids, subscribed):
+    """Verify and score the popped ids of 1 batch. Return the records created."""
+
+    # The TMDB record code stays in app.videos. The import is lazy. Thus,
+    # the module import direction stays one-way
+
+    from app.videos import find_or_create_tmdb_movie
+
+    redis = current_app.redis
+
     # The seen set already holds each popped id. Thus, an id that drops
     # here is never discovered again. Only a verified answer drops an
-    # id. An unknown answer (a TMDB failure, no profile yet) puts the id
-    # back for the next run (#304).
+    # id. An unknown answer (a TMDB failure, no profile yet, no
+    # calibration curve yet) puts the id back for the next run (#304,
+    # #537).
 
     def retry(tmdb_ids):
         """Put ids back in the pending set."""
@@ -286,7 +305,12 @@ def _process_pending(subscribed):
             estimate = estimated_rating(profile, score)
             if estimate is not None and (best is None or estimate > best):
                 best = estimate
-        if best is None or best < MIN_ESTIMATE:
+        if best is None:
+            # No profile has a calibration curve or a score yet. That is
+            # not a verdict on the film (#537).
+            retry([tmdb_id])
+            continue
+        if best < MIN_ESTIMATE:
             continue
         movie, was_created = find_or_create_tmdb_movie(
             tmdb_id, payload["title"], int(payload["year"])

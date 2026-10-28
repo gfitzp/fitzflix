@@ -276,3 +276,51 @@ def test_an_unknown_answer_keeps_the_id_pending(app, monkeypatch):
     with app.app_context():
         assert pc._process_pending({258}) == 0
     assert sorted(int(m) for m in app.redis.smembers(pc.PENDING_KEY)) == [302]
+
+
+def _streaming_batch(app, monkeypatch, ids):
+    """Make each id stream on the subscribed service with a Western payload."""
+
+    import app.provider_catalog as pc
+
+    subscribe_criterion(app)
+    scorer_that_likes_westerns(monkeypatch)
+    streams = {"link": None, "flatrate": [CRITERION], "ads": [], "rent": [], "buy": []}
+    monkeypatch.setattr(
+        pc, "batch_title_availability", lambda batch: ({i: streams for i in batch}, [])
+    )
+    payloads = {i: shelf_item(i, f"Catalog Western {i}") for i in ids}
+    monkeypatch.setattr(pc, "enriched_movie", lambda tmdb_id: payloads.get(tmdb_id))
+    app.redis.sadd(pc.PENDING_KEY, *ids)
+
+
+def test_a_film_with_no_calibrated_estimate_stays_pending(app, monkeypatch):
+    """No calibration curve is no verdict. The id waits (#537)."""
+
+    import app.provider_catalog as pc
+
+    _streaming_batch(app, monkeypatch, [401])
+    monkeypatch.setattr(pc, "estimated_rating", lambda profile, score: None)
+    with app.app_context():
+        assert pc._process_pending({258}) == 0
+    assert [int(m) for m in app.redis.smembers(pc.PENDING_KEY)] == [401]
+
+
+def test_a_raise_after_the_pop_puts_the_batch_back(app, monkeypatch):
+    """A fault in the batch loses no popped id (#537)."""
+
+    import pytest
+
+    import app.provider_catalog as pc
+    import app.videos as videos
+
+    _streaming_batch(app, monkeypatch, [501, 502])
+
+    def fault(*args, **kwargs):
+        raise RuntimeError("Lock wait timeout exceeded")
+
+    monkeypatch.setattr(videos, "find_or_create_tmdb_movie", fault)
+    with app.app_context():
+        with pytest.raises(RuntimeError):
+            pc._process_pending({258})
+    assert sorted(int(m) for m in app.redis.smembers(pc.PENDING_KEY)) == [501, 502]
