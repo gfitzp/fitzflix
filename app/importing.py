@@ -899,6 +899,7 @@ def localization_task(
             run.lock = _take_title_lock(file_details, run)
             if not run.lock:
                 return False
+            _note_title_lock(run.job, run.lock)
 
             verdict = _quality_and_space_gate(file_path, file_details, conversion, run)
             if verdict != "ok":
@@ -1125,6 +1126,23 @@ def _take_title_lock(file_details, run):
         description=f"'{run.basename}'",
         kwargs={"file_path": run.source_path, **run.counters},
     )
+
+
+def _note_title_lock(job, lock):
+    """Keep the title lock in the meta of the job, best effort (#498).
+
+    A worker that dies takes the token of the lock with it. The worker
+    that reclaims the dead job reads the lock here and releases it."""
+
+    from app.worker_recovery import TITLE_LOCK_META
+
+    if job is None:
+        return
+    try:
+        job.meta[TITLE_LOCK_META] = [lock.resource, lock.key]
+        job.save_meta()
+    except Exception:
+        current_app.logger.warning(traceback.format_exc())
 
 
 def _quality_and_space_gate(file_path, file_details, conversion, run):
