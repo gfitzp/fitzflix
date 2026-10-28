@@ -818,6 +818,28 @@ def library_language_choices():
     return tuple(tuple(pair) for pair in choices)
 
 
+def file_language_choices(stored_codes):
+    """Return the File page choices, with the languages of the file itself (#545).
+
+    The cached choices can predate a language that is new to the
+    library. Then the dropdown of such a track selected nothing, and the
+    browser posted the first option (Abkhazian) as a change. Thus, each
+    resolved code of the file joins the choices."""
+
+    choices = list(library_language_choices())
+    offered = {code for code, _ in choices}
+    names = _code_names() or dict(iso_639_2_languages())
+    missing = {
+        code
+        for code in (resolve_language_code(value) for value in stored_codes)
+        if code and code not in offered
+    }
+    if not missing:
+        return tuple(choices)
+    choices += [(code, names.get(code, code)) for code in missing]
+    return tuple(sorted(choices, key=lambda language: language[1].lower()))
+
+
 def _stored_language_choices():
     """Return the (code, name) choices of the library, for cached_fetch."""
 

@@ -618,3 +618,33 @@ def test_a_code_wins_over_the_name_of_a_different_language(app):
         assert resolve_language_code("Lou") == "lou"
         assert resolve_language_code("eng") == "eng"
         assert resolve_language_code("fra") == "fre"
+
+
+def test_a_language_new_to_the_cached_choices_stays_selected(app, admin_client):
+    """The choices cache predates the first Cantonese track (#545).
+
+    The dropdown must still select Cantonese. Else the browser posts the
+    first option, Abkhazian, as a change."""
+
+    import json
+
+    from app.tracks import LANGUAGE_CHOICES_KEY
+
+    app.redis.set(
+        LANGUAGE_CHOICES_KEY,
+        json.dumps([["abk", "Abkhazian"], ["eng", "English"], ["und", "Undetermined"]]),
+        ex=600,
+    )
+    try:
+        _, library_path, page = _matroska_file_page(
+            app, admin_client, subtitles=False, language="yue"
+        )
+        try:
+            select = page.split('name="language_a1"')[1].split("</select>")[0]
+            assert select.count(" selected") == 1
+            assert '<option value="yue" selected>' in select
+            assert '<option value="abk">Abkhazian</option>' in select
+        finally:
+            os.remove(library_path)
+    finally:
+        app.redis.delete(LANGUAGE_CHOICES_KEY)

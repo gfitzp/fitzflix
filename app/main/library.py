@@ -149,7 +149,7 @@ from app.videos import (
     criterion_release_lookups,
     language_names,
     stored_criterion_releases,
-    library_language_choices,
+    file_language_choices,
     resolve_language_code,
     track_metadata_scan,
     untouched_key_still_claimed,
@@ -2825,12 +2825,17 @@ def file(file_id):
         # The dropdowns offer the own languages of the collection.
         # language_names covers the stored spellings too. Thus, a track
         # recorded as "deu" still reads as German.
+        # The dropdowns compare by the resolved code. The own languages
+        # of the file are always choices (#545).
         languages=(
-            library_language_choices()
+            file_language_choices(
+                [track.language for track in list(audio_tracks) + list(subtitle_tracks)]
+            )
             if file.container == "Matroska" and (audio_tracks or subtitle_tracks)
             else ()
         ),
         language_names=language_names(),
+        language_code=resolve_language_code,
         mkvmerge_form=mkvmerge_form,
         upload_form=upload_form,
         download_form=download_form,

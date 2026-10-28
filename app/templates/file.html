@@ -84,9 +84,9 @@
 				<td>
 					{% if languages %}
 					<select class="form-select form-select-sm" style="min-width: 11rem" form="mkvpropedit-form" id="language_a{{ audio.track }}" name="language_a{{ audio.track }}" aria-label="Language of audio track {{ audio.track }}"{% if not file_exists_locally %} disabled{% endif %}>
-						{% set current = language_names.get(audio.language) %}
+						{% set current = language_code(audio.language) %}
 						{% if not current %}<option value="{{ audio.language }}" selected>{{ audio.language }}</option>{% endif %}
-						{% for code, name in languages %}<option value="{{ code }}"{% if name == current %} selected{% endif %}>{{ name }}</option>{% endfor %}
+						{% for code, name in languages %}<option value="{{ code }}"{% if code == current %} selected{% endif %}>{{ name }}</option>{% endfor %}
 					</select>
 					{% else %}{{ language_names.get(audio.language, audio.language) }}{% endif %}
 				</td>
@@ -123,9 +123,9 @@
 				<td>
 					{% if languages %}
 					<select class="form-select form-select-sm" style="min-width: 11rem" form="mkvpropedit-form" id="language_s{{ subtitle.track }}" name="language_s{{ subtitle.track }}" aria-label="Language of subtitle track {{ subtitle.track }}"{% if not file_exists_locally %} disabled{% endif %}>
-						{% set current = language_names.get(subtitle.language) %}
+						{% set current = language_code(subtitle.language) %}
 						{% if not current %}<option value="{{ subtitle.language }}" selected>{{ subtitle.language }}</option>{% endif %}
-						{% for code, name in languages %}<option value="{{ code }}"{% if name == current %} selected{% endif %}>{{ name }}</option>{% endfor %}
+						{% for code, name in languages %}<option value="{{ code }}"{% if code == current %} selected{% endif %}>{{ name }}</option>{% endfor %}
 					</select>
 					{% else %}{{ language_names.get(subtitle.language, subtitle.language) }}{% endif %}
 				</td>
