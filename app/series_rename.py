@@ -41,7 +41,7 @@ from flask import current_app, g
 from pathvalidate import sanitize_filename
 from werkzeug.local import LocalProxy
 
-from app.tasks import enqueue_task
+from app.tasks import delete_job, enqueue_task
 from app.aws_storage import request_archive_move
 from app.pipeline import migrate_renamed_file
 from app import db, get_app, safe_job_id
@@ -793,7 +793,7 @@ def _enqueue_once(name, job_id, *args, description, also=(), timeout=None):
     if old is not None and old.is_failed:
         job_id = f"{job_id}_{int(time.time())}"
     elif old is not None:
-        old.delete()
+        delete_job(old)
     return enqueue_task(
         name, *args, description=description, job_id=job_id, timeout=timeout
     )

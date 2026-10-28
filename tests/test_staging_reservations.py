@@ -223,3 +223,18 @@ def test_the_extras_of_2_films_get_their_own_staged_output():
         first == "/staging/.First Film (2001) - Trailer - Trailer [DVD].localized.mkv"
     )
     assert second.endswith(".localized.mkv")
+
+
+def test_no_reservation_without_the_lock(app, staging, volume, monkeypatch):
+    """A held lock makes the import wait. It does not reserve unlocked (#478)."""
+
+    monkeypatch.setattr(importing.time, "sleep", lambda seconds: None)
+    with app.app_context():
+        held = app.lock_manager.lock(importing.STAGING_RESERVE_LOCK, 30000)
+        assert held
+        try:
+            name = "Locked (2020) - [Bluray-2160p].mkv"
+            assert reserve_staging(name, 10 * GB, [name], staging) == "wait"
+            assert not app.redis.hexists(STAGING_RESERVED_KEY, name)
+        finally:
+            app.lock_manager.unlock(held)

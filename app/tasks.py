@@ -357,6 +357,9 @@ def _submit(
         options["meta"] = meta
     if result_ttl is not None:
         options["result_ttl"] = result_ttl
+    # rq keeps the result stream of a failure with no expiry unless the
+    # job has a failure_ttl (#478)
+    options["failure_ttl"] = FAILURE_TTL
     if at_front:
         options["at_front"] = True
     if delay is None:
@@ -364,6 +367,24 @@ def _submit(
     if not isinstance(delay, timedelta):
         delay = timedelta(seconds=delay)
     return target.enqueue_in(delay, name, **options)
+
+
+# A failed job and its result stream expire after 30 days (#478). Without
+# a failure_ttl, rq 2 keeps the stream of each failure forever.
+
+FAILURE_TTL = 30 * 86400
+
+
+def delete_job(job):
+    """Delete an rq job together with its result stream (#478).
+
+    Job.delete removes the job hash, but not the rq:results stream of
+    the job. A stream with no job grows the database forever."""
+
+    from rq.results import Result
+
+    Result.delete_all(job)
+    job.delete()
 
 
 # The states of a job that still waits or runs.
@@ -456,7 +477,7 @@ def free_job_id(name, job_id):
         return True
     if old.get_status(refresh=False) in LIVE_JOB_STATES:
         return False
-    old.delete()
+    delete_job(old)
     return True
 
 

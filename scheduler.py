@@ -30,6 +30,7 @@ from rq.utils import now
 
 from app import cron_table, get_app, next_cron_time
 from app.queues import QUEUE_NAMES
+from app.tasks import FAILURE_TTL
 
 
 class LocalTimeCronJob(CronJob):
@@ -129,6 +130,8 @@ for entry in cron_table(app.config):
             "func": entry["func"],
         },
         result_ttl=86400,
+        # A failure and its result stream expire (#478)
+        failure_ttl=FAILURE_TTL,
     )
     # Change the class for local-time evaluation. Then compute the first
     # next-run time again, because the constructor derived it in UTC.

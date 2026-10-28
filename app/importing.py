@@ -46,7 +46,13 @@ from unidecode import unidecode
 from flask import current_app, render_template
 from werkzeug.local import LocalProxy
 
-from app.tasks import enqueue_task, report_progress, requeue, requeue_job_id
+from app.tasks import (
+    delete_job,
+    enqueue_task,
+    report_progress,
+    requeue,
+    requeue_job_id,
+)
 from app import (
     db,
     get_app,
@@ -365,7 +371,7 @@ def enqueue_localization(path, at_front=False, quiet=False):
     elif old.is_failed:
         job_id = f"{job_id}_{int(time.time())}"
     else:
-        old.delete()
+        delete_job(old)
     return enqueue_task(
         "app.videos.localization_task",
         path,
@@ -629,6 +635,16 @@ def reserve_staging(basename, needed_bytes, names, staging_dir):
         if lock:
             break
         time.sleep(0.5)
+
+    # Without the lock, the check and the reservation are not 1 step.
+    # Then 2 imports can take the same space (#478). The import waits.
+
+    if not lock:
+        current_app.logger.warning(
+            f"'{basename}' Cannot get the staging reservation lock. "
+            f"The import waits"
+        )
+        return "wait"
     try:
         total, free = _staging_usage(staging_dir)
         available = (
@@ -639,8 +655,7 @@ def reserve_staging(basename, needed_bytes, names, staging_dir):
         set_staging_reservation(basename, needed_bytes, names)
         return "ok"
     finally:
-        if lock:
-            current_app.lock_manager.unlock(lock)
+        current_app.lock_manager.unlock(lock)
 
 
 def _gigabytes(size):

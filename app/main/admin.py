@@ -126,6 +126,7 @@ from app.videos import (
 from rq.cron import CronScheduler
 from rq.exceptions import NoSuchJobError
 from rq.job import Job
+from rq.results import Result
 from rq.registry import FailedJobRegistry
 
 # The scheduled tasks that the Run now button of the System page does
@@ -165,6 +166,8 @@ def system():
             else:
                 try:
                     job = Job.fetch(job_id, connection=current_app.redis)
+                    # The result stream goes with the job (#478)
+                    Result.delete_all(job)
                     registry.remove(job, delete_job=True)
                 except NoSuchJobError:
                     registry.connection.zrem(registry.key, job_id)
