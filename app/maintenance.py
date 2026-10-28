@@ -1,5 +1,6 @@
 """Run the tasks that maintain the application itself, not the video library."""
 
+import errno
 import glob
 import gzip
 import json
@@ -1602,6 +1603,12 @@ def _probe_http(url, **kwargs):
     r.raise_for_status()
 
 
+# The handle sweep asks the watchdog of a share again after an open
+# failure. This is the shortest time between 2 such questions (#488).
+
+SHARE_RECHECK_SECONDS = 5
+
+
 def smb_handle_sweep():
     """Ask every library file if the NAS still holds its handle.
 
@@ -1648,6 +1655,7 @@ def smb_handle_sweep():
         # queue for the hour.
 
         share_alive = {}
+        share_checked = {}
 
         for i, file in enumerate(files):
             if job and i % 500 == 0:
@@ -1668,6 +1676,24 @@ def smb_handle_sweep():
                 continue
 
             result = probe_path(path)
+
+            # The share can drop during the sweep (#488). Then each later
+            # open fails with ENXIO or EIO. An open failure that is not
+            # ENOENT asks the watchdog again, at most 1 time in
+            # SHARE_RECHECK_SECONDS for each share.
+
+            if (
+                result["stage"] == "open"
+                and result["errno"] != errno.ENOENT
+                and time.monotonic() - share_checked.get(share, 0)
+                >= SHARE_RECHECK_SECONDS
+            ):
+                share_checked[share] = time.monotonic()
+                if not share_responsive(path):
+                    share_alive[share] = False
+                    offline_shares.add(share)
+                    continue
+
             record_result(result, context="nightly sweep")
 
             if lost_handle(result):

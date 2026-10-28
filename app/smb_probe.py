@@ -258,7 +258,8 @@ def record_result(result, context=None):
 
     A clean probe of a file that has no record stays unrecorded. Healthy
     files are the large majority and are not news. A file that is not on
-    the volume at all also gets no record.
+    the volume at all also gets no record. A failure that is not the
+    lost-handle state gets no record (#488).
 
     Return the entry that this function wrote, or None if it wrote
     nothing.
@@ -292,6 +293,15 @@ def record_result(result, context=None):
         current_app.redis.hset(STATE_KEY, path, json.dumps(entry))
         _append_history(path, entry)
         return entry
+
+    # Only the lost-handle state is a handle failure (#488). An open
+    # failure (ENXIO in the dead window of an NFS mount, EPERM from a
+    # TCC deny, EIO) is about the share. Thousands of such records after
+    # a drop in the sweep would push the real episodes out of the
+    # history at the recheck.
+
+    if not lost_handle(result):
+        return None
 
     # A file that broke again after a recovery is a new episode. Thus,
     # it starts a new clock. It does not inherit the old one.

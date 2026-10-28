@@ -1113,3 +1113,43 @@ def test_a_second_registration_does_not_repeat_the_options(app):
         "everything",
     ]
     assert not hasattr(smb_cli.probe_files, "__click_params__")
+
+
+def test_an_open_failure_is_not_a_handle_record(app):
+    """Only the lost-handle state gets a record (#488)."""
+
+    from app.smb_probe import record_result, recorded_state
+
+    with app.app_context():
+        for err in (errno.ENXIO, errno.EPERM, errno.EIO):
+            path = f"/library/open-{err}.mkv"
+            assert record_result(failure(path, stage="open", err=err)) is None
+        assert record_result(failure("/library/close-eio.mkv", err=errno.EIO)) is None
+        assert recorded_state() == {}
+
+
+def test_a_share_that_drops_mid_sweep_goes_offline_for_the_rest(app, monkeypatch):
+    """The first ENXIO asks the watchdog again. Later files are not opened (#488)."""
+
+    from app import db, smb_probe
+    from app.maintenance import smb_handle_sweep
+    from tests.factories import make_movie, make_movie_file
+
+    with app.app_context():
+        for n in range(4):
+            make_movie_file(make_movie(f"Dropped {n}", 2021), "Bluray-1080p")
+        db.session.commit()
+
+        answers = iter([True, False])
+        monkeypatch.setattr(smb_probe, "share_responsive", lambda path: next(answers))
+        opened = []
+
+        def dropped(path):
+            opened.append(path)
+            return failure(path, stage="open", err=errno.ENXIO)
+
+        monkeypatch.setattr(smb_probe, "probe_path", dropped)
+
+        assert smb_handle_sweep() is True
+        assert len(opened) == 1
+        assert smb_probe.recorded_state() == {}
