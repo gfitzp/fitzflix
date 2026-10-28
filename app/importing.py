@@ -66,6 +66,7 @@ from app import (
 from app.aws_storage import (
     clear_archive_target,
     discard_pending_archive,
+    ensure_pending_upload,
     is_pending_archive,
     pending_archive_key,
     pending_archive_of,
@@ -3067,7 +3068,8 @@ def _after_commit(
     # claims that key first. Thus, the delete of a replaced archive with
     # the same key below skips it.
 
-    step("archive key", _request_final_archive_key, file)
+    source = file_path if file_path != output_file else None
+    source_can_go = step("archive key", _request_final_archive_key, file, source)
 
     for worse_key in worse_aws_keys:
         step("archive delete", _delete_replaced_archive, worse_key)
@@ -3075,7 +3077,13 @@ def _after_commit(
     # Remove the imported file, unless the localized file replaced it.
     # Fitzflix must not remove the file that it just made.
 
-    if file_path != output_file:
+    # The archive move runs later. If the pending upload is gone and the
+    # new upload failed, the source is the only copy of the rip (#494).
+    # Then it goes to rejects/unarchived, out of the import sweep.
+
+    if file_path != output_file and source_can_go is False:
+        step("source hold", move_to_rejects, file_path, "unarchived")
+    elif file_path != output_file:
         step("source removal", _remove_source, file_path)
 
     step("radarr", _report_film_move, file, file_path, output_directory)
@@ -3201,16 +3209,25 @@ def _atmos_handoff(staged_output, output_file):
     return staged_handoff(staged_output, output_file)
 
 
-def _request_final_archive_key(file):
+def _request_final_archive_key(file, source_path=None):
     """Request the archive move of a run-scoped upload to its final key (#430).
 
     The records are committed. Thus, a replaced record no longer claims
     the key, and the move can take it. A record that still claims the
-    key keeps it. Then the move gives this file the key with its id."""
+    key keeps it. Then the move gives this file the key with its id.
 
-    if file.aws_key and is_pending_archive(file.aws_key):
-        request_archive_move(file)
-        db.session.commit()
+    Return False if the source must stay (#494). The move runs later,
+    and the source is removed now. Thus, the pending object must exist
+    first. A missing object gets a new upload of the source."""
+
+    if not (file.aws_key and is_pending_archive(file.aws_key)):
+        return True
+    source_can_go = True
+    if source_path is not None:
+        source_can_go = ensure_pending_upload(file, source_path)
+    request_archive_move(file)
+    db.session.commit()
+    return source_can_go
 
 
 def _delete_replaced_archive(worse_key):

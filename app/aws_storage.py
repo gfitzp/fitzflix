@@ -3490,6 +3490,47 @@ def upload_untouched(file_path, other_key):
     )
 
 
+def ensure_pending_upload(file, source_path):
+    """Make sure that the run-scoped upload of an import exists (#494).
+
+    Return True if the source can go. The object can be gone after a
+    long wait (the 60-day expiry, or a prune). Then the source goes up
+    again to the same key. Return False if the head fails, or if the
+    upload fails. Then the source is the only copy of the rip."""
+
+    key = file.aws_key
+    try:
+        if _head_or_none(aws_s3_client(with_retries=True), key) is not None:
+            return True
+    except Exception as e:
+        current_app.logger.warning(
+            f"'{key}' Cannot read the head of the pending upload ({e}). "
+            f"Keeping the source"
+        )
+        return False
+    current_app.logger.warning(
+        f"'{key}' The pending upload is gone. Uploading '{source_path}' again"
+    )
+    try:
+        (
+            file.aws_key,
+            file.aws_date_uploaded,
+            file.aws_filesize_bytes,
+        ) = aws_upload(
+            source_path,
+            os.path.dirname(key),
+            key_name=os.path.basename(key),
+            force_upload=True,
+        )
+    except Exception as e:
+        current_app.logger.error(
+            f"'{key}' The pending upload is gone, and the new upload of "
+            f"'{source_path}' failed ({e}). Keeping the source"
+        )
+        return False
+    return True
+
+
 def pending_archive_of(file_details):
     """Return the run-scoped upload key of an import, or None (#430)."""
 

@@ -242,3 +242,68 @@ def test_the_pending_uploads_live_outside_untouched(app, monkeypatch):
         )
         aws_storage._list_archives()
         assert "pending-untouched/" in listed
+
+
+def _drop_pending_before_the_follow_up(monkeypatch, fake):
+    """Delete the run-scoped upload just before the archive key step."""
+
+    from app import importing
+
+    real = importing._request_final_archive_key
+
+    def dropped(file, source_path=None):
+        fake.objects.pop(file.aws_key, None)
+        return real(file, source_path)
+
+    monkeypatch.setattr(importing, "_request_final_archive_key", dropped)
+
+
+def test_a_missing_pending_upload_goes_up_again_before_the_source_goes(
+    app, sample_mkv, incoming_dir, monkeypatch
+):
+    """The pending object expired. The source uploads again first (#494)."""
+
+    from app import db
+    from app.models import File
+    from tests.localization_helpers import run_full_chain
+
+    fake, row_id = _claimed_rip(app, monkeypatch)
+    source = _incoming(sample_mkv, incoming_dir)
+    _drop_pending_before_the_follow_up(monkeypatch, fake)
+
+    with app.app_context():
+        run_full_chain(app, source)
+
+        row = db.session.get(File, row_id)
+        pending = _pending_keys(fake)
+        assert len(pending) == 2 and pending[0] == pending[1]
+        assert row.aws_key == pending[0]
+        assert pending[0] in fake.objects
+        assert not os.path.exists(source)
+
+
+def test_a_failed_new_upload_keeps_the_source_in_rejects(
+    app, sample_mkv, incoming_dir, monkeypatch
+):
+    """The pending object is gone and the new upload fails. The rip stays."""
+
+    from tests.localization_helpers import run_full_chain
+
+    fake, _ = _claimed_rip(app, monkeypatch)
+    source = _incoming(sample_mkv, incoming_dir)
+    _drop_pending_before_the_follow_up(monkeypatch, fake)
+    real_upload = fake.upload_file
+
+    def upload_once(Filename, Bucket, Key, **kwargs):
+        if _pending_keys(fake):
+            raise OSError("network down")
+        return real_upload(Filename, Bucket, Key, **kwargs)
+
+    monkeypatch.setattr(fake, "upload_file", upload_once)
+
+    with app.app_context():
+        run_full_chain(app, source)
+
+        kept = os.path.join(app.config["REJECTS_DIR"], "unarchived", BASENAME)
+        assert not os.path.exists(source)
+        assert os.path.exists(kept)
