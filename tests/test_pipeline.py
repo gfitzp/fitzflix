@@ -1912,3 +1912,20 @@ def test_a_requeue_after_a_failure_keeps_the_journey(app):
     assert not any(e.get("journey") for e in new_trail[1:])
     assert first_run == "2026-10-24 09:00:00"
     assert first_enqueued == "2026-10-24 08:00:00"
+
+
+def test_a_rename_back_with_an_expired_trail_leaves_no_alias_cycle(app):
+    """A to B, then B back to A with no trail under B, ends at A (#550).
+
+    The empty-trail branch kept the alias A to B. The new alias B to A
+    made a 2-cycle. Then later stamps under A or B went to 2 cards."""
+
+    from app.pipeline import _resolve_basename, migrate_trail
+
+    first = "Cycle (1999) - [DVD].mkv"
+    second = "Cycle Renamed (1999) - [DVD].mkv"
+    migrate_trail(app.redis, first, second)
+    assert _resolve_basename(app.redis, first) == second
+    migrate_trail(app.redis, second, first)
+    assert _resolve_basename(app.redis, first) == first
+    assert _resolve_basename(app.redis, second) == first

@@ -11,6 +11,18 @@ import click
 from app.tasks import enqueue_task
 
 
+def _has_subtitle_aids(snapshot_dir):
+    """Return True if the triage directory of a file holds subtitle aids (#550).
+
+    The lossy-audio comparison is the "audio" child of the same
+    directory. A file with only that child has no subtitle aids yet."""
+
+    try:
+        return any(name != "audio" for name in os.listdir(snapshot_dir))
+    except FileNotFoundError:
+        return False
+
+
 def register_cli(app):
     """Attach the `flask triage` group to the Flask app."""
 
@@ -32,7 +44,7 @@ def register_cli(app):
         queued = 0
         for entry in forced_subtitle_candidates():
             file = entry["file"]
-            if os.path.isdir(triage_snapshot_dir(file.id)):
+            if _has_subtitle_aids(triage_snapshot_dir(file.id)):
                 continue
             if not os.path.isfile(
                 os.path.join(app.config["LIBRARY_DIR"], file.file_path)

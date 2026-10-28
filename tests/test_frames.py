@@ -2593,3 +2593,56 @@ def test_an_expired_token_post_resumes_the_open_round(app, admin_client):
     with app.app_context():
         score = UserFrameScore.query.filter_by(difficulty="difficult").one()
         assert score.rounds_seen == seen
+
+
+def test_the_floor_spares_are_rated_films_of_the_reviewer(app, monkeypatch, admin_id):
+    """The floor top-up draws only on the rated films of the reviewer (#550).
+
+    The rotation retires an unrated film and a rated one. The floor
+    needs the rated one back. The spare draw took any retired film."""
+
+    import app.frames as frames
+    from app import db
+    from app.models import UserMovieReview
+    from app.videos import star_rating_fields
+
+    monkeypatch.setitem(app.config, "FRAME_POOL_SIZE", 3)
+    monkeypatch.setitem(app.config, "FRAME_POOL_ROTATE", 2)
+    monkeypatch.setitem(app.config, "FRAME_POOL_MIN_RATED", 2)
+    # The order of the retired list decides. Keep it.
+    monkeypatch.setattr(frames.random, "shuffle", lambda items: None)
+
+    with app.app_context():
+        rated_ids = []
+        for n in range(2):
+            movie = make_movie(f"Floor Rated {n}", 1950 + n)
+            make_movie_file(movie, "Bluray-1080p")
+            db.session.add(
+                UserMovieReview(
+                    user_id=admin_id, movie_id=movie.id, **star_rating_fields(4.0)
+                )
+            )
+            rated_ids.append(movie.id)
+        unrated = make_movie("Floor Unrated", 1970)
+        make_movie_file(unrated, "Bluray-1080p")
+        fresh = make_movie("Floor Fresh", 1971)
+        make_movie_file(fresh, "Bluray-1080p")
+        db.session.commit()
+        unrated_id = unrated.id
+
+    seed_frame(app, unrated_id, extracted_at=100)
+    seed_frame(app, rated_ids[0], extracted_at=200)
+    seed_frame(app, rated_ids[1], extracted_at=300)
+
+    with app.app_context():
+        frames.refresh_frame_pool_task()
+        jobs = [
+            app.transcode_queue.fetch_job(job_id)
+            for job_id in app.transcode_queue.get_job_ids()
+        ]
+        queued = {
+            job.args[0] for job in jobs if "extract_frame_task" in (job.func_name or "")
+        }
+        pooled = {entry["movie_id"] for entry in frames.pool_entries().values()}
+    assert set(rated_ids) <= pooled | queued
+    assert unrated_id not in queued

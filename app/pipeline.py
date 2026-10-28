@@ -669,6 +669,10 @@ def migrate_trail(connection, old_basename, new_basename):
                 if not old_trail and old_first is None:
                     pipe.multi()
                     pipe.set(alias_key, new_basename, ex=TRAIL_TTL_SECONDS)
+                    # A rename back to an earlier name left a 2-cycle of
+                    # aliases (#550). _resolve_basename then returned its
+                    # start, and later stamps split the file into 2 cards.
+                    pipe.delete(ALIAS_KEY.format(digest=new_digest))
                     pipe.execute()
                     return
 

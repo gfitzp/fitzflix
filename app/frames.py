@@ -352,7 +352,14 @@ def refresh_frame_pool_task():
                 # can run out of unpooled films. The floor outranks the
                 # retirement. The film comes back, on a new frame.
 
-                spare = [movie_id for movie_id in retired if movie_id not in chosen]
+                # Only the rated films of this reviewer fill the floor
+                # (#550). Else the slots went to films that the reviewer
+                # never rated, and the Easy floor undershot.
+                spare = [
+                    movie_id
+                    for movie_id in retired
+                    if movie_id not in chosen and movie_id in rated_playable
+                ]
                 random.shuffle(spare)
                 needed += spare[:short]
             floors += needed

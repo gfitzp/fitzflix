@@ -567,3 +567,19 @@ def test_the_clear_packets_of_a_pgs_track_are_not_cues(app, monkeypatch):
     with app.app_context():
         assert triage._probe_cue_times("x.mkv", 3, bitmap=True) == [37.955, 42.626]
         assert len(triage._probe_cue_times("x.mkv", 3)) == 4
+
+
+def test_the_backfill_ignores_the_audio_comparison_child(app, tmp_path):
+    """A triage directory with only the audio child has no subtitle aids (#550).
+
+    The backfill skipped a file whenever its directory existed. A file
+    that was also a lossy-audio candidate was skipped for good."""
+
+    from app.triage_cli import _has_subtitle_aids
+
+    snapshots = tmp_path / "77"
+    assert not _has_subtitle_aids(str(snapshots))
+    (snapshots / "audio").mkdir(parents=True)
+    assert not _has_subtitle_aids(str(snapshots))
+    (snapshots / "3").mkdir()
+    assert _has_subtitle_aids(str(snapshots))
