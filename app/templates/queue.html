@@ -297,6 +297,25 @@
 			return !last || last.status === "done";
 		}
 
+		// The text of what the rows show. A poll repaints only when it
+		// changes. The heal of an orphaned chip writes only its status,
+		// and the late enqueue anchor moves only enqueued_at (#574). Both
+		// are in it.
+		function rowsSignature(tasks, trailByJob, orphans) {
+			function chipStatuses(trail) {
+				return trail.entries.map(function(entry) { return entry.status; }).join(",");
+			}
+			return tasks.map(function(task) {
+				var trail = trailByJob[task.trail_job || task.id];
+				return task.position + "|" + task.id + "|" + task.status + "|" + task.at_head + "|" + task.description
+					+ "|" + task.enqueued_at + "|" + task.started_at + "|" + task.scheduled_for
+					+ "|" + (trail ? trail.updated + "|" + trail.entries.length + "|" + chipStatuses(trail) : "");
+			}).concat(orphans.map(function(trail) {
+				return "orphan|" + trail.basename + "|" + trail.updated
+					+ "|" + trail.entries.length + "|" + chipStatuses(trail);
+			})).join("\n");
+		}
+
 		function renderAll(tasks, files) {
 			var tbody = document.getElementById("all-tasks");
 			if (!tbody) return;
@@ -317,15 +336,7 @@
 				return listed.indexOf(trail) < 0 && !trailSettled(trail);
 			});
 
-			var signature = tasks.map(function(task) {
-				var trail = trailByJob[task.trail_job || task.id];
-				return task.position + "|" + task.id + "|" + task.status + "|" + task.at_head + "|" + task.description
-					+ "|" + task.started_at + "|" + task.scheduled_for
-					+ "|" + (trail ? trail.updated + "|" + trail.entries.length : "");
-			}).concat(orphans.map(function(trail) {
-				return "orphan|" + trail.basename + "|" + trail.updated
-					+ "|" + trail.entries.length;
-			})).join("\n");
+			var signature = rowsSignature(tasks, trailByJob, orphans);
 			if (signature === allSignature) return;
 
 			tbody.textContent = "";

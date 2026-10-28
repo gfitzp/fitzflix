@@ -199,3 +199,34 @@ result = { before, after: abbr.attributes.title };
         "before": "2026-10-28 17:00:00+00:00",
         "after": "local 2026-10-28T17:00:00Z LLL",
     }
+
+
+def test_a_healed_chip_or_a_late_anchor_repaints_the_queue_rows(admin_client, tmp_path):
+    """The repaint signature missed 2 server writes (#574).
+
+    The heal of an orphaned chip changes only the chip status. The late
+    queued rule moves only enqueued_at. The poll kept the old rows."""
+
+    body = admin_client.get("/queue").get_data(as_text=True)
+    test_code = r"""
+const trail = { basename: "Heal.mkv", updated: "t1", entries: [{ job: "j1", status: "queued" }] };
+const task = { position: 1, id: "j1", status: "queued", at_head: true, description: "d",
+               enqueued_at: "2026-10-28T10:00:00Z", started_at: null, scheduled_for: null };
+const base = rowsSignature([task], { j1: trail }, [trail]);
+const healed = JSON.parse(JSON.stringify(trail));
+healed.entries[0].status = "done";
+const later = Object.assign({}, task, { enqueued_at: "2026-10-28T09:00:00Z" });
+result = {
+    healed: rowsSignature([task], { j1: healed }, []) !== rowsSignature([task], { j1: trail }, []),
+    orphan: rowsSignature([], {}, [healed]) !== rowsSignature([], {}, [trail]),
+    anchor: rowsSignature([later], { j1: trail }, [trail]) !== base,
+    same: rowsSignature([task], { j1: trail }, [trail]) === base,
+};
+"""
+    out = run_page_script(body, ["rowsSignature"], test_code, tmp_path)
+    assert out["result"] == {
+        "healed": True,
+        "orphan": True,
+        "anchor": True,
+        "same": True,
+    }
