@@ -2352,3 +2352,29 @@ def test_two_overlapping_extra_posts_grade_the_round_once(
         db.session.expire_all()
         score = UserFrameScore.query.filter_by(difficulty="extra").one()
         assert (score.points, score.current_streak) == banked
+
+
+def test_a_malformed_pool_entry_leaves_the_pool(app):
+    """A malformed field and its image go, not only out of the answer (#471)."""
+
+    from app import frames
+
+    with app.app_context():
+        os.makedirs(app.config["FRAME_POOL_DIR"], exist_ok=True)
+        bad_json = "malformedjson01"
+        with open(frames.frame_path(bad_json), "wb") as handle:
+            handle.write(b"jpegbytes")
+        app.redis.hset(frames.POOL_KEY, bad_json, "{not json")
+        app.redis.hset(frames.POOL_KEY, "notadict0001", json.dumps(5))
+        app.redis.hset(frames.POOL_KEY, "../escape", json.dumps({"movie_id": 1}))
+        good = seed_frame(app, 4711)
+        try:
+            entries = frames.pool_entries()
+            assert set(entries) == {good}
+            fields = {field.decode() for field in app.redis.hkeys(frames.POOL_KEY)}
+            assert fields == {good}
+            assert not os.path.exists(frames.frame_path(bad_json))
+            assert os.path.exists(frames.frame_path(good))
+        finally:
+            app.redis.delete(frames.POOL_KEY)
+            os.remove(frames.frame_path(good))

@@ -22,6 +22,7 @@ can.
 import json
 import os
 import random
+import re
 import secrets
 import subprocess
 import time
@@ -127,20 +128,48 @@ def frame_path(token):
     return os.path.join(current_app.config["FRAME_POOL_DIR"], f"{token}.jpg")
 
 
+# The form of a token that the pool writes. Only such a token names an
+# image file of the pool.
+
+POOL_TOKEN_PATTERN = re.compile(r"[A-Za-z0-9_-]{8,64}")
+
+
 def pool_entries():
     """Return token -> {movie_id, extracted_at, offset} for every pooled
     frame.
 
-    This function drops a malformed entry from the answer. The nightly
-    prune removes it from the pool."""
+    A malformed entry is not in the answer. This function removes it
+    from the pool, with its image (#471). Thus, the prune never needs to
+    see it."""
 
     entries = {}
     for token, payload in current_app.redis.hgetall(POOL_KEY).items():
         try:
-            entries[token.decode()] = json.loads(payload)
+            name = token.decode()
+            entry = json.loads(payload)
         except (ValueError, UnicodeDecodeError):
+            entry = None
+        if not isinstance(entry, dict) or not POOL_TOKEN_PATTERN.fullmatch(name):
+            _drop_malformed_entry(token)
             continue
+        entries[name] = entry
     return entries
+
+
+def _drop_malformed_entry(token):
+    """Remove a malformed pool field. Remove its image only for a valid token."""
+
+    current_app.logger.warning(f"Frame pool: removing the malformed entry {token!r}")
+    current_app.redis.hdel(POOL_KEY, token)
+    try:
+        name = token.decode()
+    except UnicodeDecodeError:
+        return
+    if POOL_TOKEN_PATTERN.fullmatch(name):
+        try:
+            os.remove(frame_path(name))
+        except OSError:
+            pass
 
 
 def _drop_entry(token):
