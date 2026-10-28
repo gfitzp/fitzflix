@@ -598,6 +598,14 @@ def find_better_files(details):
                             wider_span,
                             RefQuality.preference >= source_quality.preference,
                         ).self_group(),
+                        # Any non-full screen copy of the same or a wider
+                        # span blocks a full screen file, as in the movie
+                        # branch (#553). Before, a full screen Bluray went
+                        # in beside a widescreen DVD.
+                        db.and_(
+                            db.or_(same_span, wider_span),
+                            File.fullscreen == False,
+                        ).self_group(),
                     ).self_group(),
                 )
                 .all()
@@ -742,6 +750,25 @@ def find_worse_files(file, replace_existing=False):
     return worse_files
 
 
+def _worse_quality_rule(file):
+    """Return the quality and full screen filter of the files that file outranks.
+
+    A copy of the same screen format is worse at the same or a lower
+    quality. A full screen copy is also worse than a full screen file at
+    the same or a lower quality. A non-full screen file replaces each
+    full screen copy, at any quality (#553). That is the rule of the
+    header of find_better_files. The preference test kept a full screen
+    Bluray beside the new widescreen DVD."""
+
+    same_or_lower = RefQuality.preference <= file.quality.preference
+    if file.fullscreen:
+        return db.and_(same_or_lower, File.fullscreen == True).self_group()
+    return db.or_(
+        db.and_(same_or_lower, File.fullscreen == False).self_group(),
+        File.fullscreen == True,
+    ).self_group()
+
+
 def _worse_by_quality(file):
     """Return the same-title files of the same or a lower quality."""
 
@@ -756,8 +783,7 @@ def _worse_by_quality(file):
                 File.feature_type_id == file.feature_type_id,
                 File.plex_title == file.plex_title,
                 File.edition == file.edition,
-                RefQuality.preference <= file.quality.preference,
-                db.or_(File.fullscreen == file.fullscreen, File.fullscreen == True),
+                _worse_quality_rule(file),
                 File.id != file.id,
             )
             .all()
@@ -780,8 +806,7 @@ def _worse_by_quality(file):
                 File.series_id == file.series_id,
                 File.season == file.season,
                 *_inside_span(file),
-                RefQuality.preference <= file.quality.preference,
-                db.or_(File.fullscreen == file.fullscreen, File.fullscreen == True),
+                _worse_quality_rule(file),
                 File.id != file.id,
             )
             .all()

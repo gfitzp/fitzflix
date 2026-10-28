@@ -435,3 +435,61 @@ def test_a_lookup_row_in_use_refuses_its_delete(app, holder):
             connection.invalidate()
             db.session.rollback()
         assert RefQuality.query.filter_by(quality_title="Test tier").count() == 0
+
+
+def _tv_details(file, quality_title, fullscreen):
+    """Return the parsed details of an incoming copy of the episode of file."""
+
+    return {
+        "media_library": "TV Shows",
+        "dirname": file.dirname,
+        "title": file.tv_series.title,
+        "season": file.season,
+        "episode": file.episode,
+        "last_episode": file.last_episode,
+        "edition": None,
+        "quality_title": quality_title,
+        "fullscreen": fullscreen,
+    }
+
+
+def test_a_widescreen_episode_blocks_a_fullscreen_import(app):
+    """Any widescreen copy of the span blocks a full screen file (#553).
+
+    A full screen Bluray went in beside a widescreen DVD of the episode."""
+
+    with app.app_context():
+        series = make_tv_series("Fullscreen Show")
+        widescreen_dvd = make_tv_file(series, 1, 1, "DVD")
+        assert widescreen_dvd in find_better_files(
+            _tv_details(widescreen_dvd, "Bluray-1080p", True)
+        )
+        # A full screen copy of the same span and a lower tier blocks
+        # nothing. The new full screen file is better.
+        fullscreen_series = make_tv_series("Fullscreen Only Show")
+        fullscreen_dvd = make_tv_file(fullscreen_series, 1, 1, "DVD", fullscreen=True)
+        assert (
+            find_better_files(_tv_details(fullscreen_dvd, "Bluray-1080p", True)) == []
+        )
+
+
+@pytest.mark.parametrize("library", ["movie", "tv"])
+def test_a_widescreen_copy_replaces_a_better_fullscreen_copy(app, library):
+    """A non-full screen file removes each full screen copy, at any tier (#553).
+
+    The preference test kept the full screen Bluray beside the new
+    widescreen DVD. The rank picked the DVD. Both copies stayed."""
+
+    with app.app_context():
+        if library == "movie":
+            movie = make_movie("Fullscreen Film", 1990)
+            fullscreen_bluray = make_movie_file(movie, "Bluray-1080p", fullscreen=True)
+            widescreen_dvd = make_movie_file(movie, "DVD")
+        else:
+            series = make_tv_series("Fullscreen Replaced Show")
+            fullscreen_bluray = make_tv_file(
+                series, 1, 1, "Bluray-1080p", fullscreen=True
+            )
+            widescreen_dvd = make_tv_file(series, 1, 1, "DVD")
+        assert fullscreen_bluray in find_worse_files(widescreen_dvd)
+        assert widescreen_dvd not in find_worse_files(fullscreen_bluray)
