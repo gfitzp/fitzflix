@@ -55,7 +55,7 @@ def register_cli(app):
         click.echo(
             f"\n{len(results)} components checked, "
             f"{created} created or updated"
-            + ("" if created else " — everything was already in place")
+            + ("" if created else ". Everything was already in place")
         )
 
     @aws.command("cdn-url")

@@ -313,34 +313,34 @@ def play_movie(movie, user):
     movie page can show."""
 
     if not remote_playback_configured():
-        return False, "Remote playback isn't configured."
+        return False, "Remote playback is not configured."
     if not user.plex_player_configured:
         return False, "Set your playback device on your Profile page first."
     address = player_address(user.plex_player_address)
     if address is None:
         return False, (
-            "Your playback device isn't at a private-network address — "
-            "set it again on your Profile page."
+            "Your playback device is not at a private-network address. "
+            "Set it again on your Profile page."
         )
 
     try:
         token = player_token(user)
         if token is None:
             return False, (
-                "Remote playback needs your Plex Home account linked — set "
-                "your Plex username on your Profile page."
+                "Remote playback needs a link to your Plex Home account. "
+                "Set your Plex username on your Profile page."
             )
         rating_key = _movie_rating_key(movie)
         if rating_key is None:
-            return False, "Plex doesn't have this movie (or hasn't scanned it yet)."
+            return False, "Plex does not have this movie, or Plex did not scan it yet."
         server_id = _server_machine_id()
         if not server_id:
-            return False, "The Plex server didn't report its machine id."
+            return False, "The Plex server did not report its machine id."
         queue_id = _create_play_queue(server_id, rating_key, token)
         if queue_id is None:
             return False, "Plex built an empty play queue for this movie."
     except requests.RequestException:
-        return False, "Couldn't talk to the Plex server."
+        return False, "Fitzflix could not talk to the Plex server."
 
     server = urlsplit(current_app.config["PLEX_PLAYER_SERVER_URI"])
     try:
@@ -366,7 +366,10 @@ def play_movie(movie, user):
         )
         r.raise_for_status()
     except (requests.ConnectionError, requests.Timeout):
-        return False, "Couldn't reach your player — is the Plex app open on it?"
+        return (
+            False,
+            "Fitzflix could not reach your player. Make sure that the Plex app is open on it.",
+        )
     except requests.RequestException:
         return False, "Your player refused the play command."
 

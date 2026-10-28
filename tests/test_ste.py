@@ -9,7 +9,9 @@ not check the STE dictionary.
 
 The checks apply to Python comments and docstrings (app/, tests/,
 scripts/, and the root scripts). They apply to the text of each flash
-call and each help argument (#393). They apply to the Jinja, HTML, CSS,
+call and each help argument (#393). They apply to the text of each
+click.echo call, and to the literals that a function returns when its
+result reaches a flash call (#528). They apply to the Jinja, HTML, CSS,
 and JavaScript comments of the templates and of the static files. They
 apply to the page text of the templates, to the text that their scripts
 write into the page, and to the email templates. A preformatted block
@@ -154,8 +156,11 @@ def _violations(text, path, line):
     return found
 
 
-def _python_prose(path):
-    """Yield (line, text) for each comment, docstring and message of a Python file."""
+def _python_prose(path, flashed=frozenset()):
+    """Yield (line, text) for each comment, docstring and message of a Python file.
+
+    flashed holds the names of the functions whose result reaches a
+    flash call in some module. Their returned literals are messages."""
     source = open(path, encoding="utf-8").read()
     block, start = [], None
     for tok in tokenize.generate_tokens(io.StringIO(source).readline):
@@ -190,6 +195,7 @@ def _python_prose(path):
                 first = node.body[0]
                 yield first.lineno, doc
     yield from _message_prose(tree)
+    yield from _returned_messages(tree, flashed)
 
 
 def _literal_text(node):
@@ -210,18 +216,100 @@ def _literal_text(node):
     return None
 
 
+def _call_name(node):
+    """Return the name of the function of a call node, or None."""
+    return getattr(node.func, "id", None) or getattr(node.func, "attr", None)
+
+
+def _is_echo(node):
+    """Return True for a call of click.echo or click.secho (#528)."""
+    func = node.func
+    return (
+        isinstance(func, ast.Attribute)
+        and func.attr in ("echo", "secho")
+        and getattr(func.value, "id", None) == "click"
+    )
+
+
 def _message_prose(tree):
-    """Yield (line, text) for the text of each flash call and help argument."""
+    """Yield (line, text) for the text of each flash, echo and help argument."""
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
-        name = getattr(node.func, "id", None) or getattr(node.func, "attr", None)
+        name = _call_name(node)
         values = [node.args[0]] if name == "flash" and node.args else []
+        if _is_echo(node) and node.args:
+            values.append(node.args[0])
         values += [kw.value for kw in node.keywords if kw.arg == "help"]
         for value in values:
             text = _literal_text(value)
             if text:
                 yield value.lineno, text
+
+
+# A call with one of these names is not a message helper. Its result can
+# reach a flash call, but its returns are not messages.
+NOT_MESSAGE_HELPERS = {"Markup", "format", "str", "join", "get", "escape", "strip"}
+
+
+def _names_bound_by(target):
+    """Yield each plain name that an assignment target binds."""
+    if isinstance(target, ast.Name):
+        yield target.id
+    elif isinstance(target, (ast.Tuple, ast.List)):
+        for element in target.elts:
+            yield from _names_bound_by(element)
+
+
+def flashed_functions(tree):
+    """Return the names of the functions whose result reaches a flash call (#528).
+
+    A helper can return the text, and its caller flashes it: flash(f(x)),
+    or error = f(x) and then flash(error), or a, error = f(x)."""
+    names = set()
+    scopes = [tree] + [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    ]
+    for scope in scopes:
+        bound = {}
+        for node in ast.walk(scope):
+            if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call):
+                for target in node.targets:
+                    for name in _names_bound_by(target):
+                        bound.setdefault(name, set()).add(_call_name(node.value))
+        for node in ast.walk(scope):
+            if not (isinstance(node, ast.Call) and _call_name(node) == "flash"):
+                continue
+            if not node.args:
+                continue
+            argument = node.args[0]
+            if isinstance(argument, ast.Call):
+                names.add(_call_name(argument))
+            elif isinstance(argument, ast.Name) and argument.id in bound:
+                names |= bound[argument.id]
+    return {name for name in names if name} - NOT_MESSAGE_HELPERS
+
+
+def _returned_messages(tree, flashed):
+    """Yield (line, text) for each literal that a flashed function returns.
+
+    A returned tuple gives each of its literals."""
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if node.name not in flashed:
+            continue
+        for returned in ast.walk(node):
+            if not isinstance(returned, ast.Return) or returned.value is None:
+                continue
+            value = returned.value
+            elements = value.elts if isinstance(value, ast.Tuple) else [value]
+            for element in elements:
+                text = _literal_text(element)
+                if text:
+                    yield element.lineno, text
 
 
 # A block tag of HTML ends a run of page text. The other tags do not.
@@ -338,10 +426,12 @@ def ste_violations(root=ROOT):
     python_files = _files(PY_DIRS, (".py",), root) + [
         os.path.join(root, name) for name in ROOT_SCRIPTS
     ]
+    python_files = [path for path in python_files if os.path.exists(path)]
+    flashed = set()
     for path in python_files:
-        if not os.path.exists(path):
-            continue
-        for line, text in _python_prose(path):
+        flashed |= flashed_functions(ast.parse(open(path, encoding="utf-8").read()))
+    for path in python_files:
+        for line, text in _python_prose(path, flashed):
             found.extend(_violations(text, os.path.relpath(path, root), line))
     for path in _files(TEMPLATE_DIRS, (".html", ".js", ".css"), root):
         for line, text in _template_prose(path):
@@ -473,3 +563,38 @@ def test_the_gate_reads_page_text_messages_emails_and_markdown(tmp_path):
             (os.path.join("tests", "README.md"), 1, "contraction"),
         ]
     )
+
+
+def test_the_gate_reads_echo_text_and_flashed_helper_returns(tmp_path):
+    """A helper that returns the flashed text is message prose (#528).
+
+    The DVR admin helpers returned an em dash that the gate did not see."""
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "README.md").write_text("Fine.\n")
+    (tmp_path / "app").mkdir()
+    (tmp_path / "app" / "helpers.py").write_text(
+        "def resolve(text):\n"
+        "    if not text:\n"
+        '        return None, "Enter a title."\n'
+        "    return None, f'{text} is ambiguous \u2014 try again.'\n"
+        "\n"
+        "\n"
+        "def unrelated():\n"
+        '    return "It isn\'t a message."\n'
+    )
+    (tmp_path / "app" / "routes.py").write_text(
+        "from app.helpers import resolve\n"
+        "\n"
+        "\n"
+        "def view(text):\n"
+        "    movie, error = resolve(text)\n"
+        "    flash(error)\n"
+        '    click.echo("It doesn\'t echo well.")\n'
+    )
+    found = sorted(
+        (path, line, rule) for path, line, rule, _ in ste_violations(str(tmp_path))
+    )
+    assert found == [
+        (os.path.join("app", "helpers.py"), 4, "em dash"),
+        (os.path.join("app", "routes.py"), 7, "contraction"),
+    ]

@@ -244,7 +244,7 @@ def test_missing_movie_reports_without_touching_the_player(
         ok, message = plex_player.play_movie(movie, device_user())
 
     assert ok is False
-    assert "doesn't have" in message
+    assert "does not have" in message
     assert fake.queue_posts == []
     assert fake.player_gets == []
 
@@ -283,7 +283,7 @@ def test_unreachable_player_blames_the_closed_app(app, monkeypatch, server_confi
         ok, message = plex_player.play_movie(movie, device_user())
 
     assert ok is False
-    assert "Plex app open" in message
+    assert "Plex app is open" in message
 
 
 def test_unconfigured_server_short_circuits(app, monkeypatch):

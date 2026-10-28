@@ -365,8 +365,8 @@ def reject_incomplete_download(service, payload, file_path, refresh_command):
         "The release was marked failed: it is blocklisted, the file was "
         "deleted, and a replacement search was triggered."
         if failed
-        else "Marking the release failed did NOT succeed — the file was "
-        "left in place for manual handling."
+        else "Marking the release failed did NOT succeed. The file stays "
+        "in place for manual handling."
     )
     notify_admin_text(
         "Incomplete download rejected",

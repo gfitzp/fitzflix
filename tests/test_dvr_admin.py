@@ -150,7 +150,7 @@ def test_member_add_by_title(app, admin_client):
         },
         follow_redirects=True,
     )
-    assert "ambiguous" in response.get_data(as_text=True)
+    assert "matches more than 1 movie. Try one of:" in response.get_data(as_text=True)
 
     response = admin_client.post(
         f"/dvr/channels/{channel_id}",

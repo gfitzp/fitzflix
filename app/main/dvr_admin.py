@@ -141,7 +141,7 @@ def _resolve_movie(text):
     if not candidates:
         return None, f'No movie matches "{text}".'
     options = "; ".join(f"{m.title} ({m.year})" for m in candidates[:5])
-    return None, f'"{text}" is ambiguous — try one of: {options}.'
+    return None, f'"{text}" matches more than 1 movie. Try one of: {options}.'
 
 
 def _resolve_series(text):
@@ -168,7 +168,7 @@ def _resolve_series(text):
     if not candidates:
         return None, f'No series matches "{text}".'
     options = "; ".join(series.title for series in candidates[:5])
-    return None, f'"{text}" is ambiguous — try one of: {options}.'
+    return None, f'"{text}" matches more than 1 series. Try one of: {options}.'
 
 
 @bp.route("/dvr/title-search.json")

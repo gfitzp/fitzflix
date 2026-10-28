@@ -247,7 +247,7 @@ def test_bad_poster_path_is_rejected_before_any_fetch(
         },
         follow_redirects=True,
     )
-    assert "isn&#39;t a TMDB poster path" in response.get_data(as_text=True)
+    assert "is not a TMDB poster path" in response.get_data(as_text=True)
     assert tmdb_image_cdn == []
     assert poster_pipeline["saved"] == []
 

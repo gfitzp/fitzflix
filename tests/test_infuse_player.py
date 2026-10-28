@@ -119,7 +119,7 @@ def test_rejected_credentials_ask_for_a_re_pair(app, monkeypatch):
         ok, message = infuse_player.play_movie(movie, infuse_user())
 
     assert ok is False
-    assert "re-pair" in message
+    assert "Pair it again" in message
 
 
 def test_unreachable_apple_tv_reports_kindly(app, monkeypatch):
@@ -549,7 +549,7 @@ def test_pairing_outcome_reads_the_task_verdict(app):
         app.redis.set("fitzflix:infuse-pair:7:state", "ok", ex=300)
         assert pairing_outcome(7, wait_seconds=1) == (
             True,
-            "Paired — your play buttons can now open films in Infuse.",
+            "Paired. Your play buttons can now open films in Infuse.",
         )
 
         app.redis.set("fitzflix:infuse-pair:7:state", "error:The Apple TV refused")
@@ -759,7 +759,7 @@ def test_profile_pin_submit_reports_the_outcome(app, monkeypatch, user_client):
         account, "submit_pin", lambda user_id, pin: handed_over.append(pin)
     )
     monkeypatch.setattr(
-        account, "pairing_outcome", lambda user_id: (True, "Paired — done.")
+        account, "pairing_outcome", lambda user_id: (True, "Paired. Done.")
     )
     user_id = _member_id(app)
     app.redis.set(f"fitzflix:infuse-pair:{user_id}:state", "show-pin", ex=300)

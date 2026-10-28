@@ -111,7 +111,7 @@ def probe_files(file_ids, since, everything):
 
     for share in sorted(offline_shares):
         click.echo(
-            f"  SHARE NOT MOUNTED OR NOT RESPONDING  {share} — its files "
+            f"  SHARE NOT MOUNTED OR NOT RESPONDING  {share}. Its files "
             f"were not probed"
         )
 

@@ -135,10 +135,11 @@ def refresh_changed_records():
         cap = now - timedelta(days=LOOKBACK_CAP_DAYS)
         if window_start < cap:
             current_app.logger.warning(
-                f"TMDB changes: last sweep at {window_start:%Y-%m-%d} predates "
-                f"TMDB's {LOOKBACK_CAP_DAYS}-day change history; edits before "
-                f"{cap:%Y-%m-%d} are unknowable — run the maintenance page's "
-                f"bulk TMDB refresh to catch the library up"
+                f"TMDB changes: the last sweep at {window_start:%Y-%m-%d} is "
+                f"older than the {LOOKBACK_CAP_DAYS}-day change history of "
+                f"TMDB. Fitzflix cannot know the edits before {cap:%Y-%m-%d}. "
+                f"Run the bulk TMDB refresh of the maintenance page to update "
+                f"the library"
             )
             window_start = cap
 

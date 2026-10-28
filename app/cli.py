@@ -243,15 +243,15 @@ def register(app):
             return
         title = f"{movie.tmdb_title or movie.title} ({movie.year})"
         if movie.files.count():
-            click.echo(f"'{title}' has files in the library — not catalog junk")
+            click.echo(f"'{title}' has files in the library. It is not catalog junk")
             return
         if UserMovieReview.query.filter_by(movie_id=movie.id).count():
-            click.echo(f"'{title}' has diary entries — not catalog junk")
+            click.echo(f"'{title}' has diary entries. It is not catalog junk")
             return
         if movie.tmdb_id is None:
             click.echo(
-                f"'{title}' has no TMDB id, so the catalog loaders can't "
-                f"recreate it; deleting the record only"
+                f"'{title}' has no TMDB id. Thus, the catalog loaders cannot "
+                f"make it again. Only the record is deleted"
             )
         elif not CatalogExclusion.query.filter_by(tmdb_id=movie.tmdb_id).first():
             db.session.add(CatalogExclusion(tmdb_id=movie.tmdb_id, title=title))

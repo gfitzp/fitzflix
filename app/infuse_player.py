@@ -129,7 +129,7 @@ def play_movie(movie, user):
     if not user.infuse_player_configured:
         return False, "Pair your Apple TV for Infuse on your Profile page first."
     if not movie.tmdb_id:
-        return False, "Infuse links films by TMDB id, and this one doesn't have one."
+        return False, "Infuse links films by TMDB id, and this film has no TMDB id."
     # The Profile page fences the address when it saves it. This is the
     # same fence at play time, so a stored name cannot reach pyatv.
     address = player_address(user.infuse_player_address, default_port=COMPANION_PORT)
@@ -152,7 +152,7 @@ def play_movie(movie, user):
         )
     except exceptions.AuthenticationError:
         return False, (
-            "Your Apple TV rejected the stored pairing — re-pair it on "
+            "Your Apple TV refused the stored pairing. Pair it again on "
             "your Profile page."
         )
     except Exception:
@@ -162,10 +162,13 @@ def play_movie(movie, user):
             user.infuse_player_address,
             exc_info=True,
         )
-        return False, ("Couldn't reach your Apple TV — is it awake and on the network?")
+        return False, (
+            "Fitzflix could not reach your Apple TV. Make sure that it is "
+            "awake and on the network."
+        )
     return True, (
-        "Opened in Infuse — if it doesn't start on its own, pick the "
-        "film from Search on the page that opens."
+        "Opened in Infuse. If the film does not start, find it with "
+        "Search on the page that opens."
     )
 
 
@@ -255,14 +258,14 @@ def pairing_outcome(user_id, wait_seconds=20):
         state = (redis.get(_state_key(user_id)) or b"").decode()
         if state == "ok":
             redis.delete(_state_key(user_id), _pin_key(user_id))
-            return True, "Paired — your play buttons can now open films in Infuse."
+            return True, "Paired. Your play buttons can now open films in Infuse."
         if state.startswith("error:"):
             redis.delete(_state_key(user_id), _pin_key(user_id))
             return False, state[len("error:") :]
         if not state:
-            return False, "The pairing timed out — try again."
+            return False, "The pairing timed out. Try again."
         time.sleep(0.5)
-    return None, "Still pairing — give it a moment and reload this page."
+    return None, "The pairing continues. Wait some seconds and reload this page."
 
 
 # --- Pairing: the queue task ---------------------------------------------
@@ -355,7 +358,7 @@ async def _pair(app, user_id, address, attempt=None):
                 break
             await asyncio.sleep(1)
         else:
-            report("error:No PIN arrived in time — start the pairing again.")
+            report("error:No PIN arrived in time. Start the pairing again.")
             return
 
         if not owns():
@@ -363,7 +366,7 @@ async def _pair(app, user_id, address, attempt=None):
         pairing.pin(int(pin.decode()))
         await pairing.finish()
         if not pairing.has_paired:
-            report("error:The Apple TV refused that PIN — start the pairing again.")
+            report("error:The Apple TV refused that PIN. Start the pairing again.")
             return
 
         if not owns():
@@ -382,15 +385,15 @@ async def _pair(app, user_id, address, attempt=None):
     except exceptions.PairingError:
         app.logger.warning("Infuse pairing with %s failed", address, exc_info=True)
         report(
-            "error:The Apple TV didn't accept the pairing — wrong PIN, or "
-            "its PIN dialog expired first. Start again and enter the PIN "
-            "promptly."
+            "error:The Apple TV did not accept the pairing. The PIN was "
+            "wrong, or its PIN dialog expired first. Start again and enter "
+            "the PIN quickly."
         )
     except Exception:
         app.logger.warning("Infuse pairing with %s failed", address, exc_info=True)
         report(
-            "error:Pairing failed — check the address, make sure the "
-            "Apple TV is awake, and try again."
+            "error:The pairing failed. Check the address, make sure that "
+            "the Apple TV is awake, and try again."
         )
     finally:
         if pairing is not None:

@@ -470,7 +470,7 @@ def _fetch_tmdb_poster(poster_path):
     """
 
     if not re.fullmatch(r"/[A-Za-z0-9]+\.(?:jpg|jpeg|png)", poster_path or ""):
-        return None, "That isn't a TMDB poster path."
+        return None, "That is not a TMDB poster path."
     try:
         r = requests.get(
             f"{current_app.config['TMDB_IMAGE_URL']}/original{poster_path}",
@@ -479,7 +479,7 @@ def _fetch_tmdb_poster(poster_path):
         r.raise_for_status()
     except Exception:
         current_app.logger.error(traceback.format_exc())
-        return None, "Couldn't download that poster from TMDB."
+        return None, "Fitzflix could not download that poster from TMDB."
     return (
         FileStorage(
             stream=io.BytesIO(r.content), filename=os.path.basename(poster_path)
