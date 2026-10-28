@@ -1024,7 +1024,7 @@ def test_a_cataloging_waits_for_sonarr_before_it_splits_a_series(
     retry = requeue_job_id(
         "app.videos.finalize_localization",
         source,
-        {"vanished_retries": 0, "sonarr_waits": 1},
+        {"vanished_retries": 0, "sonarr_waits": 1, "lock_waits": 0},
     )
     assert retry in ScheduledJobRegistry(queue=app.sql_queue).get_job_ids()
     with app.app_context():
@@ -1063,7 +1063,7 @@ def test_a_dead_volume_retry_keeps_the_sonarr_wait_count(app, monkeypatch):
     retry = requeue_job_id(
         "app.videos.finalize_localization",
         source,
-        {"vanished_retries": 0, "sonarr_waits": 7},
+        {"vanished_retries": 0, "sonarr_waits": 7, "lock_waits": 0},
     )
     assert retry in ScheduledJobRegistry(queue=app.sql_queue).get_job_ids()
     job = app.sql_queue.fetch_job(retry)

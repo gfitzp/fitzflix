@@ -576,12 +576,57 @@ def test_finalize_defers_when_volumes_dead(app, monkeypatch):
         requeue_job_id(
             "app.videos.finalize_localization",
             "/nonexistent/source.mkv",
-            {"vanished_retries": 0, "sonarr_waits": 0},
+            {"vanished_retries": 0, "sonarr_waits": 0, "lock_waits": 0},
         )
     ]
     # The retry keeps the inspection. It must not inspect again on the sql
     # worker.
     assert retries[0].kwargs["inspection"] == {"filesize_bytes": 5}
+
+
+def test_finalize_waits_when_another_task_took_its_title_lock(app, tmp_path):
+    """The lock expired during a long defer, and a new import took it (#520).
+
+    The old cataloging must not write the rows or rename the copy. It
+    waits for the lock with the same token."""
+
+    from app.models import File
+
+    file_details = {
+        "basename": "Retaken (2021) - [DVD].mkv",
+        "dirname": "Movies/Retaken (2021)",
+        "file_path": "Movies/Retaken (2021)/Retaken (2021) - [DVD].mkv",
+    }
+    hidden_copy = tmp_path / ".Retaken (2021) - [DVD].mkv"
+    hidden_copy.write_bytes(b"video")
+    source = "/nonexistent/retaken.mkv"
+    with app.app_context():
+        lock = app.lock_manager.lock("test-520-title", 60000)
+        app.redis.set(lock[1], "token-of-the-new-import", px=60000)
+        try:
+            result = finalize_localization(
+                source,
+                file_details,
+                lock,
+                str(hidden_copy),
+                inspection={"filesize_bytes": 5},
+            )
+            assert result is False
+            assert (
+                File.query.filter_by(file_path=file_details["file_path"]).count() == 0
+            )
+            assert app.redis.get(lock[1]) == b"token-of-the-new-import"
+        finally:
+            app.redis.delete(lock[1])
+
+    assert hidden_copy.exists()
+    (retry,) = [
+        job
+        for job in scheduled_jobs(app.sql_queue)
+        if job.id.startswith("retry_finalize") and job.args and job.args[0] == source
+    ]
+    assert retry.kwargs["lock_waits"] == 1
+    assert retry.args[2] == lock and retry.args[4] == {"filesize_bytes": 5}
 
 
 def test_move_to_rejects_survives_dead_volume(app, incoming_dir, monkeypatch):

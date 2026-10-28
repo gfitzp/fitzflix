@@ -2416,6 +2416,7 @@ def finalize_localization(
     staged_output=None,
     vanished_retries=0,
     sonarr_waits=0,
+    lock_waits=0,
 ):
     """Add a localized file to the database and move it into position.
 
@@ -2442,6 +2443,10 @@ def finalize_localization(
     Sonarr does not answer and a Sonarr rename can explain a new title,
     the task waits SONARR_WAIT, up to MAX_SONARR_WAITS times. Then it
     makes the new series.
+
+    Each run first extends its title lock, as the move does (#520). If
+    another task took the lock meanwhile, the task waits for it. It
+    writes no row and moves no file of the title until then.
     """
 
     from app.videos import _dead_volumes
@@ -2450,11 +2455,49 @@ def finalize_localization(
         # The queue page lists this job with a banner and a row. Name the
         # stage there, as the other stages of the pipeline do.
 
-        report_progress(get_current_job(), file_details.get("basename"), "Cataloging")
+        basename = file_details.get("basename")
+        report_progress(get_current_job(), basename, "Cataloging")
 
         output_directory = os.path.join(
             current_app.config["LIBRARY_DIR"], file_details.get("dirname")
         )
+        counters = {
+            "vanished_retries": vanished_retries,
+            "sonarr_waits": sonarr_waits,
+            "lock_waits": lock_waits,
+        }
+
+        # A dead volume, or a Sonarr wait, can requeue this task for
+        # longer than the lock TTL. Then a new import of the same title
+        # can take the lock. This check comes first. Thus, each retry
+        # extends the lock, or waits for the other task (#520).
+
+        if not _hold_title_lock(lock, basename):
+            try:
+                defer_for_title_lock(
+                    "app.videos.finalize_localization",
+                    (
+                        file_path,
+                        file_details,
+                        lock,
+                        hidden_output_file,
+                        inspection,
+                        staged_output,
+                    ),
+                    counters,
+                    file_path,
+                    basename,
+                )
+            except Exception:
+                # The source stays for the hourly sweep (#521).
+                _remove_staged_output(hidden_output_file)
+                abandon_handoff(
+                    file_path,
+                    lock,
+                    staged_output,
+                    pending_archive=pending_archive_of(file_details),
+                )
+            return False
 
         # Defer if a necessary volume is dead. Do this before the records.
         # Then the task keeps the title lock for the retry and does not
@@ -2470,10 +2513,7 @@ def finalize_localization(
                     reason=f"Volumes unavailable ({', '.join(dead)}) for the cataloging",
                     # The Sonarr wait count goes with the retry. Otherwise each
                     # volume drop starts the limit of the waits again (#402).
-                    counters={
-                        "vanished_retries": vanished_retries,
-                        "sonarr_waits": sonarr_waits,
-                    },
+                    counters=counters,
                     args=(file_path, file_details, lock, hidden_output_file),
                     kwargs={"inspection": inspection, "staged_output": staged_output},
                     description=f"'{file_details.get('basename')}'",
@@ -2513,10 +2553,7 @@ def finalize_localization(
                         delay=SONARR_WAIT,
                         reason="waits for Sonarr, because a Sonarr rename can "
                         "own this series",
-                        counters={
-                            "vanished_retries": vanished_retries,
-                            "sonarr_waits": sonarr_waits + 1,
-                        },
+                        counters={**counters, "sonarr_waits": sonarr_waits + 1},
                         args=(file_path, file_details, lock, hidden_output_file),
                         kwargs={
                             "inspection": inspection,
