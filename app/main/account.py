@@ -474,6 +474,9 @@ def history():
             time_of_day.desc(),
             UserMovieReview.date_reviewed.desc(),
             Movie.title.asc(),
+            # The unique tiebreak. A same-second bulk import of 1 film
+            # keeps 1 order across the pages (#459).
+            UserMovieReview.id.desc(),
         )
         .paginate(page=page, per_page=50, error_out=False)
     )

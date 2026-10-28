@@ -2873,10 +2873,14 @@ def _ranked_people_query(role, query_text, minimum_films):
     )
     if query_text:
         people_query = people_query.filter(TMDBCredit.name.ilike(f"%{query_text}%"))
+    # The credit id is the unique tiebreak. 2 people with the same name
+    # and count keep 1 order across the pages (#459).
+
     return people_query.having(film_count >= minimum_films).order_by(
         film_count.desc(),
         db.func.substring_index(TMDBCredit.name, " ", -1).asc(),
         TMDBCredit.name.asc(),
+        TMDBCredit.id.asc(),
     )
 
 

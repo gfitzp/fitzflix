@@ -312,6 +312,8 @@ def _people_search_results(wildcard, limit=12):
             film_count.desc(),
             db.func.substring_index(TMDBCredit.name, " ", -1).asc(),
             TMDBCredit.name.asc(),
+            # The unique tiebreak (#459).
+            TMDBCredit.id.asc(),
         )
         .limit(limit)
         .all()
