@@ -439,3 +439,39 @@ def test_a_remux_tool_ended_by_sigterm_tries_again(app, monkeypatch):
         monkeypatch.setattr(atmos, "_run_step", stopped_step)
         assert atmos.atmos_finish_task(*finish.args) is False
         assert len(_scheduled(app, "app.atmos.atmos_finish_task")) == 1
+
+
+def test_the_finish_mux_drops_an_empty_subtitle_track(app, monkeypatch):
+    """A zero-element subtitle track is left out of the 1 mux (#518).
+
+    Before, a second in-place remux removed it. That remux needed a
+    third copy of space and could end the paid run with ENOSPC."""
+
+    import app.atmos as atmos
+
+    class _Text(_Track):
+        def __init__(self, order, elements):
+            super().__init__("Text", order)
+            self._elements = elements
+
+        def to_data(self):
+            return {"streamorder": self._order, "count_of_elements": self._elements}
+
+    class _WithSubtitles:
+        tracks = [_Track("Video", 0), _Track("Audio", 1), _Text(2, "0"), _Text(3, "9")]
+
+    with app.app_context():
+        file, finish = _finish_job(app, monkeypatch, "Finish Subtitles")
+        monkeypatch.setattr(atmos.MediaInfo, "parse", lambda path: _WithSubtitles())
+        commands = []
+        real_popen = atmos.subprocess.Popen
+
+        def recording_popen(command, **kwargs):
+            commands.append(command)
+            return real_popen(command, **kwargs)
+
+        monkeypatch.setattr(atmos.subprocess, "Popen", recording_popen)
+        assert atmos.atmos_finish_task(*finish.args) is True
+        (mux,) = [c for c in commands if "--track-order" in c]
+        assert mux[mux.index("-s") + 1] == "3"
+        assert mux[mux.index("--track-order") + 1].endswith(":1,1:3")

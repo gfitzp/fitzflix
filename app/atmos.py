@@ -229,6 +229,7 @@ def build_remux_command(
     audio_orders,
     text_orders,
     inserts,
+    dropped_text_orders=(),
 ):
     """Return the mkvmerge command that inserts .ec3 twins into a file.
 
@@ -239,7 +240,10 @@ def build_remux_command(
     The --track-order option gives the complete final arrangement.
     Thus, nothing depends on the ordering rules of mkvmerge. The twins
     carry no default flag. The mkvpropedit pass after the remux applies
-    the default-track convention.
+    the default-track convention. dropped_text_orders are the subtitle
+    tracks with zero elements. The command leaves them out. Before, a
+    second in-place remux removed them and needed a third copy of
+    space (#518).
     """
 
     source_file_index = len(inserts)
@@ -264,6 +268,12 @@ def build_remux_command(
                 "0:0",
                 path,
             ]
+        )
+    if dropped_text_orders:
+        command.extend(
+            ["-s", ",".join(str(track_order) for track_order in text_orders)]
+            if text_orders
+            else ["--no-subtitles"]
         )
     command.append(source_path)
     command.extend(["--track-order", ",".join(order)])
@@ -767,6 +777,8 @@ def _atmos_prepare(file_id, phases, staged_source=None):
 
             thd_path = os.path.join(workspace, f"track{streamorder}.thd")
             phases.enter("Decoding TrueHD")
+            # mkvextract exits 1 after a warning when the extraction
+            # continued, as the other mkvtoolnix calls accept (#518)
             _run_step(
                 [
                     current_app.config["MKVEXTRACT_BIN"],
@@ -777,6 +789,7 @@ def _atmos_prepare(file_id, phases, staged_source=None):
                 job,
                 basename,
                 "Extracting TrueHD bitstream",
+                ok_returncodes=(0, 1),
             )
             damf_base = os.path.join(workspace, f"track{streamorder}")
             _run_step(
@@ -876,24 +889,36 @@ def _start_checks(state, lock):
     this job open."""
 
     job = get_current_job()
-    if job is not None:
-        job.meta["trail_continues"] = True
-        job.save_meta()
-    current_app.redis.set(
-        CHAIN_KEY.format(file_id=state["file_id"]),
-        state["chain"],
-        ex=current_app.config["TRANSCODE_TASK_TIMEOUT"],
-    )
+    try:
+        if job is not None:
+            job.meta["trail_continues"] = True
+            job.save_meta()
+        current_app.redis.set(
+            CHAIN_KEY.format(file_id=state["file_id"]),
+            state["chain"],
+            ex=current_app.config["TRANSCODE_TASK_TIMEOUT"],
+        )
 
-    # rq removes the hash of this job soon after it returns. The trail
-    # healing must not take the open chips of the run for orphans.
+        # rq removes the hash of this job soon after it returns. The trail
+        # healing must not take the open chips of the run for orphans.
 
-    keep_trail_open(
-        current_app.redis,
-        state["trail_job"],
-        current_app.config["TRANSCODE_TASK_TIMEOUT"],
-    )
-    _book_check(state, lock, 0, None)
+        keep_trail_open(
+            current_app.redis,
+            state["trail_job"],
+            current_app.config["TRANSCODE_TASK_TIMEOUT"],
+        )
+        _book_check(state, lock, 0, None)
+    except Exception:
+        # No check job owns the run (#518). The encodes billed on, the
+        # masters and the workspace stayed, and the chain key refused a
+        # new run and the workspace sweep for 2 days. The caller releases
+        # the lock and queues the early-end archive.
+        _cancel_encodes([track["mc_job_id"] for track in state["tracks"]])
+        _close_run(state, None, ended_early=False)
+        if job is not None:
+            job.meta["trail_continues"] = False
+            job.save_meta()
+        raise
 
 
 def _continuation_meta(state, word):
@@ -1218,7 +1243,6 @@ def _remux_twins(state, phases, inserts, job):
     from app.videos import (
         get_audio_tracks_from_file,
         get_subtitle_tracks_from_file,
-        remove_empty_subtitle_tracks,
         wait_for_subprocess,
         watch_mkvmerge_progress,
     )
@@ -1236,16 +1260,31 @@ def _remux_twins(state, phases, inserts, job):
     inserts.sort(key=lambda insert: insert[0])
     media_info = MediaInfo.parse(staging_source)
     video_orders, audio_orders, text_orders = [], [], []
+    empty_text_orders, unknown_text = [], False
     for media_track in media_info.tracks:
-        track_order = media_track.to_data().get("streamorder")
+        data = media_track.to_data()
+        track_order = data.get("streamorder")
         if not str(track_order).isdigit():
+            unknown_text = unknown_text or media_track.track_type == "Text"
             continue
         if media_track.track_type == "Video":
             video_orders.append(int(track_order))
         elif media_track.track_type == "Audio":
             audio_orders.append(int(track_order))
         elif media_track.track_type == "Text":
-            text_orders.append(int(track_order))
+            elements = data.get("count_of_elements")
+            if str(elements).isdigit() and int(elements) == 0:
+                empty_text_orders.append(int(track_order))
+            else:
+                text_orders.append(int(track_order))
+
+    # The mux leaves out each zero-element subtitle track (#518). A
+    # subtitle track with an unknown id makes the selection unsafe, as
+    # in remove_empty_subtitle_tracks. Then every track stays.
+
+    if unknown_text:
+        text_orders = sorted(text_orders + empty_text_orders)
+        empty_text_orders = []
 
     staging_output = hidden(os.path.join(workspace, basename))
     command = build_remux_command(
@@ -1256,6 +1295,7 @@ def _remux_twins(state, phases, inserts, job):
         audio_orders,
         text_orders,
         inserts,
+        dropped_text_orders=empty_text_orders,
     )
     current_app.logger.info(f"'{basename}' Running mkvmerge: {command}")
     with _transient_step("remux"):
@@ -1270,8 +1310,6 @@ def _remux_twins(state, phases, inserts, job):
             mkvmerge_process, job, basename, "Muxing E-AC-3 Atmos twin"
         )
         wait_for_subprocess(mkvmerge_process, ok_returncodes=(0, 1))
-
-        remove_empty_subtitle_tracks(staging_output)
 
     # The first audio track gets the default flag. Each other track
     # has the flag cleared. This is the library convention. The

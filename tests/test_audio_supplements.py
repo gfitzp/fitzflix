@@ -691,3 +691,28 @@ def test_a_real_truncated_sample_gets_its_twin_with_real_mediainfo(
         t.format for t in MediaInfo.parse(path).tracks if t.track_type == "Audio"
     ]
     assert "FLAC" in formats
+
+
+def test_remux_command_leaves_out_the_empty_subtitles(app):
+    """The mux selects the kept subtitles. No second remux runs (#518)."""
+
+    from app.atmos import build_remux_command
+
+    def command(text_orders, dropped):
+        return build_remux_command(
+            "mkvmerge",
+            "out.mkv",
+            "source.mkv",
+            video_orders=[0],
+            audio_orders=[1],
+            text_orders=text_orders,
+            inserts=[(0, "twin.ec3", "eng")],
+            dropped_text_orders=dropped,
+        )
+
+    kept = command([3], [2])
+    assert kept[kept.index("-s") + 1] == "3"
+    assert kept.index("-s") < kept.index("source.mkv")
+    assert "--no-subtitles" in command([], [2])
+    unchanged = command([2, 3], [])
+    assert "-s" not in unchanged and "--no-subtitles" not in unchanged

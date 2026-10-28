@@ -401,3 +401,52 @@ class _NoPhases:
 
     def close(self, status):
         pass
+
+
+def test_the_extract_step_accepts_a_mkvextract_warning(app, monkeypatch):
+    """mkvextract exits 1 after a warning. The run continues (#518)."""
+
+    import app.atmos as atmos
+
+    with app.app_context():
+        file, job, mediaconvert = _setup(app, monkeypatch, "Extract Warning")
+        codes = {}
+
+        def recording_step(command, job, basename, description, ok_returncodes=(0,)):
+            codes[description] = ok_returncodes
+            _fake_run_step(command, job, basename, description, ok_returncodes)
+
+        monkeypatch.setattr(atmos, "_run_step", recording_step)
+        assert atmos.atmos_supplement_task(file.id) is True
+        assert codes["Extracting TrueHD bitstream"] == (0, 1)
+
+
+def test_a_failed_first_check_booking_cleans_up_the_run(app, monkeypatch):
+    """A raise in the hand-off cancels the encode and frees the run (#518).
+
+    Before, the encode billed on, and the chain key refused a new run
+    and the workspace sweep for 2 days."""
+
+    import pytest
+
+    import app.atmos as atmos
+
+    with app.app_context():
+        file, job, mediaconvert = _setup(app, monkeypatch, "Booking Fault")
+
+        def refuse(*args, **kwargs):
+            raise ConnectionError("Redis went away")
+
+        monkeypatch.setattr(atmos, "_book_check", refuse)
+        with pytest.raises(ConnectionError):
+            atmos.atmos_supplement_task(file.id)
+
+        assert mediaconvert.canceled == ["mc-1"]
+        assert not app.redis.exists(atmos.CHAIN_KEY.format(file_id=file.id))
+        workspace = os.path.join(app.config["STAGING_DIR"], f"atmos-{file.id}")
+        assert not os.path.exists(workspace)
+        assert job.meta["trail_continues"] is False
+        # The caller released the title lock
+        lock = app.lock_manager.lock(file.file_identifier(), 1000)
+        assert lock
+        app.lock_manager.unlock(lock)
