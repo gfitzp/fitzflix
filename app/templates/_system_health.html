@@ -95,12 +95,18 @@
 			<td>{% if task.next_run %}<abbr title="{{ local_time(task.next_run) }}">{{ task.next_run_text }}</abbr>{% else %}{{ task.next_run_text }}{% endif %}</td>
 			<td class="text-end">
 				{# The poll swaps this fragment in each 5 seconds. The post
-				   goes to the System page, like the failed-job buttons. #}
+				   goes to the System page, like the failed-job buttons. The
+				   S3 sync and the Criterion refresh run from the Maintenance
+				   page only. #}
+				{% if task.runnable %}
 				<form action="{{ url_for('main.system') }}" method="post" class="form-inline">
 					{{ run_form.csrf_token }}
 					{{ run_form.task_func(value=task.func) }}
 					{{ run_form.run_submit(class_="btn btn-sm btn-outline-secondary text-nowrap") }}
 				</form>
+				{% else %}
+				<a href="{{ url_for('main.maintenance') }}" class="small text-nowrap">Maintenance page</a>
+				{% endif %}
 			</td>
 		</tr>
 		{% endfor %}

@@ -15,6 +15,7 @@ of a spec is the CLI command that does the same work, when there is
 one. The System page shows it next to the scheduled task.
 """
 
+import importlib
 import random
 import uuid
 
@@ -370,22 +371,71 @@ def _submit(
 LIVE_JOB_STATES = ("queued", "started", "scheduled", "deferred")
 
 
+def task_func_names(name):
+    """Return each func_name that rq can give a job of the task called name (#456).
+
+    A job that enqueue_task queues has the name of the registry. The
+    scheduler queues the function object. Then rq names the job after
+    the module that defines the function. For a function that app.videos
+    exports from another module, that is a different name."""
+
+    names = {name}
+    module_name, attribute = name.rsplit(".", 1)
+    try:
+        func = getattr(importlib.import_module(module_name), attribute)
+    except (ImportError, AttributeError):
+        return names
+    names.add(f"{func.__module__}.{func.__qualname__}")
+    return names
+
+
 def live_task_job(name):
     """Return a job of the task called name that waits or runs on its queue, or None.
 
     The Run now button of the System page asks this before it queues a
     scheduled task. A second copy of a maintenance task behind the first
-    one does the same work 2 times (the import sweep, the S3 sync)."""
+    one does the same work 2 times (the import sweep, the S3 sync). The
+    check reads the queue and the started and the scheduled jobs. A
+    retry or a defer waits in the scheduled jobs."""
 
     from rq.job import Job
-    from rq.registry import StartedJobRegistry
+    from rq.registry import ScheduledJobRegistry, StartedJobRegistry
 
     queue = resolve_queue(TASKS[name].queue)
-    ids = list(queue.job_ids) + StartedJobRegistry(queue=queue).get_job_ids()
+    names = task_func_names(name)
+    ids = (
+        list(queue.job_ids)
+        + StartedJobRegistry(queue=queue).get_job_ids()
+        + ScheduledJobRegistry(queue=queue).get_job_ids()
+    )
     for job in Job.fetch_many(ids, connection=queue.connection):
-        if job is not None and job.func_name == name:
+        if job is None:
+            continue
+        if (job.meta or {}).get("func") == name or job.func_name in names:
             return job
     return None
+
+
+def start_task_run(name):
+    """Return True if a Run now of the task called name can queue it (#456).
+
+    A short gate in Redis covers the time between the check and the
+    enqueue. Thus, 2 posts at the same time to 2 web workers cannot both
+    pass. The caller calls finish_task_run after the enqueue."""
+
+    gate = _bulk_gate(f"run-now:{name}")
+    if not current_app.redis.set(gate, "1", nx=True, ex=BULK_GATE_SECONDS):
+        return False
+    if live_task_job(name) is not None:
+        current_app.redis.delete(gate)
+        return False
+    return True
+
+
+def finish_task_run(name):
+    """Release the Run now gate of the task called name after its enqueue."""
+
+    current_app.redis.delete(_bulk_gate(f"run-now:{name}"))
 
 
 def free_job_id(name, job_id):

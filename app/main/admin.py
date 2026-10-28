@@ -29,10 +29,12 @@ from app.tasks import (
     bulk_job_id,
     enqueue_task,
     finish_bulk_run,
+    finish_task_run,
     free_job_id,
     live_task_job,
     requeue_job_id,
     start_bulk_run,
+    start_task_run,
 )
 from app import cron_table, db, enqueue_import_scan, local_path, safe_job_id
 from app.naming import hidden
@@ -126,6 +128,17 @@ from rq.exceptions import NoSuchJobError
 from rq.job import Job
 from rq.registry import FailedJobRegistry
 
+# The scheduled tasks that the Run now button of the System page does
+# not queue (#456). Each has a Maintenance page button with a bulk gate.
+# The S3 sync also needs the password there.
+
+MAINTENANCE_PAGE_TASKS = frozenset(
+    {
+        "app.videos.sync_aws_s3_storage_task",
+        "app.videos.refresh_criterion_collection_info",
+    }
+)
+
 
 @bp.route("/system", methods=["GET", "POST"])
 @login_required
@@ -163,7 +176,8 @@ def system():
 
     # This form queues a scheduled task now. Only a task of the cron
     # table can be queued here. A task that waits or runs already is not
-    # queued a second time.
+    # queued a second time. The S3 sync and the Criterion refresh have
+    # their own buttons on the Maintenance page, with their own checks.
 
     run_form = RunScheduledTaskForm()
     if run_form.run_submit.data and run_form.validate_on_submit():
@@ -171,10 +185,13 @@ def system():
         scheduled = {entry["func"] for entry in cron_table(current_app.config)}
         if func not in scheduled:
             flash("That task is not a scheduled task.", "warning")
-        elif live_task_job(func) is not None:
+        elif func in MAINTENANCE_PAGE_TASKS:
+            flash("Use the button of this task on the Maintenance page.", "warning")
+        elif not start_task_run(func):
             flash(f"'{TASKS[func].description}' waits or runs already.", "warning")
         else:
             enqueue_task(func)
+            finish_task_run(func)
             flash(f"Queued '{TASKS[func].description}'", "info")
             current_app.logger.info(
                 f"{current_user.email} queued the scheduled task {func} now"
@@ -259,6 +276,7 @@ def _scheduled_tasks():
                 {
                     "name": meta.get("description") or cron_job.func_name,
                     "func": func,
+                    "runnable": func not in MAINTENANCE_PAGE_TASKS,
                     "command": spec.command if spec else None,
                     "schedule": _cron_description(cron_string),
                     "cron_string": cron_string,
@@ -718,6 +736,11 @@ def _refresh_criterion_post(form):
     if not start_bulk_run(CRITERION_RUN, name):
         flash(ALREADY_QUEUED, "info")
         return
+    # The scheduler queues the monthly run with an id of its own (#456).
+    if live_task_job(name) is not None:
+        finish_bulk_run(CRITERION_RUN)
+        flash(ALREADY_QUEUED, "info")
+        return
     enqueue_task(
         name,
         description="Refreshing Criterion Collection information for all movies in library",
@@ -788,6 +811,11 @@ def _sync_storage_post(form):
     name = "app.videos.sync_aws_s3_storage_task"
     # A sync that waits for idle queues books its retry under this id.
     if not start_bulk_run((SYNC_RUN, requeue_job_id(name)), name):
+        flash(ALREADY_QUEUED, "info")
+        return
+    # The scheduler queues the weekly sync with an id of its own (#456).
+    if live_task_job(name) is not None:
+        finish_bulk_run(SYNC_RUN)
         flash(ALREADY_QUEUED, "info")
         return
     enqueue_task(

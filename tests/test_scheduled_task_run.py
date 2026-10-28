@@ -133,3 +133,101 @@ def test_run_now_requires_admin(app, user_client):
     assert response.status_code == 302
     with app.app_context():
         assert len(app.maintenance_queue) == 0
+
+
+def enqueue_like_the_scheduler(app, func_name, delay=None):
+    """Queue the function object with no meta, as an old cron job does (#456).
+
+    rq then names the job after the module that defines the function.
+    For the import sweep, that is app.importing, not app.videos."""
+
+    import importlib
+    from datetime import timedelta
+
+    module_name, name = func_name.rsplit(".", 1)
+    func = getattr(importlib.import_module(module_name), name)
+    if delay is None:
+        return app.maintenance_queue.enqueue(func)
+    return app.maintenance_queue.enqueue_in(timedelta(minutes=delay), func)
+
+
+def test_a_cron_job_of_the_task_blocks_run_now(app, admin_client):
+    """The scheduler queues the callable. Its func_name is the defining module."""
+
+    with app.app_context():
+        register_cron_job(app, IMPORT_SWEEP)
+        job = enqueue_like_the_scheduler(app, IMPORT_SWEEP)
+        assert job.func_name == "app.importing.manual_import_task"
+
+    response = run_now(admin_client, IMPORT_SWEEP)
+    assert "waits or runs already" in response.get_data(as_text=True)
+    with app.app_context():
+        assert len(app.maintenance_queue) == 1
+
+
+def test_a_scheduled_retry_of_the_task_blocks_run_now(app, admin_client):
+    """A defer or a retry waits in the ScheduledJobRegistry. It counts as live."""
+
+    with app.app_context():
+        register_cron_job(app, IMPORT_SWEEP)
+        enqueue_like_the_scheduler(app, IMPORT_SWEEP, delay=5)
+        assert len(app.maintenance_queue) == 0
+
+    response = run_now(admin_client, IMPORT_SWEEP)
+    assert "waits or runs already" in response.get_data(as_text=True)
+    with app.app_context():
+        assert len(app.maintenance_queue) == 0
+
+
+def test_the_run_now_gate_stops_a_second_post_at_the_same_time(app):
+    """2 posts to 2 web workers can both see an empty queue. The gate stops one."""
+
+    from app.tasks import finish_task_run, start_task_run
+
+    with app.app_context():
+        assert start_task_run(IMPORT_SWEEP) is True
+        assert start_task_run(IMPORT_SWEEP) is False
+        finish_task_run(IMPORT_SWEEP)
+        assert start_task_run(IMPORT_SWEEP) is True
+        finish_task_run(IMPORT_SWEEP)
+
+
+def test_the_sync_row_has_no_run_now_button(app, admin_client):
+    """The S3 sync needs the password and the bulk gate of the Maintenance page."""
+
+    sync = "app.videos.sync_aws_s3_storage_task"
+    with app.app_context():
+        register_cron_job(app, sync, "0 3 * * 0")
+
+    body = admin_client.get("/system/metrics").get_data(as_text=True)
+    assert f'value="{sync}"' not in body
+    assert "Maintenance page" in body
+
+    response = run_now(admin_client, sync)
+    assert "Maintenance page" in response.get_data(as_text=True)
+    with app.app_context():
+        assert len(app.maintenance_queue) == 0
+
+
+def test_the_sync_button_sees_a_cron_sync(app, admin_client):
+    """A sync that the scheduler queued keeps the Maintenance button out (#456)."""
+
+    from tests.conftest import ADMIN_PASSWORD, csrf_token_from
+
+    sync = "app.videos.sync_aws_s3_storage_task"
+    with app.app_context():
+        enqueue_like_the_scheduler(app, sync)
+
+    page = admin_client.get("/maintenance").get_data(as_text=True)
+    body = admin_client.post(
+        "/maintenance",
+        data={
+            "csrf_token": csrf_token_from(page),
+            "password": ADMIN_PASSWORD,
+            "sync_submit": "1",
+        },
+        follow_redirects=True,
+    ).get_data(as_text=True)
+    assert "already queued or running" in body
+    with app.app_context():
+        assert len(app.maintenance_queue) == 1
