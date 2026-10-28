@@ -6,6 +6,8 @@ recovery notice. It also covers the disk free-space floor and the
 worker-liveness summarizer.
 """
 
+import os
+
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 
@@ -756,3 +758,29 @@ def test_a_failed_probe_keeps_the_api_key_out_of_redis_and_the_mail(
     assert b"api_key=[redacted]" in probes[b"TMDB"]
     issues = health_env.redis.hgetall("fitzflix:health:issues")
     assert all(key.encode() not in message for message in issues.values())
+
+
+def test_a_killed_worker_of_this_host_is_not_live(app):
+    """A SIGKILL leaves the hash with no death field (#530)."""
+
+    import socket
+    import subprocess
+
+    process = subprocess.Popen(["true"])
+    process.wait()
+    hostname = socket.gethostname()
+    killed = _fake_worker_key(app.redis, "killed", "fitzflix-sql", pid=process.pid)
+    app.redis.hset(killed, "hostname", hostname)
+    entries = {e["queue"]: e for e in maintenance.worker_health(app.redis)}
+    assert entries["fitzflix-sql"]["live"] == 0
+
+    # A worker of this host whose process runs still counts. So does a
+    # worker of a different host, whose process Fitzflix cannot see.
+    alive = _fake_worker_key(app.redis, "alive", "fitzflix-sql", pid=os.getpid())
+    app.redis.hset(alive, "hostname", hostname)
+    remote = _fake_worker_key(app.redis, "remote", "fitzflix-sql", pid=process.pid)
+    app.redis.hset(remote, "hostname", "another-host")
+    entries = {e["queue"]: e for e in maintenance.worker_health(app.redis)}
+    assert entries["fitzflix-sql"]["live"] == 2
+    for key in (killed, alive, remote):
+        app.redis.delete(key)

@@ -116,8 +116,18 @@ def _live_workers(connection):
     of rq. The worker never adds itself again. But it continues to work
     and to refresh its own key. Thus, the per-worker keys with a TTL are
     the true source for liveness.
+
+    A worker that a SIGKILL stopped leaves a hash with no death field.
+    Its key lives for the full job timeout, 48 hours on the transcode
+    queue. Thus, a worker of this host whose process is gone is not live
+    (#530). Then the self-heal starts the stopped process again.
     """
 
+    import socket
+
+    from app.worker_recovery import _pid_alive
+
+    hostname = socket.gethostname()
     workers = []
     for key in connection.scan_iter("rq:worker:*"):
         # The key of a worker that shut down cleanly stays for a short
@@ -129,8 +139,16 @@ def _live_workers(connection):
             worker = Worker.find_by_key(key.decode(), connection=connection)
         except Exception:
             continue
-        if worker is not None:
-            workers.append(worker)
+        if worker is None:
+            continue
+        if (
+            worker.hostname == hostname
+            and worker.pid
+            and worker.pid != os.getpid()
+            and not _pid_alive(worker.pid)
+        ):
+            continue
+        workers.append(worker)
     return workers
 
 
