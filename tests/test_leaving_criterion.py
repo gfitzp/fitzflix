@@ -1459,7 +1459,7 @@ def test_the_leaving_inventory_ranks_a_record_by_its_movie_lane(app, monkeypatch
     monkeypatch.setattr(
         leaving_criterion,
         "record_lane_scores",
-        lambda redis, user_id, tmdb_ids, profile: {9102: 5.0},
+        lambda redis, user_id, tmdb_ids, profile, tmdb_weights=None: {9102: 5.0},
     )
     try:
         with app.app_context():
@@ -1467,5 +1467,43 @@ def test_the_leaving_inventory_ranks_a_record_by_its_movie_lane(app, monkeypatch
             inventory = leaving_criterion.leaving_inventory(user)
         assert [item["tmdb_id"] for item in inventory["items"]] == [9102, 9101]
         assert inventory["items"][0]["score"] == 5.0
+    finally:
+        app.redis.delete(leaving_criterion.LEAVING_KEY)
+
+
+def test_the_leaving_shelf_scores_only_the_films_that_it_shows(app, monkeypatch):
+    """The lane scores ran for the logged and owned films too (#580)."""
+
+    import app.leaving_criterion as leaving_criterion
+    from app import db
+    from app.models import User, UserMovieReview
+    from app.videos import star_rating_fields
+
+    user_id = subscribe_criterion(app)
+    with app.app_context():
+        logged = make_movie("Leaving Logged", 1956, tmdb_id=9601)
+        db.session.add(
+            UserMovieReview(
+                user_id=user_id, movie_id=logged.id, **star_rating_fields(4)
+            )
+        )
+        db.session.commit()
+    plant_shelf(
+        app, [shelf_item(9601, "Leaving Logged"), shelf_item(9602, "Leaving Shown")]
+    )
+    calls = []
+    monkeypatch.setattr(
+        leaving_criterion,
+        "record_lane_scores",
+        lambda redis, user_id, tmdb_ids, profile, tmdb_weights=None: calls.append(
+            (list(tmdb_ids), tmdb_weights)
+        )
+        or {},
+    )
+    monkeypatch.setattr(leaving_criterion, "user_tmdb_weights", lambda u: {8: 1.0})
+    try:
+        with app.app_context():
+            leaving_criterion.leaving_shelf(db.session.get(User, user_id))
+        assert calls == [([9602], {8: 1.0})]
     finally:
         app.redis.delete(leaving_criterion.LEAVING_KEY)

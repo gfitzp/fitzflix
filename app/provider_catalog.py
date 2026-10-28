@@ -51,6 +51,7 @@ from app.recommendations import (
     estimated_rating,
     resolved_tmdb_score,
     stored_profile,
+    user_tmdb_weights,
 )
 from app.streaming import batch_title_availability, streaming_matches
 from app.streaming_rail import enriched_movie, movie_gone
@@ -276,6 +277,7 @@ def _process_popped(ids, subscribed):
 
     to_refresh = []
     created = 0
+    weights = {}
     for tmdb_id in streamable:
         if created >= CREATE_CAP:
             # The cap protects the refresh queue and the nightly loads.
@@ -299,7 +301,12 @@ def _process_popped(ids, subscribed):
 
         best = None
         for user_id, profile in profiles:
-            score = resolved_tmdb_score(redis, user_id, tmdb_id, profile)
+            # 1 weights read for each profile in the run (#580).
+            if user_id not in weights:
+                weights[user_id] = user_tmdb_weights(user_id)
+            score = resolved_tmdb_score(
+                redis, user_id, tmdb_id, profile, tmdb_weights=weights[user_id]
+            )
             if score is None:
                 continue
             estimate = estimated_rating(profile, score)

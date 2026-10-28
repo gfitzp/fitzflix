@@ -1861,3 +1861,39 @@ def test_resolved_score_ignores_a_map_entry_without_tmdb_data(app, admin_id):
             app.redis.hget(PATCH_SCORES_KEY.format(user_id=user_id), str(pick.id))
             is None
         )
+
+
+def test_the_resolvers_pass_the_weights_map_to_the_co_preference(app, monkeypatch):
+    """resolved_tmdb_score and single_movie_score paid user_movie_weights per film (#580)."""
+
+    from datetime import datetime
+
+    import app.recommendations as recommendations
+    import app.streaming_rail as streaming_rail
+    from app import db
+    from tests.factories import make_movie
+
+    copref = []
+    monkeypatch.setattr(
+        recommendations,
+        "_tmdb_copref",
+        lambda user_id, tmdb_id, tmdb_weights=None: copref.append(tmdb_weights) or 0.0,
+    )
+    monkeypatch.setattr(
+        streaming_rail, "enriched_movie", lambda tmdb_id: {"genres": [], "year": 1950}
+    )
+    weights = {5: 1.0}
+    profile = {"affinities": {}}
+    with app.app_context():
+        movie = make_movie("Weights Record", 1950, tmdb_id=9501)
+        movie.tmdb_data_as_of = datetime(2026, 10, 1)
+        db.session.commit()
+        app.redis.delete(recommendations.TMDB_PATCH_SCORES_KEY.format(user_id=1))
+        app.redis.delete(recommendations.PATCH_SCORES_KEY.format(user_id=1))
+        recommendations.resolved_tmdb_score(
+            app.redis, 1, 9501, profile, scores={}, tmdb_weights=weights
+        )
+        recommendations.resolved_tmdb_score(
+            app.redis, 1, 9502, profile, scores={}, tmdb_weights=weights
+        )
+    assert copref == [weights, weights]

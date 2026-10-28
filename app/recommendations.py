@@ -738,7 +738,7 @@ def _tmdb_copref(user_id, tmdb_id, tmdb_weights=None):
     return _copref_value(entries)
 
 
-def single_movie_score(user_id, movie, profile):
+def single_movie_score(user_id, movie, profile, tmdb_weights=None):
     """Return the live score of 1 film with the stored-recommendation
     recipe.
 
@@ -748,13 +748,13 @@ def single_movie_score(user_id, movie, profile):
     This returns None until the TMDB data of the film arrives. A record
     in the middle of a refresh has only its decade for the score. That
     would read as a taste mismatch and give an incorrect low
-    estimate."""
+    estimate. A loop gives tmdb_weights from user_tmdb_weights (#580)."""
 
     if not profile or movie.tmdb_data_as_of is None:
         return None
 
     taste, _ = score_movie(collect_features([movie.id]).get(movie.id, []), profile)
-    total = taste + _tmdb_copref(user_id, movie.tmdb_id)
+    total = taste + _tmdb_copref(user_id, movie.tmdb_id, tmdb_weights)
     if taste > 0:
         wins, nominations = 0, 0
         for win, tally in (
@@ -1392,7 +1392,7 @@ def stored_scores(redis, user_id):
     return scores
 
 
-def resolved_score(redis, user_id, movie, profile, scores=None):
+def resolved_score(redis, user_id, movie, profile, scores=None, tmdb_weights=None):
     """Return the engine score of the film from the 1 shared source.
 
     If the stored map covers the film, this returns the stored score.
@@ -1401,7 +1401,8 @@ def resolved_score(redis, user_id, movie, profile, scores=None):
     movie page, the rate drive) reads the identical number. It does not
     recompute its own. This returns None for a film that cannot get a
     score yet (no profile, or TMDB data not arrived). A batch caller
-    passes its `scores` map to skip the Redis read for each film."""
+    passes its `scores` map to skip the Redis read for each film. It
+    passes tmdb_weights to skip the weights query for each film (#580)."""
 
     # A film without TMDB data gets no score, also if an older map has
     # an entry for it. Thus, a film imported before the nightly run
@@ -1414,7 +1415,7 @@ def resolved_score(redis, user_id, movie, profile, scores=None):
         scores = stored_scores(redis, user_id)
     if movie.id in scores:
         return scores[movie.id]
-    score = single_movie_score(user_id, movie, profile)
+    score = single_movie_score(user_id, movie, profile, tmdb_weights)
     if score is not None:
         score = round(score, 4)
         key = PATCH_SCORES_KEY.format(user_id=int(user_id))
@@ -1443,7 +1444,7 @@ def tmdb_taste_score(user_id, tmdb_id, payload, profile, tmdb_weights=None):
     return round(taste + copref, 4), contributions
 
 
-def record_lane_scores(redis, user_id, tmdb_ids, profile):
+def record_lane_scores(redis, user_id, tmdb_ids, profile, tmdb_weights=None):
     """Return {tmdb_id: score} of each film with a local record (#535).
 
     resolved_tmdb_score sends a film with a record through the movie-id
@@ -1451,7 +1452,7 @@ def record_lane_scores(redis, user_id, tmdb_ids, profile):
     a discovery shelf ranks such a film by it too, not by the TMDB-lane
     taste score. A film with no record, or with no score yet, is absent.
     The first record of each TMDB id is the one that the resolver
-    reads."""
+    reads. A loop gives tmdb_weights from user_tmdb_weights (#580)."""
 
     if not profile or not tmdb_ids:
         return {}
@@ -1465,13 +1466,17 @@ def record_lane_scores(redis, user_id, tmdb_ids, profile):
     scores = stored_scores(redis, user_id)
     result = {}
     for tmdb_id, movie in movies.items():
-        score = resolved_score(redis, user_id, movie, profile, scores=scores)
+        score = resolved_score(
+            redis, user_id, movie, profile, scores=scores, tmdb_weights=tmdb_weights
+        )
         if score is not None:
             result[tmdb_id] = score
     return result
 
 
-def resolved_tmdb_score(redis, user_id, tmdb_id, profile, scores=None):
+def resolved_tmdb_score(
+    redis, user_id, tmdb_id, profile, scores=None, tmdb_weights=None
+):
     """Return the score for a film through the TMDB-keyed lane of the
     shared source. The film can be absent from the local database.
 
@@ -1484,11 +1489,14 @@ def resolved_tmdb_score(redis, user_id, tmdb_id, profile, scores=None):
     database does not grow. When the film gets a record (a watchlist
     add, a log, an import), the movie-id lane takes over. This returns
     None if the film cannot get a score: no profile, or TMDB not
-    reachable with nothing cached."""
+    reachable with nothing cached. A batch caller gives tmdb_weights
+    from user_tmdb_weights (#580)."""
 
     movie = Movie.query.filter_by(tmdb_id=int(tmdb_id)).first()
     if movie is not None:
-        return resolved_score(redis, user_id, movie, profile, scores=scores)
+        return resolved_score(
+            redis, user_id, movie, profile, scores=scores, tmdb_weights=tmdb_weights
+        )
     if not profile:
         return None
     key = TMDB_PATCH_SCORES_KEY.format(user_id=int(user_id))
@@ -1501,7 +1509,7 @@ def resolved_tmdb_score(redis, user_id, tmdb_id, profile, scores=None):
     payload = enriched_movie(tmdb_id)
     if not payload:
         return None
-    score, _ = tmdb_taste_score(user_id, tmdb_id, payload, profile)
+    score, _ = tmdb_taste_score(user_id, tmdb_id, payload, profile, tmdb_weights)
     redis.hset(key, str(int(tmdb_id)), score)
     redis.expire(key, PATCH_SCORES_TTL)
     return score

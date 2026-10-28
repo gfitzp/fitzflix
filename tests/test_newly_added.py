@@ -931,3 +931,81 @@ def test_the_shelf_reads_the_weights_1_time_per_call(app, monkeypatch):
 
     extra = queries_for(15) - queries_for(5)
     assert extra <= 12, f"{extra} queries for 10 more films"
+
+
+def test_the_shelf_scores_only_the_films_that_it_shows(app, monkeypatch):
+    """The lane scores ran for logged and owned films too (#580).
+
+    A logged film has no stored score. Each one cost a live score on the
+    first landing render of the day. The weights go with the batch."""
+
+    import app.newly_added as newly_added
+    from app import db
+    from app.models import User, UserMovieReview
+    from app.videos import star_rating_fields
+
+    user_id = subscribe_criterion(app)
+    today = date.today().isoformat()
+    with app.app_context():
+        logged = make_movie("Shelf Logged", 1956, tmdb_id=9401)
+        db.session.add(
+            UserMovieReview(
+                user_id=user_id, movie_id=logged.id, **star_rating_fields(4)
+            )
+        )
+        db.session.commit()
+    plant_feed(
+        app,
+        [
+            new_item(9401, "Shelf Logged", first_seen=today),
+            new_item(9402, "Shelf Shown", first_seen=today),
+        ],
+    )
+    calls = []
+    monkeypatch.setattr(
+        newly_added,
+        "record_lane_scores",
+        lambda redis, user_id, tmdb_ids, profile, tmdb_weights=None: calls.append(
+            (list(tmdb_ids), tmdb_weights)
+        )
+        or {},
+    )
+    monkeypatch.setattr(newly_added, "user_tmdb_weights", lambda user_id: {7: 1.0})
+    with app.app_context():
+        newly_added.newly_added_shelves(db.session.get(User, user_id))
+    assert calls == [([9402], {7: 1.0})]
+
+
+def test_the_inventory_ranks_a_record_by_its_movie_lane(app, monkeypatch):
+    """The /newly-added page ranked a record by the TMDB lane (#580)."""
+
+    import app.newly_added as newly_added
+    from app import db
+    from app.models import User
+
+    user_id = subscribe_criterion(app)
+    today = date.today().isoformat()
+    plant_feed(
+        app,
+        [
+            new_item(9411, "Inventory High", first_seen=today),
+            new_item(9412, "Inventory Recorded", first_seen=today),
+        ],
+    )
+    lane = {9411: 2.0, 9412: 1.0}
+    monkeypatch.setattr(newly_added, "stored_profile", lambda redis, u: {"x": 1})
+    monkeypatch.setattr(newly_added, "user_tmdb_weights", lambda user_id: {})
+    monkeypatch.setattr(
+        newly_added,
+        "tmdb_taste_score",
+        lambda user_id, tmdb_id, item, profile, weights: (lane[tmdb_id], []),
+    )
+    monkeypatch.setattr(
+        newly_added,
+        "record_lane_scores",
+        lambda redis, user_id, tmdb_ids, profile, tmdb_weights=None: {9412: 5.0},
+    )
+    with app.app_context():
+        sections = newly_added.newly_added_inventory(db.session.get(User, user_id))
+    films = [film["tmdb_id"] for film in sections[0]["films"]]
+    assert films == [9412, 9411]

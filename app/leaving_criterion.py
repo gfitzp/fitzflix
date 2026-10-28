@@ -750,25 +750,30 @@ def leaving_shelf(user):
     if not tmdb_ids:
         return None
     owned, logged, watchlisted, refused = user_film_sets(user, tmdb_ids)
+    excluded = owned | refused | logged | watchlisted
+    shown = [
+        item
+        for item in stored.get("items", [])
+        if item["tmdb_id"] is not None and item["tmdb_id"] not in excluded
+    ]
+    if not shown:
+        return {"departs": departs, "url": _source_url(stored, departs), "items": []}
 
-    # A film with a record ranks by the number of its tile (#535).
+    # A film with a record ranks by the number of its tile (#535). Only
+    # the films that the shelf shows get the number (#580).
 
-    recorded = record_lane_scores(current_app.redis, user.id, tmdb_ids, profile)
+    tmdb_weights = user_tmdb_weights(user.id)
+    recorded = record_lane_scores(
+        current_app.redis,
+        user.id,
+        [item["tmdb_id"] for item in shown],
+        profile,
+        tmdb_weights=tmdb_weights,
+    )
 
     items = []
-    tmdb_weights = None
-    for item in stored.get("items", []):
+    for item in shown:
         tmdb_id = item["tmdb_id"]
-        if tmdb_id is None:
-            continue
-        if tmdb_id in owned:
-            continue
-        if tmdb_id in refused:
-            continue
-        if tmdb_id in logged or tmdb_id in watchlisted:
-            continue
-        if tmdb_weights is None:
-            tmdb_weights = user_tmdb_weights(user.id)
         score, contributions = tmdb_taste_score(
             user.id, tmdb_id, item, profile, tmdb_weights
         )
@@ -875,10 +880,12 @@ def leaving_inventory(user):
     # A film with a record ranks by the number of its popover, as on
     # the home shelf (#535, #557).
 
-    recorded = record_lane_scores(current_app.redis, user.id, tmdb_ids, profile)
+    tmdb_weights = user_tmdb_weights(user.id) if profile else None
+    recorded = record_lane_scores(
+        current_app.redis, user.id, tmdb_ids, profile, tmdb_weights=tmdb_weights
+    )
 
     items = []
-    tmdb_weights = user_tmdb_weights(user.id) if profile else None
     for item in matched:
         tmdb_id = item["tmdb_id"]
         if profile:

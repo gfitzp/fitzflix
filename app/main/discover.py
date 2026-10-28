@@ -87,6 +87,7 @@ from app.recommendations import (
     stored_profile,
     stored_recommendations,
     stored_scores,
+    user_tmdb_weights,
     watch_again_shelf,
 )
 from app.availability_alerts import NEW_IN_LIBRARY_LABEL, recent_availability
@@ -1588,11 +1589,19 @@ def _movie_states():
                 with ThreadPoolExecutor(max_workers=10) as executor:
                     list(executor.map(warm, to_fetch))
             scoreable = cached | set(to_fetch)
+        tmdb_weights = None
         for tmdb_id in unmatched:
             score = overlay.get(tmdb_id)
             if score is None and tmdb_id in scoreable:
+                # 1 weights read for the batch, not 1 for each film (#580).
+                if tmdb_weights is None:
+                    tmdb_weights = user_tmdb_weights(current_user.id)
                 score = resolved_tmdb_score(
-                    current_app.redis, current_user.id, tmdb_id, profile
+                    current_app.redis,
+                    current_user.id,
+                    tmdb_id,
+                    profile,
+                    tmdb_weights=tmdb_weights,
                 )
             if score is not None:
                 tmdb_estimates[tmdb_id] = estimated_rating(profile, score)

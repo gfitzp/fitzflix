@@ -36,7 +36,7 @@ def scorer_that_likes_westerns(monkeypatch):
     import app.provider_catalog as pc
     from app.streaming_rail import _payload_features
 
-    def score(redis, user_id, tmdb_id, profile):
+    def score(redis, user_id, tmdb_id, profile, tmdb_weights=None):
         """Score a Western payload 1.0 and each different payload 0.0."""
 
         features = _payload_features(pc.enriched_movie(tmdb_id) or {})
@@ -324,3 +324,45 @@ def test_a_raise_after_the_pop_puts_the_batch_back(app, monkeypatch):
         with pytest.raises(RuntimeError):
             pc._process_pending({258})
     assert sorted(int(m) for m in app.redis.smembers(pc.PENDING_KEY)) == [501, 502]
+
+
+def test_the_catalog_run_reads_the_weights_1_time_per_profile(app, monkeypatch):
+    """resolved_tmdb_score paid the weights query for each film (#580)."""
+
+    import app.provider_catalog as pc
+
+    subscribe_criterion(app)
+    scorer_that_likes_westerns(monkeypatch)
+    seen = []
+    real_score = pc.resolved_tmdb_score
+    monkeypatch.setattr(
+        pc,
+        "resolved_tmdb_score",
+        lambda redis, user_id, tmdb_id, profile, tmdb_weights=None: (
+            seen.append(tmdb_weights),
+            real_score(redis, user_id, tmdb_id, profile),
+        )[1],
+    )
+    reads = []
+    monkeypatch.setattr(
+        pc, "user_tmdb_weights", lambda user_id: reads.append(user_id) or {1: 1.0}
+    )
+    payloads = {
+        tmdb_id: shelf_item(tmdb_id, f"Weights Western {tmdb_id}")
+        for tmdb_id in (211, 212, 213)
+    }
+    monkeypatch.setattr(pc, "enriched_movie", lambda tmdb_id: payloads.get(tmdb_id))
+    for tmdb_id in payloads:
+        plant_availability(
+            app,
+            tmdb_id,
+            {"link": None, "flatrate": [CRITERION], "ads": [], "rent": [], "buy": []},
+        )
+    app.redis.sadd(pc.PENDING_KEY, *payloads)
+
+    with app.app_context():
+        monkeypatch.setattr(app, "maintenance_queue", RecordingQueue())
+        pc._process_pending({258})
+    assert len(seen) == 3
+    assert seen == [{1: 1.0}] * 3
+    assert len(reads) == 1

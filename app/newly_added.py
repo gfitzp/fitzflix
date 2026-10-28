@@ -269,20 +269,29 @@ def newly_added_shelves(user):
 
         tmdb_ids = [item["tmdb_id"] for item in recent]
         owned, logged, watchlisted, refused = user_film_sets(user, tmdb_ids)
+        shown = [
+            item
+            for item in recent
+            if item["tmdb_id"] not in owned | refused | logged | watchlisted
+        ]
 
         # A film with a record ranks by the number of its tile (#535).
+        # Only the films that the shelf shows get the number (#580). A
+        # logged film has no stored score and cost a live score each day.
 
-        recorded = record_lane_scores(current_app.redis, user.id, tmdb_ids, profile)
-
-        rows = []
         if tmdb_weights is None:
             tmdb_weights = user_tmdb_weights(user.id)
-        for item in recent:
+        recorded = record_lane_scores(
+            current_app.redis,
+            user.id,
+            [item["tmdb_id"] for item in shown],
+            profile,
+            tmdb_weights=tmdb_weights,
+        )
+
+        rows = []
+        for item in shown:
             tmdb_id = item["tmdb_id"]
-            if tmdb_id in owned or tmdb_id in refused:
-                continue
-            if tmdb_id in logged or tmdb_id in watchlisted:
-                continue
             score, contributions = tmdb_taste_score(
                 user.id, tmdb_id, item, profile, tmdb_weights
             )
@@ -383,12 +392,20 @@ def newly_added_inventory(user):
         films = []
         if profile and tmdb_weights is None:
             tmdb_weights = user_tmdb_weights(user.id)
+
+        # A film with a record ranks by the number of its tile, as on the
+        # shelf (#535, #580).
+
+        recorded = record_lane_scores(
+            current_app.redis, user.id, tmdb_ids, profile, tmdb_weights=tmdb_weights
+        )
         for item in matched:
             tmdb_id = item["tmdb_id"]
             if profile:
                 score, contributions = tmdb_taste_score(
                     user.id, tmdb_id, item, profile, tmdb_weights
                 )
+                score = recorded.get(tmdb_id, score)
             else:
                 score, contributions = 0.0, []
             films.append(
