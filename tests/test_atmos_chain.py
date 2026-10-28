@@ -305,9 +305,14 @@ def test_the_import_queues_the_twin_on_the_handoff_queue(app, monkeypatch):
     import app.atmos as atmos
 
     with app.app_context():
+        from rq.job import JobStatus
+
         file, job, _ = _setup(app, monkeypatch, "Chain Queue")
         assert job.origin == "fitzflix-import"
+        # The first job ran. A finished job under the fixed id gives the
+        # id to the next job (#504).
         app.import_queue.remove(job.id)
+        job.set_status(JobStatus.FINISHED)
 
         assert (
             atmos.maybe_enqueue_atmos_supplement(file.id, queue=app.handoff_queue)

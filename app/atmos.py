@@ -37,7 +37,7 @@ from rq import get_current_job
 from rq.registry import StartedJobRegistry
 
 from app import s3_layout
-from app.tasks import enqueue_task, report_progress
+from app.tasks import enqueue_task, free_job_id, report_progress
 from app import db, get_app, safe_job_id
 from app.models import File, FileAudioTrack
 from app.naming import hidden
@@ -479,6 +479,13 @@ def maybe_enqueue_atmos_supplement(file_id, staged_source=None, queue=None):
         started = StartedJobRegistry(queue=queued)
         if job_id in queued.job_ids or job_id in started.get_job_ids():
             return False
+
+    # A finished job under the fixed id gives its expiry to a new job
+    # under the same id (#504). The queued job then expires before a
+    # worker takes it. A live job keeps the id.
+
+    if not free_job_id("app.atmos.atmos_supplement_task", job_id):
+        return False
     enqueue_task(
         "app.atmos.atmos_supplement_task",
         int(file_id),
@@ -791,12 +798,10 @@ def _atmos_prepare(file_id, phases, staged_source=None):
                 ),
             )
             mc_job_id = mc_job["Job"]["Id"]
-            current_app.logger.info(
-                f"'{basename}' MediaConvert job {mc_job_id} submitted "
-                f"({get_setting('EAC3_ATMOS_BITRATE')} bps 9.1.6)"
-            )
-            for damf_path in damf_files:
-                os.remove(damf_path)
+
+            # Record the job before the removes (#504). A fault in a
+            # remove must still cancel the encode. Else it bills to the
+            # end and writes into a prefix that the cleanup emptied.
 
             tracks.append(
                 {
@@ -806,6 +811,12 @@ def _atmos_prepare(file_id, phases, staged_source=None):
                     "mc_job_id": mc_job_id,
                 }
             )
+            current_app.logger.info(
+                f"'{basename}' MediaConvert job {mc_job_id} submitted "
+                f"({get_setting('EAC3_ATMOS_BITRATE')} bps 9.1.6)"
+            )
+            for damf_path in damf_files:
+                os.remove(damf_path)
 
     except BaseException:
         current_app.logger.error(traceback.format_exc())

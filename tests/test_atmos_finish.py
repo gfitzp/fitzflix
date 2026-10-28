@@ -207,3 +207,41 @@ def test_a_file_that_has_its_twins_gets_its_rows_back(app, monkeypatch):
             )
         ]
         assert codecs == [TWIN, ATMOS]
+
+
+def test_a_finished_job_under_the_fixed_id_gives_no_expiry_to_the_new_one(
+    app, monkeypatch
+):
+    """The fixed id is freed before the enqueue (#504)."""
+
+    import app.atmos as atmos
+    from rq.job import JobStatus
+
+    with app.app_context():
+        file, job, _ = _setup(app, monkeypatch, "Fixed Id")
+        app.import_queue.remove(job)
+        job.set_status(JobStatus.FINISHED)
+        app.redis.expire(job.key, 500)
+
+        assert atmos.maybe_enqueue_atmos_supplement(file.id) is True
+        assert app.redis.ttl(job.key) == -1
+
+
+def test_a_failed_remove_after_the_submit_still_cancels_the_encode(app, monkeypatch):
+    """The encode is in the list that the cleanup cancels (#504)."""
+
+    import app.atmos as atmos
+
+    with app.app_context():
+        file, job, mediaconvert = _setup(app, monkeypatch, "Remove Fault")
+        real_remove = os.remove
+
+        def remove(path):
+            if ".atmos" in os.path.basename(path):
+                raise OSError(6, "Device not configured")
+            return real_remove(path)
+
+        monkeypatch.setattr(atmos.os, "remove", remove)
+        with pytest.raises(OSError):
+            atmos.atmos_supplement_task(file.id)
+        assert getattr(mediaconvert, "canceled", []) == ["mc-1"]
