@@ -1112,9 +1112,14 @@ def mkvpropedit_unlocked(
                     universal_newlines=True,
                     bufsize=1,
                 )
-                for line in mkvpropedit_task.stdout:
-                    line = line.replace("\n", "")
-                    current_app.logger.info(f"'{file.basename}' {line}")
+                try:
+                    for line in mkvpropedit_task.stdout:
+                        line = line.replace("\n", "")
+                        current_app.logger.info(f"'{file.basename}' {line}")
+                except BaseException:
+                    # The child must not keep writing after a fault (#499).
+                    stop_process(mkvpropedit_task)
+                    raise
 
                 wait_for_subprocess(mkvpropedit_task, ok_returncodes=(0, 1))
 

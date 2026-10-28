@@ -44,6 +44,7 @@ from app.models import File, FileAudioTrack
 from app.naming import hidden
 from app.settings import get_setting
 from app.pipeline import TaskPhases, close_trail, keep_trail_open
+from app.tracks import stop_process
 from app.plex_library import enqueue_plex_analyze
 
 app = get_app()
@@ -334,18 +335,24 @@ def _run_step(command, job, basename, description, ok_returncodes=(0,)):
         bufsize=1,
     )
     previous_percent = None
-    for line in process.stdout:
-        line = line.rstrip()
-        if not line:
-            continue
-        current_app.logger.info(f"'{basename}' {line}")
-        percent_match = re.search(r"(\d{1,3})%", line)
-        if percent_match and job:
-            percent = min(int(percent_match.group(1)), 100)
-            if percent != previous_percent:
-                previous_percent = percent
-                job.meta["progress"] = percent
-                job.save_meta()
+    try:
+        for line in process.stdout:
+            line = line.rstrip()
+            if not line:
+                continue
+            current_app.logger.info(f"'{basename}' {line}")
+            percent_match = re.search(r"(\d{1,3})%", line)
+            if percent_match and job:
+                percent = min(int(percent_match.group(1)), 100)
+                if percent != previous_percent:
+                    previous_percent = percent
+                    job.meta["progress"] = percent
+                    job.save_meta()
+    except BaseException:
+        # The child must not keep writing into a workspace that the
+        # cleanup removes (#499).
+        stop_process(process)
+        raise
     wait_for_subprocess(process, ok_returncodes=ok_returncodes)
 
 

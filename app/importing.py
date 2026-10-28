@@ -116,6 +116,7 @@ from app.tracks import (
     get_subtitle_tracks_from_file,
     record_filesize,
     remove_empty_subtitle_tracks,
+    stop_process,
     supplement_lossless_tracks,
     watch_mkvmerge_progress,
 )
@@ -1653,12 +1654,18 @@ def _copy_as_is(
             universal_newlines=True,
             bufsize=1,
         )
-        for line in atomicparsley_process.stdout:
-            line = line.replace("\n", "")
-            current_app.logger.info(f"'{os.path.basename(work_path)}' {line}")
-            report_progress(
-                job, os.path.basename(work_path), "Removing MPEG-4 metadata"
-            )
+        try:
+            for line in atomicparsley_process.stdout:
+                line = line.replace("\n", "")
+                current_app.logger.info(f"'{os.path.basename(work_path)}' {line}")
+                report_progress(
+                    job, os.path.basename(work_path), "Removing MPEG-4 metadata"
+                )
+        except BaseException:
+            # AtomicParsley rewrites the work file in place. It must stop
+            # before the cleanup (#499).
+            stop_process(atomicparsley_process)
+            raise
 
         wait_for_subprocess(atomicparsley_process)
 
@@ -1961,8 +1968,12 @@ def inspect_localized_file(file_path, container, job=None):
                 universal_newlines=True,
                 bufsize=1,
             )
-            for line in mkvpropedit_process.stdout:
-                current_app.logger.info(f"'{name}' {line.rstrip()}")
+            try:
+                for line in mkvpropedit_process.stdout:
+                    current_app.logger.info(f"'{name}' {line.rstrip()}")
+            except BaseException:
+                stop_process(mkvpropedit_process)
+                raise
 
             wait_for_subprocess(mkvpropedit_process, ok_returncodes=(0, 1))
 

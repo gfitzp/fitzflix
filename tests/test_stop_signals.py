@@ -154,3 +154,77 @@ def test_abandon_import_releases_the_lock_before_the_slow_steps(app, monkeypatch
             pending_archive="pending-untouched/run/Slow (2001).mkv",
         )
     assert events == ["unlock", "discard", "reject"]
+
+
+class _WritingChild:
+    """A fake child that runs until it is killed. Its output is 1 line."""
+
+    def __init__(self, *args, **kwargs):
+        self.stdout = iter(["line 50%\n", "line 60%\n"])
+        self.pid = 4545
+        self.args = ["tool"]
+        self.killed = False
+        self.returncode = None
+
+    def poll(self):
+        return -9 if self.killed else None
+
+    def kill(self):
+        self.killed = True
+
+    def wait(self, timeout=None):
+        return -9
+
+
+def test_a_fault_in_the_atmos_step_loop_stops_the_child(app, monkeypatch):
+    """A Redis fault in the progress write stops mkvextract or truehdd (#499)."""
+
+    import app.atmos as atmos
+
+    children = []
+
+    def popen(*args, **kwargs):
+        children.append(_WritingChild())
+        return children[-1]
+
+    class BrokenJob:
+        """A job whose progress write fails after the child starts."""
+
+        meta = {}
+
+        def save_meta(self):
+            if children:
+                raise ConnectionError("redis down")
+
+    monkeypatch.setattr(atmos.subprocess, "Popen", popen)
+    with app.app_context(), pytest.raises(ConnectionError):
+        atmos._run_step(["truehdd"], BrokenJob(), "Film.mkv", "Decoding")
+    assert children[0].killed
+
+
+def test_a_fault_in_the_atomicparsley_loop_stops_the_child(app, monkeypatch):
+    """AtomicParsley rewrites the file in place. A fault stops it (#499)."""
+
+    from app import importing
+
+    children = []
+
+    def popen(*args, **kwargs):
+        children.append(_WritingChild())
+        return children[-1]
+
+    def broken(*args, **kwargs):
+        raise ConnectionError("redis down")
+
+    monkeypatch.setattr(importing.subprocess, "Popen", popen)
+    monkeypatch.setattr(importing, "report_progress", broken)
+    with app.app_context(), pytest.raises(ConnectionError):
+        importing._copy_as_is(
+            "/nowhere/Film.mp4",
+            "/nowhere/.Film.mp4",
+            "/nowhere",
+            "Film.mp4",
+            "MPEG-4",
+            None,
+        )
+    assert children[0].killed

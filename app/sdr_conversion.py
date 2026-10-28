@@ -507,8 +507,14 @@ def convert_localized_file(
                 universal_newlines=True,
                 bufsize=1,
             )
-            for line in mux_process.stdout:
-                current_app.logger.debug(f"'{basename}' {line.rstrip()}")
+            try:
+                for line in mux_process.stdout:
+                    current_app.logger.debug(f"'{basename}' {line.rstrip()}")
+            except BaseException:
+                # The mux must not keep writing into a file that the
+                # cleanup removes (#499).
+                stop_process(mux_process)
+                raise
             wait_for_subprocess(mux_process, ok_returncodes=(0, 1))
 
             # Make sure that the result is SDR and complete.
