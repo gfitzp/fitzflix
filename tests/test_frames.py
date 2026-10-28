@@ -52,11 +52,21 @@ def reopen_rounds(app):
     """Open the graded rounds again, as a new deal of the frame does.
 
     These tests grade many guesses against 1 dealt frame. The game
-    grades a round only 1 time."""
+    grades a round only 1 time. A graded round keeps its difficulty in
+    the marker (#490). Thus, it opens again for the same difficulty."""
 
-    keys = app.redis.keys("fitzflix:frames:graded:*")
-    if keys:
-        app.redis.delete(*keys)
+    for key in app.redis.keys("fitzflix:frames:graded:*"):
+        value = (app.redis.get(key) or b"").decode()
+        if value.startswith("graded:"):
+            app.redis.set(key, "open:" + value[len("graded:") :])
+
+
+def open_round(app, user_id, token, difficulty):
+    """Open the round of token for difficulty, as a deal of the frame does (#490)."""
+
+    from app.main.game import GRADED_KEY
+
+    app.redis.set(GRADED_KEY.format(user_id=user_id, token=token), f"open:{difficulty}")
 
 
 def test_refresh_prunes_and_tops_up(app):
@@ -483,8 +493,10 @@ def test_high_scores_persist_per_difficulty(app, admin_client):
     assert "That is 2 in a row. This is a new personal best." in body
     guess("difficult", "999999")
 
-    # A hit on a different difficulty starts its own row
+    # A hit on a different difficulty starts its own row. The token must
+    # be dealt on that difficulty first (#490).
 
+    admin_client.get("/game?difficulty=siracusa&unrated=1")
     guess("siracusa", "")  # a miss, but it creates the row
     with app.app_context():
         difficult = UserFrameScore.query.filter_by(difficulty="difficult").one()
@@ -1929,7 +1941,7 @@ def test_fuzzy_matching_accepts_the_subtitle_alone(app, admin_client):
     assert "alert-danger" in guess("The Search for Spock")
 
 
-def test_fuzzy_matching_folds_spelled_numbers_to_digits(app, admin_client):
+def test_fuzzy_matching_folds_spelled_numbers_to_digits(app, admin_client, admin_id):
     """Fold spelled numbers to digits in the fuzzy match.
 
     Digits and their spelled-out forms are interchangeable. 'Pelham 123'
@@ -1956,7 +1968,7 @@ def test_fuzzy_matching_folds_spelled_numbers_to_digits(app, admin_client):
     csrf = re.search(r'name="csrf_token"[^>]*value="([^"]+)"', page).group(1)
 
     def guess(token, text):
-        reopen_rounds(app)
+        open_round(app, admin_id, token, "siracusa")
         return admin_client.post(
             "/game",
             data={
@@ -2378,3 +2390,88 @@ def test_a_malformed_pool_entry_leaves_the_pool(app):
         finally:
             app.redis.delete(frames.POOL_KEY)
             os.remove(frames.frame_path(good))
+
+
+def test_a_live_extra_round_cannot_be_revealed_as_siracusa(app, admin_client):
+    """The Siracusa post of the live Extra token redirects with no reveal (#490)."""
+
+    import re
+
+    from app import db
+    from app.models import UserFrameScore
+
+    with app.app_context():
+        movie = make_movie("Bound Extra Film", 2002)
+        make_movie_file(movie, "Bluray-1080p")
+        db.session.commit()
+        movie_id = movie.id
+
+    token = seed_image_frame(app, movie_id, size=(120, 80))
+    page = admin_client.get("/game?difficulty=extra&unrated=1").get_data(as_text=True)
+    csrf = re.search(r'name="csrf_token"[^>]*value="([^"]+)"', page).group(1)
+
+    response = admin_client.post(
+        "/game",
+        data={
+            "csrf_token": csrf,
+            "token": token,
+            "difficulty": "siracusa",
+            "guess": "",
+            "guess_submit": "y",
+        },
+    )
+    assert response.status_code == 302
+    assert "Bound Extra Film" not in response.get_data(as_text=True)
+    with app.app_context():
+        assert UserFrameScore.query.filter_by(difficulty="siracusa").count() == 0
+
+
+def test_an_easy_token_cannot_be_graded_as_siracusa(app, admin_client):
+    """A token dealt on Easy redirects a Siracusa post (#490)."""
+
+    import re
+
+    from app import db
+    from app.models import UserFrameScore
+
+    with app.app_context():
+        answer = make_movie("Bound Easy Film", 1994)
+        make_movie_file(answer, "Bluray-1080p")
+        for n in range(4):
+            make_movie_file(make_movie(f"Bound Distractor {n}", 1990 + n), "DVD")
+        db.session.commit()
+        answer_id = answer.id
+
+    token = seed_frame(app, answer_id)
+    page = admin_client.get("/game?difficulty=difficult&unrated=1").get_data(
+        as_text=True
+    )
+    assert f'src="/game/frame/{token}"' in page
+    csrf = re.search(r'name="csrf_token"[^>]*value="([^"]+)"', page).group(1)
+
+    response = admin_client.post(
+        "/game",
+        data={
+            "csrf_token": csrf,
+            "token": token,
+            "difficulty": "siracusa",
+            "guess": "Bound Easy Film",
+            "guess_submit": "y",
+        },
+    )
+    assert response.status_code == 302
+    with app.app_context():
+        assert UserFrameScore.query.filter_by(difficulty="siracusa").count() == 0
+
+    # The post of the dealt difficulty still grades the round.
+    body = admin_client.post(
+        "/game",
+        data={
+            "csrf_token": csrf,
+            "token": token,
+            "difficulty": "difficult",
+            "choice": str(answer_id),
+            "guess_submit": "y",
+        },
+    ).get_data(as_text=True)
+    assert "Correct" in body

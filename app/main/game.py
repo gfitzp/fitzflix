@@ -121,11 +121,21 @@ BRAG_TTL = 3600
 
 # A round of Easy, Medium, or Hard is graded 1 time. A reload of the
 # reveal page posts the guess again. Without this marker, each post
-# added to the streak and queued another frame replacement. A new deal
-# of the frame clears the marker.
+# added to the streak and queued another frame replacement. A deal
+# writes "open:<difficulty>" into the marker (#490). Only a post of
+# that difficulty can grade the round. The grade writes
+# "graded:<difficulty>". Thus, a token dealt on Easy, or a live Extra
+# round, cannot be graded as Siracusa.
 
 GRADED_KEY = "fitzflix:frames:graded:{user_id}:{token}"
 GRADED_TTL = 86400
+GRADE_SCRIPT = """
+if redis.call('GET', KEYS[1]) == ARGV[1] then
+  redis.call('SET', KEYS[1], ARGV[2], 'EX', ARGV[3])
+  return 1
+end
+return 0
+"""
 
 # The distractors stay in the era of the answer (requested by Glenn,
 # 2026-08-20). An option that is decades away gives the round away by
@@ -895,8 +905,19 @@ def name_that_frame():
         if difficulty == "extra":
             return _extra_post(form, token, movie)
 
+        # The live Extra round of the token is not a round of this
+        # difficulty (#490). A reveal here would show its title.
+
+        live = _extra_round()
         graded_key = GRADED_KEY.format(user_id=int(current_user.id), token=token)
-        if not current_app.redis.set(graded_key, "1", nx=True, ex=GRADED_TTL):
+        if (live and live.get("token") == token) or not current_app.redis.eval(
+            GRADE_SCRIPT,
+            1,
+            graded_key,
+            f"open:{difficulty}",
+            f"graded:{difficulty}",
+            GRADED_TTL,
+        ):
             return redirect(url_for("main.name_that_frame", difficulty=difficulty))
 
         if DIFFICULTIES[difficulty] is None:
@@ -984,14 +1005,19 @@ def name_that_frame():
             dealt = token is not None
             if token:
                 _save_extra_round(token, stage)
+                current_app.redis.delete(
+                    GRADED_KEY.format(user_id=int(current_user.id), token=token)
+                )
             else:
                 _clear_extra_round()
     else:
         token = _deal_token(tokens)
         dealt = token is not None
         if token:
-            current_app.redis.delete(
-                GRADED_KEY.format(user_id=int(current_user.id), token=token)
+            current_app.redis.set(
+                GRADED_KEY.format(user_id=int(current_user.id), token=token),
+                f"open:{difficulty}",
+                ex=GRADED_TTL,
             )
     options = None
     if token and DIFFICULTIES[difficulty] is not None:
