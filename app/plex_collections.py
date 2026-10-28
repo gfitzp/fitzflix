@@ -353,7 +353,14 @@ def sync_criterion_collection():
                 name.decode() if isinstance(name, bytes) else name
                 for name in redis.smembers(SYNCED_SETS_KEY)
             }
-            shrunk = sorted((box_set_titles() - set(qualifying)) & synced)
+            titles = box_set_titles()
+            # A set title that no record names any more (a renamed set)
+            # leaves the record. Its old collection is not ours (#558).
+            stale = sorted(synced - titles)
+            if stale:
+                redis.srem(SYNCED_SETS_KEY, *stale)
+                synced -= set(stale)
+            shrunk = sorted((titles - set(qualifying)) & synced)
             machine = _server_machine_id()
             sections = plex_get("/library/sections").get("MediaContainer", {})
         except Exception:

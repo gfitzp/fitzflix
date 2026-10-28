@@ -128,14 +128,15 @@ def remux_file(file_path, build_command, job, name, activity, before_replace=Non
             if status != "lock":
                 break
         if status == "lock":
-            # A transient error. The callers book a retry. An in-place
-            # remux would write a second copy over the NAS (#298).
-            raise OSError(
-                errno.ETIMEDOUT,
+            # The scan, the audio plan and the post-reorder step have no
+            # retry for this fault (#569 follow-up). Thus, the remux runs
+            # in place after the tries, as it does for a lack of space.
+            current_app.logger.warning(
                 f"'{name}' The staging reservation lock stays busy. "
-                f"The remux waits for a later try",
+                f"Remuxing in place"
             )
-        if status != "ok":
+            staged = False
+        elif status != "ok":
             current_app.logger.warning(
                 f"'{name}' Staging has no space for the remux. Remuxing in place"
             )

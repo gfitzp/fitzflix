@@ -549,3 +549,25 @@ def test_a_hand_made_collection_named_like_a_small_set_stays(app, monkeypatch):
 
     assert plex_collections.sync_criterion_collection() is True
     assert fake.collections["5"]["Lonely Set"][1] == {"34", "35"}
+
+
+def test_a_set_title_that_no_record_names_leaves_the_synced_record(app, monkeypatch):
+    """A renamed set kept its old name in the synced record (#558 follow-up).
+
+    The old name was not in box_set_titles. Thus, it never reached the
+    shrunk list, and the record held it for good."""
+
+    paths = _box_sets(app)
+    plex_collections, fake = _setup(
+        app,
+        monkeypatch,
+        {"5": ("movie", "Movies", {"31": paths["web"], "34": paths["lonely"]})},
+    )
+    fake.collections["5"] = {"Old Set Name": ["700", {"34", "35"}]}
+    app.redis.sadd(plex_collections.SYNCED_SETS_KEY, "Old Set Name")
+
+    assert plex_collections.sync_criterion_collection() is True
+    assert not app.redis.sismember(plex_collections.SYNCED_SETS_KEY, "Old Set Name")
+    assert app.redis.sismember(plex_collections.SYNCED_SETS_KEY, "Olympia Films")
+    # The old collection is not ours. Its members stay.
+    assert fake.collections["5"]["Old Set Name"][1] == {"34", "35"}

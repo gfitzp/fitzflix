@@ -206,12 +206,15 @@ def test_an_in_place_remux_checks_the_space_first(app, library_file, monkeypatch
     assert _audio_count(app, library_file) == 2
 
 
-def test_a_busy_reservation_lock_tries_again_and_never_remuxes_in_place(
+def test_a_busy_reservation_lock_tries_again_and_then_remuxes_in_place(
     app, library_file, staging, monkeypatch
 ):
-    """A busy lock was read as no space, and the remux ran on the NAS (#569)."""
+    """A busy lock was read as no space on the first answer (#569).
 
-    import errno
+    The first fix raised a transient error after the tries. The track
+    scan, the audio plan and the post-reorder step book no retry for
+    it, so the job failed (#569 follow-up). Now the remux runs in place
+    after the tries, as it does for a lack of space."""
 
     monkeypatch.setattr(tracks, "_on_volume_of", lambda path, directory: False)
     answers = []
@@ -222,14 +225,14 @@ def test_a_busy_reservation_lock_tries_again_and_never_remuxes_in_place(
     )
     seen = []
     with app.app_context():
-        with pytest.raises(OSError) as raised:
-            tracks.remux_file(
-                library_file, _drop_second_audio(app, seen), None, "x", "Remuxing"
-            )
-    assert raised.value.errno == errno.ETIMEDOUT
+        tracks.remux_file(
+            library_file, _drop_second_audio(app, seen), None, "x", "Remuxing"
+        )
     assert answers == ["lock"] * tracks.REMUX_RESERVATION_TRIES
-    assert seen == []
-    assert _audio_count(app, library_file) == 2
+    source, output = seen[0]
+    assert os.path.dirname(output) == os.path.dirname(library_file)
+    assert _audio_count(app, library_file) == 1
+    assert os.listdir(staging) == []
 
 
 def test_a_reservation_lock_that_frees_up_remuxes_on_staging(

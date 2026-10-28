@@ -1191,8 +1191,32 @@ def download_task(
                     f"The restore does not replace it"
                 )
             if etag is not None:
-                head = _head_or_none(aws_s3_client(), key)
-                if head is None or head.get("ETag") != etag:
+                s3_client = aws_s3_client()
+                head = _head_or_none(s3_client, key)
+                if head is None:
+                    # An archive key move during the download (#369)
+                    # copied the same bytes under the key of the fresh
+                    # row. The download is still good (#563 follow-up).
+                    moved_to = [
+                        other
+                        for other in (
+                            fresh.aws_key,
+                            fresh.aws_transcoded_key,
+                            fresh.aws_key_target,
+                        )
+                        if other and other != key
+                    ]
+                    if any(_head_or_none(s3_client, other) for other in moved_to):
+                        current_app.logger.info(
+                            f"'{basename}' The archive '{key}' moved during "
+                            f"the download. The restore places the download"
+                        )
+                    else:
+                        raise PlacementRefused(
+                            f"'{basename}' The archive '{key}' is gone. The "
+                            f"restore does not place the file"
+                        )
+                elif head.get("ETag") != etag:
                     raise PlacementRefused(
                         f"'{basename}' The archive '{key}' changed during the "
                         f"download. The restore does not replace the file"
@@ -3260,10 +3284,11 @@ def aws_download(
     checks still use the S3 API.
 
     before_place runs after the download and before a direct placement.
-    It gets the ETag of the object at the start of the download. If it
-    raises, the download is deleted and the error propagates. The SQS
-    message stays (#533). If it returns a path, the placement goes there,
-    not to place_at (#563).
+    It gets the ETag of the object at the start of the download. A
+    PlacementDeferred keeps the finished download and its sidecar for
+    the next try (#533). Any other error deletes the download and
+    propagates. The caller decides about the SQS message. If it returns
+    a path, the placement goes there, not to place_at (#563).
     """
 
     # The retry constants still live in app.videos. Import them lazily.
@@ -3500,9 +3525,10 @@ def aws_restore(key, tier="Standard", record_request=True):
             s3_client = aws_s3_client(with_retries=True)
 
             # Make sure that the key exists in the AWS bucket. A HEAD of
-            # the key, not a listing of the prefix (#572). The listing of
-            # 1 key returned an id-suffixed sibling first ("stem (2).mkv"
-            # sorts before "stem.mkv").
+            # the key, not a listing of the prefix (#572). For a missing
+            # key, a listing of 1 key answered a longer sibling such as
+            # "stem.mkv.etag". The restore then asked for a key that does
+            # not exist.
 
             head_response = _head_or_none(s3_client, key)
 
@@ -3619,8 +3645,8 @@ def aws_upload(
 
     if not force_upload and not current_app.config["FORCE_UPLOAD"]:
         # A HEAD of this exact key (#572). A listing of the prefix with
-        # MaxKeys=1 returned an id-suffixed sibling first. Then the
-        # upload did not see the key and uploaded the file again.
+        # MaxKeys=1 answered a longer sibling for a missing key. Then
+        # the upload compared the file with the wrong object.
 
         remote_etag = None
         date_uploaded = None

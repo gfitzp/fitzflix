@@ -2690,3 +2690,55 @@ def test_a_resumed_round_shows_the_same_options(app, admin_client):
     resumed = admin_client.get(response.headers["Location"]).get_data(as_text=True)
     assert f'src="/game/frame/{token}"' in resumed
     assert options(resumed) == dealt
+
+
+def test_a_switch_on_the_resume_url_keeps_the_dealt_options(app, admin_client):
+    """The unrated switch changed the pool of a resumed round (#573 follow-up).
+
+    The seed holds the token. The pool held the rated-only preference,
+    which the resume URL could change. Two option sets for one frame
+    gave the answer away again."""
+
+    import re
+
+    from app import db
+    from app.models import User, UserMovieReview
+    from app.videos import star_rating_fields
+
+    with app.app_context():
+        admin_id = User.query.filter_by(admin=True).first().id
+        answer = make_movie("Switched Options Film", 1994)
+        make_movie_file(answer, "Bluray-1080p")
+        for n in range(30):
+            extra = make_movie(f"Switched Distractor {n}", 1990 + n % 9)
+            make_movie_file(extra, "Bluray-1080p")
+            # 10 rated distractors: the rated-only pool differs from
+            # the whole pool.
+            if n < 10:
+                db.session.add(
+                    UserMovieReview(
+                        user_id=admin_id,
+                        movie_id=extra.id,
+                        liked=True,
+                        **star_rating_fields(4.0),
+                    )
+                )
+        db.session.commit()
+        answer_id = answer.id
+    seed_frame(app, answer_id)
+
+    def options(page):
+        return re.findall(r'name="choice" id="choice-\d+" value="(\d+)"', page)
+
+    first = admin_client.get("/game?difficulty=difficult&unrated=1").get_data(
+        as_text=True
+    )
+    token = re.search(r'src="/game/frame/([^"?]+)"', first)[1]
+    dealt = options(first)
+    assert len(dealt) == 8
+
+    switched = admin_client.get(
+        f"/game?difficulty=difficult&resume={token}&unrated=0"
+    ).get_data(as_text=True)
+    assert f'src="/game/frame/{token}"' in switched
+    assert options(switched) == dealt

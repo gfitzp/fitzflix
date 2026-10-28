@@ -1221,7 +1221,13 @@ def name_that_frame():
     # This is the include-unrated switch. The checkbox always submits a
     # hidden unrated=0 with a checked unrated=1. Thus, a missing "1" is
     # a deliberate un-tick, not a bare visit.
-    if difficulty in RATED_FILTER_DIFFICULTIES and "unrated" in request.args:
+    # A resume keeps the pool of the dealt round (#573). A switch on the
+    # resume URL would deal a second option set for the same frame.
+    if (
+        difficulty in RATED_FILTER_DIFFICULTIES
+        and "unrated" in request.args
+        and "resume" not in request.args
+    ):
         _set_include_unrated(difficulty, "1" in request.args.getlist("unrated"))
     rated_only = _rated_only(difficulty)
 

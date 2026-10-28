@@ -411,9 +411,11 @@ def _transient_step(step):
 
     A tool that exits with an error (corrupt input) gives the same error
     again. Thus, its error is final. Only a tool that a stop signal ended
-    can try again (#502)."""
+    can try again (#502). A lost database connection at the stale flag
+    of the library copy is transient as well (#561 follow-up)."""
 
     import botocore.exceptions
+    from sqlalchemy.exc import OperationalError
 
     from app.importing import INTERRUPT_SIGNALS
 
@@ -425,6 +427,7 @@ def _transient_step(step):
         raise
     except (
         OSError,
+        OperationalError,
         botocore.exceptions.BotoCoreError,
         botocore.exceptions.ClientError,
     ) as error:

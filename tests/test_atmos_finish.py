@@ -475,3 +475,23 @@ def test_the_finish_mux_drops_an_empty_subtitle_track(app, monkeypatch):
         (mux,) = [c for c in commands if "--track-order" in c]
         assert mux[mux.index("-s") + 1] == "3"
         assert mux[mux.index("--track-order") + 1].endswith(":1,1:3")
+
+
+def test_a_lost_database_connection_at_the_stale_flag_is_transient(app):
+    """The pre-rename flag commit raised through the finish (#561 follow-up).
+
+    The flag raises on a failed commit (#561). The run then ended in the
+    BaseException handler and discarded the paid twin. A lost connection
+    is transient, like an I/O fault. The step books a retry."""
+
+    from sqlalchemy.exc import OperationalError
+
+    import app.atmos as atmos
+
+    with app.app_context():
+        with pytest.raises(atmos.FinishInterrupted):
+            with atmos._transient_step("library copy"):
+                raise OperationalError("COMMIT", {}, Exception("server gone away"))
+        with pytest.raises(ValueError):
+            with atmos._transient_step("library copy"):
+                raise ValueError("final")

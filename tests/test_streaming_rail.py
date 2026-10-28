@@ -703,3 +703,34 @@ def test_a_rail_film_with_a_record_ranks_by_its_movie_lane_number(app, monkeypat
         (5002, 1.64),
         (5001, 0.45),
     ]
+
+
+def test_the_rail_passes_the_weights_map_to_the_lane_scores(app, monkeypatch):
+    """The rail read the weights per recorded film (#580 follow-up).
+
+    record_lane_scores got no weights map. Each recorded film without a
+    stored score then read user_movie_weights and a Movie row again."""
+
+    import app.streaming_rail as streaming_rail
+    from app import db
+    from app.models import User
+
+    user_id = subscribe(app, 8, "Netflix")
+    plant_profile(app, user_id, COMEDY_PROFILE)
+    install_rail_fakes(app, monkeypatch)
+    plant_availability(app, 5001, [NETFLIX])
+    plant_availability(app, 5002, [NETFLIX])
+
+    calls = []
+    monkeypatch.setattr(
+        streaming_rail,
+        "record_lane_scores",
+        lambda redis, user_id, tmdb_ids, profile, tmdb_weights=None: calls.append(
+            (sorted(tmdb_ids), tmdb_weights)
+        )
+        or {},
+    )
+    monkeypatch.setattr(streaming_rail, "user_tmdb_weights", lambda u: {7: 1.0})
+    with app.app_context():
+        streaming_rail.compute_user_rail(db.session.get(User, user_id))
+    assert calls == [([5001, 5002], {7: 1.0})]

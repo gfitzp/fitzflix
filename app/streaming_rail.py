@@ -490,12 +490,16 @@ def compute_user_rail(user):
     # A film with a record shows the movie-id lane number on its tile.
     # Thus, the rail ranks it by that number (#535).
 
+    tmdb_weights = user_tmdb_weights(user.id) if verified else None
     recorded = record_lane_scores(
-        current_app.redis, user.id, [tmdb_id for tmdb_id, _, _ in verified], profile
+        current_app.redis,
+        user.id,
+        [tmdb_id for tmdb_id, _, _ in verified],
+        profile,
+        tmdb_weights,
     )
 
     items = []
-    tmdb_weights = None
     for tmdb_id, entry, matches in verified:
         payload = payloads.get(tmdb_id)
         if not payload:
@@ -504,8 +508,6 @@ def compute_user_rail(user):
         # discovery shelves. Taste alone disagreed with the estimates on
         # the tiles, which add the co-preference (#420).
 
-        if tmdb_weights is None:
-            tmdb_weights = user_tmdb_weights(user.id)
         score, contributions = tmdb_taste_score(
             user.id, tmdb_id, payload, profile, tmdb_weights
         )
