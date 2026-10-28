@@ -610,3 +610,29 @@ def test_a_malformed_air_date_does_not_stop_the_import(app, client, tmp_path):
     )
     assert response.status_code == 200
     assert app.import_queue.fetch_job(safe_job_id(original)) is not None
+
+
+@pytest.mark.parametrize(
+    "owner_id, file_id",
+    [("abc", 7), ([1], 7), (1, "x"), (1, True)],
+)
+def test_a_non_integer_arr_id_gets_a_400(app, client, tmp_path, owner_id, file_id):
+    """A text or a list id answered 500 in int() (#577)."""
+
+    (tmp_path / "a.mkv").write_bytes(b"episode")
+    response = client.post(
+        "/api/sonarr/add",
+        json={
+            "eventType": "Download",
+            "series": {"id": owner_id, "path": str(tmp_path), "title": "Show"},
+            "episodeFile": {
+                "id": file_id,
+                "relativePath": "a.mkv",
+                "quality": "HDTV-720p",
+            },
+            "episodes": [{"seasonNumber": 1, "episodeNumber": 1}],
+        },
+        headers=auth_header(),
+    )
+    assert response.status_code == 400
+    assert app.import_queue.count == 0

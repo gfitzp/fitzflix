@@ -163,3 +163,36 @@ def test_a_concurrent_duplicate_registration_gets_the_message(app, client, monke
         with app.app_context():
             User.query.filter_by(email=email).delete()
             db.session.commit()
+
+
+def test_a_concurrent_email_change_gets_the_message(app, admin_client, monkeypatch):
+    """The profile email change hit the unique index after the form check (#577).
+
+    Another request took the address first. The commit raised
+    IntegrityError, and the page answered 500."""
+
+    from app.main.forms import EditProfileForm
+    from app.models import User
+
+    from app import db
+
+    taken = "taken-later@example.com"
+    with app.app_context():
+        db.session.add(User(email=taken, api_key="e" * 32))
+        db.session.commit()
+    monkeypatch.setattr(EditProfileForm, "validate_email", lambda self, field: None)
+    token = _token(admin_client.get("/profile").get_data(as_text=True))
+    response = admin_client.post(
+        "/profile",
+        data={
+            "csrf_token": token,
+            "email": taken,
+            "email2": taken,
+            "submit": "Update",
+        },
+        follow_redirects=True,
+    )
+    assert response.status_code == 200
+    assert "Please use a different email address." in response.get_data(as_text=True)
+    with app.app_context():
+        assert User.query.filter_by(email=taken).count() == 1

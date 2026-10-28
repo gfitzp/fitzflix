@@ -24,6 +24,7 @@ from flask import (
 
 # Flask 2.4 removed flask.Markup. Import it from its actual home.
 from flask_login import current_user, login_required
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import contains_eager
 
 from app.tasks import enqueue_task
@@ -602,7 +603,14 @@ def _save_email(form):
     """Update the email address of the user."""
 
     current_user.email = form.email.data
-    db.session.commit()
+    try:
+        db.session.commit()
+    except IntegrityError:
+        # A concurrent post took the address after the form check. The
+        # unique index refuses this one (#577), as on the register page.
+        db.session.rollback()
+        flash("Please use a different email address.", "danger")
+        return
     flash("Updated your email address.", "success")
 
 

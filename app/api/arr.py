@@ -130,6 +130,12 @@ def import_event_webhook(service, observe=None):
     return decorator
 
 
+def _is_int(value):
+    """Return True if value is an integer. A JSON true is not one."""
+
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
 def download_payload_problem(service, payload):
     """Return the reason that a Download payload is not usable, or None (#448).
 
@@ -142,6 +148,11 @@ def download_payload_problem(service, payload):
     owner_key = "movie" if service == "Radarr" else "series"
     if not isinstance(payload.get(owner_key) or {}, dict):
         return f"the {owner_key} block is not an object"
+    # An id goes to int() and to the rescan command (#577). A text or a
+    # list id answered 500.
+    owner_id = (payload.get(owner_key) or {}).get("id")
+    if owner_id is not None and not _is_int(owner_id):
+        return f"{owner_key}.id is not an integer"
     custom_format = payload.get("customFormatInfo")
     if custom_format is not None and not isinstance(custom_format, dict):
         return "the customFormatInfo block is not an object"
@@ -151,6 +162,8 @@ def download_payload_problem(service, payload):
     for field in ("quality", "relativePath"):
         if not isinstance(media_file.get(field), str):
             return f"{file_key}.{field} is missing"
+    if media_file.get("id") is not None and not _is_int(media_file.get("id")):
+        return f"{file_key}.id is not an integer"
     if service == "Sonarr":
         episodes = payload.get("episodes")
         if not isinstance(episodes, list) or not episodes:
