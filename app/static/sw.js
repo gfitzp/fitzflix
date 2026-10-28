@@ -159,11 +159,12 @@ self.addEventListener("fetch", function (event) {
 		event.waitUntil(
 			network
 				.then(function (response) {
-					if (!isCacheable(response)) return;
-					var copy = response.clone();
-					return caches.open(CACHE).then(function (cache) {
-						return cache.put(request, copy);
-					});
+					if (isCacheable(response)) {
+						var copy = response.clone();
+						return caches.open(CACHE).then(function (cache) {
+							return cache.put(request, copy);
+						});
+					}
 				})
 				.catch(function () {})
 		);
@@ -206,13 +207,14 @@ self.addEventListener("fetch", function (event) {
 	event.waitUntil(
 		network
 			.then(function (response) {
-				if (!(isCacheable(response) && isKeepablePage(response))) return;
-				var copy = response.clone();
-				return caches.open(PAGES).then(function (cache) {
-					return cache.put(request, copy).then(function () {
-						return trimSearchPages(cache);
+				if (isCacheable(response) && isKeepablePage(response)) {
+					var copy = response.clone();
+					return caches.open(PAGES).then(function (cache) {
+						return cache.put(request, copy).then(function () {
+							return trimSearchPages(cache);
+						});
 					});
-				});
+				}
 			})
 			.catch(function () {})
 	);
