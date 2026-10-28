@@ -134,11 +134,27 @@ def _live_workers(connection):
     return workers
 
 
-def worker_health(connection):
-    """Summarize the rq worker liveness per queue against the expected roster."""
+def expected_workers(config):
+    """Return the expected worker count of each queue (#501).
 
+    Under supervisor, the roster of fitzflix_supervisor.ini applies. A
+    manual layout runs as many workers as the admin wants. Then only a
+    queue with no worker is a problem."""
+
+    if _supervisor_status(config):
+        return EXPECTED_WORKERS
+    return {name: 1 for name in EXPECTED_WORKERS}
+
+
+def worker_health(connection, expected=None):
+    """Summarize the rq worker liveness per queue against the expected roster.
+
+    expected maps each queue to its count. The default is
+    EXPECTED_WORKERS."""
+
+    expected = EXPECTED_WORKERS if expected is None else expected
     now = datetime.now(timezone.utc)
-    queues = {name: {"queue": name, "live": 0, "busy": []} for name in EXPECTED_WORKERS}
+    queues = {name: {"queue": name, "live": 0, "busy": []} for name in expected}
     for worker in _live_workers(connection):
         # A busy worker does not refresh its heartbeat while the job
         # runs. Thus, only an idle worker can count as stale. rq 2 returns
@@ -172,7 +188,7 @@ def worker_health(connection):
                 entry["busy"].append(job.description or job.id)
 
     for entry in queues.values():
-        entry["expected"] = EXPECTED_WORKERS.get(entry["queue"])
+        entry["expected"] = expected.get(entry["queue"])
         entry["ok"] = entry["expected"] is None or entry["live"] >= entry["expected"]
         entry["queued"] = Queue(entry["queue"], connection=connection).count
 
@@ -727,7 +743,7 @@ def system_health(flask_app):
     return {
         "redis_ms": redis_ms,
         "db_ms": db_ms,
-        "workers": worker_health(flask_app.redis),
+        "workers": worker_health(flask_app.redis, expected_workers(flask_app.config)),
         "disks": disk_health(flask_app.config),
         "missing_mounts": missing_volumes(flask_app.config),
         "backup": backup_health(flask_app.config),
@@ -1996,7 +2012,11 @@ def _digest(config, redis, seen):
 HEALTH_COLLECTORS = (
     ("disks", lambda config, redis, seen: disk_health(config), _disk_issues),
     ("backup", lambda config, redis, seen: backup_health(config), _backup_issues),
-    ("workers", lambda config, redis, seen: worker_health(redis), _worker_issues),
+    (
+        "workers",
+        lambda config, redis, seen: worker_health(redis, expected_workers(config)),
+        _worker_issues,
+    ),
     ("mounts", lambda config, redis, seen: missing_volumes(config), _mount_issues),
     ("self-heal", _self_heal, lambda actions, config: ()),
     (

@@ -999,9 +999,26 @@ def build_channel_lineups(day=None):
         episode_cap = get_setting("DVR_CHANNEL_EPISODES")
 
         if not _library_online():
-            current_app.logger.error(
-                "DVR: a library share is offline; keeping the stored lineups"
-            )
+            # A folder that was never made is not a dead share (#501). A
+            # new install has no library folders yet. An ERROR each night
+            # would mail the admin.
+            from app.maintenance import VOLUMES_ROOT
+
+            missing = [
+                current_app.config[key]
+                for key in ("MOVIE_LIBRARY", "TV_LIBRARY")
+                if not os.path.exists(current_app.config[key])
+                and not current_app.config[key].startswith(VOLUMES_ROOT + os.sep)
+            ]
+            if missing:
+                current_app.logger.warning(
+                    f"DVR: the library folder(s) {missing} do not exist. Keeping "
+                    f"the stored lineups. Make the folders to build the lineups"
+                )
+            else:
+                current_app.logger.error(
+                    "DVR: a library share is offline; keeping the stored lineups"
+                )
             return True
 
         # The nightly cron build has a random job id, so the dedupe in

@@ -542,10 +542,23 @@ def check_config(app):
         # The Settings page can turn archival on. Thus, read the setting
         # through get_setting. The read occurs only if a value is missing.
 
+        # Before the first migration, the settings table does not exist
+        # (#501). Then the .env value is the only value.
+
+        from sqlalchemy import inspect
+
         from app.settings import get_setting
 
         with app.app_context():
-            archive = get_setting("ARCHIVE_ORIGINAL_MEDIA", app.config)
+            try:
+                has_settings = inspect(db.engine).has_table("app_setting")
+            except Exception:
+                has_settings = False
+            archive = (
+                get_setting("ARCHIVE_ORIGINAL_MEDIA", app.config)
+                if has_settings
+                else app.config.get("ARCHIVE_ORIGINAL_MEDIA")
+            )
         if archive:
             app.logger.warning(
                 f"ARCHIVE_ORIGINAL_MEDIA is set, but uploads will fail: "
