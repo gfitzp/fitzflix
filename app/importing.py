@@ -3752,11 +3752,18 @@ def _canonical_series_title(title):
     second series. A name WITH A YEAR attaches to the bare-titled record
     only if the year is the same as its TMDB first-air year. "Batman
     (1992)" never goes to the 1966 series. A BARE name attaches to a
-    year-suffixed record only if exactly 1 such record exists."""
+    year-suffixed record only if exactly 1 such record exists.
 
-    if TVSeries.query.filter_by(title=title).first() is not None:
-        return title
+    The result is always the title of the record, not the spelling of
+    the file (#480). MariaDB compares titles with no case, no accents,
+    and no trailing spaces. Thus, "MONK" finds the record "Monk". The
+    dirname, the basename, and the lock key must use "Monk"."""
+
+    existing = TVSeries.query.filter_by(title=title).first()
+    if existing is not None:
+        return existing.title
     year_form = re.fullmatch(r"(?P<base>.+) \((?P<year>\d{4})\)", title)
+
     if year_form:
         bare = TVSeries.query.filter_by(title=year_form.group("base")).first()
         if (
