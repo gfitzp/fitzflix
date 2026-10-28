@@ -46,7 +46,7 @@ def sonarr_add(payload):
     def recently_aired(new_name):
         """Return True if the episode aired in the last RECENT_EPISODE_DAYS."""
 
-        airdate = payload["episodes"][0].get("airDate")
+        airdate = (payload.get("episodes") or [{}])[0].get("airDate")
         if not airdate:
             return False
         aired_days_ago = (

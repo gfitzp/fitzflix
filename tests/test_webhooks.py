@@ -466,3 +466,52 @@ def test_each_service_uses_its_own_minimum_score(app, client, tmp_path, monkeypa
     )
     assert response.status_code == 200
     assert (season / "Columbo (1971) - S01E01 - [WEBRip-1080p].mkv").exists()
+
+
+@pytest.mark.parametrize(
+    "endpoint, body",
+    [
+        ("/api/radarr/add", {"movie": {"id": 1, "folderPath": "{root}"}}),
+        (
+            "/api/radarr/add",
+            {
+                "movie": {"id": 1, "folderPath": "{root}"},
+                "movieFile": {"relativePath": "Heat (1995).mkv"},
+            },
+        ),
+        (
+            "/api/sonarr/add",
+            {
+                "series": {"id": 7, "path": "{root}"},
+                "episodeFile": {"relativePath": "a.mkv", "quality": "HDTV-720p"},
+            },
+        ),
+        (
+            "/api/sonarr/add",
+            {
+                "series": {"id": 7, "path": "{root}"},
+                "episodeFile": {"relativePath": "a.mkv", "quality": "HDTV-720p"},
+                "episodes": [],
+            },
+        ),
+    ],
+)
+def test_a_download_without_its_file_fields_gets_a_400(
+    app, client, tmp_path, endpoint, body
+):
+    """A malformed Download body gets the 400 of the wrapper, not a 500 (#448).
+
+    The folders are under the root folder. Thus, only the missing fields
+    can refuse the body."""
+
+    import json
+
+    (tmp_path / "Heat (1995).mkv").write_bytes(b"film")
+    (tmp_path / "a.mkv").write_bytes(b"episode")
+    body = json.loads(json.dumps(body).replace("{root}", str(tmp_path)))
+    response = client.post(
+        endpoint, json={"eventType": "Download", **body}, headers=auth_header()
+    )
+    assert response.status_code == 400
+    assert response.is_json
+    assert app.import_queue.count == 0

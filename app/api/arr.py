@@ -113,11 +113,43 @@ def import_event_webhook(service, observe=None):
                 )
                 return response
 
+            # A body without the file fields gets a 400, not a 500 (#448).
+
+            problem = download_payload_problem(service, payload)
+            if problem:
+                current_app.logger.warning(
+                    f"{service} Download webhook refused: {problem}"
+                )
+                response.status_code = 400
+                return response
+
             return handler(payload)
 
         return wrapper
 
     return decorator
+
+
+def download_payload_problem(service, payload):
+    """Return the reason that a Download payload is not usable, or None (#448).
+
+    The file block must be a dict with a string quality and a string
+    relativePath. A Sonarr payload also needs a list of episodes."""
+
+    file_key = "movieFile" if service == "Radarr" else "episodeFile"
+    media_file = payload.get(file_key)
+    if not isinstance(media_file, dict):
+        return f"the {file_key} block is missing"
+    for field in ("quality", "relativePath"):
+        if not isinstance(media_file.get(field), str):
+            return f"{file_key}.{field} is missing"
+    if service == "Sonarr":
+        episodes = payload.get("episodes")
+        if not isinstance(episodes, list) or not episodes:
+            return "the episodes list is missing or empty"
+        if not isinstance(episodes[0], dict):
+            return "the first episode is not an object"
+    return None
 
 
 def _root_folders(service):
