@@ -997,3 +997,82 @@ def test_an_edition_only_film_counts_as_owned(app, admin_client):
     assert f'href="/movie/{cut_id}"' in page
     assert page.count("#701 &ndash;") == 1
     assert page.count("#702 &ndash;") == 1
+
+
+def _apu_releases():
+    """Return a standalone release and a set release of 1 film (#472)."""
+
+    standalone = {
+        "spine_number": 1001,
+        "tmdb_id": 5801,
+        "title": "PATHER PANCHALI",
+        "label": "Pather Panchali",
+        "year": 1955,
+        "criterion_film_id": "pather",
+        "set_title": None,
+    }
+    in_set = dict(standalone, spine_number=1002, set_title="The Apu Trilogy")
+    return [standalone, in_set]
+
+
+def test_a_film_with_its_own_spine_also_gets_its_set_title(app):
+    """Keep the standalone spine and take the set title of the set (#472)."""
+
+    from app.criterion_catalog import (
+        assign_criterion_release,
+        criterion_release_lookups,
+    )
+
+    releases = _apu_releases()
+    by_tmdb_id, by_title_year = criterion_release_lookups(releases)
+    assert by_tmdb_id[5801]["spine_number"] == 1001
+    assert by_tmdb_id[5801]["set_title"] == "The Apu Trilogy"
+    assert by_title_year[("PATHER PANCHALI", 1955)]["set_title"] == "The Apu Trilogy"
+    # The stored releases do not change
+    assert releases[0]["set_title"] is None
+
+    with app.app_context():
+        # Unsaved records: the assignment only sets attributes
+        by_id = Movie(title="Pather Panchali", year=1955, tmdb_id=5801)
+        by_name = Movie(title="Pather Panchali", year=1955)
+        curated = Movie(
+            title="Pather Panchali",
+            year=1955,
+            tmdb_id=5801,
+            criterion_set_title="Hand Set",
+        )
+        for movie in (by_id, by_name, curated):
+            assert assign_criterion_release(movie, by_tmdb_id, by_title_year)
+            assert movie.criterion_spine_number == 1001
+        assert by_id.criterion_set_title == "The Apu Trilogy"
+        assert by_name.criterion_set_title == "The Apu Trilogy"
+        assert curated.criterion_set_title == "Hand Set"
+
+
+def test_the_stored_releases_reassign_without_wikidata(app, monkeypatch):
+    """Apply the set titles to existing records from the stored copy (#472)."""
+
+    from app.criterion_catalog import reassign_stored_criterion_releases
+
+    _no_wikidata(monkeypatch)
+    with app.app_context():
+        app.redis.delete(videos.CRITERION_CACHE_KEY)
+        assert reassign_stored_criterion_releases() is None
+
+        movie = make_movie(
+            "Pather Panchali", 1955, tmdb_id=5801, criterion_spine_number=1001
+        )
+        db.session.commit()
+        movie_id = movie.id
+        app.redis.set(videos.CRITERION_CACHE_KEY, json.dumps(_apu_releases()))
+        try:
+            assert reassign_stored_criterion_releases() == 1
+            db.session.expire_all()
+            movie = db.session.get(Movie, movie_id)
+            assert movie.criterion_spine_number == 1001
+            assert movie.criterion_set_title == "The Apu Trilogy"
+            assert reassign_stored_criterion_releases() == 0
+        finally:
+            app.redis.delete(videos.CRITERION_CACHE_KEY)
+            db.session.delete(db.session.get(Movie, movie_id))
+            db.session.commit()

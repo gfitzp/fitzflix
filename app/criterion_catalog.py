@@ -276,6 +276,21 @@ def criterion_releases_age_days(redis):
     return (time.time() - int(fetched)) / 86400
 
 
+def _index_release(index, key, release):
+    """Add 1 release to a lookup. The first release of a film wins.
+
+    A film can have its own release and also a set membership. The
+    standalone release comes first and keeps its spine. A later set
+    release gives its set title to that entry (#472). The stored
+    release itself does not change."""
+
+    first = index.get(key)
+    if first is None:
+        index[key] = release
+    elif release.get("set_title") and not first.get("set_title"):
+        index[key] = dict(first, set_title=release["set_title"])
+
+
 def criterion_release_lookups(criterion_collection):
     """Index Criterion releases by TMDB id and by (title, year)."""
 
@@ -283,9 +298,9 @@ def criterion_release_lookups(criterion_collection):
     by_title_year = {}
     for release in criterion_collection:
         if release.get("tmdb_id"):
-            by_tmdb_id.setdefault(release["tmdb_id"], release)
+            _index_release(by_tmdb_id, release["tmdb_id"], release)
         if release.get("title") and release.get("year"):
-            by_title_year.setdefault((release["title"], release["year"]), release)
+            _index_release(by_title_year, (release["title"], release["year"]), release)
     return by_tmdb_id, by_title_year
 
 
@@ -321,6 +336,27 @@ def assign_criterion_release(movie, by_tmdb_id, by_title_year):
         f"spine #{movie.criterion_spine_number}"
     )
     return True
+
+
+def reassign_stored_criterion_releases():
+    """Assign the stored releases to each movie again. Never query Wikidata.
+
+    This applies a change of the assignment rule to the existing records
+    (#472). It reads the releases that Redis stores. Return the number
+    of movies that got a set title, or None if no stored copy exists."""
+
+    criterion_collection = cached_json(CRITERION_CACHE_KEY)
+    if criterion_collection is MISS:
+        return None
+    by_tmdb_id, by_title_year = criterion_release_lookups(criterion_collection)
+    set_titles = 0
+    for movie in Movie.query.all():
+        had_set_title = movie.criterion_set_title is not None
+        assign_criterion_release(movie, by_tmdb_id, by_title_year)
+        if not had_set_title and movie.criterion_set_title is not None:
+            set_titles += 1
+    db.session.commit()
+    return set_titles
 
 
 def create_criterion_catalog_records(criterion_collection, by_tmdb_id, by_title_year):

@@ -285,6 +285,22 @@ def register(app):
             )
         )
 
+    @catalog.command()
+    def reassign():
+        """Assign the stored Criterion releases to each movie again.
+
+        This reads the releases that Redis stores. It does not query
+        Wikidata. It applies a change of the assignment rule to the
+        existing records (#472)."""
+
+        from app.criterion_catalog import reassign_stored_criterion_releases
+
+        set_titles = reassign_stored_criterion_releases()
+        if set_titles is None:
+            click.echo("No stored Criterion releases. Nothing changed")
+            return
+        click.echo(f"Gave a box-set title to {set_titles} movie record(s)")
+
     # The groups that belong to 1 module each live next to that module.
 
     from app import (
