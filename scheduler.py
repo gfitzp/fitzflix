@@ -29,6 +29,7 @@ from rq.scheduler import RQScheduler
 from rq.utils import now
 
 from app import cron_table, get_app, next_cron_time
+from app.maintenance import keep_cron_registered
 from app.queues import QUEUE_NAMES
 from app.tasks import FAILURE_TTL
 
@@ -204,6 +205,15 @@ try:
                     "The recurring-jobs process lost its instance lock. It stops"
                 )
                 break
+
+        # The same stall can expire the hash and the registry entry of
+        # the cron scheduler (#562). Register again before the next save.
+
+        if keep_cron_registered(cron):
+            app.logger.warning(
+                "The cron scheduler lost its registration during a stall. "
+                "The process registered it again"
+            )
         if mover.should_reacquire_locks:
             mover.acquire_locks()
         mover.enqueue_scheduled_jobs()

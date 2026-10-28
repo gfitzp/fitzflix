@@ -267,7 +267,13 @@ def _scheduled_tasks():
     """
 
     scheduled_tasks = []
-    for scheduler in CronScheduler.all(current_app.redis):
+    try:
+        schedulers = CronScheduler.all(current_app.redis)
+    except KeyError:
+        # A stall can leave a hash with only the cron_jobs field (#562).
+        # The scheduler registers again on its next tick.
+        schedulers = []
+    for scheduler in schedulers:
         for cron_job in scheduler.get_jobs():
             meta = cron_job.job_options.get("meta") or {}
             cron_string = cron_job.cron or meta.get("cron_string", "")

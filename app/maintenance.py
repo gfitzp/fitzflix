@@ -429,6 +429,31 @@ def scheduler_health(connection):
     return {"ok": alive}
 
 
+def keep_cron_registered(cron):
+    """Register the cron scheduler again if a stall lost its registration (#562).
+
+    The hash of the scheduler has a TTL of 120 seconds, and the registry
+    sweep drops an entry after 120 seconds with no heartbeat. A longer
+    stall (a sleep of the Mac) loses both. The heartbeat cannot add them
+    back, and the next save writes a hash with only the cron_jobs field.
+    Then the System page fails and the health probe reports a dead
+    scheduler. scheduler.py calls this on each tick. Return True after a
+    repair."""
+
+    from rq.cron import cron_scheduler_registry
+
+    connection = cron.connection
+    whole = connection.hexists(cron.key, "hostname")
+    listed = (
+        connection.zscore(cron_scheduler_registry.get_registry_key(), cron.name)
+        is not None
+    )
+    if whole and listed:
+        return False
+    cron.register_birth()
+    return True
+
+
 def repair_worker_registry(connection):
     """List again the live workers that the registry sweep of rq dropped.
 

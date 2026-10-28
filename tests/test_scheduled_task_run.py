@@ -258,3 +258,52 @@ def test_an_enqueue_error_does_not_leave_the_gate_shut(app, admin_client, monkey
             },
         )
     assert not app.redis.exists(_bulk_gate(f"run-now:{IMPORT_SWEEP}"))
+
+
+def _stall(app, scheduler):
+    """Expire the hash and the registry entry, then save the jobs, as a stall does."""
+
+    from rq.cron import cron_scheduler_registry
+
+    app.redis.delete(scheduler.key)
+    app.redis.zrem(cron_scheduler_registry.get_registry_key(), scheduler.name)
+    scheduler.heartbeat()
+    scheduler.save_jobs_data()
+
+
+def test_a_stalled_cron_scheduler_registers_again(app):
+    """A stall over 120 seconds lost the hash and the registry entry (#562).
+
+    The heartbeat could not add them back. The next save wrote a hash
+    with only the cron_jobs field, and the System page read no task."""
+
+    from rq.cron import CronScheduler
+
+    from app.maintenance import keep_cron_registered
+
+    with app.app_context():
+        scheduler = register_cron_job(app, IMPORT_SWEEP)
+        assert keep_cron_registered(scheduler) is False
+        _stall(app, scheduler)
+        assert keep_cron_registered(scheduler) is True
+        assert keep_cron_registered(scheduler) is False
+        (listed,) = CronScheduler.all(app.redis)
+        assert listed.name == scheduler.name
+        assert [job.func_name for job in listed.get_jobs()] == [
+            job.func_name for job in scheduler.get_jobs()
+        ]
+
+
+def test_a_partial_scheduler_hash_does_not_break_the_system_page(app, admin_client):
+    """A hash with only cron_jobs made CronScheduler.all raise KeyError (#562)."""
+
+    from rq.cron import cron_scheduler_registry
+
+    with app.app_context():
+        scheduler = register_cron_job(app, IMPORT_SWEEP)
+        app.redis.delete(scheduler.key)
+        scheduler.save_jobs_data()
+        assert app.redis.zscore(
+            cron_scheduler_registry.get_registry_key(), scheduler.name
+        )
+    assert admin_client.get("/system/metrics").status_code == 200
