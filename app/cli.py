@@ -229,6 +229,7 @@ def register(app):
 
         from app import db
         from app.aws_storage import untouched_key_still_claimed
+        from app.custom_artwork import remove_custom_artwork_after_commit
         from app.models import (
             ArchivedOriginal,
             CatalogExclusion,
@@ -263,6 +264,9 @@ def register(app):
         for original in ArchivedOriginal.query.filter_by(movie_id=movie.id).all():
             original_keys.append(original.aws_key)
             db.session.delete(original)
+        # The custom poster tree of the film goes after the commit (#463).
+
+        remove_custom_artwork_after_commit(db.session, "movie", movie.id)
         db.session.delete(movie)
         db.session.commit()
         for aws_key in original_keys:

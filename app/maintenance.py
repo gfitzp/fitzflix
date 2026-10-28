@@ -1192,13 +1192,35 @@ def _kept_restore_copy(dirpath, name):
     download and its ETag sidecar are leftovers like the other hidden
     partial files."""
 
+    from app.aws_storage import read_partial_sidecar
+
     if not name.startswith(ORPHAN_KEPT_PREFIXES):
-        return False
-    if name.endswith(ETAG_SIDECAR_SUFFIX):
         return False
     if S3TRANSFER_TEMP_SUFFIX.search(name):
         return False
-    return not os.path.exists(os.path.join(dirpath, name + ETAG_SIDECAR_SUFFIX))
+    if name.endswith(ETAG_SIDECAR_SUFFIX):
+        # The sidecar of a complete copy stays with its copy.
+        copy = name[: -len(ETAG_SIDECAR_SUFFIX)]
+        return os.path.exists(os.path.join(dirpath, copy)) and _complete_copy(
+            dirpath, copy, read_partial_sidecar
+        )
+    if not os.path.exists(os.path.join(dirpath, name + ETAG_SIDECAR_SUFFIX)):
+        return True
+    return _complete_copy(dirpath, name, read_partial_sidecar)
+
+
+def _complete_copy(dirpath, name, read_partial_sidecar):
+    """Return True if a copy has the object size that its sidecar records.
+
+    The removal of a sidecar can fail after a complete download. The
+    size then shows that the copy is complete (follow-up #457)."""
+
+    path = os.path.join(dirpath, name)
+    _, size = read_partial_sidecar(path)
+    try:
+        return bool(size) and os.path.getsize(path) == size
+    except OSError:
+        return False
 
 
 # These are the contents that a directory can hold and still count as

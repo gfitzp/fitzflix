@@ -831,6 +831,38 @@ def _report_dangling_claims(listing):
         )
         if key not in s3_key_set
     )
+
+    # A lost pending upload (follow-up #455) is named 1 time, in a
+    # section of its own. It needs a re-rip, not a key repair. Later
+    # reports leave it out. A key that is no longer dangling leaves the
+    # record.
+
+    lost = {
+        field.decode(): value.decode()
+        for field, value in current_app.redis.hgetall(ARCHIVE_LOST_KEY).items()
+    }
+    dangling_set = set(dangling_claims)
+    gone = [key for key in lost if key not in dangling_set]
+    if gone:
+        current_app.redis.hdel(ARCHIVE_LOST_KEY, *gone)
+    new_lost = sorted(
+        key for key in dangling_claims if key in lost and lost[key] != "reported"
+    )
+    dangling_claims = [key for key in dangling_claims if key not in lost]
+    if new_lost:
+        notify_admin_text(
+            "Rip archives lost before their move",
+            "The pending uploads of these records are gone. Each record "
+            "needs a re-rip. Later reports leave these keys out:\n\n"
+            + "\n".join(new_lost),
+            "<p>The pending uploads of these records are gone. Each record "
+            "needs a re-rip. Later reports leave these keys out:</p><ul>"
+            + "".join(f"<li>{escape(key)}</li>" for key in new_lost)
+            + "</ul>",
+        )
+        current_app.redis.hset(
+            ARCHIVE_LOST_KEY, mapping={key: "reported" for key in new_lost}
+        )
     if dangling_claims:
         notify_admin_text(
             "Archive keys missing from AWS S3!",
@@ -2052,10 +2084,19 @@ def move_archive_object(file_id, sqs_receipt_handle=None):
 def _sync_is_running():
     """Return True if the weekly S3 sync job runs on the maintenance queue."""
 
+    from app.tasks import task_func_names
+
+    # The scheduler queues the function object. Then rq names the job
+    # after the defining module, app.aws_storage (follow-up #456).
+
+    name = "app.videos.sync_aws_s3_storage_task"
+    names = task_func_names(name)
     queue = current_app.maintenance_queue
     for job_id in StartedJobRegistry(queue=queue).get_job_ids():
         job = queue.fetch_job(job_id)
-        if job is not None and job.func_name == "app.videos.sync_aws_s3_storage_task":
+        if job is None:
+            continue
+        if job.func_name in names or (job.meta or {}).get("func") == name:
             return True
     return False
 
@@ -2109,20 +2150,53 @@ def _wait_move(file, source, sqs_receipt_handle, waits_for):
     return MOVE_WAITING
 
 
+# _archive_lost_upload returns this when the library volume is dead.
+
+LOST_UPLOAD_WAIT = "wait"
+
+# The keys of the records whose rip archive is lost. Each needs a
+# re-rip. The dangling-claims mail names them in a section of their own
+# (follow-up #455).
+
+ARCHIVE_LOST_KEY = "fitzflix:archive:lost"
+
+
+def mark_archive_lost(file, source):
+    """Record that the pending upload of a record is lost, for the weekly report."""
+
+    current_app.logger.warning(
+        f"'{file.basename}' The pending upload '{source}' is lost. The record "
+        f"needs a re-rip"
+    )
+    try:
+        current_app.redis.hset(ARCHIVE_LOST_KEY, source, file.basename)
+    except Exception:
+        current_app.logger.warning(traceback.format_exc())
+
+
 def _archive_lost_upload(file, source, column):
     """Archive the library file of a record whose run-scoped upload is gone (#455).
 
     A lifecycle expiry or a prune can remove the pending upload of an
     import before its move. The untouched rip is then lost. The library
     file is the best copy that remains. It goes to modified/, and the
-    record names that key. Return True if the upload occurred."""
+    record names that key. Return True if the upload occurred. Return
+    LOST_UPLOAD_WAIT if the library volume does not respond. Then the
+    move waits, because the file can come back (follow-up #455).
+    Return False otherwise."""
+
+    from app.videos import _dead_volumes
 
     if column != "aws_key" or not is_pending_archive(source):
         return False
-    if file.converted_from_quality:
-        return False
     path = os.path.join(current_app.config["LIBRARY_DIR"], file.file_path)
+    if _dead_volumes([path]):
+        return LOST_UPLOAD_WAIT
+    if file.converted_from_quality:
+        mark_archive_lost(file, source)
+        return False
     if not os.path.isfile(path):
+        mark_archive_lost(file, source)
         return False
     current_app.logger.warning(
         f"'{file.basename}' The pending upload '{source}' is not in S3. The "
@@ -2189,7 +2263,12 @@ def _move_archive(file, sqs_receipt_handle):
     except botocore.exceptions.ClientError as error:
         if not _is_missing(error):
             raise
-        if _archive_lost_upload(file, source, column):
+        lost = _archive_lost_upload(file, source, column)
+        if lost == LOST_UPLOAD_WAIT:
+            return _wait_move(
+                file, source, sqs_receipt_handle, "the library volume to return"
+            )
+        if lost:
             _drop_message(sqs_receipt_handle, "archive move of a missing object")
             return True
         current_app.logger.warning(
@@ -2549,9 +2628,12 @@ def cdn_download(key, destination, progress, expected_size=0, etag=None):
         if response.status_code == 206 and have:
             mode, written = "ab", have
             progress(have)
+            # The orphan sweep reads the age of the sidecar. A resumed
+            # chain keeps it fresh (follow-up #457).
+            _touch_partial_etag(destination)
         elif response.status_code == 200:
             mode, written, have = "wb", 0, 0
-            _write_partial_etag(destination, etag)
+            _write_partial_etag(destination, etag, expected_size)
         else:
             raise CdnDownloadError(response.status_code)
         content_length = int(response.headers.get("Content-Length") or 0)
@@ -2586,25 +2668,53 @@ def _partial_size(destination):
         return 0
 
 
-def _partial_etag(destination):
-    """Return the ETag of the object that a partial download came from, or None."""
+def read_partial_sidecar(destination):
+    """Return (etag, object size) from the sidecar of a partial download.
+
+    Each value is None when it is not known. The first line is the ETag.
+    The second line is the object size, if the download knew it. An
+    older sidecar has the ETag only."""
 
     try:
         with open(f"{destination}.etag") as sidecar:
-            return sidecar.read().strip() or None
+            lines = sidecar.read().split("\n")
     except OSError:
-        return None
+        return None, None
+    etag = lines[0].strip() or None
+    try:
+        size = int(lines[1]) if len(lines) > 1 and lines[1].strip() else None
+    except ValueError:
+        size = None
+    return etag, size
 
 
-def _write_partial_etag(destination, etag):
-    """Record the ETag of the object that a download writes to destination."""
+def _partial_etag(destination):
+    """Return the ETag of the object that a partial download came from, or None."""
+
+    return read_partial_sidecar(destination)[0]
+
+
+def _write_partial_etag(destination, etag, size=None):
+    """Record the ETag and the size of the object that a download writes to destination.
+
+    The orphan sweep compares the size with the file. A complete copy
+    whose sidecar stayed is then not a partial (follow-up #457)."""
 
     if not etag:
         _remove_partial_etag(destination)
         return
     try:
         with open(f"{destination}.etag", "w") as sidecar:
-            sidecar.write(etag)
+            sidecar.write(f"{etag}\n{int(size)}" if size else etag)
+    except OSError:
+        pass
+
+
+def _touch_partial_etag(destination):
+    """Renew the modification time of the sidecar of a resumed download."""
+
+    try:
+        os.utime(f"{destination}.etag")
     except OSError:
         pass
 
@@ -2614,8 +2724,12 @@ def _remove_partial_etag(destination):
 
     try:
         os.remove(f"{destination}.etag")
-    except OSError:
+    except FileNotFoundError:
         pass
+    except OSError as error:
+        current_app.logger.warning(
+            f"'{destination}' Could not remove the ETag sidecar: {error}"
+        )
 
 
 def _discard_partial(destination):

@@ -128,12 +128,15 @@ SPACE_WAIT = timedelta(minutes=30)
 SPACE_ERRNOS = {errno.ENOSPC, errno.EDQUOT}
 
 # A file that waits for space has a marker for the length of 1 wait,
-# plus a margin. The hourly sweep and the watcher skip a marked file.
-# Without it, each sweep started 1 more wait chain for the same file.
-# If a chain dies, its marker expires and the sweep takes the file up.
+# plus a wide margin. The hourly sweep and the watcher skip a marked
+# file. Without it, each sweep started 1 more wait chain for the same
+# file. If a chain dies, its marker expires and the sweep takes the file
+# up. The marker also protects the pending upload of the import from
+# the S3 prune (#455). A retry that waits on a busy queue must not let
+# it lapse. Thus, the margin is hours, and each retry renews it.
 
 SPACE_WAIT_KEY = "fitzflix:import:space-wait:{}"
-SPACE_WAIT_MARK = SPACE_WAIT + timedelta(minutes=30)
+SPACE_WAIT_MARK = max(SPACE_WAIT + timedelta(minutes=30), timedelta(hours=3))
 
 # Refresh the title lock while a copy waits. The token must match. A
 # lock that expired is taken again. A lock that another task holds is

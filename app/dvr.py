@@ -654,7 +654,17 @@ def _stored_start(cursor, day, episodes):
     return None
 
 
-def _channel_window(members, day, cap, cursors=None):
+def _advanced_cursor(day, episodes, start, aired):
+    """Return the stored cursor of a series that aired aired episodes from start (#460)."""
+
+    return {
+        "day": day.isoformat(),
+        "start": _episode_key(episodes[start]),
+        "next": _episode_key(episodes[(start + aired) % len(episodes)]),
+    }
+
+
+def _channel_window(members, day, cap, cursors=None, starts=None):
     """Return the program window of the day for a multi-series channel.
 
     The window is a list of (series, file) pairs. Each series gets
@@ -667,8 +677,10 @@ def _channel_window(members, day, cap, cursors=None):
     cursors maps a series id to its stored cursor (#460). A series with
     a cursor continues after the last episode that aired, also when the
     series gained or lost an episode. A series with no cursor starts at
-    the position of the day formula. The function writes the new
-    cursor of each series that airs into cursors."""
+    the position of the day formula. starts gets the episode list and
+    the start position of each series in the window. The caller moves a
+    cursor only by the episodes that really aired (follow-up #460).
+    A duration probe can drop an episode from the lineup."""
 
     members = sorted(members, key=lambda m: (m["series"].title.lower(), m["series"].id))
     lists = [(m["series"], _series_episodes(m["series"].id)) for m in members]
@@ -721,16 +733,9 @@ def _channel_window(members, day, cap, cursors=None):
         if not progressed:
             break
 
-    if cursors is not None:
-        for (series, episodes, start, quota), (_, _, remaining) in zip(
-            cursor_rows, cursors_now
-        ):
-            aired = quota - remaining
-            cursors[series.id] = {
-                "day": day.isoformat(),
-                "start": _episode_key(episodes[start]),
-                "next": _episode_key(episodes[(start + aired) % len(episodes)]),
-            }
+    if starts is not None:
+        for series, episodes, start, _ in cursor_rows:
+            starts[series.id] = (episodes, start)
     return window
 
 
@@ -1028,6 +1033,7 @@ def build_channel_lineups(day=None):
 
         epoch = datetime.now(timezone.utc).timestamp()
         index = []
+        pending_cursors = {}
 
         def store(number, slug, name, programs):
             """Write the lineup of one channel and index it.
@@ -1098,18 +1104,11 @@ def build_channel_lineups(day=None):
                     cursors[int(field)] = json.loads(raw)
                 except ValueError:
                     continue
-            window = _channel_window(series_entries, day, episode_cap, cursors)
-            member_ids = {entry["series"].id for entry in series_entries}
-            redis_client.delete(cursors_key)
-            kept_cursors = {
-                str(series_id): json.dumps(cursor)
-                for series_id, cursor in cursors.items()
-                if series_id in member_ids
-            }
-            if kept_cursors:
-                redis_client.hset(cursors_key, mapping=kept_cursors)
+            starts = {}
+            window = _channel_window(series_entries, day, episode_cap, cursors, starts)
 
             episode_programs = []
+            aired = {}
             for series, file in window:
                 duration = _cached_duration(redis_client, file)
                 if duration is None:
@@ -1118,6 +1117,21 @@ def build_channel_lineups(day=None):
                     )
                     continue
                 episode_programs.append(_episode_program(series, file, duration))
+                aired[series.id] = aired.get(series.id, 0) + 1
+
+            # A cursor moves only by the episodes that aired. A series
+            # with none keeps its cursor. The write waits until the
+            # lineups are stored (follow-up #460).
+
+            member_ids = {entry["series"].id for entry in series_entries}
+            for series_id, count in aired.items():
+                episodes, start = starts[series_id]
+                cursors[series_id] = _advanced_cursor(day, episodes, start, count)
+            pending_cursors[channel.slug] = {
+                str(series_id): json.dumps(cursor)
+                for series_id, cursor in cursors.items()
+                if series_id in member_ids
+            }
 
             store(
                 channel.number,
@@ -1137,6 +1151,18 @@ def build_channel_lineups(day=None):
             return True
 
         redis_client.set(CHANNELS_KEY, json.dumps(index))
+
+        # The cursors change only with stored lineups. A build that kept
+        # the old lineups keeps the old cursors too (follow-up #460).
+
+        for entry in index:
+            mapping = pending_cursors.get(entry["slug"])
+            cursors_key = CURSORS_KEY.format(slug=entry["slug"])
+            pipe = redis_client.pipeline()
+            pipe.delete(cursors_key)
+            if mapping:
+                pipe.hset(cursors_key, mapping=mapping)
+            pipe.execute()
 
         # Without this, the stored lineup of a deleted or emptied channel
         # would answer its stream URL without end.
