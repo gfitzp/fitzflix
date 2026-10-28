@@ -261,3 +261,35 @@ def test_the_criterion_refresh_button_uses_the_maintenance_queue(app, admin_clie
     assert [job for job in app.request_queue.jobs if job.func_name == func] == []
     (job,) = [job for job in app.maintenance_queue.jobs if job.func_name == func]
     assert job.timeout == 3600
+
+
+def test_the_badge_counts_a_seeded_queue_without_a_fetch_per_job(app, monkeypatch):
+    """The count reads the hashes in 1 pipeline per queue (#526).
+
+    A 300-file drop made each page view 300 or more round trips. The
+    SQL queue counts only its pipeline stages. A missing hash does not
+    count."""
+
+    from rq.queue import Queue
+
+    from app.pipeline import STAGES
+    from app.queue_page import listed_jobs, queue_count
+
+    for number in range(5):
+        app.import_queue.enqueue(
+            "app.videos.localization_task", f"/import/file{number}.mkv"
+        )
+    stage = next(iter(STAGES))
+    app.sql_queue.enqueue(stage, "/import/file0.mkv")
+    app.sql_queue.enqueue("app.videos.apply_tmdb_refresh", "Movies", 1)
+    gone = app.import_queue.enqueue("app.videos.localization_task", "/import/gone.mkv")
+    app.redis.delete(gone.key)
+
+    def no_single_fetch(self, job_id):
+        raise AssertionError("a fetch per job")
+
+    monkeypatch.setattr(Queue, "fetch_job", no_single_fetch)
+    with app.app_context():
+        assert queue_count() == 6
+        running, queued = listed_jobs()
+    assert running == [] and len(queued) == 6

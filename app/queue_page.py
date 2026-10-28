@@ -61,8 +61,10 @@ def listed_jobs():
             (running, StartedJobRegistry(queue=queue).get_job_ids()),
             (queued, queue.job_ids),
         ):
-            for job_id in job_ids:
-                job = queue.fetch_job(job_id)
+            # 1 pipeline per list, not 1 round trip per job (#526). A
+            # missing hash gives None. Unlike fetch_job, this is no write
+            # from a page view.
+            for job in queue.job_class.fetch_many(job_ids, connection=queue.connection):
                 if job is not None and (only is None or job.func_name in only):
                     target.append(job)
     return running, queued
@@ -249,7 +251,25 @@ def queue_details():
 def queue_count():
     """Return the total of queued and running jobs for the navbar badge.
 
-    The badge counts the same jobs that the queue page lists."""
+    The badge counts the same jobs that the queue page lists. Each page
+    renders it (#526). Thus, a queue with no job filter only counts the
+    job hashes that exist, in 1 pipeline. Only the SQL queue reads its
+    jobs, for the stage filter."""
 
-    running, queued = listed_jobs()
-    return len(running) + len(queued)
+    total = 0
+    for queue, only in listed_queues():
+        job_ids = StartedJobRegistry(queue=queue).get_job_ids() + queue.job_ids
+        if only is None:
+            pipeline = queue.connection.pipeline()
+            for job_id in job_ids:
+                pipeline.exists(queue.job_class.key_for(job_id))
+            total += sum(1 for exists in pipeline.execute() if exists)
+        else:
+            total += sum(
+                1
+                for job in queue.job_class.fetch_many(
+                    job_ids, connection=queue.connection
+                )
+                if job is not None and job.func_name in only
+            )
+    return total
