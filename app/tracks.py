@@ -79,6 +79,11 @@ def _run_mkvmerge(command, job, name, activity):
     wait_for_subprocess(process, ok_returncodes=(0, 1))
 
 
+# The tries of the staging reservation of a remux while its lock is busy.
+
+REMUX_RESERVATION_TRIES = 3
+
+
 def remux_file(file_path, build_command, job, name, activity, before_replace=None):
     """Remux a Matroska file and replace it with the result (#298).
 
@@ -110,12 +115,26 @@ def remux_file(file_path, build_command, job, name, activity, before_replace=Non
     reservation = f"remux:{staged_name}"
     staged = not _on_volume_of(file_path, staging_dir)
     if staged:
-        status = reserve_staging(
-            reservation,
-            int(os.path.getsize(file_path) * STAGED_REMUX_FACTOR),
-            [f"src-{staged_name}", f"remux-{staged_name}"],
-            staging_dir,
-        )
+        # A busy reservation lock (an import burst) is no lack of space
+        # (#569). The reservation tries again. Each try waits for the
+        # lock first.
+        for _ in range(REMUX_RESERVATION_TRIES):
+            status = reserve_staging(
+                reservation,
+                int(os.path.getsize(file_path) * STAGED_REMUX_FACTOR),
+                [f"src-{staged_name}", f"remux-{staged_name}"],
+                staging_dir,
+            )
+            if status != "lock":
+                break
+        if status == "lock":
+            # A transient error. The callers book a retry. An in-place
+            # remux would write a second copy over the NAS (#298).
+            raise OSError(
+                errno.ETIMEDOUT,
+                f"'{name}' The staging reservation lock stays busy. "
+                f"The remux waits for a later try",
+            )
         if status != "ok":
             current_app.logger.warning(
                 f"'{name}' Staging has no space for the remux. Remuxing in place"

@@ -204,3 +204,50 @@ def test_an_in_place_remux_checks_the_space_first(app, library_file, monkeypatch
     assert raised.value.errno == errno.ENOSPC
     assert ran == []
     assert _audio_count(app, library_file) == 2
+
+
+def test_a_busy_reservation_lock_tries_again_and_never_remuxes_in_place(
+    app, library_file, staging, monkeypatch
+):
+    """A busy lock was read as no space, and the remux ran on the NAS (#569)."""
+
+    import errno
+
+    monkeypatch.setattr(tracks, "_on_volume_of", lambda path, directory: False)
+    answers = []
+    monkeypatch.setattr(
+        importing,
+        "reserve_staging",
+        lambda *args: answers.append("lock") or "lock",
+    )
+    seen = []
+    with app.app_context():
+        with pytest.raises(OSError) as raised:
+            tracks.remux_file(
+                library_file, _drop_second_audio(app, seen), None, "x", "Remuxing"
+            )
+    assert raised.value.errno == errno.ETIMEDOUT
+    assert answers == ["lock"] * tracks.REMUX_RESERVATION_TRIES
+    assert seen == []
+    assert _audio_count(app, library_file) == 2
+
+
+def test_a_reservation_lock_that_frees_up_remuxes_on_staging(
+    app, library_file, staging, monkeypatch
+):
+    monkeypatch.setattr(tracks, "_on_volume_of", lambda path, directory: False)
+    real = importing.reserve_staging
+    answers = ["lock"]
+    monkeypatch.setattr(
+        importing,
+        "reserve_staging",
+        lambda *args: answers.pop(0) if answers else real(*args),
+    )
+    seen = []
+    with app.app_context():
+        tracks.remux_file(
+            library_file, _drop_second_audio(app, seen), None, "x", "Remuxing"
+        )
+    source, output = seen[0]
+    assert source.startswith(staging) and output.startswith(staging)
+    assert _audio_count(app, library_file) == 1
