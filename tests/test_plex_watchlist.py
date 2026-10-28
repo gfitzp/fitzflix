@@ -782,3 +782,25 @@ def test_a_listing_under_half_the_snapshot_needs_two_runs(app, monkeypatch):
         assert plex_watchlist.sync_plex_watchlist() is True
         assert fitzflix_watchlist_tmdb_ids(user_id) == set(kept)
         assert app.redis.get(plex_watchlist.SHRINK_KEY) is None
+
+
+def test_a_re_pointed_watchlist_film_gets_no_second_row(app, monkeypatch):
+    """Test that a Plex add of a watchlisted film with no tmdb id adds no row (#485)."""
+    import app.plex_watchlist as plex_watchlist
+
+    with app.app_context():
+        user_id = setup_user(app)
+        movie = make_movie("Bare Film", 1971, tmdb_id=None)
+        db.session.add(UserWatchlist(user_id=user_id, movie_id=movie.id))
+        db.session.commit()
+
+        fake = FakePlex({351: ("Bare Film", 1971)})
+        wire(app, monkeypatch, fake)
+        assert plex_watchlist.sync_plex_watchlist() is True
+
+        assert db.session.get(Movie, movie.id).tmdb_id == 351
+        assert UserWatchlist.query.filter_by(user_id=user_id).count() == 1
+        assert json.loads(app.redis.get(plex_watchlist.SNAPSHOT_KEY)) == [351]
+        # The next run is quiet.
+        assert plex_watchlist.sync_plex_watchlist() is True
+        assert UserWatchlist.query.filter_by(user_id=user_id).count() == 1

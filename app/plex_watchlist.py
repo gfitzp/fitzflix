@@ -399,8 +399,19 @@ def sync_plex_watchlist():
                 if created:
                     db.session.flush()
                     created_movies.append((movie.id, tmdb_id))
-            db.session.add(UserWatchlist(user_id=user.id, movie_id=movie.id))
-            added_here += 1
+            # A watchlist row of a film with no tmdb id is not in the
+            # Fitzflix side above. find_or_create_tmdb_movie can give that
+            # film this tmdb id. A second row for the film breaks the
+            # unique key, and each later run fails the same way.
+
+            if (
+                UserWatchlist.query.filter_by(
+                    user_id=user.id, movie_id=movie.id
+                ).first()
+                is None
+            ):
+                db.session.add(UserWatchlist(user_id=user.id, movie_id=movie.id))
+                added_here += 1
 
         for tmdb_id in sorted(fitz_ids - target):
             _, watchlist_id = fitzflix[tmdb_id]
