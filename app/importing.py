@@ -875,9 +875,12 @@ class _LocalizationRun:
     def retry(self, delay, reason, level="warning", **changes):
         """Book the task again after delay. Every retry carries all 4 counters.
 
-        Each retry changes only its own counter. Return "retry"."""
+        Each retry changes only its own counter. Return "retry". A
+        requeue that fails raises HandoffFailed (#559). The handler of
+        localization_task then keeps the source."""
 
-        requeue(
+        handoff(
+            requeue,
             "app.videos.localization_task",
             key=self.source_path,
             delay=delay,
@@ -973,6 +976,25 @@ def localization_task(
             work_path, hidden_output_file = _localize(
                 file_path, work_path, file_details, staged, run.job, run.strays
             )
+
+        except HandoffFailed:
+            # The run could not book its own retry or take its title lock
+            # (#559). Only Redis failed. The retries all come before the
+            # localization, so nothing has changed the source. It stays
+            # for the hourly sweep.
+
+            current_app.logger.error(
+                f"'{run.basename}' A retry could not be queued. The source "
+                f"stays for the next sweep: " + traceback.format_exc()
+            )
+            abandon_import(
+                run.source_path,
+                run.lock,
+                strays=run.strays,
+                keep_source=True,
+                pending_archive=pending_archive_of(file_details),
+            )
+            return False
 
         except BaseException as error:
             # Remove the staged copies. Fitzflix rejects the original source.
@@ -1173,7 +1195,11 @@ def _take_title_lock(file_details, run):
     # The note of the lock follows the take in the same call (#498). A
     # worker that dies after this still leaves its lock token behind.
 
-    lock = acquire_lock_or_defer(
+    # A Redis fault of the lock or of the deferral raises HandoffFailed
+    # (#559). The source is good, so the handler keeps it.
+
+    lock = handoff(
+        acquire_lock_or_defer,
         file_identifier,
         current_app.config["LOCALIZATION_TASK_TIMEOUT"] * 1000,
         current_app.import_queue,

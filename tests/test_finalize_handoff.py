@@ -353,3 +353,45 @@ def test_a_failed_dead_volume_retry_of_the_move_releases_the_lock(
     assert app.redis.get(lock.resource) is None
     assert source.exists()
     assert not hidden.exists()
+
+
+def _assert_not_rejected(app, source):
+    assert os.path.exists(source)
+    rejects = app.config["REJECTS_DIR"]
+    for _, _, names in os.walk(rejects):
+        assert os.path.basename(source) not in names
+
+
+def test_a_failed_localization_retry_keeps_the_source(app, tmp_path, monkeypatch):
+    """A requeue fault in the run's own retry must not reject the source (#559)."""
+
+    import app.importing as importing
+
+    monkeypatch.setattr("app.videos._dead_volumes", lambda paths: ["/Volumes/x"])
+    monkeypatch.setattr(importing, "requeue", _refuse)
+    source = tmp_path / "Retry Fault (2021) - [DVD].mkv"
+    source.write_bytes(b"source")
+    with app.app_context():
+        assert importing.localization_task(str(source)) is False
+    _assert_not_rejected(app, str(source))
+
+
+def test_a_failed_title_lock_keeps_the_source(app, tmp_path, monkeypatch):
+    """A Redis fault while the run takes its title lock keeps the source (#559)."""
+
+    import app.importing as importing
+
+    details = {
+        "media_library": "Movies",
+        "title": "Lock Fault",
+        "year": 2021,
+        "basename": "Lock Fault (2021) - [DVD].mkv",
+    }
+    monkeypatch.setattr(importing, "_admission_gate", lambda path, run: "ok")
+    monkeypatch.setattr(importing, "_identify", lambda path, run: (details, None))
+    monkeypatch.setattr("app.videos.acquire_lock_or_defer", _refuse)
+    source = tmp_path / details["basename"]
+    source.write_bytes(b"source")
+    with app.app_context():
+        assert importing.localization_task(str(source)) is False
+    _assert_not_rejected(app, str(source))
