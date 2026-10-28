@@ -170,7 +170,7 @@ def film_page_director(url):
         return cached or None
 
     # Imported here. criterion_now imports this module at its top.
-    from app.criterion_now import parse_film_info
+    from app.criterion_now import film_blocks, parse_film_info
 
     try:
         r = requests.get(url, timeout=15)
@@ -179,11 +179,21 @@ def film_page_director(url):
     except Exception:
         current_app.logger.warning(traceback.format_exc())
         return DIRECTOR_FETCH_FAILED
+
+    # A page with no film block (an empty render, a challenge page) is a
+    # failed fetch, not a film with no director (#557). Else the
+    # director-less match is cached for 2 months.
+
+    if not film_blocks(r.text):
+        current_app.logger.warning(
+            f"'{url}' The film page has no film data. Trying again later"
+        )
+        return DIRECTOR_FETCH_FAILED
     cache_json(cache_key, director, MATCH_CACHE_SECONDS)
     return director
 
 
-def fetch_collection_films(url):
+def fetch_collection_films(url, answered=None):
     """Return [{title, director, year}] scraped from 1 collection page,
     without duplicates.
 
@@ -192,12 +202,15 @@ def fetch_collection_films(url):
     page. This is the generic half of the scraper. The leaving page and
     the newly-added feed (#246, app.newly_added) both read through
     it. A film whose film page did not answer gets "director_failed".
-    The callers do not match it that day (#539)."""
+    The callers do not match it that day (#539). answered, a list, gets
+    the url when the page answers 200, with films or without (#557)."""
 
     try:
         r = requests.get(url, timeout=15)
         if r.status_code != 200:
             return []
+        if answered is not None:
+            answered.append(url)
         films = parse_collection_page(r.text)
     except Exception:
         current_app.logger.warning(traceback.format_exc())
@@ -218,16 +231,23 @@ def fetch_collection_films(url):
 
 
 def fetch_leaving_films():
-    """Return (departure date, source url, films) scraped from the
-    official leaving page.
+    """Return (departure date, source url, films, early) scraped from
+    the official leaving page.
 
-    It returns (None, None, []) if no candidate page has films."""
+    early is True when the page of this month answered with no films and
+    a later page gave the films (#557). That can be one empty render.
+    Thus, the set of a later page is stored as replaceable. It returns
+    (None, None, [], False) if no candidate page has films."""
 
-    for url, departs in leaving_page_candidates(date.today()):
-        films = fetch_collection_films(url)
+    candidates = leaving_page_candidates(date.today())
+    this_url, this_departs = candidates[0]
+    answered = []
+    for url, departs in candidates:
+        films = fetch_collection_films(url, answered=answered)
         if films:
-            return departs, url, films
-    return None, None, []
+            early = departs > this_departs and this_url in answered
+            return departs, url, films, early
+    return None, None, [], False
 
 
 # The words that carry no meaning in a title comparison.
@@ -580,20 +600,35 @@ def refresh_leaving_criterion():
             ):
                 return True
 
-        departs, source, films = fetch_leaving_films()
+        departs, source, films, early = fetch_leaving_films()
         if not films:
             current_app.logger.warning(
                 "Leaving-Criterion: no films found on any candidate page"
             )
             return True
 
+        # A set stored after an empty render of this month's page gives
+        # way to an earlier page that has not departed (#557). Without
+        # this, the 2 gates below kept the wrong month.
+
+        replaceable = bool(
+            stored
+            and stored.get("early")
+            and date.today() <= departs < date.fromisoformat(stored["departs"])
+        )
+
         # The candidates include the page of last month. It stays up for
         # some days after its month. A failed fetch of this month must not
         # replace the stored set with the departed one (#324). The stored
         # set keeps its incomplete mark, and the next run tries again.
 
-        if stored and (
-            departs < date.fromisoformat(stored["departs"]) or departs < date.today()
+        if (
+            stored
+            and not replaceable
+            and (
+                departs < date.fromisoformat(stored["departs"])
+                or departs < date.today()
+            )
         ):
             current_app.logger.warning(
                 f"Leaving-Criterion: '{source}' departs {departs.isoformat()}, "
@@ -609,6 +644,7 @@ def refresh_leaving_criterion():
 
         if (
             stored
+            and not replaceable
             and date.fromisoformat(stored["departs"]) >= date.today()
             and departs != date.fromisoformat(stored["departs"])
         ):
@@ -658,7 +694,10 @@ def refresh_leaving_criterion():
                     "departs": departs.isoformat(),
                     "source": source,
                     "items": items,
-                    "incomplete": bool(failures),
+                    # An early set is fetched again each day until the
+                    # page of this month answers or the month ends.
+                    "incomplete": bool(failures) or early,
+                    "early": early,
                 }
             ),
         )
@@ -833,6 +872,11 @@ def leaving_inventory(user):
         )
         _, seen, watchlisted, _ = user_film_sets(user, tmdb_ids)
 
+    # A film with a record ranks by the number of its popover, as on
+    # the home shelf (#535, #557).
+
+    recorded = record_lane_scores(current_app.redis, user.id, tmdb_ids, profile)
+
     items = []
     tmdb_weights = user_tmdb_weights(user.id) if profile else None
     for item in matched:
@@ -841,6 +885,7 @@ def leaving_inventory(user):
             score, contributions = tmdb_taste_score(
                 user.id, tmdb_id, item, profile, tmdb_weights
             )
+            score = recorded.get(tmdb_id, score)
         else:
             score, contributions = 0.0, []
         items.append(

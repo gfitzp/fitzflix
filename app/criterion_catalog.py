@@ -202,9 +202,13 @@ def get_criterion_collection_from_wikidata(force_refresh=False):
     for binding in _wikidata_sparql(url, CRITERION_SETS_SPARQL_QUERY):
         release = _parse_criterion_binding(binding)
         if release:
-            release["set_title"] = (
-                binding.get("setLabel", {}).get("value") or ""
-            ).strip() or None
+            set_title = (binding.get("setLabel", {}).get("value") or "").strip()
+            # A set with no English label echoes its Q-id (#557). A stored
+            # set title is never replaced. Thus, the Q-id would become the
+            # permanent title and the name of a Plex collection.
+            if WIKIDATA_ITEM_ID.fullmatch(set_title):
+                set_title = ""
+            release["set_title"] = set_title or None
             criterion_collection.append(release)
 
     # A glitch of the endpoint can return few rows or none. Such a list

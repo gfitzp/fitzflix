@@ -381,14 +381,11 @@ def _json_ld_objects(data):
             yield data
 
 
-def parse_film_info(page_html):
-    """Return {director, year, country, starring} from a film page.
+def film_blocks(page_html):
+    """Return the schema.org Movie and VideoObject blocks of a film page.
 
-    The page is on criterionchannel.com. It carries a schema.org Movie
-    block with the director, the release date, the country, and the
-    top billing. A value is None if it is absent."""
+    An empty render or a challenge page has none (#557)."""
 
-    info = {"director": None, "year": None, "country": None, "starring": None}
     blocks = []
     for block in JSON_LD_RE.findall(page_html):
         try:
@@ -402,6 +399,18 @@ def parse_film_info(page_html):
                 blocks.append(dict(item, **{"@type": "Movie"}))
             elif "VideoObject" in kinds:
                 blocks.append(dict(item, **{"@type": "VideoObject"}))
+    return blocks
+
+
+def parse_film_info(page_html):
+    """Return {director, year, country, starring} from a film page.
+
+    The page is on criterionchannel.com. It carries a schema.org Movie
+    block with the director, the release date, the country, and the
+    top billing. A value is None if it is absent."""
+
+    info = {"director": None, "year": None, "country": None, "starring": None}
+    blocks = film_blocks(page_html)
     if not blocks:
         return info
 

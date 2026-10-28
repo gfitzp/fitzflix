@@ -1098,6 +1098,7 @@ def test_a_film_that_tmdb_deleted_does_not_keep_the_set_incomplete(app, monkeypa
             date.today() + timedelta(days=5),
             "https://example.test/leaving",
             [{"title": "Gone Film", "year": 1960, "director": None}],
+            False,
         ),
     )
     monkeypatch.setattr(leaving_criterion, "match_tmdb_id", lambda *a, **k: 4040)
@@ -1158,7 +1159,12 @@ def test_an_earlier_set_never_replaces_the_stored_set(app, monkeypatch):
     monkeypatch.setattr(
         leaving_criterion,
         "fetch_leaving_films",
-        lambda: (date.today() - timedelta(days=3), "leaving-last-month", departed),
+        lambda: (
+            date.today() - timedelta(days=3),
+            "leaving-last-month",
+            departed,
+            False,
+        ),
     )
 
     with app.app_context():
@@ -1184,7 +1190,12 @@ def test_next_month_never_replaces_a_set_that_has_not_departed(app, monkeypatch)
     monkeypatch.setattr(
         leaving_criterion,
         "fetch_leaving_films",
-        lambda: (date.today() + timedelta(days=33), "leaving-next-month", upcoming),
+        lambda: (
+            date.today() + timedelta(days=33),
+            "leaving-next-month",
+            upcoming,
+            False,
+        ),
     )
 
     with app.app_context():
@@ -1353,5 +1364,108 @@ def test_a_failed_film_page_skips_the_match_and_retries_tomorrow(app, monkeypatc
             for media_id in ("aaaa1111", "bbbb2222"):
                 key = leaving_criterion.DIRECTOR_KEY.format(media_id=media_id)
                 assert app.redis.get(key) is None
+    finally:
+        app.redis.delete(leaving_criterion.LEAVING_KEY)
+
+
+def test_a_film_page_with_no_film_data_is_a_failed_fetch(app, monkeypatch):
+    """An empty render answered 200 with no JSON-LD block (#557).
+
+    The None director was cached for 2 months, and the match ran with no
+    director test."""
+
+    import app.leaving_criterion as leaving_criterion
+
+    url = "https://www.criterionchannel.com/films/dddd4444/a-shell"
+    key = leaving_criterion.DIRECTOR_KEY.format(media_id="dddd4444")
+    app.redis.delete(key)
+    monkeypatch.setattr(
+        leaving_criterion.requests,
+        "get",
+        lambda url, timeout=None: FakeResponse(text="<html>loading</html>"),
+    )
+    with app.app_context():
+        assert (
+            leaving_criterion.film_page_director(url)
+            is leaving_criterion.DIRECTOR_FETCH_FAILED
+        )
+    assert app.redis.get(key) is None
+
+
+def test_an_empty_render_of_this_month_stores_a_replaceable_set(app, monkeypatch):
+    """A first run with an empty render of this month stored next month (#557).
+
+    The next day, the #324 and #541 gates kept the wrong month until its
+    own departure. Now that set gives way to this month's page."""
+
+    import app.leaving_criterion as leaving_criterion
+
+    (this_url, this_departs), (next_url, next_departs) = (
+        leaving_criterion.leaving_page_candidates(date.today())[:2]
+    )
+    pages = {this_url: collection_page([]), next_url: LEAVING_HTML}
+    monkeypatch.setattr(
+        leaving_criterion.requests,
+        "get",
+        lambda url, timeout=None: FakeResponse(
+            text=pages.get(url, ""), status_code=200 if url in pages else 404
+        ),
+    )
+    monkeypatch.setattr(leaving_criterion, "film_page_director", lambda url: "Ford")
+    monkeypatch.setattr(leaving_criterion, "match_tmdb_id", lambda *a, **k: None)
+    monkeypatch.setattr("app.dvr.enqueue_lineup_rebuild", lambda *args, **kwargs: None)
+    app.redis.delete(leaving_criterion.LEAVING_KEY)
+    try:
+        with app.app_context():
+            assert leaving_criterion.refresh_leaving_criterion() is True
+            stored = json.loads(app.redis.get(leaving_criterion.LEAVING_KEY))
+            assert stored["departs"] == next_departs.isoformat()
+            assert stored["incomplete"] is True
+
+            pages[this_url] = LEAVING_HTML
+            assert leaving_criterion.refresh_leaving_criterion() is True
+            stored = json.loads(app.redis.get(leaving_criterion.LEAVING_KEY))
+            assert stored["departs"] == this_departs.isoformat()
+            assert not stored.get("early")
+    finally:
+        app.redis.delete(leaving_criterion.LEAVING_KEY)
+
+
+def test_the_leaving_inventory_ranks_a_record_by_its_movie_lane(app, monkeypatch):
+    """The /leaving page ranked by the TMDB lane only (#557).
+
+    The popover shows the movie-lane number of a film with a record.
+    The order now agrees with it."""
+
+    import app.leaving_criterion as leaving_criterion
+    from app.models import User
+
+    stored = {
+        "departs": (date.today() + timedelta(days=9)).isoformat(),
+        "items": [
+            {"tmdb_id": 9101, "title": "Inventory High"},
+            {"tmdb_id": 9102, "title": "Inventory Recorded"},
+        ],
+    }
+    app.redis.set(leaving_criterion.LEAVING_KEY, json.dumps(stored))
+    lane = {9101: 2.0, 9102: 1.0}
+    monkeypatch.setattr(leaving_criterion, "stored_profile", lambda r, u: {"x": 1})
+    monkeypatch.setattr(leaving_criterion, "user_tmdb_weights", lambda u: {})
+    monkeypatch.setattr(
+        leaving_criterion,
+        "tmdb_taste_score",
+        lambda user_id, tmdb_id, item, profile, weights: (lane[tmdb_id], []),
+    )
+    monkeypatch.setattr(
+        leaving_criterion,
+        "record_lane_scores",
+        lambda redis, user_id, tmdb_ids, profile: {9102: 5.0},
+    )
+    try:
+        with app.app_context():
+            user = User.query.filter_by(admin=True).first()
+            inventory = leaving_criterion.leaving_inventory(user)
+        assert [item["tmdb_id"] for item in inventory["items"]] == [9102, 9101]
+        assert inventory["items"][0]["score"] == 5.0
     finally:
         app.redis.delete(leaving_criterion.LEAVING_KEY)

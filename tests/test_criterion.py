@@ -1173,3 +1173,31 @@ def test_an_empty_box_set_answer_keeps_the_last_good_copy(app, monkeypatch):
     monkeypatch.setattr(criterion_catalog.requests, "get", fake_get)
     assert criterion_catalog.refresh_criterion_releases() is True
     assert app.redis.get(videos.CRITERION_CACHE_KEY).decode() == good
+
+
+def test_a_set_with_no_label_gets_no_q_id_title(app, monkeypatch):
+    """A set item with no English label echoes its Q-id (#557).
+
+    A stored set title is never replaced. Thus, "Q1234567" became the
+    permanent set title and the name of a Plex collection."""
+
+    import copy
+
+    import app.criterion_catalog as criterion_catalog
+
+    sets = copy.deepcopy(SETS_RESPONSE)
+    sets["results"]["bindings"][0]["setLabel"] = {"value": "Q1234567"}
+
+    def fake_get(url, params=None, headers=None, timeout=None):
+        if "P527" in (params or {}).get("query", ""):
+            return Response(sets)
+        return Response(SPARQL_RESPONSE)
+
+    monkeypatch.setattr(criterion_catalog.requests, "get", fake_get)
+    app.redis.delete(criterion_catalog.CRITERION_CACHE_KEY)
+    with app.app_context():
+        releases = criterion_catalog.get_criterion_collection_from_wikidata(
+            force_refresh=True
+        )
+    (member,) = [r for r in releases if r["tmdb_id"] == 39462]
+    assert member["set_title"] is None
