@@ -1090,6 +1090,12 @@ def test_the_tv_ebay_link_carries_the_format_filter(app, admin_client):
     assert links
     assert all("&amp;Format=" in link or "&Format=" in link for link in links)
 
+    # A DVD season says "Buy on Blu-Ray". Its link drops the DVD format
+    # (#564). The TV rows never passed the instruction to the menu.
+
+    assert "Buy on Blu-Ray" in page
+    assert all("Format=Blu%252Dray%7C4K" in link for link in links)
+
 
 def test_a_file_with_no_last_episode_shows_1_episode(app, admin_client):
     """A legacy row with a null last_episode is not "Episodes 3 to None" (#556)."""
