@@ -158,3 +158,62 @@ def test_page_script_guards_posts_and_clears_watchlist_tiles(app, admin_client):
     assert "if (state.on_watchlist === false) {" in body
     assert body.count("removeWatchlistCell(") == 2
     assert body.count("afterTileState(form, state);") == 2
+
+
+def test_a_double_log_watch_writes_1_row(app, admin_client):
+    """2 Log Watch posts with the same fields write 1 diary row (#516)."""
+
+    from app.models import UserMovieReview
+
+    movie_id = _movie(app, "Double Log", 880516)
+    token = _token(admin_client, movie_id)
+    data = {"csrf_token": token, "review_submit": "y", "review": "Again."}
+    for _ in range(2):
+        response = admin_client.post(f"/movie/{movie_id}", data=data)
+        assert response.status_code == 302
+    with app.app_context():
+        assert UserMovieReview.query.filter_by(movie_id=movie_id).count() == 1
+
+    # A log with other fields is a new viewing
+    admin_client.post(f"/movie/{movie_id}", data={**data, "review": "Third."})
+    with app.app_context():
+        assert UserMovieReview.query.filter_by(movie_id=movie_id).count() == 2
+
+
+def test_a_racing_watchlist_add_answers_added(app, admin_client):
+    """An add whose row a second post inserted first is not a 500 (#516).
+
+    The fake query hides the row from the check, as a post that runs at
+    the same time sees it."""
+
+    from app import db
+    from app.models import User, UserWatchlist
+
+    movie_id = _movie(app, "Racing Add", 880517)
+    with app.app_context():
+        user_id = User.query.filter_by(email=ADMIN_EMAIL).one().id
+        db.session.add(UserWatchlist(user_id=user_id, movie_id=movie_id))
+        db.session.commit()
+    token = _token(admin_client, movie_id)
+
+    class Hidden:
+        def filter_by(self, **kwargs):
+            return self
+
+        def first(self):
+            return None
+
+    # The query property is a descriptor of the base model. A getattr
+    # outside an app context raises. Thus, monkeypatch cannot save it.
+    assert "query" not in UserWatchlist.__dict__
+    UserWatchlist.query = Hidden()
+    try:
+        response = admin_client.post(
+            f"/movie/{movie_id}",
+            data={"csrf_token": token, "add_watchlist_submit": "1"},
+            headers={"X-Requested-With": "card"},
+        )
+    finally:
+        del UserWatchlist.query
+    assert response.status_code == 200
+    assert response.get_json() == {"on_watchlist": True}

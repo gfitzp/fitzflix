@@ -4,6 +4,8 @@ This is slice f of the routes.py split. It holds the verdict and ladder
 plumbing that every rating surface uses, the admin gate, and the read of
 the quality threshold."""
 
+import hashlib
+
 from datetime import date, datetime, timedelta
 
 from flask import (
@@ -253,6 +255,10 @@ def _letterboxd_locked(user_id, movie_id, rating, removes, corrects):
 
 VERDICT_LOCK_SECONDS = 10
 VERDICT_LOCK_KEY = "fitzflix:verdict-lock:{user_id}:{name}"
+# A form log with the same fields in this time is the same submission
+# (#516): a double click, or 2 tabs.
+REPEAT_LOG_SECONDS = 10
+REPEAT_LOG_KEY = "fitzflix:verdict-log:{user_id}:{movie_id}:{digest}"
 
 
 def _hold_verdict_lock(name):
@@ -520,6 +526,8 @@ def apply_verdict(post, target, policy):
     # this user and film makes this a repeat viewing.
 
     is_review = bool(rating is not None or text)
+    if not quick_present and _repeated_log(user_id, target.id, post):
+        return Outcome("logged", rating, is_review)
     rewatch = (
         db.session.query(UserMovieReview.id)
         .filter_by(user_id=user_id, movie_id=target.id)
@@ -544,6 +552,28 @@ def apply_verdict(post, target, policy):
     if rating is not None:
         _steer_and_recompute(user_id, target, rating, steer)
     return Outcome("logged", rating, is_review)
+
+
+def _repeated_log(user_id, movie_id, post):
+    """Return True if the same form log of a film arrived some seconds ago.
+
+    2 Log Watch posts in flight (a double click without the script, 2
+    tabs) wrote 2 diary rows. The second row had the rewatch flag (#516).
+    The SET NX of Redis is atomic. Thus, only the first post writes. A
+    ladder tap does not come here. A repeated tap removes the rating on
+    purpose. If Redis fails, the post logs as before."""
+
+    digest = hashlib.sha1(
+        repr((post.rating, (post.review_text or "").strip(), post.watched_date)).encode(
+            "utf-8"
+        )
+    ).hexdigest()[:16]
+    key = REPEAT_LOG_KEY.format(user_id=int(user_id), movie_id=movie_id, digest=digest)
+    try:
+        first = current_app.redis.set(key, 1, nx=True, ex=REPEAT_LOG_SECONDS)
+    except Exception:
+        return False
+    return not first
 
 
 def _apply_flag(user_id, target, allow_unflag, steer_flag):

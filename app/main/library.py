@@ -29,6 +29,7 @@ from wtforms import ValidationError
 from markupsafe import Markup
 from flask_login import current_user, login_required
 from flask_sqlalchemy.pagination import Pagination
+from sqlalchemy.exc import IntegrityError
 
 from app.tasks import enqueue_task
 from app import db
@@ -1287,7 +1288,12 @@ def movie(movie_id):
             user_id=int(current_user.id), movie_id=target.id
         ).first():
             db.session.add(UserWatchlist(user_id=current_user.id, movie_id=target.id))
-            db.session.commit()
+            try:
+                db.session.commit()
+            except IntegrityError:
+                # A second post in flight added the row first (#516). The
+                # film is on the list. Thus, the answer is the same.
+                db.session.rollback()
         if _card_fetch():
             return jsonify({"on_watchlist": True})
         target_title = target.display_title
