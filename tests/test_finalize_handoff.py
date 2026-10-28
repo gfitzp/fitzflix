@@ -173,3 +173,146 @@ def test_an_in_place_retry_counts_only_a_queued_job_in_a_fixed_window(
         importing._retry_failed_in_place_imports()
         assert app.redis.get(counter) == b"2"
         assert app.redis.ttl(counter) <= 100
+
+
+def _refuse(*args, **kwargs):
+    raise ConnectionError("Redis is away")
+
+
+def _finalize_fixture(app, tmp_path, name, media_library="Movies"):
+    """Return (source, hidden, staged, details, lock) for a cataloging run."""
+
+    hidden = tmp_path / f".{name}"
+    hidden.write_bytes(b"library copy")
+    staged = tmp_path / f"staged-{name}"
+    staged.write_bytes(b"staged copy")
+    source = tmp_path / name
+    source.write_bytes(b"source")
+    folder = name.split(" - ")[0]
+    details = {
+        "basename": name,
+        "dirname": f"{media_library}/{folder}",
+        "file_path": f"{media_library}/{folder}/{name}",
+        "media_library": media_library,
+    }
+    lock = app.lock_manager.lock(f'{{"title": "{folder}"}}', 60000)
+    return source, hidden, staged, details, lock
+
+
+def _assert_kept(app, lock, unlocked, source, hidden, staged):
+    """The source stays for the sweep. The lock and the copies go (#521)."""
+
+    assert lock in unlocked
+    assert app.redis.get(lock.resource) is None
+    assert source.exists()
+    assert not hidden.exists() and not staged.exists()
+
+
+def test_a_failed_sonarr_wait_keeps_the_source(app, tmp_path, monkeypatch):
+    import app.importing as importing
+    import app.videos as videos
+
+    monkeypatch.setattr(
+        importing, "resolve_import_series", lambda details: ("wait", None)
+    )
+    monkeypatch.setattr(importing, "requeue", _refuse)
+    unlocked = _lock_watch(app, monkeypatch)
+    with app.app_context():
+        source, hidden, staged, details, lock = _finalize_fixture(
+            app, tmp_path, "Sonarr Wait Fault - S01E01 - [HDTV-720p].mkv", "TV Shows"
+        )
+        result = videos.finalize_localization(
+            str(source), details, lock, str(hidden), {}, staged_output=str(staged)
+        )
+    assert result is False
+    _assert_kept(app, lock, unlocked, source, hidden, staged)
+
+
+def test_a_failed_vanished_copy_retry_keeps_the_source(app, tmp_path, monkeypatch):
+    import errno
+
+    import app.importing as importing
+    import app.videos as videos
+
+    def lost(src, dst):
+        raise OSError(errno.ENOENT, "the mount lost the copy")
+
+    monkeypatch.setattr(importing, "_build_records", lambda *a, **k: None)
+    monkeypatch.setattr(videos, "_rename_with_retries", lost)
+    monkeypatch.setattr(importing, "requeue", _refuse)
+    unlocked = _lock_watch(app, monkeypatch)
+    with app.app_context():
+        source, hidden, staged, details, lock = _finalize_fixture(
+            app, tmp_path, "Vanished Fault (2021) - [DVD].mkv"
+        )
+        hidden.unlink()
+        result = videos.finalize_localization(
+            str(source), details, lock, str(hidden), {}, staged_output=str(staged)
+        )
+    assert result is False
+    _assert_kept(app, lock, unlocked, source, hidden, staged)
+
+
+def test_a_failed_hand_off_to_the_move_keeps_the_source(app, tmp_path, monkeypatch):
+    import os as real_os
+    from types import SimpleNamespace
+
+    import app.importing as importing
+    import app.videos as videos
+
+    class OtherVolume:
+        """Report the folder of the hidden copy on another volume."""
+
+        def __getattr__(self, name):
+            return getattr(real_os, name)
+
+        def stat(self, path, *args, **kwargs):
+            result = real_os.stat(path, *args, **kwargs)
+            if path == str(tmp_path):
+                return SimpleNamespace(st_dev=result.st_dev + 1)
+            return result
+
+    monkeypatch.setattr(importing, "_build_records", lambda *a, **k: None)
+    monkeypatch.setattr(importing, "os", OtherVolume())
+    monkeypatch.setattr(importing, "enqueue_task", _refuse)
+    unlocked = _lock_watch(app, monkeypatch)
+    with app.app_context():
+        source, hidden, staged, details, lock = _finalize_fixture(
+            app, tmp_path, "Hand Off Fault (2021) - [DVD].mkv"
+        )
+        result = videos.finalize_localization(
+            str(source), details, lock, str(hidden), {}, staged_output=str(staged)
+        )
+    assert result is False
+    _assert_kept(app, lock, unlocked, source, hidden, staged)
+
+
+def test_a_failed_space_wait_inside_the_copy_keeps_the_source(
+    app, incoming_dir, monkeypatch
+):
+    import errno
+
+    import app.importing as importing
+    import app.videos as videos
+    from tests.test_localization import space_move_fixture
+
+    def full(src, dst):
+        raise OSError(errno.ENOSPC, "No space left on device")
+
+    basename = "Space Wait Fault (2021) - [DVD].mkv"
+    source, hidden, details = space_move_fixture(app, incoming_dir, basename)
+    monkeypatch.setattr(videos, "inspect_localized_file", lambda *a, **k: {})
+    monkeypatch.setattr(videos, "_rename_with_retries", full)
+    monkeypatch.setattr(importing, "requeue", _refuse)
+    unlocked = _lock_watch(app, monkeypatch)
+    try:
+        with app.app_context():
+            lock = app.lock_manager.lock('{"title": "Space Wait Fault"}', 60000)
+            assert videos.move_localized_file(source, details, lock, hidden) is False
+        assert lock in unlocked
+        assert os.path.exists(source)
+        assert not os.path.exists(hidden)
+    finally:
+        for path in (source, hidden):
+            if os.path.exists(path):
+                os.remove(path)

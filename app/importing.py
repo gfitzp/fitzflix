@@ -1882,6 +1882,23 @@ def abandon_import(
             current_app.logger.error(traceback.format_exc())
 
 
+class HandoffFailed(Exception):
+    """A stage could not queue its retry or its next stage (#521).
+
+    The source is good. Only Redis failed. Thus, the handler of the
+    stage keeps the source for the hourly sweep through abandon_handoff.
+    It does not reject the source."""
+
+
+def handoff(submit, *args, **kwargs):
+    """Call an enqueue or a requeue. Raise HandoffFailed if it fails (#521)."""
+
+    try:
+        return submit(*args, **kwargs)
+    except Exception as e:
+        raise HandoffFailed(f"{type(e).__name__}: {e}") from e
+
+
 def abandon_handoff(source_path, lock, staged_output, pending_archive=None):
     """Clean up after a stage could not queue the next stage (#340).
 
@@ -2114,7 +2131,8 @@ def move_localized_file(
 
         def retry(delay, reason, level="warning", **changes):
             renew_space_wait(os.path.basename(source_path))
-            requeue(
+            handoff(
+                requeue,
                 "app.videos.move_localized_file",
                 key=source_path,
                 delay=delay,
@@ -2128,7 +2146,8 @@ def move_localized_file(
 
         def defer():
             renew_space_wait(os.path.basename(source_path))
-            defer_for_title_lock(
+            handoff(
+                defer_for_title_lock,
                 "app.videos.move_localized_file",
                 move_args,
                 counters,
@@ -2300,6 +2319,19 @@ def move_localized_file(
                     f"(attempt {transient_retries + 1} of {MAX_TRANSIENT_RETRIES})",
                     transient_retries=transient_retries + 1,
                 )
+
+        except HandoffFailed:
+            # A retry could not be booked (#521). The source is good. It
+            # stays for the hourly sweep, as after a failed enqueue below.
+
+            _remove_staged_output(destination_hidden)
+            abandon_handoff(
+                source_path,
+                lock,
+                hidden_output_file,
+                pending_archive=pending_archive_of(file_details),
+            )
+            return False
 
         except BaseException as error:
             # Remove both hidden copies. The original source is unchanged.
@@ -2547,7 +2579,8 @@ def finalize_localization(
                 # stays out of the write transaction.
                 db.session.rollback()
                 if verdict == "wait" and sonarr_waits < MAX_SONARR_WAITS:
-                    requeue(
+                    handoff(
+                        requeue,
                         "app.videos.finalize_localization",
                         key=file_path,
                         delay=SONARR_WAIT,
@@ -2587,6 +2620,21 @@ def finalize_localization(
 
             file, worse_local_copies, worse_aws_keys, kept_archives, emails = records
             _commit_records(file, kept_archives, file_path)
+
+        except HandoffFailed:
+            # A retry or the hand-off to the move could not be queued
+            # (#521). The source is good. It stays for the hourly sweep,
+            # and the lock and the copies go.
+
+            db.session.rollback()
+            _remove_staged_output(hidden_output_file)
+            abandon_handoff(
+                file_path,
+                lock,
+                staged_output,
+                pending_archive=pending_archive_of(file_details),
+            )
+            return False
 
         except BaseException as error:
             db.session.rollback()
@@ -3081,9 +3129,11 @@ def _place_file(
         db.session.rollback()
 
         # The caller keeps the lock only after the enqueue returns. If
-        # the enqueue fails, the caller releases the lock (#340).
+        # the enqueue fails, the caller releases the lock and keeps the
+        # source (#340, #521).
 
-        enqueue_task(
+        handoff(
+            enqueue_task,
             "app.videos.move_localized_file",
             file_path,
             file_details,
@@ -3110,7 +3160,8 @@ def _place_file(
         # start at 0. The vanished count keeps the ids of the new chain
         # apart from the ids of the old one.
 
-        requeue(
+        handoff(
+            requeue,
             "app.videos.move_localized_file",
             key=file_path,
             delay=timedelta(minutes=1),
