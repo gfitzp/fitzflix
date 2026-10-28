@@ -159,6 +159,20 @@ def box_set_groups():
     }
 
 
+def box_set_titles():
+    """Return the title of each Criterion box set that a movie record names.
+
+    A set under BOX_SET_MIN_FILMS has no group in box_set_groups. Its
+    Plex collection must still empty (#544)."""
+
+    return {
+        title
+        for (title,) in db.session.query(Movie.criterion_set_title)
+        .filter(Movie.criterion_set_title.isnot(None))
+        .distinct()
+    }
+
+
 def _paged(path, params=None):
     """Yield every Metadata entry of a Plex list, one page at a time."""
 
@@ -318,8 +332,13 @@ def sync_criterion_collection():
                     SORT_RELEASE,
                 )
             ]
-            for set_title, groups in sorted(box_set_groups().items()):
+            qualifying = box_set_groups()
+            for set_title, groups in sorted(qualifying.items()):
                 plans.append((set_title, groups, SORT_RELEASE))
+            # A set that shrank under BOX_SET_MIN_FILMS kept its Plex
+            # collection with every former member (#544). An empty plan
+            # empties a collection that exists. It makes no new one.
+            shrunk = sorted(box_set_titles() - set(qualifying))
             machine = _server_machine_id()
             sections = plex_get("/library/sections").get("MediaContainer", {})
         except Exception:
@@ -343,7 +362,8 @@ def sync_criterion_collection():
             except Exception:
                 current_app.logger.warning(traceback.format_exc())
                 continue
-            for name, groups, sort in plans:
+            stale = [(name, [], SORT_RELEASE) for name in shrunk if name in collections]
+            for name, groups, sort in plans + stale:
                 try:
                     _sync_collection(
                         section, collections, by_path, groups, name, machine, sort

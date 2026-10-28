@@ -879,3 +879,36 @@ def test_an_unsyncable_film_seen_on_plex_leaves_the_set(app, monkeypatch):
             {b"392"},
             {"392"},
         )
+
+
+def test_a_total_size_under_the_first_page_skips_the_run(app, monkeypatch):
+    """A wrong small totalSize stops the run (#544).
+
+    Page 1 held 3 items and claimed 2. The read stopped there, and the
+    4th film became a removal."""
+    import app.plex_watchlist as plex_watchlist
+
+    ids = [321, 322, 323, 324]
+    with app.app_context():
+        user_id = setup_user(app)
+        for tmdb_id in ids:
+            movie = make_movie(f"Film {tmdb_id}", 2000, tmdb_id=tmdb_id)
+            db.session.add(UserWatchlist(user_id=user_id, movie_id=movie.id))
+        db.session.commit()
+        app.redis.set(plex_watchlist.SNAPSHOT_KEY, json.dumps(ids))
+
+        fake = FakePlex({tmdb_id: (f"Film {tmdb_id}", 2000) for tmdb_id in ids})
+        listing = fake.get
+
+        def small_total(url, params=None):
+            payload = listing(url, params)
+            if "watchlist/all" in url:
+                payload["MediaContainer"]["totalSize"] = 2
+            return payload
+
+        wire(app, monkeypatch, fake)
+        monkeypatch.setattr(plex_watchlist, "_plex_get", small_total)
+        monkeypatch.setattr(plex_watchlist, "PAGE_SIZE", 3)
+        assert plex_watchlist.sync_plex_watchlist() is True
+        assert fitzflix_watchlist_tmdb_ids(user_id) == set(ids)
+        assert json.loads(app.redis.get(plex_watchlist.SNAPSHOT_KEY)) == ids

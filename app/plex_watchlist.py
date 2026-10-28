@@ -212,7 +212,7 @@ def _read_listing(fitzflix_ids, snapshot):
     back. Thus, an offset walk across the change can skip an item. An
     empty page before the walk reaches the totalSize of page 1 raises
     ListingAnomaly. A first page with items and no totalSize also
-    raises it."""
+    raises it, as does a totalSize under the items of page 1 (#544)."""
 
     films = {}
     start = 0
@@ -235,6 +235,13 @@ def _read_listing(fitzflix_ids, snapshot):
                     raise ListingAnomaly("page 1 has items but no totalSize")
                 return films
             total = int(size)
+            # A count under the items of page 1 is wrong (#544). Then a
+            # short page passed as complete, and its missing films became
+            # removals.
+            if len(page) > total:
+                raise ListingAnomaly(
+                    f"page 1 has {len(page)} items but totalSize {total}"
+                )
         elif size is not None and int(size) != total:
             return None
         for item in page:

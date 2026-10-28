@@ -605,7 +605,8 @@ def test_a_reimport_finds_the_scrobble_that_the_feed_gave_to_the_day_before(app)
 
     A CSV import of 10-06 updates that row. It does not add a no-guid
     row that the export sends back to Letterboxd. A CSV entry of 10-07
-    keeps its own row."""
+    gets a row of its own. Before #544, the 10-06 entry got a new row,
+    and the 10-07 entry wrote over the scrobble of 10-06."""
 
     from app.videos import apply_letterboxd_import
 
@@ -631,11 +632,18 @@ def test_a_reimport_finds_the_scrobble_that_the_feed_gave_to_the_day_before(app)
         rows = UserMovieReview.query.filter_by(user_id=user.id, movie_id=movie_id)
         assert rows.count() == 1
 
-        assert apply_letterboxd_import(
-            user.id, [_letterboxd_film(movie_id, "2026-10-06", "2026-10-07")]
-        )
-        days = sorted(row.date_watched for row in rows)
-        assert days == [datetime(2026, 10, 6), datetime(2026, 10, 7, 0, 10)]
+        film = _letterboxd_film(movie_id, "2026-10-06", "2026-10-07")
+        film["entries"][1]["rating"] = 2.0
+        assert apply_letterboxd_import(user.id, [film])
+        days = sorted((row.date_watched, row.rating) for row in rows)
+        assert days == [
+            (datetime(2026, 10, 7), 2.0),
+            (datetime(2026, 10, 7, 0, 10), 4.0),
+        ]
+
+        # A second run of the same export changes nothing
+        assert apply_letterboxd_import(user.id, [film])
+        assert sorted((row.date_watched, row.rating) for row in rows) == days
 
 
 def test_a_scrobble_twin_goes_to_1_entry_of_an_import(app):

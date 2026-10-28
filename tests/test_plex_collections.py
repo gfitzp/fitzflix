@@ -507,3 +507,21 @@ def test_main_collection_sorts_by_release(app, monkeypatch):
     fake.writes.clear()
     assert plex_collections.sync_criterion_collection() is True
     assert fake.writes == []
+
+
+def test_a_set_that_shrank_under_the_minimum_empties_its_collection(app, monkeypatch):
+    """A set with 1 film left loses its Plex members (#544).
+
+    It never entered the plans. Thus, its collection kept every former
+    member. The sync makes no collection for a small set."""
+
+    paths = _box_sets(app)
+    plex_collections, fake = _setup(
+        app,
+        monkeypatch,
+        {"5": ("movie", "Movies", {"31": paths["web"], "34": paths["lonely"]})},
+    )
+    fake.collections["5"] = {"Lonely Set": ["700", {"34", "35"}]}
+
+    assert plex_collections.sync_criterion_collection() is True
+    assert fake.collections["5"]["Lonely Set"][1] == set()

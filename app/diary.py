@@ -405,7 +405,24 @@ def letterboxd_import_task(user_id, films):
             return True
 
 
-def _feed_claimed_twin(user_id, movie_id, date_watched, import_days, claimed):
+def _clock_twin_offset(row):
+    """Return the day offset of the entry that a guid scrobble can be the twin of, or None.
+
+    A row on the next day before noon is the twin of the day before
+    (-1). A row at noon or later is the twin of the next day (+1). A
+    midnight stamp is a row of its own day."""
+
+    if row.letterboxd_guid is None or row.date_watched is None:
+        return None
+    clock = row.date_watched.time()
+    if clock == datetime.min.time():
+        return None
+    return -1 if clock.hour < 12 else 1
+
+
+def _feed_claimed_twin(
+    user_id, movie_id, date_watched, import_days, claimed, orphan_days=frozenset()
+):
     """Return the feed row of a watch 1 day away from a Letterboxd date, or None.
 
     The feed sync gives a Plex scrobble near midnight to the Letterboxd
@@ -413,7 +430,9 @@ def _feed_claimed_twin(user_id, movie_id, date_watched, import_days, claimed):
     for example 00:10 on 10-07 for the entry of 10-06 (#381). A twin is
     a row with a guid on the next day before noon, or on the day before
     at noon or later. Thus, a twin is next to 1 date only. A day that
-    has its own entry in the import is not a twin. claimed holds the ids
+    has its own entry in the import is not a twin. The exception is an
+    entry date with no row at the start of the import (orphan_days). The
+    feed gave the scrobble to that date (#544). claimed holds the ids
     of the rows that this import gave to an entry already. Such a row
     is not a twin again. The function adds the id of the twin."""
 
@@ -430,12 +449,41 @@ def _feed_claimed_twin(user_id, movie_id, date_watched, import_days, claimed):
         early = clock.hour < 12
         if (
             row.id not in claimed
-            and day not in import_days
+            and (day not in import_days or date_watched.date() in orphan_days)
             and clock != datetime.min.time()
             and ((offset == 1 and early) or (offset == -1 and not early))
         ):
             claimed.add(row.id)
             return row
+    return None
+
+
+def _same_day_row(user_id, movie_id, date_watched, orphan_days, claimed):
+    """Return the row of a film on the day of a Letterboxd entry, or None (#544).
+
+    A row without a guid comes first. A row that this import gave to an
+    entry already is skipped. So is a guid scrobble that the clock rule
+    gives to an orphan import day next to this one: the feed gave it to
+    that day. Before, the first row of the day won. Then the entry of
+    D+1 wrote over the scrobble that the feed gave to D. 2 entries of
+    1 day still share 1 row, as before."""
+
+    rows = UserMovieReview.query.filter(
+        UserMovieReview.user_id == user_id,
+        UserMovieReview.movie_id == movie_id,
+        UserMovieReview.date_watched >= date_watched,
+        UserMovieReview.date_watched < date_watched + timedelta(days=1),
+    ).order_by(UserMovieReview.letterboxd_guid.isnot(None), UserMovieReview.id)
+    for row in rows:
+        if row.id in claimed:
+            continue
+        offset = _clock_twin_offset(row)
+        if (
+            offset is not None
+            and date_watched.date() + timedelta(days=offset) in orphan_days
+        ):
+            continue
+        return row
     return None
 
 
@@ -485,6 +533,21 @@ def apply_letterboxd_import(user_id, films):
                     for entry in film["entries"]
                     if entry["watched"]
                 }
+                # An import day with no row of its own at the start is an
+                # orphan. The clock rule can give it a guid scrobble on the
+                # day next to it. That scrobble is its feed twin, also on a
+                # day with its own entry (#544).
+                stored_days = {
+                    stamp.date()
+                    for (stamp,) in db.session.query(
+                        UserMovieReview.date_watched
+                    ).filter(
+                        UserMovieReview.user_id == user_id,
+                        UserMovieReview.movie_id == movie.id,
+                        UserMovieReview.date_watched.isnot(None),
+                    )
+                }
+                orphan_days = import_days - stored_days
                 for entry in film["entries"]:
                     date_watched = (
                         datetime.strptime(entry["watched"], "%Y-%m-%d")
@@ -509,14 +572,15 @@ def apply_letterboxd_import(user_id, films):
                     # from the day next to it (#381).
 
                     if date_watched is not None:
-                        review = UserMovieReview.query.filter(
-                            UserMovieReview.user_id == user_id,
-                            UserMovieReview.movie_id == movie.id,
-                            UserMovieReview.date_watched >= date_watched,
-                            UserMovieReview.date_watched
-                            < date_watched + timedelta(days=1),
-                        ).first() or _feed_claimed_twin(
-                            user_id, movie.id, date_watched, import_days, claimed
+                        review = _same_day_row(
+                            user_id, movie.id, date_watched, orphan_days, claimed
+                        ) or _feed_claimed_twin(
+                            user_id,
+                            movie.id,
+                            date_watched,
+                            import_days,
+                            claimed,
+                            orphan_days,
                         )
                     else:
                         review = UserMovieReview.query.filter_by(
