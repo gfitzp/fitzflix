@@ -3,6 +3,8 @@
 #   venv/bin/pip install -r requirements-dev.txt
 -r requirements.txt
 black==26.10.1
-pre-commit==4.6.1
+filelock==4.2.4
+pre-commit==4.7.0
 pyflakes==3.4.0
 pytest==9.1.1
+virtualenv==21.15.1
