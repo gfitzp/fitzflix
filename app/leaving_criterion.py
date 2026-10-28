@@ -38,7 +38,11 @@ from werkzeug.local import LocalProxy
 from app import db, get_app
 from app.models import File, Movie
 from app.funnel import user_film_sets
-from app.recommendations import stored_profile, tmdb_taste_score
+from app.recommendations import (
+    record_lane_scores,
+    stored_profile,
+    tmdb_taste_score,
+)
 from app.cache import MISS, cache_json, cached_json
 from app.streaming_rail import enriched_movie, movie_gone
 from app.tmdb_apply import tmdb_json_or
@@ -676,6 +680,10 @@ def leaving_shelf(user):
         return None
     owned, logged, watchlisted, refused = user_film_sets(user, tmdb_ids)
 
+    # A film with a record ranks by the number of its tile (#535).
+
+    recorded = record_lane_scores(current_app.redis, user.id, tmdb_ids, profile)
+
     items = []
     for item in stored.get("items", []):
         tmdb_id = item["tmdb_id"]
@@ -688,6 +696,7 @@ def leaving_shelf(user):
         if tmdb_id in logged or tmdb_id in watchlisted:
             continue
         score, contributions = tmdb_taste_score(user.id, tmdb_id, item, profile)
+        score = recorded.get(tmdb_id, score)
         items.append(
             {
                 "tmdb_id": tmdb_id,

@@ -665,3 +665,41 @@ def test_the_rail_orders_by_the_number_that_its_tiles_show(app, monkeypatch):
         5002: 2.0,
         5001: 0.45,
     }
+
+
+def test_a_rail_film_with_a_record_ranks_by_its_movie_lane_number(app, monkeypatch):
+    """The tile of a film with a record reads the movie-id lane (#535).
+
+    That lane adds the award prior. The stored map holds the number
+    here. The drama has a record and a high stored score. Thus, it
+    outranks the comedy, whose taste score is higher."""
+
+    from datetime import datetime
+
+    from app import db
+    from app.models import User
+    from app.recommendations import SCORES_KEY
+    from app.streaming_rail import compute_user_rail
+
+    user_id = subscribe(app, 8, "Netflix")
+    plant_profile(app, user_id, COMEDY_PROFILE)
+    install_rail_fakes(app, monkeypatch)
+    plant_availability(app, 5001, [NETFLIX])
+    plant_availability(app, 5002, [NETFLIX])
+
+    with app.app_context():
+        drama = make_movie("Rail Drama", 1953, tmdb_id=5002)
+        drama.tmdb_data_as_of = datetime(2026, 10, 1)
+        db.session.commit()
+        app.redis.set(
+            SCORES_KEY.format(user_id=user_id), json.dumps({str(drama.id): 1.64})
+        )
+        try:
+            items = compute_user_rail(db.session.get(User, user_id))
+        finally:
+            app.redis.delete(SCORES_KEY.format(user_id=user_id))
+
+    assert [(item["tmdb_id"], item["score"]) for item in items][:2] == [
+        (5002, 1.64),
+        (5001, 0.45),
+    ]

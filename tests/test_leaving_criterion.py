@@ -1247,3 +1247,47 @@ def test_filmography_hit_reads_the_words_of_the_title(app):
     original = dict(credit, title="Kumo no hitomi", original_title="Spider Eyes")
     assert filmography_hit(original, wanted, 1998)
     assert not filmography_hit(dict(credit, title="Serpent's Path"), wanted, 1998)
+
+
+def test_the_leaving_shelf_ranks_a_recorded_film_by_its_tile_number(app):
+    """A film with a record shows the movie-id lane number (#535)."""
+
+    from datetime import datetime
+
+    from app import db
+    from app.leaving_criterion import LEAVING_KEY, leaving_shelf
+    from app.models import User
+    from app.recommendations import SCORES_KEY
+    from tests.factories import make_movie
+
+    user_id = subscribe_criterion(app)
+    with app.app_context():
+        low = make_movie("Leaving Order Low", 1956, tmdb_id=9131)
+        high = make_movie("Leaving Order High", 1956, tmdb_id=9132)
+        for movie in (low, high):
+            movie.tmdb_data_as_of = datetime(2026, 10, 1)
+        db.session.commit()
+        app.redis.set(
+            SCORES_KEY.format(user_id=user_id),
+            json.dumps({str(low.id): -0.5, str(high.id): 2.5}),
+        )
+        app.redis.set(
+            LEAVING_KEY,
+            json.dumps(
+                {
+                    "departs": date.today().isoformat(),
+                    "items": [
+                        shelf_item(9131, "Leaving Order Low"),
+                        shelf_item(9132, "Leaving Order High"),
+                    ],
+                }
+            ),
+        )
+        try:
+            shelf = leaving_shelf(db.session.get(User, user_id))
+            assert [(i["title"], i["score"]) for i in shelf["items"]] == [
+                ("Leaving Order High", 2.5),
+                ("Leaving Order Low", -0.5),
+            ]
+        finally:
+            app.redis.delete(SCORES_KEY.format(user_id=user_id), LEAVING_KEY)

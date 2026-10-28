@@ -1412,6 +1412,34 @@ def tmdb_taste_score(user_id, tmdb_id, payload, profile):
     return round(taste + _tmdb_copref(user_id, int(tmdb_id)), 4), contributions
 
 
+def record_lane_scores(redis, user_id, tmdb_ids, profile):
+    """Return {tmdb_id: score} of each film with a local record (#535).
+
+    resolved_tmdb_score sends a film with a record through the movie-id
+    lane, which adds the award prior. The tile shows that number. Thus,
+    a discovery shelf ranks such a film by it too, not by the TMDB-lane
+    taste score. A film with no record, or with no score yet, is absent.
+    The first record of each TMDB id is the one that the resolver
+    reads."""
+
+    if not profile or not tmdb_ids:
+        return {}
+    movies = {}
+    for movie in (
+        Movie.query.filter(Movie.tmdb_id.in_({int(i) for i in tmdb_ids}))
+        .order_by(Movie.id)
+        .all()
+    ):
+        movies.setdefault(movie.tmdb_id, movie)
+    scores = stored_scores(redis, user_id)
+    result = {}
+    for tmdb_id, movie in movies.items():
+        score = resolved_score(redis, user_id, movie, profile, scores=scores)
+        if score is not None:
+            result[tmdb_id] = score
+    return result
+
+
 def resolved_tmdb_score(redis, user_id, tmdb_id, profile, scores=None):
     """Return the score for a film through the TMDB-keyed lane of the
     shared source. The film can be absent from the local database.

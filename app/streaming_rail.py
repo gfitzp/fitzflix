@@ -40,6 +40,7 @@ from app.recommendations import (
     features_from_parts,
     score_movie,
     stored_profile,
+    record_lane_scores,
     tmdb_taste_score,
 )
 from app.streaming import (
@@ -484,6 +485,13 @@ def compute_user_rail(user):
         ):
             payloads[tmdb_id] = payload
 
+    # A film with a record shows the movie-id lane number on its tile.
+    # Thus, the rail ranks it by that number (#535).
+
+    recorded = record_lane_scores(
+        current_app.redis, user.id, [tmdb_id for tmdb_id, _, _ in verified], profile
+    )
+
     items = []
     for tmdb_id, entry, matches in verified:
         payload = payloads.get(tmdb_id)
@@ -494,6 +502,7 @@ def compute_user_rail(user):
         # the tiles, which add the co-preference (#420).
 
         score, contributions = tmdb_taste_score(user.id, tmdb_id, payload, profile)
+        score = recorded.get(tmdb_id, score)
         because = [entry["sources"][0]]
         because += [
             label for contribution, label in contributions[:3] if contribution > 0

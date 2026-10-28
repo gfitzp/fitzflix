@@ -814,3 +814,45 @@ def test_a_film_that_tmdb_deleted_goes_back_to_unmatched(app, monkeypatch):
     assert [item["tmdb_id"] for item in items] == [None, None]
     assert not any(item.get("payload_missing") for item in items)
     assert items[1]["first_seen"] == "2026-10-01"
+
+
+def test_a_film_with_a_record_ranks_by_the_number_of_its_tile(app):
+    """The tile reads the movie-id lane, which adds the award prior (#535).
+
+    The shelf must order by the same number. 2 films with the same
+    payload features differ only by their stored scores here."""
+
+    from datetime import datetime
+
+    from app import db
+    from app.models import User
+    from app.newly_added import newly_added_shelves
+    from app.recommendations import SCORES_KEY
+
+    user_id = subscribe_criterion(app)
+    today = date.today().isoformat()
+    with app.app_context():
+        low = make_movie("Tile Order Low", 1956, tmdb_id=9121)
+        high = make_movie("Tile Order High", 1956, tmdb_id=9122)
+        for movie in (low, high):
+            movie.tmdb_data_as_of = datetime(2026, 10, 1)
+        db.session.commit()
+        app.redis.set(
+            SCORES_KEY.format(user_id=user_id),
+            json.dumps({str(low.id): 0.25, str(high.id): 1.75}),
+        )
+        plant_feed(
+            app,
+            [
+                new_item(9121, "Tile Order Low", first_seen=today),
+                new_item(9122, "Tile Order High", first_seen=today),
+            ],
+        )
+        try:
+            (shelf,) = newly_added_shelves(db.session.get(User, user_id))
+            assert [(row["title"], row["score"]) for row in shelf["items"]] == [
+                ("Tile Order High", 1.75),
+                ("Tile Order Low", 0.25),
+            ]
+        finally:
+            app.redis.delete(SCORES_KEY.format(user_id=user_id))
