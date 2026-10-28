@@ -196,20 +196,22 @@ def test_maintenance_page_links_to_rejects(app, admin_client):
 def test_a_failed_rename_after_the_move_puts_the_file_back(
     app, admin_client, monkeypatch
 ):
-    """The copy arrived, then the rename failed. The file goes back to rejects (follow-up #441)."""
+    """The copy arrived, then the import name failed. The file goes back to rejects (follow-up #441).
+
+    The import name comes from a hard link since #527."""
 
     import app.main.admin as admin
 
     name = "Rename Fault (2021) - [DVD].mkv"
     source = reject_a_file(app, "exception", name)
-    real_rename = os.rename
+    real_link = os.link
 
-    def failing_rename(src, dst):
+    def failing_link(src, dst):
         if dst == os.path.join(app.config["IMPORT_DIR"], name):
             raise OSError(5, "Input/output error")
-        return real_rename(src, dst)
+        return real_link(src, dst)
 
-    monkeypatch.setattr(admin.os, "rename", failing_rename)
+    monkeypatch.setattr(admin.os, "link", failing_link)
     page = admin_client.get("/rejects").get_data(as_text=True)
     body = admin_client.post(
         "/rejects",
