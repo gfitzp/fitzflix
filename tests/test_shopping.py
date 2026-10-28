@@ -615,3 +615,60 @@ def test_the_tv_search_keeps_the_minimum_quality(app, admin_client):
     )
     assert response.status_code == 302
     assert f"min_quality={dvd_id}" in response.headers["Location"]
+
+
+def test_a_tmdb_search_keeps_the_selected_view(app, admin_client):
+    """The tmdb: search filtered only the shopping rows (#576).
+
+    It skipped the Criterion and digital filters and the liked films
+    with no copy, which the text search applies."""
+
+    with app.app_context():
+        user_id = User.query.first().id
+        plain = make_movie("Gamma Plain", 1980, tmdb_id=777002)
+        make_movie_file(plain, "Bluray-1080p")
+        liked = make_movie("Gamma Liked", 1981, tmdb_id=777003)
+        make_liked_review(user_id, liked)
+        db.session.commit()
+        row = f'href="/movie/{plain.id}"'
+        liked_row = f'href="/movie/{liked.id}"'
+
+    assert row in admin_client.get("/shopping-list/movie?q=tmdb:777002").get_data(
+        as_text=True
+    )
+    criterion = admin_client.get(
+        "/shopping-list/movie?library=criterion&q=tmdb:777002"
+    ).get_data(as_text=True)
+    assert row not in criterion
+    digital = admin_client.get(
+        "/shopping-list/movie?media=digital&q=tmdb:777002"
+    ).get_data(as_text=True)
+    assert row not in digital
+    unowned = admin_client.get("/shopping-list/movie?q=tmdb:777003").get_data(
+        as_text=True
+    )
+    assert liked_row in unowned
+
+
+def test_the_tv_filter_keeps_the_minimum_quality(app, admin_client):
+    """The TV filter redirect dropped min_quality (#576)."""
+
+    from tests.conftest import csrf_token_from
+    from app.models import RefQuality
+
+    with app.app_context():
+        dvd_id = RefQuality.query.filter_by(quality_title="DVD").one().id
+        top_id = RefQuality.query.filter_by(quality_title="Bluray-1080p").one().id
+
+    url = f"/shopping-list/tv?min_quality={dvd_id}"
+    page = admin_client.get(url).get_data(as_text=True)
+    response = admin_client.post(
+        url,
+        data={
+            "csrf_token": csrf_token_from(page),
+            "quality": str(top_id),
+            "filter_submit": "Filter",
+        },
+    )
+    assert response.status_code == 302
+    assert f"min_quality={dvd_id}" in response.headers["Location"]

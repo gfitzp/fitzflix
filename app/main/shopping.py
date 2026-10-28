@@ -684,20 +684,41 @@ def movie_shopping():
     # The watchlist view keeps its own rows when a search is given (#509).
     # The search narrows the selected view, as #458 asks.
 
+    def search_rows(match):
+        """Return the page of the rows of the selected view that match.
+
+        The search narrows the selected view (#458). The Criterion view
+        keeps its filter. The digital view keeps only the owned films
+        with no physical copy, as when it has no search. A tmdb: search
+        is the same search with another match (#576)."""
+
+        owned_matches = criterion_only(shopping_rows().filter(match))
+        liked_matches = criterion_only(liked_unowned_query().filter(match))
+        if media == "digital":
+            owned_matches = digital_only(owned_matches)
+
+        # A film with no local copy counts as the virtual bottom quality.
+        # Thus, it appears only if the minimum of the range reaches down
+        # to "Not in library".
+
+        candidates = (
+            owned_matches.union_all(liked_matches)
+            if min_preference <= bottom_quality and media != "digital"
+            else owned_matches
+        )
+        return candidates.order_by(*TITLE_ORDER).paginate(
+            page=page, per_page=100, error_out=False
+        )
+
     if q and library != "watchlist":
         if re.match(r"tmdb:(?P<tmdb_id>\d+)", q):
-            tmdb_id = re.match(r"tmdb:(?P<tmdb_id>\d+)", q).group(1)
-            movie = Movie.query.filter_by(tmdb_id=int(tmdb_id)).first()
+            tmdb_id = int(re.match(r"tmdb:(?P<tmdb_id>\d+)", q).group(1))
+            movie = Movie.query.filter_by(tmdb_id=tmdb_id).first()
             if not movie:
                 title = f"Upgrade details for TMDB ID {tmdb_id}"
             else:
                 title = f'Upgrade details for "{movie.display_title}"'
-            movies = (
-                shopping_rows()
-                .filter(Movie.tmdb_id == tmdb_id)
-                .order_by(*TITLE_ORDER)
-                .paginate(page=page, per_page=100, error_out=False)
-            )
+            movies = search_rows(Movie.tmdb_id == tmdb_id)
 
         else:
             title = f"Movies to upgrade matching '{q}'"
@@ -706,30 +727,11 @@ def movie_shopping():
             # searches. Thus, "spider man" finds "Spider-Man".
 
             pattern = q.replace(" ", "%")
-            title_matches = db.or_(
-                Movie.title.ilike(f"%{pattern}%"),
-                Movie.tmdb_title.ilike(f"%{pattern}%"),
-            )
-            # The search narrows the selected view (#458). The Criterion
-            # view keeps its filter. The digital view keeps only the owned
-            # films with no physical copy, as when it has no search.
-
-            owned_matches = criterion_only(shopping_rows().filter(title_matches))
-            liked_matches = criterion_only(liked_unowned_query().filter(title_matches))
-            if media == "digital":
-                owned_matches = digital_only(owned_matches)
-
-            # A film with no local copy counts as the virtual bottom
-            # quality. Thus, it appears only if the minimum of the range
-            # reaches down to "Not in library".
-
-            candidates = (
-                owned_matches.union_all(liked_matches)
-                if min_preference <= bottom_quality and media != "digital"
-                else owned_matches
-            )
-            movies = candidates.order_by(*TITLE_ORDER).paginate(
-                page=page, per_page=100, error_out=False
+            movies = search_rows(
+                db.or_(
+                    Movie.title.ilike(f"%{pattern}%"),
+                    Movie.tmdb_title.ilike(f"%{pattern}%"),
+                )
             )
 
     elif library == "watchlist":
@@ -911,8 +913,14 @@ def tv_shopping():
 
     library_search_form = LibrarySearchForm()
     if filter_form.validate_on_submit():
+        # The hand-set minimum stays, as on the search redirect (#576).
         return redirect(
-            url_for("main.tv_shopping", max_quality=filter_form.quality.data, q=q)
+            url_for(
+                "main.tv_shopping",
+                min_quality=qualities.min_id,
+                max_quality=filter_form.quality.data,
+                q=q,
+            )
         )
 
     # Apply the changes to the filter form. The reason that this must be
