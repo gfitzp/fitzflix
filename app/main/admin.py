@@ -3,6 +3,7 @@
 The pages are the system health, the scheduled tasks, the library
 maintenance, the triage pages, the queue, and the pipeline trails."""
 
+import errno
 import os
 import shutil
 import traceback
@@ -994,6 +995,12 @@ def missing_files():
         if not start_bulk_run(MISSING_SCAN_RUN, name):
             flash(ALREADY_QUEUED, "info")
             return redirect(url_for("main.missing_files"))
+        # The nightly cron queues the scan with an id of its own (#527),
+        # as for the Criterion and S3 runs (#456)
+        if live_task_job(name) is not None:
+            finish_bulk_run(MISSING_SCAN_RUN)
+            flash(ALREADY_QUEUED, "info")
+            return redirect(url_for("main.missing_files"))
         enqueue_task(
             name,
             description="Scanning for best files that have no local copy",
@@ -1423,8 +1430,24 @@ def tmdb_triage():
             description=f"Refreshing TMDB data for '{display}'",
             at_front=True,
         )
+        # The rq 2 return value replaces the deprecated Job.result (#527).
+        # A job that raised has no return value. It is a failure.
+
+        from rq.job import JobStatus
+
         waited_seconds = 0
-        while refresh_job.result is None and waited_seconds < 10:
+        result = None
+        while True:
+            if refresh_job.get_status(refresh=True) in (
+                JobStatus.FAILED,
+                JobStatus.STOPPED,
+                JobStatus.CANCELED,
+            ):
+                result = False
+                break
+            result = refresh_job.return_value(refresh=True)
+            if result is not None or waited_seconds >= 10:
+                break
             time.sleep(1)
             waited_seconds = waited_seconds + 1
         # The refresh job only fetches. The apply runs next, at the front
@@ -1432,17 +1455,23 @@ def tmdb_triage():
 
         from app.tmdb_refresh import TMDB_NO_MATCH
 
-        if refresh_job.result == TMDB_NO_MATCH:
+        if result == TMDB_NO_MATCH:
             flash(
                 f"TMDB has no data for id {form.tmdb_id.data}. '{display}' is "
                 f"not matched",
                 "warning",
             )
-        elif refresh_job.result:
+        elif result:
             flash(
                 f"Fetched TMDB id {form.tmdb_id.data} for '{display}'. Fitzflix "
                 f"applies the match next",
                 "success",
+            )
+        elif result is False:
+            flash(
+                f"Fitzflix could not get TMDB data for '{display}'. The log has "
+                f"the reason. Try again later.",
+                "danger",
             )
         else:
             flash(
@@ -1832,6 +1861,32 @@ def _rejected_files():
     return entries
 
 
+def _claim_import_name(staged, destination):
+    """Give a staged reject its import name. Never replace a file there (#527).
+
+    A link refuses an existing name (EEXIST). The rename replaced a
+    same-named file that landed in the import directory after the check
+    of the caller. A volume with no hard links gets a check and the
+    rename."""
+
+    try:
+        os.link(staged, destination)
+    except FileExistsError:
+        raise
+    except OSError as error:
+        if error.errno not in (errno.EPERM, errno.ENOTSUP, errno.EOPNOTSUPP):
+            raise
+        if os.path.exists(destination):
+            raise FileExistsError(errno.EEXIST, "exists", destination)
+        os.rename(staged, destination)
+        return
+    try:
+        os.remove(staged)
+    except OSError:
+        # The hidden name does not import. Thus, it is only a stray.
+        current_app.logger.warning(f"'{staged}' Could not remove the staged link")
+
+
 @bp.route("/rejects", methods=["GET", "POST"])
 @login_required
 @admin_required
@@ -1883,7 +1938,7 @@ def rejects():
                     os.remove(staged)
                 raise
             try:
-                os.rename(staged, destination)
+                _claim_import_name(staged, destination)
             except OSError:
                 # The file is under its hidden name, and nothing imports
                 # it. It goes back to rejects (follow-up #441).

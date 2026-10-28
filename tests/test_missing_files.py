@@ -297,3 +297,20 @@ def test_restore_skips_a_file_that_is_back_since_the_scan(
         as_text=True
     )
     assert [job.args[0] for job in app.request_queue.jobs] == ["g.mkv"]
+
+
+def test_scan_now_beside_the_running_cron_copy_queues_nothing(app, admin_client):
+    """The nightly cron runs the scan under its own id (#527).
+
+    A click while it runs queued the scan a second time, at the front."""
+
+    name = "app.missing_files.missing_best_files_task"
+    app.maintenance_queue.enqueue(name, job_id="cron-missing-scan")
+    page = admin_client.get("/maintenance/missing").get_data(as_text=True)
+    response = admin_client.post(
+        "/maintenance/missing",
+        data={"csrf_token": csrf_token_from(page), "missing_scan_submit": "Scan now"},
+        follow_redirects=True,
+    )
+    assert "already queued or running" in response.get_data(as_text=True)
+    assert [job.id for job in app.maintenance_queue.jobs] == ["cron-missing-scan"]

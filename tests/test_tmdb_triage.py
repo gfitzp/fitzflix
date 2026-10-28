@@ -218,3 +218,41 @@ def test_match_without_an_id_is_refused(app, admin_client):
         for job in app.sql_queue.jobs
         if job.func_name == "app.videos.refresh_tmdb_info"
     ]
+
+
+def test_a_failed_match_fetch_flashes_a_failure(app, admin_client, monkeypatch):
+    """A refresh job that raised is a failure, not "Still refreshing" (#527).
+
+    The wait reads the rq 2 status and return value. The deprecated
+    Job.result fell back to the legacy hash and read None."""
+
+    import app.main.admin as admin
+
+    class FailedJob:
+        def get_status(self, refresh=True):
+            return "failed"
+
+        def return_value(self, refresh=False):
+            return None
+
+    monkeypatch.setattr(admin, "time", _InstantTime)
+    monkeypatch.setattr(admin, "enqueue_task", lambda *args, **kwargs: FailedJob())
+    with app.app_context():
+        movie = make_movie("Failed Match", 1988)
+        db.session.commit()
+        movie_id = movie.id
+
+    page = admin_client.get("/maintenance/tmdb").get_data(as_text=True)
+    response = admin_client.post(
+        "/maintenance/tmdb",
+        data={
+            "csrf_token": csrf_token_from(page),
+            "movie_id": movie_id,
+            "tmdb_id": "265216",
+            "lookup_submit": "Match",
+        },
+        follow_redirects=True,
+    )
+    text = response.get_data(as_text=True)
+    assert "could not get TMDB data" in text
+    assert "Still refreshing" not in text

@@ -198,3 +198,54 @@ def test_a_run_that_failed_at_once_can_start_again(app, admin_client):
     body = _post(admin_client, {"scan_submit": "1"}).get_data(as_text=True)
     assert "already queued or running" not in body
     assert _queued_names(app).count("app.videos.track_metadata_scan_library") == 1
+
+
+def test_a_reimport_never_replaces_a_file_that_just_arrived(
+    app, admin_client, monkeypatch
+):
+    """A same-named file that lands after the check stays as it is (#527).
+
+    The rename replaced it. The reject goes back to the rejects
+    directory."""
+
+    import os
+    import shutil
+
+    import app.main.admin as admin
+    from tests.conftest import csrf_token_from
+
+    name = "Race Reimport (2001) - [DVD].mkv"
+    reject = os.path.join(app.config["REJECTS_DIR"], name)
+    destination = os.path.join(app.config["IMPORT_DIR"], name)
+    with open(reject, "wb") as handle:
+        handle.write(b"reject")
+    real_move = shutil.move
+
+    def move_then_arrive(source, target):
+        result = real_move(source, target)
+        if source == os.path.realpath(reject):
+            with open(destination, "wb") as handle:
+                handle.write(b"newcomer")
+        return result
+
+    monkeypatch.setattr(admin.shutil, "move", move_then_arrive)
+    try:
+        page = admin_client.get("/rejects").get_data(as_text=True)
+        response = admin_client.post(
+            "/rejects",
+            data={
+                "csrf_token": csrf_token_from(page),
+                "file_path": name,
+                "reimport_submit": "Re-import",
+            },
+            follow_redirects=True,
+        )
+        assert "could not be moved to the import directory" in response.get_data(
+            as_text=True
+        )
+        assert open(destination, "rb").read() == b"newcomer"
+        assert open(reject, "rb").read() == b"reject"
+    finally:
+        for path in (destination, reject):
+            if os.path.exists(path):
+                os.remove(path)
