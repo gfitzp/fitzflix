@@ -654,13 +654,18 @@ def _stored_start(cursor, day, episodes):
     return None
 
 
-def _advanced_cursor(day, episodes, start, aired):
-    """Return the stored cursor of a series that aired aired episodes from start (#460)."""
+def _advanced_cursor(day, episodes, start, advance):
+    """Return the stored cursor of a series that moves advance positions from start.
+
+    advance is the position after the last episode that aired, counted
+    from start (#474). It is not the count of the episodes that aired. A
+    dropped episode before the last aired one stays behind the cursor.
+    Thus, no aired episode airs again the next day."""
 
     return {
         "day": day.isoformat(),
         "start": _episode_key(episodes[start]),
-        "next": _episode_key(episodes[(start + aired) % len(episodes)]),
+        "next": _episode_key(episodes[(start + advance) % len(episodes)]),
     }
 
 
@@ -1107,9 +1112,17 @@ def build_channel_lineups(day=None):
             starts = {}
             window = _channel_window(series_entries, day, episode_cap, cursors, starts)
 
+            # The window gives the episodes of a series in order from its
+            # start. offsets counts the position of each one in that
+            # slice. advance keeps the position after the last episode
+            # that aired (#474).
+
             episode_programs = []
-            aired = {}
+            offsets = {}
+            advance = {}
             for series, file in window:
+                offset = offsets.get(series.id, 0)
+                offsets[series.id] = offset + 1
                 duration = _cached_duration(redis_client, file)
                 if duration is None:
                     current_app.logger.warning(
@@ -1117,16 +1130,17 @@ def build_channel_lineups(day=None):
                     )
                     continue
                 episode_programs.append(_episode_program(series, file, duration))
-                aired[series.id] = aired.get(series.id, 0) + 1
+                advance[series.id] = offset + 1
 
-            # A cursor moves only by the episodes that aired. A series
-            # with none keeps its cursor. The write waits until the
-            # lineups are stored (follow-up #460).
+            # A cursor moves to the position after the last episode that
+            # aired. A series with none keeps its cursor. The write waits
+            # until the lineups are stored (follow-up #460).
 
             member_ids = {entry["series"].id for entry in series_entries}
-            for series_id, count in aired.items():
+            for series_id, positions in advance.items():
                 episodes, start = starts[series_id]
-                cursors[series_id] = _advanced_cursor(day, episodes, start, count)
+                cursors[series_id] = _advanced_cursor(day, episodes, start, positions)
+
             pending_cursors[channel.slug] = {
                 str(series_id): json.dumps(cursor)
                 for series_id, cursor in cursors.items()

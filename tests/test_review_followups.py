@@ -33,7 +33,7 @@ def test_a_cron_started_sync_holds_the_archive_move(app):
         assert aws_storage._sync_is_running() is False
 
 
-def _two_series(app, monkeypatch, episodes=20):
+def _two_series(app, monkeypatch, episodes=20, cap=4):
     from app import dvr
 
     monkeypatch.setattr(dvr, "_on_disk", lambda file: True)
@@ -43,7 +43,7 @@ def _two_series(app, monkeypatch, episodes=20):
     monkeypatch.setattr(
         dvr,
         "get_setting",
-        lambda name: 4 if name == "DVR_CHANNEL_EPISODES" else real_setting(name),
+        lambda name: cap if name == "DVR_CHANNEL_EPISODES" else real_setting(name),
     )
     from app.models import TMDBGenre
 
@@ -93,21 +93,26 @@ def test_a_build_with_no_programs_keeps_the_cursors(app, monkeypatch):
     assert after[0] == f"S01E{(last % 20) + 1:02d}"
 
 
-def test_a_dropped_episode_does_not_count_as_aired(app, monkeypatch):
-    """An episode with no duration leaves the lineup. The cursor does not pass it."""
+def test_a_mid_window_drop_does_not_repeat_an_aired_episode(app, monkeypatch):
+    """A probe fails in the middle of a window. The cursor passes the last aired episode (#474).
+
+    Each series has 4 slots. The second episode of the next window has no
+    duration. The episodes after it air. The next day starts after the
+    last of them, not on an episode that aired the day before."""
 
     from app import dvr
 
     day = date(2026, 11, 5)
     monkeypatch.setattr(dvr, "_probe_duration", lambda path: 1500.0)
     with app.app_context():
-        _two_series(app, monkeypatch)
+        _two_series(app, monkeypatch, cap=8)
         assert dvr.build_channel_lineups(day=day) is True
         before = _aired(app, "Kappa Toons")
-        second = int(before[-1][-2:])
+        assert len(before) == 4
+        last = int(before[-1][-2:])
 
         # The second episode of the next window has no duration.
-        dropped = f"S01E{(second + 1) % 20 + 1:02d}"
+        dropped = f"S01E{(last + 1) % 20 + 1:02d}"
         app.redis.delete(dvr.DURATIONS_KEY)
         monkeypatch.setattr(
             dvr,
@@ -116,12 +121,14 @@ def test_a_dropped_episode_does_not_count_as_aired(app, monkeypatch):
         )
         assert dvr.build_channel_lineups(day=day + timedelta(days=1)) is True
         middle = _aired(app, "Kappa Toons")
-        assert len(middle) == 1
+        assert len(middle) == 3
+        assert dropped not in middle
 
         monkeypatch.setattr(dvr, "_probe_duration", lambda path: 1500.0)
         assert dvr.build_channel_lineups(day=day + timedelta(days=2)) is True
         after = _aired(app, "Kappa Toons")
-    assert after[0] == dropped
+    assert not set(after) & set(middle)
+    assert after[0] == f"S01E{int(middle[-1][-2:]) % 20 + 1:02d}"
 
 
 def _lost_upload_row(app, monkeypatch, tmp_path, title):
