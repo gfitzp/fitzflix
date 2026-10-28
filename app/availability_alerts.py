@@ -461,7 +461,7 @@ def _with_unsent(user_id, events, marks):
     streaming, rent, or leaving event of a film that is in the library
     now goes too. A film that is in a list 2 times stays 1 time. The
     stored marks join marks. A digest older than UNSENT_SECONDS is lost.
-    That is an error in the log."""
+    That is an error in the log. Its marks still join marks."""
 
     today = date.today().isoformat()
     stored = current_app.redis.getdel(UNSENT_KEY.format(user_id=int(user_id)))
@@ -473,6 +473,16 @@ def _with_unsent(user_id, events, marks):
         current_app.logger.error(
             f"Watchlist availability: the digest of user {user_id} waited "
             f"since {since} and was never sent. Its events are lost"
+        )
+        # The events go, but their markers and badge stamps stay, as in
+        # _drop_unsent (#543). Else a later provider flap mails again.
+        marks.merge(
+            unsent.get("marks") or {},
+            {
+                item.get("movie_id")
+                for items in (unsent.get("events") or {}).values()
+                for item in items
+            },
         )
         return events, today
     listed = {

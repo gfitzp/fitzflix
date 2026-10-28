@@ -777,14 +777,28 @@ def test_an_unsent_digest_that_expires_is_an_error(app, monkeypatch, caplog):
     with app.app_context():
         user = User.query.filter_by(email=MEMBER_EMAIL).one()
         old = (date.today() - timedelta(days=8)).isoformat()
+        sent_key = f"fitzflix:test-sent:{user.id}:1"
         app.redis.set(
             UNSENT_KEY.format(user_id=user.id),
-            json.dumps({"since": old, "events": {"streaming": [{"movie_id": 1}]}}),
+            json.dumps(
+                {
+                    "since": old,
+                    "events": {"streaming": [{"movie_id": 1}]},
+                    "marks": {
+                        "sent": {sent_key: 600},
+                        "recent": [[1, "Now on Netflix"], [2, "Not in the digest"]],
+                    },
+                }
+            ),
         )
         events = {"local": [], "streaming": [], "rent": [], "leaving": []}
-        merged, since = _with_unsent(user.id, events, _Marks(user.id))
+        marks = _Marks(user.id)
+        merged, since = _with_unsent(user.id, events, marks)
     assert merged == events
     assert since == date.today().isoformat()
+    # The events are lost, but their marks stay (#543).
+    assert marks.sent == {sent_key: 600}
+    assert marks.recent == [(1, "Now on Netflix")]
     assert any(
         record.levelname == "ERROR" and "was never sent" in record.getMessage()
         for record in caplog.records
