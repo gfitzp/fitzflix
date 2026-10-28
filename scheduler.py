@@ -190,10 +190,20 @@ try:
         if not refresh_instance(
             keys=[INSTANCE_KEY], args=[instance_token, INSTANCE_TTL]
         ):
-            app.logger.error(
-                "The recurring-jobs process lost its instance lock. It stops"
-            )
-            break
+            # A stall longer than INSTANCE_TTL (a sleep and wake of the
+            # Mac) lets the key expire with no other holder (#531). Then
+            # this process takes the lock again. Only a key that another
+            # process holds stops it.
+            if app.redis.set(INSTANCE_KEY, instance_token, nx=True, ex=INSTANCE_TTL):
+                app.logger.warning(
+                    "The instance lock of the recurring-jobs process expired "
+                    "during a stall. The process took it again"
+                )
+            else:
+                app.logger.error(
+                    "The recurring-jobs process lost its instance lock. It stops"
+                )
+                break
         if mover.should_reacquire_locks:
             mover.acquire_locks()
         mover.enqueue_scheduled_jobs()

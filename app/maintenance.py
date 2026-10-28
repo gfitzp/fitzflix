@@ -7,6 +7,7 @@ import json
 import os
 import re
 import shutil
+import tempfile
 import subprocess
 import threading
 import time
@@ -367,16 +368,17 @@ def backup_health(config):
     return {"ok": age_hours <= BACKUP_STALE_HOURS, "last": last}
 
 
-def observer_health(connection):
+def observer_health(connection, supervised=True):
     """Count the processes with a live import-directory observer heartbeat.
 
     Only the import-program workers watch. supervisor.py limits the
     observer to them. Thus, the expected count is the numprocs of that
-    program.
+    program. A manual layout (supervised False) runs plain rq workers
+    with no observer (#531). Then no count is expected.
     """
 
     watchers = sum(1 for _ in connection.scan_iter(f"{OBSERVER_KEY_PREFIX}*"))
-    expected = PROGRAM_COUNTS.get("fitzflix-import", 1)
+    expected = PROGRAM_COUNTS.get("fitzflix-import", 1) if supervised else 0
     return {"ok": watchers >= expected, "watchers": watchers, "expected": expected}
 
 
@@ -706,20 +708,26 @@ def heal_mounts(dead_mounts, connection, config):
                 timeout=60,
             )
         except (OSError, subprocess.TimeoutExpired) as e:
-            actions.append(f"failed to remount {mount}: {e}")
+            # The text of the error holds the command and the URL. A URL
+            # with userinfo would reach the log and the health mail
+            # (#531). Thus, only the type of the error goes.
+            actions.append(f"failed to remount {mount}: {type(e).__name__}")
             continue
 
         if result.returncode == 0 and volume_alive(mount):
             actions.append(f"remounted {mount}")
         else:
-            reason = result.stderr.strip() or "still dead"
+            reason = (
+                result.stderr.strip().replace(url, "the MOUNT_URLS entry")
+                or "still dead"
+            )
 
             # Name the location where the share went. Then "still dead"
             # becomes something that a person can act on without a search.
 
             stranded = share_mounted_elsewhere(share, mount)
             if stranded:
-                reason = f"{reason} — share is mounted at {', '.join(stranded)}"
+                reason = f"{reason}. The share is mounted at {', '.join(stranded)}"
 
             actions.append(f"failed to remount {mount}: {reason}")
 
@@ -769,7 +777,9 @@ def system_health(flask_app):
         "disks": disk_health(flask_app.config),
         "missing_mounts": missing_volumes(flask_app.config),
         "backup": backup_health(flask_app.config),
-        "observer": observer_health(flask_app.redis),
+        "observer": observer_health(
+            flask_app.redis, _supervisor_status(flask_app.config) is not None
+        ),
         "scheduler": scheduler_health(flask_app.redis),
         "probes": probe_health(flask_app.redis),
         "missing_best": missing_best_summary(flask_app.redis),
@@ -899,18 +909,26 @@ def backup_database():
         if url.password:
             env["MYSQL_PWD"] = url.password
 
+        # stderr goes to a temporary file, not a pipe (#531). The pipe was
+        # read only after stdout ended. Warnings that fill the pipe
+        # buffer then stopped mysqldump, and the backup never ended.
+
         try:
-            with gzip.open(backup_file, "wb") as target:
+            with gzip.open(
+                backup_file, "wb"
+            ) as target, tempfile.TemporaryFile() as errors:
                 dump = subprocess.Popen(
                     command,
                     stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
+                    stderr=errors,
                     env=env,
                 )
                 shutil.copyfileobj(dump.stdout, target)
                 dump.stdout.close()
-                stderr = dump.stderr.read().decode("utf-8", "replace")
-                if dump.wait() != 0:
+                returncode = dump.wait()
+                errors.seek(0)
+                stderr = errors.read().decode("utf-8", "replace")
+                if returncode != 0:
                     raise RuntimeError(
                         f"mysqldump exited {dump.returncode}: {stderr[:300]}"
                     )
@@ -2050,7 +2068,9 @@ HEALTH_COLLECTORS = (
     ("self-heal", _self_heal, lambda actions, config: ()),
     (
         "observers",
-        lambda config, redis, seen: observer_health(redis),
+        lambda config, redis, seen: observer_health(
+            redis, _supervisor_status(config) is not None
+        ),
         _observer_issues,
     ),
     (
@@ -2172,14 +2192,19 @@ def health_probe():
                 text_body="\n".join(lines),
                 html_body=None,
             )
-            for condition in report:
-                redis.set(
-                    f"{ALERTED_KEY_PREFIX}{condition}",
-                    "1",
-                    ex=ALERT_REMINDER_SECONDS,
-                )
-            for condition in recovered:
-                redis.delete(f"{ALERTED_KEY_PREFIX}{condition}")
+
+        # The reminder keys hold with or without mail (#531). An install
+        # with no MAIL_SERVER or ADMIN_EMAIL logged each open problem at
+        # WARNING every 10 minutes.
+
+        for condition in report:
+            redis.set(
+                f"{ALERTED_KEY_PREFIX}{condition}",
+                "1",
+                ex=ALERT_REMINDER_SECONDS,
+            )
+        for condition in recovered:
+            redis.delete(f"{ALERTED_KEY_PREFIX}{condition}")
 
         pipe = redis.pipeline()
         pipe.delete(ISSUES_KEY)

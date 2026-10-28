@@ -769,7 +769,7 @@ def test_heal_mounts_says_where_a_stranded_share_went(app, monkeypatch, tmp_path
         in actions
     )
     assert (
-        f"failed to remount {stub}: still dead — share is mounted at {duplicate}"
+        f"failed to remount {stub}: still dead. The share is mounted at {duplicate}"
         in (actions)
     )
 
@@ -924,3 +924,56 @@ def test_heal_mounts_unmounts_a_dead_nfs_mount_that_lstat_cannot_read(
     assert calls.index(["diskutil", "unmount", "force", mount]) < next(
         i for i, command in enumerate(calls) if command[0] == "osascript"
     )
+
+
+def test_a_mysqldump_with_many_warnings_does_not_stall(app, mysqldump_stub):
+    """stderr goes to a file. A full pipe stopped the dump (#531).
+
+    The stub writes 256 KiB of warnings before its output. A stderr pipe
+    holds approximately 64 KiB. The old read of stderr after stdout
+    stalled for good."""
+
+    import threading
+
+    stub, backup_dir = mysqldump_stub
+    stub.write_text(
+        "#!/bin/sh\n"
+        "head -c 262144 /dev/zero | tr '\\0' 'w' >&2\n"
+        'echo "-- fitzflix dump"\n'
+    )
+
+    def run_with_a_limit():
+        with app.app_context():
+            backup_database()
+
+    worker = threading.Thread(target=run_with_a_limit, daemon=True)
+    worker.start()
+    worker.join(timeout=20)
+    assert not worker.is_alive(), "the backup stalled on a full stderr pipe"
+    dumps = glob.glob(str(backup_dir / "*.sql.gz"))
+    assert len(dumps) == 1
+
+
+def test_a_remount_timeout_does_not_log_the_url(app, monkeypatch, tmp_path):
+    """The error text of a timeout holds the URL of the share (#531)."""
+
+    import subprocess as subprocess_module
+
+    import app.maintenance as maintenance
+
+    volumes = tmp_path / "Volumes"
+    leftover = volumes / "Movies"
+    leftover.mkdir(parents=True)
+    url = "nfs://user:secret@nas.test/Movies"
+    monkeypatch.setattr(maintenance, "VOLUMES_ROOT", str(volumes))
+    monkeypatch.setitem(app.config, "MOUNT_URLS", {"Movies": url})
+
+    def fake_run(command, **kwargs):
+        if command[0] == "osascript":
+            raise subprocess_module.TimeoutExpired(command, 60)
+        return subprocess_module.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(maintenance.subprocess, "run", fake_run)
+    actions = maintenance.heal_mounts([str(leftover)], app.redis, app.config)
+    assert actions == [f"failed to remount {leftover}: TimeoutExpired"]
+    assert not any("secret" in action for action in actions)

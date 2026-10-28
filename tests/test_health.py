@@ -784,3 +784,83 @@ def test_a_killed_worker_of_this_host_is_not_live(app):
     assert entries["fitzflix-sql"]["live"] == 2
     for key in (killed, alive, remote):
         app.redis.delete(key)
+
+
+def test_the_reminder_holds_without_mail(app, health_env, monkeypatch, caplog):
+    """An open problem logs once, also with no mail configured (#531).
+
+    The reminder keys were set only in the mail branch. Thus, an install
+    with no MAIL_SERVER logged each problem every 10 minutes."""
+
+    monkeypatch.setitem(app.config, "MAIL_SERVER", None)
+    health_env.failing.add("TMDB")
+    health_env.run()
+    with caplog.at_level("WARNING"):
+        health_env.run()
+    assert "consecutive probes" in caplog.text
+    caplog.clear()
+    with caplog.at_level("WARNING"):
+        health_env.run()
+    assert "consecutive probes" not in caplog.text
+    assert health_env.redis.exists("fitzflix:health:alerted:probe:TMDB")
+
+
+def test_a_manual_layout_expects_no_import_watchers(app, health_env, monkeypatch):
+    """Plain rq workers run no observer. That is not a problem (#531)."""
+
+    health_env.redis.delete("fitzflix:observer:test-1", "fitzflix:observer:test-2")
+    monkeypatch.setattr(maintenance, "_supervisor_status", lambda config: None)
+    health_env.run()
+    assert b"observer" not in health_env.redis.hgetall("fitzflix:health:issues")
+
+    monkeypatch.setattr(
+        maintenance,
+        "_supervisor_status",
+        lambda config: {"fitzflix:fitzflix-import_00": ("RUNNING", 1)},
+    )
+    health_env.run()
+    assert b"observer" in health_env.redis.hgetall("fitzflix:health:issues")
+
+
+def test_the_error_mail_starts_tls_without_credentials(app, monkeypatch):
+    """MAIL_USE_TLS with no username still starts TLS, as Flask-Mail does (#531)."""
+
+    import logging
+    import smtplib
+
+    from app.logging_setup import ErrorMailHandler
+
+    calls = []
+
+    class FakeSMTP:
+        def __init__(self, host, port, timeout=None):
+            calls.append(("connect", host, port))
+
+        def ehlo(self):
+            calls.append(("ehlo",))
+
+        def starttls(self, *args):
+            calls.append(("starttls",))
+
+        def login(self, username, password):
+            calls.append(("login", username))
+
+        def send_message(self, message):
+            calls.append(("send", message["Subject"]))
+
+        def quit(self):
+            calls.append(("quit",))
+
+    monkeypatch.setattr(smtplib, "SMTP", FakeSMTP)
+    handler = ErrorMailHandler(
+        mailhost=("smtp.test", 587),
+        fromaddr="noreply@example.test",
+        toaddrs="alerts@example.test",
+        subject="Fitzflix Failure",
+        secure=(),
+    )
+    handler.emit(logging.LogRecord("app", logging.ERROR, "x", 1, "boom", None, None))
+    names = [call[0] for call in calls]
+    assert "starttls" in names
+    assert "login" not in names
+    assert ("send", "Fitzflix Failure") in calls
