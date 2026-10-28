@@ -193,6 +193,8 @@ def get_criterion_collection_from_wikidata(force_refresh=False):
         if release:
             criterion_collection.append(release)
 
+    standalone_count = len(criterion_collection)
+
     # The standalone releases come first. Thus, a film that has its own
     # release and also a set membership keeps its own spine. The matching
     # lookups keep the first entry per film.
@@ -206,15 +208,24 @@ def get_criterion_collection_from_wikidata(force_refresh=False):
             criterion_collection.append(release)
 
     # A glitch of the endpoint can return few rows or none. Such a list
-    # must not replace the last good copy.
+    # must not replace the last good copy. Each query gets the rule on
+    # its own (#541). On the sum, a box-set query that answered with no
+    # rows passed, and every set title went until the next weekly fetch.
 
     stored = cached_json(CRITERION_CACHE_KEY)
-    stored_count = len(stored) if stored is not MISS else 0
-    if len(criterion_collection) < max(1, stored_count // 2):
-        raise ValueError(
-            f"Wikidata returned {len(criterion_collection)} Criterion releases, "
-            f"against {stored_count} stored. The stored copy stays"
-        )
+    stored = stored if stored is not MISS else []
+    stored_sets = sum(1 for release in stored if release.get("set_title"))
+    fetched_sets = len(criterion_collection) - standalone_count
+    for label, fetched, stored_count, minimum in (
+        ("standalone", standalone_count, len(stored) - stored_sets, 1),
+        # A first fetch can find no set member. That is no glitch.
+        ("box-set", fetched_sets, stored_sets, 1 if stored_sets else 0),
+    ):
+        if fetched < max(minimum, stored_count // 2):
+            raise ValueError(
+                f"Wikidata returned {fetched} {label} Criterion releases, "
+                f"against {stored_count} stored. The stored copy stays"
+            )
 
     current_app.redis.set(CRITERION_CACHE_KEY, json.dumps(criterion_collection))
     current_app.redis.set(CRITERION_FETCHED_KEY, int(time.time()))

@@ -1148,3 +1148,28 @@ def test_the_full_refresh_fetches_before_it_reads_the_movies(app, monkeypatch):
         monkeypatch.setattr(query_class, "all", all_rows)
         assert refresh_criterion_collection_info() is True
     assert order[:2] == ["fetch", "movies"]
+
+
+def test_an_empty_box_set_answer_keeps_the_last_good_copy(app, monkeypatch):
+    """Each query gets the half-rule on its own (#541).
+
+    The standalone rows alone passed the rule on the sum. Then the new
+    copy had no set titles until the next weekly fetch."""
+
+    import app.criterion_catalog as criterion_catalog
+
+    monkeypatch.setitem(app.config, "WIKIDATA_SPARQL_URL", "https://wikidata.test")
+    good = json.dumps(
+        [{"spine_number": 1}]
+        + [{"spine_number": 900 + n, "set_title": "A Box"} for n in range(3)]
+    )
+    app.redis.set(videos.CRITERION_CACHE_KEY, good)
+
+    def fake_get(url, params=None, headers=None, timeout=None):
+        if "P527" in (params or {}).get("query", ""):
+            return Response({"results": {"bindings": []}})
+        return Response(SPARQL_RESPONSE)
+
+    monkeypatch.setattr(criterion_catalog.requests, "get", fake_get)
+    assert criterion_catalog.refresh_criterion_releases() is True
+    assert app.redis.get(videos.CRITERION_CACHE_KEY).decode() == good

@@ -1166,6 +1166,32 @@ def test_an_earlier_set_never_replaces_the_stored_set(app, monkeypatch):
     assert json.loads(app.redis.get(leaving_criterion.LEAVING_KEY)) == current
 
 
+def test_next_month_never_replaces_a_set_that_has_not_departed(app, monkeypatch):
+    """The page of next month waits for the stored set to depart (#541).
+
+    One empty render of this month's page made the fetch return the
+    November films 2 days early."""
+
+    import app.leaving_criterion as leaving_criterion
+
+    current = {
+        "departs": (date.today() + timedelta(days=2)).isoformat(),
+        "items": [{"title": "Still Leaving", "tmdb_id": None}],
+        "incomplete": True,
+    }
+    app.redis.set(leaving_criterion.LEAVING_KEY, json.dumps(current))
+    upcoming = [{"title": "Next Month", "year": 1950, "director": None}]
+    monkeypatch.setattr(
+        leaving_criterion,
+        "fetch_leaving_films",
+        lambda: (date.today() + timedelta(days=33), "leaving-next-month", upcoming),
+    )
+
+    with app.app_context():
+        assert leaving_criterion.refresh_leaving_criterion() is True
+    assert json.loads(app.redis.get(leaving_criterion.LEAVING_KEY)) == current
+
+
 # The match rules of match_tmdb_id, 1 at a time. The cases are the cases
 # of their docstrings.
 

@@ -352,16 +352,33 @@ def parse_watch_live_url(page_html):
 
 
 def _names(people):
-    """Return the names of a schema.org person list, joined by commas."""
+    """Return the names of a schema.org person list, joined by commas.
 
-    if isinstance(people, dict):
+    A person can be an object with a name or a plain string (#541). A
+    string iterated as characters and gave None."""
+
+    if isinstance(people, (dict, str)):
         people = [people]
-    names = [
-        person.get("name", "").strip()
-        for person in people or []
-        if isinstance(person, dict) and person.get("name")
-    ]
+    names = []
+    for person in people if isinstance(people, list) else []:
+        if isinstance(person, dict):
+            person = person.get("name")
+        if isinstance(person, str) and person.strip():
+            names.append(person.strip())
     return ", ".join(names) or None
+
+
+def _json_ld_objects(data):
+    """Yield each object of a JSON-LD block: a dict, a list, or a @graph (#541)."""
+
+    if isinstance(data, list):
+        for item in data:
+            yield from _json_ld_objects(item)
+    elif isinstance(data, dict):
+        if isinstance(data.get("@graph"), list):
+            yield from _json_ld_objects(data["@graph"])
+        else:
+            yield data
 
 
 def parse_film_info(page_html):
@@ -378,8 +395,13 @@ def parse_film_info(page_html):
             data = json.loads(html.unescape(block))
         except ValueError:
             continue
-        if data.get("@type") in ("Movie", "VideoObject"):
-            blocks.append(data)
+        for item in _json_ld_objects(data):
+            kinds = item.get("@type")
+            kinds = kinds if isinstance(kinds, list) else [kinds]
+            if "Movie" in kinds:
+                blocks.append(dict(item, **{"@type": "Movie"}))
+            elif "VideoObject" in kinds:
+                blocks.append(dict(item, **{"@type": "VideoObject"}))
     if not blocks:
         return info
 

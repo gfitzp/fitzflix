@@ -602,6 +602,23 @@ def refresh_leaving_criterion():
             )
             return True
 
+        # The forward direction (#541). A stored set that did not depart
+        # yet is only completed. One empty render of its page let the
+        # page of next month replace it some days early. Then the films
+        # of this month lost their shelf, badges, alert and lineup.
+
+        if (
+            stored
+            and date.fromisoformat(stored["departs"]) >= date.today()
+            and departs != date.fromisoformat(stored["departs"])
+        ):
+            current_app.logger.warning(
+                f"Leaving-Criterion: '{source}' departs {departs.isoformat()}, "
+                f"but the stored set departs {stored['departs']} and has not "
+                f"departed yet. Keeping the stored set"
+            )
+            return True
+
         # Films that the TMDB matcher cannot resolve still go into the
         # stored set. They carry only the scraped facts (title, director,
         # year). The /leaving page lists them as plain rows. Thus, the

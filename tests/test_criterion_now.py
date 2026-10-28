@@ -1298,3 +1298,36 @@ def test_the_poller_reads_the_watch_live_page():
 
     assert WHATSON_URL == WATCH_LIVE_URL
     assert "whatsonnow" not in WHATSON_URL
+
+
+def test_parse_film_info_reads_the_list_and_graph_forms(app):
+    """A list block, a @graph block and a plain-string director parse (#541).
+
+    The list and the graph raised AttributeError on every poll. A string
+    director iterated as characters and gave None."""
+
+    import json as json_module
+
+    from app.criterion_now import parse_film_info
+
+    def page(data):
+        return (
+            '<script type="application/ld+json">'
+            + json_module.dumps(data)
+            + "</script>"
+        )
+
+    movie = {
+        "@type": "Movie",
+        "director": "Agnes Varda",
+        "datePublished": "1962-04-11",
+        "actor": [{"name": "Corinne Marchand"}, "Antoine Bourseiller"],
+    }
+    for data in (
+        [{"@type": "WebPage"}, movie],
+        {"@graph": [{"@type": "WebPage"}, movie]},
+    ):
+        info = parse_film_info(page(data))
+        assert info["director"] == "Agnes Varda"
+        assert info["year"] == 1962
+        assert info["starring"] == "Corinne Marchand, Antoine Bourseiller"
