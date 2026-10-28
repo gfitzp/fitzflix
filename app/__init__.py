@@ -14,7 +14,7 @@ from rq.exceptions import NoSuchJobError
 from rq.job import Job
 from werkzeug.middleware.proxy_fix import ProxyFix
 
-from config import Config
+from config import Config, check_database_uri
 from app.mail_timeout import TimeoutMail
 from flask import Flask
 from flask_sqlalchemy import SQLAlchemy
@@ -592,6 +592,7 @@ def create_app(config_class=Config, watch_import_dir=False):
     # Build the application configuration from the config.py file.
 
     app.config.from_object(config_class)
+    check_database_uri(app.config)
     register_template_helpers(app)
 
     # The built-in SECRET_KEY fallback lets anyone forge session cookies

@@ -152,7 +152,10 @@ class Config(object):
     PREVENT_ACCOUNT_CREATION            = os.environ.get("PREVENT_ACCOUNT_CREATION") is not None
     REDIS_URL                           = os.environ.get("REDIS_URL") or "redis://"
     SECRET_KEY                          = os.environ.get("SECRET_KEY") or "fitzflix-secret"
-    SQLALCHEMY_DATABASE_URI             = os.environ.get("SQLALCHEMY_DATABASE_URI") or "sqlite:///" + os.path.join(basedir, "app.db")
+    # Fitzflix needs MariaDB or MySQL (#500). The migrations and some
+    # pages use SQL that SQLite does not have. check_database_uri refuses
+    # any other database outside the tests.
+    SQLALCHEMY_DATABASE_URI             = os.environ.get("SQLALCHEMY_DATABASE_URI") or ""
     SQLALCHEMY_ENGINE_OPTIONS           = {"pool_pre_ping": True, "pool_recycle": 300}
     SQLALCHEMY_TRACK_MODIFICATIONS      = os.environ.get("SQLALCHEMY_TRACK_MODIFICATIONS") is not None
 
@@ -425,3 +428,18 @@ class Config(object):
     MAX_CONTENT_LENGTH                  = 1024 * 1024 * 10 # 10 megabytes
 
     # fmt: on
+
+
+def check_database_uri(config):
+    """Raise RuntimeError if the database is not MariaDB or MySQL (#500).
+
+    The test configuration (TESTING) uses its own SQLite file."""
+
+    uri = config.get("SQLALCHEMY_DATABASE_URI") or ""
+    if config.get("TESTING") or uri.startswith(("mysql", "mariadb")):
+        return
+    raise RuntimeError(
+        "SQLALCHEMY_DATABASE_URI must be a MariaDB or MySQL URI, for example "
+        "mysql+pymysql://user:password@localhost/fitzflix. Fitzflix does not "
+        f"run on '{uri.split(':', 1)[0] or 'an empty setting'}'"
+    )

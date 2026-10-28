@@ -371,7 +371,7 @@ Fitzflix is developed and operated on macOS with [Homebrew](https://brew.sh). Th
 ### Core
 
 - **Python 3.14** (each recent Python 3 version is applicable)
-- **MySQL**, the application database. Fitzflix connects through `mysql+pymysql://` (set `SQLALCHEMY_DATABASE_URI`). If the setting is empty, Fitzflix uses a local SQLite file.
+- **MariaDB or MySQL**, the application database. Fitzflix connects through `mysql+pymysql://` (set `SQLALCHEMY_DATABASE_URI`). The setting is necessary. Fitzflix does not start with an empty setting or with a different database. The migrations and some pages use SQL that SQLite does not have. Only the test suite uses SQLite.
 - **Redis**, for the task queues, the scheduler, and the file-import locks (set `REDIS_URL`)
 
 ### Third-party binaries
