@@ -1153,3 +1153,62 @@ def test_a_share_that_drops_mid_sweep_goes_offline_for_the_rest(app, monkeypatch
         assert smb_handle_sweep() is True
         assert len(opened) == 1
         assert smb_probe.recorded_state() == {}
+
+
+def _stale_file(title):
+    from app import db
+    from tests.factories import make_movie, make_movie_file
+
+    file = make_movie_file(make_movie(title, 2021), "Bluray-1080p")
+    file.aws_key = f"untouched/{title}.mkv"
+    file.aws_stale = True
+    db.session.commit()
+    return file
+
+
+def test_repair_asks_the_share_first_and_never_opens_a_wedged_one(app, monkeypatch):
+    """The repair has the share watchdog of the probe (#489)."""
+
+    import app.cli as app_cli
+
+    from app import smb_probe
+
+    app_cli.register(app)
+    with app.app_context():
+        _stale_file("Wedged Repair")
+
+        def boom(path):
+            raise AssertionError(f"probed '{path}' on a share that never answered")
+
+        monkeypatch.setattr(smb_probe, "share_responsive", lambda path: False)
+        monkeypatch.setattr(smb_probe, "probe_path", boom)
+        result = app.test_cli_runner().invoke(args=["smb", "repair", "--enqueue"])
+
+        assert "share not responding" in result.output
+        assert result.exception is None
+
+
+def test_repair_skips_a_file_whose_title_lock_is_held(app, monkeypatch):
+    """A file in a remux or a rename is not archived now (#489)."""
+
+    import app.cli as app_cli
+
+    from app import smb_probe
+
+    app_cli.register(app)
+    with app.app_context():
+        file = _stale_file("Locked Repair")
+        path = smb_probe.library_path(file)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "wb") as f:
+            f.write(b"library file")
+        lock = app.lock_manager.lock(file.file_identifier(), 60000)
+        queued = []
+        monkeypatch.setattr(
+            app.file_queue, "enqueue", lambda *a, **kw: queued.append(a)
+        )
+        result = app.test_cli_runner().invoke(args=["smb", "repair", "--enqueue"])
+        app.lock_manager.unlock(lock)
+
+        assert "BUSY" in result.output
+        assert queued == []
