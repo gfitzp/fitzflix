@@ -1082,7 +1082,7 @@ def held_imports():
     still exists, the import waits here again."""
 
     from app.importing import enqueue_localization
-    from app.sdr_conversion import prune_held_imports
+    from app.sdr_conversion import clear_stuck_decisions, prune_held_imports
     from app.videos import move_to_rejects
 
     form = HeldImportForm()
@@ -1094,6 +1094,9 @@ def held_imports():
         if held is None or not os.path.exists(held.held_path):
             flash("That file no longer waits for a decision.", "warning")
             return redirect(url_for("main.held_imports"))
+        # A decision that no job carries any more does not block (#525).
+
+        clear_stuck_decisions([held])
         if held.decision:
             flash(f"'{held.untouched_basename}' is already in progress.", "info")
             return redirect(url_for("main.held_imports"))

@@ -1040,6 +1040,68 @@ def test_a_missing_held_volume_prunes_no_row(app, monkeypatch, tmp_path):
         assert HeldImport.query.count() == 1
 
 
+def test_a_decision_with_no_job_is_cleared_on_the_page(
+    app, admin_client, monkeypatch, tmp_path
+):
+    """A killed or forgotten job left the decision behind (#525).
+
+    The page clears it. Thus, the admin can choose again, Discard too. A
+    decision whose job still waits keeps its badge."""
+
+    from datetime import datetime, timedelta
+
+    import app.videos as videos
+    from app import db
+    from app.models import HeldImport
+
+    held_dir = tmp_path / "held"
+    held_dir.mkdir()
+    monkeypatch.setitem(app.config, "HELD_DIR", str(held_dir))
+    monkeypatch.setattr(videos, "_dead_volumes", lambda paths: [])
+    long_ago = datetime.now() - timedelta(hours=1)
+
+    with app.app_context():
+        for name, decision in (
+            ("Orphaned Choice (2003) - [Bluray-2160p].mkv", "import"),
+            ("Orphaned Archive (2004) - [Bluray-2160p].mkv", "archive"),
+            ("Live Choice (2005) - [Bluray-2160p].mkv", "import"),
+        ):
+            (held_dir / name).write_bytes(b"video")
+            db.session.add(
+                HeldImport(
+                    held_path=str(held_dir / name),
+                    untouched_basename=name,
+                    file_details="{}",
+                    source_format="HDR10",
+                    filesize_bytes=5,
+                    decision=decision,
+                    date_decided=long_ago,
+                )
+            )
+        db.session.commit()
+        live_path = str(held_dir / "Live Choice (2005) - [Bluray-2160p].mkv")
+        job = app.import_queue.enqueue("app.videos.localization_task", live_path)
+
+    try:
+        page = admin_client.get("/maintenance/held-imports").get_data(as_text=True)
+        with app.app_context():
+            decisions = {
+                h.untouched_basename: h.decision for h in HeldImport.query.all()
+            }
+        assert decisions == {
+            "Orphaned Choice (2003) - [Bluray-2160p].mkv": None,
+            "Orphaned Archive (2004) - [Bluray-2160p].mkv": None,
+            "Live Choice (2005) - [Bluray-2160p].mkv": "import",
+        }
+        assert page.count('name="discard_submit"') == 2
+        assert "Import in progress" in page
+    finally:
+        job.delete()
+        with app.app_context():
+            HeldImport.query.delete()
+            db.session.commit()
+
+
 def _foreign_lock(app, resource):
     """Return a lock tuple whose title another task holds now (#339)."""
 

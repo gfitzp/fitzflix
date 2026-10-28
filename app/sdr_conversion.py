@@ -33,7 +33,7 @@ import subprocess
 import time
 import traceback
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from pymediainfo import MediaInfo
 from rq import get_current_job
@@ -723,8 +723,101 @@ def _same_file(path, before):
     )
 
 
+# A decision commits a moment before its job is queued. Thus, a decision
+# that is younger than this time never counts as stuck (#525).
+
+STUCK_DECISION_GRACE = timedelta(minutes=5)
+
+
+def _jobs_of(queues):
+    """Yield each queued, running, scheduled or failed job of the queues."""
+
+    from rq.job import Job
+    from rq.registry import (
+        FailedJobRegistry,
+        ScheduledJobRegistry,
+        StartedJobRegistry,
+    )
+
+    for queue in queues:
+        ids = set(queue.job_ids)
+        ids.update(queue.intermediate_queue.get_job_ids())
+        for registry in (StartedJobRegistry, ScheduledJobRegistry, FailedJobRegistry):
+            ids.update(registry(queue=queue).get_job_ids())
+        for job in Job.fetch_many(sorted(ids), connection=queue.connection):
+            if job is not None:
+                yield job
+
+
+def held_decision_has_job(held):
+    """Return True if a job still carries the decision of a held import (#525).
+
+    An import decision has a localization, a conversion, a move or a
+    cataloging of the held path. An archive decision has an
+    archive_held_task of the row. A failed job counts too. The admin can
+    then requeue it on the System page."""
+
+    from app.importing import LATER_STAGES
+    from app.tasks import TASKS, resolve_queue, task_func_names
+
+    if held.decision == "archive":
+        name = "app.videos.archive_held_task"
+        names = task_func_names(name)
+        return any(
+            job.func_name in names and job.args and job.args[0] == held.id
+            for job in _jobs_of([resolve_queue(TASKS[name].queue)])
+        )
+
+    queues = {current_app.import_queue}
+    queues.update(getattr(current_app, attr) for attr in LATER_STAGES.values())
+    for job in _jobs_of(queues):
+        kwargs = job.kwargs or {}
+        source = (
+            job.args[0]
+            if job.args
+            else kwargs.get("source_path") or kwargs.get("file_path")
+        )
+        if source == held.held_path:
+            return True
+    return False
+
+
+def clear_stuck_decisions(rows):
+    """Clear each decision that no job carries any more. Return the count (#525).
+
+    A hard-killed worker, an expired job, or a failed job that the admin
+    forgot leaves the decision with the file still held. The page then
+    refused every choice, Discard too. With the decision clear, the
+    admin can choose again."""
+
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    cleared = 0
+    for held in rows:
+        if not held.decision:
+            continue
+        decided = held.date_decided
+        if decided is not None and decided.tzinfo is not None:
+            decided = decided.astimezone(timezone.utc).replace(tzinfo=None)
+        if decided is not None and now - decided < STUCK_DECISION_GRACE:
+            continue
+        if held_decision_has_job(held):
+            continue
+        current_app.logger.warning(
+            f"'{held.untouched_basename}' No job carries the {held.decision} "
+            f"decision any more. The file waits for a new decision"
+        )
+        held.decision = None
+        held.date_decided = None
+        cleared += 1
+    if cleared:
+        db.session.commit()
+    return cleared
+
+
 def prune_held_imports():
-    """Remove the HeldImport rows whose held file is gone, for example after a reject."""
+    """Remove the HeldImport rows whose held file is gone, for example after a reject.
+
+    It also clears each decision that no job carries any more (#525)."""
 
     from app.models import HeldImport
     from app.videos import _dead_volumes
@@ -751,4 +844,9 @@ def prune_held_imports():
         db.session.delete(held)
     if gone:
         db.session.commit()
+    clear_stuck_decisions(
+        held
+        for held in HeldImport.query.filter(HeldImport.decision.isnot(None)).all()
+        if os.path.exists(held.held_path)
+    )
     return len(gone)
