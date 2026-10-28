@@ -45,7 +45,7 @@ from app.custom_artwork import move_episode_thumb
 from app.tasks import delete_job, enqueue_task
 from app.aws_storage import request_archive_move
 from app.pipeline import migrate_renamed_file
-from app import db, get_app, safe_job_id
+from app import db, get_app, makedirs_on_mounted_volume, safe_job_id
 from app.models import TVSeries
 
 app = LocalProxy(get_app)
@@ -295,8 +295,27 @@ def _rows_not_renamed(series, old_title, new_title):
     return left
 
 
+def _tv_library_down():
+    """Return True if the TV library is not there or does not answer (#551).
+
+    A dropped share hides each file of each series. Then a file with
+    neither its old nor its new path reads as an archive-only record."""
+
+    from app.videos import _dead_volumes
+
+    tv_library = current_app.config["TV_LIBRARY"]
+    return not os.path.isdir(tv_library) or bool(_dead_volumes([tv_library]))
+
+
 def _move_series(series, new_title):
-    """Move the files and rewrite the rows of a series. The caller holds the locks."""
+    """Move the files and rewrite the rows of a series. The caller holds the locks.
+
+    An unmounted TV library defers the rename. It must not rewrite the
+    rows of files that it cannot see (#551)."""
+
+    if _tv_library_down():
+        _requeue_rename(series, new_title, "waits for the TV library volume")
+        return False
 
     old_title = series.title
     library_dir = current_app.config["LIBRARY_DIR"]
@@ -341,7 +360,7 @@ def _move_series(series, new_title):
             else:
                 db_only += 1
         elif os.path.isfile(src):
-            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            makedirs_on_mounted_volume(os.path.dirname(dst))
             _rename_with_retries(src, dst)
             # The episode thumb goes with its video (#469)
             move_episode_thumb(src, dst)
@@ -350,6 +369,11 @@ def _move_series(series, new_title):
         elif os.path.isfile(dst):
             # A previous partial run moved the file. Complete the row.
             moved += 1
+        elif _tv_library_down():
+            # The volume dropped during the loop. The rows that are
+            # renamed already stay renamed. The retry does the rest.
+            _requeue_rename(series, new_title, "waits for the TV library volume")
+            return False
         else:
             # There is no local copy. This is an archived-only record.
             # The rows get the new name. The archive moves too.

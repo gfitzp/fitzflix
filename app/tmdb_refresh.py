@@ -13,6 +13,7 @@ resolve. The filename plumbing lives in app.importing. This module
 imports it lazily. Thus, the module import direction stays one-way.
 """
 
+import errno
 import gzip
 import json
 import os
@@ -28,7 +29,7 @@ from rq.registry import ScheduledJobRegistry, StartedJobRegistry
 from werkzeug.local import LocalProxy
 
 from app.tasks import enqueue_task, requeue
-from app import db, get_app
+from app import db, get_app, makedirs_on_mounted_volume
 from app.aws_storage import request_archive_move
 from app.custom_artwork import (
     is_library_poster,
@@ -569,13 +570,24 @@ def _rename_movie_file(f, tmdb_id):
         )
         return False
 
-    os.makedirs(
-        os.path.join(
-            current_app.config["LIBRARY_DIR"],
-            file_details.get("dirname"),
-        ),
-        exist_ok=True,
-    )
+    # A dropped share leaves its mountpoint as a plain folder on the boot
+    # disk. Then neither path exists, and the row would move with no file
+    # (#551). Thus, the rename waits for the volume. A row with no local
+    # copy on a live volume still gets its new name.
+
+    from app.videos import _dead_volumes
+
+    new_directory = os.path.dirname(new_file)
+    try:
+        if _dead_volumes([new_directory, old_directory]):
+            raise OSError(errno.ENODEV, "volume does not answer", new_directory)
+        makedirs_on_mounted_volume(new_directory)
+    except OSError as e:
+        current_app.logger.warning(
+            f"'{f.basename}' (file #{f.id}) not renamed to '{new_relative}': "
+            f"the library volume is not available ({e})"
+        )
+        return False
 
     # Database first, disk second. The path update flushes
     # inside a savepoint. Thus, a unique-index conflict

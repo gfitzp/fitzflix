@@ -534,3 +534,39 @@ def test_a_rename_moves_the_episode_thumb_with_its_file(app):
             assert handle.read() == b"thumb"
         os.remove(moved)
         os.remove(os.path.splitext(moved)[0] + ".png")
+
+
+def test_a_dead_tv_library_defers_the_rename(app, monkeypatch):
+    """A dropped mount hides every file (#551).
+
+    Each file would read as an archive-only record, and the rows would
+    move with no file. The rename waits for the volume instead."""
+
+    import app.videos as videos
+    from app.models import TVSeries
+    from tests.test_scheduling import scheduled_jobs
+
+    monkeypatch.setattr(videos, "_dead_volumes", lambda paths: ["/Volumes/TV Shows"])
+    with app.app_context():
+        series = make_tv_series("Dropped Mount Show", tmdb_id=99551)
+        file = make_tv_file(series, 1, 1, "Bluray-1080p")
+        db.session.commit()
+        series_id, file_id, old_path = series.id, file.id, file.file_path
+
+        assert rename_tv_series_task(series_id, "Dropped Mount Show (2001)") is False
+        db.session.expire_all()
+        assert db.session.get(File, file_id).file_path == old_path
+        assert db.session.get(TVSeries, series_id).title == "Dropped Mount Show"
+        retries = [
+            job
+            for job in scheduled_jobs(app.file_queue)
+            + scheduled_jobs(app.request_queue)
+            + scheduled_jobs(app.maintenance_queue)
+            + scheduled_jobs(app.sql_queue)
+            if job.func_name == "app.series_rename.rename_tv_series_task"
+        ]
+        assert [job.args for job in retries] == [
+            (series_id, "Dropped Mount Show (2001)")
+        ]
+        for job in retries:
+            job.delete()

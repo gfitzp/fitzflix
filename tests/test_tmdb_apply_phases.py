@@ -464,3 +464,30 @@ def test_an_apply_whose_commit_fails_stops(app, monkeypatch):
         db.session.expire_all()
         assert db.session.get(File, file_id).file_path == old_path
         assert [job for queue in roster_queues(app) for job in queue.jobs] == []
+
+
+def test_a_rename_waits_for_a_dead_library_volume(app, monkeypatch):
+    """A dropped share hides both paths (#551).
+
+    The rename must not make the folder on the boot disk, and the row
+    must not move with no file."""
+
+    import app.videos as videos
+    from app.models import File
+    from app.tmdb_refresh import _rename_movie_file
+
+    monkeypatch.setattr(videos, "_dead_volumes", lambda paths: ["/Volumes/Movies"])
+    with app.app_context():
+        movie = make_movie("Dropped Tune", 1943)
+        file = make_movie_file(movie, "HDTV-720p")
+        file.untouched_basename = "Dropped Tune (1944) - [HDTV-720p].mkv"
+        db.session.commit()
+        file_id, old_relative = file.id, file.file_path
+        new_folder = os.path.join(
+            app.config["LIBRARY_DIR"], "Movies/Dropped Tune (1944)"
+        )
+
+        assert _rename_movie_file(file, None) is False
+        assert not os.path.exists(new_folder)
+        db.session.expire_all()
+        assert db.session.get(File, file_id).file_path == old_relative
