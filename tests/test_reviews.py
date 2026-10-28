@@ -2611,3 +2611,51 @@ def test_a_plain_review_post_forwards_once_the_record_exists(app, admin_client):
         review = UserMovieReview.query.filter_by(movie_id=movie_id).one()
         assert float(review.rating) == 4.0
         assert review.review == "great"
+
+
+def test_enter_in_the_review_editor_saves_and_keeps_the_stars(app, admin_client):
+    """Enter submits through the first submit button of the form (#555).
+
+    That was the 5-star button of the ladder. Now it is a hidden save
+    button. The post of that button keeps the stars of the viewing."""
+
+    import re
+
+    from app import db
+    from app.models import User, UserMovieReview
+    from app.videos import star_rating_fields
+
+    with app.app_context():
+        user_id = User.query.first().id
+        movie = make_movie("Enter Key Film", 1996)
+        row = UserMovieReview(
+            user_id=user_id,
+            movie_id=movie.id,
+            date_watched=datetime(2024, 2, 5),
+            **star_rating_fields(2.0),
+        )
+        db.session.add(row)
+        db.session.commit()
+        row_id = row.id
+
+    page = admin_client.get(f"/review/{row_id}/edit").get_data(as_text=True)
+    form = page.split('<form action="" method="post">', 1)[1].split("</form>")[0]
+    first = re.search(r'<(button|input)\b[^>]*type="submit"[^>]*>', form).group(0)
+    assert 'name="review_submit"' in first
+
+    # The browser sends the name and the value of that button.
+    name = re.search(r'name="([^"]+)"', first).group(1)
+    value = re.search(r'value="([^"]+)"', first).group(1)
+    admin_client.post(
+        f"/review/{row_id}/edit",
+        data={
+            "csrf_token": csrf_token_from(page),
+            "date_watched": "2024-02-06",
+            "review": "A note.",
+            name: value,
+        },
+    )
+    with app.app_context():
+        row = db.session.get(UserMovieReview, row_id)
+        assert float(row.rating) == 2.0
+        assert row.review == "A note."

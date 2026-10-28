@@ -16,6 +16,10 @@
 			{% if user_review.date_watched %}Viewing on {{ user_review.date_watched.strftime("%B %-d, %Y") }}{% else %}Undated viewing{% endif %}{% if user_review.rewatch %} &middot; rewatch{% endif %}
 		</p>
 		<form action="" method="post">
+			{# Enter in a field submits through the first submit button of
+			   the form. The ladder comes first, and its first button is 5
+			   stars. Thus, this hidden save button comes before it (#555). #}
+			<button type="submit" name="review_submit" value="Save Review" class="visually-hidden" tabindex="-1" aria-hidden="true">Save Review</button>
 			{{ movie_review_form.hidden_tag() }}
 			{{ rating_ladder(allow_not_interested=false, current=(user_review.rating if user_review.rating is not none else none), live=true, estimated=estimated) }}
 			{# A ladder tap re-rates this viewing in place. A save without a
