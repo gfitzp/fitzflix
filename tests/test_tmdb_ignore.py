@@ -761,3 +761,53 @@ def test_file_pages_are_admin_only(app, admin_client, user_client):
     admin_movie_page = admin_client.get(f"/movie/{movie_id}").get_data(as_text=True)
     assert f"/movie/{movie_id}/files" in admin_movie_page
     assert "/library/files" in admin_movie_page
+
+
+def test_a_lock_busy_movie_rematch_keeps_the_hand_entered_id(app):
+    """The lock-busy retry of a detached movie carries rematch (#560).
+
+    Before, the retry dropped rematch. Then it found the record detached
+    and discarded the payload of the hand-entered id."""
+
+    import json
+    import zlib
+
+    from app.tmdb_refresh import _movie_refresh_lock_resources
+    from app.videos import apply_tmdb_refresh
+    from tests.test_scheduling import scheduled_jobs
+
+    payload = zlib.compress(
+        json.dumps({"id": 40222, "title": "Pompeii: The Last Day"}).encode("utf-8")
+    )
+    with app.app_context():
+        movie = make_movie("Pompeii The Last Day", 2003, tmdb_ignored=True)
+        db.session.commit()
+        movie_id = movie.id
+        (resource,) = _movie_refresh_lock_resources(movie)
+        lock = app.lock_manager.lock(resource, 60000)
+        assert lock
+        try:
+            assert (
+                apply_tmdb_refresh(
+                    "Movies",
+                    movie_id,
+                    tmdb_id=40222,
+                    tmdb_payload=payload,
+                    rematch=True,
+                )
+                is False
+            )
+        finally:
+            app.lock_manager.unlock(lock)
+
+        (retry,) = [
+            job
+            for job in scheduled_jobs(app.sql_queue)
+            if job.func_name == "app.videos.apply_tmdb_refresh"
+        ]
+        assert retry.kwargs["rematch"] is True
+        assert apply_tmdb_refresh(**retry.kwargs) is True
+        db.session.expire_all()
+        stored = db.session.get(Movie, movie_id)
+        assert stored.tmdb_ignored is False
+        assert stored.tmdb_id == 40222

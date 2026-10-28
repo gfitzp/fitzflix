@@ -758,9 +758,12 @@ def _apply_movie_refresh(
     notify_if_missing,
     locks,
     volume_waits=0,
+    rematch=False,
 ):
     """Apply a movie payload: merge, rename the files, and move the rows.
 
+    The lock-busy retry carries rematch and volume_waits (#560). Without
+    rematch, the retry discards the payload of a detached record.
     locks collects the title locks that the driver releases. Return
     False if the apply must stop. That is a busy lock (the apply is
     booked again) or a commit that failed (#380). Return True
@@ -812,6 +815,8 @@ def _apply_movie_refresh(
                     "tmdb_id": tmdb_id,
                     "tmdb_payload": tmdb_payload,
                     "notify_if_missing": notify_if_missing,
+                    "rematch": rematch,
+                    "volume_waits": volume_waits,
                 },
                 description=description,
             )
@@ -993,6 +998,7 @@ def apply_tmdb_refresh(
                     notify_if_missing,
                     locks,
                     volume_waits,
+                    rematch=rematch,
                 ):
                     return False
             else:
