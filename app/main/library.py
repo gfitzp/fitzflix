@@ -111,6 +111,7 @@ from app.main.helpers import (
     tv_meta_line,
 )
 from app.cache import cached_fetch
+from app.custom_artwork import remove_custom_artwork
 from app.tmdb_apply import PEOPLE_RANKING_SECONDS, tmdb_json_or
 from app.funnel import might_interest, user_film_sets_by_id
 from app.recommendations import (
@@ -2234,10 +2235,12 @@ def tv_delete(series_id):
         return redirect(url_for("main.tv", series_id=tv.id))
     aws_keys = []
     leftover_dirs = set()
+    file_ids = []
 
     try:
         files = File.query.filter(File.series_id == series_id).all()
         for file in files:
+            file_ids.append(file.id)
             if file.aws_key:
                 aws_keys.append(file.aws_key)
             leftover_dirs.add(
@@ -2279,6 +2282,11 @@ def tv_delete(series_id):
 
     for leftover_dir in sorted(leftover_dirs):
         clear_leftover_directory(leftover_dir)
+
+    # The custom poster tree of each deleted file goes too (#463).
+
+    for file_id in file_ids:
+        remove_custom_artwork("file", file_id)
 
     flash(f"Deleted TV series '{title}' and its files from the database.", "success")
     return redirect(url_for("main.tv_library"))
@@ -2641,6 +2649,7 @@ def _delete_file_post(file, form):
     """Delete the file and its record. Return the page to go to next."""
 
     aws_key = file.aws_key
+    file_id = file.id
     leftover_dir = os.path.join(current_app.config["LIBRARY_DIR"], file.dirname)
 
     try:
@@ -2673,6 +2682,7 @@ def _delete_file_post(file, form):
     from app.maintenance import clear_leftover_directory
 
     clear_leftover_directory(leftover_dir)
+    remove_custom_artwork("file", file_id)
 
     flash(f"Deleted '{file.basename}' and removed from database.", "success")
 

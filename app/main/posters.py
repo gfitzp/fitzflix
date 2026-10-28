@@ -27,6 +27,8 @@ import requests
 # Flask 2.4 removed flask.Markup. Import it from its real home.
 from flask_login import login_required
 from werkzeug.datastructures import FileStorage
+
+from app.custom_artwork import custom_artwork_dir
 from werkzeug.utils import secure_filename
 
 from app import db
@@ -119,7 +121,7 @@ def _custom_poster_dir(scope, record_id):
     mirrors them to S3. The backup also propagates deletions.
     """
 
-    return os.path.join(current_app.config["CUSTOM_ARTWORK_DIR"], scope, str(record_id))
+    return custom_artwork_dir(scope, record_id)
 
 
 def _assign_movie_poster(movie, uploaded_data):

@@ -30,6 +30,7 @@ from werkzeug.local import LocalProxy
 from app.tasks import enqueue_task, requeue
 from app import db, get_app
 from app.aws_storage import request_archive_move
+from app.custom_artwork import move_movie_poster
 from app.email import notify_admin, notify_admin_text
 from app.models import (
     MOVIES,
@@ -81,7 +82,8 @@ def move_movie_rows(old_movie_id, new_movie_id):
     """Move the per-movie rows of a merged movie record to the survivor.
 
     These are the watchlist rows, the status flags, the awards, the
-    archive-only originals, the reviews, and the DVR channel picks. A row that the
+    archive-only originals, the reviews, the DVR channel picks, and the
+    custom poster. A row that the
     survivor already has stays behind. The delete of the
     old record removes it. Thus, no unique key fails."""
 
@@ -113,6 +115,10 @@ def move_movie_rows(old_movie_id, new_movie_id):
         for channel in old_movie.dvr_channels.all():
             if channel.movies.filter(Movie.id == new_movie_id).first() is None:
                 channel.movies.append(new_movie)
+
+        # The custom poster goes to the survivor if it has none (#463).
+
+        move_movie_poster(db.session, old_movie, new_movie)
 
 
 def find_or_create_tmdb_movie(tmdb_id, film_title, year, details=None):
