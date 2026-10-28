@@ -2475,3 +2475,73 @@ def test_an_easy_token_cannot_be_graded_as_siracusa(app, admin_client):
         },
     ).get_data(as_text=True)
     assert "Correct" in body
+
+
+def test_a_stale_mid_round_post_cannot_bring_back_an_ended_round(
+    app, admin_client, monkeypatch
+):
+    """A miss that read stage 1 after another post ended the round saves nothing (#492)."""
+
+    import re
+
+    from app import db
+    from app.main import game
+
+    with app.app_context():
+        movie = make_movie("Ended Round Film", 2004)
+        make_movie_file(movie, "Bluray-1080p")
+        db.session.commit()
+        movie_id = movie.id
+
+    token = seed_image_frame(app, movie_id, size=(120, 80))
+    page = admin_client.get("/game?difficulty=extra&unrated=1").get_data(as_text=True)
+    csrf = re.search(r'name="csrf_token"[^>]*value="([^"]+)"', page).group(1)
+
+    # The other post banked the round after this post read stage 1.
+    stale = {"token": token, "stage": 1}
+    monkeypatch.setattr(game, "_extra_round", lambda: dict(stale))
+    app.redis.delete(*app.redis.keys("fitzflix:frames:extra:*"))
+
+    response = admin_client.post(
+        "/game",
+        data={
+            "csrf_token": csrf,
+            "token": token,
+            "difficulty": "extra",
+            "guess": "Wrong Film",
+            "guess_submit": "y",
+        },
+    )
+    assert response.status_code == 302
+    assert app.redis.keys("fitzflix:frames:extra:*") == []
+
+
+def test_an_untick_of_unrated_films_resumes_the_live_extra_round(app, admin_client):
+    """The round of an unrated film stays live after the filter narrows (#492)."""
+
+    import re
+
+    from app import db
+
+    with app.app_context():
+        movie = make_movie("Unrated Round Film", 2005)
+        make_movie_file(movie, "Bluray-1080p")
+        db.session.commit()
+        movie_id = movie.id
+
+    token = seed_image_frame(app, movie_id, size=(120, 80))
+    page = admin_client.get("/game?difficulty=extra&unrated=1").get_data(as_text=True)
+    csrf = re.search(r'name="csrf_token"[^>]*value="([^"]+)"', page).group(1)
+    admin_client.post(
+        "/game",
+        data={
+            "csrf_token": csrf,
+            "token": token,
+            "difficulty": "extra",
+            "zoom_out": "y",
+        },
+    )
+
+    page = admin_client.get("/game?difficulty=extra&unrated=0").get_data(as_text=True)
+    assert f"/game/frame/{token}" in page
+    assert "2 points" in page

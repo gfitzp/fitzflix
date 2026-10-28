@@ -637,6 +637,40 @@ def _save_extra_round(token, stage):
     )
 
 
+# A mid-round post moves the round to its next stage only if the round
+# is still at the stage that the post read (#492). A second post can
+# end the round between the read and the save. A plain SET then made
+# the ended round live again.
+
+ADVANCE_SCRIPT = """
+local current = redis.call('GET', KEYS[1])
+if not current then return 0 end
+local ok, round = pcall(cjson.decode, current)
+if not ok or type(round) ~= 'table' then return 0 end
+if round['token'] ~= ARGV[1] or tonumber(round['stage'] or 1) ~= tonumber(ARGV[2]) then
+  return 0
+end
+redis.call('SET', KEYS[1], ARGV[3], 'EX', ARGV[4])
+return 1
+"""
+
+
+def _advance_extra_round(token, read_stage, next_stage):
+    """Move the live round of token from read_stage to next_stage. Return True if it moved."""
+
+    return bool(
+        current_app.redis.eval(
+            ADVANCE_SCRIPT,
+            1,
+            EXTRA_ROUND_KEY.format(user_id=int(current_user.id)),
+            token,
+            read_stage,
+            json.dumps({"token": token, "stage": next_stage}),
+            DEALT_TTL,
+        )
+    )
+
+
 def _take_extra_round(token):
     """Delete the live round atomically. Return True if it was the round of token.
 
@@ -921,7 +955,8 @@ def _extra_post(form, token, movie):
         # the user skipped the round in a different tab. Deal or resume.
         # Do not grade against the wrong stage.
         return redirect(url_for("main.name_that_frame", difficulty="extra"))
-    stage = min(int(round_.get("stage") or 1), EXTRA_STAGES)
+    read_stage = int(round_.get("stage") or 1)
+    stage = min(read_stage, EXTRA_STAGES)
 
     zoom_out = bool(form.zoom_out.data)
     gave_up = bool(form.give_up.data)
@@ -929,7 +964,8 @@ def _extra_post(form, token, movie):
     correct = not (gave_up or zoom_out) and _fuzzy_match(guessed, movie)
     outcome = grade_round("extra", stage, zoom_out, gave_up, correct)
     if not outcome.ended:
-        _save_extra_round(token, outcome.next_stage)
+        if not _advance_extra_round(token, read_stage, outcome.next_stage):
+            return redirect(url_for("main.name_that_frame", difficulty="extra"))
         missed = None if zoom_out else guessed or None
         return _render_extra_round(token, outcome.next_stage, form, missed=missed)
 
@@ -1094,7 +1130,10 @@ def name_that_frame():
         if request.args.get("skip") and round_ and int(round_.get("stage") or 1) <= 1:
             _clear_extra_round()
             round_ = None
-        if round_ and round_.get("token") in tokens:
+        # The round resumes while its frame is in the pool (#492). The
+        # rated-films filter narrows only the next deal. An un-tick must
+        # not abandon a started round.
+        if round_ and round_.get("token") in pool_entries():
             token = round_["token"]
             stage = min(int(round_.get("stage") or 1), EXTRA_STAGES)
         else:
