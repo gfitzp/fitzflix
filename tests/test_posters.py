@@ -450,3 +450,86 @@ def test_save_custom_poster_builds_thumbnails(app, tmp_path):
     assert os.path.isfile(original)
     for width in ("92", "154", "185", "342", "500", "780"):
         assert os.path.isfile(tmp_path / f"w{width}" / "poster.png"), width
+
+
+def _upload_file_poster(admin_client, file_id, name="thumb.png"):
+    """Upload a poster to the picker of 1 file and return the response."""
+
+    page = admin_client.get(f"/file/{file_id}/poster").get_data(as_text=True)
+    return admin_client.post(
+        f"/file/{file_id}/poster",
+        data={
+            "csrf_token": csrf_token_from(page),
+            "custom_poster": (io.BytesIO(png_bytes()), name),
+            "poster_submit": "Upload",
+        },
+        content_type="multipart/form-data",
+    )
+
+
+def test_tv_file_posters_are_episode_thumbs(app, admin_client):
+    """Give each episode its own thumb in the shared season folder (#469).
+
+    The upload of a second episode must not delete the art of the first.
+    The removal deletes only the thumb of its own episode. The picker of a
+    TV file with a custom poster renders, although the file has no movie."""
+
+    import shutil
+
+    from app.models import File
+    from tests.factories import make_tv_series, make_tv_file
+
+    with app.app_context():
+        series = make_tv_series("Thumb Show")
+        first = make_tv_file(series, 1, 1, "WEBDL-1080p")
+        second = make_tv_file(series, 1, 2, "WEBDL-1080p")
+        db.session.commit()
+        first_id, second_id = first.id, second.id
+        season_dir = os.path.join(app.config["LIBRARY_DIR"], first.dirname)
+        first_stem = os.path.splitext(first.basename)[0]
+        second_stem = os.path.splitext(second.basename)[0]
+        os.makedirs(season_dir, exist_ok=True)
+        for file in (first, second):
+            with open(os.path.join(season_dir, file.basename), "wb") as f:
+                f.write(b"episode bytes")
+        # The poster of the season is not the art of an episode
+        with open(os.path.join(season_dir, "poster.jpg"), "wb") as f:
+            f.write(b"season art")
+
+    try:
+        assert _upload_file_poster(admin_client, first_id).status_code == 302
+        assert _upload_file_poster(admin_client, second_id).status_code == 302
+
+        names = set(os.listdir(season_dir))
+        assert f"{first_stem}.png" in names
+        assert f"{second_stem}.png" in names
+        assert "poster.png" not in names
+        assert "poster.jpg" in names
+
+        response = admin_client.get(f"/file/{second_id}/poster")
+        assert response.status_code == 200
+        assert "Thumb Show - S01E02" in response.get_data(as_text=True)
+
+        page = response.get_data(as_text=True)
+        response = admin_client.post(
+            f"/file/{second_id}/poster",
+            data={
+                "csrf_token": csrf_token_from(page),
+                "poster_remove_submit": "Remove custom poster",
+            },
+        )
+        assert response.status_code == 302
+        names = set(os.listdir(season_dir))
+        assert f"{second_stem}.png" not in names
+        assert f"{first_stem}.png" in names
+        assert "poster.jpg" in names
+        with app.app_context():
+            assert db.session.get(File, first_id).custom_poster == "poster.png"
+            assert db.session.get(File, second_id).custom_poster is None
+    finally:
+        shutil.rmtree(season_dir, ignore_errors=True)
+        for file_id in (first_id, second_id):
+            shutil.rmtree(
+                os.path.join(app.config["CUSTOM_ARTWORK_DIR"], "file", str(file_id)),
+                ignore_errors=True,
+            )

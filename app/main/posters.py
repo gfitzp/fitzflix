@@ -113,6 +113,45 @@ def replace_library_poster(library_directory, original_file, poster_filename):
     current_app.logger.info(f"'{original_file}' Copied to '{destination_file}'")
 
 
+# The extensions that a library poster or an episode thumb can have
+
+LIBRARY_POSTER_EXTENSIONS = (".jpg", ".jpeg", ".png", ".tbn")
+
+
+def _episode_thumb_names(file):
+    """Return the names that the episode thumb of a TV file can have.
+
+    Plex reads "<video name without extension>.<ext>" as the thumb of 1
+    episode. A season folder holds many episodes. Thus, each episode has
+    its own name. The name "poster.<ext>" in a season folder is the
+    poster of the season, not of an episode (#469)."""
+
+    stem = os.path.splitext(file.basename)[0]
+    return [f"{stem}{ext}" for ext in LIBRARY_POSTER_EXTENSIONS]
+
+
+def replace_episode_thumb(library_directory, original_file, file):
+    """Replace the episode thumb of 1 TV file. Touch no other art."""
+
+    remove_episode_thumb(library_directory, file)
+    stem = os.path.splitext(file.basename)[0]
+    destination_file = os.path.join(
+        library_directory, f"{stem}{os.path.splitext(original_file)[1].lower()}"
+    )
+    shutil.copy(original_file, destination_file)
+    current_app.logger.info(f"'{original_file}' Copied to '{destination_file}'")
+
+
+def remove_episode_thumb(library_directory, file):
+    """Delete the episode thumb of 1 TV file, if it exists."""
+
+    for name in _episode_thumb_names(file):
+        path = os.path.join(library_directory, name)
+        if os.path.isfile(path):
+            os.remove(path)
+            current_app.logger.info(f"Deleted '{path}'")
+
+
 def _custom_poster_dir(scope, record_id):
     """Return the directory of the custom poster tree of a movie or a file.
 
@@ -199,12 +238,13 @@ def _assign_file_poster(file, uploaded_data):
         except ValueError as error:
             return str(error)
 
-        if file.feature_type_id == None:
-            replace_library_poster(
-                os.path.join(current_app.config["LIBRARY_DIR"], file.dirname),
-                original_file,
-                poster_filename,
-            )
+        library_directory = os.path.join(
+            current_app.config["LIBRARY_DIR"], file.dirname
+        )
+        if file.series_id is not None:
+            replace_episode_thumb(library_directory, original_file, file)
+        elif file.feature_type_id == None:
+            replace_library_poster(library_directory, original_file, poster_filename)
 
         file.custom_poster = poster_filename
         db.session.commit()
@@ -279,7 +319,14 @@ def _remove_file_poster(file):
 
     poster_filename = file.custom_poster
     try:
-        if file.feature_type_id == None:
+        if file.series_id is not None:
+            library_directory = os.path.join(
+                current_app.config["LIBRARY_DIR"], file.dirname
+            )
+            if os.path.isdir(library_directory):
+                remove_episode_thumb(library_directory, file)
+        elif file.feature_type_id == None:
+
             library_directory = os.path.join(
                 current_app.config["LIBRARY_DIR"], file.dirname
             )
