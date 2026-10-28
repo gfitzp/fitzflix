@@ -748,7 +748,12 @@ def test_heal_mounts_remounts_with_cooldown(app, monkeypatch):
         return FakeResult()
 
     monkeypatch.setattr(maintenance.subprocess, "run", fake_run)
-    monkeypatch.setattr(maintenance, "volume_alive", lambda mount, timeout=10: True)
+    # The volume is dead at the heal. It is alive after the remount.
+    monkeypatch.setattr(
+        maintenance,
+        "volume_alive",
+        lambda mount, timeout=10: any(c[0] == "osascript" for c in commands),
+    )
     monkeypatch.setitem(
         app.config, "MOUNT_URLS", {"Movies": "smb://user@nas.local/Movies"}
     )

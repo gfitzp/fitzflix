@@ -501,7 +501,27 @@ def heal_worker_processes(connection, config):
     return actions
 
 
-def share_mounted_elsewhere(share, mount):
+def mount_table():
+    """Return the (device, path) pairs of the mount table, or None on a failure."""
+
+    try:
+        result = subprocess.run(["mount"], capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+
+    table = []
+    for line in result.stdout.splitlines():
+        # Example line:
+        # `//server@host/TV%20Shows on /Volumes/TV Shows-1 (smbfs, ...)`.
+        # Use rsplit on the options. Then a path that contains " (" stays
+        # intact.
+        device, separator, path = line.rsplit(" (", 1)[0].partition(" on ")
+        if separator:
+            table.append((device, path))
+    return table
+
+
+def share_mounted_elsewhere(share, mount, table=None):
     """Return the other paths where `share` is mounted now.
 
     When the SMB session dies, it takes every share with it. macOS
@@ -523,23 +543,13 @@ def share_mounted_elsewhere(share, mount):
     An NFS device reads `host:/export/Share`, with the share name
     literal (#239). The session collapse that caused this function
     occurred during an NFS test. The SMB-only match could not see the
-    NFS duplicates.
+    NFS duplicates. table is the output of mount_table, if the caller
+    has it already.
     """
 
-    try:
-        result = subprocess.run(["mount"], capture_output=True, text=True, timeout=30)
-    except (OSError, subprocess.TimeoutExpired):
-        return []
-
+    table = mount_table() if table is None else table
     elsewhere = []
-    for line in result.stdout.splitlines():
-        # Example line:
-        # `//server@host/TV%20Shows on /Volumes/TV Shows-1 (smbfs, ...)`.
-        # Use rsplit on the options. Then a path that contains " (" stays
-        # intact.
-        device, separator, path = line.rsplit(" (", 1)[0].partition(" on ")
-        if not separator:
-            continue
+    for device, path in table or ():
         if device.startswith("//"):
             name = unquote(device.rsplit("/", 1)[-1])
         elif ":" in device and device.partition(":")[2].startswith("/"):
@@ -576,6 +586,15 @@ def heal_mounts(dead_mounts, connection, config):
         if not connection.set(cooldown_key, "1", ex=HEAL_COOLDOWN_SECONDS, nx=True):
             continue
 
+        # AutoMounter brings a dropped share back in approximately 2
+        # seconds. The probe can see the drop before that. A force-unmount
+        # of the healthy share then breaks the Plex streams and the
+        # library copies on it (#487).
+
+        if volume_alive(mount):
+            actions.append(f"{mount} came back on its own")
+            continue
+
         share = os.path.basename(mount)
         url = mount_urls.get(share)
         if url is None:
@@ -584,12 +603,22 @@ def heal_mounts(dead_mounts, connection, config):
                 f"remount {mount}"
             )
             continue
-        if os.path.ismount(mount):
+        # The mount table tells if the path is a mountpoint (#487). A dead
+        # NFS mount answers ENXIO or ETIMEDOUT to lstat, and ismount
+        # reads that as "not a mountpoint". ismount is the fallback when
+        # the table cannot be read.
+
+        table = mount_table()
+        if table is None:
+            mounted = os.path.ismount(mount)
+        else:
+            mounted = any(path == mount for _, path in table)
+        if mounted:
             # The volume is still mounted but dead. Unmount it before the
-            # remount. The condition is ismount, not isdir (#227). The
-            # leftover-directory case now reaches here. There is nothing
-            # to unmount then. A force-unmount of a path that is not a
-            # mountpoint is a hazard. Do not make it possible.
+            # remount. The condition is a mountpoint, not isdir (#227).
+            # The leftover-directory case now reaches here. There is
+            # nothing to unmount then. A force-unmount of a path that is
+            # not a mountpoint is a hazard. Do not make it possible.
             try:
                 subprocess.run(
                     ["diskutil", "unmount", "force", mount],
@@ -600,7 +629,7 @@ def heal_mounts(dead_mounts, connection, config):
             except (OSError, subprocess.TimeoutExpired):
                 pass
 
-        for duplicate in share_mounted_elsewhere(share, mount):
+        for duplicate in share_mounted_elsewhere(share, mount, table):
             # Try a clean unmount first. The duplicate is usually a
             # healthy mount with readers on it. Plex streams from these
             # shares. Thus, force is the last resort, not the first step.

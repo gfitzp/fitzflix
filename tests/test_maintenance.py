@@ -862,3 +862,60 @@ def test_share_mounted_elsewhere_finds_an_nfs_duplicate(monkeypatch):
     # A share that is already on its canonical path is not its own duplicate
 
     assert maintenance.share_mounted_elsewhere("Movies", "/Volumes/Movies") == []
+
+
+def test_heal_mounts_leaves_a_share_that_came_back_on_its_own(
+    app, monkeypatch, tmp_path
+):
+    """AutoMounter remounted the share after the probe. Nothing is unmounted (#487)."""
+
+    import subprocess as subprocess_module
+
+    import app.maintenance as maintenance
+
+    monkeypatch.setitem(app.config, "MOUNT_URLS", {"Movies": "nfs://nas.test/Movies"})
+    monkeypatch.setattr(maintenance, "volume_alive", lambda mount, timeout=10: True)
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append(command)
+        return subprocess_module.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(maintenance.subprocess, "run", fake_run)
+
+    actions = maintenance.heal_mounts(["/Volumes/Movies"], app.redis, app.config)
+
+    assert actions == ["/Volumes/Movies came back on its own"]
+    assert calls == []
+
+
+def test_heal_mounts_unmounts_a_dead_nfs_mount_that_lstat_cannot_read(
+    app, monkeypatch, tmp_path
+):
+    """The mount table, not ismount, decides that the dead mount needs an unmount (#487)."""
+
+    import subprocess as subprocess_module
+
+    import app.maintenance as maintenance
+
+    mount = "/Volumes/Movies"
+    monkeypatch.setitem(app.config, "MOUNT_URLS", {"Movies": "nfs://nas.test/Movies"})
+    monkeypatch.setattr(maintenance, "volume_alive", lambda path, timeout=10: False)
+    # lstat of a dead NFS mount raises ENXIO. Then ismount answers False.
+    monkeypatch.setattr(maintenance.os.path, "ismount", lambda path: False)
+    output = _mount_output(f"nas.test:/volume1/Movies on {mount} (nfs, nodev)")
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append(command)
+        stdout = output if command[0] == "mount" else ""
+        return subprocess_module.CompletedProcess(command, 0, stdout=stdout, stderr="")
+
+    monkeypatch.setattr(maintenance.subprocess, "run", fake_run)
+
+    maintenance.heal_mounts([mount], app.redis, app.config)
+
+    assert ["diskutil", "unmount", "force", mount] in calls
+    assert calls.index(["diskutil", "unmount", "force", mount]) < next(
+        i for i, command in enumerate(calls) if command[0] == "osascript"
+    )
