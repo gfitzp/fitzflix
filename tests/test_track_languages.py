@@ -648,3 +648,42 @@ def test_a_language_new_to_the_cached_choices_stays_selected(app, admin_client):
             os.remove(library_path)
     finally:
         app.redis.delete(LANGUAGE_CHOICES_KEY)
+
+
+def test_an_unresolvable_stored_language_does_not_block_the_edit(app, admin_client):
+    """A stored value that is no language posted itself on every edit (#570).
+
+    Then the whole edit was refused, even a default change only. The
+    option now posts blank, which is no change."""
+
+    import re
+
+    from tests.conftest import csrf_token_from
+
+    file_id, library_path, page = _matroska_file_page(
+        app, admin_client, subtitles=False, language="en-US"
+    )
+    try:
+        select = re.search(r'<select[^>]*name="language_a1".*?</select>', page, re.S)
+        selected = re.search(r'<option value="([^"]*)" selected>([^<]*)<', select[0])
+        assert selected.groups() == ("", "en-US")
+
+        response = admin_client.post(
+            f"/file/{file_id}",
+            data={
+                "csrf_token": csrf_token_from(page),
+                "default_audio": "1",
+                "default_subtitle": "0",
+                "language_a1": selected[1],
+                "mkvpropedit_submit": "Update MKV Properties",
+            },
+            follow_redirects=True,
+        )
+        assert "Unrecognized language" not in response.get_data(as_text=True)
+        assert [
+            job
+            for job in app.file_queue.jobs
+            if job.func_name == "app.videos.mkvpropedit_task"
+        ]
+    finally:
+        os.remove(library_path)

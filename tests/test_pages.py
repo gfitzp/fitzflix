@@ -1115,3 +1115,24 @@ def test_a_file_with_no_last_episode_shows_1_episode(app, admin_client):
     activity = admin_client.get("/file-activity").get_data(as_text=True)
     assert "None" not in activity.split("Legacy Span Show")[1][:300]
     assert "Episode 3" in activity
+
+
+def test_a_file_with_no_episode_number_prints_no_none(app, admin_client):
+    """An episode NULL cell printed the literal None (#570)."""
+
+    import re
+
+    from app import db
+    from tests.factories import make_tv_file, make_tv_series
+
+    with app.app_context():
+        series = make_tv_series("Null Episode Show")
+        file = make_tv_file(series, 1, 3, "DVD")
+        file.episode = None
+        file.last_episode = None
+        db.session.commit()
+        series_id = series.id
+
+    season = admin_client.get(f"/tv/{series_id}/1").get_data(as_text=True)
+    cells = re.findall(r'<td class="align-middle">([^<]*)</td>', season)
+    assert "None" not in cells
