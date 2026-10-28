@@ -94,3 +94,57 @@ def test_a_key_that_a_file_still_claims_is_not_deleted(app):
     result = app.test_cli_runner().invoke(args=["catalog", "exclude", str(movie_id)])
     assert result.exit_code == 0, result.output
     assert key not in _deletes(app)
+
+
+def test_a_file_purge_deletes_the_converted_and_target_keys(app, admin_client):
+    """A purge queues the transcoded key and a pending move target (#515).
+
+    Both count as claimed only while the row exists. Before, the purge
+    deleted only the untouched key."""
+
+    from tests.factories import make_movie_file
+
+    with app.app_context():
+        movie = make_movie("Converted Purge", 1995, tmdb_id=515001)
+        file = make_movie_file(movie, "Bluray-1080p")
+        file.aws_key = "untouched/Converted Purge (1995).mkv"
+        file.aws_transcoded_key = "transcoded/Converted Purge (1995).mkv"
+        file.aws_key_target = "untouched/Converted Purge (1995) - [HDR].mkv"
+        db.session.commit()
+        file_id = file.id
+
+    token = csrf_token_from(admin_client.get(f"/file/{file_id}").get_data(as_text=True))
+    response = admin_client.post(
+        f"/file/{file_id}",
+        data={"csrf_token": token, "delete_submit": "Delete File"},
+    )
+    assert response.status_code == 302
+    assert sorted(_deletes(app)) == sorted(
+        [
+            "untouched/Converted Purge (1995).mkv",
+            "transcoded/Converted Purge (1995).mkv",
+            "untouched/Converted Purge (1995) - [HDR].mkv",
+        ]
+    )
+
+
+def test_a_series_purge_deletes_the_converted_keys(app, admin_client):
+    """The series delete queues each claimed key of its files (#515)."""
+
+    with app.app_context():
+        series = make_tv_series("Converted Show", tmdb_id=515002)
+        file = make_tv_file(series, 1, 1, "Bluray-1080p")
+        file.aws_key = "untouched/Converted Show S01E01.mkv"
+        file.aws_transcoded_key = "transcoded/Converted Show S01E01.mkv"
+        db.session.commit()
+        series_id = series.id
+
+    token = csrf_token_from(admin_client.get(f"/tv/{series_id}").get_data(as_text=True))
+    admin_client.post(
+        f"/tv/{series_id}/delete",
+        data={"csrf_token": token, "delete_submit": "Delete"},
+    )
+    assert sorted(_deletes(app)) == [
+        "transcoded/Converted Show S01E01.mkv",
+        "untouched/Converted Show S01E01.mkv",
+    ]

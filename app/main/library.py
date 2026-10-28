@@ -2241,8 +2241,7 @@ def tv_delete(series_id):
         files = File.query.filter(File.series_id == series_id).all()
         for file in files:
             file_ids.append(file.id)
-            if file.aws_key:
-                aws_keys.append(file.aws_key)
+            aws_keys.extend(_claimed_archive_keys(file))
             leftover_dirs.add(
                 os.path.join(current_app.config["LIBRARY_DIR"], file.dirname)
             )
@@ -2277,7 +2276,7 @@ def tv_delete(series_id):
     # Thus, a failed commit cannot leave database records whose backups
     # are gone.
 
-    for aws_key in aws_keys:
+    for aws_key in dict.fromkeys(aws_keys):
         if untouched_key_still_claimed(aws_key):
             continue
         enqueue_task(
@@ -2668,10 +2667,22 @@ def _restore_post(estimate):
     return handler
 
 
+def _claimed_archive_keys(file):
+    """Return each S3 key that the record of a file claims (#515).
+
+    The untouched key, a #292 conversion key and a pending #369 move
+    target count as claimed only while the row exists.
+    A purge that deletes only the untouched key left the other 2 for
+    the weekly prune."""
+
+    keys = (file.aws_key, file.aws_transcoded_key, file.aws_key_target)
+    return [key for key in dict.fromkeys(keys) if key]
+
+
 def _delete_file_post(file, form):
     """Delete the file and its record. Return the page to go to next."""
 
-    aws_key = file.aws_key
+    aws_keys = _claimed_archive_keys(file)
     file_id = file.id
     leftover_dir = os.path.join(current_app.config["LIBRARY_DIR"], file.dirname)
 
@@ -2693,7 +2704,9 @@ def _delete_file_post(file, form):
     # Thus, a failed commit cannot leave a database record whose backup is
     # gone.
 
-    if aws_key and not untouched_key_still_claimed(aws_key):
+    for aws_key in aws_keys:
+        if untouched_key_still_claimed(aws_key):
+            continue
         enqueue_task(
             "app.videos.aws_delete",
             aws_key,
