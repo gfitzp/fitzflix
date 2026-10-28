@@ -18,6 +18,7 @@ from flask import (
 
 # Flask 2.4 removed flask.Markup. Import it from its real module.
 from flask_login import current_user, login_required
+from unidecode import unidecode
 
 from app import db
 from app.main.forms import (
@@ -283,6 +284,33 @@ def watchlist_shopping_groups():
         }
         for state, heading in WATCHLIST_GROUPS
     ]
+
+
+def watchlist_search_matcher(q):
+    """Return a test that tells if a movie matches the search q.
+
+    "tmdb:<id>" matches the TMDB id. Any other search works as the
+    watchlist page: it ignores accents and case, and a space matches any
+    run of characters. Thus, "amelie" finds "Amélie" (#509)."""
+
+    tmdb_match = re.match(r"tmdb:(?P<tmdb_id>\d+)", q)
+    if tmdb_match:
+        tmdb_id = int(tmdb_match.group("tmdb_id"))
+        return lambda movie: movie.tmdb_id == tmdb_id
+
+    words = unidecode(q).lower().split()
+
+    def matches_text(text):
+        text = unidecode(text or "").lower()
+        position = 0
+        for word in words:
+            found = text.find(word, position)
+            if found < 0:
+                return False
+            position = found + len(word)
+        return True
+
+    return lambda movie: matches_text(movie.tmdb_title) or matches_text(movie.title)
 
 
 @bp.route("/shopping-list/movie", methods=["GET", "POST"])
@@ -653,7 +681,10 @@ def movie_shopping():
 
     watchlist_groups = None
 
-    if q:
+    # The watchlist view keeps its own rows when a search is given (#509).
+    # The search narrows the selected view, as #458 asks.
+
+    if q and library != "watchlist":
         if re.match(r"tmdb:(?P<tmdb_id>\d+)", q):
             tmdb_id = re.match(r"tmdb:(?P<tmdb_id>\d+)", q).group(1)
             movie = Movie.query.filter_by(tmdb_id=int(tmdb_id)).first()
@@ -711,6 +742,11 @@ def movie_shopping():
         title = "Watchlisted movies to buy"
         watchlist_groups = watchlist_shopping_groups()
         movies = None
+        if q:
+            title = f"Watchlisted movies to buy matching '{q}'"
+            matches = watchlist_search_matcher(q)
+            for group in watchlist_groups:
+                group["rows"] = [row for row in group["rows"] if matches(row["movie"])]
 
     elif media == "digital":
         movies = (
@@ -892,6 +928,7 @@ def tv_shopping():
         return redirect(
             url_for(
                 "main.tv_shopping",
+                min_quality=qualities.min_id,
                 max_quality=max_quality,
                 q=library_search_form.search_query.data,
             )

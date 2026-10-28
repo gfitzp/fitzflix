@@ -566,3 +566,52 @@ def test_a_member_cannot_change_the_shopping_list(app, admin_client, user_client
     )
     with app.app_context():
         assert db.session.get(Movie, movie_id).shopping_list_exclude == 1
+
+
+def test_a_search_in_the_watchlist_view_keeps_the_watchlist_rows(app, admin_client):
+    """A search narrows the watchlist view. It does not swap the view (#509)."""
+
+    from app.models import UserWatchlist
+
+    with app.app_context():
+        admin_id = User.query.filter_by(admin=True).first().id
+        wanted = make_movie("Gamma Wanted Search", 1971, tmdb_id=9911)
+        other = make_movie("Delta Wanted Other", 1972, tmdb_id=9912)
+        owned = make_movie("Gamma Owned Search", 1973, tmdb_id=9913)
+        make_movie_file(owned, "DVD")
+        db.session.commit()
+        for movie in (wanted, other):
+            db.session.add(UserWatchlist(user_id=admin_id, movie_id=movie.id))
+        db.session.commit()
+
+    page = admin_client.get("/shopping-list/movie?library=watchlist&q=gamma").get_data(
+        as_text=True
+    )
+    assert "Watchlisted movies to buy matching" in page
+    assert "Gamma Wanted Search" in page
+    assert "Gamma Owned Search" not in page
+    assert "Delta Wanted Other" not in page
+
+
+def test_the_tv_search_keeps_the_minimum_quality(app, admin_client):
+    """The TV search redirect carries the minimum of the range (#509)."""
+
+    from tests.conftest import csrf_token_from
+
+    with app.app_context():
+        from app.models import RefQuality
+
+        dvd_id = RefQuality.query.filter_by(quality_title="DVD").one().id
+
+    url = f"/shopping-list/tv?min_quality={dvd_id}"
+    page = admin_client.get(url).get_data(as_text=True)
+    response = admin_client.post(
+        url,
+        data={
+            "csrf_token": csrf_token_from(page),
+            "search_query": "span",
+            "search_submit": "Search",
+        },
+    )
+    assert response.status_code == 302
+    assert f"min_quality={dvd_id}" in response.headers["Location"]
