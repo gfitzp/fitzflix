@@ -1736,13 +1736,56 @@ def archive_library_file(file, path, delete_replaced=True):
     db.session.commit()
     current_app.logger.info(f"'{file.basename}' Archived the library file as '{key}'")
 
-    if replaced and delete_replaced and not untouched_key_still_claimed(replaced):
-        enqueue_task(
-            "app.videos.aws_delete",
-            replaced,
-            description=f"Deleting '{replaced}' from AWS",
-        )
+    doomed = [replaced] if replaced else []
+    if replaced and delete_replaced and is_pending_archive(replaced):
+        # The archive move of the import did not run yet (#495). A delete
+        # of the pending key removes each version at once. Thus, the rip
+        # first goes to its untouched/ key, as the move would do. Then
+        # its delete leaves the noncurrent version for the lifecycle
+        # window, as for the rip of any edited file.
+
+        rip = _keep_pending_rip(file, replaced)
+        doomed = [rip, replaced] if rip else []
+    for doomed_key in doomed:
+        if delete_replaced and not untouched_key_still_claimed(doomed_key):
+            enqueue_task(
+                "app.videos.aws_delete",
+                doomed_key,
+                description=f"Deleting '{doomed_key}' from AWS",
+            )
     return key
+
+
+def _keep_pending_rip(file, pending):
+    """Copy a pending upload to its untouched/ key. Return that key, or None (#495).
+
+    The pending prefix is STANDARD. Thus, the copy needs no restore. A
+    failed copy keeps the pending key, and the caller deletes nothing."""
+
+    target = archive_key_for(file, current_app.config["AWS_UNTOUCHED_PREFIX"])
+    s3_client = aws_s3_client(with_retries=True)
+    bucket = current_app.config["AWS_BUCKET"]
+    try:
+        head = s3_client.head_object(Bucket=bucket, Key=pending)
+        s3_client.copy(
+            {"Bucket": bucket, "Key": pending},
+            bucket,
+            target,
+            Config=_copy_config(s3_client, bucket, pending, head),
+        )
+        problem = _copy_problem(head, s3_client.head_object(Bucket=bucket, Key=target))
+    except Exception as error:
+        problem = f"failed ({error})"
+    if problem:
+        current_app.logger.error(
+            f"'{file.basename}' The copy of the pending upload '{pending}' to "
+            f"'{target}' {problem}. The pending upload stays"
+        )
+        return None
+    current_app.logger.info(
+        f"'{file.basename}' Copied the pending upload '{pending}' to '{target}'"
+    )
+    return target
 
 
 def move_archive_to_modified_task(file_id):

@@ -602,3 +602,62 @@ def test_the_prune_keeps_the_upload_of_an_import_that_waits_for_space(app, monke
     aws_storage.sync_aws_s3_storage_task()
 
     assert deletes == ["untouched/Old Stray (2020) - [DVD].mkv"]
+
+
+def test_a_re_archive_before_the_move_keeps_the_pending_rip(app, uploads, monkeypatch):
+    """The pending upload goes to untouched/ before its delete (#495)."""
+
+    from tests.fakes import ArchiveS3
+
+    name = "Early Edit (2024) - [DVD].mkv"
+    pending = f"pending-untouched/run9/{name}"
+    fake = ArchiveS3(
+        {
+            pending: {
+                "ContentLength": 50,
+                "ETag": '"rip"',
+                "StorageClass": "STANDARD",
+                "VersionId": "v1",
+            }
+        }
+    )
+    monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kwargs: fake)
+    monkeypatch.setitem(app.config, "AWS_BUCKET", "test-bucket")
+    with app.app_context():
+        file = make_movie_file(
+            make_movie("Early Edit", 2024),
+            "DVD",
+            aws_key=pending,
+            aws_key_target=f"untouched/{name}",
+            untouched_basename=name,
+        )
+        db.session.commit()
+
+        aws_storage.archive_library_file(file, "/library/file.mkv")
+
+        assert file.aws_key == f"modified/{name}"
+        assert fake.objects[f"untouched/{name}"]["ETag"] == '"rip"'
+        assert _deletes(app) == [f"untouched/{name}", pending]
+
+
+def test_a_failed_copy_of_the_pending_rip_deletes_nothing(app, uploads, monkeypatch):
+    from tests.fakes import ArchiveS3
+
+    name = "Lost Copy (2024) - [DVD].mkv"
+    pending = f"pending-untouched/run8/{name}"
+    fake = ArchiveS3({})
+    monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kwargs: fake)
+    monkeypatch.setitem(app.config, "AWS_BUCKET", "test-bucket")
+    with app.app_context():
+        file = make_movie_file(
+            make_movie("Lost Copy", 2024),
+            "DVD",
+            aws_key=pending,
+            untouched_basename=name,
+        )
+        db.session.commit()
+
+        aws_storage.archive_library_file(file, "/library/file.mkv")
+
+        assert file.aws_key == f"modified/{name}"
+        assert _deletes(app) == []
