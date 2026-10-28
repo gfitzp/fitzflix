@@ -207,7 +207,7 @@ The command `flask recs evaluate` measures the full engine. It does a leave-one-
 
 ## Streaming availability
 
-Each user selects streaming services on the Profile page. All providers in the TMDB registry are available. The movie pages, the TMDB search results, the filmographies, the watchlist, and the streaming shelf then show provider-logo badges. A badge shows that the film streams on *your* services. The badges show rentals only for the films that you do not own. They never show digital purchases, because this house buys physical media only. The availability data comes from JustWatch through TMDB. Fitzflix caches the data for each title for one day. Each page that shows the data has the required credit "Streaming data by JustWatch".
+Each user selects streaming services on the Profile page. All providers in the TMDB registry are available. The movie pages, the TMDB search results, the filmographies, the watchlist, and the streaming shelf then show provider-logo badges. A badge shows that the film streams on *your* services. The badges show rentals only for the films that you do not own. They never show digital purchases, because this house buys physical media only. The availability data comes from JustWatch through TMDB. Fitzflix caches the data for each title for two days. Each page that shows the data has the required credit "Streaming data by JustWatch".
 
 Fitzflix can also **send alerts** about the films on your watchlist. Select this option on the Profile page. Then the nightly availability check sends one email digest to each user. It never sends one email for each film. The digest covers the films on your watchlist that became available. A film becomes available when it gets its first local file, or when it starts to stream on a flat-rate service that you subscribe to. A film that you can only rent counts as available only if you select a separate option, because a rental has a fee. The digest also covers the films that leave the Criterion Channel soon. Each entry starts with the poster. "Recently available" covers the last month. A local file causes an alert only for the first arrival of the film, and never for a quality upgrade.
 
@@ -253,6 +253,7 @@ When a download completes, Fitzflix renames the file with a *lower* quality titl
 | `Bluray-720p` | `WEBDL-720p` |
 | `Bluray-1080p` | `WEBDL-1080p` |
 | `Bluray-1080p Remux` | `WEBDL-1080p` |
+| `Remux-1080p` | `WEBDL-1080p` |
 
 A download with a custom format score below the minimum gets the label `WEBRip` in place of `WEBDL`. The minimum is `RADARR_WEBDL_MIN_SCORE` for Radarr and `SONARR_WEBDL_MIN_SCORE` for Sonarr, 1600 by default. Fitzflix imports the file from the folder of the download client, and does not copy it to the import directory. A TV episode that aired in the last 14 days goes to the front of the import queue. After the rename, Fitzflix asks Sonarr to scan the series again, so the Sonarr records stay correct.
 
@@ -382,7 +383,14 @@ Fitzflix is developed and operated on macOS with [Homebrew](https://brew.sh). Th
 | [mkvpropedit](https://mkvtoolnix.download) (MKVToolNix) | `MKVPROPEDIT_LOCATION` | Edits Matroska properties in place: the default and forced track flags, and the track statistics |
 | [HandBrakeCLI](https://handbrake.fr) | `HANDBRAKE_BIN` | Converts HDR and BT.2020 imports to 1080p SDR (refer to `CONVERSION_PRESET` and `HANDBRAKE_PRESET_FILE` for the preset) |
 | [ffmpeg](https://ffmpeg.org) | `FFMPEG_BIN` | Converts video |
+| [ffprobe](https://ffmpeg.org) | `FFPROBE_BIN` | Measures the durations and reads the streams for the triage aids, the frames, and the DVR lineups |
+| [mkvextract](https://mkvtoolnix.download) (MKVToolNix) | `MKVEXTRACT_BIN` | Extracts the TrueHD track for the E-AC-3 Atmos twin |
+| truehdd | `TRUEHDD_BIN` | Decodes a TrueHD Atmos track to the master that MediaConvert encodes. The default is `/Users/server/bin/truehdd`. Without it, a new import gets no Atmos twin. |
 | [AtomicParsley](https://github.com/wez/atomicparsley) | `ATOMICPARSLEY_BIN` | Removes the embedded metadata from MP4 files that Fitzflix cannot convert to Matroska |
+| [mysqldump](https://dev.mysql.com) and mysql | `MYSQLDUMP_BIN`, `MYSQL_BIN` | Make the nightly database dumps, and restore a dump |
+| [supervisorctl](http://supervisord.org) | `SUPERVISORCTL_BIN` | Reads the state of the worker programs, and starts or restarts a worker that the health check finds stopped |
+
+The Atmos twins also need an AWS Elemental MediaConvert role. Set its ARN in `MEDIACONVERT_ROLE_ARN`.
 
 ```
 brew install mediainfo mkvtoolnix handbrake ffmpeg atomicparsley mysql redis
@@ -443,7 +451,7 @@ The on/off settings that are off by default are `PREVENT_ACCOUNT_CREATION`, `AWS
 
 #### The Settings page
 
-Some settings can also change on the **Admin > Settings** page, without a restart. Each web and worker process gets a saved value in approximately 5 seconds. The page settings are:
+Some settings can also change on the **Admin > Settings** page, without a restart. A save on the page goes to each web and worker process at once, through a version number in Redis. A value that changes outside the page can take up to 60 seconds. While Redis is down, each process reads the table again after 5 seconds. The page settings are:
 
 - The on/off settings `PREVENT_ACCOUNT_CREATION`, `ARCHIVE_ORIGINAL_MEDIA`, `AWS_DOWNLOAD_VIA_CDN`, `CREATE_FLAC_TWINS`, `CREATE_ATMOS_TWINS`, and `CONVERT_HDR_TO_SDR`.
 - The health and log alerts `DISK_ALERT_FREE_GB`, `LOG_DIGEST_THRESHOLD`, and `LOG_DIGEST_IGNORE`.
@@ -493,8 +501,8 @@ Fitzflix divides the background work across seven Redis queues. The supervisor c
 | `fitzflix-file-operation` | Does the operations on single files: S3 uploads and downloads, and Matroska property edits |
 | `fitzflix-transcode` | Does the SDR conversions, the triage clips, and the frame extractions (high CPU load; usually one worker) |
 | `fitzflix-sql` | Writes to the database, including the database half of the TMDB refreshes. Start exactly one worker, so the writes occur in sequence. |
-| `fitzflix-user-request` | Does the jobs from the web UI and the CLI: manual scans, S3 sync, SQS polls, and the network half of the TMDB refreshes |
-| `fitzflix-maintenance` | Does the scheduled maintenance: nightly log rotation and backups, recommendation recomputes, awards and Criterion refreshes, and availability cache warms. One worker. |
+| `fitzflix-user-request` | Does the jobs from the web UI and the CLI: manual scans, SQS polls, and the network half of the TMDB refreshes |
+| `fitzflix-maintenance` | Does the scheduled maintenance: the S3 sync, nightly log rotation and backups, recommendation recomputes, awards and Criterion refreshes, and availability cache warms. `flask sync` also queues the sync here. One worker. |
 
 Each file that moves through the pipeline leaves a **trail** with a sequence of stages: Localizing → Moving into the library → Cataloging → Archiving to S3. Conversions to SDR, remuxes, and restores also leave a trail. The **Pipeline Activity** page shows the trails. The link to the page is on the Library Maintenance page. The page shows a status chip for each stage: green for done, blue for running, gray for queued, amber for a retry that waits, and red for failed. The page refreshes each five seconds. The trails come from the job-lifecycle hooks around the queues and the workers. Thus, they record the deferred retries and the failures without instrumentation in the tasks. The trails stay for seven days.
 
@@ -576,7 +584,20 @@ Run these commands from the project root, with the venv active. Each command put
 | `flask recs awards` | Refreshes the Wikidata award records now: first the film-item pass, then the person-item craft pass (otherwise each Monday) |
 | `flask recs copref <dataset-dir>` | Rebuilds the MovieLens co-preference table from an extracted ml-32m directory. This needs `numpy` and `scipy`. Do this only when you adopt a new snapshot. |
 | `flask recs evaluate` | Calculates the leave-one-out ranking metrics for the engine. This is the measure for each change to the scores. |
+| `flask recs newly-added` | Reads and compares the newly-added feed of each provider now (otherwise each night) |
+| `flask recs catalog` | Lists the catalogs of the subscribed providers and processes the pending discoveries now (otherwise each night) |
+| `flask alerts availability` | Compares the availability of the watchlist films with the stored snapshot and sends the digests now. The first run only writes the snapshots. |
+| `flask frames refresh` | Prunes and fills the Name That Frame pool now (otherwise each night) |
+| `flask tv rename <series_id> <new_title>` | Renames a TV series on the disk and in the database. The untouched names and the archive keys follow. |
+| `flask catalog exclude <movie_id>` | Deletes a false catalog record and blocks its TMDB id from the catalog loads |
+| `flask catalog reassign` | Assigns the stored Criterion releases to each movie again, with no Wikidata query |
+| `flask smb probe --all` | Probes each library file for the SMB lost-handle state. `--file-id` and `--since` probe fewer files. The `smb` group also has `status`, `repair`, `history`, and `recheck`. |
+| `flask audio atmos [<file_id>]` | Queues E-AC-3 Atmos twins for one file, or for each TrueHD Atmos file of the library that has no twin |
+| `flask aws provision` | Creates or updates the AWS components. Refer to [AWS infrastructure](#aws-infrastructure). |
+| `flask aws converge-keys` | Lists the archives whose key differs from the key of their untouched name. `--apply` requests the moves. |
+| `flask aws cdn-url <key>` | Prints a signed CloudFront URL for one object key, to test the CDN download path |
 | `flask triage backfill` | Queues the subtitle-triage inspection aids for each existing candidate file |
+| `flask triage backfill-audio` | Queues the lossy-audio comparison clips for each existing candidate file |
 
 The Criterion data comes from [Wikidata](https://www.wikidata.org). Fitzflix matches each movie by TMDB id, or by title and year if there is no TMDB id. The match gives the spine number and a direct link to the film page at criterion.com. Box sets are supported. Some films are only in a set, for example a Godzilla Showa-era collection or an Olympic-films collection. Such a film takes the spine number of the set. Fitzflix adds the set title automatically if nobody entered one by hand.
 
@@ -595,6 +616,9 @@ Fitzflix keeps all its AWS data in one S3 bucket (`AWS_BUCKET`). The bucket has 
 | `transcoded/` (`AWS_TRANSCODED_PREFIX`) | The current 1080p library file of each [HDR conversion](#hdr-and-bt2020-imports). Its original stays in `untouched/`. | The same rules as `untouched/` |
 | `backup/` (`AWS_BACKUP_PREFIX`) | The nightly database dumps and the encrypted copy of `.env` | The backup task removes the old objects after its own retention period |
 | `custom-posters/` (`AWS_CUSTOM_POSTERS_PREFIX`) | A mirror of the custom artwork tree. The nightly backup syncs it, and deletions propagate. | The noncurrent versions expire after 30 days |
+| `mediaconvert-scratch/` (`AWS_MEDIACONVERT_PREFIX`) | The scratch area of the Atmos pipeline: the masters and the E-AC-3 twins of a run | The objects expire after 7 days, and the noncurrent versions after 1 day |
+| `pending-untouched/` | The run-scoped upload of an import. After the commit, an archive move copies it to `untouched/`. | The objects expire after 60 days, and the noncurrent versions after 1 day |
+| `inventory/` | The weekly CSV of the best files, for an S3 Batch restore | The sync removes the old versions |
 
 **Bucket versioning** stays on. It is the recovery layer for deleted or replaced objects, and the [disaster recovery](#disaster-recovery) procedure depends on it. Versioning applies to the full bucket, because S3 has no versioning for one prefix. The retention period of the noncurrent versions is different for each prefix. For `untouched/`, the previous version of a deleted or replaced original stays available for **180 days**. This period matches the minimum storage duration of Deep Archive, which is 180 days. Thus, the period has no cost. If the noncurrent versions expired sooner, the early-deletion fees would cost the same. A lifecycle rule for the full bucket also stops **incomplete multipart uploads** after one day. Thus, an interrupted archive upload or backup upload cannot collect invisible parts that have a cost.
 
@@ -618,13 +642,13 @@ This command is idempotent. It makes the components that do not exist, and it re
 - the SQS queue
 - the queue policy that lets S3 deliver to the queue
 - the restore-event notification
- If the command makes a queue, it prints the `AWS_SQS_URL` line that you must add to `.env`. The command always keeps the existing configuration. It adds to the lifecycle rules and the notifications, and it never replaces them. Thus, the rules that you made by hand stay. If you run the command against an account with a full configuration, it changes nothing and says so.
+ If the command makes a queue, it prints the `AWS_SQS_URL` line that you must add to `.env`. The command always keeps the existing configuration. It adds to the lifecycle rules and the notifications. Thus, the rules that you made by hand stay. A rule that Fitzflix owns has an id that starts with `fitzflix-`. If its days or its other fields differ from the current values, the command updates that rule in place and reports it as updated. If you run the command against an account with a full configuration, it changes nothing and says so.
 
 Each run saves the current lifecycle configuration and notification configuration to `logs/aws-snapshots/` before it writes. If the bucket reports fewer lifecycle rules than the newest snapshot, the command stops. Use `--force` when the decrease is intentional. For example, use it when you removed all the rules to rebuild the set that the command manages.
 
 ### IAM
 
-The app operates with a policy that is limited to its bucket and its queue. The daily operation needs this policy:
+The app operates with a policy that is limited to its bucket and its queue. The daily operation needs this policy. The nightly backup prune, the Atmos scratch cleanup, and the archive moves delete object versions by version id. They also list the versions of a prefix. Without `s3:DeleteObjectVersion` and `s3:ListBucketVersions`, these deletes fail, and the noncurrent versions collect.
 
 ```json
 {
@@ -632,7 +656,16 @@ The app operates with a policy that is limited to its bucket and its queue. The 
     "Statement": [
         {
             "Effect": "Allow",
-            "Action": ["s3:PutObject", "s3:GetObject", "s3:DeleteObject", "s3:RestoreObject", "s3:ListBucket"],
+            "Action": [
+                "s3:PutObject",
+                "s3:GetObject",
+                "s3:DeleteObject",
+                "s3:DeleteObjectVersion",
+                "s3:RestoreObject",
+                "s3:ListBucket",
+                "s3:ListBucketVersions",
+                "s3:AbortMultipartUpload"
+            ],
             "Resource": ["arn:aws:s3:::<bucket>", "arn:aws:s3:::<bucket>/*"]
         },
         {
@@ -715,7 +748,7 @@ When you flag the selected tracks, Fitzflix sets the forced flag in place with m
 
 ### Lossy audio triage
 
-The **Library Maintenance → Lossy Files** report lists the files whose audio can be better. A file with the three TrueHD Atmos supplement tracks counts as settled, and the report does not include it. For some files, the selection of the lead track is a judgment call. For these files, the triage flow makes **listening-clip comparisons**. A comparison has six short clips from five points across the full runtime of each track. You can play the clips side by side in the browser. Then one click remuxes the file with the selected track in the lead, or dismisses the file as correct.
+The **Library Maintenance → Lossy Files** report lists the files whose audio can be better. A file with the three TrueHD Atmos supplement tracks counts as settled, and the report does not include it. For some files, the selection of the lead track is a judgment call. For these files, the triage flow makes **listening-clip comparisons**. A comparison has six short clips from six points across the full runtime of each track. You can play the clips side by side in the browser. Then one click remuxes the file with the selected track in the lead, or dismisses the file as correct.
 
 Two more review queues are available. A **TMDB triage** page lists the records whose metadata match needs a second look. A report lists the files whose measured duration does not agree with the TMDB runtime of the film. The causes are a wrong match, a partial rip, or an alternative cut with the wrong label.
 
@@ -758,7 +791,7 @@ The hooks run on the staged Python files at each commit. The `migrations/` direc
 venv/bin/python -m pytest
 ```
 
-The test suite is fully isolated from an installation that runs. It uses a temporary SQLite database, Redis database 9 (the app uses database 0), temporary media directories, and no external services. TMDB, Sonarr, Radarr, AWS, and mail are stubs, or the configuration makes them unreachable. The only requirement in addition to `requirements-dev.txt` is a local Redis server. You can run the suite while the real application runs. The suite has approximately 1,800 tests and takes approximately 50 seconds. Run it after dependency upgrades and before you deploy changes. `tests/README.md` lists the shared test helpers and the traps of the suite.
+The test suite is fully isolated from an installation that runs. It uses a temporary SQLite database, Redis database 9 (the app uses database 0), temporary media directories, and no external services. TMDB, Sonarr, Radarr, AWS, and mail are stubs, or the configuration makes them unreachable. The only requirement in addition to `requirements-dev.txt` is a local Redis server. You can run the suite while the real application runs. The suite has approximately 2,200 tests and takes approximately 80 seconds. Run it after dependency upgrades and before you deploy changes. `tests/README.md` lists the shared test helpers and the traps of the suite.
 
 The suite covers:
 
@@ -776,8 +809,9 @@ The suite covers:
 This document, the page text, the flash messages, the command help, the email templates, and the code comments use ASD-STE100 Simplified Technical English. The test `tests/test_ste.py` checks the prose for these mechanical rules:
 
 - no contractions
-- no em dashes
+- no em dashes, and no spaced double hyphen (` -- `) in their place
 - no semicolons that join clauses
+- no `e.g.` and no `i.e.`
 - no words from a short list that STE does not permit
 - a maximum of 25 words in a sentence
 
