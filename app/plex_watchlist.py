@@ -22,6 +22,7 @@ import traceback
 import requests
 
 from flask import current_app
+from rq.timeouts import BaseTimeoutException
 from werkzeug.local import LocalProxy
 
 from app.tasks import enqueue_task
@@ -68,6 +69,15 @@ LISTING_READS = 3
 
 RETRYABLE_CLIENT_ERRORS = {401, 403, 408, 429}
 
+# These codes are about the token or the load. The next request gets
+# the same answer. Thus, the push loop stops at the first one. A 429
+# with Retry-After also holds off the next runs for that time, up to
+# BACKOFF_MAX seconds.
+
+STOP_CODES = {401, 403, 429}
+BACKOFF_KEY = "fitzflix:plex:watchlist:backoff"
+BACKOFF_MAX = 24 * 3600
+
 # A plex.tv API sometimes answers 1 page of a long watchlist with a
 # server error (a 503). The same request usually succeeds a moment
 # later. Thus, a GET tries again after each of these waits, in seconds.
@@ -85,6 +95,24 @@ def _refused_by_plex(error):
         return False
     status = response.status_code
     return 400 <= status < 500 and status not in RETRYABLE_CLIENT_ERRORS
+
+
+def _stop_status(error):
+    """Return the HTTP status if the push loop must stop for it, or None."""
+
+    response = getattr(error, "response", None)
+    if not isinstance(error, requests.HTTPError) or response is None:
+        return None
+    if response.status_code not in STOP_CODES:
+        return None
+    if response.status_code == 429:
+        try:
+            wait = int(response.headers.get("Retry-After") or 0)
+        except ValueError:
+            wait = 0
+        if wait > 0:
+            current_app.redis.set(BACKOFF_KEY, 1, ex=min(wait, BACKOFF_MAX))
+    return response.status_code
 
 
 def _transient(error):
@@ -320,6 +348,12 @@ def sync_plex_watchlist():
     with app.app_context():
         if not current_app.config.get("PLEX_TOKEN"):
             return True
+        if current_app.redis.exists(BACKOFF_KEY):
+            current_app.logger.info(
+                "Plex watchlist: plex.tv asked for a wait (Retry-After). "
+                "Skipping this run."
+            )
+            return True
 
         snapshot_raw = current_app.redis.get(SNAPSHOT_KEY)
         snapshot = set(json.loads(snapshot_raw)) if snapshot_raw else set()
@@ -329,6 +363,8 @@ def sync_plex_watchlist():
 
         try:
             user = _sync_user()
+        except BaseTimeoutException:
+            raise
         except Exception:
             current_app.logger.warning(traceback.format_exc())
             return True
@@ -352,6 +388,8 @@ def sync_plex_watchlist():
                 f"Skipping this run."
             )
             return True
+        except BaseTimeoutException:
+            raise
         except requests.RequestException as e:
             # A Plex outage is not a code fault. One line is sufficient.
 
@@ -369,6 +407,14 @@ def sync_plex_watchlist():
 
         plex_ids = set(plex)
         fitz_ids = set(fitzflix)
+
+        # An unsyncable film that is now on Plex is in sync. Out of the
+        # set, a later Fitzflix re-add of the film can push again.
+
+        listed = unsyncable & plex_ids
+        if listed:
+            current_app.redis.srem(UNSYNCABLE_KEY, *listed)
+            unsyncable -= listed
 
         # The reconcile: the films that both sides kept, plus the new
         # adds from each side. On the first run, the snapshot is empty.
@@ -428,7 +474,11 @@ def sync_plex_watchlist():
         # films without churn.
 
         attempted = set()
+        stopped = None
         for tmdb_id in sorted(target - plex_ids):
+            if stopped is not None:
+                synced.discard(tmdb_id)
+                continue
             if tmdb_id in unsyncable:
                 synced.discard(tmdb_id)
                 continue
@@ -441,7 +491,10 @@ def sync_plex_watchlist():
                 rating_key = plex_rating_key(tmdb_id)
                 if rating_key is None:
                     raise LookupError(f"no Plex match for tmdb {tmdb_id}")
+            except BaseTimeoutException:
+                raise
             except Exception as e:
+                stopped = _stop_status(e)
                 current_app.logger.warning(
                     f"Plex watchlist: couldn't look up tmdb {tmdb_id}: {e}"
                 )
@@ -452,7 +505,10 @@ def sync_plex_watchlist():
                 _plex_put("addToWatchlist", rating_key)
                 attempted.add(tmdb_id)
                 pushed += 1
+            except BaseTimeoutException:
+                raise
             except Exception as e:
+                stopped = _stop_status(e)
                 if _refused_by_plex(e):
                     current_app.logger.warning(
                         f"Plex watchlist: Plex refused the add for tmdb "
@@ -469,10 +525,18 @@ def sync_plex_watchlist():
                 failed += 1
 
         for tmdb_id in sorted(plex_ids - target):
+            if stopped is not None:
+                # The film stays in the snapshot. The next run tries the
+                # removal again.
+                synced.add(tmdb_id)
+                continue
             try:
                 _plex_put("removeFromWatchlist", plex[tmdb_id]["rating_key"])
                 pulled += 1
+            except BaseTimeoutException:
+                raise
             except Exception as e:
+                stopped = _stop_status(e)
                 current_app.logger.warning(
                     f"Plex watchlist: couldn't remove tmdb {tmdb_id}: {e}"
                 )
@@ -494,6 +558,8 @@ def sync_plex_watchlist():
         if attempted:
             try:
                 landed = fetch_plex_watchlist(fitz_ids | attempted, snapshot)
+            except BaseTimeoutException:
+                raise
             except Exception:
                 current_app.logger.warning(traceback.format_exc())
                 landed = None
@@ -527,6 +593,11 @@ def sync_plex_watchlist():
                 description=f"Refreshing TMDB data for movie {movie_id}",
             )
 
+        if stopped is not None:
+            current_app.logger.warning(
+                f"Plex watchlist: plex.tv answered {stopped}. Stopped the "
+                f"pushes. The next run tries the rest again."
+            )
         if added_here or removed_here or pushed or pulled or failed:
             current_app.logger.info(
                 f"Plex watchlist sync for '{user.plex_username}': "

@@ -804,3 +804,78 @@ def test_a_re_pointed_watchlist_film_gets_no_second_row(app, monkeypatch):
         # The next run is quiet.
         assert plex_watchlist.sync_plex_watchlist() is True
         assert UserWatchlist.query.filter_by(user_id=user_id).count() == 1
+
+
+def test_a_429_stops_the_pushes_and_honours_retry_after(app, monkeypatch):
+    """Test that a rate limit stops the loop and holds off the next run (#486)."""
+    import app.plex_watchlist as plex_watchlist
+
+    with app.app_context():
+        user_id = setup_user(app)
+        for tmdb_id in (371, 372, 373):
+            movie = make_movie(f"Film {tmdb_id}", 2000, tmdb_id=tmdb_id)
+            db.session.add(UserWatchlist(user_id=user_id, movie_id=movie.id))
+        db.session.commit()
+
+        fake = FakePlex({})
+        calls = []
+
+        def limited_put(path, rating_key):
+            calls.append(rating_key)
+            response = requests.Response()
+            response.status_code = 429
+            response.headers["Retry-After"] = "120"
+            raise requests.HTTPError("429 Too Many Requests", response=response)
+
+        wire(app, monkeypatch, fake)
+        monkeypatch.setattr(plex_watchlist, "_plex_put", limited_put)
+        assert plex_watchlist.sync_plex_watchlist() is True
+
+        assert len(calls) == 1
+        assert json.loads(app.redis.get(plex_watchlist.SNAPSHOT_KEY)) == []
+        assert app.redis.smembers(plex_watchlist.UNSYNCABLE_KEY) == set()
+        assert 0 < app.redis.ttl(plex_watchlist.BACKOFF_KEY) <= 120
+
+        # The next run waits for the Retry-After time.
+        assert plex_watchlist.sync_plex_watchlist() is True
+        assert len(calls) == 1
+
+
+def test_a_job_timeout_in_the_push_loop_is_not_swallowed(app, monkeypatch):
+    """Test that the rq job timeout stops the sync (#486)."""
+    import pytest
+    from rq.timeouts import JobTimeoutException
+
+    import app.plex_watchlist as plex_watchlist
+
+    with app.app_context():
+        user_id = setup_user(app)
+        movie = make_movie("Film 381", 2000, tmdb_id=381)
+        db.session.add(UserWatchlist(user_id=user_id, movie_id=movie.id))
+        db.session.commit()
+
+        fake = FakePlex({})
+        wire(app, monkeypatch, fake)
+
+        def timed_out(tmdb_id):
+            raise JobTimeoutException("Task exceeded maximum timeout value")
+
+        monkeypatch.setattr(plex_watchlist, "plex_rating_key", timed_out)
+        with pytest.raises(JobTimeoutException):
+            plex_watchlist.sync_plex_watchlist()
+
+
+def test_an_unsyncable_film_seen_on_plex_leaves_the_set(app, monkeypatch):
+    """Test that a listed unsyncable film can push again later (#486)."""
+    import app.plex_watchlist as plex_watchlist
+
+    with app.app_context():
+        setup_user(app)
+        app.redis.sadd(plex_watchlist.UNSYNCABLE_KEY, 391, 392)
+        fake = FakePlex({391: ("Film 391", 2000)})
+        wire(app, monkeypatch, fake)
+        assert plex_watchlist.sync_plex_watchlist() is True
+        assert app.redis.smembers(plex_watchlist.UNSYNCABLE_KEY) in (
+            {b"392"},
+            {"392"},
+        )
