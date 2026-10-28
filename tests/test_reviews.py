@@ -2175,7 +2175,12 @@ def test_the_star_ladder_never_changes_a_letterboxd_row(app, admin_client):
         "/review/tmdb/777004",
         data={"csrf_token": csrf_token_from(page), "quick_rating": "1"},
     )
-    assert response.status_code == 302
+    assert response.status_code == 307
+    admin_client.post(
+        "/review/tmdb/777004",
+        data={"csrf_token": csrf_token_from(page), "quick_rating": "1"},
+        follow_redirects=True,
+    )
     with app.app_context():
         assert float(db.session.get(UserMovieReview, row_id).rating) == 4.0
         assert UserMovieReview.query.filter_by(movie_id=movie_id).count() == 1
@@ -2577,3 +2582,32 @@ def test_a_star_edit_of_a_date_only_row_removes_a_same_day_add(app, admin_client
     with app.app_context():
         assert UserWatchlist.query.filter_by(movie_id=same_id).count() == 0
         assert UserWatchlist.query.filter_by(movie_id=next_id).count() == 1
+
+
+def test_a_plain_review_post_forwards_once_the_record_exists(app, admin_client):
+    """A record that appears while the TMDB page is open keeps the post (#510)."""
+
+    from app import db
+    from app.models import UserMovieReview
+
+    with app.app_context():
+        movie = make_movie("Appeared Meanwhile", 1981, tmdb_id=8889)
+        db.session.commit()
+        movie_id = movie.id
+
+    page = admin_client.get(f"/movie/{movie_id}").get_data(as_text=True)
+    data = {
+        "csrf_token": csrf_token_from(page),
+        "quick_rating": "4",
+        "review": "great",
+        "date_watched": "2026-08-02",
+    }
+    response = admin_client.post("/review/tmdb/8889", data=data)
+    assert response.status_code == 307
+    assert response.headers["Location"].endswith(f"/movie/{movie_id}")
+
+    admin_client.post("/review/tmdb/8889", data=data, follow_redirects=True)
+    with app.app_context():
+        review = UserMovieReview.query.filter_by(movie_id=movie_id).one()
+        assert float(review.rating) == 4.0
+        assert review.review == "great"

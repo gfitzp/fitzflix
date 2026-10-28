@@ -2175,9 +2175,11 @@ def review_tmdb(tmdb_id):
         # forwards it with the method and body intact (307, not 302).
         # Thus, the full ladder handling of the movie route (re-rate,
         # toggle-off, ✕) takes over. Poster-card watchlist toggles (#45c)
-        # forward the same way.
+        # forward the same way. A plain review post or watchlist post also
+        # forwards with 307. A 302 would make the browser GET the movie
+        # page, and the rating, the text and the date would be lost (#510).
 
-        if (_ladder_fetch() or _card_fetch()) and request.method == "POST":
+        if request.method == "POST":
             return redirect(url_for("main.movie", movie_id=movie.id), code=307)
         return redirect(url_for("main.movie", movie_id=movie.id))
 
