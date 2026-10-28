@@ -689,3 +689,53 @@ def test_a_failed_first_upload_leaves_no_tree(app, admin_client, tmp_path, monke
             assert db.session.get(Movie, movie_id).custom_poster is None
     finally:
         os.rmdir(library_dir)
+
+
+def test_a_movie_upload_keeps_the_file_poster_of_a_shared_folder(
+    app, admin_client, poster_pipeline
+):
+    """2 main features share 1 folder, and 1 has its own poster (#524)."""
+
+    with app.app_context():
+        movie = make_movie("Shared Folder Film", 1972)
+        owner = make_movie_file(movie, "DVD", custom_poster="poster.png")
+        sibling = make_movie_file(movie, "WEBDL-1080p")
+        db.session.commit()
+        assert owner.dirname == sibling.dirname
+        movie_id = movie.id
+        library_dir = os.path.join(app.config["LIBRARY_DIR"], owner.dirname)
+    os.makedirs(library_dir, exist_ok=True)
+    try:
+        _post_movie_upload(admin_client, movie_id, png_bytes(), "movie.png")
+        assert poster_pipeline["library"] == []
+    finally:
+        os.rmdir(library_dir)
+
+
+def test_a_movie_poster_remove_keeps_the_file_poster_of_a_shared_folder(
+    app, admin_client
+):
+    """The sibling of the file with its own poster must not delete it (#524)."""
+
+    with app.app_context():
+        movie = make_movie("Shared Remove Film", 1973, custom_poster="poster.jpg")
+        owner = make_movie_file(movie, "DVD", custom_poster="poster.jpg")
+        make_movie_file(movie, "WEBDL-1080p")
+        db.session.commit()
+        movie_id = movie.id
+        build_custom_tree(app, "movie", movie_id, "poster.jpg")
+        build_custom_tree(app, "file", owner.id, "poster.jpg")
+        library_dir = os.path.join(app.config["LIBRARY_DIR"], owner.dirname)
+    os.makedirs(library_dir, exist_ok=True)
+    with open(os.path.join(library_dir, "poster.jpg"), "wb") as f:
+        f.write(png_bytes())
+
+    page = admin_client.get(f"/movie/{movie_id}/poster").get_data(as_text=True)
+    admin_client.post(
+        f"/movie/{movie_id}/poster",
+        data={
+            "csrf_token": csrf_token_from(page),
+            "poster_remove_submit": "Remove custom poster",
+        },
+    )
+    assert os.path.isfile(os.path.join(library_dir, "poster.jpg"))

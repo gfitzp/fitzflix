@@ -209,6 +209,24 @@ def _custom_poster_dir(scope, record_id):
     return custom_artwork_dir(scope, record_id)
 
 
+def _main_feature_folders(movie):
+    """Return the main-feature files of a movie, grouped by their folder.
+
+    The result maps each dirname to its files, in id order. The main
+    features of 1 movie share 1 folder, and a folder has 1 poster. Thus,
+    a file-scoped poster in a folder is the poster of that whole folder
+    (#524)."""
+
+    folders = {}
+    for file in (
+        File.query.filter(File.movie_id == movie.id)
+        .filter(File.feature_type_id == None)
+        .order_by(File.id)
+    ):
+        folders.setdefault(file.dirname, []).append(file)
+    return folders
+
+
 def _assign_movie_poster(movie, uploaded_data):
     """Run a poster image through the custom-poster pipeline for a movie.
 
@@ -221,11 +239,7 @@ def _assign_movie_poster(movie, uploaded_data):
     if poster_filename is None:
         return f"'{uploaded_data.filename}' is an invalid movie poster file type!"
 
-    movie_files = (
-        File.query.filter(File.movie_id == movie.id)
-        .filter(File.feature_type_id == None)
-        .all()
-    )
+    folders = _main_feature_folders(movie)
     custom_dir = _custom_poster_dir("movie", movie.id)
     had_tree = os.path.isdir(custom_dir)
 
@@ -238,15 +252,16 @@ def _assign_movie_poster(movie, uploaded_data):
             return str(error)
         poster_filename = os.path.basename(original_file)
 
-        for file in movie_files:
+        for dirname, files in folders.items():
             # A file with its own custom poster keeps it. The file
-            # outranks the movie (#470). A file with no local folder
-            # (an archive-only copy) has no library copy to replace.
-            if file.custom_poster:
+            # outranks the movie (#470). Its folder can hold a second
+            # main feature, and the folder has 1 poster. Thus, the whole
+            # folder keeps the art of the file (#524). A file with no
+            # local folder (an archive-only copy) has no library copy to
+            # replace.
+            if any(file.custom_poster for file in files):
                 continue
-            library_directory = os.path.join(
-                current_app.config["LIBRARY_DIR"], file.dirname
-            )
+            library_directory = os.path.join(current_app.config["LIBRARY_DIR"], dirname)
             if not os.path.isdir(library_directory):
                 continue
             replace_library_poster(library_directory, original_file, poster_filename)
@@ -326,26 +341,33 @@ def _remove_movie_poster(movie):
 
     poster_filename = movie.custom_poster
     try:
-        movie_files = (
-            File.query.filter(File.movie_id == movie.id)
-            .filter(File.feature_type_id == None)
-            .all()
-        )
-        for file in movie_files:
-            library_directory = os.path.join(
-                current_app.config["LIBRARY_DIR"], file.dirname
-            )
+        for dirname, files in _main_feature_folders(movie).items():
+            library_directory = os.path.join(current_app.config["LIBRARY_DIR"], dirname)
             if not os.path.isdir(library_directory):
                 continue
-            if file.custom_poster:
-                file_original = os.path.join(
-                    _custom_poster_dir("file", file.id), "original", file.custom_poster
+
+            # A folder restores the art of its first file with a
+            # file-scoped original, 1 time. A second main feature in the
+            # same folder must not delete it again (#524).
+
+            file_originals = [
+                (
+                    os.path.join(
+                        _custom_poster_dir("file", file.id),
+                        "original",
+                        file.custom_poster,
+                    ),
+                    file.custom_poster,
                 )
-                if os.path.isfile(file_original):
-                    replace_library_poster(
-                        library_directory, file_original, file.custom_poster
-                    )
-                    continue
+                for file in files
+                if file.custom_poster
+            ]
+            restored = next(
+                (pair for pair in file_originals if os.path.isfile(pair[0])), None
+            )
+            if restored:
+                replace_library_poster(library_directory, *restored)
+                continue
             library_copy = os.path.join(library_directory, poster_filename)
             if os.path.isfile(library_copy):
                 os.remove(library_copy)
