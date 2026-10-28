@@ -165,9 +165,12 @@ def test_picking_a_tmdb_poster_runs_the_pipeline(
 
     with app.app_context():
         movie = make_galleried_movie(app)
-        make_movie_file(movie, "DVD")
+        file = make_movie_file(movie, "DVD")
         db.session.commit()
         movie_id = movie.id
+        # A library copy needs the local folder of the file (#470)
+        library_dir = os.path.join(app.config["LIBRARY_DIR"], file.dirname)
+    os.makedirs(library_dir, exist_ok=True)
 
     page = admin_client.get(f"/movie/{movie_id}/poster").get_data(as_text=True)
     response = admin_client.post(
@@ -178,6 +181,7 @@ def test_picking_a_tmdb_poster_runs_the_pipeline(
             "poster_select_submit": "Use this poster",
         },
     )
+    os.rmdir(library_dir)
     assert response.status_code == 302
     assert response.headers["Location"].endswith(f"/movie/{movie_id}")
 
@@ -533,3 +537,155 @@ def test_tv_file_posters_are_episode_thumbs(app, admin_client):
                 os.path.join(app.config["CUSTOM_ARTWORK_DIR"], "file", str(file_id)),
                 ignore_errors=True,
             )
+
+
+def _image_bytes(mode, size, image_format, color=0):
+    buf = io.BytesIO()
+    Image.new(mode, size, color).save(buf, image_format)
+    return buf.getvalue()
+
+
+def _post_movie_upload(admin_client, movie_id, data, name):
+    page = admin_client.get(f"/movie/{movie_id}/poster").get_data(as_text=True)
+    return admin_client.post(
+        f"/movie/{movie_id}/poster",
+        data={
+            "csrf_token": csrf_token_from(page),
+            "custom_poster": (io.BytesIO(data), name),
+            "poster_submit": "Upload",
+        },
+        content_type="multipart/form-data",
+        follow_redirects=True,
+    )
+
+
+def test_an_oversized_poster_is_refused_before_the_decode(app, tmp_path):
+    """A poster above 6000x9000 pixels is refused (#470)."""
+
+    from werkzeug.datastructures import FileStorage
+
+    from app.main.posters import save_custom_poster
+
+    with app.app_context():
+        for size in ((6001, 10), (10, 9001)):
+            upload = FileStorage(
+                stream=io.BytesIO(_image_bytes("L", size, "PNG")), filename="big.png"
+            )
+            with pytest.raises(ValueError, match="too large"):
+                save_custom_poster(upload, "poster.png", str(tmp_path))
+    assert not os.path.exists(tmp_path / "original")
+
+
+def test_a_mismatched_image_is_named_after_its_real_format(app, tmp_path):
+    """An RGBA PNG named .jpg and a CMYK JPEG named .png both save (#470)."""
+
+    from werkzeug.datastructures import FileStorage
+
+    from app.main.posters import save_custom_poster
+
+    with app.app_context():
+        upload = FileStorage(
+            stream=io.BytesIO(_image_bytes("RGBA", (300, 450), "PNG")),
+            filename="art.jpg",
+        )
+        original = save_custom_poster(upload, "poster.jpg", str(tmp_path / "a"))
+        assert os.path.basename(original) == "poster.png"
+        assert os.path.isfile(tmp_path / "a" / "w92" / "poster.png")
+
+        upload = FileStorage(
+            stream=io.BytesIO(_image_bytes("CMYK", (300, 450), "JPEG")),
+            filename="art.png",
+        )
+        original = save_custom_poster(upload, "poster.png", str(tmp_path / "b"))
+        assert os.path.basename(original) == "poster.jpg"
+        with Image.open(tmp_path / "b" / "w342" / "poster.jpg") as thumbnail:
+            assert thumbnail.mode == "RGB"
+            assert thumbnail.size[0] == 300  # never enlarged
+
+
+def test_the_upload_extension_check_ignores_case_and_refuses_tbn(
+    app, admin_client, poster_pipeline
+):
+    from app.models import Movie
+
+    with app.app_context():
+        movie = make_movie("Camera Film", 1999)
+        make_movie_file(movie, "DVD")
+        db.session.commit()
+        movie_id = movie.id
+
+    response = _post_movie_upload(admin_client, movie_id, png_bytes(), "IMG_0001.JPG")
+    assert poster_pipeline["saved"][-1]["poster"] == "poster.jpg"
+    with app.app_context():
+        assert db.session.get(Movie, movie_id).custom_poster == "poster.jpg"
+
+    saved = len(poster_pipeline["saved"])
+    response = _post_movie_upload(admin_client, movie_id, png_bytes(), "poster.tbn")
+    assert "invalid movie poster file type" in response.get_data(as_text=True)
+    assert len(poster_pipeline["saved"]) == saved
+
+
+def test_a_movie_upload_skips_a_file_with_its_own_poster(
+    app, admin_client, poster_pipeline
+):
+    """The file outranks the movie. Its library copy stays (#470)."""
+
+    with app.app_context():
+        movie = make_movie("Owned Art Film", 1998)
+        file = make_movie_file(movie, "DVD", custom_poster="poster.png")
+        db.session.commit()
+        movie_id = movie.id
+        library_dir = os.path.join(app.config["LIBRARY_DIR"], file.dirname)
+    os.makedirs(library_dir, exist_ok=True)
+    try:
+        _post_movie_upload(admin_client, movie_id, png_bytes(), "movie.png")
+        assert poster_pipeline["library"] == []
+    finally:
+        os.rmdir(library_dir)
+
+
+def test_an_archive_only_file_does_not_fail_the_upload(
+    app, admin_client, tmp_path, monkeypatch
+):
+    """A main feature with no local folder has no library copy to replace (#470)."""
+
+    from app.models import Movie
+
+    monkeypatch.setitem(app.config, "CUSTOM_ARTWORK_DIR", str(tmp_path))
+    with app.app_context():
+        movie = make_movie("Archive Only Film", 1997)
+        make_movie_file(movie, "DVD")
+        db.session.commit()
+        movie_id = movie.id
+
+    response = _post_movie_upload(admin_client, movie_id, png_bytes(), "art.png")
+    assert "Unable to assign" not in response.get_data(as_text=True)
+    with app.app_context():
+        assert db.session.get(Movie, movie_id).custom_poster == "poster.png"
+    assert os.path.isfile(tmp_path / "movie" / str(movie_id) / "w92" / "poster.png")
+
+
+def test_a_failed_first_upload_leaves_no_tree(app, admin_client, tmp_path, monkeypatch):
+    import app.main.posters as posters
+    from app.models import Movie
+
+    def broken_copy(*args):
+        raise OSError("library copy failed")
+
+    monkeypatch.setitem(app.config, "CUSTOM_ARTWORK_DIR", str(tmp_path))
+    monkeypatch.setattr(posters, "replace_library_poster", broken_copy)
+    with app.app_context():
+        movie = make_movie("Broken Copy Film", 1996)
+        file = make_movie_file(movie, "DVD")
+        db.session.commit()
+        movie_id = movie.id
+        library_dir = os.path.join(app.config["LIBRARY_DIR"], file.dirname)
+    os.makedirs(library_dir, exist_ok=True)
+    try:
+        response = _post_movie_upload(admin_client, movie_id, png_bytes(), "art.png")
+        assert "Unable to assign" in response.get_data(as_text=True)
+        assert not os.path.exists(tmp_path / "movie" / str(movie_id))
+        with app.app_context():
+            assert db.session.get(Movie, movie_id).custom_poster is None
+    finally:
+        os.rmdir(library_dir)

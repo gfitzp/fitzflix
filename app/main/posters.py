@@ -53,11 +53,37 @@ POSTERS_KEY = "fitzflix:tmdb:movie:{tmdb_id}:posters"
 POSTERS_SECONDS = 86400
 
 
+# The upload limits (#470). A poster above these pixel sizes is refused
+# before the full decode. Each thumbnail comes from 1 reduced copy.
+
+MAX_POSTER_SIZE = (6000, 9000)
+THUMBNAIL_WIDTHS = ("92", "154", "185", "342", "500", "780")
+UPLOAD_EXTENSIONS = (".jpg", ".jpeg", ".png")
+FORMAT_EXTENSIONS = {"JPEG": ".jpg", "PNG": ".png"}
+
+
+def _jpeg_ready(image):
+    """Return image in a mode that the JPEG encoder can write."""
+
+    return image if image.mode in ("RGB", "L") else image.convert("RGB")
+
+
+def _save_poster_image(image, path, image_format):
+    """Write 1 poster image in its own format."""
+
+    if image_format == "JPEG":
+        _jpeg_ready(image).save(path, "JPEG", quality=95)
+    else:
+        image.save(path, image_format)
+
+
 def save_custom_poster(uploaded_data, poster_filename, custom_poster_dir):
     """Validate an uploaded poster, then write the original and its thumbnails.
 
-    Return the path of the saved original. If the upload is not a usable
-    poster image, raise ValueError with a message that is ready to flash.
+    Return the path of the saved original. Its name has the extension of
+    the real image format, not of the uploaded name (#470). If the
+    upload is not a usable poster image, raise ValueError with a message
+    that is ready to flash.
     """
 
     try:
@@ -67,35 +93,55 @@ def save_custom_poster(uploaded_data, poster_filename, custom_poster_dir):
 
     with Image.open(uploaded_data) as poster:
         current_app.logger.info(f"Uploaded poster format: {poster.format}")
-        if poster.format not in ["JPEG", "PNG"]:
+        if poster.format not in FORMAT_EXTENSIONS:
             raise ValueError(f"'{poster.format}' is not an appropriate file type!")
+        width, height = poster.size
+        if width > MAX_POSTER_SIZE[0] or height > MAX_POSTER_SIZE[1]:
+            raise ValueError(
+                f"'{uploaded_data.filename}' is too large ({width}x{height} "
+                f"pixels). The limit is {MAX_POSTER_SIZE[0]}x{MAX_POSTER_SIZE[1]} "
+                f"pixels."
+            )
+        image_format = poster.format
+        poster_filename = (
+            os.path.splitext(poster_filename)[0] + FORMAT_EXTENSIONS[image_format]
+        )
 
         os.makedirs(os.path.join(custom_poster_dir, "original"), exist_ok=True)
         original_file = os.path.join(custom_poster_dir, "original", poster_filename)
-        poster.save(original_file)
+        _save_poster_image(poster, original_file, image_format)
 
-        original_width, original_height = poster.size
+        # 1 reduced copy at the largest thumbnail width. The smaller
+        # thumbnails come from it, not from the full image.
 
-        for width in ["92", "154", "185", "342", "500", "780"]:
-            current_app.logger.info(f"'{original_file}' Creating w{width} thumbnail")
+        largest = int(THUMBNAIL_WIDTHS[-1])
+        reduced = poster.copy()
+        reduced.thumbnail((largest, max(1, int(height * largest / width))))
 
-            percent = int(width) / float(original_width)
-            height = int(original_height * float(percent))
-            size = (int(width), int(height))
-
-            subdir_path = os.path.join(custom_poster_dir, f"w{width}")
-            os.makedirs(subdir_path, exist_ok=True)
-
-            poster_thumbnail = poster.copy()
-            poster_thumbnail.thumbnail(size)
-            if poster.format == "JPEG":
-                poster_thumbnail.save(
-                    os.path.join(subdir_path, poster_filename), quality=95
-                )
-            else:
-                poster_thumbnail.save(os.path.join(subdir_path, poster_filename))
+    for width_text in THUMBNAIL_WIDTHS:
+        current_app.logger.info(f"'{original_file}' Creating w{width_text} thumbnail")
+        size = (int(width_text), max(1, int(height * int(width_text) / width)))
+        subdir_path = os.path.join(custom_poster_dir, f"w{width_text}")
+        os.makedirs(subdir_path, exist_ok=True)
+        thumbnail = reduced.copy()
+        thumbnail.thumbnail(size)
+        _save_poster_image(
+            thumbnail, os.path.join(subdir_path, poster_filename), image_format
+        )
 
     return original_file
+
+
+def _upload_name(uploaded_data):
+    """Return the poster file name of an upload, or None if its type is refused.
+
+    The extension check ignores case. Thus, a camera "IMG_0001.JPG" is
+    accepted. A .tbn upload is refused, because Pillow cannot write it."""
+
+    file_ext = os.path.splitext(secure_filename(uploaded_data.filename))[1].lower()
+    if file_ext not in UPLOAD_EXTENSIONS:
+        return None
+    return f"poster{file_ext}"
 
 
 def replace_library_poster(library_directory, original_file, poster_filename):
@@ -171,34 +217,39 @@ def _assign_movie_poster(movie, uploaded_data):
     failure, or None on success.
     """
 
-    file_ext = os.path.splitext(secure_filename(uploaded_data.filename))[1]
-    poster_filename = f"poster{file_ext}"
-
-    if file_ext not in [".jpg", ".jpeg", ".png", ".tbn"]:
-        return f"'{poster_filename}' is an invalid movie poster file type!"
+    poster_filename = _upload_name(uploaded_data)
+    if poster_filename is None:
+        return f"'{uploaded_data.filename}' is an invalid movie poster file type!"
 
     movie_files = (
         File.query.filter(File.movie_id == movie.id)
         .filter(File.feature_type_id == None)
         .all()
     )
+    custom_dir = _custom_poster_dir("movie", movie.id)
+    had_tree = os.path.isdir(custom_dir)
 
     try:
         try:
             original_file = save_custom_poster(
-                uploaded_data,
-                poster_filename,
-                _custom_poster_dir("movie", movie.id),
+                uploaded_data, poster_filename, custom_dir
             )
         except ValueError as error:
             return str(error)
+        poster_filename = os.path.basename(original_file)
 
         for file in movie_files:
-            replace_library_poster(
-                os.path.join(current_app.config["LIBRARY_DIR"], file.dirname),
-                original_file,
-                poster_filename,
+            # A file with its own custom poster keeps it. The file
+            # outranks the movie (#470). A file with no local folder
+            # (an archive-only copy) has no library copy to replace.
+            if file.custom_poster:
+                continue
+            library_directory = os.path.join(
+                current_app.config["LIBRARY_DIR"], file.dirname
             )
+            if not os.path.isdir(library_directory):
+                continue
+            replace_library_poster(library_directory, original_file, poster_filename)
 
         movie.custom_poster = poster_filename
         db.session.commit()
@@ -211,6 +262,10 @@ def _assign_movie_poster(movie, uploaded_data):
     except Exception:
         current_app.logger.error(traceback.format_exc())
         db.session.rollback()
+        # The tree of a failed first upload must not stay. The nightly
+        # backup would mirror it.
+        if not had_tree:
+            shutil.rmtree(custom_dir, ignore_errors=True)
         return f"Unable to assign a custom poster to '{movie.title}'!"
 
     return None
@@ -222,21 +277,20 @@ def _assign_file_poster(file, uploaded_data):
 
     This function replaces the library copy only for a main feature."""
 
-    file_ext = os.path.splitext(secure_filename(uploaded_data.filename))[1]
-    poster_filename = f"poster{file_ext}"
-
-    if file_ext not in [".jpg", ".jpeg", ".png", ".tbn"]:
-        return f"'{poster_filename}' is an invalid movie poster file type!"
+    poster_filename = _upload_name(uploaded_data)
+    if poster_filename is None:
+        return f"'{uploaded_data.filename}' is an invalid movie poster file type!"
+    custom_dir = _custom_poster_dir("file", file.id)
+    had_tree = os.path.isdir(custom_dir)
 
     try:
         try:
             original_file = save_custom_poster(
-                uploaded_data,
-                poster_filename,
-                _custom_poster_dir("file", file.id),
+                uploaded_data, poster_filename, custom_dir
             )
         except ValueError as error:
             return str(error)
+        poster_filename = os.path.basename(original_file)
 
         library_directory = os.path.join(
             current_app.config["LIBRARY_DIR"], file.dirname
@@ -252,6 +306,8 @@ def _assign_file_poster(file, uploaded_data):
     except Exception:
         current_app.logger.error(traceback.format_exc())
         db.session.rollback()
+        if not had_tree:
+            shutil.rmtree(custom_dir, ignore_errors=True)
         return f"Unable to assign a custom poster to '{file.basename}'!"
 
     return None
