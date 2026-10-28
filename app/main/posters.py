@@ -387,11 +387,31 @@ def _remove_movie_poster(movie):
     return None
 
 
+def _sibling_file_poster(file):
+    """Return (original path, name) of the poster of another file in the folder, or None.
+
+    The other file is a main feature of the same movie with a
+    file-scoped poster whose original exists (#578)."""
+
+    siblings = _main_feature_folders(file.movie).get(file.dirname, [])
+    for sibling in siblings:
+        if sibling.id == file.id or not sibling.custom_poster:
+            continue
+        original = os.path.join(
+            _custom_poster_dir("file", sibling.id), "original", sibling.custom_poster
+        )
+        if os.path.isfile(original):
+            return original, sibling.custom_poster
+    return None
+
+
 def _remove_file_poster(file):
     """Remove the custom poster of one file (the file-scoped twin of
     _remove_movie_poster).
 
-    If the movie still has its own custom poster, this function restores
+    A sibling main feature in the same folder with its own file-scoped
+    poster outranks the movie (#578). Its art is restored first. Else,
+    if the movie still has its own custom poster, this function restores
     that art to the library directory. If not, it deletes the poster copy.
     """
 
@@ -419,7 +439,10 @@ def _remove_file_poster(file):
                     if movie and movie.custom_poster
                     else None
                 )
-                if movie_original and os.path.isfile(movie_original):
+                sibling = _sibling_file_poster(file) if movie else None
+                if sibling:
+                    replace_library_poster(library_directory, *sibling)
+                elif movie_original and os.path.isfile(movie_original):
                     replace_library_poster(
                         library_directory, movie_original, movie.custom_poster
                     )

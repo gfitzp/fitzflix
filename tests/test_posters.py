@@ -739,3 +739,36 @@ def test_a_movie_poster_remove_keeps_the_file_poster_of_a_shared_folder(
         },
     )
     assert os.path.isfile(os.path.join(library_dir, "poster.jpg"))
+
+
+def test_a_file_poster_remove_restores_the_sibling_file_poster(app, monkeypatch):
+    """The other main feature of the folder keeps its own art (#578).
+
+    The remove restored only the movie original, else it deleted the
+    poster. The sibling file-scoped poster outranks the movie."""
+
+    import app.main.posters as posters
+
+    restored = []
+    monkeypatch.setattr(
+        posters,
+        "replace_library_poster",
+        lambda directory, original, name: restored.append((original, name)),
+    )
+    with app.app_context():
+        movie = make_movie("Two Posters Film", 1974, custom_poster="movie.jpg")
+        first = make_movie_file(movie, "DVD", custom_poster="first.jpg")
+        second = make_movie_file(movie, "WEBDL-1080p", custom_poster="second.png")
+        db.session.commit()
+        build_custom_tree(app, "movie", movie.id, "movie.jpg")
+        build_custom_tree(app, "file", first.id, "first.jpg")
+        second_tree = build_custom_tree(app, "file", second.id, "second.png")
+        library_dir = os.path.join(app.config["LIBRARY_DIR"], first.dirname)
+        os.makedirs(library_dir, exist_ok=True)
+        try:
+            assert posters._remove_file_poster(first) is None
+        finally:
+            os.rmdir(library_dir)
+    assert restored == [
+        (os.path.join(second_tree, "original", "second.png"), "second.png")
+    ]
