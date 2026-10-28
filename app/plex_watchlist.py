@@ -44,9 +44,22 @@ UNSYNCABLE_KEY = "fitzflix:plex:watchlist:unsyncable"
 PAGE_SIZE = 100
 
 # A Plex listing much smaller than the snapshot is an API anomaly. It
-# is not a mass removal. Do not propagate deletions from it.
+# is not a mass removal. The walk refuses a listing that holds fewer
+# items than the totalSize of page 1 (ListingAnomaly). The sync also
+# skips a run whose listing holds less than half of the snapshot, if
+# the snapshot holds more than ANOMALY_FLOOR films. A real mass removal
+# gives the same short listing on the next run. Thus, the sync accepts
+# a short listing when SHRINK_KEY holds the same listing from the run
+# before.
 
 ANOMALY_FLOOR = 10
+SHRINK_KEY = "fitzflix:plex:watchlist:shrink"
+SHRINK_TTL = 2 * 24 * 3600
+
+# The walk reads the listing again from page 1 when the totalSize
+# changes between pages. It gives up after this number of reads.
+
+LISTING_READS = 3
 
 # Plex refuses some matched films with a client error (A Turning Point,
 # 1984, gets a 400). A retry gets the same answer. Thus, these codes put
@@ -88,6 +101,10 @@ def _transient(error):
         and response is not None
         and response.status_code >= 500
     )
+
+
+class ListingAnomaly(Exception):
+    """The Plex listing is incomplete. The sync must not use it."""
 
 
 def _plex_get(url, params=None):
@@ -150,8 +167,28 @@ def fetch_plex_watchlist(fitzflix_ids=(), snapshot=()):
 
     fitzflix_ids = set(fitzflix_ids)
     snapshot = set(snapshot)
+    for _ in range(LISTING_READS):
+        films = _read_listing(fitzflix_ids, snapshot)
+        if films is not None:
+            return films
+    raise ListingAnomaly(
+        f"the Plex watchlist changed size during each of {LISTING_READS} reads"
+    )
+
+
+def _read_listing(fitzflix_ids, snapshot):
+    """Read the full listing 1 time. Return the films, or None.
+
+    None tells the caller that the totalSize changed between pages. A
+    removal on Plex between 2 pages moves the later items 1 position
+    back. Thus, an offset walk across the change can skip an item. An
+    empty page before the walk reaches the totalSize of page 1 raises
+    ListingAnomaly. A first page with items and no totalSize also
+    raises it."""
+
     films = {}
     start = 0
+    total = None
     while True:
         payload = _plex_get(
             f"{DISCOVER_URL}/library/sections/watchlist/all",
@@ -161,8 +198,17 @@ def fetch_plex_watchlist(fitzflix_ids=(), snapshot=()):
                 "X-Plex-Container-Size": PAGE_SIZE,
             },
         )
-        container = payload.get("MediaContainer", {})
+        container = payload.get("MediaContainer", {}) or {}
         page = container.get("Metadata", []) or []
+        size = container.get("totalSize")
+        if total is None:
+            if size is None:
+                if page:
+                    raise ListingAnomaly("page 1 has items but no totalSize")
+                return films
+            total = int(size)
+        elif size is not None and int(size) != total:
+            return None
         for item in page:
             # The tmdb guid of a show is a TV-series id. As a film, it
             # becomes a bare Movie row (The Flight Attendant, Severance).
@@ -187,9 +233,12 @@ def fetch_plex_watchlist(fitzflix_ids=(), snapshot=()):
                     "rating_key": item.get("ratingKey"),
                 }
         start += len(page)
-        if not page or start >= container.get("totalSize", 0):
-            break
-    return films
+        if start >= total:
+            return films
+        if not page:
+            raise ListingAnomaly(
+                f"the listing stopped at item {start} of {total} items"
+            )
 
 
 def plex_rating_key(tmdb_id):
@@ -225,6 +274,39 @@ def _sync_user():
             f"'{username}' — set it on the profile page"
         )
     return user
+
+
+def _short_listing(plex, snapshot):
+    """Return True if the run must stop because the listing is short.
+
+    A listing with less than half of a snapshot of more than
+    ANOMALY_FLOOR films is short. The run after the first short listing
+    accepts the same listing. That is a real mass removal on Plex."""
+
+    redis = current_app.redis
+    if len(snapshot) <= ANOMALY_FLOOR or len(plex) >= len(snapshot) // 2:
+        redis.delete(SHRINK_KEY)
+        return False
+    listing = json.dumps(sorted(plex))
+    previous = redis.get(SHRINK_KEY)
+    if (
+        previous is not None
+        and (previous.decode() if isinstance(previous, bytes) else previous) == listing
+    ):
+        redis.delete(SHRINK_KEY)
+        current_app.logger.warning(
+            f"Plex watchlist: the listing of {len(plex)} items against a "
+            f"{len(snapshot)}-item snapshot is the same as on the last run. "
+            f"Applying it as a removal on Plex."
+        )
+        return False
+    redis.set(SHRINK_KEY, listing, ex=SHRINK_TTL)
+    current_app.logger.warning(
+        f"Plex watchlist: the API returned {len(plex)} items against a "
+        f"{len(snapshot)}-item snapshot. Anomaly, skipping this run. The "
+        f"next run applies the same listing."
+    )
+    return True
 
 
 def sync_plex_watchlist():
@@ -264,6 +346,12 @@ def sync_plex_watchlist():
 
         try:
             plex = fetch_plex_watchlist(fitzflix, snapshot)
+        except ListingAnomaly as e:
+            current_app.logger.warning(
+                f"Plex watchlist: the Plex listing is incomplete ({e}). "
+                f"Skipping this run."
+            )
+            return True
         except requests.RequestException as e:
             # A Plex outage is not a code fault. One line is sufficient.
 
@@ -276,11 +364,7 @@ def sync_plex_watchlist():
             current_app.logger.warning(traceback.format_exc())
             return True
 
-        if not plex and len(snapshot) > ANOMALY_FLOOR:
-            current_app.logger.warning(
-                f"Plex watchlist: API returned 0 items against a "
-                f"{len(snapshot)}-item snapshot — anomaly, skipping this run"
-            )
+        if _short_listing(plex, snapshot):
             return True
 
         plex_ids = set(plex)

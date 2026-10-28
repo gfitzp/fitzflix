@@ -660,3 +660,125 @@ def test_removing_one_of_two_films_of_a_shared_plex_item_keeps_the_other(
         assert fake.removes == []
         assert fake.items["compX"]["listed"] is True
         assert fitzflix_watchlist_tmdb_ids(user_id) == {55942}
+
+
+def test_a_short_page_skips_the_run_and_keeps_every_row(app, monkeypatch, caplog):
+    """Test that an empty page before the totalSize stops the run (#484)."""
+    import app.plex_watchlist as plex_watchlist
+
+    with app.app_context():
+        user_id = setup_user(app)
+        ids = list(range(301, 307))
+        for tmdb_id in ids:
+            movie = make_movie(f"Film {tmdb_id}", 2000, tmdb_id=tmdb_id)
+            db.session.add(UserWatchlist(user_id=user_id, movie_id=movie.id))
+        db.session.commit()
+        app.redis.set(plex_watchlist.SNAPSHOT_KEY, json.dumps(ids))
+
+        fake = FakePlex({tmdb_id: (f"Film {tmdb_id}", 2000) for tmdb_id in ids})
+        listing = fake.get
+
+        def short_get(url, params=None):
+            payload = listing(url, params)
+            if "watchlist/all" in url and int(params["X-Plex-Container-Start"]) >= 2:
+                payload["MediaContainer"]["Metadata"] = []
+            return payload
+
+        wire(app, monkeypatch, fake)
+        monkeypatch.setattr(plex_watchlist, "_plex_get", short_get)
+        monkeypatch.setattr(plex_watchlist, "PAGE_SIZE", 2)
+        assert plex_watchlist.sync_plex_watchlist() is True
+
+        assert fitzflix_watchlist_tmdb_ids(user_id) == set(ids)
+        assert json.loads(app.redis.get(plex_watchlist.SNAPSHOT_KEY)) == ids
+        assert fake.adds == [] and fake.removes == []
+        assert "the listing stopped at item 2 of 6 items" in caplog.text
+
+
+def test_a_page_with_no_total_size_skips_the_run(app, monkeypatch):
+    """Test that a first page with items and no totalSize stops the run."""
+    import app.plex_watchlist as plex_watchlist
+
+    with app.app_context():
+        user_id = setup_user(app)
+        movie = make_movie("Film 311", 2000, tmdb_id=311)
+        db.session.add(UserWatchlist(user_id=user_id, movie_id=movie.id))
+        db.session.commit()
+        app.redis.set(plex_watchlist.SNAPSHOT_KEY, json.dumps([311, 312]))
+
+        fake = FakePlex({311: ("Film 311", 2000), 312: ("Film 312", 2000)})
+        listing = fake.get
+
+        def no_total(url, params=None):
+            payload = listing(url, params)
+            if "watchlist/all" in url:
+                del payload["MediaContainer"]["totalSize"]
+            return payload
+
+        wire(app, monkeypatch, fake)
+        monkeypatch.setattr(plex_watchlist, "_plex_get", no_total)
+        monkeypatch.setattr(plex_watchlist, "PAGE_SIZE", 1)
+        assert plex_watchlist.sync_plex_watchlist() is True
+        assert fitzflix_watchlist_tmdb_ids(user_id) == {311}
+        assert json.loads(app.redis.get(plex_watchlist.SNAPSHOT_KEY)) == [311, 312]
+
+
+def test_a_listing_that_shifts_between_pages_is_read_again(app, monkeypatch):
+    """Test that a Plex removal between 2 pages does not skip a film."""
+    import app.plex_watchlist as plex_watchlist
+
+    with app.app_context():
+        user_id = setup_user(app)
+        ids = [321, 322, 323, 324]
+        for tmdb_id in ids:
+            movie = make_movie(f"Film {tmdb_id}", 2000, tmdb_id=tmdb_id)
+            db.session.add(UserWatchlist(user_id=user_id, movie_id=movie.id))
+        db.session.commit()
+        app.redis.set(plex_watchlist.SNAPSHOT_KEY, json.dumps(ids))
+
+        fake = FakePlex({tmdb_id: (f"Film {tmdb_id}", 2000) for tmdb_id in ids})
+        listing = fake.get
+        reads = []
+
+        def shifting(url, params=None):
+            if "watchlist/all" in url:
+                reads.append(int(params["X-Plex-Container-Start"]))
+                # Plex removes the first film after the first page.
+                if len(reads) == 2:
+                    fake.items["rk321"]["listed"] = False
+            return listing(url, params)
+
+        wire(app, monkeypatch, fake)
+        monkeypatch.setattr(plex_watchlist, "_plex_get", shifting)
+        monkeypatch.setattr(plex_watchlist, "PAGE_SIZE", 2)
+        assert plex_watchlist.sync_plex_watchlist() is True
+
+        # Only the film that Plex removed leaves Fitzflix. Film 323 moved
+        # into the first page and the walk did not skip it.
+        assert fitzflix_watchlist_tmdb_ids(user_id) == {322, 323, 324}
+        assert reads[:3] == [0, 2, 0]
+
+
+def test_a_listing_under_half_the_snapshot_needs_two_runs(app, monkeypatch):
+    """Test that a short listing applies only when the next run repeats it."""
+    import app.plex_watchlist as plex_watchlist
+
+    with app.app_context():
+        user_id = setup_user(app)
+        ids = list(range(331, 345))
+        for tmdb_id in ids:
+            movie = make_movie(f"Film {tmdb_id}", 2000, tmdb_id=tmdb_id)
+            db.session.add(UserWatchlist(user_id=user_id, movie_id=movie.id))
+        db.session.commit()
+        app.redis.set(plex_watchlist.SNAPSHOT_KEY, json.dumps(ids))
+
+        kept = ids[:3]
+        fake = FakePlex({tmdb_id: (f"Film {tmdb_id}", 2000) for tmdb_id in kept})
+        wire(app, monkeypatch, fake)
+        assert plex_watchlist.sync_plex_watchlist() is True
+        assert fitzflix_watchlist_tmdb_ids(user_id) == set(ids)
+
+        # The same listing on the next run is a real mass removal.
+        assert plex_watchlist.sync_plex_watchlist() is True
+        assert fitzflix_watchlist_tmdb_ids(user_id) == set(kept)
+        assert app.redis.get(plex_watchlist.SHRINK_KEY) is None
