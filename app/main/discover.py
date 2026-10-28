@@ -27,6 +27,7 @@ from flask import (
 
 # Flask 2.4 removed flask.Markup. Import it from its actual home.
 from flask_login import current_user, login_required
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import contains_eager, selectinload
 from unidecode import unidecode
 
@@ -2177,6 +2178,24 @@ TMDB_VERDICT_MESSAGES = {
 }
 
 
+def _tmdb_record(tmdb_id, film_title, year, details):
+    """Return (movie, created) for a post of the TMDB review page.
+
+    2 first posts for a film with no record both insert it. The (title,
+    year) constraint refuses the second insert (#567). That post then
+    uses the record of the first post, and the repeat gate of the log
+    sees the same movie id."""
+
+    try:
+        return find_or_create_tmdb_movie(tmdb_id, film_title, year, details=details)
+    except IntegrityError:
+        db.session.rollback()
+        movie = Movie.query.filter_by(tmdb_id=tmdb_id).first()
+        if movie is None:
+            raise
+        return movie, False
+
+
 @bp.route("/review/tmdb/<int:tmdb_id>", methods=["GET", "POST"])
 @login_required
 def review_tmdb(tmdb_id):
@@ -2234,9 +2253,7 @@ def review_tmdb(tmdb_id):
 
     watchlist_form = WatchlistForm()
     if watchlist_form.add_watchlist_submit.data and watchlist_form.validate_on_submit():
-        movie, created = find_or_create_tmdb_movie(
-            tmdb_id, film_title, year, details=details
-        )
+        movie, created = _tmdb_record(tmdb_id, film_title, year, details)
         if movie is None:
             return _namesake_refusal(film_title, year, tmdb_id)
         listed = UserWatchlist.query.filter_by(
@@ -2244,7 +2261,12 @@ def review_tmdb(tmdb_id):
         ).first()
         if listed is None:
             db.session.add(UserWatchlist(user_id=current_user.id, movie_id=movie.id))
-        db.session.commit()
+        try:
+            db.session.commit()
+        except IntegrityError:
+            # A second add in flight inserted the row first (#516, #567).
+            # The film is on the list. Thus, the answer is the same.
+            db.session.rollback()
         if created:
             enqueue_task(
                 "app.videos.refresh_tmdb_info",
@@ -2270,9 +2292,7 @@ def review_tmdb(tmdb_id):
             return redirect(url_for("main.review_tmdb", tmdb_id=tmdb_id))
         if post.quick_present:
             _hold_verdict_lock(f"tmdb:{int(tmdb_id)}")
-        movie, created = find_or_create_tmdb_movie(
-            tmdb_id, film_title, year, details=details
-        )
+        movie, created = _tmdb_record(tmdb_id, film_title, year, details)
         if movie is None:
             return _namesake_refusal(film_title, year, tmdb_id)
 

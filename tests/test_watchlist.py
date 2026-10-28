@@ -1375,3 +1375,103 @@ def test_a_stale_remove_does_not_claim_a_removal(app, admin_client, admin_id):
     text = response.get_data(as_text=True)
     assert "The film is not on your watchlist." in text
     assert "Removed from your watchlist" not in text
+
+
+def test_a_racing_first_watchlist_add_on_the_tmdb_page_answers_added(
+    app, admin_client, monkeypatch, admin_id
+):
+    """2 first posts for a film with no record raced on (title, year) (#567).
+
+    The second insert raised IntegrityError, and the page answered 500.
+    Now the post uses the record that the first post committed."""
+
+    from sqlalchemy.exc import IntegrityError
+
+    import app.main.discover as discover
+    from app import db
+    from app.models import Movie
+
+    def fake_tmdb_get(url, params=None, **kwargs):
+        return Response(
+            {
+                "title": "Raced Unknown",
+                "release_date": "1998-08-08",
+                "overview": "Not in the library.",
+                "poster_path": "/raced.jpg",
+                "runtime": 90,
+                "genres": [],
+                "credits": {"cast": []},
+                "release_dates": {"results": []},
+            }
+        )
+
+    def other_post_first(tmdb_id, film_title, year, details=None):
+        """The other post commits the record, and this insert is refused."""
+
+        db.session.add(Movie(title=film_title, year=year, tmdb_id=tmdb_id))
+        db.session.commit()
+        raise IntegrityError("INSERT INTO movie", {}, Exception("Duplicate entry"))
+
+    monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
+    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
+    page = admin_client.get("/review/tmdb/9307").get_data(as_text=True)
+    monkeypatch.setattr(discover, "find_or_create_tmdb_movie", other_post_first)
+
+    response = admin_client.post(
+        "/review/tmdb/9307",
+        data={
+            "csrf_token": csrf_token_from(page),
+            "add_watchlist_submit": "Add to Watchlist",
+        },
+    )
+    assert response.status_code == 302
+    with app.app_context():
+        movie = Movie.query.filter_by(tmdb_id=9307).one()
+        assert entries_for(app, admin_id) == [movie.id]
+
+
+def test_a_racing_first_log_on_the_tmdb_page_uses_the_other_record(
+    app, admin_client, monkeypatch
+):
+    """The Log Watch path of the same race (#567)."""
+
+    from sqlalchemy.exc import IntegrityError
+
+    import app.main.discover as discover
+    from app import db
+    from app.models import Movie, UserMovieReview
+
+    def fake_tmdb_get(url, params=None, **kwargs):
+        return Response(
+            {
+                "title": "Raced Log",
+                "release_date": "1997-07-07",
+                "overview": "Not in the library.",
+                "poster_path": "/log.jpg",
+                "runtime": 90,
+                "genres": [],
+                "credits": {"cast": []},
+                "release_dates": {"results": []},
+            }
+        )
+
+    def other_post_first(tmdb_id, film_title, year, details=None):
+        db.session.add(Movie(title=film_title, year=year, tmdb_id=tmdb_id))
+        db.session.commit()
+        raise IntegrityError("INSERT INTO movie", {}, Exception("Duplicate entry"))
+
+    monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
+    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
+    page = admin_client.get("/review/tmdb/9308").get_data(as_text=True)
+    monkeypatch.setattr(discover, "find_or_create_tmdb_movie", other_post_first)
+
+    response = admin_client.post(
+        "/review/tmdb/9308",
+        data={"quick_rating": "4", "csrf_token": csrf_token_from(page)},
+        headers={"X-Requested-With": "ladder"},
+    )
+    assert response.status_code == 200
+    with app.app_context():
+        movie = Movie.query.filter_by(tmdb_id=9308).one()
+        row = UserMovieReview.query.filter_by(movie_id=movie.id).one()
+        assert float(row.rating) == 4.0
