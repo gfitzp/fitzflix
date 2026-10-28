@@ -268,3 +268,35 @@ def test_a_failed_mail_in_the_request_thread_is_logged(app, monkeypatch, caplog)
         email_module.send_async_email(app, msg)
     assert "mail server down" in caplog.text
     assert "Subject" in caplog.text
+
+
+def test_the_smtp_connection_has_a_timeout(app, monkeypatch):
+    """A mail server that drops the packets must not hold the sender for good (#452)."""
+
+    import smtplib
+
+    from app import mail
+    from app.mail_timeout import TimeoutConnection
+
+    opened = []
+
+    class FakeSMTP:
+        def __init__(self, server, port, timeout=None):
+            opened.append((server, port, timeout))
+
+        def set_debuglevel(self, level):
+            pass
+
+        def starttls(self):
+            pass
+
+        def login(self, username, password):
+            pass
+
+    monkeypatch.setattr(smtplib, "SMTP", FakeSMTP)
+    monkeypatch.setitem(app.config, "MAIL_TIMEOUT", 7)
+    with app.app_context():
+        connection = mail.connect()
+        assert isinstance(connection, TimeoutConnection)
+        connection.configure_host()
+    assert opened[0][2] == 7

@@ -250,6 +250,7 @@ class Config(object):
     MAIL_SERVER                         = os.environ.get("MAIL_SERVER")
     MAIL_PORT                           = int(os.environ.get("MAIL_PORT") or 25)
     MAIL_USE_TLS                        = os.environ.get("MAIL_USE_TLS") is not None
+    MAIL_TIMEOUT                        = int(os.environ.get("MAIL_TIMEOUT") or 30)
     SERVER_EMAIL                        = os.environ.get("SERVER_EMAIL") or os.environ.get("MAIL_USERNAME")
     ADMIN_EMAIL                         = os.environ.get("ADMIN_EMAIL") or os.environ.get("MAIL_USERNAME")
     TODO_EMAIL                          = os.environ.get("TODO_EMAIL") or None

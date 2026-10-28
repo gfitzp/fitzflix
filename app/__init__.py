@@ -15,18 +15,18 @@ from rq.job import Job
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 from config import Config
+from app.mail_timeout import TimeoutMail
 from flask import Flask
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
 from flask_login import LoginManager
-from flask_mail import Mail
 from flask_moment import Moment
 
 db = SQLAlchemy()
 migrate = Migrate(compare_type=True)
 login = LoginManager()
 login.login_view = "auth.login"
-mail = Mail()
+mail = TimeoutMail()
 moment = Moment()
 
 _app = None
