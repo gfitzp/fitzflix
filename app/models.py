@@ -936,6 +936,14 @@ IMPORT_DETAIL_KEYS = frozenset(
 )
 
 
+def _remove_triage_aids(file_id):
+    """Remove the triage inspection aids of a file row."""
+
+    from app.triage import remove_triage_snapshots
+
+    remove_triage_snapshots(file_id)
+
+
 class File(db.Model):
     """A library media file.
 
@@ -1149,6 +1157,11 @@ class File(db.Model):
                 f"Could not delete the local file '{file_to_delete}': "
                 f"{type(error).__name__}: {error}"
             )
+
+            # The aids belong to a row that no longer exists (#579). No
+            # sweep removes them later.
+
+            _remove_triage_aids(file_id)
             return
 
         else:
@@ -1156,9 +1169,7 @@ class File(db.Model):
 
         # The triage snapshots are useful only while the local copy exists.
 
-        from app.triage import remove_triage_snapshots
-
-        remove_triage_snapshots(file_id)
+        _remove_triage_aids(file_id)
 
         # As an option, delete the directory tree, even if the library file
         # itself was already gone. Thus, a record delete also removes its

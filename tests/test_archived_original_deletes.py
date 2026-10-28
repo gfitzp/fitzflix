@@ -205,3 +205,26 @@ def test_the_purge_delete_skips_a_key_with_no_object(app, monkeypatch):
     assert "untouched/Not Yet.mkv" not in s3.markers
     aws_storage.aws_delete("untouched/Here.mkv", only_if_present=True)
     assert [key for key, _ in s3.deletes] == ["untouched/Here.mkv"]
+
+
+def test_a_wedged_share_at_the_unlink_still_removes_the_triage_aids(app, monkeypatch):
+    """The EIO branch returned before the aids went (#579).
+
+    The row is gone after the commit. No sweep removes the aids later."""
+
+    import errno
+    import os
+
+    from app.models import File
+    from app.triage import triage_snapshot_dir
+
+    def wedged(path, *args, **kwargs):
+        raise OSError(errno.EIO, "Input/output error", path)
+
+    with app.app_context():
+        aids = triage_snapshot_dir(579001)
+        os.makedirs(os.path.join(aids, "s1"), exist_ok=True)
+        monkeypatch.setattr(os, "remove", wedged)
+        File.delete_library_copy("Movies/Wedged (1996)/Wedged (1996).mkv", 579001)
+        monkeypatch.undo()
+    assert not os.path.exists(aids)
