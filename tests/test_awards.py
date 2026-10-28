@@ -516,3 +516,51 @@ def test_award_badges_can_wrap(app, admin_client):
     assert award_badges, "no award badge on the page"
     for classes in award_badges:
         assert "text-wrap" in classes, "the badge would overflow instead of wrapping"
+
+
+def test_a_statement_with_and_without_its_date_gives_1_row(app):
+    """The dated row wins over its undated twin (#540).
+
+    The Last Wave showed its AACTA badge 2 times: 1978 and NULL."""
+
+    from app.awards import _award_rows
+
+    bindings = [
+        binding("tt0076257", "Q1", "AACTA Award for Best Sound", "win", 1978),
+        binding("tt0076257", "Q1", "AACTA Award for Best Sound", "win"),
+        # A nomination is a different kind. Its undated row stays.
+        binding("tt0076257", "Q1", "AACTA Award for Best Sound", "nomination"),
+        binding("tt0076257", "Q2", "AACTA Award for Best Cinematography", "win"),
+    ]
+    rows = _award_rows(bindings, {"tt0076257": 7})
+    assert rows == {
+        7: {
+            ("Q1", "AACTA Award for Best Sound", True, 1978),
+            ("Q1", "AACTA Award for Best Sound", False, None),
+            ("Q2", "AACTA Award for Best Cinematography", True, None),
+        }
+    }
+
+
+def test_the_person_merge_keeps_the_dated_row_of_a_pair(app):
+    """The merge inserts the dated row, not the undated twin (#540).
+
+    The set order could put the undated row first. Then the dated row
+    counted as a match, and the merge skipped it. The list here puts the
+    undated row first on purpose."""
+
+    from app import db
+    from app.awards import _merge_person_awards
+    from app.models import MovieAward
+
+    with app.app_context():
+        movie = make_movie("Galaxy Quest", 1999)
+        db.session.commit()
+        entries = [
+            ("Q3", "Saturn Award for Best Special Effects", False, None),
+            ("Q3", "Saturn Award for Best Special Effects", False, 2000),
+        ]
+        films, inserted = _merge_person_awards({movie.id: entries})
+        assert inserted == 1
+        rows = MovieAward.query.filter_by(movie_id=movie.id).all()
+        assert [(row.award_id, row.year) for row in rows] == [("Q3", 2000)]

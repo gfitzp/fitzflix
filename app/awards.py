@@ -125,7 +125,8 @@ def _award_rows(bindings, movie_ids_by_ext):
     same award statement more than one time. For example, a re-import
     can add the statement with and without a date qualifier. The unique
     constraint treats NULL years as distinct. Thus, this function must
-    remove the duplicates.
+    remove the duplicates. _fold_undated removes the undated twin of a
+    dated row.
     """
 
     rows = {}
@@ -138,7 +139,24 @@ def _award_rows(bindings, movie_ids_by_ext):
         if parsed is None:
             continue
         rows.setdefault(movie_id, set()).add(parsed)
-    return rows
+    return {movie_id: _fold_undated(entries) for movie_id, entries in rows.items()}
+
+
+def _fold_undated(entries):
+    """Return the award entries of 1 film without the redundant undated rows (#540).
+
+    A statement with and without its date qualifier gave a dated row and
+    an undated row. The set kept both, because the years differ. Thus,
+    the film showed the badge 2 times. An undated row goes when a dated
+    row has the same award and the same kind (win or nomination). The
+    dated row keeps its own name."""
+
+    dated = {(award_id, win) for award_id, _, win, year in entries if year is not None}
+    return {
+        entry
+        for entry in entries
+        if entry[3] is not None or (entry[0], entry[2]) not in dated
+    }
 
 
 def _replace_awards(batch_movie_ids, rows):
@@ -187,11 +205,19 @@ def _merge_person_awards(rows):
             (row.award_id, row.win), set()
         ).add(row.year)
 
+    # The dated rows go first. An undated row that came first made the
+    # dated row of the same award a match, and the merge skipped it
+    # (#540).
+
     films = set()
     inserted = 0
     for movie_id, entries in rows.items():
         stored = existing.setdefault(movie_id, {})
-        for award_id, name, win, year in entries:
+        ordered = sorted(
+            _fold_undated(set(entries)),
+            key=lambda entry: (entry[3] is None, entry[3] or 0, entry[0], entry[1]),
+        )
+        for award_id, name, win, year in ordered:
             years = stored.get((award_id, win))
             if years is not None and (year in years or None in years or year is None):
                 continue
