@@ -2545,3 +2545,51 @@ def test_an_untick_of_unrated_films_resumes_the_live_extra_round(app, admin_clie
     page = admin_client.get("/game?difficulty=extra&unrated=0").get_data(as_text=True)
     assert f"/game/frame/{token}" in page
     assert "2 points" in page
+
+
+def test_an_expired_token_post_resumes_the_open_round(app, admin_client):
+    """A guess with an expired CSRF token deals no new frame (#549).
+
+    The post fell into the visit branch. It dealt a new frame and
+    counted the lost round. Now it goes back to the same round."""
+
+    from app import db
+    from app.models import UserFrameScore
+
+    with app.app_context():
+        answer = make_movie("Expired Guess Film", 1994)
+        make_movie_file(answer, "Bluray-1080p")
+        for n in range(8):
+            extra = make_movie(f"Expired Distractor {n}", 1980 + n)
+            make_movie_file(extra, "Bluray-1080p")
+        db.session.commit()
+        answer_id = answer.id
+    import re
+
+    seed_frame(app, answer_id)
+    seed_frame(app, answer_id + 1)
+
+    # The deal picks 1 of the 2 frames. The post names the dealt one.
+    first = admin_client.get("/game?difficulty=difficult&unrated=1")
+    token = re.search(r'src="/game/frame/([^"?]+)"', first.get_data(as_text=True))[1]
+    with app.app_context():
+        seen = UserFrameScore.query.filter_by(difficulty="difficult").one().rounds_seen
+
+    response = admin_client.post(
+        "/game",
+        data={
+            "csrf_token": "expired",
+            "token": token,
+            "difficulty": "difficult",
+            "choice": str(answer_id),
+            "guess_submit": "y",
+        },
+    )
+    assert response.status_code == 302
+    assert "difficulty=difficult" in response.headers["Location"]
+    page = admin_client.get(response.headers["Location"]).get_data(as_text=True)
+    assert f'src="/game/frame/{token}"' in page
+    assert "The page was out of date" in page
+    with app.app_context():
+        score = UserFrameScore.query.filter_by(difficulty="difficult").one()
+        assert score.rounds_seen == seen

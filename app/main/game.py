@@ -30,6 +30,7 @@ from difflib import SequenceMatcher
 from flask import (
     abort,
     current_app,
+    flash,
     redirect,
     render_template,
     request,
@@ -1079,6 +1080,25 @@ def _extra_post(form, token, movie):
     )
 
 
+def _resumed_token(resume, difficulty, tokens):
+    """Return the token of an open round of the user to resume, or None (#549).
+
+    Only a round that this user was dealt at this difficulty, and did not
+    grade, resumes. Its frame must still be in the pool. The token goes
+    into tokens. Thus, the options of the round build as for a deal."""
+
+    if not resume:
+        return None
+    key = GRADED_KEY.format(user_id=int(current_user.id), token=resume)
+    if (current_app.redis.get(key) or b"").decode() != f"open:{difficulty}":
+        return None
+    entry = tokens.get(resume) or pool_entries().get(resume)
+    if entry is None:
+        return None
+    tokens[resume] = entry
+    return resume
+
+
 @bp.route("/game", methods=["GET", "POST"])
 @login_required
 def name_that_frame():
@@ -1163,6 +1183,23 @@ def name_that_frame():
             ),
         )
 
+    if request.method == "POST":
+        # The form did not validate: an expired CSRF token of a long-idle
+        # tab, or a session rotation. The post fell into the visit below.
+        # It dealt a new frame and counted the lost round (#549). Now it
+        # goes back to the GET of its difficulty. An open round of the
+        # token resumes there, with no new count.
+        difficulty = (
+            form.difficulty.data if form.difficulty.data in DIFFICULTIES else None
+        )
+        flash("The page was out of date. Make your guess again.", "warning")
+        resume = form.token.data or None
+        if difficulty is None or difficulty == "extra":
+            resume = None
+        return redirect(
+            url_for("main.name_that_frame", difficulty=difficulty, resume=resume)
+        )
+
     # A plain /game visit opens again at the difficulty that the user
     # chose last (requested by Glenn, 2026-08-27). It is a preference.
     # Thus, it has no expiry.
@@ -1213,14 +1250,16 @@ def name_that_frame():
             else:
                 _clear_extra_round()
     else:
-        token = _deal_token(tokens)
-        dealt = token is not None
-        if token:
-            current_app.redis.set(
-                GRADED_KEY.format(user_id=int(current_user.id), token=token),
-                f"open:{difficulty}",
-                ex=GRADED_TTL,
-            )
+        token = _resumed_token(request.args.get("resume"), difficulty, tokens)
+        if token is None:
+            token = _deal_token(tokens)
+            dealt = token is not None
+            if token:
+                current_app.redis.set(
+                    GRADED_KEY.format(user_id=int(current_user.id), token=token),
+                    f"open:{difficulty}",
+                    ex=GRADED_TTL,
+                )
     options = None
     if token and DIFFICULTIES[difficulty] is not None:
         options = _build_options(tokens[token]["movie_id"], difficulty, rated_only)
