@@ -181,6 +181,12 @@ def _refresh_feed(provider_id, feed):
             first_seen = today if previous is not None else None
             if previous is not None:
                 fresh += 1
+        # A film whose film page did not answer has no director. The
+        # match then takes the first search hit. Thus, the film stays
+        # unmatched today, and the next run tries again (#539).
+        if film.get("director_failed"):
+            items.append(_stored_entry(film, None, None, first_seen))
+            continue
         tmdb_id = match_tmdb_id(film["title"], film["year"], film["director"])
         payload = enriched_movie(tmdb_id) if tmdb_id is not None else None
         if tmdb_id is not None and not payload and movie_gone(tmdb_id):

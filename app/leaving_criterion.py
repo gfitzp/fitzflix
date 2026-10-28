@@ -144,13 +144,21 @@ def parse_collection_page(page_html):
     return []
 
 
+# film_page_director returns this when the film page did not answer. A
+# None director means that the page names no director (#539).
+
+DIRECTOR_FETCH_FAILED = object()
+
+
 def film_page_director(url):
     """Return the director that the film page of the Channel names, or
     None.
 
     The cache keeps the answer for 2 months. Thus, a daily refresh reads
     only the pages of the films that are new to a collection. A page
-    that does not answer is not cached."""
+    that does not answer is not cached. Then the function returns
+    DIRECTOR_FETCH_FAILED, not None. A missing director disables the
+    director test of the TMDB match (#539)."""
 
     media = MEDIA_ID_RE.search(url or "")
     if not media:
@@ -169,7 +177,7 @@ def film_page_director(url):
         director = parse_film_info(r.text)["director"]
     except Exception:
         current_app.logger.warning(traceback.format_exc())
-        return None
+        return DIRECTOR_FETCH_FAILED
     cache_json(cache_key, director, MATCH_CACHE_SECONDS)
     return director
 
@@ -182,7 +190,8 @@ def fetch_collection_films(url):
     does not answer. The director of each film comes from its film
     page. This is the generic half of the scraper. The leaving page and
     the newly-added feed (#246, app.newly_added) both read through
-    it."""
+    it. A film whose film page did not answer gets "director_failed".
+    The callers do not match it that day (#539)."""
 
     try:
         r = requests.get(url, timeout=15)
@@ -199,13 +208,11 @@ def fetch_collection_films(url):
         if key in seen:
             continue
         seen.add(key)
-        unique.append(
-            {
-                "title": film["title"],
-                "director": film_page_director(film["url"]),
-                "year": film["year"],
-            }
-        )
+        director = film_page_director(film["url"])
+        entry = {"title": film["title"], "director": director, "year": film["year"]}
+        if director is DIRECTOR_FETCH_FAILED:
+            entry.update(director=None, director_failed=True)
+        unique.append(entry)
     return unique
 
 
@@ -607,6 +614,13 @@ def refresh_leaving_criterion():
         items = []
         failures = []
         for film in films:
+            # Without the director, the matcher takes the first search
+            # hit. A generic title then becomes a different film for 2
+            # months. Thus, the film waits for the next run (#539).
+            if film.get("director_failed"):
+                failures.append("film page")
+                items.append({**film, "tmdb_id": None})
+                continue
             tmdb_id = match_tmdb_id(
                 film["title"], film["year"], film["director"], failures=failures
             )
@@ -634,7 +648,7 @@ def refresh_leaving_criterion():
             f"Leaving-Criterion: stored {len(items)} of {len(films)} films "
             f"departing {departs.isoformat()}"
             + (
-                f" ({len(failures)} TMDB failure(s), retrying tomorrow)"
+                f" ({len(failures)} lookup failure(s), retrying tomorrow)"
                 if failures
                 else ""
             )

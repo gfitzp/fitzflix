@@ -1291,3 +1291,41 @@ def test_the_leaving_shelf_ranks_a_recorded_film_by_its_tile_number(app):
             ]
         finally:
             app.redis.delete(SCORES_KEY.format(user_id=user_id), LEAVING_KEY)
+
+
+def test_a_failed_film_page_skips_the_match_and_retries_tomorrow(app, monkeypatch):
+    """A 429 on a film page must not disable the director guard (#539).
+
+    Without the director, the first search hit would win for 2 months.
+    The film stays unmatched, and the set is incomplete."""
+
+    import app.leaving_criterion as leaving_criterion
+
+    for media_id in ("aaaa1111", "bbbb2222"):
+        app.redis.delete(leaving_criterion.DIRECTOR_KEY.format(media_id=media_id))
+    app.redis.delete(leaving_criterion.LEAVING_KEY)
+
+    def fake_requests_get(url, timeout=None):
+        if "/films/" in url:
+            raise ConnectionError("429 Too Many Requests")
+        return FakeResponse(text=LEAVING_HTML)
+
+    matched = []
+    monkeypatch.setattr(leaving_criterion.requests, "get", fake_requests_get)
+    monkeypatch.setattr(
+        leaving_criterion,
+        "match_tmdb_id",
+        lambda *args, **kwargs: matched.append(args) or 3110,
+    )
+    try:
+        with app.app_context():
+            assert leaving_criterion.refresh_leaving_criterion() is True
+            stored = json.loads(app.redis.get(leaving_criterion.LEAVING_KEY))
+            assert matched == []
+            assert stored["incomplete"] is True
+            assert [item["tmdb_id"] for item in stored["items"]] == [None, None]
+            for media_id in ("aaaa1111", "bbbb2222"):
+                key = leaving_criterion.DIRECTOR_KEY.format(media_id=media_id)
+                assert app.redis.get(key) is None
+    finally:
+        app.redis.delete(leaving_criterion.LEAVING_KEY)

@@ -856,3 +856,37 @@ def test_a_film_with_a_record_ranks_by_the_number_of_its_tile(app):
             ]
         finally:
             app.redis.delete(SCORES_KEY.format(user_id=user_id))
+
+
+def test_a_failed_film_page_leaves_the_arrival_unmatched_for_a_day(app, monkeypatch):
+    """The newly-added feed skips the match of such a film too (#539)."""
+
+    import app.leaving_criterion as leaving_criterion
+    import app.newly_added as newly_added
+
+    for media_id in ("aaaa1111", "bbbb2222"):
+        app.redis.delete(leaving_criterion.DIRECTOR_KEY.format(media_id=media_id))
+
+    def fake_requests_get(url, timeout=None):
+        if "/films/" in url:
+            raise ConnectionError("timed out")
+        return FakeResponse(text=LEAVING_HTML)
+
+    matched = []
+    monkeypatch.setattr(leaving_criterion.requests, "get", fake_requests_get)
+    monkeypatch.setattr(
+        newly_added, "match_tmdb_id", lambda *a, **k: matched.append(a) or 3110
+    )
+    feed = {
+        "url": "https://www.criterionchannel.com/discover/newly-added",
+        "label": "Newly added",
+    }
+    key = newly_added.NEWLY_ADDED_KEY.format(provider_id=999001)
+    try:
+        with app.app_context():
+            newly_added._refresh_feed(999001, feed)
+            stored = json.loads(app.redis.get(key))
+        assert matched == []
+        assert [item["tmdb_id"] for item in stored["items"]] == [None, None]
+    finally:
+        app.redis.delete(key)
