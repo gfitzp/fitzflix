@@ -2276,22 +2276,15 @@ def tv_delete(series_id):
     # file is a ghost.
 
     for file_path, file_id in local_copies:
-        File.delete_library_copy(file_path, file_id, delete_directory_tree=True)
+        _after_commit(
+            File.delete_library_copy, file_path, file_id, delete_directory_tree=True
+        )
 
     # Delete the AWS copies only after the database delete is committed.
     # Thus, a failed commit cannot leave database records whose backups
     # are gone.
 
-    for aws_key in dict.fromkeys(aws_keys):
-        if untouched_key_still_claimed(aws_key):
-            continue
-        enqueue_task(
-            "app.videos.aws_delete",
-            aws_key,
-            # A delete from a page uses the request workers. The handoff
-            # queue can hold long library copies.
-            queue="request",
-        )
+    _queue_archive_deletes(aws_keys)
 
     # The folders themselves. delete_library_copy removes only EMPTY
     # directories. Poster art sits beside the episodes (placed by Fitzflix
@@ -2302,12 +2295,12 @@ def tv_delete(series_id):
     from app.maintenance import clear_leftover_directory
 
     for leftover_dir in sorted(leftover_dirs):
-        clear_leftover_directory(leftover_dir)
+        _after_commit(clear_leftover_directory, leftover_dir)
 
     # The custom poster tree of each deleted file goes too (#463).
 
     for file_id in file_ids:
-        remove_custom_artwork("file", file_id)
+        _after_commit(remove_custom_artwork, "file", file_id)
 
     flash(f"Deleted TV series '{title}' and its files from the database.", "success")
     return redirect(url_for("main.tv_library"))
@@ -2685,6 +2678,41 @@ def _claimed_archive_keys(file):
     return [key for key in dict.fromkeys(keys) if key]
 
 
+def _after_commit(step, *args, **kwargs):
+    """Run 1 cleanup step of a committed delete. Log a failure and go on (follow-up #513).
+
+    The rows are gone. A wedged share that raised in 1 step stopped the
+    loop, and the AWS deletes and the folder cleanup never ran."""
+
+    try:
+        step(*args, **kwargs)
+    except Exception:
+        current_app.logger.warning(
+            f"Delete cleanup step {getattr(step, '__name__', step)} failed: "
+            + traceback.format_exc()
+        )
+
+
+def _queue_archive_deletes(aws_keys):
+    """Queue the S3 delete of each archive key that no surviving row claims.
+
+    The delete reads the head first. A pending move target has no
+    object yet. A plain delete wrote a delete marker there (follow-up
+    #515)."""
+
+    for aws_key in dict.fromkeys(aws_keys):
+        if untouched_key_still_claimed(aws_key):
+            continue
+        enqueue_task(
+            "app.videos.aws_delete",
+            aws_key,
+            only_if_present=True,
+            # A delete from a page uses the request workers. The handoff
+            # queue can hold long library copies.
+            queue="request",
+        )
+
+
 def _delete_file_post(file, form):
     """Delete the file and its record. Return the page to go to next."""
 
@@ -2704,22 +2732,15 @@ def _delete_file_post(file, form):
 
     # The library file goes only after the commit, as in tv_delete (#513).
 
-    File.delete_library_copy(file_path, file_id, delete_directory_tree=True)
+    _after_commit(
+        File.delete_library_copy, file_path, file_id, delete_directory_tree=True
+    )
 
     # Delete the AWS copy only after the database delete is committed.
     # Thus, a failed commit cannot leave a database record whose backup is
     # gone.
 
-    for aws_key in aws_keys:
-        if untouched_key_still_claimed(aws_key):
-            continue
-        enqueue_task(
-            "app.videos.aws_delete",
-            aws_key,
-            # A delete from a page uses the request workers. The handoff
-            # queue can hold long library copies.
-            queue="request",
-        )
+    _queue_archive_deletes(aws_keys)
 
     # Clear the folder if only placed poster art and OS metadata
     # remain. A delete of the last file of a movie used to leave its
@@ -2727,8 +2748,8 @@ def _delete_file_post(file, form):
 
     from app.maintenance import clear_leftover_directory
 
-    clear_leftover_directory(leftover_dir)
-    remove_custom_artwork("file", file_id)
+    _after_commit(clear_leftover_directory, leftover_dir)
+    _after_commit(remove_custom_artwork, "file", file_id)
 
     flash(f"Deleted '{file.basename}' and removed from database.", "success")
 

@@ -173,6 +173,11 @@ def test_a_double_log_watch_writes_1_row(app, admin_client):
         assert response.status_code == 302
     with app.app_context():
         assert UserMovieReview.query.filter_by(movie_id=movie_id).count() == 1
+    # The repeat says so. It does not claim a new log
+    page = admin_client.post(f"/movie/{movie_id}", data=data, follow_redirects=True)
+    assert "some seconds ago. Fitzflix did not log it again." in page.get_data(
+        as_text=True
+    )
 
     # A log with other fields is a new viewing
     admin_client.post(f"/movie/{movie_id}", data={**data, "review": "Third."})
@@ -217,3 +222,40 @@ def test_a_racing_watchlist_add_answers_added(app, admin_client):
         del UserWatchlist.query
     assert response.status_code == 200
     assert response.get_json() == {"on_watchlist": True}
+
+
+def test_a_log_watch_whose_commit_failed_logs_on_the_resubmit(app, admin_client):
+    """A failed commit frees the gate. The resubmit writes the row (follow-up #516).
+
+    The gate key was set before the insert and never released. Thus, a
+    resubmit inside 10 seconds answered "logged" with no row."""
+
+    import pytest
+    from sqlalchemy import event
+    from sqlalchemy.exc import OperationalError
+    from sqlalchemy.orm import Session
+
+    from app.models import UserMovieReview
+
+    movie_id = _movie(app, "Failed Commit Log", 880518)
+    token = _token(admin_client, movie_id)
+    data = {"csrf_token": token, "review_submit": "y", "review": "Once."}
+    failures = []
+
+    def fail_once(session):
+        if not failures:
+            failures.append(1)
+            raise OperationalError("COMMIT", {}, Exception("1020"))
+
+    event.listen(Session, "before_commit", fail_once)
+    try:
+        with pytest.raises(OperationalError):
+            admin_client.post(f"/movie/{movie_id}", data=data)
+    finally:
+        event.remove(Session, "before_commit", fail_once)
+    with app.app_context():
+        assert UserMovieReview.query.filter_by(movie_id=movie_id).count() == 0
+
+    admin_client.post(f"/movie/{movie_id}", data=data)
+    with app.app_context():
+        assert UserMovieReview.query.filter_by(movie_id=movie_id).count() == 1

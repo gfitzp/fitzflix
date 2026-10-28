@@ -110,14 +110,30 @@
 		// The server rows carry the raw UTC stamp in each tooltip. The
 		// poll paints local times, but it skips a table with the same
 		// signature (#547). Thus, the first paint gets the local times
-		// here, from the stamp of the flask-moment span.
+		// from the stamp of the flask-moment span. moment.js loads in the
+		// scripts block, after this content. Thus, the work waits for
+		// DOMContentLoaded. A direct call threw a ReferenceError and
+		// stopped this whole script (follow-up #547).
 
-		document.querySelectorAll("#all-tasks abbr").forEach(function(abbr) {
-			var span = abbr.querySelector("[data-timestamp]");
-			if (span) {
-				abbr.setAttribute("title", moment(span.getAttribute("data-timestamp")).format("LLL"));
+		function localizeFirstPaintTitles() {
+			if (typeof moment === "undefined") return;
+			document.querySelectorAll("#all-tasks abbr").forEach(function(abbr) {
+				var span = abbr.querySelector("[data-timestamp]");
+				if (span) {
+					abbr.setAttribute("title", moment(span.getAttribute("data-timestamp")).format("LLL"));
+				}
+			});
+		}
+
+		function scheduleFirstPaintTitles() {
+			if (document.readyState === "loading") {
+				document.addEventListener("DOMContentLoaded", localizeFirstPaintTitles);
+			} else {
+				localizeFirstPaintTitles();
 			}
-		});
+		}
+
+		scheduleFirstPaintTitles();
 
 		// The table of the queue page has 1 row per running, queued, or
 		// deferred job. Each row carries the pipeline trail of its FILE

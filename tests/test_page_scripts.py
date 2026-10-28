@@ -162,3 +162,40 @@ setImmediate(() => { result = { inFlight: form._postInFlight }; });
         {"name": "quick_rating", "value": "4", "type": "hidden"}
     ]
     assert out["result"]["inFlight"] is False
+
+
+def test_the_queue_tooltips_wait_for_moment(app, admin_client, tmp_path):
+    """The first-paint tooltip pass runs after moment.js loads (follow-up #547).
+
+    moment.js loads in the scripts block, after the content. A direct
+    call threw a ReferenceError with a job on the page. Then the whole
+    script of the queue page stopped. Here, moment is undefined when the
+    script runs, and it is defined before DOMContentLoaded."""
+
+    app.import_queue.enqueue("app.videos.localization_task", "/import/Tip (2001).mkv")
+    body = admin_client.get("/queue").get_data(as_text=True)
+    assert body.index("scheduleFirstPaintTitles();") < body.index("libs/moment.js/")
+    test_code = r"""
+document.readyState = "loading";
+const abbr = {
+    attributes: { title: "2026-10-28 17:00:00+00:00" },
+    querySelector: () => ({ getAttribute: () => "2026-10-28T17:00:00Z" }),
+    setAttribute(name, value) { this.attributes[name] = value; },
+};
+document.querySelectorAll = () => [abbr];
+scheduleFirstPaintTitles();
+const before = abbr.attributes.title;
+globalThis.moment = (stamp) => ({ format: (style) => "local " + stamp + " " + style });
+listeners["DOMContentLoaded"]();
+result = { before, after: abbr.attributes.title };
+"""
+    out = run_page_script(
+        body,
+        ["localizeFirstPaintTitles", "scheduleFirstPaintTitles"],
+        test_code,
+        tmp_path,
+    )
+    assert out["result"] == {
+        "before": "2026-10-28 17:00:00+00:00",
+        "after": "local 2026-10-28T17:00:00Z LLL",
+    }

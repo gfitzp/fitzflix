@@ -474,7 +474,7 @@ def test_a_rename_waits_for_a_dead_library_volume(app, monkeypatch):
 
     import app.videos as videos
     from app.models import File
-    from app.tmdb_refresh import _rename_movie_file
+    from app.tmdb_refresh import VOLUME_DOWN, _rename_movie_file
 
     monkeypatch.setattr(videos, "_dead_volumes", lambda paths: ["/Volumes/Movies"])
     with app.app_context():
@@ -487,7 +487,42 @@ def test_a_rename_waits_for_a_dead_library_volume(app, monkeypatch):
             app.config["LIBRARY_DIR"], "Movies/Dropped Tune (1944)"
         )
 
-        assert _rename_movie_file(file, None) is False
+        assert _rename_movie_file(file, None) == VOLUME_DOWN
         assert not os.path.exists(new_folder)
         db.session.expire_all()
         assert db.session.get(File, file_id).file_path == old_relative
+
+
+def test_a_movie_rename_on_a_dead_volume_books_the_apply_again(app, monkeypatch):
+    """The apply comes back for the file that the volume kept (follow-up #551).
+
+    Before, the title and the untouched name committed. The folder kept
+    the old title until TMDB changed the film again."""
+
+    import app.videos as videos
+    from app.videos import apply_tmdb_refresh
+
+    monkeypatch.setattr(videos, "_dead_volumes", lambda paths: ["/Volumes/Movies"])
+    with app.app_context():
+        movie = make_movie("Volume Tune", 1943)
+        file = make_movie_file(movie, "HDTV-720p")
+        file.untouched_basename = file.basename
+        movie.year = 1944
+        db.session.commit()
+        movie_id, old_path = movie.id, file.file_path
+
+        assert apply_tmdb_refresh("Movies", movie_id) is True
+        retries = [
+            job
+            for queue in (app.sql_queue, app.request_queue, app.maintenance_queue)
+            for job in scheduled_jobs(queue)
+            if job.func_name == "app.videos.apply_tmdb_refresh"
+        ]
+        assert [job.kwargs["volume_waits"] for job in retries] == [1]
+        assert retries[0].kwargs["id"] == movie_id
+        from app.models import File
+
+        db.session.expire_all()
+        assert db.session.get(File, file.id).file_path == old_path
+        for job in retries:
+            job.delete()

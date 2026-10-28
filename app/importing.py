@@ -2167,25 +2167,6 @@ def move_localized_file(
             )
             return False
 
-        if not _hold_title_lock(lock, basename):
-            return defer()
-
-        # Defer if a necessary volume is dead. The task keeps the title lock
-        # for the retry.
-
-        dead = _dead_volumes(
-            [
-                output_directory,
-                os.path.dirname(hidden_output_file),
-                os.path.dirname(source_path),
-            ]
-        )
-        if dead:
-            return retry(
-                timedelta(minutes=5),
-                f"Volumes unavailable ({', '.join(dead)}) for the library copy",
-            )
-
         destination_hidden = hidden(os.path.join(output_directory, basename))
 
         def wait_for_space(needed, shortfall, directory=None):
@@ -2215,29 +2196,64 @@ def move_localized_file(
                 SPACE_WAIT, "waits for space", level=None, space_waits=space_waits + 1
             )
 
-        # A copy to another volume needs space there. Check before the
-        # inspection and the copy. Thus, a wait repeats neither.
-
-        # A stat error skips the check. Then the copy meets the same
-        # error, and the existing error handling applies.
+        # The lock defer, the volume retry and the space wait book a job.
+        # A Redis fault there failed the job. Then the lock, the hidden
+        # output and the reservation stayed (follow-up #521). They get the
+        # handler of the copy.
 
         try:
-            crosses_volumes = hidden_output_file != destination_hidden and (
-                _crosses_volumes(hidden_output_file, output_directory)
+            if not _hold_title_lock(lock, basename):
+                return defer()
+
+            # Defer if a necessary volume is dead. The task keeps the title lock
+            # for the retry.
+
+            dead = _dead_volumes(
+                [
+                    output_directory,
+                    os.path.dirname(hidden_output_file),
+                    os.path.dirname(source_path),
+                ]
             )
-            needed = os.path.getsize(hidden_output_file) + SPACE_RESERVE
-        except OSError:
-            crosses_volumes = False
-        if crosses_volumes:
-            shortfall = library_space_shortfall(output_directory, needed)
-            if shortfall:
-                return wait_for_space(needed, shortfall)
-        if space_waits:
-            clear_space_wait(os.path.basename(source_path))
-            current_app.logger.info(
-                f"'{basename}' The space is available again after "
-                f"{space_waits} wait(s). Copying"
+            if dead:
+                return retry(
+                    timedelta(minutes=5),
+                    f"Volumes unavailable ({', '.join(dead)}) for the library copy",
+                )
+
+            # A copy to another volume needs space there. Check before the
+            # inspection and the copy. Thus, a wait repeats neither.
+
+            # A stat error skips the check. Then the copy meets the same
+            # error, and the existing error handling applies.
+
+            try:
+                crosses_volumes = hidden_output_file != destination_hidden and (
+                    _crosses_volumes(hidden_output_file, output_directory)
+                )
+                needed = os.path.getsize(hidden_output_file) + SPACE_RESERVE
+            except OSError:
+                crosses_volumes = False
+            if crosses_volumes:
+                shortfall = library_space_shortfall(output_directory, needed)
+                if shortfall:
+                    return wait_for_space(needed, shortfall)
+            if space_waits:
+                clear_space_wait(os.path.basename(source_path))
+                current_app.logger.info(
+                    f"'{basename}' The space is available again after "
+                    f"{space_waits} wait(s). Copying"
+                )
+        except Exception:
+            # HandoffFailed, or a Redis fault of the lock or of the space
+            # wait marks. The source stays for the hourly sweep.
+            abandon_handoff(
+                source_path,
+                lock,
+                hidden_output_file,
+                pending_archive=pending_archive_of(file_details),
             )
+            return False
 
         staged_output = None
         try:

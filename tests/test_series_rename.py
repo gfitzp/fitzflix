@@ -675,3 +675,38 @@ def test_a_rename_never_replaces_a_file_at_the_target(app):
         assert retries
         for job in retries:
             job.delete()
+
+
+def test_a_share_that_drops_inside_the_loop_books_the_rename_again(app, monkeypatch):
+    """A failed move in the loop requeues the rename (follow-up #551).
+
+    The OSError of the move failed the job before the dead-volume branch."""
+
+    import errno
+
+    import app.videos as videos
+    from tests.test_scheduling import scheduled_jobs
+
+    def dropped(src, dst, *args, **kwargs):
+        raise OSError(errno.ENXIO, "Device not configured", dst)
+
+    monkeypatch.setattr(videos, "_rename_with_retries", dropped)
+    with app.app_context():
+        series = make_tv_series("Batman", tmdb_id=2287)
+        one = make_tv_file(series, 1, 1, "Bluray-1080p")
+        db.session.commit()
+        _materialize(app, one)
+        series_id, old_path = series.id, one.file_path
+
+        assert rename_tv_series_task(series_id, "Batman (1966)") is False
+        db.session.expire_all()
+        assert db.session.get(File, one.id).file_path == old_path
+        retries = [
+            job
+            for queue in (app.file_queue, app.request_queue, app.maintenance_queue)
+            for job in scheduled_jobs(queue)
+            if job.func_name == "app.series_rename.rename_tv_series_task"
+        ]
+        assert retries
+        for job in retries:
+            job.delete()

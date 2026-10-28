@@ -526,8 +526,9 @@ def apply_verdict(post, target, policy):
     # this user and film makes this a repeat viewing.
 
     is_review = bool(rating is not None or text)
-    if not quick_present and _repeated_log(user_id, target.id, post):
-        return Outcome("logged", rating, is_review)
+    gate = None if quick_present else _repeat_log_key(user_id, target.id, post)
+    if gate is not None and not _claim_log_gate(gate):
+        return Outcome("repeated", rating, is_review)
     rewatch = (
         db.session.query(UserMovieReview.id)
         .filter_by(user_id=user_id, movie_id=target.id)
@@ -548,32 +549,56 @@ def apply_verdict(post, target, policy):
     )
     clear_watchlist(user_id, target.id)
     clear_not_interested(user_id, target.id)
-    db.session.commit()
+    try:
+        db.session.commit()
+    except BaseException:
+        # No row is written. A resubmit must log, not read as a repeat
+        # (follow-up #516).
+        db.session.rollback()
+        _release_log_gate(gate)
+        raise
     if rating is not None:
         _steer_and_recompute(user_id, target, rating, steer)
     return Outcome("logged", rating, is_review)
 
 
-def _repeated_log(user_id, movie_id, post):
-    """Return True if the same form log of a film arrived some seconds ago.
+def _repeat_log_key(user_id, movie_id, post):
+    """Return the Redis key of the gate of 1 form log of a film (#516).
 
     2 Log Watch posts in flight (a double click without the script, 2
-    tabs) wrote 2 diary rows. The second row had the rewatch flag (#516).
-    The SET NX of Redis is atomic. Thus, only the first post writes. A
-    ladder tap does not come here. A repeated tap removes the rating on
-    purpose. If Redis fails, the post logs as before."""
+    tabs) wrote 2 diary rows. The second row had the rewatch flag. The
+    key holds the fields of the log. A ladder tap does not use it. A
+    repeated tap removes the rating on purpose."""
 
     digest = hashlib.sha1(
         repr((post.rating, (post.review_text or "").strip(), post.watched_date)).encode(
             "utf-8"
         )
     ).hexdigest()[:16]
-    key = REPEAT_LOG_KEY.format(user_id=int(user_id), movie_id=movie_id, digest=digest)
+    return REPEAT_LOG_KEY.format(user_id=int(user_id), movie_id=movie_id, digest=digest)
+
+
+def _claim_log_gate(key):
+    """Return True if this post is the first form log with these fields.
+
+    The SET NX of Redis is atomic. Thus, only the first post writes. If
+    Redis fails, the post logs as before."""
+
     try:
-        first = current_app.redis.set(key, 1, nx=True, ex=REPEAT_LOG_SECONDS)
+        return bool(current_app.redis.set(key, 1, nx=True, ex=REPEAT_LOG_SECONDS))
     except Exception:
-        return False
-    return not first
+        return True
+
+
+def _release_log_gate(key):
+    """Remove the gate of a form log whose row did not commit (follow-up #516)."""
+
+    if key is None:
+        return
+    try:
+        current_app.redis.delete(key)
+    except Exception:
+        pass
 
 
 def _apply_flag(user_id, target, allow_unflag, steer_flag):
@@ -628,6 +653,12 @@ VERDICT_MESSAGES = {
     "rated": ("Rated '{name}' {rating:g} out of 5 stars", "success"),
     "reviewed": ("Logged review for '{name}'", "success"),
     "watched": ("Logged '{name}' in your history", "success"),
+    # A second identical Log Watch in REPEAT_LOG_SECONDS is the same
+    # submission. It writes nothing (#516).
+    "repeated": (
+        "You logged '{name}' some seconds ago. Fitzflix did not log it again.",
+        "info",
+    ),
     "watched_undated": (
         "Marked '{name}' as seen. Add a date to show it in your history.",
         "success",

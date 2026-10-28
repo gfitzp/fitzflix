@@ -148,3 +148,60 @@ def test_a_series_purge_deletes_the_converted_keys(app, admin_client):
         "transcoded/Converted Show S01E01.mkv",
         "untouched/Converted Show S01E01.mkv",
     ]
+
+
+def test_a_wedged_share_at_the_unlink_still_queues_the_archive_deletes(
+    app, admin_client, monkeypatch
+):
+    """An EIO at the unlink after the commit is logged (follow-up #513).
+
+    It answered 500, and the AWS deletes and the folder cleanup never ran."""
+
+    import errno
+    import os
+
+    from tests.factories import make_movie_file
+
+    with app.app_context():
+        movie = make_movie("Wedged Purge", 1996, tmdb_id=513001)
+        file = make_movie_file(movie, "DVD")
+        file.aws_key = "untouched/Wedged Purge (1996).mkv"
+        db.session.commit()
+        file_id = file.id
+        library = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
+    os.makedirs(os.path.dirname(library), exist_ok=True)
+    with open(library, "wb") as handle:
+        handle.write(b"video")
+    real_remove = os.remove
+
+    def wedged(path, *args, **kwargs):
+        if path == library:
+            raise OSError(errno.EIO, "Input/output error", path)
+        return real_remove(path, *args, **kwargs)
+
+    token = csrf_token_from(admin_client.get(f"/file/{file_id}").get_data(as_text=True))
+    monkeypatch.setattr(os, "remove", wedged)
+    response = admin_client.post(
+        f"/file/{file_id}",
+        data={"csrf_token": token, "delete_submit": "Delete File"},
+    )
+    monkeypatch.undo()
+    assert response.status_code == 302
+    assert _deletes(app) == ["untouched/Wedged Purge (1996).mkv"]
+    real_remove(library)
+
+
+def test_the_purge_delete_skips_a_key_with_no_object(app, monkeypatch):
+    """A pending move target has no object. No delete marker goes there (follow-up #515)."""
+
+    from app import aws_storage
+    from tests.fakes import ArchiveS3
+
+    s3 = ArchiveS3(objects={"untouched/Here.mkv": {"ContentLength": 1}})
+    monkeypatch.setattr(aws_storage, "aws_s3_client", lambda *a, **k: s3)
+    monkeypatch.setitem(app.config, "AWS_BUCKET", "test-bucket")
+    aws_storage.aws_delete("untouched/Not Yet.mkv", only_if_present=True)
+    assert s3.deletes == []
+    assert "untouched/Not Yet.mkv" not in s3.markers
+    aws_storage.aws_delete("untouched/Here.mkv", only_if_present=True)
+    assert [key for key, _ in s3.deletes] == ["untouched/Here.mkv"]

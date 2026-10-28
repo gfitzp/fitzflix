@@ -741,28 +741,50 @@ def test_a_track_edit_during_the_download_refuses_the_placement(app, monkeypatch
         os.remove(library_path)
 
 
-def test_a_refused_placement_discards_the_download(app, monkeypatch):
+def test_a_deferred_placement_keeps_the_finished_download(app, monkeypatch):
+    """A volume wait at the placement keeps the download (follow-up #533).
+
+    The defer discarded the finished file and its sidecar. Each of up to
+    288 waits downloaded the whole object again. The next run places the
+    kept file with no new download."""
+
     import app.videos as videos
     from app import aws_storage
 
-    s3 = S3(head={"ContentLength": 3})
+    s3 = S3(head={"ContentLength": 3, "ETag": '"v1"'})
     monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kwargs: s3)
     monkeypatch.setattr(aws_storage, "aws_sqs_client", lambda: None)
+    library = os.path.join(app.config["LIBRARY_DIR"], "Movies/y.mkv")
+    staged = os.path.join(app.config["IMPORT_DIR"], ".restore-modified-y.mkv")
 
     def refuse():
         raise aws_storage.PlacementDeferred(["/Volumes/Movies"])
 
-    with app.app_context():
-        with pytest.raises(aws_storage.PlacementDeferred):
-            videos.aws_download(
-                "modified/y.mkv",
-                "y.mkv",
-                place_at=os.path.join(app.config["LIBRARY_DIR"], "Movies/y.mkv"),
-                before_place=refuse,
+    try:
+        with app.app_context():
+            with pytest.raises(aws_storage.PlacementDeferred):
+                videos.aws_download(
+                    "modified/y.mkv", "y.mkv", place_at=library, before_place=refuse
+                )
+            assert s3.downloads == ["modified/y.mkv"]
+            assert os.path.exists(staged)
+            assert not os.path.exists(library)
+
+            os.makedirs(os.path.dirname(library), exist_ok=True)
+            assert (
+                videos.aws_download(
+                    "modified/y.mkv",
+                    "y.mkv",
+                    place_at=library,
+                    before_place=lambda: None,
+                )
+                == aws_storage.DOWNLOAD_COMPLETE
             )
         assert s3.downloads == ["modified/y.mkv"]
-        staged = os.path.join(app.config["IMPORT_DIR"], ".restore-modified-y.mkv")
+        assert open(library, "rb").read() == b"s3!"
         assert not os.path.exists(staged)
-        assert not os.path.exists(
-            os.path.join(app.config["LIBRARY_DIR"], "Movies/y.mkv")
-        )
+        assert not os.path.exists(f"{staged}.etag")
+    finally:
+        for path in (staged, f"{staged}.etag", library):
+            if os.path.exists(path):
+                os.remove(path)

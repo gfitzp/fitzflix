@@ -1140,6 +1140,17 @@ class File(db.Model):
         except FileNotFoundError:
             pass
 
+        except OSError as error:
+            # A wedged share answers EIO, ENXIO or EACCES. The rows are
+            # committed already. Thus, the caller must go on with its
+            # AWS deletes and its folder cleanup (follow-up #513). The
+            # warning names the file that stays on the disk.
+            current_app.logger.warning(
+                f"Could not delete the local file '{file_to_delete}': "
+                f"{type(error).__name__}: {error}"
+            )
+            return
+
         else:
             current_app.logger.info(f"Deleted local file '{file_to_delete}'")
 

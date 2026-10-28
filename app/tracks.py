@@ -1152,9 +1152,6 @@ def mkvpropedit_unlocked(
 
             if localization_arguments:
 
-                # mkvpropedit writes the file in place (#517).
-
-                flag_archive_before_rewrite(file_id)
                 mkvpropedit_task = subprocess.Popen(
                     [
                         current_app.config["MKVPROPEDIT_BIN"],
@@ -1176,6 +1173,13 @@ def mkvpropedit_unlocked(
                     raise
 
                 wait_for_subprocess(mkvpropedit_task, ok_returncodes=(0, 1))
+
+                # mkvpropedit writes the file in place (#517). The flag goes
+                # on after the tool reports success (follow-up #517). A
+                # tool that failed before it wrote left a stale row. That
+                # row refused a direct restore and cost an upload.
+
+                flag_archive_before_rewrite(file_id)
 
                 # If the default audio track is not the first track, make a
                 # new file with the default audio track first. Then Plex

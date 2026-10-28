@@ -297,3 +297,38 @@ def test_the_scan_marks_the_archive_stale_before_its_remux(app, monkeypatch):
         with pytest.raises(OSError):
             tracks.extract_track_metadata("/nowhere.mkv", file_id)
         assert db.session.get(File, file_id).aws_stale
+
+
+def test_a_failed_mkvpropedit_leaves_the_archive_current(
+    app, monkeypatch, three_audio_mkv, tmp_path
+):
+    """The stale flag waits for the success of the tool (follow-up #517).
+
+    The flag was committed before mkvpropedit started. A tool that exited
+    without a write left a stale row. That row refused a direct restore."""
+
+    from app import db
+    from app.models import File
+    import app.tracks as tracks
+    from tests.factories import make_movie, make_movie_file
+
+    broken = tmp_path / "mkvpropedit"
+    broken.write_text("#!/bin/sh\necho 'Error: the file is locked'\nexit 2\n")
+    broken.chmod(0o755)
+    monkeypatch.setitem(app.config, "MKVPROPEDIT_BIN", str(broken))
+    monkeypatch.setitem(app.config, "ARCHIVE_ORIGINAL_MEDIA", True)
+    with app.app_context():
+        file = make_movie_file(make_movie("Failed Propedit", 2021), "Bluray-1080p")
+        db.session.commit()
+        file_id = file.id
+        library_path = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
+    os.makedirs(os.path.dirname(library_path), exist_ok=True)
+    shutil.copy(three_audio_mkv, library_path)
+
+    with app.app_context():
+        try:
+            tracks.mkvpropedit_unlocked(file_id, 2, None, None)
+        except Exception:
+            pass
+        db.session.expire_all()
+        assert not db.session.get(File, file_id).aws_stale

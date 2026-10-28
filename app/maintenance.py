@@ -368,17 +368,53 @@ def backup_health(config):
     return {"ok": age_hours <= BACKUP_STALE_HOURS, "last": last}
 
 
-def observer_health(connection, supervised=True):
+# The watcher count of the last supervisor status that answered. A
+# timeout of supervisorctl keeps it (follow-up #531).
+
+EXPECTED_WATCHERS_KEY = "fitzflix:health:expected-watchers"
+
+
+def expected_watchers(connection, config):
+    """Return the number of import-directory watchers that should be alive.
+
+    Under supervisor, it is the numprocs of the import program. A manual
+    layout runs plain rq workers with no observer (#531). Then it is 0.
+    A supervisorctl that timed out or answered nothing is not a manual
+    layout. Then the count of the last answer stays, with a warning
+    (follow-up #531). Before, a supervisor fault hid a blind pipeline."""
+
+    status = _supervisor_status(config)
+    if status is not None:
+        count = PROGRAM_COUNTS.get("fitzflix-import", 1)
+        try:
+            connection.set(EXPECTED_WATCHERS_KEY, count)
+        except Exception:
+            pass
+        return count
+    try:
+        remembered = connection.get(EXPECTED_WATCHERS_KEY)
+    except Exception:
+        remembered = None
+    if remembered is None:
+        return 0
+    current_app.logger.warning(
+        "The supervisor status is not available. The health check expects "
+        "the import-directory watchers of the last status"
+    )
+    return int(remembered)
+
+
+def observer_health(connection, expected=None):
     """Count the processes with a live import-directory observer heartbeat.
 
     Only the import-program workers watch. supervisor.py limits the
-    observer to them. Thus, the expected count is the numprocs of that
-    program. A manual layout (supervised False) runs plain rq workers
-    with no observer (#531). Then no count is expected.
+    observer to them. Thus, the default expected count is the numprocs
+    of that program. The callers give expected_watchers.
     """
 
     watchers = sum(1 for _ in connection.scan_iter(f"{OBSERVER_KEY_PREFIX}*"))
-    expected = PROGRAM_COUNTS.get("fitzflix-import", 1) if supervised else 0
+    if expected is None:
+        expected = PROGRAM_COUNTS.get("fitzflix-import", 1)
     return {"ok": watchers >= expected, "watchers": watchers, "expected": expected}
 
 
@@ -778,7 +814,7 @@ def system_health(flask_app):
         "missing_mounts": missing_volumes(flask_app.config),
         "backup": backup_health(flask_app.config),
         "observer": observer_health(
-            flask_app.redis, _supervisor_status(flask_app.config) is not None
+            flask_app.redis, expected_watchers(flask_app.redis, flask_app.config)
         ),
         "scheduler": scheduler_health(flask_app.redis),
         "probes": probe_health(flask_app.redis),
@@ -2069,7 +2105,7 @@ HEALTH_COLLECTORS = (
     (
         "observers",
         lambda config, redis, seen: observer_health(
-            redis, _supervisor_status(config) is not None
+            redis, expected_watchers(redis, config)
         ),
         _observer_issues,
     ),

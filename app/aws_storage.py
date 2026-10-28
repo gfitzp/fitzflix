@@ -2601,14 +2601,33 @@ def rearchive_untouched_object(file_id, new_key=None, path_retries=0):
         return moving
 
 
-def aws_delete(key):
-    """Delete an object from AWS S3 storage."""
+def aws_delete(key, only_if_present=False):
+    """Delete an object from AWS S3 storage.
+
+    only_if_present reads the head first. A key with no object is left
+    alone (follow-up #515). The purge of a pending move named its target.
+    On the versioned bucket, a plain delete wrote a delete marker at a
+    key that did not exist yet."""
 
     # This needs app.app_context(). Thus, the web application can call it
     # directly.
     with app.app_context():
         current_app.logger.info(f"Preparing to delete '{key}' from AWS...")
         s3_client = aws_s3_client()
+        if only_if_present:
+            try:
+                s3_client.head_object(Bucket=current_app.config["AWS_BUCKET"], Key=key)
+            except botocore.exceptions.ClientError as error:
+                if str(error.response.get("Error", {}).get("Code")) in (
+                    "404",
+                    "NoSuchKey",
+                    "NotFound",
+                ):
+                    current_app.logger.info(
+                        f"'{key}' has no object in AWS S3 storage. Nothing to delete"
+                    )
+                    return None
+                raise
         s3_layout.delete(s3_client, current_app.config["AWS_BUCKET"], key)
         current_app.logger.info(f"'{key}' deleted from AWS S3 storage")
         return datetime.now(timezone.utc)
@@ -2951,6 +2970,23 @@ def _remove_partial_etag(destination):
         )
 
 
+def _finished_download(destination, progress):
+    """Return True if destination holds the whole object that progress describes.
+
+    The size and the ETag of its sidecar must match the head of the
+    object. A newer archive of the key then downloads again."""
+
+    try:
+        size = os.path.getsize(destination)
+    except OSError:
+        return False
+    return bool(
+        progress.etag
+        and size == progress.size
+        and _partial_etag(destination) == progress.etag
+    )
+
+
 def _discard_partial(destination):
     """Remove a partial download. The import scan skips dotfiles, so an
     abandoned partial would stay invisible in the import directory."""
@@ -3246,7 +3282,15 @@ def aws_download(
     while retry > 0:
         try:
             progress = DownloadProgressPercentage(s3_client, bucket, key, basename)
-            if via_cdn:
+            if place_at and _finished_download(destination, progress):
+                # A placement that waited for a volume kept its finished
+                # download (follow-up #533). Each wait downloaded the
+                # whole object again.
+                current_app.logger.info(
+                    f"'{basename}' The finished download waits in staging. "
+                    f"It is not downloaded again"
+                )
+            elif via_cdn:
                 cdn_download(
                     key,
                     destination,
@@ -3377,10 +3421,16 @@ def aws_download(
                 if before_place:
                     try:
                         before_place()
+                    except PlacementDeferred:
+                        # The download is complete. The sidecar marks it
+                        # for the next run and for the orphan sweep.
+                        _write_partial_etag(destination, progress.etag, progress.size)
+                        raise
                     except BaseException:
                         _discard_partial(destination)
                         raise
                 place_in_library(destination, place_at, progress.size, basename)
+                _remove_partial_etag(destination)
             elif not place_restored_import(destination, basename):
                 enqueue_task(
                     "app.aws_storage.place_restored_import_task",

@@ -864,3 +864,25 @@ def test_the_error_mail_starts_tls_without_credentials(app, monkeypatch):
     assert "starttls" in names
     assert "login" not in names
     assert ("send", "Fitzflix Failure") in calls
+
+
+def test_a_supervisor_timeout_keeps_the_expected_watchers(
+    app, health_env, monkeypatch, caplog
+):
+    """A supervisorctl fault is no manual layout (follow-up #531).
+
+    None from the status made the expected count 0. Then a blind import
+    pipeline hid behind a supervisor hiccup."""
+
+    monkeypatch.setattr(
+        maintenance,
+        "_supervisor_status",
+        lambda config: {"fitzflix:fitzflix-import_00": ("RUNNING", 1)},
+    )
+    health_env.run()
+    health_env.redis.delete("fitzflix:observer:test-1", "fitzflix:observer:test-2")
+    monkeypatch.setattr(maintenance, "_supervisor_status", lambda config: None)
+    with caplog.at_level("WARNING"):
+        health_env.run()
+    assert b"observer" in health_env.redis.hgetall("fitzflix:health:issues")
+    assert "supervisor status is not available" in caplog.text

@@ -375,8 +375,18 @@ def _move_series(series, new_title):
                 )
                 _requeue_rename(series, new_title, "waits for a duplicate file")
                 return False
-            makedirs_on_mounted_volume(os.path.dirname(dst))
-            _rename_with_retries(src, dst)
+            try:
+                makedirs_on_mounted_volume(os.path.dirname(dst))
+                _rename_with_retries(src, dst)
+            except OSError as error:
+                # The share dropped inside the loop (follow-up #551). The
+                # rows renamed so far are committed. The retry resumes.
+                current_app.logger.warning(
+                    f"Series rename: {file.file_path!r} not moved: "
+                    f"{type(error).__name__}: {error}"
+                )
+                _requeue_rename(series, new_title, "waits for the TV library volume")
+                return False
             # The episode thumb goes with its video (#469)
             move_episode_thumb(src, dst)
             old_dirs.add(os.path.dirname(src))

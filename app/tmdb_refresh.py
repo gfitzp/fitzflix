@@ -21,7 +21,7 @@ import shutil
 import traceback
 import zlib
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from flask import current_app
 from markupsafe import escape
@@ -504,6 +504,14 @@ def _follow_rename_in_radarr(old_tmdb_id, new_tmdb_id, new_folder):
     )
 
 
+# _rename_movie_file gives this when the library volume does not answer.
+# The apply then books itself again (follow-up #551). Before, the folder
+# kept the old title until TMDB changed the film again.
+
+VOLUME_DOWN = "volume-down"
+MAX_RENAME_VOLUME_WAITS = 72
+
+
 def _rename_movie_file(f, tmdb_id):
     """Move 1 library file of a refreshed movie to the name of its new details.
 
@@ -600,7 +608,7 @@ def _rename_movie_file(f, tmdb_id):
             f"'{f.basename}' (file #{f.id}) not renamed to '{new_relative}': "
             f"the library volume is not available ({e})"
         )
-        return False
+        return VOLUME_DOWN
 
     # Database first, disk second. The path update flushes
     # inside a savepoint. Thus, a unique-index conflict
@@ -710,8 +718,46 @@ def _rename_movie_file(f, tmdb_id):
     return renamed
 
 
+def _requeue_for_the_volume(movie_id, tmdb_id, tmdb_payload, description, waits):
+    """Book the apply again for a file that the dead volume kept from its rename.
+
+    The retry renames the files that kept their old names. It stops
+    after MAX_RENAME_VOLUME_WAITS (6 hours)."""
+
+    if waits >= MAX_RENAME_VOLUME_WAITS:
+        current_app.logger.error(
+            f"Movie id {movie_id}: the library volume was not available for "
+            f"the rename after {waits} waits. Refresh the TMDB data again later"
+        )
+        return
+    try:
+        requeue(
+            "app.videos.apply_tmdb_refresh",
+            key=f"{MOVIES}:{movie_id}:volume",
+            delay=timedelta(minutes=5),
+            reason="The library volume is not available for the rename",
+            counters={"volume_waits": waits + 1},
+            kwargs={
+                "library": MOVIES,
+                "id": movie_id,
+                "tmdb_id": tmdb_id,
+                "tmdb_payload": tmdb_payload,
+            },
+            description=description,
+        )
+    except Exception:
+        current_app.logger.error(traceback.format_exc())
+
+
 def _apply_movie_refresh(
-    movie, description, tmdb_id, tmdb_info, tmdb_payload, notify_if_missing, locks
+    movie,
+    description,
+    tmdb_id,
+    tmdb_info,
+    tmdb_payload,
+    notify_if_missing,
+    locks,
+    volume_waits=0,
 ):
     """Apply a movie payload: merge, rename the files, and move the rows.
 
@@ -834,9 +880,19 @@ def _apply_movie_refresh(
 
     files = File.query.filter_by(movie_id=updated_movie_id).all()
     renamed = False
+    volume_down = False
 
     for f in files:
-        renamed = _rename_movie_file(f, tmdb_id) or renamed
+        outcome = _rename_movie_file(f, tmdb_id)
+        if outcome == VOLUME_DOWN:
+            volume_down = True
+        else:
+            renamed = outcome or renamed
+
+    if volume_down:
+        _requeue_for_the_volume(
+            updated_movie_id, tmdb_id, tmdb_payload, description, volume_waits
+        )
 
     # Request the archive moves LAST, after the path commit above. The
     # move job does not need the library file. It copies the S3 object
@@ -887,6 +943,7 @@ def apply_tmdb_refresh(
     tmdb_payload=None,
     notify_if_missing=False,
     rematch=False,
+    volume_waits=0,
 ):
     """Run the database phase of a TMDB refresh.
 
@@ -935,6 +992,7 @@ def apply_tmdb_refresh(
                     tmdb_payload,
                     notify_if_missing,
                     locks,
+                    volume_waits,
                 ):
                     return False
             else:

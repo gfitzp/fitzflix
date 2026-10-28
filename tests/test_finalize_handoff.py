@@ -316,3 +316,40 @@ def test_a_failed_space_wait_inside_the_copy_keeps_the_source(
         for path in (source, hidden):
             if os.path.exists(path):
                 os.remove(path)
+
+
+def test_a_failed_dead_volume_retry_of_the_move_releases_the_lock(
+    app, tmp_path, monkeypatch
+):
+    """The move books its volume retry inside the hand-off handler (follow-up #521).
+
+    A Redis fault there failed the job. The title lock, the hidden output
+    and the reservation stayed."""
+
+    import app.importing as importing
+    import app.videos as videos
+
+    hidden = tmp_path / ".Move Retry (2021) - [DVD].mkv"
+    hidden.write_bytes(b"localized output")
+    source = tmp_path / "Move Retry (2021) - [DVD].mkv"
+    source.write_bytes(b"source")
+
+    def refuse(*args, **kwargs):
+        raise ConnectionError("Redis is away")
+
+    monkeypatch.setattr(videos, "_dead_volumes", lambda paths: ["/Volumes/Movies"])
+    monkeypatch.setattr(importing, "requeue", refuse)
+    unlocked = _lock_watch(app, monkeypatch)
+    with app.app_context():
+        lock = app.lock_manager.lock('{"title": "Move Retry"}', 60000)
+        result = videos.move_localized_file(
+            str(source),
+            {"basename": source.name, "dirname": "Movies/Move Retry (2021)"},
+            lock,
+            str(hidden),
+        )
+    assert result is False
+    assert unlocked == [lock]
+    assert app.redis.get(lock.resource) is None
+    assert source.exists()
+    assert not hidden.exists()
