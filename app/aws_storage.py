@@ -3374,6 +3374,17 @@ def aws_restore(key, tier="Standard", record_request=True):
                     f"'{key}' is already in process of being restored"
                 )
 
+                # An archive move can have asked for this restore with no
+                # record. A restore that a person asks for needs the
+                # record, or the notification queues only the move, and
+                # the download never occurs (#532). An existing time stays.
+
+                if (
+                    record_request
+                    and restore_requested_at(current_app.redis, key) is None
+                ):
+                    record_restore_request(current_app.redis, key)
+
             else:
                 current_app.logger.error(e)
                 raise

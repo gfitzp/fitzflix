@@ -592,3 +592,47 @@ def test_two_restores_with_one_untouched_name_never_overwrite(app, monkeypatch):
             for path in (target, staged):
                 if os.path.exists(path):
                     os.remove(path)
+
+
+def test_a_restore_already_in_progress_still_records_the_request(app, monkeypatch):
+    """An archive move asked first, with no record (#532).
+
+    A later restore from a page gets RestoreAlreadyInProgress. It must
+    record its time, or the download never occurs. An existing time
+    stays."""
+
+    from datetime import datetime, timezone
+
+    import botocore.exceptions
+
+    from app import aws_storage
+
+    class InProgressS3:
+        def list_objects(self, **kwargs):
+            return {
+                "Contents": [{"Key": kwargs["Prefix"], "StorageClass": "DEEP_ARCHIVE"}]
+            }
+
+        def head_object(self, **kwargs):
+            return {}
+
+        def restore_object(self, **kwargs):
+            raise botocore.exceptions.ClientError(
+                {"Error": {"Code": "RestoreAlreadyInProgress"}}, "RestoreObject"
+            )
+
+    monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kwargs: InProgressS3())
+    key = "untouched/In Progress (1951) - [DVD].mkv"
+    with app.app_context():
+        app.redis.delete(aws_storage.RESTORE_REQUESTED_KEY.format(key))
+        aws_storage.aws_restore(key, record_request=False)
+        assert aws_storage.restore_requested_at(app.redis, key) is None
+
+        aws_storage.aws_restore(key)
+        first = aws_storage.restore_requested_at(app.redis, key)
+        assert first is not None
+
+        earlier = datetime(2026, 10, 20, 12, 0, tzinfo=timezone.utc)
+        aws_storage.record_restore_request(app.redis, key, earlier)
+        aws_storage.aws_restore(key)
+        assert aws_storage.restore_requested_at(app.redis, key) == earlier
