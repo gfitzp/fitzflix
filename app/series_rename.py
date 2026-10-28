@@ -101,9 +101,12 @@ def _filesystem_safe(title):
     A title with characters that a filesystem refuses is not safe. The
     rename task refuses it. Accented letters are safe. The TV import
     keeps them in the show folder and the episode names, for example
-    "Les Misérables (2018)" (#408)."""
+    "Les Misérables (2018)" (#408). The test reads the folder that the
+    task writes (_folder_title), with no period at the end (#552). Thus,
+    "The Venture Bros." is safe."""
 
-    return sanitize_filename(title) == title
+    folder = _folder_title(title)
+    return bool(folder) and sanitize_filename(folder) == folder
 
 
 def _renamed_folder(part, old_folder, new_folder):

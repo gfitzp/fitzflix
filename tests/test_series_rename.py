@@ -594,3 +594,23 @@ def test_a_tagged_episode_name_names_the_series_that_owns_the_id(app):
         app.import_queue.enqueue("app.videos.localization_task", path)
         assert series_import_in_flight({"Doctor Who (2005)"}) == path
         assert series_import_in_flight({"Doctor Who (1963)"}) is None
+
+
+def test_a_title_with_a_period_at_the_end_is_safe(app):
+    """The safety test reads the folder that the rename writes (#552).
+
+    sanitize_filename removes the period at the end. Thus, the test
+    refused 5 live series titles as unsafe."""
+
+    from app.series_rename import _filesystem_safe
+
+    for title in (
+        "James May: Our Man In.",
+        "Marvel's Agents of S.H.I.E.L.D.",
+        "The Man From U.N.C.L.E.",
+        "The Venture Bros.",
+        "Batman Jr.",
+    ):
+        assert _filesystem_safe(title.replace(":", " -")), title
+    assert not _filesystem_safe("Bad/Name")
+    assert not _filesystem_safe("...")
