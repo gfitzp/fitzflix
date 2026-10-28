@@ -53,6 +53,7 @@ from app.main.forms import (
     WatchlistForm,
 )
 from app.models import (
+    ArchivedOriginal,
     CatalogExclusion,
     File,
     FileAudioTrack,
@@ -2248,6 +2249,14 @@ def tv_delete(series_id):
             )
             file.delete_local_file(delete_directory_tree=True)
             db.session.delete(file)
+
+        # The archive-only originals of the series go with it (#464). With
+        # ON DELETE SET NULL, they stayed with no owner and kept claiming
+        # their keys. Their S3 objects go after the commit, as above.
+
+        for original in ArchivedOriginal.query.filter_by(series_id=series_id).all():
+            aws_keys.append(original.aws_key)
+            db.session.delete(original)
 
         db.session.delete(tv)
         db.session.commit()

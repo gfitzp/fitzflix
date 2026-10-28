@@ -228,7 +228,13 @@ def register(app):
         Those are real library data, not catalog junk."""
 
         from app import db
-        from app.models import CatalogExclusion, Movie, UserMovieReview
+        from app.aws_storage import untouched_key_still_claimed
+        from app.models import (
+            ArchivedOriginal,
+            CatalogExclusion,
+            Movie,
+            UserMovieReview,
+        )
 
         movie = db.session.get(Movie, movie_id)
         if movie is None:
@@ -248,8 +254,24 @@ def register(app):
             )
         elif not CatalogExclusion.query.filter_by(tmdb_id=movie.tmdb_id).first():
             db.session.add(CatalogExclusion(tmdb_id=movie.tmdb_id, title=title))
+
+        # The archive-only originals of the film go with it (#464). The
+        # S3 objects go after the commit, unless a record still claims
+        # the key.
+
+        original_keys = []
+        for original in ArchivedOriginal.query.filter_by(movie_id=movie.id).all():
+            original_keys.append(original.aws_key)
+            db.session.delete(original)
         db.session.delete(movie)
         db.session.commit()
+        for aws_key in original_keys:
+            if not untouched_key_still_claimed(aws_key):
+                enqueue_task(
+                    "app.videos.aws_delete",
+                    aws_key,
+                    description=f"Deleting '{aws_key}' from AWS",
+                )
         click.echo(
             f"Deleted '{title}'"
             + (
