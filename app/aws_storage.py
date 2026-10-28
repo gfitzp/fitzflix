@@ -904,6 +904,13 @@ def _prune_unclaimed(listing, job, unreferenced_files):
     # marker.
 
     waiting_keys = keys_held_by_later_stages()
+
+    # A failed in-place import uploaded its rip to untouched/ directly
+    # (#496). Its source went to rejects. That upload is the only copy of
+    # the untouched bytes. A rejects directory that cannot be read keeps
+    # every untouched/ key this time.
+
+    rejected = _rejected_untouched_keys()
     for marker in current_app.redis.scan_iter(f"{marker_prefix}*"):
         waiting_keys.add(
             os.path.join(
@@ -915,8 +922,13 @@ def _prune_unclaimed(listing, job, unreferenced_files):
         if upload_key and is_pending_archive(upload_key.decode()):
             waiting_keys.add(upload_key.decode())
 
+    untouched_prefix = current_app.config["AWS_UNTOUCHED_PREFIX"]
     for i, remote_key in enumerate(s3_keys):
         if remote_key in waiting_keys:
+            continue
+        if _in_prefix(remote_key, untouched_prefix) and (
+            rejected is None or remote_key in rejected
+        ):
             continue
         if job:
             report_progress(
@@ -940,6 +952,35 @@ def _prune_unclaimed(listing, job, unreferenced_files):
         if remote_key not in aws_keys and remote_key not in archive_prefixes:
             aws_delete(remote_key)
             unreferenced_files.append(remote_key)
+
+
+def _rejected_untouched_keys():
+    """Return the untouched/ key of each file in the rejects directory, or None.
+
+    None means that the directory could not be read (#496)."""
+
+    rejects = current_app.config["REJECTS_DIR"]
+    prefix = current_app.config["AWS_UNTOUCHED_PREFIX"]
+    keys = set()
+    if not os.path.isdir(rejects):
+        return keys
+    try:
+        for _, dirnames, filenames in os.walk(rejects, onerror=_raise):
+            dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+            keys.update(
+                os.path.join(prefix, sanitize_s3_key(name))
+                for name in filenames
+                if not name.startswith(".")
+            )
+    except OSError:
+        return None
+    return keys
+
+
+def _raise(error):
+    """Raise the error of os.walk. A silent walk can hide a dead volume."""
+
+    raise error
 
 
 def _mail_reports(unreferenced_files, orphaned_files):
@@ -1024,6 +1065,18 @@ def download_task(key, basename, sqs_receipt_handle=None, transient_retries=0):
         # download would replace the new file with the old one, and an
         # object in cold storage would start a new restore. Thus, drop
         # the message and download nothing.
+
+        if place_at and restore_would_replace_newer(file, key):
+            current_app.logger.warning(
+                f"'{basename}' The library file is newer than its archive "
+                f"'{key}'. The restore does not replace it. Archive the file "
+                f"again first"
+            )
+            if sqs_receipt_handle:
+                return delete_sqs_message(
+                    aws_sqs_client(), sqs_receipt_handle, note="stale restore"
+                )
+            return True
 
         if overtaken_by_import(current_app.redis, file, key):
             current_app.logger.info(
@@ -1342,6 +1395,23 @@ def _in_prefix(key, prefix):
     """Return True if an S3 key is below a prefix such as "modified"."""
 
     return bool(key) and key.startswith(f"{prefix}/")
+
+
+def restore_would_replace_newer(file, key=None):
+    """Return True if a direct restore would replace a newer library file (#496).
+
+    A stale row has a library file that changed after its archive. A
+    modified/ or transcoded/ restore over it would bring back the older
+    bytes."""
+
+    key = key or file.restore_key
+    return bool(
+        file.aws_stale
+        and restores_directly(key)
+        and os.path.isfile(
+            os.path.join(current_app.config["LIBRARY_DIR"], file.file_path)
+        )
+    )
 
 
 def restores_directly(key):

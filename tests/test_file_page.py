@@ -227,3 +227,24 @@ def test_the_track_labels(app):
     assert bare.label == "Latin: PCM 2" and bare.quality_label is None
     subtitle = FileSubtitleTrack(elements=1200, language_name="English")
     assert subtitle.label == "1200-element English"
+
+
+def test_the_restore_form_refuses_to_replace_a_newer_local_file(
+    app, admin_client, queued
+):
+    """A stale row with a local file gets a warning, not a restore (#496)."""
+
+    from app.models import File
+
+    file_id = _file(app, aws_key="modified/Newer Page.mkv", title="Newer Page Film")
+    with app.app_context():
+        file = db.session.get(File, file_id)
+        file.aws_stale = True
+        db.session.commit()
+    page = _post(
+        admin_client,
+        file_id,
+        {"password": ADMIN_PASSWORD, "s3_download_submit": "Restore"},
+    )
+    assert "is newer than its archive in AWS" in page
+    assert queued == []

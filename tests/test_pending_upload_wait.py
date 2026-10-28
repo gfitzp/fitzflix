@@ -193,3 +193,69 @@ def test_the_prune_keeps_the_upload_of_a_scheduled_conversion_retry(app, monkeyp
     aws_storage.sync_aws_s3_storage_task()
 
     assert deletes == [stray]
+
+
+def test_the_prune_keeps_the_untouched_upload_of_a_rejected_import(app, monkeypatch):
+    """A failed in-place import keeps its direct untouched/ upload (#496)."""
+
+    from app import aws_storage
+
+    old = datetime.now(timezone.utc) - timedelta(days=30)
+    name = "Rejected In Place (2024) - [UHD].mkv"
+    kept = f"untouched/{name}"
+    stray = "untouched/Old Untouched Stray (2020) - [DVD].mkv"
+    objects = {
+        "untouched/": [
+            {"Key": kept, "Size": 5, "LastModified": old},
+            {"Key": stray, "Size": 5, "LastModified": old},
+        ],
+    }
+    monkeypatch.setattr(
+        aws_storage,
+        "get_matching_s3_objects",
+        lambda bucket, prefix="": objects.get(prefix, []),
+    )
+    deletes = []
+    monkeypatch.setattr(aws_storage, "aws_delete", lambda key: deletes.append(key))
+    monkeypatch.setattr(aws_storage, "aws_restore", lambda key, **kw: None)
+    monkeypatch.setattr("app.email.send_email", lambda *a, **k: None)
+
+    class FakeClient:
+        def put_object(self, **kwargs):
+            pass
+
+    monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kw: FakeClient())
+    rejected = os.path.join(app.config["REJECTS_DIR"], "exception")
+    os.makedirs(rejected, exist_ok=True)
+    with open(os.path.join(rejected, name), "wb") as f:
+        f.write(b"rewritten source")
+    aws_storage.sync_aws_s3_storage_task()
+
+    assert deletes == [stray]
+
+
+def test_a_direct_restore_never_replaces_a_newer_library_file(app, monkeypatch):
+    """A stale row keeps its library file. The restore stops (#496)."""
+
+    from app import aws_storage, db
+
+    with app.app_context():
+        file = make_movie_file(
+            make_movie("Newer Local", 2024),
+            "DVD",
+            aws_key="modified/Newer Local (2024) - [DVD].mkv",
+            aws_date_uploaded=datetime(2026, 1, 1),
+            aws_stale=True,
+        )
+        db.session.commit()
+        path = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "wb") as f:
+            f.write(b"newer bytes")
+
+        def no_download(*args, **kwargs):
+            raise AssertionError("the stale restore downloaded")
+
+        monkeypatch.setattr(aws_storage, "aws_download", no_download)
+        assert aws_storage.download_task(file.aws_key, file.basename) is True
+        assert open(path, "rb").read() == b"newer bytes"

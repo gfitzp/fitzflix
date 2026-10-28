@@ -32,6 +32,7 @@ from flask_sqlalchemy.pagination import Pagination
 
 from app.tasks import enqueue_task
 from app import db
+from app.aws_storage import restore_would_replace_newer
 from app.main.forms import (
     CriterionForm,
     FileDeleteForm,
@@ -2620,6 +2621,14 @@ def _restore_post(estimate):
             return
         if not file.restore_key:
             flash(f"'{file.basename}' has no archive in AWS to restore.", "warning")
+            return
+        if restore_would_replace_newer(file):
+            flash(
+                f"'{file.basename}' is newer than its archive in AWS. A restore "
+                f"would replace it with the older copy. Archive the file again "
+                f"first.",
+                "warning",
+            )
             return
         enqueue_task(
             "app.videos.aws_restore",
