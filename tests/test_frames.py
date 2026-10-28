@@ -2646,3 +2646,47 @@ def test_the_floor_spares_are_rated_films_of_the_reviewer(app, monkeypatch, admi
         pooled = {entry["movie_id"] for entry in frames.pool_entries().values()}
     assert set(rated_ids) <= pooled | queued
     assert unrated_id not in queued
+
+
+def test_a_resumed_round_shows_the_same_options(app, admin_client):
+    """A resume drew new distractors for the same frame (#573).
+
+    The answer was then the 1 film in both option sets."""
+
+    import re
+
+    from app import db
+
+    with app.app_context():
+        answer = make_movie("Resumed Options Film", 1994)
+        make_movie_file(answer, "Bluray-1080p")
+        for n in range(30):
+            extra = make_movie(f"Resumed Distractor {n}", 1990 + n % 9)
+            make_movie_file(extra, "Bluray-1080p")
+        db.session.commit()
+        answer_id = answer.id
+    seed_frame(app, answer_id)
+
+    def options(page):
+        return re.findall(r'name="choice" id="choice-\d+" value="(\d+)"', page)
+
+    first = admin_client.get("/game?difficulty=difficult&unrated=1").get_data(
+        as_text=True
+    )
+    token = re.search(r'src="/game/frame/([^"?]+)"', first)[1]
+    dealt = options(first)
+    assert len(dealt) == 8
+
+    response = admin_client.post(
+        "/game",
+        data={
+            "csrf_token": "expired",
+            "token": token,
+            "difficulty": "difficult",
+            "choice": str(answer_id),
+            "guess_submit": "y",
+        },
+    )
+    resumed = admin_client.get(response.headers["Location"]).get_data(as_text=True)
+    assert f'src="/game/frame/{token}"' in resumed
+    assert options(resumed) == dealt

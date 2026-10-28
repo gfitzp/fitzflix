@@ -496,7 +496,7 @@ def _shared_genre_movie_ids(answer_id):
     }
 
 
-def _build_options(answer_id, difficulty, rated_only=False):
+def _build_options(answer_id, difficulty, rated_only=False, seed=None):
     """Return the shuffled multiple-choice list of the round.
 
     The list is the answer plus random distractors. The distractors
@@ -513,8 +513,13 @@ def _build_options(answer_id, difficulty, rated_only=False):
     same applies to a difficulty with the rated-films filter on,
     because an unrated option would mark the answer by elimination.
     Then it pads from the whole library. The last resort is any film.
-    Thus, a round can always fill its slots."""
+    Thus, a round can always fill its slots.
 
+    seed makes the draw repeatable (#573). A resumed round then shows
+    the same options as before. A second draw let the player find the
+    answer as the 1 film in both option sets."""
+
+    rng = random.Random(seed)
     count = DIFFICULTIES[difficulty]
     answer = db.session.get(Movie, answer_id)
     answer_year = answer.display_year
@@ -567,14 +572,16 @@ def _build_options(answer_id, difficulty, rated_only=False):
 
     distractors = []
     for tier in tiers:
-        pool = [m for m in tier if m not in distractors]
-        random.shuffle(pool)
+        # The sort fixes the order before the shuffle. Thus, 1 seed gives
+        # 1 draw, whatever order the database returns.
+        pool = sorted(m for m in tier if m not in distractors)
+        rng.shuffle(pool)
         distractors += pool[: count - 1 - len(distractors)]
         if len(distractors) == count - 1:
             break
 
     ids = distractors + [answer_id]
-    random.shuffle(ids)
+    rng.shuffle(ids)
     movies = {movie.id: movie for movie in Movie.query.filter(Movie.id.in_(ids)).all()}
     return [(movie_id, movies[movie_id].display_title) for movie_id in ids]
 
@@ -1262,7 +1269,14 @@ def name_that_frame():
                 )
     options = None
     if token and DIFFICULTIES[difficulty] is not None:
-        options = _build_options(tokens[token]["movie_id"], difficulty, rated_only)
+        # The seed is the round of this user (#573). A resume deals the
+        # same options again.
+        options = _build_options(
+            tokens[token]["movie_id"],
+            difficulty,
+            rated_only,
+            seed=f"{int(current_user.id)}:{token}:{difficulty}",
+        )
 
     if dealt:
         # Each dealt frame counts as seen (the win-rate rule of Glenn,
