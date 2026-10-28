@@ -1076,3 +1076,75 @@ def test_the_stored_releases_reassign_without_wikidata(app, monkeypatch):
             app.redis.delete(videos.CRITERION_CACHE_KEY)
             db.session.delete(db.session.get(Movie, movie_id))
             db.session.commit()
+
+
+def test_an_item_id_label_is_not_a_title(app, monkeypatch):
+    """Wikidata gives an item with no label its id. That is no title (#473)."""
+
+    from app.criterion_catalog import (
+        _parse_criterion_binding,
+        create_criterion_catalog_records,
+        criterion_release_lookups,
+    )
+
+    release = _parse_criterion_binding(
+        {
+            "spine": {"value": "457"},
+            "tmdbId": {"value": "13457"},
+            "filmLabel": {"value": "Q1219923"},
+            "year": {"value": "1954"},
+        }
+    )
+    assert release["title"] == ""
+    assert release["label"] == ""
+
+    # A real title that starts with Q stays
+    named = _parse_criterion_binding(
+        {"spine": {"value": "9"}, "filmLabel": {"value": "Q Planes"}}
+    )
+    assert named["label"] == "Q Planes"
+
+    import app.videos as videos_module
+
+    monkeypatch.setattr(
+        videos_module,
+        "find_or_create_tmdb_movie",
+        lambda *args: (_ for _ in ()).throw(AssertionError("created a record")),
+    )
+    with app.app_context():
+        assert (
+            create_criterion_catalog_records(
+                [release], *criterion_release_lookups([release])
+            )
+            == 0
+        )
+
+
+def test_the_full_refresh_fetches_before_it_reads_the_movies(app, monkeypatch):
+    """The movie read opens the snapshot after the slow fetch (#473)."""
+
+    import app.criterion_catalog as criterion_catalog
+
+    order = []
+    real_fetch = criterion_catalog.get_criterion_collection_from_wikidata
+
+    def fetch(force_refresh=False):
+        order.append("fetch")
+        return real_fetch(force_refresh=force_refresh)
+
+    fake_sparql(monkeypatch)
+    monkeypatch.setattr(
+        criterion_catalog, "get_criterion_collection_from_wikidata", fetch
+    )
+    with app.app_context():
+        query_class = Movie.query.__class__
+        real_all = query_class.all
+
+        def all_rows(self):
+            if self.column_descriptions[0].get("entity") is Movie:
+                order.append("movies")
+            return real_all(self)
+
+        monkeypatch.setattr(query_class, "all", all_rows)
+        assert refresh_criterion_collection_info() is True
+    assert order[:2] == ["fetch", "movies"]

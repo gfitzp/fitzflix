@@ -22,6 +22,7 @@ import direction stays one-way.
 """
 
 import json
+import re
 import time
 import traceback
 
@@ -129,6 +130,9 @@ def _wikidata_sparql(url, query, timeout=60):
         return r.json().get("results", {}).get("bindings", [])
 
 
+WIKIDATA_ITEM_ID = re.compile(r"Q\d+")
+
+
 def _parse_criterion_binding(binding):
     """Return a SPARQL result row as a release dict, or None if the spine is bad."""
 
@@ -138,6 +142,12 @@ def _parse_criterion_binding(binding):
 
     tmdb_id = binding.get("tmdbId", {}).get("value", "")
     title = (binding.get("filmLabel", {}).get("value") or "").strip()
+
+    # An item with no label in the language of the query gets its item
+    # id as the label ("Q1219923"). That is not a title (#473).
+
+    if WIKIDATA_ITEM_ID.fullmatch(title):
+        title = ""
     year = binding.get("year", {}).get("value", "")
 
     # "title" is uppercase for matching. "label" keeps the casing of
@@ -404,8 +414,14 @@ def create_criterion_catalog_records(criterion_collection, by_tmdb_id, by_title_
             continue
         if tmdb_id in excluded:
             continue
-        existing.add(tmdb_id)
         title = release.get("label") or release.get("title")
+
+        # A release with no title (an item id label, #473) waits for a
+        # Wikidata label. The title and year are the identity of a record.
+
+        if not title:
+            continue
+        existing.add(tmdb_id)
         movie, created = find_or_create_tmdb_movie(tmdb_id, title, release["year"])
         if movie is None:
             continue
@@ -449,15 +465,21 @@ def refresh_criterion_collection_info(movie_id=None):
             # If the user specified one movie, update the Criterion
             # Collection info for only that movie. If not, update all.
 
+            # Fetch and check the releases before the first read of the
+            # movie table (#473). The fetch can take minutes, with a
+            # throttle sleep. Under REPEATABLE READ, a snapshot that was
+            # open for that time fails the UPDATE of a row that another
+            # worker changed.
+
+            criterion_collection = get_criterion_collection_from_wikidata(
+                force_refresh=movie_id is None
+            )
+
             if movie_id:
                 movies = Movie.query.filter_by(id=movie_id).all()
 
             else:
                 movies = Movie.query.all()
-
-            criterion_collection = get_criterion_collection_from_wikidata(
-                force_refresh=movie_id is None
-            )
             by_tmdb_id, by_title_year = criterion_release_lookups(criterion_collection)
 
             matched = 0
