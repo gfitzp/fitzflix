@@ -111,3 +111,36 @@ def test_the_four_ladder_responses_share_their_keys(app, admin_client):
     assert edited["rating"] == 2.0 and edited["has_review"] is True
     assert card["movie_id"] == movie_id and card["has_review"] is True
     assert card_unknown["movie_id"] is None and card_unknown["has_review"] is False
+
+
+def test_a_ladder_fetch_on_a_guid_row_gets_json(app, admin_client):
+    """A stale tab's ladder post on a Letterboxd row gets JSON (#512).
+
+    Before, it got the redirect and the flash of a normal submission."""
+
+    from app import db
+    from app.models import User, UserMovieReview
+
+    with app.app_context():
+        user = User.query.filter_by(email=ADMIN_EMAIL).first()
+        movie = make_movie("Guid Row", 1972)
+        row = UserMovieReview(
+            user_id=user.id,
+            movie_id=movie.id,
+            review="",
+            date_watched=datetime(2026, 8, 9),
+            rewatch=False,
+            letterboxd_guid="letterboxd-review-1",
+        )
+        db.session.add(row)
+        db.session.commit()
+        movie_id, row_id = movie.id, row.id
+
+    token = _csrf(admin_client.get(f"/movie/{movie_id}").get_data(as_text=True))
+    response = admin_client.post(
+        f"/review/{row_id}/edit",
+        data={"csrf_token": token, "quick_rating": "2"},
+        headers=LADDER,
+    )
+    assert response.status_code == 409
+    assert response.get_json() == {"error": "syncs from Letterboxd"}

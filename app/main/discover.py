@@ -1755,13 +1755,18 @@ def watchlist():
         and watchlist_form.validate_on_submit()
         and watchlist_form.movie_id.data
     ):
-        clear_watchlist(current_user.id, watchlist_form.movie_id.data)
+        removed = clear_watchlist(current_user.id, watchlist_form.movie_id.data)
         db.session.commit()
         # A background post from the tile (#187) wants the JSON state,
         # not a redirect. The client clears the tile itself.
         if _card_fetch():
             return jsonify({"on_watchlist": False})
-        flash("Removed from your watchlist", "success")
+        # A stale tab can remove a film that is no longer on the list
+        # (#512)
+        if removed:
+            flash("Removed from your watchlist", "success")
+        else:
+            flash("The film is not on your watchlist.", "info")
         return redirect(
             url_for(
                 "main.watchlist",

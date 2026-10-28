@@ -1350,3 +1350,28 @@ def test_last_tile_removal_reveals_the_empty_state(app, admin_client, admin_id):
         "empty": False,
         "link": "Show all 2 watchlisted films",
     }
+
+
+def test_a_stale_remove_does_not_claim_a_removal(app, admin_client, admin_id):
+    """A remove of a film that is no longer on the list says so (#512)."""
+
+    from app import db
+    from app.models import UserWatchlist
+
+    with app.app_context():
+        movie = make_movie("Stale Removal", 1991)
+        db.session.add(UserWatchlist(user_id=admin_id, movie_id=movie.id))
+        db.session.commit()
+        movie_id = movie.id
+
+    page = admin_client.get("/watchlist").get_data(as_text=True)
+    with app.app_context():
+        UserWatchlist.query.filter_by(movie_id=movie_id).delete()
+        db.session.commit()
+
+    response = admin_client.post(
+        "/watchlist", data=remove_form_fields(page, movie_id), follow_redirects=True
+    )
+    text = response.get_data(as_text=True)
+    assert "The film is not on your watchlist." in text
+    assert "Removed from your watchlist" not in text

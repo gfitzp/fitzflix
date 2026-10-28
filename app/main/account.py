@@ -117,6 +117,10 @@ def review_edit(review_id):
     # guid rows fully. It does not accept changes that revert.
 
     if user_review.letterboxd_guid:
+        # A ladder fetch from a stale tab wants JSON, not a redirect
+        # (#512). The page then falls back to a normal submission.
+        if _ladder_fetch():
+            return jsonify({"error": "syncs from Letterboxd"}), 409
         flash(
             f"'{title}' syncs from your Letterboxd account. Edit it on "
             f"Letterboxd instead.",

@@ -95,9 +95,12 @@ def clear_watchlist(user_id, movie_id):
     """Remove a film from the watchlist of a user, if the film is on it.
 
     A watch of the film completes the watchlist entry. The source of the
-    watch is not important. The caller must commit the session."""
+    watch is not important. The caller must commit the session. Return
+    the number of rows that the call removed (#512)."""
 
-    UserWatchlist.query.filter_by(user_id=int(user_id), movie_id=int(movie_id)).delete()
+    return UserWatchlist.query.filter_by(
+        user_id=int(user_id), movie_id=int(movie_id)
+    ).delete()
 
 
 def clear_not_interested(user_id, movie_id):
