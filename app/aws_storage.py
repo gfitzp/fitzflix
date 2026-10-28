@@ -295,7 +295,7 @@ def sync_aws_s3_storage_task(volume_drops=0):
 
     with app.app_context():
         job = get_current_job()
-        if _sync_deferred(job):
+        if _sync_deferred(job, volume_drops):
             return True
 
         failures = []
@@ -363,7 +363,7 @@ def _scheduled_moves(queue):
     return count
 
 
-def _sync_deferred(job):
+def _sync_deferred(job, volume_drops=0):
     """Return True if the sync must wait. Then a retry is booked.
 
     The sync runs only when each queue is idle. A file can be in an
@@ -376,8 +376,12 @@ def _sync_deferred(job):
     An archive move that waits for a retry counts too (#369). It changes
     a key between the listing and the pass over the rows. Other
     scheduled retries do not count. A space wait has no limit, and it
-    would hold the sync off for days (Oct 24 2026)."""
+    would hold the sync off for days (Oct 24 2026).
 
+    The retry keeps volume_drops (#457). Without it, a defer reset the
+    count, and MAX_SYNC_VOLUME_DROPS never stopped the sync."""
+
+    drops = {"volume_drops": volume_drops} if volume_drops else None
     busy = []
     for queue in roster_queues(current_app):
         queue_name = queue.name
@@ -402,6 +406,7 @@ def _sync_deferred(job):
             delay=timedelta(minutes=5),
             reason=f"waits for the other tasks to finish ({', '.join(busy)})",
             level="info",
+            counters=drops,
         )
         return True
 
@@ -420,6 +425,7 @@ def _sync_deferred(job):
             key=None,
             delay=timedelta(minutes=30),
             reason=f"Library volume(s) unavailable ({', '.join(dead)})",
+            counters=drops,
         )
         return True
     return False

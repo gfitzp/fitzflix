@@ -4,6 +4,7 @@ import glob
 import gzip
 import json
 import os
+import re
 import shutil
 import subprocess
 import threading
@@ -1174,9 +1175,31 @@ ORPHAN_IGNORED_PREFIXES = ("._",)
 
 # A restored copy whose import name stayed taken waits under its staging
 # name for the admin (#433). The age of the file does not make it a
-# leftover. Thus, the file pass keeps it.
+# leftover. Thus, the file pass keeps it. An unfinished download under
+# the same prefix is a leftover (#457). A CloudFront partial has an
+# ETag sidecar until it is complete. An S3 partial has the temporary
+# suffix of s3transfer, a dot and 8 hex digits.
 
 ORPHAN_KEPT_PREFIXES = (".restore-",)
+ETAG_SIDECAR_SUFFIX = ".etag"
+S3TRANSFER_TEMP_SUFFIX = re.compile(r"\.[0-9a-fA-F]{8}$")
+
+
+def _kept_restore_copy(dirpath, name):
+    """Return True if a .restore- file is a complete restored copy (#457).
+
+    A complete copy stays for its placement or for the admin. A partial
+    download and its ETag sidecar are leftovers like the other hidden
+    partial files."""
+
+    if not name.startswith(ORPHAN_KEPT_PREFIXES):
+        return False
+    if name.endswith(ETAG_SIDECAR_SUFFIX):
+        return False
+    if S3TRANSFER_TEMP_SUFFIX.search(name):
+        return False
+    return not os.path.exists(os.path.join(dirpath, name + ETAG_SIDECAR_SUFFIX))
+
 
 # These are the contents that a directory can hold and still count as
 # removable leftovers (specified by Glenn): the @eaDir metadata trees of
@@ -1351,8 +1374,10 @@ def cleanup_orphaned_files():
                     if not name.startswith("."):
                         continue
                     if name in ORPHAN_IGNORED_NAMES or name.startswith(
-                        ORPHAN_IGNORED_PREFIXES + ORPHAN_KEPT_PREFIXES
+                        ORPHAN_IGNORED_PREFIXES
                     ):
+                        continue
+                    if _kept_restore_copy(dirpath, name):
                         continue
                     path = os.path.join(dirpath, name)
                     try:

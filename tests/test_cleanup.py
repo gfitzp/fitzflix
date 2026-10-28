@@ -470,3 +470,44 @@ def test_the_trail_fallback_logs_through_the_app_logger(caplog):
     assert [r.name for r in caplog.records if "trail write failed" in r.message] == [
         "app"
     ]
+
+
+def test_cleanup_removes_dead_restore_partials(app, monkeypatch):
+    """A partial download under .restore- is a leftover. A complete copy stays (#457)."""
+
+    monkeypatch.setattr(maintenance, "task_send_email", lambda *a, **k: None)
+    imports = app.config["IMPORT_DIR"]
+    cdn_partial = plant(os.path.join(imports, ".restore-untouched-Cut (2020).mkv"), 30)
+    sidecar = plant(cdn_partial + ".etag", 30)
+    s3_partial = plant(
+        os.path.join(imports, ".restore-untouched-Gone (2020).mkv.a1B2c3D4"), 30
+    )
+    complete = plant(os.path.join(imports, ".restore-untouched-Done (2020).mkv"), 30)
+    try:
+        maintenance.cleanup_orphaned_files()
+        assert not os.path.exists(cdn_partial)
+        assert not os.path.exists(sidecar)
+        assert not os.path.exists(s3_partial)
+        assert os.path.exists(complete)
+    finally:
+        for path in (cdn_partial, sidecar, s3_partial, complete):
+            if os.path.exists(path):
+                os.remove(path)
+
+
+def test_a_sync_defer_keeps_the_volume_drop_count(app, monkeypatch):
+    """A busy queue books the retry with the count of the drops so far (#457)."""
+
+    from app import aws_storage
+
+    booked = []
+    monkeypatch.setattr(
+        aws_storage, "requeue", lambda name, **kwargs: booked.append(kwargs)
+    )
+    with app.app_context():
+        app.maintenance_queue.enqueue("app.maintenance.rotate_logs")
+        try:
+            assert aws_storage._sync_deferred(None, volume_drops=5) is True
+        finally:
+            app.maintenance_queue.empty()
+    assert booked[0]["counters"] == {"volume_drops": 5}
