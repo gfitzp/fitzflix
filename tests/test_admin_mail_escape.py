@@ -7,6 +7,8 @@ the entity parse."""
 import json
 import zlib
 
+from datetime import datetime
+
 from app import db
 from tests.factories import make_movie, make_movie_file
 
@@ -61,6 +63,8 @@ def test_the_dangling_claims_mail_escapes_the_keys(app, monkeypatch):
     with app.app_context():
         file = make_movie_file(make_movie("Claimed Escape", 1999), "DVD")
         file.aws_key = f"untouched/{NAME}.mkv"
+        # A row that was never uploaded claims no object (#534)
+        file.aws_date_uploaded = datetime.utcnow()
         db.session.commit()
         aws_storage._report_dangling_claims(SimpleNamespace(keys=set()))
     _assert_escaped(sent[0])
