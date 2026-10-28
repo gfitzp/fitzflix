@@ -189,6 +189,12 @@ NO_FORMAT = "no name format matches"
         ("Jaws (1975) {bogus-123} - [DVD].mkv", NO_FORMAT),  # an unknown tag kind.
         ("Jaws (1975) {imdb-0073195} - [DVD].mkv", NO_FORMAT),  # no tt prefix.
         ("Hamilton {edition-Broadway} - [DVD].mkv", "no year and no id tag"),
+        # A version that is only a feature type names no extra (#522)
+        ("Jaws (1975) - Trailers [DVD].mkv", "a Trailers extra with no name"),
+        (
+            "Jaws (1975) - Fullscreen - Trailers [DVD].mkv",
+            "a Trailers extra with no name",
+        ),
     ],
 )
 def test_rejected_filenames(app, filename, detail):
@@ -927,9 +933,10 @@ def test_an_explicit_tmdb_id_outranks_the_tag(app, monkeypatch):
 # must give the same plex title and basename. The extra names cover the
 # shapes that the corpus does not hold.
 
+# A version that is only a feature type is a reject now (#522). The
+# rejected names are in test_rejected_filenames.
+
 NAMING_EXTRA_NAMES = [
-    "Jaws (1975) - Trailers [DVD].mkv",
-    "Jaws (1975) - Fullscreen - Trailers [DVD].mkv",
     "Jaws (1975) - Trailers - Theatrical Trailer - Fullscreen [DVD].mkv",
     "Star Wars (1977) - Featurettes - Star Wars (1977) - Original Trailer [DVD].mkv",
     "Apocalypse Now (1979) {edition-Redux} - Trailers - Theatrical Trailer [DVD].mkv",

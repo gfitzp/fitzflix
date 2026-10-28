@@ -4128,7 +4128,7 @@ def _parse_movie(basename, tmdb_id, log):
         id_tag_text = f"{{tmdb-{tmdb_id}}}" if tmdb_id else id_tag[2]
 
     extension = movie.group("extension")
-    dirname, plex_title, basename, version, feature_type, fullscreen = _movie_layout(
+    layout = _movie_layout(
         {
             "library": media_library,
             "title": title,
@@ -4140,6 +4140,9 @@ def _parse_movie(basename, tmdb_id, log):
         },
         movie.group("version"),
     )
+    if isinstance(layout, FilenameRejection):
+        return layout
+    dirname, plex_title, basename, version, feature_type, fullscreen = layout
     basename = sanitize_filename(unidecode(basename))
 
     return _details(
@@ -4164,7 +4167,9 @@ def _movie_layout(parts, version_text):
     parts holds the library_name parts of the film with no version. The
     basename is not sanitized yet. A special feature type in the version
     text puts the file in the folder of that type, with only its own
-    name. "Full Screen" goes at the end of the version."""
+    name. "Full Screen" goes at the end of the version. A feature type
+    with no name after it is a FilenameRejection (#522). It parsed as an
+    extra with the edition of its type and the name of the film."""
 
     edition = parts["edition"]
     feature_type = None
@@ -4226,8 +4231,10 @@ def _movie_layout(parts, version_text):
             type_position = [string.upper() for string in version_strings].index(
                 type.upper()
             ) + 1
-            feature_type = type
             special_feature = " - ".join(version_strings[type_position:])
+            if not special_feature:
+                return FilenameRejection(None, f"a {type} extra with no name")
+            feature_type = type
             dirname = os.path.join(dirname, sanitize_filename(unidecode(feature_type)))
             break
 
