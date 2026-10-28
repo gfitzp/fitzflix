@@ -386,3 +386,60 @@ def test_provision_treats_an_empty_prefix_as_no_filter(tmp_path):
 
     assert results["lifecycle: bucket-wide incomplete-multipart abort"] == "present"
     assert s3.writes == []
+
+
+def test_provision_reads_every_valid_queue_policy_shape(tmp_path):
+    """A string Principal and a single-object Statement are valid IAM (#534).
+
+    The check called .get on the string and iterated the keys of the
+    object. The provision crashed before the notification step."""
+
+    config = dict(CONFIG, LOG_FILE=str(tmp_path / "app.log"))
+    wildcard = {
+        "Effect": "Allow",
+        "Principal": "*",
+        "Action": "sqs:SendMessage",
+        "Resource": "arn:aws:sqs:us-east-1:1:fitzflix-restore-untouched",
+    }
+    for policy, expected in (
+        ({"Version": "2012-10-17", "Statement": wildcard}, "updated"),
+        ({"Version": "2012-10-17", "Statement": s3_policy_statement()}, "present"),
+        (
+            {
+                "Version": "2012-10-17",
+                "Statement": [
+                    wildcard,
+                    dict(
+                        s3_policy_statement(),
+                        Principal={"Service": ["s3.amazonaws.com"]},
+                        Condition={
+                            "ArnLike": {"aws:SourceArn": ["arn:aws:s3:::test-bucket"]}
+                        },
+                    ),
+                ],
+            },
+            "present",
+        ),
+    ):
+        sqs = FakeSQS(policy=policy)
+        results = dict(provision(config, FakeS3(), sqs, echo=lambda *_: None))
+        assert results["sqs queue policy allows S3"] == expected, policy
+        if expected == "updated":
+            assert isinstance(sqs.policy["Statement"], list)
+            assert sqs.policy["Statement"][0] == wildcard
+
+
+def test_the_edition_rewrite_stops_at_its_own_parenthesis(app):
+    """A later parenthesis in the name is not part of the edition (#534)."""
+
+    from app.aws_storage import brace_edition_tags
+
+    name = (
+        "Zappa (2020) (edition-Official Movie Backer Edition) - Scenes - "
+        "Apostrophe(') Ad [Bluray-1080p].mkv"
+    )
+    assert brace_edition_tags(name) == (
+        "Zappa (2020) {edition-Official Movie Backer Edition} - Scenes - "
+        "Apostrophe(') Ad [Bluray-1080p].mkv"
+    )
+    assert brace_edition_tags("Jaws (1975) - [DVD].mkv") == "Jaws (1975) - [DVD].mkv"

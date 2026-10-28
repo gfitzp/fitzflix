@@ -824,6 +824,9 @@ def _report_dangling_claims(listing):
         for (key,) in db.session.query(File.aws_key)
         .filter(File.aws_key.isnot(None))
         .filter(File.aws_date_deleted.is_(None))
+        # A row whose first upload never ran claims no object yet (#534).
+        # The transcoded union has the same rule.
+        .filter(File.aws_date_uploaded.isnot(None))
         .union(db.session.query(ArchivedOriginal.aws_key))
         .union(
             db.session.query(File.aws_transcoded_key).filter(
@@ -3097,6 +3100,18 @@ RESTORED_IMPORT_WAIT = timedelta(minutes=10)
 MAX_RESTORED_IMPORT_WAITS = 36
 
 
+def brace_edition_tags(basename):
+    """Rewrite each "(edition-foo bar)" of a name as "{edition-foo bar}".
+
+    The match stops at the first closing parenthesis (#534). The greedy
+    form ran to the last one. Thus, "(edition-X) - Scenes - Apostrophe(')
+    Ad" became "{edition-X) - Scenes - Apostrophe('} Ad"."""
+
+    if "(edition-" not in basename:
+        return basename
+    return re.sub(r"\(edition-(?P<edition>[^)]+)\)", "{edition-\\g<edition>}", basename)
+
+
 def _rename_without_replace(source, target):
     """Rename source to target. Return False, and change nothing, if target exists.
 
@@ -3190,11 +3205,7 @@ def aws_download(
 
     retry = MAX_DOWNLOAD_RETRIES
 
-    # Rename "(edition-foo bar baz)" to "{edition-foo bar baz}".
-    if "(edition-" in basename:
-        basename = re.sub(
-            r"\(edition\-(?P<edition>.+)\)", "{edition-\\g<edition>}", basename
-        )
+    basename = brace_edition_tags(basename)
 
     via_cdn = cdn_download_enabled()
     if via_cdn:

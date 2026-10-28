@@ -210,6 +210,33 @@ def _ensure_archive_rules(rules, report, changes, prefix, rule_id, retention_day
         report(retention_label, "created" if current_days is None else "updated")
 
 
+def _as_list(value):
+    """Return value as a list. IAM accepts 1 value or a list of values."""
+
+    if value is None:
+        return []
+    return value if isinstance(value, list) else [value]
+
+
+def _statement_allows_s3(statement, bucket_arn):
+    """Return True if a queue policy statement lets the bucket send messages (#534).
+
+    A valid statement can have a string Principal ("*"), a list of
+    services, or a list of source ARNs. The old check called .get on
+    each of them and crashed the provision."""
+
+    if not isinstance(statement, dict):
+        return False
+    principal = statement.get("Principal")
+    services = _as_list(principal.get("Service")) if isinstance(principal, dict) else []
+    condition = statement.get("Condition")
+    arn_like = condition.get("ArnLike") if isinstance(condition, dict) else None
+    sources = (
+        _as_list(arn_like.get("aws:SourceArn")) if isinstance(arn_like, dict) else []
+    )
+    return "s3.amazonaws.com" in services and bucket_arn in sources
+
+
 def provision(config, s3, sqs, echo=print, force=False):
     """Make sure that the bucket, its rules, the queue, and the wiring exist.
 
@@ -428,16 +455,19 @@ def provision(config, s3, sqs, echo=print, force=False):
     policy = json.loads(
         attributes.get("Policy") or '{"Version": "2012-10-17", "Statement": []}'
     )
+    # A single statement can be 1 object, not a list. IAM accepts both
+    # (#534).
+    statements = policy.get("Statement") or []
+    if isinstance(statements, dict):
+        statements = [statements]
+    policy["Statement"] = statements
     allows_s3 = any(
-        statement.get("Principal", {}).get("Service") == "s3.amazonaws.com"
-        and statement.get("Condition", {}).get("ArnLike", {}).get("aws:SourceArn")
-        == bucket_arn
-        for statement in policy.get("Statement", [])
+        _statement_allows_s3(statement, bucket_arn) for statement in statements
     )
     if allows_s3:
         report("sqs queue policy allows S3", "present")
     else:
-        policy.setdefault("Statement", []).append(
+        statements.append(
             {
                 "Sid": "fitzflix-allow-s3-restore-events",
                 "Effect": "Allow",
