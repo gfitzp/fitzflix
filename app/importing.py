@@ -175,6 +175,18 @@ def mark_space_wait(basename, aws_key=None):
     )
 
 
+def renew_space_wait(basename):
+    """Renew the space-wait marker of a source file, if it has one (#475).
+
+    A wait chain can also defer for the title lock or for a dead volume.
+    Each of those retries renews the marker. Thus, a chain that waits
+    longer than SPACE_WAIT_MARK on those paths keeps its marker."""
+
+    current_app.redis.expire(
+        SPACE_WAIT_KEY.format(basename), int(SPACE_WAIT_MARK.total_seconds())
+    )
+
+
 def clear_space_wait(basename):
     """Remove the space-wait marker of a source file."""
 
@@ -1955,6 +1967,7 @@ def move_localized_file(
         }
 
         def retry(delay, reason, level="warning", **changes):
+            renew_space_wait(os.path.basename(source_path))
             requeue(
                 "app.videos.move_localized_file",
                 key=source_path,
@@ -1968,6 +1981,7 @@ def move_localized_file(
             return False
 
         def defer():
+            renew_space_wait(os.path.basename(source_path))
             defer_for_title_lock(
                 "app.videos.move_localized_file",
                 move_args,

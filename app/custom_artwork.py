@@ -25,6 +25,33 @@ def custom_artwork_dir(scope, record_id):
     return os.path.join(current_app.config["CUSTOM_ARTWORK_DIR"], scope, str(record_id))
 
 
+def is_library_poster(name):
+    """Return True if a file name in a library folder is poster art that Plex reads."""
+
+    lower = name.lower()
+    return lower.startswith(("cover", "default", "movie", "poster")) and lower.endswith(
+        ("jpg", "jpeg", "png", "tbn")
+    )
+
+
+def library_poster_original(file):
+    """Return (path, name) of the custom original for the library copy of file.
+
+    The poster of the file outranks the poster of its movie. Return None
+    if neither has an original on disk."""
+
+    candidates = [("file", file.id, file.custom_poster)]
+    if file.movie is not None:
+        candidates.append(("movie", file.movie.id, file.movie.custom_poster))
+    for scope, record_id, name in candidates:
+        if not name:
+            continue
+        path = os.path.join(custom_artwork_dir(scope, record_id), "original", name)
+        if os.path.isfile(path):
+            return path, name
+    return None
+
+
 def remove_custom_artwork(scope, record_id):
     """Remove the custom poster tree of a record now. A missing tree is not an error."""
 

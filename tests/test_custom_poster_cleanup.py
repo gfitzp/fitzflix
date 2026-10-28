@@ -124,3 +124,69 @@ def test_a_file_delete_removes_its_poster_tree(
     )
     assert response.status_code == 302
     assert not os.path.exists(tree)
+
+
+def test_a_merge_rename_keeps_the_library_poster_of_the_survivor(
+    app, monkeypatch, tmp_path
+):
+    """The poster of the merged folder must not replace the poster of the survivor (#475)."""
+
+    import json
+    import shutil
+    import zlib
+
+    from app.models import Movie
+    from app.tmdb_refresh import apply_tmdb_refresh
+
+    monkeypatch.setitem(app.config, "CUSTOM_ARTWORK_DIR", str(tmp_path))
+    library = app.config["LIBRARY_DIR"]
+    with app.app_context():
+        survivor = make_movie("Merge Poster", 2012, tmdb_id=475001)
+        survivor.custom_poster = "new.jpg"
+        merged = make_movie("Merge Poster Copy", 2012)
+        merged.custom_poster = "old.jpg"
+        file = make_movie_file(merged, "DVD")
+        file.untouched_basename = file.basename
+        db.session.commit()
+        survivor_id, merged_id = survivor.id, merged.id
+        _tree(app, "movie", survivor_id, "new.jpg")
+        _tree(app, "movie", merged_id, "old.jpg")
+        old_dir = os.path.join(library, file.dirname)
+        target_dir = os.path.join(library, "Movies", "Merge Poster (2012)")
+
+    os.makedirs(old_dir, exist_ok=True)
+    os.makedirs(target_dir, exist_ok=True)
+    with open(os.path.join(old_dir, file.basename), "wb") as f:
+        f.write(b"film")
+    with open(os.path.join(old_dir, "poster.jpg"), "wb") as f:
+        f.write(b"merged art")
+    with open(os.path.join(target_dir, "poster.jpg"), "wb") as f:
+        f.write(b"survivor art")
+
+    payload = zlib.compress(
+        json.dumps(
+            {"id": 475001, "title": "Merge Poster", "release_date": "2012-01-01"}
+        ).encode("utf-8")
+    )
+    try:
+        assert (
+            apply_tmdb_refresh(
+                "Movies", merged_id, tmdb_id=475001, tmdb_payload=payload
+            )
+            is True
+        )
+        with app.app_context():
+            assert db.session.get(Movie, merged_id) is None
+            assert db.session.get(Movie, survivor_id).custom_poster == "new.jpg"
+
+        posters = {}
+        for name in os.listdir(target_dir):
+            if name.endswith(".jpg"):
+                with open(os.path.join(target_dir, name), "rb") as f:
+                    posters[name] = f.read()
+        assert b"merged art" not in posters.values()
+        # The library copy is the custom original of the survivor
+        assert posters == {"new.jpg": b"jpeg"}
+    finally:
+        shutil.rmtree(old_dir, ignore_errors=True)
+        shutil.rmtree(target_dir, ignore_errors=True)

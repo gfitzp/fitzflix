@@ -231,3 +231,30 @@ def test_the_sync_button_sees_a_cron_sync(app, admin_client):
     assert "already queued or running" in body
     with app.app_context():
         assert len(app.maintenance_queue) == 1
+
+
+def test_an_enqueue_error_does_not_leave_the_gate_shut(app, admin_client, monkeypatch):
+    """The Run now gate opens again after a failed enqueue (#475)."""
+
+    import pytest
+
+    from app.main import admin
+    from app.tasks import _bulk_gate
+
+    def broken_enqueue(*args, **kwargs):
+        raise RuntimeError("enqueue failed")
+
+    with app.app_context():
+        register_cron_job(app, IMPORT_SWEEP)
+    token = page_csrf_token(admin_client, "/system")
+    monkeypatch.setattr(admin, "enqueue_task", broken_enqueue)
+    with pytest.raises(RuntimeError):
+        admin_client.post(
+            "/system",
+            data={
+                "csrf_token": token,
+                "task_func": IMPORT_SWEEP,
+                "run_submit": "Run now",
+            },
+        )
+    assert not app.redis.exists(_bulk_gate(f"run-now:{IMPORT_SWEEP}"))

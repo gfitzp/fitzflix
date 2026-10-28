@@ -30,7 +30,11 @@ from werkzeug.local import LocalProxy
 from app.tasks import enqueue_task, requeue
 from app import db, get_app
 from app.aws_storage import request_archive_move
-from app.custom_artwork import move_movie_poster
+from app.custom_artwork import (
+    is_library_poster,
+    library_poster_original,
+    move_movie_poster,
+)
 from app.email import notify_admin, notify_admin_text
 from app.models import (
     MOVIES,
@@ -614,18 +618,24 @@ def _rename_movie_file(f, tmdb_id):
                 current_app.logger.error(traceback.format_exc())
         return False
 
-    # Move or delete the old local assets.
+    # Move or delete the old local assets. The poster art of a folder
+    # that already holds poster art stays (#475). A merge must not put
+    # the poster of the merged record over the poster of the survivor.
+    new_directory = os.path.join(
+        current_app.config["LIBRARY_DIR"],
+        file_details.get("dirname"),
+    )
     try:
         old_assets = os.listdir(old_directory)
-        new_directory = os.path.join(
-            current_app.config["LIBRARY_DIR"],
-            file_details.get("dirname"),
+        target_has_poster = new_directory != old_directory and any(
+            is_library_poster(name) for name in os.listdir(new_directory)
         )
         for old_asset in old_assets:
             if (
                 old_asset.startswith(("cover", "default", "movie", "poster"))
                 and old_asset.endswith(("jpg", "jpeg", "png", "tbn"))
                 and f.feature_type_id is None
+                and not target_has_poster
                 and os.path.join(old_directory, old_asset)
                 != os.path.join(new_directory, old_asset)
                 and os.path.isfile(os.path.join(old_directory, old_asset))
@@ -649,6 +659,19 @@ def _rename_movie_file(f, tmdb_id):
 
     except FileNotFoundError:
         pass
+
+    # A custom poster decides the library copy of a main feature that
+    # moved. The poster of the file outranks the poster of the movie.
+
+    if f.feature_type_id is None and new_directory != old_directory:
+        original = library_poster_original(f)
+        if original is not None and os.path.isdir(new_directory):
+            from app.main.posters import replace_library_poster
+
+            try:
+                replace_library_poster(new_directory, *original)
+            except OSError:
+                current_app.logger.warning(traceback.format_exc())
 
     # Clear the old directory tree. This clear knows junk.
     # It does not only clear an empty directory. The poster

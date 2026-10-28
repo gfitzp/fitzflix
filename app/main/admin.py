@@ -193,8 +193,11 @@ def system():
         elif not start_task_run(func):
             flash(f"'{TASKS[func].description}' waits or runs already.", "warning")
         else:
-            enqueue_task(func)
-            finish_task_run(func)
+            # An enqueue error must not leave the gate shut (#475)
+            try:
+                enqueue_task(func)
+            finally:
+                finish_task_run(func)
             flash(f"Queued '{TASKS[func].description}'", "info")
             current_app.logger.info(
                 f"{current_user.email} queued the scheduled task {func} now"
