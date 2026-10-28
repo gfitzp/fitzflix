@@ -757,7 +757,7 @@ def test_a_deferred_placement_keeps_the_finished_download(app, monkeypatch):
     library = os.path.join(app.config["LIBRARY_DIR"], "Movies/y.mkv")
     staged = os.path.join(app.config["IMPORT_DIR"], ".restore-modified-y.mkv")
 
-    def refuse():
+    def refuse(etag=None):
         raise aws_storage.PlacementDeferred(["/Volumes/Movies"])
 
     try:
@@ -776,7 +776,7 @@ def test_a_deferred_placement_keeps_the_finished_download(app, monkeypatch):
                     "modified/y.mkv",
                     "y.mkv",
                     place_at=library,
-                    before_place=lambda: None,
+                    before_place=lambda etag=None: None,
                 )
                 == aws_storage.DOWNLOAD_COMPLETE
             )
@@ -788,3 +788,81 @@ def test_a_deferred_placement_keeps_the_finished_download(app, monkeypatch):
         for path in (staged, f"{staged}.etag", library):
             if os.path.exists(path):
                 os.remove(path)
+
+
+def _place_with(app, monkeypatch, s3, key):
+    """Run a direct restore of key through the real download and placement."""
+
+    import app.videos as videos
+    from app import aws_storage
+
+    monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kwargs: s3)
+    monkeypatch.setattr(aws_storage, "aws_sqs_client", lambda: None)
+    monkeypatch.setattr(videos, "_dead_volumes", lambda paths: [])
+    with app.app_context():
+        return videos.download_task(key, os.path.basename(key))
+
+
+def test_a_rename_during_the_download_places_at_the_new_path(app, monkeypatch):
+    """The placement goes to the path of the fresh row (#563).
+
+    The task placed at the path that it read before the download. A
+    TMDB rename meanwhile left the copy under the old name, uncataloged,
+    and the row still named a missing file."""
+
+    from app import db
+    from app.models import File
+
+    key, old_path = _direct_restore_row(app, "Renamed During")
+    with app.app_context():
+        file = File.query.filter_by(aws_key=key).one()
+        new_relative = file.file_path.replace("Renamed During", "Renamed Later")
+
+    class RenamingS3(S3):
+        def download_file(self, bucket, key, filename, Callback=None):
+            db.session.execute(
+                db.update(File)
+                .where(File.aws_key == key)
+                .values(file_path=new_relative)
+            )
+            db.session.commit()
+            super().download_file(bucket, key, filename, Callback)
+
+    new_path = os.path.join(app.config["LIBRARY_DIR"], new_relative)
+    try:
+        assert _place_with(app, monkeypatch, RenamingS3(), key) is True
+        assert open(new_path, "rb").read() == b"s3!"
+        assert not os.path.exists(old_path)
+    finally:
+        for path in (new_path, old_path):
+            if os.path.exists(path):
+                os.remove(path)
+
+
+def test_a_new_archive_during_the_download_refuses_the_placement(app, monkeypatch):
+    """A track edit archived the file again during the download (#563).
+
+    Its own upload cleared the stale flag. Thus, only the ETag shows that
+    the downloaded bytes are older than the library file."""
+
+    key, library_path = _direct_restore_row(app, "Archived During")
+    os.makedirs(os.path.dirname(library_path), exist_ok=True)
+    with open(library_path, "wb") as f:
+        f.write(b"edited library file")
+    s3 = S3(
+        head=lambda call: {
+            "ContentLength": 3,
+            "ETag": '"v1"' if call == 1 else '"v2"',
+        }
+    )
+    try:
+        assert _place_with(app, monkeypatch, s3, key) is True
+        assert s3.downloads == [key]
+        with open(library_path, "rb") as f:
+            assert f.read() == b"edited library file"
+        staged = os.path.join(
+            app.config["IMPORT_DIR"], f".restore-{key.replace('/', '-')}"
+        )
+        assert not os.path.exists(staged)
+    finally:
+        os.remove(library_path)

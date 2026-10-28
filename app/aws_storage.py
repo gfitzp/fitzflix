@@ -1057,8 +1057,10 @@ def download_task(
     mountpoint as a plain directory on the boot disk, and a write there
     succeeds with no error. Thus, the task waits while a volume is dead,
     before the download and again before the placement (#533). The
-    newer-file guards also run again before the placement. A track edit
-    during a long download can make the archive older than the file."""
+    newer-file guards also run again before the placement. They read the
+    row again, and the placement goes to its fresh path (#563). A track
+    edit that archives the file again during the download changes the
+    ETag of the object. Then the placement is refused."""
 
     # The retry constants still live in app.videos. Import them lazily.
     # Thus, the module import direction stays videos to aws_storage.
@@ -1150,15 +1152,30 @@ def download_task(
         if dead:
             return wait_for_volumes(dead)
 
-        def before_place():
-            """Check the volumes and the newer-file guards again (#533)."""
+        def before_place(etag=None):
+            """Check the volumes and the newer-file guards again. Return the path (#533).
 
-            dead = dead_volumes()
-            if dead:
-                raise PlacementDeferred(dead)
+            A rename during the download moves the file of the row
+            (#563). Thus, the placement goes to the path of the fresh
+            row, and the volume probe checks that folder. etag is the
+            ETag of the object at the start of the download. A track
+            edit that archived the file again during the download
+            changes it."""
+
             db.session.rollback()
             fresh = db.session.get(File, file.id)
-            if fresh is None or restore_would_replace_newer(fresh, key):
+            if fresh is None or not fresh.file_path:
+                raise PlacementRefused(
+                    f"'{basename}' The record has no library path any more. "
+                    f"The restore does not place the file"
+                )
+            target = os.path.join(current_app.config["LIBRARY_DIR"], fresh.file_path)
+            dead = _dead_volumes(
+                [current_app.config["IMPORT_DIR"], os.path.dirname(target)]
+            )
+            if dead:
+                raise PlacementDeferred(dead)
+            if restore_would_replace_newer(fresh, key):
                 raise PlacementRefused(
                     f"'{basename}' The library file changed during the download. "
                     f"The restore does not replace it"
@@ -1168,6 +1185,19 @@ def download_task(
                     f"'{basename}' was imported again during the download. "
                     f"The restore does not replace it"
                 )
+            if etag is not None:
+                head = _head_or_none(aws_s3_client(), key)
+                if head is None or head.get("ETag") != etag:
+                    raise PlacementRefused(
+                        f"'{basename}' The archive '{key}' changed during the "
+                        f"download. The restore does not replace the file"
+                    )
+            if target != place_at:
+                current_app.logger.info(
+                    f"'{basename}' The file was renamed during the download. "
+                    f"The restore places it at '{fresh.file_path}'"
+                )
+            return target
 
         report_progress(job, basename, "Downloading from AWS", percent=None)
 
@@ -3230,8 +3260,10 @@ def aws_download(
     checks still use the S3 API.
 
     before_place runs after the download and before a direct placement.
-    If it raises, the download is deleted and the error propagates. The
-    SQS message stays (#533).
+    It gets the ETag of the object at the start of the download. If it
+    raises, the download is deleted and the error propagates. The SQS
+    message stays (#533). If it returns a path, the placement goes there,
+    not to place_at (#563).
     """
 
     # The retry constants still live in app.videos. Import them lazily.
@@ -3418,9 +3450,10 @@ def aws_download(
             current_app.logger.info(f"'{basename}' downloaded from {source}")
 
             if place_at:
+                target = place_at
                 if before_place:
                     try:
-                        before_place()
+                        target = before_place(progress.etag) or place_at
                     except PlacementDeferred:
                         # The download is complete. The sidecar marks it
                         # for the next run and for the orphan sweep.
@@ -3429,7 +3462,7 @@ def aws_download(
                     except BaseException:
                         _discard_partial(destination)
                         raise
-                place_in_library(destination, place_at, progress.size, basename)
+                place_in_library(destination, target, progress.size, basename)
                 _remove_partial_etag(destination)
             elif not place_restored_import(destination, basename):
                 enqueue_task(
