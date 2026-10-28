@@ -134,9 +134,17 @@ def download_payload_problem(service, payload):
     """Return the reason that a Download payload is not usable, or None (#448).
 
     The file block must be a dict with a string quality and a string
-    relativePath. A Sonarr payload also needs a list of episodes."""
+    relativePath. A Sonarr payload also needs a list of episodes. The
+    movie or series block and the custom format block must be objects
+    when they are present (#507)."""
 
     file_key = "movieFile" if service == "Radarr" else "episodeFile"
+    owner_key = "movie" if service == "Radarr" else "series"
+    if not isinstance(payload.get(owner_key) or {}, dict):
+        return f"the {owner_key} block is not an object"
+    custom_format = payload.get("customFormatInfo")
+    if custom_format is not None and not isinstance(custom_format, dict):
+        return "the customFormatInfo block is not an object"
     media_file = payload.get(file_key)
     if not isinstance(media_file, dict):
         return f"the {file_key} block is missing"
@@ -420,9 +428,12 @@ def handle_import_event(arr, payload, priority=None):
     # Find the name with the downgraded quality title.
 
     original_quality = media_file.get("quality")
+    # A null or text score counts as 0 (#507).
+
+    score = (payload.get("customFormatInfo") or {}).get("customFormatScore")
     new_quality = downgrade_quality_title(
         original_quality,
-        (payload.get("customFormatInfo") or {}).get("customFormatScore", 0),
+        score if isinstance(score, (int, float)) else 0,
         get_setting(arr.min_score_setting),
     )
 

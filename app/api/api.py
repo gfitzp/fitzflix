@@ -124,7 +124,11 @@ def plex_webhook(token):
         )
         return "", 204
 
-    username = (payload.get("Account") or {}).get("title") or ""
+    # The Account block can be a list or a string in a shaped body (#507).
+
+    account = payload.get("Account")
+    username = account.get("title") if isinstance(account, dict) else None
+    username = username if isinstance(username, str) else ""
     enqueue_task(
         "app.videos.apply_plex_watch",
         tmdb_id,

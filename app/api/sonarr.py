@@ -49,9 +49,16 @@ def sonarr_add(payload):
         airdate = (payload.get("episodes") or [{}])[0].get("airDate")
         if not airdate:
             return False
-        aired_days_ago = (
-            date.today() - datetime.strptime(airdate, "%Y-%m-%d").date()
-        ).days
+        # A malformed airDate is not a recent episode. It does not stop
+        # the import (#507).
+        try:
+            aired = datetime.strptime(str(airdate), "%Y-%m-%d").date()
+        except ValueError:
+            current_app.logger.warning(
+                f"'{new_name}' has an airDate that is not a date ({airdate!r})"
+            )
+            return False
+        aired_days_ago = (date.today() - aired).days
         current_app.logger.info(f"'{new_name}' aired {aired_days_ago} day(s) ago")
         if aired_days_ago <= RECENT_EPISODE_DAYS:
             current_app.logger.info(f"'{new_name}' Import will be prioritized")

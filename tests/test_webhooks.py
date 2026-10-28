@@ -515,3 +515,98 @@ def test_a_download_without_its_file_fields_gets_a_400(
     assert response.status_code == 400
     assert response.is_json
     assert app.import_queue.count == 0
+
+
+@pytest.mark.parametrize(
+    "endpoint, body",
+    [
+        (
+            "/api/radarr/add",
+            {
+                "movie": "Heat",
+                "movieFile": {
+                    "relativePath": "Heat (1995).mkv",
+                    "quality": "Bluray-1080p",
+                },
+            },
+        ),
+        (
+            "/api/sonarr/add",
+            {
+                "series": ["{root}"],
+                "episodeFile": {"relativePath": "a.mkv", "quality": "HDTV-720p"},
+                "episodes": [{"airDate": "2020-01-01"}],
+            },
+        ),
+        (
+            "/api/radarr/add",
+            {
+                "movie": {"id": 1, "folderPath": "{root}"},
+                "movieFile": {
+                    "relativePath": "Heat (1995).mkv",
+                    "quality": "Bluray-1080p",
+                },
+                "customFormatInfo": [2000],
+            },
+        ),
+    ],
+)
+def test_a_shaped_owner_block_gets_a_400(app, client, tmp_path, endpoint, body):
+    """A movie or series block that is not an object gets a 400 (#507)."""
+
+    import json
+
+    (tmp_path / "Heat (1995).mkv").write_bytes(b"film")
+    (tmp_path / "a.mkv").write_bytes(b"episode")
+    body = json.loads(json.dumps(body).replace("{root}", str(tmp_path)))
+    response = client.post(
+        endpoint, json={"eventType": "Download", **body}, headers=auth_header()
+    )
+    assert response.status_code == 400
+    assert app.import_queue.count == 0
+
+
+def test_a_null_custom_format_score_counts_as_0(app, client, tmp_path):
+    """A null customFormatScore is a low score, not a TypeError (#507)."""
+
+    movie_dir = tmp_path / "Heat (1995)"
+    movie_dir.mkdir()
+    original = "Heat (1995) [Bluray-1080p].mkv"
+    (movie_dir / original).write_bytes(b"film")
+    response = client.post(
+        "/api/radarr/add",
+        json={
+            "eventType": "Download",
+            "movie": {"id": 1, "folderPath": str(movie_dir)},
+            "movieFile": {"relativePath": original, "quality": "Bluray-1080p"},
+            "customFormatInfo": {"customFormatScore": None},
+        },
+        headers=auth_header(),
+    )
+    assert response.status_code == 200
+    assert (movie_dir / "Heat (1995) [WEBRip-1080p].mkv").exists()
+
+
+def test_a_malformed_air_date_does_not_stop_the_import(app, client, tmp_path):
+    """A malformed airDate is not a recent episode and not a 500 (#507)."""
+
+    series_dir = tmp_path / "Doctor Who (2005)" / "Season 01"
+    series_dir.mkdir(parents=True)
+    original = "Doctor Who (2005) - S01E01 - Rose [HDTV-720p].mkv"
+    (series_dir / original).write_bytes(b"episode")
+    response = client.post(
+        "/api/sonarr/add",
+        json={
+            "eventType": "Download",
+            "series": {"id": 7, "path": str(tmp_path / "Doctor Who (2005)")},
+            "episodeFile": {
+                "relativePath": f"Season 01/{original}",
+                "quality": "HDTV-720p",
+            },
+            "customFormatInfo": {"customFormatScore": 2000},
+            "episodes": [{"airDate": "2020-13-45"}],
+        },
+        headers=auth_header(),
+    )
+    assert response.status_code == 200
+    assert app.import_queue.fetch_job(safe_job_id(original)) is not None

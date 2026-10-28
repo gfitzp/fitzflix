@@ -1013,3 +1013,15 @@ def test_a_shaped_webhook_body_gets_a_204(app, client, payload):
     )
     assert raw.status_code == 204
     assert plex_jobs(app) == []
+
+
+@pytest.mark.parametrize("account", [["glenn-plex"], "glenn-plex", {"title": 5}])
+def test_a_shaped_account_block_records_no_username(app, client, account):
+    """An Account that is a list or a string gets a 204, not a 500 (#507)."""
+
+    payload = scrobble_payload()
+    payload["Account"] = account
+    assert post_webhook(client, payload).status_code == 204
+    jobs = plex_jobs(app)
+    assert len(jobs) == 1
+    assert jobs[0].args[1] == ""

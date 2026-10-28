@@ -119,3 +119,47 @@ def test_registration_refuses_an_email_longer_than_120(app, client, monkeypatch)
     assert "cannot be longer than 120 characters" in response.get_data(as_text=True)
     with app.app_context():
         assert User.query.filter_by(email=email).first() is None
+
+
+def test_a_concurrent_duplicate_registration_gets_the_message(app, client, monkeypatch):
+    """The second of 2 posts with one email gets the message, not a 500 (#507).
+
+    The form check passes for both posts. The unique index refuses the
+    second row."""
+
+    from app.auth.forms import RegistrationForm
+    from app.models import User
+
+    from app import db
+
+    monkeypatch.setitem(app.config, "PREVENT_ACCOUNT_CREATION", False)
+    email = "first@example.com"
+    with app.app_context():
+        db.session.add(User(email=email, api_key="d" * 32))
+        db.session.commit()
+    try:
+        monkeypatch.setattr(
+            RegistrationForm, "validate_email", lambda self, field: None
+        )
+        token = _token(client.get("/auth/register").get_data(as_text=True))
+        response = client.post(
+            "/auth/register",
+            data={
+                "csrf_token": token,
+                "email": email,
+                "password": "pw",
+                "password2": "pw",
+                "submit": "Register",
+            },
+        )
+        assert response.status_code == 200
+        assert "Please use a different email address." in response.get_data(
+            as_text=True
+        )
+        with app.app_context():
+            assert User.query.filter_by(email=email).count() == 1
+    finally:
+        # The user table survives between tests
+        with app.app_context():
+            User.query.filter_by(email=email).delete()
+            db.session.commit()

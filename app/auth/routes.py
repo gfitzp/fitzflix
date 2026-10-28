@@ -1,5 +1,7 @@
 import secrets
 
+from sqlalchemy.exc import IntegrityError
+
 from flask import render_template, flash, redirect, url_for, request
 from flask_wtf.csrf import validate_csrf
 from wtforms.validators import ValidationError
@@ -146,7 +148,14 @@ def register():
         user.set_password(form.password.data)
         user.api_key = secrets.token_hex(16)
         db.session.add(user)
-        db.session.commit()
+        try:
+            db.session.commit()
+        except IntegrityError:
+            # A concurrent post with the same email passed the form check
+            # first. The unique index refuses the second row (#507).
+            db.session.rollback()
+            flash("Email: Please use a different email address.", "danger")
+            return render_template("auth/register.html", title="Register", form=form)
         flash("You are now a registered user.")
         return redirect(url_for("auth.login"))
 
