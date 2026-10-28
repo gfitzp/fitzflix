@@ -55,6 +55,7 @@ from app.main.forms import GuessFrameForm
 from app.main.helpers import decimal_id
 from app.title_keys import title_key
 from app.models import (
+    File,
     Movie,
     MovieCast,
     UserFrameScore,
@@ -205,41 +206,138 @@ def _normalize(text):
     return " ".join(words)
 
 
-def _fuzzy_match(guess, movie):
-    """Return True if the guess is close enough to a title of the film.
+# A sequel number decides the film. 'Iron Man 2' does not name Iron
+# Man 3, and 'Mockingjay Part 1' does not name Part 2 (#491). The number
+# is a 'part N' (or vol, volume, chapter, episode) phrase, a trailing
+# Roman numeral, or the trailing digits of the squeezed title. A lone
+# 'i' is a word, not a numeral, except after 'part' and the others.
 
-    The titles are the local title and the TMDB title, with and without
-    the year, and with and without a subtitle. The two halves around a
-    ':' (or the filename-safe ' - ') stand alone. Thus, 'Rogue One'
-    names 'Rogue One: A Star Wars Story', and 'Wrath of Khan' names its
-    Star Trek film (reported by Glenn, 2026-08-27). This compares each
-    pair 2 times: as normalized words, and with the spaces removed.
-    Normalization turns punctuation into spaces. Thus, 'M*A*S*H'
-    normalizes to 'm a s h'. Only the squeezed pass lets a player type
-    'mash' (reported by Glenn, 2026-08-27)."""
+PART_RE = re.compile(r"\b(?:part|vol|volume|chapter|episode) (\d+|[ivx]+)\b")
+ROMAN = {
+    numeral: value
+    for value, numeral in enumerate(
+        "i ii iii iv v vi vii viii ix x xi xii xiii xiv xv".split(), start=1
+    )
+}
+YEAR_RE = re.compile(r"\b(?:18|19|20)\d\d\b")
 
-    normalized = _normalize(guess)
-    if not normalized:
-        return False
-    candidates = {movie.title, movie.tmdb_title, movie.display_title}
-    for title in (movie.title, movie.tmdb_title):
+
+def _sequel_number(normalized):
+    """Return the sequel number of a normalized title, or None."""
+
+    match = PART_RE.search(normalized)
+    if match:
+        value = match.group(1)
+        return int(value) if value.isdigit() else ROMAN.get(value)
+    words = normalized.split()
+    if words and words[-1] in ROMAN and words[-1] != "i":
+        return ROMAN[words[-1]]
+    match = re.search(r"(\d+)$", normalized.replace(" ", ""))
+    return int(match.group(1)) if match else None
+
+
+def _similarity(normalized, candidate):
+    """Return the best ratio of the 2 passes. A different sequel number gives 0."""
+
+    if _sequel_number(normalized) != _sequel_number(candidate):
+        return 0.0
+    return max(
+        SequenceMatcher(None, normalized, candidate).ratio(),
+        SequenceMatcher(
+            None, normalized.replace(" ", ""), candidate.replace(" ", "")
+        ).ratio(),
+    )
+
+
+def _could_beat(normalized, candidate, score):
+    """Return True if the candidate can score above score. This is a cheap bound."""
+
+    return any(
+        SequenceMatcher(None, a, b).quick_ratio() > score
+        for a, b in (
+            (normalized, candidate),
+            (normalized.replace(" ", ""), candidate.replace(" ", "")),
+        )
+    )
+
+
+def _title_candidates(movie):
+    """Return the titles that name the film, normalized.
+
+    These are the local title, the TMDB title and the original title
+    (#491), with and without a subtitle, and the display title with the
+    year."""
+
+    titles = (movie.title, movie.tmdb_title, movie.tmdb_original_title)
+    candidates = set(titles) | {movie.display_title}
+    for title in titles:
         for separator in (":", " - "):
             if title and separator in title:
                 head, tail = title.split(separator, 1)
                 candidates.add(head)
                 candidates.add(tail)
-    for candidate in filter(None, candidates):
-        candidate = _normalize(candidate)
-        for pair in (
-            (normalized, candidate),
-            (
-                normalized.replace(" ", ""),
-                candidate.replace(" ", ""),
-            ),
-        ):
-            if SequenceMatcher(None, *pair).ratio() >= FUZZY_THRESHOLD:
+    return {_normalize(c) for c in candidates if c} - {""}
+
+
+def _other_film_scores_higher(normalized, movie, score):
+    """Return True if a different library film matches the guess better (#491).
+
+    'Aliens' names Aliens, not Alien. 'Hoot' names Hoot, not Hook. A
+    tie is not a better match. Two films with the same title (the 2
+    Cape Fear films) both accept the bare title."""
+
+    rows = (
+        db.session.query(
+            Movie.id, Movie.title, Movie.tmdb_title, Movie.tmdb_original_title
+        )
+        .join(File, File.movie_id == Movie.id)
+        .filter(Movie.id != movie.id)
+        .distinct()
+    )
+    for _, *titles in rows:
+        for title in filter(None, titles):
+            candidate = _normalize(title)
+            if not candidate or not _could_beat(normalized, candidate, score):
+                continue
+            if _similarity(normalized, candidate) > score:
                 return True
     return False
+
+
+def _fuzzy_match(guess, movie):
+    """Return True if the guess is close enough to a title of the film.
+
+    The titles are the local title, the TMDB title, and the original
+    title, with and without the year, and with and without a subtitle.
+    The two halves around a ':' (or the filename-safe ' - ') stand
+    alone. Thus, 'Rogue One' names 'Rogue One: A Star Wars Story', and
+    'Wrath of Khan' names its Star Trek film (reported by Glenn,
+    2026-08-27). This compares each pair 2 times: as normalized words,
+    and with the spaces removed. Normalization turns punctuation into
+    spaces. Thus, 'M*A*S*H' normalizes to 'm a s h'. Only the squeezed
+    pass lets a player type 'mash' (reported by Glenn, 2026-08-27).
+
+    The guess fails if it holds a year that is not the year of the film
+    and not in its title. It fails if its sequel number is different. It
+    fails if a different library film matches it better (#491)."""
+
+    normalized = _normalize(guess)
+    if not normalized:
+        return False
+    candidates = _title_candidates(movie)
+    film_years = {str(movie.display_year), str(movie.year)}
+    title_words = {
+        word
+        for title in (movie.title, movie.tmdb_title, movie.tmdb_original_title)
+        if title
+        for word in _normalize(title).split()
+    }
+    if set(YEAR_RE.findall(normalized)) - film_years - title_words:
+        return False
+    score = max((_similarity(normalized, c) for c in candidates), default=0.0)
+    if score < FUZZY_THRESHOLD:
+        return False
+    return not _other_film_scores_higher(normalized, movie, score)
 
 
 def _include_unrated(difficulty):
