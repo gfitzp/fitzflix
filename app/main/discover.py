@@ -1380,6 +1380,21 @@ MOVIE_STATES_TMDB_FETCHES = 100
 def movie_states():
     """Return the ladder and watchlist state for a batch of poster tiles.
 
+    A Redis outage gives empty states, not a 500 (#476). The tiles then
+    render blank, as they do before the hydration."""
+
+    from app.redis_guard import REDIS_DOWN_ERRORS, warn_redis_down
+
+    try:
+        return _movie_states()
+    except REDIS_DOWN_ERRORS as error:
+        warn_redis_down("The tile hydration", error)
+        return jsonify({"movies": {}, "tmdb": {}})
+
+
+def _movie_states():
+    """Build the response of movie_states.
+
     This is #45c, 2026-08 revision. One fetch per gallery page hydrates
     the star row and the watchlist toggle of every tile. Thus, no
     gallery route has to compute the per-film verdicts itself.

@@ -312,15 +312,28 @@ class User(UserMixin, db.Model):
         """Return the running and queued background jobs for the queue page."""
 
         from app.queue_page import queue_details
+        from app.redis_guard import REDIS_DOWN_ERRORS, warn_redis_down
 
-        return queue_details()
+        # Each page renders this. A Redis outage gives an empty result,
+        # not a failed page (#476).
+
+        try:
+            return queue_details()
+        except REDIS_DOWN_ERRORS as error:
+            warn_redis_down("The queue badge", error)
+            return {}
 
     def get_queue_count(self):
         """Return the total of queued and running jobs for the navbar badge."""
 
         from app.queue_page import queue_count
+        from app.redis_guard import REDIS_DOWN_ERRORS, warn_redis_down
 
-        return queue_count()
+        try:
+            return queue_count()
+        except REDIS_DOWN_ERRORS as error:
+            warn_redis_down("The queue badge", error)
+            return 0
 
 
 class UserStreamingProvider(db.Model):

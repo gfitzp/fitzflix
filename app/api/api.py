@@ -24,7 +24,16 @@ def queue_details():
     """
 
     if current_user.is_authenticated:
+        from app.pipeline import ACTIVE_LIMIT, pipeline_trails
+        from app.redis_guard import REDIS_DOWN_ERRORS, warn_redis_down
+
         details = current_user.get_queue_details()
+
+        # A Redis outage gives an empty queue, not a 500 (#476). The
+        # poll continues, and the badge fills again when Redis is back.
+
+        if not details:
+            return jsonify({"count": 0, "running": [], "all": [], "files": []})
 
         # The per-file pipeline trails show where each recent file is in
         # the import pipeline. The poll of the queue page uses the default
@@ -32,14 +41,16 @@ def queue_details():
         # ?files=. Fitzflix clamps that number to what Redis keeps. The
         # Queue table shows the newest journey of each file only (#297).
 
-        from app.pipeline import ACTIVE_LIMIT, pipeline_trails
-
         limit = request.args.get("files", 25, type=int) or 25
-        details["files"] = pipeline_trails(
-            current_app.redis,
-            limit=max(1, min(limit, ACTIVE_LIMIT)),
-            journey_only=True,
-        )
+        try:
+            details["files"] = pipeline_trails(
+                current_app.redis,
+                limit=max(1, min(limit, ACTIVE_LIMIT)),
+                journey_only=True,
+            )
+        except REDIS_DOWN_ERRORS as error:
+            warn_redis_down("The queue badge", error)
+            details["files"] = []
         return jsonify(details)
 
     # The user is not authenticated. Return a 401 HTTP error code.
