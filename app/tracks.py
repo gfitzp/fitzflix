@@ -2105,8 +2105,12 @@ def _remux_audio_plan_unlocked(file_id, plan):
 
         plan = [(action, int(index)) for action, index in plan]
         staging_dir = current_app.config["STAGING_DIR"]
-        staging_source = os.path.join(staging_dir, f".src-{basename}")
-        staging_output = os.path.join(staging_dir, basename)
+        # The staging names hold a digest of the library path, as in
+        # remux_file (#519). 2 extras named "Trailer.mkv" can run at the
+        # same time on the transcode queue.
+        staged_name = f"{hashlib.sha1(file_path.encode()).hexdigest()[:8]}-{basename}"
+        staging_source = os.path.join(staging_dir, f".src-{staged_name}")
+        staging_output = os.path.join(staging_dir, staged_name)
         try:
             free = shutil.disk_usage(staging_dir).free
             if free < os.path.getsize(file_path) * 2.2 + 16 * 2**30:
@@ -2197,11 +2201,11 @@ def _remux_audio_plan_unlocked(file_id, plan):
                     f"vs {file_duration}"
                 )
 
-            # The output already has the clean basename. In the atmos task,
-            # the OUTPUT was the dotfile. Thus, the upload derives the
-            # correct S3 key from staging_output. The first run renamed the
-            # output to the .src- name and uploaded 40 GB under
-            # 'untouched/src-…' (the Fellowship incident)
+            # The S3 key comes from the row (archive_key_for), not from
+            # the staging name. Thus, the digest prefix of the staging
+            # name does not reach the key (#519). The first run took the
+            # key from the name. It uploaded 40 GB under 'untouched/src-…'
+            # (the Fellowship incident).
 
             os.remove(staging_source)
             final_staging = staging_output

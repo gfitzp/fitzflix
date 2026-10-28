@@ -716,3 +716,48 @@ def test_remux_command_leaves_out_the_empty_subtitles(app):
     assert "--no-subtitles" in command([], [2])
     unchanged = command([2, 3], [])
     assert "-s" not in unchanged and "--no-subtitles" not in unchanged
+
+
+def test_two_same_named_audio_plans_stage_under_different_names(app, monkeypatch):
+    """2 extras named Trailer.mkv do not share staging files (#519).
+
+    ffmpeg -y overwrote the output of the other run, and the first
+    cleanup deleted the files of the second."""
+
+    import os
+    import shutil
+    from types import SimpleNamespace
+
+    import pytest
+
+    import app.videos as videos
+    from app import db
+    from app.tracks import _remux_audio_plan_unlocked
+    from tests.factories import make_movie, make_movie_file
+
+    staged = []
+
+    def stop_after_naming(src, dst, *args, **kwargs):
+        staged.append(os.path.basename(dst))
+        raise RuntimeError("stop")
+
+    monkeypatch.setattr(videos, "copy_with_progress", stop_after_naming)
+    monkeypatch.setattr(shutil, "disk_usage", lambda path: SimpleNamespace(free=2**60))
+    ids = []
+    with app.app_context():
+        for title in ("Jaws", "Alien"):
+            file = make_movie_file(make_movie(title, 1979), "DVD", "Trailers")
+            file.basename = "Trailer.mkv"
+            file.file_path = f"{file.dirname}/Trailer.mkv"
+            library = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
+            os.makedirs(os.path.dirname(library), exist_ok=True)
+            open(library, "wb").close()
+            ids.append(file.id)
+        db.session.commit()
+
+    for file_id in ids:
+        with pytest.raises(RuntimeError):
+            _remux_audio_plan_unlocked(file_id, [("copy", 0)])
+    assert len(staged) == 2 and staged[0] != staged[1]
+    assert all(name.startswith(".src-") for name in staged)
+    assert all(name.endswith("-Trailer.mkv") for name in staged)
