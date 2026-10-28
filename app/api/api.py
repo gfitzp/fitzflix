@@ -75,7 +75,13 @@ def plex_webhook(token):
     except Exception:
         payload = {}
 
-    metadata = payload.get("Metadata") or {}
+    # A list, a string, or a number is not a Plex event (#449).
+
+    if not isinstance(payload, dict):
+        payload = {}
+    metadata = payload.get("Metadata")
+    if not isinstance(metadata, dict):
+        metadata = {}
     if payload.get("event") != "media.scrobble" or metadata.get("type") != "movie":
         return "", 204
 
@@ -88,14 +94,17 @@ def plex_webhook(token):
         return "", 204
 
     tmdb_id = None
-    for guid in metadata.get("Guid") or []:
-        match = re.match(r"tmdb://(\d+)", guid.get("id") or "")
+    guids = metadata.get("Guid")
+    for guid in guids if isinstance(guids, list) else []:
+        guid_id = guid.get("id") if isinstance(guid, dict) else None
+        match = re.match(r"tmdb://(\d+)", guid_id if isinstance(guid_id, str) else "")
         if match:
             tmdb_id = int(match.group(1))
             break
-    if tmdb_id is None:
+    legacy_guid = metadata.get("guid")
+    if tmdb_id is None and isinstance(legacy_guid, str):
         # The legacy metadata agent sends the guid as one string.
-        match = re.search(r"themoviedb://(\d+)", metadata.get("guid") or "")
+        match = re.search(r"themoviedb://(\d+)", legacy_guid)
         if match:
             tmdb_id = int(match.group(1))
     if tmdb_id is None:

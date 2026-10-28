@@ -982,3 +982,34 @@ def test_a_failed_lookup_in_the_cursor_second_queues_no_repeats(
         with app.app_context():
             assert plex_history_poll() is True
     assert [job.args[0] for job in plex_jobs(app)] == [578, 11]
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        [1, 2],
+        "media.scrobble",
+        {"event": "media.scrobble", "Metadata": "movie"},
+        {
+            "event": "media.scrobble",
+            "Metadata": {"type": "movie", "title": "Jaws", "Guid": "tmdb://578"},
+        },
+        {
+            "event": "media.scrobble",
+            "Metadata": {"type": "movie", "title": "Jaws", "Guid": ["tmdb://578", 5]},
+        },
+        {
+            "event": "media.scrobble",
+            "Metadata": {"type": "movie", "title": "Jaws", "guid": 578},
+        },
+    ],
+)
+def test_a_shaped_webhook_body_gets_a_204(app, client, payload):
+    """A list body or a string Guid gets the documented 204, not a 500 (#449)."""
+
+    assert post_webhook(client, payload).status_code == 204
+    raw = client.post(
+        WEBHOOK, data=json.dumps(payload), content_type="application/json"
+    )
+    assert raw.status_code == 204
+    assert plex_jobs(app) == []
