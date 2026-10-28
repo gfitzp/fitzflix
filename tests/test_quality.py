@@ -20,6 +20,11 @@ LOW_SCORE = 100  # below the threshold. Result: WEBRip
         ("Bluray-1080p Remux", "WEBDL-1080p"),
         ("Remux-1080p", "WEBDL-1080p"),
         ("Bluray-2160p Remux", "WEBDL-2160p"),
+        # Radarr titles that the old chain of replacements broke (#506).
+        ("DVD-R", "WEBDL-480p"),
+        ("DVDSCR", "WEBDL-480p"),
+        ("Bluray-576p", "WEBDL-480p"),
+        ("Remux-2160p", "WEBDL-2160p"),
         # A web source does not change.
         ("WEBDL-1080p", "WEBDL-1080p"),
         ("HDTV-720p", "HDTV-720p"),
@@ -56,3 +61,15 @@ def test_the_threshold_is_an_argument():
     assert downgrade_quality_title("Bluray-1080p", 100, 50) == "WEBDL-1080p"
     assert downgrade_quality_title("Bluray-1080p", 100, 500) == "WEBRip-1080p"
     assert downgrade_quality_title("Bluray-1080p", -20, -50) == "WEBDL-1080p"
+
+
+def test_every_downgraded_title_is_a_ref_quality_title():
+    """Each value of the map must be a title that the importer knows (#506)."""
+
+    from app.api.arr import WEB_EQUIVALENT_QUALITY
+    from tests.conftest import QUALITIES
+
+    known = {title for title, _, _ in QUALITIES}
+    for original in WEB_EQUIVALENT_QUALITY:
+        assert downgrade_quality_title(original, HIGH_SCORE, MIN_SCORE) in known
+        assert downgrade_quality_title(original, LOW_SCORE, MIN_SCORE) in known

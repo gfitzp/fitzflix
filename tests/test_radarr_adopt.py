@@ -249,3 +249,27 @@ def test_a_late_rename_outside_the_root_is_refused(app, monkeypatch, tmp_path, c
             service="Radarr",
         )
     assert "not under a root folder" in caplog.text
+
+
+def test_webhook_refuses_a_quality_that_fitzflix_does_not_know(app, client, tmp_path):
+    """A rename to an unknown title would send the download to rejects (#506)."""
+
+    folder = tmp_path / "Freaks (1932)"
+    folder.mkdir()
+    name = "Freaks (1932) - [WORKPRINT].mkv"
+    (folder / name).write_bytes(b"movie")
+    token = base64.b64encode(f"{ADMIN_EMAIL}:{ADMIN_API_KEY}".encode()).decode()
+    response = client.post(
+        "/api/radarr/add",
+        json={
+            "eventType": "Download",
+            "movie": {"id": 3, "folderPath": str(folder)},
+            "movieFile": {"id": 7, "relativePath": name, "quality": "WORKPRINT"},
+            "customFormatInfo": {"customFormatScore": 2000},
+        },
+        headers={"Authorization": f"Basic {token}"},
+    )
+    assert response.status_code == 400
+    assert (folder / name).exists()
+    assert app.request_queue.job_ids == []
+    assert app.import_queue.job_ids == []

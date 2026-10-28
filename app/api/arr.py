@@ -201,6 +201,28 @@ def downloaded_path(service, folder, relative):
     return None
 
 
+# The web equivalent of each physical-media quality of Sonarr and
+# Radarr. Each value is a RefQuality title. A title that is not a key does
+# not change. An explicit map replaces the earlier chain of substring
+# replacements. That chain made titles such as "WEBDL-480p-R" from
+# "DVD-R" (#506).
+
+WEB_EQUIVALENT_QUALITY = {
+    "DVD": "WEBDL-480p",
+    "DVD-R": "WEBDL-480p",
+    "DVDSCR": "WEBDL-480p",
+    "Bluray-480p": "WEBDL-480p",
+    "Bluray-576p": "WEBDL-480p",
+    "Bluray-720p": "WEBDL-720p",
+    "Bluray-1080p": "WEBDL-1080p",
+    "Bluray-1080p Remux": "WEBDL-1080p",
+    "Remux-1080p": "WEBDL-1080p",
+    "Bluray-2160p": "WEBDL-2160p",
+    "Bluray-2160p Remux": "WEBDL-2160p",
+    "Remux-2160p": "WEBDL-2160p",
+}
+
+
 def downgrade_quality_title(original_quality, custom_format_score, min_score):
     """Downgrade a Sonarr/Radarr quality title to its web-sourced equivalent.
 
@@ -208,26 +230,22 @@ def downgrade_quality_title(original_quality, custom_format_score, min_score):
     not use a physical-media quality title. Thus, it uses the next highest
     quality. "Remux" also does not identify a Bluray rip:
 
-        - DVD                 -> WEBDL-480p
-        - Bluray-480p         -> WEBDL-480p
+        - DVD, DVD-R, DVDSCR  -> WEBDL-480p
+        - Bluray-480p, -576p  -> WEBDL-480p
         - Bluray-720p         -> WEBDL-720p
         - Bluray-1080p        -> WEBDL-1080p
         - Bluray-1080p Remux  -> WEBDL-1080p
         - Remux-1080p         -> WEBDL-1080p
 
-    A download with a custom-format score below min_score gets the label
-    WEBRip instead of WEBDL. The callers read min_score from the setting
-    of their service (#290).
+    WEB_EQUIVALENT_QUALITY holds the full map. A download with a
+    custom-format score below min_score gets the label WEBRip instead of
+    WEBDL. The callers read min_score from the setting of their service
+    (#290).
     """
 
-    new_quality = (
-        original_quality.replace("DVD", "WEBDL-480p")
-        .replace("Bluray", "WEBDL")
-        .replace("Remux-", "WEBDL-")
-        .replace(" Remux", "")
-    )
-    if custom_format_score < min_score:
-        new_quality = new_quality.replace("WEBDL", "WEBRip")
+    new_quality = WEB_EQUIVALENT_QUALITY.get(original_quality, original_quality or "")
+    if custom_format_score < min_score and new_quality.startswith("WEBDL-"):
+        new_quality = "WEBRip-" + new_quality.removeprefix("WEBDL-")
     return new_quality
 
 
@@ -407,6 +425,21 @@ def handle_import_event(arr, payload, priority=None):
         (payload.get("customFormatInfo") or {}).get("customFormatScore", 0),
         get_setting(arr.min_score_setting),
     )
+
+    # The import parser rejects a quality that is not a RefQuality title.
+    # A rename to such a title would make arr lose its file, and the
+    # download would go to rejects. Thus, refuse it before any rename
+    # (#506).
+
+    from app.models import RefQuality
+
+    if not RefQuality.query.filter_by(quality_title=new_quality).first():
+        current_app.logger.warning(
+            f"'{downloaded_file_path}' {arr.name} webhook gave the quality "
+            f"{original_quality!r}, which Fitzflix does not know; refusing it"
+        )
+        response.status_code = 400
+        return response
     new_name = os.path.basename(downloaded_file_path).replace(
         f"[{original_quality}]", f"[{new_quality}]"
     )

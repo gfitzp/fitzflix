@@ -248,14 +248,15 @@ When a download completes, Fitzflix renames the file with a *lower* quality titl
 
 | Sonarr/Radarr quality | Imported as |
 | --- | --- |
-| `DVD` | `WEBDL-480p` |
-| `Bluray-480p` | `WEBDL-480p` |
+| `DVD`, `DVD-R`, `DVDSCR` | `WEBDL-480p` |
+| `Bluray-480p`, `Bluray-576p` | `WEBDL-480p` |
 | `Bluray-720p` | `WEBDL-720p` |
 | `Bluray-1080p` | `WEBDL-1080p` |
 | `Bluray-1080p Remux` | `WEBDL-1080p` |
 | `Remux-1080p` | `WEBDL-1080p` |
+| `Bluray-2160p`, `Bluray-2160p Remux`, `Remux-2160p` | `WEBDL-2160p` |
 
-A download with a custom format score below the minimum gets the label `WEBRip` in place of `WEBDL`. The minimum is `RADARR_WEBDL_MIN_SCORE` for Radarr and `SONARR_WEBDL_MIN_SCORE` for Sonarr, 1600 by default. Fitzflix imports the file from the folder of the download client, and does not copy it to the import directory. A TV episode that aired in the last 14 days goes to the front of the import queue. After the rename, Fitzflix asks Sonarr to scan the series again, so the Sonarr records stay correct.
+If a download has a quality that is not a known quality title, Fitzflix refuses the webhook with a 400 and writes a log line. A download with a custom format score below the minimum gets the label `WEBRip` in place of `WEBDL`. The minimum is `RADARR_WEBDL_MIN_SCORE` for Radarr and `SONARR_WEBDL_MIN_SCORE` for Sonarr, 1600 by default. Fitzflix imports the file from the folder of the download client, and does not copy it to the import directory. A TV episode that aired in the last 14 days goes to the front of the import queue. After the rename, Fitzflix asks Sonarr to scan the series again, so the Sonarr records stay correct.
 
 For the series that Sonarr manages, Sonarr is also the **episode-data authority**. Fitzflix matches its series to the Sonarr series by the library folder. A file coverage check protects the match, so a folder name that matches by chance cannot claim a show. For a matched series, Fitzflix takes the episode titles from the TVDB records of Sonarr. This function exists for the shows where the TMDB numbers are different from the numbers in the files. Daily shows and panel shows are examples. For these shows, the episode files follow the TVDB sequence.
 
