@@ -84,9 +84,11 @@ from app.file_ranking import (
     MOVIE_BEST_ORDER,
     TV_BEST_ORDER,
     best_copy_key,
+    best_episode_holders,
     copy_upgradable,
     criterion_settled,
     quality_anchors,
+    season_grades,
 )
 from app.newly_added import poster_fold
 from app.infuse_player import infuse_only_formats
@@ -98,7 +100,6 @@ from app.main.helpers import (
     verdict_response,
     admin_required,
     flash_form_errors,
-    season_episode_counts,
     _card_fetch,
     _ladder_fetch,
     _latest_review_row,
@@ -1848,71 +1849,31 @@ def tv_library():
     its whole series into the series list (Glenn: a search for
     "venture" must not show Bob's Burgers)."""
 
-    # This subquery gets the number of episodes in each season, and the
-    # worst quality of each season.
-
-    ranked_files = ranked_tv_files()
-
-    subquery = (
-        db.session.query(
-            File.series_id,
-            File.season,
-            db.func.count(db.func.distinct(File.episode)).label("episodes"),
-            db.func.min(RefQuality.preference).label("preference"),
-        )
-        .group_by(File.series_id, File.season)
-        .join(RefQuality, (RefQuality.id == File.quality_id))
-        .join(ranked_files, (ranked_files.c.id == File.id))
-        .filter(ranked_files.c.rank == 1)
-        .subquery()
-    )
+    # The grade of each season is its worst episode. Each episode number
+    # of a multi-episode file counts (#479). The In-library badge and the
+    # TV shopping list read the same grade.
 
     upgrade_threshold = _upgrade_threshold()
-
-    # Run the season aggregate 1 time for the whole library and group the
-    # rows by series. Do not run the ranked subquery again for each series.
-
-    season_rows = (
-        db.session.query(
-            subquery.c.series_id,
-            subquery.c.season,
-            subquery.c.episodes,
-            RefQuality.preference,
-            RefQuality.physical_media,
-            RefQuality.quality_title,
-        )
-        .join(RefQuality, (RefQuality.preference == subquery.c.preference))
-        .order_by(
-            subquery.c.series_id,
-            db.case((subquery.c.season == 0, 1), else_=0).asc(),
-            subquery.c.season.asc(),
-        )
-        .all()
-    )
-
-    # The episode count expands multi-episode files (#330)
-
-    episode_counts = season_episode_counts()
+    grades = season_grades()
 
     seasons_by_series = {}
-    for (
-        series_id,
-        season,
-        num_episodes,
-        preference,
-        physical,
-        min_quality,
-    ) in season_rows:
+    for (series_id, season), grade in sorted(
+        grades.items(),
+        key=lambda item: (item[0][0], item[0][1] == 0, item[0][1]),
+    ):
         seasons_by_series.setdefault(series_id, []).append(
             {
                 "season": season,
-                "episode_count": episode_counts.get((series_id, season), num_episodes),
-                "min_quality": min_quality,
+                "episode_count": grade.episodes,
+                "min_quality": grade.quality_title,
                 # A physical-media season (DVD, SD/720p Blu-ray) is often the
                 # only release that will ever exist. Thus, it does not count as
                 # upgradable.
                 "upgradable": copy_upgradable(
-                    False, preference, upgrade_threshold, physical=physical
+                    False,
+                    grade.preference,
+                    upgrade_threshold,
+                    physical=grade.physical_media,
                 ),
             }
         )
@@ -2133,16 +2094,26 @@ def season(series_id, season):
     )
 
 
+def _archived_best_holders(pairs):
+    """Return the archived files that are the best holder of an episode number.
+
+    pairs holds (File, RefQuality) pairs. A span that is the only holder
+    of E02 to E06 beside a better E01 single is restored too (#479)."""
+
+    holders = {file.id: file for file, _ in best_episode_holders(pairs).values()}
+    return sorted(
+        (file for file in holders.values() if file.aws_key),
+        key=lambda file: (file.season, file.episode or 0, file.id),
+    )
+
+
 def _series_restorable(series_id):
     """Return the best archived file of each episode of a series."""
 
-    restore_ranked_files = ranked_tv_files()
-    return (
-        File.query.join(restore_ranked_files, (restore_ranked_files.c.id == File.id))
+    return _archived_best_holders(
+        db.session.query(File, RefQuality)
+        .join(RefQuality, (RefQuality.id == File.quality_id))
         .filter(File.series_id == series_id)
-        .filter(restore_ranked_files.c.rank == 1)
-        .filter(File.aws_key != None)
-        .order_by(File.season.asc(), File.episode.asc())
         .all()
     )
 
@@ -2168,7 +2139,7 @@ def _season_files(series_id, season):
 def _season_restorable(files):
     """Return the best archived file of each episode in the rows of _season_files."""
 
-    return [file for file, _, _, rank in files if rank == 1 and file.aws_key]
+    return _archived_best_holders([(file, quality) for file, _, quality, _ in files])
 
 
 def _request_restores(files):

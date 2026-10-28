@@ -51,6 +51,7 @@ from app.file_ranking import (
     quality_anchors,
     quality_id,
     quality_preference,
+    season_grades,
 )
 
 # This is the scarcity order of the watchlist view (#247, the ranking
@@ -901,44 +902,18 @@ def tv_shopping():
     dvd_quality = quality_preference("DVD")
     bluray_quality = lowest_physical_preference("Bluray-1080")
 
-    # Grade each season by its episodes. The quality of an episode is the
-    # best quality of the files that hold it, a multi-episode file
-    # included. The grade of the season is the worst episode quality. An
-    # old copy next to a better one does not lower the grade. A Bluray
-    # "S13E01" does not hide that E02-E06 exist only in a DVD "S13E01-E06"
-    # (tv_file_rank groups by the first episode, and would hide them).
+    # Grade each season by its episodes, with the shared season grade of
+    # the TV library page (#479). The quality of an episode is the
+    # quality of its best holder, a multi-episode file included. The
+    # grade of the season is the worst episode quality. An old copy next
+    # to a better one does not lower the grade. A Bluray "S13E01" does
+    # not hide that E02-E06 exist only in a DVD "S13E01-E06".
 
-    episode_quality = {}
-    for series_id, season, episode, last_episode, preference in (
-        db.session.query(
-            File.series_id,
-            File.season,
-            File.episode,
-            File.last_episode,
-            RefQuality.preference,
-        )
-        .join(RefQuality, (RefQuality.id == File.quality_id))
-        .filter(File.series_id.isnot(None), File.episode.isnot(None))
-        .all()
-    ):
-        last = last_episode if last_episode is not None else episode
-        if last < episode or last - episode > 500:
-            last = episode
-        for number in range(episode, last + 1):
-            slot = (series_id, season, number)
-            episode_quality[slot] = max(
-                episode_quality.get(slot, preference), preference
-            )
-
-    season_grades = {}
-    for (series_id, season, _number), preference in episode_quality.items():
-        grade = season_grades.setdefault((series_id, season), [preference, 0])
-        grade[0] = min(grade[0], preference)
-        grade[1] += 1
-
-    quality_titles = dict(
-        db.session.query(RefQuality.preference, RefQuality.quality_title).all()
-    )
+    grades = season_grades()
+    season_grades_by_key = {
+        key: (grade.preference, grade.episodes, grade.quality_title)
+        for key, grade in grades.items()
+    }
 
     def instruction_for(preference):
         if preference < dvd_quality:
@@ -952,11 +927,11 @@ def tv_shopping():
             series_id,
             season,
             episodes,
-            quality_titles.get(preference),
+            quality_title,
             instruction_for(preference),
         )
-        for (series_id, season), (preference, episodes) in sorted(
-            season_grades.items(),
+        for (series_id, season), (preference, episodes, quality_title) in sorted(
+            season_grades_by_key.items(),
             key=lambda item: (item[0][0], item[0][1] == 0, item[0][1]),
         )
         if min_preference <= preference <= max_preference

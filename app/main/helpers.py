@@ -25,7 +25,6 @@ from app.models import (
     File,
     Movie,
     RefQuality,
-    TVSeries,
     UserMovieReview,
     UserMovieStatus,
     UserWatchlist,
@@ -34,7 +33,7 @@ from app.file_ranking import (
     MOVIE_BEST_ORDER,
     copy_upgradable,
     criterion_settled,
-    tv_file_rank,
+    season_grades,
     upgrade_threshold,
 )
 from app.elicitation import set_last_response
@@ -866,45 +865,15 @@ def series_upgradable(series_ids):
     if not series_ids:
         return {}
 
-    # Get the best copy of each episode. The preference and the physical
-    # flag of its quality are on the same row. Python then selects the
-    # worst episode of the season from that row. It does not resolve a
-    # min(preference) back to a RefQuality by value (#238: preference has
-    # no unique constraint. Thus, a value join fans out if 2 tiers share
-    # one value).
+    # The shared season grade (#479) gives the worst episode of each
+    # season. Each episode number of a multi-episode file counts. The
+    # preference and the physical flag come from the same tier row. They
+    # are not resolved back from a min(preference) by value (#238).
 
-    ranked_files = (
-        db.session.query(
-            File.series_id.label("series_id"),
-            File.season.label("season"),
-            RefQuality.preference.label("preference"),
-            RefQuality.physical_media.label("physical_media"),
-            tv_file_rank(),
-        )
-        .join(TVSeries, (TVSeries.id == File.series_id))
-        .join(RefQuality, (RefQuality.id == File.quality_id))
-        .filter(File.series_id.in_(series_ids))
-        .subquery()
-    )
-
-    worst = {}
-    for series_id, season, preference, physical in db.session.query(
-        ranked_files.c.series_id,
-        ranked_files.c.season,
-        ranked_files.c.preference,
-        ranked_files.c.physical_media,
-    ).filter(ranked_files.c.rank == 1):
-        key = (series_id, season)
-        held = worst.get(key)
-        # A tie goes to the non-physical copy. 2 episodes can tie as the
-        # worst of the season. If one of them CAN be upgraded, the season
-        # still has an episode worth an upgrade.
-        if (
-            held is None
-            or preference < held[0]
-            or (preference == held[0] and not physical)
-        ):
-            worst[key] = (preference, physical)
+    worst = {
+        key: (grade.preference, grade.physical_media)
+        for key, grade in season_grades(series_ids).items()
+    }
 
     threshold = _upgrade_threshold()
     upgradable = {}

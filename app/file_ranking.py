@@ -162,6 +162,109 @@ def best_copy_key(file, quality):
     )
 
 
+# A span longer than this is a bad parse, not a real multi-episode file.
+# The episode expansion then counts only its first episode.
+
+MAX_EPISODE_SPAN = 500
+
+
+def episode_numbers(episode, last_episode):
+    """Return the episode numbers that 1 TV file holds, in order.
+
+    A multi-episode file (S04E17-E22) holds each number of its span. A
+    file with no episode number holds the single slot None."""
+
+    if episode is None:
+        return [None]
+    last = last_episode if last_episode is not None else episode
+    if last < episode or last - episode > MAX_EPISODE_SPAN:
+        last = episode
+    return list(range(episode, last + 1))
+
+
+def tv_best_key(file, quality):
+    """Return the Python sort key of TV_BEST_ORDER for a (File, RefQuality) pair.
+
+    The smallest key is the best copy of an episode."""
+
+    return (
+        bool(file.fullscreen),
+        -(quality.preference or 0),
+        -(file.last_episode if file.last_episode is not None else -1),
+        file.converted_from_quality is not None,
+        file.id,
+    )
+
+
+def best_episode_holders(pairs):
+    """Return {(series id, season, number): (File, RefQuality)} for the best holders.
+
+    pairs holds (File, RefQuality) pairs of TV files. Each episode number
+    of a span counts (#479). Thus, a later single file and a span that
+    holds the same episode compete, whatever their first episodes are.
+    tv_file_rank groups by the first episode only. It cannot see that."""
+
+    best = {}
+    for file, quality in pairs:
+        key = tv_best_key(file, quality)
+        for number in episode_numbers(file.episode, file.last_episode):
+            slot = (file.series_id, file.season, number)
+            held = best.get(slot)
+            if held is None or key < tv_best_key(*held):
+                best[slot] = (file, quality)
+    return best
+
+
+SeasonGrade = namedtuple(
+    "SeasonGrade", "preference physical_media quality_title quality_id episodes"
+)
+
+
+def season_grades(series_ids=None):
+    """Return {(series id, season): SeasonGrade} for the TV library (#479).
+
+    This is the one season grade of the TV library page, the In-library
+    badge, and the TV shopping list. Each episode number gets its best
+    holder. The grade of the season is its worst episode. At the same
+    preference, the non-physical tier counts as the worse one. Thus, a
+    season that still has an episode worth an upgrade shows it. episodes
+    is the number of episode numbers that the season holds."""
+
+    query = (
+        db.session.query(File, RefQuality)
+        .join(RefQuality, RefQuality.id == File.quality_id)
+        .filter(File.series_id.isnot(None))
+    )
+    if series_ids is not None:
+        query = query.filter(File.series_id.in_(list(series_ids)))
+
+    grades = {}
+    numbers = {}
+    for (series_id, season, number), (_, quality) in best_episode_holders(
+        query.all()
+    ).items():
+        key = (series_id, season)
+        if number is not None:
+            numbers[key] = numbers.get(key, 0) + 1
+        else:
+            numbers.setdefault(key, 0)
+        held = grades.get(key)
+        preference = quality.preference or 0
+        if (
+            held is None
+            or preference < held.preference
+            or (preference == held.preference and not quality.physical_media)
+        ):
+            grades[key] = SeasonGrade(
+                preference,
+                bool(quality.physical_media),
+                quality.quality_title,
+                quality.id,
+                0,
+            )
+    return {key: grade._replace(episodes=numbers[key]) for key, grade in grades.items()}
+
+
 def copy_upgradable(
     fullscreen, preference, threshold, criterion_pref=None, physical=False
 ):
@@ -404,6 +507,21 @@ def find_better_files(details):
         # - wider TV episode range, NOT full screen, in the same or
         #   better quality
 
+        # The span of an existing file is the same, or it holds the span
+        # of the new file and more (#479). A span "S19E06-E07" holds a
+        # single "S19E07". The first episodes differ.
+
+        episode = details["episode"]
+        last_episode = details.get("last_episode") or episode
+        same_span = db.and_(
+            File.episode == episode, File.last_episode == last_episode
+        ).self_group()
+        wider_span = db.and_(
+            File.episode <= episode,
+            File.last_episode >= last_episode,
+            db.not_(same_span),
+        ).self_group()
+
         if details.get("fullscreen") == True:
             better_files = (
                 File.query.join(TVSeries, (TVSeries.id == File.series_id))
@@ -413,26 +531,13 @@ def find_better_files(details):
                     File.dirname == details["dirname"],
                     TVSeries.title == details["title"],
                     File.season == details["season"],
-                    File.episode == details["episode"],
                     db.or_(
                         db.and_(
-                            File.last_episode == details.get("last_episode"),
-                            File.fullscreen == True,
+                            same_span,
                             RefQuality.preference == source_quality.preference,
                         ).self_group(),
                         db.and_(
-                            File.last_episode > details.get("last_episode"),
-                            File.fullscreen == True,
-                            RefQuality.preference >= source_quality.preference,
-                        ).self_group(),
-                        db.and_(
-                            File.last_episode == details.get("last_episode"),
-                            File.fullscreen == False,
-                            RefQuality.preference == source_quality.preference,
-                        ).self_group(),
-                        db.and_(
-                            File.last_episode > details.get("last_episode"),
-                            File.fullscreen == False,
+                            wider_span,
                             RefQuality.preference >= source_quality.preference,
                         ).self_group(),
                     ).self_group(),
@@ -444,8 +549,8 @@ def find_better_files(details):
         # prevent the import of this file:
         # - same TV show episode range, not full screen, in a better
         #   quality
-        # - wider TV show episode range, not full screen, in the same
-        #   quality
+        # - wider TV show episode range, not full screen, in the same or
+        #   better quality
 
         else:
             better_files = (
@@ -456,15 +561,14 @@ def find_better_files(details):
                     File.dirname == details["dirname"],
                     TVSeries.title == details["title"],
                     File.season == details["season"],
-                    File.episode == details["episode"],
                     db.or_(
                         db.and_(
-                            File.last_episode == details.get("last_episode"),
+                            same_span,
                             RefQuality.preference > source_quality.preference,
                         ).self_group(),
                         db.and_(
-                            File.last_episode > details.get("last_episode"),
-                            RefQuality.preference == source_quality.preference,
+                            wider_span,
+                            RefQuality.preference >= source_quality.preference,
                         ).self_group(),
                     ).self_group(),
                     File.fullscreen == False,
@@ -483,6 +587,33 @@ def find_better_files(details):
         better_files = [f for f in better_files if not f.needs_sdr_conversion]
 
     return better_files
+
+
+def _inside_span(file):
+    """Return the filters of the TV files whose span is inside the span of file.
+
+    A single "S19E07" is inside a span "S19E06-E07" (#479). The first
+    episodes differ. Thus, the filter compares the 2 ends of the span."""
+
+    last_episode = file.last_episode if file.last_episode is not None else file.episode
+    return (File.episode >= file.episode, File.last_episode <= last_episode)
+
+
+def _narrower_span(other, file):
+    """Return True if the span of other is inside the span of file, and smaller."""
+
+    def span(row):
+        return (
+            row.episode,
+            row.last_episode if row.last_episode is not None else row.episode,
+        )
+
+    (first, last), (other_first, other_last) = span(file), span(other)
+    return (
+        first <= other_first
+        and other_last <= last
+        and (other_first, other_last) != (first, last)
+    )
 
 
 def same_identity_files(file):
@@ -511,8 +642,7 @@ def same_identity_files(file):
         query = query.filter(
             File.series_id == file.series_id,
             File.season == file.season,
-            File.episode == file.episode,
-            File.last_episode <= file.last_episode,
+            *_inside_span(file),
         )
     else:
         return []
@@ -544,10 +674,7 @@ def find_worse_files(file, replace_existing=False):
                 if f.converted_from_quality
                 or f.needs_sdr_conversion
                 or f.quality.preference < file.quality.preference
-                or (
-                    file.media_library == TV_SHOWS
-                    and f.last_episode < file.last_episode
-                )
+                or (file.media_library == TV_SHOWS and _narrower_span(f, file))
             ]
         worse_files += [
             f
@@ -594,8 +721,7 @@ def _worse_by_quality(file):
             .filter(
                 File.series_id == file.series_id,
                 File.season == file.season,
-                File.episode == file.episode,
-                File.last_episode <= file.last_episode,
+                *_inside_span(file),
                 RefQuality.preference <= file.quality.preference,
                 db.or_(File.fullscreen == file.fullscreen, File.fullscreen == True),
                 File.id != file.id,
@@ -633,7 +759,8 @@ def real_rips_blocking(file_details):
         query = query.join(TVSeries, (TVSeries.id == File.series_id)).filter(
             TVSeries.title == file_details["title"],
             File.season == file_details["season"],
-            File.episode == file_details["episode"],
-            File.last_episode >= file_details["last_episode"],
+            File.episode <= file_details["episode"],
+            File.last_episode
+            >= (file_details["last_episode"] or file_details["episode"]),
         )
     return [f for f in query.all() if not f.needs_sdr_conversion]
