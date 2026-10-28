@@ -316,3 +316,56 @@ def test_an_invalid_channel_post_explains_itself(app, admin_client):
     assert "checked" not in enabled
     with app.app_context():
         assert DVRChannel.query.count() == 0
+
+
+def test_a_refused_member_post_keeps_the_channel_boxes(app, admin_client):
+    """A refused member form rendered every box cleared (#566).
+
+    The channel form was bound to the member post. One Save then stored
+    enabled=False and cleared the rules."""
+
+    import re
+
+    with app.app_context():
+        channel = DVRChannel(
+            slug="kept-boxes",
+            name="Kept Boxes",
+            number=321,
+            enabled=True,
+            include_movies=True,
+            include_tv=True,
+        )
+        db.session.add(channel)
+        db.session.commit()
+        channel_id = channel.id
+
+    url = f"/dvr/channels/{channel_id}"
+    page = admin_client.get(url).get_data(as_text=True)
+    response = admin_client.post(
+        url,
+        data={
+            "csrf_token": csrf_token_from(page),
+            "member_title": "x" * 300,
+            "add_movie_submit": "Add movie",
+        },
+        follow_redirects=True,
+    )
+    body = response.get_data(as_text=True)
+    for field in ("enabled", "include_movies", "include_tv"):
+        box = re.search(rf'<input[^>]*id="{field}"[^>]*>', body).group(0)
+        assert "checked" in box
+
+
+def test_a_refused_delete_does_not_clear_the_creation_form(app, admin_client):
+    """A refused delete rendered the creation form with Enabled unticked (#566)."""
+
+    import re
+
+    response = admin_client.post(
+        "/dvr/channels",
+        data={"csrf_token": "stale", "channel_id": "1", "delete_submit": "Delete"},
+    )
+    assert response.status_code == 302
+    body = admin_client.get("/dvr/channels").get_data(as_text=True)
+    enabled = re.search(r'<input[^>]*id="enabled"[^>]*>', body).group(0)
+    assert "checked" in enabled

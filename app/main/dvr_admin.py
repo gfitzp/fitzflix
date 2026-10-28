@@ -255,6 +255,11 @@ def dvr_channels():
                 "warning",
             )
         return redirect(url_for("main.dvr_channels"))
+    if action_form.delete_submit.data or action_form.rebuild_submit.data:
+        # The creation form is bound to this post. A render would show
+        # Enabled unticked (#566). Thus, the refused action redirects.
+        flash_form_errors(action_form)
+        return redirect(url_for("main.dvr_channels"))
 
     channels = DVRChannel.query.order_by(DVRChannel.number.asc()).all()
     counts, summaries = {}, {}
@@ -361,7 +366,12 @@ def dvr_channel_edit(channel_id):
         or member_form.add_series_submit.data
         or member_form.remove_submit.data
     ):
+        # The channel form is bound to this post too. Its absent boxes
+        # would render cleared, and the next save would store them
+        # (#566). Thus, the refused member post redirects, as the
+        # other branches do.
         flash_form_errors(member_form)
+        return redirect(url_for("main.dvr_channel_edit", channel_id=channel.id))
 
     genre_names = [
         name
