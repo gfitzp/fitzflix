@@ -966,3 +966,32 @@ def test_the_row_partials_refuse_a_missing_argument(app):
         )
         rendered = app.jinja_env.from_string(none_source).render()
         assert "".join(rendered.split()) == "[]"
+
+
+def test_tv_shopping_counts_a_blu_ray_disc_tier_as_owned(app, admin_client):
+    """A Bluray-480p or Bluray-720p season is final, as on the library page (#481).
+
+    A DVD season still gets the Blu-ray advice."""
+
+    from app import db
+    from tests.factories import make_tv_file, make_tv_series
+
+    with app.app_context():
+        for title, quality_title in (
+            ("Disc Show 480", "Bluray-480p"),
+            ("Disc Show 720", "Bluray-720p"),
+            ("Disc Show DVD", "DVD"),
+        ):
+            series = make_tv_series(title)
+            make_tv_file(series, 7, 1, quality_title)
+            make_tv_file(series, 7, 2, "Bluray-1080p")
+        db.session.commit()
+
+    page = admin_client.get("/shopping-list/tv").get_data(as_text=True)
+    for title, advice in (
+        ("Disc Show 480", "Already owned"),
+        ("Disc Show 720", "Already owned"),
+        ("Disc Show DVD", "Buy on Blu-Ray"),
+    ):
+        start = page.index(f">{title}</a>")
+        assert advice in page[start : start + 600], title

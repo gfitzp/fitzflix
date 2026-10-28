@@ -915,7 +915,19 @@ def tv_shopping():
         for key, grade in grades.items()
     }
 
-    def instruction_for(preference):
+    anchors = quality_anchors()
+
+    def instruction_for(preference, quality_title):
+        # A season on a Blu-ray disc tier (Bluray-480p, Bluray-720p) is
+        # final, as on the TV library page (#481). A DVD season still
+        # gets the Blu-ray advice.
+        tier = anchors.get(quality_title)
+        if (
+            tier is not None
+            and tier.physical_media
+            and quality_title.startswith("Bluray")
+        ):
+            return "Already owned"
         if preference < dvd_quality:
             return "Buy on DVD or Blu-Ray"
         if preference < bluray_quality:
@@ -928,7 +940,7 @@ def tv_shopping():
             season,
             episodes,
             quality_title,
-            instruction_for(preference),
+            instruction_for(preference, quality_title),
         )
         for (series_id, season), (preference, episodes, quality_title) in sorted(
             season_grades_by_key.items(),
