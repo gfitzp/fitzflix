@@ -11,7 +11,8 @@ The checks apply to Python comments and docstrings (app/, tests/,
 scripts/, and the root scripts). They apply to the text of each flash
 call and each help argument (#393). They apply to the text of each
 click.echo call, and to the literals that a function returns when its
-result reaches a flash call (#528). They apply to the Jinja, HTML, CSS,
+result reaches a flash call (#528). They apply to the string arguments
+of each notify_admin_text and task_send_email call (#602). They apply to the Jinja, HTML, CSS,
 and JavaScript comments of the templates and of the static files. They
 apply to the page text of the templates, to the text that their scripts
 write into the page, and to the email templates. A preformatted block
@@ -27,6 +28,7 @@ dash. Runs as a test, and pre-commit invokes this file directly.
 """
 
 import ast
+import html
 import io
 import os
 import re
@@ -231,8 +233,37 @@ def _is_echo(node):
     )
 
 
+# The calls that send an inline mail. Each string argument is mail prose
+# (#602): the subject, the plain body and the HTML body.
+
+MAIL_CALLS = ("notify_admin_text", "task_send_email")
+
+
+def _mail_text(text):
+    """Return the prose of an inline mail body: no tags, and no entities."""
+    return html.unescape(re.sub(r"<[^>]+>", " ", text))
+
+
+def _mail_literal(node):
+    """Return the literal text of a mail argument, or None if it has none.
+
+    A body is often a literal plus a joined list. Each operand of a sum
+    that is not a literal becomes the word X."""
+    text = _literal_text(node)
+    if text is not None:
+        return text
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        left, right = _mail_literal(node.left), _mail_literal(node.right)
+        if left is None and right is None:
+            return None
+        return (left if left is not None else " X ") + (
+            right if right is not None else " X "
+        )
+    return None
+
+
 def _message_prose(tree):
-    """Yield (line, text) for the text of each flash, echo and help argument."""
+    """Yield (line, text) for each flash, echo, help and inline mail text."""
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
@@ -245,6 +276,11 @@ def _message_prose(tree):
             text = _literal_text(value)
             if text:
                 yield value.lineno, text
+        if name in MAIL_CALLS:
+            for value in list(node.args) + [kw.value for kw in node.keywords]:
+                text = _mail_literal(value)
+                if text:
+                    yield value.lineno, _mail_text(text)
 
 
 # A call with one of these names is not a message helper. Its result can
@@ -597,4 +633,41 @@ def test_the_gate_reads_echo_text_and_flashed_helper_returns(tmp_path):
     assert found == [
         (os.path.join("app", "helpers.py"), 4, "em dash"),
         (os.path.join("app", "routes.py"), 7, "contraction"),
+    ]
+
+
+def test_the_gate_reads_the_inline_mail_bodies(tmp_path):
+    """The bodies of notify_admin_text and task_send_email are mail prose (#602).
+
+    The missing-archive-keys mail said "don't" and used em dashes. The
+    gate scanned the email templates only."""
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "README.md").write_text("Fine.\n")
+    (tmp_path / "app").mkdir()
+    (tmp_path / "app" / "mails.py").write_text(
+        "def report(keys):\n"
+        "    notify_admin_text(\n"
+        '        "Keys missing!",\n'
+        '        "These keys don\'t exist:\\n\\n" + "\\n".join(keys),\n'
+        '        "<p>These keys exist &mdash; check them.</p><ul>"\n'
+        '        + "".join(keys)\n'
+        '        + "</ul>",\n'
+        "    )\n"
+        "    task_send_email(\n"
+        '        "Report",\n'
+        '        sender="x@example.test",\n'
+        "        recipients=[],\n"
+        '        text_body="It isn\'t sent.",\n'
+        "        html_body=None,\n"
+        "    )\n"
+        '    log("It isn\'t a mail.")\n'
+    )
+    found = sorted(
+        (path, line, rule) for path, line, rule, _ in ste_violations(str(tmp_path))
+    )
+    mails = os.path.join("app", "mails.py")
+    assert found == [
+        (mails, 4, "contraction"),
+        (mails, 5, "em dash"),
+        (mails, 13, "contraction"),
     ]

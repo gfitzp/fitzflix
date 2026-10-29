@@ -909,10 +909,10 @@ def _report_dangling_claims(listing):
         notify_admin_text(
             "Archive keys missing from AWS S3!",
             "These file records claim untouched archive keys "
-            "that don't exist in S3 — a restore would fail:\n\n"
+            "that do not exist in S3. A restore of them would fail:\n\n"
             + "\n".join(dangling_claims),
             "<p>These file records claim untouched archive "
-            "keys that don't exist in S3 — a restore would "
+            "keys that do not exist in S3. A restore of them would "
             "fail:</p><ul>"
             + "".join(f"<li>{escape(key)}</li>" for key in dangling_claims)
             + "</ul>",
