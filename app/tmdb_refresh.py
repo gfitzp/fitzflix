@@ -513,6 +513,15 @@ VOLUME_DOWN = "volume-down"
 MAX_RENAME_VOLUME_WAITS = 72
 
 
+def _same_file(first, second):
+    """Return True if 2 paths name the same file. A path that is gone gives False."""
+
+    try:
+        return os.path.samefile(first, second)
+    except OSError:
+        return False
+
+
 def _rename_movie_file(f, tmdb_id, probe=True):
     """Move 1 library file of a refreshed movie to the name of its new details.
 
@@ -533,6 +542,12 @@ def _rename_movie_file(f, tmdb_id, probe=True):
     # (#590). The warning below names the reason for a reject.
 
     renamed = False
+    if not f.untouched_basename:
+        current_app.logger.warning(
+            f"'{f.basename}' (file #{f.id}) has no untouched name, skipping "
+            f"its rename"
+        )
+        return False
     if tmdb_id != None:
         file_details = evaluate_filename(
             f.untouched_basename, tmdb_id=tmdb_id, log=False
@@ -589,8 +604,14 @@ def _rename_movie_file(f, tmdb_id, probe=True):
         .filter(File.id != f.id)
         .first()
     )
+    # A case-only rename on a share that folds case finds both paths. They
+    # are the same file, and that is not a collision (#604).
+
     collision = sibling is not None or (
-        new_file != old_file and os.path.exists(new_file) and os.path.exists(old_file)
+        new_file != old_file
+        and os.path.exists(new_file)
+        and os.path.exists(old_file)
+        and not _same_file(old_file, new_file)
     )
     if collision:
         detail = (
@@ -891,6 +912,15 @@ def _apply_movie_refresh(
 
     for f in files:
         untouched_basename = reconstruct_filename(f.id)
+        if not untouched_basename:
+            # The row has no quality, or its quality row is gone. A False
+            # name failed the rename of the whole apply (#604). Thus, the
+            # file keeps its name.
+            current_app.logger.warning(
+                f"'{f.basename}' (file #{f.id}) has no name to rebuild. "
+                f"It keeps the untouched name '{f.untouched_basename}'"
+            )
+            continue
         if untouched_basename != f.untouched_basename:
             current_app.logger.info(
                 f"New untouched basename: '{f.untouched_basename}' "

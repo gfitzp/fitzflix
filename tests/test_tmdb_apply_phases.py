@@ -801,3 +801,82 @@ def test_the_lock_list_with_a_new_name_stays_sorted(app):
         "Aardvark Tune",
         "Zebra Tune",
     ]
+
+
+def test_a_file_with_no_quality_keeps_its_name_and_the_apply_goes_on(app, monkeypatch):
+    """reconstruct_filename gives False for a row with no quality (#604).
+
+    The loop stored False as the untouched name. The rename then raised a
+    TypeError, and the whole apply failed after the basenames committed."""
+
+    import app.tmdb_refresh as tmdb_refresh
+    from app.models import File
+    from app.tmdb_refresh import apply_tmdb_refresh
+
+    monkeypatch.setattr(tmdb_refresh, "notify_admin_text", lambda *a: None)
+    with app.app_context():
+        movie = make_movie("Qualityless Tune", 1990)
+        good = make_movie_file(movie, "DVD")
+        good.untouched_basename = good.basename
+        bare = make_movie_file(movie, "Bluray-1080p")
+        bare.untouched_basename = bare.basename
+        bare.quality_id = None
+        db.session.commit()
+        movie_id, good_id, bare_id = movie.id, good.id, bare.id
+        kept_name = bare.untouched_basename
+
+    payload = _payload(
+        {"id": 778, "title": "Qualityless Tune", "release_date": "1991-02-02"}
+    )
+    assert apply_tmdb_refresh("Movies", movie_id, tmdb_payload=payload) is True
+    with app.app_context():
+        assert db.session.get(File, bare_id).untouched_basename == kept_name
+        assert (
+            db.session.get(File, good_id).untouched_basename
+            == "Qualityless Tune (1991) - [DVD].mkv"
+        )
+
+
+def test_a_case_only_rename_onto_the_same_file_is_not_a_collision(app, monkeypatch):
+    """A share that folds case finds both paths. They are 1 file (#604).
+
+    The check mailed "Rename collision needs triage" after the archive
+    move had committed to the new case. A hard link stands in for the
+    folded name here."""
+
+    import app.tmdb_refresh as tmdb_refresh
+    from app.models import File
+    from app.tmdb_refresh import _rename_movie_file
+
+    sent = []
+    monkeypatch.setattr(
+        tmdb_refresh, "notify_admin_text", lambda subject, *a: sent.append(subject)
+    )
+    with app.app_context():
+        movie = make_movie("None but the Brave", 1965)
+        file = make_movie_file(movie, "DVD")
+        file.untouched_basename = file.basename
+        old_relative = (
+            "Movies/None But the Brave (1965)/None But the Brave (1965) - [DVD].mkv"
+        )
+        file.file_path = old_relative
+        db.session.commit()
+        file_id = file.id
+        old_path = os.path.join(app.config["LIBRARY_DIR"], old_relative)
+        new_relative = file.file_path.replace("But", "but")
+        new_path = os.path.join(app.config["LIBRARY_DIR"], new_relative)
+        os.makedirs(os.path.dirname(old_path), exist_ok=True)
+        with open(old_path, "wb") as handle:
+            handle.write(b"payload")
+        os.makedirs(os.path.dirname(new_path), exist_ok=True)
+        if not os.path.exists(new_path):
+            os.link(old_path, new_path)
+        try:
+            _rename_movie_file(file, None, probe=False)
+            assert sent == []
+            db.session.expire_all()
+            assert db.session.get(File, file_id).file_path == new_relative
+        finally:
+            for path in (old_path, new_path):
+                if os.path.exists(path):
+                    os.remove(path)
