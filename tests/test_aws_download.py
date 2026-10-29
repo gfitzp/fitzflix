@@ -747,7 +747,7 @@ def test_a_deferred_placement_keeps_the_finished_download(app, monkeypatch):
     library = os.path.join(app.config["LIBRARY_DIR"], "Movies/y.mkv")
     staged = os.path.join(app.config["IMPORT_DIR"], ".restore-modified-y.mkv")
 
-    def refuse(etag=None):
+    def refuse(etag=None, size=None):
         raise aws_storage.PlacementDeferred(["/Volumes/Movies"])
 
     try:
@@ -766,7 +766,7 @@ def test_a_deferred_placement_keeps_the_finished_download(app, monkeypatch):
                     "modified/y.mkv",
                     "y.mkv",
                     place_at=library,
-                    before_place=lambda etag=None: None,
+                    before_place=lambda etag=None, size=None: None,
                 )
                 == aws_storage.DOWNLOAD_COMPLETE
             )
@@ -991,3 +991,115 @@ def test_a_key_that_no_row_names_refuses_the_placement(app, monkeypatch):
     finally:
         if os.path.exists(library_path):
             os.remove(library_path)
+
+
+def test_an_edit_during_the_download_refuses_the_placement_by_its_stat(
+    app, monkeypatch
+):
+    """The archive and the row can look unchanged after an edit (#586).
+
+    The upload of the edit can still run, or it can go to the target key
+    of a pending move. Then the ETag of the restored key is the same,
+    and the old bytes replaced the edited library file."""
+
+    from app import db
+    from app.models import File
+
+    key, library_path = _direct_restore_row(app, "Stat Changed")
+    os.makedirs(os.path.dirname(library_path), exist_ok=True)
+    with open(library_path, "wb") as f:
+        f.write(b"library file")
+
+    class EditingS3(S3):
+        def download_file(self, bucket, key, filename, Callback=None):
+            # A track edit rewrites the file on another worker. Its upload
+            # did not finish. Thus, the row and the object stay as they were.
+            with open(library_path, "wb") as f:
+                f.write(b"edited library file")
+            super().download_file(bucket, key, filename, Callback)
+
+    s3 = EditingS3()
+    try:
+        assert _place_with(app, monkeypatch, s3, key) is True
+        assert s3.downloads == [key]
+        with open(library_path, "rb") as f:
+            assert f.read() == b"edited library file"
+        with app.app_context():
+            assert not db.session.get(
+                File, File.query.filter_by(aws_key=key).one().id
+            ).aws_stale
+        staged = os.path.join(
+            app.config["IMPORT_DIR"], f".restore-{key.replace('/', '-')}"
+        )
+        assert not os.path.exists(staged)
+    finally:
+        os.remove(library_path)
+
+
+def test_a_moved_key_with_other_bytes_refuses_the_placement(app, monkeypatch):
+    """The key of the fresh row must hold a copy of the download (#586).
+
+    An edit of a file with a pending move uploads the edited bytes to
+    the target key and deletes the old key. The fallback accepted any
+    object at the new key."""
+
+    import botocore.exceptions
+
+    from app import db
+    from app.models import File
+
+    key, library_path = _direct_restore_row(app, "Moved Edited")
+    moved_key = "modified/Moved Edited Later.mkv"
+    gone = botocore.exceptions.ClientError(
+        {"Error": {"Code": "404", "Message": "Not Found"}}, "HeadObject"
+    )
+
+    def head(call):
+        if call == 1:
+            db.session.execute(
+                db.update(File).where(File.aws_key == key).values(aws_key=moved_key)
+            )
+            db.session.commit()
+            return {"ContentLength": 3, "ETag": '"v1"'}
+        if call == 2:
+            raise gone
+        return {"ContentLength": 4, "ETag": '"v2"'}
+
+    s3 = S3(head=head)
+    try:
+        assert _place_with(app, monkeypatch, s3, key) is True
+        assert s3.head_calls == 3
+        assert not os.path.exists(library_path)
+    finally:
+        if os.path.exists(library_path):
+            os.remove(library_path)
+
+
+def test_a_volume_wait_carries_the_stat_of_the_library_file(app, monkeypatch):
+    """The next round compares with the stat from before the first download (#586)."""
+
+    import app.videos as videos
+    from app import aws_storage
+
+    key, library_path = _direct_restore_row(app, "Stat Carried")
+    os.makedirs(os.path.dirname(library_path), exist_ok=True)
+    with open(library_path, "wb") as f:
+        f.write(b"library file")
+    answers = [[], ["/Volumes/Movies"]]
+    monkeypatch.setattr(videos, "_dead_volumes", lambda paths: answers.pop(0))
+
+    def download(key, basename, handle=None, place_at=None, before_place=None):
+        before_place()
+        return aws_storage.DOWNLOAD_COMPLETE
+
+    monkeypatch.setattr(aws_storage, "aws_download", download)
+    try:
+        with app.app_context():
+            assert videos.download_task(key, os.path.basename(key)) is False
+            expected = aws_storage._library_stat(library_path)
+        (retry,) = _volume_retries(app)
+        assert expected and retry.kwargs["library_stat"] == expected
+        assert_binds(retry)
+        retry.delete()
+    finally:
+        os.remove(library_path)

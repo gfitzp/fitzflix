@@ -1061,8 +1061,26 @@ class PlacementRefused(Exception):
 MAX_VOLUME_WAITS = 288
 
 
+def _library_stat(path):
+    """Return the size, the modification time and the inode of a library file (#586).
+
+    Return an empty list if there is no file at path. A list goes into
+    the kwargs of a retry and compares equal after the round trip."""
+
+    try:
+        stat = os.stat(path)
+    except FileNotFoundError:
+        return []
+    return [stat.st_size, stat.st_mtime_ns, stat.st_ino]
+
+
 def download_task(
-    key, basename, sqs_receipt_handle=None, transient_retries=0, volume_waits=0
+    key,
+    basename,
+    sqs_receipt_handle=None,
+    transient_retries=0,
+    volume_waits=0,
+    library_stat=None,
 ):
     """Download a file from AWS S3 storage.
 
@@ -1071,9 +1089,14 @@ def download_task(
     succeeds with no error. Thus, the task waits while a volume is dead,
     before the download and again before the placement (#533). The
     newer-file guards also run again before the placement. They read the
-    row again, and the placement goes to its fresh path (#563). A track
-    edit that archives the file again during the download changes the
-    ETag of the object. Then the placement is refused."""
+    row again, and the placement goes to its fresh path (#563).
+
+    A track edit can change the library file during the download. Its
+    upload can go to a different key, or it can still run. Thus, the
+    ETag of the object does not show the edit. The task records the
+    stat of the library file before the first download. A different
+    stat at the placement refuses it (#586). library_stat carries that
+    record through the retries. A rename keeps the stat."""
 
     # The retry constants still live in app.videos. Import them lazily.
     # Thus, the module import direction stays videos to aws_storage.
@@ -1122,11 +1145,20 @@ def download_task(
             )
             return delete_download_message(sqs_receipt_handle, note="overtaken restore")
 
+        # The stat of the library file before the first download (#586)
+
+        snapshot = library_stat
+
         def dead_volumes():
             paths = [current_app.config["IMPORT_DIR"]]
             if place_at:
                 paths.append(os.path.dirname(place_at))
             return _dead_volumes(paths)
+
+        def carried():
+            """Return the kwargs that carry the stat record to a retry."""
+
+            return {"library_stat": snapshot} if snapshot is not None else None
 
         def wait_for_volumes(dead):
             """Book the download again after 5 minutes, or give up."""
@@ -1148,6 +1180,7 @@ def download_task(
                     "volume_waits": volume_waits + 1,
                 },
                 args=(key, basename, handle),
+                kwargs=carried(),
                 description=f"'{basename}' — Downloading from AWS",
                 meta={"sqs_receipt_handle": handle},
             )
@@ -1157,15 +1190,15 @@ def download_task(
         if dead:
             return wait_for_volumes(dead)
 
-        def before_place(etag=None):
+        def before_place(etag=None, size=None):
             """Check the volumes and the newer-file guards again. Return the path (#533).
 
             A rename during the download moves the file of the row
             (#563). Thus, the placement goes to the path of the fresh
-            row, and the volume probe checks that folder. etag is the
-            ETag of the object at the start of the download. A track
-            edit that archived the file again during the download
-            changes it."""
+            row, and the volume probe checks that folder. etag and size
+            are the ETag and the size of the object at the start of the
+            download. A library file with a different stat than before
+            the download refuses the placement (#586)."""
 
             db.session.rollback()
             fresh = db.session.get(File, file.id)
@@ -1180,6 +1213,11 @@ def download_task(
             )
             if dead:
                 raise PlacementDeferred(dead)
+            if snapshot is not None and _library_stat(target) != snapshot:
+                raise PlacementRefused(
+                    f"'{basename}' The library file changed during the download. "
+                    f"The restore does not replace it"
+                )
             if restore_would_replace_newer(fresh, key):
                 raise PlacementRefused(
                     f"'{basename}' The library file changed during the download. "
@@ -1197,6 +1235,9 @@ def download_task(
                     # An archive key move during the download (#369)
                     # copied the same bytes under the key of the fresh
                     # row. The download is still good (#563 follow-up).
+                    # The object at that key must be a copy of the
+                    # download. An edit can have uploaded new bytes there
+                    # (#586).
                     moved_to = [
                         other
                         for other in (
@@ -1206,7 +1247,12 @@ def download_task(
                         )
                         if other and other != key
                     ]
-                    if any(_head_or_none(s3_client, other) for other in moved_to):
+                    downloaded = {"ETag": etag, "ContentLength": size}
+                    heads = [_head_or_none(s3_client, other) for other in moved_to]
+                    if any(
+                        other is not None and _copy_problem(downloaded, other) is None
+                        for other in heads
+                    ):
                         current_app.logger.info(
                             f"'{basename}' The archive '{key}' moved during "
                             f"the download. The restore places the download"
@@ -1231,6 +1277,8 @@ def download_task(
         report_progress(job, basename, "Downloading from AWS", percent=None)
 
         try:
+            if place_at and snapshot is None:
+                snapshot = _library_stat(place_at)
             current_app.logger.info(
                 f"Starting download of '{basename}' from AWS S3 storage"
             )
@@ -1274,6 +1322,7 @@ def download_task(
                         "volume_waits": volume_waits,
                     },
                     args=(key, basename, sqs_receipt_handle),
+                    kwargs=carried(),
                     description=f"'{basename}' — Downloading from AWS",
                     meta={"sqs_receipt_handle": sqs_receipt_handle},
                 )
@@ -3284,9 +3333,9 @@ def aws_download(
     checks still use the S3 API.
 
     before_place runs after the download and before a direct placement.
-    It gets the ETag of the object at the start of the download. A
-    PlacementDeferred keeps the finished download and its sidecar for
-    the next try (#533). Any other error deletes the download and
+    It gets the ETag and the size of the object at the start of the
+    download. A PlacementDeferred keeps the finished download and its
+    sidecar for the next try (#533). Any other error deletes the download and
     propagates. The caller decides about the SQS message. If it returns
     a path, the placement goes there, not to place_at (#563).
     """
@@ -3478,7 +3527,7 @@ def aws_download(
                 target = place_at
                 if before_place:
                     try:
-                        target = before_place(progress.etag) or place_at
+                        target = before_place(progress.etag, progress.size) or place_at
                     except PlacementDeferred:
                         # The download is complete. The sidecar marks it
                         # for the next run and for the orphan sweep.
