@@ -16,6 +16,9 @@ from tests.conftest import csrf_token_from
 
 
 def audio(file, track, codec, compression, fmt=None, streamorder=None, **kwargs):
+    """Add an audio row. Its track UID is 900 plus the position (#611)."""
+
+    kwargs.setdefault("uid", str(900 + track))
     row = FileAudioTrack(
         file_id=file.id,
         track=track,
@@ -134,6 +137,7 @@ def test_promote_enqueues_mkvpropedit_preserving_subtitle_flags(app, admin_clien
             FileSubtitleTrack(
                 file_id=file.id,
                 track=1,
+                uid="801",
                 language="eng",
                 language_name="English",
                 elements=1200,
@@ -147,6 +151,7 @@ def test_promote_enqueues_mkvpropedit_preserving_subtitle_flags(app, admin_clien
             FileSubtitleTrack(
                 file_id=file.id,
                 track=2,
+                uid="802",
                 language="eng",
                 language_name="English",
                 elements=40,
@@ -157,7 +162,7 @@ def test_promote_enqueues_mkvpropedit_preserving_subtitle_flags(app, admin_clien
             )
         )
         db.session.commit()
-        file_id, lossless_track = file.id, lossless.track
+        file_id, lossless_track = file.id, lossless.uid
 
         local_path = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
         os.makedirs(os.path.dirname(local_path), exist_ok=True)
@@ -189,7 +194,7 @@ def test_promote_enqueues_mkvpropedit_preserving_subtitle_flags(app, admin_clien
         # The lossless track becomes the default audio. The remux pass of
         # the task moves it into the lead. The subtitle default and
         # forced flags go through unchanged.
-        assert jobs[0].args == (file_id, "2", "1", ["2"])
+        assert jobs[0].args == (file_id, "902", "801", ["802"])
         inspect.signature(mkvpropedit_task).bind(*jobs[0].args)
     finally:
         os.remove(local_path)
@@ -213,7 +218,7 @@ def test_promote_refuses_a_lossy_selection(app, admin_client):
             data={
                 "csrf_token": csrf_token_from(page),
                 "file_id": file_id,
-                "lossless_track": 1,
+                "lossless_track": "901",
                 "promote_submit": "Remux with this track in the lead",
             },
             follow_redirects=True,
@@ -230,8 +235,8 @@ def test_promote_refuses_non_matroska_and_missing_local(app, admin_client):
             title="MP4 Candidate", year=2005, container="MPEG-4"
         )
         gone, gone_lossless = build_candidate(title="Restored Elsewhere", year=2006)
-        mp4_id, mp4_track = mp4.id, mp4_lossless.track
-        gone_id, gone_track = gone.id, gone_lossless.track
+        mp4_id, mp4_track = mp4.id, mp4_lossless.uid
+        gone_id, gone_track = gone.id, gone_lossless.uid
 
     page = admin_client.get("/maintenance/lossy-audio").get_data(as_text=True)
     assert "MP4 Candidate" in page  # on the worklist, with a badge
@@ -474,14 +479,14 @@ def test_lossy_triage_requires_admin(user_client):
     assert user_client.get("/maintenance/lossy-audio").status_code == 302
 
 
-def test_promote_carries_the_edit_counter_of_the_page(app, admin_client):
-    """The lead track comes from the rows of the page (#593)."""
+def test_promote_refuses_rows_with_no_uid(app, admin_client):
+    """The rows before the backfill have no UIDs. The edit waits for a rescan (#611)."""
 
     with app.app_context():
-        file, lossless = build_candidate(title="Lead Counter")
-        file.track_edit_seq = 5
+        file, lossless = build_candidate(title="Lead No UID")
+        FileAudioTrack.query.filter_by(file_id=file.id).update({"uid": None})
         db.session.commit()
-        file_id, lossless_track = file.id, lossless.track
+        file_id = file.id
         local_path = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
     os.makedirs(os.path.dirname(local_path), exist_ok=True)
     with open(local_path, "wb") as f:
@@ -490,22 +495,21 @@ def test_promote_carries_the_edit_counter_of_the_page(app, admin_client):
         page = admin_client.get(f"/maintenance/lossy-audio/{file_id}").get_data(
             as_text=True
         )
-        assert 'name="track_edit_seq" value="5"' in page
-        admin_client.post(
+        assert "have no track UIDs. Rescan the file" in page
+        assert "<fieldset disabled>" in page
+        response = admin_client.post(
             "/maintenance/lossy-audio",
             data={
                 "csrf_token": csrf_token_from(page),
                 "file_id": file_id,
-                "lossless_track": lossless_track,
-                "track_edit_seq": "5",
+                "lossless_track": "2",
                 "promote_submit": "Remux with this track in the lead",
             },
+            follow_redirects=True,
         )
-        (job,) = [
-            job
-            for job in app.file_queue.jobs
-            if job.func_name == "app.videos.mkvpropedit_task"
-        ]
-        assert job.kwargs == {"edit_seq": 5}
+        assert "have no track UIDs. Rescan the file, then try again." in (
+            response.get_data(as_text=True)
+        )
+        assert app.file_queue.jobs == []
     finally:
         os.remove(local_path)

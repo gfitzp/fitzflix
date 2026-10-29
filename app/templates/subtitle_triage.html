@@ -45,7 +45,8 @@
 		<form action="" method="post">
 			{{ triage_form.csrf_token }}
 			{{ triage_form.file_id(value=file.id) }}
-			<input type="hidden" name="track_edit_seq" value="{{ file.track_edit_seq or 0 }}">
+			{% if file.id in rescan_file_ids %}<p class="small text-muted mb-1">The track rows of this file have no track UIDs. Rescan the file on its page before you flag a track.</p>{% endif %}
+			<fieldset{% if file.id in rescan_file_ids %} disabled{% endif %}>
 			<div class="table-responsive">
 			<table class="table table-sm mb-0">
 				<thead class="table-light">
@@ -61,7 +62,7 @@
 					{% for item in entry.tracks %}
 					<tr{% if item.aids %} class="border-bottom-0"{% endif %}>
 						{% if file.container == "Matroska" %}
-						<td><input type="checkbox" name="track_ids" value="{{ item.track.id }}" aria-label="Flag track {{ item.track.track }} as forced"></td>
+						<td><input type="checkbox" name="track_uids" value="{{ item.track.uid or '' }}" aria-label="Flag track {{ item.track.track }} as forced"></td>
 						{% endif %}
 						<td>{{ item.track.track }}</td>
 						<td>{{ item.track.language_name }}</td>
@@ -97,6 +98,7 @@
 			{% if file.container == "Matroska" %}
 			{{ triage_form.mark_forced_submit(class_="btn btn-sm btn-warning mt-2") }}
 			{% endif %}
+			</fieldset>
 		</form>
 	</div>
 </div>

@@ -827,30 +827,27 @@ def _watched_timestamp(watched_date):
     return datetime.combine(watched_date, datetime.min.time())
 
 
-# The name of the hidden field that carries the track edit counter of
-# the rows that a page showed (#593).
+def tracks_need_rescan(file, *track_lists):
+    """Return True if a Matroska track row of the file has no track UID (#611).
 
-TRACK_EDIT_SEQ_FIELD = "track_edit_seq"
+    The edits address a track by its UID. The rows of a file that was
+    scanned before the UID column existed have none until the backfill
+    or a rescan fills them. Then the page disables the track controls,
+    and the routes refuse an edit."""
 
-
-def posted_track_edit_seq():
-    """Return the track edit counter that the posted page showed (#593).
-
-    The page computes the track positions from its rows. The counter of
-    those rows is the baseline of the edit task. A newer edit before the
-    task takes the lock then stops the task. A missing or non-numeric
-    field returns None, which means no baseline. Thus, a tab that was
-    open before the deploy still works."""
-
-    value = request.form.get(TRACK_EDIT_SEQ_FIELD, "").strip()
-    return int(value) if value.isdigit() else None
+    return file.container == "Matroska" and any(
+        track.uid is None for tracks in track_lists for track in tracks
+    )
 
 
-def edit_seq_kwargs():
-    """Return the edit_seq keyword of an edit task for the posted page (#593)."""
+def flash_tracks_need_rescan(file):
+    """Flash the refusal of a track edit of a file whose rows have no UIDs (#611)."""
 
-    edit_seq = posted_track_edit_seq()
-    return {} if edit_seq is None else {"edit_seq": edit_seq}
+    flash(
+        f"The track rows of '{file.basename}' have no track UIDs. Rescan the "
+        f"file, then try again.",
+        "warning",
+    )
 
 
 def flash_form_errors(form):

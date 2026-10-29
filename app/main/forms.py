@@ -599,7 +599,7 @@ class MovieMergeForm(FlaskForm):
 class SubtitleTriageForm(FlaskForm):
     """Apply per-file actions on the possibly-forced subtitles triage page.
 
-    The track selection travels as plain track_ids checkboxes. A file
+    The track selection travels as plain track_uids checkboxes. A file
     can hide more than one forced track. The form carries the file and
     the 2 actions.
     """

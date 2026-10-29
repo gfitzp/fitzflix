@@ -38,7 +38,6 @@ from app.tasks import (
     enqueue_task,
     report_progress,
     requeue,
-    requeue_job_id,
 )
 from app import db, get_app
 from app.aws_storage import archive_library_file, mark_archive_stale
@@ -587,34 +586,9 @@ def _flag_after_a_write(file_id):
         current_app.logger.warning(traceback.format_exc())
 
 
-def count_failed_track_edit(file_id=None, file_path=None):
-    """Count 1 more track edit of a file in a separate transaction (#592).
-
-    An edit that changed the library file and then failed its row commit
-    counts nothing in that commit. An older transient retry then sees the
-    same counter and runs against the new layout. Thus, the handlers that
-    know the file changed call this. Give the File id, or the library path
-    of the row when the id is not known. The session of the caller stays
-    as it is. This is best effort. The caller raises the original error."""
-
-    table = File.__table__
-    where = (
-        table.c.id == file_id
-        if file_id is not None
-        else (table.c.file_path == file_path)
-    )
-    try:
-        with db.engine.begin() as connection:
-            connection.execute(
-                db.update(table)
-                .where(where)
-                .values(track_edit_seq=db.func.coalesce(table.c.track_edit_seq, 0) + 1)
-            )
-    except Exception:
-        current_app.logger.warning(traceback.format_exc())
-
-
-def _rescan_after_a_failed_edit(file_id, name, count=True):
+def _rescan_after_a_failed_edit(
+    file_id, name, reason="Track edit failed after the file changed"
+):
     """Queue a track scan of a file whose edit failed after the file changed (#583).
 
     The file has the new layout, but the track rows and the size keep
@@ -623,40 +597,20 @@ def _rescan_after_a_failed_edit(file_id, name, count=True):
     retry of the scan. Thus, a repeat replaces the scheduled scan. This
     is best effort. The caller raises the original error.
 
-    The file changed with no commit. Thus, this also counts the edit
-    (#592). A caller whose write was already followed by a counted edit
-    gives count=False."""
+    An edit that finds a posted track UID missing from the file also
+    calls this (#611). Then the rows are older than the file."""
 
-    if count:
-        count_failed_track_edit(file_id)
     try:
         requeue(
             "app.videos.track_metadata_scan_task",
             key=int(file_id),
             delay=(5, 15),
-            reason="Track edit failed after the file changed",
+            reason=reason,
             kwargs={"file_id": file_id},
             description=name,
         )
     except Exception:
         current_app.logger.warning(traceback.format_exc())
-
-
-def _track_edit_seq(file_id):
-    """Return the track edit counter of a file from a new transaction (#589).
-
-    An edit commits new rows and adds 1 to the counter. A failed attempt
-    commits nothing, and the counter stays. A scan does not change it.
-    The read of the row before the lock opened a snapshot. An edit that
-    committed after that read is not in the snapshot. Thus, the counter
-    comes from a separate connection. The session and its row stay as
-    they are."""
-
-    with db.engine.connect() as connection:
-        seq = connection.execute(
-            db.select(File.track_edit_seq).where(File.id == file_id)
-        ).scalar()
-    return seq or 0
 
 
 def save_track_metadata(file_id, details, lock=None, archive=False):
@@ -1073,21 +1027,16 @@ def mkvpropedit_task(
     forced_subtitle_tracks,
     track_languages=None,
     transient_retries=0,
-    edit_seq=None,
     file_changed=False,
 ):
     """Update the MKV properties of a file.
 
-    `track_languages` maps a track to the ISO 639-2 code to set. The
-    keys are the track names of mkvpropedit ({"a1": "eng"}). None (or
-    an empty mapping) changes no language.
-
-    edit_seq is the track edit counter of the file when the first
-    attempt ran (#589). A transient retry carries it. A newer edit that
-    committed in the meantime adds 1 to the counter. Then the track
-    arguments of the retry are old, and the retry stops. A scan does not
-    change the counter. Thus, a scan in the retry delay does not stop
-    the retry. Rows that are the same as before do not hide a newer edit.
+    The tracks are Matroska track UIDs as text (#611). A remux keeps
+    the UID of a track and changes its position. Thus, an edit that
+    waits for the lock or for a retry still finds its track.
+    default_subtitle_track "0" sets no default subtitle track.
+    `track_languages` maps a track UID to the ISO 639-2 code to set.
+    None (or an empty mapping) changes no language.
     """
 
     # The shared lock, retry, and copy code stays in app.videos. The import
@@ -1097,7 +1046,6 @@ def mkvpropedit_task(
         MAX_TRANSIENT_RETRIES,
         TRANSIENT_COPY_ERRNOS,
         acquire_lock_or_defer,
-        arguments_tag,
     )
 
     with app.app_context():
@@ -1122,29 +1070,11 @@ def mkvpropedit_task(
                 track_languages,
             ),
             kwargs={"transient_retries": transient_retries}
-            | ({"edit_seq": edit_seq} if edit_seq is not None else {})
             | ({"file_changed": True} if file_changed else {}),
             key=int(file_id),
         )
         if not lock:
             return True
-
-        try:
-            current_seq = _track_edit_seq(file_id)
-        except BaseException:
-            current_app.lock_manager.unlock(lock)
-            raise
-        if edit_seq is not None and edit_seq != current_seq:
-            current_app.logger.warning(
-                f"'{file.basename}' A newer edit changed the tracks after "
-                f"this edit was queued. The older edit stops"
-            )
-            if file_changed:
-                # The write of the earlier attempt came before the newer
-                # edit, and that edit counted itself. Thus, no count here.
-                _rescan_after_a_failed_edit(file_id, f"'{file.basename}'", count=False)
-            current_app.lock_manager.unlock(lock)
-            return False
 
         # Bulk writes over SMB put the files into the lost-handle state.
         # Thus, probe this file directly at the end. Do not let the close
@@ -1172,25 +1102,11 @@ def mkvpropedit_task(
                 and not getattr(e, "retry_unsafe", False)
             ):
                 # An unstable mount interrupted the edit before the file
-                # was restructured. Thus, the same track arguments are
-                # still valid. Try again after the mount is stable. The
-                # finally block releases the lock. The retry takes the
-                # lock again, like a new run. The id holds a digest of the
-                # arguments. A transient retry of a second edit of this
-                # file then does not replace the retry of the first edit
-                # (#595 follow-up).
+                # was restructured. The tracks are UIDs, so the same
+                # arguments are still valid. Try again after the mount is
+                # stable. The finally block releases the lock. The retry
+                # takes the lock again, like a new run.
 
-                retry_args = (
-                    file_id,
-                    default_audio_track,
-                    default_subtitle_track,
-                    forced_subtitle_tracks,
-                    track_languages,
-                )
-                retry_kwargs = {"edit_seq": current_seq} | (
-                    {"file_changed": True} if wrote else {}
-                )
-                counters = {"transient_retries": transient_retries + 1}
                 requeue(
                     "app.videos.mkvpropedit_task",
                     key=int(file_id),
@@ -1200,16 +1116,16 @@ def mkvpropedit_task(
                         f"({e}) (attempt {transient_retries + 1} of "
                         f"{MAX_TRANSIENT_RETRIES})"
                     ),
-                    counters=counters,
-                    args=retry_args,
-                    kwargs=retry_kwargs,
-                    description=f"'{file.basename}'",
-                    job_id=requeue_job_id(
-                        "app.videos.mkvpropedit_task",
-                        int(file_id),
-                        counters,
-                        tag=arguments_tag(retry_args, retry_kwargs),
+                    counters={"transient_retries": transient_retries + 1},
+                    args=(
+                        file_id,
+                        default_audio_track,
+                        default_subtitle_track,
+                        forced_subtitle_tracks,
+                        track_languages,
                     ),
+                    kwargs={"file_changed": True} if wrote else {},
+                    description=f"'{file.basename}'",
                 )
                 return False
 
@@ -1258,8 +1174,8 @@ def track_order(tracks):
 
 
 def build_propedit_args(
-    audio_count,
-    subtitle_count,
+    audio_tracks,
+    subtitle_tracks,
     default_audio_track,
     default_subtitle_track,
     forced_subtitle_tracks,
@@ -1267,34 +1183,66 @@ def build_propedit_args(
 ):
     """Return the mkvpropedit arguments that set the flags and the languages.
 
-    The track ids are strings that count from 1 in each type. Each
-    audio track gets its default flag. The subtitle tracks get their
-    default and forced flags only when the caller selected a default
-    or a forced track. The language corrections are independent: a
-    file whose flags are correct still needs them. mkvpropedit also
-    applies a language to LanguageIETF."""
+    The tracks are the track dicts of a new read of the file. The
+    selections are track UIDs as text (#611). "--edit track:=UID"
+    selects a track by its UID, not by its position. Each audio track
+    gets its default flag. The subtitle tracks get their default and
+    forced flags only when the caller selected a default or a forced
+    track. The language corrections are independent: a file whose
+    flags are correct still needs them. mkvpropedit also applies a
+    language to LanguageIETF."""
 
     args = []
-    for track_id in range(1, audio_count + 1):
-        flag = 1 if str(track_id) == default_audio_track else 0
-        args += ["--edit", f"track:a{track_id}", "--set", f"flag-default={flag}"]
+    for track in audio_tracks:
+        flag = 1 if track["uid"] == default_audio_track else 0
+        args += ["--edit", f"track:={track['uid']}", "--set", f"flag-default={flag}"]
     if default_subtitle_track or forced_subtitle_tracks:
-        for track_id in range(1, subtitle_count + 1):
-            default = 1 if str(track_id) == default_subtitle_track else 0
-            forced = 1 if str(track_id) in forced_subtitle_tracks else 0
-            args += ["--edit", f"track:s{track_id}", "--set", f"flag-default={default}"]
-            args += ["--edit", f"track:s{track_id}", "--set", f"flag-forced={forced}"]
-    for track_type, count in (("a", audio_count), ("s", subtitle_count)):
-        for track_id in range(1, count + 1):
-            language = (track_languages or {}).get(f"{track_type}{track_id}")
-            if language:
-                args += [
-                    "--edit",
-                    f"track:{track_type}{track_id}",
-                    "--set",
-                    f"language={language}",
-                ]
+        forced_uids = set(forced_subtitle_tracks or ())
+        for track in subtitle_tracks:
+            default = 1 if track["uid"] == default_subtitle_track else 0
+            forced = 1 if track["uid"] in forced_uids else 0
+            selector = f"track:={track['uid']}"
+            args += ["--edit", selector, "--set", f"flag-default={default}"]
+            args += ["--edit", selector, "--set", f"flag-forced={forced}"]
+    for track in list(audio_tracks) + list(subtitle_tracks):
+        language = (track_languages or {}).get(track["uid"])
+        if language:
+            args += [
+                "--edit",
+                f"track:={track['uid']}",
+                "--set",
+                f"language={language}",
+            ]
     return args
+
+
+def missing_track_uids(
+    audio_tracks,
+    subtitle_tracks,
+    default_audio_track,
+    default_subtitle_track,
+    forced_subtitle_tracks,
+    track_languages=None,
+):
+    """Return the selected track UIDs that the file does not have (#611).
+
+    The tracks are the track dicts of a new read of the file. A UID
+    that is not there means that the file changed after the page was
+    loaded. A track of the file with no UID also counts. Then no
+    selection can address it. The result is a sorted list."""
+
+    audio = {track.get("uid") for track in audio_tracks}
+    subtitles = {track.get("uid") for track in subtitle_tracks}
+    missing = {None} & (audio | subtitles)
+    if default_audio_track is not None and default_audio_track not in audio:
+        missing.add(default_audio_track)
+    if default_subtitle_track not in (None, "0") and (
+        default_subtitle_track not in subtitles
+    ):
+        missing.add(default_subtitle_track)
+    missing |= set(forced_subtitle_tracks or ()) - subtitles
+    missing |= set(track_languages or {}) - audio - subtitles
+    return sorted("no UID" if uid is None else str(uid) for uid in missing)
 
 
 def mkvpropedit_unlocked(
@@ -1310,9 +1258,8 @@ def mkvpropedit_unlocked(
 
     with app.app_context():
         # After the reorder remux or the empty-subtitle removal is renamed
-        # into place, the track numbering of the file is different. Thus,
-        # a retry with the original track arguments of the caller would
-        # flag the wrong tracks (#582)
+        # into place, the layout of the file is different. A failure then
+        # does not retry. A scan reads the rows from the file (#582, #583).
 
         restructured = False
 
@@ -1353,19 +1300,45 @@ def mkvpropedit_unlocked(
                 f"{file.basename} selected track_languages: {track_languages} {type(track_languages)}"
             )
 
-            # The web form sends the track ids as strings. mkvmerge_task
-            # sends ints. None means that the file has no audio tracks for a
-            # default. Normalize them 1 time. Thus, each comparison below
-            # compares the same types.
+            # The tracks are UIDs as text (#611). None means that the file
+            # has no audio tracks for a default. Normalize them 1 time.
+            # Thus, each comparison below compares the same types.
 
             if default_audio_track is not None:
                 default_audio_track = str(default_audio_track)
             if default_subtitle_track is not None:
                 default_subtitle_track = str(default_subtitle_track)
+            forced_subtitle_tracks = [str(uid) for uid in forced_subtitle_tracks or ()]
+            track_languages = {
+                str(uid): code for uid, code in (track_languages or {}).items()
+            }
+
+            # A UID that the file does not have means that the file changed
+            # after the page was loaded. The edit stops before it writes,
+            # and a scan reads the rows again (#611).
+
+            missing = missing_track_uids(
+                audio_tracks,
+                subtitle_tracks,
+                default_audio_track,
+                default_subtitle_track,
+                forced_subtitle_tracks,
+                track_languages,
+            )
+            if missing:
+                current_app.logger.warning(
+                    f"{name} The file has no track with UID "
+                    f"{', '.join(missing)}. The file changed after the page "
+                    f"was loaded. The edit stops"
+                )
+                _rescan_after_a_failed_edit(
+                    file_id, name, reason="Track edit found a changed file"
+                )
+                return False
 
             localization_arguments = build_propedit_args(
-                len(audio_tracks),
-                len(subtitle_tracks),
+                audio_tracks,
+                subtitle_tracks,
                 default_audio_track,
                 default_subtitle_track,
                 forced_subtitle_tracks,
@@ -1422,7 +1395,10 @@ def mkvpropedit_unlocked(
                 # new file with the default audio track first. Then Plex
                 # selects it first
 
-                if default_audio_track is not None and default_audio_track != "1":
+                if (
+                    default_audio_track is not None
+                    and default_audio_track != audio_tracks[0]["uid"]
+                ):
                     new_track_order = track_order(MediaInfo.parse(file_path).tracks)
 
                     current_app.logger.info(
@@ -1474,7 +1450,6 @@ def mkvpropedit_unlocked(
 
             record_filesize(file, os.path.getsize(file_path))
             file.date_updated = datetime.now(timezone.utc)
-            file.note_track_edit()
             db.session.commit()
 
         except OSError as e:
@@ -1545,13 +1520,35 @@ def mkvpropedit_unlocked(
         return True
 
 
-def mkvmerge_task(file_id, audio_tracks, subtitle_tracks, edit_seq=None):
-    """Remux an MKV file.
+def mkvmerge_track_ids(file_path):
+    """Return the mkvmerge track ids of a file by track UID (#611).
 
-    edit_seq is the track edit counter of the rows that the page showed
-    (#593). The track positions come from those rows. A newer edit that
-    committed before this task took the lock adds 1 to the counter. Then
-    the positions are old, and the remux stops. None means no baseline."""
+    The result maps "audio" and "subtitles" to a dict of UID (text) to
+    track id. mkvmerge -J reads only the headers. Thus, this is fast on
+    a large file. mkvmerge -a and -s take these ids, not UIDs."""
+
+    from app.videos import wait_for_subprocess
+
+    result = subprocess.run(
+        [current_app.config["MKVMERGE_BIN"], "-J", file_path],
+        capture_output=True,
+        text=True,
+    )
+    wait_for_subprocess(result, ok_returncodes=(0, 1))
+    ids = {"audio": {}, "subtitles": {}}
+    for track in json.loads(result.stdout).get("tracks") or []:
+        uid = (track.get("properties") or {}).get("uid")
+        if track.get("type") in ids and uid is not None:
+            ids[track["type"]][str(uid)] = int(track["id"])
+    return ids
+
+
+def mkvmerge_task(file_id, audio_tracks, subtitle_tracks):
+    """Remux an MKV file with only the given tracks.
+
+    The tracks are the Matroska track UIDs to keep, as text (#611). The
+    remux maps them to the track ids of the file after it takes the
+    lock."""
 
     from app.videos import acquire_lock_or_defer
 
@@ -1570,24 +1567,10 @@ def mkvmerge_task(file_id, audio_tracks, subtitle_tracks, edit_seq=None):
             timeout=current_app.config["MKVPROPEDIT_TASK_TIMEOUT"],
             description=f"'{file.basename}'",
             args=(file_id, audio_tracks, subtitle_tracks),
-            kwargs={"edit_seq": edit_seq} if edit_seq is not None else {},
             key=int(file_id),
         )
         if not lock:
             return True
-
-        try:
-            current_seq = _track_edit_seq(file_id)
-        except BaseException:
-            current_app.lock_manager.unlock(lock)
-            raise
-        if edit_seq is not None and edit_seq != current_seq:
-            current_app.logger.warning(
-                f"'{file.basename}' A newer edit changed the tracks after "
-                f"this remux was queued. The older remux stops"
-            )
-            current_app.lock_manager.unlock(lock)
-            return False
 
         try:
             return mkvmerge_unlocked(file_id, audio_tracks, subtitle_tracks)
@@ -1613,42 +1596,33 @@ def mkvmerge_unlocked(file_id, audio_tracks, subtitle_tracks):
             file_path = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
             name = f"'{file.basename}'"
 
-            # The form gives the 1-based position of each track in its
-            # kind (FileAudioTrack.track). mkvmerge wants the container
-            # stream order. MediaInfo lists the tracks grouped by kind,
-            # so its list index is the stream order only when the file has
-            # video, then audio, then subtitles. Each track carries its own
-            # stream order. remove_empty_subtitle_tracks uses it the same
-            # way (#315).
+            # The form gives the UID of each kept track (#611). mkvmerge
+            # selects the tracks by their ids in the file. A new read of
+            # the file maps each UID to its id now, under the lock.
 
-            media_info = MediaInfo.parse(file_path)
-            stream_orders = {"Audio": [], "Text": []}
-            for track in media_info.tracks:
-                if track.track_type in stream_orders:
-                    stream_orders[track.track_type].append(
-                        track.to_data().get("streamorder")
-                    )
-            current_app.logger.info(f"Stream orders: {stream_orders}")
             current_app.logger.info(f"Audio tracks: {audio_tracks}")
             current_app.logger.info(f"Subtitle tracks: {subtitle_tracks}")
+            ids = mkvmerge_track_ids(file_path)
+            current_app.logger.info(f"Track ids by UID: {ids}")
+            missing = sorted(
+                ({str(uid) for uid in audio_tracks} - set(ids["audio"]))
+                | ({str(uid) for uid in subtitle_tracks} - set(ids["subtitles"]))
+            )
+            if missing:
+                current_app.logger.warning(
+                    f"{name} The file has no track with UID "
+                    f"{', '.join(missing)}. The file changed after the page "
+                    f"was loaded. The remux stops"
+                )
+                _rescan_after_a_failed_edit(
+                    file_id, name, reason="Track remux found a changed file"
+                )
+                return False
 
-            def stream_ids(kind, positions):
-                """Return the mkvmerge ids of the tracks at the form positions."""
-
-                orders = stream_orders[kind]
-                ids = []
-                for position in positions:
-                    index = int(position) - 1
-                    if not 0 <= index < len(orders) or not str(orders[index]).isdigit():
-                        raise RuntimeError(
-                            f"'{file.basename}' has no stream order for "
-                            f"{kind} track {position}. The remux stops."
-                        )
-                    ids.append(int(orders[index]))
-                return ids
-
-            audio_tracks = stream_ids("Audio", audio_tracks)
-            subtitle_tracks = stream_ids("Text", subtitle_tracks)
+            audio_tracks = sorted(ids["audio"][str(uid)] for uid in audio_tracks)
+            subtitle_tracks = sorted(
+                ids["subtitles"][str(uid)] for uid in subtitle_tracks
+            )
 
             current_app.logger.info(f"Modified audio tracks: {audio_tracks}")
             current_app.logger.info(f"Modified subtitle tracks: {subtitle_tracks}")
@@ -1706,7 +1680,6 @@ def mkvmerge_unlocked(file_id, audio_tracks, subtitle_tracks):
 
             file = _fresh_file(file.id)
             replace_track_rows(file, output_audio_tracks, output_subtitle_tracks)
-            file.note_track_edit()
             db.session.commit()
 
         except Exception:
@@ -1720,16 +1693,29 @@ def mkvmerge_unlocked(file_id, audio_tracks, subtitle_tracks):
             # This task already holds the lock of the title. Thus, call the
             # unlocked variant directly. A call to the locked variant would
             # deadlock against this task. An OSError from the unlocked
-            # variant leaves the log entry to the caller. Thus, log it here
+            # variant leaves the log entry to the caller. Thus, log it here.
+            # The first audio track that stays becomes the default.
 
+            first_audio = output_audio_tracks[0]["uid"] if output_audio_tracks else None
             try:
-                mkvpropedit_unlocked(file.id, 1, None, None)
+                mkvpropedit_unlocked(file.id, first_audio, None, None)
             except OSError as e:
                 if getattr(e, "file_changed", False):
                     _rescan_after_a_failed_edit(file_id, name)
                 current_app.logger.error(traceback.format_exc())
                 raise
             return True
+
+
+def track_uid(data):
+    """Return the Matroska track UID of a MediaInfo track as text, or None (#611).
+
+    data is the to_data() dict of the track. MediaInfo gives the UID as
+    unique_id. mkvmerge -J gives the same number as properties.uid. A
+    container with no track UIDs gives None."""
+
+    value = str(data.get("unique_id") or "").split(" ", 1)[0]
+    return value if value.isdigit() else None
 
 
 def get_audio_tracks_from_file(file_path):
@@ -1776,6 +1762,7 @@ def get_audio_tracks_from_file(file_path):
                 if str(track.to_data().get("streamorder", "")).isdigit()
                 else None
             )
+            audio_track["uid"] = track_uid(track.to_data())
             audio_track["format"] = track.to_data().get("format")
 
             audio_track["channels"] = (
@@ -1884,6 +1871,7 @@ def get_subtitle_tracks_from_file(file_path):
                 if str(track.to_data().get("streamorder", "")).isdigit()
                 else None
             )
+            subtitle_track["uid"] = track_uid(track.to_data())
             subtitle_track["elements"] = int(
                 track.to_data().get("count_of_elements", 0)
             )
@@ -2548,14 +2536,13 @@ def _remux_audio_plan_unlocked(file_id, plan):
             # Build the track records again because the file changed. A new
             # transaction avoids MariaDB error 1020 after the long remux.
             # The file has the new layout now. A failed commit queues the
-            # scan of #583 and counts the edit apart (#594).
+            # scan of #583.
 
             try:
                 file = _fresh_file(file.id)
                 replace_track_rows(file, new_audio_tracks, new_subtitle_tracks)
                 record_filesize(file, os.path.getsize(final_staging))
                 file.date_updated = datetime.now(timezone.utc)
-                file.note_track_edit()
                 db.session.commit()
             except Exception:
                 current_app.logger.error(traceback.format_exc())

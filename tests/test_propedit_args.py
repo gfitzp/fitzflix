@@ -1,8 +1,9 @@
-"""Table tests for the 2 pure helpers of mkvpropedit_unlocked (#364).
+"""Table tests for the pure helpers of mkvpropedit_unlocked (#364, #611).
 
 build_propedit_args returns the argument list. Before, the task built
 strings and split them on the spaces. track_order is one stable sort.
-Before, it was 6 loops over the MediaInfo tracks."""
+Before, it was 6 loops over the MediaInfo tracks. missing_track_uids
+finds the selections that the file does not have."""
 
 from types import SimpleNamespace
 
@@ -15,109 +16,104 @@ def _track(track_type, default, streamorder):
     )
 
 
+def _uids(*uids):
+    """Return the track dicts of a new read of a file with these track UIDs."""
+
+    return [{"uid": uid} for uid in uids]
+
+
+def _edit(uid, field):
+    return ["--edit", f"track:={uid}", "--set", field]
+
+
 @pytest.mark.parametrize(
-    "audio_count, subtitle_count, default_audio, default_subtitle, forced, "
-    "languages, expected",
+    "audio, subtitles, default_audio, default_subtitle, forced, languages, expected",
     [
         # One audio track, no subtitles: only its default flag
-        (1, 0, "1", None, [], None, ["--edit", "track:a1", "--set", "flag-default=1"]),
+        (_uids("71"), [], "71", None, [], None, _edit("71", "flag-default=1")),
         # The second audio track is the default
         (
-            2,
-            0,
-            "2",
+            _uids("71", "72"),
+            [],
+            "72",
             None,
             [],
             None,
-            [
-                "--edit",
-                "track:a1",
-                "--set",
-                "flag-default=0",
-                "--edit",
-                "track:a2",
-                "--set",
-                "flag-default=1",
-            ],
+            _edit("71", "flag-default=0") + _edit("72", "flag-default=1"),
         ),
         # No default and no forced subtitle: the subtitle flags stay
         (
-            1,
-            2,
-            "1",
+            _uids("71"),
+            _uids("81", "82"),
+            "71",
             None,
             [],
             None,
-            ["--edit", "track:a1", "--set", "flag-default=1"],
+            _edit("71", "flag-default=1"),
         ),
         # A forced subtitle: each subtitle gets both flags
         (
-            1,
-            2,
-            "1",
+            _uids("71"),
+            _uids("81", "82"),
+            "71",
             None,
-            ["2"],
+            ["82"],
             None,
-            [
-                "--edit",
-                "track:a1",
-                "--set",
-                "flag-default=1",
-                "--edit",
-                "track:s1",
-                "--set",
-                "flag-default=0",
-                "--edit",
-                "track:s1",
-                "--set",
-                "flag-forced=0",
-                "--edit",
-                "track:s2",
-                "--set",
-                "flag-default=0",
-                "--edit",
-                "track:s2",
-                "--set",
-                "flag-forced=1",
-            ],
+            _edit("71", "flag-default=1")
+            + _edit("81", "flag-default=0")
+            + _edit("81", "flag-forced=0")
+            + _edit("82", "flag-default=0")
+            + _edit("82", "flag-forced=1"),
         ),
         # No audio track for a default, and a language correction
         (
-            1,
-            1,
+            _uids("71"),
+            _uids("81"),
             None,
             None,
             [],
-            {"a1": "yue", "s1": None},
-            [
-                "--edit",
-                "track:a1",
-                "--set",
-                "flag-default=0",
-                "--edit",
-                "track:a1",
-                "--set",
-                "language=yue",
-            ],
+            {"71": "yue", "81": None},
+            _edit("71", "flag-default=0") + _edit("71", "language=yue"),
         ),
     ],
 )
 def test_build_propedit_args(
-    app,
-    audio_count,
-    subtitle_count,
-    default_audio,
-    default_subtitle,
-    forced,
-    languages,
-    expected,
+    app, audio, subtitles, default_audio, default_subtitle, forced, languages, expected
 ):
+    """The edits address the tracks by UID, not by position (#611)."""
+
     from app.tracks import build_propedit_args
 
     assert (
         build_propedit_args(
-            audio_count,
-            subtitle_count,
+            audio, subtitles, default_audio, default_subtitle, forced, languages
+        )
+        == expected
+    )
+
+
+@pytest.mark.parametrize(
+    "default_audio, default_subtitle, forced, languages, expected",
+    [
+        ("71", "0", [], None, []),
+        ("79", "0", [], None, ["79"]),
+        ("71", "89", ["81", "88"], {"77": "eng"}, ["77", "88", "89"]),
+        # An audio UID is not a subtitle UID
+        ("71", "71", [], None, ["71"]),
+        (None, None, [], {"81": "fre"}, []),
+    ],
+)
+def test_missing_track_uids(
+    app, default_audio, default_subtitle, forced, languages, expected
+):
+    """A selected UID that the file does not have stops the edit (#611)."""
+
+    from app.tracks import missing_track_uids
+
+    assert (
+        missing_track_uids(
+            _uids("71"),
+            _uids("81"),
             default_audio,
             default_subtitle,
             forced,
@@ -125,6 +121,12 @@ def test_build_propedit_args(
         )
         == expected
     )
+
+
+def test_a_track_with_no_uid_counts_as_missing(app):
+    from app.tracks import missing_track_uids
+
+    assert missing_track_uids(_uids("71", None), [], "71", None, []) == ["no UID"]
 
 
 @pytest.mark.parametrize(

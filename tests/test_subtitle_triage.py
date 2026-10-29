@@ -27,6 +27,8 @@ def add_subtitle(
     row = FileSubtitleTrack(
         file_id=file.id,
         track=track,
+        # The track UID is 800 plus the position (#611).
+        uid=str(800 + track),
         language=language,
         language_name=language_name,
         elements=elements,
@@ -214,6 +216,7 @@ def test_mark_forced_enqueues_mkvpropedit_preserving_settings(app, admin_client)
             FileAudioTrack(
                 file_id=file.id,
                 track=1,
+                uid="901",
                 language="eng",
                 language_name="English",
                 format="DTS",
@@ -223,7 +226,7 @@ def test_mark_forced_enqueues_mkvpropedit_preserving_settings(app, admin_client)
             )
         )
         db.session.commit()
-        file_id, small_id = file.id, small.id
+        file_id, small_id = file.id, small.uid
 
         local_path = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
         os.makedirs(os.path.dirname(local_path), exist_ok=True)
@@ -239,7 +242,7 @@ def test_mark_forced_enqueues_mkvpropedit_preserving_settings(app, admin_client)
             data={
                 "csrf_token": csrf_token_from(page),
                 "file_id": file_id,
-                "track_ids": [small_id],
+                "track_uids": [small_id],
                 "mark_forced_submit": "Flag selected as forced",
             },
             follow_redirects=True,
@@ -253,8 +256,9 @@ def test_mark_forced_enqueues_mkvpropedit_preserving_settings(app, admin_client)
         ]
         assert len(jobs) == 1
         # The task keeps the current defaults: audio track 1 and default
-        # subtitle 1. The flagged track joins the forced set
-        assert jobs[0].args == (file_id, "1", "1", ["2"])
+        # subtitle 1. The flagged track joins the forced set. The tracks
+        # go by UID (#611).
+        assert jobs[0].args == (file_id, "901", "801", ["802"])
         inspect.signature(mkvpropedit_task).bind(*jobs[0].args)
     finally:
         os.remove(local_path)
@@ -265,7 +269,7 @@ def test_mark_forced_refuses_non_matroska(app, admin_client):
         file, small = build_candidate(
             title="MP4 Suspect", year=2006, container="MPEG-4"
         )
-        file_id, small_id = file.id, small.id
+        file_id, small_id = file.id, small.uid
 
     page = admin_client.get("/maintenance/subtitles").get_data(as_text=True)
     assert "MP4 Suspect" in page  # the worklist lists it
@@ -277,7 +281,7 @@ def test_mark_forced_refuses_non_matroska(app, admin_client):
         data={
             "csrf_token": csrf_token_from(page),
             "file_id": file_id,
-            "track_ids": [small_id],
+            "track_uids": [small_id],
             "mark_forced_submit": "Flag selected as forced",
         },
         follow_redirects=True,
@@ -300,7 +304,7 @@ def test_multi_select_flags_all_chosen_tracks_in_one_task(app, admin_client):
         file, small = build_candidate(title="Two Suspects", year=2011)
         third = add_subtitle(file, 3, 50)
         db.session.commit()
-        file_id, small_id, third_id = file.id, small.id, third.id
+        file_id, small_id, third_id = file.id, small.uid, third.uid
 
         local_path = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
         os.makedirs(os.path.dirname(local_path), exist_ok=True)
@@ -316,7 +320,7 @@ def test_multi_select_flags_all_chosen_tracks_in_one_task(app, admin_client):
             data={
                 "csrf_token": csrf_token_from(page),
                 "file_id": file_id,
-                "track_ids": [small_id, third_id],
+                "track_uids": [small_id, third_id],
                 "mark_forced_submit": "Flag selected as forced",
             },
             follow_redirects=True,
@@ -329,7 +333,7 @@ def test_multi_select_flags_all_chosen_tracks_in_one_task(app, admin_client):
             if job.func_name == "app.videos.mkvpropedit_task"
         ]
         assert len(jobs) == 1
-        assert jobs[0].args == (file_id, None, "1", ["2", "3"])
+        assert jobs[0].args == (file_id, None, "801", ["802", "803"])
     finally:
         os.remove(local_path)
 
@@ -412,7 +416,7 @@ def test_generate_snapshots_and_render_the_aids(app, admin_client, monkeypatch):
         )
         assert "5 cues from 0:00:10 to 1:38:20" in page
         assert f"triage/{file_id}/2/snap-1.jpg" in page
-        assert 'name="track_ids"' in page
+        assert 'name="track_uids" value="802"' in page
 
         # A snapshot enlarges in place through the shared modal. It does
         # not open as a new-tab link
@@ -595,14 +599,14 @@ def test_an_unreadable_aids_path_counts_as_no_aids(tmp_path):
     assert _has_subtitle_aids(str(blocker)) is False
 
 
-def test_mark_forced_carries_the_edit_counter_of_the_page(app, admin_client):
-    """The selected tracks come from the rows of the page (#593)."""
+def test_mark_forced_refuses_rows_with_no_uid(app, admin_client):
+    """The rows before the backfill have no UIDs. The edit waits for a rescan (#611)."""
 
     with app.app_context():
-        file, small = build_candidate(title="Forced Counter")
-        file.track_edit_seq = 3
+        file, small = build_candidate(title="Forced No UID")
+        FileSubtitleTrack.query.filter_by(file_id=file.id).update({"uid": None})
         db.session.commit()
-        file_id, small_id = file.id, small.id
+        file_id = file.id
         local_path = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
     os.makedirs(os.path.dirname(local_path), exist_ok=True)
     with open(local_path, "wb") as f:
@@ -611,22 +615,21 @@ def test_mark_forced_carries_the_edit_counter_of_the_page(app, admin_client):
         page = admin_client.get(f"/maintenance/subtitles/{file_id}").get_data(
             as_text=True
         )
-        assert 'name="track_edit_seq" value="3"' in page
-        admin_client.post(
+        assert "have no track UIDs. Rescan the file" in page
+        assert "<fieldset disabled>" in page
+        response = admin_client.post(
             "/maintenance/subtitles",
             data={
                 "csrf_token": csrf_token_from(page),
                 "file_id": file_id,
-                "track_ids": [small_id],
-                "track_edit_seq": "3",
+                "track_uids": ["802"],
                 "mark_forced_submit": "Flag selected as forced",
             },
+            follow_redirects=True,
         )
-        (job,) = [
-            job
-            for job in app.file_queue.jobs
-            if job.func_name == "app.videos.mkvpropedit_task"
-        ]
-        assert job.kwargs == {"edit_seq": 3}
+        assert "have no track UIDs. Rescan the file, then try again." in (
+            response.get_data(as_text=True)
+        )
+        assert app.file_queue.jobs == []
     finally:
         os.remove(local_path)

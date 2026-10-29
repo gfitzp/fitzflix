@@ -98,7 +98,8 @@ from app.infuse_player import play_movie as infuse_play_movie
 from app.plex_player import play_movie, remote_playback_configured
 from app.main.helpers import (
     _hold_verdict_lock,
-    edit_seq_kwargs,
+    flash_tracks_need_rescan,
+    tracks_need_rescan,
     apply_verdict,
     verdict_response,
     admin_required,
@@ -2456,9 +2457,9 @@ def _best_file_row(file):
 def changed_track_languages(posted, audio_tracks, subtitle_tracks):
     """Return (changes, unresolved) for the language boxes of the file page.
 
-    posted maps a box name ("language_a1", "language_s3") to its value.
-    changes maps a track key ("a1", "s3") to the new code of each track
-    whose language changed. unresolved holds the values that are not a
+    posted maps a box name ("language_" and the track UID) to its value.
+    changes maps a track UID to the new code of each track whose
+    language changed (#611). unresolved holds the values that are not a
     language. A blank box is not a change. The comparison uses resolved
     codes. Thus, a box can still hold a stored ISO 639-2/T spelling
     ("deu"). That box does not read as a request to rewrite the track to
@@ -2466,34 +2467,33 @@ def changed_track_languages(posted, audio_tracks, subtitle_tracks):
 
     changes = {}
     unresolved = []
-    for prefix, tracks in (("a", audio_tracks), ("s", subtitle_tracks)):
-        for track in tracks:
-            submitted = posted.get(f"language_{prefix}{track.track}", "")
-            if not submitted.strip():
-                continue
-            language = resolve_language_code(submitted)
-            if not language:
-                unresolved.append(submitted.strip())
-            elif language != (resolve_language_code(track.language) or track.language):
-                changes[f"{prefix}{track.track}"] = language
+    for track in list(audio_tracks) + list(subtitle_tracks):
+        submitted = posted.get(f"language_{track.uid}", "")
+        if not submitted.strip():
+            continue
+        language = resolve_language_code(submitted)
+        if not language:
+            unresolved.append(submitted.strip())
+        elif language != (resolve_language_code(track.language) or track.language):
+            changes[track.uid] = language
     return changes, unresolved
 
 
 def _propedit_form(audio_tracks, subtitle_tracks):
     """Return the form of the track flag edits, with the choices of the file.
 
-    The choices and defaults are strings, because WTForms coerces the
-    submitted values to strings. An int here would fail the "valid
-    choice" validation."""
+    The values are the track UIDs (#611). They are strings, because
+    WTForms coerces the submitted values to strings. An int here would
+    fail the "valid choice" validation."""
 
     form = MKVPropEditForm()
     if audio_tracks:
         form.default_audio.choices = [
-            (str(track.track), track.label) for track in audio_tracks
+            (str(track.uid), track.label) for track in audio_tracks
         ]
         form.default_audio.default = next(
-            (str(track.track) for track in reversed(audio_tracks) if track.default),
-            "1",
+            (str(track.uid) for track in reversed(audio_tracks) if track.default),
+            str(audio_tracks[0].uid),
         )
     else:
         # No audio tracks. Remove the field completely. Thus, its empty
@@ -2503,31 +2503,33 @@ def _propedit_form(audio_tracks, subtitle_tracks):
 
         del form.default_audio
 
-    subtitle_choices = [(str(track.track), track.label) for track in subtitle_tracks]
+    subtitle_choices = [(str(track.uid), track.label) for track in subtitle_tracks]
     form.default_subtitle.choices = [("0", "None")] + subtitle_choices
     form.default_subtitle.default = next(
-        (str(track.track) for track in reversed(subtitle_tracks) if track.default),
+        (str(track.uid) for track in reversed(subtitle_tracks) if track.default),
         "0",
     )
     form.forced_subtitles.choices = subtitle_choices
     form.forced_subtitles.default = [
-        str(track.track) for track in subtitle_tracks if track.forced
+        str(track.uid) for track in subtitle_tracks if track.forced
     ]
     return form
 
 
 def _remux_form(audio_tracks, subtitle_tracks):
-    """Return the form of a remux without some tracks. Each track starts kept."""
+    """Return the form of a remux without some tracks. Each track starts kept.
+
+    The values are the track UIDs (#611)."""
 
     form = MKVMergeForm()
     form.audio_tracks.choices = [
-        (str(track.track), track.label) for track in audio_tracks
+        (str(track.uid), track.label) for track in audio_tracks
     ]
-    form.audio_tracks.default = [str(track.track) for track in audio_tracks]
+    form.audio_tracks.default = [str(track.uid) for track in audio_tracks]
     form.subtitle_tracks.choices = [
-        (str(track.track), track.label) for track in subtitle_tracks
+        (str(track.uid), track.label) for track in subtitle_tracks
     ]
-    form.subtitle_tracks.default = [str(track.track) for track in subtitle_tracks]
+    form.subtitle_tracks.default = [str(track.uid) for track in subtitle_tracks]
     return form
 
 
@@ -2591,7 +2593,6 @@ def _propedit_post(audio_tracks, subtitle_tracks):
             form.forced_subtitles.data,
             track_languages or None,
             description=f"'{file.basename}'",
-            **edit_seq_kwargs(),
         )
         if mkvpropedit_job:
             current_app.logger.info(f"Queued '{file.basename}' for MKV property edits")
@@ -2618,7 +2619,6 @@ def _remux_post(file, form):
         form.subtitle_tracks.data,
         description=f"'{file.basename}'",
         at_front=True,
-        **edit_seq_kwargs(),
     )
     if mkvmerge_job:
         current_app.logger.info(f"Queued '{file.basename}' for MKV remuxing")
@@ -2834,6 +2834,16 @@ def file(file_id):
         ),
         (delete_form, delete_form.delete_submit, _delete_file_post, False),
     )
+    # The track forms post track UIDs (#611). Rows with no UID give the
+    # forms no valid choice. Thus, the refusal comes before the validation.
+
+    needs_rescan = tracks_need_rescan(file, audio_tracks, subtitle_tracks)
+    if needs_rescan and (
+        mkvpropedit_form.mkvpropedit_submit.data or mkvmerge_form.mkvmerge_submit.data
+    ):
+        flash_tracks_need_rescan(file)
+        return redirect(url_for("main.file", file_id=file.id))
+
     for form, submit, handler, needs_local_file in handlers:
         if submit.data and form.validate_on_submit():
             if needs_local_file and not file_exists_locally:
@@ -2878,6 +2888,7 @@ def file(file_id):
         pending_subtitle_triage=pending_subtitle_triage,
         pending_lossy_triage=pending_lossy_triage,
         possibly_forced_track_ids=possibly_forced_track_ids,
+        tracks_need_rescan=needs_rescan,
         metadata_scan_form=metadata_scan_form,
         mkvpropedit_form=mkvpropedit_form,
         # The dropdowns offer the own languages of the collection.

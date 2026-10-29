@@ -61,6 +61,9 @@
 		</form>
 	</div>
 </div>
+{# The edits address a track by its UID (#611). Rows with no UID wait
+   for a rescan, and their controls stay off. #}
+{% set track_edits_off = not file_exists_locally or tracks_need_rescan %}
 <div class="table-responsive mt-3">
 	<table class="table align-middle">
 		{% if audio_tracks %}
@@ -83,7 +86,7 @@
 				<th scope="row">{{ audio.track }}</th>
 				<td>
 					{% if languages %}
-					<select class="form-select form-select-sm" style="min-width: 11rem" form="mkvpropedit-form" id="language_a{{ audio.track }}" name="language_a{{ audio.track }}" aria-label="Language of audio track {{ audio.track }}"{% if not file_exists_locally %} disabled{% endif %}>
+					<select class="form-select form-select-sm" style="min-width: 11rem" form="mkvpropedit-form" id="language_a{{ audio.track }}" name="language_{{ audio.uid }}" aria-label="Language of audio track {{ audio.track }}"{% if track_edits_off %} disabled{% endif %}>
 						{# A stored value that is no language posts blank, which is no
 						   change (#570). The raw value posted refused every edit. #}
 						{% set current = language_code(audio.language) %}
@@ -98,8 +101,8 @@
 					{% if audio.quality_label %}{{ audio.quality_label }}{% else %}&mdash;{% endif %}
 				</td>
 				<td>{{ audio.compression_mode }}{% if pending_lossy_triage and audio.track == 1 %}<a href="{{ url_for('main.lossy_audio_triage', file_id=file.id, origin=url_for('main.file', file_id=file.id)) }}" class="small fw-normal ms-2">Review&hellip;</a>{% endif %}</td>
-				<td class="text-center">{% if file.container == "Matroska" %}<input class="form-check-input" type="radio" form="mkvpropedit-form" name="default_audio" value="{{ audio.track }}"{% if audio.default or (not audio_has_default and loop.first) %} checked{% endif %}{% if not file_exists_locally %} disabled{% endif %} aria-label="Make audio track {{ audio.track }} the default">{% elif audio.default %}<span class="badge text-bg-info">Default</span>{% endif %}</td>
-				<td class="text-center">{% if file.container == "Matroska" %}<input class="form-check-input" type="checkbox" form="mkvmerge-form" name="audio_tracks" value="{{ audio.track }}" checked{% if not file_exists_locally %} disabled{% endif %} aria-label="Keep audio track {{ audio.track }} when remuxing">{% endif %}</td>
+				<td class="text-center">{% if file.container == "Matroska" %}<input class="form-check-input" type="radio" form="mkvpropedit-form" name="default_audio" value="{{ audio.uid }}"{% if audio.default or (not audio_has_default and loop.first) %} checked{% endif %}{% if track_edits_off %} disabled{% endif %} aria-label="Make audio track {{ audio.track }} the default">{% elif audio.default %}<span class="badge text-bg-info">Default</span>{% endif %}</td>
+				<td class="text-center">{% if file.container == "Matroska" %}<input class="form-check-input" type="checkbox" form="mkvmerge-form" name="audio_tracks" value="{{ audio.uid }}" checked{% if track_edits_off %} disabled{% endif %} aria-label="Keep audio track {{ audio.track }} when remuxing">{% endif %}</td>
 			</tr>
 			{% endfor %}
 		</tbody>
@@ -124,7 +127,7 @@
 				<th scope="row">{{ subtitle.track }}</th>
 				<td>
 					{% if languages %}
-					<select class="form-select form-select-sm" style="min-width: 11rem" form="mkvpropedit-form" id="language_s{{ subtitle.track }}" name="language_s{{ subtitle.track }}" aria-label="Language of subtitle track {{ subtitle.track }}"{% if not file_exists_locally %} disabled{% endif %}>
+					<select class="form-select form-select-sm" style="min-width: 11rem" form="mkvpropedit-form" id="language_s{{ subtitle.track }}" name="language_{{ subtitle.uid }}" aria-label="Language of subtitle track {{ subtitle.track }}"{% if track_edits_off %} disabled{% endif %}>
 						{% set current = language_code(subtitle.language) %}
 						{% if not current %}<option value="" selected>{{ subtitle.language if subtitle.language is not none else "Not set" }}</option>{% endif %}
 						{% for code, name in languages %}<option value="{{ code }}"{% if code == current %} selected{% endif %}>{{ name }}</option>{% endfor %}
@@ -134,9 +137,9 @@
 				<td>{{ subtitle.format }}</td>
 				<td>{{ subtitle.elements }}</td>
 				<td>{% if subtitle.forced is none or subtitle.id in possibly_forced_track_ids %}<span class="badge text-bg-warning">Possibly forced</span>{% if pending_subtitle_triage and subtitle.id in possibly_forced_track_ids %}<a href="{{ url_for('main.subtitle_triage', file_id=file.id, origin=url_for('main.file', file_id=file.id)) }}" class="small fw-normal ms-2">Review&hellip;</a>{% endif %}{% endif %}</td>
-				<td class="text-center">{% if file.container == "Matroska" %}<input class="form-check-input" type="checkbox" form="mkvpropedit-form" name="forced_subtitles" value="{{ subtitle.track }}"{% if subtitle.forced %} checked{% endif %}{% if not file_exists_locally %} disabled{% endif %} aria-label="Flag subtitle track {{ subtitle.track }} as forced">{% elif subtitle.forced %}<span class="badge text-bg-danger">Forced</span>{% endif %}</td>
-				<td class="text-center">{% if file.container == "Matroska" %}<input class="form-check-input" type="radio" form="mkvpropedit-form" name="default_subtitle" value="{{ subtitle.track }}"{% if subtitle.default %} checked{% endif %}{% if not file_exists_locally %} disabled{% endif %} aria-label="Make subtitle track {{ subtitle.track }} the default">{% elif subtitle.default %}<span class="badge text-bg-info">Default</span>{% endif %}</td>
-				<td class="text-center">{% if file.container == "Matroska" %}<input class="form-check-input" type="checkbox" form="mkvmerge-form" name="subtitle_tracks" value="{{ subtitle.track }}" checked{% if not file_exists_locally %} disabled{% endif %} aria-label="Keep subtitle track {{ subtitle.track }} when remuxing">{% endif %}</td>
+				<td class="text-center">{% if file.container == "Matroska" %}<input class="form-check-input" type="checkbox" form="mkvpropedit-form" name="forced_subtitles" value="{{ subtitle.uid }}"{% if subtitle.forced %} checked{% endif %}{% if track_edits_off %} disabled{% endif %} aria-label="Flag subtitle track {{ subtitle.track }} as forced">{% elif subtitle.forced %}<span class="badge text-bg-danger">Forced</span>{% endif %}</td>
+				<td class="text-center">{% if file.container == "Matroska" %}<input class="form-check-input" type="radio" form="mkvpropedit-form" name="default_subtitle" value="{{ subtitle.uid }}"{% if subtitle.default %} checked{% endif %}{% if track_edits_off %} disabled{% endif %} aria-label="Make subtitle track {{ subtitle.track }} the default">{% elif subtitle.default %}<span class="badge text-bg-info">Default</span>{% endif %}</td>
+				<td class="text-center">{% if file.container == "Matroska" %}<input class="form-check-input" type="checkbox" form="mkvmerge-form" name="subtitle_tracks" value="{{ subtitle.uid }}" checked{% if track_edits_off %} disabled{% endif %} aria-label="Keep subtitle track {{ subtitle.track }} when remuxing">{% endif %}</td>
 			</tr>
 			{% endfor %}
 			{% if file.container == "Matroska" %}
@@ -144,7 +147,7 @@
 				<th scope="row"></th>
 				<td colspan="4" class="text-muted">No default subtitle track</td>
 				<td></td>
-				<td class="text-center"><input class="form-check-input" type="radio" form="mkvpropedit-form" name="default_subtitle" value="0"{% if not subtitle_has_default %} checked{% endif %}{% if not file_exists_locally %} disabled{% endif %} aria-label="Leave the file with no default subtitle track"></td>
+				<td class="text-center"><input class="form-check-input" type="radio" form="mkvpropedit-form" name="default_subtitle" value="0"{% if not subtitle_has_default %} checked{% endif %}{% if track_edits_off %} disabled{% endif %} aria-label="Leave the file with no default subtitle track"></td>
 				<td></td>
 			</tr>
 			{% endif %}
@@ -156,21 +159,21 @@
 {% if file.container == "Matroska" and (audio_tracks or subtitle_tracks) %}
 <div class="d-flex flex-wrap gap-2">
 	<form id="mkvpropedit-form" action="" method="post">
-		<fieldset {% if not file_exists_locally %}disabled{% endif %}>
+		<fieldset {% if track_edits_off %}disabled{% endif %}>
 			{{ mkvpropedit_form.hidden_tag() }}
-			<input type="hidden" name="track_edit_seq" value="{{ file.track_edit_seq or 0 }}">
 			{{ mkvpropedit_form.mkvpropedit_submit(class_="btn btn-sm btn-warning") }}
 		</fieldset>
 	</form>
 	<form id="mkvmerge-form" action="" method="post">
-		<fieldset {% if not file_exists_locally %}disabled{% endif %}>
+		<fieldset {% if track_edits_off %}disabled{% endif %}>
 			{{ mkvmerge_form.hidden_tag() }}
-			<input type="hidden" name="track_edit_seq" value="{{ file.track_edit_seq or 0 }}">
 			{{ mkvmerge_form.mkvmerge_submit(class_="btn btn-sm btn-danger") }}
 		</fieldset>
 	</form>
 </div>
-{% if file_exists_locally %}
+{% if tracks_need_rescan %}
+<p class="small text-muted mt-2 mb-0">The track rows of this file have no track UIDs. Rescan the file before you edit its tracks.</p>
+{% elif file_exists_locally %}
 <p class="small text-muted mt-2 mb-0"><em>Update MKV Properties</em> saves the Language, Default, and Forced columns. It edits the file in place. <em>Remux MKV File</em> rebuilds the file with only the tracks that you selected under Keep.</p>
 {% endif %}
 {% endif %}

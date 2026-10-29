@@ -1499,7 +1499,6 @@ def _atmos_finish(state, phases):
         replace_track_rows(file, new_audio_tracks, new_subtitle_tracks)
         record_filesize(file, os.path.getsize(final_staging))
         file.date_updated = datetime.now(timezone.utc)
-        file.note_track_edit()
         db.session.commit()
     except Exception:
         # The archive is behind the library file now (#503). The weekly
@@ -1516,14 +1515,10 @@ def _atmos_finish(state, phases):
             file = db.session.get(File, file_id)
             replace_track_rows(file, new_audio_tracks, new_subtitle_tracks)
             record_filesize(file, os.path.getsize(final_staging))
-            # The first commit rolled back. Its count of the edit went too.
-            file.note_track_edit()
             db.session.commit()
         except Exception:
             # The library file has the twins, and the rows keep the old
-            # layout. A scan reads the rows from the file. The count of
-            # the edit goes in a separate transaction (#592). Thus, an
-            # older retry of a track edit stops.
+            # layout. A scan reads the rows from the file (#592).
             db.session.rollback()
             _rescan_after_a_failed_edit(file_id, f"'{basename}'")
             raise

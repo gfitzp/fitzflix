@@ -22,6 +22,7 @@ LISTING = {
         "smb",
         "sqs",
         "sync",
+        "tracks",
         "triage",
         "tv",
     ],
@@ -59,6 +60,7 @@ LISTING = {
     ],
     "refresh": ["criterion", "file", "tmdb"],
     "smb": ["history", "probe", "recheck", "repair", "status"],
+    "tracks": ["backfill-uids"],
     "triage": ["backfill", "backfill-audio"],
     "tv": ["rename"],
 }

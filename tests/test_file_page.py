@@ -11,9 +11,24 @@ from app import db
 from tests.conftest import ADMIN_PASSWORD, csrf_token_from
 from tests.factories import make_movie, make_movie_file
 
+# The track UIDs of the rows of _file. They differ from the positions.
+# Thus, a form that posts a position instead of a UID fails (#611).
 
-def _file(app, present=True, container="Matroska", aws_key=None, title="Page Film"):
-    """Make a movie file with 2 audio tracks and 1 subtitle track. Return its id."""
+AUDIO_UIDS = ("9001", "9002")
+SUBTITLE_UID = "9003"
+
+
+def _file(
+    app,
+    present=True,
+    container="Matroska",
+    aws_key=None,
+    title="Page Film",
+    uids=True,
+):
+    """Make a movie file with 2 audio tracks and 1 subtitle track. Return its id.
+
+    With uids False, the rows have no track UIDs, as before the backfill."""
 
     from app.models import FileAudioTrack, FileSubtitleTrack
 
@@ -26,6 +41,7 @@ def _file(app, present=True, container="Matroska", aws_key=None, title="Page Fil
                 FileAudioTrack(
                     file_id=file.id,
                     track=1,
+                    uid=AUDIO_UIDS[0] if uids else None,
                     language="eng",
                     language_name="English",
                     codec="TrueHD",
@@ -38,6 +54,7 @@ def _file(app, present=True, container="Matroska", aws_key=None, title="Page Fil
                 FileAudioTrack(
                     file_id=file.id,
                     track=2,
+                    uid=AUDIO_UIDS[1] if uids else None,
                     language="fra",
                     language_name="French",
                     codec="AC-3",
@@ -48,6 +65,7 @@ def _file(app, present=True, container="Matroska", aws_key=None, title="Page Fil
                 FileSubtitleTrack(
                     file_id=file.id,
                     track=3,
+                    uid=SUBTITLE_UID if uids else None,
                     language="eng",
                     language_name="English",
                     elements=1200,
@@ -86,8 +104,8 @@ def _post(admin_client, file_id, data):
 
 LOCAL_FORMS = [
     {"scan_submit": "Scan"},
-    {"default_audio": "1", "default_subtitle": "0", "mkvpropedit_submit": "Update"},
-    {"audio_tracks": "1", "subtitle_tracks": "3", "mkvmerge_submit": "Remux"},
+    {"default_audio": "9001", "default_subtitle": "0", "mkvpropedit_submit": "Update"},
+    {"audio_tracks": "9001", "subtitle_tracks": "9003", "mkvmerge_submit": "Remux"},
     {"s3_upload_submit": "Upload"},
 ]
 
@@ -121,7 +139,7 @@ def test_the_remux_form_queues_the_remux(app, admin_client, queued):
     page = _post(
         admin_client,
         file_id,
-        {"audio_tracks": "1", "subtitle_tracks": "3", "mkvmerge_submit": "Remux"},
+        {"audio_tracks": "9001", "subtitle_tracks": "9003", "mkvmerge_submit": "Remux"},
     )
     assert queued == ["app.videos.mkvmerge_task"]
     assert "Remuxing MKV file" in page
@@ -186,23 +204,23 @@ def test_changed_track_languages(app):
     from app.main.library import changed_track_languages
 
     audio = [
-        SimpleNamespace(track=1, language="und"),
-        SimpleNamespace(track=2, language="ger"),
+        SimpleNamespace(track=1, uid="71", language="und"),
+        SimpleNamespace(track=2, uid="72", language="ger"),
     ]
-    subtitles = [SimpleNamespace(track=3, language="eng")]
+    subtitles = [SimpleNamespace(track=3, uid="73", language="eng")]
     with app.app_context():
         changes, unresolved = changed_track_languages(
             {
-                "language_a1": "eng",
-                "language_a2": "deu",
-                "language_s3": "  ",
+                "language_71": "eng",
+                "language_72": "deu",
+                "language_73": "  ",
             },
             audio,
             subtitles,
         )
-        assert (changes, unresolved) == ({"a1": "eng"}, [])
+        assert (changes, unresolved) == ({"71": "eng"}, [])
         changes, unresolved = changed_track_languages(
-            {"language_s3": "Klingonese"}, audio, subtitles
+            {"language_73": "Klingonese"}, audio, subtitles
         )
         assert (changes, unresolved) == ({}, ["Klingonese"])
 
@@ -250,44 +268,25 @@ def test_the_restore_form_refuses_to_replace_a_newer_local_file(
     assert queued == []
 
 
-def _set_edit_seq(app, file_id, value):
-    from app.models import File
-
-    with app.app_context():
-        db.session.get(File, file_id).track_edit_seq = value
-        db.session.commit()
-
-
-def test_both_track_forms_render_the_edit_counter_of_the_page(app, admin_client):
-    """The track positions come from the rows of the page (#593)."""
-
-    file_id = _file(app, title="Counter Render")
-    _set_edit_seq(app, file_id, 4)
-    page = admin_client.get(f"/file/{file_id}").get_data(as_text=True)
-    assert page.count('name="track_edit_seq" value="4"') == 2
-
-
 TRACK_EDIT_POSTS = [
     (
         "app.videos.mkvpropedit_task",
-        {"default_audio": "1", "default_subtitle": "0", "mkvpropedit_submit": "Up"},
+        {"default_audio": "9002", "default_subtitle": "0", "mkvpropedit_submit": "Up"},
+        ("9002", "0", []),
     ),
     (
         "app.videos.mkvmerge_task",
-        {"audio_tracks": "1", "subtitle_tracks": "3", "mkvmerge_submit": "Remux"},
+        {"audio_tracks": "9002", "subtitle_tracks": "9003", "mkvmerge_submit": "Rx"},
+        (["9002"], ["9003"]),
     ),
 ]
 
 
-@pytest.mark.parametrize("task, data", TRACK_EDIT_POSTS)
-@pytest.mark.parametrize("posted, expected", [("4", 4), (None, None), ("x", None)])
-def test_a_track_edit_post_carries_the_counter_of_the_page(
-    app, admin_client, monkeypatch, task, data, posted, expected
+@pytest.mark.parametrize("task, data, expected", TRACK_EDIT_POSTS)
+def test_a_track_edit_post_sends_the_track_uids(
+    app, admin_client, monkeypatch, task, data, expected
 ):
-    """The first attempt gets the counter as its baseline (#593).
-
-    A missing or non-numeric field sends no baseline. Thus, a tab that was
-    open before the deploy still works."""
+    """The page posts the track UIDs, and the task gets them (#611)."""
 
     import app.main.library as library
 
@@ -295,12 +294,29 @@ def test_a_track_edit_post_carries_the_counter_of_the_page(
     monkeypatch.setattr(
         library,
         "enqueue_task",
-        lambda name, *args, **kwargs: calls.append((name, kwargs)),
+        lambda name, *args, **kwargs: calls.append((name, args, kwargs)),
     )
-    file_id = _file(app, title=f"Counter Post {task[-10:]} {posted}")
-    _set_edit_seq(app, file_id, 4)
-    extra = {} if posted is None else {"track_edit_seq": posted}
-    _post(admin_client, file_id, {**data, **extra})
-    ((name, kwargs),) = calls
+    file_id = _file(app, title=f"UID Post {task[-10:]}")
+    page = admin_client.get(f"/file/{file_id}").get_data(as_text=True)
+    assert 'name="default_audio" value="9002"' in page
+    assert 'name="language_9003"' in page
+    _post(admin_client, file_id, data)
+    ((name, args, kwargs),) = calls
     assert name == task
-    assert kwargs.get("edit_seq") == expected
+    assert args[0] == file_id
+    assert args[1 : len(expected) + 1] == expected
+
+
+@pytest.mark.parametrize("task, data, expected", TRACK_EDIT_POSTS)
+def test_rows_with_no_uid_disable_the_edits_and_refuse_a_post(
+    app, admin_client, queued, task, data, expected
+):
+    """The rows before the backfill have no UIDs. The page waits for a rescan (#611)."""
+
+    file_id = _file(app, title=f"No UID {task[-10:]}", uids=False)
+    page = admin_client.get(f"/file/{file_id}").get_data(as_text=True)
+    assert "have no track UIDs. Rescan the file" in page
+    assert 'name="default_audio" value="None" checked disabled' in page
+    page = _post(admin_client, file_id, data)
+    assert queued == []
+    assert "have no track UIDs. Rescan the file, then try again." in page

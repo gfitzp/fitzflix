@@ -113,7 +113,7 @@ def test_the_edit_rewrites_the_languages_in_the_file(app, undetermined_mkv):
     new codes."""
 
     from app import db
-    from app.tracks import mkvpropedit_unlocked
+    from app.tracks import get_audio_tracks_from_file, mkvpropedit_unlocked
     from app.models import FileAudioTrack
     from tests.factories import make_movie, make_movie_file
 
@@ -130,7 +130,10 @@ def test_the_edit_rewrites_the_languages_in_the_file(app, undetermined_mkv):
     assert _audio_languages(app, library_path) == ["und", "und"]
 
     with app.app_context():
-        assert mkvpropedit_unlocked(file_id, 1, None, None, {"a1": "eng"}) is True
+        uids = [track["uid"] for track in get_audio_tracks_from_file(library_path)]
+        assert (
+            mkvpropedit_unlocked(file_id, uids[0], None, None, {uids[0]: "eng"}) is True
+        )
 
     # Only the track that the caller asked about changes.
 
@@ -153,7 +156,8 @@ def _matroska_file_page(
 ):
     """Build a Matroska file with 1 audio track and render its File page.
 
-    The file can also have 1 subtitle track. Return the library path of
+    The audio track has UID 71. The file can also have 1 subtitle track,
+    with UID 81 (#611). Return the library path of
     the file only when `local`, because that is what the caller must
     clean up."""
 
@@ -171,6 +175,7 @@ def _matroska_file_page(
             FileAudioTrack(
                 file_id=file.id,
                 track=1,
+                uid="71",
                 language=language,
                 language_name="Undetermined",
                 format="DTS",
@@ -185,6 +190,7 @@ def _matroska_file_page(
                 FileSubtitleTrack(
                     file_id=file.id,
                     track=1,
+                    uid="81",
                     language="und",
                     language_name="Undetermined",
                     format="PGS",
@@ -275,8 +281,8 @@ def test_the_page_offers_a_language_dropdown_per_track(app, admin_client):
 
     _, library_path, page = _matroska_file_page(app, admin_client, subtitles=True)
     try:
-        assert 'name="language_a1"' in page
-        assert 'name="language_s1"' in page
+        assert 'name="language_71"' in page
+        assert 'name="language_81"' in page
         assert page.count("<select") == 2
 
         # Decision by Glenn (2026-08-24): languages read as names, not
@@ -389,8 +395,8 @@ def test_every_track_control_lives_in_the_listing(app, admin_client):
         # editor owns the flags. The remuxer owns the tracks that remain.
 
         owners = {
-            "language_a1": "mkvpropedit-form",
-            "language_s1": "mkvpropedit-form",
+            "language_71": "mkvpropedit-form",
+            "language_81": "mkvpropedit-form",
             "default_audio": "mkvpropedit-form",
             "default_subtitle": "mkvpropedit-form",
             "forced_subtitles": "mkvpropedit-form",
@@ -466,7 +472,7 @@ def test_the_controls_are_disabled_when_the_file_is_not_local(app, admin_client)
     page_controls.feed(page)
 
     assert page_controls.controls
-    for name in ("language_a1", "default_audio", "forced_subtitles", "audio_tracks"):
+    for name in ("language_71", "default_audio", "forced_subtitles", "audio_tracks"):
         found = page_controls.named(name)
         assert found, f"{name} is missing from the page"
         assert all("disabled" in attrs for attrs, _ in found), f"{name} stayed live"
@@ -489,10 +495,10 @@ def test_only_the_changed_languages_are_sent_to_the_edit(app, admin_client):
             f"/file/{file_id}",
             data={
                 "csrf_token": csrf_token_from(page),
-                "default_audio": "1",
-                "default_subtitle": "1",
-                "language_a1": "eng",
-                "language_s1": "und",
+                "default_audio": "71",
+                "default_subtitle": "81",
+                "language_71": "eng",
+                "language_81": "und",
                 "mkvpropedit_submit": "Update MKV Properties",
             },
             follow_redirects=True,
@@ -509,7 +515,7 @@ def test_only_the_changed_languages_are_sent_to_the_edit(app, admin_client):
 
         # The audio box changed from und to eng. The subtitle box did not change.
 
-        assert jobs[0].args[4] == {"a1": "eng"}
+        assert jobs[0].args[4] == {"71": "eng"}
     finally:
         os.remove(library_path)
 
@@ -531,9 +537,9 @@ def test_an_unknown_language_refuses_the_whole_edit(app, admin_client):
             f"/file/{file_id}",
             data={
                 "csrf_token": csrf_token_from(page),
-                "default_audio": "1",
+                "default_audio": "71",
                 "default_subtitle": "0",
-                "language_a1": "Gibberish",
+                "language_71": "Gibberish",
                 "mkvpropedit_submit": "Update MKV Properties",
             },
             follow_redirects=True,
@@ -573,9 +579,9 @@ def test_a_terminologic_code_reads_as_a_name_and_is_not_a_change(app, admin_clie
             f"/file/{file_id}",
             data={
                 "csrf_token": csrf_token_from(page),
-                "default_audio": "1",
+                "default_audio": "71",
                 "default_subtitle": "0",
-                "language_a1": "ger",
+                "language_71": "ger",
                 "mkvpropedit_submit": "Update MKV Properties",
             },
             follow_redirects=True,
@@ -640,7 +646,7 @@ def test_a_language_new_to_the_cached_choices_stays_selected(app, admin_client):
             app, admin_client, subtitles=False, language="yue"
         )
         try:
-            select = page.split('name="language_a1"')[1].split("</select>")[0]
+            select = page.split('name="language_71"')[1].split("</select>")[0]
             assert select.count(" selected") == 1
             assert '<option value="yue" selected>' in select
             assert '<option value="abk">Abkhazian</option>' in select
@@ -664,7 +670,7 @@ def test_an_unresolvable_stored_language_does_not_block_the_edit(app, admin_clie
         app, admin_client, subtitles=False, language="en-US"
     )
     try:
-        select = re.search(r'<select[^>]*name="language_a1".*?</select>', page, re.S)
+        select = re.search(r'<select[^>]*name="language_71".*?</select>', page, re.S)
         selected = re.search(r'<option value="([^"]*)" selected>([^<]*)<', select[0])
         assert selected.groups() == ("", "en-US")
 
@@ -672,9 +678,9 @@ def test_an_unresolvable_stored_language_does_not_block_the_edit(app, admin_clie
             f"/file/{file_id}",
             data={
                 "csrf_token": csrf_token_from(page),
-                "default_audio": "1",
+                "default_audio": "71",
                 "default_subtitle": "0",
-                "language_a1": selected[1],
+                "language_71": selected[1],
                 "mkvpropedit_submit": "Update MKV Properties",
             },
             follow_redirects=True,

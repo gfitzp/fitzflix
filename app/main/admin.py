@@ -86,7 +86,8 @@ from app.main.helpers import (
     admin_required,
     decimal_id,
     decimal_ids,
-    edit_seq_kwargs,
+    flash_tracks_need_rescan,
+    tracks_need_rescan,
 )
 from app.main.library import restore_cost_estimate
 from app.log_digest import stored_digest
@@ -1501,6 +1502,21 @@ def tmdb_triage():
     )
 
 
+def _rescan_file_ids(candidates):
+    """Return the ids of the candidate files whose track rows have no UIDs (#611).
+
+    The triage page disables the track controls of these files. The
+    backfill or a rescan fills the UIDs."""
+
+    return {
+        entry["file"].id
+        for entry in candidates
+        if tracks_need_rescan(
+            entry["file"], entry["file"].audiotrack, entry["file"].subtrack
+        )
+    }
+
+
 @bp.route("/maintenance/subtitles", methods=["GET", "POST"], defaults={"file_id": None})
 @bp.route("/maintenance/subtitles/<int:file_id>", methods=["GET", "POST"])
 @login_required
@@ -1548,9 +1564,16 @@ def subtitle_triage(file_id):
 
     if triage_form.mark_forced_submit.data and triage_form.validate_on_submit():
         file = File.query.filter_by(id=triage_form.file_id.data).first_or_404()
-        track_ids = request.form.getlist("track_ids", type=int)
+        if tracks_need_rescan(file, file.audiotrack, file.subtrack):
+            flash_tracks_need_rescan(file)
+            return stay()
+
+        # The checkboxes post the track UIDs (#611). A remux between the
+        # page load and the post keeps them.
+
+        track_uids = request.form.getlist("track_uids")
         tracks = FileSubtitleTrack.query.filter(
-            FileSubtitleTrack.id.in_(track_ids or [0]),
+            FileSubtitleTrack.uid.in_(track_uids or [""]),
             FileSubtitleTrack.file_id == file.id,
         ).all()
         if not tracks:
@@ -1576,22 +1599,19 @@ def subtitle_triage(file_id):
         audio_default = FileAudioTrack.query.filter_by(
             file_id=file.id, default=True
         ).first()
-        default_audio_track = str(audio_default.track) if audio_default else None
+        default_audio_track = audio_default.uid if audio_default else None
         subtitle_default = FileSubtitleTrack.query.filter_by(
             file_id=file.id, default=True
         ).first()
-        default_subtitle_track = (
-            str(subtitle_default.track) if subtitle_default else None
-        )
+        default_subtitle_track = subtitle_default.uid if subtitle_default else None
         forced_tracks = sorted(
             {
-                str(existing.track)
+                existing.uid
                 for existing in FileSubtitleTrack.query.filter_by(
                     file_id=file.id, forced=True
                 )
             }
-            | {str(track.track) for track in tracks},
-            key=int,
+            | {track.uid for track in tracks}
         )
 
         enqueue_task(
@@ -1601,7 +1621,6 @@ def subtitle_triage(file_id):
             default_subtitle_track,
             forced_tracks,
             description=f"'{file.basename}'",
-            **edit_seq_kwargs(),
         )
         remove_triage_snapshots(file.id)
         numbers = ", ".join(
@@ -1640,6 +1659,7 @@ def subtitle_triage(file_id):
 
     return render_template(
         "subtitle_triage.html",
+        rescan_file_ids=_rescan_file_ids(candidates) if focus_file else set(),
         title=(
             f'Possibly-forced subtitles in "{focus_file.basename}"'
             if focus_file
@@ -1693,9 +1713,15 @@ def lossy_audio_triage(file_id):
 
     if triage_form.promote_submit.data and triage_form.validate_on_submit():
         file = File.query.filter_by(id=triage_form.file_id.data).first_or_404()
-        chosen = request.form.get("lossless_track", type=int)
+        if tracks_need_rescan(file, file.audiotrack, file.subtrack):
+            flash_tracks_need_rescan(file)
+            return stay()
+
+        # The radio posts the track UID (#611).
+
+        chosen = request.form.get("lossless_track", "")
         track = FileAudioTrack.query.filter_by(
-            file_id=file.id, track=chosen or 0
+            file_id=file.id, uid=chosen or ""
         ).first()
         if track is None or track.compression_mode != "Lossless":
             flash("Select a lossless track to lead.", "warning")
@@ -1721,27 +1747,21 @@ def lossy_audio_triage(file_id):
         subtitle_default = FileSubtitleTrack.query.filter_by(
             file_id=file.id, default=True
         ).first()
-        default_subtitle_track = (
-            str(subtitle_default.track) if subtitle_default else None
-        )
+        default_subtitle_track = subtitle_default.uid if subtitle_default else None
         forced_tracks = sorted(
-            {
-                str(existing.track)
-                for existing in FileSubtitleTrack.query.filter_by(
-                    file_id=file.id, forced=True
-                )
-            },
-            key=int,
+            existing.uid
+            for existing in FileSubtitleTrack.query.filter_by(
+                file_id=file.id, forced=True
+            )
         )
 
         enqueue_task(
             "app.videos.mkvpropedit_task",
             file.id,
-            str(track.track),
+            track.uid,
             default_subtitle_track,
             forced_tracks,
             description=f"'{file.basename}'",
-            **edit_seq_kwargs(),
         )
 
         # The remux renumbers the tracks. Thus, each aid set shows streams
@@ -1799,6 +1819,7 @@ def lossy_audio_triage(file_id):
 
     return render_template(
         "lossy_audio_triage.html",
+        rescan_file_ids=_rescan_file_ids(candidates) if focus_file else set(),
         title=(
             f'Lossy-audio lead in "{focus_file.basename}"'
             if focus_file

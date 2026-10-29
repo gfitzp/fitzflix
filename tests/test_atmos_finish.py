@@ -179,16 +179,13 @@ def test_a_db_fault_after_the_rename_marks_the_archive_stale_and_fixes_the_rows(
         assert sorted(codecs) == sorted([TWIN, ATMOS])
 
 
-def test_a_second_failed_row_commit_counts_the_edit_and_queues_a_scan(app, monkeypatch):
+def test_a_second_failed_row_commit_queues_a_scan(app, monkeypatch):
     """The twins are in the file, and both row commits failed (#592).
 
-    The edit counter moves in a separate transaction. Thus, an older retry
-    of a track edit stops. A scan reads the rows from the file."""
+    A scan reads the rows from the file."""
 
     import app.atmos as atmos
     import app.tracks as tracks
-    from app import db
-    from app.models import File
     from tests.test_scheduling import requeue_id, scheduled_jobs
 
     with app.app_context():
@@ -202,8 +199,6 @@ def test_a_second_failed_row_commit_counts_the_edit_and_queues_a_scan(app, monke
         with pytest.raises(RuntimeError):
             atmos.atmos_finish_task(*finish.args)
 
-        db.session.expire_all()
-        assert db.session.get(File, file_id).track_edit_seq == 1
         wanted = requeue_id("app.videos.track_metadata_scan_task", file_id)
         assert [j.id for j in scheduled_jobs(app.file_queue) if j.id == wanted] == [
             wanted

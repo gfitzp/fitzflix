@@ -2736,9 +2736,8 @@ def finalize_localization(
                 # The new file replaced the file of an existing record, and
                 # the commit of its rows failed. The row keeps the track
                 # rows, the size and the archive of the old file. The
-                # rescan counts the edit (#592) and reads the rows again.
-                # The stale flag makes the repair upload the new file
-                # (#592 follow-up).
+                # rescan reads the rows again (#592). The stale flag makes
+                # the repair upload the new file (#592 follow-up).
                 replaced_id = _row_id_at(file_details.get("file_path"))
                 if replaced_id is not None:
                     _rescan_after_a_failed_edit(replaced_id, f"'{output_file}'")
@@ -2841,10 +2840,10 @@ def _build_records(file_details, inspection, output_name, series_id=None):
 
         # The track rows of the existing record go in the
         # replace_track_rows call below. The new file replaces the old
-        # one. Thus, a retry of an edit of the old file must stop (#589).
+        # one. A retry of an edit of the old file then finds none of its
+        # track UIDs, and it stops (#611).
 
         file.date_updated = datetime.now(timezone.utc)
-        file.note_track_edit()
 
     if file.media_library == MOVIES:
         _attach_movie(file, file_details)

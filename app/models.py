@@ -1065,25 +1065,8 @@ class File(db.Model):
 
     custom_poster = db.Column(db.String(64))
 
-    # The count of the committed track edits of the file (#589). A
-    # transient retry of an edit carries the count from its first
-    # attempt. A different count stops the retry. A scan does not change
-    # it. Thus, a scan in the retry delay does not stop the retry. None
-    # reads as 0.
-
-    track_edit_seq = db.Column(db.Integer)
-
     def __repr__(self):
         return f"<File '{self.plex_title}'>"
-
-    def note_track_edit(self):
-        """Count 1 more track edit of the file (#589).
-
-        Call this in the transaction that writes the new track rows of
-        an edit, a conversion or a new import of the same row. Never
-        call it in a scan."""
-
-        self.track_edit_seq = (self.track_edit_seq or 0) + 1
 
     @property
     def needs_sdr_conversion(self):
@@ -1333,6 +1316,13 @@ class FileAudioTrack(db.Model):
     language_name = db.Column(db.String(64), nullable=False)
     compression_mode = db.Column(db.String(64))
 
+    # The Matroska track UID (#611). The edits address a track by it,
+    # because a remux keeps it and changes the positions. It is an
+    # unsigned 64-bit number, which is too large for a signed BIGINT.
+    # Thus, it is text. Other containers have none.
+
+    uid = db.Column(db.String(20))
+
     __table_args__ = (db.UniqueConstraint("file_id", "track"),)
 
     @property
@@ -1377,6 +1367,10 @@ class FileSubtitleTrack(db.Model):
     forced = db.Column(db.Boolean)
     streamorder = db.Column(db.Integer)
     language_name = db.Column(db.String(64), nullable=False)
+
+    # The Matroska track UID (#611), as on FileAudioTrack.
+
+    uid = db.Column(db.String(20))
 
     __table_args__ = (db.UniqueConstraint("file_id", "track"),)
 

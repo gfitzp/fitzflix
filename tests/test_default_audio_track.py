@@ -50,6 +50,29 @@ def _audio(app, path):
         ]
 
 
+def _uids(file_id):
+    """Return the audio track UIDs of the library file of a row, in file order.
+
+    The edits address a track by its UID (#611). Call this in an app
+    context."""
+
+    from flask import current_app
+
+    from app import db
+    from app.models import File
+    from app.tracks import get_audio_tracks_from_file
+
+    file = db.session.get(File, file_id)
+    path = os.path.join(current_app.config["LIBRARY_DIR"], file.file_path)
+    return [track["uid"] for track in get_audio_tracks_from_file(path)]
+
+
+def _uid(file_id, position):
+    """Return the UID of the audio track at a 1-based position of a row's file."""
+
+    return _uids(file_id)[position - 1]
+
+
 def test_the_fixture_really_starts_out_wrong(app, three_audio_mkv):
     """Check the fixture itself.
 
@@ -107,7 +130,7 @@ def test_choosing_a_later_default_moves_it_to_the_front(app, three_audio_mkv):
     # Ask for the SECOND track (fra) as the default.
 
     with app.app_context():
-        assert mkvpropedit_unlocked(file_id, 2, None, None) is True
+        assert mkvpropedit_unlocked(file_id, _uid(file_id, 2), None, None) is True
 
     # French is now first, and it is the only default. The other 2 tracks
     # keep their order behind it.
@@ -142,7 +165,7 @@ def test_the_stored_track_rows_follow_the_reordered_file(app, three_audio_mkv):
     shutil.copy(three_audio_mkv, library_path)
 
     with app.app_context():
-        assert mkvpropedit_unlocked(file_id, 3, None, None) is True
+        assert mkvpropedit_unlocked(file_id, _uid(file_id, 3), None, None) is True
 
         rows = (
             FileAudioTrack.query.filter_by(file_id=file_id)
@@ -248,7 +271,9 @@ def test_a_reorder_that_fails_its_commit_marks_the_archive_stale(
         monkeypatch,
         three_audio_mkv,
         "Stale Reorder",
-        lambda tracks, file_id: tracks.mkvpropedit_unlocked(file_id, 2, None, None),
+        lambda tracks, file_id: tracks.mkvpropedit_unlocked(
+            file_id, _uid(file_id, 2), None, None
+        ),
     )
 
 
@@ -260,7 +285,7 @@ def test_a_remux_that_fails_its_commit_marks_the_archive_stale(
         monkeypatch,
         three_audio_mkv,
         "Stale Remux",
-        lambda tracks, file_id: tracks.mkvmerge_unlocked(file_id, [1, 2, 3], []),
+        lambda tracks, file_id: tracks.mkvmerge_unlocked(file_id, _uids(file_id), []),
     )
 
 
@@ -332,7 +357,7 @@ def test_a_mkvpropedit_that_cannot_start_leaves_the_archive_current(
     )
     with app.app_context():
         with pytest.raises(FileNotFoundError):
-            tracks.mkvpropedit_unlocked(file_id, 2, None, None)
+            tracks.mkvpropedit_unlocked(file_id, _uid(file_id, 2), None, None)
         db.session.expire_all()
         assert not db.session.get(File, file_id).aws_stale
     assert os.path.exists(library_path)
@@ -361,7 +386,7 @@ def test_a_failed_mkvpropedit_marks_the_archive_stale(
     )
     with app.app_context():
         with pytest.raises(subprocess.CalledProcessError):
-            tracks.mkvpropedit_unlocked(file_id, 2, None, None)
+            tracks.mkvpropedit_unlocked(file_id, _uid(file_id, 2), None, None)
         db.session.expire_all()
         assert db.session.get(File, file_id).aws_stale
 
@@ -441,7 +466,7 @@ def test_a_fault_after_the_empty_subtitle_removal_marks_the_retry_unsafe(
     monkeypatch.setattr(tracks, "get_subtitle_tracks_from_file", subtitles)
     with app.app_context():
         with pytest.raises(OSError) as raised:
-            tracks.mkvpropedit_unlocked(file_id, 1, None, None)
+            tracks.mkvpropedit_unlocked(file_id, _uid(file_id, 1), None, None)
     assert len(reads) == 2
     assert raised.value.retry_unsafe is True
 
@@ -466,11 +491,15 @@ def _scheduled_scans(app, file_id):
     [
         (
             "Rescan Reorder",
-            lambda tracks, file_id: tracks.mkvpropedit_unlocked(file_id, 2, None, None),
+            lambda tracks, file_id: tracks.mkvpropedit_unlocked(
+                file_id, _uid(file_id, 2), None, None
+            ),
         ),
         (
             "Rescan Remux",
-            lambda tracks, file_id: tracks.mkvmerge_unlocked(file_id, [1, 2, 3], []),
+            lambda tracks, file_id: tracks.mkvmerge_unlocked(
+                file_id, _uids(file_id), []
+            ),
         ),
     ],
 )
@@ -511,7 +540,7 @@ def test_a_clean_edit_queues_no_track_scan(app, monkeypatch, three_audio_mkv):
     os.makedirs(os.path.dirname(library_path), exist_ok=True)
     shutil.copy(three_audio_mkv, library_path)
     with app.app_context():
-        assert mkvpropedit_unlocked(file_id, 2, None, None) is True
+        assert mkvpropedit_unlocked(file_id, _uid(file_id, 2), None, None) is True
     assert _scheduled_scans(app, file_id) == []
 
 
@@ -552,7 +581,9 @@ def test_a_failed_flag_after_a_clean_mkvpropedit_still_commits_and_uploads(
         tracks, "archive_library_file", lambda file, path: uploads.append(path)
     )
     with app.app_context():
-        assert tracks.mkvpropedit_unlocked(file_id, 1, None, None) is True
+        assert (
+            tracks.mkvpropedit_unlocked(file_id, _uid(file_id, 1), None, None) is True
+        )
         assert FileAudioTrack.query.filter_by(file_id=file_id).count() == 3
     assert flags == [True]
     assert uploads == [library_path]
@@ -592,7 +623,7 @@ def test_a_transient_fault_after_mkvpropedit_leaves_the_scan_to_the_task(
     monkeypatch.setattr(tracks, "get_subtitle_tracks_from_file", subtitles)
     with app.app_context():
         with pytest.raises(OSError) as raised:
-            tracks.mkvpropedit_unlocked(file_id, 1, None, None)
+            tracks.mkvpropedit_unlocked(file_id, _uid(file_id, 1), None, None)
     assert raised.value.file_changed is True
     assert raised.value.retry_unsafe is False
     assert _scheduled_scans(app, file_id) == []
@@ -636,7 +667,7 @@ def test_a_failure_after_the_write_flags_the_archive_again(
     monkeypatch.setattr(tracks, "replace_track_rows", broken_rows)
     with app.app_context():
         with pytest.raises(RuntimeError):
-            tracks.mkvpropedit_unlocked(file_id, 1, None, None)
+            tracks.mkvpropedit_unlocked(file_id, _uid(file_id, 1), None, None)
     assert flags == [True, True]
     wanted = requeue_id("app.videos.track_metadata_scan_task", file_id)
     scans = [job for job in scheduled_jobs(app.file_queue) if job.id == wanted]

@@ -2641,8 +2641,6 @@ def move_archive_object(file_id, sqs_receipt_handle=None):
                     lock_wait_job_id(
                         "app.aws_storage.move_archive_object",
                         f"'{file.basename}' — Moving the archive",
-                        (file.id,),
-                        {"sqs_receipt_handle": sqs_receipt_handle},
                         key=file.id,
                     )
                 )
