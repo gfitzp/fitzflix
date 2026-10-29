@@ -113,50 +113,169 @@ def test_a_deferred_scan_of_a_library_run_keeps_the_run_prefix(
         os.remove(path)
 
 
-def test_a_retry_after_a_newer_edit_stops(app, monkeypatch):
-    """The old track arguments do not fit the rows of a newer edit (#585)."""
+def _first_attempt_fails(app, monkeypatch, file_id):
+    """Run attempt A, which fails with a transient fault. Return its retry job."""
 
     import app.videos as videos
-    from app import db, tracks
-    from app.models import FileAudioTrack
+    from app import tracks
+
+    with monkeypatch.context() as patch:
+        patch.setattr(tracks, "mkvpropedit_unlocked", _failing_unlocked(False, False))
+        assert videos.mkvpropedit_task(file_id, "2", None, []) is False
+    (retry,) = [
+        job
+        for job in scheduled_jobs(app.file_queue)
+        if job.func_name.endswith("mkvpropedit_task") and job.args[0] == file_id
+    ]
+    return retry
+
+
+def _write_rows(app, file_id, default_track, bump):
+    """Write 2 audio rows with default_track as the default. Count an edit if bump."""
+
+    from app import db
+    from app.models import File
+    from app.tracks import replace_track_rows
+
+    with app.app_context():
+        file = db.session.get(File, file_id)
+        replace_track_rows(
+            file,
+            [
+                {
+                    "language": "eng",
+                    "language_name": "English",
+                    "default": default_track == 1,
+                },
+                {
+                    "language": "fra",
+                    "language_name": "French",
+                    "default": default_track == 2,
+                },
+            ],
+            [],
+        )
+        if bump:
+            file.note_track_edit()
+        db.session.commit()
+
+
+def _edit_seq(app, file_id):
+    from app import db
+    from app.models import File
+
+    with app.app_context():
+        return db.session.get(File, file_id).track_edit_seq
+
+
+def test_a_retry_after_a_newer_edit_with_the_same_rows_stops(app, monkeypatch):
+    """The digest of the rows missed an edit back to the old rows (ABA, #589).
+
+    Attempt A set track 2 as the default and failed after the write. The
+    page still showed track 1, and edit B posted track 1. B committed the
+    same rows as before A. The retry of A then set track 2 over B."""
+
+    import app.videos as videos
+    from app import tracks
 
     file_id, identifier, path = _library_row(app, "Stale Retry")
-    with app.app_context():
-        old = tracks._track_layout(file_id)
-        db.session.add(
-            FileAudioTrack(
-                file_id=file_id,
-                track=1,
-                language="fra",
-                language_name="French",
-                default=True,
-            )
-        )
-        db.session.commit()
+    _write_rows(app, file_id, 1, bump=False)
+    retry = _first_attempt_fails(app, monkeypatch, file_id)
+    kwargs = dict(retry.kwargs)
+    retry.delete()
+    assert kwargs["edit_seq"] == 0
+
+    # Edit B commits the rows of before A and counts its edit.
+    _write_rows(app, file_id, 1, bump=True)
+    assert _edit_seq(app, file_id) == 1
+
     calls = []
     monkeypatch.setattr(
         tracks, "mkvpropedit_unlocked", lambda *args: calls.append(args) or True
     )
     try:
-        assert (
-            videos.mkvpropedit_task(
-                file_id, "2", None, [], None, transient_retries=1, layout=old
-            )
-            is False
-        )
+        assert videos.mkvpropedit_task(file_id, *retry.args[1:], **kwargs) is False
         assert calls == []
         assert _lock_is_free(app, identifier)
 
-        # The same rows let the retry run.
-        with app.app_context():
-            current = tracks._track_layout(file_id)
-        assert (
-            videos.mkvpropedit_task(
-                file_id, "2", None, [], None, transient_retries=1, layout=current
-            )
-            is True
-        )
+        # The current count lets the retry run.
+        kwargs["edit_seq"] = 1
+        assert videos.mkvpropedit_task(file_id, *retry.args[1:], **kwargs) is True
         assert len(calls) == 1
+    finally:
+        os.remove(path)
+
+
+def test_a_scan_in_the_retry_delay_does_not_stop_the_retry(app, monkeypatch):
+    """A scan changed the digest, and the rest of the edit was lost (#589).
+
+    The scan rewrites the rows from the half-edited file. It does not
+    count an edit. Thus, the retry still runs."""
+
+    import app.videos as videos
+    from app import tracks
+
+    file_id, identifier, path = _library_row(app, "Scan In Delay")
+    _write_rows(app, file_id, 1, bump=False)
+    retry = _first_attempt_fails(app, monkeypatch, file_id)
+    kwargs = dict(retry.kwargs)
+    retry.delete()
+
+    with app.app_context():
+        assert tracks.save_track_metadata(
+            file_id,
+            {
+                "video": {},
+                "filesize_bytes": 3,
+                "audio_tracks": [
+                    {"language": "fra", "language_name": "French", "default": True},
+                    {"language": "eng", "language_name": "English", "default": False},
+                ],
+                "subtitle_tracks": [],
+            },
+        )
+    assert _edit_seq(app, file_id) is None
+
+    calls = []
+    monkeypatch.setattr(
+        tracks, "mkvpropedit_unlocked", lambda *args: calls.append(args) or True
+    )
+    try:
+        assert videos.mkvpropedit_task(file_id, *retry.args[1:], **kwargs) is True
+        assert len(calls) == 1
+    finally:
+        os.remove(path)
+
+
+def test_a_track_edit_counts_once_and_a_scan_does_not_count(app):
+    """Each edit adds exactly 1 to the counter. A scan leaves it (#589)."""
+
+    from app import db, tracks
+    from app.models import File
+
+    file_id, identifier, path = _library_row(app, "Edit Counter")
+    try:
+        with app.app_context():
+            file = db.session.get(File, file_id)
+            assert file.track_edit_seq is None
+            file.note_track_edit()
+            db.session.commit()
+            assert db.session.get(File, file_id).track_edit_seq == 1
+            file = db.session.get(File, file_id)
+            file.note_track_edit()
+            db.session.commit()
+            assert db.session.get(File, file_id).track_edit_seq == 2
+            details = {
+                "video": {},
+                "filesize_bytes": 3,
+                "audio_tracks": [
+                    {"language": "eng", "language_name": "English", "default": True}
+                ],
+                "subtitle_tracks": [],
+            }
+            assert tracks.save_track_metadata(file_id, details)
+            db.session.expire_all()
+            assert db.session.get(File, file_id).track_edit_seq == 2
     finally:
         os.remove(path)
 
@@ -194,7 +313,7 @@ def test_an_unsafe_failure_after_a_change_queues_a_scan(app, monkeypatch):
 
 
 def test_a_safe_transient_retry_queues_no_scan(app, monkeypatch):
-    """The retry repairs the rows. A scan first would change the layout digest."""
+    """The retry repairs the rows. A scan is not needed before it."""
 
     import app.videos as videos
     from app import tracks
@@ -300,20 +419,12 @@ def test_a_retry_stopped_by_a_newer_edit_queues_the_scan_for_its_write(
 
     import app.videos as videos
     from app import db, tracks
-    from app.models import FileAudioTrack
+    from app.models import File
 
     file_id, identifier, path = _library_row(app, "Stopped After Write")
     with app.app_context():
-        old = tracks._track_layout(file_id)
-        db.session.add(
-            FileAudioTrack(
-                file_id=file_id,
-                track=1,
-                language="fra",
-                language_name="French",
-                default=True,
-            )
-        )
+        file = db.session.get(File, file_id)
+        file.note_track_edit()
         db.session.commit()
     calls = []
     monkeypatch.setattr(
@@ -328,7 +439,7 @@ def test_a_retry_stopped_by_a_newer_edit_queues_the_scan_for_its_write(
                 [],
                 None,
                 transient_retries=1,
-                layout=old,
+                edit_seq=0,
                 file_changed=True,
             )
             is False
@@ -357,8 +468,78 @@ def test_a_safe_retry_carries_the_earlier_write(app, monkeypatch):
         ]
         assert len(retries) == 1
         assert retries[0].kwargs["file_changed"] is True
-        assert "layout" in retries[0].kwargs
+        assert retries[0].kwargs["edit_seq"] == 0
         for job in retries:
             job.delete()
+    finally:
+        os.remove(path)
+
+
+# Each function that commits new track rows of an existing file outside a
+# scan, with the count of its note_track_edit calls (#589). _atmos_finish
+# has a second commit for a first commit that failed. A scan, the Atmos
+# rebuild of the rows from the file, and the restore placement count no
+# edit.
+
+TRACK_EDIT_SITES = [
+    ("app/tracks.py", "mkvpropedit_unlocked", 1),
+    ("app/tracks.py", "mkvmerge_unlocked", 1),
+    ("app/tracks.py", "_remux_audio_plan_unlocked", 1),
+    ("app/atmos.py", "_atmos_finish", 2),
+    ("app/importing.py", "_build_records", 1),
+    ("app/tracks.py", "save_track_metadata", 0),
+    ("app/atmos.py", "_atmos_prepare", 0),
+    ("app/aws_storage.py", "place_in_library", 0),
+]
+
+
+def _note_calls(path, function):
+    """Return the count of the note_track_edit calls in one function."""
+
+    import ast
+
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    tree = ast.parse(open(os.path.join(root, path)).read())
+    (node,) = [
+        child
+        for child in ast.walk(tree)
+        if isinstance(child, ast.FunctionDef) and child.name == function
+    ]
+    return sum(
+        1
+        for call in ast.walk(node)
+        if isinstance(call, ast.Call)
+        and isinstance(call.func, ast.Attribute)
+        and call.func.attr == "note_track_edit"
+    )
+
+
+@pytest.mark.parametrize("path, function, count", TRACK_EDIT_SITES)
+def test_each_track_edit_site_counts_its_edit(path, function, count):
+    assert (
+        _note_calls(path, function) == count
+    ), f"{path}:{function} must call note_track_edit {count} times (#589)"
+
+
+def test_a_real_flag_edit_adds_exactly_1_to_the_counter(app, tmp_path):
+    """The commit of mkvpropedit_unlocked counts the edit (#589)."""
+
+    import shutil
+
+    from app import db
+    from app.models import File
+    from app.tracks import mkvpropedit_unlocked
+    from tests.media import make_sample_mkv
+
+    sample = make_sample_mkv(
+        str(tmp_path / "two-audio.mkv"), audio=(("eng", True), ("fra", False))
+    )
+    file_id, identifier, path = _library_row(app, "Real Flag Edit")
+    shutil.copy(sample, path)
+    try:
+        with app.app_context():
+            assert mkvpropedit_unlocked(file_id, 1, None, None) is True
+            db.session.expire_all()
+            assert db.session.get(File, file_id).track_edit_seq == 1
     finally:
         os.remove(path)

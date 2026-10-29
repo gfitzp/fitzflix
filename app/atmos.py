@@ -1495,6 +1495,7 @@ def _atmos_finish(state, phases):
         replace_track_rows(file, new_audio_tracks, new_subtitle_tracks)
         record_filesize(file, os.path.getsize(final_staging))
         file.date_updated = datetime.now(timezone.utc)
+        file.note_track_edit()
         db.session.commit()
     except Exception:
         # The archive is behind the library file now (#503). The weekly
@@ -1508,6 +1509,8 @@ def _atmos_finish(state, phases):
         file = db.session.get(File, file_id)
         replace_track_rows(file, new_audio_tracks, new_subtitle_tracks)
         record_filesize(file, os.path.getsize(final_staging))
+        # The first commit rolled back. Its count of the edit went too.
+        file.note_track_edit()
         db.session.commit()
 
     # The film gained a track under a path that Plex already knows. Thus,

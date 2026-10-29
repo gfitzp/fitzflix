@@ -2824,9 +2824,11 @@ def _build_records(file_details, inspection, output_name, series_id=None):
             )
 
         # The track rows of the existing record go in the
-        # replace_track_rows call below.
+        # replace_track_rows call below. The new file replaces the old
+        # one. Thus, a retry of an edit of the old file must stop (#589).
 
         file.date_updated = datetime.now(timezone.utc)
+        file.note_track_edit()
 
     if file.media_library == MOVIES:
         _attach_movie(file, file_details)

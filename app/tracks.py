@@ -587,29 +587,21 @@ def _rescan_after_a_failed_edit(file_id, name):
         current_app.logger.warning(traceback.format_exc())
 
 
-def _track_layout(file_id):
-    """Return a digest of the stored track rows of a file (#585).
+def _track_edit_seq(file_id):
+    """Return the track edit counter of a file from a new transaction (#589).
 
-    An edit commits new rows. The digest thus changes after a newer
-    edit. A failed attempt commits nothing, and its digest stays."""
+    An edit commits new rows and adds 1 to the counter. A failed attempt
+    commits nothing, and the counter stays. A scan does not change it.
+    The read of the row before the lock opened a snapshot. An edit that
+    committed after that read is not in the snapshot. Thus, the counter
+    comes from a separate connection. The session and its row stay as
+    they are."""
 
-    audio = (
-        FileAudioTrack.query.filter_by(file_id=file_id)
-        .order_by(FileAudioTrack.track)
-        .all()
-    )
-    subtitles = (
-        FileSubtitleTrack.query.filter_by(file_id=file_id)
-        .order_by(FileSubtitleTrack.track)
-        .all()
-    )
-    rows = [
-        ("a", t.track, t.language, t.format, t.channels, bool(t.default)) for t in audio
-    ] + [
-        ("s", t.track, t.language, t.format, bool(t.default), bool(t.forced))
-        for t in subtitles
-    ]
-    return hashlib.sha1(repr(rows).encode()).hexdigest()[:16]
+    with db.engine.connect() as connection:
+        seq = connection.execute(
+            db.select(File.track_edit_seq).where(File.id == file_id)
+        ).scalar()
+    return seq or 0
 
 
 def save_track_metadata(file_id, details, lock=None, archive=False):
@@ -1026,7 +1018,7 @@ def mkvpropedit_task(
     forced_subtitle_tracks,
     track_languages=None,
     transient_retries=0,
-    layout=None,
+    edit_seq=None,
     file_changed=False,
 ):
     """Update the MKV properties of a file.
@@ -1035,10 +1027,12 @@ def mkvpropedit_task(
     keys are the track names of mkvpropedit ({"a1": "eng"}). None (or
     an empty mapping) changes no language.
 
-    layout is the digest of the track rows when the first attempt ran
-    (#585). A transient retry carries it. A newer edit that committed
-    in the meantime changes the rows. Then the track arguments of the
-    retry are old, and the retry stops.
+    edit_seq is the track edit counter of the file when the first
+    attempt ran (#589). A transient retry carries it. A newer edit that
+    committed in the meantime adds 1 to the counter. Then the track
+    arguments of the retry are old, and the retry stops. A scan does not
+    change the counter. Thus, a scan in the retry delay does not stop
+    the retry. Rows that are the same as before do not hide a newer edit.
     """
 
     # The shared lock, retry, and copy code stays in app.videos. The import
@@ -1072,7 +1066,7 @@ def mkvpropedit_task(
                 track_languages,
             ),
             kwargs={"transient_retries": transient_retries}
-            | ({"layout": layout} if layout is not None else {})
+            | ({"edit_seq": edit_seq} if edit_seq is not None else {})
             | ({"file_changed": True} if file_changed else {}),
             key=int(file_id),
         )
@@ -1080,11 +1074,11 @@ def mkvpropedit_task(
             return True
 
         try:
-            current_layout = _track_layout(file_id)
+            current_seq = _track_edit_seq(file_id)
         except BaseException:
             current_app.lock_manager.unlock(lock)
             raise
-        if layout is not None and layout != current_layout:
+        if edit_seq is not None and edit_seq != current_seq:
             current_app.logger.warning(
                 f"'{file.basename}' A newer edit changed the tracks after the "
                 f"failed attempt. The retry of the older edit stops"
@@ -1142,7 +1136,7 @@ def mkvpropedit_task(
                         forced_subtitle_tracks,
                         track_languages,
                     ),
-                    kwargs={"layout": current_layout}
+                    kwargs={"edit_seq": current_seq}
                     | ({"file_changed": True} if wrote else {}),
                     description=f"'{file.basename}'",
                 )
@@ -1409,6 +1403,7 @@ def mkvpropedit_unlocked(
 
             record_filesize(file, os.path.getsize(file_path))
             file.date_updated = datetime.now(timezone.utc)
+            file.note_track_edit()
             db.session.commit()
 
         except OSError as e:
@@ -1621,6 +1616,7 @@ def mkvmerge_unlocked(file_id, audio_tracks, subtitle_tracks):
 
             file = _fresh_file(file.id)
             replace_track_rows(file, output_audio_tracks, output_subtitle_tracks)
+            file.note_track_edit()
             db.session.commit()
 
         except Exception:
@@ -2466,6 +2462,7 @@ def _remux_audio_plan_unlocked(file_id, plan):
             replace_track_rows(file, new_audio_tracks, new_subtitle_tracks)
             record_filesize(file, os.path.getsize(final_staging))
             file.date_updated = datetime.now(timezone.utc)
+            file.note_track_edit()
             db.session.commit()
 
             # The audio layout is new. Plex reads it again now, not at its
