@@ -1115,7 +1115,11 @@ def download_task(
     ETag of the object does not show the edit. The task records the
     stat of the library file before the first download. A different
     stat at the placement refuses it (#586). library_stat carries that
-    record through the retries. A rename keeps the stat."""
+    record through the retries. A rename keeps the stat.
+
+    A kept copy in staging can outlive its chain. Its sidecar holds the
+    stat of its own first download. That stat wins over the stat of a
+    new chain, which can come after an edit (#589)."""
 
     # The retry constants still live in app.videos. Import them lazily.
     # Thus, the module import direction stays videos to aws_storage.
@@ -1227,7 +1231,7 @@ def download_task(
         if dead:
             return wait_for_volumes(dead)
 
-        def before_place(etag=None, size=None):
+        def before_place(etag=None, size=None, library_stat=None):
             """Check the volumes and the newer-file guards again. Return the path (#533).
 
             A rename during the download moves the file of the row
@@ -1235,8 +1239,14 @@ def download_task(
             row, and the volume probe checks that folder. etag and size
             are the ETag and the size of the object at the start of the
             download. A library file with a different stat than before
-            the download refuses the placement (#586)."""
+            the download refuses the placement (#586). library_stat is
+            the stat from the sidecar of a kept copy. It is older than
+            the stat of this chain, and it wins (#589)."""
 
+            nonlocal snapshot
+            if library_stat is not None:
+                # A retry after a deferral then carries the older stat.
+                snapshot = library_stat
             db.session.rollback()
             fresh = db.session.get(File, file_id)
             if fresh is None or not fresh.file_path:
@@ -1325,6 +1335,7 @@ def download_task(
                 sqs_receipt_handle,
                 place_at=place_at,
                 before_place=before_place if place_at else None,
+                library_stat=snapshot,
             )
 
         except PlacementDeferred as e:
@@ -2982,7 +2993,9 @@ def cdn_signed_url(key, expires_in=None):
     )
 
 
-def cdn_download(key, destination, progress, expected_size=0, etag=None):
+def cdn_download(
+    key, destination, progress, expected_size=0, etag=None, library_stat=None
+):
     """Fetch one object through CloudFront, and write it to destination.
 
     The progress callback gets the size of each chunk, as the boto3
@@ -2992,9 +3005,11 @@ def cdn_download(key, destination, progress, expected_size=0, etag=None):
     byte zero. A sidecar file holds the ETag of the object that the
     partial file came from. A resume needs the same ETag. Thus, a partial
     file of an older version of the key starts again from byte zero.
-    Raise CdnDownloadError for an HTTP error status. Raise
-    RuntimeError if the body length differs from the Content-Length
-    header or from expected_size (the object size from the S3 API).
+    A new body writes library_stat into the sidecar (#589). A resume
+    keeps the sidecar as it is. Raise CdnDownloadError for an HTTP
+    error status. Raise RuntimeError if the body length differs from
+    the Content-Length header or from expected_size (the object size
+    from the S3 API).
     Raise RuntimeError if neither size is known. The requests transport
     errors escape as they are.
     """
@@ -3024,7 +3039,7 @@ def cdn_download(key, destination, progress, expected_size=0, etag=None):
             _touch_partial_etag(destination)
         elif response.status_code == 200:
             mode, written, have = "wb", 0, 0
-            _write_partial_etag(destination, etag, expected_size)
+            _write_partial_etag(destination, etag, expected_size, library_stat)
         else:
             raise CdnDownloadError(response.status_code)
         content_length = int(response.headers.get("Content-Length") or 0)
@@ -3060,23 +3075,43 @@ def _partial_size(destination):
 
 
 def read_partial_sidecar(destination):
-    """Return (etag, object size) from the sidecar of a partial download.
+    """Return (etag, object size, library stat) from the sidecar of a download.
 
     Each value is None when it is not known. The first line is the ETag.
-    The second line is the object size, if the download knew it. An
-    older sidecar has the ETag only."""
+    The second line is the object size, if the download knew it. The
+    third line is the stat of the library file before the first download
+    of a direct restore, as a JSON list (#589). An older sidecar has 1
+    or 2 lines only."""
 
     try:
         with open(f"{destination}.etag") as sidecar:
             lines = sidecar.read().split("\n")
     except OSError:
-        return None, None
+        return None, None, None
     etag = lines[0].strip() or None
     try:
         size = int(lines[1]) if len(lines) > 1 and lines[1].strip() else None
     except ValueError:
         size = None
-    return etag, size
+    return etag, size, _sidecar_stat(lines[2] if len(lines) > 2 else "")
+
+
+def _sidecar_stat(line):
+    """Return the library stat from the third line of a sidecar, or None.
+
+    An empty list is a stat too. It means that there was no library file."""
+
+    if not line.strip():
+        return None
+    try:
+        stat = json.loads(line)
+    except ValueError:
+        return None
+    if not isinstance(stat, list) or not all(
+        isinstance(value, int) and not isinstance(value, bool) for value in stat
+    ):
+        return None
+    return stat
 
 
 def _partial_etag(destination):
@@ -3085,18 +3120,23 @@ def _partial_etag(destination):
     return read_partial_sidecar(destination)[0]
 
 
-def _write_partial_etag(destination, etag, size=None):
+def _write_partial_etag(destination, etag, size=None, library_stat=None):
     """Record the ETag and the size of the object that a download writes to destination.
 
     The orphan sweep compares the size with the file. A complete copy
-    whose sidecar stayed is then not a partial (follow-up #457)."""
+    whose sidecar stayed is then not a partial (follow-up #457). The
+    stat of the library file goes on a third line (#589). A kept copy
+    then keeps the stat from before its first download."""
 
     if not etag:
         _remove_partial_etag(destination)
         return
+    lines = [etag, str(int(size)) if size else ""]
+    if library_stat is not None:
+        lines.append(json.dumps(list(library_stat)))
     try:
         with open(f"{destination}.etag", "w") as sidecar:
-            sidecar.write(f"{etag}\n{int(size)}" if size else etag)
+            sidecar.write("\n".join(lines).rstrip("\n"))
     except OSError:
         pass
 
@@ -3127,7 +3167,8 @@ def _finished_download(destination, progress):
     """Return True if destination holds the whole object that progress describes.
 
     The size and the ETag of its sidecar must match the head of the
-    object. A newer archive of the key then downloads again."""
+    object. A newer archive of the key then downloads again. The caller
+    reads the library stat of the kept copy with _kept_library_stat."""
 
     try:
         size = os.path.getsize(destination)
@@ -3138,6 +3179,18 @@ def _finished_download(destination, progress):
         and size == progress.size
         and _partial_etag(destination) == progress.etag
     )
+
+
+def _kept_library_stat(destination, progress):
+    """Return the library stat from the sidecar of a kept or partial copy (#589).
+
+    The sidecar must name the ETag of the object at the start of this
+    download. Return None if there is no such sidecar or no stat in it."""
+
+    if not progress.etag or not _partial_size(destination):
+        return None
+    etag, _, library_stat = read_partial_sidecar(destination)
+    return library_stat if etag == progress.etag else None
 
 
 def _discard_partial(destination):
@@ -3378,7 +3431,12 @@ def restore_staging_path(key):
 
 
 def aws_download(
-    key, basename, sqs_receipt_handle=None, place_at=None, before_place=None
+    key,
+    basename,
+    sqs_receipt_handle=None,
+    place_at=None,
+    before_place=None,
+    library_stat=None,
 ):
     """Download an object from AWS S3 storage.
 
@@ -3401,6 +3459,10 @@ def aws_download(
     sidecar for the next try (#533). Any other error deletes the download and
     propagates. The caller decides about the SQS message. If it returns
     a path, the placement goes there, not to place_at (#563).
+
+    library_stat is the stat of the library file from the caller. A new
+    download writes it into the sidecar. A kept or resumed copy keeps
+    the stat of its sidecar, and before_place gets that stat (#589).
     """
 
     # The retry constants still live in app.videos. Import them lazily.
@@ -3446,6 +3508,11 @@ def aws_download(
     while retry > 0:
         try:
             progress = DownloadProgressPercentage(s3_client, bucket, key, basename)
+
+            # A copy from an earlier chain holds the stat from before its
+            # first download. A new chain can start after an edit (#589).
+
+            kept = _kept_library_stat(destination, progress) if place_at else None
             if place_at and _finished_download(destination, progress):
                 # A placement that waited for a volume kept its finished
                 # download (follow-up #533). Each wait downloaded the
@@ -3461,8 +3528,11 @@ def aws_download(
                     progress,
                     expected_size=progress.size,
                     etag=progress.etag,
+                    library_stat=kept if kept is not None else library_stat,
                 )
             else:
+                # The S3 transfer writes the whole object again.
+                kept = None
                 s3_client.download_file(bucket, key, destination, Callback=progress)
 
         # Do not resume if the file does not exist in AWS.
@@ -3589,10 +3659,20 @@ def aws_download(
                 # or a transient fault of the placement then does not
                 # download the object again (#588).
 
-                _write_partial_etag(destination, progress.etag, progress.size)
+                _write_partial_etag(
+                    destination,
+                    progress.etag,
+                    progress.size,
+                    kept if kept is not None else library_stat,
+                )
                 if before_place:
                     try:
-                        target = before_place(progress.etag, progress.size) or place_at
+                        target = (
+                            before_place(
+                                progress.etag, progress.size, library_stat=kept
+                            )
+                            or place_at
+                        )
                     except PlacementDeferred:
                         raise
                     except BaseException:

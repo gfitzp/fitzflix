@@ -1406,7 +1406,7 @@ def _complete_copy(dirpath, name, read_partial_sidecar):
     size then shows that the copy is complete (follow-up #457)."""
 
     path = os.path.join(dirpath, name)
-    _, size = read_partial_sidecar(path)
+    _, size, _ = read_partial_sidecar(path)
     try:
         return bool(size) and os.path.getsize(path) == size
     except OSError:
