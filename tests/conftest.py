@@ -402,6 +402,41 @@ def no_growth_wait(app, monkeypatch):
 
 
 @pytest.fixture
+def case_folding_keys(app):
+    """Fold case in each equality on a key column, as utf8mb4_general_ci does (#591).
+
+    The sqlite test schema compares keys byte for byte. MariaDB folds
+    case on these columns. The listener adds COLLATE NOCASE to each
+    equality on a key column. MariaDB also folds case when a UNION
+    removes duplicates. Thus, in a statement with a UNION, the listener
+    adds COLLATE NOCASE to each selected key column too (#591 follow-up)."""
+
+    import re
+
+    from sqlalchemy import event
+
+    from app import db
+
+    columns = (
+        r"(?:file|archived_original)\.(?:aws_key|aws_transcoded_key|aws_key_target)"
+    )
+    equality = re.compile(rf"({columns} = \?)")
+    selected = re.compile(rf"(SELECT {columns}) AS")
+
+    def fold(conn, cursor, statement, parameters, context, executemany):
+        statement = equality.sub(r"\1 COLLATE NOCASE", statement)
+        if " UNION " in statement:
+            statement = selected.sub(r"\1 COLLATE NOCASE AS", statement)
+        return statement, parameters
+
+    with app.app_context():
+        engine = db.engine
+    event.listen(engine, "before_cursor_execute", fold, retval=True)
+    yield
+    event.remove(engine, "before_cursor_execute", fold)
+
+
+@pytest.fixture
 def client(app):
     return app.test_client()
 

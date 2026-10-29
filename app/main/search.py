@@ -480,12 +480,12 @@ def search_tmdb():
     text, years = _parse_query(q)
 
     if q and not current_app.config["TMDB_API_KEY"]:
-        error = "TMDB_API_KEY is not configured, so TMDB can't be searched."
+        error = "TMDB_API_KEY is not configured, so TMDB cannot be searched."
 
     elif q and not text:
         # The TMDB search endpoints need a title. A year alone cannot
         # browse them the way it browses the local library.
-        error = "Add a title to the year filter — TMDB can't be searched by year alone."
+        error = "Add a title to the year filter. TMDB cannot be searched by year alone."
 
     elif q:
         # A single-year y: modifier (#185) goes with the year parameter of

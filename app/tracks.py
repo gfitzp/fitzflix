@@ -33,7 +33,13 @@ from rq import get_current_job
 from flask import current_app
 from werkzeug.local import LocalProxy
 
-from app.tasks import bulk_job_id, enqueue_task, report_progress, requeue
+from app.tasks import (
+    bulk_job_id,
+    enqueue_task,
+    report_progress,
+    requeue,
+    requeue_job_id,
+)
 from app import db, get_app
 from app.aws_storage import archive_library_file, mark_archive_stale
 from app.models import File, FileAudioTrack, FileSubtitleTrack
@@ -1091,6 +1097,7 @@ def mkvpropedit_task(
         MAX_TRANSIENT_RETRIES,
         TRANSIENT_COPY_ERRNOS,
         acquire_lock_or_defer,
+        arguments_tag,
     )
 
     with app.app_context():
@@ -1168,8 +1175,22 @@ def mkvpropedit_task(
                 # was restructured. Thus, the same track arguments are
                 # still valid. Try again after the mount is stable. The
                 # finally block releases the lock. The retry takes the
-                # lock again, like a new run
+                # lock again, like a new run. The id holds a digest of the
+                # arguments. A transient retry of a second edit of this
+                # file then does not replace the retry of the first edit
+                # (#595 follow-up).
 
+                retry_args = (
+                    file_id,
+                    default_audio_track,
+                    default_subtitle_track,
+                    forced_subtitle_tracks,
+                    track_languages,
+                )
+                retry_kwargs = {"edit_seq": current_seq} | (
+                    {"file_changed": True} if wrote else {}
+                )
+                counters = {"transient_retries": transient_retries + 1}
                 requeue(
                     "app.videos.mkvpropedit_task",
                     key=int(file_id),
@@ -1179,17 +1200,16 @@ def mkvpropedit_task(
                         f"({e}) (attempt {transient_retries + 1} of "
                         f"{MAX_TRANSIENT_RETRIES})"
                     ),
-                    counters={"transient_retries": transient_retries + 1},
-                    args=(
-                        file_id,
-                        default_audio_track,
-                        default_subtitle_track,
-                        forced_subtitle_tracks,
-                        track_languages,
-                    ),
-                    kwargs={"edit_seq": current_seq}
-                    | ({"file_changed": True} if wrote else {}),
+                    counters=counters,
+                    args=retry_args,
+                    kwargs=retry_kwargs,
                     description=f"'{file.basename}'",
+                    job_id=requeue_job_id(
+                        "app.videos.mkvpropedit_task",
+                        int(file_id),
+                        counters,
+                        tag=arguments_tag(retry_args, retry_kwargs),
+                    ),
                 )
                 return False
 

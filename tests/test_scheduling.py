@@ -351,8 +351,18 @@ def test_mkvpropedit_transient_error_defers_and_releases_lock(app, monkeypatch):
             for job in scheduled_jobs(app.file_queue)
             if job.id.startswith(safe_job_id("retry:mkvpropedit_task"))
         ]
+        # The id holds a digest of the edit arguments (#595 follow-up).
+        from app.videos import arguments_tag
+
         assert [job.id for job in retries] == [
-            requeue_id("app.videos.mkvpropedit_task", file_id, {"transient_retries": 1})
+            requeue_id(
+                "app.videos.mkvpropedit_task",
+                file_id,
+                {"transient_retries": 1},
+                tag=arguments_tag(
+                    (file_id, "2", None, [], {"a1": "eng"}), {"edit_seq": 0}
+                ),
+            )
         ]
         job = retries[0]
         assert list(job.args) == [file_id, "2", None, [], {"a1": "eng"}]

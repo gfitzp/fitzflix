@@ -1531,6 +1531,9 @@ def test_a_transient_fault_before_the_placement_carries_the_kept_stat(app, monke
         raise OSError(errno.EIO, "Input/output error")
 
     monkeypatch.setattr(aws_storage, "aws_download", lost)
+    # The sidecar names the ETag of the key now, so its stat counts.
+    s3 = S3(head={"ContentLength": 3, "ETag": '"v1"'})
+    monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kwargs: s3)
     monkeypatch.setattr(videos, "_dead_volumes", lambda paths: [])
     try:
         with app.app_context():
@@ -1686,3 +1689,166 @@ def test_a_download_requeue_forgets_the_stored_handle(app, monkeypatch, fault):
         retry.delete()
     finally:
         app.redis.delete(handle_key)
+
+
+def test_a_sidecar_of_an_older_object_version_does_not_set_the_stat(app, monkeypatch):
+    """A sidecar of ETag v0 refused a good restore of v1 (#597 follow-up).
+
+    A dead chain of the old object left its partial and its stat. An edit
+    then archived the key again with ETag v1. The stat of the old sidecar
+    is older than the edit, and the chain refused the new object."""
+
+    import json
+
+    from app import aws_storage
+
+    key, library_path = _direct_restore_row(app, "Stale Sidecar")
+    os.makedirs(os.path.dirname(library_path), exist_ok=True)
+    with open(library_path, "wb") as f:
+        f.write(b"old library file")
+    with app.app_context():
+        older = aws_storage._library_stat(library_path)
+    staged = _kept_copy(app, key, f'"v0"\n99\n{json.dumps(older)}')
+    with open(library_path, "wb") as f:
+        f.write(b"edited, then archived again")
+    s3 = S3(head={"ContentLength": 3, "ETag": '"v1"'})
+    try:
+        assert _place_with(app, monkeypatch, s3, key) is True
+        assert s3.downloads == [key]
+        with open(library_path, "rb") as f:
+            assert f.read() == b"s3!"
+    finally:
+        for path in (staged, f"{staged}.etag", library_path):
+            if os.path.exists(path):
+                os.remove(path)
+
+
+def test_a_give_up_forgets_the_stored_handle_under_a_fixed_id(app, monkeypatch):
+    """A retry that gave up kept SQS_HANDLE_KEY of its fixed id (#600 follow-up).
+
+    A later chain of the key reaches the same id and read the stale
+    handle. Its own message then came back."""
+
+    import app.videos as videos
+    from app import aws_storage
+
+    key, library_path = _direct_restore_row(app, "Give Up Forgets Handle")
+    retry_id = requeue_id(
+        "app.videos.download_task", key, {"transient_retries": 1, "volume_waits": 0}
+    )
+    handle_key = _stored_handle(app, monkeypatch, retry_id, "handle-2")
+    monkeypatch.setattr(videos, "_dead_volumes", lambda paths: [])
+    # The download uses up its budget in place. The message stays.
+    monkeypatch.setattr(aws_storage, "aws_download", lambda *a, **k: False)
+    try:
+        with app.app_context():
+            assert (
+                videos.download_task(
+                    key, os.path.basename(key), "handle-1", transient_retries=1
+                )
+                is False
+            )
+            assert app.redis.get(handle_key) is None
+            assert aws_storage._latest_receipt_handle("handle-5") == "handle-5"
+    finally:
+        app.redis.delete(handle_key)
+
+
+@pytest.mark.parametrize("exit", ["error", "volume give-up"])
+def test_each_exit_with_no_retry_forgets_the_stored_handle(app, monkeypatch, exit):
+    """The logged error exit and the volume give-up kept the stored handle (#600 follow-up)."""
+
+    import app.videos as videos
+    from app import aws_storage
+
+    key, library_path = _direct_restore_row(app, f"Exit Forgets Handle {exit}")
+    handle_key = _stored_handle(app, monkeypatch, "fixed-retry-id", "handle-2")
+    kwargs = {}
+    if exit == "error":
+        monkeypatch.setattr(videos, "_dead_volumes", lambda paths: [])
+
+        def broken(*args, **kwargs):
+            raise RuntimeError("simulated fault")
+
+        monkeypatch.setattr(aws_storage, "aws_download", broken)
+    else:
+        monkeypatch.setattr(videos, "_dead_volumes", lambda paths: ["/Volumes/Movies"])
+        kwargs["volume_waits"] = aws_storage.MAX_VOLUME_WAITS
+    try:
+        with app.app_context():
+            assert not videos.download_task(
+                key, os.path.basename(key), "handle-1", **kwargs
+            )
+        assert app.redis.get(handle_key) is None
+        assert [
+            job
+            for job in scheduled_jobs(app.file_queue)
+            if job.id.startswith(safe_job_id("retry:download_task"))
+        ] == []
+    finally:
+        app.redis.delete(handle_key)
+
+
+def test_a_retry_under_the_id_of_the_job_keeps_the_stored_handle(app, monkeypatch):
+    """The retry owns the stored handle when it has the id of the current job (#600)."""
+
+    import errno
+
+    import app.videos as videos
+    from app import aws_storage
+
+    key, library_path = _direct_restore_row(app, "Same Id Keeps Handle")
+    retry_id = requeue_id(
+        "app.videos.download_task", key, {"transient_retries": 1, "volume_waits": 0}
+    )
+    handle_key = _stored_handle(app, monkeypatch, retry_id, "handle-2")
+    monkeypatch.setattr(videos, "_dead_volumes", lambda paths: [])
+
+    def lost(*args, **kwargs):
+        raise OSError(errno.EIO, "Input/output error")
+
+    monkeypatch.setattr(aws_storage, "aws_download", lost)
+    try:
+        with app.app_context():
+            assert videos.download_task(key, os.path.basename(key), "handle-1") is False
+        assert app.redis.get(handle_key) == b"handle-2"
+        for job in scheduled_jobs(app.file_queue):
+            job.delete()
+    finally:
+        app.redis.delete(handle_key)
+
+
+@pytest.mark.parametrize("fault", ["ConnectionError", "TimeoutError"])
+def test_a_redis_fault_at_the_overtaken_check_keeps_the_download(
+    app, monkeypatch, fault
+):
+    """A lost Redis at the overtaken check discarded a finished download (#598 follow-up)."""
+
+    import redis.exceptions
+
+    from app import aws_storage
+
+    key, library_path = _direct_restore_row(app, f"Placement Redis {fault}")
+    staged = os.path.join(app.config["IMPORT_DIR"], f".restore-{key.replace('/', '-')}")
+    real_check = aws_storage.overtaken_by_import
+    calls = []
+
+    def lost_redis(*args, **kwargs):
+        calls.append(args)
+        if len(calls) == 1:
+            # The check before the download still runs.
+            return real_check(*args, **kwargs)
+        raise getattr(redis.exceptions, fault)("simulated Redis fault")
+
+    monkeypatch.setattr(aws_storage, "overtaken_by_import", lost_redis)
+    try:
+        assert _place_with(app, monkeypatch, S3(), key) is False
+        assert len(calls) == 2
+        assert os.path.exists(staged) and os.path.exists(f"{staged}.etag")
+        assert not os.path.exists(library_path)
+        (retry,) = _volume_retries(app)
+        retry.delete()
+    finally:
+        for path in (staged, f"{staged}.etag"):
+            if os.path.exists(path):
+                os.remove(path)

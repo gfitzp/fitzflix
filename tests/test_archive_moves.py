@@ -1208,35 +1208,6 @@ def test_an_early_stop_deletes_a_message_that_arrived_late(app, monkeypatch, del
     assert sqs.deleted == ["late"]
 
 
-@pytest.fixture
-def case_folding_keys(app):
-    """Fold case in each equality on a key column, as utf8mb4_general_ci does (#591).
-
-    The sqlite test schema compares keys byte for byte. MariaDB folds
-    case on these columns. The listener adds COLLATE NOCASE to each
-    equality on a key column."""
-
-    import re
-
-    from sqlalchemy import event
-
-    from app import db
-
-    pattern = re.compile(
-        r"((?:file|archived_original)\.(?:aws_key|aws_transcoded_key|aws_key_target)"
-        r" = \?)"
-    )
-
-    def fold(conn, cursor, statement, parameters, context, executemany):
-        return pattern.sub(r"\1 COLLATE NOCASE", statement), parameters
-
-    with app.app_context():
-        engine = db.engine
-    event.listen(engine, "before_cursor_execute", fold, retval=True)
-    yield
-    event.remove(engine, "before_cursor_execute", fold)
-
-
 def test_a_case_only_move_deletes_the_old_object(app, s3, case_folding_keys):
     """The claim check matched the new key of the row itself (#591).
 
@@ -1286,6 +1257,82 @@ def test_a_case_variant_on_another_row_is_not_a_claim(app, case_folding_keys):
             aws_storage.untouched_key_still_claimed("untouched/CASE CLAIM (1970).mkv")
             is False
         )
+
+
+def _archive_only_row(key, reason="archive only"):
+    """Add and commit an archive-only original with key. Return its id."""
+
+    from app import db
+    from app.models import ArchivedOriginal
+
+    row = ArchivedOriginal(
+        media_library="Movies",
+        quality_title="Bluray-2160p",
+        untouched_basename=os.path.basename(key),
+        aws_key=key,
+        reason=reason,
+    )
+    db.session.add(row)
+    db.session.commit()
+    return row.id
+
+
+def test_an_import_commit_keeps_the_archive_only_row_of_a_case_variant(
+    app, case_folding_keys
+):
+    """The commit of an import deleted the claim of a case variant (#591 follow-up).
+
+    The archive-only row of the key of the new file goes. A row of a key
+    that differs only by case claims a different object, and it stays."""
+
+    from app import db, importing
+    from app.models import ArchivedOriginal
+
+    with app.app_context():
+        file = archived_film("Commit Fold", 1972)
+        variant = file.aws_key.replace("Commit Fold", "COMMIT FOLD")
+        _archive_only_row(file.aws_key)
+        variant_id = _archive_only_row(variant)
+        importing._commit_records(file, [], "/held/none.mkv")
+        db.session.expire_all()
+        assert [(row.id, row.aws_key) for row in ArchivedOriginal.query.all()] == [
+            (variant_id, variant)
+        ]
+
+
+@pytest.mark.parametrize("dangling", ["file key", "archive-only key"])
+def test_the_weekly_report_names_a_dangling_case_variant(
+    app, monkeypatch, case_folding_keys, dangling
+):
+    """The UNION of the claims folded case and hid a dangling claim (#591 follow-up).
+
+    The UNION kept 1 of 2 keys that differ only by case. When the kept
+    key had its object, the report left out the other key."""
+
+    from types import SimpleNamespace
+
+    from app import aws_storage
+
+    sent = []
+    monkeypatch.setattr(
+        aws_storage,
+        "notify_admin_text",
+        lambda subject, text, *a: sent.append((subject, text)),
+    )
+    with app.app_context():
+        file = archived_film("Union Fold", 1973)
+        variant = file.aws_key.replace("Union Fold", "union fold")
+        _archive_only_row(variant)
+        missing, present = (
+            (file.aws_key, variant)
+            if dangling == "file key"
+            else (variant, file.aws_key)
+        )
+        aws_storage._report_dangling_claims(SimpleNamespace(keys={present}))
+    assert [subject for subject, text in sent] == ["Archive keys missing from AWS S3!"]
+    lines = sent[0][1].split("\n")
+    assert missing in lines
+    assert present not in lines
 
 
 def _stored_handle(app, monkeypatch, job_id, handle):

@@ -885,3 +885,109 @@ def test_a_real_flag_edit_adds_exactly_1_to_the_counter(app, tmp_path):
             assert db.session.get(File, file_id).track_edit_seq == 1
     finally:
         os.remove(path)
+
+
+def test_transient_retries_of_two_edits_of_a_file_keep_both_edits(app, monkeypatch):
+    """The transient retry id was 1 per file and counter (#595 follow-up).
+
+    The transient retry of a second edit of the file replaced the retry
+    of the first edit, and the first edit was lost."""
+
+    import app.videos as videos
+    from app import tracks
+
+    def failing(*args, **kwargs):
+        error = OSError(errno.EBADF, "Bad file descriptor")
+        error.file_changed = False
+        error.retry_unsafe = False
+        raise error
+
+    file_id, identifier, path = _library_row(app, "Two Transient Edits")
+    monkeypatch.setattr(tracks, "mkvpropedit_unlocked", failing)
+    try:
+        assert videos.mkvpropedit_task(file_id, "2", None, [], edit_seq=0) is False
+        assert videos.mkvpropedit_task(file_id, None, "1", ["1"], edit_seq=0) is False
+        retries = [
+            job
+            for job in scheduled_jobs(app.file_queue)
+            if job.func_name.endswith("mkvpropedit_task") and job.args[0] == file_id
+        ]
+        assert sorted(tuple(map(repr, job.args[1:4])) for job in retries) == sorted(
+            [("'2'", "None", "[]"), ("None", "'1'", "['1']")]
+        )
+
+        # A repeat of the same failed edit still replaces its own retry.
+        assert videos.mkvpropedit_task(file_id, "2", None, [], edit_seq=0) is False
+        assert (
+            len(
+                [
+                    job
+                    for job in scheduled_jobs(app.file_queue)
+                    if job.func_name.endswith("mkvpropedit_task")
+                ]
+            )
+            == 2
+        )
+        for job in retries:
+            job.delete()
+    finally:
+        os.remove(path)
+
+
+def test_a_failed_reimport_commit_over_a_replaced_file_queues_a_scan(
+    app, sample_mkv, incoming_dir, monkeypatch
+):
+    """The row kept the tracks, the size and the archive of the old file (#592 follow-up).
+
+    The new file replaced the file of the row, and the commit failed. No
+    scan was queued, and the archive was not flagged stale."""
+
+    from app import db, importing
+    from app.models import File
+    from tests.factories import make_movie, make_movie_file
+    from tests.localization_helpers import run_full_chain
+
+    with app.app_context():
+        row = make_movie_file(make_movie("Replaced Commit Scan", 2021), "DVD")
+        db.session.commit()
+        row_id = row.id
+        library = os.path.join(app.config["LIBRARY_DIR"], row.file_path)
+    os.makedirs(os.path.dirname(library), exist_ok=True)
+    with open(library, "wb") as f:
+        f.write(b"old copy")
+
+    class Failing:
+        """A HeldImport stand-in whose cleanup delete fails, as a commit can."""
+
+        class query:
+            @staticmethod
+            def filter_by(**kwargs):
+                raise RuntimeError("simulated failure before the commit")
+
+    source = os.path.join(incoming_dir, "Replaced Commit Scan (2021) - [DVD].mkv")
+    with open(sample_mkv, "rb") as f_in, open(source, "wb") as f_out:
+        f_out.write(f_in.read())
+    monkeypatch.setattr(importing, "HeldImport", Failing)
+    try:
+        with app.app_context():
+            run_full_chain(app, source)
+            db.session.expire_all()
+            fresh = db.session.get(File, row_id)
+            assert fresh.track_edit_seq == 1
+            assert fresh.aws_stale is True
+        scans = [
+            job
+            for job in scheduled_jobs(app.file_queue)
+            if job.func_name.endswith("track_metadata_scan_task")
+            and job.kwargs.get("file_id") == row_id
+        ]
+        assert len(scans) == 1
+    finally:
+        for path in (library, source):
+            if os.path.exists(path):
+                os.remove(path)
+        rejected = os.path.join(
+            app.config["REJECTS_DIR"], "exception", os.path.basename(source)
+        )
+        if os.path.exists(rejected):
+            os.remove(rejected)

@@ -548,18 +548,22 @@ def _bulk_gate(prefix):
     return BULK_GATE_KEY.format(prefix if isinstance(prefix, str) else prefix[0])
 
 
-def requeue_job_id(name, key=None, counters=None):
+def requeue_job_id(name, key=None, counters=None, tag=None):
     """Return the id of a retry of the task called name.
 
     The id is "retry", the short task name, a digest of key, and each
     counter as name=value in name order. Each attempt of a chain thus
     gets an id of its own (see retry_job_id). The digest keeps apart 2
     files with the same basename (#338). A retry with no key and no
-    counters has a fixed id, and a repeat defer replaces it."""
+    counters has a fixed id, and a repeat defer replaces it. tag goes
+    after the key digest. A track edit gives the digest of its arguments
+    there. Then 2 edits of 1 file retry apart (#595 follow-up)."""
 
     parts = ["retry", name.rsplit(".", 1)[-1]]
     if key is not None:
         parts.append(path_tag(key))
+    if tag is not None:
+        parts.append(tag)
     parts.extend(
         f"{counter}={value}" for counter, value in sorted((counters or {}).items())
     )

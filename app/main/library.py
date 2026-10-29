@@ -1715,7 +1715,7 @@ def movie_play(movie_id):
                 jsonify(
                     {
                         "ok": False,
-                        "message": "This page is stale — reload it and try again.",
+                        "message": "This page is stale. Reload it and try again.",
                     }
                 ),
                 400,

@@ -856,23 +856,26 @@ def _report_dangling_claims(listing):
     each week. Thus, it can never accumulate."""
 
     s3_key_set = listing.keys
-    dangling_claims = sorted(
-        key
-        for (key,) in db.session.query(File.aws_key)
+    # A SQL UNION removes duplicates under the collation of MariaDB, and
+    # that folds case. 2 keys that differ only by case are 2 objects.
+    # Thus, a Python set joins the 3 queries, and it compares exactly
+    # (#591 follow-up).
+    claims = set()
+    for query in (
+        db.session.query(File.aws_key)
         .filter(File.aws_key.isnot(None))
         .filter(File.aws_date_deleted.is_(None))
         # A row whose first upload never ran claims no object yet (#534).
-        # The transcoded union has the same rule.
-        .filter(File.aws_date_uploaded.isnot(None))
-        .union(db.session.query(ArchivedOriginal.aws_key))
-        .union(
-            db.session.query(File.aws_transcoded_key).filter(
-                File.aws_transcoded_key.isnot(None),
-                File.aws_transcoded_date_uploaded.isnot(None),
-            )
-        )
-        if key not in s3_key_set
-    )
+        # The transcoded query has the same rule.
+        .filter(File.aws_date_uploaded.isnot(None)),
+        db.session.query(ArchivedOriginal.aws_key),
+        db.session.query(File.aws_transcoded_key).filter(
+            File.aws_transcoded_key.isnot(None),
+            File.aws_transcoded_date_uploaded.isnot(None),
+        ),
+    ):
+        claims.update(key for (key,) in query.all())
+    dangling_claims = sorted(key for key in claims if key not in s3_key_set)
 
     # A lost pending upload (follow-up #455) is named 1 time, in a
     # section of its own. It needs a re-rip, not a key repair. Later
@@ -1087,9 +1090,12 @@ def _transient_placement_fault(error):
     """Return True if a fault of a placement check can clear by itself (#598).
 
     These are a throttle or a server error of S3, a lost connection to
-    AWS, and a lost connection to the database. A missing object and an
-    access fault are not transient."""
+    AWS, and a lost connection to the database. A lost connection to
+    Redis and a Redis timeout in the overtaken check are transient too
+    (#598 follow-up). A missing object and an access fault are not
+    transient."""
 
+    import redis.exceptions
     import sqlalchemy.exc
 
     if isinstance(error, botocore.exceptions.ClientError):
@@ -1104,6 +1110,8 @@ def _transient_placement_fault(error):
             botocore.exceptions.ConnectionError,
             botocore.exceptions.HTTPClientError,
             sqlalchemy.exc.OperationalError,
+            redis.exceptions.ConnectionError,
+            redis.exceptions.TimeoutError,
         ),
     )
 
@@ -1170,7 +1178,40 @@ def download_task(
 
     A kept copy in staging can outlive its chain. Its sidecar holds the
     stat of its own first download. That stat wins over the stat of a
-    new chain, which can come after an edit (#589)."""
+    new chain, which can come after an edit (#589).
+
+    Each exit forgets the stored SQS handle of this job (#600). A retry
+    under the id of this job owns that handle, so it stays then."""
+
+    retry_ids = []
+    try:
+        return _download_task(
+            key,
+            basename,
+            sqs_receipt_handle,
+            transient_retries,
+            volume_waits,
+            library_stat,
+            retry_ids,
+        )
+    finally:
+        # A give-up or a failed delete also leaves the message in SQS. The
+        # retry ids are fixed per key and counter values. A later chain of
+        # the key can reach the id of this job and read a stale handle.
+        with app.app_context():
+            _forget_stored_handle(retry_ids[0] if retry_ids else None)
+
+
+def _download_task(
+    key,
+    basename,
+    sqs_receipt_handle,
+    transient_retries,
+    volume_waits,
+    library_stat,
+    retry_ids,
+):
+    """Run download_task. Append the id of each retry that it books to retry_ids."""
 
     # The retry constants still live in app.videos. Import them lazily.
     # Thus, the module import direction stays videos to aws_storage.
@@ -1282,9 +1323,7 @@ def download_task(
                 description=f"'{basename}' — Downloading from AWS",
                 meta={"sqs_receipt_handle": handle},
             )
-            _forget_stored_handle(
-                requeue_job_id("app.videos.download_task", key, counters)
-            )
+            retry_ids.append(requeue_job_id("app.videos.download_task", key, counters))
             return False
 
         dead = dead_volumes()
@@ -1404,6 +1443,35 @@ def download_task(
                 )
             return target
 
+        def kept_stat_of_this_object():
+            """Return the stat of the sidecar of a kept copy of this object, or None.
+
+            The sidecar of an older version of the key can outlive its
+            chain. An edit then archives the key again with a new ETag.
+            The stat of that sidecar is older than the edit, and it would
+            refuse a good restore (#597 follow-up). Thus, the sidecar
+            ETag must equal the ETag of the key now. A missing object or
+            a head with no ETag gives None."""
+
+            etag, _, kept = read_partial_sidecar(restore_staging_path(key))
+            if kept is None or etag is None:
+                return None
+            try:
+                head = _head_or_none(aws_s3_client(), key)
+            except Exception as error:
+                if not _transient_placement_fault(error):
+                    raise
+                raise PlacementDeferred(
+                    [],
+                    reason=(
+                        f"The check of the kept restore copy failed with a "
+                        f"transient fault ({type(error).__name__}: {error})"
+                    ),
+                ) from error
+            if head is None or not head.get("ETag"):
+                return None
+            return kept if head["ETag"] == etag else None
+
         report_progress(job, basename, "Downloading from AWS", percent=None)
 
         try:
@@ -1414,7 +1482,7 @@ def download_task(
                 # round (#597). A transient fault can remove the copy
                 # before before_place runs. The retry then still compares
                 # with the older stat, not with the stat after an edit.
-                kept_stat = read_partial_sidecar(restore_staging_path(key))[2]
+                kept_stat = kept_stat_of_this_object()
                 snapshot = (
                     kept_stat if kept_stat is not None else _library_stat(place_at)
                 )
@@ -1467,7 +1535,7 @@ def download_task(
                     description=f"'{basename}' — Downloading from AWS",
                     meta={"sqs_receipt_handle": sqs_receipt_handle},
                 )
-                _forget_stored_handle(
+                retry_ids.append(
                     requeue_job_id("app.videos.download_task", key, counters)
                 )
                 return False
@@ -2345,6 +2413,22 @@ def _exact_claim(key, candidates):
     """Return True if one of the fetched keys is key, character for character (#591)."""
 
     return any(candidate == key for candidate in candidates)
+
+
+def archived_originals_with_key(key):
+    """Return the ArchivedOriginal rows whose key is key, character for character.
+
+    The SQL filter fetches the candidates, and MariaDB folds case there.
+    A row of a case variant claims a different S3 object. A reuse or a
+    delete of that row would drop its claim (#591 follow-up)."""
+
+    return [
+        row
+        for row in ArchivedOriginal.query.filter(
+            _key_candidates(ArchivedOriginal.aws_key, key)
+        ).all()
+        if _exact_claim(key, [row.aws_key])
+    ]
 
 
 def untouched_key_still_claimed(key):

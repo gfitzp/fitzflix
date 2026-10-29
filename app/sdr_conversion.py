@@ -632,9 +632,12 @@ def archived_original_from_file(file, reason):
     The caller adds it to the session and commits. The row keeps the
     original in S3 after its library file goes away."""
 
+    from app.aws_storage import archived_originals_with_key
     from app.models import ArchivedOriginal
 
-    existing = ArchivedOriginal.query.filter_by(aws_key=file.aws_key).first()
+    # A row of a case variant of the key claims a different object. It
+    # is not reused (#591 follow-up).
+    existing = next(iter(archived_originals_with_key(file.aws_key)), None)
     archived = existing or ArchivedOriginal(aws_key=file.aws_key)
     archived.media_library = file.media_library
     archived.movie_id = file.movie_id
@@ -660,7 +663,7 @@ def archive_held_task(held_id):
     This is the "Archive only" choice. The library does not change. The
     held file is deleted after the upload."""
 
-    from app.aws_storage import upload_untouched
+    from app.aws_storage import archived_originals_with_key, upload_untouched
     from app.models import ArchivedOriginal, HeldImport, Movie, TVSeries
 
     with app.app_context():
@@ -681,7 +684,9 @@ def archive_held_task(held_id):
                 return f"{stem} (held {held_id}){extension}"
 
             key, uploaded, size = upload_untouched(held.held_path, own_key)
-            archived = ArchivedOriginal.query.filter_by(aws_key=key).first()
+            # A row of a case variant of the key is not this archive
+            # (#591 follow-up).
+            archived = next(iter(archived_originals_with_key(key)), None)
             if archived is None:
                 archived = ArchivedOriginal(aws_key=key)
             archived.media_library = details["media_library"]

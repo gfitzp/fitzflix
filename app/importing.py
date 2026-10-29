@@ -65,10 +65,12 @@ from app import (
     safe_job_id,
 )
 from app.aws_storage import (
+    archived_originals_with_key,
     clear_archive_target,
     discard_pending_archive,
     ensure_pending_upload,
     is_pending_archive,
+    mark_archive_stale,
     pending_archive_key,
     pending_archive_of,
     request_archive_move,
@@ -87,7 +89,6 @@ from app.naming import hidden, library_name, with_extension
 from app.models import (
     MOVIES,
     TV_SHOWS,
-    ArchivedOriginal,
     File,
     HeldImport,
     Movie,
@@ -109,7 +110,7 @@ from app.sdr_conversion import (
 from app.file_ranking import find_better_files, find_worse_files, real_rips_blocking
 from app.tracks import (
     _extract_media_details,
-    count_failed_track_edit,
+    _rescan_after_a_failed_edit,
     file_language_spelling,
     same_language,
     replace_track_rows,
@@ -2733,10 +2734,18 @@ def finalize_localization(
                 stray = output_file
             elif placement == "replaced":
                 # The new file replaced the file of an existing record, and
-                # the commit of its rows failed. Count the edit in a
-                # separate transaction (#592). Thus, an older retry of a
-                # track edit of the old file stops.
-                count_failed_track_edit(file_path=file_details.get("file_path"))
+                # the commit of its rows failed. The row keeps the track
+                # rows, the size and the archive of the old file. The
+                # rescan counts the edit (#592) and reads the rows again.
+                # The stale flag makes the repair upload the new file
+                # (#592 follow-up).
+                replaced_id = _row_id_at(file_details.get("file_path"))
+                if replaced_id is not None:
+                    _rescan_after_a_failed_edit(replaced_id, f"'{output_file}'")
+                    mark_archive_stale(
+                        replaced_id,
+                        reason="an import replaced the file and its commit failed",
+                    )
             _release_title_lock(lock)
             abandon_failed_stage(
                 error,
@@ -3272,6 +3281,28 @@ def _place_file(
     return "replaced" if replaced_existing else "renamed"
 
 
+def _row_id_at(library_file_path):
+    """Return the id of the File row at a library path, or None.
+
+    This is best effort. A fault of the database gives None and a
+    warning."""
+
+    if not library_file_path:
+        return None
+    try:
+        return (
+            db.session.query(File.id)
+            .filter(File.file_path == library_file_path)
+            .order_by(File.id)
+            .limit(1)
+            .scalar()
+        )
+    except Exception:
+        db.session.rollback()
+        current_app.logger.warning(traceback.format_exc())
+        return None
+
+
 def _commit_records(file, kept_archives, file_path):
     """Commit the records of the import with its archive-only originals.
 
@@ -3283,7 +3314,10 @@ def _commit_records(file, kept_archives, file_path):
     for archived in kept_archives:
         db.session.add(archived)
     if file.aws_key:
-        ArchivedOriginal.query.filter_by(aws_key=file.aws_key).delete()
+        # MariaDB folds case in the SQL filter. A row of a case variant
+        # claims a different object, and it stays (#591 follow-up).
+        for archived in archived_originals_with_key(file.aws_key):
+            db.session.delete(archived)
     HeldImport.query.filter_by(held_path=file_path).delete()
     db.session.commit()
 
