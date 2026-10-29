@@ -50,8 +50,9 @@ from app.models import (
     UserMovieStatus,
     UserWatchlist,
     clip_movie_title,
+    title_lock_key,
 )
-from app.tmdb_apply import tmdb_json_or
+from app.tmdb_apply import canonical_movie_name, tmdb_json_or
 from app.naming import retag_quality, with_extension
 from app.title_keys import title_key
 
@@ -184,13 +185,22 @@ def find_or_create_tmdb_movie(tmdb_id, film_title, year, details=None):
     return movie, created
 
 
-def _movie_refresh_lock_resources(*movies):
+def _movie_base_lock(title, year):
+    """Return the base main-feature lock resource of a movie title and year."""
+
+    return title_lock_key(MOVIES, title, year=year, plex_title=f"{title} ({year})")
+
+
+def _movie_refresh_lock_resources(*movies, names=()):
     """Return every title-lock resource that an import of these movies can hold.
 
     The list covers the identifier of each existing file. It also covers
     the base main-feature identifier of each movie. Thus, a new first
     file of the title that arrives during the refresh is also
-    serialized. The list is sorted. Thus, 2 refreshes that take locks
+    serialized. names holds more (title, year) pairs. The caller gives
+    the canonical name of the payload. An import of a file with the new
+    name builds its key from the new name, and the renames run in its
+    folder (#603). The list is sorted. Thus, 2 refreshes that take locks
     for overlapping movies cannot deadlock each other.
     """
 
@@ -198,19 +208,12 @@ def _movie_refresh_lock_resources(*movies):
     for movie in movies:
         if movie is None:
             continue
-        resources.add(
-            json.dumps(
-                {
-                    "title": movie.title,
-                    "year": movie.year,
-                    "feature_type": None,
-                    "plex_title": f"{movie.title} ({movie.year})",
-                    "edition": None,
-                }
-            )
-        )
+        resources.add(_movie_base_lock(movie.title, movie.year))
         for file in movie.files.all():
             resources.add(file.file_identifier())
+    for title, year in names:
+        if title:
+            resources.add(_movie_base_lock(title, year))
     return sorted(resources)
 
 
@@ -811,7 +814,12 @@ def _apply_movie_refresh(
     # order, so concurrent refreshes cannot deadlock. If a
     # lock is busy, retry later.
 
-    for resource in _movie_refresh_lock_resources(movie, existing_movie):
+    # The apply renames the record to the canonical name of the payload.
+    # Its lock goes in the list too (#603).
+
+    renamed_to = existing_movie or movie
+    names = [canonical_movie_name(tmdb_info, renamed_to.year)] if tmdb_info else []
+    for resource in _movie_refresh_lock_resources(movie, existing_movie, names=names):
         lock = current_app.lock_manager.lock(
             resource, current_app.config["SQL_TASK_TIMEOUT"] * 1000
         )

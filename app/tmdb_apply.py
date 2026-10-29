@@ -140,6 +140,26 @@ def _tmdb_date(value):
     return datetime.strptime(value, "%Y-%m-%d") if value else None
 
 
+def canonical_movie_name(tmdb_info, year):
+    """Return the (title, year) that tmdb_movie_apply gives a movie for a payload (#603).
+
+    The title is the TMDB title, shortened to the column of Movie.title.
+    The year is the year of the release date of the payload, or year
+    when the payload has no release date. The title is None when the
+    payload has no title. tmdb_movie_apply can still keep the old name
+    when another record holds the new one."""
+
+    from app.models import Movie
+
+    title = tmdb_info.get("title")
+    title_length = Movie.__table__.c.title.type.length
+    if title and len(title) > title_length:
+        title = title[:title_length].rstrip()
+    if tmdb_info.get("release_date"):
+        year = _tmdb_date(tmdb_info["release_date"]).year
+    return title, year
+
+
 def pick_rating(entries, field, preferred=None):
     """Return the first non-blank value of field in a list of TMDB entries.
 
@@ -531,9 +551,7 @@ class TMDBMixin(object):
             return self
 
         self._apply_scalars(tmdb_info)
-        canonical_year = self.year
-        if self.tmdb_release_date and tmdb_info.get("release_date"):
-            canonical_year = self.tmdb_release_date.year
+        canonical_title, canonical_year = canonical_movie_name(tmdb_info, self.year)
         self._fit_tmdb_strings()
 
         # Rename this movie to the canonical TMDB title and year, unless a
@@ -546,16 +564,15 @@ class TMDBMixin(object):
         # Movie.title is narrower than tmdb_title. The title goes into
         # the library names, which have a byte limit. Thus, the record
         # title is shortened to its column, as _fit_tmdb_strings does for
-        # the TMDB columns (#383).
+        # the TMDB columns (#383). canonical_movie_name shortens it. The
+        # title locks of a refresh use the same rule (#603).
 
-        canonical_title = tmdb_info.get("title")
         title_length = Movie.__table__.c.title.type.length
-        if canonical_title and len(canonical_title) > title_length:
+        if len(tmdb_info.get("title") or "") > title_length:
             current_app.logger.warning(
-                f"{self} TMDB title has {len(canonical_title)} characters, "
+                f"{self} TMDB title has {len(tmdb_info['title'])} characters, "
                 f"more than {title_length}. The record title is shortened"
             )
-            canonical_title = canonical_title[:title_length].rstrip()
 
         duplicate = Movie.query.filter(
             Movie.title == canonical_title, Movie.year == canonical_year

@@ -11,6 +11,8 @@ import logging
 import os
 import zlib
 
+import pytest
+
 from app import db
 from tests.factories import make_movie, make_movie_file, make_tv_series
 from tests.fakes import Response
@@ -726,3 +728,76 @@ def test_a_rename_warning_names_the_reject_reason(app, caplog):
         "'Yearless Tune - [DVD].mkv' no longer evaluates (no name format matches), "
         "skipping its rename"
     ) in caplog.text
+
+
+@pytest.mark.parametrize(
+    "title, year, payload",
+    [
+        (
+            "The African Queen",
+            1952,
+            {"id": 488, "title": "The African Queen", "release_date": "1951-12-26"},
+        ),
+        (
+            "None But the Brave",
+            1965,
+            {"id": 3092, "title": "None but the Brave", "release_date": "1965-01-15"},
+        ),
+    ],
+)
+def test_tmdb_apply_locks_the_new_canonical_name(app, held_lock, title, year, payload):
+    """The refresh locked the old title and year only (#603).
+
+    An import of a file with the new name took the lock of the new name.
+    It then ran in the folder that the renames of the refresh moved into."""
+
+    from app.models import title_lock_key
+    from app.videos import apply_tmdb_refresh
+
+    with app.app_context():
+        movie = make_movie(title, year)
+        db.session.commit()
+        movie_id = movie.id
+        new_title, new_year = payload["title"], int(payload["release_date"][:4])
+        assert (new_title, new_year) != (title, year)
+
+        held_lock(
+            title_lock_key(
+                "Movies",
+                new_title,
+                year=new_year,
+                plex_title=f"{new_title} ({new_year})",
+            )
+        )
+        compressed = zlib.compress(json.dumps(payload).encode("utf-8"))
+        assert (
+            apply_tmdb_refresh(
+                "Movies", movie_id, tmdb_id=payload["id"], tmdb_payload=compressed
+            )
+            is False
+        )
+        assert any(
+            job.id == requeue_id("app.videos.apply_tmdb_refresh", f"Movies:{movie_id}")
+            for job in scheduled_jobs(app.sql_queue)
+        )
+
+
+def test_the_lock_list_with_a_new_name_stays_sorted(app):
+    """The sorted order keeps 2 refreshes from a deadlock (#603)."""
+
+    from app.tmdb_refresh import _movie_refresh_lock_resources
+
+    with app.app_context():
+        movie = make_movie("Zebra Tune", 1970)
+        make_movie_file(movie, "DVD")
+        db.session.commit()
+        resources = _movie_refresh_lock_resources(
+            movie, names=[("Aardvark Tune", 1971), (None, 1971)]
+        )
+    # The main feature file has the base key of its movie. A name with no
+    # title adds nothing.
+    assert resources == sorted(resources)
+    assert [json.loads(resource)["title"] for resource in resources] == [
+        "Aardvark Tune",
+        "Zebra Tune",
+    ]
