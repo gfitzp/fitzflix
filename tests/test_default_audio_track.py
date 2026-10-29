@@ -596,3 +596,49 @@ def test_a_transient_fault_after_mkvpropedit_leaves_the_scan_to_the_task(
     assert raised.value.file_changed is True
     assert raised.value.retry_unsafe is False
     assert _scheduled_scans(app, file_id) == []
+
+
+def test_a_failure_after_the_write_flags_the_archive_again(
+    app, monkeypatch, three_audio_mkv
+):
+    """The best-effort flag failed and the row write failed too (#584 follow-up).
+
+    The first flag logged and went on. The later failure queued the scan,
+    whose save uploads nothing. The archive kept the old bytes with a
+    clean flag. A failure after the write now flags again."""
+
+    import sqlalchemy.exc
+
+    from app import db
+    import app.tracks as tracks
+    from tests.factories import make_movie, make_movie_file
+    from tests.test_scheduling import requeue_id, scheduled_jobs
+
+    monkeypatch.setitem(app.config, "ARCHIVE_ORIGINAL_MEDIA", True)
+    with app.app_context():
+        file = make_movie_file(make_movie("Flag Twice", 2021), "Bluray-1080p")
+        db.session.commit()
+        file_id = file.id
+        library_path = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
+    os.makedirs(os.path.dirname(library_path), exist_ok=True)
+    shutil.copy(three_audio_mkv, library_path)
+
+    flags = []
+
+    def blip(file_id, strict=False):
+        flags.append(strict)
+        raise sqlalchemy.exc.OperationalError("UPDATE", {}, Exception("gone away"))
+
+    def broken_rows(*args, **kwargs):
+        raise RuntimeError("row write failed")
+
+    monkeypatch.setattr(tracks, "_flag_rewritten_archive", blip)
+    monkeypatch.setattr(tracks, "replace_track_rows", broken_rows)
+    with app.app_context():
+        with pytest.raises(RuntimeError):
+            tracks.mkvpropedit_unlocked(file_id, 1, None, None)
+    assert flags == [True, True]
+    wanted = requeue_id("app.videos.track_metadata_scan_task", file_id)
+    scans = [job for job in scheduled_jobs(app.file_queue) if job.id == wanted]
+    assert len(scans) == 1
+    scans[0].delete()

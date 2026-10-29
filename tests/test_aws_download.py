@@ -1242,3 +1242,73 @@ def test_the_sqs_delete_lets_a_base_exception_through(app):
     with app.app_context():
         with pytest.raises(SystemExit):
             aws_storage.delete_sqs_message(Stopping(), "receipt")
+
+
+def test_a_share_fault_at_the_placement_stat_defers_and_keeps_the_download(
+    app, monkeypatch
+):
+    """An ESTALE at the stat of the placement discarded the download (#586 follow-up).
+
+    The stat ran after the volume probe passed. Its fault left before_place
+    as a plain OSError, the finished copy was removed, and the transient
+    retry downloaded the whole object again."""
+
+    import errno
+
+    from app import aws_storage
+
+    key, library_path = _direct_restore_row(app, "Stat Blip")
+    real = aws_storage._library_stat
+    calls = []
+
+    def stat(path):
+        calls.append(path)
+        if len(calls) == 2:
+            raise OSError(errno.ESTALE, "Stale file handle")
+        return real(path)
+
+    monkeypatch.setattr(aws_storage, "_library_stat", stat)
+    s3 = S3(head={"ContentLength": 3, "ETag": '"v1"'})
+    staged = os.path.join(app.config["IMPORT_DIR"], f".restore-{key.replace('/', '-')}")
+    try:
+        assert _place_with(app, monkeypatch, s3, key) is False
+        assert s3.downloads == [key]
+        assert os.path.exists(staged)
+        assert os.path.exists(f"{staged}.etag")
+        assert not os.path.exists(library_path)
+        (retry,) = _volume_retries(app)
+        assert retry.kwargs["volume_waits"] == 1
+        retry.delete()
+    finally:
+        for path in (staged, f"{staged}.etag", library_path):
+            if os.path.exists(path):
+                os.remove(path)
+
+
+def test_a_delivered_delete_clears_the_stored_handle_of_the_job(app, monkeypatch):
+    """A stale stored handle shadowed the handle of a later chain (#587 follow-up).
+
+    The move retry ids are fixed per file, and the stored handle lived
+    14 days. The next chain of the same file deleted with the old handle,
+    and its own message came back."""
+
+    from types import SimpleNamespace
+
+    from app import aws_storage
+
+    sqs = SQS()
+    monkeypatch.setattr(
+        aws_storage.rq, "get_current_job", lambda: SimpleNamespace(id="chain-job")
+    )
+    handle_key = aws_storage.SQS_HANDLE_KEY.format(job_id="chain-job")
+    app.redis.set(handle_key, "stored-handle")
+    try:
+        with app.app_context():
+            assert aws_storage.delete_sqs_message(sqs, "kwarg-handle") is True
+        assert sqs.deleted == ["stored-handle"]
+        assert app.redis.get(handle_key) is None
+        with app.app_context():
+            assert aws_storage.delete_sqs_message(sqs, "kwarg-handle") is True
+        assert sqs.deleted == ["stored-handle", "kwarg-handle"]
+    finally:
+        app.redis.delete(handle_key)

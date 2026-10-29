@@ -1027,6 +1027,7 @@ def mkvpropedit_task(
     track_languages=None,
     transient_retries=0,
     layout=None,
+    file_changed=False,
 ):
     """Update the MKV properties of a file.
 
@@ -1071,7 +1072,8 @@ def mkvpropedit_task(
                 track_languages,
             ),
             kwargs={"transient_retries": transient_retries}
-            | ({"layout": layout} if layout is not None else {}),
+            | ({"layout": layout} if layout is not None else {})
+            | ({"file_changed": True} if file_changed else {}),
             key=int(file_id),
         )
         if not lock:
@@ -1087,6 +1089,8 @@ def mkvpropedit_task(
                 f"'{file.basename}' A newer edit changed the tracks after the "
                 f"failed attempt. The retry of the older edit stops"
             )
+            if file_changed:
+                _rescan_after_a_failed_edit(file_id, f"'{file.basename}'")
             current_app.lock_manager.unlock(lock)
             return False
 
@@ -1106,6 +1110,10 @@ def mkvpropedit_task(
             )
         except OSError as e:
             probe_and_record(probed_path, context="mkvpropedit_task")
+            # An earlier attempt can have written the file. The retry
+            # carries that, so a stop without a commit still queues the
+            # scan (#583 follow-up).
+            wrote = file_changed or getattr(e, "file_changed", False)
             if (
                 e.errno in TRANSIENT_COPY_ERRNOS
                 and transient_retries < MAX_TRANSIENT_RETRIES
@@ -1134,7 +1142,8 @@ def mkvpropedit_task(
                         forced_subtitle_tracks,
                         track_languages,
                     ),
-                    kwargs={"layout": current_layout},
+                    kwargs={"layout": current_layout}
+                    | ({"file_changed": True} if wrote else {}),
                     description=f"'{file.basename}'",
                 )
                 return False
@@ -1142,7 +1151,7 @@ def mkvpropedit_task(
             # No retry repairs the rows. A scan reads them from the file
             # (#583).
 
-            if getattr(e, "file_changed", False):
+            if wrote:
                 _rescan_after_a_failed_edit(file_id, f"'{file.basename}'")
             current_app.logger.error(traceback.format_exc())
             raise
@@ -1410,12 +1419,18 @@ def mkvpropedit_unlocked(
             e.retry_unsafe = restructured
             e.file_changed = changed
             db.session.rollback()
+            if changed:
+                # The best-effort flag after the write can have failed
+                # in the same outage (#584 follow-up). The rows commit
+                # no more in this run. Thus, flag again.
+                _flag_after_a_write(file_id)
             raise
 
         except Exception:
             current_app.logger.error(traceback.format_exc())
             db.session.rollback()
             if changed:
+                _flag_after_a_write(file_id)
                 _rescan_after_a_failed_edit(file_id, name)
             raise
 
@@ -2277,7 +2292,11 @@ def remux_audio_plan_task(file_id, plan):
 def _remux_audio_plan_unlocked(file_id, plan):
     """Run the remux pipeline. The caller must hold the lock of the title."""
 
-    from app.importing import release_staging_reservation, reserve_staging
+    from app.importing import (
+        release_staging_reservation,
+        reserve_staging,
+        set_staging_reservation,
+    )
     from app.videos import copy_with_progress
 
     with app.app_context():
@@ -2303,7 +2322,8 @@ def _remux_audio_plan_unlocked(file_id, plan):
             # the imports see this one (#585). A busy reservation lock
             # falls back to the plain check of the free space.
 
-            needed = int(os.path.getsize(file_path) * STAGED_REMUX_FACTOR)
+            source_bytes = os.path.getsize(file_path)
+            needed = int(source_bytes * STAGED_REMUX_FACTOR)
             for _ in range(REMUX_RESERVATION_TRIES):
                 status = reserve_staging(
                     reservation,
@@ -2415,6 +2435,9 @@ def _remux_audio_plan_unlocked(file_id, plan):
             # (the Fellowship incident).
 
             os.remove(staging_source)
+            # The source copy is gone. The reservation shrinks to the
+            # output, which waits for the upload (#585 follow-up).
+            set_staging_reservation(reservation, needed - source_bytes, [staged_name])
             final_staging = staging_output
 
             # A failed copy leaves a partial hidden file next to the

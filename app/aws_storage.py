@@ -143,6 +143,12 @@ def delete_sqs_message(sqs_client, receipt_handle, note="message"):
         return False
 
     current_app.logger.info(f"Deleted {note} '{receipt_handle}' from SQS")
+    # The stored handle belongs to this message. A later chain of the
+    # same file gets the same fixed retry id. A stale handle there would
+    # shadow its own handle (#587 follow-up).
+    job = rq.get_current_job()
+    if job is not None:
+        current_app.redis.delete(SQS_HANDLE_KEY.format(job_id=job.id))
     return True
 
 
@@ -1074,6 +1080,19 @@ def _library_stat(path):
     return [stat.st_size, stat.st_mtime_ns, stat.st_ino]
 
 
+def _placement_stat(path):
+    """Return _library_stat(path) at the placement, or defer on a share fault.
+
+    An ESTALE or EIO at the stat right after the volume probe is the
+    fault of #533. A raise here discarded the finished download. The
+    deferral keeps the copy and the sidecar for the next try."""
+
+    try:
+        return _library_stat(path)
+    except OSError as error:
+        raise PlacementDeferred([os.path.dirname(path)]) from error
+
+
 def download_task(
     key,
     basename,
@@ -1231,7 +1250,7 @@ def download_task(
             )
             if dead:
                 raise PlacementDeferred(dead)
-            if snapshot is not None and _library_stat(target) != snapshot:
+            if snapshot is not None and _placement_stat(target) != snapshot:
                 raise PlacementRefused(
                     f"'{basename}' The library file changed during the download. "
                     f"The restore does not replace it"

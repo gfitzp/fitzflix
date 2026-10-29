@@ -263,3 +263,102 @@ def test_an_audio_plan_with_no_reserved_space_stops_before_the_copy(app, monkeyp
         assert copies == []
     finally:
         os.remove(path)
+
+
+def test_a_retry_that_stops_before_the_tool_still_queues_the_scan(app, monkeypatch):
+    """The retry forgot that the first attempt wrote the file (#583 follow-up).
+
+    Attempt 1 wrote the flags and failed on a transient read. Its safe
+    retry failed before the tool started. Nothing queued the scan, and
+    the rows kept the old values for good."""
+
+    import app.videos as videos
+    from app import tracks
+
+    file_id, identifier, path = _library_row(app, "Forgotten Write")
+
+    def no_file(*args, **kwargs):
+        raise OSError(errno.ENOENT, "No such file")
+
+    monkeypatch.setattr(tracks, "mkvpropedit_unlocked", no_file)
+    try:
+        with pytest.raises(OSError):
+            videos.mkvpropedit_task(
+                file_id, "2", None, [], None, transient_retries=1, file_changed=True
+            )
+        (scan,) = _scans(app, file_id)
+        assert scan.kwargs == {"file_id": file_id}
+        assert _lock_is_free(app, identifier)
+    finally:
+        os.remove(path)
+
+
+def test_a_retry_stopped_by_a_newer_edit_queues_the_scan_for_its_write(
+    app, monkeypatch
+):
+    """A newer edit stops the retry. The earlier write still needs the scan."""
+
+    import app.videos as videos
+    from app import db, tracks
+    from app.models import FileAudioTrack
+
+    file_id, identifier, path = _library_row(app, "Stopped After Write")
+    with app.app_context():
+        old = tracks._track_layout(file_id)
+        db.session.add(
+            FileAudioTrack(
+                file_id=file_id,
+                track=1,
+                language="fra",
+                language_name="French",
+                default=True,
+            )
+        )
+        db.session.commit()
+    calls = []
+    monkeypatch.setattr(
+        tracks, "mkvpropedit_unlocked", lambda *args: calls.append(args) or True
+    )
+    try:
+        assert (
+            videos.mkvpropedit_task(
+                file_id,
+                "2",
+                None,
+                [],
+                None,
+                transient_retries=1,
+                layout=old,
+                file_changed=True,
+            )
+            is False
+        )
+        assert calls == []
+        (scan,) = _scans(app, file_id)
+        assert scan.kwargs == {"file_id": file_id}
+    finally:
+        os.remove(path)
+
+
+def test_a_safe_retry_carries_the_earlier_write(app, monkeypatch):
+    """The transient retry remembers that the file changed (#583 follow-up)."""
+
+    import app.videos as videos
+    from app import tracks
+
+    file_id, identifier, path = _library_row(app, "Carried Write")
+    monkeypatch.setattr(tracks, "mkvpropedit_unlocked", _failing_unlocked(True, False))
+    try:
+        assert videos.mkvpropedit_task(file_id, "2", None, []) is False
+        retries = [
+            job
+            for job in scheduled_jobs(app.file_queue)
+            if job.func_name.endswith("mkvpropedit_task") and job.args[0] == file_id
+        ]
+        assert len(retries) == 1
+        assert retries[0].kwargs["file_changed"] is True
+        assert "layout" in retries[0].kwargs
+        for job in retries:
+            job.delete()
+    finally:
+        os.remove(path)
