@@ -1286,3 +1286,90 @@ def test_a_case_variant_on_another_row_is_not_a_claim(app, case_folding_keys):
             aws_storage.untouched_key_still_claimed("untouched/CASE CLAIM (1970).mkv")
             is False
         )
+
+
+def _stored_handle(app, monkeypatch, job_id, handle):
+    """Make job_id the current job and store handle for it. Return the Redis key."""
+
+    from types import SimpleNamespace
+
+    from app import aws_storage
+
+    monkeypatch.setattr(
+        aws_storage.rq, "get_current_job", lambda: SimpleNamespace(id=job_id)
+    )
+    handle_key = aws_storage.SQS_HANDLE_KEY.format(job_id=job_id)
+    app.redis.set(handle_key, handle)
+    return handle_key
+
+
+def _scheduled_moves(app):
+    from rq.registry import ScheduledJobRegistry
+
+    return [
+        job
+        for job in (
+            app.file_queue.fetch_job(job_id)
+            for job_id in ScheduledJobRegistry(queue=app.file_queue).get_job_ids()
+        )
+        if job is not None and job.func_name == "app.aws_storage.move_archive_object"
+    ]
+
+
+@pytest.mark.parametrize("same_id", [False, True])
+def test_a_move_wait_forgets_the_stored_handle_of_another_id(
+    app, s3, monkeypatch, same_id
+):
+    """The wait retry carries the handle. The stored copy stayed for 14 days (#600).
+
+    A retry under the same id as the running job owns the stored handle."""
+
+    from app import aws_storage, db
+    from tests.test_scheduling import requeue_id
+
+    with app.app_context():
+        file = archived_film(
+            f"Wait Handle {same_id}", 1974, key_name=f"Wait Handle {same_id} Old.mkv"
+        )
+        aws_storage.request_archive_move(file)
+        db.session.commit()
+        app.file_queue.enqueue(
+            "app.videos.download_task", args=(file.aws_key, "Wait Handle Old.mkv")
+        )
+        s3({file.aws_key: readable()})
+        job_id = (
+            requeue_id("app.aws_storage.move_archive_object", file.id)
+            if same_id
+            else "first-move-job"
+        )
+        handle_key = _stored_handle(app, monkeypatch, job_id, "handle-2")
+        try:
+            result = aws_storage.move_archive_object(file.id, sqs_receipt_handle="h1")
+            assert result == aws_storage.MOVE_WAITING
+            (retry,) = _scheduled_moves(app)
+            assert retry.kwargs == {"sqs_receipt_handle": "handle-2"}
+            assert (app.redis.get(handle_key) is not None) is same_id
+        finally:
+            app.redis.delete(handle_key)
+
+
+def test_a_move_lock_wait_forgets_the_stored_handle(app, s3, monkeypatch):
+    """The lock wait carries the handle in its kwargs (#600)."""
+
+    from app import aws_storage, db
+
+    with app.app_context():
+        file = archived_film("Lock Handle", 1975, key_name="Lock Handle Old.mkv")
+        aws_storage.request_archive_move(file)
+        db.session.commit()
+        identifier = file.file_identifier()
+        handle_key = _stored_handle(app, monkeypatch, "locked-move-job", "handle-2")
+        held = app.lock_manager.lock(identifier, 60000)
+        try:
+            assert aws_storage.move_archive_object(file.id, "h1") is False
+            (retry,) = _scheduled_moves(app)
+            assert retry.kwargs == {"sqs_receipt_handle": "handle-2"}
+            assert app.redis.get(handle_key) is None
+        finally:
+            app.lock_manager.unlock(held)
+            app.redis.delete(handle_key)

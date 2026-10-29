@@ -1635,3 +1635,54 @@ def test_a_lost_database_at_a_placement_check_keeps_the_download(app, monkeypatc
         for path in (staged, f"{staged}.etag"):
             if os.path.exists(path):
                 os.remove(path)
+
+
+def _stored_handle(app, monkeypatch, job_id, handle):
+    """Make job_id the current job and store handle for it. Return the Redis key."""
+
+    from types import SimpleNamespace
+
+    from app import aws_storage
+
+    monkeypatch.setattr(
+        aws_storage.rq, "get_current_job", lambda: SimpleNamespace(id=job_id)
+    )
+    handle_key = aws_storage.SQS_HANDLE_KEY.format(job_id=job_id)
+    app.redis.set(handle_key, handle)
+    return handle_key
+
+
+@pytest.mark.parametrize("fault", ["volume", "transient"])
+def test_a_download_requeue_forgets_the_stored_handle(app, monkeypatch, fault):
+    """The stored handle stayed under a fixed id that a later chain reuses (#600)."""
+
+    import errno
+
+    import app.videos as videos
+    from app import aws_storage
+
+    key, library_path = _direct_restore_row(app, f"Forget Handle {fault}")
+    handle_key = _stored_handle(app, monkeypatch, "download-chain-job", "handle-2")
+    if fault == "volume":
+        monkeypatch.setattr(videos, "_dead_volumes", lambda paths: ["/Volumes/Movies"])
+    else:
+        monkeypatch.setattr(videos, "_dead_volumes", lambda paths: [])
+
+        def lost(*args, **kwargs):
+            raise OSError(errno.EIO, "Input/output error")
+
+        monkeypatch.setattr(aws_storage, "aws_download", lost)
+    try:
+        with app.app_context():
+            assert videos.download_task(key, os.path.basename(key), "handle-1") is False
+        (retry,) = [
+            job
+            for job in scheduled_jobs(app.file_queue)
+            if job.id.startswith(safe_job_id("retry:download_task"))
+        ]
+        assert retry.args[2] == "handle-2"
+        assert retry.meta["sqs_receipt_handle"] == "handle-2"
+        assert app.redis.get(handle_key) is None
+        retry.delete()
+    finally:
+        app.redis.delete(handle_key)

@@ -47,7 +47,7 @@ from sqlalchemy import event as sa_event
 from sqlalchemy.orm import Session as OrmSession
 from werkzeug.local import LocalProxy
 
-from app.tasks import enqueue_task, report_progress, requeue
+from app.tasks import enqueue_task, report_progress, requeue, requeue_job_id
 from app import db, get_app
 from app.email import notify_admin, notify_admin_text
 from app import s3_layout
@@ -110,6 +110,24 @@ def _latest_receipt_handle(receipt_handle, job_id=None):
         return receipt_handle
     latest = current_app.redis.get(SQS_HANDLE_KEY.format(job_id=job_id))
     return latest.decode() if latest else receipt_handle
+
+
+def _forget_stored_handle(retry_id=None):
+    """Delete the stored SQS handle of the current job after a retry took it (#600).
+
+    The retry carries the newest handle in its args or kwargs. The fixed
+    retry ids return in a later chain of the same key. A stale handle
+    under the id of this job would then shadow the handle of that chain.
+    A retry under the same id as this job owns the stored handle, so it
+    stays. This is best effort."""
+
+    job = rq.get_current_job()
+    if job is None or job.id == retry_id:
+        return
+    try:
+        current_app.redis.delete(SQS_HANDLE_KEY.format(job_id=job.id))
+    except Exception:
+        current_app.logger.warning(traceback.format_exc())
 
 
 def delete_download_message(receipt_handle, note="message", sqs_client=None):
@@ -1249,19 +1267,23 @@ def download_task(
                 discard_kept_download()
                 return False
             handle = _latest_receipt_handle(sqs_receipt_handle)
+            counters = {
+                "transient_retries": transient_retries,
+                "volume_waits": volume_waits + 1,
+            }
             requeue(
                 "app.videos.download_task",
                 key=key,
                 delay=timedelta(minutes=5),
                 reason=reason,
-                counters={
-                    "transient_retries": transient_retries,
-                    "volume_waits": volume_waits + 1,
-                },
+                counters=counters,
                 args=(key, basename, handle),
                 kwargs=carried(),
                 description=f"'{basename}' — Downloading from AWS",
                 meta={"sqs_receipt_handle": handle},
+            )
+            _forget_stored_handle(
+                requeue_job_id("app.videos.download_task", key, counters)
             )
             return False
 
@@ -1427,6 +1449,10 @@ def download_task(
                 # The retry is a new job. It carries the newest handle.
 
                 sqs_receipt_handle = _latest_receipt_handle(sqs_receipt_handle)
+                counters = {
+                    "transient_retries": transient_retries + 1,
+                    "volume_waits": volume_waits,
+                }
                 requeue(
                     "app.videos.download_task",
                     key=key,
@@ -1435,14 +1461,14 @@ def download_task(
                         f"Download failed with a transient I/O error ({e}) "
                         f"(attempt {transient_retries + 1} of {MAX_TRANSIENT_RETRIES})"
                     ),
-                    counters={
-                        "transient_retries": transient_retries + 1,
-                        "volume_waits": volume_waits,
-                    },
+                    counters=counters,
                     args=(key, basename, sqs_receipt_handle),
                     kwargs=carried(),
                     description=f"'{basename}' — Downloading from AWS",
                     meta={"sqs_receipt_handle": sqs_receipt_handle},
+                )
+                _forget_stored_handle(
+                    requeue_job_id("app.videos.download_task", key, counters)
                 )
                 return False
             current_app.logger.error(traceback.format_exc())
@@ -2517,7 +2543,7 @@ def move_archive_object(file_id, sqs_receipt_handle=None):
     is the restore notification that started the job. The job deletes it
     when the notification is handled."""
 
-    from app.videos import acquire_lock_or_defer
+    from app.videos import acquire_lock_or_defer, lock_wait_job_id
 
     with app.app_context():
         config = current_app.config
@@ -2560,6 +2586,16 @@ def move_archive_object(file_id, sqs_receipt_handle=None):
             key=file.id,
         )
         if not lock:
+            if sqs_receipt_handle:
+                _forget_stored_handle(
+                    lock_wait_job_id(
+                        "app.aws_storage.move_archive_object",
+                        f"'{file.basename}' — Moving the archive",
+                        (file.id,),
+                        {"sqs_receipt_handle": sqs_receipt_handle},
+                        key=file.id,
+                    )
+                )
             return False
 
         try:
@@ -2634,6 +2670,10 @@ def _wait_move(file, source, sqs_receipt_handle, waits_for):
         description=f"'{file.basename}' — Moving the archive",
         level="info",
     )
+    if sqs_receipt_handle:
+        _forget_stored_handle(
+            requeue_job_id("app.aws_storage.move_archive_object", file.id)
+        )
     return MOVE_WAITING
 
 

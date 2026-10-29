@@ -375,6 +375,28 @@ def arguments_tag(args, kwargs):
     )
 
 
+def lock_wait_job_id(func, description, args=(), kwargs=None, key=None):
+    """Return the job id of the lock wait of a task (see schedule_retry).
+
+    The lock wait keeps its own id format. localization_pending matches
+    the localization form of it exactly (#287). The track edits put a
+    digest of their arguments into the id (#595). 2 different edits of
+    1 file then wait apart, and neither replaces the other."""
+
+    short_name = func.rsplit(".", 1)[-1]
+    edit_tag = (
+        f"{arguments_tag(args, kwargs)}:"
+        if short_name in ARGUMENT_TAGGED_RETRIES
+        else ""
+    )
+    return safe_job_id(
+        f"retry:{short_name}:"
+        + (f"{path_tag(key)}:" if key is not None else "")
+        + edit_tag
+        + description
+    )
+
+
 def schedule_retry(
     queue, func, minutes, timeout, description, reason, args=(), kwargs=None, key=None
 ):
@@ -391,17 +413,6 @@ def schedule_retry(
     Without the key, the retry of 1 file replaces the retry of the other.
     """
 
-    # The lock wait keeps its own id format. localization_pending matches
-    # the localization form of it exactly (#287). The track edits put a
-    # digest of their arguments into the id (#595). 2 different edits of
-    # 1 file then wait apart, and neither replaces the other.
-
-    short_name = func.rsplit(".", 1)[-1]
-    edit_tag = (
-        f"{arguments_tag(args, kwargs)}:"
-        if short_name in ARGUMENT_TAGGED_RETRIES
-        else ""
-    )
     delay = requeue(
         func,
         key=key,
@@ -412,12 +423,7 @@ def schedule_retry(
         description=description,
         queue=queue,
         timeout=timeout,
-        job_id=safe_job_id(
-            f"retry:{short_name}:"
-            + (f"{path_tag(key)}:" if key is not None else "")
-            + edit_tag
-            + description
-        ),
+        job_id=lock_wait_job_id(func, description, args, kwargs, key=key),
     )
     return int(delay.total_seconds() // 60)
 
