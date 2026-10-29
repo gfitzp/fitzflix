@@ -856,26 +856,23 @@ def _report_dangling_claims(listing):
     each week. Thus, it can never accumulate."""
 
     s3_key_set = listing.keys
-    # A SQL UNION removes duplicates under the collation of MariaDB, and
-    # that folds case. 2 keys that differ only by case are 2 objects.
-    # Thus, a Python set joins the 3 queries, and it compares exactly
-    # (#591 follow-up).
-    claims = set()
-    for query in (
-        db.session.query(File.aws_key)
+    dangling_claims = sorted(
+        key
+        for (key,) in db.session.query(File.aws_key)
         .filter(File.aws_key.isnot(None))
         .filter(File.aws_date_deleted.is_(None))
         # A row whose first upload never ran claims no object yet (#534).
-        # The transcoded query has the same rule.
-        .filter(File.aws_date_uploaded.isnot(None)),
-        db.session.query(ArchivedOriginal.aws_key),
-        db.session.query(File.aws_transcoded_key).filter(
-            File.aws_transcoded_key.isnot(None),
-            File.aws_transcoded_date_uploaded.isnot(None),
-        ),
-    ):
-        claims.update(key for (key,) in query.all())
-    dangling_claims = sorted(key for key in claims if key not in s3_key_set)
+        # The transcoded union has the same rule.
+        .filter(File.aws_date_uploaded.isnot(None))
+        .union(db.session.query(ArchivedOriginal.aws_key))
+        .union(
+            db.session.query(File.aws_transcoded_key).filter(
+                File.aws_transcoded_key.isnot(None),
+                File.aws_transcoded_date_uploaded.isnot(None),
+            )
+        )
+        if key not in s3_key_set
+    )
 
     # A lost pending upload (follow-up #455) is named 1 time, in a
     # section of its own. It needs a re-rip, not a key repair. Later
@@ -1878,27 +1875,17 @@ def _claimed_by_another(file, key, claims=None):
 
     if claims is not None:
         return bool(claims.get(key, set()) - {file.id})
-
-    # The SQL filter fetches the candidates. MariaDB folds case there.
-    # Thus, the keys are compared exactly after the fetch (#591).
-
-    rows = (
-        db.session.query(File.aws_key, File.aws_transcoded_key, File.aws_key_target)
-        .filter(
+    return (
+        File.query.filter(
             File.id != file.id,
             db.or_(
-                _key_candidates(File.aws_key, key),
-                _key_candidates(File.aws_transcoded_key, key),
-                _key_candidates(File.aws_key_target, key),
+                File.aws_key == key,
+                File.aws_transcoded_key == key,
+                File.aws_key_target == key,
             ),
-        )
-        .all()
-    )
-    archived = db.session.query(ArchivedOriginal.aws_key).filter(
-        _key_candidates(ArchivedOriginal.aws_key, key)
-    )
-    return _exact_claim(key, [value for row in rows for value in row]) or (
-        _exact_claim(key, [value for (value,) in archived.all()])
+        ).first()
+        is not None
+        or ArchivedOriginal.query.filter_by(aws_key=key).first() is not None
     )
 
 
@@ -1935,20 +1922,35 @@ def archive_key_for(file, prefix, claims=None):
     return key
 
 
+def same_archive_key(key, rule_key):
+    """Return True if 2 archive keys are equal when letter case is ignored (#612).
+
+    A key holds the year and the untouched rip name. Thus, the keys of 2
+    different files never differ only by case. A case-only difference
+    is always the same file. Its archive keeps its key and does not
+    move. With no case-only moves, the key columns can fold case on
+    MariaDB (utf8mb4_general_ci). A plain SQL equality on a key then
+    finds the correct claims."""
+
+    return key.casefold() == rule_key.casefold()
+
+
 def archive_drift(file, claims=None):
     """Return (key, rule key) of the first archive of a file that has the wrong key.
 
     The archive in aws_key comes first. Then the transcoded/ copy of a
     conversion. Return None when each archive has the key of its
     untouched name. A deleted archive, or one with no upload, does not
-    count."""
+    count. A key that differs from its rule key only by letter case is
+    correct (same_archive_key). flask aws converge-keys uses this rule
+    too."""
 
     config = current_app.config
     if file.aws_key and file.aws_date_uploaded and file.aws_date_deleted is None:
         prefix = _archive_prefix_of(file.aws_key)
         if prefix:
             wanted = archive_key_for(file, prefix, claims)
-            if wanted != file.aws_key:
+            if not same_archive_key(file.aws_key, wanted):
                 return file.aws_key, wanted
     if (
         file.converted_from_quality
@@ -1957,7 +1959,7 @@ def archive_drift(file, claims=None):
         and _in_prefix(file.aws_transcoded_key, config["AWS_TRANSCODED_PREFIX"])
     ):
         wanted = archive_key_for(file, config["AWS_TRANSCODED_PREFIX"], claims)
-        if wanted != file.aws_transcoded_key:
+        if not same_archive_key(file.aws_transcoded_key, wanted):
             return file.aws_transcoded_key, wanted
     return None
 
@@ -2005,8 +2007,9 @@ def request_archive_move(file, claims=None):
     Set aws_key_target, and queue move_archive_object after the next
     commit of the session. The caller commits. A pending target is
     replaced. The job reads the current target when it runs. A file
-    whose archives have their keys loses its pending target. Return True
-    if a move is pending."""
+    whose archives have their keys loses its pending target. A rename
+    that changes only letter case keeps the key, and a pending target
+    of that rename goes (#612). Return True if a move is pending."""
 
     drift = archive_drift(file, claims)
     if drift is None:
@@ -2398,39 +2401,6 @@ def move_archive_to_modified_task(file_id):
             current_app.lock_manager.unlock(lock)
 
 
-def _key_candidates(column, key):
-    """Return the SQL filter that fetches the candidate claims of key (#591).
-
-    The column has the collation utf8mb4_general_ci on MariaDB. Thus, the
-    filter also matches a key that differs only by letter case, or by a
-    trailing space. The caller compares the fetched keys exactly with
-    _exact_claim. A COLLATE clause is not portable to the test schema."""
-
-    return column == key
-
-
-def _exact_claim(key, candidates):
-    """Return True if one of the fetched keys is key, character for character (#591)."""
-
-    return any(candidate == key for candidate in candidates)
-
-
-def archived_originals_with_key(key):
-    """Return the ArchivedOriginal rows whose key is key, character for character.
-
-    The SQL filter fetches the candidates, and MariaDB folds case there.
-    A row of a case variant claims a different S3 object. A reuse or a
-    delete of that row would drop its claim (#591 follow-up)."""
-
-    return [
-        row
-        for row in ArchivedOriginal.query.filter(
-            _key_candidates(ArchivedOriginal.aws_key, key)
-        ).all()
-        if _exact_claim(key, [row.aws_key])
-    ]
-
-
 def untouched_key_still_claimed(key):
     """Return True if a surviving file record still claims this S3 key.
 
@@ -2443,30 +2413,26 @@ def untouched_key_still_claimed(key):
     count. An archive-only original (#292) claims its key too. So does
     the target of a pending move (#369).
 
-    The SQL filter folds case on MariaDB. After a case-only move, the new
-    key of the row matched the old key, and the old object was never
-    deleted. Thus, the fetched keys are compared exactly (#591)."""
+    The key columns fold case on MariaDB. A case-only rename keeps its
+    key (#612). Thus, no claim differs from key only by case."""
 
-    candidates = [
-        candidate
-        for query in (
-            db.session.query(File.aws_key).filter(
-                _key_candidates(File.aws_key, key),
-                File.aws_date_deleted.is_(None),
-            ),
-            db.session.query(ArchivedOriginal.aws_key).filter(
-                _key_candidates(ArchivedOriginal.aws_key, key)
-            ),
-            db.session.query(File.aws_transcoded_key).filter(
-                _key_candidates(File.aws_transcoded_key, key)
-            ),
-            db.session.query(File.aws_key_target).filter(
-                _key_candidates(File.aws_key_target, key)
-            ),
+    return (
+        db.session.query(File.id)
+        .filter(
+            File.aws_key == key,
+            File.aws_date_deleted.is_(None),
         )
-        for (candidate,) in query.all()
-    ]
-    return _exact_claim(key, candidates)
+        .first()
+        is not None
+        or db.session.query(ArchivedOriginal.id)
+        .filter(ArchivedOriginal.aws_key == key)
+        .first()
+        is not None
+        or db.session.query(File.id).filter(File.aws_transcoded_key == key).first()
+        is not None
+        or db.session.query(File.id).filter(File.aws_key_target == key).first()
+        is not None
+    )
 
 
 # The status of a move that waits for a restore of its object. It is

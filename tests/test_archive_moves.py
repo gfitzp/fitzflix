@@ -1208,131 +1208,80 @@ def test_an_early_stop_deletes_a_message_that_arrived_late(app, monkeypatch, del
     assert sqs.deleted == ["late"]
 
 
-def test_a_case_only_move_deletes_the_old_object(app, s3, case_folding_keys):
-    """The claim check matched the new key of the row itself (#591).
+def _case_renamed_archive(library, key_name):
+    """Make a film or an episode whose archive key is key_name(rule name). Return it."""
 
-    "None But the Brave" became "None but the Brave". Under general_ci the
-    new key of the row claimed the old key, and the old object stayed."""
+    from app import db
+
+    if library == "film":
+        file = archived_film("None but the Brave", 1965)
+    else:
+        file = make_tv_file(make_tv_series("Case Show"), 1, 2, "WEBDL-1080p")
+        file.untouched_basename = file.basename
+        file.aws_date_uploaded = datetime(2026, 1, 1)
+        file.aws_filesize_bytes = SIZE
+    file.aws_key = f"untouched/{key_name(file.untouched_basename)}"
+    db.session.commit()
+    return file
+
+
+def _dry_run(app):
+    """Run the dry run of flask aws converge-keys. Return its output."""
+
+    from app.cli import register
+
+    if "aws" not in app.cli.commands:
+        register(app)
+    result = app.test_cli_runner().invoke(args=["aws", "converge-keys"])
+    assert result.exit_code == 0, result.output
+    return result.output
+
+
+@pytest.mark.parametrize("library", ["film", "episode"])
+def test_a_case_only_rename_keeps_the_archive_key(app, library):
+    """A rename that changes only letter case keeps the key and queues no move (#612).
+
+    A pending target from an older case-only request goes. The dry run of
+    converge-keys uses the same rule and lists no drift."""
 
     from app import aws_storage, db
 
     with app.app_context():
-        file = archived_film(
-            "None but the Brave",
-            1965,
-            key_name="None But the Brave (1965) - [Bluray-1080p].mkv",
-        )
-        file_id = file.id
-        old_key = file.aws_key
-        new_key = "untouched/None but the Brave (1965) - [Bluray-1080p].mkv"
-        assert old_key.lower() == new_key.lower() and old_key != new_key
-
-        # The fixture folds case like MariaDB.
-        assert aws_storage.untouched_key_still_claimed(new_key.upper()) is False
-
-        fake = s3({old_key: readable()})
-        assert aws_storage.request_archive_move(file) is True
-        assert file.aws_key_target == new_key
+        file = _case_renamed_archive(library, str.swapcase)
+        file_id, old_key = file.id, file.aws_key
+        rule_key = f"untouched/{file.untouched_basename}"
+        assert old_key != rule_key and old_key.lower() == rule_key.lower()
+        file.aws_key_target = rule_key
         db.session.commit()
-        assert aws_storage.move_archive_object(file_id) is True
-        assert committed_key(app, file_id) == new_key
-        assert fake.deletes == [(old_key, None)]
+
+        assert aws_storage.archive_drift(file) is None
+        assert aws_storage.request_archive_move(file) is False
+        db.session.commit()
+        assert committed_key(app, file_id) == old_key
+        assert committed_key(app, file_id, "aws_key_target") is None
+        assert move_jobs(app) == []
+    assert "0 archive key(s) differ" in _dry_run(app)
 
 
-def test_a_case_variant_on_another_row_is_not_a_claim(app, case_folding_keys):
-    """The SQL branch of _claimed_by_another refused a key for a case variant (#591)."""
+@pytest.mark.parametrize("library", ["film", "episode"])
+def test_a_real_rename_still_moves_the_archive(app, library):
+    """A rename that changes more than letter case still requests a move (#369)."""
 
-    from app import aws_storage
-
-    with app.app_context():
-        other = archived_film("Case Claim", 1970, key_name="case claim (1970).mkv")
-        file = archived_film("Case Claim Two", 1971)
-        assert aws_storage._claimed_by_another(file, other.aws_key) is True
-        assert (
-            aws_storage._claimed_by_another(file, "untouched/Case Claim (1970).mkv")
-            is False
-        )
-        assert aws_storage.untouched_key_still_claimed(other.aws_key) is True
-        assert (
-            aws_storage.untouched_key_still_claimed("untouched/CASE CLAIM (1970).mkv")
-            is False
-        )
-
-
-def _archive_only_row(key, reason="archive only"):
-    """Add and commit an archive-only original with key. Return its id."""
-
-    from app import db
-    from app.models import ArchivedOriginal
-
-    row = ArchivedOriginal(
-        media_library="Movies",
-        quality_title="Bluray-2160p",
-        untouched_basename=os.path.basename(key),
-        aws_key=key,
-        reason=reason,
-    )
-    db.session.add(row)
-    db.session.commit()
-    return row.id
-
-
-def test_an_import_commit_keeps_the_archive_only_row_of_a_case_variant(
-    app, case_folding_keys
-):
-    """The commit of an import deleted the claim of a case variant (#591 follow-up).
-
-    The archive-only row of the key of the new file goes. A row of a key
-    that differs only by case claims a different object, and it stays."""
-
-    from app import db, importing
-    from app.models import ArchivedOriginal
+    from app import aws_storage, db
 
     with app.app_context():
-        file = archived_film("Commit Fold", 1972)
-        variant = file.aws_key.replace("Commit Fold", "COMMIT FOLD")
-        _archive_only_row(file.aws_key)
-        variant_id = _archive_only_row(variant)
-        importing._commit_records(file, [], "/held/none.mkv")
-        db.session.expire_all()
-        assert [(row.id, row.aws_key) for row in ArchivedOriginal.query.all()] == [
-            (variant_id, variant)
-        ]
+        file = _case_renamed_archive(library, lambda name: f"Old {name}")
+        file_id, old_key = file.id, file.aws_key
+        rule_key = f"untouched/{file.untouched_basename}"
 
-
-@pytest.mark.parametrize("dangling", ["file key", "archive-only key"])
-def test_the_weekly_report_names_a_dangling_case_variant(
-    app, monkeypatch, case_folding_keys, dangling
-):
-    """The UNION of the claims folded case and hid a dangling claim (#591 follow-up).
-
-    The UNION kept 1 of 2 keys that differ only by case. When the kept
-    key had its object, the report left out the other key."""
-
-    from types import SimpleNamespace
-
-    from app import aws_storage
-
-    sent = []
-    monkeypatch.setattr(
-        aws_storage,
-        "notify_admin_text",
-        lambda subject, text, *a: sent.append((subject, text)),
-    )
-    with app.app_context():
-        file = archived_film("Union Fold", 1973)
-        variant = file.aws_key.replace("Union Fold", "union fold")
-        _archive_only_row(variant)
-        missing, present = (
-            (file.aws_key, variant)
-            if dangling == "file key"
-            else (variant, file.aws_key)
-        )
-        aws_storage._report_dangling_claims(SimpleNamespace(keys={present}))
-    assert [subject for subject, text in sent] == ["Archive keys missing from AWS S3!"]
-    lines = sent[0][1].split("\n")
-    assert missing in lines
-    assert present not in lines
+        assert aws_storage.request_archive_move(file) is True
+        db.session.commit()
+        assert committed_key(app, file_id) == old_key
+        assert committed_key(app, file_id, "aws_key_target") == rule_key
+        assert [job.args[0] for job in move_jobs(app)] == [file_id]
+    output = _dry_run(app)
+    assert "1 archive key(s) differ" in output
+    assert f"{old_key} -> {rule_key}" in output
 
 
 def _stored_handle(app, monkeypatch, job_id, handle):

@@ -65,7 +65,6 @@ from app import (
     safe_job_id,
 )
 from app.aws_storage import (
-    archived_originals_with_key,
     clear_archive_target,
     discard_pending_archive,
     ensure_pending_upload,
@@ -89,6 +88,7 @@ from app.naming import hidden, library_name, with_extension
 from app.models import (
     MOVIES,
     TV_SHOWS,
+    ArchivedOriginal,
     File,
     HeldImport,
     Movie,
@@ -3314,10 +3314,7 @@ def _commit_records(file, kept_archives, file_path):
     for archived in kept_archives:
         db.session.add(archived)
     if file.aws_key:
-        # MariaDB folds case in the SQL filter. A row of a case variant
-        # claims a different object, and it stays (#591 follow-up).
-        for archived in archived_originals_with_key(file.aws_key):
-            db.session.delete(archived)
+        ArchivedOriginal.query.filter_by(aws_key=file.aws_key).delete()
     HeldImport.query.filter_by(held_path=file_path).delete()
     db.session.commit()
 
