@@ -649,8 +649,10 @@ def test_an_apply_with_no_new_name_logs_1_summary_line(app, caplog):
     assert not [m for m in messages if m.startswith("Existing movie: ")]
     assert not [m for m in messages if "New untouched basename" in m]
     assert not [m for m in messages if m.startswith(IMPORT_LINES)]
-    summaries = [m for m in messages if " refreshed: " in m]
-    assert summaries == ["<Movie 'Steady Tune (1950)'> refreshed: 0 of 2 names changed"]
+    summaries = [m for m in messages if " names changed" in m]
+    assert summaries == [
+        "<Movie 'Steady Tune (1950)'> has no TMDB data to apply: 0 of 2 names changed"
+    ]
 
 
 def test_an_apply_logs_the_old_and_the_new_name(app, caplog):
@@ -678,8 +680,8 @@ def test_an_apply_logs_the_old_and_the_new_name(app, caplog):
         "New untouched basename: 'Desert Tune (1943) - [HDTV-720p].mkv' "
         "to 'Desert Tune (1944) - [HDTV-720p].mkv'"
     ]
-    assert [m for m in messages if " refreshed: " in m] == [
-        "<Movie 'Desert Tune (1943)'> refreshed: 1 of 1 names changed"
+    assert [m for m in messages if " names changed" in m] == [
+        "<Movie 'Desert Tune (1943)'> has no TMDB data to apply: 1 of 1 names changed"
     ]
 
 
@@ -880,3 +882,60 @@ def test_a_case_only_rename_onto_the_same_file_is_not_a_collision(app, monkeypat
             for path in (old_path, new_path):
                 if os.path.exists(path):
                     os.remove(path)
+
+
+def test_a_payload_apply_logs_refreshed_after_the_commit(app, caplog, monkeypatch):
+    """The summary said "refreshed" before a commit that can roll back (#605)."""
+
+    from app.videos import apply_tmdb_refresh
+
+    with app.app_context():
+        movie = make_movie("Summary Tune", 1950)
+        file = make_movie_file(movie, "DVD")
+        file.untouched_basename = file.basename
+        db.session.commit()
+        movie_id = movie.id
+
+        payload = _payload(
+            {"id": 9050, "title": "Summary Tune", "release_date": "1950-03-03"}
+        )
+        with caplog.at_level(logging.INFO, logger="app"):
+            assert apply_tmdb_refresh("Movies", movie_id, tmdb_payload=payload) is True
+        messages = [record.getMessage() for record in caplog.records]
+        assert [m for m in messages if " names changed" in m] == [
+            "<Movie 'Summary Tune (1950)'> refreshed: 0 of 1 names changed"
+        ]
+
+        # The commit of the basenames fails. No summary says it is done.
+        caplog.clear()
+        real_commit = db.session.commit
+        calls = []
+
+        def second_fails():
+            calls.append(1)
+            if len(calls) == 2:
+                raise RuntimeError("Lock wait timeout exceeded")
+            return real_commit()
+
+        monkeypatch.setattr(db.session, "commit", second_fails)
+        with caplog.at_level(logging.INFO, logger="app"):
+            apply_tmdb_refresh("Movies", movie_id, tmdb_payload=payload)
+        monkeypatch.setattr(db.session, "commit", real_commit)
+        assert len(calls) >= 2
+        assert not [r for r in caplog.records if " names changed" in r.getMessage()]
+
+
+def test_the_fetch_line_is_debug(app, caplog, monkeypatch):
+    """A bulk refresh wrote 2 INFO lines per movie, not 1 (#605)."""
+
+    import app.tmdb_apply as tmdb_apply
+
+    monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
+    monkeypatch.setattr(tmdb_apply, "tmdb_json", lambda *args, **kwargs: {"id": 1})
+    with app.app_context():
+        movie = make_movie("Fetch Tune", 1950)
+        db.session.commit()
+        with caplog.at_level(logging.DEBUG, logger="app"):
+            assert movie.tmdb_movie_fetch(tmdb_id=1) == {"id": 1}
+    (record,) = [r for r in caplog.records if "Getting TMDB data" in r.getMessage()]
+    assert record.levelno == logging.DEBUG

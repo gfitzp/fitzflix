@@ -928,9 +928,6 @@ def _apply_movie_refresh(
             )
             changed += 1
         f.untouched_basename = untouched_basename
-    current_app.logger.info(
-        f"{movie} refreshed: {changed} of {len(files)} names changed"
-    )
 
     # Commit the new basenames BEFORE you queue an archive
     # move. A deferred re-archive reads the key that the record
@@ -944,6 +941,14 @@ def _apply_movie_refresh(
         current_app.logger.error(traceback.format_exc())
         db.session.rollback()
         return False
+
+    # The summary comes after the commit. Thus, it never reports a
+    # rollback as done (#605). With no payload, nothing came from TMDB.
+
+    outcome = "refreshed" if tmdb_info else "has no TMDB data to apply"
+    current_app.logger.info(
+        f"{movie} {outcome}: {changed} of {len(files)} names changed"
+    )
 
     # Create new directories and move the files if necessary.
 

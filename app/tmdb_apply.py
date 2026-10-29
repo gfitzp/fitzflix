@@ -505,7 +505,9 @@ class TMDBMixin(object):
         # Request only the appended blocks that tmdb_movie_apply reads.
 
         requested_info = "credits,external_ids,keywords,release_dates"
-        current_app.logger.info(f"{self} Getting TMDB data")
+        # A bulk refresh fetches hundreds of movies a night. The apply
+        # writes the 1 INFO line of each movie (#590, #605).
+        current_app.logger.debug(f"{self} Getting TMDB data")
         if tmdb_id == None:
             search = tmdb_json(
                 "/search/movie",
