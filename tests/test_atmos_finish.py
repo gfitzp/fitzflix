@@ -179,6 +179,37 @@ def test_a_db_fault_after_the_rename_marks_the_archive_stale_and_fixes_the_rows(
         assert sorted(codecs) == sorted([TWIN, ATMOS])
 
 
+def test_a_second_failed_row_commit_counts_the_edit_and_queues_a_scan(app, monkeypatch):
+    """The twins are in the file, and both row commits failed (#592).
+
+    The edit counter moves in a separate transaction. Thus, an older retry
+    of a track edit stops. A scan reads the rows from the file."""
+
+    import app.atmos as atmos
+    import app.tracks as tracks
+    from app import db
+    from app.models import File
+    from tests.test_scheduling import requeue_id, scheduled_jobs
+
+    with app.app_context():
+        file, finish = _finish_job(app, monkeypatch, "Finish Rows Twice")
+        file_id = file.id
+
+        def always_fail(*args, **kwargs):
+            raise RuntimeError("(1020, 'Record has changed since last read')")
+
+        monkeypatch.setattr(tracks, "replace_track_rows", always_fail)
+        with pytest.raises(RuntimeError):
+            atmos.atmos_finish_task(*finish.args)
+
+        db.session.expire_all()
+        assert db.session.get(File, file_id).track_edit_seq == 1
+        wanted = requeue_id("app.videos.track_metadata_scan_task", file_id)
+        assert [j.id for j in scheduled_jobs(app.file_queue) if j.id == wanted] == [
+            wanted
+        ]
+
+
 def test_a_file_that_has_its_twins_gets_its_rows_back(app, monkeypatch):
     """The rows say no twin, the staged copy has it. The rows follow the file (#503)."""
 

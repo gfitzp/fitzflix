@@ -565,15 +565,48 @@ def _flag_after_a_write(file_id):
         current_app.logger.warning(traceback.format_exc())
 
 
-def _rescan_after_a_failed_edit(file_id, name):
+def count_failed_track_edit(file_id=None, file_path=None):
+    """Count 1 more track edit of a file in a separate transaction (#592).
+
+    An edit that changed the library file and then failed its row commit
+    counts nothing in that commit. An older transient retry then sees the
+    same counter and runs against the new layout. Thus, the handlers that
+    know the file changed call this. Give the File id, or the library path
+    of the row when the id is not known. The session of the caller stays
+    as it is. This is best effort. The caller raises the original error."""
+
+    table = File.__table__
+    where = (
+        table.c.id == file_id
+        if file_id is not None
+        else (table.c.file_path == file_path)
+    )
+    try:
+        with db.engine.begin() as connection:
+            connection.execute(
+                db.update(table)
+                .where(where)
+                .values(track_edit_seq=db.func.coalesce(table.c.track_edit_seq, 0) + 1)
+            )
+    except Exception:
+        current_app.logger.warning(traceback.format_exc())
+
+
+def _rescan_after_a_failed_edit(file_id, name, count=True):
     """Queue a track scan of a file whose edit failed after the file changed (#583).
 
     The file has the new layout, but the track rows and the size keep
     the old layout. No periodic scan repairs them. The scan reads the
     rows again from the file. The job id is the id of the lock-busy
     retry of the scan. Thus, a repeat replaces the scheduled scan. This
-    is best effort. The caller raises the original error."""
+    is best effort. The caller raises the original error.
 
+    The file changed with no commit. Thus, this also counts the edit
+    (#592). A caller whose write was already followed by a counted edit
+    gives count=False."""
+
+    if count:
+        count_failed_track_edit(file_id)
     try:
         requeue(
             "app.videos.track_metadata_scan_task",
@@ -1084,7 +1117,9 @@ def mkvpropedit_task(
                 f"failed attempt. The retry of the older edit stops"
             )
             if file_changed:
-                _rescan_after_a_failed_edit(file_id, f"'{file.basename}'")
+                # The write of the earlier attempt came before the newer
+                # edit, and that edit counted itself. Thus, no count here.
+                _rescan_after_a_failed_edit(file_id, f"'{file.basename}'", count=False)
             current_app.lock_manager.unlock(lock)
             return False
 

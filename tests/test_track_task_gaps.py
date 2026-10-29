@@ -475,6 +475,131 @@ def test_a_safe_retry_carries_the_earlier_write(app, monkeypatch):
         os.remove(path)
 
 
+def test_a_failed_edit_that_changed_the_file_counts_the_edit(app, monkeypatch):
+    """The file changed and the rows did not commit. The counter still moves (#592)."""
+
+    import app.videos as videos
+    from app import tracks
+
+    file_id, identifier, path = _library_row(app, "Counted Failure")
+    monkeypatch.setattr(tracks, "mkvpropedit_unlocked", _failing_unlocked(True, True))
+    try:
+        with pytest.raises(OSError):
+            videos.mkvpropedit_task(file_id, "2", None, [])
+        assert _edit_seq(app, file_id) == 1
+    finally:
+        os.remove(path)
+
+
+def test_a_safe_transient_retry_counts_no_edit(app, monkeypatch):
+    """The retry carries the counter. A count here would stop the retry itself."""
+
+    import app.videos as videos
+    from app import tracks
+
+    file_id, identifier, path = _library_row(app, "Uncounted Retry")
+    monkeypatch.setattr(tracks, "mkvpropedit_unlocked", _failing_unlocked(True, False))
+    try:
+        assert videos.mkvpropedit_task(file_id, "2", None, []) is False
+        assert not _edit_seq(app, file_id)
+    finally:
+        os.remove(path)
+
+
+def test_a_retry_after_a_failed_remux_that_changed_the_file_stops(app, monkeypatch):
+    """Edit B replaced the file and failed its commit. The retry of A stops (#592).
+
+    The retry of A has the counter of the old layout. The remux of B
+    renumbered the tracks. Before, B counted nothing, and A set its
+    default flag on the wrong track."""
+
+    import app.videos as videos
+    from app import tracks
+
+    file_id, identifier, path = _library_row(app, "Remux Then Retry")
+    retry = _first_attempt_fails(app, monkeypatch, file_id)
+    assert retry.kwargs["edit_seq"] == 0
+
+    class Track:
+        def __init__(self, kind, order):
+            self.track_type = kind
+            self.order = order
+
+        def to_data(self):
+            return {"streamorder": self.order}
+
+    media = SimpleNamespace(tracks=[Track("Video", 0), Track("Audio", 1)])
+    calls = []
+
+    def lost_read(*args, **kwargs):
+        raise RuntimeError("MediaInfo read failed")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(tracks.MediaInfo, "parse", lambda path: media)
+        patch.setattr(tracks, "remux_file", lambda *args, **kwargs: None)
+        patch.setattr(tracks, "remove_empty_subtitle_tracks", lost_read)
+        with pytest.raises(RuntimeError):
+            tracks.mkvmerge_unlocked(file_id, [1], [])
+    assert _edit_seq(app, file_id) == 1
+
+    monkeypatch.setattr(
+        tracks, "mkvpropedit_unlocked", lambda *args: calls.append(args) or True
+    )
+    try:
+        assert videos.mkvpropedit_task(*retry.args, **retry.kwargs) is False
+        assert calls == []
+    finally:
+        retry.delete()
+        os.remove(path)
+
+
+def test_a_failed_reimport_commit_over_a_replaced_file_counts_the_edit(
+    app, sample_mkv, incoming_dir, monkeypatch
+):
+    """The new file replaced the file of the row, and the commit failed (#592)."""
+
+    from app import db, importing
+    from app.models import File
+    from tests.factories import make_movie, make_movie_file
+    from tests.localization_helpers import run_full_chain
+
+    with app.app_context():
+        row = make_movie_file(make_movie("Replaced Commit Fail", 2021), "DVD")
+        db.session.commit()
+        row_id = row.id
+        library = os.path.join(app.config["LIBRARY_DIR"], row.file_path)
+    os.makedirs(os.path.dirname(library), exist_ok=True)
+    with open(library, "wb") as f:
+        f.write(b"old copy")
+
+    class Failing:
+        """A HeldImport stand-in whose cleanup delete fails, as a commit can."""
+
+        class query:
+            @staticmethod
+            def filter_by(**kwargs):
+                raise RuntimeError("simulated failure before the commit")
+
+    source = os.path.join(incoming_dir, "Replaced Commit Fail (2021) - [DVD].mkv")
+    with open(sample_mkv, "rb") as f_in, open(source, "wb") as f_out:
+        f_out.write(f_in.read())
+    monkeypatch.setattr(importing, "HeldImport", Failing)
+    try:
+        with app.app_context():
+            run_full_chain(app, source)
+            db.session.expire_all()
+            assert db.session.get(File, row_id).track_edit_seq == 1
+    finally:
+        for path in (library, source):
+            if os.path.exists(path):
+                os.remove(path)
+        rejected = os.path.join(
+            app.config["REJECTS_DIR"], "exception", os.path.basename(source)
+        )
+        if os.path.exists(rejected):
+            os.remove(rejected)
+
+
 # Each function that commits new track rows of an existing file outside a
 # scan, with the count of its note_track_edit calls (#589). _atmos_finish
 # has a second commit for a first commit that failed. A scan, the Atmos
@@ -493,8 +618,28 @@ TRACK_EDIT_SITES = [
 ]
 
 
-def _note_calls(path, function):
-    """Return the count of the note_track_edit calls in one function."""
+# Each function whose handlers know that the file changed with no row
+# commit, with the count of its calls that count the edit apart (#592).
+# _rescan_after_a_failed_edit counts the edit, and count_failed_track_edit
+# is the separate transaction. A scan and the restore placement have none.
+
+FAILED_EDIT_SITES = [
+    ("app/tracks.py", "_rescan_after_a_failed_edit", 1),
+    ("app/tracks.py", "mkvpropedit_task", 2),
+    ("app/tracks.py", "mkvpropedit_unlocked", 1),
+    ("app/tracks.py", "mkvmerge_unlocked", 2),
+    ("app/atmos.py", "_atmos_finish", 1),
+    ("app/importing.py", "finalize_localization", 1),
+    ("app/tracks.py", "save_track_metadata", 0),
+    ("app/atmos.py", "_atmos_prepare", 0),
+    ("app/aws_storage.py", "place_in_library", 0),
+]
+
+FAILED_EDIT_CALLS = ("_rescan_after_a_failed_edit", "count_failed_track_edit")
+
+
+def _calls(path, function, names):
+    """Return the count of the calls to names in one function."""
 
     import ast
 
@@ -505,13 +650,25 @@ def _note_calls(path, function):
         for child in ast.walk(tree)
         if isinstance(child, ast.FunctionDef) and child.name == function
     ]
+
+    def name_of(func):
+        if isinstance(func, ast.Attribute):
+            return func.attr
+        if isinstance(func, ast.Name):
+            return func.id
+        return None
+
     return sum(
         1
         for call in ast.walk(node)
-        if isinstance(call, ast.Call)
-        and isinstance(call.func, ast.Attribute)
-        and call.func.attr == "note_track_edit"
+        if isinstance(call, ast.Call) and name_of(call.func) in names
     )
+
+
+def _note_calls(path, function):
+    """Return the count of the note_track_edit calls in one function."""
+
+    return _calls(path, function, ("note_track_edit",))
 
 
 @pytest.mark.parametrize("path, function, count", TRACK_EDIT_SITES)
@@ -519,6 +676,13 @@ def test_each_track_edit_site_counts_its_edit(path, function, count):
     assert (
         _note_calls(path, function) == count
     ), f"{path}:{function} must call note_track_edit {count} times (#589)"
+
+
+@pytest.mark.parametrize("path, function, count", FAILED_EDIT_SITES)
+def test_each_failed_edit_handler_counts_the_edit_apart(path, function, count):
+    assert (
+        _calls(path, function, FAILED_EDIT_CALLS) == count
+    ), f"{path}:{function} must count a failed edit {count} times (#592)"
 
 
 def test_a_real_flag_edit_adds_exactly_1_to_the_counter(app, tmp_path):

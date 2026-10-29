@@ -1379,7 +1379,11 @@ def _atmos_finish(state, phases):
     The library share carries 1 write here: the verified result."""
 
     from app.aws_storage import archive_library_file, mark_archive_stale
-    from app.tracks import flag_archive_before_rewrite, replace_track_rows
+    from app.tracks import (
+        _rescan_after_a_failed_edit,
+        flag_archive_before_rewrite,
+        replace_track_rows,
+    )
     from app.videos import (
         aws_s3_client,
         copy_with_progress,
@@ -1505,13 +1509,24 @@ def _atmos_finish(state, phases):
 
         current_app.logger.error(traceback.format_exc())
         db.session.rollback()
-        mark_archive_stale(file_id, reason="the Atmos twin replaced the library file")
-        file = db.session.get(File, file_id)
-        replace_track_rows(file, new_audio_tracks, new_subtitle_tracks)
-        record_filesize(file, os.path.getsize(final_staging))
-        # The first commit rolled back. Its count of the edit went too.
-        file.note_track_edit()
-        db.session.commit()
+        try:
+            mark_archive_stale(
+                file_id, reason="the Atmos twin replaced the library file"
+            )
+            file = db.session.get(File, file_id)
+            replace_track_rows(file, new_audio_tracks, new_subtitle_tracks)
+            record_filesize(file, os.path.getsize(final_staging))
+            # The first commit rolled back. Its count of the edit went too.
+            file.note_track_edit()
+            db.session.commit()
+        except Exception:
+            # The library file has the twins, and the rows keep the old
+            # layout. A scan reads the rows from the file. The count of
+            # the edit goes in a separate transaction (#592). Thus, an
+            # older retry of a track edit stops.
+            db.session.rollback()
+            _rescan_after_a_failed_edit(file_id, f"'{basename}'")
+            raise
 
     # The film gained a track under a path that Plex already knows. Thus,
     # nothing tells Plex to look again until its next scan. Ask for the

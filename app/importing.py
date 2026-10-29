@@ -109,6 +109,7 @@ from app.sdr_conversion import (
 from app.file_ranking import find_better_files, find_worse_files, real_rips_blocking
 from app.tracks import (
     _extract_media_details,
+    count_failed_track_edit,
     file_language_spelling,
     same_language,
     replace_track_rows,
@@ -2730,6 +2731,12 @@ def finalize_localization(
                 stray = hidden_output_file
             elif placement == "renamed" and file_path != output_file:
                 stray = output_file
+            elif placement == "replaced":
+                # The new file replaced the file of an existing record, and
+                # the commit of its rows failed. Count the edit in a
+                # separate transaction (#592). Thus, an older retry of a
+                # track edit of the old file stops.
+                count_failed_track_edit(file_path=file_details.get("file_path"))
             _release_title_lock(lock)
             abandon_failed_stage(
                 error,
