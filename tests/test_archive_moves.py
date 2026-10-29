@@ -1177,3 +1177,32 @@ def test_a_requested_download_of_a_shared_key_runs_beside_the_move(app, s3):
         assert aws_storage.move_archive_object(mover.id, "handle-7") == (
             aws_storage.MOVE_WAITING
         )
+
+
+@pytest.mark.parametrize("deleted", [True, False])
+def test_an_early_stop_deletes_a_message_that_arrived_late(app, monkeypatch, deleted):
+    """A move queued with no handle can get one from the poll (#587).
+
+    The early returns tested the argument, not the newest handle. The
+    message came back, and a rename back turned it into a download."""
+
+    from types import SimpleNamespace
+
+    from app import aws_storage, db
+
+    sqs = SQS()
+    monkeypatch.setattr(aws_storage, "aws_sqs_client", lambda: sqs)
+    monkeypatch.setattr(
+        aws_storage.rq, "get_current_job", lambda: SimpleNamespace(id="late-move")
+    )
+    app.redis.set(aws_storage.SQS_HANDLE_KEY.format(job_id="late-move"), "late")
+    with app.app_context():
+        file = make_movie_file(make_movie("Late Handle Move", 1960), "DVD")
+        db.session.commit()
+        file_id = file.id
+        if deleted:
+            db.session.delete(file)
+            db.session.commit()
+        result = aws_storage.move_archive_object(file_id)
+    assert result is (not deleted)
+    assert sqs.deleted == ["late"]

@@ -2278,10 +2278,14 @@ def _copy_problem(original, copied):
 
 
 def _drop_message(sqs_receipt_handle, note):
-    """Delete the SQS message of a move, if the move came from a notification."""
+    """Delete the SQS message of a move, if the move came from a notification.
 
-    if sqs_receipt_handle:
-        delete_sqs_message(aws_sqs_client(), sqs_receipt_handle, note=note)
+    The newest handle decides, as in delete_download_message. A handle
+    can arrive while the job runs (#587)."""
+
+    handle = _latest_receipt_handle(sqs_receipt_handle)
+    if handle:
+        delete_sqs_message(aws_sqs_client(), handle, note=note)
 
 
 def _file_queue_jobs():
@@ -2360,6 +2364,11 @@ def move_archive_object(file_id, sqs_receipt_handle=None):
 
     with app.app_context():
         config = current_app.config
+
+        # The poll records the handle of a later message for this job. The
+        # early returns below must delete that message too (#587).
+
+        sqs_receipt_handle = _latest_receipt_handle(sqs_receipt_handle)
         file = db.session.get(File, int(file_id))
         if file is None:
             current_app.logger.warning(
@@ -2377,8 +2386,6 @@ def move_archive_object(file_id, sqs_receipt_handle=None):
         # A row with no target and a key that differs from its rule lost
         # its target to a race. The job computes the target again.
 
-        # The poll records the handle of a later message for this job.
-        sqs_receipt_handle = _latest_receipt_handle(sqs_receipt_handle)
         lock = acquire_lock_or_defer(
             file.file_identifier(),
             config["UPLOAD_TASK_TIMEOUT"] * 1000,
