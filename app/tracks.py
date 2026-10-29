@@ -1129,8 +1129,8 @@ def mkvpropedit_task(
             raise
         if edit_seq is not None and edit_seq != current_seq:
             current_app.logger.warning(
-                f"'{file.basename}' A newer edit changed the tracks after the "
-                f"failed attempt. The retry of the older edit stops"
+                f"'{file.basename}' A newer edit changed the tracks after "
+                f"this edit was queued. The older edit stops"
             )
             if file_changed:
                 # The write of the earlier attempt came before the newer
@@ -1525,8 +1525,13 @@ def mkvpropedit_unlocked(
         return True
 
 
-def mkvmerge_task(file_id, audio_tracks, subtitle_tracks):
-    """Remux an MKV file."""
+def mkvmerge_task(file_id, audio_tracks, subtitle_tracks, edit_seq=None):
+    """Remux an MKV file.
+
+    edit_seq is the track edit counter of the rows that the page showed
+    (#593). The track positions come from those rows. A newer edit that
+    committed before this task took the lock adds 1 to the counter. Then
+    the positions are old, and the remux stops. None means no baseline."""
 
     from app.videos import acquire_lock_or_defer
 
@@ -1545,10 +1550,24 @@ def mkvmerge_task(file_id, audio_tracks, subtitle_tracks):
             timeout=current_app.config["MKVPROPEDIT_TASK_TIMEOUT"],
             description=f"'{file.basename}'",
             args=(file_id, audio_tracks, subtitle_tracks),
+            kwargs={"edit_seq": edit_seq} if edit_seq is not None else {},
             key=int(file_id),
         )
         if not lock:
             return True
+
+        try:
+            current_seq = _track_edit_seq(file_id)
+        except BaseException:
+            current_app.lock_manager.unlock(lock)
+            raise
+        if edit_seq is not None and edit_seq != current_seq:
+            current_app.logger.warning(
+                f"'{file.basename}' A newer edit changed the tracks after "
+                f"this remux was queued. The older remux stops"
+            )
+            current_app.lock_manager.unlock(lock)
+            return False
 
         try:
             return mkvmerge_unlocked(file_id, audio_tracks, subtitle_tracks)

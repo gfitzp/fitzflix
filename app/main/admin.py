@@ -82,7 +82,12 @@ from app.models import (
     title_sort,
 )
 from app.main import bp
-from app.main.helpers import admin_required, decimal_id, decimal_ids
+from app.main.helpers import (
+    admin_required,
+    decimal_id,
+    decimal_ids,
+    edit_seq_kwargs,
+)
 from app.main.library import restore_cost_estimate
 from app.log_digest import stored_digest
 from app.maintenance import system_health
@@ -1596,6 +1601,7 @@ def subtitle_triage(file_id):
             default_subtitle_track,
             forced_tracks,
             description=f"'{file.basename}'",
+            **edit_seq_kwargs(),
         )
         remove_triage_snapshots(file.id)
         numbers = ", ".join(
@@ -1735,6 +1741,7 @@ def lossy_audio_triage(file_id):
             default_subtitle_track,
             forced_tracks,
             description=f"'{file.basename}'",
+            **edit_seq_kwargs(),
         )
 
         # The remux renumbers the tracks. Thus, each aid set shows streams

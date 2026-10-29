@@ -98,6 +98,7 @@ from app.infuse_player import play_movie as infuse_play_movie
 from app.plex_player import play_movie, remote_playback_configured
 from app.main.helpers import (
     _hold_verdict_lock,
+    edit_seq_kwargs,
     apply_verdict,
     verdict_response,
     admin_required,
@@ -2590,6 +2591,7 @@ def _propedit_post(audio_tracks, subtitle_tracks):
             form.forced_subtitles.data,
             track_languages or None,
             description=f"'{file.basename}'",
+            **edit_seq_kwargs(),
         )
         if mkvpropedit_job:
             current_app.logger.info(f"Queued '{file.basename}' for MKV property edits")
@@ -2616,6 +2618,7 @@ def _remux_post(file, form):
         form.subtitle_tracks.data,
         description=f"'{file.basename}'",
         at_front=True,
+        **edit_seq_kwargs(),
     )
     if mkvmerge_job:
         current_app.logger.info(f"Queued '{file.basename}' for MKV remuxing")

@@ -683,6 +683,50 @@ def test_a_failed_reimport_commit_over_a_replaced_file_counts_the_edit(
             os.remove(rejected)
 
 
+def test_a_remux_queued_before_a_newer_edit_stops(app, monkeypatch):
+    """The page positions of a remux are old after a newer edit (#593)."""
+
+    from app import tracks
+
+    file_id, identifier, path = _library_row(app, "Remux After Edit")
+    _write_rows(app, file_id, 1, bump=True)
+    calls = []
+    monkeypatch.setattr(
+        tracks, "mkvmerge_unlocked", lambda *args: calls.append(args) or True
+    )
+    try:
+        assert tracks.mkvmerge_task(file_id, [1], [], edit_seq=0) is False
+        assert calls == []
+        assert _lock_is_free(app, identifier)
+        assert tracks.mkvmerge_task(file_id, [1], [], edit_seq=1) is True
+        assert calls == [(file_id, [1], [])]
+    finally:
+        os.remove(path)
+
+
+@pytest.mark.parametrize("task", ["mkvmerge_task", "mkvpropedit_task"])
+def test_a_lock_deferred_edit_keeps_its_baseline(app, monkeypatch, task):
+    """The lock-busy retry carries the counter of the page (#593)."""
+
+    from app import tracks
+
+    file_id, identifier, path = _library_row(app, f"Deferred Baseline {task}")
+    args = (file_id, [1], []) if task == "mkvmerge_task" else (file_id, "2", None, [])
+    held = app.lock_manager.lock(identifier, 60000)
+    try:
+        assert getattr(tracks, task)(*args, edit_seq=7) is True
+        (retry,) = [
+            job
+            for job in scheduled_jobs(app.file_queue) + scheduled_jobs(app.import_queue)
+            if job.func_name.endswith(task)
+        ]
+        assert retry.kwargs["edit_seq"] == 7
+        retry.delete()
+    finally:
+        app.lock_manager.unlock(held)
+        os.remove(path)
+
+
 # Each function that commits new track rows of an existing file outside a
 # scan, with the count of its note_track_edit calls (#589). _atmos_finish
 # has a second commit for a first commit that failed. A scan, the Atmos

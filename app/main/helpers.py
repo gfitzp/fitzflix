@@ -827,6 +827,32 @@ def _watched_timestamp(watched_date):
     return datetime.combine(watched_date, datetime.min.time())
 
 
+# The name of the hidden field that carries the track edit counter of
+# the rows that a page showed (#593).
+
+TRACK_EDIT_SEQ_FIELD = "track_edit_seq"
+
+
+def posted_track_edit_seq():
+    """Return the track edit counter that the posted page showed (#593).
+
+    The page computes the track positions from its rows. The counter of
+    those rows is the baseline of the edit task. A newer edit before the
+    task takes the lock then stops the task. A missing or non-numeric
+    field returns None, which means no baseline. Thus, a tab that was
+    open before the deploy still works."""
+
+    value = request.form.get(TRACK_EDIT_SEQ_FIELD, "").strip()
+    return int(value) if value.isdigit() else None
+
+
+def edit_seq_kwargs():
+    """Return the edit_seq keyword of an edit task for the posted page (#593)."""
+
+    edit_seq = posted_track_edit_seq()
+    return {} if edit_seq is None else {"edit_seq": edit_seq}
+
+
 def flash_form_errors(form):
     """Flash the first error of each field of a form that failed validation.
 

@@ -248,3 +248,59 @@ def test_the_restore_form_refuses_to_replace_a_newer_local_file(
     )
     assert "is newer than its archive in AWS" in page
     assert queued == []
+
+
+def _set_edit_seq(app, file_id, value):
+    from app.models import File
+
+    with app.app_context():
+        db.session.get(File, file_id).track_edit_seq = value
+        db.session.commit()
+
+
+def test_both_track_forms_render_the_edit_counter_of_the_page(app, admin_client):
+    """The track positions come from the rows of the page (#593)."""
+
+    file_id = _file(app, title="Counter Render")
+    _set_edit_seq(app, file_id, 4)
+    page = admin_client.get(f"/file/{file_id}").get_data(as_text=True)
+    assert page.count('name="track_edit_seq" value="4"') == 2
+
+
+TRACK_EDIT_POSTS = [
+    (
+        "app.videos.mkvpropedit_task",
+        {"default_audio": "1", "default_subtitle": "0", "mkvpropedit_submit": "Up"},
+    ),
+    (
+        "app.videos.mkvmerge_task",
+        {"audio_tracks": "1", "subtitle_tracks": "3", "mkvmerge_submit": "Remux"},
+    ),
+]
+
+
+@pytest.mark.parametrize("task, data", TRACK_EDIT_POSTS)
+@pytest.mark.parametrize("posted, expected", [("4", 4), (None, None), ("x", None)])
+def test_a_track_edit_post_carries_the_counter_of_the_page(
+    app, admin_client, monkeypatch, task, data, posted, expected
+):
+    """The first attempt gets the counter as its baseline (#593).
+
+    A missing or non-numeric field sends no baseline. Thus, a tab that was
+    open before the deploy still works."""
+
+    import app.main.library as library
+
+    calls = []
+    monkeypatch.setattr(
+        library,
+        "enqueue_task",
+        lambda name, *args, **kwargs: calls.append((name, kwargs)),
+    )
+    file_id = _file(app, title=f"Counter Post {task[-10:]} {posted}")
+    _set_edit_seq(app, file_id, 4)
+    extra = {} if posted is None else {"track_edit_seq": posted}
+    _post(admin_client, file_id, {**data, **extra})
+    ((name, kwargs),) = calls
+    assert name == task
+    assert kwargs.get("edit_seq") == expected

@@ -472,3 +472,40 @@ def test_envelope_correlation_separates_programme_from_commentary(app):
 
 def test_lossy_triage_requires_admin(user_client):
     assert user_client.get("/maintenance/lossy-audio").status_code == 302
+
+
+def test_promote_carries_the_edit_counter_of_the_page(app, admin_client):
+    """The lead track comes from the rows of the page (#593)."""
+
+    with app.app_context():
+        file, lossless = build_candidate(title="Lead Counter")
+        file.track_edit_seq = 5
+        db.session.commit()
+        file_id, lossless_track = file.id, lossless.track
+        local_path = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
+    os.makedirs(os.path.dirname(local_path), exist_ok=True)
+    with open(local_path, "wb") as f:
+        f.write(b"mkv bytes")
+    try:
+        page = admin_client.get(f"/maintenance/lossy-audio/{file_id}").get_data(
+            as_text=True
+        )
+        assert 'name="track_edit_seq" value="5"' in page
+        admin_client.post(
+            "/maintenance/lossy-audio",
+            data={
+                "csrf_token": csrf_token_from(page),
+                "file_id": file_id,
+                "lossless_track": lossless_track,
+                "track_edit_seq": "5",
+                "promote_submit": "Remux with this track in the lead",
+            },
+        )
+        (job,) = [
+            job
+            for job in app.file_queue.jobs
+            if job.func_name == "app.videos.mkvpropedit_task"
+        ]
+        assert job.kwargs == {"edit_seq": 5}
+    finally:
+        os.remove(local_path)

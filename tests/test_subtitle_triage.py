@@ -593,3 +593,40 @@ def test_an_unreadable_aids_path_counts_as_no_aids(tmp_path):
     blocker = tmp_path / "12"
     blocker.write_text("not a directory")
     assert _has_subtitle_aids(str(blocker)) is False
+
+
+def test_mark_forced_carries_the_edit_counter_of_the_page(app, admin_client):
+    """The selected tracks come from the rows of the page (#593)."""
+
+    with app.app_context():
+        file, small = build_candidate(title="Forced Counter")
+        file.track_edit_seq = 3
+        db.session.commit()
+        file_id, small_id = file.id, small.id
+        local_path = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
+    os.makedirs(os.path.dirname(local_path), exist_ok=True)
+    with open(local_path, "wb") as f:
+        f.write(b"mkv bytes")
+    try:
+        page = admin_client.get(f"/maintenance/subtitles/{file_id}").get_data(
+            as_text=True
+        )
+        assert 'name="track_edit_seq" value="3"' in page
+        admin_client.post(
+            "/maintenance/subtitles",
+            data={
+                "csrf_token": csrf_token_from(page),
+                "file_id": file_id,
+                "track_ids": [small_id],
+                "track_edit_seq": "3",
+                "mark_forced_submit": "Flag selected as forced",
+            },
+        )
+        (job,) = [
+            job
+            for job in app.file_queue.jobs
+            if job.func_name == "app.videos.mkvpropedit_task"
+        ]
+        assert job.kwargs == {"edit_seq": 3}
+    finally:
+        os.remove(local_path)

@@ -158,12 +158,14 @@
 	<form id="mkvpropedit-form" action="" method="post">
 		<fieldset {% if not file_exists_locally %}disabled{% endif %}>
 			{{ mkvpropedit_form.hidden_tag() }}
+			<input type="hidden" name="track_edit_seq" value="{{ file.track_edit_seq or 0 }}">
 			{{ mkvpropedit_form.mkvpropedit_submit(class_="btn btn-sm btn-warning") }}
 		</fieldset>
 	</form>
 	<form id="mkvmerge-form" action="" method="post">
 		<fieldset {% if not file_exists_locally %}disabled{% endif %}>
 			{{ mkvmerge_form.hidden_tag() }}
+			<input type="hidden" name="track_edit_seq" value="{{ file.track_edit_seq or 0 }}">
 			{{ mkvmerge_form.mkvmerge_submit(class_="btn btn-sm btn-danger") }}
 		</fieldset>
 	</form>

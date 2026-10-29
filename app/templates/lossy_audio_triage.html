@@ -45,6 +45,7 @@
 		<form action="" method="post">
 			{{ triage_form.csrf_token }}
 			{{ triage_form.file_id(value=file.id) }}
+			<input type="hidden" name="track_edit_seq" value="{{ file.track_edit_seq or 0 }}">
 			<div class="table-responsive">
 			<table class="table table-sm mb-0">
 				<thead class="table-light">
