@@ -85,11 +85,13 @@ def queued(monkeypatch):
     """Record each task that the page queues."""
 
     import app.main.library as library
+    from app import aws_storage
 
     calls = []
-    monkeypatch.setattr(
-        library, "enqueue_task", lambda name, *args, **kwargs: calls.append(name)
-    )
+    for module in (library, aws_storage):
+        monkeypatch.setattr(
+            module, "enqueue_task", lambda name, *args, **kwargs: calls.append(name)
+        )
     return calls
 
 

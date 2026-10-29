@@ -38,7 +38,7 @@ from app.tasks import (
     start_task_run,
 )
 from app import cron_table, db, enqueue_import_scan, local_path, safe_job_id
-from app.aws_storage import refuse_while_restore_pending
+from app.aws_storage import refuse_while_restore_pending, request_restore
 from app.naming import hidden
 from app.main.forms import (
     ArchivedRestoreForm,
@@ -1059,10 +1059,8 @@ def missing_files():
             return redirect(url_for("main.missing_files"))
 
         for file in files:
-            enqueue_task(
-                "app.videos.aws_restore",
-                file.restore_key,
-                description=f"'{file.untouched_basename}'",
+            request_restore(
+                file.restore_key, description=f"'{file.untouched_basename}'"
             )
         estimate = restore_cost_estimate(files)
         flash(
@@ -1175,10 +1173,8 @@ def held_imports():
         if archived is None:
             flash("That original is no longer archived.", "warning")
             return redirect(url_for("main.held_imports"))
-        enqueue_task(
-            "app.videos.aws_restore",
-            archived.aws_key,
-            description=f"'{archived.untouched_basename}'",
+        request_restore(
+            archived.aws_key, description=f"'{archived.untouched_basename}'"
         )
         flash(
             f"Requesting a restore of '{archived.untouched_basename}' from AWS. "

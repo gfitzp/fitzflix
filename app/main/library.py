@@ -33,7 +33,11 @@ from sqlalchemy.exc import IntegrityError
 
 from app.tasks import enqueue_task
 from app import db
-from app.aws_storage import refuse_while_restore_pending, restore_would_replace_newer
+from app.aws_storage import (
+    refuse_while_restore_pending,
+    request_restore,
+    restore_would_replace_newer,
+)
 from app.main.forms import (
     CriterionForm,
     FileDeleteForm,
@@ -2181,8 +2185,7 @@ def _request_restores(files):
     The hourly SQS poll downloads each file when it is ready."""
 
     for file in files:
-        enqueue_task(
-            "app.videos.aws_restore",
+        request_restore(
             file.restore_key,
             tier="Bulk",
             description=f"'{file.untouched_basename}'",
@@ -2653,11 +2656,7 @@ def _restore_post(estimate):
                 "warning",
             )
             return
-        enqueue_task(
-            "app.videos.aws_restore",
-            file.restore_key,
-            description=f"'{file.untouched_basename}'",
-        )
+        request_restore(file.restore_key, description=f"'{file.untouched_basename}'")
         flash(
             f"Requesting '{file.untouched_basename}' to be restored from AWS "
             f"Glacier (≈ ${estimate['cost']:.2f})",

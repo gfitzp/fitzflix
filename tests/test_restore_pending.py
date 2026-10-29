@@ -12,6 +12,7 @@ import os
 import re
 from types import SimpleNamespace
 
+import botocore.exceptions
 import pytest
 
 from tests.fakes import S3, SQS
@@ -884,3 +885,107 @@ def test_a_fault_at_the_lock_release_still_ends_a_placed_restore(app, monkeypatc
             assert handle.read() == b"s3!"
     finally:
         _remove(path)
+
+
+def test_the_page_stamps_the_row_before_the_redirect(app, admin_client, monkeypatch):
+    """The forms are disabled on the page the restore request redirects to (#613)."""
+
+    from app import aws_storage
+    from tests.conftest import ADMIN_PASSWORD, csrf_token_from
+
+    queued = []
+    monkeypatch.setattr(
+        aws_storage, "enqueue_task", lambda name, *args, **kwargs: queued.append(name)
+    )
+    with app.app_context():
+        file_id, _, path = _pending_file(app, "Stamped At The Click", requested=False)
+    try:
+        page = admin_client.get(f"/file/{file_id}").get_data(as_text=True)
+        assert "disabled" not in _fieldset_of(page, "s3_upload_submit")
+        response = admin_client.post(
+            f"/file/{file_id}",
+            data={
+                "csrf_token": csrf_token_from(page),
+                "password": ADMIN_PASSWORD,
+                "s3_download_submit": "Restore",
+            },
+            follow_redirects=True,
+        )
+        page = response.get_data(as_text=True)
+        assert "to be restored from AWS" in page
+        assert "are disabled until the restore ends" in page
+        for field in ("s3_upload_submit", "s3_download_submit"):
+            assert "disabled" in _fieldset_of(page, field)
+        # The worker has not run. The page stamped the row itself.
+        assert queued == ["app.videos.aws_restore"]
+        with app.app_context():
+            assert _pending(file_id) is not None
+    finally:
+        _remove(path)
+
+
+class _RefusingS3:
+    """An S3 client whose restore request cannot be made."""
+
+    def __init__(self, fault):
+        self.fault = fault
+
+    def head_object(self, **kwargs):
+        if self.fault == "missing":
+            raise botocore.exceptions.ClientError(
+                {"Error": {"Code": "404"}, "ResponseMetadata": {"HTTPStatusCode": 404}},
+                "HeadObject",
+            )
+        return {"StorageClass": "DEEP_ARCHIVE"}
+
+    def restore_object(self, **kwargs):
+        if self.fault == "refused":
+            raise botocore.exceptions.ClientError(
+                {"Error": {"Code": "AccessDenied"}}, "RestoreObject"
+            )
+        if self.fault == "in-progress":
+            raise botocore.exceptions.ClientError(
+                {"Error": {"Code": "RestoreAlreadyInProgress"}}, "RestoreObject"
+            )
+        raise OSError("endpoint unreachable")
+
+
+@pytest.mark.parametrize("fault", ["missing", "refused", "unreachable", "in-progress"])
+def test_a_request_that_cannot_be_made_clears_the_state(app, monkeypatch, fault):
+    """A stamp from the page ends when S3 cannot take the request (#613)."""
+
+    from app import aws_storage
+
+    monkeypatch.setattr(
+        aws_storage, "aws_s3_client", lambda **kwargs: _RefusingS3(fault)
+    )
+    with app.app_context():
+        file_id, key, path = _pending_file(app, f"Refused Request {fault}", local=False)
+        try:
+            if fault in ("refused", "unreachable"):
+                with pytest.raises(Exception):
+                    aws_storage.aws_restore(key)
+            else:
+                aws_storage.aws_restore(key)
+            # A request that is already in progress keeps the stamp.
+            expected_pending = fault == "in-progress"
+            assert (_pending(file_id) is not None) is expected_pending
+        finally:
+            _remove(path)
+
+
+def test_a_move_request_that_cannot_be_made_keeps_the_rows(app, monkeypatch):
+    """record_request=False never touches the state (#613)."""
+
+    from app import aws_storage
+
+    monkeypatch.setattr(
+        aws_storage, "aws_s3_client", lambda **kwargs: _RefusingS3("missing")
+    )
+    with app.app_context():
+        file_id, key, path = _pending_file(app, "Move Request Missing", local=False)
+        try:
+            aws_storage.aws_restore(key, record_request=False)
+            assert _pending(file_id) is not None
+        finally:
+            _remove(path)

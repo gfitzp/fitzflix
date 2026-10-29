@@ -226,6 +226,44 @@ def end_restore_request(file_id):
         )
 
 
+def end_restore_requests_of_key(key):
+    """Clear the pending restore of each row that claims key (#613).
+
+    aws_restore calls this when a request that a page recorded cannot
+    be made: the key is gone from S3, or S3 refuses it. Thus, a form
+    never stays off for a restore that never started. This commits."""
+
+    try:
+        cleared = File.query.filter(
+            db.or_(File.aws_key == key, File.aws_transcoded_key == key),
+            File.restore_requested_at.isnot(None),
+        ).update({"restore_requested_at": None}, synchronize_session=False)
+        if cleared:
+            db.session.commit()
+    except Exception:
+        db.session.rollback()
+        current_app.logger.warning(
+            f"'{key}' Could not clear the pending restore: " + traceback.format_exc()
+        )
+
+
+def request_restore(key, tier="Standard", description=None):
+    """Record a restore request of key on its rows, then queue the request (#613).
+
+    A page calls this. The record comes before the queue. Thus, the
+    page that the request redirects to shows the forms disabled at
+    once, not after the worker runs. The worker clears the record if
+    the request cannot be made."""
+
+    mark_restore_pending(key)
+    enqueue_task(
+        "app.videos.aws_restore",
+        key,
+        tier=tier,
+        description=description or f"'{os.path.basename(key)}'",
+    )
+
+
 def refuse_while_restore_pending(file):
     """Return RESTORE_PENDING_MESSAGE if a restore of the file is pending, else None (#610).
 
@@ -3954,10 +3992,12 @@ def aws_restore(key, tier="Standard", record_request=True):
     The request sets the pending restore of each File row that claims
     the key (#610). Then each writer of the file refuses until the
     download ends, and download_task can tell if an import replaced the
-    file during the restore. A second request during a thaw is a new
-    request, with its own time. record_request=False is a
-    restore for an archive move or a request again for the same
-    download. It does not change the rows.
+    file during the restore. A page sets the state before it queues
+    this (#613). The stamp here is for the requests no page asks for.
+    A second request during a thaw is a new request, with its own
+    time. A request that cannot be made clears the state.
+    record_request=False is a restore for an archive move or a request
+    again for the same download. It does not change the rows.
     """
 
     with app.app_context():
@@ -4017,9 +4057,11 @@ def aws_restore(key, tier="Standard", record_request=True):
                 current_app.logger.warning(
                     f"'{key}' does not exist in AWS S3 storage, cannot restore"
                 )
+                if record_request:
+                    end_restore_requests_of_key(key)
 
         # Only a botocore ClientError instance has a .response attribute.
-        # Let each other exception propagate as it is.
+        # Each other exception clears the record and propagates.
 
         except botocore.exceptions.ClientError as e:
             if e.response["Error"]["Code"] == "RestoreAlreadyInProgress":
@@ -4037,7 +4079,14 @@ def aws_restore(key, tier="Standard", record_request=True):
 
             else:
                 current_app.logger.error(e)
+                if record_request:
+                    end_restore_requests_of_key(key)
                 raise
+
+        except Exception:
+            if record_request:
+                end_restore_requests_of_key(key)
+            raise
 
         else:
             return

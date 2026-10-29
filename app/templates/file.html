@@ -53,7 +53,7 @@
    turns them on again. #}
 {% if file.restore_requested_at %}
 <div class="alert alert-info" role="alert">
-	A restore of this file from AWS is pending since {{ moment(file.restore_requested_at).format("LLL") }}. The forms that edit, upload or restore the file stay off until the restore ends.
+	A restore of this file from AWS is pending since {{ moment(file.restore_requested_at).format("LLL") }}. The forms that edit, upload or restore the file are disabled until the restore ends.
 </div>
 {% endif %}
 {% if audio_tracks or subtitle_tracks %}
@@ -69,7 +69,7 @@
 		</form>
 	</div>
 </div>
-{# The controls of a file with a pending restore stay off (#610). #}
+{# The controls of a file with a pending restore are disabled (#610). #}
 {% set track_edits_off = not file_exists_locally or file.restore_requested_at %}
 <div class="table-responsive mt-3">
 	<table class="table align-middle">
