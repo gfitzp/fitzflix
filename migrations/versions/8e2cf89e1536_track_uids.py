@@ -2,9 +2,9 @@
 
 A remux keeps the UID and changes the positions. Thus, an edit that
 addresses a track by UID needs no counter to find a changed position.
-The upgrade fills no UID. Run `flask tracks backfill-uids` after it,
-while the old code still runs. The next revision drops the counter
-column, after the restart.
+The upgrade fills no UID. A one-time scan of each library file filled
+them on Oct 29 2026, while the old code still ran. The next revision
+drops the counter column, after the restart.
 
 Revision ID: 8e2cf89e1536
 Revises: d7b1f4a09e52

@@ -308,7 +308,6 @@ def register(app):
         aws_cli,
         recommendations_cli,
         smb_cli,
-        tracks_cli,
         triage_cli,
     )
 
@@ -318,6 +317,5 @@ def register(app):
         triage_cli,
         atmos_cli,
         smb_cli,
-        tracks_cli,
     ):
         module.register_cli(app)
