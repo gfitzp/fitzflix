@@ -8,6 +8,7 @@ column. These tests use real Matroska files and read the results with
 mkvmerge -J."""
 
 import importlib.util
+import inspect
 import json
 import os
 import shutil
@@ -334,19 +335,33 @@ def test_the_backfill_command_is_registered(app):
     assert "track UIDs" in result.output
 
 
-def test_the_migration_adds_the_uids_and_drops_the_counter():
+def _migration(name):
     path = os.path.join(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
         "migrations",
         "versions",
-        "8e2cf89e1536_track_uids.py",
+        name,
     )
     spec = importlib.util.spec_from_file_location("track_uid_migration", path)
     migration = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(migration)
+    return migration
+
+
+def test_the_migration_adds_the_uids_before_the_restart():
+    migration = _migration("8e2cf89e1536_track_uids.py")
     assert migration.revision == "8e2cf89e1536"
     assert migration.down_revision == "d7b1f4a09e52"
     assert migration.TRACK_TABLES == ("file_audio_track", "file_subtitle_track")
+    source = inspect.getsource(migration.upgrade)
+    assert "drop_column" not in source
+
+
+def test_the_counter_drops_in_its_own_step_after_the_restart():
+    migration = _migration("b3a9d1e7c4f2_drop_track_edit_seq.py")
+    assert migration.revision == "b3a9d1e7c4f2"
+    assert migration.down_revision == "8e2cf89e1536"
+    assert "track_edit_seq" in inspect.getsource(migration.upgrade)
 
 
 def test_the_models_carry_the_uid(app):
