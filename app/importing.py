@@ -3520,9 +3520,13 @@ def _delete_replaced_archive(worse_key):
             f"Keeping '{worse_key}' in AWS — another file record still claims it"
         )
         return
+    # The replaced row can name a key with no object. A plain delete
+    # then writes a marker at a key that never existed (#588).
+
     enqueue_task(
         "app.videos.aws_delete",
         worse_key,
+        only_if_present=True,
         description=f"Deleting '{worse_key}' from AWS",
     )
 

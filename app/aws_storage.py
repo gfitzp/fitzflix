@@ -136,7 +136,7 @@ def delete_sqs_message(sqs_client, receipt_handle, note="message"):
         )
         current_app.logger.debug(f"SQS delete_message response: {response}")
 
-    except:
+    except Exception:
         current_app.logger.warning(
             f"Unable to delete message '{receipt_handle}' from SQS"
         )
@@ -1112,6 +1112,11 @@ def download_task(
         file = File.query.filter_by(aws_key=key).first()
         if file is None:
             file = File.query.filter_by(aws_transcoded_key=key).first()
+
+        # The id stays readable after the rollback of before_place. The
+        # rollback expires the row, and a deleted row then raises (#588).
+
+        file_id = file.id if file is not None else None
         place_at = None
         if file is not None and restores_directly(key):
             basename = file.basename
@@ -1130,12 +1135,23 @@ def download_task(
         # object in cold storage would start a new restore. Thus, drop
         # the message and download nothing.
 
+        def discard_kept_download():
+            """Remove a finished download that an earlier round kept (#588).
+
+            A PlacementDeferred round keeps the copy and its sidecar. The
+            orphan sweep keeps a complete copy. Thus, a round that stops
+            removes it."""
+
+            if place_at:
+                _discard_partial(restore_staging_path(key))
+
         if place_at and restore_would_replace_newer(file, key):
             current_app.logger.warning(
                 f"'{basename}' The library file is newer than its archive "
                 f"'{key}'. The restore does not replace it. Archive the file "
                 f"again first"
             )
+            discard_kept_download()
             return delete_download_message(sqs_receipt_handle, note="stale restore")
 
         if overtaken_by_import(current_app.redis, file, key):
@@ -1143,6 +1159,7 @@ def download_task(
                 f"'{basename}' was imported again after its restore request, "
                 f"skipping the download"
             )
+            discard_kept_download()
             return delete_download_message(sqs_receipt_handle, note="overtaken restore")
 
         # The stat of the library file before the first download (#586)
@@ -1168,6 +1185,7 @@ def download_task(
                     f"'{basename}' Volumes unavailable ({', '.join(dead)}) for "
                     f"the restore after {volume_waits} waits; giving up"
                 )
+                discard_kept_download()
                 return False
             handle = _latest_receipt_handle(sqs_receipt_handle)
             requeue(
@@ -1201,7 +1219,7 @@ def download_task(
             the download refuses the placement (#586)."""
 
             db.session.rollback()
-            fresh = db.session.get(File, file.id)
+            fresh = db.session.get(File, file_id)
             if fresh is None or not fresh.file_path:
                 raise PlacementRefused(
                     f"'{basename}' The record has no library path any more. "
@@ -2018,11 +2036,16 @@ def archive_library_file(file, path, delete_replaced=True):
 
         rip = _keep_pending_rip(file, replaced)
         doomed = [rip, replaced] if rip else []
+    # A row that the sync uploads because it has no upload date can name
+    # a key with no object. A plain delete then writes a marker at a key
+    # that never existed (#588).
+
     for doomed_key in doomed:
         if delete_replaced and not untouched_key_still_claimed(doomed_key):
             enqueue_task(
                 "app.videos.aws_delete",
                 doomed_key,
+                only_if_present=True,
                 description=f"Deleting '{doomed_key}' from AWS",
             )
     return key
@@ -3321,6 +3344,20 @@ def place_restored_import_task(staged, basename, waits=0):
         return True
 
 
+def restore_staging_path(key):
+    """Return the staging path of the download of an S3 key in the import directory.
+
+    A library basename is not unique: many films have a "Restoration
+    Demonstration.mkv". The untouched name is not sufficient either. The
+    2 archives of a conversion share it, and 2 keys can share 1
+    untouched name (#433). Thus, the staging name is the downloaded key,
+    with its prefix: 1 file for each object."""
+
+    return os.path.join(
+        current_app.config["IMPORT_DIR"], f".restore-{key.replace('/', '-')}"
+    )
+
+
 def aws_download(
     key, basename, sqs_receipt_handle=None, place_at=None, before_place=None
 ):
@@ -3374,17 +3411,12 @@ def aws_download(
     current_app.logger.info(f"'{basename}' downloading from {source}")
 
     bucket = current_app.config["AWS_BUCKET"]
-    # A library basename is not unique: many films have a "Restoration
-    # Demonstration.mkv". The untouched name is not sufficient either. The
-    # 2 archives of a conversion share it, and 2 keys can share 1
-    # untouched name (#433). Thus, the staging name is the downloaded key,
-    # with its prefix: 1 file for each object. An import download then
-    # takes its untouched name, because the import parses that name. The
-    # rename never replaces a file of that name. The rename starts the
-    # import.
 
-    staged_name = f".restore-{key.replace('/', '-')}"
-    destination = os.path.join(current_app.config["IMPORT_DIR"], staged_name)
+    # An import download takes its untouched name after the download,
+    # because the import parses that name. The rename never replaces a
+    # file of that name. The rename starts the import.
+
+    destination = restore_staging_path(key)
     s3_client = aws_s3_client()
     sqs_client = aws_sqs_client()
 
@@ -3532,13 +3564,17 @@ def aws_download(
 
             if place_at:
                 target = place_at
+
+                # The download is complete. The sidecar marks it for the
+                # next run and for the orphan sweep. A PlacementDeferred
+                # or a transient fault of the placement then does not
+                # download the object again (#588).
+
+                _write_partial_etag(destination, progress.etag, progress.size)
                 if before_place:
                     try:
                         target = before_place(progress.etag, progress.size) or place_at
                     except PlacementDeferred:
-                        # The download is complete. The sidecar marks it
-                        # for the next run and for the orphan sweep.
-                        _write_partial_etag(destination, progress.etag, progress.size)
                         raise
                     except BaseException:
                         _discard_partial(destination)

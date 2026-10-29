@@ -1103,3 +1103,142 @@ def test_a_volume_wait_carries_the_stat_of_the_library_file(app, monkeypatch):
         retry.delete()
     finally:
         os.remove(library_path)
+
+
+def test_a_row_deleted_during_the_download_refuses_and_drops_the_message(
+    app, monkeypatch
+):
+    """The rollback expired the row, and its id raised ObjectDeletedError (#588).
+
+    The error was no PlacementRefused. The SQS message stayed."""
+
+    import app.videos as videos
+    from app import aws_storage, db
+    from app.models import File
+
+    key, library_path = _direct_restore_row(app, "Deleted During")
+
+    class DeletingS3(S3):
+        def download_file(self, bucket, key, filename, Callback=None):
+            # Another worker deletes the row. Its own connection keeps the
+            # row of this session in the identity map.
+            with db.engine.begin() as other:
+                other.execute(db.delete(File).where(File.aws_key == key))
+            super().download_file(bucket, key, filename, Callback)
+
+    sqs = SQS()
+    monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kwargs: DeletingS3())
+    monkeypatch.setattr(aws_storage, "aws_sqs_client", lambda: sqs)
+    monkeypatch.setattr(videos, "_dead_volumes", lambda paths: [])
+    with app.app_context():
+        assert videos.download_task(key, os.path.basename(key), "receipt-9") is True
+    assert sqs.deleted == ["receipt-9"]
+    assert not os.path.exists(library_path)
+
+
+def test_a_transient_placement_fault_keeps_the_download_for_the_retry(app, monkeypatch):
+    """The sidecar was written only on a PlacementDeferred (#588).
+
+    A fault of the library volume during the copy then downloaded the
+    whole object again on the retry."""
+
+    import errno
+
+    import app.videos as videos
+    from app import aws_storage
+
+    s3 = S3()
+    monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kwargs: s3)
+    monkeypatch.setattr(aws_storage, "aws_sqs_client", lambda: None)
+    library = os.path.join(app.config["LIBRARY_DIR"], "Movies/z.mkv")
+    staged = os.path.join(app.config["IMPORT_DIR"], ".restore-modified-z.mkv")
+    real_place = aws_storage.place_in_library
+
+    def volume_drop(*args):
+        raise OSError(errno.EIO, "Input/output error")
+
+    try:
+        with app.app_context():
+            with monkeypatch.context() as patch:
+                patch.setattr(aws_storage, "place_in_library", volume_drop)
+                with pytest.raises(OSError):
+                    videos.aws_download(
+                        "modified/z.mkv",
+                        "z.mkv",
+                        place_at=library,
+                        before_place=lambda etag=None, size=None: None,
+                    )
+            assert os.path.exists(staged) and os.path.exists(f"{staged}.etag")
+            assert aws_storage.place_in_library is real_place
+            os.makedirs(os.path.dirname(library), exist_ok=True)
+            assert (
+                videos.aws_download(
+                    "modified/z.mkv",
+                    "z.mkv",
+                    place_at=library,
+                    before_place=lambda etag=None, size=None: None,
+                )
+                == aws_storage.DOWNLOAD_COMPLETE
+            )
+        assert s3.downloads == ["modified/z.mkv"]
+        assert open(library, "rb").read() == b"s3!"
+    finally:
+        for path in (staged, f"{staged}.etag", library):
+            if os.path.exists(path):
+                os.remove(path)
+
+
+@pytest.mark.parametrize("stop", ["stale", "give-up"])
+def test_an_early_stop_removes_the_kept_download(app, monkeypatch, stop):
+    """A copy that a deferred round kept stayed for ever (#588).
+
+    The orphan sweep keeps a complete copy with its sidecar."""
+
+    import app.videos as videos
+    from app import aws_storage, db
+    from app.models import File
+
+    key, library_path = _direct_restore_row(app, f"Kept Copy {stop}")
+    staged = os.path.join(app.config["IMPORT_DIR"], f".restore-{key.replace('/', '-')}")
+    os.makedirs(os.path.dirname(staged), exist_ok=True)
+    with open(staged, "wb") as f:
+        f.write(b"s3!")
+    with open(f"{staged}.etag", "w") as f:
+        f.write('"v1"\n3')
+    kwargs = {}
+    if stop == "stale":
+        os.makedirs(os.path.dirname(library_path), exist_ok=True)
+        with open(library_path, "wb") as f:
+            f.write(b"newer")
+        with app.app_context():
+            db.session.execute(
+                db.update(File).where(File.aws_key == key).values(aws_stale=True)
+            )
+            db.session.commit()
+    else:
+        monkeypatch.setattr(videos, "_dead_volumes", lambda paths: ["/Volumes/Movies"])
+        kwargs["volume_waits"] = aws_storage.MAX_VOLUME_WAITS
+    monkeypatch.setattr(aws_storage, "aws_sqs_client", lambda: None)
+    try:
+        with app.app_context():
+            videos.download_task(key, os.path.basename(key), **kwargs)
+        assert not os.path.exists(staged)
+        assert not os.path.exists(f"{staged}.etag")
+    finally:
+        for path in (staged, f"{staged}.etag", library_path):
+            if os.path.exists(path):
+                os.remove(path)
+
+
+def test_the_sqs_delete_lets_a_base_exception_through(app):
+    """A bare except swallowed a shutdown during the delete (#588)."""
+
+    from app import aws_storage
+
+    class Stopping:
+        def delete_message(self, **kwargs):
+            raise SystemExit(1)
+
+    with app.app_context():
+        with pytest.raises(SystemExit):
+            aws_storage.delete_sqs_message(Stopping(), "receipt")

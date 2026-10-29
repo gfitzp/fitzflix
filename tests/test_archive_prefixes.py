@@ -665,3 +665,31 @@ def test_a_failed_copy_of_the_pending_rip_deletes_nothing(app, uploads, monkeypa
 
         assert file.aws_key == f"modified/{name}"
         assert _deletes(app) == []
+
+
+def test_the_replaced_key_is_deleted_only_if_present(app, uploads):
+    """A row with no upload date can name a key with no object (#588).
+
+    A plain delete wrote a delete marker at a key that never existed."""
+
+    from app.importing import _delete_replaced_archive
+
+    with app.app_context():
+        file = make_movie_file(
+            make_movie("Marker Archive", 1998),
+            "DVD",
+            aws_key="untouched/Marker Archive (1998) - [DVD].mkv",
+        )
+        db.session.commit()
+        aws_storage.archive_library_file(file, "/library/file.mkv")
+        _delete_replaced_archive("untouched/Worse Copy (1998) - [DVD].mkv")
+    deletes = [
+        job
+        for job in app.handoff_queue.jobs
+        if job.func_name == "app.videos.aws_delete"
+    ]
+    assert [job.args[0] for job in deletes] == [
+        "untouched/Marker Archive (1998) - [DVD].mkv",
+        "untouched/Worse Copy (1998) - [DVD].mkv",
+    ]
+    assert all(job.kwargs == {"only_if_present": True} for job in deletes)
