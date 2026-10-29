@@ -187,9 +187,18 @@ def remux_file(file_path, build_command, job, name, activity, before_replace=Non
             os.remove(hidden_library)
         raise
     finally:
+        # The rename can be done when this cleanup runs. A fault here must
+        # not hide that fact from the caller. Thus, a stray that stays
+        # only logs a warning (#582)
+
         for path in (staged_source, staged_output):
-            if os.path.exists(path):
-                os.remove(path)
+            try:
+                if os.path.exists(path):
+                    os.remove(path)
+            except OSError as e:
+                current_app.logger.warning(
+                    f"'{name}' Cannot remove the staging copy {path}: {e}"
+                )
         release_staging_reservation(reservation)
 
 
@@ -1134,12 +1143,12 @@ def mkvpropedit_unlocked(
     from app.videos import wait_for_subprocess
 
     with app.app_context():
-        # After the reorder remux is renamed into place, the track
-        # numbering of the file is different. Thus, a retry with the
-        # original track arguments of the caller would flag the wrong
-        # tracks
+        # After the reorder remux or the empty-subtitle removal is renamed
+        # into place, the track numbering of the file is different. Thus,
+        # a retry with the original track arguments of the caller would
+        # flag the wrong tracks (#582)
 
-        reordered = False
+        restructured = False
 
         try:
             job = get_current_job()
@@ -1260,13 +1269,15 @@ def mkvpropedit_unlocked(
                         "Remuxing",
                         before_replace=lambda: flag_archive_before_rewrite(file_id),
                     )
-                    reordered = True
+                    restructured = True
 
-            # Remove the subtitle tracks that have zero elements
+            # Remove the subtitle tracks that have zero elements. The
+            # removal renumbers the subtitle tracks that stay (#582)
 
-            remove_empty_subtitle_tracks(
+            if remove_empty_subtitle_tracks(
                 file_path, before_replace=lambda: flag_archive_before_rewrite(file_id)
-            )
+            ):
+                restructured = True
 
             # Build the audio and subtitle track info again after the changes
 
@@ -1291,7 +1302,7 @@ def mkvpropedit_unlocked(
             # safe. The log entry (or a quiet transient defer) is the job of
             # the caller
 
-            e.retry_unsafe = reordered
+            e.retry_unsafe = restructured
             db.session.rollback()
             raise
 

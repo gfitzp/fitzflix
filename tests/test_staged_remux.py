@@ -254,3 +254,35 @@ def test_a_reservation_lock_that_frees_up_remuxes_on_staging(
     source, output = seen[0]
     assert source.startswith(staging) and output.startswith(staging)
     assert _audio_count(app, library_file) == 1
+
+
+def test_a_stray_that_stays_after_the_rename_does_not_fail_the_remux(
+    app, library_file, staging, monkeypatch
+):
+    """The cleanup runs after the rename. A fault there only warns (#582).
+
+    Before, the OSError of the cleanup reached the caller. The caller
+    read it as a fault before the restructure, and a retry with the old
+    track numbers was then thought to be safe."""
+
+    monkeypatch.setattr(tracks, "_on_volume_of", lambda path, directory: False)
+    real_remove = os.remove
+
+    def stuck(path, *args, **kwargs):
+        if os.path.basename(path).startswith(".remux-"):
+            raise OSError(116, "Stale NFS file handle")
+        return real_remove(path, *args, **kwargs)
+
+    seen = []
+    with app.app_context():
+        with monkeypatch.context() as patch:
+            patch.setattr(tracks.os, "remove", stuck)
+            tracks.remux_file(
+                library_file, _drop_second_audio(app, seen), None, "x", "Remuxing"
+            )
+        assert _audio_count(app, library_file) == 1
+        assert not [
+            field
+            for field in app.redis.hkeys(STAGING_RESERVED_KEY)
+            if field.startswith(b"remux:")
+        ]
