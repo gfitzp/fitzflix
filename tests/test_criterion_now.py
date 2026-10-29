@@ -490,6 +490,22 @@ def test_director_match_survives_romanization_differences(app, monkeypatch):
     assert not criterion_now._person_matches("Samuel Fuller", "Alan Smithee")
 
 
+def test_person_matches_folds_accents():
+    """Test that an accent on one side only never vetoes a match.
+
+    The Channel wrote 'Luis Bunuel' where TMDB credits 'Luis Buñuel'.
+    The old test compared the raw lowercase strings. The ñ broke the
+    containment test and split the surname into two tokens."""
+
+    import app.criterion_now as criterion_now
+
+    assert criterion_now._person_matches("Luis Bunuel", "Luis Buñuel")
+    assert criterion_now._person_matches("Luis Buñuel", "Luis Bunuel")
+    assert criterion_now._person_matches("Francois Truffaut", "François Truffaut")
+    assert not criterion_now._person_matches("Luis Bunuel", "")
+    assert not criterion_now._person_matches("Jean Renoir", "Jean-Luc Godard")
+
+
 def test_starring_line_verifies_when_no_director_is_known(app, monkeypatch):
     """Test the Starring line as the fallback when a director is missing.
 

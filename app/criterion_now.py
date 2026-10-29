@@ -41,7 +41,7 @@ from app.tasks import enqueue_task
 from app import get_app
 from app.leaving_criterion import CRITERION_PROVIDER_ID, match_tmdb_id
 from app.streaming_rail import enriched_movie
-from app.title_keys import title_key
+from app.title_keys import match_key, title_key
 
 app = LocalProxy(get_app)
 
@@ -435,20 +435,23 @@ def parse_film_info(page_html):
 def _person_matches(scraped, credited_name):
     """Return True if a scraped name can name the same person as a TMDB credit.
 
-    The containment test must run in both directions. TMDB frequently
-    carries a longer romanization ('Mabel Cheung Yuen-Ting') than the
-    Channel ('Mabel Cheung'). Two shared name tokens also count. That
-    covers a reversed name order and hyphen differences."""
+    Both names become comparison keys from match_key first. That folds
+    accents, case, and punctuation. Thus, the Channel's 'Luis Bunuel'
+    matches the TMDB credit 'Luis Buñuel' (reported by Glenn,
+    2026-10-29). The containment test must run in both directions. TMDB
+    frequently carries a longer romanization ('Mabel Cheung Yuen-Ting')
+    than the Channel ('Mabel Cheung'). Two shared name tokens also
+    count. That covers a reversed name order and hyphen differences."""
 
-    scraped = scraped.lower()
-    name = credited_name.lower()
+    scraped = match_key(scraped)
+    name = match_key(credited_name)
+    if not scraped or not name:
+        return False
     if name in scraped or scraped in name:
         return True
     if name.split()[-1] in scraped:
         return True
-    scraped_tokens = set(re.findall(r"[a-z]+", scraped))
-    name_tokens = set(re.findall(r"[a-z]+", name))
-    return len(scraped_tokens & name_tokens) >= 2
+    return len(set(scraped.split()) & set(name.split())) >= 2
 
 
 def matched_film(title, info, failures=None):
