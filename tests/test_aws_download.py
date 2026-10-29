@@ -1546,3 +1546,92 @@ def test_a_transient_fault_before_the_placement_carries_the_kept_stat(app, monke
         for path in (staged, f"{staged}.etag", library_path):
             if os.path.exists(path):
                 os.remove(path)
+
+
+def _slow_down():
+    return _client_error("SlowDown", 503, "HeadObject")
+
+
+def _lost_endpoint():
+    import botocore.exceptions
+
+    return botocore.exceptions.EndpointConnectionError(endpoint_url="https://s3")
+
+
+@pytest.mark.parametrize("fault", [_slow_down, _lost_endpoint])
+def test_a_transient_fault_of_a_placement_check_keeps_the_download(
+    app, monkeypatch, fault
+):
+    """A throttled HEAD discarded a finished restore download (#598)."""
+
+    key, library_path = _direct_restore_row(app, f"Placement Fault {fault.__name__}")
+    staged = os.path.join(app.config["IMPORT_DIR"], f".restore-{key.replace('/', '-')}")
+
+    def head(call):
+        if call == 2:
+            raise fault()
+        return {"ContentLength": 3, "ETag": '"v1"'}
+
+    s3 = S3(head=head)
+    try:
+        assert _place_with(app, monkeypatch, s3, key) is False
+        assert s3.downloads == [key]
+        assert os.path.exists(staged) and os.path.exists(f"{staged}.etag")
+        assert not os.path.exists(library_path)
+        (retry,) = _volume_retries(app)
+        assert retry.kwargs["library_stat"] == []
+        retry.delete()
+    finally:
+        for path in (staged, f"{staged}.etag"):
+            if os.path.exists(path):
+                os.remove(path)
+
+
+def test_an_access_fault_of_a_placement_check_still_discards(app, monkeypatch):
+    """A 403 does not clear by itself. The deferral is only for a transient fault."""
+
+    key, library_path = _direct_restore_row(app, "Placement Denied")
+    staged = os.path.join(app.config["IMPORT_DIR"], f".restore-{key.replace('/', '-')}")
+
+    def head(call):
+        if call == 2:
+            raise _client_error("AccessDenied", 403, "HeadObject")
+        return {"ContentLength": 3, "ETag": '"v1"'}
+
+    assert _place_with(app, monkeypatch, S3(head=head), key) is None
+    assert not os.path.exists(staged)
+    assert _volume_retries(app) == []
+
+
+def test_a_lost_database_at_a_placement_check_keeps_the_download(app, monkeypatch):
+    """A MariaDB restart at the read of the row discarded the download (#598)."""
+
+    import sqlalchemy.exc
+
+    from app import db
+
+    key, library_path = _direct_restore_row(app, "Placement Db Lost")
+    staged = os.path.join(app.config["IMPORT_DIR"], f".restore-{key.replace('/', '-')}")
+    real_get = db.session.get
+    calls = []
+
+    def lost_get(*args, **kwargs):
+        calls.append(args)
+        raise sqlalchemy.exc.OperationalError("SELECT", {}, Exception("gone away"))
+
+    class LosingS3(S3):
+        def download_file(self, *args, **kwargs):
+            super().download_file(*args, **kwargs)
+            monkeypatch.setattr(db.session, "get", lost_get)
+
+    try:
+        assert _place_with(app, monkeypatch, LosingS3(), key) is False
+        monkeypatch.setattr(db.session, "get", real_get)
+        assert calls
+        assert os.path.exists(staged) and os.path.exists(f"{staged}.etag")
+        (retry,) = _volume_retries(app)
+        retry.delete()
+    finally:
+        for path in (staged, f"{staged}.etag"):
+            if os.path.exists(path):
+                os.remove(path)

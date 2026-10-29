@@ -1054,7 +1054,40 @@ def _import_uncataloged(roots):
 
 
 class PlacementDeferred(Exception):
-    """A volume of a direct restore is not available at the placement (#533)."""
+    """A volume of a direct restore is not available at the placement (#533).
+
+    The first argument is the list of the dead volumes. reason replaces
+    the volume text of the log line for a transient fault of a check
+    (#598)."""
+
+    def __init__(self, dead, reason=None):
+        super().__init__(dead)
+        self.reason = reason
+
+
+def _transient_placement_fault(error):
+    """Return True if a fault of a placement check can clear by itself (#598).
+
+    These are a throttle or a server error of S3, a lost connection to
+    AWS, and a lost connection to the database. A missing object and an
+    access fault are not transient."""
+
+    import sqlalchemy.exc
+
+    if isinstance(error, botocore.exceptions.ClientError):
+        code = str(error.response.get("Error", {}).get("Code", ""))
+        status = error.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+        return not (
+            _is_missing(error) or code in NON_RETRYABLE_DOWNLOAD_ERRORS or status == 403
+        )
+    return isinstance(
+        error,
+        (
+            botocore.exceptions.ConnectionError,
+            botocore.exceptions.HTTPClientError,
+            sqlalchemy.exc.OperationalError,
+        ),
+    )
 
 
 class PlacementRefused(Exception):
@@ -1200,13 +1233,18 @@ def download_task(
 
             return {"library_stat": snapshot} if snapshot is not None else None
 
-        def wait_for_volumes(dead):
-            """Book the download again after 5 minutes, or give up."""
+        def wait_for_volumes(dead, reason=None):
+            """Book the download again after 5 minutes, or give up.
 
+            reason replaces the volume text for a transient fault of a
+            placement check (#598)."""
+
+            reason = (
+                reason or f"Volumes unavailable ({', '.join(dead)}) for the restore"
+            )
             if volume_waits >= MAX_VOLUME_WAITS:
                 current_app.logger.error(
-                    f"'{basename}' Volumes unavailable ({', '.join(dead)}) for "
-                    f"the restore after {volume_waits} waits; giving up"
+                    f"'{basename}' {reason} after {volume_waits} waits; giving up"
                 )
                 discard_kept_download()
                 return False
@@ -1215,7 +1253,7 @@ def download_task(
                 "app.videos.download_task",
                 key=key,
                 delay=timedelta(minutes=5),
-                reason=f"Volumes unavailable ({', '.join(dead)}) for the restore",
+                reason=reason,
                 counters={
                     "transient_retries": transient_retries,
                     "volume_waits": volume_waits + 1,
@@ -1232,6 +1270,29 @@ def download_task(
             return wait_for_volumes(dead)
 
         def before_place(etag=None, size=None, library_stat=None):
+            """Run the placement checks. Defer on a transient fault (#598).
+
+            A throttle of an S3 HEAD or a restart of the database is not a
+            reason to discard a finished download. A PlacementDeferred
+            keeps the copy and its sidecar, and the retry carries the
+            stat."""
+
+            try:
+                return check_placement(etag, size, library_stat)
+            except (PlacementDeferred, PlacementRefused):
+                raise
+            except Exception as error:
+                if not _transient_placement_fault(error):
+                    raise
+                raise PlacementDeferred(
+                    [],
+                    reason=(
+                        f"A placement check of the restore failed with a "
+                        f"transient fault ({type(error).__name__}: {error})"
+                    ),
+                ) from error
+
+        def check_placement(etag=None, size=None, library_stat=None):
             """Check the volumes and the newer-file guards again. Return the path (#533).
 
             A rename during the download moves the file of the row
@@ -1348,7 +1409,7 @@ def download_task(
             )
 
         except PlacementDeferred as e:
-            return wait_for_volumes(e.args[0])
+            return wait_for_volumes(e.args[0], getattr(e, "reason", None))
 
         except PlacementRefused as e:
             current_app.logger.warning(str(e))
