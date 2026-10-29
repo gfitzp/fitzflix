@@ -1206,3 +1206,83 @@ def test_an_early_stop_deletes_a_message_that_arrived_late(app, monkeypatch, del
         result = aws_storage.move_archive_object(file_id)
     assert result is (not deleted)
     assert sqs.deleted == ["late"]
+
+
+@pytest.fixture
+def case_folding_keys(app):
+    """Fold case in each equality on a key column, as utf8mb4_general_ci does (#591).
+
+    The sqlite test schema compares keys byte for byte. MariaDB folds
+    case on these columns. The listener adds COLLATE NOCASE to each
+    equality on a key column."""
+
+    import re
+
+    from sqlalchemy import event
+
+    from app import db
+
+    pattern = re.compile(
+        r"((?:file|archived_original)\.(?:aws_key|aws_transcoded_key|aws_key_target)"
+        r" = \?)"
+    )
+
+    def fold(conn, cursor, statement, parameters, context, executemany):
+        return pattern.sub(r"\1 COLLATE NOCASE", statement), parameters
+
+    with app.app_context():
+        engine = db.engine
+    event.listen(engine, "before_cursor_execute", fold, retval=True)
+    yield
+    event.remove(engine, "before_cursor_execute", fold)
+
+
+def test_a_case_only_move_deletes_the_old_object(app, s3, case_folding_keys):
+    """The claim check matched the new key of the row itself (#591).
+
+    "None But the Brave" became "None but the Brave". Under general_ci the
+    new key of the row claimed the old key, and the old object stayed."""
+
+    from app import aws_storage, db
+
+    with app.app_context():
+        file = archived_film(
+            "None but the Brave",
+            1965,
+            key_name="None But the Brave (1965) - [Bluray-1080p].mkv",
+        )
+        file_id = file.id
+        old_key = file.aws_key
+        new_key = "untouched/None but the Brave (1965) - [Bluray-1080p].mkv"
+        assert old_key.lower() == new_key.lower() and old_key != new_key
+
+        # The fixture folds case like MariaDB.
+        assert aws_storage.untouched_key_still_claimed(new_key.upper()) is False
+
+        fake = s3({old_key: readable()})
+        assert aws_storage.request_archive_move(file) is True
+        assert file.aws_key_target == new_key
+        db.session.commit()
+        assert aws_storage.move_archive_object(file_id) is True
+        assert committed_key(app, file_id) == new_key
+        assert fake.deletes == [(old_key, None)]
+
+
+def test_a_case_variant_on_another_row_is_not_a_claim(app, case_folding_keys):
+    """The SQL branch of _claimed_by_another refused a key for a case variant (#591)."""
+
+    from app import aws_storage
+
+    with app.app_context():
+        other = archived_film("Case Claim", 1970, key_name="case claim (1970).mkv")
+        file = archived_film("Case Claim Two", 1971)
+        assert aws_storage._claimed_by_another(file, other.aws_key) is True
+        assert (
+            aws_storage._claimed_by_another(file, "untouched/Case Claim (1970).mkv")
+            is False
+        )
+        assert aws_storage.untouched_key_still_claimed(other.aws_key) is True
+        assert (
+            aws_storage.untouched_key_still_claimed("untouched/CASE CLAIM (1970).mkv")
+            is False
+        )

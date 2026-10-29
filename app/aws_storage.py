@@ -1784,17 +1784,27 @@ def _claimed_by_another(file, key, claims=None):
 
     if claims is not None:
         return bool(claims.get(key, set()) - {file.id})
-    return (
-        File.query.filter(
+
+    # The SQL filter fetches the candidates. MariaDB folds case there.
+    # Thus, the keys are compared exactly after the fetch (#591).
+
+    rows = (
+        db.session.query(File.aws_key, File.aws_transcoded_key, File.aws_key_target)
+        .filter(
             File.id != file.id,
             db.or_(
-                File.aws_key == key,
-                File.aws_transcoded_key == key,
-                File.aws_key_target == key,
+                _key_candidates(File.aws_key, key),
+                _key_candidates(File.aws_transcoded_key, key),
+                _key_candidates(File.aws_key_target, key),
             ),
-        ).first()
-        is not None
-        or ArchivedOriginal.query.filter_by(aws_key=key).first() is not None
+        )
+        .all()
+    )
+    archived = db.session.query(ArchivedOriginal.aws_key).filter(
+        _key_candidates(ArchivedOriginal.aws_key, key)
+    )
+    return _exact_claim(key, [value for row in rows for value in row]) or (
+        _exact_claim(key, [value for (value,) in archived.all()])
     )
 
 
@@ -2294,6 +2304,23 @@ def move_archive_to_modified_task(file_id):
             current_app.lock_manager.unlock(lock)
 
 
+def _key_candidates(column, key):
+    """Return the SQL filter that fetches the candidate claims of key (#591).
+
+    The column has the collation utf8mb4_general_ci on MariaDB. Thus, the
+    filter also matches a key that differs only by letter case, or by a
+    trailing space. The caller compares the fetched keys exactly with
+    _exact_claim. A COLLATE clause is not portable to the test schema."""
+
+    return column == key
+
+
+def _exact_claim(key, candidates):
+    """Return True if one of the fetched keys is key, character for character (#591)."""
+
+    return any(candidate == key for candidate in candidates)
+
+
 def untouched_key_still_claimed(key):
     """Return True if a surviving file record still claims this S3 key.
 
@@ -2304,25 +2331,32 @@ def untouched_key_still_claimed(key):
     delete marker (the Bambi II incident, 2026-08). The caller must
     check AFTER its own deletes commit. Thus, the purged rows no longer
     count. An archive-only original (#292) claims its key too. So does
-    the target of a pending move (#369)."""
+    the target of a pending move (#369).
 
-    return (
-        db.session.query(File.id)
-        .filter(
-            File.aws_key == key,
-            File.aws_date_deleted.is_(None),
+    The SQL filter folds case on MariaDB. After a case-only move, the new
+    key of the row matched the old key, and the old object was never
+    deleted. Thus, the fetched keys are compared exactly (#591)."""
+
+    candidates = [
+        candidate
+        for query in (
+            db.session.query(File.aws_key).filter(
+                _key_candidates(File.aws_key, key),
+                File.aws_date_deleted.is_(None),
+            ),
+            db.session.query(ArchivedOriginal.aws_key).filter(
+                _key_candidates(ArchivedOriginal.aws_key, key)
+            ),
+            db.session.query(File.aws_transcoded_key).filter(
+                _key_candidates(File.aws_transcoded_key, key)
+            ),
+            db.session.query(File.aws_key_target).filter(
+                _key_candidates(File.aws_key_target, key)
+            ),
         )
-        .first()
-        is not None
-        or db.session.query(ArchivedOriginal.id)
-        .filter(ArchivedOriginal.aws_key == key)
-        .first()
-        is not None
-        or db.session.query(File.id).filter(File.aws_transcoded_key == key).first()
-        is not None
-        or db.session.query(File.id).filter(File.aws_key_target == key).first()
-        is not None
-    )
+        for (candidate,) in query.all()
+    ]
+    return _exact_claim(key, candidates)
 
 
 # The status of a move that waits for a restore of its object. It is
