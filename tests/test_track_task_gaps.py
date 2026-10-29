@@ -727,6 +727,56 @@ def test_a_lock_deferred_edit_keeps_its_baseline(app, monkeypatch, task):
         os.remove(path)
 
 
+def _lock_waits(app, task, file_id):
+    from app import safe_job_id
+
+    prefix = safe_job_id(f"retry:{task}:")
+    return [
+        job
+        for queue in (app.file_queue, app.import_queue, app.transcode_queue)
+        for job in scheduled_jobs(queue)
+        if job.id.startswith(prefix) and job.args[0] == file_id
+    ]
+
+
+@pytest.mark.parametrize(
+    "task, first, second",
+    [
+        ("mkvpropedit_task", (None, "1", ["2"]), ("2", None, [])),
+        ("mkvmerge_task", ([1], [1]), ([1, 2], [])),
+        ("remux_audio_plan_task", ([("copy", 0)],), ([("flac", 0)],)),
+    ],
+)
+def test_a_second_deferred_edit_of_a_file_keeps_the_first(
+    app, monkeypatch, task, first, second
+):
+    """The lock wait id was 1 per file. The second edit replaced the first (#595)."""
+
+    from app import tracks
+
+    file_id, identifier, path = _library_row(app, f"Two Waits {task}")
+    held = app.lock_manager.lock(identifier, 60000)
+    try:
+        run = getattr(tracks, task)
+        assert run(file_id, *first) is True
+        assert run(file_id, *second) is True
+        waits = _lock_waits(app, task, file_id)
+        assert len(waits) == 2
+        assert {tuple(map(repr, job.args[1 : len(first) + 1])) for job in waits} == {
+            tuple(map(repr, first)),
+            tuple(map(repr, second)),
+        }
+
+        # A repeat of the same edit still replaces its own wait.
+        assert run(file_id, *first) is True
+        assert len(_lock_waits(app, task, file_id)) == 2
+        for job in waits:
+            job.delete()
+    finally:
+        app.lock_manager.unlock(held)
+        os.remove(path)
+
+
 # Each function that commits new track rows of an existing file outside a
 # scan, with the count of its note_track_edit calls (#589). _atmos_finish
 # has a second commit for a first commit that failed. A scan, the Atmos

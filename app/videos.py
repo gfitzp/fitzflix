@@ -14,6 +14,7 @@ real homes. The shim exists for the strings and the history.
 """
 
 import errno
+import json
 import os
 import subprocess
 import time
@@ -352,6 +353,28 @@ def acquire_lock_or_defer(
     return None
 
 
+# The tasks whose lock wait id holds a digest of the arguments (#595).
+# Each is an edit of 1 file with arguments that differ per edit. A
+# second deferred edit of the file replaced the first under a fixed id,
+# and the first edit was lost. An idempotent task, such as the scan,
+# keeps the fixed id.
+
+ARGUMENT_TAGGED_RETRIES = frozenset(
+    {"mkvpropedit_task", "mkvmerge_task", "remux_audio_plan_task"}
+)
+
+
+def arguments_tag(args, kwargs):
+    """Return a short digest of the arguments of a task (#595).
+
+    The same arguments give the same digest. Thus, a repeat deferral of
+    1 edit still replaces its own pending retry."""
+
+    return path_tag(
+        json.dumps([list(args or ()), kwargs or {}], sort_keys=True, default=repr)
+    )
+
+
 def schedule_retry(
     queue, func, minutes, timeout, description, reason, args=(), kwargs=None, key=None
 ):
@@ -369,8 +392,16 @@ def schedule_retry(
     """
 
     # The lock wait keeps its own id format. localization_pending matches
-    # the localization form of it exactly (#287).
+    # the localization form of it exactly (#287). The track edits put a
+    # digest of their arguments into the id (#595). 2 different edits of
+    # 1 file then wait apart, and neither replaces the other.
 
+    short_name = func.rsplit(".", 1)[-1]
+    edit_tag = (
+        f"{arguments_tag(args, kwargs)}:"
+        if short_name in ARGUMENT_TAGGED_RETRIES
+        else ""
+    )
     delay = requeue(
         func,
         key=key,
@@ -382,8 +413,9 @@ def schedule_retry(
         queue=queue,
         timeout=timeout,
         job_id=safe_job_id(
-            f"retry:{func.rsplit('.', 1)[-1]}:"
+            f"retry:{short_name}:"
             + (f"{path_tag(key)}:" if key is not None else "")
+            + edit_tag
             + description
         ),
     )
