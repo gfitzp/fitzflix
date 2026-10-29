@@ -3156,6 +3156,10 @@ def cdn_download(
     from the S3 API).
     Raise RuntimeError if neither size is known. The requests transport
     errors escape as they are.
+
+    A resume sends If-Range with the ETag. A response whose ETag is not
+    etag removes the partial and raises CdnStaleObject (#599). The
+    caller spends a retry, and the retry starts from byte zero.
     """
 
     url = cdn_signed_url(key)
@@ -3163,7 +3167,10 @@ def cdn_download(
     headers = {}
     same_object = bool(etag) and _partial_etag(destination) == etag
     if have and expected_size and have < expected_size and same_object:
+        # If-Range makes CloudFront send the whole object (200) when its
+        # copy is not the version of the partial (#599).
         headers["Range"] = f"bytes={have}-"
+        headers["If-Range"] = f'"{_bare_etag(etag)}"'
     else:
         have = 0
 
@@ -3175,6 +3182,21 @@ def cdn_download(
     with CDN_HTTP_GET(
         url, stream=True, timeout=CDN_TIMEOUT, headers=headers
     ) as response:
+        # CloudFront can serve a cached copy of an older version of the
+        # key with the same length. The S3 HEAD names the version to
+        # place. A different ETag refuses the body (#599).
+        served = _bare_etag(response.headers.get("ETag"))
+        if (
+            response.status_code in (200, 206)
+            and served
+            and etag
+            and served != _bare_etag(etag)
+        ):
+            _discard_partial(destination)
+            raise CdnStaleObject(
+                f"CloudFront sent the ETag {served} for '{key}', S3 says "
+                f"{_bare_etag(etag)}"
+            )
         if response.status_code == 206 and have:
             mode, written = "ab", have
             progress(have)
@@ -3207,6 +3229,21 @@ def cdn_download(
                 f"CloudFront sent {written} bytes for '{key}', {label} says {size}"
             )
     _remove_partial_etag(destination)
+
+
+class CdnStaleObject(RuntimeError):
+    """CloudFront sent a version of the key that is not the version of the S3 HEAD (#599).
+
+    The partial download is gone. The retry starts again from byte zero."""
+
+
+def _bare_etag(etag):
+    """Return an ETag with no weak prefix and no quotes, or None for a blank value."""
+
+    value = (etag or "").strip()
+    if value.startswith("W/"):
+        value = value[2:]
+    return value.strip('"') or None
 
 
 def _partial_size(destination):

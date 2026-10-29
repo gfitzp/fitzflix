@@ -624,7 +624,8 @@ def test_cdn_resumes_a_dropped_download_with_a_range(app, monkeypatch, cdn):
         landed = os.path.join(app.config["IMPORT_DIR"], "x.mkv")
         assert open(landed, "rb").read() == b"cdn"
 
-    assert cdn["headers"] == [{}, {"Range": "bytes=2-"}]
+    # If-Range names the version of the partial (#599).
+    assert cdn["headers"] == [{}, {"Range": "bytes=2-", "If-Range": '"v1"'}]
     assert len(cdn["signed"]) == 2
 
 
@@ -823,3 +824,59 @@ def test_the_give_up_writes_one_error_record(app, monkeypatch, cdn, caplog):
     warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
     assert "attempt 10 of 10 failed, no retries left" in warnings[-1]
     assert all("retrying" in message for message in warnings[:-1])
+
+
+@pytest.mark.parametrize("served", ['"v0"', 'W/"v0"', "v0"])
+def test_a_cached_older_version_of_the_same_length_is_refused(
+    app, monkeypatch, cdn, served
+):
+    """CloudFront served an old copy with the S3 length. The checks passed (#599).
+
+    The ETag of the response is not the ETag of the S3 HEAD. The body is
+    refused, and the retry starts from byte zero."""
+
+    from app import aws_storage
+
+    stale = _FakeResponse(200, b"old")
+    stale.headers["ETag"] = served
+    fresh = _FakeResponse(200, b"new")
+    fresh.headers["ETag"] = '"v1"'
+    cdn["responses"] = [stale, fresh]
+    _wire(monkeypatch, S3({"ContentLength": 3, "ETag": '"v1"'}), SQS())
+
+    with app.app_context():
+        assert (
+            aws_storage.aws_download("untouched/x.mkv", "x.mkv")
+            == aws_storage.DOWNLOAD_COMPLETE
+        )
+        landed = os.path.join(app.config["IMPORT_DIR"], "x.mkv")
+        assert open(landed, "rb").read() == b"new"
+    assert len(cdn["signed"]) == 2
+
+
+def test_a_stale_resume_body_drops_the_partial(app, monkeypatch, cdn):
+    """A 206 from a refreshed cache joined bytes of 2 versions (#599)."""
+
+    from app import aws_storage
+
+    first = _FakeResponse(200, b"cdn", fail_after=2)
+    first.headers["ETag"] = '"v1"'
+    tail = _FakeResponse(206, b"X")
+    tail.headers["ETag"] = '"v2"'
+    whole = _FakeResponse(200, b"cdn")
+    whole.headers["ETag"] = '"v1"'
+    cdn["responses"] = [first, tail, whole]
+    _wire(monkeypatch, S3({"ContentLength": 3, "ETag": '"v1"'}), SQS())
+
+    with app.app_context():
+        assert (
+            aws_storage.aws_download("untouched/x.mkv", "x.mkv")
+            == aws_storage.DOWNLOAD_COMPLETE
+        )
+        landed = os.path.join(app.config["IMPORT_DIR"], "x.mkv")
+        assert open(landed, "rb").read() == b"cdn"
+    assert cdn["headers"] == [
+        {},
+        {"Range": "bytes=2-", "If-Range": '"v1"'},
+        {},
+    ]
