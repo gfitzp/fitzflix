@@ -478,7 +478,7 @@ def test_the_migration_adds_the_uids_before_the_restart():
 def test_the_counter_drops_in_its_own_step_after_the_restart():
     migration = _migration("b3a9d1e7c4f2_drop_track_edit_seq.py")
     assert migration.revision == "b3a9d1e7c4f2"
-    assert migration.down_revision == "8e2cf89e1536"
+    assert migration.down_revision == "c4e8f2a6d1b9"
     assert "track_edit_seq" in inspect.getsource(migration.upgrade)
 
 

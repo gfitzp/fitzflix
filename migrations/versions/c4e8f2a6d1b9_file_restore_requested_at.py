@@ -6,7 +6,7 @@ Thus, the old code runs on with it, and the step can run before the
 restart.
 
 Revision ID: c4e8f2a6d1b9
-Revises: b3a9d1e7c4f2
+Revises: 8e2cf89e1536
 Create Date: 2026-10-29 21:00:00.000000
 
 """
@@ -16,7 +16,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision = "c4e8f2a6d1b9"
-down_revision = "b3a9d1e7c4f2"
+down_revision = "8e2cf89e1536"
 branch_labels = None
 depends_on = None
 

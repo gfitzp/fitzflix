@@ -1,11 +1,12 @@
 """Drop the track edit counter of a file (#611)
 
 The edits address the tracks by Matroska UID since 8e2cf89e1536. The
-counter has no reader. The old code reads it. Thus, this step runs
-after the restart, when the queues are idle.
+counter has no reader. The old code reads it. Thus, this step is the
+last of the chain and runs after the restart, when the queues are idle.
+The 2 steps before it add nullable columns that the old code ignores.
 
 Revision ID: b3a9d1e7c4f2
-Revises: 8e2cf89e1536
+Revises: c4e8f2a6d1b9
 Create Date: 2026-10-29 18:30:00.000000
 
 """
@@ -15,7 +16,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision = "b3a9d1e7c4f2"
-down_revision = "8e2cf89e1536"
+down_revision = "c4e8f2a6d1b9"
 branch_labels = None
 depends_on = None
 

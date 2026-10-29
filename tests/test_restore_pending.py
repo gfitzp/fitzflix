@@ -67,7 +67,7 @@ def test_the_migration_adds_the_column_after_the_uid_steps():
     migration = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(migration)
     assert migration.revision == "c4e8f2a6d1b9"
-    assert migration.down_revision == "b3a9d1e7c4f2"
+    assert migration.down_revision == "8e2cf89e1536"
     assert "restore_requested_at" in inspect.getsource(migration.upgrade)
     assert "drop_column" in inspect.getsource(migration.downgrade)
 
