@@ -444,3 +444,72 @@ def test_a_fault_after_the_empty_subtitle_removal_marks_the_retry_unsafe(
             tracks.mkvpropedit_unlocked(file_id, 1, None, None)
     assert len(reads) == 2
     assert raised.value.retry_unsafe is True
+
+
+def _scheduled_scans(app, file_id):
+    """Return the ids of the scheduled track scans of a file."""
+
+    from rq.registry import ScheduledJobRegistry
+
+    from app.tasks import requeue_job_id
+
+    wanted = requeue_job_id("app.videos.track_metadata_scan_task", file_id)
+    return [
+        job_id
+        for job_id in ScheduledJobRegistry(queue=app.file_queue).get_job_ids()
+        if job_id == wanted
+    ]
+
+
+@pytest.mark.parametrize(
+    "title, run",
+    [
+        (
+            "Rescan Reorder",
+            lambda tracks, file_id: tracks.mkvpropedit_unlocked(file_id, 2, None, None),
+        ),
+        (
+            "Rescan Remux",
+            lambda tracks, file_id: tracks.mkvmerge_unlocked(file_id, [1, 2, 3], []),
+        ),
+    ],
+)
+def test_a_fault_after_a_restructure_queues_a_track_scan(
+    app, monkeypatch, three_audio_mkv, title, run
+):
+    """The rows keep the old layout after the fault. A scan repairs them (#583).
+
+    Before, only the maintenance button queued a scan. The file page and
+    the Atmos search read the wrong rows until then."""
+
+    from rq.job import Job
+
+    with app.app_context():
+        _stale_after_failed_commit(app, monkeypatch, three_audio_mkv, title, run)
+        from app.models import File
+
+        file_id = File.query.order_by(File.id.desc()).first().id
+    scans = _scheduled_scans(app, file_id)
+    assert len(scans) == 1
+    job = Job.fetch(scans[0], connection=app.redis)
+    assert job.func_name == "app.videos.track_metadata_scan_task"
+    assert job.kwargs == {"file_id": file_id}
+
+
+def test_a_clean_edit_queues_no_track_scan(app, monkeypatch, three_audio_mkv):
+    """A committed edit leaves the rows on the file layout. No scan is queued."""
+
+    from app import db
+    from app.tracks import mkvpropedit_unlocked
+    from tests.factories import make_movie, make_movie_file
+
+    with app.app_context():
+        file = make_movie_file(make_movie("No Rescan", 2021), "Bluray-1080p")
+        db.session.commit()
+        file_id = file.id
+        library_path = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
+    os.makedirs(os.path.dirname(library_path), exist_ok=True)
+    shutil.copy(three_audio_mkv, library_path)
+    with app.app_context():
+        assert mkvpropedit_unlocked(file_id, 2, None, None) is True
+    assert _scheduled_scans(app, file_id) == []

@@ -547,6 +547,28 @@ def _flag_after_a_failed_rewrite(file_id):
         current_app.logger.warning(traceback.format_exc())
 
 
+def _rescan_after_a_failed_edit(file_id, name):
+    """Queue a track scan of a file whose edit failed after the file changed (#583).
+
+    The file has the new layout, but the track rows and the size keep
+    the old layout. No periodic scan repairs them. The scan reads the
+    rows again from the file. The job id is the id of the lock-busy
+    retry of the scan. Thus, a repeat replaces the scheduled scan. This
+    is best effort. The caller raises the original error."""
+
+    try:
+        requeue(
+            "app.videos.track_metadata_scan_task",
+            key=int(file_id),
+            delay=(5, 15),
+            reason="Track edit failed after the file changed",
+            kwargs={"file_id": file_id},
+            description=name,
+        )
+    except Exception:
+        current_app.logger.warning(traceback.format_exc())
+
+
 def save_track_metadata(file_id, details, lock=None, archive=False):
     """Write the extracted track metadata to the database.
 
@@ -1150,6 +1172,13 @@ def mkvpropedit_unlocked(
 
         restructured = False
 
+        # After mkvpropedit starts, the file can differ from the track
+        # rows until the commit. A failure in that window queues a scan
+        # (#583)
+
+        changed = False
+        name = f"File {file_id}"
+
         try:
             job = get_current_job()
 
@@ -1157,6 +1186,7 @@ def mkvpropedit_unlocked(
 
             file = File.query.filter_by(id=file_id).first()
             file_path = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
+            name = f"'{file.basename}'"
 
             report_progress(job, file.basename, "Updating MKV properties")
 
@@ -1213,6 +1243,7 @@ def mkvpropedit_unlocked(
                     universal_newlines=True,
                     bufsize=1,
                 )
+                changed = True
                 try:
                     try:
                         for line in mkvpropedit_task.stdout:
@@ -1277,7 +1308,7 @@ def mkvpropedit_unlocked(
             if remove_empty_subtitle_tracks(
                 file_path, before_replace=lambda: flag_archive_before_rewrite(file_id)
             ):
-                restructured = True
+                restructured = changed = True
 
             # Build the audio and subtitle track info again after the changes
 
@@ -1296,6 +1327,7 @@ def mkvpropedit_unlocked(
 
             record_filesize(file, os.path.getsize(file_path))
             file.date_updated = datetime.now(timezone.utc)
+            db.session.commit()
 
         except OSError as e:
             # Tell the caller if a retry with the same arguments is still
@@ -1304,16 +1336,18 @@ def mkvpropedit_unlocked(
 
             e.retry_unsafe = restructured
             db.session.rollback()
+            if changed:
+                _rescan_after_a_failed_edit(file_id, name)
             raise
 
         except Exception:
             current_app.logger.error(traceback.format_exc())
             db.session.rollback()
+            if changed:
+                _rescan_after_a_failed_edit(file_id, name)
             raise
 
         else:
-            db.session.commit()
-
             # The file on disk changed. The default flags changed. After a
             # reorder, the whole track layout changed. Plex reads it again
             # now, not at its next scan
@@ -1393,11 +1427,19 @@ def mkvmerge_unlocked(file_id, audio_tracks, subtitle_tracks):
     """Remux an MKV file. The caller must hold the lock of the title."""
 
     with app.app_context():
+        # After the remux replaces the file, the file differs from the
+        # track rows until the commit. A failure in that window queues a
+        # scan (#583)
+
+        changed = False
+        name = f"File {file_id}"
+
         try:
             job = get_current_job()
 
             file = File.query.filter_by(id=file_id).first()
             file_path = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
+            name = f"'{file.basename}'"
 
             # The form gives the 1-based position of each track in its
             # kind (FileAudioTrack.track). mkvmerge wants the container
@@ -1470,6 +1512,7 @@ def mkvmerge_unlocked(file_id, audio_tracks, subtitle_tracks):
                 "Remuxing",
                 before_replace=lambda: flag_archive_before_rewrite(file_id),
             )
+            changed = True
 
             # Remove the subtitle tracks that have zero elements
 
@@ -1491,14 +1534,16 @@ def mkvmerge_unlocked(file_id, audio_tracks, subtitle_tracks):
 
             file = _fresh_file(file.id)
             replace_track_rows(file, output_audio_tracks, output_subtitle_tracks)
+            db.session.commit()
 
         except Exception:
             current_app.logger.error(traceback.format_exc())
             db.session.rollback()
+            if changed:
+                _rescan_after_a_failed_edit(file_id, name)
             raise
 
         else:
-            db.session.commit()
             # This task already holds the lock of the title. Thus, call the
             # unlocked variant directly. A call to the locked variant would
             # deadlock against this task. An OSError from the unlocked
