@@ -557,3 +557,42 @@ def test_a_failed_flag_after_a_clean_mkvpropedit_still_commits_and_uploads(
     assert flags == [True]
     assert uploads == [library_path]
     assert _audio(app, library_path) == [("eng", True), ("fra", False), ("deu", False)]
+
+
+def test_a_transient_fault_after_mkvpropedit_leaves_the_scan_to_the_task(
+    app, monkeypatch, three_audio_mkv
+):
+    """A safe retry repairs the rows itself (#585).
+
+    A scan before the retry would write the half-edited rows. Then the
+    layout digest of the retry no longer matches, and the retry stops."""
+
+    import errno
+
+    from app import db
+    import app.tracks as tracks
+    from tests.factories import make_movie, make_movie_file
+
+    with app.app_context():
+        file = make_movie_file(make_movie("Transient No Scan", 2021), "Bluray-1080p")
+        db.session.commit()
+        file_id = file.id
+        library_path = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
+    os.makedirs(os.path.dirname(library_path), exist_ok=True)
+    shutil.copy(three_audio_mkv, library_path)
+
+    reads = []
+
+    def subtitles(path):
+        reads.append(path)
+        if len(reads) > 1:
+            raise OSError(errno.ESTALE, "Stale NFS file handle")
+        return []
+
+    monkeypatch.setattr(tracks, "get_subtitle_tracks_from_file", subtitles)
+    with app.app_context():
+        with pytest.raises(OSError) as raised:
+            tracks.mkvpropedit_unlocked(file_id, 1, None, None)
+    assert raised.value.file_changed is True
+    assert raised.value.retry_unsafe is False
+    assert _scheduled_scans(app, file_id) == []

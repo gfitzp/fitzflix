@@ -356,7 +356,9 @@ def test_mkvpropedit_transient_error_defers_and_releases_lock(app, monkeypatch):
         ]
         job = retries[0]
         assert list(job.args) == [file_id, "2", None, [], {"a1": "eng"}]
-        assert job.kwargs == {"transient_retries": 1}
+        with app.app_context():
+            layout = tracks._track_layout(file_id)
+        assert job.kwargs == {"transient_retries": 1, "layout": layout}
         assert_binds(job)
 
         # The task released the lock. Thus, the retry can take it again

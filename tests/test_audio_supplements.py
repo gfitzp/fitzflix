@@ -742,7 +742,9 @@ def test_two_same_named_audio_plans_stage_under_different_names(app, monkeypatch
         raise RuntimeError("stop")
 
     monkeypatch.setattr(videos, "copy_with_progress", stop_after_naming)
-    monkeypatch.setattr(shutil, "disk_usage", lambda path: SimpleNamespace(free=2**60))
+    monkeypatch.setattr(
+        shutil, "disk_usage", lambda path: SimpleNamespace(total=2**60, free=2**60)
+    )
     ids = []
     with app.app_context():
         for title in ("Jaws", "Alien"):

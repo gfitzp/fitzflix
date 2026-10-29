@@ -405,6 +405,11 @@ def track_metadata_scan_task(file_id):
     """
 
     with app.app_context():
+        # The save job releases the lock after it gets it. A failure
+        # before that hand-off releases the lock here (#585).
+
+        lock = None
+        handed_off = False
         try:
             file = File.query.filter_by(id=file_id).first()
             if file is None:
@@ -419,6 +424,11 @@ def track_metadata_scan_task(file_id):
                 current_app.config["MKVPROPEDIT_TASK_TIMEOUT"] * 1000,
             )
             if not lock:
+                # A job of a library scan keeps the id prefix of the run.
+                # Thus, the scan button sees the deferred files (#585).
+
+                job = get_current_job()
+                in_run = job is not None and job.id.startswith(TRACK_SCAN_FILE_RUN)
                 requeue(
                     "app.videos.track_metadata_scan_task",
                     key=int(file_id),
@@ -426,14 +436,11 @@ def track_metadata_scan_task(file_id):
                     reason="Lock exists",
                     kwargs={"file_id": file_id},
                     description=f"'{file.basename}'",
+                    job_id=bulk_job_id(TRACK_SCAN_FILE_RUN) if in_run else None,
                 )
                 return True
 
-            try:
-                details = extract_track_metadata(file_path, file_id)
-            except Exception:
-                current_app.lock_manager.unlock(lock)
-                raise
+            details = extract_track_metadata(file_path, file_id)
 
             # The scan removed empty subtitle tracks. Thus, the library file
             # changed, and its archive must follow (#299). The save queues
@@ -455,10 +462,16 @@ def track_metadata_scan_task(file_id):
                 archive,
                 description=f"{file.basename} – Saving track metadata",
             )
+            handed_off = True
 
         except Exception:
             current_app.logger.error(traceback.format_exc())
             db.session.rollback()
+            if lock and not handed_off:
+                try:
+                    current_app.lock_manager.unlock(lock)
+                except Exception:
+                    current_app.logger.warning(traceback.format_exc())
             raise
 
         return True
@@ -572,6 +585,31 @@ def _rescan_after_a_failed_edit(file_id, name):
         )
     except Exception:
         current_app.logger.warning(traceback.format_exc())
+
+
+def _track_layout(file_id):
+    """Return a digest of the stored track rows of a file (#585).
+
+    An edit commits new rows. The digest thus changes after a newer
+    edit. A failed attempt commits nothing, and its digest stays."""
+
+    audio = (
+        FileAudioTrack.query.filter_by(file_id=file_id)
+        .order_by(FileAudioTrack.track)
+        .all()
+    )
+    subtitles = (
+        FileSubtitleTrack.query.filter_by(file_id=file_id)
+        .order_by(FileSubtitleTrack.track)
+        .all()
+    )
+    rows = [
+        ("a", t.track, t.language, t.format, t.channels, bool(t.default)) for t in audio
+    ] + [
+        ("s", t.track, t.language, t.format, bool(t.default), bool(t.forced))
+        for t in subtitles
+    ]
+    return hashlib.sha1(repr(rows).encode()).hexdigest()[:16]
 
 
 def save_track_metadata(file_id, details, lock=None, archive=False):
@@ -988,12 +1026,18 @@ def mkvpropedit_task(
     forced_subtitle_tracks,
     track_languages=None,
     transient_retries=0,
+    layout=None,
 ):
     """Update the MKV properties of a file.
 
     `track_languages` maps a track to the ISO 639-2 code to set. The
     keys are the track names of mkvpropedit ({"a1": "eng"}). None (or
     an empty mapping) changes no language.
+
+    layout is the digest of the track rows when the first attempt ran
+    (#585). A transient retry carries it. A newer edit that committed
+    in the meantime changes the rows. Then the track arguments of the
+    retry are old, and the retry stops.
     """
 
     # The shared lock, retry, and copy code stays in app.videos. The import
@@ -1026,11 +1070,25 @@ def mkvpropedit_task(
                 forced_subtitle_tracks,
                 track_languages,
             ),
-            kwargs={"transient_retries": transient_retries},
+            kwargs={"transient_retries": transient_retries}
+            | ({"layout": layout} if layout is not None else {}),
             key=int(file_id),
         )
         if not lock:
             return True
+
+        try:
+            current_layout = _track_layout(file_id)
+        except BaseException:
+            current_app.lock_manager.unlock(lock)
+            raise
+        if layout is not None and layout != current_layout:
+            current_app.logger.warning(
+                f"'{file.basename}' A newer edit changed the tracks after the "
+                f"failed attempt. The retry of the older edit stops"
+            )
+            current_app.lock_manager.unlock(lock)
+            return False
 
         # Bulk writes over SMB put the files into the lost-handle state.
         # Thus, probe this file directly at the end. Do not let the close
@@ -1076,9 +1134,16 @@ def mkvpropedit_task(
                         forced_subtitle_tracks,
                         track_languages,
                     ),
+                    kwargs={"layout": current_layout},
                     description=f"'{file.basename}'",
                 )
                 return False
+
+            # No retry repairs the rows. A scan reads them from the file
+            # (#583).
+
+            if getattr(e, "file_changed", False):
+                _rescan_after_a_failed_edit(file_id, f"'{file.basename}'")
             current_app.logger.error(traceback.format_exc())
             raise
         else:
@@ -1179,7 +1244,9 @@ def mkvpropedit_unlocked(
 
         # After mkvpropedit starts, the file can differ from the track
         # rows until the commit. A failure in that window queues a scan
-        # (#583)
+        # (#583). For an OSError, the caller decides. A transient retry
+        # repairs the rows itself, and a scan before it would change the
+        # rows that the retry compares (#585).
 
         changed = False
         name = f"File {file_id}"
@@ -1341,9 +1408,8 @@ def mkvpropedit_unlocked(
             # the caller
 
             e.retry_unsafe = restructured
+            e.file_changed = changed
             db.session.rollback()
-            if changed:
-                _rescan_after_a_failed_edit(file_id, name)
             raise
 
         except Exception:
@@ -1557,7 +1623,9 @@ def mkvmerge_unlocked(file_id, audio_tracks, subtitle_tracks):
 
             try:
                 mkvpropedit_unlocked(file.id, 1, None, None)
-            except OSError:
+            except OSError as e:
+                if getattr(e, "file_changed", False):
+                    _rescan_after_a_failed_edit(file_id, name)
                 current_app.logger.error(traceback.format_exc())
                 raise
             return True
@@ -2209,6 +2277,7 @@ def remux_audio_plan_task(file_id, plan):
 def _remux_audio_plan_unlocked(file_id, plan):
     """Run the remux pipeline. The caller must hold the lock of the title."""
 
+    from app.importing import release_staging_reservation, reserve_staging
     from app.videos import copy_with_progress
 
     with app.app_context():
@@ -2228,9 +2297,30 @@ def _remux_audio_plan_unlocked(file_id, plan):
         staged_name = f"{hashlib.sha1(file_path.encode()).hexdigest()[:8]}-{basename}"
         staging_source = os.path.join(staging_dir, f".src-{staged_name}")
         staging_output = os.path.join(staging_dir, staged_name)
+        reservation = f"audio-plan:{staged_name}"
         try:
-            free = shutil.disk_usage(staging_dir).free
-            if free < os.path.getsize(file_path) * 2.2 + 16 * 2**30:
+            # The reservation sees the space that the imports reserved, and
+            # the imports see this one (#585). A busy reservation lock
+            # falls back to the plain check of the free space.
+
+            needed = int(os.path.getsize(file_path) * STAGED_REMUX_FACTOR)
+            for _ in range(REMUX_RESERVATION_TRIES):
+                status = reserve_staging(
+                    reservation,
+                    needed,
+                    [f"src-{staged_name}", staged_name],
+                    staging_dir,
+                )
+                if status != "lock":
+                    break
+            if status == "lock":
+                current_app.logger.warning(
+                    f"'{basename}' The staging reservation lock stays busy. "
+                    f"Checking the free space only"
+                )
+                if shutil.disk_usage(staging_dir).free < needed + 16 * 2**30:
+                    raise RuntimeError(f"'{basename}' not enough staging space")
+            elif status != "ok":
                 raise RuntimeError(f"'{basename}' not enough staging space")
 
             copy_with_progress(
@@ -2383,6 +2473,7 @@ def _remux_audio_plan_unlocked(file_id, plan):
                     os.remove(stray)
                 except OSError:
                     pass
+            release_staging_reservation(reservation)
 
 
 # This is the app instance of this process. Fitzflix resolves it lazily.
