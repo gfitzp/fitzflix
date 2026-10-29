@@ -513,3 +513,47 @@ def test_a_clean_edit_queues_no_track_scan(app, monkeypatch, three_audio_mkv):
     with app.app_context():
         assert mkvpropedit_unlocked(file_id, 2, None, None) is True
     assert _scheduled_scans(app, file_id) == []
+
+
+def test_a_failed_flag_after_a_clean_mkvpropedit_still_commits_and_uploads(
+    app, monkeypatch, three_audio_mkv
+):
+    """The flag after the in-place write is best effort (#584).
+
+    The strict flag raised on a database blip after mkvpropedit wrote
+    the file. The row commit and the upload at the end never ran, and
+    the archive kept the old bytes with a clean flag."""
+
+    import sqlalchemy.exc
+
+    from app import db
+    from app.models import FileAudioTrack
+    import app.tracks as tracks
+    from tests.factories import make_movie, make_movie_file
+
+    monkeypatch.setitem(app.config, "ARCHIVE_ORIGINAL_MEDIA", True)
+    with app.app_context():
+        file = make_movie_file(make_movie("Flag Blip", 2021), "Bluray-1080p")
+        db.session.commit()
+        file_id = file.id
+        library_path = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
+    os.makedirs(os.path.dirname(library_path), exist_ok=True)
+    shutil.copy(three_audio_mkv, library_path)
+
+    flags = []
+
+    def blip(file_id, strict=False):
+        flags.append(strict)
+        raise sqlalchemy.exc.OperationalError("UPDATE", {}, Exception("gone away"))
+
+    uploads = []
+    monkeypatch.setattr(tracks, "_flag_rewritten_archive", blip)
+    monkeypatch.setattr(
+        tracks, "archive_library_file", lambda file, path: uploads.append(path)
+    )
+    with app.app_context():
+        assert tracks.mkvpropedit_unlocked(file_id, 1, None, None) is True
+        assert FileAudioTrack.query.filter_by(file_id=file_id).count() == 3
+    assert flags == [True]
+    assert uploads == [library_path]
+    assert _audio(app, library_path) == [("eng", True), ("fra", False), ("deu", False)]

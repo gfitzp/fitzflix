@@ -526,20 +526,25 @@ def flag_archive_before_rewrite(file_id):
     bytes. archive_library_file clears the flag after a good upload. The
     flag is set only when Fitzflix archives the library files.
 
-    A failed flag raises (#561). The caller has not written yet. Thus,
-    the rewrite stops and the library file stays as it was. The same
-    database fault would fail the commit after the rewrite."""
+    A failed flag raises (#561). This strict rule is for a caller that
+    has not written yet. Then the rewrite stops and the library file
+    stays as it was. The same database fault would fail the commit after
+    the rewrite. A caller whose tool already wrote the file uses
+    _flag_after_a_write (#584)."""
 
     if get_setting("ARCHIVE_ORIGINAL_MEDIA"):
         _flag_rewritten_archive(file_id, strict=True)
 
 
-def _flag_after_a_failed_rewrite(file_id):
-    """Mark the archive stale after a tool that can have written failed (#561).
+def _flag_after_a_write(file_id):
+    """Mark the archive stale after a tool that can have written the file (#561).
 
     mkvpropedit writes the file in place. A kill or an error exit after
-    its first write leaves new bytes on disk. This is best effort. The
-    original error of the tool is the one that the caller raises."""
+    its first write leaves new bytes on disk. A clean exit wrote them
+    for sure. This is best effort (#584). After a failure, the caller
+    raises the original error of the tool. After a success, the task
+    goes on to the row commit and the upload at its end. A raise there
+    skipped both and left the archive old with a clean flag."""
 
     try:
         flag_archive_before_rewrite(file_id)
@@ -1260,16 +1265,17 @@ def mkvpropedit_unlocked(
                     # kill or the error exit (#561). Thus, the archive is
                     # marked stale in this case too.
 
-                    _flag_after_a_failed_rewrite(file_id)
+                    _flag_after_a_write(file_id)
                     raise
 
                 # mkvpropedit writes the file in place (#517). The flag goes
                 # on after the tool reports success (follow-up #517), or
                 # after a failure once the tool ran (#561). A tool that
                 # could not start leaves the row clean. A stale row refuses
-                # a direct restore and costs an upload.
+                # a direct restore and costs an upload. The write is done.
+                # Thus, a failed flag only logs (#584).
 
-                flag_archive_before_rewrite(file_id)
+                _flag_after_a_write(file_id)
 
                 # If the default audio track is not the first track, make a
                 # new file with the default audio track first. Then Plex
