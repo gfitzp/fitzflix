@@ -367,6 +367,59 @@ def test_the_audio_plan_reserves_its_staging_space(app, monkeypatch):
         os.remove(path)
 
 
+def test_a_failed_audio_plan_commit_after_the_replace_queues_a_scan(app, monkeypatch):
+    """The plan replaced the file, and the row commit failed (#594).
+
+    The function had only a finally. The rows kept the old layout, no
+    scan was queued, and no edit was counted."""
+
+    import shutil
+
+    import app.videos as videos
+    from app import tracks
+
+    file_id, identifier, path = _library_row(app, "Plan Commit Fails")
+    audio = [{"format": "AC-3", "language": "eng", "language_name": "English"}]
+
+    class General:
+        track_type = "General"
+        format = "Matroska"
+        duration = None
+
+    def fake_ffmpeg(command, **kwargs):
+        with open(command[-1], "wb") as f:
+            f.write(b"remuxed")
+        return SimpleNamespace(returncode=0, stderr="")
+
+    def lost_commit(*args, **kwargs):
+        raise RuntimeError("(2013, 'Lost connection to MySQL server')")
+
+    monkeypatch.setattr(
+        videos, "copy_with_progress", lambda src, dst, *a, **k: shutil.copy(src, dst)
+    )
+    monkeypatch.setattr(
+        shutil, "disk_usage", lambda path: SimpleNamespace(total=2**60, free=2**60)
+    )
+    monkeypatch.setattr(
+        tracks.MediaInfo, "parse", lambda path: SimpleNamespace(tracks=[General()])
+    )
+    monkeypatch.setattr(tracks, "get_audio_tracks_from_file", lambda path: audio)
+    monkeypatch.setattr(tracks, "get_subtitle_tracks_from_file", lambda path: [])
+    monkeypatch.setattr(tracks.subprocess, "run", fake_ffmpeg)
+    monkeypatch.setattr(tracks, "copy_image_attachments", lambda *args: None)
+    monkeypatch.setattr(tracks, "replace_track_rows", lost_commit)
+    os.makedirs(app.config["STAGING_DIR"], exist_ok=True)
+    try:
+        with pytest.raises(RuntimeError, match="Lost connection"):
+            tracks._remux_audio_plan_unlocked(file_id, [("copy", 0)])
+        assert open(path, "rb").read() == b"remuxed"
+        (scan,) = _scans(app, file_id)
+        assert scan.kwargs == {"file_id": file_id}
+        assert _edit_seq(app, file_id) == 1
+    finally:
+        os.remove(path)
+
+
 def test_an_audio_plan_with_no_reserved_space_stops_before_the_copy(app, monkeypatch):
     import app.importing as importing
     import app.videos as videos
@@ -628,6 +681,7 @@ FAILED_EDIT_SITES = [
     ("app/tracks.py", "mkvpropedit_task", 2),
     ("app/tracks.py", "mkvpropedit_unlocked", 1),
     ("app/tracks.py", "mkvmerge_unlocked", 2),
+    ("app/tracks.py", "_remux_audio_plan_unlocked", 1),
     ("app/atmos.py", "_atmos_finish", 1),
     ("app/importing.py", "finalize_localization", 1),
     ("app/tracks.py", "save_track_metadata", 0),

@@ -2492,13 +2492,21 @@ def _remux_audio_plan_unlocked(file_id, plan):
 
             # Build the track records again because the file changed. A new
             # transaction avoids MariaDB error 1020 after the long remux.
+            # The file has the new layout now. A failed commit queues the
+            # scan of #583 and counts the edit apart (#594).
 
-            file = _fresh_file(file.id)
-            replace_track_rows(file, new_audio_tracks, new_subtitle_tracks)
-            record_filesize(file, os.path.getsize(final_staging))
-            file.date_updated = datetime.now(timezone.utc)
-            file.note_track_edit()
-            db.session.commit()
+            try:
+                file = _fresh_file(file.id)
+                replace_track_rows(file, new_audio_tracks, new_subtitle_tracks)
+                record_filesize(file, os.path.getsize(final_staging))
+                file.date_updated = datetime.now(timezone.utc)
+                file.note_track_edit()
+                db.session.commit()
+            except Exception:
+                current_app.logger.error(traceback.format_exc())
+                db.session.rollback()
+                _rescan_after_a_failed_edit(int(file_id), f"'{basename}'")
+                raise
 
             # The audio layout is new. Plex reads it again now, not at its
             # own pace
