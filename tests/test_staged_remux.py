@@ -286,3 +286,25 @@ def test_a_stray_that_stays_after_the_rename_does_not_fail_the_remux(
             for field in app.redis.hkeys(STAGING_RESERVED_KEY)
             if field.startswith(b"remux:")
         ]
+
+
+def test_a_failed_reservation_release_after_the_rename_does_not_fail_the_remux(
+    app, library_file, staging, monkeypatch
+):
+    """The release runs after the rename. A Redis fault there only warns (#596).
+
+    Before, the fault reached the caller. The caller then did not know
+    that the file changed, and it queued no scan."""
+
+    monkeypatch.setattr(tracks, "_on_volume_of", lambda path, directory: False)
+
+    def lost(reservation):
+        raise ConnectionError("Redis went away")
+
+    monkeypatch.setattr(importing, "release_staging_reservation", lost)
+    seen = []
+    with app.app_context():
+        tracks.remux_file(
+            library_file, _drop_second_audio(app, seen), None, "x", "Remuxing"
+        )
+        assert _audio_count(app, library_file) == 1

@@ -199,7 +199,23 @@ def remux_file(file_path, build_command, job, name, activity, before_replace=Non
                 current_app.logger.warning(
                     f"'{name}' Cannot remove the staging copy {path}: {e}"
                 )
-        release_staging_reservation(reservation)
+        _release_reservation_quietly(release_staging_reservation, reservation, name)
+
+
+def _release_reservation_quietly(release, reservation, name):
+    """Release a staging reservation. A fault only logs a warning (#596).
+
+    The release runs in a finally after the rename into the library. A
+    Redis fault there hid from the caller that the file changed. Then no
+    scan was queued and no edit was counted. The "at" stamp of the
+    reservation lets the grace sweep expire it."""
+
+    try:
+        release(reservation)
+    except Exception as e:
+        current_app.logger.warning(
+            f"'{name}' Cannot release the staging reservation {reservation}: {e}"
+        )
 
 
 STOP_PROCESS_WAIT_SECONDS = 60
@@ -2536,7 +2552,9 @@ def _remux_audio_plan_unlocked(file_id, plan):
                     os.remove(stray)
                 except OSError:
                     pass
-            release_staging_reservation(reservation)
+            _release_reservation_quietly(
+                release_staging_reservation, reservation, basename
+            )
 
 
 # This is the app instance of this process. Fitzflix resolves it lazily.

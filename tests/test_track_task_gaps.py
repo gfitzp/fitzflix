@@ -367,18 +367,14 @@ def test_the_audio_plan_reserves_its_staging_space(app, monkeypatch):
         os.remove(path)
 
 
-def test_a_failed_audio_plan_commit_after_the_replace_queues_a_scan(app, monkeypatch):
-    """The plan replaced the file, and the row commit failed (#594).
-
-    The function had only a finally. The rows kept the old layout, no
-    scan was queued, and no edit was counted."""
+def _fake_audio_plan(app, monkeypatch):
+    """Fake the tools of the audio plan. The ffmpeg output is b"remuxed"."""
 
     import shutil
 
     import app.videos as videos
     from app import tracks
 
-    file_id, identifier, path = _library_row(app, "Plan Commit Fails")
     audio = [{"format": "AC-3", "language": "eng", "language_name": "English"}]
 
     class General:
@@ -390,9 +386,6 @@ def test_a_failed_audio_plan_commit_after_the_replace_queues_a_scan(app, monkeyp
         with open(command[-1], "wb") as f:
             f.write(b"remuxed")
         return SimpleNamespace(returncode=0, stderr="")
-
-    def lost_commit(*args, **kwargs):
-        raise RuntimeError("(2013, 'Lost connection to MySQL server')")
 
     monkeypatch.setattr(
         videos, "copy_with_progress", lambda src, dst, *a, **k: shutil.copy(src, dst)
@@ -407,14 +400,51 @@ def test_a_failed_audio_plan_commit_after_the_replace_queues_a_scan(app, monkeyp
     monkeypatch.setattr(tracks, "get_subtitle_tracks_from_file", lambda path: [])
     monkeypatch.setattr(tracks.subprocess, "run", fake_ffmpeg)
     monkeypatch.setattr(tracks, "copy_image_attachments", lambda *args: None)
-    monkeypatch.setattr(tracks, "replace_track_rows", lost_commit)
+    monkeypatch.setattr(tracks, "enqueue_plex_analyze", lambda path: None)
     os.makedirs(app.config["STAGING_DIR"], exist_ok=True)
+
+
+def test_a_failed_audio_plan_commit_after_the_replace_queues_a_scan(app, monkeypatch):
+    """The plan replaced the file, and the row commit failed (#594).
+
+    The function had only a finally. The rows kept the old layout, no
+    scan was queued, and no edit was counted."""
+
+    from app import tracks
+
+    file_id, identifier, path = _library_row(app, "Plan Commit Fails")
+    _fake_audio_plan(app, monkeypatch)
+
+    def lost_commit(*args, **kwargs):
+        raise RuntimeError("(2013, 'Lost connection to MySQL server')")
+
+    monkeypatch.setattr(tracks, "replace_track_rows", lost_commit)
     try:
         with pytest.raises(RuntimeError, match="Lost connection"):
             tracks._remux_audio_plan_unlocked(file_id, [("copy", 0)])
         assert open(path, "rb").read() == b"remuxed"
         (scan,) = _scans(app, file_id)
         assert scan.kwargs == {"file_id": file_id}
+        assert _edit_seq(app, file_id) == 1
+    finally:
+        os.remove(path)
+
+
+def test_a_failed_reservation_release_does_not_fail_a_committed_plan(app, monkeypatch):
+    """A Redis fault in the release of the finally failed a done plan (#596)."""
+
+    import app.importing as importing
+    from app import tracks
+
+    file_id, identifier, path = _library_row(app, "Plan Release Fails")
+    _fake_audio_plan(app, monkeypatch)
+
+    def lost(reservation):
+        raise ConnectionError("Redis went away")
+
+    monkeypatch.setattr(importing, "release_staging_reservation", lost)
+    try:
+        assert tracks._remux_audio_plan_unlocked(file_id, [("copy", 0)]) is True
         assert _edit_seq(app, file_id) == 1
     finally:
         os.remove(path)
