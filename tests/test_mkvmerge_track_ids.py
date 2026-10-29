@@ -2,68 +2,10 @@
 
 The form gives the track UID of each kept track. mkvmerge selects the
 tracks by their ids in the file. The remux maps each UID to its id from
-a new mkvmerge -J read under the lock. A UID that the file does not
-have stops the remux and queues a scan."""
+a new mkvmerge -J read under the lock. tests/test_track_uids.py runs the
+remux on real files."""
 
 import pytest
-
-from tests.factories import make_movie, make_movie_file
-
-# The ids by UID of a file with interleaved streams: video 0, subtitle 1,
-# audio 2, audio 3, subtitle 4.
-
-IDS = {
-    "audio": {"72": 2, "73": 3},
-    "subtitles": {"81": 1, "84": 4},
-}
-
-
-class Stop(Exception):
-    """Stop the task after the command is built."""
-
-
-def _remux_command(app, monkeypatch, audio, subtitles):
-    """Run the track remux up to the remux. Return (result, mkvmerge commands)."""
-
-    import app.tracks as tracks
-    from app import db
-
-    with app.app_context():
-        movie = make_movie("Interleaved Film", 2001)
-        file = make_movie_file(movie, "Bluray-1080p")
-        db.session.commit()
-        file_id = file.id
-
-    commands = []
-
-    def fake_remux(file_path, build, job, basename, label, before_replace=None):
-        commands.append(build("in.mkv", "out.mkv"))
-        raise Stop()
-
-    monkeypatch.setattr(tracks, "mkvmerge_track_ids", lambda path: IDS)
-    monkeypatch.setattr(tracks, "remux_file", fake_remux)
-    try:
-        result = tracks.mkvmerge_unlocked(file_id, audio, subtitles)
-    except Stop:
-        result = None
-    return file_id, result, commands
-
-
-def test_the_track_remux_maps_the_uids_to_the_ids(app, monkeypatch):
-    file_id, result, (command,) = _remux_command(app, monkeypatch, ["73"], ["84", "81"])
-    pairs = list(zip(command, command[1:]))
-    assert ("-a", "3") in pairs
-    assert ("-s", "1,4") in pairs
-
-
-def test_an_unknown_uid_stops_the_remux_and_queues_a_scan(app, monkeypatch):
-    from tests.test_scheduling import requeue_id, scheduled_jobs
-
-    file_id, result, commands = _remux_command(app, monkeypatch, ["72"], ["99"])
-    assert result is False
-    assert commands == []
-    wanted = requeue_id("app.videos.track_metadata_scan_task", file_id)
-    assert [job.id for job in scheduled_jobs(app.file_queue)] == [wanted]
 
 
 def test_mkvmerge_track_ids_reads_the_uids_of_a_real_file(app, tmp_path):

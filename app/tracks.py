@@ -38,6 +38,7 @@ from app.tasks import (
     enqueue_task,
     report_progress,
     requeue,
+    requeue_job_id,
 )
 from app import db, get_app
 from app.aws_storage import (
@@ -363,17 +364,21 @@ def _extract_media_details(file_path):
     }
 
 
-def extract_track_metadata(file_path, file_id=None):
+def extract_track_metadata(file_path, file_id=None, rewrite=True):
     """Remove the empty subtitle tracks and return the media details of a library file.
 
     This is the file half of a track scan. The returned details go to
     save_track_metadata on the sql queue. With file_id, the archive of
     that row is marked stale before the remux replaces the file (#517).
+    With rewrite False, the file does not change. A scan during a
+    pending restore only reads the file (#610).
     """
 
     media_info = MediaInfo.parse(file_path)
     rewritten = False
     for track in media_info.tracks:
+        if not rewrite:
+            break
         if track.track_type == "General" and track.format == "Matroska":
             rewritten = remove_empty_subtitle_tracks(
                 file_path,
@@ -418,6 +423,21 @@ def track_metadata_scan_library():
             raise
 
         return True
+
+
+def _may_rewrite(file):
+    """Return False if a scan must not rewrite the file of a pending restore (#610).
+
+    The caller holds the title lock. The scan still reads the file and
+    saves the track rows."""
+
+    refused = refuse_while_restore_pending(file)
+    if refused:
+        current_app.logger.info(
+            f"'{file.basename}' {refused} The scan does not remove the empty "
+            f"subtitle tracks"
+        )
+    return not refused
 
 
 def track_metadata_scan_task(file_id):
@@ -465,7 +485,9 @@ def track_metadata_scan_task(file_id):
                 )
                 return True
 
-            details = extract_track_metadata(file_path, file_id)
+            details = extract_track_metadata(
+                file_path, file_id, rewrite=_may_rewrite(file)
+            )
 
             # The scan removed empty subtitle tracks. Thus, the library file
             # changed, and its archive must follow (#299). The save queues
@@ -685,7 +707,9 @@ def track_metadata_scan(file_id):
 
     try:
         details = extract_track_metadata(
-            os.path.join(current_app.config["LIBRARY_DIR"], file.file_path), file_id
+            os.path.join(current_app.config["LIBRARY_DIR"], file.file_path),
+            file_id,
+            rewrite=_may_rewrite(file),
         )
     except Exception:
         current_app.lock_manager.unlock(lock)
@@ -1050,6 +1074,15 @@ def mkvpropedit_task(
         MAX_TRANSIENT_RETRIES,
         TRANSIENT_COPY_ERRNOS,
         acquire_lock_or_defer,
+        arguments_tag,
+    )
+
+    edit_args = (
+        file_id,
+        default_audio_track,
+        default_subtitle_track,
+        forced_subtitle_tracks,
+        track_languages,
     )
 
     with app.app_context():
@@ -1066,13 +1099,7 @@ def mkvpropedit_task(
             minutes=(5, 15),
             timeout=current_app.config["MKVPROPEDIT_TASK_TIMEOUT"],
             description=f"'{file.basename}'",
-            args=(
-                file_id,
-                default_audio_track,
-                default_subtitle_track,
-                forced_subtitle_tracks,
-                track_languages,
-            ),
+            args=edit_args,
             kwargs={"transient_retries": transient_retries}
             | ({"file_changed": True} if file_changed else {}),
             key=int(file_id),
@@ -1121,6 +1148,10 @@ def mkvpropedit_task(
                 # stable. The finally block releases the lock. The retry
                 # takes the lock again, like a new run.
 
+                # The digest of the arguments keeps the retries of 2
+                # different edits of this file apart (#595).
+
+                counters = {"transient_retries": transient_retries + 1}
                 requeue(
                     "app.videos.mkvpropedit_task",
                     key=int(file_id),
@@ -1130,16 +1161,16 @@ def mkvpropedit_task(
                         f"({e}) (attempt {transient_retries + 1} of "
                         f"{MAX_TRANSIENT_RETRIES})"
                     ),
-                    counters={"transient_retries": transient_retries + 1},
-                    args=(
-                        file_id,
-                        default_audio_track,
-                        default_subtitle_track,
-                        forced_subtitle_tracks,
-                        track_languages,
-                    ),
+                    counters=counters,
+                    args=edit_args,
                     kwargs={"file_changed": True} if wrote else {},
                     description=f"'{file.basename}'",
+                    job_id=requeue_job_id(
+                        "app.videos.mkvpropedit_task",
+                        int(file_id),
+                        counters,
+                        tag=arguments_tag(edit_args),
+                    ),
                 )
                 return False
 
@@ -1300,32 +1331,11 @@ def mkvpropedit_unlocked(
             audio_tracks = get_audio_tracks_from_file(file_path)
             subtitle_tracks = get_subtitle_tracks_from_file(file_path)
 
-            current_app.logger.info(f"{file.basename} file_id: {file_id}")
             current_app.logger.info(
-                f"{file.basename} selected default_audio_track: {default_audio_track} {type(default_audio_track)}"
+                f"{name} file_id {file_id}: default audio {default_audio_track}, "
+                f"default subtitle {default_subtitle_track}, forced subtitles "
+                f"{forced_subtitle_tracks}, languages {track_languages}"
             )
-            current_app.logger.info(
-                f"{file.basename} selected default_subtitle_track: {default_subtitle_track} {type(default_subtitle_track)}"
-            )
-            current_app.logger.info(
-                f"{file.basename} selected forced_subtitle_tracks: {forced_subtitle_tracks} {type(forced_subtitle_tracks)}"
-            )
-            current_app.logger.info(
-                f"{file.basename} selected track_languages: {track_languages} {type(track_languages)}"
-            )
-
-            # The tracks are UIDs as text (#611). None means that the file
-            # has no audio tracks for a default. Normalize them 1 time.
-            # Thus, each comparison below compares the same types.
-
-            if default_audio_track is not None:
-                default_audio_track = str(default_audio_track)
-            if default_subtitle_track is not None:
-                default_subtitle_track = str(default_subtitle_track)
-            forced_subtitle_tracks = [str(uid) for uid in forced_subtitle_tracks or ()]
-            track_languages = {
-                str(uid): code for uid, code in (track_languages or {}).items()
-            }
 
             # A UID that the file does not have means that the file changed
             # after the page was loaded. The edit stops before it writes,
@@ -1534,12 +1544,11 @@ def mkvpropedit_unlocked(
         return True
 
 
-def mkvmerge_track_ids(file_path):
-    """Return the mkvmerge track ids of a file by track UID (#611).
+def mkvmerge_identify(file_path):
+    """Return the track list of mkvmerge -J for a file.
 
-    The result maps "audio" and "subtitles" to a dict of UID (text) to
-    track id. mkvmerge -J reads only the headers. Thus, this is fast on
-    a large file. mkvmerge -a and -s take these ids, not UIDs."""
+    mkvmerge -J reads only the headers. Thus, this is fast on a large
+    file."""
 
     from app.videos import wait_for_subprocess
 
@@ -1549,8 +1558,17 @@ def mkvmerge_track_ids(file_path):
         text=True,
     )
     wait_for_subprocess(result, ok_returncodes=(0, 1))
+    return json.loads(result.stdout).get("tracks") or []
+
+
+def mkvmerge_track_ids(file_path):
+    """Return the mkvmerge track ids of a file by track UID (#611).
+
+    The result maps "audio" and "subtitles" to a dict of UID (text) to
+    track id. mkvmerge -a and -s take these ids, not UIDs."""
+
     ids = {"audio": {}, "subtitles": {}}
-    for track in json.loads(result.stdout).get("tracks") or []:
+    for track in mkvmerge_identify(file_path):
         uid = (track.get("properties") or {}).get("uid")
         if track.get("type") in ids and uid is not None:
             ids[track["type"]][str(uid)] = int(track["id"])
@@ -1620,10 +1638,7 @@ def mkvmerge_unlocked(file_id, audio_tracks, subtitle_tracks):
             # selects the tracks by their ids in the file. A new read of
             # the file maps each UID to its id now, under the lock.
 
-            current_app.logger.info(f"Audio tracks: {audio_tracks}")
-            current_app.logger.info(f"Subtitle tracks: {subtitle_tracks}")
             ids = mkvmerge_track_ids(file_path)
-            current_app.logger.info(f"Track ids by UID: {ids}")
             missing = sorted(
                 ({str(uid) for uid in audio_tracks} - set(ids["audio"]))
                 | ({str(uid) for uid in subtitle_tracks} - set(ids["subtitles"]))
@@ -1644,8 +1659,10 @@ def mkvmerge_unlocked(file_id, audio_tracks, subtitle_tracks):
                 ids["subtitles"][str(uid)] for uid in subtitle_tracks
             )
 
-            current_app.logger.info(f"Modified audio tracks: {audio_tracks}")
-            current_app.logger.info(f"Modified subtitle tracks: {subtitle_tracks}")
+            current_app.logger.info(
+                f"{name} Keeps audio track ids {audio_tracks} and subtitle "
+                f"track ids {subtitle_tracks}"
+            )
 
             track_args = []
             if len(audio_tracks) >= 1:

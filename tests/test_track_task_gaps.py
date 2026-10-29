@@ -43,7 +43,7 @@ def test_a_scan_that_fails_before_the_hand_off_releases_the_lock(app, monkeypatc
     monkeypatch.setattr(
         tracks,
         "extract_track_metadata",
-        lambda path, file_id: {"rewritten": False, "video": {}},
+        lambda path, file_id, rewrite=True: {"rewritten": False, "video": {}},
     )
 
     def lost(*args, **kwargs):
@@ -65,7 +65,7 @@ def test_a_handed_off_scan_keeps_the_lock_for_the_save(app, monkeypatch):
     monkeypatch.setattr(
         tracks,
         "extract_track_metadata",
-        lambda path, file_id: {"rewritten": False, "video": {}},
+        lambda path, file_id, rewrite=True: {"rewritten": False, "video": {}},
     )
     monkeypatch.setattr(tracks, "enqueue_task", lambda *args, **kwargs: None)
     try:
@@ -405,3 +405,86 @@ def test_a_failed_reimport_commit_over_a_replaced_file_queues_a_scan(
         )
         if os.path.exists(rejected):
             os.remove(rejected)
+
+
+# 2 different edits of 1 file wait apart (#595, #611 follow-up). The
+# lock wait id and the transient retry id hold a digest of the edit
+# arguments. Under a fixed id, the second edit replaced the first.
+
+DEFERRED_EDITS = [
+    (
+        "mkvpropedit_task",
+        "file_queue",
+        [("111", "0", []), ("222", "0", ["333"])],
+    ),
+    ("mkvmerge_task", "import_queue", [(["1"], []), (["2"], [])]),
+    (
+        "remux_audio_plan_task",
+        "transcode_queue",
+        [([["copy", 1]],), ([["flac", 1], ["copy", 1]],)],
+    ),
+]
+
+
+@pytest.mark.parametrize("task, queue, edits", DEFERRED_EDITS)
+def test_two_different_deferred_edits_both_wait(app, held_lock, task, queue, edits):
+    from app import tracks
+
+    file_id, identifier, path = _library_row(app, f"Two Edits {task[:9]}")
+    held_lock(identifier)
+    try:
+        with app.app_context():
+            for edit in edits:
+                assert getattr(tracks, task)(file_id, *edit) is True
+        jobs = [
+            job
+            for job in scheduled_jobs(getattr(app, queue))
+            if job.func_name == f"app.videos.{task}"
+        ]
+        posted = sorted(repr(list(job.args[1 : 1 + len(edits[0])])) for job in jobs)
+        assert posted == sorted(repr(list(edit)) for edit in edits)
+    finally:
+        os.remove(path)
+
+
+def test_a_repeat_deferral_of_one_edit_still_replaces_its_wait(app, held_lock):
+    from app import tracks
+
+    file_id, identifier, path = _library_row(app, "Repeat Edit")
+    held_lock(identifier)
+    try:
+        with app.app_context():
+            tracks.mkvpropedit_task(file_id, "111", "0", [])
+            tracks.mkvpropedit_task(file_id, "111", "0", [])
+        jobs = [
+            job
+            for job in scheduled_jobs(app.file_queue)
+            if job.func_name == "app.videos.mkvpropedit_task"
+        ]
+        assert len(jobs) == 1
+    finally:
+        os.remove(path)
+
+
+def test_two_transient_retries_of_different_edits_both_wait(app, monkeypatch):
+    from app import tracks
+
+    def flaky(*args, **kwargs):
+        raise OSError(errno.EIO, "simulated share fault")
+
+    monkeypatch.setattr(tracks, "mkvpropedit_unlocked", flaky)
+    monkeypatch.setattr(tracks, "probe_and_record", lambda *args, **kwargs: None)
+    file_id, _, path = _library_row(app, "Two Retries")
+    try:
+        with app.app_context():
+            assert tracks.mkvpropedit_task(file_id, "111", "0", []) is False
+            assert tracks.mkvpropedit_task(file_id, "222", "0", []) is False
+        jobs = [
+            job
+            for job in scheduled_jobs(app.file_queue)
+            if job.func_name == "app.videos.mkvpropedit_task"
+        ]
+        assert sorted(job.args[1] for job in jobs) == ["111", "222"]
+        assert all(job.kwargs == {"transient_retries": 1} for job in jobs)
+    finally:
+        os.remove(path)

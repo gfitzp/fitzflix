@@ -307,16 +307,42 @@ def test_a_track_edit_post_sends_the_track_uids(
     assert args[1 : len(expected) + 1] == expected
 
 
-@pytest.mark.parametrize("task, data, expected", TRACK_EDIT_POSTS)
-def test_rows_with_no_uid_disable_the_edits_and_refuse_a_post(
-    app, admin_client, queued, task, data, expected
-):
-    """The rows before the backfill have no UIDs. The page waits for a rescan (#611)."""
+NO_UID_POSTS = [
+    (
+        "app.videos.mkvpropedit_task",
+        {"default_audio": "None", "default_subtitle": "0", "mkvpropedit_submit": "Up"},
+        ("None", "0", []),
+    ),
+    (
+        "app.videos.mkvmerge_task",
+        {"audio_tracks": "None", "subtitle_tracks": "None", "mkvmerge_submit": "Rx"},
+        (["None"], ["None"]),
+    ),
+]
 
+
+@pytest.mark.parametrize("task, data, expected", NO_UID_POSTS)
+def test_rows_with_no_uid_post_none_to_the_task(
+    app, admin_client, monkeypatch, task, data, expected
+):
+    """The rows before the backfill have no UIDs. The page posts "None" (#611).
+
+    The file has no track with that UID. Thus, the task refuses the edit
+    and queues a rescan (tests/test_track_uids.py)."""
+
+    import app.main.library as library
+
+    calls = []
+    monkeypatch.setattr(
+        library,
+        "enqueue_task",
+        lambda name, *args, **kwargs: calls.append((name, args, kwargs)),
+    )
     file_id = _file(app, title=f"No UID {task[-10:]}", uids=False)
     page = admin_client.get(f"/file/{file_id}").get_data(as_text=True)
-    assert "have no track UIDs. Rescan the file" in page
-    assert 'name="default_audio" value="None" checked disabled' in page
-    page = _post(admin_client, file_id, data)
-    assert queued == []
-    assert "have no track UIDs. Rescan the file, then try again." in page
+    assert 'name="default_audio" value="None" checked aria-label' in page
+    _post(admin_client, file_id, data)
+    ((name, args, kwargs),) = calls
+    assert name == task
+    assert args[0] == file_id
+    assert args[1 : len(expected) + 1] == expected

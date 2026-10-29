@@ -654,8 +654,8 @@ def test_a_restore_already_in_progress_still_records_the_request(app, monkeypatc
     """An archive move asked first, with no record (#532).
 
     A later restore from a page gets RestoreAlreadyInProgress. It must
-    record its time, or the download never occurs. An existing time
-    stays."""
+    record its time, or the download never occurs. A second request
+    gets its own time."""
 
     from datetime import datetime
 
@@ -686,11 +686,12 @@ def test_a_restore_already_in_progress_still_records_the_request(app, monkeypatc
         first = _pending_since(key)
         assert first is not None
 
+        # A second press during the thaw is a new request (#610).
         earlier = datetime(2026, 10, 20, 12, 0)
         File.query.filter_by(aws_key=key).one().restore_requested_at = earlier
         db.session.commit()
         aws_storage.aws_restore(key)
-        assert _pending_since(key) == earlier
+        assert _pending_since(key) > earlier
 
 
 def _direct_restore_row(app, title):

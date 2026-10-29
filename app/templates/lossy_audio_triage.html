@@ -45,9 +45,8 @@
 		<form action="" method="post">
 			{{ triage_form.csrf_token }}
 			{{ triage_form.file_id(value=file.id) }}
-			{% if file.id in rescan_file_ids %}<p class="small text-muted mb-1">The track rows of this file have no track UIDs. Rescan the file on its page before you promote a track.</p>{% endif %}
 			{% if file.restore_requested_at %}<p class="small text-muted mb-1">A restore of this file from AWS is pending. The track controls stay off until the restore ends.</p>{% endif %}
-			<fieldset{% if file.id in rescan_file_ids or file.restore_requested_at %} disabled{% endif %}>
+			<fieldset{% if file.restore_requested_at %} disabled{% endif %}>
 			<div class="table-responsive">
 			<table class="table table-sm mb-0">
 				<thead class="table-light">

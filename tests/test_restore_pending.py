@@ -1,15 +1,16 @@
 """Test the pending restore state of a File row (#610).
 
 A restore request sets File.restore_requested_at. While it is set, the
-forms of the file are off, and each writer refuses. The placement, each
-terminal end of the download and the 14-day sweep clear it.
+forms of the file are off, and each writer refuses. The end of the
+download clears it by the row id, unless a retry or a new restore
+follows. The 14-day sweep clears it too.
 """
 
-import ast
 import importlib.util
 import inspect
 import os
 import re
+from types import SimpleNamespace
 
 import pytest
 
@@ -320,7 +321,9 @@ def _wire(monkeypatch, s3, sqs=None):
     monkeypatch.setattr(videos, "_dead_volumes", lambda paths: [])
 
 
-def test_the_placement_clears_the_state_under_the_title_lock(app, monkeypatch):
+def test_the_placement_copies_under_the_title_lock_and_then_clears_the_state(
+    app, monkeypatch
+):
     import app.videos as videos
     from app import aws_storage, db
     from app.models import File
@@ -401,6 +404,7 @@ def _denied():
     ["object missing", "non-retryable", "retries used up", "access denied"],
 )
 def test_each_terminal_download_outcome_clears_the_state(app, monkeypatch, outcome):
+    import app.videos as videos
     from app import aws_storage
 
     file_id, key, path = _direct_row(app, f"Terminal {outcome}")
@@ -427,22 +431,33 @@ def test_each_terminal_download_outcome_clears_the_state(app, monkeypatch, outco
             aws_storage, "CDN_HTTP_GET", lambda *a, **k: _FakeResponse(403)
         )
     _wire(monkeypatch, s3, sqs)
+    statuses = []
+    real_download = aws_storage.aws_download
+
+    def download(*args, **kwargs):
+        statuses.append(real_download(*args, **kwargs))
+        return statuses[-1]
+
+    monkeypatch.setattr(aws_storage, "aws_download", download)
     with app.app_context():
-        assert (
-            aws_storage.aws_download(key, os.path.basename(key), "r1", place_at=path)
-            == expected
-        )
+        assert videos.download_task(key, os.path.basename(key), "r1") is bool(expected)
         assert _pending(file_id) is None
+    assert statuses == [expected]
     assert not os.path.exists(path)
 
 
-def test_a_pending_restore_again_keeps_the_state(app, monkeypatch):
-    """The restored copy expired. The request again is for the same row."""
+@pytest.mark.parametrize("deleted", [True, False])
+def test_a_pending_restore_again_keeps_the_state(app, monkeypatch, deleted):
+    """The restored copy expired. The request again is for the same row.
 
+    A failed delete of the stale message does not end the state. The
+    restore is on its way."""
+
+    import app.videos as videos
     from app import aws_storage
     from tests.test_aws_download import _client_error
 
-    file_id, key, path = _direct_row(app, "Restore Again")
+    file_id, key, path = _direct_row(app, f"Restore Again {deleted}")
     s3 = S3(
         head={"ContentLength": 3, "StorageClass": "DEEP_ARCHIVE"},
         errors=_client_error("InvalidObjectState", 403, "GetObject"),
@@ -454,13 +469,18 @@ def test_a_pending_restore_again_keeps_the_state(app, monkeypatch):
         lambda key, **kwargs: restored.append((key, kwargs)),
     )
     _wire(monkeypatch, s3, SQS())
+    if not deleted:
+        monkeypatch.setattr(
+            aws_storage, "delete_download_message", lambda *args, **kwargs: False
+        )
     with app.app_context():
         assert (
             aws_storage.aws_download(key, os.path.basename(key), "r1", place_at=path)
             == aws_storage.DOWNLOAD_RESTORE_PENDING
         )
+        assert videos.download_task(key, os.path.basename(key), "r1") is True
         assert _pending(file_id) is not None
-    assert restored == [(key, {"record_request": False})]
+    assert restored == [(key, {"record_request": False})] * 2
 
 
 @pytest.mark.parametrize("exit", ["volume give-up", "error", "refused"])
@@ -489,59 +509,6 @@ def test_each_terminal_exit_of_the_task_clears_the_state(app, monkeypatch, exit)
     with app.app_context():
         videos.download_task(key, os.path.basename(key), "r1", **kwargs)
         assert _pending(file_id) is None
-
-
-def test_the_terminal_returns_of_the_download_go_through_the_clear():
-    """Each return of a terminal status ends the pending restore (#610).
-
-    DOWNLOAD_RESTORE_PENDING is the one status that keeps it."""
-
-    from app import aws_storage
-
-    terminal = {
-        "DOWNLOAD_COMPLETE",
-        "DOWNLOAD_OBJECT_MISSING",
-        "DOWNLOAD_ACCESS_DENIED",
-    }
-    tree = ast.parse(inspect.getsource(aws_storage))
-    functions = {
-        node.name: node
-        for node in ast.walk(tree)
-        if isinstance(node, ast.FunctionDef)
-        and node.name
-        in (
-            "aws_download",
-            "_resolve_missing_object",
-            "_refuse_access_fault",
-            "_defer_to_restore",
-        )
-    }
-    assert len(functions) == 4
-    checked = 0
-    for name, function in functions.items():
-        for node in ast.walk(function):
-            if not isinstance(node, ast.Return) or node.value is None:
-                continue
-            names = {
-                child.id
-                for child in ast.walk(node.value)
-                if isinstance(child, ast.Name)
-            }
-            cleared = (
-                isinstance(node.value, ast.Call)
-                and getattr(node.value.func, "id", None) == "end_restore_request"
-            )
-            if names & terminal:
-                checked += 1
-                assert cleared, f"{name} line {node.lineno} returns without the clear"
-            if "DOWNLOAD_RESTORE_PENDING" in names:
-                assert (
-                    not cleared
-                ), f"{name} line {node.lineno} clears a pending restore"
-    assert checked == 3
-    give_up = functions["aws_download"].body[-1]
-    assert isinstance(give_up, ast.Return)
-    assert give_up.value.func.id == "end_restore_request"
 
 
 def test_the_sweep_clears_a_state_older_than_14_days(app, monkeypatch):
@@ -633,3 +600,287 @@ def test_an_old_sidecar_with_a_stat_line_still_resumes(app, monkeypatch):
             assert handle.read() == b"s3!"
     finally:
         _remove(staged, f"{staged}.etag", path)
+
+
+def test_a_move_during_the_download_still_ends_the_pending_restore(app, monkeypatch):
+    """An archive move repoints the row during the download (#563 follow-up).
+
+    The clear goes by the row id. A clear by the old key found no row,
+    and the forms stayed off until the 14-day sweep."""
+
+    import botocore.exceptions
+
+    import app.videos as videos
+    from app import db
+    from app.models import File
+
+    file_id, key, path = _direct_row(app, "Moved Pending")
+    moved_key = "modified/Moved Pending Later.mkv"
+    gone = botocore.exceptions.ClientError(
+        {"Error": {"Code": "404", "Message": "gone"}}, "HeadObject"
+    )
+
+    def head(call):
+        if call == 1:
+            db.session.execute(
+                db.update(File).where(File.id == file_id).values(aws_key=moved_key)
+            )
+            db.session.commit()
+        elif call == 2:
+            raise gone
+        return {"ContentLength": 3, "ETag": '"v1"'}
+
+    _wire(monkeypatch, S3(head=head))
+    try:
+        with app.app_context():
+            assert videos.download_task(key, os.path.basename(key)) is True
+            assert _pending(file_id) is None
+            assert db.session.get(File, file_id).aws_key == moved_key
+        with open(path, "rb") as handle:
+            assert handle.read() == b"s3!"
+    finally:
+        _remove(path)
+
+
+def test_the_retry_after_a_busy_lock_places_the_kept_copy(app, monkeypatch, held_lock):
+    """The retry places the kept download with no second download, then clears."""
+
+    import app.videos as videos
+    from app import db
+    from app.models import File
+    from tests.test_scheduling import scheduled_jobs
+
+    file_id, key, path = _direct_row(app, "Busy Then Free")
+    with app.app_context():
+        resource = db.session.get(File, file_id).file_identifier()
+    lock = held_lock(resource)
+    s3 = S3()
+    _wire(monkeypatch, s3, SQS())
+    try:
+        with app.app_context():
+            assert videos.download_task(key, os.path.basename(key), "r1") is False
+            assert _pending(file_id) is not None
+        app.lock_manager.unlock(lock)
+        (retry,) = [
+            job
+            for job in scheduled_jobs(app.file_queue)
+            if job.func_name == "app.videos.download_task"
+        ]
+        with app.app_context():
+            assert videos.download_task(*retry.args, **retry.kwargs) is True
+            assert _pending(file_id) is None
+        assert s3.downloads == [key]
+        with open(path, "rb") as handle:
+            assert handle.read() == b"s3!"
+    finally:
+        _remove(path)
+
+
+def test_the_placement_after_a_writer_that_began_first_ends_consistent(
+    app, monkeypatch, held_lock
+):
+    """A remux held the lock at the request. It writes while the placement waits.
+
+    Its archive is refused. The placement does not replace the newer
+    file, the pending state ends, and the stale mark stays for the sync."""
+
+    import app.videos as videos
+    from app import aws_storage, db
+    from app.models import File
+    from app.tracks import flag_archive_before_rewrite
+    from tests.test_scheduling import scheduled_jobs
+
+    file_id, key, path = _direct_row(app, "Writer First", requested=False)
+    with app.app_context():
+        resource = db.session.get(File, file_id).file_identifier()
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "wb") as handle:
+        handle.write(b"old local")
+    s3 = S3()
+    _wire(monkeypatch, s3, SQS())
+    writer_lock = held_lock(resource)
+    staged = os.path.join(app.config["IMPORT_DIR"], f".restore-{key.replace('/', '-')}")
+    try:
+        with app.app_context():
+            aws_storage.mark_restore_pending(key)
+            assert videos.download_task(key, os.path.basename(key), "r1") is False
+            flag_archive_before_rewrite(file_id)
+            with open(path, "wb") as handle:
+                handle.write(b"remuxed local")
+            assert (
+                aws_storage.archive_library_file(db.session.get(File, file_id), path)
+                is None
+            )
+        app.lock_manager.unlock(writer_lock)
+        (retry,) = [
+            job
+            for job in scheduled_jobs(app.file_queue)
+            if job.func_name == "app.videos.download_task"
+        ]
+        with app.app_context():
+            videos.download_task(*retry.args, **retry.kwargs)
+            assert _pending(file_id) is None
+            assert db.session.get(File, file_id).aws_stale is True
+        with open(path, "rb") as handle:
+            assert handle.read() == b"remuxed local"
+        assert not os.path.exists(staged)
+        assert s3.downloads == [key]
+    finally:
+        _remove(path, staged, f"{staged}.etag")
+
+
+def test_the_import_of_the_restored_rip_clears_the_stale_mark(app):
+    """A refused archive of an untouched/ row marks it stale. The rip then imports.
+
+    The new library file is a fresh localization of the rip. A stale mark
+    that stayed made the next sync upload the file to modified/ and
+    delete the untouched/ rip."""
+
+    from datetime import datetime
+
+    from app import aws_storage, db, importing
+    from app.models import File
+
+    with app.app_context():
+        file_id, key, path = _pending_file(app, "Refused Untouched")
+        file = db.session.get(File, file_id)
+        file.untouched_basename = file.basename
+        db.session.commit()
+        assert aws_storage.archive_library_file(file, path) is None
+        assert db.session.get(File, file_id).aws_stale is True
+        aws_storage.end_restore_request(file_id)
+        file = db.session.get(File, file_id)
+        details = {
+            "file_path": file.file_path,
+            "basename": file.basename,
+            "media_library": "Movies",
+            "title": "Refused Untouched",
+            "year": 1953,
+            "quality_title": "Bluray-1080p",
+            "untouched_basename": file.basename,
+            "aws_key": key,
+            "aws_date_uploaded": datetime(2026, 10, 1),
+            "aws_filesize_bytes": 5,
+        }
+        inspection = {
+            "video": {},
+            "audio_tracks": [],
+            "subtitle_tracks": [],
+            "filesize_bytes": 5,
+        }
+        try:
+            importing._build_records(details, inspection, file.basename)
+            db.session.commit()
+            db.session.expire_all()
+            row = db.session.get(File, file_id)
+            assert row.aws_key == key
+            assert row.aws_stale is False
+        finally:
+            _remove(path)
+
+
+@pytest.mark.parametrize("on_demand", [False, True])
+def test_the_scan_does_not_rewrite_the_file_of_a_pending_restore(
+    app, monkeypatch, on_demand
+):
+    """The scan removes empty subtitle tracks. A pending restore keeps the file.
+
+    The read part of the scan still runs. A rewrite marked the archive
+    stale, and the placement then refused the restore. The library scan,
+    the rescan after a failed edit and the page scan all reach it."""
+
+    from app import db, tracks
+    from app.models import File
+
+    with app.app_context():
+        file_id, _, path = _pending_file(app, f"Scan Writer {on_demand}")
+        db.session.get(File, file_id).container = "Matroska"
+        db.session.commit()
+
+    class Info:
+        tracks = [SimpleNamespace(track_type="General", format="Matroska")]
+
+    rewrites = []
+    saved = []
+    monkeypatch.setattr(tracks.MediaInfo, "parse", staticmethod(lambda path: Info()))
+    monkeypatch.setattr(
+        tracks,
+        "remove_empty_subtitle_tracks",
+        lambda path, before_replace=None: rewrites.append(path) or True,
+    )
+    monkeypatch.setattr(tracks, "_extract_media_details", lambda path: {})
+    monkeypatch.setattr(
+        tracks,
+        "enqueue_task",
+        lambda name, file_id, details, lock, archive, **kwargs: saved.append(
+            (file_id, archive)
+        ),
+    )
+
+    def save(file_id, details, lock=None, archive=False):
+        saved.append((file_id, archive))
+        app.lock_manager.unlock(lock)
+        return True
+
+    monkeypatch.setattr(tracks, "save_track_metadata", save)
+    try:
+        with app.app_context():
+            scan = (
+                tracks.track_metadata_scan
+                if on_demand
+                else tracks.track_metadata_scan_task
+            )
+            assert scan(file_id) is True
+            assert db.session.get(File, file_id).aws_stale is False
+        assert rewrites == []
+        assert saved == [(file_id, False)]
+    finally:
+        _remove(path)
+
+
+def test_the_sweep_reads_a_naive_stamp_as_utc(app):
+    """MariaDB returns naive datetimes. A naive stamp of 3 days ago stays."""
+
+    from datetime import datetime, timedelta, timezone
+
+    from app import db
+    from app.aws_storage import expire_restore_requests
+    from app.models import File
+
+    with app.app_context():
+        file_id, _, _ = _pending_file(app, "Naive Stamp", local=False)
+        stamp = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=3)
+        db.session.get(File, file_id).restore_requested_at = stamp
+        db.session.commit()
+        expire_restore_requests(14)
+        assert _pending(file_id) is not None
+
+
+def test_a_fault_at_the_lock_release_still_ends_a_placed_restore(app, monkeypatch):
+    """A Redis fault at the release of the title lock does not fail the restore.
+
+    The copy is in place, and the state ends. The lock expires by itself."""
+
+    import app.videos as videos
+
+    file_id, key, path = _direct_row(app, "Unlock Fault")
+    _wire(monkeypatch, S3(), SQS())
+    real_unlock = app.lock_manager.unlock
+    faults = []
+
+    def unlock(lock):
+        real_unlock(lock)
+        if not faults:
+            faults.append(lock)
+            raise RuntimeError("simulated Redis fault at the unlock")
+
+    monkeypatch.setattr(app.lock_manager, "unlock", unlock)
+    try:
+        with app.app_context():
+            assert videos.download_task(key, os.path.basename(key), "r1") is True
+            assert _pending(file_id) is None
+        assert len(faults) == 1
+        with open(path, "rb") as handle:
+            assert handle.read() == b"s3!"
+    finally:
+        _remove(path)

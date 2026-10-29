@@ -98,8 +98,6 @@ from app.infuse_player import play_movie as infuse_play_movie
 from app.plex_player import play_movie, remote_playback_configured
 from app.main.helpers import (
     _hold_verdict_lock,
-    flash_tracks_need_rescan,
-    tracks_need_rescan,
     apply_verdict,
     verdict_response,
     admin_required,
@@ -2847,16 +2845,6 @@ def file(file_id):
         flash(f"'{file.basename}' {restore_pending}", "warning")
         return redirect(url_for("main.file", file_id=file.id))
 
-    # The track forms post track UIDs (#611). Rows with no UID give the
-    # forms no valid choice. Thus, the refusal comes before the validation.
-
-    needs_rescan = tracks_need_rescan(file, audio_tracks, subtitle_tracks)
-    if needs_rescan and (
-        mkvpropedit_form.mkvpropedit_submit.data or mkvmerge_form.mkvmerge_submit.data
-    ):
-        flash_tracks_need_rescan(file)
-        return redirect(url_for("main.file", file_id=file.id))
-
     for form, submit, handler, needs_local_file in handlers:
         if submit.data and form.validate_on_submit():
             if needs_local_file and not file_exists_locally:
@@ -2901,7 +2889,6 @@ def file(file_id):
         pending_subtitle_triage=pending_subtitle_triage,
         pending_lossy_triage=pending_lossy_triage,
         possibly_forced_track_ids=possibly_forced_track_ids,
-        tracks_need_rescan=needs_rescan,
         metadata_scan_form=metadata_scan_form,
         mkvpropedit_form=mkvpropedit_form,
         # The dropdowns offer the own languages of the collection.

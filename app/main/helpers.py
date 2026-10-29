@@ -827,29 +827,6 @@ def _watched_timestamp(watched_date):
     return datetime.combine(watched_date, datetime.min.time())
 
 
-def tracks_need_rescan(file, *track_lists):
-    """Return True if a Matroska track row of the file has no track UID (#611).
-
-    The edits address a track by its UID. The rows of a file that was
-    scanned before the UID column existed have none until the backfill
-    or a rescan fills them. Then the page disables the track controls,
-    and the routes refuse an edit."""
-
-    return file.container == "Matroska" and any(
-        track.uid is None for tracks in track_lists for track in tracks
-    )
-
-
-def flash_tracks_need_rescan(file):
-    """Flash the refusal of a track edit of a file whose rows have no UIDs (#611)."""
-
-    flash(
-        f"The track rows of '{file.basename}' have no track UIDs. Rescan the "
-        f"file, then try again.",
-        "warning",
-    )
-
-
 def flash_form_errors(form):
     """Flash the first error of each field of a form that failed validation.
 

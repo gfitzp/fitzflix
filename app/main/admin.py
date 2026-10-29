@@ -87,8 +87,6 @@ from app.main.helpers import (
     admin_required,
     decimal_id,
     decimal_ids,
-    flash_tracks_need_rescan,
-    tracks_need_rescan,
 )
 from app.main.library import restore_cost_estimate
 from app.log_digest import stored_digest
@@ -1503,21 +1501,6 @@ def tmdb_triage():
     )
 
 
-def _rescan_file_ids(candidates):
-    """Return the ids of the candidate files whose track rows have no UIDs (#611).
-
-    The triage page disables the track controls of these files. The
-    backfill or a rescan fills the UIDs."""
-
-    return {
-        entry["file"].id
-        for entry in candidates
-        if tracks_need_rescan(
-            entry["file"], entry["file"].audiotrack, entry["file"].subtrack
-        )
-    }
-
-
 @bp.route("/maintenance/subtitles", methods=["GET", "POST"], defaults={"file_id": None})
 @bp.route("/maintenance/subtitles/<int:file_id>", methods=["GET", "POST"])
 @login_required
@@ -1568,9 +1551,6 @@ def subtitle_triage(file_id):
         refused = refuse_while_restore_pending(file)
         if refused:
             flash(f"'{file.basename}' {refused}", "warning")
-            return stay()
-        if tracks_need_rescan(file, file.audiotrack, file.subtrack):
-            flash_tracks_need_rescan(file)
             return stay()
 
         # The checkboxes post the track UIDs (#611). A remux between the
@@ -1664,7 +1644,6 @@ def subtitle_triage(file_id):
 
     return render_template(
         "subtitle_triage.html",
-        rescan_file_ids=_rescan_file_ids(candidates) if focus_file else set(),
         title=(
             f'Possibly-forced subtitles in "{focus_file.basename}"'
             if focus_file
@@ -1721,9 +1700,6 @@ def lossy_audio_triage(file_id):
         refused = refuse_while_restore_pending(file)
         if refused:
             flash(f"'{file.basename}' {refused}", "warning")
-            return stay()
-        if tracks_need_rescan(file, file.audiotrack, file.subtrack):
-            flash_tracks_need_rescan(file)
             return stay()
 
         # The radio posts the track UID (#611).
@@ -1828,7 +1804,6 @@ def lossy_audio_triage(file_id):
 
     return render_template(
         "lossy_audio_triage.html",
-        rescan_file_ids=_rescan_file_ids(candidates) if focus_file else set(),
         title=(
             f'Lossy-audio lead in "{focus_file.basename}"'
             if focus_file

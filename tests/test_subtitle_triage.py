@@ -599,8 +599,10 @@ def test_an_unreadable_aids_path_counts_as_no_aids(tmp_path):
     assert _has_subtitle_aids(str(blocker)) is False
 
 
-def test_mark_forced_refuses_rows_with_no_uid(app, admin_client):
-    """The rows before the backfill have no UIDs. The edit waits for a rescan (#611)."""
+def test_mark_forced_finds_no_track_in_rows_with_no_uid(app, admin_client):
+    """The rows before the backfill have no UIDs. The page posts no value (#611).
+
+    No row matches. Thus, the post flags nothing and queues nothing."""
 
     with app.app_context():
         file, small = build_candidate(title="Forced No UID")
@@ -615,19 +617,18 @@ def test_mark_forced_refuses_rows_with_no_uid(app, admin_client):
         page = admin_client.get(f"/maintenance/subtitles/{file_id}").get_data(
             as_text=True
         )
-        assert "have no track UIDs. Rescan the file" in page
-        assert "<fieldset disabled>" in page
+        assert 'name="track_uids" value=""' in page
         response = admin_client.post(
             "/maintenance/subtitles",
             data={
                 "csrf_token": csrf_token_from(page),
                 "file_id": file_id,
-                "track_uids": ["802"],
+                "track_uids": [""],
                 "mark_forced_submit": "Flag selected as forced",
             },
             follow_redirects=True,
         )
-        assert "have no track UIDs. Rescan the file, then try again." in (
+        assert "Select at least 1 track to flag as forced." in (
             response.get_data(as_text=True)
         )
         assert app.file_queue.jobs == []

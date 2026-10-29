@@ -242,16 +242,20 @@ def test_an_edit_for_a_uid_that_is_gone_stops_and_queues_a_scan(
         os.remove(path)
 
 
-def test_the_task_refuses_a_uid_that_is_gone(app, two_by_two_mkv):
-    """The queued task, not only the unlocked body, stops on a gone UID."""
+@pytest.mark.parametrize("uid", ["999", "None"])
+def test_the_task_refuses_a_uid_that_is_gone(app, two_by_two_mkv, uid):
+    """The queued task, not only the unlocked body, stops on a gone UID.
+
+    A row with no UID posts "None" (#611). The edit stops the same way,
+    and the rescan fills the UIDs."""
 
     from app import tracks
 
-    file_id, path = _library_file(app, two_by_two_mkv, "UID Gone Task")
+    file_id, path = _library_file(app, two_by_two_mkv, f"UID Gone Task {uid}")
     try:
         with app.app_context():
-            assert tracks.mkvpropedit_task(file_id, "999", None, []) is False
-            assert tracks.mkvmerge_task(file_id, ["999"], []) is False
+            assert tracks.mkvpropedit_task(file_id, uid, None, []) is False
+            assert tracks.mkvmerge_task(file_id, [uid], []) is False
         assert len(_scans(app, file_id)) == 1
     finally:
         os.remove(path)
@@ -323,6 +327,120 @@ def test_the_backfill_skips_a_missing_file_and_a_busy_lock(app, two_by_two_mkv):
     finally:
         app.lock_manager.unlock(held)
         os.remove(busy_path)
+
+
+@pytest.fixture
+def attached_mkv(app, tmp_path):
+    """Build a Matroska file with 2 audio tracks, 1 subtitle and a cover image."""
+
+    subtitle = tmp_path / "cue.srt"
+    subtitle.write_text("1\n00:00:00,000 --> 00:00:00,500\nLine\n")
+    cover = tmp_path / "cover.jpg"
+    cover.write_bytes(b"\xff\xd8\xff\xe0" + b"0" * 64)
+    return make_sample_mkv(
+        str(tmp_path / "attached.mkv"),
+        audio=(("eng", True), ("fra", False)),
+        subtitles=[subtitle],
+        attachments=[(cover, "image/jpeg")],
+    )
+
+
+def _row_details(app, file_id):
+    from app.models import FileAudioTrack, FileSubtitleTrack
+
+    with app.app_context():
+        return sorted(
+            (model.__name__, row.streamorder, row.uid, row.language)
+            for model in (FileAudioTrack, FileSubtitleTrack)
+            for row in model.query.filter_by(file_id=file_id)
+        )
+
+
+def test_the_backfill_maps_each_row_of_a_file_with_an_attachment(app, attached_mkv):
+    from app.tracks_cli import backfill_track_uids
+
+    file_id, path = _library_file(app, attached_mkv, "UID Attached")
+    try:
+        scanned = _row_details(app, file_id)
+        assert len(scanned) == 3
+        _clear_uids(app, file_id)
+        with app.app_context():
+            counts = backfill_track_uids()
+        assert (counts["rows"], counts["left"]) == (3, 0)
+        assert _row_details(app, file_id) == scanned
+    finally:
+        os.remove(path)
+
+
+@pytest.mark.parametrize("change", ["type", "language", "codec", "shared uid"])
+def test_a_row_that_does_not_match_its_track_leaves_the_file_for_a_rescan(
+    app, attached_mkv, change
+):
+    """A row older than the file can point at a different track (#611).
+
+    A remux swapped the tracks, and its rescan failed. A fill by the
+    stream order alone gave a row the UID of a different track. On any
+    mismatch, every row of the file keeps no UID, and the file counts
+    as left."""
+
+    from app import db
+    from app.models import FileAudioTrack, FileSubtitleTrack
+    from app.tracks_cli import backfill_track_uids
+
+    file_id, path = _library_file(app, attached_mkv, f"UID Mismatch {change}")
+    try:
+        _clear_uids(app, file_id)
+        with app.app_context():
+            first, second = (
+                FileAudioTrack.query.filter_by(file_id=file_id)
+                .order_by(FileAudioTrack.track)
+                .all()
+            )
+            if change == "type":
+                FileSubtitleTrack.query.filter_by(file_id=file_id).update(
+                    {"streamorder": first.streamorder}
+                )
+            elif change == "language":
+                first.streamorder, second.streamorder = (
+                    second.streamorder,
+                    first.streamorder,
+                )
+            elif change == "codec":
+                first.format = "DTS"
+            else:
+                second.language = first.language
+                second.streamorder = first.streamorder
+            db.session.commit()
+            counts = backfill_track_uids()
+        assert (counts["rows"], counts["left"], counts["files"]) == (0, 1, 0)
+        assert all(uid is None for _, _, uid, _ in _row_details(app, file_id))
+    finally:
+        os.remove(path)
+
+
+@pytest.mark.parametrize(
+    "row_format, codec_id, same",
+    [
+        ("AC-3", "A_AC3", True),
+        ("AC-3", "A_EAC3", False),
+        ("E-AC-3", "A_EAC3", True),
+        ("DTS", "A_DTS/LOSSLESS", True),
+        ("PCM", "A_PCM/INT/LIT", True),
+        ("PCM", "A_MS/ACM", True),
+        ("MLP FBA", "A_TRUEHD", True),
+        ("UTF-8", "S_TEXT/UTF8", True),
+        ("PGS", "S_HDMV/PGS", True),
+        ("PGS", "S_HDMV/TEXTST", False),
+        ("AAC", None, False),
+        ("Unknown", "A_AAC", False),
+    ],
+)
+def test_same_codec_pairs_a_mediainfo_format_with_a_codec_id(
+    row_format, codec_id, same
+):
+    from app.tracks_cli import same_codec
+
+    assert same_codec(row_format, codec_id) is same
 
 
 def test_the_backfill_command_is_registered(app):

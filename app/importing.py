@@ -2920,6 +2920,13 @@ def _build_records(file_details, inspection, output_name, series_id=None):
     file.aws_date_uploaded = file_details.get("aws_date_uploaded")
     file.aws_filesize_bytes = file_details.get("aws_filesize_bytes")
 
+    # The new library file is a fresh localization of this archive. Thus,
+    # the archive is current. A stale mark from a refused archive of the
+    # old file must go. Otherwise the next sync uploads the new file to
+    # modified/ and deletes the restored rip in untouched/ (#610).
+
+    file.aws_stale = False
+
     # A pending move of the old archive does not apply to the new one
     # (#369). A reused conversion can keep a transcoded/ copy under the
     # old name. Its move is requested here, and it goes to the queue at

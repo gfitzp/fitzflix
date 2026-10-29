@@ -49,42 +49,107 @@ def _pending_file_ids():
     )
 
 
-def _fill_file(file, ids):
+# The mkvmerge codec ids of each MediaInfo format that a track row
+# stores. A codec id matches if it is one of these or starts with one
+# and a slash. These are the formats of the live rows on 2026-10-29. A
+# format that is not here never matches. Then the file needs a rescan.
+
+CODEC_IDS = {
+    "AAC": ("A_AAC",),
+    "AC-3": ("A_AC3",),
+    "DTS": ("A_DTS",),
+    "DTS LBR": ("A_DTS",),
+    "E-AC-3": ("A_EAC3",),
+    "FLAC": ("A_FLAC",),
+    "MLP FBA": ("A_TRUEHD", "A_MLP"),
+    "MPEG Audio": ("A_MPEG",),
+    "Opus": ("A_OPUS",),
+    "PCM": ("A_PCM", "A_MS/ACM"),
+    "Vorbis": ("A_VORBIS",),
+    "ASS": ("S_TEXT/ASS",),
+    "D_WEBVTT/SUBTITLES": ("D_WEBVTT",),
+    "DVB Subtitle": ("S_DVBSUB",),
+    "PGS": ("S_HDMV/PGS",),
+    "TEXTST": ("S_HDMV/TEXTST",),
+    "UTF-8": ("S_TEXT/UTF8",),
+    "VobSub": ("S_VOBSUB",),
+}
+
+
+def same_codec(row_format, codec_id):
+    """Return True if a MediaInfo format and an mkvmerge codec id name 1 codec."""
+
+    codec_id = str(codec_id or "")
+    return any(
+        codec_id == known or codec_id.startswith(known + "/")
+        for known in CODEC_IDS.get(row_format, ())
+    )
+
+
+def _row_uid(row, track, kind):
+    """Return the UID of track for row, or None if track is not the track of row.
+
+    The track must have the type of the row, a UID, the language of the
+    row and the codec of the row. A row that is older than the file can
+    have the stream order of a different track. Then the language or the
+    codec is different."""
+
+    from app.tracks import same_language
+
+    if track is None or track.get("type") != kind:
+        return None
+    properties = track.get("properties") or {}
+    if properties.get("uid") is None:
+        return None
+    if not same_language(row.language, properties.get("language") or "und"):
+        return None
+    if not same_codec(row.format, properties.get("codec_id")):
+        return None
+    return str(properties["uid"])
+
+
+def _fill_file(file, tracks):
     """Stage the UID of each track row of file that has none.
 
-    Return the counts of the filled rows and of the rows left empty.
-    ids is the result of mkvmerge_track_ids for the file. The stream
-    order of a row is the mkvmerge track id. A row whose stream order
-    has no track of the same type stays empty. A rescan repairs it. The
-    UPDATE matches the row id, the stream order and an empty UID. Thus,
-    a row that changed since the read keeps what it has."""
+    Return the count of the filled rows, or None if the file needs a
+    rescan. tracks is the result of mkvmerge_identify for the file. The
+    stream order of a row is the mkvmerge track id. Each row must match
+    the type, the language and the codec of that track, and no 2 rows
+    can get 1 UID. On a mismatch, every row of the file stays empty. A
+    rescan then fills them from the file. The UPDATE matches the row id,
+    the stream order and an empty UID. Thus, a row that changed since
+    the read keeps what it has."""
 
     from app import db
     from app.models import FileAudioTrack, FileSubtitleTrack
 
-    filled = left = 0
+    by_id = {track.get("id"): track for track in tracks}
+    staged = []
     for model in (FileAudioTrack, FileSubtitleTrack):
-        by_id = {
-            track_id: uid for uid, track_id in ids[TRACK_TYPES[model.__name__]].items()
-        }
+        kind = TRACK_TYPES[model.__name__]
         rows = model.query.filter(model.file_id == file.id, model.uid.is_(None)).all()
         for row in rows:
-            uid = by_id.get(row.streamorder)
+            uid = _row_uid(row, by_id.get(row.streamorder), kind)
             if uid is None:
-                left += 1
-                continue
-            result = db.session.execute(
-                db.update(model)
-                .where(
-                    model.id == row.id,
-                    model.streamorder == row.streamorder,
-                    model.uid.is_(None),
-                )
-                .values(uid=uid)
-                .execution_options(synchronize_session=False)
+                return None
+            staged.append((model, row, uid))
+    if len({uid for _, _, uid in staged}) != len(staged):
+        return None
+
+    filled = 0
+    for model, row, uid in staged:
+        result = db.session.execute(
+            db.update(model)
+            .where(
+                model.id == row.id,
+                model.streamorder == row.streamorder,
+                model.uid.is_(None),
             )
-            filled += result.rowcount
-    return filled, left
+            .values(uid=uid)
+            .execution_options(synchronize_session=False)
+        )
+        filled += result.rowcount
+    return filled
 
 
 def backfill_track_uids(batch_size=BATCH_SIZE):
@@ -105,7 +170,7 @@ def backfill_track_uids(batch_size=BATCH_SIZE):
 
     from app import db
     from app.models import File
-    from app.tracks import mkvmerge_track_ids
+    from app.tracks import mkvmerge_identify
 
     file_ids = _pending_file_ids()
     click.echo(f"{len(file_ids)} Matroska file(s) have track rows with no UID")
@@ -131,16 +196,22 @@ def backfill_track_uids(batch_size=BATCH_SIZE):
                     continue
                 locks.append(lock)
                 try:
-                    ids = mkvmerge_track_ids(path)
+                    tracks = mkvmerge_identify(path)
                 except Exception as error:
                     counts["failed"] += 1
                     current_app.logger.warning(
                         f"'{file.basename}' mkvmerge -J failed: {error}"
                     )
                     continue
-                filled, left = _fill_file(file, ids)
+                filled = _fill_file(file, tracks)
+                if filled is None:
+                    counts["left"] += 1
+                    current_app.logger.warning(
+                        f"'{file.basename}' The track rows do not match the "
+                        f"file. The rows keep no UID until a rescan"
+                    )
+                    continue
                 counts["rows"] += filled
-                counts["left"] += left
                 counts["files"] += 1
             db.session.commit()
         except BaseException:
@@ -158,7 +229,8 @@ def backfill_track_uids(batch_size=BATCH_SIZE):
 
     click.echo(
         f"Filled {counts['rows']} track row(s) in {counts['files']} file(s). "
-        f"{counts['left']} row(s) had no matching track and need a rescan. "
+        f"{counts['left']} file(s) have rows that do not match the file and "
+        f"need a rescan. "
         f"Skipped {counts['missing']} missing, {counts['busy']} busy and "
         f"{counts['failed']} unreadable file(s)"
     )

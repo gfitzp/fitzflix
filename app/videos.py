@@ -14,6 +14,7 @@ real homes. The shim exists for the strings and the history.
 """
 
 import errno
+import json
 import os
 import subprocess
 import time
@@ -352,16 +353,41 @@ def acquire_lock_or_defer(
     return None
 
 
-def lock_wait_job_id(func, description, key=None):
+# The tasks whose lock wait id holds a digest of the arguments (#595).
+# Each is an edit of 1 file with arguments that differ per edit. Under a
+# fixed id, a second deferred edit of the file replaces the first.
+
+ARGUMENT_TAGGED_RETRIES = frozenset(
+    {"mkvpropedit_task", "mkvmerge_task", "remux_audio_plan_task"}
+)
+
+
+def arguments_tag(args):
+    """Return a short digest of the positional arguments of a task (#595).
+
+    The same arguments give the same digest. Thus, a repeat deferral of
+    1 edit still replaces its own pending retry."""
+
+    return path_tag(json.dumps(list(args or ()), sort_keys=True, default=repr))
+
+
+def lock_wait_job_id(func, description, args=(), key=None):
     """Return the job id of the lock wait of a task (see schedule_retry).
 
     The lock wait keeps its own id format. localization_pending matches
     the localization form of it exactly (#287). A repeat deferral of a
-    task for 1 file replaces its pending retry."""
+    task for 1 file replaces its pending retry. The track edits put a
+    digest of their arguments into the id (#595). Thus, 2 different
+    edits of 1 file wait apart."""
 
+    short_name = func.rsplit(".", 1)[-1]
+    edit_tag = (
+        f"{arguments_tag(args)}:" if short_name in ARGUMENT_TAGGED_RETRIES else ""
+    )
     return safe_job_id(
-        f"retry:{func.rsplit('.', 1)[-1]}:"
+        f"retry:{short_name}:"
         + (f"{path_tag(key)}:" if key is not None else "")
+        + edit_tag
         + description
     )
 
@@ -392,7 +418,7 @@ def schedule_retry(
         description=description,
         queue=queue,
         timeout=timeout,
-        job_id=lock_wait_job_id(func, description, key=key),
+        job_id=lock_wait_job_id(func, description, args, key=key),
     )
     return int(delay.total_seconds() // 60)
 

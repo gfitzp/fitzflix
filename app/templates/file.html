@@ -69,10 +69,8 @@
 		</form>
 	</div>
 </div>
-{# The edits address a track by its UID (#611). Rows with no UID wait
-   for a rescan, and their controls stay off. So do the controls of a
-   file with a pending restore (#610). #}
-{% set track_edits_off = not file_exists_locally or tracks_need_rescan or file.restore_requested_at %}
+{# The controls of a file with a pending restore stay off (#610). #}
+{% set track_edits_off = not file_exists_locally or file.restore_requested_at %}
 <div class="table-responsive mt-3">
 	<table class="table align-middle">
 		{% if audio_tracks %}
@@ -180,9 +178,7 @@
 		</fieldset>
 	</form>
 </div>
-{% if tracks_need_rescan %}
-<p class="small text-muted mt-2 mb-0">The track rows of this file have no track UIDs. Rescan the file before you edit its tracks.</p>
-{% elif file_exists_locally and not file.restore_requested_at %}
+{% if file_exists_locally and not file.restore_requested_at %}
 <p class="small text-muted mt-2 mb-0"><em>Update MKV Properties</em> saves the Language, Default, and Forced columns. It edits the file in place. <em>Remux MKV File</em> rebuilds the file with only the tracks that you selected under Keep.</p>
 {% endif %}
 {% endif %}

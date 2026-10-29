@@ -479,8 +479,10 @@ def test_lossy_triage_requires_admin(user_client):
     assert user_client.get("/maintenance/lossy-audio").status_code == 302
 
 
-def test_promote_refuses_rows_with_no_uid(app, admin_client):
-    """The rows before the backfill have no UIDs. The edit waits for a rescan (#611)."""
+def test_promote_finds_no_track_in_rows_with_no_uid(app, admin_client):
+    """The rows before the backfill have no UIDs. The page posts no value (#611).
+
+    No row matches. Thus, the post remuxes nothing and queues nothing."""
 
     with app.app_context():
         file, lossless = build_candidate(title="Lead No UID")
@@ -495,21 +497,18 @@ def test_promote_refuses_rows_with_no_uid(app, admin_client):
         page = admin_client.get(f"/maintenance/lossy-audio/{file_id}").get_data(
             as_text=True
         )
-        assert "have no track UIDs. Rescan the file" in page
-        assert "<fieldset disabled>" in page
+        assert 'name="lossless_track" value=""' in page
         response = admin_client.post(
             "/maintenance/lossy-audio",
             data={
                 "csrf_token": csrf_token_from(page),
                 "file_id": file_id,
-                "lossless_track": "2",
+                "lossless_track": "",
                 "promote_submit": "Remux with this track in the lead",
             },
             follow_redirects=True,
         )
-        assert "have no track UIDs. Rescan the file, then try again." in (
-            response.get_data(as_text=True)
-        )
+        assert "Select a lossless track to lead." in response.get_data(as_text=True)
         assert app.file_queue.jobs == []
     finally:
         os.remove(local_path)
