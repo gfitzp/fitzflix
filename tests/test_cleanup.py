@@ -583,3 +583,42 @@ def test_a_failed_file_delete_keeps_the_library_file(app, admin_client, monkeypa
     assert os.path.exists(os.path.join(lib, file_path))
     with app.app_context():
         assert db.session.get(File, file_id) is not None
+
+
+@pytest.mark.parametrize("prefix", ["modified", "transcoded"])
+def test_cleanup_removes_an_old_direct_restore_copy_with_no_owner(
+    app, monkeypatch, prefix
+):
+    """A complete copy of a modified/ key stayed in staging for ever (#601).
+
+    No message returns for a chain that died after a direct enqueue. The
+    sidecar age shows that no chain owns the copy. An untouched/ copy
+    waits for the admin and stays."""
+
+    from app import aws_storage
+
+    monkeypatch.setattr(maintenance, "task_send_email", lambda *a, **k: None)
+    imports = app.config["IMPORT_DIR"]
+    old_copy = plant(os.path.join(imports, f".restore-{prefix}-Old (2020).mkv"))
+    fresh_copy = plant(os.path.join(imports, f".restore-{prefix}-Fresh (2020).mkv"))
+    waiting = plant(os.path.join(imports, ".restore-untouched-Waits (2020).mkv"))
+    copies = (old_copy, fresh_copy, waiting)
+    with app.app_context():
+        for copy in copies:
+            aws_storage._write_partial_etag(copy, '"v1"', os.path.getsize(copy), [])
+    ages = {old_copy: 30, fresh_copy: 10, waiting: 30}
+    for copy, age in ages.items():
+        stamp = time.time() - age * 86400
+        for path in (copy, copy + ".etag"):
+            os.utime(path, (stamp, stamp))
+    try:
+        maintenance.cleanup_orphaned_files()
+        assert not os.path.exists(old_copy)
+        assert not os.path.exists(old_copy + ".etag")
+        for kept in (fresh_copy, waiting):
+            assert os.path.exists(kept) and os.path.exists(kept + ".etag")
+    finally:
+        for copy in copies:
+            for path in (copy, copy + ".etag"):
+                if os.path.exists(path):
+                    os.remove(path)

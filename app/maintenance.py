@@ -1375,12 +1375,53 @@ ETAG_SIDECAR_SUFFIX = ".etag"
 S3TRANSFER_TEMP_SUFFIX = re.compile(r"\.[0-9a-fA-F]{8}$")
 
 
+# A complete copy of a modified/ or transcoded/ key goes straight into
+# the library. Its chain or the next SQS delivery of its message places
+# it. Each round of a chain writes the sidecar again. A chain waits for
+# a volume for 1 day at most. A copy whose sidecar is older than this
+# has no owner any more, and the sweep removes it (#601).
+
+DIRECT_RESTORE_COPY_MAX_AGE_DAYS = 14
+
+
+def _direct_restore_name(name):
+    """Return True if a .restore- name is the copy of a modified/ or transcoded/ key."""
+
+    config = current_app.config
+    return name.startswith(
+        tuple(
+            f".restore-{config[prefix].strip('/')}-"
+            for prefix in ("AWS_MODIFIED_PREFIX", "AWS_TRANSCODED_PREFIX")
+        )
+    )
+
+
+def _ownerless_direct_restore(dirpath, copy):
+    """Return True if a complete direct-restore copy is too old to have an owner (#601).
+
+    The age comes from the sidecar, which each round of a chain writes
+    again. A copy with no sidecar uses its own modification time."""
+
+    if not _direct_restore_name(copy):
+        return False
+    path = os.path.join(dirpath, copy)
+    for stamped in (path + ETAG_SIDECAR_SUFFIX, path):
+        try:
+            stamp = os.stat(stamped).st_mtime
+        except OSError:
+            continue
+        return stamp < time.time() - DIRECT_RESTORE_COPY_MAX_AGE_DAYS * 86400
+    return False
+
+
 def _kept_restore_copy(dirpath, name):
     """Return True if a .restore- file is a complete restored copy (#457).
 
     A complete copy stays for its placement or for the admin. A partial
     download and its ETag sidecar are leftovers like the other hidden
-    partial files."""
+    partial files. A complete copy of a modified/ or transcoded/ key
+    whose sidecar is older than DIRECT_RESTORE_COPY_MAX_AGE_DAYS is a
+    leftover too (#601)."""
 
     from app.aws_storage import read_partial_sidecar
 
@@ -1391,12 +1432,15 @@ def _kept_restore_copy(dirpath, name):
     if name.endswith(ETAG_SIDECAR_SUFFIX):
         # The sidecar of a complete copy stays with its copy.
         copy = name[: -len(ETAG_SIDECAR_SUFFIX)]
-        return os.path.exists(os.path.join(dirpath, copy)) and _complete_copy(
+        complete = os.path.exists(os.path.join(dirpath, copy)) and _complete_copy(
             dirpath, copy, read_partial_sidecar
         )
-    if not os.path.exists(os.path.join(dirpath, name + ETAG_SIDECAR_SUFFIX)):
-        return True
-    return _complete_copy(dirpath, name, read_partial_sidecar)
+    else:
+        copy = name
+        complete = not os.path.exists(
+            os.path.join(dirpath, name + ETAG_SIDECAR_SUFFIX)
+        ) or _complete_copy(dirpath, name, read_partial_sidecar)
+    return complete and not _ownerless_direct_restore(dirpath, copy)
 
 
 def _complete_copy(dirpath, name, read_partial_sidecar):
@@ -1607,7 +1651,17 @@ def cleanup_orphaned_files():
                             f"'{path}' Couldn't delete orphaned file: {e}"
                         )
                         continue
-                    current_app.logger.info(f"'{path}' Deleted orphaned partial file")
+                    if _direct_restore_name(name):
+                        current_app.logger.info(
+                            f"'{path}' Deleted a direct-restore file with no "
+                            f"owner. Its sidecar is older than "
+                            f"{DIRECT_RESTORE_COPY_MAX_AGE_DAYS} days, or it is "
+                            f"a partial download"
+                        )
+                    else:
+                        current_app.logger.info(
+                            f"'{path}' Deleted orphaned partial file"
+                        )
                     removed.append(f"{path} ({_human_size(stats.st_size)})")
 
         # This is the empty-directory pass. It removes the import
