@@ -1501,3 +1501,48 @@ def test_a_deferred_placement_refuses_after_an_edit_in_the_wait(app, monkeypatch
         for path in (staged, f"{staged}.etag", library_path):
             if os.path.exists(path):
                 os.remove(path)
+
+
+def test_a_transient_fault_before_the_placement_carries_the_kept_stat(app, monkeypatch):
+    """The retry took the stat of the edited file after an EIO (#597).
+
+    A partial of an earlier chain holds the stat from before the edit. A
+    transient fault removed the partial before before_place ran. The
+    retry then downloaded fresh, compared the new stat with itself, and
+    placed the archive over the edit."""
+
+    import errno
+    import json
+
+    import app.videos as videos
+    from app import aws_storage
+
+    key, library_path = _direct_restore_row(app, "Kept Stat Fault")
+    os.makedirs(os.path.dirname(library_path), exist_ok=True)
+    with open(library_path, "wb") as f:
+        f.write(b"library file")
+    with app.app_context():
+        before = aws_storage._library_stat(library_path)
+    staged = _kept_copy(app, key, f'"v1"\n3\n{json.dumps(before)}')
+    with open(library_path, "wb") as f:
+        f.write(b"edited library file")
+
+    def lost(*args, **kwargs):
+        raise OSError(errno.EIO, "Input/output error")
+
+    monkeypatch.setattr(aws_storage, "aws_download", lost)
+    monkeypatch.setattr(videos, "_dead_volumes", lambda paths: [])
+    try:
+        with app.app_context():
+            assert videos.download_task(key, os.path.basename(key)) is False
+        (retry,) = [
+            job
+            for job in scheduled_jobs(app.file_queue)
+            if job.id.startswith(safe_job_id("retry:download_task"))
+        ]
+        assert retry.kwargs["library_stat"] == before
+        retry.delete()
+    finally:
+        for path in (staged, f"{staged}.etag", library_path):
+            if os.path.exists(path):
+                os.remove(path)

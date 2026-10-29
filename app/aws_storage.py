@@ -1325,7 +1325,16 @@ def download_task(
 
         try:
             if place_at and snapshot is None:
-                snapshot = _library_stat(place_at)
+                # A kept copy or a partial of an earlier chain holds the
+                # stat from before its first download in its sidecar. That
+                # stat goes into the kwargs of this chain from the first
+                # round (#597). A transient fault can remove the copy
+                # before before_place runs. The retry then still compares
+                # with the older stat, not with the stat after an edit.
+                kept_stat = read_partial_sidecar(restore_staging_path(key))[2]
+                snapshot = (
+                    kept_stat if kept_stat is not None else _library_stat(place_at)
+                )
             current_app.logger.info(
                 f"Starting download of '{basename}' from AWS S3 storage"
             )
