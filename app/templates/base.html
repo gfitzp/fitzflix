@@ -296,9 +296,9 @@
 		// link or form commits to leave the page, the top hairline starts
 		// to grow. This listens on window, in the bubbling phase. Thus,
 		// it runs after every handler that can cancel the navigation.
-		// Examples are the touch tap of the poster popover and the
-		// background posts of the ladder. Thus, a prevented default never
-		// lights the hairline. pageshow clears it when Safari restores
+		// An example is a ladder tap, which posts in the background.
+		// Thus, a prevented default never lights the hairline. pageshow
+		// clears it when Safari restores
 		// the page from the back-forward cache, where the scripts do not
 		// run again
 		(function() {
@@ -735,15 +735,17 @@
 
 		// The poster popover (#45c): the anchors marked data-card-url
 		// fetch the card fragment of their film 1 time and show it in a
-		// Bootstrap popover. Hover-capable pointers preview on hover,
-		// with a grace period to move into the card. On touch, a poster
-		// tap only TOGGLES its card. It never navigates. The title link
-		// of the card is the way to the page of the film (revised by
-		// Glenn, 2026-08: with tap-again-to-navigate, a stray tap opened
-		// a page when the user wanted to close the card). The card is
-		// informational only. The ladder and the watchlist toggle are
-		// under the poster. Thus, an action on a tile drops its cached
-		// card (the watchlist badge inside went stale). 1 card at a time.
+		// Bootstrap popover. Only hover-capable pointers get the card.
+		// They preview on hover, with a grace period to move into the
+		// card, and a click follows the link. On touch, a poster tap
+		// follows the link of the poster to the page of the film. No
+		// card shows (revised by Glenn, 2026-10: on a phone the card
+		// often opened partly off the screen. Before that, 2026-08, a
+		// tap toggled the card and the title link of the card was the
+		// way to the page). The card is informational only. The ladder
+		// and the watchlist toggle are under the poster. Thus, an action
+		// on a tile drops its cached card (the watchlist badge inside
+		// went stale). 1 card at a time.
 
 		var cardOpen = null;    // the anchor whose card is showing
 		var cardWanted = null;  // the anchor a pending hover/fetch intends
@@ -864,19 +866,10 @@
 		}
 
 		document.addEventListener("click", function(event) {
-			var anchor = event.target.closest("[data-card-url]");
-			if (!anchor) {
-				// A click inside the card acts on it. A click anywhere else closes it
-				if (cardOpen && !event.target.closest(".poster-card-pop")) cardHide();
-				return;
-			}
-			if (cardHover) return;  // pointer users navigate on click
-			event.preventDefault();
-			if (cardOpen === anchor) {
-				cardHide();
-				return;
-			}
-			cardShow(anchor);
+			// A click or a tap on a poster follows its link. A click
+			// inside the card acts on it. A click anywhere else closes it
+			if (event.target.closest("[data-card-url]")) return;
+			if (cardOpen && !event.target.closest(".poster-card-pop")) cardHide();
 		});
 
 		document.addEventListener("keydown", function(event) {

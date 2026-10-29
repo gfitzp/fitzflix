@@ -173,9 +173,9 @@ Fitzflix shows films as poster walls on most pages. These pages include:
 - the leaving-Criterion pages
 - the suggestion strips
 
-Each poster has a **hover card**. Move the pointer over the poster, or tap the poster on a phone, to open the card. The card shows the credits, the synopsis, the availability badges, the rating ladder, and a watchlist control. The ladder shows your rating, or the estimate of the engine until you rate the film.
+Each poster has a **hover card**. Move the pointer over the poster to open the card. The card shows the credits, the synopsis, the availability badges, the rating ladder, and a watchlist control. The ladder shows your rating, or the estimate of the engine until you rate the film.
 
-On a phone, a tap on the poster only opens or closes the card. Tap at an other location to close the card. Open the page of the film through the title on the card. All controls on the card operate without a change of page. A rating or a watchlist change from a card does not change the "Since you liked…" strip of the rating drive. Only a rating of the featured film, or a rating on the page of a film, changes the drive.
+On a phone, a tap on the poster opens the page of the film. The card does not show on a phone, because it often opened partly off the screen. All controls on the card operate without a change of page. A rating or a watchlist change from a card does not change the "Since you liked…" strip of the rating drive. Only a rating of the featured film, or a rating on the page of a film, changes the drive.
 
 The search results, the TMDB results, the filmographies, and the movie pages show **funnel badges** for each user. The badges are *Might interest you* (taste profile), *On your watchlist* (intent), and *Seen* (diary), in that sequence.
 
