@@ -170,52 +170,123 @@ def delete_sqs_message(sqs_client, receipt_handle, note="message"):
     return True
 
 
-# The time of each restore request. A Deep Archive restore takes up to 12
-# hours, and the restored copy stays for some days. During that time, a
-# new download of the same title can replace the file. Then the restored
-# copy is old, and an import of it would replace the new file. The entry
-# expires after the restored copy does.
+# A pending restore is a state of the File row (#610). The request sets
+# File.restore_requested_at. While it is set, the file page disables its
+# edit and download forms, and each writer of the library file or of its
+# archive refuses. The placement of the restored copy, a terminal fault
+# of the download and the 14-day sweep clear it. Thus, a request cannot
+# lose its object to an edit during the hours of a thaw.
 
-RESTORE_REQUESTED_KEY = "fitzflix:restore-requested:{}"
-RESTORE_REQUEST_TTL = timedelta(days=7)
+RESTORE_PENDING_MESSAGE = (
+    "A restore of this file from AWS is pending. Fitzflix does not change "
+    "the file or its archive until the restore ends."
+)
 
 
-def record_restore_request(redis, key, requested=None):
-    """Record the time of a restore request for an S3 key."""
+def _rows_claiming(key):
+    """Return the query of the File rows whose archive or transcoded/ copy is key."""
 
-    requested = requested or datetime.now(timezone.utc)
-    redis.set(
-        RESTORE_REQUESTED_KEY.format(key),
-        requested.isoformat(),
-        ex=int(RESTORE_REQUEST_TTL.total_seconds()),
+    return File.query.filter(
+        db.or_(File.aws_key == key, File.aws_transcoded_key == key)
     )
 
 
-def restore_requested_at(redis, key):
-    """Return the time of the restore request for an S3 key, or None."""
+def mark_restore_pending(key, keep_first=False):
+    """Record a restore request of key on each File row that claims it (#610).
 
-    raw = redis.get(RESTORE_REQUESTED_KEY.format(key))
-    if not raw:
+    A row with a deleted archive does not get the state. A new request
+    records its own time. With keep_first, a row that has the state
+    keeps the time of the earlier request. A key with no File row (an
+    ArchivedOriginal) gets nothing. This commits."""
+
+    rows = _rows_claiming(key).filter(File.aws_date_deleted.is_(None))
+    if keep_first:
+        rows = rows.filter(File.restore_requested_at.is_(None))
+    requested = datetime.now(timezone.utc)
+    for row in rows.all():
+        row.restore_requested_at = requested
+    db.session.commit()
+
+
+def end_restore_request(key, outcome=None):
+    """Clear the pending restore of each File row that claims key. Return outcome (#610).
+
+    Each terminal end of a download calls this: a placed copy, a missing
+    object, an access fault and a give-up. Thus, a form never stays off
+    for a restore that does not come. A fault of the clear goes to the
+    log. The 14-day sweep then clears the row. This commits."""
+
+    try:
+        rows = _rows_claiming(key).filter(File.restore_requested_at.isnot(None)).all()
+        for row in rows:
+            row.restore_requested_at = None
+        if rows:
+            db.session.commit()
+    except Exception:
+        db.session.rollback()
+        current_app.logger.warning(
+            f"'{key}' Could not clear the pending restore: " + traceback.format_exc()
+        )
+    return outcome
+
+
+def refuse_while_restore_pending(file):
+    """Return RESTORE_PENDING_MESSAGE if a restore of the file is pending, else None (#610).
+
+    Each writer calls this after it takes the title lock. A refusal
+    changes nothing. The value comes from the database, not from the
+    loaded row. The request does not take the title lock, and a writer
+    can hold an old copy of the row."""
+
+    if file is None or file.id is None:
         return None
-    return datetime.fromisoformat(raw.decode() if isinstance(raw, bytes) else raw)
+    requested = (
+        db.session.query(File.restore_requested_at).filter(File.id == file.id).scalar()
+    )
+    return RESTORE_PENDING_MESSAGE if requested is not None else None
 
 
-def overtaken_by_import(redis, file, key):
+def expire_restore_requests(max_age_days):
+    """Clear each pending restore that is older than max_age_days (#610).
+
+    A chain of a download waits for a volume for 1 day at most. A request
+    that is older than the cap has no download any more. Return the
+    number of cleared rows. This commits."""
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=max_age_days)
+    rows = File.query.filter(File.restore_requested_at < cutoff).all()
+    for row in rows:
+        current_app.logger.info(
+            f"'{row.basename}' The restore request from "
+            f"{row.restore_requested_at.isoformat()} has no result after "
+            f"{max_age_days} days. Its pending state ends"
+        )
+        row.restore_requested_at = None
+    db.session.commit()
+    return len(rows)
+
+
+def _as_utc(stamp):
+    """Return a stored datetime as an aware UTC datetime, or None."""
+
+    if stamp is None or stamp.tzinfo is not None:
+        return stamp
+    return stamp.replace(tzinfo=timezone.utc)
+
+
+def overtaken_by_import(file):
     """Return True if an import replaced the file after its restore request.
 
-    The record must claim the key, and its library file must be present.
-    A restore of a present file that was imported before the request is
-    on purpose (for example, a replacement of a bad copy). Thus, it
-    continues.
+    The row must have a pending restore, and its library file must be
+    present. A restore of a present file that was imported before the
+    request is on purpose (for example, a replacement of a bad copy).
+    Thus, it continues.
     """
 
-    requested = restore_requested_at(redis, key)
-    if file is None or requested is None or file.date_localized is None:
+    if file is None or file.restore_requested_at is None:
         return False
-    localized = file.date_localized
-    if localized.tzinfo is None:
-        localized = localized.replace(tzinfo=timezone.utc)
-    if localized <= requested:
+    localized = _as_utc(file.date_localized)
+    if localized is None or localized <= _as_utc(file.restore_requested_at):
         return False
     return os.path.isfile(
         os.path.join(current_app.config["LIBRARY_DIR"], file.file_path)
@@ -648,7 +719,7 @@ def _reconcile_files(listing, job):
                         f"'{file.aws_transcoded_key}' does not exist in "
                         f"the local library"
                     )
-                    aws_restore(file.aws_transcoded_key, tier="Bulk")
+                    _sync_restore(file.aws_transcoded_key)
 
         # The next branches test the state of the archive of the file.
 
@@ -714,7 +785,7 @@ def _reconcile_files(listing, job):
                     current_app.logger.info(
                         f"'{file.aws_key}' does not exist in the local library"
                     )
-                    aws_restore(file.aws_key, tier="Bulk")
+                    _sync_restore(file.aws_key)
 
         # The file is not in S3 and does not exist in the filesystem.
         elif file.aws_key not in s3_keys and not local:
@@ -735,6 +806,26 @@ def _reconcile_files(listing, job):
 
     current_app.logger.info(f"Orphaned files: {orphaned_files}")
     return inventory_export, orphaned_files
+
+
+def _sync_restore(key):
+    """Request a Bulk restore of a missing best copy from the S3 sync (#610).
+
+    The request writes the pending restore of the row in its own session.
+    The sync session read that row earlier. A later write of the row from
+    the sync session then fails with MariaDB error 1020. Thus, the sync
+    session commits first, and its next read starts a new snapshot. The
+    commit keeps the loaded rows. A reload of each row would cost 1 query
+    per file, and a row that another worker deleted would raise."""
+
+    session = db.session()
+    expire_on_commit = session.expire_on_commit
+    session.expire_on_commit = False
+    try:
+        session.commit()
+    finally:
+        session.expire_on_commit = expire_on_commit
+    aws_restore(key, tier="Bulk")
 
 
 def _replaced_after_upload(file, remote_size, modified):
@@ -1088,8 +1179,8 @@ def _transient_placement_fault(error):
 
     These are a throttle or a server error of S3, a lost connection to
     AWS, and a lost connection to the database. A lost connection to
-    Redis and a Redis timeout in the overtaken check are transient too
-    (#598 follow-up). A missing object and an access fault are not
+    Redis and a Redis timeout at the title lock are transient too (#598
+    follow-up, #610). A missing object and an access fault are not
     transient."""
 
     import redis.exceptions
@@ -1123,39 +1214,13 @@ class PlacementRefused(Exception):
 MAX_VOLUME_WAITS = 288
 
 
-def _library_stat(path):
-    """Return the size, the modification time and the inode of a library file (#586).
-
-    Return an empty list if there is no file at path. A list goes into
-    the kwargs of a retry and compares equal after the round trip."""
-
-    try:
-        stat = os.stat(path)
-    except FileNotFoundError:
-        return []
-    return [stat.st_size, stat.st_mtime_ns, stat.st_ino]
-
-
-def _placement_stat(path):
-    """Return _library_stat(path) at the placement, or defer on a share fault.
-
-    An ESTALE or EIO at the stat right after the volume probe is the
-    fault of #533. A raise here discarded the finished download. The
-    deferral keeps the copy and the sidecar for the next try."""
-
-    try:
-        return _library_stat(path)
-    except OSError as error:
-        raise PlacementDeferred([os.path.dirname(path)]) from error
-
-
 def download_task(
     key,
     basename,
     sqs_receipt_handle=None,
     transient_retries=0,
     volume_waits=0,
-    library_stat=None,
+    **retired,
 ):
     """Download a file from AWS S3 storage.
 
@@ -1166,16 +1231,14 @@ def download_task(
     newer-file guards also run again before the placement. They read the
     row again, and the placement goes to its fresh path (#563).
 
-    A track edit can change the library file during the download. Its
-    upload can go to a different key, or it can still run. Thus, the
-    ETag of the object does not show the edit. The task records the
-    stat of the library file before the first download. A different
-    stat at the placement refuses it (#586). library_stat carries that
-    record through the retries. A rename keeps the stat.
+    The row of the key holds the pending restore (#610). While it is
+    set, each writer of the file and of its archive refuses. The title
+    lock covers only the final copy and the commit that clears the
+    state. A rename can still run during the download. The placement
+    reads the path of the row under the lock.
 
-    A kept copy in staging can outlive its chain. Its sidecar holds the
-    stat of its own first download. That stat wins over the stat of a
-    new chain, which can come after an edit (#589).
+    retired takes the kwargs of a retry that an older release booked.
+    They have no use now.
 
     Each exit forgets the stored SQS handle of this job (#600). A retry
     under the id of this job owns that handle, so it stays then."""
@@ -1188,7 +1251,6 @@ def download_task(
             sqs_receipt_handle,
             transient_retries,
             volume_waits,
-            library_stat,
             retry_ids,
         )
     finally:
@@ -1205,7 +1267,6 @@ def _download_task(
     sqs_receipt_handle,
     transient_retries,
     volume_waits,
-    library_stat,
     retry_ids,
 ):
     """Run download_task. Append the id of each retry that it books to retry_ids."""
@@ -1264,19 +1325,20 @@ def _download_task(
                 f"again first"
             )
             discard_kept_download()
-            return delete_download_message(sqs_receipt_handle, note="stale restore")
+            return end_restore_request(
+                key, delete_download_message(sqs_receipt_handle, note="stale restore")
+            )
 
-        if overtaken_by_import(current_app.redis, file, key):
+        if overtaken_by_import(file):
             current_app.logger.info(
                 f"'{basename}' was imported again after its restore request, "
                 f"skipping the download"
             )
             discard_kept_download()
-            return delete_download_message(sqs_receipt_handle, note="overtaken restore")
-
-        # The stat of the library file before the first download (#586)
-
-        snapshot = library_stat
+            return end_restore_request(
+                key,
+                delete_download_message(sqs_receipt_handle, note="overtaken restore"),
+            )
 
         def dead_volumes():
             paths = [current_app.config["IMPORT_DIR"]]
@@ -1284,16 +1346,12 @@ def _download_task(
                 paths.append(os.path.dirname(place_at))
             return _dead_volumes(paths)
 
-        def carried():
-            """Return the kwargs that carry the stat record to a retry."""
-
-            return {"library_stat": snapshot} if snapshot is not None else None
-
         def wait_for_volumes(dead, reason=None):
             """Book the download again after 5 minutes, or give up.
 
             reason replaces the volume text for a transient fault of a
-            placement check (#598)."""
+            placement check (#598). A give-up ends the pending restore
+            (#610)."""
 
             reason = (
                 reason or f"Volumes unavailable ({', '.join(dead)}) for the restore"
@@ -1303,7 +1361,7 @@ def _download_task(
                     f"'{basename}' {reason} after {volume_waits} waits; giving up"
                 )
                 discard_kept_download()
-                return False
+                return end_restore_request(key, False)
             handle = _latest_receipt_handle(sqs_receipt_handle)
             counters = {
                 "transient_retries": transient_retries,
@@ -1316,7 +1374,6 @@ def _download_task(
                 reason=reason,
                 counters=counters,
                 args=(key, basename, handle),
-                kwargs=carried(),
                 description=f"'{basename}' — Downloading from AWS",
                 meta={"sqs_receipt_handle": handle},
             )
@@ -1327,16 +1384,26 @@ def _download_task(
         if dead:
             return wait_for_volumes(dead)
 
-        def before_place(etag=None, size=None, library_stat=None):
-            """Run the placement checks. Defer on a transient fault (#598).
+        # The title lock of the placement (#610). before_place takes it,
+        # and after_place releases it after the commit. Each other exit
+        # releases it in the finally block below.
+
+        held = []
+
+        def release_title_lock():
+            while held:
+                current_app.lock_manager.unlock(held.pop())
+
+        def before_place(etag=None, size=None):
+            """Take the title lock and run the placement checks. Defer on a transient fault (#598).
 
             A throttle of an S3 HEAD or a restart of the database is not a
-            reason to discard a finished download. A PlacementDeferred
-            keeps the copy and its sidecar, and the retry carries the
-            stat."""
+            reason to discard a finished download. A busy title lock is
+            not a reason either (#610). A PlacementDeferred keeps the copy
+            and its sidecar."""
 
             try:
-                return check_placement(etag, size, library_stat)
+                return check_placement(etag, size)
             except (PlacementDeferred, PlacementRefused):
                 raise
             except Exception as error:
@@ -1350,22 +1417,9 @@ def _download_task(
                     ),
                 ) from error
 
-        def check_placement(etag=None, size=None, library_stat=None):
-            """Check the volumes and the newer-file guards again. Return the path (#533).
+        def fresh_row():
+            """Read the row again in a new transaction. Refuse if it has no path."""
 
-            A rename during the download moves the file of the row
-            (#563). Thus, the placement goes to the path of the fresh
-            row, and the volume probe checks that folder. etag and size
-            are the ETag and the size of the object at the start of the
-            download. A library file with a different stat than before
-            the download refuses the placement (#586). library_stat is
-            the stat from the sidecar of a kept copy. It is older than
-            the stat of this chain, and it wins (#589)."""
-
-            nonlocal snapshot
-            if library_stat is not None:
-                # A retry after a deferral then carries the older stat.
-                snapshot = library_stat
             db.session.rollback()
             fresh = db.session.get(File, file_id)
             if fresh is None or not fresh.file_path:
@@ -1373,23 +1427,43 @@ def _download_task(
                     f"'{basename}' The record has no library path any more. "
                     f"The restore does not place the file"
                 )
+            return fresh
+
+        def check_placement(etag=None, size=None):
+            """Take the title lock, and check the volumes and the newer-file guards again (#533).
+
+            Return the path. A rename during the download moves the file
+            of the row (#563). Thus, the placement goes to the path of
+            the row under the lock, and the volume probe checks that
+            folder. etag and size are the ETag and the size of the
+            object at the start of the download."""
+
+            lock = current_app.lock_manager.lock(
+                fresh_row().file_identifier(),
+                current_app.config["MOVE_TASK_TIMEOUT"] * 1000,
+            )
+            if not lock:
+                raise PlacementDeferred(
+                    [],
+                    reason=(
+                        "Another task holds the title lock. The placement of "
+                        "the restore waits"
+                    ),
+                )
+            held.append(lock)
+            fresh = fresh_row()
             target = os.path.join(current_app.config["LIBRARY_DIR"], fresh.file_path)
             dead = _dead_volumes(
                 [current_app.config["IMPORT_DIR"], os.path.dirname(target)]
             )
             if dead:
                 raise PlacementDeferred(dead)
-            if snapshot is not None and _placement_stat(target) != snapshot:
-                raise PlacementRefused(
-                    f"'{basename}' The library file changed during the download. "
-                    f"The restore does not replace it"
-                )
             if restore_would_replace_newer(fresh, key):
                 raise PlacementRefused(
                     f"'{basename}' The library file changed during the download. "
                     f"The restore does not replace it"
                 )
-            if overtaken_by_import(current_app.redis, fresh, key):
+            if overtaken_by_import(fresh):
                 raise PlacementRefused(
                     f"'{basename}' was imported again during the download. "
                     f"The restore does not replace it"
@@ -1440,49 +1514,17 @@ def _download_task(
                 )
             return target
 
-        def kept_stat_of_this_object():
-            """Return the stat of the sidecar of a kept copy of this object, or None.
+        def after_place():
+            """Clear the pending restore, and release the title lock (#610)."""
 
-            The sidecar of an older version of the key can outlive its
-            chain. An edit then archives the key again with a new ETag.
-            The stat of that sidecar is older than the edit, and it would
-            refuse a good restore (#597 follow-up). Thus, the sidecar
-            ETag must equal the ETag of the key now. A missing object or
-            a head with no ETag gives None."""
-
-            etag, _, kept = read_partial_sidecar(restore_staging_path(key))
-            if kept is None or etag is None:
-                return None
             try:
-                head = _head_or_none(aws_s3_client(), key)
-            except Exception as error:
-                if not _transient_placement_fault(error):
-                    raise
-                raise PlacementDeferred(
-                    [],
-                    reason=(
-                        f"The check of the kept restore copy failed with a "
-                        f"transient fault ({type(error).__name__}: {error})"
-                    ),
-                ) from error
-            if head is None or not head.get("ETag"):
-                return None
-            return kept if head["ETag"] == etag else None
+                end_restore_request(key)
+            finally:
+                release_title_lock()
 
         report_progress(job, basename, "Downloading from AWS", percent=None)
 
         try:
-            if place_at and snapshot is None:
-                # A kept copy or a partial of an earlier chain holds the
-                # stat from before its first download in its sidecar. That
-                # stat goes into the kwargs of this chain from the first
-                # round (#597). A transient fault can remove the copy
-                # before before_place runs. The retry then still compares
-                # with the older stat, not with the stat after an edit.
-                kept_stat = kept_stat_of_this_object()
-                snapshot = (
-                    kept_stat if kept_stat is not None else _library_stat(place_at)
-                )
             current_app.logger.info(
                 f"Starting download of '{basename}' from AWS S3 storage"
             )
@@ -1492,7 +1534,7 @@ def _download_task(
                 sqs_receipt_handle,
                 place_at=place_at,
                 before_place=before_place if place_at else None,
-                library_stat=snapshot,
+                after_place=after_place if place_at else None,
             )
 
         except PlacementDeferred as e:
@@ -1500,7 +1542,9 @@ def _download_task(
 
         except PlacementRefused as e:
             current_app.logger.warning(str(e))
-            return delete_download_message(sqs_receipt_handle, note="stale restore")
+            return end_restore_request(
+                key, delete_download_message(sqs_receipt_handle, note="stale restore")
+            )
 
         except OSError as e:
             if (
@@ -1528,7 +1572,6 @@ def _download_task(
                     ),
                     counters=counters,
                     args=(key, basename, sqs_receipt_handle),
-                    kwargs=carried(),
                     description=f"'{basename}' — Downloading from AWS",
                     meta={"sqs_receipt_handle": sqs_receipt_handle},
                 )
@@ -1537,16 +1580,19 @@ def _download_task(
                 )
                 return False
             current_app.logger.error(traceback.format_exc())
+            return end_restore_request(key)
 
         except Exception:
             current_app.logger.error(traceback.format_exc())
+            return end_restore_request(key)
 
         else:
             # A truthy status means that the SQS message was handled. The
             # file arrived (DOWNLOAD_COMPLETE), or there was nothing to
             # download (object missing, restore pending). False means that
             # the retry budget was used up, or that the message could not be
-            # deleted.
+            # deleted. aws_download ended the pending restore on each
+            # terminal status.
 
             if not downloaded:
                 current_app.logger.error(
@@ -1554,6 +1600,9 @@ def _download_task(
                 )
                 return False
             return True
+
+        finally:
+            release_title_lock()
 
 
 def sqs_retrieve_task():
@@ -1721,9 +1770,10 @@ def _route_restore(sqs_client, key, receipt_handle, downloads_by_key, moves_by_k
 
     file = _file_claiming(key)
     if file is not None and file.aws_key_target and move_source(file) == key:
-        if restore_requested_at(
-            current_app.redis, key
-        ) is not None and not _download_job_for(key):
+        requested = (
+            _rows_claiming(key).filter(File.restore_requested_at.isnot(None)).first()
+        )
+        if requested is not None and not _download_job_for(key):
             downloads_by_key[key] = enqueue_task(
                 "app.videos.download_task",
                 key,
@@ -1778,7 +1828,8 @@ def upload_task(file_id):
             # for a normal file, transcoded/ for a conversion (#299). A rip
             # in untouched/ is never overwritten.
 
-            archive_library_file(file, file_path)
+            if archive_library_file(file, file_path) is None:
+                return False
             file.date_updated = (
                 file.aws_transcoded_date_uploaded
                 if file.converted_from_quality
@@ -2181,7 +2232,20 @@ def archive_library_file(file, path, delete_replaced=True):
 
     A pending move of the same archive (#369) ends here. The upload goes
     to the key of the new name, the old key is deleted, and the target
-    is cleared. Thus, an edit completes the move."""
+    is cleared. Thus, an edit completes the move.
+
+    A pending restore of the file refuses the upload (#610). The upload
+    can delete the key under restore. A writer that started before the
+    request can have changed the library file. Thus, the refusal marks
+    the archive stale, and it returns None."""
+
+    refused = refuse_while_restore_pending(file)
+    if refused:
+        current_app.logger.warning(
+            f"'{file.basename}' {refused} The archive upload does not run"
+        )
+        mark_archive_stale(file.id, reason="restore pending")
+        return None
 
     config = current_app.config
     converted = bool(file.converted_from_quality)
@@ -2339,6 +2403,12 @@ def move_archive_to_modified_task(file_id):
 
         try:
             db.session.refresh(file)
+            refused = refuse_while_restore_pending(file)
+            if refused:
+                current_app.logger.warning(
+                    f"'{file.basename}' {refused} The archive stays in untouched/"
+                )
+                return False
             old_key = file.aws_key
             if not _in_prefix(old_key, config["AWS_UNTOUCHED_PREFIX"]):
                 return _in_prefix(old_key, config["AWS_MODIFIED_PREFIX"])
@@ -2553,16 +2623,21 @@ def _download_after_move(file, source, target):
     """Download the moved archive if a restore for a download preceded the move.
 
     The restore notification of the old key went to the move. A request
-    for a download records its time. If the library file is still
-    missing, the download of the new key starts now. The copy is in
-    STANDARD storage. Thus, it needs no restore."""
+    for a download sets the pending restore of the row (#610). The row
+    keeps it through the move. If the library file is still missing, the
+    download of the new key starts now. The copy is in STANDARD storage.
+    Thus, it needs no restore. A present file gets no download. Then the
+    pending restore ends here."""
 
-    requested = restore_requested_at(current_app.redis, source)
-    if requested is None:
+    if file.restore_requested_at is None:
         return
     if os.path.isfile(os.path.join(current_app.config["LIBRARY_DIR"], file.file_path)):
+        current_app.logger.info(
+            f"'{file.basename}' The library file is present after the archive "
+            f"move. The restore of '{source}' ends with no download"
+        )
+        end_restore_request(target)
         return
-    record_restore_request(current_app.redis, target, requested)
     enqueue_task(
         "app.videos.download_task",
         target,
@@ -3185,9 +3260,7 @@ def cdn_signed_url(key, expires_in=None):
     )
 
 
-def cdn_download(
-    key, destination, progress, expected_size=0, etag=None, library_stat=None
-):
+def cdn_download(key, destination, progress, expected_size=0, etag=None):
     """Fetch one object through CloudFront, and write it to destination.
 
     The progress callback gets the size of each chunk, as the boto3
@@ -3197,8 +3270,7 @@ def cdn_download(
     byte zero. A sidecar file holds the ETag of the object that the
     partial file came from. A resume needs the same ETag. Thus, a partial
     file of an older version of the key starts again from byte zero.
-    A new body writes library_stat into the sidecar (#589). A resume
-    keeps the sidecar as it is. Raise CdnDownloadError for an HTTP
+    A resume keeps the sidecar as it is. Raise CdnDownloadError for an HTTP
     error status. Raise RuntimeError if the body length differs from
     the Content-Length header or from expected_size (the object size
     from the S3 API).
@@ -3253,7 +3325,7 @@ def cdn_download(
             _touch_partial_etag(destination)
         elif response.status_code == 200:
             mode, written, have = "wb", 0, 0
-            _write_partial_etag(destination, etag, expected_size, library_stat)
+            _write_partial_etag(destination, etag, expected_size)
         else:
             raise CdnDownloadError(response.status_code)
         content_length = int(response.headers.get("Content-Length") or 0)
@@ -3304,43 +3376,23 @@ def _partial_size(destination):
 
 
 def read_partial_sidecar(destination):
-    """Return (etag, object size, library stat) from the sidecar of a download.
+    """Return (etag, object size) from the sidecar of a download.
 
     Each value is None when it is not known. The first line is the ETag.
-    The second line is the object size, if the download knew it. The
-    third line is the stat of the library file before the first download
-    of a direct restore, as a JSON list (#589). An older sidecar has 1
-    or 2 lines only."""
+    The second line is the object size, if the download knew it. A
+    sidecar from before #610 can have a third line. It has no use now."""
 
     try:
         with open(f"{destination}.etag") as sidecar:
             lines = sidecar.read().split("\n")
     except OSError:
-        return None, None, None
+        return None, None
     etag = lines[0].strip() or None
     try:
         size = int(lines[1]) if len(lines) > 1 and lines[1].strip() else None
     except ValueError:
         size = None
-    return etag, size, _sidecar_stat(lines[2] if len(lines) > 2 else "")
-
-
-def _sidecar_stat(line):
-    """Return the library stat from the third line of a sidecar, or None.
-
-    An empty list is a stat too. It means that there was no library file."""
-
-    if not line.strip():
-        return None
-    try:
-        stat = json.loads(line)
-    except ValueError:
-        return None
-    if not isinstance(stat, list) or not all(
-        isinstance(value, int) and not isinstance(value, bool) for value in stat
-    ):
-        return None
-    return stat
+    return etag, size
 
 
 def _partial_etag(destination):
@@ -3349,20 +3401,16 @@ def _partial_etag(destination):
     return read_partial_sidecar(destination)[0]
 
 
-def _write_partial_etag(destination, etag, size=None, library_stat=None):
+def _write_partial_etag(destination, etag, size=None):
     """Record the ETag and the size of the object that a download writes to destination.
 
     The orphan sweep compares the size with the file. A complete copy
-    whose sidecar stayed is then not a partial (follow-up #457). The
-    stat of the library file goes on a third line (#589). A kept copy
-    then keeps the stat from before its first download."""
+    whose sidecar stayed is then not a partial (follow-up #457)."""
 
     if not etag:
         _remove_partial_etag(destination)
         return
     lines = [etag, str(int(size)) if size else ""]
-    if library_stat is not None:
-        lines.append(json.dumps(list(library_stat)))
     try:
         with open(f"{destination}.etag", "w") as sidecar:
             sidecar.write("\n".join(lines).rstrip("\n"))
@@ -3396,8 +3444,7 @@ def _finished_download(destination, progress):
     """Return True if destination holds the whole object that progress describes.
 
     The size and the ETag of its sidecar must match the head of the
-    object. A newer archive of the key then downloads again. The caller
-    reads the library stat of the kept copy with _kept_library_stat."""
+    object. A newer archive of the key then downloads again."""
 
     try:
         size = os.path.getsize(destination)
@@ -3408,18 +3455,6 @@ def _finished_download(destination, progress):
         and size == progress.size
         and _partial_etag(destination) == progress.etag
     )
-
-
-def _kept_library_stat(destination, progress):
-    """Return the library stat from the sidecar of a kept or partial copy (#589).
-
-    The sidecar must name the ETag of the object at the start of this
-    download. Return None if there is no such sidecar or no stat in it."""
-
-    if not progress.etag or not _partial_size(destination):
-        return None
-    etag, _, library_stat = read_partial_sidecar(destination)
-    return library_stat if etag == progress.etag else None
 
 
 def _discard_partial(destination):
@@ -3467,37 +3502,36 @@ def _restore_has_expired(restore_status):
     return expiry <= datetime.now(timezone.utc)
 
 
-def _resolve_missing_object(sqs_client, basename, sqs_receipt_handle):
+def _resolve_missing_object(sqs_client, key, basename, sqs_receipt_handle):
     """Report an object that is not at AWS, and drop its SQS message.
 
-    Return DOWNLOAD_OBJECT_MISSING, or False if the delete failed."""
+    The pending restore ends (#610). Return DOWNLOAD_OBJECT_MISSING, or
+    False if the delete failed."""
 
     current_app.logger.info(f"'{basename}' doesn't exist in AWS S3")
-    if not delete_download_message(sqs_receipt_handle, sqs_client=sqs_client):
-        return False
-    return DOWNLOAD_OBJECT_MISSING
+    deleted = delete_download_message(sqs_receipt_handle, sqs_client=sqs_client)
+    return end_restore_request(key, DOWNLOAD_OBJECT_MISSING if deleted else False)
 
 
-def _refuse_access_fault(sqs_client, basename, sqs_receipt_handle):
+def _refuse_access_fault(sqs_client, key, basename, sqs_receipt_handle):
     """Report a CloudFront refusal of an object that S3 can read.
 
     Only a change to the key pair, the key group, or the WAF allowlist
     clears this. A retry cannot. If the SQS message stayed, each
     redelivery would request a new restore and send a new email. Thus,
     the message is dropped, and the operator requests the restore again
-    after the fix. Return DOWNLOAD_ACCESS_DENIED, or False if the delete
-    failed."""
+    after the fix. The pending restore ends (#610). Return
+    DOWNLOAD_ACCESS_DENIED, or False if the delete failed."""
 
     current_app.logger.error(
         f"'{basename}' CloudFront refused the signed URL, but the object is "
         f"readable at S3; check the key pair, the key group, and the WAF "
         f"allowlist, then request the restore again"
     )
-    if not delete_download_message(
+    deleted = delete_download_message(
         sqs_receipt_handle, note="CloudFront access fault", sqs_client=sqs_client
-    ):
-        return False
-    return DOWNLOAD_ACCESS_DENIED
+    )
+    return end_restore_request(key, DOWNLOAD_ACCESS_DENIED if deleted else False)
 
 
 def _defer_to_restore(sqs_client, key, basename, sqs_receipt_handle, head_response):
@@ -3506,7 +3540,8 @@ def _defer_to_restore(sqs_client, key, basename, sqs_receipt_handle, head_respon
     The restored copy expired before the download. Thus, the object is
     back in cold storage, and this SQS message is stale. Request a new
     restore, unless one is already in progress. Its completion
-    notification triggers the download again. Return
+    notification triggers the download again. The request again is for
+    the same rows. Thus, their pending restore stays (#610). Return
     DOWNLOAD_RESTORE_PENDING, or False if the message delete failed."""
 
     restore_status = head_response.get("Restore") or ""
@@ -3665,7 +3700,7 @@ def aws_download(
     sqs_receipt_handle=None,
     place_at=None,
     before_place=None,
-    library_stat=None,
+    after_place=None,
 ):
     """Download an object from AWS S3 storage.
 
@@ -3676,7 +3711,9 @@ def aws_download(
     download again. Return DOWNLOAD_ACCESS_DENIED if CloudFront refused
     an object that S3 can read. These 4 values are truthy. They mean
     that the SQS message was handled. Return False if the retry budget was used up,
-    or if the SQS message could not be deleted.
+    or if the SQS message could not be deleted. Each terminal status ends
+    the pending restore of the key through end_restore_request (#610).
+    DOWNLOAD_RESTORE_PENDING keeps it.
 
     When AWS_DOWNLOAD_VIA_CDN is set, the bytes come through CloudFront
     with a signed URL. The object size check and the restore-state
@@ -3688,10 +3725,7 @@ def aws_download(
     sidecar for the next try (#533). Any other error deletes the download and
     propagates. The caller decides about the SQS message. If it returns
     a path, the placement goes there, not to place_at (#563).
-
-    library_stat is the stat of the library file from the caller. A new
-    download writes it into the sidecar. A kept or resumed copy keeps
-    the stat of its sidecar, and before_place gets that stat (#589).
+    after_place runs after the placement. The caller commits there.
     """
 
     # The retry constants still live in app.videos. Import them lazily.
@@ -3737,11 +3771,6 @@ def aws_download(
     while retry > 0:
         try:
             progress = DownloadProgressPercentage(s3_client, bucket, key, basename)
-
-            # A copy from an earlier chain holds the stat from before its
-            # first download. A new chain can start after an edit (#589).
-
-            kept = _kept_library_stat(destination, progress) if place_at else None
             if place_at and _finished_download(destination, progress):
                 # A placement that waited for a volume kept its finished
                 # download (follow-up #533). Each wait downloaded the
@@ -3757,11 +3786,9 @@ def aws_download(
                     progress,
                     expected_size=progress.size,
                     etag=progress.etag,
-                    library_stat=kept if kept is not None else library_stat,
                 )
             else:
                 # The S3 transfer writes the whole object again.
-                kept = None
                 s3_client.download_file(bucket, key, destination, Callback=progress)
 
         # Do not resume if the file does not exist in AWS.
@@ -3774,7 +3801,9 @@ def aws_download(
             )
             if error_code in ("404", "NoSuchKey") or status_code == 404:
                 _discard_partial(destination)
-                return _resolve_missing_object(sqs_client, basename, sqs_receipt_handle)
+                return _resolve_missing_object(
+                    sqs_client, key, basename, sqs_receipt_handle
+                )
 
             elif error_code == "InvalidObjectState":
                 try:
@@ -3804,7 +3833,9 @@ def aws_download(
         except CdnDownloadError as error:
             if error.status_code == 404:
                 _discard_partial(destination)
-                return _resolve_missing_object(sqs_client, basename, sqs_receipt_handle)
+                return _resolve_missing_object(
+                    sqs_client, key, basename, sqs_receipt_handle
+                )
 
             elif error.status_code == 403:
                 # A 403 from CloudFront has 4 possible causes. The object
@@ -3829,7 +3860,7 @@ def aws_download(
                     ):
                         _discard_partial(destination)
                         return _resolve_missing_object(
-                            sqs_client, basename, sqs_receipt_handle
+                            sqs_client, key, basename, sqs_receipt_handle
                         )
                     retry, last_fault = _spend_download_retry(retry, basename)
                     continue
@@ -3839,7 +3870,7 @@ def aws_download(
                 if _object_is_readable(head_response):
                     _discard_partial(destination)
                     return _refuse_access_fault(
-                        sqs_client, basename, sqs_receipt_handle
+                        sqs_client, key, basename, sqs_receipt_handle
                     )
                 else:
                     _discard_partial(destination)
@@ -3888,20 +3919,10 @@ def aws_download(
                 # or a transient fault of the placement then does not
                 # download the object again (#588).
 
-                _write_partial_etag(
-                    destination,
-                    progress.etag,
-                    progress.size,
-                    kept if kept is not None else library_stat,
-                )
+                _write_partial_etag(destination, progress.etag, progress.size)
                 if before_place:
                     try:
-                        target = (
-                            before_place(
-                                progress.etag, progress.size, library_stat=kept
-                            )
-                            or place_at
-                        )
+                        target = before_place(progress.etag, progress.size) or place_at
                     except PlacementDeferred:
                         raise
                     except BaseException:
@@ -3909,6 +3930,8 @@ def aws_download(
                         raise
                 place_in_library(destination, target, progress.size, basename)
                 _remove_partial_etag(destination)
+                if after_place:
+                    after_place()
             elif not place_restored_import(destination, basename):
                 enqueue_task(
                     "app.aws_storage.place_restored_import_task",
@@ -3918,10 +3941,8 @@ def aws_download(
                     description=f"'{basename}' — Waiting for the import name",
                 )
 
-            if not delete_download_message(sqs_receipt_handle, sqs_client=sqs_client):
-                return False
-
-            return DOWNLOAD_COMPLETE
+            deleted = delete_download_message(sqs_receipt_handle, sqs_client=sqs_client)
+            return end_restore_request(key, DOWNLOAD_COMPLETE if deleted else False)
 
     current_app.logger.error(
         f"'{basename}' could not be downloaded from {source}; giving up"
@@ -3929,15 +3950,19 @@ def aws_download(
     )
 
     _discard_partial(destination)
-    return False
+    return end_restore_request(key, False)
 
 
 def aws_restore(key, tier="Standard", record_request=True):
     """Request a restore of a file at AWS from Glacier status for a download.
 
-    The request time goes to Redis. Then download_task can tell if an
-    import replaced the file during the restore. A request again for an
-    expired restored copy keeps the time of the first request.
+    The request sets the pending restore of each File row that claims
+    the key (#610). Then each writer of the file refuses until the
+    download ends, and download_task can tell if an import replaced the
+    file during the restore. A restore that is already in progress
+    keeps the time of the first request. record_request=False is a
+    restore for an archive move or a request again for the same
+    download. It does not change the rows.
     """
 
     with app.app_context():
@@ -3966,6 +3991,8 @@ def aws_restore(key, tier="Standard", record_request=True):
                     current_app.logger.info(
                         f"'{key}' doesn't need to be restored; attempting to download"
                     )
+                    if record_request:
+                        mark_restore_pending(key)
                     enqueue_task(
                         "app.videos.download_task",
                         key,
@@ -3989,7 +4016,7 @@ def aws_restore(key, tier="Standard", record_request=True):
                         f"day(s) using tier '{tier}'"
                     )
                     if record_request:
-                        record_restore_request(current_app.redis, key)
+                        mark_restore_pending(key)
 
             else:
                 current_app.logger.warning(
@@ -4010,11 +4037,8 @@ def aws_restore(key, tier="Standard", record_request=True):
                 # record, or the notification queues only the move, and
                 # the download never occurs (#532). An existing time stays.
 
-                if (
-                    record_request
-                    and restore_requested_at(current_app.redis, key) is None
-                ):
-                    record_restore_request(current_app.redis, key)
+                if record_request:
+                    mark_restore_pending(key, keep_first=True)
 
             else:
                 current_app.logger.error(e)

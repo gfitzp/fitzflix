@@ -555,6 +555,7 @@ def atmos_supplement_task(file_id, staged_source=None):
     job, or None. The deferred retries carry it. When the job ends, a
     staged copy that it did not use is removed."""
 
+    from app.aws_storage import refuse_while_restore_pending
     from app.tmdb_refresh import tmdb_refresh_pending
     from app.videos import acquire_lock_or_defer, schedule_retry
 
@@ -604,6 +605,17 @@ def atmos_supplement_task(file_id, staged_source=None):
         )
         if not lock:
             return True
+
+        # A pending restore of the file refuses the supplement (#610).
+
+        refused = refuse_while_restore_pending(file)
+        if refused:
+            current_app.logger.warning(
+                f"'{file.basename}' {refused} The Atmos supplement does not run"
+            )
+            current_app.lock_manager.unlock(lock)
+            discard_staged_source(staged_source)
+            return False
 
         # Each step of the run shows as a chip on the trail of the file.
         # A failure turns the chip of its step red.

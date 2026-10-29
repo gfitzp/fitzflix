@@ -48,13 +48,21 @@
 	This file is not in the local library. Restore it from AWS before you edit or upload it.
 </div>
 {% endif %}
+{# A pending restore turns off each form that edits, uploads or
+   restores the file (#610). The placement or the end of the download
+   turns them on again. #}
+{% if file.restore_requested_at %}
+<div class="alert alert-info" role="alert">
+	A restore of this file from AWS is pending since {{ moment(file.restore_requested_at).format("LLL") }}. The forms that edit, upload or restore the file stay off until the restore ends.
+</div>
+{% endif %}
 {% if audio_tracks or subtitle_tracks %}
 <hr>
 <div class="row d-flex">
 	<h3 class="col-12 col-sm-auto me-auto">Tracks</h3>
 	<div class="col-12 col-sm-auto mt-2">
 		<form class="form-inline float-sm-right mb-2" action="" method="post">
-			<fieldset {% if not file_exists_locally %}disabled{% endif %}>
+			<fieldset {% if not file_exists_locally or file.restore_requested_at %}disabled{% endif %}>
 				{{ metadata_scan_form.hidden_tag() }}
 				{{ metadata_scan_form.scan_submit(class_="btn btn-sm btn-warning") }}
 			</fieldset>
@@ -62,8 +70,9 @@
 	</div>
 </div>
 {# The edits address a track by its UID (#611). Rows with no UID wait
-   for a rescan, and their controls stay off. #}
-{% set track_edits_off = not file_exists_locally or tracks_need_rescan %}
+   for a rescan, and their controls stay off. So do the controls of a
+   file with a pending restore (#610). #}
+{% set track_edits_off = not file_exists_locally or tracks_need_rescan or file.restore_requested_at %}
 <div class="table-responsive mt-3">
 	<table class="table align-middle">
 		{% if audio_tracks %}
@@ -173,7 +182,7 @@
 </div>
 {% if tracks_need_rescan %}
 <p class="small text-muted mt-2 mb-0">The track rows of this file have no track UIDs. Rescan the file before you edit its tracks.</p>
-{% elif file_exists_locally %}
+{% elif file_exists_locally and not file.restore_requested_at %}
 <p class="small text-muted mt-2 mb-0"><em>Update MKV Properties</em> saves the Language, Default, and Forced columns. It edits the file in place. <em>Remux MKV File</em> rebuilds the file with only the tracks that you selected under Keep.</p>
 {% endif %}
 {% endif %}
@@ -193,14 +202,14 @@
 		   transcoded/ for a conversion. The rip in untouched/ never
 		   changes (#299). #}
 		<form action="" method="post">
-			<fieldset {% if not file_exists_locally or not best_file %}disabled{% endif %}>
+			<fieldset {% if not file_exists_locally or not best_file or file.restore_requested_at %}disabled{% endif %}>
 				{{ upload_form.hidden_tag() }}
 				{{ upload_form.s3_upload_submit(class_="btn btn-sm btn-success") }}
 			</fieldset>
 		</form>
 		<em class="small">{% if file.aws_date_uploaded %}Archived offsite {{ moment(file.aws_date_uploaded).format("LLL") }}{% else %}Not uploaded to AWS.{% endif %}</em>
 		<form action="" method="post" class="mt-3">
-			<fieldset {% if not best_file or not file.restore_key %}disabled{% endif %}>
+			<fieldset {% if not best_file or not file.restore_key or file.restore_requested_at %}disabled{% endif %}>
 				{{ download_form.hidden_tag() }}
 				{{ download_form.password(class_="form-control form-control-sm mb-1", placeholder="Password") }}
 				{{ download_form.s3_download_submit(class_="btn btn-sm btn-success") }}

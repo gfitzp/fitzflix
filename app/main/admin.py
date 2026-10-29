@@ -38,6 +38,7 @@ from app.tasks import (
     start_task_run,
 )
 from app import cron_table, db, enqueue_import_scan, local_path, safe_job_id
+from app.aws_storage import refuse_while_restore_pending
 from app.naming import hidden
 from app.main.forms import (
     ArchivedRestoreForm,
@@ -1564,6 +1565,10 @@ def subtitle_triage(file_id):
 
     if triage_form.mark_forced_submit.data and triage_form.validate_on_submit():
         file = File.query.filter_by(id=triage_form.file_id.data).first_or_404()
+        refused = refuse_while_restore_pending(file)
+        if refused:
+            flash(f"'{file.basename}' {refused}", "warning")
+            return stay()
         if tracks_need_rescan(file, file.audiotrack, file.subtrack):
             flash_tracks_need_rescan(file)
             return stay()
@@ -1713,6 +1718,10 @@ def lossy_audio_triage(file_id):
 
     if triage_form.promote_submit.data and triage_form.validate_on_submit():
         file = File.query.filter_by(id=triage_form.file_id.data).first_or_404()
+        refused = refuse_while_restore_pending(file)
+        if refused:
+            flash(f"'{file.basename}' {refused}", "warning")
+            return stay()
         if tracks_need_rescan(file, file.audiotrack, file.subtrack):
             flash_tracks_need_rescan(file)
             return stay()

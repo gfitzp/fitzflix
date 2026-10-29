@@ -1379,7 +1379,8 @@ S3TRANSFER_TEMP_SUFFIX = re.compile(r"\.[0-9a-fA-F]{8}$")
 # the library. Its chain or the next SQS delivery of its message places
 # it. Each round of a chain writes the sidecar again. A chain waits for
 # a volume for 1 day at most. A copy whose sidecar is older than this
-# has no owner any more, and the sweep removes it (#601).
+# has no owner any more, and the sweep removes it (#601). A pending
+# restore on a File row that is older than this ends too (#610).
 
 DIRECT_RESTORE_COPY_MAX_AGE_DAYS = 14
 
@@ -1450,7 +1451,7 @@ def _complete_copy(dirpath, name, read_partial_sidecar):
     size then shows that the copy is complete (follow-up #457)."""
 
     path = os.path.join(dirpath, name)
-    _, size, _ = read_partial_sidecar(path)
+    _, size = read_partial_sidecar(path)
     try:
         return bool(size) and os.path.getsize(path) == size
     except OSError:
@@ -1663,6 +1664,19 @@ def cleanup_orphaned_files():
                             f"'{path}' Deleted orphaned partial file"
                         )
                     removed.append(f"{path} ({_human_size(stats.st_size)})")
+
+        # A restore request with no result after the cap ends here (#610).
+        # The forms of its file then work again.
+
+        from app.aws_storage import expire_restore_requests
+
+        try:
+            expire_restore_requests(DIRECT_RESTORE_COPY_MAX_AGE_DAYS)
+        except Exception:
+            db.session.rollback()
+            current_app.logger.warning(
+                "Could not end the old pending restores: " + traceback.format_exc()
+            )
 
         # This is the empty-directory pass. It removes the import
         # leftovers of Radarr and Sonarr and the folders that a person

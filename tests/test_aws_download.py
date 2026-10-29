@@ -403,8 +403,10 @@ def test_download_task_reports_download_outcome(app, monkeypatch):
         assert result is True
 
 
-def _overtaken_fixture(app, title, localized, present=True):
-    """Make an archived movie file, and optionally its library copy."""
+def _overtaken_fixture(app, title, localized, present=True, requested=None):
+    """Make an archived movie file, and optionally its library copy.
+
+    requested is the time of the pending restore of the row (#610)."""
 
     from app import db
     from tests.factories import make_movie, make_movie_file
@@ -416,6 +418,7 @@ def _overtaken_fixture(app, title, localized, present=True):
         aws_key=key,
         date_localized=localized,
     )
+    file.restore_requested_at = requested
     db.session.commit()
     if present:
         path = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
@@ -425,12 +428,23 @@ def _overtaken_fixture(app, title, localized, present=True):
     return key
 
 
+def _pending_since(key):
+    """Return the pending restore time of the row that claims key, or None."""
+
+    from app.models import File
+
+    file = File.query.filter(
+        (File.aws_key == key) | (File.aws_transcoded_key == key)
+    ).one()
+    return file.restore_requested_at
+
+
 def test_aws_restore_records_the_request_time(app, monkeypatch):
-    """Test that a restore request stores its time for download_task.
+    """Test that a restore request sets the pending restore of the row (#610).
 
     A request again for an expired restored copy keeps the first time."""
 
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     import app.videos as videos
 
@@ -444,15 +458,53 @@ def test_aws_restore_records_the_request_time(app, monkeypatch):
             return {}
 
     monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kwargs: FakeS3())
-    key = "untouched/Recorded (1950) - [DVD].mkv"
-    first = datetime(2026, 10, 20, 12, 0, tzinfo=timezone.utc)
+    first = datetime(2026, 10, 20, 12, 0)
     with app.app_context():
-        aws_storage.record_restore_request(app.redis, key, first)
+        key = _overtaken_fixture(
+            app, "Recorded", datetime(2026, 10, 1), present=False, requested=first
+        )
         videos.aws_restore(key, record_request=False)
-        assert aws_storage.restore_requested_at(app.redis, key) == first
+        assert _pending_since(key) == first
 
         videos.aws_restore(key)
-        assert aws_storage.restore_requested_at(app.redis, key) > first
+        assert _pending_since(key) > first
+
+
+def test_a_restore_of_an_archived_original_sets_no_row(app, monkeypatch):
+    """A key with no File row (an ArchivedOriginal of #292) sets nothing (#610)."""
+
+    from app import aws_storage
+    from app.models import File
+
+    class FakeS3:
+        def head_object(self, **kwargs):
+            return {"StorageClass": "DEEP_ARCHIVE"}
+
+        def restore_object(self, **kwargs):
+            return {}
+
+    monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kwargs: FakeS3())
+    with app.app_context():
+        aws_storage.aws_restore("untouched/Original Only (1950) - [UHD].mkv")
+        assert File.query.filter(File.restore_requested_at.isnot(None)).count() == 0
+
+
+def test_a_readable_object_also_sets_the_pending_restore(app, monkeypatch):
+    """A warm object goes to a download at once. The row still gets the state (#610)."""
+
+    from datetime import datetime
+
+    from app import aws_storage
+
+    class WarmS3:
+        def head_object(self, **kwargs):
+            return {"ContentLength": 1}
+
+    monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kwargs: WarmS3())
+    with app.app_context():
+        key = _overtaken_fixture(app, "Warm", datetime(2026, 10, 1), present=False)
+        aws_storage.aws_restore(key)
+        assert _pending_since(key) is not None
 
 
 def test_download_task_skips_a_restore_that_an_import_overtook(app, monkeypatch):
@@ -461,7 +513,7 @@ def test_download_task_skips_a_restore_that_an_import_overtook(app, monkeypatch)
     The record was imported after the restore request, and its file is
     present. The download would replace the new file with the old one."""
 
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     import app.videos as videos
 
@@ -474,11 +526,17 @@ def test_download_task_skips_a_restore_that_an_import_overtook(app, monkeypatch)
     )
     monkeypatch.setattr(aws_storage, "aws_sqs_client", lambda: sqs)
     with app.app_context():
-        key = _overtaken_fixture(app, "Overtaken", datetime(2026, 10, 20, 18, 0))
-        aws_storage.record_restore_request(
-            app.redis, key, datetime(2026, 10, 20, 13, 0, tzinfo=timezone.utc)
+        key = _overtaken_fixture(
+            app,
+            "Overtaken",
+            datetime(2026, 10, 20, 18, 0),
+            requested=datetime(2026, 10, 20, 13, 0),
         )
         assert videos.download_task(key, os.path.basename(key), "receipt-1") is True
+
+        # The dropped restore ends its pending state (#610).
+
+        assert _pending_since(key) is None
 
     assert downloads == []
     assert sqs.deleted == ["receipt-1"]
@@ -490,32 +548,7 @@ def test_download_task_keeps_a_restore_of_a_file_imported_before(app, monkeypatc
     The record was imported before the restore request. For example, the
     operator replaces a bad local copy."""
 
-    from datetime import datetime, timezone
-
-    import app.videos as videos
-
-    from app import aws_storage
-
-    downloads = []
-    monkeypatch.setattr(
-        aws_storage,
-        "aws_download",
-        lambda *args, **kwargs: downloads.append(args) or aws_storage.DOWNLOAD_COMPLETE,
-    )
-    with app.app_context():
-        key = _overtaken_fixture(app, "Kept On Purpose", datetime(2026, 10, 19, 18, 0))
-        aws_storage.record_restore_request(
-            app.redis, key, datetime(2026, 10, 20, 13, 0, tzinfo=timezone.utc)
-        )
-        assert videos.download_task(key, os.path.basename(key), "receipt-2") is True
-
-    assert len(downloads) == 1
-
-
-def test_download_task_keeps_a_restore_of_an_absent_file(app, monkeypatch):
-    """Test that a restore continues when the library file is absent."""
-
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     import app.videos as videos
 
@@ -529,10 +562,38 @@ def test_download_task_keeps_a_restore_of_an_absent_file(app, monkeypatch):
     )
     with app.app_context():
         key = _overtaken_fixture(
-            app, "Kept Absent", datetime(2026, 10, 20, 18, 0), present=False
+            app,
+            "Kept On Purpose",
+            datetime(2026, 10, 19, 18, 0),
+            requested=datetime(2026, 10, 20, 13, 0),
         )
-        aws_storage.record_restore_request(
-            app.redis, key, datetime(2026, 10, 20, 13, 0, tzinfo=timezone.utc)
+        assert videos.download_task(key, os.path.basename(key), "receipt-2") is True
+
+    assert len(downloads) == 1
+
+
+def test_download_task_keeps_a_restore_of_an_absent_file(app, monkeypatch):
+    """Test that a restore continues when the library file is absent."""
+
+    from datetime import datetime
+
+    import app.videos as videos
+
+    from app import aws_storage
+
+    downloads = []
+    monkeypatch.setattr(
+        aws_storage,
+        "aws_download",
+        lambda *args, **kwargs: downloads.append(args) or aws_storage.DOWNLOAD_COMPLETE,
+    )
+    with app.app_context():
+        key = _overtaken_fixture(
+            app,
+            "Kept Absent",
+            datetime(2026, 10, 20, 18, 0),
+            present=False,
+            requested=datetime(2026, 10, 20, 13, 0),
         )
         assert videos.download_task(key, os.path.basename(key), "receipt-3") is True
 
@@ -596,11 +657,13 @@ def test_a_restore_already_in_progress_still_records_the_request(app, monkeypatc
     record its time, or the download never occurs. An existing time
     stays."""
 
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     import botocore.exceptions
 
+    from app import db
     from app import aws_storage
+    from app.models import File
 
     class InProgressS3:
         def head_object(self, **kwargs):
@@ -612,20 +675,22 @@ def test_a_restore_already_in_progress_still_records_the_request(app, monkeypatc
             )
 
     monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kwargs: InProgressS3())
-    key = "untouched/In Progress (1951) - [DVD].mkv"
     with app.app_context():
-        app.redis.delete(aws_storage.RESTORE_REQUESTED_KEY.format(key))
+        key = _overtaken_fixture(
+            app, "In Progress", datetime(2026, 10, 1), present=False
+        )
         aws_storage.aws_restore(key, record_request=False)
-        assert aws_storage.restore_requested_at(app.redis, key) is None
+        assert _pending_since(key) is None
 
         aws_storage.aws_restore(key)
-        first = aws_storage.restore_requested_at(app.redis, key)
+        first = _pending_since(key)
         assert first is not None
 
-        earlier = datetime(2026, 10, 20, 12, 0, tzinfo=timezone.utc)
-        aws_storage.record_restore_request(app.redis, key, earlier)
+        earlier = datetime(2026, 10, 20, 12, 0)
+        File.query.filter_by(aws_key=key).one().restore_requested_at = earlier
+        db.session.commit()
         aws_storage.aws_restore(key)
-        assert aws_storage.restore_requested_at(app.redis, key) == earlier
+        assert _pending_since(key) == earlier
 
 
 def _direct_restore_row(app, title):
@@ -747,7 +812,7 @@ def test_a_deferred_placement_keeps_the_finished_download(app, monkeypatch):
     library = os.path.join(app.config["LIBRARY_DIR"], "Movies/y.mkv")
     staged = os.path.join(app.config["IMPORT_DIR"], ".restore-modified-y.mkv")
 
-    def refuse(etag=None, size=None, library_stat=None):
+    def refuse(etag=None, size=None):
         raise aws_storage.PlacementDeferred(["/Volumes/Movies"])
 
     try:
@@ -993,49 +1058,6 @@ def test_a_key_that_no_row_names_refuses_the_placement(app, monkeypatch):
             os.remove(library_path)
 
 
-def test_an_edit_during_the_download_refuses_the_placement_by_its_stat(
-    app, monkeypatch
-):
-    """The archive and the row can look unchanged after an edit (#586).
-
-    The upload of the edit can still run, or it can go to the target key
-    of a pending move. Then the ETag of the restored key is the same,
-    and the old bytes replaced the edited library file."""
-
-    from app import db
-    from app.models import File
-
-    key, library_path = _direct_restore_row(app, "Stat Changed")
-    os.makedirs(os.path.dirname(library_path), exist_ok=True)
-    with open(library_path, "wb") as f:
-        f.write(b"library file")
-
-    class EditingS3(S3):
-        def download_file(self, bucket, key, filename, Callback=None):
-            # A track edit rewrites the file on another worker. Its upload
-            # did not finish. Thus, the row and the object stay as they were.
-            with open(library_path, "wb") as f:
-                f.write(b"edited library file")
-            super().download_file(bucket, key, filename, Callback)
-
-    s3 = EditingS3()
-    try:
-        assert _place_with(app, monkeypatch, s3, key) is True
-        assert s3.downloads == [key]
-        with open(library_path, "rb") as f:
-            assert f.read() == b"edited library file"
-        with app.app_context():
-            assert not db.session.get(
-                File, File.query.filter_by(aws_key=key).one().id
-            ).aws_stale
-        staged = os.path.join(
-            app.config["IMPORT_DIR"], f".restore-{key.replace('/', '-')}"
-        )
-        assert not os.path.exists(staged)
-    finally:
-        os.remove(library_path)
-
-
 def test_a_moved_key_with_other_bytes_refuses_the_placement(app, monkeypatch):
     """The key of the fresh row must hold a copy of the download (#586).
 
@@ -1073,36 +1095,6 @@ def test_a_moved_key_with_other_bytes_refuses_the_placement(app, monkeypatch):
     finally:
         if os.path.exists(library_path):
             os.remove(library_path)
-
-
-def test_a_volume_wait_carries_the_stat_of_the_library_file(app, monkeypatch):
-    """The next round compares with the stat from before the first download (#586)."""
-
-    import app.videos as videos
-    from app import aws_storage
-
-    key, library_path = _direct_restore_row(app, "Stat Carried")
-    os.makedirs(os.path.dirname(library_path), exist_ok=True)
-    with open(library_path, "wb") as f:
-        f.write(b"library file")
-    answers = [[], ["/Volumes/Movies"]]
-    monkeypatch.setattr(videos, "_dead_volumes", lambda paths: answers.pop(0))
-
-    def download(key, basename, handle=None, place_at=None, before_place=None, **_):
-        before_place()
-        return aws_storage.DOWNLOAD_COMPLETE
-
-    monkeypatch.setattr(aws_storage, "aws_download", download)
-    try:
-        with app.app_context():
-            assert videos.download_task(key, os.path.basename(key)) is False
-            expected = aws_storage._library_stat(library_path)
-        (retry,) = _volume_retries(app)
-        assert expected and retry.kwargs["library_stat"] == expected
-        assert_binds(retry)
-        retry.delete()
-    finally:
-        os.remove(library_path)
 
 
 def test_a_row_deleted_during_the_download_refuses_and_drops_the_message(
@@ -1244,47 +1236,6 @@ def test_the_sqs_delete_lets_a_base_exception_through(app):
             aws_storage.delete_sqs_message(Stopping(), "receipt")
 
 
-def test_a_share_fault_at_the_placement_stat_defers_and_keeps_the_download(
-    app, monkeypatch
-):
-    """An ESTALE at the stat of the placement discarded the download (#586 follow-up).
-
-    The stat ran after the volume probe passed. Its fault left before_place
-    as a plain OSError, the finished copy was removed, and the transient
-    retry downloaded the whole object again."""
-
-    import errno
-
-    from app import aws_storage
-
-    key, library_path = _direct_restore_row(app, "Stat Blip")
-    real = aws_storage._library_stat
-    calls = []
-
-    def stat(path):
-        calls.append(path)
-        if len(calls) == 2:
-            raise OSError(errno.ESTALE, "Stale file handle")
-        return real(path)
-
-    monkeypatch.setattr(aws_storage, "_library_stat", stat)
-    s3 = S3(head={"ContentLength": 3, "ETag": '"v1"'})
-    staged = os.path.join(app.config["IMPORT_DIR"], f".restore-{key.replace('/', '-')}")
-    try:
-        assert _place_with(app, monkeypatch, s3, key) is False
-        assert s3.downloads == [key]
-        assert os.path.exists(staged)
-        assert os.path.exists(f"{staged}.etag")
-        assert not os.path.exists(library_path)
-        (retry,) = _volume_retries(app)
-        assert retry.kwargs["volume_waits"] == 1
-        retry.delete()
-    finally:
-        for path in (staged, f"{staged}.etag", library_path):
-            if os.path.exists(path):
-                os.remove(path)
-
-
 def test_a_delivered_delete_clears_the_stored_handle_of_the_job(app, monkeypatch):
     """A stale stored handle shadowed the handle of a later chain (#587 follow-up).
 
@@ -1314,118 +1265,18 @@ def test_a_delivered_delete_clears_the_stored_handle_of_the_job(app, monkeypatch
         app.redis.delete(handle_key)
 
 
-def _kept_copy(app, key, sidecar):
-    """Write a finished copy of key and its sidecar into staging (#589)."""
-
-    staged = os.path.join(app.config["IMPORT_DIR"], f".restore-{key.replace('/', '-')}")
-    os.makedirs(os.path.dirname(staged), exist_ok=True)
-    with open(staged, "wb") as f:
-        f.write(b"s3!")
-    with open(f"{staged}.etag", "w") as f:
-        f.write(sidecar)
-    return staged
-
-
-def test_a_kept_copy_from_a_broken_chain_keeps_its_stat(app, monkeypatch):
-    """A new chain took the stat of the edited file, and the kept copy reverted it (#589).
-
-    A job timeout left the copy. The edit then changed the library file
-    while its upload still ran. The ETag of the key was unchanged."""
-
-    import json
-
-    from app import aws_storage
-
-    key, library_path = _direct_restore_row(app, "Broken Chain")
-    os.makedirs(os.path.dirname(library_path), exist_ok=True)
-    with open(library_path, "wb") as f:
-        f.write(b"library file")
-    with app.app_context():
-        before = aws_storage._library_stat(library_path)
-    staged = _kept_copy(app, key, f'"v1"\n3\n{json.dumps(before)}')
-    with open(library_path, "wb") as f:
-        f.write(b"edited library file")
-    s3 = S3(head={"ContentLength": 3, "ETag": '"v1"'})
-    try:
-        assert _place_with(app, monkeypatch, s3, key) is True
-        assert s3.downloads == []
-        with open(library_path, "rb") as f:
-            assert f.read() == b"edited library file"
-        assert not os.path.exists(staged)
-        assert not os.path.exists(f"{staged}.etag")
-    finally:
-        for path in (staged, f"{staged}.etag", library_path):
-            if os.path.exists(path):
-                os.remove(path)
-
-
-def test_a_new_download_writes_the_stat_into_the_sidecar(app, monkeypatch):
-    """The sidecar holds the stat from the caller beside the ETag and the size (#589)."""
-
-    import app.videos as videos
-    from app import aws_storage
-
-    s3 = S3(head={"ContentLength": 3, "ETag": '"v1"'})
-    monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kwargs: s3)
-    monkeypatch.setattr(aws_storage, "aws_sqs_client", lambda: None)
-    library = os.path.join(app.config["LIBRARY_DIR"], "Movies/w.mkv")
-    staged = os.path.join(app.config["IMPORT_DIR"], ".restore-modified-w.mkv")
-    seen = []
-
-    def defer(etag=None, size=None, library_stat=None):
-        seen.append(library_stat)
-        raise aws_storage.PlacementDeferred(["/Volumes/Movies"])
-
-    try:
-        with app.app_context():
-            with pytest.raises(aws_storage.PlacementDeferred):
-                videos.aws_download(
-                    "modified/w.mkv",
-                    "w.mkv",
-                    place_at=library,
-                    before_place=defer,
-                    library_stat=[12, 345, 678],
-                )
-            assert aws_storage.read_partial_sidecar(staged) == (
-                '"v1"',
-                3,
-                [12, 345, 678],
-            )
-
-            # The next round reuses the copy. Its sidecar stat goes to
-            # before_place.
-            with pytest.raises(aws_storage.PlacementDeferred):
-                videos.aws_download(
-                    "modified/w.mkv",
-                    "w.mkv",
-                    place_at=library,
-                    before_place=defer,
-                    library_stat=[99, 99, 99],
-                )
-        assert s3.downloads == ["modified/w.mkv"]
-        assert seen == [None, [12, 345, 678]]
-        with app.app_context():
-            assert aws_storage.read_partial_sidecar(staged)[2] == [12, 345, 678]
-    finally:
-        for path in (staged, f"{staged}.etag"):
-            if os.path.exists(path):
-                os.remove(path)
-
-
 @pytest.mark.parametrize(
     "text, expected",
     [
-        ('"v1"', ('"v1"', None, None)),
-        ('"v1"\n3', ('"v1"', 3, None)),
-        ('"v1"\n3\n', ('"v1"', 3, None)),
-        ('"v1"\n3\n[1, 2, 3]', ('"v1"', 3, [1, 2, 3])),
-        ('"v1"\n\n[]', ('"v1"', None, [])),
-        ('"v1"\n3\nnot json', ('"v1"', 3, None)),
-        ('"v1"\n3\n{"a": 1}', ('"v1"', 3, None)),
+        ('"v1"', ('"v1"', None)),
+        ('"v1"\n3', ('"v1"', 3)),
+        ('"v1"\n3\n', ('"v1"', 3)),
+        ('"v1"\n3\n[1, 2, 3]', ('"v1"', 3)),
+        ('"v1"\n\n[]', ('"v1"', None)),
     ],
 )
-def test_an_older_sidecar_reads_with_no_stat(app, text, expected):
-    """A sidecar of 1 or 2 lines predates the stat line (#589)."""
+def test_a_sidecar_reads_as_the_etag_and_the_size(app, text, expected):
+    """The sidecar has 2 lines (#610). The stat line of an older sidecar has no use."""
 
     from app import aws_storage
 
@@ -1438,117 +1289,6 @@ def test_an_older_sidecar_reads_with_no_stat(app, text, expected):
             assert aws_storage.read_partial_sidecar(destination) == expected
     finally:
         os.remove(f"{destination}.etag")
-
-
-def test_the_sidecar_stat_survives_a_write_and_a_read(app):
-    """An empty stat means no library file. It must not read as no stat (#589)."""
-
-    from app import aws_storage
-
-    destination = os.path.join(app.config["IMPORT_DIR"], ".restore-modified-rt.mkv")
-    os.makedirs(os.path.dirname(destination), exist_ok=True)
-    try:
-        with app.app_context():
-            for size, stat in ((3, []), (None, [1, 2, 3]), (3, None), (None, None)):
-                aws_storage._write_partial_etag(destination, '"v1"', size, stat)
-                assert aws_storage.read_partial_sidecar(destination) == (
-                    '"v1"',
-                    size,
-                    stat,
-                )
-    finally:
-        if os.path.exists(f"{destination}.etag"):
-            os.remove(f"{destination}.etag")
-
-
-def test_a_deferred_placement_refuses_after_an_edit_in_the_wait(app, monkeypatch):
-    """The retry reuses the kept copy and compares with its sidecar stat (#589)."""
-
-    import app.videos as videos
-    from app import aws_storage
-
-    key, library_path = _direct_restore_row(app, "Edited In Wait")
-    os.makedirs(os.path.dirname(library_path), exist_ok=True)
-    with open(library_path, "wb") as f:
-        f.write(b"library file")
-    s3 = S3(head={"ContentLength": 3, "ETag": '"v1"'})
-    monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kwargs: s3)
-    monkeypatch.setattr(aws_storage, "aws_sqs_client", lambda: None)
-    answers = [[], ["/Volumes/Movies"]]
-    monkeypatch.setattr(
-        videos, "_dead_volumes", lambda paths: answers.pop(0) if answers else []
-    )
-    staged = os.path.join(app.config["IMPORT_DIR"], f".restore-{key.replace('/', '-')}")
-    try:
-        with app.app_context():
-            before = aws_storage._library_stat(library_path)
-            assert videos.download_task(key, os.path.basename(key)) is False
-            assert aws_storage.read_partial_sidecar(staged)[2] == before
-        (retry,) = _volume_retries(app)
-        kwargs = dict(retry.kwargs)
-        retry.delete()
-        assert kwargs["library_stat"] == before
-
-        with open(library_path, "wb") as f:
-            f.write(b"edited library file")
-        with app.app_context():
-            assert videos.download_task(key, os.path.basename(key), **kwargs) is True
-        assert s3.downloads == [key]
-        with open(library_path, "rb") as f:
-            assert f.read() == b"edited library file"
-        assert not os.path.exists(staged)
-    finally:
-        for path in (staged, f"{staged}.etag", library_path):
-            if os.path.exists(path):
-                os.remove(path)
-
-
-def test_a_transient_fault_before_the_placement_carries_the_kept_stat(app, monkeypatch):
-    """The retry took the stat of the edited file after an EIO (#597).
-
-    A partial of an earlier chain holds the stat from before the edit. A
-    transient fault removed the partial before before_place ran. The
-    retry then downloaded fresh, compared the new stat with itself, and
-    placed the archive over the edit."""
-
-    import errno
-    import json
-
-    import app.videos as videos
-    from app import aws_storage
-
-    key, library_path = _direct_restore_row(app, "Kept Stat Fault")
-    os.makedirs(os.path.dirname(library_path), exist_ok=True)
-    with open(library_path, "wb") as f:
-        f.write(b"library file")
-    with app.app_context():
-        before = aws_storage._library_stat(library_path)
-    staged = _kept_copy(app, key, f'"v1"\n3\n{json.dumps(before)}')
-    with open(library_path, "wb") as f:
-        f.write(b"edited library file")
-
-    def lost(*args, **kwargs):
-        raise OSError(errno.EIO, "Input/output error")
-
-    monkeypatch.setattr(aws_storage, "aws_download", lost)
-    # The sidecar names the ETag of the key now, so its stat counts.
-    s3 = S3(head={"ContentLength": 3, "ETag": '"v1"'})
-    monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kwargs: s3)
-    monkeypatch.setattr(videos, "_dead_volumes", lambda paths: [])
-    try:
-        with app.app_context():
-            assert videos.download_task(key, os.path.basename(key)) is False
-        (retry,) = [
-            job
-            for job in scheduled_jobs(app.file_queue)
-            if job.id.startswith(safe_job_id("retry:download_task"))
-        ]
-        assert retry.kwargs["library_stat"] == before
-        retry.delete()
-    finally:
-        for path in (staged, f"{staged}.etag", library_path):
-            if os.path.exists(path):
-                os.remove(path)
 
 
 def _slow_down():
@@ -1582,7 +1322,7 @@ def test_a_transient_fault_of_a_placement_check_keeps_the_download(
         assert os.path.exists(staged) and os.path.exists(f"{staged}.etag")
         assert not os.path.exists(library_path)
         (retry,) = _volume_retries(app)
-        assert retry.kwargs["library_stat"] == []
+        assert retry.kwargs == {"transient_retries": 0, "volume_waits": 1}
         retry.delete()
     finally:
         for path in (staged, f"{staged}.etag"):
@@ -1691,38 +1431,6 @@ def test_a_download_requeue_forgets_the_stored_handle(app, monkeypatch, fault):
         app.redis.delete(handle_key)
 
 
-def test_a_sidecar_of_an_older_object_version_does_not_set_the_stat(app, monkeypatch):
-    """A sidecar of ETag v0 refused a good restore of v1 (#597 follow-up).
-
-    A dead chain of the old object left its partial and its stat. An edit
-    then archived the key again with ETag v1. The stat of the old sidecar
-    is older than the edit, and the chain refused the new object."""
-
-    import json
-
-    from app import aws_storage
-
-    key, library_path = _direct_restore_row(app, "Stale Sidecar")
-    os.makedirs(os.path.dirname(library_path), exist_ok=True)
-    with open(library_path, "wb") as f:
-        f.write(b"old library file")
-    with app.app_context():
-        older = aws_storage._library_stat(library_path)
-    staged = _kept_copy(app, key, f'"v0"\n99\n{json.dumps(older)}')
-    with open(library_path, "wb") as f:
-        f.write(b"edited, then archived again")
-    s3 = S3(head={"ContentLength": 3, "ETag": '"v1"'})
-    try:
-        assert _place_with(app, monkeypatch, s3, key) is True
-        assert s3.downloads == [key]
-        with open(library_path, "rb") as f:
-            assert f.read() == b"s3!"
-    finally:
-        for path in (staged, f"{staged}.etag", library_path):
-            if os.path.exists(path):
-                os.remove(path)
-
-
 def test_a_give_up_forgets_the_stored_handle_under_a_fixed_id(app, monkeypatch):
     """A retry that gave up kept SQS_HANDLE_KEY of its fixed id (#600 follow-up).
 
@@ -1819,31 +1527,23 @@ def test_a_retry_under_the_id_of_the_job_keeps_the_stored_handle(app, monkeypatc
 
 
 @pytest.mark.parametrize("fault", ["ConnectionError", "TimeoutError"])
-def test_a_redis_fault_at_the_overtaken_check_keeps_the_download(
-    app, monkeypatch, fault
-):
-    """A lost Redis at the overtaken check discarded a finished download (#598 follow-up)."""
+def test_a_redis_fault_at_the_title_lock_keeps_the_download(app, monkeypatch, fault):
+    """A lost Redis at the placement lock must not discard a finished download (#598, #610)."""
 
     import redis.exceptions
 
-    from app import aws_storage
-
     key, library_path = _direct_restore_row(app, f"Placement Redis {fault}")
     staged = os.path.join(app.config["IMPORT_DIR"], f".restore-{key.replace('/', '-')}")
-    real_check = aws_storage.overtaken_by_import
     calls = []
 
     def lost_redis(*args, **kwargs):
         calls.append(args)
-        if len(calls) == 1:
-            # The check before the download still runs.
-            return real_check(*args, **kwargs)
         raise getattr(redis.exceptions, fault)("simulated Redis fault")
 
-    monkeypatch.setattr(aws_storage, "overtaken_by_import", lost_redis)
+    monkeypatch.setattr(app.lock_manager, "lock", lost_redis)
     try:
         assert _place_with(app, monkeypatch, S3(), key) is False
-        assert len(calls) == 2
+        assert len(calls) == 1
         assert os.path.exists(staged) and os.path.exists(f"{staged}.etag")
         assert not os.path.exists(library_path)
         (retry,) = _volume_retries(app)

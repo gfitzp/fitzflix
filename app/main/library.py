@@ -33,7 +33,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.tasks import enqueue_task
 from app import db
-from app.aws_storage import restore_would_replace_newer
+from app.aws_storage import refuse_while_restore_pending, restore_would_replace_newer
 from app.main.forms import (
     CriterionForm,
     FileDeleteForm,
@@ -2834,6 +2834,19 @@ def file(file_id):
         ),
         (delete_form, delete_form.delete_submit, _delete_file_post, False),
     )
+    # A pending restore refuses each form that edits, uploads or restores
+    # the file (#610). Only the delete stays. The refusal comes before
+    # the validation.
+
+    restore_pending = refuse_while_restore_pending(file)
+    if restore_pending and any(
+        submit.data
+        for _, submit, _, _ in handlers
+        if submit is not delete_form.delete_submit
+    ):
+        flash(f"'{file.basename}' {restore_pending}", "warning")
+        return redirect(url_for("main.file", file_id=file.id))
+
     # The track forms post track UIDs (#611). Rows with no UID give the
     # forms no valid choice. Thus, the refusal comes before the validation.
 

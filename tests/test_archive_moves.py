@@ -194,10 +194,10 @@ def test_a_deep_archive_object_gets_a_bulk_restore_and_the_row_stays(app, s3):
         assert fake.copies == [] and fake.deletes == []
 
         # record_request=False: a download must not think that a person
-        # asked for this restore.
-        assert aws_storage.restore_requested_at(app.redis, old_key) is None
+        # asked for this restore. The row gets no pending restore (#610).
         db.session.expire_all()
         row = db.session.get(File, file_id)
+        assert row.restore_requested_at is None
         assert row.aws_key == old_key
         assert row.aws_key_target == "untouched/Frozen Reel (1952) - [Bluray-1080p].mkv"
 
@@ -1159,7 +1159,7 @@ def test_a_requested_download_of_a_shared_key_runs_beside_the_move(app, s3):
         db.session.commit()
         for job in move_jobs(app):
             job.delete()
-        aws_storage.record_restore_request(app.redis, key)
+        aws_storage.mark_restore_pending(key)
 
         downloads, moves = {}, {}
         aws_storage._route_restore(s3.sqs, key, "handle-7", downloads, moves)

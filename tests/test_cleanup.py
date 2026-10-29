@@ -605,7 +605,7 @@ def test_cleanup_removes_an_old_direct_restore_copy_with_no_owner(
     copies = (old_copy, fresh_copy, waiting)
     with app.app_context():
         for copy in copies:
-            aws_storage._write_partial_etag(copy, '"v1"', os.path.getsize(copy), [])
+            aws_storage._write_partial_etag(copy, '"v1"', os.path.getsize(copy))
     ages = {old_copy: 30, fresh_copy: 10, waiting: 30}
     for copy, age in ages.items():
         stamp = time.time() - age * 86400

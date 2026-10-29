@@ -1056,6 +1056,13 @@ class File(db.Model):
     # check reads the row as consistent. A successful upload clears it.
 
     aws_stale = db.Column(db.Boolean, nullable=False, server_default="0", default=False)
+
+    # The UTC time of a restore request of the archive (#610). A writer
+    # of the library file or of its archive refuses while it is set. The
+    # placement of the restored copy, a terminal fault of the download
+    # and the 14-day sweep clear it.
+
+    restore_requested_at = db.Column(db.DateTime)
     subtrack = db.relationship(
         "FileSubtitleTrack", backref="file", lazy="select", cascade="all,delete"
     )

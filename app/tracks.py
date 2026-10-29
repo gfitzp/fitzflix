@@ -40,7 +40,11 @@ from app.tasks import (
     requeue,
 )
 from app import db, get_app
-from app.aws_storage import archive_library_file, mark_archive_stale
+from app.aws_storage import (
+    archive_library_file,
+    mark_archive_stale,
+    refuse_while_restore_pending,
+)
 from app.models import File, FileAudioTrack, FileSubtitleTrack
 from app.naming import hidden
 from app.cache import cached_fetch
@@ -1076,6 +1080,16 @@ def mkvpropedit_task(
         if not lock:
             return True
 
+        # A pending restore of the file refuses the edit (#610).
+
+        refused = refuse_while_restore_pending(file)
+        if refused:
+            current_app.logger.warning(
+                f"'{file.basename}' {refused} The MKV property edit does not run"
+            )
+            current_app.lock_manager.unlock(lock)
+            return False
+
         # Bulk writes over SMB put the files into the lost-handle state.
         # Thus, probe this file directly at the end. Do not let the close
         # of a later upload find the problem
@@ -1573,6 +1587,12 @@ def mkvmerge_task(file_id, audio_tracks, subtitle_tracks):
             return True
 
         try:
+            refused = refuse_while_restore_pending(file)
+            if refused:
+                current_app.logger.warning(
+                    f"'{file.basename}' {refused} The remux does not run"
+                )
+                return False
             return mkvmerge_unlocked(file_id, audio_tracks, subtitle_tracks)
         finally:
             current_app.lock_manager.unlock(lock)
@@ -2358,6 +2378,12 @@ def remux_audio_plan_task(file_id, plan):
             return True
 
         try:
+            refused = refuse_while_restore_pending(file)
+            if refused:
+                current_app.logger.warning(
+                    f"'{file.basename}' {refused} The audio remux does not run"
+                )
+                return False
             return _remux_audio_plan_unlocked(int(file_id), plan)
         finally:
             current_app.lock_manager.unlock(lock)
