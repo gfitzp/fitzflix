@@ -385,7 +385,6 @@ def refresh_tmdb_info(
                 return False
             record, description = target
             if library == MOVIES:
-                current_app.logger.info(f"tmdb_id: {tmdb_id}")
                 tmdb_info = record.tmdb_movie_fetch(tmdb_id)
             else:
                 tmdb_info = record.tmdb_tv_fetch(tmdb_id)
@@ -526,17 +525,26 @@ def _rename_movie_file(f, tmdb_id, probe=True):
 
     from app.importing import evaluate_filename
 
+    # The import lines of evaluate_filename (File, Movie, Existing movie)
+    # do not belong to a rename. A bulk refresh wrote them for each file
+    # (#590). The warning below names the reason for a reject.
+
     renamed = False
     if tmdb_id != None:
-        file_details = evaluate_filename(f.untouched_basename, tmdb_id=tmdb_id)
+        file_details = evaluate_filename(
+            f.untouched_basename, tmdb_id=tmdb_id, log=False
+        )
     else:
-        file_details = evaluate_filename(f.untouched_basename)
+        file_details = evaluate_filename(f.untouched_basename, log=False)
 
     if not file_details:
         # For example, an id tag in the untouched name no
         # longer resolves. Leave the file where it is.
+        detail = getattr(file_details, "detail", None)
+        reason = f" ({detail})" if detail else ""
         current_app.logger.warning(
-            f"'{f.untouched_basename}' no longer evaluates, " f"skipping its rename"
+            f"'{f.untouched_basename}' no longer evaluates{reason}, "
+            f"skipping its rename"
         )
         return False
     file_details = library_name_details(f, file_details)
@@ -832,7 +840,6 @@ def _apply_movie_refresh(
 
     if existing_movie:
         movie = existing_movie
-        current_app.logger.info(f"Existing movie: {movie}")
         existing_movie.tmdb_movie_apply(tmdb_info)
         db.session.commit()
     else:
@@ -867,13 +874,25 @@ def _apply_movie_refresh(
         return False
 
     # Reconstruct the untouched filenames with the new movie details.
+    # A bulk refresh applies hundreds of movies a night. Most names do
+    # not change. Thus, a name gets a log line only when it changes, and
+    # each apply writes 1 summary line (#590).
 
     files = File.query.filter_by(movie_id=updated_movie_id).all()
+    changed = 0
 
     for f in files:
         untouched_basename = reconstruct_filename(f.id)
+        if untouched_basename != f.untouched_basename:
+            current_app.logger.info(
+                f"New untouched basename: '{f.untouched_basename}' "
+                f"to '{untouched_basename}'"
+            )
+            changed += 1
         f.untouched_basename = untouched_basename
-        current_app.logger.info(f"New untouched basename: '{untouched_basename}'")
+    current_app.logger.info(
+        f"{movie} refreshed: {changed} of {len(files)} names changed"
+    )
 
     # Commit the new basenames BEFORE you queue an archive
     # move. A deferred re-archive reads the key that the record

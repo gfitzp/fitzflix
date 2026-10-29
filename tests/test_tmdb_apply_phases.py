@@ -7,6 +7,7 @@ payload whose apply raises.
 """
 
 import json
+import logging
 import os
 import zlib
 
@@ -607,3 +608,121 @@ def test_a_dead_volume_skips_the_collision_stat_of_a_rename(app, monkeypatch):
         monkeypatch.undo()
         assert outcome == VOLUME_DOWN
         assert stats == []
+
+
+# The log volume of a bulk refresh (#590). A nightly run applies hundreds
+# of movies. Most of them change no name.
+
+IMPORT_LINES = ("File: ", "Movie: ", "Existing movie with this TMDB id")
+
+
+def _put_on_disk(app, file):
+    path = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "wb") as handle:
+        handle.write(b"payload")
+    return path
+
+
+def test_an_apply_with_no_new_name_logs_1_summary_line(app, caplog):
+    """An unchanged name gets no line. The apply writes 1 summary line (#590)."""
+
+    from app.videos import apply_tmdb_refresh, refresh_tmdb_info
+
+    with app.app_context():
+        movie = make_movie("Steady Tune", 1950)
+        for quality_title in ("DVD", "Bluray-1080p"):
+            file = make_movie_file(movie, quality_title)
+            file.untouched_basename = file.basename
+            _put_on_disk(app, file)
+        db.session.commit()
+        movie_id = movie.id
+
+        with caplog.at_level(logging.INFO, logger="app"):
+            refresh_tmdb_info("Movies", movie_id)
+            assert apply_tmdb_refresh("Movies", movie_id) is True
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert not [m for m in messages if m.startswith("tmdb_id: ")]
+    assert not [m for m in messages if m.startswith("Existing movie: ")]
+    assert not [m for m in messages if "New untouched basename" in m]
+    assert not [m for m in messages if m.startswith(IMPORT_LINES)]
+    summaries = [m for m in messages if " refreshed: " in m]
+    assert summaries == ["<Movie 'Steady Tune (1950)'> refreshed: 0 of 2 names changed"]
+
+
+def test_an_apply_logs_the_old_and_the_new_name(app, caplog):
+    """A changed name gets 1 line with the old and the new name (#590)."""
+
+    from datetime import date
+
+    from app.videos import apply_tmdb_refresh
+
+    with app.app_context():
+        movie = make_movie("Desert Tune", 1943)
+        file = make_movie_file(movie, "HDTV-720p")
+        file.untouched_basename = file.basename
+        movie.tmdb_title = "Desert Tune"
+        movie.tmdb_release_date = date(1944, 1, 1)
+        db.session.commit()
+        movie_id = movie.id
+        _put_on_disk(app, file)
+
+        with caplog.at_level(logging.INFO, logger="app"):
+            assert apply_tmdb_refresh("Movies", movie_id) is True
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert [m for m in messages if "New untouched basename" in m] == [
+        "New untouched basename: 'Desert Tune (1943) - [HDTV-720p].mkv' "
+        "to 'Desert Tune (1944) - [HDTV-720p].mkv'"
+    ]
+    assert [m for m in messages if " refreshed: " in m] == [
+        "<Movie 'Desert Tune (1943)'> refreshed: 1 of 1 names changed"
+    ]
+
+
+def test_a_rename_writes_none_of_the_import_lines(app, caplog):
+    """The rename path evaluates the name quietly. An import still logs (#590)."""
+
+    from app.importing import evaluate_filename, reconstruct_filename
+    from app.tmdb_refresh import _rename_movie_file
+
+    with app.app_context():
+        movie = make_movie("Quiet Tune", 1961, tmdb_id=4242)
+        file = make_movie_file(movie, "DVD")
+        file.untouched_basename = file.basename
+        db.session.commit()
+        _put_on_disk(app, file)
+
+        with caplog.at_level(logging.INFO, logger="app"):
+            assert reconstruct_filename(file.id) == file.basename
+            assert _rename_movie_file(file, 4242, probe=False) is False
+        quiet = [record.getMessage() for record in caplog.records]
+        assert not [m for m in quiet if m.startswith(IMPORT_LINES)]
+
+        caplog.clear()
+        with caplog.at_level(logging.INFO, logger="app"):
+            assert evaluate_filename(file.untouched_basename, tmdb_id=4242)
+        loud = [record.getMessage() for record in caplog.records]
+        for prefix in IMPORT_LINES:
+            assert [m for m in loud if m.startswith(prefix)], prefix
+
+
+def test_a_rename_warning_names_the_reject_reason(app, caplog):
+    """With the quiet evaluation, the warning says why the name failed (#590)."""
+
+    from app.tmdb_refresh import _rename_movie_file
+
+    with app.app_context():
+        movie = make_movie("Yearless Tune", 1961)
+        file = make_movie_file(movie, "DVD")
+        file.untouched_basename = "Yearless Tune - [DVD].mkv"
+        db.session.commit()
+
+        with caplog.at_level(logging.INFO, logger="app"):
+            assert _rename_movie_file(file, None, probe=False) is False
+
+    assert (
+        "'Yearless Tune - [DVD].mkv' no longer evaluates (no name format matches), "
+        "skipping its rename"
+    ) in caplog.text
