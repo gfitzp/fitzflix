@@ -423,26 +423,13 @@ def create_work_directory(app, key):
 
     A missing directory must not stop the app. Localization processes
     the files in place when the staging volume is absent. Thus, a
-    failure only writes a warning.
-
-    A path under /Volumes must be on a mounted volume. When a volume
-    is absent, macOS has no directory at its mountpoint. A makedirs
-    call would then create the tree on the boot disk. Then the volume
-    mounts under a new name, and every config path points at the boot
-    disk (#227). Thus, the function refuses to create a directory on an
-    unmounted volume, and it writes a warning instead.
+    failure only writes a warning. makedirs_on_mounted_volume refuses a
+    directory on an unmounted volume (#630).
     """
 
     path = app.config[key]
-    if path.startswith("/Volumes/"):
-        mountpoint = "/".join(path.split("/")[:3])
-        if not os.path.ismount(mountpoint):
-            app.logger.warning(
-                f"{key} '{path}' was not created, volume '{mountpoint}' is not mounted"
-            )
-            return False
     try:
-        os.makedirs(path, exist_ok=True)
+        makedirs_on_mounted_volume(path)
     except OSError as e:
         app.logger.warning(f"{key} '{path}' could not be created ({e})")
         return False

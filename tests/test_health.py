@@ -516,6 +516,26 @@ def test_create_work_directory_refuses_an_unmounted_volume(app, monkeypatch, cap
     assert "is not mounted" in caplog.text
 
 
+def test_create_work_directory_asks_the_one_mount_rule(
+    app, monkeypatch, caplog, tmp_path
+):
+    """makedirs_on_mounted_volume decides for each work directory (#630)."""
+
+    import errno
+
+    import app as app_module
+
+    def refuse(path):
+        raise OSError(errno.ENODEV, "volume '/Volumes/x' is not mounted", path)
+
+    monkeypatch.setattr(app_module, "makedirs_on_mounted_volume", refuse)
+    monkeypatch.setitem(app.config, "TEST_WORK_DIR", str(tmp_path / "import"))
+    with caplog.at_level("WARNING"):
+        assert app_module.create_work_directory(app, "TEST_WORK_DIR") is False
+    assert not (tmp_path / "import").exists()
+    assert "TEST_WORK_DIR" in caplog.text and "is not mounted" in caplog.text
+
+
 def test_the_roster_matches_the_supervisor_configuration():
     """Keep PROGRAM_QUEUES the same as the commands in fitzflix_supervisor.ini.
 
