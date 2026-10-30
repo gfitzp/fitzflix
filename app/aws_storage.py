@@ -455,10 +455,7 @@ def sync_aws_s3_storage_task(volume_drops=0):
         return True
 
 
-ARCHIVE_MOVE_TASKS = (
-    "app.aws_storage.move_archive_object",
-    "app.videos.rearchive_untouched_object",
-)
+ARCHIVE_MOVE_TASKS = ("app.aws_storage.move_archive_object",)
 
 
 def _scheduled_moves(queue):
@@ -1203,7 +1200,6 @@ def download_task(
     sqs_receipt_handle=None,
     transient_retries=0,
     volume_waits=0,
-    **retired,
 ):
     """Download a file from AWS S3 storage.
 
@@ -1221,9 +1217,6 @@ def download_task(
     The end of the task clears the state by the row id, after the lock
     is released. A writer that comes first sees the state and refuses.
     A booked retry and a new restore of the object keep the state.
-
-    retired takes the kwargs of a retry that an older release booked.
-    They have no use now.
 
     The newest receipt handle of the message is under the key (#617)."""
 
@@ -2925,22 +2918,6 @@ def _move_archive(file, sqs_receipt_handle, message_key):
     if request_archive_move(file):
         db.session.commit()
     return True
-
-
-def rearchive_untouched_object(file_id, new_key=None, path_retries=0):
-    """Request the archive move of a file. This is the old task of a rename.
-
-    A job of the old task can still wait in a queue. It names the task
-    by this name. The move job computes the new key from the row. Thus,
-    new_key and path_retries are not read (#369)."""
-
-    with app.app_context():
-        file = db.session.get(File, int(file_id))
-        if file is None:
-            return False
-        moving = request_archive_move(file)
-        db.session.commit()
-        return moving
 
 
 def aws_delete(key, only_if_present=False):

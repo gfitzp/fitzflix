@@ -778,21 +778,6 @@ def test_the_system_page_shows_the_pending_moves(app, admin_client):
     assert "Archive moves pending: 1, oldest 3 hours ago" in page
 
 
-def test_the_old_rearchive_task_requests_a_move(app):
-    """A queued job of the old task name still works. It requests the move."""
-
-    from app import db, videos
-
-    with app.app_context():
-        file = archived_film("Old Job", 1967, key_name="Old Job Key (1967).mkv")
-        file_id = file.id
-        db.session.commit()
-
-    assert videos.rearchive_untouched_object(file_id, "untouched/ignored.mkv") is True
-    with app.app_context():
-        assert [job.args for job in move_jobs(app)] == [(file_id,)]
-
-
 def test_each_producer_leaves_the_key_of_the_untouched_name(
     app, s3, monkeypatch, tmp_path
 ):

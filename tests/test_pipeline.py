@@ -1504,9 +1504,7 @@ def test_the_queue_shows_only_the_newest_journey_of_a_file(app):
         file = make_movie_file(make_movie("Two Journeys", 2026), "WEBRip-1080p")
         db.session.commit()
         assert file.basename == basename
-        archive = app.file_queue.enqueue(
-            "app.videos.rearchive_untouched_object", args=(file.id, "untouched/x")
-        )
+        archive = app.file_queue.enqueue("app.videos.upload_task", args=(file.id,))
         record_job_event(app.redis, archive, "started")
         record_job_event(app.redis, archive, "done")
 
@@ -1517,7 +1515,7 @@ def test_the_queue_shows_only_the_newest_journey_of_a_file(app):
             return [entry["stage"] for entry in trail["entries"]]
 
         assert stages(pipeline_trails(app.redis)) == [
-            "Re-archiving to S3",
+            "Archiving to S3",
             "Setting track flags",
         ]
         assert stages(pipeline_trails(app.redis, journey_only=True)) == [

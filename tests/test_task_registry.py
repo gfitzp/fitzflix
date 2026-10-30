@@ -285,3 +285,18 @@ def test_a_job_in_the_dequeue_gap_is_live_for_every_reader(app):
             app.redis.delete(queue.intermediate_queue.key)
             job.delete()
         assert live_task_job("app.videos.sync_aws_s3_storage_task") is None
+
+
+def test_the_retired_task_signatures_are_gone(app):
+    """The old jobs drained before the deploy. No code reads a retired signature (#622)."""
+
+    from app import videos
+    from app.tasks import TASKS
+
+    assert "app.videos.rearchive_untouched_object" not in TASKS
+    assert not hasattr(videos, "rearchive_untouched_object")
+    kinds = {
+        parameter.kind
+        for parameter in inspect.signature(videos.download_task).parameters.values()
+    }
+    assert inspect.Parameter.VAR_KEYWORD not in kinds

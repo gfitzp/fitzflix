@@ -207,7 +207,6 @@ TASKS = {
     "app.frames.replace_frame_task": TaskSpec("transcode", 600),
     # The file operations.
     "app.videos.upload_task": TaskSpec("file", "UPLOAD_TASK_TIMEOUT"),
-    "app.videos.rearchive_untouched_object": TaskSpec("file", "UPLOAD_TASK_TIMEOUT"),
     # A move is 1 server-side copy (#369). For 100 GiB, s3transfer sends
     # 6,400 UploadPartCopy requests of 16 MiB, 10 at a time. The estimate
     # at 50 MB/s for each request is 4 minutes. FILE_TASK_TIMEOUT
