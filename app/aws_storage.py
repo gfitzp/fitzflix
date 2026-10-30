@@ -1398,10 +1398,10 @@ def _download_task(
             A throttle of an S3 HEAD or a restart of the database is not a
             reason to discard a finished download. A busy title lock is
             not a reason either (#610). A PlacementDeferred keeps the copy
-            and its sidecar."""
+            and its sidecar. The size has no use since #621."""
 
             try:
-                return check_placement(etag, size)
+                return check_placement(etag)
             except (PlacementDeferred, PlacementRefused):
                 raise
             except Exception as error:
@@ -1427,14 +1427,14 @@ def _download_task(
                 )
             return fresh
 
-        def check_placement(etag=None, size=None):
+        def check_placement(etag=None):
             """Take the title lock, and check the volumes and the newer-file guards again (#533).
 
             Return the path. A rename during the download moves the file
             of the row (#563). Thus, the placement goes to the path of
             the row under the lock, and the volume probe checks that
-            folder. etag and size are the ETag and the size of the
-            object at the start of the download."""
+            folder. etag is the ETag of the object at the start of the
+            download."""
 
             lock = current_app.lock_manager.lock(
                 fresh_row().file_identifier(),
@@ -1470,36 +1470,14 @@ def _download_task(
                 s3_client = aws_s3_client()
                 head = _head_or_none(s3_client, key)
                 if head is None:
-                    # An archive key move during the download (#369)
-                    # copied the same bytes under the key of the fresh
-                    # row. The download is still good (#563 follow-up).
-                    # The object at that key must be a copy of the
-                    # download. An edit can have uploaded new bytes there
-                    # (#586).
-                    moved_to = [
-                        other
-                        for other in (
-                            fresh.aws_key,
-                            fresh.aws_transcoded_key,
-                            fresh.aws_key_target,
-                        )
-                        if other and other != key
-                    ]
-                    downloaded = {"ETag": etag, "ContentLength": size}
-                    heads = [_head_or_none(s3_client, other) for other in moved_to]
-                    if any(
-                        other is not None and _copy_problem(downloaded, other) is None
-                        for other in heads
-                    ):
-                        current_app.logger.info(
-                            f"'{basename}' The archive '{key}' moved during "
-                            f"the download. The restore places the download"
-                        )
-                    else:
-                        raise PlacementRefused(
-                            f"'{basename}' The archive '{key}' is gone. The "
-                            f"restore does not place the file"
-                        )
+                    # A move never runs alongside a download of its source
+                    # (#621). The move waits for the download job. Thus, a
+                    # gone key is a refusal, and the person requests the
+                    # restore again.
+                    raise PlacementRefused(
+                        f"'{basename}' The archive '{key}' is gone. The "
+                        f"restore does not place the file"
+                    )
                 elif head.get("ETag") != etag:
                     raise PlacementRefused(
                         f"'{basename}' The archive '{key}' changed during the "

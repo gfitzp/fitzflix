@@ -607,7 +607,8 @@ def test_a_move_during_the_download_still_ends_the_pending_restore(app, monkeypa
     """An archive move repoints the row during the download (#563 follow-up).
 
     The clear goes by the row id. A clear by the old key found no row,
-    and the forms stayed off until the 14-day sweep."""
+    and the forms stayed off until the 14-day sweep. A gone key refuses
+    the placement (#621). The person requests the restore again."""
 
     import botocore.exceptions
 
@@ -637,8 +638,7 @@ def test_a_move_during_the_download_still_ends_the_pending_restore(app, monkeypa
             assert videos.download_task(key, os.path.basename(key)) is True
             assert _pending(file_id) is None
             assert db.session.get(File, file_id).aws_key == moved_key
-        with open(path, "rb") as handle:
-            assert handle.read() == b"s3!"
+        assert not os.path.exists(path)
     finally:
         _remove(path)
 

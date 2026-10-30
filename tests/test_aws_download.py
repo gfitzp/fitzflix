@@ -985,48 +985,6 @@ def test_a_restore_of_a_missing_key_with_a_longer_sibling_does_nothing(
         ]
 
 
-def test_a_key_move_during_the_download_still_places_the_file(app, monkeypatch):
-    """The second HEAD of a moved key refused the placement (#563 follow-up).
-
-    An archive key move (#369) copies the same bytes under the key of
-    the fresh row. The downloaded copy is good. Only a key that no row
-    names any more refuses."""
-
-    import botocore.exceptions
-
-    from app import db
-    from app.models import File
-
-    key, library_path = _direct_restore_row(app, "Moved During")
-    moved_key = "modified/Moved Later.mkv"
-    gone = botocore.exceptions.ClientError(
-        {"Error": {"Code": "404", "Message": "Not Found"}}, "HeadObject"
-    )
-
-    def head(call):
-        if call == 1:
-            # The move lands while the download runs.
-            db.session.execute(
-                db.update(File).where(File.aws_key == key).values(aws_key=moved_key)
-            )
-            db.session.commit()
-            return {"ContentLength": 3, "ETag": '"v1"'}
-        if call == 2:
-            raise gone
-        return {"ContentLength": 3, "ETag": '"v1"'}
-
-    s3 = S3(head=head)
-    try:
-        assert _place_with(app, monkeypatch, s3, key) is True
-        assert s3.downloads == [key]
-        assert s3.head_calls == 3
-        with open(library_path, "rb") as f:
-            assert f.read() == b"s3!"
-    finally:
-        if os.path.exists(library_path):
-            os.remove(library_path)
-
-
 def test_a_key_that_no_row_names_refuses_the_placement(app, monkeypatch):
     """A gone key with no successor on the row still refuses (#563 follow-up)."""
 
@@ -1050,45 +1008,6 @@ def test_a_key_that_no_row_names_refuses_the_placement(app, monkeypatch):
             app.config["IMPORT_DIR"], f".restore-{key.replace('/', '-')}"
         )
         assert not os.path.exists(staged)
-    finally:
-        if os.path.exists(library_path):
-            os.remove(library_path)
-
-
-def test_a_moved_key_with_other_bytes_refuses_the_placement(app, monkeypatch):
-    """The key of the fresh row must hold a copy of the download (#586).
-
-    An edit of a file with a pending move uploads the edited bytes to
-    the target key and deletes the old key. The fallback accepted any
-    object at the new key."""
-
-    import botocore.exceptions
-
-    from app import db
-    from app.models import File
-
-    key, library_path = _direct_restore_row(app, "Moved Edited")
-    moved_key = "modified/Moved Edited Later.mkv"
-    gone = botocore.exceptions.ClientError(
-        {"Error": {"Code": "404", "Message": "Not Found"}}, "HeadObject"
-    )
-
-    def head(call):
-        if call == 1:
-            db.session.execute(
-                db.update(File).where(File.aws_key == key).values(aws_key=moved_key)
-            )
-            db.session.commit()
-            return {"ContentLength": 3, "ETag": '"v1"'}
-        if call == 2:
-            raise gone
-        return {"ContentLength": 4, "ETag": '"v2"'}
-
-    s3 = S3(head=head)
-    try:
-        assert _place_with(app, monkeypatch, s3, key) is True
-        assert s3.head_calls == 3
-        assert not os.path.exists(library_path)
     finally:
         if os.path.exists(library_path):
             os.remove(library_path)
