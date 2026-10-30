@@ -31,7 +31,7 @@
 		<p class="mb-0"><b>Recently rejected</b> <span class="small text-muted">(in the rejects folder{% if import_activity.reject_count > import_activity.rejects|length %}, {{ import_activity.rejects|length }} of {{ import_activity.reject_count }} shown{% endif %})</span>:</p>
 		<ul class="mb-0 small">
 			{% for reject in import_activity.rejects %}
-			<li>{{ reject.basename }} &middot; <span class="badge text-bg-warning">{{ reject.reason or 'unspecified' }}</span> <span class="small text-muted">{{ moment(reject.when).fromNow(refresh=True) }}</span></li>
+			<li>{{ reject.basename }} &middot; <span class="badge text-bg-warning">{{ reject.reason }}</span> <span class="small text-muted">{{ moment(reject.rejected_at).fromNow(refresh=True) }}</span></li>
 			{% endfor %}
 		</ul>
 		{% endif %}

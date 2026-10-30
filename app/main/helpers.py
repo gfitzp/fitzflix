@@ -2,11 +2,12 @@
 
 This is slice f of the routes.py split. It holds the verdict and ladder
 plumbing that every rating surface uses, the admin gate, and the read of
-the quality threshold."""
+the quality threshold. It also reads the rejects folder."""
 
 import hashlib
+import os
 
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 from flask import (
     after_this_request,
@@ -1006,3 +1007,42 @@ def season_episode_counts(series_ids=None):
             last = episode
         held.update(range(episode, last + 1))
     return {key: len(value) for key, value in numbers.items()}
+
+
+def rejected_files():
+    """Return each real file under the rejects directory, newest first.
+
+    The Rejects page, the Library Maintenance count and the File Activity
+    card read the rejects folder through this function (#642). A file
+    that moves away before its stat does not list (#511)."""
+
+    rejects_dir = os.path.realpath(current_app.config["REJECTS_DIR"])
+    entries = []
+    for dirpath, dirnames, filenames in os.walk(rejects_dir):
+        dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+        for name in filenames:
+            if name.startswith("."):
+                continue
+            full_path = os.path.join(dirpath, name)
+            try:
+                stats = os.stat(full_path)
+            except OSError:
+                continue
+            relative_path = os.path.relpath(full_path, rejects_dir)
+            entries.append(
+                {
+                    "path": relative_path,
+                    "basename": name,
+                    "reason": os.path.dirname(relative_path) or "unknown",
+                    "size": stats.st_size,
+                    # Use ctime, not mtime. The move into the rejects
+                    # tree updates the inode change time. But rename and
+                    # copy2 both KEEP the mtime of the file. That mtime
+                    # can be years old. The SMB share refuses utime. Thus,
+                    # Fitzflix cannot set a time at reject time (the
+                    # Army of Darkness report)
+                    "rejected_at": datetime.fromtimestamp(stats.st_ctime, timezone.utc),
+                }
+            )
+    entries.sort(key=lambda entry: entry["rejected_at"], reverse=True)
+    return entries

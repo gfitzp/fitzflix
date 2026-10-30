@@ -6,13 +6,12 @@ series), the watchlist, and the Radarr hand-off."""
 
 import hashlib
 import json
-import os
 import traceback
 
 from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 
-from datetime import date, datetime, timezone
+from datetime import date
 
 from flask import (
     abort,
@@ -55,7 +54,6 @@ from app.models import (
 from app.tmdb_apply import tmdb_json_or, us_certification_from
 from app.main import bp
 from app.plex_player import remote_playback_configured
-from app.queues import QUEUE_NAME
 from app.file_ranking import copy_upgradable
 from app.main.helpers import (
     _hold_verdict_lock,
@@ -74,6 +72,7 @@ from app.main.helpers import (
     series_upgradable,
     tv_meta_line,
     admin_required,
+    rejected_files,
 )
 from app.funnel import user_film_sets, user_film_sets_by_id
 from app.recommendations import (
@@ -125,7 +124,7 @@ from app.videos import (
     clear_watchlist,
     find_or_create_tmdb_movie,
 )
-from rq.registry import ScheduledJobRegistry, StartedJobRegistry
+from rq.registry import ScheduledJobRegistry
 
 # The top watchlist shelf is bigger than the 12-card discovery shelves
 # (Glenn, 2026-08-30). It holds the films that the user already wants.
@@ -701,17 +700,6 @@ def criterion_now():
     )
 
 
-def _entry_ctime(entry):
-    """Return the change time of a rejects entry, or None when it is gone.
-
-    A worker can move a reject between the scandir and the stat (#511)."""
-
-    try:
-        return entry.stat().st_ctime
-    except OSError:
-        return None
-
-
 @bp.route("/file-activity")
 @login_required
 def file_activity():
@@ -744,29 +732,12 @@ def file_activity():
         else None
     )
 
-    # The import pipeline activity comes from the live state: the running
-    # and queued imports, the deferred retries, and the contents of the
-    # rejects folder.
+    # The import activity comes from the live state: the deferred retries
+    # and the contents of the rejects folder. The running and queued
+    # imports show on the Queue page.
 
     import_activity = None
     if page == 1:
-        active = []
-        started_ids = StartedJobRegistry(
-            QUEUE_NAME["import"], connection=current_app.redis
-        ).get_job_ids()
-        for job_id in started_ids + list(current_app.import_queue.job_ids):
-            job = current_app.import_queue.fetch_job(job_id)
-            if job is None or job.func_name != "app.videos.localization_task":
-                continue
-            active.append(
-                {
-                    "description": job.meta.get("description")
-                    or job.description
-                    or job_id,
-                    "status": "running" if job_id in started_ids else "queued",
-                }
-            )
-
         # Read the ids and their times in 1 call (#511)
 
         from app.queue_page import scheduled_entries
@@ -792,41 +763,12 @@ def file_activity():
                 unique_deferred.append(entry)
         deferred = unique_deferred
 
-        rejects = []
-        rejects_dir = current_app.config["REJECTS_DIR"]
-        if os.path.isdir(rejects_dir):
-            for entry in os.scandir(rejects_dir):
-                if entry.is_file() and not entry.name.startswith("."):
-                    when = _entry_ctime(entry)
-                    if when is not None:
-                        rejects.append(
-                            {"basename": entry.name, "reason": "", "when": when}
-                        )
-                elif entry.is_dir():
-                    try:
-                        file_entries = list(os.scandir(entry.path))
-                    except OSError:
-                        continue
-                    for file_entry in file_entries:
-                        if file_entry.is_file() and not file_entry.name.startswith("."):
-                            when = _entry_ctime(file_entry)
-                            if when is not None:
-                                rejects.append(
-                                    {
-                                        "basename": file_entry.name,
-                                        "reason": entry.name,
-                                        "when": when,
-                                    }
-                                )
-        rejects.sort(key=lambda entry: entry["when"], reverse=True)
+        rejects = rejected_files()
         reject_count = len(rejects)
         rejects = rejects[:10]
-        for entry in rejects:
-            entry["when"] = datetime.fromtimestamp(entry["when"], tz=timezone.utc)
 
-        if active or deferred or rejects:
+        if deferred or rejects:
             import_activity = {
-                "active": active,
                 "deferred": deferred,
                 "rejects": rejects,
                 "reject_count": reject_count,

@@ -88,6 +88,7 @@ from app.main.helpers import (
     admin_required,
     decimal_id,
     decimal_ids,
+    rejected_files,
 )
 from app.main.library import (
     _flash_tmdb_refresh,
@@ -974,7 +975,7 @@ def maintenance():
     return render_template(
         "maintenance.html",
         title="Library Maintenance",
-        rejected_count=len(_rejected_files()),
+        rejected_count=len(rejected_files()),
         subtitle_triage_count=len(forced_subtitle_candidates()),
         lossy_triage_count=len(lossy_audio_candidates()),
         tmdb_triage_count=sum(len(bucket) for bucket in _tmdb_unmatched()),
@@ -1800,41 +1801,6 @@ def _duplicate_movie_groups():
     return list(groups.values())
 
 
-def _rejected_files():
-    """Return each real file under the rejects directory, newest first."""
-
-    rejects_dir = os.path.realpath(current_app.config["REJECTS_DIR"])
-    entries = []
-    for dirpath, dirnames, filenames in os.walk(rejects_dir):
-        dirnames[:] = [d for d in dirnames if not d.startswith(".")]
-        for name in filenames:
-            if name.startswith("."):
-                continue
-            full_path = os.path.join(dirpath, name)
-            try:
-                stats = os.stat(full_path)
-            except OSError:
-                continue
-            relative_path = os.path.relpath(full_path, rejects_dir)
-            entries.append(
-                {
-                    "path": relative_path,
-                    "basename": name,
-                    "reason": os.path.dirname(relative_path) or "unknown",
-                    "size": stats.st_size,
-                    # Use ctime, not mtime. The move into the rejects
-                    # tree updates the inode change time. But rename and
-                    # copy2 both KEEP the mtime of the file. That mtime
-                    # can be years old. The SMB share refuses utime. Thus,
-                    # Fitzflix cannot set a time at reject time (the
-                    # Army of Darkness report)
-                    "rejected_at": datetime.fromtimestamp(stats.st_ctime, timezone.utc),
-                }
-            )
-    entries.sort(key=lambda entry: entry["rejected_at"], reverse=True)
-    return entries
-
-
 def _claim_import_name(staged, destination):
     """Give a staged reject its import name. Never replace a file there (#527).
 
@@ -1947,7 +1913,7 @@ def rejects():
     return render_template(
         "rejects.html",
         title="Rejected files",
-        rejected=_rejected_files(),
+        rejected=rejected_files(),
         form=form,
     )
 

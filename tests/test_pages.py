@@ -1029,45 +1029,40 @@ def test_file_activity_survives_a_retry_that_leaves_the_schedule(
 def test_file_activity_skips_a_reject_that_moves_before_its_stat(
     app, admin_client, monkeypatch
 ):
-    """A reject that a worker moves after the scandir is skipped (#511)."""
+    """A reject that a worker moves before its stat is skipped (#511).
+
+    The card reads the rejects folder through rejected_files, as the
+    Rejects page does (#642). A file at the top of the folder has the
+    reason "unknown"."""
 
     import os
 
     rejects_dir = app.config["REJECTS_DIR"]
     kept = os.path.join(rejects_dir, "Kept (2001) - [DVD].mkv")
-    with open(kept, "wb") as handle:
-        handle.write(b"video")
+    moved = os.path.join(rejects_dir, "Moved (2001) - [DVD].mkv")
+    for path in (kept, moved):
+        with open(path, "wb") as handle:
+            handle.write(b"video")
 
-    class Moved:
-        name = "Moved (2001) - [DVD].mkv"
-        path = os.path.join(rejects_dir, name)
+    real_stat = os.stat
 
-        def is_file(self):
-            return True
+    def stat(path, *args, **kwargs):
+        if os.path.basename(path) == os.path.basename(moved):
+            raise FileNotFoundError(path)
+        return real_stat(path, *args, **kwargs)
 
-        def is_dir(self):
-            return False
-
-        def stat(self):
-            raise FileNotFoundError(self.path)
-
-    real_scandir = os.scandir
-
-    def scandir(path):
-        entries = list(real_scandir(path))
-        if path == rejects_dir:
-            entries.append(Moved())
-        return iter(entries)
-
-    monkeypatch.setattr(os, "scandir", scandir)
+    monkeypatch.setattr(os, "stat", stat)
     try:
         response = admin_client.get("/file-activity")
         assert response.status_code == 200
         page = response.get_data(as_text=True)
         assert "Kept (2001)" in page
         assert "Moved (2001)" not in page
+        assert '<span class="badge text-bg-warning">unknown</span>' in page
     finally:
-        os.remove(kept)
+        monkeypatch.undo()
+        for path in (kept, moved):
+            os.remove(path)
 
 
 def test_the_tv_ebay_link_carries_the_format_filter(app, admin_client):
