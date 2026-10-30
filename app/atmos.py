@@ -961,12 +961,10 @@ def _close_run(state, lock, ended_early=True):
     """Release the title lock and remove the workspace and the S3 scratch area.
 
     A run that ended before its archive step queues the archive of a
-    conversion (#505). The import left that upload to the run."""
+    conversion (#505). The import left that upload to the run. The
+    upload takes the title lock. Thus, it is queued after the release."""
 
     from app.videos import aws_s3_client
-
-    if ended_early:
-        archive_after_early_end(state["file_id"])
 
     shutil.rmtree(state["workspace"], ignore_errors=True)
     try:
@@ -977,6 +975,8 @@ def _close_run(state, lock, ended_early=True):
     close_trail(current_app.redis, state["trail_job"])
     if lock:
         current_app.lock_manager.unlock(lock)
+    if ended_early:
+        archive_after_early_end(state["file_id"])
 
 
 def archive_after_early_end(file_id):

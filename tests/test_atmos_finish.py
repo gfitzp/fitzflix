@@ -331,6 +331,36 @@ def _uploads(app):
     ]
 
 
+def test_an_early_end_queues_its_archive_after_it_releases_the_lock(app, monkeypatch):
+    """The upload takes the title lock. Queued under it, it waits (#615 follow-up)."""
+
+    import app.atmos as atmos
+    from app import db
+
+    with app.app_context():
+        file, job, mediaconvert = _setup(app, monkeypatch, "Early Unlock")
+        file.converted_from_quality = "Remux-2160p"
+        db.session.commit()
+        monkeypatch.setattr(atmos, "get_setting", lambda name: True)
+        assert atmos.atmos_supplement_task(file.id) is True
+        (check,) = _scheduled(app, "app.atmos.atmos_check_task")
+        lock = check.args[1]
+
+        held_at_enqueue = []
+        real_enqueue = atmos.enqueue_task
+
+        def enqueue(name, *args, **kwargs):
+            if name == "app.videos.upload_task":
+                held_at_enqueue.append(bool(app.redis.exists(lock.resource)))
+            return real_enqueue(name, *args, **kwargs)
+
+        monkeypatch.setattr(atmos, "enqueue_task", enqueue)
+        mediaconvert.status = {"Status": "ERROR", "ErrorCode": 1030}
+        with pytest.raises(atmos.AtmosRunEnded):
+            atmos.atmos_check_task(*check.args, **check.kwargs)
+    assert held_at_enqueue == [False]
+
+
 def test_no_local_copy_queues_no_archive(app, monkeypatch):
     """A run that ends on 'no local copy' uploads nothing (#505 follow-up)."""
 

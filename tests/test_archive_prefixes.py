@@ -544,6 +544,34 @@ def test_a_scan_that_rewrites_the_file_queues_its_archive(app, monkeypatch):
     os.remove(path)
 
 
+def test_the_save_queues_the_upload_after_it_releases_the_title_lock(app, monkeypatch):
+    """The upload takes the title lock. Queued under it, it waits (#615 follow-up)."""
+
+    import app.tracks as tracks
+
+    held_at_enqueue = []
+    monkeypatch.setattr(
+        tracks,
+        "enqueue_task",
+        lambda name, *a, **k: held_at_enqueue.append(
+            (name, bool(app.redis.exists(lock.resource)))
+        ),
+    )
+    with app.app_context():
+        file = make_movie_file(make_movie("Saved Unlocked", 2006), "DVD")
+        db.session.commit()
+        lock = app.lock_manager.lock(file.file_identifier(), 30000)
+        assert lock
+        details = {
+            "video": {},
+            "audio_tracks": [],
+            "subtitle_tracks": [],
+            "filesize_bytes": 1,
+        }
+        assert tracks.save_track_metadata(file.id, details, lock, True) is True
+    assert held_at_enqueue == [("app.videos.upload_task", False)]
+
+
 def test_the_prune_keeps_a_recent_unclaimed_upload(app, monkeypatch):
     """An import uploads its rip before its File row exists. The prune waits."""
 

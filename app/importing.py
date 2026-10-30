@@ -2598,8 +2598,9 @@ def finalize_localization(
         # Each follow-up guards itself. This guard is for the code between
         # them. Nothing after the commit moves the file.
 
+        archive_due = False
         try:
-            _after_commit(
+            archive_due = _after_commit(
                 file,
                 file_path,
                 file_details,
@@ -2629,6 +2630,19 @@ def finalize_localization(
                 release_staging_reservation(os.path.basename(file_path))
             except Exception:
                 current_app.logger.warning(traceback.format_exc())
+
+        # The upload takes the title lock. Thus, it is queued after the
+        # release. Otherwise it waits for this task (#615 follow-up).
+
+        if archive_due:
+            _follow_up(
+                output_file,
+                "transcoded archive",
+                enqueue_task,
+                "app.videos.upload_task",
+                file.id,
+                description=f"'{file.basename}'",
+            )
         return None
 
 
@@ -3206,7 +3220,9 @@ def _after_commit(
     delete the worse library copies and send the emails. They give the
     staged copy to the Atmos job and delete the replaced archives. They
     remove the source and tell Radarr. Then they queue the TMDB refresh,
-    the Atmos twin, the archive of a conversion, and the triage aids."""
+    the Atmos twin and the triage aids. Return True if the conversion
+    needs its transcoded/ archive. The caller queues that upload after
+    the release of the title lock, because the upload takes that lock."""
 
     step = partial(_follow_up, output_file)
 
@@ -3276,7 +3292,9 @@ def _after_commit(
     # An Atmos job archives it when it finishes. Thus, the upload waits
     # for that job.
 
-    step("transcoded archive", _enqueue_transcoded_archive, file, atmos_queued)
+    archive_due = step(
+        "transcoded archive", _transcoded_archive_due, file, atmos_queued
+    )
 
     possibly_foreign_language, lossy_lead = _audio_alerts(
         audio_tracks, current_app.config["NATIVE_LANGUAGE"]
@@ -3303,6 +3321,7 @@ def _after_commit(
             "lossy_audio",
             file=file,
         )
+    return archive_due is True
 
 
 def _audio_alerts(audio_tracks, native_language):
@@ -3331,17 +3350,14 @@ def _report_film_move(file, file_path, output_directory):
         _report_import_move_to_radarr(os.path.dirname(file_path), output_directory)
 
 
-def _enqueue_transcoded_archive(file, atmos_queued):
-    """Queue the transcoded/ archive of a conversion, unless an Atmos job does it."""
+def _transcoded_archive_due(file, atmos_queued):
+    """Return True if a conversion needs its transcoded/ archive and no Atmos job does it."""
 
-    if (
+    return bool(
         file.converted_from_quality
         and get_setting("ARCHIVE_ORIGINAL_MEDIA")
         and not atmos_queued
-    ):
-        enqueue_task(
-            "app.videos.upload_task", file.id, description=f"'{file.basename}'"
-        )
+    )
 
 
 def _delete_worse_copies(worse_local_copies, output_file):

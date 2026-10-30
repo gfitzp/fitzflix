@@ -670,7 +670,8 @@ def save_track_metadata(file_id, details, lock=None, archive=False):
     This is the sql half of a track scan. All work here is session
     work from the details dict. This function releases the given title
     lock when it is done. If archive is True, it queues the upload of
-    the rewritten library file after its commit.
+    the rewritten library file after its commit. The upload takes the
+    title lock. Thus, it is queued after the release of that lock.
     """
 
     with app.app_context():
@@ -678,6 +679,7 @@ def save_track_metadata(file_id, details, lock=None, archive=False):
             file = File.query.filter_by(id=file_id).first()
             if file is None:
                 return False
+            basename = file.basename
 
             # Set the video track info of the file
 
@@ -699,16 +701,15 @@ def save_track_metadata(file_id, details, lock=None, archive=False):
 
         else:
             db.session.commit()
-            if archive:
-                enqueue_task(
-                    "app.videos.upload_task", file_id, description=f"'{file.basename}'"
-                )
-            return True
 
         finally:
             if lock:
                 current_app.lock_manager.unlock(lock)
                 current_app.logger.info(f"Removed lock {lock}")
+
+        if archive:
+            enqueue_task("app.videos.upload_task", file_id, description=f"'{basename}'")
+        return True
 
 
 def track_metadata_scan(file_id):

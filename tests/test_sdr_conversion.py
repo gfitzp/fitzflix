@@ -460,6 +460,40 @@ def test_an_hdr_import_becomes_a_1080p_sdr_conversion(
         os.remove(output)
 
 
+def test_the_import_queues_the_transcoded_archive_after_it_releases_the_lock(
+    app, hdr10_mkv, incoming_dir, archive_on, monkeypatch
+):
+    """The upload takes the title lock. Queued under it, it waits (#615 follow-up)."""
+
+    basename = "Unlocked Archive (2020) - [Bluray-2160p].mkv"
+    with app.app_context():
+        source = _place(incoming_dir, hdr10_mkv, basename)
+        assert importing.localization_task(source) is True
+        (convert_job,) = _jobs(app.transcode_queue, "app.videos.convert_localized_file")
+        assert videos.convert_localized_file(*convert_job.args) is True
+        (move_job,) = _jobs(app.handoff_queue, "app.videos.move_localized_file")
+        assert videos.move_localized_file(*move_job.args) is True
+        (finalize_job,) = _jobs(app.sql_queue, "app.videos.finalize_localization")
+        lock = finalize_job.args[2]
+
+        held_at_enqueue = []
+        real_enqueue = importing.enqueue_task
+
+        def enqueue(name, *args, **kwargs):
+            if name == "app.videos.upload_task":
+                held_at_enqueue.append(bool(app.redis.exists(lock.resource)))
+            return real_enqueue(name, *args, **kwargs)
+
+        monkeypatch.setattr(importing, "enqueue_task", enqueue)
+        videos.finalize_localization(*finalize_job.args)
+        assert held_at_enqueue == [False]
+
+        file = File.query.filter_by(
+            basename="Unlocked Archive (2020) - [Bluray-1080p].mkv"
+        ).one()
+        os.remove(os.path.join(app.config["LIBRARY_DIR"], file.file_path))
+
+
 def test_an_hdr_import_waits_when_a_real_rip_exists(
     app, hdr10_mkv, incoming_dir, archive_on, monkeypatch
 ):
