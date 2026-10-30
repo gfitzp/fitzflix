@@ -14,20 +14,10 @@ Thus, the pages show the awards that exist and do not claim that the
 list is complete. Reads of Wikidata are approved. Writes to Wikidata
 were declined.
 
-Two passes fill the movie_award table. The film pass reads the award
-statements from the film items. But Wikidata records the craft
-categories (Best Director, Best Actor, Best Cinematography, and more)
-on PERSON items. Those statements have a "for work" (P1686) qualifier
-that names the film. For example, the item of On the Waterfront knows
-the Best Picture win. The item of Kazan holds the Best Director win.
-Thus, a second pass finds each award statement whose for-work
-qualifier names a library film. The item that holds the statement is
-not important. The second pass attributes the award to the film. The
-query must start from the film side. The qualifier lookup that starts
-from a bound film resolves a batch of 200 films in less than 1 second.
-A sweep of the 61,000 credited people of the library made WDQS time
-out on each batch. A person award without a for-work qualifier (a
-career honor, a knighthood) never matches.
+Wikidata records the craft categories (Best Director, Best Actor, and
+more) on person items, with a "for work" (P1686) qualifier that names
+the film. Thus, each batch runs a film query and a craft query that
+starts from the film, and writes the joined rows 1 time.
 """
 
 import time
@@ -47,7 +37,7 @@ from app.models import Movie, MovieAward
 app = LocalProxy(get_app)
 
 # The VALUES batches keep each request small. The pause between requests
-# keeps the crawl polite. The whole library refreshes in about 20
+# keeps the crawl polite. The whole library refreshes in about 40
 # requests.
 
 AWARDS_BATCH_SIZE = 200
@@ -77,7 +67,7 @@ SELECT ?ext ?award ?awardLabel ?kind (YEAR(?when) AS ?year) WHERE {{
 }}
 """
 
-# The craft pass starts from the FILM. It walks backwards into each
+# The craft query starts from the FILM. It walks backwards into each
 # award statement whose "for work" qualifier names the film. The query
 # never names the item that holds the statement (usually a person).
 # Thus, the query stays selective enough for the 60-second limit of
@@ -185,143 +175,14 @@ def _replace_awards(batch_movie_ids, rows):
     db.session.commit()
 
 
-def _merge_person_awards(rows):
-    """Insert the person-derived rows that a film does not have yet.
-
-    This MERGES, unlike the film pass. The same ceremony event can
-    correctly appear on the two items. For example, the item of a film
-    sometimes lists its Best Director win too. Thus, this skips a row
-    if the film already has that award with the same kind (win or
-    nomination) and a matching year. A missing year on one side counts
-    as a match, because a film item without the date qualifier still
-    means the same event. A win goes in if only the nomination is on
-    record, because the win is new information. Return (films,
-    inserted).
-    """
-
-    existing = {}
-    for row in MovieAward.query.filter(MovieAward.movie_id.in_(list(rows))):
-        existing.setdefault(row.movie_id, {}).setdefault(
-            (row.award_id, row.win), set()
-        ).add(row.year)
-
-    # The dated rows go first. An undated row that came first made the
-    # dated row of the same award a match, and the merge skipped it
-    # (#540).
-
-    films = set()
-    inserted = 0
-    for movie_id, entries in rows.items():
-        stored = existing.setdefault(movie_id, {})
-        ordered = sorted(
-            _fold_undated(set(entries)),
-            key=lambda entry: (entry[3] is None, entry[3] or 0, entry[0], entry[1]),
-        )
-        for award_id, name, win, year in ordered:
-            years = stored.get((award_id, win))
-            if years is not None and (year in years or None in years or year is None):
-                continue
-            db.session.add(
-                MovieAward(
-                    movie_id=movie_id,
-                    award_id=award_id,
-                    award_name=name[:512],
-                    win=win,
-                    year=year,
-                )
-            )
-            stored.setdefault((award_id, win), set()).add(year)
-            films.add(movie_id)
-            inserted += 1
-    db.session.commit()
-    return films, inserted
-
-
-def refresh_person_awards():
-    """Backfill the for-work craft awards, in the batches of the film pass.
-
-    This uses the same id maps as refresh_movie_awards: IMDb first, then
-    TMDB as the fallback. But the query walks from each film into the
-    award statements that name the film as their "for work". These are
-    the craft categories that the person items hold. The weekly task
-    runs this AFTER refresh_movie_awards. The film pass replaces all the
-    rows. Thus, this pass rebuilds the craft rows on top of each new
-    baseline, and the merge removes the duplicates. A standalone run is
-    idempotent. It skips the rows that are already stored.
-    """
-
-    if not current_app.config["WIKIDATA_SPARQL_URL"]:
-        return "WIKIDATA_SPARQL_URL is not configured, skipping awards refresh"
-
-    by_imdb = {
-        imdb_id: movie_id
-        for movie_id, imdb_id in db.session.query(Movie.id, Movie.imdb_id).filter(
-            Movie.imdb_id.isnot(None), Movie.imdb_id != ""
-        )
-    }
-    by_tmdb = {
-        str(tmdb_id): movie_id
-        for movie_id, tmdb_id in db.session.query(Movie.id, Movie.tmdb_id)
-        .filter(Movie.tmdb_id.isnot(None))
-        .filter(db.or_(Movie.imdb_id.is_(None), Movie.imdb_id == ""))
-    }
-
-    films = 0
-    touched = set()
-    inserted = 0
-    consecutive_failures = 0
-    for id_prop, mapping in (("P345", by_imdb), ("P4947", by_tmdb)):
-        ext_ids = sorted(mapping)
-        for start in range(0, len(ext_ids), AWARDS_BATCH_SIZE):
-            batch = ext_ids[start : start + AWARDS_BATCH_SIZE]
-            values = " ".join(f'"{ext}"' for ext in batch)
-            try:
-                bindings = _wikidata_sparql(
-                    current_app.config["WIKIDATA_SPARQL_URL"],
-                    CRAFT_AWARDS_QUERY.format(values=values, id_prop=id_prop),
-                    timeout=120,
-                )
-            except Exception:
-                current_app.logger.warning(traceback.format_exc())
-                current_app.logger.warning(
-                    f"Craft-awards batch failed ({id_prop}, {len(batch)} ids), "
-                    f"moving on"
-                )
-                consecutive_failures += 1
-                if consecutive_failures >= AWARDS_MAX_CONSECUTIVE_FAILURES:
-                    current_app.logger.warning(
-                        f"Craft-awards refresh aborted after "
-                        f"{consecutive_failures} consecutive failed batches — "
-                        f"Wikidata is having a bad day; the weekly run will "
-                        f"pick it back up"
-                    )
-                    return (
-                        f"Craft-awards refresh aborted after "
-                        f"{consecutive_failures} consecutive failures; "
-                        f"scanned {films} films, added {inserted} records"
-                    )
-                time.sleep(AWARDS_ERROR_PAUSE_SECONDS)
-                continue
-            consecutive_failures = 0
-            rows = _award_rows(bindings, mapping)
-            batch_films, batch_inserted = _merge_person_awards(rows)
-            films += len(batch)
-            touched |= batch_films
-            inserted += batch_inserted
-            time.sleep(AWARDS_BATCH_PAUSE_SECONDS)
-
-    return (
-        f"Scanned {films} films for craft awards, "
-        f"added {inserted} records for {len(touched)} films"
-    )
-
-
 def refresh_movie_awards():
     """Refresh the award rows of each film from Wikidata, in polite batches.
 
     A film with an IMDb id matches through P345. The other films match
-    through their TMDB id and P4947. A failed batch logs a warning, and
-    the loop continues. The weekly run repairs a partial refresh.
+    through their TMDB id and P4947. Each batch runs the film query and
+    the craft query, and _award_rows removes the duplicates of the 2.
+    A batch with a failed query keeps its stored rows, and the loop
+    continues. The weekly run repairs a partial refresh.
     """
 
     if not current_app.config["WIKIDATA_SPARQL_URL"]:
@@ -349,11 +210,15 @@ def refresh_movie_awards():
             batch = ext_ids[start : start + AWARDS_BATCH_SIZE]
             values = " ".join(f'"{ext}"' for ext in batch)
             try:
-                bindings = _wikidata_sparql(
-                    current_app.config["WIKIDATA_SPARQL_URL"],
-                    AWARDS_QUERY.format(values=values, id_prop=id_prop),
-                    timeout=120,
-                )
+                bindings = [
+                    binding
+                    for query in (AWARDS_QUERY, CRAFT_AWARDS_QUERY)
+                    for binding in _wikidata_sparql(
+                        current_app.config["WIKIDATA_SPARQL_URL"],
+                        query.format(values=values, id_prop=id_prop),
+                        timeout=120,
+                    )
+                ]
             except Exception:
                 current_app.logger.warning(traceback.format_exc())
                 current_app.logger.warning(
@@ -383,15 +248,9 @@ def refresh_movie_awards():
 
 
 def refresh_awards():
-    """Run the two award passes inside an app context, as the weekly task.
-
-    The order is important. The film pass deletes and rebuilds the rows
-    of each film. Then the person pass adds the craft categories on top.
-    """
+    """Refresh the award rows inside an app context, as the weekly task."""
 
     with app.app_context():
-        film_result = refresh_movie_awards()
-        current_app.logger.info(film_result)
-        person_result = refresh_person_awards()
-        current_app.logger.info(person_result)
-        return f"{film_result}; {person_result}"
+        result = refresh_movie_awards()
+        current_app.logger.info(result)
+        return result

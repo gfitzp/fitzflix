@@ -75,13 +75,11 @@ def register_cli(app):
     def awards():
         """Refresh the Wikidata award records of every film now.
 
-        Do not wait for the weekly run. The film-item pass runs first.
-        Then the person-item craft backfill adds to it."""
+        Do not wait for the weekly run."""
 
-        from app.awards import refresh_movie_awards, refresh_person_awards
+        from app.awards import refresh_movie_awards
 
         click.echo(refresh_movie_awards())
-        click.echo(refresh_person_awards())
 
     @recs.command()
     @click.argument("dataset", type=click.Path(exists=True, file_okay=False))

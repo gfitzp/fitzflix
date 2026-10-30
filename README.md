@@ -584,7 +584,7 @@ Run these commands from the project root, with the venv active. Each command put
 | `flask recs recompute` | Rebuilds the taste profile and the stored recommendations of each user now, and does not wait for the nightly run at 01:45 |
 | `flask recs streaming` | Rebuilds the streaming shelf now (otherwise each night at 02:15) |
 | `flask recs leaving` | Refreshes the leaving-Criterion set now (otherwise each day at 06:00, and again at 08:00 on the 1st of each month) |
-| `flask recs awards` | Refreshes the Wikidata award records now: first the film-item pass, then the person-item craft pass (otherwise each Monday) |
+| `flask recs awards` | Refreshes the Wikidata award records now, the film-item and the person-item craft awards together (otherwise each Monday) |
 | `flask recs copref <dataset-dir>` | Rebuilds the MovieLens co-preference table from an extracted ml-32m directory. This needs `numpy` and `scipy`. Do this only when you adopt a new snapshot. |
 | `flask recs evaluate` | Calculates the leave-one-out ranking metrics for the engine. This is the measure for each change to the scores. |
 | `flask recs newly-added` | Reads and compares the newly-added feed of each provider now (otherwise each night) |

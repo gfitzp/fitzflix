@@ -1,8 +1,8 @@
 """Test the film awards from Wikidata.
 
 These tests cover the batched SPARQL refresh with its current-truth
-replacement semantics. They cover the person-item craft backfill that
-merges on top of it. They also cover the movie-page award strip and the
+replacement semantics. They cover the person-item craft query that
+joins the film query in each batch. They also cover the movie-page award strip and the
 capped quality prior that the recommendation engine adds."""
 
 from datetime import datetime
@@ -56,6 +56,8 @@ def test_refresh_parses_batches_and_replaces(app, monkeypatch):
     def fake_sparql(url, query, timeout=None):
         """Return the canned bindings for each id-system query."""
 
+        if "pq:P1686" in query:
+            return []
         if "P345" in query:
             assert '"tt0047296"' in query and '"tt0000001"' in query
             return [
@@ -109,16 +111,14 @@ def test_refresh_parses_batches_and_replaces(app, monkeypatch):
     assert result == "Refreshed awards for 3 films, 2 with award records"
 
 
-def test_craft_backfill_attributes_for_work_awards(app, monkeypatch):
-    """Test that the craft backfill attributes for-work awards to films.
+def test_a_batch_joins_the_film_and_the_craft_awards(app, monkeypatch):
+    """Test that each batch writes the film rows and the for-work craft rows 1 time (#632).
 
     Person items hold the craft categories. An award statement can name
     a library film as its "for work". Then the award attributes to the
     film through the ids of the film (the IMDb batch first, then the
-    TMDB fallback). The rows merge without duplicates of what the film
-    items already list. A film row without a year still suppresses its
-    dated person copy. A win goes in when only the nomination is on
-    record."""
+    TMDB fallback). A craft row that repeats a film row goes. The dated
+    twin of an undated film row wins."""
 
     import app.awards as awards
 
@@ -127,44 +127,41 @@ def test_craft_backfill_attributes_for_work_awards(app, monkeypatch):
             "Backfill Waterfront", 1954, imdb_id="tt0047296", tmdb_id=654
         )
         ryan = make_movie("Backfill Ryan", 1998, tmdb_id=857)
-
-        # This is what the film pass already found on the item of the film.
-
-        db.session.add_all(
-            [
-                MovieAward(
-                    movie_id=waterfront.id,
-                    award_id="Q103618",
-                    award_name="Academy Award for Best Picture",
-                    win=True,
-                    year=1955,
-                ),
-                MovieAward(
-                    movie_id=waterfront.id,
-                    award_id="Q106291",
-                    award_name="BAFTA Award for Best Film",
-                    win=False,
-                ),
-                MovieAward(
-                    movie_id=waterfront.id,
-                    award_id="Q103360",
-                    award_name="Academy Award for Best Directing",
-                    win=False,
-                    year=1955,
-                ),
-            ]
-        )
         db.session.commit()
         waterfront_id, ryan_id = waterfront.id, ryan.id
 
-    def fake_sparql(url, query, timeout=None):
-        """Return the canned for-work bindings for each id-system query."""
+    def film_bindings(query):
+        """Return what the film query finds on the item of each film."""
 
-        assert "pq:P1686" in query
+        if "P345" in query:
+            return [
+                binding(
+                    "tt0047296",
+                    "Q103618",
+                    "Academy Award for Best Picture",
+                    "win",
+                    1955,
+                ),
+                binding(
+                    "tt0047296", "Q106291", "BAFTA Award for Best Film", "nomination"
+                ),
+                binding(
+                    "tt0047296",
+                    "Q103360",
+                    "Academy Award for Best Directing",
+                    "nomination",
+                    1955,
+                ),
+            ]
+        return []
+
+    def craft_bindings(query):
+        """Return the for-work statements that name each film."""
+
         if "P345" in query:
             assert '"tt0047296"' in query
             return [
-                # This is the craft win that the film pass misses.
+                # This is the craft win that the film query misses.
                 binding(
                     "tt0047296",
                     "Q103360",
@@ -190,7 +187,7 @@ def test_craft_backfill_attributes_for_work_awards(app, monkeypatch):
                     1955,
                 ),
                 # The film item has this award with no recorded year.
-                # The dated person copy is still the same event.
+                # The dated person copy is the same event, and it wins.
                 binding(
                     "tt0047296",
                     "Q106291",
@@ -213,34 +210,40 @@ def test_craft_backfill_attributes_for_work_awards(app, monkeypatch):
             ),
         ]
 
+    def fake_sparql(url, query, timeout=None):
+        """Answer the film query and the craft query of each batch."""
+
+        if "pq:P1686" in query:
+            return craft_bindings(query)
+        return film_bindings(query)
+
     monkeypatch.setattr(awards, "_wikidata_sparql", fake_sparql)
     monkeypatch.setattr(awards.time, "sleep", lambda seconds: None)
     monkeypatch.setitem(
         app.config, "WIKIDATA_SPARQL_URL", "https://example.test/sparql"
     )
 
-    with app.app_context():
-        result = awards.refresh_person_awards()
-        stored = {
-            (row.movie_id, row.award_id, row.win, row.year)
-            for row in MovieAward.query.all()
-        }
-
-    assert stored == {
+    expected = {
         (waterfront_id, "Q103618", True, 1955),
-        (waterfront_id, "Q106291", False, None),
+        (waterfront_id, "Q106291", False, 1955),
         (waterfront_id, "Q103360", False, 1955),
         (waterfront_id, "Q103360", True, 1955),
         (ryan_id, "Q131520", True, 1999),
     }
-    assert result == "Scanned 2 films for craft awards, added 2 records for 2 films"
+    with app.app_context():
+        result = awards.refresh_movie_awards()
+        stored = {
+            (row.movie_id, row.award_id, row.win, row.year)
+            for row in MovieAward.query.all()
+        }
+    assert stored == expected
+    assert result == "Refreshed awards for 2 films, 2 with award records"
 
-    # Standalone reruns are idempotent. Every row is now a duplicate.
+    # A rerun replaces the rows of each batch and adds no copy.
 
     with app.app_context():
-        rerun = awards.refresh_person_awards()
-        assert MovieAward.query.count() == 5
-    assert rerun == "Scanned 2 films for craft awards, added 0 records for 0 films"
+        awards.refresh_movie_awards()
+        assert MovieAward.query.count() == len(expected)
 
 
 def test_award_prior_math(app):
@@ -540,27 +543,3 @@ def test_a_statement_with_and_without_its_date_gives_1_row(app):
             ("Q2", "AACTA Award for Best Cinematography", True, None),
         }
     }
-
-
-def test_the_person_merge_keeps_the_dated_row_of_a_pair(app):
-    """The merge inserts the dated row, not the undated twin (#540).
-
-    The set order could put the undated row first. Then the dated row
-    counted as a match, and the merge skipped it. The list here puts the
-    undated row first on purpose."""
-
-    from app import db
-    from app.awards import _merge_person_awards
-    from app.models import MovieAward
-
-    with app.app_context():
-        movie = make_movie("Galaxy Quest", 1999)
-        db.session.commit()
-        entries = [
-            ("Q3", "Saturn Award for Best Special Effects", False, None),
-            ("Q3", "Saturn Award for Best Special Effects", False, 2000),
-        ]
-        films, inserted = _merge_person_awards({movie.id: entries})
-        assert inserted == 1
-        rows = MovieAward.query.filter_by(movie_id=movie.id).all()
-        assert [(row.award_id, row.year) for row in rows] == [("Q3", 2000)]
