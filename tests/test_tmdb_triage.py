@@ -149,9 +149,9 @@ def test_flag_refuses_a_record_that_left_the_list(app, admin_client):
 
 
 def test_match_enqueues_the_refresh(app, admin_client, monkeypatch):
-    import app.main.admin as admin
+    import app.main.library as library
 
-    monkeypatch.setattr(admin, "time", _InstantTime)
+    monkeypatch.setattr(library, "time", _InstantTime)
 
     with app.app_context():
         movie = make_movie("G.I. Joe- The Ernie Pyle Story", 1988)
@@ -162,7 +162,7 @@ def test_match_enqueues_the_refresh(app, admin_client, monkeypatch):
     page = admin_client.get("/maintenance/tmdb").get_data(as_text=True)
     token = csrf_token_from(page)
 
-    admin_client.post(
+    response = admin_client.post(
         "/maintenance/tmdb",
         data={
             "csrf_token": token,
@@ -170,7 +170,14 @@ def test_match_enqueues_the_refresh(app, admin_client, monkeypatch):
             "tmdb_id": "265216",
             "lookup_submit": "Match",
         },
+        follow_redirects=True,
     )
+    # No worker runs the job. The flash of the shared helper links back
+    # to the triage page (#641).
+
+    text = response.get_data(as_text=True)
+    assert "is refreshing TMDB data for 'G.I. Joe- The Ernie Pyle Story (1988)'" in text
+    assert "<a href='/maintenance/tmdb'>Reload this page</a>" in text
     admin_client.post(
         "/maintenance/tmdb",
         data={
@@ -221,12 +228,14 @@ def test_match_without_an_id_is_refused(app, admin_client):
 
 
 def test_a_failed_match_fetch_flashes_a_failure(app, admin_client, monkeypatch):
-    """A refresh job that raised is a failure, not "Still refreshing" (#527).
+    """A refresh job that raised is a failure, not a refresh that still runs (#527).
 
     The wait reads the rq 2 status and return value. The deprecated
-    Job.result fell back to the legacy hash and read None."""
+    Job.result fell back to the legacy hash and read None. The triage
+    page waits and flashes through the helpers of the film page (#641)."""
 
     import app.main.admin as admin
+    import app.main.library as library
 
     class FailedJob:
         def get_status(self, refresh=True):
@@ -235,7 +244,7 @@ def test_a_failed_match_fetch_flashes_a_failure(app, admin_client, monkeypatch):
         def return_value(self, refresh=False):
             return None
 
-    monkeypatch.setattr(admin, "time", _InstantTime)
+    monkeypatch.setattr(library, "time", _InstantTime)
     monkeypatch.setattr(admin, "enqueue_task", lambda *args, **kwargs: FailedJob())
     with app.app_context():
         movie = make_movie("Failed Match", 1988)
@@ -255,4 +264,4 @@ def test_a_failed_match_fetch_flashes_a_failure(app, admin_client, monkeypatch):
     )
     text = response.get_data(as_text=True)
     assert "could not get TMDB data" in text
-    assert "Still refreshing" not in text
+    assert "is refreshing TMDB data" not in text

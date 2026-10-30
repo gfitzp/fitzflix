@@ -9,7 +9,6 @@ import json
 import os
 import shutil
 import traceback
-import time
 
 
 from datetime import datetime, timezone
@@ -90,7 +89,11 @@ from app.main.helpers import (
     decimal_id,
     decimal_ids,
 )
-from app.main.library import restore_cost_estimate
+from app.main.library import (
+    _flash_tmdb_refresh,
+    _wait_for_refresh,
+    restore_cost_estimate,
+)
 from app.log_digest import stored_digest
 from app.maintenance import system_health
 from app.manual_imports import (
@@ -1439,54 +1442,9 @@ def tmdb_triage():
             description=f"Refreshing TMDB data for '{display}'",
             at_front=True,
         )
-        # The rq 2 return value replaces the deprecated Job.result (#527).
-        # A job that raised has no return value. It is a failure.
-
-        from rq.job import JobStatus
-
-        waited_seconds = 0
-        result = None
-        while True:
-            if refresh_job.get_status(refresh=True) in (
-                JobStatus.FAILED,
-                JobStatus.STOPPED,
-                JobStatus.CANCELED,
-            ):
-                result = False
-                break
-            result = refresh_job.return_value(refresh=True)
-            if result is not None or waited_seconds >= 10:
-                break
-            time.sleep(1)
-            waited_seconds = waited_seconds + 1
-        # The refresh job only fetches. The apply runs next, at the front
-        # of the sql queue.
-
-        from app.tmdb_refresh import TMDB_NO_MATCH
-
-        if result == TMDB_NO_MATCH:
-            flash(
-                f"TMDB has no data for id {form.tmdb_id.data}. '{display}' is "
-                f"not matched",
-                "warning",
-            )
-        elif result:
-            flash(
-                f"Fetched TMDB id {form.tmdb_id.data} for '{display}'. Fitzflix "
-                f"applies the match next",
-                "success",
-            )
-        elif result is False:
-            flash(
-                f"Fitzflix could not get TMDB data for '{display}'. The log has "
-                f"the reason. Try again later.",
-                "danger",
-            )
-        else:
-            flash(
-                f"Still refreshing TMDB data for '{display}'. Reload in a moment",
-                "info",
-            )
+        _flash_tmdb_refresh(
+            _wait_for_refresh(refresh_job), display, url_for("main.tmdb_triage")
+        )
         return redirect(url_for("main.tmdb_triage"))
 
     movies, series = _tmdb_unmatched()
