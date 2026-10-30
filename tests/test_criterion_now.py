@@ -11,6 +11,8 @@ links."""
 import json
 import re
 
+import pytest
+
 from datetime import datetime, timedelta, timezone
 from tests.conftest import csrf_token_from
 
@@ -224,21 +226,23 @@ def test_stale_heading_keeps_the_stored_film_and_retries(app, monkeypatch):
         assert timedelta(seconds=30) < wait <= criterion_now.STALE_RETRY
 
 
-def test_stamps_are_utc_and_legacy_stamps_still_read(app):
+def test_stamps_are_utc(app):
     """Test the stored time format.
 
     Redis holds UTC stamps. A local stamp repeats in the hour when the
-    clocks go back. The reader still takes the local stamps of older
-    polls."""
+    clocks go back. The schedule reader takes the same format (#628)."""
 
-    from app.criterion_now import _parse_stamp, _stamp
+    from app.criterion_now import _parse_stamp, _parse_utc, _stamp
 
     moment = datetime(2026, 11, 1, 6, 10, tzinfo=timezone.utc)
     assert _stamp(moment) == "2026-11-01T06:10:00Z"
     assert _parse_stamp("2026-11-01T06:10:00Z") == moment
+    assert _parse_utc("2026-11-01T06:10:00Z") == moment
 
     local = moment.astimezone().strftime("%Y-%m-%d %H:%M:%S")
-    assert _parse_stamp(local).tzinfo is not None
+    with pytest.raises(ValueError):
+        _parse_stamp(local)
+    assert _parse_utc(local) is None
 
 
 def test_parse_film_info_reads_the_schema_block(app):
@@ -657,9 +661,9 @@ def test_card_carries_the_estimate_and_linked_credits(app, admin_client, monkeyp
                 "more_url": "https://www.criterionchannel.com/shock-corridor",
                 "tmdb_id": 33667,
                 "poster_path": "/shock.jpg",
-                "ends_at": (datetime.now() + timedelta(minutes=45)).strftime(
-                    "%Y-%m-%d %H:%M:%S"
-                ),
+                "ends_at": (
+                    datetime.now(timezone.utc) + timedelta(minutes=45)
+                ).strftime("%Y-%m-%dT%H:%M:%SZ"),
             }
         ),
     )
@@ -743,8 +747,8 @@ def test_card_gates_on_subscription_and_staleness(app, admin_client):
                     "more_url": "https://www.criterionchannel.com/shock-corridor",
                     "tmdb_id": 33667,
                     "poster_path": "/shock.jpg",
-                    "ends_at": (datetime.now() + ends_delta).strftime(
-                        "%Y-%m-%d %H:%M:%S"
+                    "ends_at": (datetime.now(timezone.utc) + ends_delta).strftime(
+                        "%Y-%m-%dT%H:%M:%SZ"
                     ),
                 }
             ),
@@ -810,8 +814,8 @@ def test_card_watchlist_toggle_and_minutes_in(app, admin_client):
                     "tmdb_id": 33667,
                     "poster_path": "/shock.jpg",
                     "ends_at": (
-                        datetime.now() + timedelta(minutes=minutes_left)
-                    ).strftime("%Y-%m-%d %H:%M:%S"),
+                        datetime.now(timezone.utc) + timedelta(minutes=minutes_left)
+                    ).strftime("%Y-%m-%dT%H:%M:%SZ"),
                 }
             ),
         )
@@ -889,8 +893,8 @@ def test_card_fragment_follows_the_feed(app, admin_client):
                     "tmdb_id": tmdb_id,
                     "poster_path": "/shock.jpg",
                     "ends_at": (
-                        datetime.now() + timedelta(minutes=minutes_left)
-                    ).strftime("%Y-%m-%d %H:%M:%S"),
+                        datetime.now(timezone.utc) + timedelta(minutes=minutes_left)
+                    ).strftime("%Y-%m-%dT%H:%M:%SZ"),
                 }
             ),
         )
@@ -949,10 +953,10 @@ def test_card_turns_over_from_the_stored_schedule(app, admin_client):
     import app.criterion_now as criterion_now
 
     subscribe_criterion(app)
-    stamp = "%Y-%m-%d %H:%M:%S"
+    stamp = "%Y-%m-%dT%H:%M:%SZ"
 
     def at(minutes):
-        return (datetime.now() + timedelta(minutes=minutes)).strftime(stamp)
+        return (datetime.now(timezone.utc) + timedelta(minutes=minutes)).strftime(stamp)
 
     app.redis.set(
         criterion_now.NOW_KEY,

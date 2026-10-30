@@ -271,7 +271,7 @@ def pairing_outcome(user_id, wait_seconds=20):
 # --- Pairing: the queue task ---------------------------------------------
 
 
-def pair_task(user_id, address, attempt=None):
+def pair_task(user_id, address, attempt):
     """Hold a Companion pairing session open in this worker.
 
     begin() puts the PIN on the TV screen. The web form puts the PIN
@@ -311,7 +311,7 @@ async def _bounded_pair(config, loop):
         raise
 
 
-async def _pair(app, user_id, address, attempt=None):
+async def _pair(app, user_id, address, attempt):
     """Run the body of pair_task.
 
     The body is the Companion session, the wait for the PIN in Redis,
@@ -319,15 +319,12 @@ async def _pair(app, user_id, address, attempt=None):
     Profile page can report. The attempt token fences all of it. A task
     that is no longer the current attempt of the user stops silently.
     It does not consume the PIN of the newer attempt, and it does not
-    overwrite its result. A task with attempt=None, from a legacy
-    enqueue, always owns the attempt."""
+    overwrite its result."""
 
     state_key = _state_key(user_id)
     pin_key = _pin_key(user_id)
 
     def owns():
-        if attempt is None:
-            return True
         current = app.redis.get(_attempt_key(user_id))
         return (current or b"").decode() == attempt
 

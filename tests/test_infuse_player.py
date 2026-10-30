@@ -476,9 +476,20 @@ class FakePairing:
         self.log.append("close")
 
 
+def _current_attempt(app, user_id):
+    """Store a pairing-attempt token for the user, as start_pairing does, and return it."""
+
+    from app.infuse_player import _attempt_key
+
+    app.redis.set(_attempt_key(user_id), "current", ex=300)
+    return "current"
+
+
 def _run_pair(app, monkeypatch, user_id, accept=True, attempt=None):
     import app.infuse_player as infuse_player
 
+    if attempt is None:
+        attempt = _current_attempt(app, user_id)
     log = []
 
     async def fake_pair(device, protocol, loop):
@@ -616,6 +627,27 @@ def test_superseded_task_bows_out_without_touching_anything(app, monkeypatch):
 
     with app.app_context():
         assert db.session.get(User, user_id).infuse_player_credentials is None
+
+
+def test_a_task_with_no_attempt_token_does_not_pair(app, monkeypatch):
+    """start_pairing always passes a token. A task with none owns no attempt (#628)."""
+
+    import app.infuse_player as infuse_player
+
+    user_id = _member_id(app)
+    app.redis.set(f"fitzflix:infuse-pair:{user_id}:pin", "1234", ex=300)
+    log = []
+
+    async def fake_pair(device, protocol, loop):
+        log.append("pair")
+        return FakePairing(log)
+
+    monkeypatch.setattr(infuse_player.pyatv, "pair", fake_pair)
+    with app.app_context():
+        asyncio.run(infuse_player._pair(app, user_id, "192.168.1.63:49153", None))
+
+    assert log == []
+    assert app.redis.get(f"fitzflix:infuse-pair:{user_id}:pin") == b"1234"
 
 
 def test_current_attempt_still_pairs_normally(app, monkeypatch):
@@ -857,7 +889,12 @@ def test_pair_task_reports_an_apple_tv_that_never_answers(app, monkeypatch):
     with app.app_context():
         # A missing timeout must fail the test, not hang it for an hour.
         asyncio.run(
-            asyncio.wait_for(infuse_player._pair(app, user_id, "192.168.1.63:49153"), 5)
+            asyncio.wait_for(
+                infuse_player._pair(
+                    app, user_id, "192.168.1.63:49153", _current_attempt(app, user_id)
+                ),
+                5,
+            )
         )
 
     state = app.redis.get(f"fitzflix:infuse-pair:{user_id}:state").decode()
@@ -883,7 +920,11 @@ def test_a_pair_call_past_the_timeout_is_closed(app, monkeypatch):
     monkeypatch.setattr(infuse_player, "LATE_PAIR_GRACE_SECONDS", 1)
     monkeypatch.setattr(infuse_player.pyatv, "pair", slow_pair)
     with app.app_context():
-        asyncio.run(infuse_player._pair(app, user_id, "192.168.1.63:49153"))
+        asyncio.run(
+            infuse_player._pair(
+                app, user_id, "192.168.1.63:49153", _current_attempt(app, user_id)
+            )
+        )
 
     state = app.redis.get(f"fitzflix:infuse-pair:{user_id}:state").decode()
     assert state.startswith("error:Could not reach the Apple TV")

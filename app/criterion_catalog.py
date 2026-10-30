@@ -152,9 +152,7 @@ def _parse_criterion_binding(binding):
 
     # "title" is uppercase for matching. "label" keeps the casing of
     # Wikidata for display. The catalog page shows the releases that the
-    # library has no record for. Cached payloads from before Fitzflix
-    # stored the label do not have the key. Thus, readers must fall back
-    # to "title".
+    # library has no record for.
 
     return {
         "spine_number": int(spine),
@@ -429,7 +427,7 @@ def create_criterion_catalog_records(criterion_collection, by_tmdb_id, by_title_
             continue
         if tmdb_id in excluded:
             continue
-        title = release.get("label") or release.get("title")
+        title = release.get("label")
 
         # A release with no title (an item id label, #473) waits for a
         # Wikidata label. The title and year are the identity of a record.

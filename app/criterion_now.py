@@ -87,11 +87,8 @@ SCHEDULE_TRUST = timedelta(hours=6)
 # Redis holds the times as UTC stamps. Local wall-clock stamps repeat 1
 # hour when the clocks go back. Thus, they cannot tell the 2 halves of
 # that hour apart. The card converts to local time only for display.
-# LEGACY_STAMP is the local form that polls before 2026-09-24 stored.
-# The reader still takes it until the next poll replaces it.
 
 STAMP = "%Y-%m-%dT%H:%M:%SZ"
-LEGACY_STAMP = "%Y-%m-%d %H:%M:%S"
 
 # The time after the expected end. The card continues to show the film
 # during this time. The next poll normally arrives exactly at the end.
@@ -158,9 +155,7 @@ def _parse_utc(stamp):
     """Return an aware datetime from a schedule stamp, or None."""
 
     try:
-        return datetime.strptime(stamp, "%Y-%m-%dT%H:%M:%SZ").replace(
-            tzinfo=timezone.utc
-        )
+        return _parse_stamp(stamp)
     except ValueError:
         return None
 
@@ -255,14 +250,9 @@ def _stamp(moment):
 def _parse_stamp(stamp):
     """Return an aware UTC datetime from a stored stamp.
 
-    A UTC stamp parses directly. A legacy local stamp gets the local
-    zone of the host. A value that does not parse raises ValueError."""
+    A value that does not parse raises ValueError."""
 
-    try:
-        return datetime.strptime(stamp, STAMP).replace(tzinfo=timezone.utc)
-    except ValueError:
-        local = datetime.strptime(stamp, LEGACY_STAMP)
-        return local.astimezone().astimezone(timezone.utc)
+    return datetime.strptime(stamp, STAMP).replace(tzinfo=timezone.utc)
 
 
 def _clock(moment):

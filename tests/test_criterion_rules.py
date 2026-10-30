@@ -24,9 +24,27 @@ def test_catalog_rows_for_skips_the_consumed_the_excluded_and_the_set_shells(app
     from app.main.library import catalog_rows_for
 
     releases = [
-        {"tmdb_id": 1, "title": "OWNED", "year": 1950, "spine_number": 1},
-        {"tmdb_id": 2, "title": "EXCLUDED", "year": 1951, "spine_number": 2},
-        {"tmdb_id": None, "title": "SET", "year": 1952, "spine_number": 88},
+        {
+            "tmdb_id": 1,
+            "title": "OWNED",
+            "label": "OWNED",
+            "year": 1950,
+            "spine_number": 1,
+        },
+        {
+            "tmdb_id": 2,
+            "title": "EXCLUDED",
+            "label": "EXCLUDED",
+            "year": 1951,
+            "spine_number": 2,
+        },
+        {
+            "tmdb_id": None,
+            "title": "SET",
+            "label": "SET",
+            "year": 1952,
+            "spine_number": 88,
+        },
         {
             "tmdb_id": 3,
             "title": "PART I",
@@ -35,9 +53,27 @@ def test_catalog_rows_for_skips_the_consumed_the_excluded_and_the_set_shells(app
             "spine_number": 88,
             "set_title": "Ivan",
         },
-        {"tmdb_id": 3, "title": "PART I", "year": 1944, "spine_number": 89},
-        {"tmdb_id": None, "title": "PLAIN", "year": 1960, "spine_number": 90},
-        {"tmdb_id": None, "title": "BY NAME", "year": 1961, "spine_number": 91},
+        {
+            "tmdb_id": 3,
+            "title": "PART I",
+            "label": "PART I",
+            "year": 1944,
+            "spine_number": 89,
+        },
+        {
+            "tmdb_id": None,
+            "title": "PLAIN",
+            "label": "PLAIN",
+            "year": 1960,
+            "spine_number": 90,
+        },
+        {
+            "tmdb_id": None,
+            "title": "BY NAME",
+            "label": "BY NAME",
+            "year": 1961,
+            "spine_number": 91,
+        },
     ]
     rows = catalog_rows_for(releases, {1}, {("BY NAME", 1961)}, {2})
     assert [(row["kind"], row["tmdb_id"], row["title"]) for row in rows] == [
@@ -52,11 +88,24 @@ def test_a_set_member_without_a_tmdb_id_does_not_repeat_a_release_with_one(app):
     from app.main.library import catalog_rows_for
 
     releases = [
-        {"tmdb_id": 31417, "title": "Lonesome", "year": 1928, "spine_number": 623},
-        {"tmdb_id": 9, "title": "Owned", "year": 1930, "spine_number": 700},
+        {
+            "tmdb_id": 31417,
+            "title": "Lonesome",
+            "label": "Lonesome",
+            "year": 1928,
+            "spine_number": 623,
+        },
+        {
+            "tmdb_id": 9,
+            "title": "Owned",
+            "label": "Owned",
+            "year": 1930,
+            "spine_number": 700,
+        },
         {
             "tmdb_id": None,
             "title": "Lonesome",
+            "label": "Lonesome",
             "year": 1928,
             "spine_number": 624,
             "set_title": "Lonesome collector's set",
@@ -64,6 +113,7 @@ def test_a_set_member_without_a_tmdb_id_does_not_repeat_a_release_with_one(app):
         {
             "tmdb_id": None,
             "title": "Owned",
+            "label": "Owned",
             "year": 1930,
             "spine_number": 701,
             "set_title": "Owned set",
@@ -71,13 +121,26 @@ def test_a_set_member_without_a_tmdb_id_does_not_repeat_a_release_with_one(app):
         {
             "tmdb_id": None,
             "title": "The Last Performance",
+            "label": "The Last Performance",
             "year": 1929,
             "spine_number": 624,
             "set_title": "Lonesome collector's set",
         },
         # 2 TMDB ids with 1 title and year are 2 films.
-        {"tmdb_id": 41, "title": "Threepenny", "year": 1931, "spine_number": 9},
-        {"tmdb_id": 42, "title": "Threepenny", "year": 1931, "spine_number": 9},
+        {
+            "tmdb_id": 41,
+            "title": "Threepenny",
+            "label": "Threepenny",
+            "year": 1931,
+            "spine_number": 9,
+        },
+        {
+            "tmdb_id": 42,
+            "title": "Threepenny",
+            "label": "Threepenny",
+            "year": 1931,
+            "spine_number": 9,
+        },
     ]
     rows = catalog_rows_for(releases, {9}, set(), set())
     assert [(row["tmdb_id"], row["title"]) for row in rows] == [
@@ -97,11 +160,18 @@ def test_a_set_member_first_in_the_cache_is_still_dropped(app):
         {
             "tmdb_id": None,
             "title": "Lonesome",
+            "label": "Lonesome",
             "year": 1928,
             "spine_number": 624,
             "set_title": "Lonesome collector's set",
         },
-        {"tmdb_id": 31417, "title": "Lonesome", "year": 1928, "spine_number": 623},
+        {
+            "tmdb_id": 31417,
+            "title": "Lonesome",
+            "label": "Lonesome",
+            "year": 1928,
+            "spine_number": 623,
+        },
     ]
     rows = catalog_rows_for(releases, set(), set(), set())
     assert [(row["tmdb_id"], row["title"]) for row in rows] == [(31417, "Lonesome")]

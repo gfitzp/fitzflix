@@ -858,38 +858,6 @@ def test_runtime_filter_says_when_the_shelf_empties(app, admin_client):
     assert "Nothing leaving fits" not in body
 
 
-def test_leaving_page_source_link_survives_pre_url_payloads(app, admin_client):
-    """Test that /leaving links a stored set that has no source key.
-
-    A stored set from before the source key existed still gets a source
-    link on /leaving. Fitzflix rebuilds the link from the departure
-    date."""
-
-    import calendar
-
-    from app.leaving_criterion import LEAVING_KEY
-
-    subscribe_criterion(app)
-    departs = date.today() + timedelta(days=10)
-    app.redis.set(
-        LEAVING_KEY,
-        json.dumps(
-            {
-                "fetched_at": "2026-08-01 03:30",
-                "departs": departs.isoformat(),
-                "items": [shelf_item(8301, "Shelf Linkless")],
-            }
-        ),
-    )
-
-    body = admin_client.get("/leaving").get_data(as_text=True)
-    expected = (
-        "https://www.criterionchannel.com/discover/leaving-"
-        f"{calendar.month_name[departs.month].lower()}-{departs.day}"
-    )
-    assert f'<a href="{expected}"' in body
-
-
 def test_leaving_page_lists_the_complete_inventory(app, admin_client):
     """Test that /leaving lists the complete departure inventory.
 
@@ -1313,6 +1281,7 @@ def test_the_leaving_shelf_ranks_a_recorded_film_by_its_tile_number(app):
             json.dumps(
                 {
                     "departs": date.today().isoformat(),
+                    "source": "https://www.criterionchannel.com/leaving-august-31",
                     "items": [
                         shelf_item(9131, "Leaving Order Low"),
                         shelf_item(9132, "Leaving Order High"),
@@ -1442,6 +1411,7 @@ def test_the_leaving_inventory_ranks_a_record_by_its_movie_lane(app, monkeypatch
 
     stored = {
         "departs": (date.today() + timedelta(days=9)).isoformat(),
+        "source": "https://www.criterionchannel.com/leaving-august-31",
         "items": [
             {"tmdb_id": 9101, "title": "Inventory High"},
             {"tmdb_id": 9102, "title": "Inventory Recorded"},

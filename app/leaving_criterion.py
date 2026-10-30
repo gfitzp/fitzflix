@@ -757,7 +757,7 @@ def leaving_shelf(user):
         if item["tmdb_id"] is not None and item["tmdb_id"] not in excluded
     ]
     if not shown:
-        return {"departs": departs, "url": _source_url(stored, departs), "items": []}
+        return {"departs": departs, "url": stored["source"], "items": []}
 
     # A film with a record ranks by the number of its tile (#535). Only
     # the films that the shelf shows get the number (#580).
@@ -795,7 +795,7 @@ def leaving_shelf(user):
         )
 
     items.sort(key=lambda item: item["score"], reverse=True)
-    return {"departs": departs, "url": _source_url(stored, departs), "items": items}
+    return {"departs": departs, "url": stored["source"], "items": items}
 
 
 def leaving_departure(tmdb_id):
@@ -826,19 +826,6 @@ def leaving_departure(tmdb_id):
                 }
         g._leaving_criterion_index = index
     return index.get(tmdb_id)
-
-
-def _source_url(stored, departs):
-    """Return the URL of the scraped page.
-
-    Payloads stored before the source key existed build the URL from
-    the departure date. It has the same shape that the candidate list
-    builds."""
-
-    return stored.get("source") or (
-        f"{COLLECTION_ORIGIN}/leaving-"
-        f"{calendar.month_name[departs.month].lower()}-{departs.day}"
-    )
 
 
 def leaving_inventory(user):
@@ -936,7 +923,7 @@ def leaving_inventory(user):
     )
     return {
         "departs": departs,
-        "url": _source_url(stored, departs),
+        "url": stored["source"],
         "items": items,
         "unmatched": unmatched,
     }

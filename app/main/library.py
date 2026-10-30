@@ -791,7 +791,7 @@ def catalog_rows_for(releases, consumed_tmdb, consumed_title_year, excluded_tmdb
                 "kind": "tmdb" if tmdb_id else "plain",
                 "movie": None,
                 "tmdb_id": tmdb_id,
-                "title": release.get("label") or release.get("title"),
+                "title": release.get("label"),
                 "year": release.get("year"),
                 "spine": release.get("spine_number"),
                 "set_title": release.get("set_title"),
