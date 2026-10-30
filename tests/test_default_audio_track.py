@@ -430,47 +430,6 @@ def test_a_failed_stale_flag_stops_the_remux_before_the_rename(
     assert [p.name for p in tmp_path.iterdir() if p.name.startswith(".")] == []
 
 
-def test_a_fault_after_the_empty_subtitle_removal_marks_the_retry_unsafe(
-    app, monkeypatch, three_audio_mkv
-):
-    """The removal renumbers the subtitles. A retry must not reuse the old ids (#582).
-
-    The flag covered only the audio reorder. A transient fault after the
-    removal then sent the original arguments back to the queue."""
-
-    import errno
-
-    from app import db
-    import app.tracks as tracks
-    from tests.factories import make_movie, make_movie_file
-
-    with app.app_context():
-        file = make_movie_file(make_movie("Removal Retry", 2021), "Bluray-1080p")
-        db.session.commit()
-        file_id = file.id
-        library_path = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
-    os.makedirs(os.path.dirname(library_path), exist_ok=True)
-    shutil.copy(three_audio_mkv, library_path)
-
-    reads = []
-
-    def subtitles(path):
-        reads.append(path)
-        if len(reads) > 1:
-            raise OSError(errno.ESTALE, "Stale NFS file handle")
-        return []
-
-    monkeypatch.setattr(
-        tracks, "remove_empty_subtitle_tracks", lambda path, before_replace=None: True
-    )
-    monkeypatch.setattr(tracks, "get_subtitle_tracks_from_file", subtitles)
-    with app.app_context():
-        with pytest.raises(OSError) as raised:
-            tracks.mkvpropedit_unlocked(file_id, _uid(file_id, 1), None, None)
-    assert len(reads) == 2
-    assert raised.value.retry_unsafe is True
-
-
 def _scheduled_scans(app, file_id):
     """Return the ids of the scheduled track scans of a file."""
 
@@ -491,15 +450,13 @@ def _scheduled_scans(app, file_id):
     [
         (
             "Rescan Reorder",
-            lambda tracks, file_id: tracks.mkvpropedit_unlocked(
+            lambda tracks, file_id: tracks.mkvpropedit_task(
                 file_id, _uid(file_id, 2), None, None
             ),
         ),
         (
             "Rescan Remux",
-            lambda tracks, file_id: tracks.mkvmerge_unlocked(
-                file_id, _uids(file_id), []
-            ),
+            lambda tracks, file_id: tracks.mkvmerge_task(file_id, _uids(file_id), []),
         ),
     ],
 )
@@ -509,7 +466,8 @@ def test_a_fault_after_a_restructure_queues_a_track_scan(
     """The rows keep the old layout after the fault. A scan repairs them (#583).
 
     Before, only the maintenance button queued a scan. The file page and
-    the Atmos search read the wrong rows until then."""
+    the Atmos search read the wrong rows until then. The task wrapper
+    queues the scan on each raise (#614)."""
 
     from rq.job import Job
 
@@ -588,88 +546,3 @@ def test_a_failed_flag_after_a_clean_mkvpropedit_still_commits_and_uploads(
     assert flags == [True]
     assert uploads == [library_path]
     assert _audio(app, library_path) == [("eng", True), ("fra", False), ("deu", False)]
-
-
-def test_a_transient_fault_after_mkvpropedit_leaves_the_scan_to_the_task(
-    app, monkeypatch, three_audio_mkv
-):
-    """A safe retry repairs the rows itself (#585).
-
-    A scan before the retry would write the half-edited rows. Then the
-    layout digest of the retry no longer matches, and the retry stops."""
-
-    import errno
-
-    from app import db
-    import app.tracks as tracks
-    from tests.factories import make_movie, make_movie_file
-
-    with app.app_context():
-        file = make_movie_file(make_movie("Transient No Scan", 2021), "Bluray-1080p")
-        db.session.commit()
-        file_id = file.id
-        library_path = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
-    os.makedirs(os.path.dirname(library_path), exist_ok=True)
-    shutil.copy(three_audio_mkv, library_path)
-
-    reads = []
-
-    def subtitles(path):
-        reads.append(path)
-        if len(reads) > 1:
-            raise OSError(errno.ESTALE, "Stale NFS file handle")
-        return []
-
-    monkeypatch.setattr(tracks, "get_subtitle_tracks_from_file", subtitles)
-    with app.app_context():
-        with pytest.raises(OSError) as raised:
-            tracks.mkvpropedit_unlocked(file_id, _uid(file_id, 1), None, None)
-    assert raised.value.file_changed is True
-    assert raised.value.retry_unsafe is False
-    assert _scheduled_scans(app, file_id) == []
-
-
-def test_a_failure_after_the_write_flags_the_archive_again(
-    app, monkeypatch, three_audio_mkv
-):
-    """The best-effort flag failed and the row write failed too (#584 follow-up).
-
-    The first flag logged and went on. The later failure queued the scan,
-    whose save uploads nothing. The archive kept the old bytes with a
-    clean flag. A failure after the write now flags again."""
-
-    import sqlalchemy.exc
-
-    from app import db
-    import app.tracks as tracks
-    from tests.factories import make_movie, make_movie_file
-    from tests.test_scheduling import requeue_id, scheduled_jobs
-
-    monkeypatch.setitem(app.config, "ARCHIVE_ORIGINAL_MEDIA", True)
-    with app.app_context():
-        file = make_movie_file(make_movie("Flag Twice", 2021), "Bluray-1080p")
-        db.session.commit()
-        file_id = file.id
-        library_path = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
-    os.makedirs(os.path.dirname(library_path), exist_ok=True)
-    shutil.copy(three_audio_mkv, library_path)
-
-    flags = []
-
-    def blip(file_id, strict=False):
-        flags.append(strict)
-        raise sqlalchemy.exc.OperationalError("UPDATE", {}, Exception("gone away"))
-
-    def broken_rows(*args, **kwargs):
-        raise RuntimeError("row write failed")
-
-    monkeypatch.setattr(tracks, "_flag_rewritten_archive", blip)
-    monkeypatch.setattr(tracks, "replace_track_rows", broken_rows)
-    with app.app_context():
-        with pytest.raises(RuntimeError):
-            tracks.mkvpropedit_unlocked(file_id, _uid(file_id, 1), None, None)
-    assert flags == [True, True]
-    wanted = requeue_id("app.videos.track_metadata_scan_task", file_id)
-    scans = [job for job in scheduled_jobs(app.file_queue) if job.id == wanted]
-    assert len(scans) == 1
-    scans[0].delete()

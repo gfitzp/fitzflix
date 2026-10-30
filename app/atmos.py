@@ -1507,27 +1507,16 @@ def _atmos_finish(state, phases):
         file.date_updated = datetime.now(timezone.utc)
         db.session.commit()
     except Exception:
-        # The archive is behind the library file now (#503). The weekly
-        # sync uploads a stale archive. The rows get 1 more try. Without
-        # it, the next sweep copies the whole file again and changes
-        # nothing. A second failure fails the job.
+        # The library file has the twins, and the rows keep the old
+        # layout. A scan reads the rows from the file (#592). The archive
+        # is behind the library file now (#503). The weekly sync uploads
+        # a stale archive.
 
         current_app.logger.error(traceback.format_exc())
         db.session.rollback()
-        try:
-            mark_archive_stale(
-                file_id, reason="the Atmos twin replaced the library file"
-            )
-            file = db.session.get(File, file_id)
-            replace_track_rows(file, new_audio_tracks, new_subtitle_tracks)
-            record_filesize(file, os.path.getsize(final_staging))
-            db.session.commit()
-        except Exception:
-            # The library file has the twins, and the rows keep the old
-            # layout. A scan reads the rows from the file (#592).
-            db.session.rollback()
-            _rescan_after_a_failed_edit(file_id, f"'{basename}'")
-            raise
+        mark_archive_stale(file_id, reason="the Atmos twin replaced the library file")
+        _rescan_after_a_failed_edit(file_id, f"'{basename}'")
+        raise
 
     # The film gained a track under a path that Plex already knows. Thus,
     # nothing tells Plex to look again until its next scan. Ask for the

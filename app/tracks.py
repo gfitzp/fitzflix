@@ -612,14 +612,12 @@ def _flag_after_a_write(file_id):
         current_app.logger.warning(traceback.format_exc())
 
 
-def _rescan_after_a_failed_edit(
-    file_id, name, reason="Track edit failed after the file changed"
-):
-    """Queue a track scan of a file whose edit failed after the file changed (#583).
+def _rescan_after_a_failed_edit(file_id, name, reason="Track edit failed"):
+    """Queue a track scan of a file whose edit failed (#583, #614).
 
-    The file has the new layout, but the track rows and the size keep
-    the old layout. No periodic scan repairs them. The scan reads the
-    rows again from the file. The job id is the id of the lock-busy
+    The file can have the new layout, but the track rows and the size
+    keep the old layout. No periodic scan repairs them. The scan reads
+    the rows again from the file. The job id is the id of the lock-busy
     retry of the scan. Thus, a repeat replaces the scheduled scan. This
     is best effort. The caller raises the original error.
 
@@ -1105,6 +1103,72 @@ def resolve_language_code(value):
     return None
 
 
+def _locked_edit(
+    task, file_id, args, queue, timeout, what, run, retry=None, kwargs=None
+):
+    """Run 1 track edit of file_id under the title lock of the file (#614).
+
+    This is the 1 wrapper of the 3 edit tasks. It takes the title lock,
+    or books a lock wait and returns True. A pending restore refuses the
+    edit (#610). run() is the edit. Any raise of run() queues 1 track
+    scan and raises again. A repeat of an edit reads the file again and
+    rebuilds the rows (#611). Thus, the scan is always safe. A failure
+    before the tool wrote costs 1 scan that only reads the file.
+
+    retry(error, name) can book a retry of a transient fault. It returns
+    True if it did. Then the task returns False with no scan, because
+    the retry rebuilds the rows. queue is a roster key. timeout names
+    the config setting of the lock TTL and of the job. kwargs go to the
+    lock wait."""
+
+    from app.videos import acquire_lock_or_defer
+
+    with app.app_context():
+        file = db.session.get(File, int(file_id))
+        if file is None:
+            return True
+        name = f"'{file.basename}'"
+        seconds = current_app.config[timeout]
+
+        # Serialize with the other tasks that rewrite the files or the
+        # track records of this title.
+
+        lock = acquire_lock_or_defer(
+            file.file_identifier(),
+            seconds * 1000,
+            queue,
+            task,
+            minutes=(5, 15),
+            timeout=seconds,
+            description=name,
+            args=args,
+            kwargs=kwargs,
+            key=int(file_id),
+        )
+        if not lock:
+            return True
+
+        try:
+            refused = refuse_while_restore_pending(file)
+            if refused:
+                current_app.logger.warning(f"{name} {refused} The {what} does not run")
+                return False
+            return run()
+        except BaseException as error:
+            try:
+                booked = retry is not None and retry(error, name)
+            except Exception:
+                current_app.logger.warning(traceback.format_exc())
+                booked = False
+            if booked:
+                return False
+            current_app.logger.error(traceback.format_exc())
+            _rescan_after_a_failed_edit(file_id, name)
+            raise
+        finally:
+            current_app.lock_manager.unlock(lock)
+
+
 def mkvpropedit_task(
     file_id,
     default_audio_track,
@@ -1112,7 +1176,6 @@ def mkvpropedit_task(
     forced_subtitle_tracks,
     track_languages=None,
     transient_retries=0,
-    file_changed=False,
 ):
     """Update the MKV properties of a file.
 
@@ -1127,12 +1190,7 @@ def mkvpropedit_task(
     # The shared lock, retry, and copy code stays in app.videos. The import
     # is lazy. Thus, the module import direction stays one-way
 
-    from app.videos import (
-        MAX_TRANSIENT_RETRIES,
-        TRANSIENT_COPY_ERRNOS,
-        acquire_lock_or_defer,
-        arguments_tag,
-    )
+    from app.videos import MAX_TRANSIENT_RETRIES, TRANSIENT_COPY_ERRNOS, arguments_tag
 
     edit_args = (
         file_id,
@@ -1142,107 +1200,67 @@ def mkvpropedit_task(
         track_languages,
     )
 
-    with app.app_context():
-        file = File.query.filter_by(id=file_id).first()
-
-        # Serialize with the other tasks that rewrite the files or the
-        # track records of this title
-
-        lock = acquire_lock_or_defer(
-            file.file_identifier(),
-            current_app.config["MKVPROPEDIT_TASK_TIMEOUT"] * 1000,
-            current_app.file_queue,
-            "app.videos.mkvpropedit_task",
-            minutes=(5, 15),
-            timeout=current_app.config["MKVPROPEDIT_TASK_TIMEOUT"],
-            description=f"'{file.basename}'",
-            args=edit_args,
-            kwargs={"transient_retries": transient_retries}
-            | ({"file_changed": True} if file_changed else {}),
-            key=int(file_id),
-        )
-        if not lock:
-            return True
-
-        # A pending restore of the file refuses the edit (#610).
-
-        refused = refuse_while_restore_pending(file)
-        if refused:
-            current_app.logger.warning(
-                f"'{file.basename}' {refused} The MKV property edit does not run"
-            )
-            current_app.lock_manager.unlock(lock)
-            return False
-
+    def run():
         # Bulk writes over SMB put the files into the lost-handle state.
         # Thus, probe this file directly at the end. Do not let the close
         # of a later upload find the problem
 
-        probed_path = library_path(file)
-
+        probed_path = library_path(db.session.get(File, int(file_id)))
         try:
-            edited = mkvpropedit_unlocked(
-                file_id,
-                default_audio_track,
-                default_subtitle_track,
-                forced_subtitle_tracks,
-                track_languages,
-            )
-        except OSError as e:
+            edited = mkvpropedit_unlocked(*edit_args)
+        except OSError:
             probe_and_record(probed_path, context="mkvpropedit_task")
-            # An earlier attempt can have written the file. The retry
-            # carries that, so a stop without a commit still queues the
-            # scan (#583 follow-up).
-            wrote = file_changed or getattr(e, "file_changed", False)
-            if (
-                e.errno in TRANSIENT_COPY_ERRNOS
-                and transient_retries < MAX_TRANSIENT_RETRIES
-                and not getattr(e, "retry_unsafe", False)
-            ):
-                # An unstable mount interrupted the edit before the file
-                # was restructured. The tracks are UIDs, so the same
-                # arguments are still valid. Try again after the mount is
-                # stable. The finally block releases the lock. The retry
-                # takes the lock again, like a new run.
-
-                # The digest of the arguments keeps the retries of 2
-                # different edits of this file apart (#595).
-
-                counters = {"transient_retries": transient_retries + 1}
-                requeue(
-                    "app.videos.mkvpropedit_task",
-                    key=int(file_id),
-                    delay=timedelta(minutes=5),
-                    reason=(
-                        f"MKV property edit failed with a transient I/O error "
-                        f"({e}) (attempt {transient_retries + 1} of "
-                        f"{MAX_TRANSIENT_RETRIES})"
-                    ),
-                    counters=counters,
-                    args=edit_args,
-                    kwargs={"file_changed": True} if wrote else {},
-                    description=f"'{file.basename}'",
-                    job_id=requeue_job_id(
-                        "app.videos.mkvpropedit_task",
-                        int(file_id),
-                        counters,
-                        tag=arguments_tag(edit_args),
-                    ),
-                )
-                return False
-
-            # No retry repairs the rows. A scan reads them from the file
-            # (#583).
-
-            if wrote:
-                _rescan_after_a_failed_edit(file_id, f"'{file.basename}'")
-            current_app.logger.error(traceback.format_exc())
             raise
-        else:
-            probe_and_record(probed_path, context="mkvpropedit_task")
-            return edited
-        finally:
-            current_app.lock_manager.unlock(lock)
+        probe_and_record(probed_path, context="mkvpropedit_task")
+        return edited
+
+    def retry(error, name):
+        """Book the edit again after a transient I/O fault of the share.
+
+        The tracks are UIDs, so the same arguments are still valid. The
+        retry takes the lock again, like a new run. The digest of the
+        arguments keeps the retries of 2 different edits of this file
+        apart (#595)."""
+
+        if not (
+            isinstance(error, OSError)
+            and error.errno in TRANSIENT_COPY_ERRNOS
+            and transient_retries < MAX_TRANSIENT_RETRIES
+        ):
+            return False
+        counters = {"transient_retries": transient_retries + 1}
+        requeue(
+            "app.videos.mkvpropedit_task",
+            key=int(file_id),
+            delay=timedelta(minutes=5),
+            reason=(
+                f"MKV property edit failed with a transient I/O error "
+                f"({error}) (attempt {transient_retries + 1} of "
+                f"{MAX_TRANSIENT_RETRIES})"
+            ),
+            counters=counters,
+            args=edit_args,
+            description=name,
+            job_id=requeue_job_id(
+                "app.videos.mkvpropedit_task",
+                int(file_id),
+                counters,
+                tag=arguments_tag(edit_args),
+            ),
+        )
+        return True
+
+    return _locked_edit(
+        "app.videos.mkvpropedit_task",
+        file_id,
+        edit_args,
+        "file",
+        "MKVPROPEDIT_TASK_TIMEOUT",
+        "MKV property edit",
+        run,
+        retry=retry,
+        kwargs={"transient_retries": transient_retries},
+    )
 
 
 # The mkvmerge track order puts the default track of each type first,
@@ -1354,24 +1372,13 @@ def mkvpropedit_unlocked(
     forced_subtitle_tracks,
     track_languages=None,
 ):
-    """Update the MKV properties of a file. The caller must hold the lock of the title."""
+    """Update the MKV properties of a file. The caller must hold the lock of the title.
+
+    A raise leaves the rescan to the caller (#614)."""
 
     from app.videos import wait_for_subprocess
 
     with app.app_context():
-        # After the reorder remux or the empty-subtitle removal is renamed
-        # into place, the layout of the file is different. A failure then
-        # does not retry. A scan reads the rows from the file (#582, #583).
-
-        restructured = False
-
-        # After mkvpropedit starts, the file can differ from the track
-        # rows until the commit. A failure in that window queues a scan
-        # (#583). For an OSError, the caller decides. A transient retry
-        # repairs the rows itself, and a scan before it would change the
-        # rows that the retry compares (#585).
-
-        changed = False
         name = f"File {file_id}"
 
         try:
@@ -1435,7 +1442,6 @@ def mkvpropedit_unlocked(
                     universal_newlines=True,
                     bufsize=1,
                 )
-                changed = True
                 try:
                     try:
                         for line in mkvpropedit_task.stdout:
@@ -1496,15 +1502,13 @@ def mkvpropedit_unlocked(
                         "Remuxing",
                         before_replace=lambda: flag_archive_before_rewrite(file_id),
                     )
-                    restructured = True
 
             # Remove the subtitle tracks that have zero elements. The
             # removal renumbers the subtitle tracks that stay (#582)
 
-            if remove_empty_subtitle_tracks(
+            remove_empty_subtitle_tracks(
                 file_path, before_replace=lambda: flag_archive_before_rewrite(file_id)
-            ):
-                restructured = changed = True
+            )
 
             # Build the audio and subtitle track info again after the changes
 
@@ -1525,27 +1529,8 @@ def mkvpropedit_unlocked(
             file.date_updated = datetime.now(timezone.utc)
             db.session.commit()
 
-        except OSError as e:
-            # Tell the caller if a retry with the same arguments is still
-            # safe. The log entry (or a quiet transient defer) is the job of
-            # the caller
-
-            e.retry_unsafe = restructured
-            e.file_changed = changed
-            db.session.rollback()
-            if changed:
-                # The best-effort flag after the write can have failed
-                # in the same outage (#584 follow-up). The rows commit
-                # no more in this run. Thus, flag again.
-                _flag_after_a_write(file_id)
-            raise
-
         except Exception:
-            current_app.logger.error(traceback.format_exc())
             db.session.rollback()
-            if changed:
-                _flag_after_a_write(file_id)
-                _rescan_after_a_failed_edit(file_id, name)
             raise
 
         else:
@@ -1562,10 +1547,9 @@ def mkvpropedit_unlocked(
             try:
                 archive_library_file(file, file_path)
 
-            except OSError as e:
-                # The edit already succeeded and committed. Thus, a retry
-                # of the whole task could edit a restructured file again.
-                # Only the second upload was lost.
+            except OSError:
+                # The edit already succeeded and committed. Only the
+                # upload was lost.
                 #
                 # No other process can find that loss. The S3 key still
                 # exists. It has the date of the previous upload. Thus,
@@ -1575,7 +1559,6 @@ def mkvpropedit_unlocked(
                 # the archive stays a pre-edit file for ever. Thus, record
                 # the problem explicitly. The repair queue handles it.
 
-                e.retry_unsafe = True
                 current_app.logger.error(traceback.format_exc())
                 db.session.rollback()
                 mark_archive_stale(file_id, reason="re-archive after a track edit")
@@ -1631,49 +1614,23 @@ def mkvmerge_task(file_id, audio_tracks, subtitle_tracks):
     remux maps them to the track ids of the file after it takes the
     lock."""
 
-    from app.videos import acquire_lock_or_defer
-
-    with app.app_context():
-        file = File.query.filter_by(id=file_id).first()
-
-        # Serialize with the other tasks that rewrite the files or the
-        # track records of this title
-
-        lock = acquire_lock_or_defer(
-            file.file_identifier(),
-            current_app.config["MKVPROPEDIT_TASK_TIMEOUT"] * 1000,
-            current_app.import_queue,
-            "app.videos.mkvmerge_task",
-            minutes=(5, 15),
-            timeout=current_app.config["MKVPROPEDIT_TASK_TIMEOUT"],
-            description=f"'{file.basename}'",
-            args=(file_id, audio_tracks, subtitle_tracks),
-            key=int(file_id),
-        )
-        if not lock:
-            return True
-
-        try:
-            refused = refuse_while_restore_pending(file)
-            if refused:
-                current_app.logger.warning(
-                    f"'{file.basename}' {refused} The remux does not run"
-                )
-                return False
-            return mkvmerge_unlocked(file_id, audio_tracks, subtitle_tracks)
-        finally:
-            current_app.lock_manager.unlock(lock)
+    return _locked_edit(
+        "app.videos.mkvmerge_task",
+        file_id,
+        (file_id, audio_tracks, subtitle_tracks),
+        "import",
+        "MKVPROPEDIT_TASK_TIMEOUT",
+        "remux",
+        lambda: mkvmerge_unlocked(file_id, audio_tracks, subtitle_tracks),
+    )
 
 
 def mkvmerge_unlocked(file_id, audio_tracks, subtitle_tracks):
-    """Remux an MKV file. The caller must hold the lock of the title."""
+    """Remux an MKV file. The caller must hold the lock of the title.
+
+    A raise leaves the rescan to the caller (#614)."""
 
     with app.app_context():
-        # After the remux replaces the file, the file differs from the
-        # track rows until the commit. A failure in that window queues a
-        # scan (#583)
-
-        changed = False
         name = f"File {file_id}"
 
         try:
@@ -1736,7 +1693,6 @@ def mkvmerge_unlocked(file_id, audio_tracks, subtitle_tracks):
                 "Remuxing",
                 before_replace=lambda: flag_archive_before_rewrite(file_id),
             )
-            changed = True
 
             # Remove the subtitle tracks that have zero elements
 
@@ -1761,28 +1717,17 @@ def mkvmerge_unlocked(file_id, audio_tracks, subtitle_tracks):
             db.session.commit()
 
         except Exception:
-            current_app.logger.error(traceback.format_exc())
             db.session.rollback()
-            if changed:
-                _rescan_after_a_failed_edit(file_id, name)
             raise
 
-        else:
-            # This task already holds the lock of the title. Thus, call the
-            # unlocked variant directly. A call to the locked variant would
-            # deadlock against this task. An OSError from the unlocked
-            # variant leaves the log entry to the caller. Thus, log it here.
-            # The first audio track that stays becomes the default.
+        # This task already holds the lock of the title. Thus, call the
+        # unlocked variant directly. A call to the locked variant would
+        # deadlock against this task. The first audio track that stays
+        # becomes the default.
 
-            first_audio = output_audio_tracks[0]["uid"] if output_audio_tracks else None
-            try:
-                mkvpropedit_unlocked(file.id, first_audio, None, None)
-            except OSError as e:
-                if getattr(e, "file_changed", False):
-                    _rescan_after_a_failed_edit(file_id, name)
-                current_app.logger.error(traceback.format_exc())
-                raise
-            return True
+        first_audio = output_audio_tracks[0]["uid"] if output_audio_tracks else None
+        mkvpropedit_unlocked(file.id, first_audio, None, None)
+        return True
 
 
 def track_uid(data):
@@ -2414,37 +2359,15 @@ def remux_audio_plan_task(file_id, plan):
     for a conversion (#299). The rip in untouched/ never changes.
     """
 
-    from app.videos import acquire_lock_or_defer
-
-    with app.app_context():
-        file = db.session.get(File, int(file_id))
-        if file is None:
-            return True
-
-        lock = acquire_lock_or_defer(
-            file.file_identifier(),
-            current_app.config["TRANSCODE_TASK_TIMEOUT"] * 1000,
-            current_app.transcode_queue,
-            "app.videos.remux_audio_plan_task",
-            minutes=(5, 15),
-            timeout=current_app.config["TRANSCODE_TASK_TIMEOUT"],
-            description=f"'{file.basename}'",
-            args=(int(file_id), plan),
-            key=int(file_id),
-        )
-        if not lock:
-            return True
-
-        try:
-            refused = refuse_while_restore_pending(file)
-            if refused:
-                current_app.logger.warning(
-                    f"'{file.basename}' {refused} The audio remux does not run"
-                )
-                return False
-            return _remux_audio_plan_unlocked(int(file_id), plan)
-        finally:
-            current_app.lock_manager.unlock(lock)
+    return _locked_edit(
+        "app.videos.remux_audio_plan_task",
+        file_id,
+        (int(file_id), plan),
+        "transcode",
+        "TRANSCODE_TASK_TIMEOUT",
+        "audio remux",
+        lambda: _remux_audio_plan_unlocked(int(file_id), plan),
+    )
 
 
 def _remux_audio_plan_unlocked(file_id, plan):
@@ -2619,8 +2542,8 @@ def _remux_audio_plan_unlocked(file_id, plan):
 
             # Build the track records again because the file changed. A new
             # transaction avoids MariaDB error 1020 after the long remux.
-            # The file has the new layout now. A failed commit queues the
-            # scan of #583.
+            # The file has the new layout now. A failed commit raises, and
+            # the task wrapper queues a scan (#583, #614).
 
             try:
                 file = _fresh_file(file.id)
@@ -2629,9 +2552,7 @@ def _remux_audio_plan_unlocked(file_id, plan):
                 file.date_updated = datetime.now(timezone.utc)
                 db.session.commit()
             except Exception:
-                current_app.logger.error(traceback.format_exc())
                 db.session.rollback()
-                _rescan_after_a_failed_edit(int(file_id), f"'{basename}'")
                 raise
 
             # The audio layout is new. Plex reads it again now, not at its

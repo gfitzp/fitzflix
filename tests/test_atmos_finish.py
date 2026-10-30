@@ -149,43 +149,18 @@ def test_the_last_failed_retry_ends_the_run(app, monkeypatch):
         assert not app.redis.exists(atmos.CHAIN_KEY.format(file_id=file.id))
 
 
-def test_a_db_fault_after_the_rename_marks_the_archive_stale_and_fixes_the_rows(
+def test_a_failed_row_commit_marks_the_archive_stale_and_queues_a_scan(
     app, monkeypatch
 ):
-    """The rows follow the new library file, and the archive is stale (#503)."""
+    """The twins are in the file, and the row commit failed (#503, #592).
+
+    The archive is stale. A scan reads the rows from the file. The finish
+    has no second commit of its own (#614)."""
 
     import app.atmos as atmos
     import app.tracks as tracks
     from app import db
-    from app.models import File, FileAudioTrack
-
-    with app.app_context():
-        file, finish = _finish_job(app, monkeypatch, "Finish Rows")
-        real_replace = tracks.replace_track_rows
-        calls = []
-
-        def fail_once(*args, **kwargs):
-            calls.append(1)
-            if len(calls) == 1:
-                raise RuntimeError("(1020, 'Record has changed since last read')")
-            return real_replace(*args, **kwargs)
-
-        monkeypatch.setattr(tracks, "replace_track_rows", fail_once)
-        assert atmos.atmos_finish_task(*finish.args) is True
-
-        db.session.expire_all()
-        assert db.session.get(File, file.id).aws_stale is True
-        codecs = [r.codec for r in FileAudioTrack.query.filter_by(file_id=file.id)]
-        assert sorted(codecs) == sorted([TWIN, ATMOS])
-
-
-def test_a_second_failed_row_commit_queues_a_scan(app, monkeypatch):
-    """The twins are in the file, and both row commits failed (#592).
-
-    A scan reads the rows from the file."""
-
-    import app.atmos as atmos
-    import app.tracks as tracks
+    from app.models import File
     from tests.test_scheduling import requeue_id, scheduled_jobs
 
     with app.app_context():
@@ -203,6 +178,8 @@ def test_a_second_failed_row_commit_queues_a_scan(app, monkeypatch):
         assert [j.id for j in scheduled_jobs(app.file_queue) if j.id == wanted] == [
             wanted
         ]
+        db.session.expire_all()
+        assert db.session.get(File, file_id).aws_stale is True
 
 
 def test_a_file_that_has_its_twins_gets_its_rows_back(app, monkeypatch):

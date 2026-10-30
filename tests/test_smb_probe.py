@@ -680,12 +680,10 @@ def test_mkvpropedit_probes_after_a_failed_edit_too(app, monkeypatch):
         file_id = file.id
         path = smb_probe.library_path(file)
 
-        def unsafe_unlocked(*args, **kwargs):
-            error = OSError(errno.EBADF, "Bad file descriptor")
-            error.retry_unsafe = True
-            raise error
+        def failed_unlocked(*args, **kwargs):
+            raise OSError(errno.EACCES, "Permission denied")
 
-        monkeypatch.setattr(tracks, "mkvpropedit_unlocked", unsafe_unlocked)
+        monkeypatch.setattr(tracks, "mkvpropedit_unlocked", failed_unlocked)
         monkeypatch.setattr(smb_probe, "probe_path", failure)
 
         with pytest.raises(OSError):
