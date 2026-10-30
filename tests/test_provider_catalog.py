@@ -36,7 +36,7 @@ def scorer_that_likes_westerns(monkeypatch):
     import app.provider_catalog as pc
     from app.streaming_rail import _payload_features
 
-    def score(redis, user_id, tmdb_id, profile, tmdb_weights=None):
+    def score(redis, user_id, tmdb_id, profile):
         """Score a Western payload 1.0 and each different payload 0.0."""
 
         features = _payload_features(pc.enriched_movie(tmdb_id) or {})
@@ -306,8 +306,31 @@ def test_a_film_with_no_calibrated_estimate_stays_pending(app, monkeypatch):
     assert [int(m) for m in app.redis.smembers(pc.PENDING_KEY)] == [401]
 
 
-def test_a_raise_after_the_pop_puts_the_batch_back(app, monkeypatch):
-    """A fault in the batch loses no popped id (#537)."""
+def test_an_id_stays_pending_until_its_verdict_commits(app, monkeypatch):
+    """The batch reads the pending ids and removes only the decided ones (#636)."""
+
+    import app.provider_catalog as pc
+
+    _streaming_batch(app, monkeypatch, [601, 602])
+    payloads = {601: shelf_item(601, "Catalog Western 601")}
+    pending = []
+
+    def enriched(tmdb_id):
+        pending.append(app.redis.sismember(pc.PENDING_KEY, tmdb_id))
+        return payloads.get(tmdb_id)
+
+    monkeypatch.setattr(pc, "enriched_movie", enriched)
+    # 602 has no payload yet and is not gone. That is no verdict.
+    monkeypatch.setattr(pc, "movie_gone", lambda tmdb_id: False)
+    with app.app_context():
+        monkeypatch.setattr(app, "maintenance_queue", RecordingQueue())
+        assert pc._process_pending({258}) == 1
+    assert pending and all(pending)
+    assert [int(m) for m in app.redis.smembers(pc.PENDING_KEY)] == [602]
+
+
+def test_a_raise_in_the_batch_removes_nothing(app, monkeypatch):
+    """A fault in the batch loses no pending id (#537, #636)."""
 
     import pytest
 
@@ -327,9 +350,10 @@ def test_a_raise_after_the_pop_puts_the_batch_back(app, monkeypatch):
 
 
 def test_the_catalog_run_reads_the_weights_1_time_per_profile(app, monkeypatch):
-    """resolved_tmdb_score paid the weights query for each film (#580)."""
+    """resolved_tmdb_score paid the weights query for each film (#580, #637)."""
 
     import app.provider_catalog as pc
+    import app.recommendations as recommendations
 
     subscribe_criterion(app)
     scorer_that_likes_westerns(monkeypatch)
@@ -338,14 +362,16 @@ def test_the_catalog_run_reads_the_weights_1_time_per_profile(app, monkeypatch):
     monkeypatch.setattr(
         pc,
         "resolved_tmdb_score",
-        lambda redis, user_id, tmdb_id, profile, tmdb_weights=None: (
-            seen.append(tmdb_weights),
+        lambda redis, user_id, tmdb_id, profile: (
+            seen.append(recommendations.user_tmdb_weights(user_id)),
             real_score(redis, user_id, tmdb_id, profile),
         )[1],
     )
     reads = []
     monkeypatch.setattr(
-        pc, "user_tmdb_weights", lambda user_id: reads.append(user_id) or {1: 1.0}
+        recommendations,
+        "user_movie_weights",
+        lambda user_id: reads.append(user_id) or {},
     )
     payloads = {
         tmdb_id: shelf_item(tmdb_id, f"Weights Western {tmdb_id}")
@@ -363,6 +389,5 @@ def test_the_catalog_run_reads_the_weights_1_time_per_profile(app, monkeypatch):
     with app.app_context():
         monkeypatch.setattr(app, "maintenance_queue", RecordingQueue())
         pc._process_pending({258})
-    assert len(seen) == 3
-    assert seen == [{1: 1.0}] * 3
+    assert seen == [{}] * 3
     assert len(reads) == 1

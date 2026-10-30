@@ -639,7 +639,7 @@ def test_the_rail_orders_by_the_number_that_its_tiles_show(app, monkeypatch):
     monkeypatch.setattr(
         recommendations,
         "_tmdb_copref",
-        lambda user, tmdb_id, tmdb_weights=None: 2.0 if int(tmdb_id) == 5002 else 0.0,
+        lambda user, tmdb_id: 2.0 if int(tmdb_id) == 5002 else 0.0,
     )
 
     with app.app_context():
@@ -705,11 +705,11 @@ def test_a_rail_film_with_a_record_ranks_by_its_movie_lane_number(app, monkeypat
     ]
 
 
-def test_the_rail_passes_the_weights_map_to_the_lane_scores(app, monkeypatch):
-    """The rail read the weights per recorded film (#580 follow-up).
+def test_the_rail_gives_the_verified_films_to_the_lane_scores(app, monkeypatch):
+    """The rail ranks each recorded film by its movie-id lane (#535, #580).
 
-    record_lane_scores got no weights map. Each recorded film without a
-    stored score then read user_movie_weights and a Movie row again."""
+    user_tmdb_weights keeps the weights on flask.g (#637). Thus, the
+    rail passes only the ids."""
 
     import app.streaming_rail as streaming_rail
     from app import db
@@ -725,12 +725,8 @@ def test_the_rail_passes_the_weights_map_to_the_lane_scores(app, monkeypatch):
     monkeypatch.setattr(
         streaming_rail,
         "record_lane_scores",
-        lambda redis, user_id, tmdb_ids, profile, tmdb_weights=None: calls.append(
-            (sorted(tmdb_ids), tmdb_weights)
-        )
-        or {},
+        lambda redis, user_id, tmdb_ids, profile: calls.append(sorted(tmdb_ids)) or {},
     )
-    monkeypatch.setattr(streaming_rail, "user_tmdb_weights", lambda u: {7: 1.0})
     with app.app_context():
         streaming_rail.compute_user_rail(db.session.get(User, user_id))
-    assert calls == [([5001, 5002], {7: 1.0})]
+    assert calls == [[5001, 5002]]

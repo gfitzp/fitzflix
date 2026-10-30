@@ -40,7 +40,6 @@ from app.recommendations import (
     TMDB_PATCH_SCORES_KEY,
     stored_profile,
     tmdb_taste_score,
-    user_tmdb_weights,
 )
 from app.cache import cached_fetch
 from app.streaming_rail import ENRICHED_CACHE_SECONDS, ENRICHED_KEY, enriched_movie
@@ -209,7 +208,6 @@ def prescore_films(redis, user_id, tmdb_ids, profile):
     key = TMDB_PATCH_SCORES_KEY.format(user_id=int(user_id))
     scored = 0
     candidates = [tmdb_id for tmdb_id in tmdb_ids if tmdb_id not in recorded]
-    tmdb_weights = None
     for start in range(0, len(candidates), 200):
         chunk = candidates[start : start + 200]
         payloads = redis.mget(
@@ -222,11 +220,7 @@ def prescore_films(redis, user_id, tmdb_ids, profile):
             data = json.loads(payload) if payload else None
             if not data:
                 continue
-            if tmdb_weights is None:
-                tmdb_weights = user_tmdb_weights(user_id)
-            mapping[str(tmdb_id)], _ = tmdb_taste_score(
-                user_id, tmdb_id, data, profile, tmdb_weights
-            )
+            mapping[str(tmdb_id)], _ = tmdb_taste_score(user_id, tmdb_id, data, profile)
         if mapping:
             redis.hset(key, mapping=mapping)
             scored += len(mapping)

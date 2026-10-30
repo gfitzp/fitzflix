@@ -42,7 +42,6 @@ from app.recommendations import (
     stored_profile,
     record_lane_scores,
     tmdb_taste_score,
-    user_tmdb_weights,
 )
 from app.streaming import (
     batch_title_availability,
@@ -490,13 +489,11 @@ def compute_user_rail(user):
     # A film with a record shows the movie-id lane number on its tile.
     # Thus, the rail ranks it by that number (#535).
 
-    tmdb_weights = user_tmdb_weights(user.id) if verified else None
     recorded = record_lane_scores(
         current_app.redis,
         user.id,
         [tmdb_id for tmdb_id, _, _ in verified],
         profile,
-        tmdb_weights,
     )
 
     items = []
@@ -508,9 +505,7 @@ def compute_user_rail(user):
         # discovery shelves. Taste alone disagreed with the estimates on
         # the tiles, which add the co-preference (#420).
 
-        score, contributions = tmdb_taste_score(
-            user.id, tmdb_id, payload, profile, tmdb_weights
-        )
+        score, contributions = tmdb_taste_score(user.id, tmdb_id, payload, profile)
         score = recorded.get(tmdb_id, score)
         because = [entry["sources"][0]]
         because += [

@@ -51,7 +51,6 @@ from app.recommendations import (
     estimated_rating,
     resolved_tmdb_score,
     stored_profile,
-    user_tmdb_weights,
 )
 from app.streaming import batch_title_availability, streaming_matches
 from app.streaming_rail import enriched_movie, movie_gone
@@ -186,33 +185,19 @@ def refresh_provider_catalogs():
         return True
 
 
+def _remove_decided(tmdb_ids):
+    """Remove the ids with a committed verdict from the pending set."""
+
+    if tmdb_ids:
+        current_app.redis.srem(PENDING_KEY, *tmdb_ids)
+
+
 def _process_pending(subscribed):
     """Verify and score 1 batch of pending ids and make movie records.
 
-    The number of records is capped. This function returns the number
-    of records created."""
-
-    redis = current_app.redis
-    popped = redis.spop(PENDING_KEY, PROCESS_CAP)
-    ids = sorted(int(member) for member in popped or [])
-    if not ids:
-        return 0
-
-    # A raise after the pop lost the whole batch (#537): the seen set
-    # holds each id. Thus, every popped id goes back. An id that this
-    # run decided is decided again on the next run. A committed record
-    # is "existing" then.
-
-    try:
-        return _process_popped(ids, subscribed)
-    except Exception:
-        db.session.rollback()
-        redis.sadd(PENDING_KEY, *ids)
-        raise
-
-
-def _process_popped(ids, subscribed):
-    """Verify and score the popped ids of 1 batch. Return the records created."""
+    The batch is a random sample that stays in the pending set. The
+    number of records is capped. This function returns the number of
+    records created."""
 
     # The TMDB record code stays in app.videos. The import is lazy. Thus,
     # the module import direction stays one-way
@@ -220,21 +205,17 @@ def _process_popped(ids, subscribed):
     from app.videos import find_or_create_tmdb_movie
 
     redis = current_app.redis
+    ids = sorted(int(member) for member in redis.srandmember(PENDING_KEY, PROCESS_CAP))
+    if not ids:
+        return 0
 
-    # The seen set already holds each popped id. Thus, an id that drops
-    # here is never discovered again. Only a verified answer drops an
-    # id. An unknown answer (a TMDB failure, no profile yet, no
-    # calibration curve yet) puts the id back for the next run (#304,
-    # #537).
-
-    def retry(tmdb_ids):
-        """Put ids back in the pending set."""
-
-        if tmdb_ids:
-            redis.sadd(PENDING_KEY, *tmdb_ids)
+    # The seen set already holds each pending id. Thus, an id that
+    # leaves the pending set is never discovered again. Only the SREM
+    # after the commit removes an id, and only an id with a verdict
+    # (#304, #537, #636). An unknown answer (a TMDB failure, no profile
+    # yet, no calibration curve yet) leaves the id for the next run.
 
     if not subscribed:
-        retry(ids)
         return 0
 
     existing = {
@@ -247,6 +228,7 @@ def _process_popped(ids, subscribed):
         for tmdb_id in ids
         if tmdb_id not in existing and tmdb_id not in excluded
     ]
+    decided = set(ids) - set(candidates)
 
     # Discover said that these films stream on a subscribed provider. The
     # per-title payload is the truth. The fetch fills the same cache that
@@ -258,13 +240,13 @@ def _process_popped(ids, subscribed):
         set(deferred)
         | {tmdb_id for tmdb_id in candidates if availability.get(tmdb_id) is None}
     )
-    retry(unknown)
     streamable = [
         tmdb_id
         for tmdb_id in candidates
         if tmdb_id not in unknown
         and streaming_matches(availability.get(tmdb_id), subscribed, tmdb_id=tmdb_id)
     ]
+    decided |= set(candidates) - set(unknown) - set(streamable)
 
     profiles = []
     for (user_id,) in db.session.query(User.id):
@@ -272,27 +254,25 @@ def _process_popped(ids, subscribed):
         if profile:
             profiles.append((user_id, profile))
     if not profiles:
-        retry(streamable)
+        _remove_decided(decided)
         return 0
 
     to_refresh = []
     created = 0
-    weights = {}
     for tmdb_id in streamable:
         if created >= CREATE_CAP:
             # The cap protects the refresh queue and the nightly loads.
             # The verified films above the cap wait for the next run
-            redis.sadd(PENDING_KEY, tmdb_id)
             continue
         payload = enriched_movie(tmdb_id)
         if payload is None and not movie_gone(tmdb_id):
-            retry([tmdb_id])
             continue
         if (
             not payload
             or not payload.get("title")
             or not str(payload.get("year") or "").isdigit()
         ):
+            decided.add(tmdb_id)
             continue
         # The score comes from the shared source (taste plus
         # co-preference). The calibration curve was built from the same
@@ -301,12 +281,7 @@ def _process_popped(ids, subscribed):
 
         best = None
         for user_id, profile in profiles:
-            # 1 weights read for each profile in the run (#580).
-            if user_id not in weights:
-                weights[user_id] = user_tmdb_weights(user_id)
-            score = resolved_tmdb_score(
-                redis, user_id, tmdb_id, profile, tmdb_weights=weights[user_id]
-            )
+            score = resolved_tmdb_score(redis, user_id, tmdb_id, profile)
             if score is None:
                 continue
             estimate = estimated_rating(profile, score)
@@ -315,8 +290,8 @@ def _process_popped(ids, subscribed):
         if best is None:
             # No profile has a calibration curve or a score yet. That is
             # not a verdict on the film (#537).
-            retry([tmdb_id])
             continue
+        decided.add(tmdb_id)
         if best < MIN_ESTIMATE:
             continue
         movie, was_created = find_or_create_tmdb_movie(
@@ -328,6 +303,7 @@ def _process_popped(ids, subscribed):
         if movie.tmdb_data_as_of is None:
             to_refresh.append(movie)
     db.session.commit()
+    _remove_decided(decided)
 
     for movie in to_refresh:
         enqueue_task(

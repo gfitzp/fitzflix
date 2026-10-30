@@ -50,7 +50,6 @@ from app.recommendations import (
     record_lane_scores,
     stored_profile,
     tmdb_taste_score,
-    user_tmdb_weights,
 )
 from app.streaming_rail import enriched_movie, movie_gone
 
@@ -242,7 +241,6 @@ def newly_added_shelves(user):
 
     subscribed = {row.provider_id for row in user.streaming_providers}
     profile = None
-    tmdb_weights = None
     shelves = []
     for provider_id, feed in FEEDS.items():
         if provider_id not in subscribed:
@@ -279,22 +277,17 @@ def newly_added_shelves(user):
         # Only the films that the shelf shows get the number (#580). A
         # logged film has no stored score and cost a live score each day.
 
-        if tmdb_weights is None:
-            tmdb_weights = user_tmdb_weights(user.id)
         recorded = record_lane_scores(
             current_app.redis,
             user.id,
             [item["tmdb_id"] for item in shown],
             profile,
-            tmdb_weights=tmdb_weights,
         )
 
         rows = []
         for item in shown:
             tmdb_id = item["tmdb_id"]
-            score, contributions = tmdb_taste_score(
-                user.id, tmdb_id, item, profile, tmdb_weights
-            )
+            score, contributions = tmdb_taste_score(user.id, tmdb_id, item, profile)
             score = recorded.get(tmdb_id, score)
             rows.append(
                 {
@@ -340,7 +333,6 @@ def newly_added_inventory(user):
     """
 
     profile = stored_profile(current_app.redis, user.id)
-    tmdb_weights = None
     sections = []
     for provider_id, feed in FEEDS.items():
         raw = current_app.redis.get(NEWLY_ADDED_KEY.format(provider_id=provider_id))
@@ -390,21 +382,15 @@ def newly_added_inventory(user):
             }
 
         films = []
-        if profile and tmdb_weights is None:
-            tmdb_weights = user_tmdb_weights(user.id)
 
         # A film with a record ranks by the number of its tile, as on the
         # shelf (#535, #580).
 
-        recorded = record_lane_scores(
-            current_app.redis, user.id, tmdb_ids, profile, tmdb_weights=tmdb_weights
-        )
+        recorded = record_lane_scores(current_app.redis, user.id, tmdb_ids, profile)
         for item in matched:
             tmdb_id = item["tmdb_id"]
             if profile:
-                score, contributions = tmdb_taste_score(
-                    user.id, tmdb_id, item, profile, tmdb_weights
-                )
+                score, contributions = tmdb_taste_score(user.id, tmdb_id, item, profile)
                 score = recorded.get(tmdb_id, score)
             else:
                 score, contributions = 0.0, []

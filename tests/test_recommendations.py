@@ -1863,37 +1863,48 @@ def test_resolved_score_ignores_a_map_entry_without_tmdb_data(app, admin_id):
         )
 
 
-def test_the_resolvers_pass_the_weights_map_to_the_co_preference(app, monkeypatch):
-    """resolved_tmdb_score and single_movie_score paid user_movie_weights per film (#580)."""
+def test_the_weights_are_read_1_time_per_app_context(app, monkeypatch):
+    """resolved_tmdb_score and single_movie_score paid user_movie_weights per film (#580).
+
+    user_tmdb_weights keeps the result on flask.g (#637). A new app
+    context reads the weights again."""
 
     from datetime import datetime
 
     import app.recommendations as recommendations
     import app.streaming_rail as streaming_rail
     from app import db
+    from app.models import MovieCopref
     from tests.factories import make_movie
 
-    copref = []
+    reads = []
     monkeypatch.setattr(
         recommendations,
-        "_tmdb_copref",
-        lambda user_id, tmdb_id, tmdb_weights=None: copref.append(tmdb_weights) or 0.0,
+        "user_movie_weights",
+        lambda user_id: reads.append(user_id) or {},
     )
     monkeypatch.setattr(
         streaming_rail, "enriched_movie", lambda tmdb_id: {"genres": [], "year": 1950}
     )
-    weights = {5: 1.0}
     profile = {"affinities": {}}
-    with app.app_context():
-        movie = make_movie("Weights Record", 1950, tmdb_id=9501)
-        movie.tmdb_data_as_of = datetime(2026, 10, 1)
-        db.session.commit()
-        app.redis.delete(recommendations.TMDB_PATCH_SCORES_KEY.format(user_id=1))
-        app.redis.delete(recommendations.PATCH_SCORES_KEY.format(user_id=1))
-        recommendations.resolved_tmdb_score(
-            app.redis, 1, 9501, profile, scores={}, tmdb_weights=weights
-        )
-        recommendations.resolved_tmdb_score(
-            app.redis, 1, 9502, profile, scores={}, tmdb_weights=weights
-        )
-    assert copref == [weights, weights]
+    try:
+        with app.app_context():
+            movie = make_movie("Weights Record", 1950, tmdb_id=9501)
+            movie.tmdb_data_as_of = datetime(2026, 10, 1)
+            for tmdb_id in (9501, 9502):
+                db.session.add(
+                    MovieCopref(tmdb_id_a=tmdb_id, tmdb_id_b=5, similarity=0.5)
+                )
+            db.session.commit()
+            app.redis.delete(recommendations.TMDB_PATCH_SCORES_KEY.format(user_id=1))
+            app.redis.delete(recommendations.PATCH_SCORES_KEY.format(user_id=1))
+            recommendations.resolved_tmdb_score(app.redis, 1, 9501, profile, scores={})
+            recommendations.resolved_tmdb_score(app.redis, 1, 9502, profile, scores={})
+            assert reads == [1]
+        with app.app_context():
+            recommendations.user_tmdb_weights(1)
+            assert reads == [1, 1]
+    finally:
+        with app.app_context():
+            MovieCopref.query.filter(MovieCopref.tmdb_id_a.in_([9501, 9502])).delete()
+            db.session.commit()

@@ -1349,16 +1349,15 @@ def test_the_leaving_inventory_ranks_a_record_by_its_movie_lane(app, monkeypatch
     app.redis.set(leaving_criterion.LEAVING_KEY, json.dumps(stored))
     lane = {9101: 2.0, 9102: 1.0}
     monkeypatch.setattr(leaving_criterion, "stored_profile", lambda r, u: {"x": 1})
-    monkeypatch.setattr(leaving_criterion, "user_tmdb_weights", lambda u: {})
     monkeypatch.setattr(
         leaving_criterion,
         "tmdb_taste_score",
-        lambda user_id, tmdb_id, item, profile, weights: (lane[tmdb_id], []),
+        lambda user_id, tmdb_id, item, profile: (lane[tmdb_id], []),
     )
     monkeypatch.setattr(
         leaving_criterion,
         "record_lane_scores",
-        lambda redis, user_id, tmdb_ids, profile, tmdb_weights=None: {9102: 5.0},
+        lambda redis, user_id, tmdb_ids, profile: {9102: 5.0},
     )
     try:
         with app.app_context():
@@ -1394,15 +1393,11 @@ def test_the_leaving_shelf_scores_only_the_films_that_it_shows(app, monkeypatch)
     monkeypatch.setattr(
         leaving_criterion,
         "record_lane_scores",
-        lambda redis, user_id, tmdb_ids, profile, tmdb_weights=None: calls.append(
-            (list(tmdb_ids), tmdb_weights)
-        )
-        or {},
+        lambda redis, user_id, tmdb_ids, profile: calls.append(list(tmdb_ids)) or {},
     )
-    monkeypatch.setattr(leaving_criterion, "user_tmdb_weights", lambda u: {8: 1.0})
     try:
         with app.app_context():
             leaving_criterion.leaving_shelf(db.session.get(User, user_id))
-        assert calls == [([9602], {8: 1.0})]
+        assert calls == [[9602]]
     finally:
         app.redis.delete(leaving_criterion.LEAVING_KEY)

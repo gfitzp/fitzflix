@@ -937,7 +937,7 @@ def test_the_shelf_scores_only_the_films_that_it_shows(app, monkeypatch):
     """The lane scores ran for logged and owned films too (#580).
 
     A logged film has no stored score. Each one cost a live score on the
-    first landing render of the day. The weights go with the batch."""
+    first landing render of the day."""
 
     import app.newly_added as newly_added
     from app import db
@@ -965,15 +965,11 @@ def test_the_shelf_scores_only_the_films_that_it_shows(app, monkeypatch):
     monkeypatch.setattr(
         newly_added,
         "record_lane_scores",
-        lambda redis, user_id, tmdb_ids, profile, tmdb_weights=None: calls.append(
-            (list(tmdb_ids), tmdb_weights)
-        )
-        or {},
+        lambda redis, user_id, tmdb_ids, profile: calls.append(list(tmdb_ids)) or {},
     )
-    monkeypatch.setattr(newly_added, "user_tmdb_weights", lambda user_id: {7: 1.0})
     with app.app_context():
         newly_added.newly_added_shelves(db.session.get(User, user_id))
-    assert calls == [([9402], {7: 1.0})]
+    assert calls == [[9402]]
 
 
 def test_the_inventory_ranks_a_record_by_its_movie_lane(app, monkeypatch):
@@ -994,16 +990,15 @@ def test_the_inventory_ranks_a_record_by_its_movie_lane(app, monkeypatch):
     )
     lane = {9411: 2.0, 9412: 1.0}
     monkeypatch.setattr(newly_added, "stored_profile", lambda redis, u: {"x": 1})
-    monkeypatch.setattr(newly_added, "user_tmdb_weights", lambda user_id: {})
     monkeypatch.setattr(
         newly_added,
         "tmdb_taste_score",
-        lambda user_id, tmdb_id, item, profile, weights: (lane[tmdb_id], []),
+        lambda user_id, tmdb_id, item, profile: (lane[tmdb_id], []),
     )
     monkeypatch.setattr(
         newly_added,
         "record_lane_scores",
-        lambda redis, user_id, tmdb_ids, profile, tmdb_weights=None: {9412: 5.0},
+        lambda redis, user_id, tmdb_ids, profile: {9412: 5.0},
     )
     with app.app_context():
         sections = newly_added.newly_added_inventory(db.session.get(User, user_id))

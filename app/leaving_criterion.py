@@ -42,7 +42,6 @@ from app.recommendations import (
     record_lane_scores,
     stored_profile,
     tmdb_taste_score,
-    user_tmdb_weights,
 )
 from app.cache import MISS, cache_json, cached_json
 from app.streaming_rail import enriched_movie, movie_gone
@@ -684,21 +683,17 @@ def leaving_shelf(user):
     # A film with a record ranks by the number of its tile (#535). Only
     # the films that the shelf shows get the number (#580).
 
-    tmdb_weights = user_tmdb_weights(user.id)
     recorded = record_lane_scores(
         current_app.redis,
         user.id,
         [item["tmdb_id"] for item in shown],
         profile,
-        tmdb_weights=tmdb_weights,
     )
 
     items = []
     for item in shown:
         tmdb_id = item["tmdb_id"]
-        score, contributions = tmdb_taste_score(
-            user.id, tmdb_id, item, profile, tmdb_weights
-        )
+        score, contributions = tmdb_taste_score(user.id, tmdb_id, item, profile)
         score = recorded.get(tmdb_id, score)
         items.append(
             {
@@ -789,18 +784,13 @@ def leaving_inventory(user):
     # A film with a record ranks by the number of its popover, as on
     # the home shelf (#535, #557).
 
-    tmdb_weights = user_tmdb_weights(user.id) if profile else None
-    recorded = record_lane_scores(
-        current_app.redis, user.id, tmdb_ids, profile, tmdb_weights=tmdb_weights
-    )
+    recorded = record_lane_scores(current_app.redis, user.id, tmdb_ids, profile)
 
     items = []
     for item in matched:
         tmdb_id = item["tmdb_id"]
         if profile:
-            score, contributions = tmdb_taste_score(
-                user.id, tmdb_id, item, profile, tmdb_weights
-            )
+            score, contributions = tmdb_taste_score(user.id, tmdb_id, item, profile)
             score = recorded.get(tmdb_id, score)
         else:
             score, contributions = 0.0, []
