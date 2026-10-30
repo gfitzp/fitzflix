@@ -399,30 +399,6 @@ def test_a_replacement_never_takes_a_card_from_a_different_shelf(app):
         assert after_first[0] not in first + second
 
 
-def test_a_snapshot_from_before_the_index_is_protected(app):
-    """A replay records its shelf. The other shelf then skips its cards."""
-
-    day = "2026-10-24"
-    app.redis.set(f"fitzflix:shelf:old-a:1:{day}", json.dumps([1, 2]))
-    app.redis.set(f"fitzflix:shelf:old-b:1:{day}", json.dumps([3, 4]))
-
-    # Shelf b replays first, and it records itself in the index.
-    assert frozen_shelf(
-        app.redis, 1, "old-b", [3, 4, 5], lambda excluded: [], day=day
-    ) == [
-        3,
-        4,
-    ]
-
-    # Film 1 is watched. Its replacement skips 3 and 4 of shelf b.
-    assert frozen_shelf(
-        app.redis, 1, "old-a", [2, 3, 4, 5], lambda excluded: [], day=day
-    ) == [
-        5,
-        2,
-    ]
-
-
 def test_a_shelf_that_first_renders_mid_day_leaves_the_frozen_cards_alone(app):
     """Shelf B froze in the morning. Shelf A gets rows later in the day (#536).
 

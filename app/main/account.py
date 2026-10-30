@@ -359,7 +359,6 @@ def _review_export_response(review_export_form):
     f.close()
 
     return redirect(url_for("main.profile"))
-    return redirect(url_for("main.profile"))
 
 
 def _review_upload_response(review_upload_form):

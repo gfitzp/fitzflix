@@ -1235,12 +1235,8 @@ def frozen_shelf(redis_client, user_id, shelf, eligible_ids, pick, day=None, siz
 
     # A card on a different shelf of the page is not a replacement. If it
     # was, that shelf would lose a card that is still eligible, and it
-    # would replace that card too. A replay records its shelf too. Thus,
-    # a snapshot from before the day index existed is protected.
+    # would replace that card too.
 
-    index_key = SHELF_INDEX_KEY.format(user_id=int(user_id), day=day)
-    redis_client.sadd(index_key, shelf)
-    redis_client.expire(index_key, SHELF_SNAPSHOT_TTL)
     showing = set(snapshot) | _other_shelf_cards(redis_client, user_id, shelf, day)
     # Lazy on purpose: `showing` grows as replacements land, and the
     # generator's membership test reads the live set
