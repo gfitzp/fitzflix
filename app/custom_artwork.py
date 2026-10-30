@@ -4,6 +4,7 @@ An upload goes to CUSTOM_ARTWORK_DIR/<scope>/<record id>. The scope is
 "movie" or "file". A merge or a delete of a record must not leave its
 tree behind. A tree goes only after the commit that removes its record.
 Thus, a failed commit keeps the poster of a record that stays.
+sync_folder_poster decides the poster copy in a library folder (#633).
 """
 
 import os
@@ -13,6 +14,8 @@ import traceback
 from flask import current_app
 from sqlalchemy import event as sa_event
 from sqlalchemy.orm import Session as OrmSession
+
+from app.models import File
 
 # The trees that this session removes after its commit.
 
@@ -34,22 +37,52 @@ def is_library_poster(name):
     )
 
 
-def library_poster_original(file):
-    """Return (path, name) of the custom original for the library copy of file.
+def replace_library_poster(library_directory, original_file, poster_filename):
+    """Remove the poster art from a library directory, then copy in the new art."""
 
-    The poster of the file outranks the poster of its movie. Return None
-    if neither has an original on disk."""
+    for name in os.listdir(library_directory):
+        if is_library_poster(name):
+            current_app.logger.info(f"Deleting {os.path.join(library_directory, name)}")
+            os.remove(os.path.join(library_directory, name))
 
-    candidates = [("file", file.id, file.custom_poster)]
-    if file.movie is not None:
-        candidates.append(("movie", file.movie.id, file.movie.custom_poster))
+    destination_file = os.path.join(library_directory, poster_filename)
+    shutil.copy(original_file, destination_file)
+    current_app.logger.info(f"'{original_file}' Copied to '{destination_file}'")
+
+
+def sync_folder_poster(movie, dirname, lost=None):
+    """Make the poster art of 1 library folder of a movie obey the precedence rule (#633).
+
+    Plex reads 1 poster in a folder. The winner is the first main feature
+    of the folder, in id order, with a file-scoped original on disk.
+    Then comes the original of the movie. With no winner, the library
+    copy named lost goes. lost is the poster name of the record that lost
+    its poster. A folder that is not on disk has no copy to change."""
+
+    library_directory = os.path.join(current_app.config["LIBRARY_DIR"], dirname)
+    if not os.path.isdir(library_directory):
+        return
+    files = (
+        File.query.filter(File.movie_id == movie.id)
+        .filter(File.feature_type_id.is_(None))
+        .order_by(File.id)
+    )
+    candidates = [
+        ("file", file.id, file.custom_poster)
+        for file in files
+        if file.dirname == dirname
+    ]
+    candidates.append(("movie", movie.id, movie.custom_poster))
     for scope, record_id, name in candidates:
         if not name:
             continue
-        path = os.path.join(custom_artwork_dir(scope, record_id), "original", name)
-        if os.path.isfile(path):
-            return path, name
-    return None
+        original = os.path.join(custom_artwork_dir(scope, record_id), "original", name)
+        if os.path.isfile(original):
+            replace_library_poster(library_directory, original, name)
+            return
+    if lost and os.path.isfile(os.path.join(library_directory, lost)):
+        os.remove(os.path.join(library_directory, lost))
+        current_app.logger.info(f"Deleted '{os.path.join(library_directory, lost)}'")
 
 
 # The extensions of an episode thumb, "<video name without extension>.<ext>"

@@ -35,9 +35,12 @@ GALLERY = [
 def poster_pipeline(monkeypatch):
     """Capture the custom-poster pipeline calls.
 
-    Do not write into app/static. In this repo, that is the real
-    production artwork tree."""
+    The test CUSTOM_ARTWORK_DIR is a scratch directory. The fake save
+    writes a placeholder original there, because sync_folder_poster
+    copies only an original on disk. Each library call records
+    (directory, original)."""
 
+    import app.custom_artwork as custom_artwork
     import app.main.posters as posters
 
     calls = {"saved": [], "library": []}
@@ -50,15 +53,19 @@ def poster_pipeline(monkeypatch):
                 "dir": custom_poster_dir,
             }
         )
-        return os.path.join(custom_poster_dir, "original", poster_filename)
+        original = os.path.join(custom_poster_dir, "original", poster_filename)
+        os.makedirs(os.path.dirname(original), exist_ok=True)
+        with open(original, "wb") as f:
+            f.write(b"placeholder")
+        return original
 
     monkeypatch.setattr(posters, "save_custom_poster", fake_save)
     monkeypatch.setattr(
-        posters,
+        custom_artwork,
         "replace_library_poster",
         lambda library_directory, original_file, poster_filename: calls[
             "library"
-        ].append(library_directory),
+        ].append((library_directory, original_file)),
     )
     return calls
 
@@ -635,11 +642,15 @@ def test_a_movie_upload_skips_a_file_with_its_own_poster(
         file = make_movie_file(movie, "DVD", custom_poster="poster.png")
         db.session.commit()
         movie_id = movie.id
+        file_tree = build_custom_tree(app, "file", file.id, "poster.png")
         library_dir = os.path.join(app.config["LIBRARY_DIR"], file.dirname)
     os.makedirs(library_dir, exist_ok=True)
     try:
         _post_movie_upload(admin_client, movie_id, png_bytes(), "movie.png")
-        assert poster_pipeline["library"] == []
+        # The folder copy is the art of the file, not of the movie (#633).
+        assert poster_pipeline["library"] == [
+            (library_dir, os.path.join(file_tree, "original", "poster.png"))
+        ]
     finally:
         os.rmdir(library_dir)
 
@@ -666,14 +677,14 @@ def test_an_archive_only_file_does_not_fail_the_upload(
 
 
 def test_a_failed_first_upload_leaves_no_tree(app, admin_client, tmp_path, monkeypatch):
-    import app.main.posters as posters
+    import app.custom_artwork as custom_artwork
     from app.models import Movie
 
     def broken_copy(*args):
         raise OSError("library copy failed")
 
     monkeypatch.setitem(app.config, "CUSTOM_ARTWORK_DIR", str(tmp_path))
-    monkeypatch.setattr(posters, "replace_library_poster", broken_copy)
+    monkeypatch.setattr(custom_artwork, "replace_library_poster", broken_copy)
     with app.app_context():
         movie = make_movie("Broken Copy Film", 1996)
         file = make_movie_file(movie, "DVD")
@@ -703,11 +714,15 @@ def test_a_movie_upload_keeps_the_file_poster_of_a_shared_folder(
         db.session.commit()
         assert owner.dirname == sibling.dirname
         movie_id = movie.id
+        owner_tree = build_custom_tree(app, "file", owner.id, "poster.png")
         library_dir = os.path.join(app.config["LIBRARY_DIR"], owner.dirname)
     os.makedirs(library_dir, exist_ok=True)
     try:
         _post_movie_upload(admin_client, movie_id, png_bytes(), "movie.png")
-        assert poster_pipeline["library"] == []
+        # The folder copy is the art of the file, not of the movie (#633).
+        assert poster_pipeline["library"] == [
+            (library_dir, os.path.join(owner_tree, "original", "poster.png"))
+        ]
     finally:
         os.rmdir(library_dir)
 
@@ -747,11 +762,12 @@ def test_a_file_poster_remove_restores_the_sibling_file_poster(app, monkeypatch)
     The remove restored only the movie original, else it deleted the
     poster. The sibling file-scoped poster outranks the movie."""
 
+    import app.custom_artwork as custom_artwork
     import app.main.posters as posters
 
     restored = []
     monkeypatch.setattr(
-        posters,
+        custom_artwork,
         "replace_library_poster",
         lambda directory, original, name: restored.append((original, name)),
     )

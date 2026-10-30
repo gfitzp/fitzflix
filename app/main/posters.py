@@ -28,7 +28,11 @@ import requests
 from flask_login import login_required
 from werkzeug.datastructures import FileStorage
 
-from app.custom_artwork import custom_artwork_dir
+from app.custom_artwork import (
+    custom_artwork_dir,
+    remove_episode_thumb_of,
+    sync_folder_poster,
+)
 from werkzeug.utils import secure_filename
 
 from app import db
@@ -144,103 +148,48 @@ def _upload_name(uploaded_data):
     return f"poster{file_ext}"
 
 
-def replace_library_poster(library_directory, original_file, poster_filename):
-    """Remove the poster art from a library directory, then copy in the new art."""
-
-    for name in os.listdir(library_directory):
-        if name.lower().startswith(
-            ("cover", "default", "movie", "poster")
-        ) and name.lower().endswith(("jpg", "jpeg", "png", "tbn")):
-            current_app.logger.info(f"Deleting {os.path.join(library_directory, name)}")
-            os.remove(os.path.join(library_directory, name))
-
-    destination_file = os.path.join(library_directory, poster_filename)
-    shutil.copy(original_file, destination_file)
-    current_app.logger.info(f"'{original_file}' Copied to '{destination_file}'")
-
-
-# The extensions that a library poster or an episode thumb can have
-
-LIBRARY_POSTER_EXTENSIONS = (".jpg", ".jpeg", ".png", ".tbn")
-
-
-def _episode_thumb_names(file):
-    """Return the names that the episode thumb of a TV file can have.
+def replace_episode_thumb(library_directory, original_file, file):
+    """Replace the episode thumb of 1 TV file. Touch no other art.
 
     Plex reads "<video name without extension>.<ext>" as the thumb of 1
-    episode. A season folder holds many episodes. Thus, each episode has
-    its own name. The name "poster.<ext>" in a season folder is the
-    poster of the season, not of an episode (#469)."""
+    episode. The name "poster.<ext>" in a season folder is the poster of
+    the season, not of an episode (#469)."""
 
-    stem = os.path.splitext(file.basename)[0]
-    return [f"{stem}{ext}" for ext in LIBRARY_POSTER_EXTENSIONS]
-
-
-def replace_episode_thumb(library_directory, original_file, file):
-    """Replace the episode thumb of 1 TV file. Touch no other art."""
-
-    remove_episode_thumb(library_directory, file)
-    stem = os.path.splitext(file.basename)[0]
-    destination_file = os.path.join(
-        library_directory, f"{stem}{os.path.splitext(original_file)[1].lower()}"
+    video = os.path.join(library_directory, file.basename)
+    remove_episode_thumb_of(video)
+    destination_file = (
+        os.path.splitext(video)[0] + os.path.splitext(original_file)[1].lower()
     )
     shutil.copy(original_file, destination_file)
     current_app.logger.info(f"'{original_file}' Copied to '{destination_file}'")
 
 
-def remove_episode_thumb(library_directory, file):
-    """Delete the episode thumb of 1 TV file, if it exists."""
+def _main_feature_dirnames(movie):
+    """Return the library folders of the main-feature files of a movie."""
 
-    for name in _episode_thumb_names(file):
-        path = os.path.join(library_directory, name)
-        if os.path.isfile(path):
-            os.remove(path)
-            current_app.logger.info(f"Deleted '{path}'")
-
-
-def _custom_poster_dir(scope, record_id):
-    """Return the directory of the custom poster tree of a movie or a file.
-
-    In production, CUSTOM_ARTWORK_DIR is app/static/custom. Thus, Fitzflix
-    serves these files with url_for('static', ...). The nightly backup
-    mirrors them to S3. The backup also propagates deletions.
-    """
-
-    return custom_artwork_dir(scope, record_id)
-
-
-def _main_feature_folders(movie):
-    """Return the main-feature files of a movie, grouped by their folder.
-
-    The result maps each dirname to its files, in id order. The main
-    features of 1 movie share 1 folder, and a folder has 1 poster. Thus,
-    a file-scoped poster in a folder is the poster of that whole folder
-    (#524)."""
-
-    folders = {}
-    for file in (
-        File.query.filter(File.movie_id == movie.id)
-        .filter(File.feature_type_id == None)
-        .order_by(File.id)
-    ):
-        folders.setdefault(file.dirname, []).append(file)
-    return folders
+    return sorted(
+        {
+            dirname
+            for (dirname,) in db.session.query(File.dirname)
+            .filter(File.movie_id == movie.id)
+            .filter(File.feature_type_id == None)
+        }
+    )
 
 
 def _assign_movie_poster(movie, uploaded_data):
     """Run a poster image through the custom-poster pipeline for a movie.
 
-    The pipeline makes the thumbnails, a copy beside each main-feature
-    file, and the precedence column. Return a message to flash on
-    failure, or None on success.
+    The pipeline makes the thumbnails and the precedence column. Then
+    sync_folder_poster decides the copy in each main-feature folder.
+    Return a message to flash on failure, or None on success.
     """
 
     poster_filename = _upload_name(uploaded_data)
     if poster_filename is None:
         return f"'{uploaded_data.filename}' is an invalid movie poster file type!"
 
-    folders = _main_feature_folders(movie)
-    custom_dir = _custom_poster_dir("movie", movie.id)
+    custom_dir = custom_artwork_dir("movie", movie.id)
     had_tree = os.path.isdir(custom_dir)
 
     try:
@@ -250,23 +199,10 @@ def _assign_movie_poster(movie, uploaded_data):
             )
         except ValueError as error:
             return str(error)
-        poster_filename = os.path.basename(original_file)
 
-        for dirname, files in folders.items():
-            # A file with its own custom poster keeps it. The file
-            # outranks the movie (#470). Its folder can hold a second
-            # main feature, and the folder has 1 poster. Thus, the whole
-            # folder keeps the art of the file (#524). A file with no
-            # local folder (an archive-only copy) has no library copy to
-            # replace.
-            if any(file.custom_poster for file in files):
-                continue
-            library_directory = os.path.join(current_app.config["LIBRARY_DIR"], dirname)
-            if not os.path.isdir(library_directory):
-                continue
-            replace_library_poster(library_directory, original_file, poster_filename)
-
-        movie.custom_poster = poster_filename
+        movie.custom_poster = os.path.basename(original_file)
+        for dirname in _main_feature_dirnames(movie):
+            sync_folder_poster(movie, dirname)
         db.session.commit()
 
         # A custom poster is part of the Criterion rule (#281).
@@ -290,12 +226,13 @@ def _assign_file_poster(file, uploaded_data):
     """Assign the custom poster of one file (the file-scoped twin of
     _assign_movie_poster).
 
-    This function replaces the library copy only for a main feature."""
+    A TV file gets its own episode thumb. A main feature syncs the
+    poster of its folder."""
 
     poster_filename = _upload_name(uploaded_data)
     if poster_filename is None:
         return f"'{uploaded_data.filename}' is an invalid movie poster file type!"
-    custom_dir = _custom_poster_dir("file", file.id)
+    custom_dir = custom_artwork_dir("file", file.id)
     had_tree = os.path.isdir(custom_dir)
 
     try:
@@ -305,17 +242,16 @@ def _assign_file_poster(file, uploaded_data):
             )
         except ValueError as error:
             return str(error)
-        poster_filename = os.path.basename(original_file)
 
-        library_directory = os.path.join(
-            current_app.config["LIBRARY_DIR"], file.dirname
-        )
+        file.custom_poster = os.path.basename(original_file)
         if file.series_id is not None:
-            replace_episode_thumb(library_directory, original_file, file)
+            replace_episode_thumb(
+                os.path.join(current_app.config["LIBRARY_DIR"], file.dirname),
+                original_file,
+                file,
+            )
         elif file.feature_type_id == None:
-            replace_library_poster(library_directory, original_file, poster_filename)
-
-        file.custom_poster = poster_filename
+            sync_folder_poster(file.movie, file.dirname)
         db.session.commit()
 
     except Exception:
@@ -331,50 +267,18 @@ def _assign_file_poster(file, uploaded_data):
 def _remove_movie_poster(movie):
     """Delete the custom poster of a movie.
 
-    This function deletes the custom-artwork tree, the copies beside the
-    library files of the movie, and the precedence column. A main-feature
-    file with its own custom poster keeps that art. The file has
-    precedence over the movie. Thus, this function restores the library
-    copy from the file-scoped original. It does not delete it. Return a
-    message to flash on failure, or None on success.
+    This function deletes the custom-artwork tree and the precedence
+    column. sync_folder_poster then decides the copy in each
+    main-feature folder. Return a message to flash on failure, or None
+    on success.
     """
 
     poster_filename = movie.custom_poster
     try:
-        for dirname, files in _main_feature_folders(movie).items():
-            library_directory = os.path.join(current_app.config["LIBRARY_DIR"], dirname)
-            if not os.path.isdir(library_directory):
-                continue
-
-            # A folder restores the art of its first file with a
-            # file-scoped original, 1 time. A second main feature in the
-            # same folder must not delete it again (#524).
-
-            file_originals = [
-                (
-                    os.path.join(
-                        _custom_poster_dir("file", file.id),
-                        "original",
-                        file.custom_poster,
-                    ),
-                    file.custom_poster,
-                )
-                for file in files
-                if file.custom_poster
-            ]
-            restored = next(
-                (pair for pair in file_originals if os.path.isfile(pair[0])), None
-            )
-            if restored:
-                replace_library_poster(library_directory, *restored)
-                continue
-            library_copy = os.path.join(library_directory, poster_filename)
-            if os.path.isfile(library_copy):
-                os.remove(library_copy)
-                current_app.logger.info(f"Deleted '{library_copy}'")
-
-        shutil.rmtree(_custom_poster_dir("movie", movie.id), ignore_errors=True)
         movie.custom_poster = None
+        for dirname in _main_feature_dirnames(movie):
+            sync_folder_poster(movie, dirname, lost=poster_filename)
+        shutil.rmtree(custom_artwork_dir("movie", movie.id), ignore_errors=True)
         db.session.commit()
         if movie.criterion_spine_number:
             enqueue_criterion_sync()
@@ -387,73 +291,25 @@ def _remove_movie_poster(movie):
     return None
 
 
-def _sibling_file_poster(file):
-    """Return (original path, name) of the poster of another file in the folder, or None.
-
-    The other file is a main feature of the same movie with a
-    file-scoped poster whose original exists (#578)."""
-
-    siblings = _main_feature_folders(file.movie).get(file.dirname, [])
-    for sibling in siblings:
-        if sibling.id == file.id or not sibling.custom_poster:
-            continue
-        original = os.path.join(
-            _custom_poster_dir("file", sibling.id), "original", sibling.custom_poster
-        )
-        if os.path.isfile(original):
-            return original, sibling.custom_poster
-    return None
-
-
 def _remove_file_poster(file):
     """Remove the custom poster of one file (the file-scoped twin of
     _remove_movie_poster).
 
-    A sibling main feature in the same folder with its own file-scoped
-    poster outranks the movie (#578). Its art is restored first. Else,
-    if the movie still has its own custom poster, this function restores
-    that art to the library directory. If not, it deletes the poster copy.
+    A TV file loses its episode thumb. A main feature syncs the poster
+    of its folder.
     """
 
     poster_filename = file.custom_poster
     try:
-        if file.series_id is not None:
-            library_directory = os.path.join(
-                current_app.config["LIBRARY_DIR"], file.dirname
-            )
-            if os.path.isdir(library_directory):
-                remove_episode_thumb(library_directory, file)
-        elif file.feature_type_id == None:
-
-            library_directory = os.path.join(
-                current_app.config["LIBRARY_DIR"], file.dirname
-            )
-            if os.path.isdir(library_directory):
-                movie = file.movie
-                movie_original = (
-                    os.path.join(
-                        _custom_poster_dir("movie", movie.id),
-                        "original",
-                        movie.custom_poster,
-                    )
-                    if movie and movie.custom_poster
-                    else None
-                )
-                sibling = _sibling_file_poster(file) if movie else None
-                if sibling:
-                    replace_library_poster(library_directory, *sibling)
-                elif movie_original and os.path.isfile(movie_original):
-                    replace_library_poster(
-                        library_directory, movie_original, movie.custom_poster
-                    )
-                else:
-                    library_copy = os.path.join(library_directory, poster_filename)
-                    if os.path.isfile(library_copy):
-                        os.remove(library_copy)
-                        current_app.logger.info(f"Deleted '{library_copy}'")
-
-        shutil.rmtree(_custom_poster_dir("file", file.id), ignore_errors=True)
         file.custom_poster = None
+        library_directory = os.path.join(
+            current_app.config["LIBRARY_DIR"], file.dirname
+        )
+        if file.series_id is not None:
+            remove_episode_thumb_of(os.path.join(library_directory, file.basename))
+        elif file.feature_type_id == None:
+            sync_folder_poster(file.movie, file.dirname, lost=poster_filename)
+        shutil.rmtree(custom_artwork_dir("file", file.id), ignore_errors=True)
         db.session.commit()
 
     except Exception:

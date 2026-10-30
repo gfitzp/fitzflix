@@ -190,3 +190,62 @@ def test_a_merge_rename_keeps_the_library_poster_of_the_survivor(
     finally:
         shutil.rmtree(old_dir, ignore_errors=True)
         shutil.rmtree(target_dir, ignore_errors=True)
+
+
+def test_a_rename_without_a_poster_keeps_the_poster_of_a_sibling(
+    app, monkeypatch, tmp_path
+):
+    """A file without a poster moves beside a sibling with one (#633).
+
+    The rename put the movie poster over the poster of the sibling. The
+    first main feature of the folder with an original on disk wins."""
+
+    import json
+    import shutil
+    import zlib
+
+    from app.tmdb_refresh import apply_tmdb_refresh
+
+    monkeypatch.setitem(app.config, "CUSTOM_ARTWORK_DIR", str(tmp_path))
+    library = app.config["LIBRARY_DIR"]
+    with app.app_context():
+        survivor = make_movie("Sibling Poster", 2013, tmdb_id=633001)
+        survivor.custom_poster = "movie.jpg"
+        sibling = make_movie_file(survivor, "Bluray-1080p", custom_poster="first.jpg")
+        sibling.untouched_basename = sibling.basename
+        merged = make_movie("Sibling Poster Copy", 2013)
+        file = make_movie_file(merged, "DVD")
+        file.untouched_basename = file.basename
+        db.session.commit()
+        merged_id = merged.id
+        _tree(app, "movie", survivor.id, "movie.jpg")
+        _tree(app, "file", sibling.id, "first.jpg")
+        old_dir = os.path.join(library, file.dirname)
+        target_dir = os.path.join(library, sibling.dirname)
+
+    os.makedirs(old_dir, exist_ok=True)
+    os.makedirs(target_dir, exist_ok=True)
+    with open(os.path.join(old_dir, file.basename), "wb") as f:
+        f.write(b"film")
+    with open(os.path.join(target_dir, "first.jpg"), "wb") as f:
+        f.write(b"jpeg")
+
+    payload = zlib.compress(
+        json.dumps(
+            {"id": 633001, "title": "Sibling Poster", "release_date": "2013-01-01"}
+        ).encode("utf-8")
+    )
+    try:
+        assert (
+            apply_tmdb_refresh(
+                "Movies", merged_id, tmdb_id=633001, tmdb_payload=payload
+            )
+            is True
+        )
+        posters = sorted(
+            name for name in os.listdir(target_dir) if name.endswith(".jpg")
+        )
+        assert posters == ["first.jpg"]
+    finally:
+        shutil.rmtree(old_dir, ignore_errors=True)
+        shutil.rmtree(target_dir, ignore_errors=True)

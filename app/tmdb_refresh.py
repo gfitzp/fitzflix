@@ -32,8 +32,8 @@ from app import db, get_app, makedirs_on_mounted_volume
 from app.aws_storage import request_archive_move
 from app.custom_artwork import (
     is_library_poster,
-    library_poster_original,
     move_movie_poster,
+    sync_folder_poster,
 )
 from app.email import notify_admin, notify_admin_text
 from app.models import (
@@ -696,8 +696,7 @@ def _rename_movie_file(f, tmdb_id, probe=True):
         )
         for old_asset in old_assets:
             if (
-                old_asset.startswith(("cover", "default", "movie", "poster"))
-                and old_asset.endswith(("jpg", "jpeg", "png", "tbn"))
+                is_library_poster(old_asset)
                 and f.feature_type_id is None
                 and not target_has_poster
                 and os.path.join(old_directory, old_asset)
@@ -724,18 +723,14 @@ def _rename_movie_file(f, tmdb_id, probe=True):
     except FileNotFoundError:
         pass
 
-    # A custom poster decides the library copy of a main feature that
-    # moved. The poster of the file outranks the poster of the movie.
+    # The custom posters decide the library copy of the folder that a
+    # main feature moved into (#633).
 
     if f.feature_type_id is None and new_directory != old_directory:
-        original = library_poster_original(f)
-        if original is not None and os.path.isdir(new_directory):
-            from app.main.posters import replace_library_poster
-
-            try:
-                replace_library_poster(new_directory, *original)
-            except OSError:
-                current_app.logger.warning(traceback.format_exc())
+        try:
+            sync_folder_poster(f.movie, f.dirname)
+        except OSError:
+            current_app.logger.warning(traceback.format_exc())
 
     # Clear the old directory tree. This clear knows junk.
     # It does not only clear an empty directory. The poster
