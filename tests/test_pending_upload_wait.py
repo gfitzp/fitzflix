@@ -15,10 +15,10 @@ BASENAME = "Long Rerip (2024) - [DVD].mkv"
 PENDING = f"pending-untouched/run1/{BASENAME}"
 
 
-def test_a_copy_that_waits_for_space_marks_its_pending_upload(
+def test_a_copy_that_waits_for_space_holds_its_pending_upload(
     app, incoming_dir, monkeypatch
 ):
-    """The space-wait marker of the library copy holds the run-scoped key."""
+    """The waiting retry of the library copy holds the run-scoped key (#619)."""
 
     from app import importing, videos
 
@@ -41,19 +41,20 @@ def test_a_copy_that_waits_for_space_marks_its_pending_upload(
         with app.app_context():
             lock = app.lock_manager.lock("long-rerip-title", 60000)
             videos.move_localized_file(source, details, lock, hidden)
-            marker = app.redis.get(importing.SPACE_WAIT_KEY.format(BASENAME))
-            assert marker == PENDING.encode()
+            held = importing.keys_held_by_pipeline()
+            assert PENDING in held
+            assert f"untouched/{BASENAME}" in held
     finally:
-        app.redis.delete(importing.SPACE_WAIT_KEY.format(BASENAME))
         os.remove(source)
         os.remove(hidden)
 
 
 def test_the_prune_keeps_the_pending_upload_of_a_waiting_import(app, monkeypatch):
-    """A marker that holds a pending key protects that key from the prune."""
+    """A live retry that holds a pending key protects that key from the prune (#619)."""
+
+    from rq.registry import ScheduledJobRegistry
 
     from app import aws_storage
-    from app.importing import SPACE_WAIT_KEY
 
     old = datetime.now(timezone.utc) - timedelta(days=30)
     stray = "pending-untouched/run2/Old Stray (2020) - [DVD].mkv"
@@ -78,11 +79,20 @@ def test_the_prune_keeps_the_pending_upload_of_a_waiting_import(app, monkeypatch
             pass
 
     monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kw: FakeClient())
-    app.redis.set(SPACE_WAIT_KEY.format(BASENAME), PENDING)
+    source = os.path.join(app.config["IMPORT_DIR"], BASENAME)
+    retry = app.handoff_queue.enqueue_in(
+        timedelta(minutes=30),
+        "app.videos.move_localized_file",
+        source,
+        {"basename": BASENAME, "aws_key": PENDING},
+        None,
+        "/staging/.x",
+        space_waits=3,
+    )
     try:
         aws_storage.sync_aws_s3_storage_task()
     finally:
-        app.redis.delete(SPACE_WAIT_KEY.format(BASENAME))
+        ScheduledJobRegistry(queue=app.handoff_queue).remove(retry, delete_job=True)
 
     assert deletes == [stray]
 

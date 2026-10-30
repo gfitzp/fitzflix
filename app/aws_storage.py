@@ -1056,25 +1056,17 @@ def _prune_unclaimed(listing, job, unreferenced_files):
     The caller owns the list. Thus, the report names the deleted keys
     also after a failure in the middle of the prune. An import that
     waits for library space has no File row yet. Its wait has no limit.
-    Its marker names its source, and the key of its untouched/ upload
-    comes from that name. A same-name re-rip uploads to a run-scoped key
-    below pending-untouched/ (#430). Its marker holds that key (#455).
-    The file_details of each later-stage job hold a key too (#493)."""
+    Its live job names its source and its upload key (#619). A same-name
+    re-rip uploads to a run-scoped key below pending-untouched/ (#430)."""
 
     s3_keys = listing.keys
     s3_modified = listing.modified
     archive_prefixes = listing.prefixes
     aws_keys = _claimed_keys()
 
-    from app.importing import SPACE_WAIT_KEY, keys_held_by_later_stages
+    from app.importing import keys_held_by_pipeline
 
-    marker_prefix = SPACE_WAIT_KEY.format("")
-
-    # A conversion, move or cataloging job that waits for a retry holds
-    # its upload too (#493). A lock wait or a transcode wait sets no
-    # marker.
-
-    waiting_keys = keys_held_by_later_stages()
+    waiting_keys = keys_held_by_pipeline()
 
     # A failed in-place import uploaded its rip to untouched/ directly
     # (#496). Its source went to rejects. That upload is the only copy of
@@ -1082,16 +1074,6 @@ def _prune_unclaimed(listing, job, unreferenced_files):
     # every untouched/ key this time.
 
     rejected = _rejected_untouched_keys()
-    for marker in current_app.redis.scan_iter(f"{marker_prefix}*"):
-        waiting_keys.add(
-            os.path.join(
-                current_app.config["AWS_UNTOUCHED_PREFIX"],
-                sanitize_s3_key(marker.decode()[len(marker_prefix) :]),
-            )
-        )
-        upload_key = current_app.redis.get(marker)
-        if upload_key and is_pending_archive(upload_key.decode()):
-            waiting_keys.add(upload_key.decode())
 
     untouched_prefix = current_app.config["AWS_UNTOUCHED_PREFIX"]
     for i, remote_key in enumerate(s3_keys):

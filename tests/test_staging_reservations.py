@@ -243,7 +243,7 @@ def test_no_reservation_without_the_lock(app, staging, volume, monkeypatch):
 def test_a_busy_staging_lock_is_not_a_space_wait(
     app, sample_mkv, incoming_dir, staging, volume, monkeypatch, caplog
 ):
-    """The import tries again soon. The space-wait counter and marker stay (#478)."""
+    """The import tries again soon. The space-wait counter stays (#478)."""
 
     import logging
 
@@ -274,7 +274,6 @@ def test_a_busy_staging_lock_is_not_a_space_wait(
                 )
                 in waits
             )
-            assert not importing.space_wait_pending(app.redis, basename)
             assert "The staging lock is busy" in caplog.text
             assert "on staging. The other imports" not in caplog.text
             assert os.path.exists(source)

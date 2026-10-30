@@ -491,17 +491,3 @@ def test_a_failed_lock_refresh_during_the_encode_keeps_the_source(
     assert result is False
     assert len(calls) == 2
     _assert_not_rejected(app, str(source))
-
-
-def test_a_failed_hand_off_clears_the_space_wait_marker(app, tmp_path):
-    """A stale marker held the kept source back from the sweep (#568)."""
-
-    import app.importing as importing
-
-    source = tmp_path / "Marker Fault (2021) - [DVD].mkv"
-    source.write_bytes(b"source")
-    with app.app_context():
-        importing.mark_space_wait(source.name)
-        importing.abandon_handoff(str(source), None, None)
-        assert not app.redis.exists(importing.SPACE_WAIT_KEY.format(source.name))
-    assert source.exists()

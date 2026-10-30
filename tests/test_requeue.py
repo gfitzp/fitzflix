@@ -104,7 +104,6 @@ def test_a_space_wait_that_lost_the_title_lock_waits_for_the_lock(
         assert job.kwargs["lock_waits"] == 1
         assert job.kwargs["space_waits"] == 0
         assert job.id == move_retry(source, lock_waits=1)
-        assert app.redis.get(importing.SPACE_WAIT_KEY.format(basename)) is None
     finally:
         _clear_move_retries(app)
         os.remove(source)

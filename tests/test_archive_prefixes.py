@@ -565,11 +565,11 @@ def test_the_sync_waits_while_a_library_volume_is_dead(app, monkeypatch):
 
 
 def test_the_prune_keeps_the_upload_of_an_import_that_waits_for_space(app, monkeypatch):
-    """A wait for library space has no limit. Its marker protects its upload."""
+    """A wait for library space has no limit. Its live retry protects its upload (#619)."""
 
     from datetime import timedelta, timezone
 
-    from app.importing import SPACE_WAIT_KEY
+    from rq.registry import ScheduledJobRegistry
 
     old = datetime.now(timezone.utc) - timedelta(days=30)
     objects = {
@@ -601,9 +601,16 @@ def test_the_prune_keeps_the_upload_of_an_import_that_waits_for_space(app, monke
             pass
 
     monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kw: FakeClient())
-    app.redis.set(SPACE_WAIT_KEY.format("Long Wait (2024) - [DVD].mkv"), "1")
-
-    aws_storage.sync_aws_s3_storage_task()
+    source = os.path.join(app.config["IMPORT_DIR"], "Long Wait (2024) - [DVD].mkv")
+    retry = app.import_queue.enqueue_in(
+        timedelta(minutes=30),
+        "app.videos.localization_task",
+        kwargs={"file_path": source, "space_waits": 4},
+    )
+    try:
+        aws_storage.sync_aws_s3_storage_task()
+    finally:
+        ScheduledJobRegistry(queue=app.import_queue).remove(retry, delete_job=True)
 
     assert deletes == ["untouched/Old Stray (2020) - [DVD].mkv"]
 

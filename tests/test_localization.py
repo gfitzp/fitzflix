@@ -1353,7 +1353,8 @@ def test_library_copy_waits_for_space_before_copying(app, incoming_dir, monkeypa
     basename = "Full Volume (2021) - [DVD].mkv"
     source, hidden, details = space_move_fixture(app, incoming_dir, basename)
 
-    # The output is 8 days old. The weekly sweep would delete it.
+    # The output is 8 days old. The weekly sweep keeps it only while a
+    # live job names it (#436, #619).
     old = time.time() - 8 * 86400
     os.utime(hidden, (old, old))
 
@@ -1388,7 +1389,8 @@ def test_library_copy_waits_for_space_before_copying(app, incoming_dir, monkeypa
             *(waits[0].args or ()), **(waits[0].kwargs or {})
         )
         assert os.path.exists(hidden) and os.path.exists(source)
-        assert os.path.getmtime(hidden) > old + 86400
+        with app.app_context():
+            assert os.path.abspath(hidden) in importing.paths_held_by_later_stages()
         assert basename not in rejected_files(app)
         assert len(app.sql_queue) == 0
     finally:
@@ -1440,7 +1442,12 @@ def test_sweep_skips_a_file_that_waits_for_space(app):
 
     A space wait is a scheduled job with its own id. The sweep saw only
     running and queued jobs by basename. Thus, each sweep started 1 more
-    wait chain. The wait now marks the file, and the sweep skips it."""
+    wait chain. The live retry names the file, and the sweep skips it
+    (#619)."""
+
+    from datetime import timedelta
+
+    from rq.registry import ScheduledJobRegistry
 
     from app import importing
 
@@ -1451,12 +1458,16 @@ def test_sweep_skips_a_file_that_waits_for_space(app):
         f.write(b"waiting")
     try:
         with app.app_context():
-            importing.mark_space_wait(basename)
+            retry = app.import_queue.enqueue_in(
+                timedelta(minutes=30),
+                "app.videos.localization_task",
+                kwargs={"file_path": path, "space_waits": 1},
+            )
             importing.manual_import_task()
             assert safe_job_id(basename) not in app.import_queue.job_ids
 
-            # When the wait ends, the marker goes, and the sweep takes the file.
-            importing.clear_space_wait(basename)
+            # A lost retry lets the sweep take the file again.
+            ScheduledJobRegistry(queue=app.import_queue).remove(retry, delete_job=True)
             importing.manual_import_task()
             assert safe_job_id(basename) in app.import_queue.job_ids
     finally:
@@ -1464,7 +1475,9 @@ def test_sweep_skips_a_file_that_waits_for_space(app):
         app.import_queue.empty()
 
 
-def test_localization_wait_marks_the_file(app, sample_mkv, incoming_dir):
+def test_a_localization_wait_is_a_live_retry_of_the_file(app, sample_mkv, incoming_dir):
+    """The waiting import is in the pipeline through its retry alone (#619)."""
+
     from app import importing
 
     basename = "Marked Wait (2021) - [DVD].mkv"
@@ -1476,9 +1489,9 @@ def test_localization_wait_marks_the_file(app, sample_mkv, incoming_dir):
     try:
         with app.app_context():
             assert localization_task(source) is True
-            assert importing.space_wait_pending(app.redis, basename)
-            ttl = app.redis.ttl(importing.SPACE_WAIT_KEY.format(basename))
-            assert 0 < ttl <= importing.SPACE_WAIT_MARK.total_seconds()
+            assert importing.localization_pending(source)
+            assert importing.enqueue_localization(source) is None
+            assert not app.redis.keys("fitzflix:import:space-wait:*")
     finally:
         importing._free_bytes = real_free
         os.remove(source)
@@ -1504,7 +1517,7 @@ def test_waiting_copy_keeps_its_title_lock(app, incoming_dir, monkeypatch):
             assert app.redis.pttl("long-wait-title") <= 60000
             videos.move_localized_file(source, details, lock, hidden)
             assert app.redis.pttl("long-wait-title") > day_ms - 60000
-            assert importing.space_wait_pending(app.redis, basename)
+            assert importing.later_stage_holds(source)
 
             # An expired lock is taken again with the same token.
             app.redis.delete("long-wait-title")

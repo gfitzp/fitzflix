@@ -765,12 +765,15 @@ def test_import_sends_the_held_file_back_through_the_import(app, admin_client):
     os.remove(path)
 
 
-def test_a_hold_after_a_space_wait_clears_the_mark(
+def test_a_hold_after_a_space_wait_leaves_no_live_job(
     app, hdr10_mkv, incoming_dir, archive_on, monkeypatch
 ):
-    """The hold on the retry of a space wait removes the mark (#434)."""
+    """The hold on the retry of a space wait ends the chain (#434, #619).
 
-    from app.importing import mark_space_wait, space_wait_pending
+    No job names the file any more. Thus, the Import choice of the Held
+    page can queue it."""
+
+    from app.importing import localization_pending
 
     monkeypatch.setattr("app.email.send_email", lambda *a, **k: None)
     basename = "Held After Wait (2020) - [Bluray-2160p].mkv"
@@ -778,24 +781,30 @@ def test_a_hold_after_a_space_wait_clears_the_mark(
         make_movie_file(make_movie("Held After Wait", 2020), "Bluray-1080p")
         db.session.commit()
         source = _place(incoming_dir, hdr10_mkv, basename)
-        mark_space_wait(basename)
 
         assert importing.localization_task(source, space_waits=1) is False
 
-        assert HeldImport.query.filter_by(untouched_basename=basename).one()
-        assert not space_wait_pending(app.redis, basename)
+        held = HeldImport.query.filter_by(untouched_basename=basename).one()
+        assert not localization_pending(source)
+        assert not localization_pending(held.held_path)
         os.remove(os.path.join(app.config["HELD_DIR"], basename))
 
 
 def test_an_import_that_queues_nothing_keeps_no_decision(app, admin_client):
     """No job came back. The decision goes back, and the page says why (#434)."""
 
-    from app.importing import clear_space_wait, mark_space_wait
+    from datetime import timedelta
+
+    from rq.registry import ScheduledJobRegistry
 
     basename = "Stalled Test (1998) - [Bluray-2160p].mkv"
     with app.app_context():
         held_id, path = _held_row(app, basename)
-        mark_space_wait(basename)
+        retry = app.import_queue.enqueue_in(
+            timedelta(minutes=30),
+            "app.videos.localization_task",
+            kwargs={"file_path": path, "space_waits": 1},
+        )
     try:
         body = _decide(admin_client, held_id, "import_submit")
         assert "is not queued" in body
@@ -804,8 +813,7 @@ def test_an_import_that_queues_nothing_keeps_no_decision(app, admin_client):
             assert held.decision is None and held.date_decided is None
             assert _jobs(app.import_queue, "app.videos.localization_task") == []
     finally:
-        with app.app_context():
-            clear_space_wait(basename)
+        ScheduledJobRegistry(queue=app.import_queue).remove(retry, delete_job=True)
         os.remove(path)
 
 

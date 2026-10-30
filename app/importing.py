@@ -69,6 +69,7 @@ from app.aws_storage import (
     pending_archive_key,
     pending_archive_of,
     request_archive_move,
+    sanitize_s3_key,
     untouched_key_still_claimed,
     upload_untouched,
 )
@@ -135,17 +136,6 @@ SPACE_WAIT = timedelta(minutes=30)
 
 SPACE_ERRNOS = {errno.ENOSPC, errno.EDQUOT}
 
-# A file that waits for space has a marker for the length of 1 wait,
-# plus a wide margin. The hourly sweep and the watcher skip a marked
-# file. Without it, each sweep started 1 more wait chain for the same
-# file. If a chain dies, its marker expires and the sweep takes the file
-# up. The marker also protects the pending upload of the import from
-# the S3 prune (#455). A retry that waits on a busy queue must not let
-# it lapse. Thus, the margin is hours, and each retry renews it.
-
-SPACE_WAIT_KEY = "fitzflix:import:space-wait:{}"
-SPACE_WAIT_MARK = max(SPACE_WAIT + timedelta(minutes=30), timedelta(hours=3))
-
 # Refresh the title lock while a copy waits. The token must match. A
 # lock that expired is taken again. A lock that another task holds is
 # left alone. Returns 1, 2, or 0 for those 3 cases.
@@ -161,44 +151,6 @@ elseif not held then
 end
 return 0
 """
-
-
-def mark_space_wait(basename, aws_key=None):
-    """Mark a source file as waiting for space, for 1 wait and a margin.
-
-    aws_key is the run-scoped upload of the import (#430), if it has one.
-    No record claims that key until finalize. The weekly S3 sync reads
-    the key from the marker and keeps the upload (#455)."""
-
-    current_app.redis.set(
-        SPACE_WAIT_KEY.format(basename),
-        aws_key or "1",
-        ex=int(SPACE_WAIT_MARK.total_seconds()),
-    )
-
-
-def renew_space_wait(basename):
-    """Renew the space-wait marker of a source file, if it has one (#475).
-
-    A wait chain can also defer for the title lock or for a dead volume.
-    Each of those retries renews the marker. Thus, a chain that waits
-    longer than SPACE_WAIT_MARK on those paths keeps its marker."""
-
-    current_app.redis.expire(
-        SPACE_WAIT_KEY.format(basename), int(SPACE_WAIT_MARK.total_seconds())
-    )
-
-
-def clear_space_wait(basename):
-    """Remove the space-wait marker of a source file."""
-
-    current_app.redis.delete(SPACE_WAIT_KEY.format(basename))
-
-
-def space_wait_pending(redis, basename):
-    """Return True if a wait chain for space holds this source file."""
-
-    return bool(redis.exists(SPACE_WAIT_KEY.format(basename)))
 
 
 # The tasks of the import pipeline, with the queue of each. Each one
@@ -285,16 +237,25 @@ def paths_held_by_later_stages():
     return held
 
 
-def keys_held_by_later_stages():
-    """Return the archive key of each conversion, move and cataloging job (#493).
+def keys_held_by_pipeline():
+    """Return each archive key that a live import pipeline job can upload or hold (#493, #619).
 
-    The key is the aws_key of the file_details argument. The import
-    gives the key to its File row only at the cataloging. A conversion
-    or a move that waits for a retry can wait for more than 8 days. The
-    weekly prune must not delete its upload."""
+    The import gives its key to its File row only at the cataloging. A
+    wait for space has no limit, and a retry can wait for more than 8
+    days. The weekly prune must not delete such an upload. A job holds
+    the untouched/ key of the name of its source, and the aws_key of
+    its file_details argument. The latter is a run-scoped key below
+    pending-untouched/ for a same-name re-rip (#430)."""
 
     held = set()
-    for job, _ in pipeline_jobs(LATER_STAGES):
+    for job, source in pipeline_jobs():
+        if source is not None:
+            held.add(
+                os.path.join(
+                    current_app.config["AWS_UNTOUCHED_PREFIX"],
+                    sanitize_s3_key(os.path.basename(source)),
+                )
+            )
         for value in list(job.args) + list((job.kwargs or {}).values()):
             if isinstance(value, dict) and isinstance(value.get("aws_key"), str):
                 held.add(value["aws_key"])
@@ -345,22 +306,20 @@ def series_import_in_flight(titles):
 def enqueue_localization(path, at_front=False, quiet=False):
     """Queue the localization of a file once. Return the job, or None (#287).
 
-    The function does nothing if a localization of the same file waits or
-    runs, or if a space wait holds it. Otherwise it deletes the finished
-    job of the fixed job id. A removal from its registry is not enough.
-    The job hash keeps its expiry, and the new job under the id takes it
-    and can expire in the queue (#371). A failed job stays in the failed
-    jobs for the sweep. Then the new job gets the id with a time tag.
+    The function does nothing if a live pipeline job names the file as
+    its source. A wait for space is such a job (#619). Otherwise it
+    deletes the finished job of the fixed job id. A removal from its
+    registry is not enough. The job hash keeps its expiry, and the new
+    job under the id takes it and can expire in the queue (#371). A
+    failed job stays in the failed jobs for the sweep. A live job of a
+    file of the same name at another path keeps the id too. Then the new
+    job gets the id with a time tag.
     With quiet, a skip writes no log line. The import watcher uses it,
     because it sees many events for 1 file."""
 
     queue = current_app.import_queue
     basename = os.path.basename(path)
-    if (
-        localization_pending(path)
-        or space_wait_pending(current_app.redis, basename)
-        or later_stage_holds(path)
-    ):
+    if localization_pending(path) or later_stage_holds(path):
         if not quiet:
             current_app.logger.info(f"'{basename}' Already waiting for import")
         return None
@@ -955,7 +914,6 @@ def localization_task(
                 keep_source=True,
                 pending_archive=pending_archive_of(file_details),
             )
-            _clear_space_wait_quietly(run.source_path)
             return False
 
         except BaseException as error:
@@ -1199,9 +1157,6 @@ def _quality_and_space_gate(file_path, file_details, conversion, run):
             blockers = real_rips_blocking(file_details)
             if blockers:
                 held = hold_import(file_path, file_details, conversion, blockers)
-                # A held file no longer waits for space. A stale mark
-                # would block the "Import" choice of the Held page (#434).
-                clear_space_wait(basename)
                 run.release_lock()
                 return "hold" if held is not None else "reject"
 
@@ -1216,7 +1171,6 @@ def _quality_and_space_gate(file_path, file_details, conversion, run):
             current_app.logger.debug(vars(better))
 
         move_to_rejects(file_path, "inferior quality")
-        clear_space_wait(basename)
         run.release_lock()
         notify_admin(
             "Received an inferior-quality file",
@@ -1238,7 +1192,6 @@ def _quality_and_space_gate(file_path, file_details, conversion, run):
     shortfall = library_space_shortfall(output_directory, needed)
     if shortfall:
         _log_space_wait(basename, output_directory, needed, shortfall, space_waits)
-        mark_space_wait(basename)
         run.release_lock()
         run.lock = None
         run.retry(
@@ -1246,7 +1199,6 @@ def _quality_and_space_gate(file_path, file_details, conversion, run):
         )
         return "wait"
     if space_waits:
-        clear_space_wait(basename)
         current_app.logger.info(
             f"'{basename}' Continuing the import after {space_waits} "
             f"wait(s) for space"
@@ -1281,7 +1233,7 @@ def _stage_source(file_path, run):
     staging = reserve_staging(basename, staging_needed, [basename], staging_dir)
     if staging == "lock":
         # The space was not checked. Thus, this is no space wait, and the
-        # space-wait counter and marker stay as they are (#478).
+        # space-wait counter stays as it is (#478).
         current_app.logger.info(
             f"'{basename}' The staging lock is busy. Trying again in "
             f"{int(STAGING_LOCK_RETRY.total_seconds() // 60)} minute"
@@ -1297,7 +1249,6 @@ def _stage_source(file_path, run):
             f"{_gigabytes(staging_outstanding(staging_dir, exclude=basename))}. "
             f"Trying again in {int(SPACE_WAIT.total_seconds() // 60)} minutes"
         )
-        mark_space_wait(basename)
         run.release_lock()
         run.lock = None
         run.retry(
@@ -1905,9 +1856,7 @@ def abandon_handoff(source_path, lock, staged_output, pending_archive=None):
     Remove the localized output, release the staging reservation and the
     title lock, and leave the source in place. The hourly sweep of the
     import directory queues the source again. Without staging, the
-    output is a hidden file in the library folder (#389). It goes too.
-    The space-wait marker goes as well (#568). A stale marker would hold
-    the source back from the sweep."""
+    output is a hidden file in the library folder (#389). It goes too."""
 
     current_app.logger.error(
         f"'{os.path.basename(source_path)}' The next stage could not be "
@@ -1920,16 +1869,6 @@ def abandon_handoff(source_path, lock, staged_output, pending_archive=None):
         keep_source=True,
         pending_archive=pending_archive,
     )
-    _clear_space_wait_quietly(source_path)
-
-
-def _clear_space_wait_quietly(source_path):
-    """Remove the space-wait marker of a kept source. This is best effort."""
-
-    try:
-        clear_space_wait(os.path.basename(source_path))
-    except Exception:
-        current_app.logger.warning(traceback.format_exc())
 
 
 def _plan_conversion_or_reject(file_path, file_details):
@@ -2142,7 +2081,6 @@ def move_localized_file(
         }
 
         def retry(delay, reason, level="warning", **changes):
-            renew_space_wait(os.path.basename(source_path))
             handoff(
                 requeue,
                 "app.videos.move_localized_file",
@@ -2157,7 +2095,6 @@ def move_localized_file(
             return False
 
         def defer():
-            renew_space_wait(os.path.basename(source_path))
             handoff(
                 defer_for_title_lock,
                 "app.videos.move_localized_file",
@@ -2181,18 +2118,10 @@ def move_localized_file(
             _log_space_wait(
                 basename, directory or output_directory, needed, shortfall, space_waits
             )
-            mark_space_wait(
-                os.path.basename(source_path), pending_archive_of(file_details)
-            )
 
-            # The weekly sweep deletes a hidden staging file that is 1 week
-            # old. A wait for space has no limit. Thus, each wait touches
-            # the localized file, and the sweep keeps it.
+            # The waiting retry names the localized file. Thus, the weekly
+            # orphan sweep keeps it (#436).
 
-            try:
-                os.utime(hidden_output_file)
-            except OSError:
-                pass
             return retry(
                 SPACE_WAIT, "waits for space", level=None, space_waits=space_waits + 1
             )
@@ -2240,14 +2169,13 @@ def move_localized_file(
                 if shortfall:
                     return wait_for_space(needed, shortfall)
             if space_waits:
-                clear_space_wait(os.path.basename(source_path))
                 current_app.logger.info(
                     f"'{basename}' The space is available again after "
                     f"{space_waits} wait(s). Copying"
                 )
         except Exception:
-            # HandoffFailed, or a Redis fault of the lock or of the space
-            # wait marks. The source stays for the hourly sweep.
+            # HandoffFailed, or a Redis fault of the lock. The source stays
+            # for the hourly sweep.
             abandon_handoff(
                 source_path,
                 lock,
