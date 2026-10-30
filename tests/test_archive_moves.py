@@ -944,6 +944,18 @@ def test_the_sync_waits_for_a_scheduled_move(app):
         assert aws_storage._sync_deferred(None) is True
 
 
+def test_the_sync_counts_live_jobs_but_not_other_scheduled_retries(app):
+    """A queued job holds the sync. A scheduled job that is not a move does not (#616)."""
+
+    from app import aws_storage
+
+    with app.app_context():
+        app.file_queue.enqueue_in(timedelta(minutes=10), "app.videos.upload_task", 1)
+        assert aws_storage._sync_deferred(None) is False
+        app.file_queue.enqueue("app.videos.upload_task", 2)
+        assert aws_storage._sync_deferred(None) is True
+
+
 def test_the_sync_does_not_upload_over_a_key_that_moved_after_the_listing(
     app, s3, monkeypatch
 ):

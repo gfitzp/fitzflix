@@ -550,21 +550,6 @@ def _fresh_file(file_id):
     return db.session.get(File, file_id)
 
 
-def _flag_rewritten_archive(file_id):
-    """Mark the archive of a library file as stale. A failure raises after the rollback (#561).
-
-    The caller read the row before its slow work. Thus, a new
-    transaction makes the change (MariaDB error 1020)."""
-
-    try:
-        db.session.rollback()
-        File.query.filter_by(id=file_id).update({"aws_stale": True})
-        db.session.commit()
-    except Exception:
-        db.session.rollback()
-        raise
-
-
 def flag_archive_before_rewrite(file_id):
     """Mark the archive stale right before a tool may write the library file (#517, #615).
 
@@ -575,11 +560,20 @@ def flag_archive_before_rewrite(file_id):
     bytes. Only archive_library_file under the title lock clears the
     flag. The flag is set only when Fitzflix archives the library files.
 
-    A failed flag raises (#561). Then the rewrite does not start, and
-    the library file stays as it was."""
+    A failed flag raises after the rollback (#561). Then the rewrite
+    does not start, and the library file stays as it was. The caller
+    read the row before its slow work. Thus, a new transaction makes
+    the change (MariaDB error 1020)."""
 
-    if get_setting("ARCHIVE_ORIGINAL_MEDIA"):
-        _flag_rewritten_archive(file_id)
+    if not get_setting("ARCHIVE_ORIGINAL_MEDIA"):
+        return
+    try:
+        db.session.rollback()
+        File.query.filter_by(id=file_id).update({"aws_stale": True})
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        raise
 
 
 def _rescan_after_a_failed_edit(file_id, name, reason="Track edit failed"):

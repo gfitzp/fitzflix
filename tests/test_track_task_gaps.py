@@ -171,6 +171,36 @@ def test_a_safe_transient_retry_queues_no_scan(app, monkeypatch):
         os.remove(path)
 
 
+def test_a_retry_that_a_pending_restore_refuses_queues_no_scan(app, monkeypatch):
+    """A refusal comes before the edit starts. It is not a raise after the lock (#614).
+
+    The retry of a transient fault finds a pending restore and stops. It
+    wrote nothing, and it raised nothing. Thus, no scan is queued."""
+
+    from datetime import datetime, timezone
+
+    import app.videos as videos
+    from app import db, tracks
+    from app.models import File
+
+    file_id, identifier, path = _library_row(app, "Refused Retry")
+    with app.app_context():
+        db.session.get(File, file_id).restore_requested_at = datetime.now(timezone.utc)
+        db.session.commit()
+    ran = []
+    monkeypatch.setattr(tracks, "mkvpropedit_unlocked", lambda *a: ran.append(a))
+    try:
+        assert (
+            videos.mkvpropedit_task(file_id, "2", None, [], None, transient_retries=1)
+            is False
+        )
+        assert ran == []
+        assert _scans(app, file_id) == []
+        assert _lock_is_free(app, identifier)
+    finally:
+        os.remove(path)
+
+
 def test_the_audio_plan_reserves_its_staging_space(app, monkeypatch):
     """The plan checked the free space only. Imports did not see it (#585)."""
 

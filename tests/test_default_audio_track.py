@@ -365,7 +365,7 @@ def test_a_failed_flag_stops_mkvpropedit_before_it_starts(
     def blip(file_id):
         raise sqlalchemy.exc.OperationalError("UPDATE", {}, Exception("gone away"))
 
-    monkeypatch.setattr(tracks, "_flag_rewritten_archive", blip)
+    monkeypatch.setattr(tracks, "flag_archive_before_rewrite", blip)
     with open(library_path, "rb") as handle:
         before = handle.read()
     with app.app_context():
@@ -535,3 +535,51 @@ def test_a_clean_edit_queues_no_track_scan(app, monkeypatch, three_audio_mkv):
     with app.app_context():
         assert mkvpropedit_unlocked(file_id, _uid(file_id, 2), None, None) is True
     assert _scheduled_scans(app, file_id) == []
+
+
+def test_a_transient_upload_fault_after_a_restructure_retries_the_whole_edit(
+    app, monkeypatch, three_audio_mkv
+):
+    """The tracks are UIDs. Thus, a retry after the reorder is still valid (#614).
+
+    The post-commit upload of the reordered file fails with a transient
+    I/O fault. The task books the edit again with no scan. The retry
+    finds the new layout and uploads the file."""
+
+    import errno
+
+    import app.tracks as tracks
+    from tests.test_scheduling import scheduled_jobs
+
+    file_id, library_path = _propedit_fixture(
+        app, monkeypatch, three_audio_mkv, "Upload Retry", app.config["MKVPROPEDIT_BIN"]
+    )
+    uploads = []
+
+    def lost_handle(file, path):
+        uploads.append(path)
+        raise OSError(errno.EBADF, "Bad file descriptor")
+
+    monkeypatch.setattr(tracks, "archive_library_file", lost_handle)
+    with app.app_context():
+        french = _uid(file_id, 2)
+        assert tracks.mkvpropedit_task(file_id, french, None, None) is False
+    assert _audio(app, library_path)[0] == ("fra", True)
+    assert _scheduled_scans(app, file_id) == []
+    (retry,) = [
+        job
+        for job in scheduled_jobs(app.file_queue)
+        if job.func_name.endswith("mkvpropedit_task")
+    ]
+    assert retry.args[:2] == (file_id, french)
+    assert retry.kwargs["transient_retries"] == 1
+
+    monkeypatch.setattr(
+        tracks, "archive_library_file", lambda file, path: uploads.append(path)
+    )
+    with app.app_context():
+        assert tracks.mkvpropedit_task(*retry.args, **retry.kwargs) is True
+    assert uploads == [library_path, library_path]
+    assert _audio(app, library_path)[0] == ("fra", True)
+    retry.delete()
+    os.remove(library_path)

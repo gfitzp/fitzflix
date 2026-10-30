@@ -38,7 +38,8 @@ import rq
 
 from botocore.client import Config
 from rq import get_current_job
-from rq.registry import ScheduledJobRegistry, StartedJobRegistry
+from rq.job import JobStatus
+from rq.registry import StartedJobRegistry
 from s3transfer.utils import ChunksizeAdjuster
 
 from flask import current_app
@@ -131,20 +132,21 @@ def delete_download_message(receipt_handle, key, note="message", sqs_client=None
     record of the poll. Thus, the newest handle decides. Return True if
     there is no message, else the result of delete_sqs_message."""
 
-    if not _latest_receipt_handle(receipt_handle, key):
-        return True
-    return delete_sqs_message(
-        sqs_client or aws_sqs_client(), receipt_handle, note=note, key=key
-    )
+    return delete_sqs_message(sqs_client, receipt_handle, note=note, key=key)
 
 
 def delete_sqs_message(sqs_client, receipt_handle, note="message", key=None):
     """Delete a message from the SQS queue. Return False if the delete fails.
 
     key is the S3 key of a restore message. The newest recorded handle
-    of key replaces receipt_handle. A good delete removes the record."""
+    of key replaces receipt_handle. A good delete removes the record.
+    With no handle, there is no message. Then this returns True. With
+    no sqs_client, this builds one."""
 
     receipt_handle = _latest_receipt_handle(receipt_handle, key)
+    if not receipt_handle:
+        return True
+    sqs_client = sqs_client or aws_sqs_client()
     try:
         response = sqs_client.delete_message(
             QueueUrl=current_app.config["AWS_SQS_URL"],
@@ -455,27 +457,14 @@ def sync_aws_s3_storage_task(volume_drops=0):
         return True
 
 
-ARCHIVE_MOVE_TASKS = ("app.aws_storage.move_archive_object",)
-
-
-def _scheduled_moves(queue):
-    """Return the count of the archive moves in the ScheduledJobRegistry of a queue."""
-
-    count = 0
-    for job_id in ScheduledJobRegistry(queue=queue).get_job_ids():
-        job = queue.fetch_job(job_id)
-        if job is not None and job.func_name in ARCHIVE_MOVE_TASKS:
-            count += 1
-    return count
-
-
 def _sync_deferred(job, volume_drops=0):
     """Return True if the sync must wait. Then a retry is booked.
 
     The sync runs only when each queue is idle. A file can be in an
     import, in an upload, or in a wait for database writes. Then it can
     exist at AWS without its final database record. The prune would see
-    it as an extra file and delete it. Every queue of the roster counts.
+    it as an extra file and delete it. Each live job of tasks.live_jobs
+    counts, on every queue of the roster (#616).
     The maintenance queue runs the hourly import sweep. That sweep can
     feed new files into the import pipeline during the sync.
 
@@ -488,22 +477,24 @@ def _sync_deferred(job, volume_drops=0):
     count, and MAX_SYNC_VOLUME_DROPS never stopped the sync."""
 
     drops = {"volume_drops": volume_drops} if volume_drops else None
+
+    # This task itself is in the started registry of maintenance (#314).
+    # Each producer and each retry uses that queue.
+
+    own_id = job.id if job else None
     busy = []
     for queue in roster_queues(current_app):
-        queue_name = queue.name
-        started = StartedJobRegistry(
-            queue_name, connection=current_app.redis
-        ).get_job_ids()
-
-        # This task itself is in the started registry of maintenance
-        # (#314). Each producer and each retry uses that queue.
-
-        if job:
-            started = [job_id for job_id in started if job_id != job.id]
-
-        count = len(queue.job_ids) + len(started) + _scheduled_moves(queue)
+        count = sum(
+            1
+            for live in live_jobs([queue])
+            if live.id != own_id
+            and (
+                live.get_status(refresh=False) != JobStatus.SCHEDULED
+                or live.func_name == "app.aws_storage.move_archive_object"
+            )
+        )
         if count:
-            busy.append(f"{queue_name}: {count}")
+            busy.append(f"{queue.name}: {count}")
 
     if busy:
         requeue(
@@ -1226,9 +1217,10 @@ def download_task(
     # a deleted row then raises (#588).
 
     with app.app_context():
-        file = File.query.filter_by(aws_key=key).first()
+        live = File.query.filter(File.aws_date_deleted.is_(None))
+        file = live.filter(File.aws_key == key).first()
         if file is None:
-            file = File.query.filter_by(aws_transcoded_key=key).first()
+            file = live.filter(File.aws_transcoded_key == key).first()
         file_id = file.id if file is not None else None
 
     booked = []
@@ -1385,13 +1377,13 @@ def _download_task(
                         + traceback.format_exc()
                     )
 
-        def before_place(etag=None, size=None):
+        def before_place(etag=None):
             """Take the title lock and run the placement checks. Defer on a transient fault (#598).
 
             A throttle of an S3 HEAD or a restart of the database is not a
             reason to discard a finished download. A busy title lock is
             not a reason either (#610). A PlacementDeferred keeps the copy
-            and its sidecar. The size has no use since #621."""
+            and its sidecar."""
 
             try:
                 return check_placement(etag)
@@ -2502,16 +2494,6 @@ def _copy_problem(original, copied):
     return None
 
 
-def _drop_message(sqs_receipt_handle, note, key):
-    """Delete the restore message of a move, if the move came from a notification.
-
-    key is the source key of the move, the key of the message. The
-    newest handle under key decides (#587, #617)."""
-
-    if _latest_receipt_handle(sqs_receipt_handle, key):
-        delete_sqs_message(aws_sqs_client(), sqs_receipt_handle, note=note, key=key)
-
-
 def _download_job_for(key):
     """Return True if a download of key waits, runs, or waits for a retry."""
 
@@ -2586,8 +2568,8 @@ def move_archive_object(file_id, sqs_receipt_handle=None):
             current_app.logger.warning(
                 f"File id {file_id} no longer exists. Its archive move stops"
             )
-            _drop_message(
-                sqs_receipt_handle, "archive move of a deleted record", message_key
+            delete_download_message(
+                sqs_receipt_handle, message_key, note="archive move of a deleted record"
             )
             return False
         message_key = message_key or move_source(file) or file.aws_key
@@ -2595,8 +2577,8 @@ def move_archive_object(file_id, sqs_receipt_handle=None):
             current_app.logger.info(
                 f"'{file.basename}' No archive move is pending. The job stops"
             )
-            _drop_message(
-                sqs_receipt_handle, "archive move with no target", message_key
+            delete_download_message(
+                sqs_receipt_handle, message_key, note="archive move with no target"
             )
             return True
 
@@ -2771,7 +2753,9 @@ def _move_archive(file, sqs_receipt_handle, message_key):
         current_app.logger.info(
             f"'{file.basename}' Each archive has the key of its name already"
         )
-        _drop_message(sqs_receipt_handle, "archive move with no work", message_key)
+        delete_download_message(
+            sqs_receipt_handle, message_key, note="archive move with no work"
+        )
         return True
     source, target = drift
     if file.aws_key_target != target:
@@ -2819,8 +2803,8 @@ def _move_archive(file, sqs_receipt_handle, message_key):
                 file, source, sqs_receipt_handle, "the library volume to return"
             )
         if lost:
-            _drop_message(
-                sqs_receipt_handle, "archive move of a missing object", message_key
+            delete_download_message(
+                sqs_receipt_handle, message_key, note="archive move of a missing object"
             )
             return True
         current_app.logger.warning(
@@ -2829,8 +2813,8 @@ def _move_archive(file, sqs_receipt_handle, message_key):
         )
         clear_archive_target(file)
         db.session.commit()
-        _drop_message(
-            sqs_receipt_handle, "archive move of a missing object", message_key
+        delete_download_message(
+            sqs_receipt_handle, message_key, note="archive move of a missing object"
         )
         return False
 
@@ -2847,7 +2831,7 @@ def _move_archive(file, sqs_receipt_handle, message_key):
                 f"is requested for the move to '{target}'"
             )
             aws_restore(source, tier="Bulk", record_request=False)
-        _drop_message(sqs_receipt_handle, "stale message", message_key)
+        delete_download_message(sqs_receipt_handle, message_key, note="stale message")
         return MOVE_WAITING
 
     report_progress(get_current_job(), file.basename, "Moving the archive", None)
@@ -2911,7 +2895,7 @@ def _move_archive(file, sqs_receipt_handle, message_key):
             head.get("VersionId") if is_pending_archive(source) else None,
         )
     _download_after_move(file, source, target)
-    _drop_message(sqs_receipt_handle, "archive move", message_key)
+    delete_download_message(sqs_receipt_handle, message_key, note="archive move")
 
     # A conversion has a second archive. Its move comes next.
 
@@ -3611,9 +3595,9 @@ def aws_download(
     rest of the attempts to the S3 transfer (#607).
 
     before_place runs after the download and before a direct placement.
-    It gets the ETag and the size of the object at the start of the
-    download. A PlacementDeferred keeps the finished download and its
-    sidecar for the next try (#533). Any other error deletes the download and
+    It gets the ETag of the object at the start of the download. A
+    PlacementDeferred keeps the finished download and its sidecar for
+    the next try (#533). Any other error deletes the download and
     propagates. The caller decides about the SQS message. If it returns
     a path, the placement goes there, not to place_at (#563).
     """
@@ -3825,7 +3809,7 @@ def aws_download(
                 _write_partial_etag(destination, progress.etag, progress.size)
                 if before_place:
                     try:
-                        target = before_place(progress.etag, progress.size) or place_at
+                        target = before_place(progress.etag) or place_at
                     except PlacementDeferred:
                         raise
                     except BaseException:

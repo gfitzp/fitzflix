@@ -128,14 +128,6 @@ def _job_lock(job):
     return None
 
 
-def _source_of(job):
-    """Return the source path of a pipeline job, or None."""
-
-    if job.args and isinstance(job.args[0], str):
-        return job.args[0]
-    return (job.kwargs or {}).get("file_path") or (job.kwargs or {}).get("source_path")
-
-
 def _next_stage_holds(job, source):
     """Return True if a different later-stage job holds the source."""
 
@@ -155,7 +147,7 @@ def abandon_dead_job(job):
     its commit can be done."""
 
     from app.aws_storage import pending_archive_of
-    from app.importing import abandon_import
+    from app.importing import _source_of, abandon_import
     from app.naming import hidden
     from app.manual_imports import STARTED_KEY
 
