@@ -1,6 +1,5 @@
 """Run the tasks that maintain the application itself, not the video library."""
 
-import errno
 import glob
 import gzip
 import json
@@ -29,7 +28,6 @@ from app import db, get_app
 from app.email import task_send_email
 from app import s3_layout
 from app.queues import QUEUE_NAMES, queue_names
-from app.tasks import report_progress
 from app.settings import get_setting
 
 # This is the app instance of this process. Fitzflix resolves it lazily.
@@ -1849,157 +1847,6 @@ def _probe_http(url, **kwargs):
 
     r = requests.get(url, timeout=10, **kwargs)
     r.raise_for_status()
-
-
-# The handle sweep asks the watchdog of a share again after an open
-# failure. This is the shortest time between 2 such questions (#488).
-
-SHARE_RECHECK_SECONDS = 5
-
-
-def smb_handle_sweep():
-    """Ask every library file if the NAS still holds its handle.
-
-    The lost-handle state is silent. Reads succeed. Only close(2) fails.
-    Thus, nothing finds the state until the final close of an upload
-    does, hours later, from inside s3transfer, with an S3 traceback. A
-    direct question costs 1 open and 1 close per file, about 1 minute
-    for the whole library. It turns that surprise into a report.
-
-    The recheck runs afterwards. Thus, the recoveries that this sweep
-    saw go into the history. The history is the only place that keeps
-    a duration.
-    """
-
-    with app.app_context():
-        from app.models import File
-        from app.smb_probe import (
-            absent,
-            library_path,
-            lost_handle,
-            probe_path,
-            recheck,
-            record_result,
-            share_responsive,
-            share_root,
-            unmounted,
-        )
-
-        job = get_current_job()
-        files = File.query.order_by(File.file_path).all()
-
-        broken = []
-        unreadable = []
-        not_local = 0
-        offline_shares = set()
-
-        # The sweep health-checks each share ONCE, through the watchdog
-        # of volume_alive, before it opens the files of that share
-        # (#237). An unmounted share fails the probes fast. But a WEDGED
-        # share is still in the mount table, and its syscalls hang. It
-        # would stall the next os.open of the sweep until the job timeout
-        # killed it. That would lose the rest of the sweep, the recheck,
-        # and the history write. It would also occupy the maintenance
-        # queue for the hour.
-
-        share_alive = {}
-        share_checked = {}
-
-        for i, file in enumerate(files):
-            if job and i % 500 == 0:
-                report_progress(
-                    job,
-                    None,
-                    "Probing library files for lost SMB handles",
-                    int((i / len(files)) * 100) if files else 100,
-                )
-
-            path = library_path(file)
-            share = share_root(path)
-            if share not in share_alive:
-                share_alive[share] = share_responsive(path)
-                if not share_alive[share]:
-                    offline_shares.add(share)
-            if not share_alive[share]:
-                continue
-
-            result = probe_path(path)
-
-            # The share can drop during the sweep (#488). Then each later
-            # open fails with ENXIO or EIO. An open failure that is not
-            # ENOENT asks the watchdog again, at most 1 time in
-            # SHARE_RECHECK_SECONDS for each share.
-
-            if (
-                result["stage"] == "open"
-                and result["errno"] != errno.ENOENT
-                and time.monotonic() - share_checked.get(share, 0)
-                >= SHARE_RECHECK_SECONDS
-            ):
-                share_checked[share] = time.monotonic()
-                if not share_responsive(path):
-                    share_alive[share] = False
-                    offline_shares.add(share)
-                    continue
-
-            record_result(result, context="nightly sweep")
-
-            if lost_handle(result):
-                broken.append(file)
-
-            elif unmounted(result):
-                offline_shares.add(share_root(path))
-
-            elif absent(result):
-                # A superseded edition keeps its row and its S3 archive
-                # after the local copy goes. Thousands are legitimately
-                # absent. None of them is a finding.
-
-                not_local += 1
-
-            elif not result["ok"]:
-                unreadable.append(file)
-
-        # An unmounted share makes every file on it look missing at one
-        # time. That says nothing about handles. It says everything about
-        # the mount.
-
-        for share in sorted(offline_shares):
-            current_app.logger.error(
-                f"SMB sweep: '{share}' is not mounted or not responding, so "
-                f"none of its files were probed"
-            )
-
-        for file in broken:
-            current_app.logger.warning(
-                f"SMB sweep: '{file.basename}' is in the lost-handle state "
-                f"(close returns EBADF); reads still work, but anything that "
-                f"closes this file will fail until the NAS clears it"
-            )
-
-        for file in unreadable:
-            current_app.logger.warning(
-                f"SMB sweep: '{file.basename}' could not be read"
-            )
-
-        report = recheck()
-
-        for result in report.healed:
-            held = result.get("held_for_seconds")
-            duration = f" after at least {held / 60:.0f} minute(s)" if held else ""
-            current_app.logger.info(
-                f"SMB sweep: '{os.path.basename(result['path'])}' has come out "
-                f"of the lost-handle state{duration}"
-            )
-
-        current_app.logger.info(
-            f"SMB sweep: {len(files)} file(s) probed, {len(broken)} in the "
-            f"lost-handle state, {len(unreadable)} otherwise unreadable, "
-            f"{not_local} not on the local volume, "
-            f"{len(report.healed)} recovery(ies) recorded"
-        )
-
-        return True
 
 
 def _probe_s3(config):

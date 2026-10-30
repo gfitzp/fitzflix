@@ -19,7 +19,6 @@ LISTING = {
         "recs",
         "refresh",
         "scan",
-        "smb",
         "sqs",
         "sync",
         "triage",
@@ -58,7 +57,6 @@ LISTING = {
         "streaming",
     ],
     "refresh": ["criterion", "file", "tmdb"],
-    "smb": ["history", "probe", "recheck", "repair", "status"],
     "triage": ["backfill", "backfill-audio"],
     "tv": ["rename"],
 }

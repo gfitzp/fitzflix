@@ -42,6 +42,7 @@ from app.availability_alerts import _leaving_set
 from app.settings import get_setting
 from app.file_ranking import MOVIE_BEST_ORDER, TV_BEST_ORDER
 from app.leaving_criterion import CRITERION_PROVIDER_ID
+from app.maintenance import volume_alive
 from app.models import (
     DVRChannel,
     File,
@@ -58,7 +59,6 @@ from app.models import (
     tv_keywords,
     tv_networks,
 )
-from app.smb_probe import library_path, share_responsive
 from app.streaming import batch_title_availability, streaming_matches
 
 # The app instance of this process. Fitzflix resolves it lazily. Thus,
@@ -216,7 +216,9 @@ def _cached_duration(redis_client, file):
                 return float(value)
             except ValueError:
                 pass
-    duration = _probe_duration(library_path(file))
+    duration = _probe_duration(
+        os.path.join(current_app.config["LIBRARY_DIR"], file.file_path)
+    )
     if duration and duration > 0:
         redis_client.hset(DURATIONS_KEY, str(file.id), f"{fingerprint}|{duration:.3f}")
         return duration
@@ -279,7 +281,9 @@ def _on_disk(file):
     _library_online. Thus, a stuck share never hangs a stat for each
     row."""
 
-    return os.path.exists(library_path(file))
+    return os.path.exists(
+        os.path.join(current_app.config["LIBRARY_DIR"], file.file_path)
+    )
 
 
 def _library_online():
@@ -291,8 +295,7 @@ def _library_online():
     instead."""
 
     return all(
-        share_responsive(current_app.config[key])
-        for key in ("MOVIE_LIBRARY", "TV_LIBRARY")
+        volume_alive(current_app.config[key]) for key in ("MOVIE_LIBRARY", "TV_LIBRARY")
     )
 
 

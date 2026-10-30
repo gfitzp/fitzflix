@@ -9,7 +9,7 @@ def register(app):
     """Attach the CLI commands of the application to the Flask app.
 
     The refresh group and the one-line enqueue commands live here. The
-    aws, recs, triage, audio, smb and tracks groups live next to the
+    aws, recs, triage, audio and tracks groups live next to the
     modules that they drive, each with its own register_cli."""
 
     @app.cli.group()
@@ -307,7 +307,6 @@ def register(app):
         atmos_cli,
         aws_cli,
         recommendations_cli,
-        smb_cli,
         triage_cli,
     )
 
@@ -316,6 +315,5 @@ def register(app):
         recommendations_cli,
         triage_cli,
         atmos_cli,
-        smb_cli,
     ):
         module.register_cli(app)

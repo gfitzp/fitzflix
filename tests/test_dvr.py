@@ -702,6 +702,27 @@ def test_build_keeps_stored_lineups_while_a_share_is_offline(app, monkeypatch):
     }
 
 
+def test_the_library_check_asks_the_watchdog_for_each_library(app, monkeypatch):
+    """Test that the build asks volume_alive for both libraries (#624).
+
+    The check uses the mount watchdog of app.maintenance. A dead TV
+    library makes the whole library read as offline."""
+
+    from app import dvr
+
+    monkeypatch.undo()
+    asked = []
+
+    def alive(path, timeout=10):
+        asked.append(path)
+        return path != app.config["TV_LIBRARY"]
+
+    monkeypatch.setattr(dvr, "volume_alive", alive)
+    with app.app_context():
+        assert dvr._library_online() is False
+    assert asked == [app.config["MOVIE_LIBRARY"], app.config["TV_LIBRARY"]]
+
+
 def test_build_keeps_stored_lineups_when_every_probe_fails(app, monkeypatch):
     """Test that a build keeps the stored lineups when every probe fails.
 

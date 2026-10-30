@@ -202,13 +202,6 @@ def cron_table(config):
         # no record claims. It waits until every queue is idle. It was out
         # of the table during the WEBDL rebuild.
         ("0 2 * * 0", "app.videos.sync_aws_s3_storage_task"),
-        # Ask every library file if the NAS still holds its handle. The
-        # state is invisible until the close of an upload fails. Thus,
-        # the sweep asks nightly instead of waiting for a surprise. 05:00
-        # is after the other maintenance of the night and far outside the
-        # viewing hours. It is approximately 21k opens over SMB, about 1
-        # minute of work, and Plex reads the same shares.
-        ("0 5 * * *", "app.maintenance.smb_handle_sweep"),
         ("*/10 * * * *", "app.maintenance.health_probe"),
         # Sync the Letterboxd diaries from the RSS feed of each user. The
         # task does nothing for the users without a configured username.
@@ -350,7 +343,7 @@ def cron_table(config):
 
     # Check the Radarr movie paths nightly (#266). A rename or an import
     # reports its new folder to Radarr at once. A push that fails while
-    # Radarr is down is repaired here. 05:40 is after the SMB sweep.
+    # Radarr is down is repaired here.
 
     if config.get("RADARR_URL") and config.get("RADARR_API_KEY"):
         table.append(("40 5 * * *", "app.radarr_push.reconcile_radarr_paths"))

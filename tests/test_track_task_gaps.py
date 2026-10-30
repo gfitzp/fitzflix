@@ -145,7 +145,6 @@ def test_any_raise_of_an_edit_queues_one_scan_and_frees_the_lock(
 
     file_id, identifier, path = _library_row(app, f"Any Raise {task[:9]}")
     monkeypatch.setattr(tracks, body, _failing_unlocked(errno.EACCES))
-    monkeypatch.setattr(tracks, "probe_and_record", lambda *args, **kwargs: None)
     try:
         with pytest.raises(OSError):
             getattr(tracks, task)(file_id, *edit)
@@ -463,7 +462,6 @@ def test_two_transient_retries_of_different_edits_both_wait(app, monkeypatch):
         raise OSError(errno.EIO, "simulated share fault")
 
     monkeypatch.setattr(tracks, "mkvpropedit_unlocked", flaky)
-    monkeypatch.setattr(tracks, "probe_and_record", lambda *args, **kwargs: None)
     file_id, _, path = _library_row(app, "Two Retries")
     try:
         with app.app_context():

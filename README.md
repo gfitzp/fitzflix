@@ -594,7 +594,6 @@ Run these commands from the project root, with the venv active. Each command put
 | `flask tv rename <series_id> <new_title>` | Renames a TV series on the disk and in the database. The untouched names and the archive keys follow. |
 | `flask catalog exclude <movie_id>` | Deletes a false catalog record and blocks its TMDB id from the catalog loads |
 | `flask catalog reassign` | Assigns the stored Criterion releases to each movie again, with no Wikidata query |
-| `flask smb probe --all` | Probes each library file for the SMB lost-handle state. `--file-id` and `--since` probe fewer files. The `smb` group also has `status`, `repair`, `history`, and `recheck`. |
 | `flask audio atmos [<file_id>]` | Queues E-AC-3 Atmos twins for one file, or for each TrueHD Atmos file of the library that has no twin |
 | `flask aws provision` | Creates or updates the AWS components. Refer to [AWS infrastructure](#aws-infrastructure). |
 | `flask aws converge-keys` | Lists the archives whose key differs from the key of their untouched name. `--apply` requests the moves. |

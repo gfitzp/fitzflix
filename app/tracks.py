@@ -47,7 +47,6 @@ from app.naming import hidden
 from app.cache import cached_fetch
 from app.settings import get_setting
 from app.plex_library import enqueue_plex_analyze
-from app.smb_probe import library_path, probe_and_record
 
 # A staged remux holds the staged source and the output on the local
 # disk at the same time (#298).
@@ -1165,18 +1164,7 @@ def mkvpropedit_task(
     )
 
     def run():
-        # Bulk writes over SMB put the files into the lost-handle state.
-        # Thus, probe this file directly at the end. Do not let the close
-        # of a later upload find the problem
-
-        probed_path = library_path(db.session.get(File, int(file_id)))
-        try:
-            edited = mkvpropedit_unlocked(*edit_args)
-        except OSError:
-            probe_and_record(probed_path, context="mkvpropedit_task")
-            raise
-        probe_and_record(probed_path, context="mkvpropedit_task")
-        return edited
+        return mkvpropedit_unlocked(*edit_args)
 
     def retry(error, name):
         """Book the edit again after a transient I/O fault of the share.

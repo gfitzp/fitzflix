@@ -72,12 +72,6 @@ TASKS = {
         "Syncing files with AWS S3 storage",
         command="flask sync",
     ),
-    "app.maintenance.smb_handle_sweep": TaskSpec(
-        "maintenance",
-        3600,
-        "Probing library files for lost SMB handles",
-        command="flask smb probe --all",
-    ),
     "app.maintenance.health_probe": TaskSpec(
         "maintenance", 600, "Probing system health"
     ),
