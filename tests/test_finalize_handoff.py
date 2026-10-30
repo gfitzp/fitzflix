@@ -8,6 +8,8 @@ file."""
 
 import os
 
+import pytest
+
 
 def _lock_watch(app, monkeypatch):
     unlocked = []
@@ -491,3 +493,46 @@ def test_a_failed_lock_refresh_during_the_encode_keeps_the_source(
     assert result is False
     assert len(calls) == 2
     _assert_not_rejected(app, str(source))
+
+
+@pytest.mark.parametrize(
+    "fault, kept",
+    [(ConnectionError("Redis is away"), True), (RuntimeError("a coding bug"), False)],
+)
+def test_the_move_has_one_cleanup_for_a_failed_booking(
+    app, incoming_dir, monkeypatch, fault, kept
+):
+    """Only a failed booking keeps the source (#623).
+
+    The lock extension books through handoff like every other booking.
+    A coding bug in the checks before the copy rejects the source, as
+    everywhere else in the stage."""
+
+    import app.importing as importing
+    import app.videos as videos
+    from tests.localization_helpers import rejected_files
+    from tests.test_localization import space_move_fixture
+
+    basename = f"One Cleanup {kept} (2021) - [DVD].mkv"
+    source, hidden, details = space_move_fixture(app, incoming_dir, basename)
+
+    def broken(*args, **kwargs):
+        raise fault
+
+    if kept:
+        monkeypatch.setattr(importing, "_hold_title_lock", broken)
+    else:
+        monkeypatch.setattr(videos, "_dead_volumes", broken)
+    unlocked = _lock_watch(app, monkeypatch)
+    try:
+        with app.app_context():
+            lock = app.lock_manager.lock(f'{{"title": "One Cleanup {kept}"}}', 60000)
+            videos.move_localized_file(source, details, lock, hidden)
+        assert lock in unlocked
+        assert not os.path.exists(hidden)
+        assert os.path.exists(source) is kept
+        assert (basename in rejected_files(app)) is not kept
+    finally:
+        for path in (source, hidden):
+            if os.path.exists(path):
+                os.remove(path)

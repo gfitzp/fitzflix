@@ -2113,7 +2113,7 @@ def move_localized_file(
             If another task holds the title lock, the copy waits for the
             lock instead (#353)."""
 
-            if not _hold_title_lock(lock, basename):
+            if not handoff(_hold_title_lock, lock, basename):
                 return defer()
             _log_space_wait(
                 basename, directory or output_directory, needed, shortfall, space_waits
@@ -2126,13 +2126,14 @@ def move_localized_file(
                 SPACE_WAIT, "waits for space", level=None, space_waits=space_waits + 1
             )
 
-        # The lock defer, the volume retry and the space wait book a job.
-        # A Redis fault there failed the job. Then the lock, the hidden
-        # output and the reservation stayed (follow-up #521). They get the
-        # handler of the copy.
+        # Each booking goes through handoff: the lock extension, the lock
+        # defer, the volume retry, the space wait and the next stage. Thus,
+        # the 1 HandoffFailed handler below cleans up after each of them
+        # (follow-up #521, #623).
 
+        staged_output = None
         try:
-            if not _hold_title_lock(lock, basename):
+            if not handoff(_hold_title_lock, lock, basename):
                 return defer()
 
             # Defer if a necessary volume is dead. The task keeps the title lock
@@ -2173,19 +2174,7 @@ def move_localized_file(
                     f"'{basename}' The space is available again after "
                     f"{space_waits} wait(s). Copying"
                 )
-        except Exception:
-            # HandoffFailed, or a Redis fault of the lock. The source stays
-            # for the hourly sweep.
-            abandon_handoff(
-                source_path,
-                lock,
-                hidden_output_file,
-                pending_archive=pending_archive_of(file_details),
-            )
-            return False
 
-        staged_output = None
-        try:
             job = get_current_job()
 
             # The final flag edits and the metadata extraction occur here,
@@ -2276,9 +2265,27 @@ def move_localized_file(
                     transient_retries=transient_retries + 1,
                 )
 
+            # The next stage gets the title lock. A failed enqueue must not
+            # keep the lock for its full TTL, or leave the copies behind
+            # (#437).
+
+            handoff(
+                enqueue_task,
+                "app.videos.finalize_localization",
+                source_path,
+                file_details,
+                lock,
+                destination_hidden,
+                inspection,
+                staged_output=staged_output,
+                vanished_retries=vanished_retries,
+                description=f"'{basename}'",
+            )
+
         except HandoffFailed:
-            # A retry could not be booked (#521). The source is good. It
-            # stays for the hourly sweep, as after a failed enqueue below.
+            # A booking failed (#521). Only Redis failed. The source is
+            # good. It stays for the hourly sweep, and the lock and the
+            # copies go.
 
             _remove_staged_output(destination_hidden)
             abandon_handoff(
@@ -2300,32 +2307,6 @@ def move_localized_file(
                 strays=(hidden_output_file, destination_hidden),
                 pending_archive=pending_archive_of(file_details),
             )
-
-        else:
-            # A failed enqueue must not keep the title lock for its full
-            # TTL, or leave the copies behind (#437). The source stays in
-            # the import directory for the hourly sweep.
-            try:
-                enqueue_task(
-                    "app.videos.finalize_localization",
-                    source_path,
-                    file_details,
-                    lock,
-                    destination_hidden,
-                    inspection,
-                    staged_output=staged_output,
-                    vanished_retries=vanished_retries,
-                    description=f"'{basename}'",
-                )
-            except Exception:
-                _remove_staged_output(destination_hidden)
-                abandon_handoff(
-                    source_path,
-                    lock,
-                    hidden_output_file,
-                    pending_archive=pending_archive_of(file_details),
-                )
-                return False
 
         return True
 
@@ -2455,27 +2436,24 @@ def finalize_localization(
             "lock_waits": lock_waits,
         }
 
-        # A dead volume, or a Sonarr wait, can requeue this task for
-        # longer than the lock TTL. Then a new import of the same title
-        # can take the lock. This check comes first. Thus, each retry
-        # extends the lock, or waits for the other task (#520).
+        # A failure before the commit must not leave the new file in the
+        # library with no record (#316). The handler needs to know if the
+        # rename happened, and if it replaced a file at that path. None
+        # means that the rename did not happen. Each booking goes through
+        # handoff. Thus, the 1 HandoffFailed handler below cleans up after
+        # each of them (#623).
 
+        placement = None
         try:
-            held = _hold_title_lock(lock, basename)
-        except Exception:
-            # A Redis fault of the lock extension (#568). The source stays
-            # for the hourly sweep, as after a failed retry (#521).
-            _remove_staged_output(hidden_output_file)
-            abandon_handoff(
-                file_path,
-                lock,
-                staged_output,
-                pending_archive=pending_archive_of(file_details),
-            )
-            return False
-        if not held:
-            try:
-                defer_for_title_lock(
+            # A dead volume, or a Sonarr wait, can requeue this task for
+            # longer than the lock TTL. Then a new import of the same title
+            # can take the lock. This check comes first. Thus, each retry
+            # extends the lock, or waits for the other task (#520). A Redis
+            # fault of the extension is a failed hand-off too (#568).
+
+            if not handoff(_hold_title_lock, lock, basename):
+                handoff(
+                    defer_for_title_lock,
                     "app.videos.finalize_localization",
                     (
                         file_path,
@@ -2489,25 +2467,16 @@ def finalize_localization(
                     file_path,
                     basename,
                 )
-            except Exception:
-                # The source stays for the hourly sweep (#521).
-                _remove_staged_output(hidden_output_file)
-                abandon_handoff(
-                    file_path,
-                    lock,
-                    staged_output,
-                    pending_archive=pending_archive_of(file_details),
-                )
-            return False
+                return False
 
-        # Defer if a necessary volume is dead. Do this before the records.
-        # Then the task keeps the title lock for the retry and does not
-        # release it.
+            # Defer if a necessary volume is dead. Do this before the
+            # records. Then the task keeps the title lock for the retry and
+            # does not release it.
 
-        dead = _dead_volumes([output_directory, os.path.dirname(file_path)])
-        if dead:
-            try:
-                requeue(
+            dead = _dead_volumes([output_directory, os.path.dirname(file_path)])
+            if dead:
+                handoff(
+                    requeue,
                     "app.videos.finalize_localization",
                     key=file_path,
                     delay=timedelta(minutes=5),
@@ -2519,25 +2488,8 @@ def finalize_localization(
                     kwargs={"inspection": inspection, "staged_output": staged_output},
                     description=f"'{file_details.get('basename')}'",
                 )
-            except Exception:
-                # The retry could not be booked (#437). The source stays
-                # for the hourly sweep, and the lock and the copies go.
-                _remove_staged_output(hidden_output_file)
-                abandon_handoff(
-                    file_path,
-                    lock,
-                    staged_output,
-                    pending_archive=pending_archive_of(file_details),
-                )
-            return False
+                return False
 
-        # A failure before the commit must not leave the new file in the
-        # library with no record (#316). The handler needs to know if the
-        # rename happened, and if it replaced a file at that path. None
-        # means that the rename did not happen.
-
-        placement = None
-        try:
             output_file = os.path.join(
                 current_app.config["LIBRARY_DIR"], file_details.get("file_path")
             )
@@ -2591,9 +2543,9 @@ def finalize_localization(
             _commit_records(file, kept_archives, file_path)
 
         except HandoffFailed:
-            # A retry or the hand-off to the move could not be queued
-            # (#521). The source is good. It stays for the hourly sweep,
-            # and the lock and the copies go.
+            # A lock extension, a retry or the hand-off to the move could
+            # not be booked (#437, #521, #568). The source is good. It stays
+            # for the hourly sweep, and the lock and the copies go.
 
             db.session.rollback()
             _remove_staged_output(hidden_output_file)
