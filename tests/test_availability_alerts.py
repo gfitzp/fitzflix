@@ -606,9 +606,9 @@ def test_a_refused_mail_stops_no_other_digest_and_waits_for_the_next_run(
             marker = SENT_KEY.format(
                 user_id=admin.id, movie_id=movie_id, kind="streaming"
             )
-            # A refused digest plants no marker and no badge (#377 follow-up).
-            assert not app.redis.exists(marker)
-            assert recent_availability(admin) == {}
+            # The run plants the marker and the badge at detection (#631).
+            assert app.redis.exists(marker)
+            assert recent_availability(admin)[movie_id]["label"] == "New on Netflix"
 
         # The next run finds no new event, but it sends the digest that waited.
         run_task(app, monkeypatch)
@@ -665,13 +665,14 @@ def test_a_resent_digest_drops_a_film_that_left_the_watchlist(app, monkeypatch):
             from app.availability_alerts import recent_availability
 
             user = User.query.filter_by(email=MEMBER_EMAIL).one()
-            assert set(recent_availability(user)) == {kept_id}
+            # Both films got their badge at detection (#631).
+            assert set(recent_availability(user)) == {kept_id, gone_id}
     finally:
         reset_alert_users(app)
 
 
-def test_an_unsent_digest_keeps_its_marks_when_mail_goes_off(app, monkeypatch, caplog):
-    """Test that a refused digest plants its marks after the user stops the mail (#403)."""
+def test_an_unsent_digest_goes_when_mail_goes_off(app, monkeypatch):
+    """Test that a user who stops the mail loses the stored digest, not the marker (#631)."""
 
     import app.availability_alerts as alerts
 
@@ -690,60 +691,6 @@ def test_an_unsent_digest_keeps_its_marks_when_mail_goes_off(app, monkeypatch, c
         plant_availability(app, 9051, {**EMPTY, "flatrate": [NETFLIX]})
         run_task(app, monkeypatch)
 
-        with app.app_context():
-            from app.availability_alerts import (
-                SENT_KEY,
-                UNSENT_KEY,
-                recent_availability,
-            )
-
-            user = User.query.filter_by(email=MEMBER_EMAIL).one()
-            unsent = UNSENT_KEY.format(user_id=user.id)
-            marker = SENT_KEY.format(
-                user_id=user.id, movie_id=movie_id, kind="streaming"
-            )
-            assert app.redis.exists(unsent)
-            assert not app.redis.exists(marker)
-
-        set_alert_flags(app, MEMBER_EMAIL, availability=False)
-        run_task(app, monkeypatch)
-        with app.app_context():
-            user = User.query.filter_by(email=MEMBER_EMAIL).one()
-            assert not app.redis.exists(unsent)
-            assert app.redis.exists(marker)
-            assert recent_availability(user)[movie_id]["label"] == "New on Netflix"
-        assert "because the user gets no mail" in caplog.text
-    finally:
-        reset_alert_users(app)
-
-
-def test_an_unsent_digest_keeps_its_marks_after_the_watchlist_empties(
-    app, monkeypatch, caplog
-):
-    """Test the stored digest of a user that the run no longer visits (#403 follow-up).
-
-    The digest is refused. Then the user turns the mail off and empties
-    the watchlist. The run visits only watchlist users, but the marks
-    are still planted."""
-
-    import app.availability_alerts as alerts
-
-    from app import db
-    from app.models import User, UserWatchlist
-
-    def refuse(subject, **kwargs):
-        raise ConnectionRefusedError("the mail server refused the message")
-
-    monkeypatch.setattr(alerts, "task_send_email", refuse)
-    set_alert_flags(app, MEMBER_EMAIL, availability=True)
-    try:
-        movie_id = watchlist_movie(app, "Emptied Debut", 9061)
-        subscribe(app, 8, "Netflix", email=MEMBER_EMAIL)
-        plant_availability(app, 9061, EMPTY)
-        run_task(app, monkeypatch)
-        plant_availability(app, 9061, {**EMPTY, "flatrate": [NETFLIX]})
-        run_task(app, monkeypatch)
-
         from app.availability_alerts import SENT_KEY, UNSENT_KEY
 
         with app.app_context():
@@ -753,17 +700,12 @@ def test_an_unsent_digest_keeps_its_marks_after_the_watchlist_empties(
                 user_id=user.id, movie_id=movie_id, kind="streaming"
             )
             assert app.redis.exists(unsent)
-            UserWatchlist.query.filter_by(user_id=user.id).delete()
-            db.session.commit()
-            # A digest of a deleted user goes away.
-            app.redis.set(UNSENT_KEY.format(user_id=987654), "{}")
+            assert app.redis.exists(marker)
 
         set_alert_flags(app, MEMBER_EMAIL, availability=False)
         run_task(app, monkeypatch)
         assert not app.redis.exists(unsent)
         assert app.redis.exists(marker)
-        assert not app.redis.exists(UNSENT_KEY.format(user_id=987654))
-        assert "the watchlist of the user is empty" in caplog.text
     finally:
         reset_alert_users(app)
 
@@ -771,7 +713,7 @@ def test_an_unsent_digest_keeps_its_marks_after_the_watchlist_empties(
 def test_an_unsent_digest_that_expires_is_an_error(app, monkeypatch, caplog):
     """A digest that waited longer than UNSENT_SECONDS is lost, loudly (#377 follow-up)."""
 
-    from app.availability_alerts import UNSENT_KEY, _Marks, _with_unsent
+    from app.availability_alerts import UNSENT_KEY, _with_unsent
     from app.models import User
 
     with app.app_context():
@@ -792,13 +734,12 @@ def test_an_unsent_digest_that_expires_is_an_error(app, monkeypatch, caplog):
             ),
         )
         events = {"local": [], "streaming": [], "rent": [], "leaving": []}
-        marks = _Marks(user.id)
-        merged, since = _with_unsent(user.id, events, marks)
+        merged, since = _with_unsent(user.id, events)
+        # A digest stored before #631 plants its old markers.
+        assert app.redis.exists(sent_key)
+        app.redis.delete(sent_key)
     assert merged == events
     assert since == date.today().isoformat()
-    # The events are lost, but their marks stay (#543).
-    assert marks.sent == {sent_key: 600}
-    assert marks.recent == [(1, "Now on Netflix")]
     assert any(
         record.levelname == "ERROR" and "was never sent" in record.getMessage()
         for record in caplog.records
