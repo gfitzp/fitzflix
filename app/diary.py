@@ -52,17 +52,13 @@ PLEX_TMDB_SECONDS = 604800
 
 # The marker of 1 recorded Plex watch per user, film and day. The
 # webhook and the history poll both record a watch. The marker keeps
-# the second from adding a row.
+# the second from adding a row. A poll cursor held before a failed
+# lookup reads later watches again (#379). The cached account names
+# give such a watch the same key. The 30-day life outlasts the hold
+# (#635).
 
 PLEX_WATCH_KEY = "fitzflix:plex:watch:{username}:{tmdb_id}:{day}"
-PLEX_WATCH_SECONDS = 2 * 86400
-
-# The marker of 1 watch of the Plex history, by film and exact viewedAt
-# (#379). The history poll can read a watch again after the day marker
-# expired. This marker keeps the watch from adding to the priority again.
-
-PLEX_HISTORY_WATCH_KEY = "fitzflix:plex:history-watch:{tmdb_id}:{viewed_at}"
-PLEX_HISTORY_WATCH_SECONDS = 30 * 86400
+PLEX_WATCH_SECONDS = 30 * 86400
 
 # The history entries at the second of the poll cursor that a poll has
 # handled (#425).
@@ -673,7 +669,7 @@ def apply_plex_watch(tmdb_id, plex_username, viewed_at, source):
     """
 
     with app.app_context():
-        marker = history_marker = None
+        marker = None
         try:
             # This is the full timestamp in local wall-clock time, as in
             # each other diary writer. The calendar day for dedup and
@@ -684,15 +680,6 @@ def apply_plex_watch(tmdb_id, plex_username, viewed_at, source):
                 datetime.fromisoformat(viewed_at).astimezone().replace(tzinfo=None)
             )
             day_start = datetime(watched_at.year, watched_at.month, watched_at.day)
-            if source == "history":
-                history_marker = PLEX_HISTORY_WATCH_KEY.format(
-                    tmdb_id=tmdb_id, viewed_at=viewed_at
-                )
-                if not current_app.redis.set(
-                    history_marker, source, nx=True, ex=PLEX_HISTORY_WATCH_SECONDS
-                ):
-                    history_marker = None
-                    return True
             marker = PLEX_WATCH_KEY.format(
                 username=plex_username,
                 tmdb_id=tmdb_id,
@@ -781,14 +768,13 @@ def apply_plex_watch(tmdb_id, plex_username, viewed_at, source):
 
             # The watch is not recorded. Thus, release the marker. Then
             # the other source (the webhook or the history poll) records
-            # the watch. Else the marker blocks it for 2 days.
+            # the watch. Else the marker blocks it for 30 days.
 
-            for key in (marker, history_marker):
-                if key:
-                    try:
-                        current_app.redis.delete(key)
-                    except Exception:
-                        pass
+            if marker:
+                try:
+                    current_app.redis.delete(marker)
+                except Exception:
+                    pass
             return False
 
         else:

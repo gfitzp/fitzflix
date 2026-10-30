@@ -821,7 +821,7 @@ def test_an_item_that_comes_back_after_a_404_is_recorded(app, plex_server, monke
 
 
 def test_a_history_watch_read_again_adds_to_the_priority_once(app):
-    """The day marker lasts 2 days. A watch that the poll reads again later counts once (#379)."""
+    """The day marker lasts 30 days. A watch that the poll reads again later counts once (#379, #635)."""
 
     from app.diary import PLEX_WATCH_KEY
 
@@ -830,11 +830,11 @@ def test_a_history_watch_read_again_adds_to_the_priority_once(app):
         movie = make_movie("Read Twice", 2001, tmdb_id=4801)
         db.session.commit()
         assert apply_plex_watch(4801, "glenn-plex", viewed_at, "history") is True
-        for key in app.redis.scan_iter(
-            PLEX_WATCH_KEY.format(username="*", tmdb_id=4801, day="*")
-        ):
-            app.redis.delete(key)
-        assert apply_plex_watch(4801, "account-1", viewed_at, "history") is True
+        (marker,) = app.redis.scan_iter(
+            PLEX_WATCH_KEY.format(username="glenn-plex", tmdb_id=4801, day="*")
+        )
+        assert app.redis.ttl(marker) > 29 * 86400
+        assert apply_plex_watch(4801, "glenn-plex", viewed_at, "history") is True
         db.session.expire_all()
         assert db.session.get(Movie, movie.id).shopping_cart_priority == 1
 
