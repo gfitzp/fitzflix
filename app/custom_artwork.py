@@ -57,10 +57,11 @@ def sync_folder_poster(movie, dirname, lost=None):
     of the folder, in id order, with a file-scoped original on disk.
     Then comes the original of the movie. With no winner, the library
     copy named lost goes. lost is the poster name of the record that lost
-    its poster. A folder that is not on disk has no copy to change."""
+    its poster. A folder that is not on disk has no copy to change. A
+    file with no movie record has no folder rule."""
 
     library_directory = os.path.join(current_app.config["LIBRARY_DIR"], dirname)
-    if not os.path.isdir(library_directory):
+    if movie is None or not os.path.isdir(library_directory):
         return
     files = (
         File.query.filter(File.movie_id == movie.id)

@@ -249,3 +249,32 @@ def test_a_rename_without_a_poster_keeps_the_poster_of_a_sibling(
     finally:
         shutil.rmtree(old_dir, ignore_errors=True)
         shutil.rmtree(target_dir, ignore_errors=True)
+
+
+def test_a_file_with_no_movie_has_no_folder_rule(app):
+    """sync_folder_poster does nothing for a file that no movie owns."""
+
+    from app.custom_artwork import sync_folder_poster
+
+    with app.app_context():
+        assert sync_folder_poster(None, "Nowhere (2020)") is None
+
+
+def test_a_poster_remove_keeps_the_tree_until_the_commit(app, monkeypatch):
+    """A failed commit of a poster remove leaves the custom tree on disk."""
+
+    from app.main.posters import _remove_movie_poster
+
+    with app.app_context():
+        movie = make_movie("Kept Tree", 2020)
+        db.session.commit()
+        movie.custom_poster = "poster.jpg"
+        db.session.commit()
+        base = _tree(app, "movie", movie.id)
+
+        def refuse():
+            raise RuntimeError("commit refused")
+
+        monkeypatch.setattr(db.session, "commit", refuse)
+        assert "Unable to remove" in _remove_movie_poster(movie)
+        assert os.path.isdir(base)

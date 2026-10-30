@@ -30,6 +30,7 @@ from werkzeug.datastructures import FileStorage
 
 from app.custom_artwork import (
     custom_artwork_dir,
+    remove_custom_artwork_after_commit,
     remove_episode_thumb_of,
     sync_folder_poster,
 )
@@ -267,9 +268,9 @@ def _assign_file_poster(file, uploaded_data):
 def _remove_movie_poster(movie):
     """Delete the custom poster of a movie.
 
-    This function deletes the custom-artwork tree and the precedence
-    column. sync_folder_poster then decides the copy in each
-    main-feature folder. Return a message to flash on failure, or None
+    This function clears the precedence column, and the custom-artwork
+    tree goes after the commit. sync_folder_poster then decides the copy
+    in each main-feature folder. Return a message to flash on failure, or None
     on success.
     """
 
@@ -278,7 +279,7 @@ def _remove_movie_poster(movie):
         movie.custom_poster = None
         for dirname in _main_feature_dirnames(movie):
             sync_folder_poster(movie, dirname, lost=poster_filename)
-        shutil.rmtree(custom_artwork_dir("movie", movie.id), ignore_errors=True)
+        remove_custom_artwork_after_commit(db.session, "movie", movie.id)
         db.session.commit()
         if movie.criterion_spine_number:
             enqueue_criterion_sync()
@@ -309,7 +310,7 @@ def _remove_file_poster(file):
             remove_episode_thumb_of(os.path.join(library_directory, file.basename))
         elif file.feature_type_id == None:
             sync_folder_poster(file.movie, file.dirname, lost=poster_filename)
-        shutil.rmtree(custom_artwork_dir("file", file.id), ignore_errors=True)
+        remove_custom_artwork_after_commit(db.session, "file", file.id)
         db.session.commit()
 
     except Exception:
