@@ -5,8 +5,13 @@ import os
 import pytest
 
 from app import db
-from app.file_ranking import find_better_files, find_worse_files
-from app.models import File, Movie, RefQuality, TVSeries, movie_file_rank, tv_file_rank
+from app.file_ranking import (
+    find_better_files,
+    find_worse_files,
+    movie_file_rank,
+    tv_file_rank,
+)
+from app.models import File, Movie, RefQuality, TVSeries
 
 from tests.factories import make_movie, make_movie_file, make_tv_file, make_tv_series
 

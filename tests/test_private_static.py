@@ -54,12 +54,9 @@ def test_an_audio_sample_serves_through_the_route(app, user_client):
 
 
 def test_the_private_static_subtrees_refuse_an_anonymous_request(client, user_client):
-    for path in (
-        "/static/custom/movie/1/poster.jpg",
-        "/static/triage/12995/2/snap-5.jpg",
-    ):
-        assert client.get(path).status_code == 401
-        assert user_client.get(path).status_code != 401
+    path = "/static/custom/movie/1/poster.jpg"
+    assert client.get(path).status_code == 401
+    assert user_client.get(path).status_code != 401
 
     # The public assets of the site stay public
     assert client.get("/static/sw.js").status_code != 401

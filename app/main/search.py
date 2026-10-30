@@ -19,17 +19,9 @@ from flask import (
 from flask_login import current_user, login_required
 
 from app import db
-from app.models import (
-    File,
-    Movie,
-    RefQuality,
-    TMDBCredit,
-    TVSeries,
-    UserMovieReview,
-    ranked_tv_files,
-)
+from app.models import File, Movie, RefQuality, TMDBCredit, TVSeries, UserMovieReview
 from app.main import bp
-from app.file_ranking import MOVIE_BEST_ORDER, copy_upgradable
+from app.file_ranking import MOVIE_BEST_ORDER, copy_upgradable, ranked_tv_files
 from app.tmdb_apply import tmdb_json
 from app.main.helpers import (
     _upgrade_threshold,

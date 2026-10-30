@@ -4,8 +4,7 @@ TMDBMixin holds the fetch and apply methods that Movie and TVSeries
 share. tmdb_get is the one rate-limited GET of the TMDB API. The other
 names are the pieces of the apply tables. app.models imports this
 module before it defines the models. Thus, this module imports the
-models only inside the functions that use them. app.models re-exports
-every public name of this module."""
+models only inside the functions that use them."""
 
 import traceback
 

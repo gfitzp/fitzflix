@@ -34,13 +34,8 @@ from werkzeug.local import LocalProxy
 
 from app import db, get_app
 from app.maintenance import missing_volumes
-from app.file_ranking import episode_rankings, tv_rank_rows
-from app.models import (
-    File,
-    Movie,
-    RefQuality,
-    movie_file_rank,
-)
+from app.file_ranking import episode_rankings, tv_rank_rows, movie_file_rank
+from app.models import File, Movie, RefQuality
 
 # This is the app instance of this process. Fitzflix resolves it lazily.
 # Thus, the task can run on a worker without a second application

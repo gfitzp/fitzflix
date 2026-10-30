@@ -46,7 +46,8 @@ from werkzeug.local import LocalProxy
 
 from app.tasks import enqueue_task
 from app import db, get_app
-from app.models import File, Movie, RefQuality, ranked_movie_files
+from app.models import File, Movie, RefQuality
+from app.file_ranking import ranked_movie_files
 from app.plex_api import plex_get, plex_write
 
 app = LocalProxy(get_app)

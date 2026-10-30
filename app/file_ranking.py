@@ -4,10 +4,7 @@ This module holds the one rule that selects the best copy of a film or
 of an episode. It also holds the one rule that tells if that copy is
 worth an upgrade. The reads of the quality tiers are here too. The ranked_files reporting view of MariaDB has the same rule. Its
 definition is RANKED_FILES_VIEW below, and a test compiles the Python
-rank and compares it with that definition.
-
-app.models re-exports the public names of this module. Thus, the old
-imports of the rank functions from app.models stay correct."""
+rank and compares it with that definition."""
 
 from collections import namedtuple
 

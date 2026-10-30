@@ -438,7 +438,7 @@ def test_tv_clear_invalidates_the_people_ranking(app):
     rankings must go. The movie clear already deletes them the same
     way."""
 
-    from app.models import PEOPLE_RANKING_KEY
+    from app.tmdb_apply import PEOPLE_RANKING_KEY
 
     with app.app_context():
         series = enriched_series()

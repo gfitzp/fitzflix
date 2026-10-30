@@ -14,13 +14,12 @@ from flask_login import current_user, login_required
 from app.main import bp
 
 # The static subtrees that hold library material. The triage aids moved
-# out of the static tree (#468). The gate also covers a copy left at the
-# old place. The custom posters stay static, but only a signed-in user
+# out of the static tree (#468). The custom posters stay static, but only a signed-in user
 # gets them. The gate answers 401, not a redirect. The service worker
 # keeps each successful static response, and a followed redirect to the
 # sign-in page is a successful response.
 
-PRIVATE_STATIC_PREFIXES = ("/static/custom/", "/static/triage/")
+PRIVATE_STATIC_PREFIXES = ("/static/custom/",)
 
 
 @bp.before_app_request

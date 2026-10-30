@@ -10,17 +10,14 @@ import pytest
 import app.importing as importing
 import app.videos as videos
 from app import db
-from app.models import (
-    ArchivedOriginal,
-    File,
-    HeldImport,
-    Movie,
-    RefQuality,
-    TVSeries,
+from app.models import ArchivedOriginal, File, HeldImport, Movie, RefQuality, TVSeries
+from app.file_ranking import (
+    find_better_files,
+    find_worse_files,
+    real_rips_blocking,
     movie_file_rank,
     tv_file_rank,
 )
-from app.file_ranking import find_better_files, find_worse_files, real_rips_blocking
 from app.sdr_conversion import (
     converted_file_details,
     converted_quality_title,

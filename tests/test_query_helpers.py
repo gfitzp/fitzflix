@@ -21,7 +21,7 @@ def test_title_sort_skips_the_article_and_prefers_the_tmdb_title(app):
 
 
 def test_ranked_files_mark_the_best_copy_as_rank_1(app):
-    from app.models import ranked_movie_files, ranked_tv_files
+    from app.file_ranking import ranked_movie_files, ranked_tv_files
     from tests.factories import (
         make_movie,
         make_movie_file,

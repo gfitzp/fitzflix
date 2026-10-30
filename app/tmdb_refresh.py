@@ -44,7 +44,6 @@ from app.models import (
     Movie,
     MovieAward,
     RefTMDBCertification,
-    TMDBUnavailable,
     TVSeries,
     UserMovieReview,
     UserMovieStatus,
@@ -52,7 +51,7 @@ from app.models import (
     clip_movie_title,
     title_lock_key,
 )
-from app.tmdb_apply import canonical_movie_name, tmdb_json_or
+from app.tmdb_apply import canonical_movie_name, tmdb_json_or, TMDBUnavailable
 from app.naming import retag_quality, with_extension
 from app.title_keys import title_key
 

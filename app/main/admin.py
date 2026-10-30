@@ -79,10 +79,9 @@ from app.models import (
     RefFeatureType,
     RefQuality,
     TVSeries,
-    ranked_movie_files,
-    ranked_tv_files,
     title_sort,
 )
+from app.file_ranking import ranked_movie_files, ranked_tv_files
 from app.main import bp
 from app.main.helpers import (
     admin_required,

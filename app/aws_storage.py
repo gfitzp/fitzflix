@@ -60,13 +60,8 @@ from app import s3_layout
 from app import naming
 from app.queues import roster_queues
 from app.settings import get_setting
-from app.file_ranking import tv_best_holder_ids
-from app.models import (
-    ArchivedOriginal,
-    File,
-    RefQuality,
-    ranked_movie_files,
-)
+from app.file_ranking import tv_best_holder_ids, ranked_movie_files
+from app.models import ArchivedOriginal, File, RefQuality
 
 EIGHT_MEGABYTES = 8388608
 

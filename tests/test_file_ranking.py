@@ -46,7 +46,7 @@ def test_every_movie_best_copy_reader_prefers_the_real_rip(app, monkeypatch):
     from app.frames import _best_file
     from app.main.library import _films_and_features
     from app.main.search import _movie_search_results
-    from app.models import ranked_movie_files
+    from app.file_ranking import ranked_movie_files
 
     with app.app_context():
         movie, rip, conversion = _movie_pair()
@@ -85,7 +85,7 @@ def test_every_episode_best_copy_reader_prefers_the_real_rip(app, monkeypatch):
 
     import app.dvr as dvr
     from app.main.library import _season_files
-    from app.models import ranked_tv_files
+    from app.file_ranking import ranked_tv_files
 
     with app.app_context():
         series, rip, conversion = _episode_pair()

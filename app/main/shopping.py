@@ -35,7 +35,6 @@ from app.models import (
     User,
     UserMovieReview,
     UserWatchlist,
-    ranked_movie_files,
     sort_title,
     title_sort,
 )
@@ -53,6 +52,7 @@ from app.file_ranking import (
     quality_id,
     quality_preference,
     season_grades,
+    ranked_movie_files,
 )
 
 # This is the scarcity order of the watchlist view (#247, the ranking

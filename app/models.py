@@ -108,8 +108,8 @@ MOVIES = "Movies"
 TV_SHOWS = "TV Shows"
 
 # The TMDB fetch and apply half of the models lives in app.tmdb_apply.
-# The models below use these 4 names. The other names of that module
-# stay importable from app.models through __getattr__ at the end.
+# The models below use these 4 names. Import the other names of that
+# module from app.tmdb_apply (#644).
 
 from app.tmdb_apply import (  # noqa: E402
     TMDBAssociation,
@@ -1910,42 +1910,3 @@ def title_sort(model, tmdb=True):
         tmdb_title = model.tmdb_title if model is Movie else model.tmdb_name
         title = db.case((tmdb_title != None, tmdb_title), else_=model.title)
     return db.func.regexp_replace(title, "^(The|A|An) ", "")
-
-
-# The re-exports of app.models (#361). The quality ranking lives in
-# app.file_ranking and the TMDB fetch and apply in app.tmdb_apply. The
-# old imports from app.models stay correct. The import is lazy, because
-# those modules import the models of this module.
-
-_REEXPORTS = {
-    "app.file_ranking": (
-        "MOVIE_BEST_ORDER",
-        "TV_BEST_ORDER",
-        "movie_file_rank",
-        "tv_file_rank",
-        "ranked_movie_files",
-        "ranked_tv_files",
-    ),
-    "app.tmdb_apply": (
-        "PEOPLE_RANKING_KEY",
-        "TMDB_RATE_KEY",
-        "TMDBUnavailable",
-        "invalidate_people_ranking",
-        "pick_rating",
-        "tmdb_get",
-        "tmdb_json",
-        "tmdb_json_or",
-        "tmdb_objects",
-    ),
-}
-_REEXPORT_HOMES = {name: home for home, names in _REEXPORTS.items() for name in names}
-
-
-def __getattr__(name):
-    """Return a re-exported name from its home module."""
-
-    if name in _REEXPORT_HOMES:
-        from importlib import import_module
-
-        return getattr(import_module(_REEXPORT_HOMES[name]), name)
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

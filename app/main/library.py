@@ -71,7 +71,6 @@ from app.models import (
     RefFeatureType,
     RefQuality,
     TMDBCredit,
-    PEOPLE_RANKING_KEY,
     TMDBGenre,
     TVCast,
     TVCrew,
@@ -80,8 +79,6 @@ from app.models import (
     UserMovieStatus,
     UserWatchlist,
     movie_genres,
-    ranked_movie_files,
-    ranked_tv_files,
     sort_title,
     title_sort,
 )
@@ -95,6 +92,8 @@ from app.file_ranking import (
     criterion_settled,
     quality_anchors,
     season_grades,
+    ranked_movie_files,
+    ranked_tv_files,
 )
 from app.newly_added import poster_fold
 from app.infuse_player import infuse_only_formats
@@ -120,7 +119,7 @@ from app.main.helpers import (
 )
 from app.cache import cached_fetch
 from app.custom_artwork import remove_custom_artwork
-from app.tmdb_apply import PEOPLE_RANKING_SECONDS, tmdb_json_or
+from app.tmdb_apply import PEOPLE_RANKING_SECONDS, tmdb_json_or, PEOPLE_RANKING_KEY
 from app.funnel import might_interest, user_film_sets_by_id
 from app.recommendations import (
     JOB_TO_CLASS,
