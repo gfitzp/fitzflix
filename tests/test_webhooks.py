@@ -39,6 +39,16 @@ class TestWebhookAuth:
     def test_rejects_missing_auth(self, client, endpoint):
         assert client.post(endpoint, json={"eventType": "Test"}).status_code == 401
 
+    @pytest.mark.parametrize(
+        "email, key", [("", ADMIN_API_KEY), (ADMIN_EMAIL, "")], ids=["user", "key"]
+    )
+    def test_rejects_an_empty_username_or_key(self, client, endpoint, email, key):
+        # authenticate_api_request is the one check of the caller (#629).
+        response = client.post(
+            endpoint, json={"eventType": "Test"}, headers=auth_header(email, key)
+        )
+        assert response.status_code == 401
+
     def test_rejects_wrong_key(self, client, endpoint):
         response = client.post(
             endpoint,

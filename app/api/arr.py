@@ -38,17 +38,6 @@ def import_event_webhook(service, observe=None):
         def wrapper():
             response = jsonify({})
 
-            if not request.authorization:
-                response.status_code = 401
-                return response
-
-            if not (
-                request.authorization.get("username")
-                and request.authorization.get("password")
-            ):
-                response.status_code = 401
-                return response
-
             # The password field must hold the API key of the user. The
             # user must be an ADMIN. The handlers rename, delete, and
             # import files at the paths that the payload names. Thus, the
