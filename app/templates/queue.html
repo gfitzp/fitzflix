@@ -78,7 +78,9 @@
 			var headers = rowsEtag ? { "If-None-Match": rowsEtag } : {};
 			return fetch(ROWS_URL, { credentials: "same-origin", cache: "no-store", headers: headers })
 				.then(function(response) {
-					if (response.status !== 200) return;
+					// A redirect is the sign-in page after the session
+					// ended. It must not land in the table.
+					if (response.status !== 200 || response.redirected) return;
 					var etag = response.headers.get("ETag");
 					return response.text().then(function(html) {
 						var tbody = document.getElementById("all-tasks");

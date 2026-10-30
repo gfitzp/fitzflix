@@ -65,3 +65,17 @@ def test_the_queue_page_renders_without_rows(app, user_client, redis_down):
 
     response = user_client.get("/queue")
     assert response.status_code == 200
+
+
+def test_the_rows_poll_logs_no_traceback_while_redis_is_down(
+    app, user_client, redis_down, caplog
+):
+    """The rows fetch of an open Queue tab reads no trails in an outage.
+
+    The details are empty then. A trail read would log a traceback at
+    each 5-second poll (follow-up #639)."""
+
+    with caplog.at_level(logging.WARNING):
+        for _ in range(3):
+            assert user_client.get("/queue/rows").status_code == 200
+    assert "Traceback" not in caplog.text

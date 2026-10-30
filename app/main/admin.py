@@ -1925,16 +1925,18 @@ def _queue_rows():
     each second. Thus, a digest of the HTML changes at each poll (#639)."""
 
     from app.pipeline import pipeline_trails, queue_rows
-    from app.redis_guard import REDIS_DOWN_ERRORS, warn_redis_down
 
-    # A Redis outage gives an empty table, not a 500 (#476).
+    # A Redis outage gives an empty table, not a 500 (#476). The details
+    # are {} then, and the trails are not read. pipeline_trails logs its
+    # own traceback on a fault, and the once-a-minute warning of the
+    # details read is the one record of the outage.
 
     details = current_user.get_queue_details()
-    try:
-        trails = pipeline_trails(current_app.redis, limit=100, journey_only=True)
-    except REDIS_DOWN_ERRORS as error:
-        warn_redis_down("The Queue page", error)
-        trails = []
+    trails = (
+        pipeline_trails(current_app.redis, limit=100, journey_only=True)
+        if details
+        else []
+    )
     rows = queue_rows(details.get("all", []), trails)
     data = json.dumps([rows, current_user.admin], default=str, sort_keys=True)
     return rows, hashlib.sha1(data.encode()).hexdigest()
