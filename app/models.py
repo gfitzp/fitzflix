@@ -1046,6 +1046,11 @@ class File(db.Model):
     # None when no move is pending.
 
     aws_key_target = db.Column(db.String(255), index=True)
+
+    # The time of the first request of the pending move (#618). It is set
+    # and cleared with aws_key_target. The System page shows the oldest.
+
+    archive_move_requested_at = db.Column(db.DateTime)
     aws_filesize_bytes = db.Column(db.BigInteger)
     aws_date_uploaded = db.Column(db.DateTime)
     aws_date_deleted = db.Column(db.DateTime)

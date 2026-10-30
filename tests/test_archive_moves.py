@@ -770,11 +770,8 @@ def test_the_system_page_shows_the_pending_moves(app, admin_client):
         file = archived_film("Pending Page", 1966, key_name="Pending (1966).mkv")
         aws_storage.request_archive_move(file)
         db.session.commit()
-        app.redis.hset(
-            aws_storage.ARCHIVE_MOVE_REQUESTED_KEY,
-            str(file.id),
-            (datetime.now(timezone.utc) - timedelta(hours=3)).isoformat(),
-        )
+        file.archive_move_requested_at = datetime.now(timezone.utc) - timedelta(hours=3)
+        db.session.commit()
         assert aws_storage.pending_archive_moves()["count"] == 1
 
     page = admin_client.get("/system").get_data(as_text=True)
@@ -1018,34 +1015,59 @@ def test_a_download_wait_keeps_the_receipt_handle(app, s3):
         assert s3.sqs.deleted == []
 
 
-def test_a_redis_fault_does_not_lose_the_move(app, monkeypatch):
-    from app import aws_storage, db
+def test_the_request_time_is_set_and_cleared_with_the_target(app):
+    """One column holds the move state. Nothing outside the row records a move (#618).
 
-    def broken(*args, **kwargs):
-        raise ConnectionError("redis down")
+    The first request keeps its time. A purged row counts no more."""
+
+    from app import aws_storage, db
+    from app.models import File
 
     with app.app_context():
-        file = archived_film("Redis Fault", 1974, key_name="Redis Fault Old.mkv")
-        monkeypatch.setattr(app.redis, "hsetnx", broken)
-        assert aws_storage.request_archive_move(file) is True
-        db.session.commit()
-        assert [job.args for job in move_jobs(app)] == [(file.id,)]
-
-
-def test_a_purged_row_leaves_no_request_time(app):
-    from app import aws_storage, db
-
-    with app.app_context():
-        file = archived_film("Purged Move", 1975, key_name="Purged Old.mkv")
+        file = archived_film("Timed Move", 1975, key_name="Timed Old.mkv")
+        assert aws_storage.pending_archive_moves() == {"count": 0, "oldest": None}
         aws_storage.request_archive_move(file)
         db.session.commit()
-        assert app.redis.hexists(aws_storage.ARCHIVE_MOVE_REQUESTED_KEY, str(file.id))
+        first = file.archive_move_requested_at
+        assert first is not None
+        aws_storage.request_archive_move(file)
+        db.session.commit()
+        assert file.archive_move_requested_at == first
+        assert aws_storage.pending_archive_moves() == {"count": 1, "oldest": first}
+        assert not app.redis.keys("fitzflix:archive-move:*")
 
+        aws_storage.clear_archive_target(file)
+        db.session.commit()
+        assert file.archive_move_requested_at is None
+
+        aws_storage.request_archive_move(file)
+        db.session.commit()
         db.session.delete(file)
         db.session.commit()
-        assert not app.redis.hexists(
-            aws_storage.ARCHIVE_MOVE_REQUESTED_KEY, str(file.id)
+        assert aws_storage.pending_archive_moves() == {"count": 0, "oldest": None}
+        assert (
+            File.query.filter(File.archive_move_requested_at.isnot(None)).count() == 0
         )
+
+
+def test_the_migration_adds_the_move_request_time():
+    import importlib.util
+    import inspect
+
+    path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "migrations",
+        "versions",
+        "e5d2a8c47f13_file_archive_move_requested_at.py",
+    )
+    spec = importlib.util.spec_from_file_location("move_time_migration", path)
+    migration = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(migration)
+    assert migration.revision == "e5d2a8c47f13"
+    assert migration.down_revision == "b3a9d1e7c4f2"
+    source = inspect.getsource(migration.upgrade)
+    assert "archive_move_requested_at" in source and "add_column" in source
+    assert "drop_column" not in source
 
 
 def test_the_move_has_a_trail_stage(app):

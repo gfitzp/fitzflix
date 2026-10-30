@@ -2074,11 +2074,6 @@ def move_source(file):
     return getattr(file, _target_column(file))
 
 
-# The time of the first request of each pending move, by file id. The
-# System page shows the oldest. The row has no column for it.
-
-ARCHIVE_MOVE_REQUESTED_KEY = "fitzflix:archive-move:requested"
-
 # The session info key of the moves that wait for the commit of the
 # session. A move job that starts before the commit reads no target.
 
@@ -2086,13 +2081,18 @@ _MOVES_AFTER_COMMIT = "fitzflix_archive_moves"
 
 
 def clear_archive_target(file):
-    """Clear the pending target of a file. The caller commits."""
+    """Clear the pending target of a file and its request time. The caller commits."""
 
     file.aws_key_target = None
-    try:
-        current_app.redis.hdel(ARCHIVE_MOVE_REQUESTED_KEY, str(file.id))
-    except Exception:
-        current_app.logger.warning(traceback.format_exc())
+    file.archive_move_requested_at = None
+
+
+def _set_archive_target(file, target):
+    """Set the pending target of a file. The first request keeps its time (#618)."""
+
+    file.aws_key_target = target
+    if file.archive_move_requested_at is None:
+        file.archive_move_requested_at = datetime.now(timezone.utc)
 
 
 def request_archive_move(file, claims=None):
@@ -2115,55 +2115,17 @@ def request_archive_move(file, claims=None):
         current_app.logger.info(
             f"'{file.basename}' The archive '{source}' moves to '{target}'"
         )
-    file.aws_key_target = target
+    _set_archive_target(file, target)
     if claims is not None:
         claims.setdefault(target, set()).add(file.id)
     db.session.info.setdefault(_MOVES_AFTER_COMMIT, {})[file.id] = file.basename
-
-    # The request time is only for the System page. A Redis fault must not
-    # stop the move.
-
-    try:
-        current_app.redis.hsetnx(
-            ARCHIVE_MOVE_REQUESTED_KEY,
-            str(file.id),
-            datetime.now(timezone.utc).isoformat(),
-        )
-    except Exception:
-        current_app.logger.warning(traceback.format_exc())
     return True
-
-
-# The ids of the File rows that this session deleted. Their request
-# times leave the Redis hash at the commit.
-
-_PURGED_FILES = "fitzflix_purged_files"
-
-
-@sa_event.listens_for(File, "after_delete")
-def _note_purged_file(mapper, connection, target):
-    """Record a deleted File row. Its move request time goes at the commit."""
-
-    session = db.inspect(target).session
-    if session is not None:
-        session.info.setdefault(_PURGED_FILES, set()).add(target.id)
 
 
 @sa_event.listens_for(OrmSession, "after_commit")
 def _enqueue_requested_moves(session):
-    """Queue the archive moves that request_archive_move recorded in this session.
+    """Queue the archive moves that request_archive_move recorded in this session."""
 
-    Also remove the request times of the deleted File rows. Thus, the
-    oldest age on the System page cannot come from a purged row."""
-
-    purged = session.info.pop(_PURGED_FILES, None)
-    if purged:
-        try:
-            current_app.redis.hdel(
-                ARCHIVE_MOVE_REQUESTED_KEY, *[str(file_id) for file_id in purged]
-            )
-        except Exception:
-            current_app.logger.warning(traceback.format_exc())
     pending = session.info.pop(_MOVES_AFTER_COMMIT, None)
     for file_id, basename in sorted((pending or {}).items()):
         try:
@@ -2208,32 +2170,19 @@ def _forget_requested_moves(session):
     """Drop the archive moves of a transaction that rolled back."""
 
     session.info.pop(_MOVES_AFTER_COMMIT, None)
-    session.info.pop(_PURGED_FILES, None)
 
 
 def pending_archive_moves():
-    """Return the count of the pending archive moves and the oldest request time."""
+    """Return the count of the pending archive moves and the oldest request time (#618)."""
 
-    ids = [
-        file_id
-        for (file_id,) in db.session.query(File.id)
-        .filter(File.aws_key_target.isnot(None))
-        .all()
-    ]
-    oldest = None
-    if ids:
-        stamps = current_app.redis.hmget(
-            ARCHIVE_MOVE_REQUESTED_KEY, [str(file_id) for file_id in ids]
+    count, oldest = (
+        db.session.query(
+            db.func.count(File.id), db.func.min(File.archive_move_requested_at)
         )
-        times = [
-            datetime.fromisoformat(
-                stamp.decode() if isinstance(stamp, bytes) else stamp
-            )
-            for stamp in stamps
-            if stamp
-        ]
-        oldest = min(times) if times else None
-    return {"count": len(ids), "oldest": oldest}
+        .filter(File.aws_key_target.isnot(None))
+        .one()
+    )
+    return {"count": count, "oldest": oldest}
 
 
 def archive_drifts(claims=None):
@@ -2885,7 +2834,7 @@ def _move_archive(file, sqs_receipt_handle, message_key):
         current_app.logger.info(
             f"'{file.basename}' The archive '{source}' now moves to '{target}'"
         )
-        file.aws_key_target = target
+        _set_archive_target(file, target)
     column = _target_column(file)
 
     # This commit records the newest target. It also ends the snapshot of
