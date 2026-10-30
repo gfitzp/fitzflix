@@ -174,8 +174,16 @@ def test_download_task_routes_by_prefix(app, monkeypatch, key, direct):
         )
         or aws_storage.DOWNLOAD_COMPLETE,
     )
+    # A download follows a restore request. The request sets the pending
+    # restore of the row (#610, #620).
+
     with app.app_context():
-        file = make_movie_file(make_movie("Routed", 2003), "DVD", aws_key=key)
+        file = make_movie_file(
+            make_movie("Routed", 2003),
+            "DVD",
+            aws_key=key,
+            restore_requested_at=datetime.utcnow(),
+        )
         db.session.commit()
         expected = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
 
