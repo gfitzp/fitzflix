@@ -93,39 +93,6 @@ def test_a_build_with_no_programs_keeps_the_cursors(app, monkeypatch):
     assert after[0] == f"S01E{(last % 20) + 1:02d}"
 
 
-def test_the_first_build_reads_the_cursors_of_the_old_hash(app, monkeypatch):
-    """A lineup from before #627 has no cursors. The build reads the old hash."""
-
-    import json
-
-    from app import dvr
-
-    day = date(2026, 11, 3)
-    monkeypatch.setattr(dvr, "_probe_duration", lambda path: 1500.0)
-    with app.app_context():
-        series_id = _two_series(app, monkeypatch)
-        assert dvr.build_channel_lineups(day=day) is True
-        assert "S01E15" not in _aired(app, "Kappa Toons")
-
-        # Put the store back in the shape from before the deploy. The old
-        # hash sends Kappa Toons to episode 15, which the day formula
-        # does not give.
-        key = dvr.LINEUP_KEY.format(slug="tv-animation")
-        lineup = json.loads(app.redis.get(key))
-        cursors = lineup.pop("cursors")
-        cursors[str(series_id)]["next"] = [1, 15]
-        app.redis.set(key, json.dumps(lineup))
-        app.redis.hset(
-            dvr.LEGACY_CURSORS_KEY.format(slug="tv-animation"),
-            mapping={field: json.dumps(value) for field, value in cursors.items()},
-        )
-
-        assert dvr.build_channel_lineups(day=day + timedelta(days=1)) is True
-        assert _aired(app, "Kappa Toons")[0] == "S01E15"
-        stored = dvr.channel_lineup(app.redis, "tv-animation")["cursors"]
-        assert stored[str(series_id)]["start"] == [1, 15]
-
-
 def test_a_mid_window_drop_does_not_repeat_an_aired_episode(app, monkeypatch):
     """A probe fails in the middle of a window. The cursor passes the last aired episode (#474).
 

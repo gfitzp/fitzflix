@@ -70,11 +70,6 @@ CHANNELS_KEY = "fitzflix:dvr:channels"
 LINEUP_KEY = "fitzflix:dvr:lineup:{slug}"
 DURATIONS_KEY = "fitzflix:dvr:durations"
 
-# The series cursors of each channel lived in this hash before #627.
-# The first build after the deploy reads it for a lineup with no
-# cursors. Delete the key, this constant and _legacy_cursors after it.
-
-LEGACY_CURSORS_KEY = "fitzflix:dvr:cursors:{slug}"
 REBUILD_FUNC = "app.dvr.build_channel_lineups"
 REBUILD_JOB_ID = "dvr-lineup-rebuild"
 
@@ -1128,10 +1123,9 @@ def build_channel_lineups(day=None):
             # The cursors of the series continue from the last build (#460).
 
             stored = channel_lineup(redis_client, channel.slug) or {}
-            if "cursors" in stored:
-                cursors = {int(key): value for key, value in stored["cursors"].items()}
-            else:
-                cursors = _legacy_cursors(redis_client, channel.slug)
+            cursors = {
+                int(key): value for key, value in stored.get("cursors", {}).items()
+            }
             starts = {}
             window = _channel_window(series_entries, day, episode_cap, cursors, starts)
 
@@ -1198,24 +1192,6 @@ def build_channel_lineups(day=None):
             f"({len(best)} owned films in pool)"
         )
         return True
-
-
-def _legacy_cursors(redis_client, slug):
-    """Return the cursors of a channel from the hash from before #627.
-
-    The first build after the deploy reads them. Thus, each series
-    continues from its last position. A field that does not parse is
-    dropped."""
-
-    cursors = {}
-    for field, raw in redis_client.hgetall(
-        LEGACY_CURSORS_KEY.format(slug=slug)
-    ).items():
-        try:
-            cursors[int(field)] = json.loads(raw)
-        except ValueError:
-            continue
-    return cursors
 
 
 def channel_index(redis_client):
