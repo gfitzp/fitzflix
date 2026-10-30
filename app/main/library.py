@@ -149,6 +149,7 @@ from app.triage import (
     forced_subtitle_candidates,
     lossy_audio_candidates,
 )
+from app.tracks import pop_stopped_edit
 from app.videos import (
     clear_watchlist,
     criterion_release_lookups,
@@ -2872,6 +2873,14 @@ def file(file_id):
             return handler(file, form) or redirect(
                 url_for("main.file", file_id=file.id)
             )
+
+    # A track edit that stopped on a changed file left a note (#606).
+    # The route said that the edit was queued. Thus, the page says that
+    # it did not run.
+
+    stopped_edit = pop_stopped_edit(file.id)
+    if stopped_edit:
+        flash(f"'{file.basename}' {stopped_edit}", "warning")
 
     # A form that was not posted shows its defaults.
 

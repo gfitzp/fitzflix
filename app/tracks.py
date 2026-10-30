@@ -639,6 +639,63 @@ def _rescan_after_a_failed_edit(
         current_app.logger.warning(traceback.format_exc())
 
 
+# A track edit that stops on a changed file leaves a note for the file
+# page (#606). The route already said that the edit was queued. The
+# next render of the file page shows the note once.
+
+STOPPED_EDIT_KEY = "fitzflix:track-edit:stopped:{file_id}"
+STOPPED_EDIT_SECONDS = 86400
+STOPPED_EDIT_MESSAGE = (
+    "The last track edit did not run. The file changed after the page was "
+    "loaded. Fitzflix scans the file again. Reload this page after the "
+    "scan, then make the edit again."
+)
+
+
+def note_stopped_edit(file_id):
+    """Record for the file page that an edit of file_id stopped (#606).
+
+    This is best effort. A fault only logs."""
+
+    try:
+        current_app.redis.set(
+            STOPPED_EDIT_KEY.format(file_id=int(file_id)),
+            STOPPED_EDIT_MESSAGE,
+            ex=STOPPED_EDIT_SECONDS,
+        )
+    except Exception:
+        current_app.logger.warning(traceback.format_exc())
+
+
+def pop_stopped_edit(file_id):
+    """Return and delete the note of a stopped edit of file_id, or None (#606)."""
+
+    try:
+        note = current_app.redis.getdel(STOPPED_EDIT_KEY.format(file_id=int(file_id)))
+    except Exception:
+        current_app.logger.warning(traceback.format_exc())
+        return None
+    return note.decode() if note else None
+
+
+def _stop_on_changed_file(file_id, name, missing, edit):
+    """Stop an edit whose posted track UIDs are gone from the file (#611).
+
+    The file changed after the page was loaded. The edit writes nothing.
+    A scan reads the rows again, and the file page shows a note (#606).
+    edit names the edit for the log. Return False."""
+
+    current_app.logger.warning(
+        f"{name} The file has no track with UID {', '.join(missing)}. The "
+        f"file changed after the page was loaded. The {edit} stops"
+    )
+    _rescan_after_a_failed_edit(
+        file_id, name, reason=f"Track {edit} found a changed file"
+    )
+    note_stopped_edit(file_id)
+    return False
+
+
 def save_track_metadata(file_id, details, lock=None, archive=False):
     """Write the extracted track metadata to the database.
 
@@ -1350,15 +1407,7 @@ def mkvpropedit_unlocked(
                 track_languages,
             )
             if missing:
-                current_app.logger.warning(
-                    f"{name} The file has no track with UID "
-                    f"{', '.join(missing)}. The file changed after the page "
-                    f"was loaded. The edit stops"
-                )
-                _rescan_after_a_failed_edit(
-                    file_id, name, reason="Track edit found a changed file"
-                )
-                return False
+                return _stop_on_changed_file(file_id, name, missing, "edit")
 
             localization_arguments = build_propedit_args(
                 audio_tracks,
@@ -1644,15 +1693,7 @@ def mkvmerge_unlocked(file_id, audio_tracks, subtitle_tracks):
                 | ({str(uid) for uid in subtitle_tracks} - set(ids["subtitles"]))
             )
             if missing:
-                current_app.logger.warning(
-                    f"{name} The file has no track with UID "
-                    f"{', '.join(missing)}. The file changed after the page "
-                    f"was loaded. The remux stops"
-                )
-                _rescan_after_a_failed_edit(
-                    file_id, name, reason="Track remux found a changed file"
-                )
-                return False
+                return _stop_on_changed_file(file_id, name, missing, "remux")
 
             audio_tracks = sorted(ids["audio"][str(uid)] for uid in audio_tracks)
             subtitle_tracks = sorted(

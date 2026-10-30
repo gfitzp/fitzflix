@@ -242,6 +242,33 @@ def test_an_edit_for_a_uid_that_is_gone_stops_and_queues_a_scan(
         os.remove(path)
 
 
+@pytest.mark.parametrize("task", ["mkvpropedit", "mkvmerge"])
+def test_the_file_page_shows_once_that_a_stale_edit_stopped(
+    app, admin_client, two_by_two_mkv, task
+):
+    """The route said that the edit was queued. The page says that it did not run (#606)."""
+
+    from app.tracks import STOPPED_EDIT_KEY, mkvmerge_unlocked, mkvpropedit_unlocked
+
+    file_id, path = _library_file(app, two_by_two_mkv, f"Stale Note {task}")
+    key = STOPPED_EDIT_KEY.format(file_id=file_id)
+    try:
+        audio = _uids(app, path, "audio")
+        with app.app_context():
+            if task == "mkvpropedit":
+                assert mkvpropedit_unlocked(file_id, "12345", "0", []) is False
+            else:
+                assert mkvmerge_unlocked(file_id, [audio[0], "12345"], []) is False
+            assert 0 < app.redis.ttl(key) <= 86400
+        page = admin_client.get(f"/file/{file_id}").get_data(as_text=True)
+        assert "The last track edit did not run" in page
+        page = admin_client.get(f"/file/{file_id}").get_data(as_text=True)
+        assert "The last track edit did not run" not in page
+    finally:
+        app.redis.delete(key)
+        os.remove(path)
+
+
 @pytest.mark.parametrize("uid", ["999", "None"])
 def test_the_task_refuses_a_uid_that_is_gone(app, two_by_two_mkv, uid):
     """The queued task, not only the unlocked body, stops on a gone UID.
