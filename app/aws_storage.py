@@ -294,33 +294,6 @@ def expire_restore_requests(max_age_days):
     return len(rows)
 
 
-def _as_utc(stamp):
-    """Return a stored datetime as an aware UTC datetime, or None."""
-
-    if stamp is None or stamp.tzinfo is not None:
-        return stamp
-    return stamp.replace(tzinfo=timezone.utc)
-
-
-def overtaken_by_import(file):
-    """Return True if an import replaced the file after its restore request.
-
-    The row must have a pending restore, and its library file must be
-    present. A restore of a present file that was imported before the
-    request is on purpose (for example, a replacement of a bad copy).
-    Thus, it continues.
-    """
-
-    if file is None or file.restore_requested_at is None:
-        return False
-    localized = _as_utc(file.date_localized)
-    if localized is None or localized <= _as_utc(file.restore_requested_at):
-        return False
-    return os.path.isfile(
-        os.path.join(current_app.config["LIBRARY_DIR"], file.file_path)
-    )
-
-
 class UploadProgressPercentage(object):
     """Report the upload progress as a callback during an upload to AWS S3."""
 
@@ -1320,11 +1293,6 @@ def _download_task(
             if archived:
                 basename = archived.untouched_basename
 
-        # An import replaced the file after the restore request. The
-        # download would replace the new file with the old one, and an
-        # object in cold storage would start a new restore. Thus, drop
-        # the message and download nothing.
-
         def discard_kept_download():
             """Remove a finished download that an earlier round kept (#588).
 
@@ -1346,14 +1314,19 @@ def _download_task(
                 sqs_receipt_handle, key, note="stale restore"
             )
 
-        if overtaken_by_import(file):
+        # The pending restore of the row ended (#620). An import replaced
+        # the file, or the 14-day sweep cleared the state. The download
+        # would replace the new file with the old one. Thus, drop the
+        # message and download nothing. A key with no File row (an
+        # archive-only original) has no state.
+
+        if file is not None and file.restore_requested_at is None:
             current_app.logger.info(
-                f"'{basename}' was imported again after its restore request, "
-                f"skipping the download"
+                f"'{basename}' has no pending restore any more, skipping the download"
             )
             discard_kept_download()
             return delete_download_message(
-                sqs_receipt_handle, key, note="overtaken restore"
+                sqs_receipt_handle, key, note="ended restore"
             )
 
         def dead_volumes():
@@ -1488,10 +1461,10 @@ def _download_task(
                     f"'{basename}' The library file changed during the download. "
                     f"The restore does not replace it"
                 )
-            if overtaken_by_import(fresh):
+            if fresh.restore_requested_at is None:
                 raise PlacementRefused(
-                    f"'{basename}' was imported again during the download. "
-                    f"The restore does not replace it"
+                    f"'{basename}' The pending restore ended during the download. "
+                    f"The restore does not replace the file"
                 )
             if etag is not None:
                 s3_client = aws_s3_client()
@@ -3934,8 +3907,8 @@ def aws_restore(key, tier="Standard", record_request=True):
 
     The request sets the pending restore of each File row that claims
     the key (#610). Then each writer of the file refuses until the
-    download ends, and download_task can tell if an import replaced the
-    file during the restore. A page sets the state before it queues
+    download ends. An import that replaces the file ends the state, and
+    the download then drops (#620). A page sets the state before it queues
     this (#613). The stamp here is for the requests no page asks for.
     A second request during a thaw is a new request, with its own
     time. A request that cannot be made clears the state.

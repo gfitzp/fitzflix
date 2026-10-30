@@ -511,7 +511,9 @@ def test_download_task_skips_a_restore_that_an_import_overtook(app, monkeypatch)
     """Test that download_task drops a restore of a replaced file.
 
     The record was imported after the restore request, and its file is
-    present. The download would replace the new file with the old one."""
+    present. The download would replace the new file with the old one.
+    The import ended the pending restore of the row (#620). The row has
+    no state, so the download drops its message."""
 
     from datetime import datetime
 
@@ -526,16 +528,8 @@ def test_download_task_skips_a_restore_that_an_import_overtook(app, monkeypatch)
     )
     monkeypatch.setattr(aws_storage, "aws_sqs_client", lambda: sqs)
     with app.app_context():
-        key = _overtaken_fixture(
-            app,
-            "Overtaken",
-            datetime(2026, 10, 20, 18, 0),
-            requested=datetime(2026, 10, 20, 13, 0),
-        )
+        key = _overtaken_fixture(app, "Overtaken", datetime(2026, 10, 20, 18, 0))
         assert videos.download_task(key, os.path.basename(key), "receipt-1") is True
-
-        # The dropped restore ends its pending state (#610).
-
         assert _pending_since(key) is None
 
     assert downloads == []
@@ -700,10 +694,16 @@ def _direct_restore_row(app, title):
     from app import db
     from tests.factories import make_movie, make_movie_file
 
+    from datetime import datetime, timezone
+
+    # A restore download follows a request. The request sets the pending
+    # restore of the row (#610, #620).
+
     with app.app_context():
         file = make_movie_file(make_movie(title, 1952), "DVD")
         key = f"modified/{file.basename}"
         file.aws_key = key
+        file.restore_requested_at = datetime.now(timezone.utc)
         db.session.commit()
         return key, os.path.join(app.config["LIBRARY_DIR"], file.file_path)
 

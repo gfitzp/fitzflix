@@ -2785,9 +2785,12 @@ def _build_records(file_details, inspection, output_name, series_id=None):
     reset_triage_state(file)
     replace_track_rows(file, inspection["audio_tracks"], inspection["subtitle_tracks"])
 
-    # Set the localized date.
+    # Set the localized date. A new localization ends any pending restore
+    # of the row (#620). The download of that restore then drops, and it
+    # never puts the old archive over the new file.
 
     file.date_localized = datetime.now(timezone.utc)
+    file.restore_requested_at = None
 
     # Set the AWS archived fields if the task uploaded the file to AWS S3
     # storage. A reused record can have the archive of its old file under

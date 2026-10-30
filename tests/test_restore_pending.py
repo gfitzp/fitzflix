@@ -783,6 +783,72 @@ def test_the_import_of_the_restored_rip_clears_the_stale_mark(app):
             _remove(path)
 
 
+@pytest.mark.parametrize("stage", ["start", "placement"])
+def test_a_new_localization_ends_the_pending_restore(app, monkeypatch, stage):
+    """An import that replaces the file ends the restore of its row (#620).
+
+    The download then drops. It never puts the old archive over the new
+    file, at its start or at its placement."""
+
+    from datetime import datetime
+
+    import app.videos as videos
+    from app import db, importing
+    from app.models import File
+
+    file_id, key, path = _direct_row(app, f"Replaced {stage}")
+
+    class ImportDuringTheDownload(S3):
+        def download_file(self, *args, **kwargs):
+            super().download_file(*args, **kwargs)
+            if stage == "placement":
+                import_now()
+
+    s3 = ImportDuringTheDownload()
+    sqs = SQS()
+    _wire(monkeypatch, s3, sqs)
+
+    def import_now():
+        file = db.session.get(File, file_id)
+        details = {
+            "file_path": file.file_path,
+            "basename": file.basename,
+            "media_library": "Movies",
+            "title": f"Replaced {stage}",
+            "year": 1953,
+            "quality_title": "Bluray-1080p",
+            "untouched_basename": file.basename,
+            "aws_key": key,
+            "aws_date_uploaded": datetime(2026, 10, 1),
+            "aws_filesize_bytes": 5,
+        }
+        inspection = {
+            "video": {},
+            "audio_tracks": [],
+            "subtitle_tracks": [],
+            "filesize_bytes": 5,
+        }
+        importing._build_records(details, inspection, file.basename)
+        db.session.commit()
+
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "wb") as handle:
+        handle.write(b"new import")
+    try:
+        with app.app_context():
+            if stage == "start":
+                import_now()
+                assert _pending(file_id) is None
+            assert videos.download_task(key, os.path.basename(key), "r1") is True
+            assert _pending(file_id) is None
+        with open(path, "rb") as handle:
+            assert handle.read() == b"new import"
+        assert sqs.deleted == ["r1"]
+        assert s3.downloads == ([] if stage == "start" else [key])
+    finally:
+        _remove(path)
+
+
 @pytest.mark.parametrize("on_demand", [False, True])
 def test_the_scan_does_not_rewrite_the_file_of_a_pending_restore(
     app, monkeypatch, on_demand
