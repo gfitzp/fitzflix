@@ -37,7 +37,7 @@ from app.tasks import (
     start_bulk_run,
     start_task_run,
 )
-from app import cron_table, db, enqueue_import_scan, local_path, safe_job_id
+from app import cron_table, db, enqueue_import_scan, local_path
 from app.aws_storage import refuse_while_restore_pending, request_restore
 from app.naming import hidden
 from app.main.forms import (
@@ -92,13 +92,12 @@ from app.main.library import restore_cost_estimate
 from app.log_digest import stored_digest
 from app.maintenance import system_health
 from app.manual_imports import (
-    STARTED_KEY,
-    STARTED_TTL,
     PENDING_KEY,
     blocked_downloads,
     download_folders,
     fetch_queue,
     fitzflix_basename,
+    manual_import_job_id,
     pending_count,
     pending_report,
     remove_from_queue,
@@ -1255,7 +1254,7 @@ def manual_imports():
             )
             return redirect(url_for("main.manual_imports"))
 
-        if started(current_app.redis, download_id):
+        if started(download_id):
             flash("That import is already queued.", "info")
             return redirect(url_for("main.manual_imports"))
         candidates = video_candidates(entry["output_path"])
@@ -1279,13 +1278,10 @@ def manual_imports():
         # job first. Otherwise the retry stays in the failed jobs, and
         # "Forget" on the System page deletes the live retry (#438).
 
-        job_id = safe_job_id(f"manual-import:{download_id}")
+        job_id = manual_import_job_id(download_id)
         if not free_job_id("app.manual_imports.manual_import_task", job_id):
             flash("That import is already queued.", "info")
             return redirect(url_for("main.manual_imports"))
-        current_app.redis.set(
-            STARTED_KEY.format(download_id=download_id), "1", ex=STARTED_TTL
-        )
         enqueue_task(
             "app.manual_imports.manual_import_task",
             service,

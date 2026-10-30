@@ -319,7 +319,6 @@ def test_import_enqueues_task_and_task_finishes_the_download(
     ]
     assert fake_queues["removed"][0][2]["removeFromClient"] == "true"
     assert fake_queues["removed"][0][2]["blocklist"] == "false"
-    assert not manual_imports.started(app.redis, DOWNLOAD_ID)
     assert app.redis.hlen(manual_imports.PENDING_KEY) == 0
 
 
@@ -360,12 +359,11 @@ def test_import_refuses_bad_names_and_foreign_files(
     assert app.file_queue.fetch_job(safe_job_id(f"manual-import:{DOWNLOAD_ID}")) is None
 
 
-def test_task_failure_leaves_download_and_clears_marker(app, downloads, fake_queues):
+def test_task_failure_leaves_the_download(app, downloads, fake_queues):
     output_path = make_download(downloads)
     final = os.path.join(app.config["IMPORT_DIR"], "M (1931) - [WEBDL-1080p].mkv")
     with open(final, "wb") as f:
         f.write(b"already here")
-    app.redis.set(manual_imports.STARTED_KEY.format(download_id=DOWNLOAD_ID), "1")
 
     with pytest.raises(RuntimeError):
         manual_imports.manual_import_task(
@@ -377,8 +375,30 @@ def test_task_failure_leaves_download_and_clears_marker(app, downloads, fake_que
         )
 
     assert os.path.isfile(os.path.join(output_path, "M.Eine.Stadt.1931.mkv"))
-    assert not manual_imports.started(app.redis, DOWNLOAD_ID)
     assert fake_queues["removed"] == []
+
+
+@pytest.mark.parametrize(
+    "status, live",
+    [("queued", True), ("deferred", True), ("finished", False), ("failed", False)],
+)
+def test_only_a_live_job_under_the_fixed_id_counts_as_started(app, status, live):
+    """The job under the fixed id is the one record of an import (#626)."""
+
+    from rq.job import JobStatus
+
+    job_id = manual_imports.manual_import_job_id(DOWNLOAD_ID)
+    assert job_id == safe_job_id(f"manual-import:{DOWNLOAD_ID}")
+    with app.app_context():
+        assert manual_imports.started(DOWNLOAD_ID) is False
+        job = app.file_queue.enqueue(
+            "app.manual_imports.manual_import_task", job_id=job_id
+        )
+        try:
+            job.set_status(JobStatus(status))
+            assert manual_imports.started(DOWNLOAD_ID) is live
+        finally:
+            job.delete()
 
 
 def test_discard_removes_queue_items_with_client_delete(

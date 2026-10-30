@@ -31,10 +31,11 @@ import urllib3
 from flask import current_app, url_for
 from werkzeug.local import LocalProxy
 
-from app import get_app
+from app import get_app, safe_job_id
 from app.api.arr import downgrade_quality_title
 from app import naming
 from app.models import MOVIES, TV_SHOWS
+from app.tasks import LIVE_JOB_STATES, TASKS, resolve_queue
 
 # This is the app instance of this process. Fitzflix resolves it lazily.
 # Thus, the task can run on a worker without a second application
@@ -42,8 +43,6 @@ from app.models import MOVIES, TV_SHOWS
 app = LocalProxy(get_app)
 
 PENDING_KEY = "fitzflix:manual-imports"
-STARTED_KEY = "fitzflix:manual-imports:started:{download_id}"
-STARTED_TTL = 24 * 3600
 
 # The queue states of Sonarr and Radarr that wait for a person
 
@@ -291,10 +290,27 @@ def fitzflix_basename(name):
     return bool(re.fullmatch(movie, name) or re.fullmatch(episode, name))
 
 
-def started(redis, download_id):
-    """Return True if an import task of this download is queued or running."""
+def manual_import_job_id(download_id):
+    """Return the fixed job id of the import task of a download."""
 
-    return bool(redis.exists(STARTED_KEY.format(download_id=download_id)))
+    return safe_job_id(f"manual-import:{download_id}")
+
+
+def started(download_id):
+    """Return True if an import task of this download waits or runs (#626).
+
+    The job under the fixed id is the record. free_job_id reads the same
+    job. Thus, the page and the refusal of a second import agree with it."""
+
+    from rq.exceptions import NoSuchJobError
+    from rq.job import Job
+
+    queue = resolve_queue(TASKS["app.manual_imports.manual_import_task"].queue)
+    try:
+        job = Job.fetch(manual_import_job_id(download_id), connection=queue.connection)
+    except NoSuchJobError:
+        return False
+    return job.get_status(refresh=False) in LIVE_JOB_STATES
 
 
 def pending_report():
@@ -329,7 +345,7 @@ def pending_report():
         if entry["candidates"]:
             extension = os.path.splitext(entry["candidates"][0]["relative"])[1]
         entry["proposed_name"] = proposed_name(entry, extension)
-        entry["started"] = started(redis, entry["download_id"])
+        entry["started"] = started(entry["download_id"])
         entry["record_url"] = record_url(entry.get("record"))
 
     reconcile_pending(redis, entries, reachable)
@@ -512,12 +528,10 @@ def manual_import_task(service, download_id, output_path, relative, new_basename
     makes the filesystem event that the import watcher acts on. Only
     after a complete copy does the task delete the download folder and
     remove the queue items from the app. A failure leaves the download
-    in place and clears the started marker. Then the page shows the
-    button again."""
+    in place. Then the page shows the button again."""
 
     with app.app_context():
         redis = current_app.redis
-        marker = STARTED_KEY.format(download_id=download_id)
         folder = fenced_path(output_path)
 
         # A download can be 1 file. Then the file is its own only
@@ -572,6 +586,3 @@ def manual_import_task(service, download_id, output_path, relative, new_basename
             if os.path.exists(hidden):
                 os.remove(hidden)
             raise
-
-        finally:
-            redis.delete(marker)

@@ -149,10 +149,11 @@ def abandon_dead_job(job):
     from app.aws_storage import pending_archive_of
     from app.importing import _source_of, abandon_import
     from app.naming import hidden
-    from app.manual_imports import STARTED_KEY
 
-    if job.func_name == MANUAL_IMPORT_TASK and len(job.args) > 1:
-        current_app.redis.delete(STARTED_KEY.format(download_id=job.args[1]))
+    # A manual import holds no title lock, staging space or output. Its
+    # dead job fails, and then the page shows the button again (#626).
+
+    if job.func_name == MANUAL_IMPORT_TASK:
         return
     if job.func_name in ATMOS_CHAIN_TASKS:
         _abandon_atmos_job(job)
