@@ -33,10 +33,13 @@ def register_template_helpers(app):
     def display_year(movie):
         """Return the TMDB release year of a film, or its local year."""
 
-        release_date = getattr(movie, "tmdb_release_date", None)
-        if getattr(movie, "tmdb_title", None) and release_date:
-            return release_date.strftime("%Y")
-        return movie.year
+        from app.models import display_year_of
+
+        return display_year_of(
+            movie.year,
+            getattr(movie, "tmdb_title", None),
+            getattr(movie, "tmdb_release_date", None),
+        )
 
     app.jinja_env.filters["display_title"] = display_title
     app.jinja_env.filters["display_year"] = display_year

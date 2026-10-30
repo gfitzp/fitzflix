@@ -10,16 +10,23 @@
 {% from "_tv_poster_small.html" import tv_poster_small %}
 {% set trail = trail_for(file) if trail_for is defined else [] %}
 <div class="list-group-item py-2 d-flex" data-card-key="{{ file.id }}" data-card-version="{{ card_version.get(file.id, '') if card_version is defined else '' }}">
-	{% if file.movie %}
+	{% if file.movie or file.tv_series %}
+		{% if file.movie %}
 		{% set movie = file.movie %}
 		<a href="{{ url_for('main.movie', movie_id=movie.id) }}">
 			{{ movie_poster_small(movie, file) }}
 		</a>
+		{% else %}
+		<a href="{{ url_for('main.file', file_id=file.id) }}">
+			{{ tv_poster_small(file.tv_series) }}
+		</a>
+		{% endif %}
 		<div class="flex-grow-1">
 			<div class="text-muted small font-italic">Added {{ moment(file.date_added).format("LLL") }}{% if file.date_updated %}, file details last updated {{ moment(file.date_updated).format("LLL") }}{% endif %}</div>
 			<h5 class="mt-0 mb-0">
 				<a href="{{ url_for('main.file', file_id=file.id) }}">{{ file.basename }}</a>
 			</h5>
+			{% if file.movie %}
 			<a href="{{ url_for('main.movie', movie_id=movie.id) }}">{{ movie|display_title }} ({{ movie|display_year }})</a><br/>
 			{% if file.edition %}{{ file.edition }}<br/>{% endif %}
 			{% if file.feature_type_id %}{{ file.feature_type.feature_type }} - {{ file.plex_title }}<br/>{% endif %}
@@ -31,33 +38,13 @@
 			{% else %}
 			<span class="badge text-bg-{{ 'warning' if card_upgradable.get(file.id) else 'success' }}">{% if file.fullscreen %}Full&nbsp;Screen&nbsp;{% endif %}{{ file.quality.quality_title }}</span><br/>
 			{% endif %}
-			{% if file.audiotrack %}Audio tracks: {% for track in file.audiotrack %}
-				{% if track.default == 1 and track.language|language_key not in native_language %}<span class="badge text-bg-warning me-1 mb-1">
-				{% elif track.default == 1 %}<span class="badge text-bg-success me-1 mb-1">
-				{% else %}<span class="badge text-bg-light me-1 mb-1">
-				{% endif %}{{ track.language }}{% if track.default == 1 and track.language|language_key not in native_language %} (foreign){% endif %}</span> {% endfor %}<br/>{% endif %}
-			{% if file.subtrack|length > 0 %}Subtitle tracks: {% for track in file.subtrack %}
-				{% if track.default == 1 %}<span class="badge text-bg-success me-1 mb-1">
-				{% elif track.forced == 1 %}<span class="badge text-bg-warning me-1 mb-1">
-				{% else %}<span class="badge text-bg-light me-1 mb-1">
-				{% endif %}{{ track.language }}{% if track.default == 1 %} (default){% elif track.forced == 1 %} (forced){% endif %}</span> {% endfor %}<br/>{% endif %}
-			<div class="mt-1" data-trail{% if not trail %} hidden{% endif %}>{{ trail_chips(trail) }}</div>
-		</div>
-	{% elif file.tv_series %}
-		{% set tv = file.tv_series %}
-		<a href="{{ url_for('main.file', file_id=file.id) }}">
-			{{ tv_poster_small(tv) }}
-		</a>
-		<div class="flex-grow-1">
-			<div class="text-muted small font-italic">Added {{ moment(file.date_added).format("LLL") }}{% if file.date_updated %}, file details last updated {{ moment(file.date_updated).format("LLL") }}{% endif %}</div>
-			<h5 class="mt-0 mb-0">
-				<a href="{{ url_for('main.file', file_id=file.id) }}">{{ file.basename }}</a>
-			</h5>
-			<a href="{{ url_for('main.tv', series_id=file.series_id) }}">{{ file.tv_series.tmdb_name if file.tv_series.tmdb_name else file.tv_series.title }}</a><br/>
+			{% else %}
+			<a href="{{ url_for('main.tv', series_id=file.series_id) }}">{{ file.tv_series.display_title }}</a><br/>
 			<a href="{{ url_for('main.season', series_id=file.series_id, season=file.season) }}">Season {{ file.season }}, {% if not file.last_episode or file.last_episode == file.episode %}Episode {{ file.episode }}{% else %}Episodes {{ file.episode }}–{{ file.last_episode }}{% endif %}</a><br/>
 			{# Physical-media TV seasons count as final. This matches
 			   the DVD-green rule of the search page. #}
 			<span class="badge text-bg-{{ 'warning' if card_upgradable.get(file.id) else 'success' }}">{{ file.quality.quality_title }}</span><br/>
+			{% endif %}
 			{% if file.audiotrack %}Audio tracks: {% for track in file.audiotrack %}
 				{% if track.default == 1 and track.language|language_key not in native_language %}<span class="badge text-bg-warning me-1 mb-1">
 				{% elif track.default == 1 %}<span class="badge text-bg-success me-1 mb-1">

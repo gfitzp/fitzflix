@@ -28,7 +28,6 @@ from flask import (
 from flask_login import current_user, login_required
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import contains_eager, selectinload
-from unidecode import unidecode
 
 from app.tasks import enqueue_task
 from app import db, local_path
@@ -53,6 +52,7 @@ from app.models import (
 )
 from app.tmdb_apply import tmdb_json_or, us_certification_from
 from app.main import bp
+from app.main.shopping import watchlist_search_matcher
 from app.plex_player import remote_playback_configured
 from app.file_ranking import copy_upgradable
 from app.main.helpers import (
@@ -1837,29 +1837,12 @@ def watchlist():
     # views. A film with no genre data hides from a genre view in the
     # same way.
 
-    # The filter works like the SQL searches: it ignores accents and case,
-    # and a space matches any run of characters. Thus, "amelie" finds
-    # "Amélie", and "spider man" finds "Spider-Man".
+    # The title search is the one of the shopping list (#509, #645).
 
     total = len(rows)
     if q:
-        words = unidecode(q).lower().split()
-
-        def matches(text):
-            text = unidecode(text or "").lower()
-            position = 0
-            for word in words:
-                found = text.find(word, position)
-                if found < 0:
-                    return False
-                position = found + len(word)
-            return True
-
-        rows = [
-            row
-            for row in rows
-            if matches(row["movie"].tmdb_title) or matches(row["movie"].title)
-        ]
+        matches = watchlist_search_matcher(q)
+        rows = [row for row in rows if matches(row["movie"])]
     if minutes:
         rows = [
             row

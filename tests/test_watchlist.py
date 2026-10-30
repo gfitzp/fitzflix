@@ -1265,6 +1265,27 @@ def test_watchlist_search_ignores_accents_and_word_gaps(app, admin_client, admin
     assert "Spider-Man" in page and "Other Film" not in page
 
 
+def test_watchlist_search_by_tmdb_id_finds_that_film(app, admin_client, admin_id):
+    """The watchlist search is the matcher of the shopping list (#645).
+
+    Thus, "tmdb:<id>" finds the film with that TMDB id."""
+
+    from app import db
+    from app.models import UserWatchlist
+
+    with app.app_context():
+        for title, year, tmdb_id in (
+            ("Tmdb Search Hit", 2001, 645001),
+            ("Tmdb Search Miss", 2002, 645002),
+        ):
+            movie = make_movie(title, year, tmdb_id=tmdb_id)
+            db.session.add(UserWatchlist(user_id=admin_id, movie_id=movie.id))
+        db.session.commit()
+
+    page = admin_client.get("/watchlist?q=tmdb:645001").get_data(as_text=True)
+    assert "Tmdb Search Hit" in page and "Tmdb Search Miss" not in page
+
+
 def test_last_tile_removal_reveals_the_empty_state(app, admin_client, admin_id):
     """Test that the live removal of the last tile shows an empty state (#407).
 

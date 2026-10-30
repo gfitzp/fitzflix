@@ -517,6 +517,24 @@ def test_sort_title_and_display_year(app):
     )
 
 
+def test_the_display_year_filter_follows_display_year_of(app):
+    """The Jinja filter applies the rule of display_year_of (#645).
+
+    The review page passes a plain object with no TMDB fields. Then the
+    local year shows."""
+
+    from datetime import date
+    from types import SimpleNamespace
+
+    from app.models import Movie
+
+    display_year = app.jinja_env.filters["display_year"]
+    film = Movie(title="Rashomon", year=1950, tmdb_title="Rashomon")
+    film.tmdb_release_date = date(1951, 12, 26)
+    assert display_year(film) == 1951
+    assert display_year(SimpleNamespace(title="Rashomon", year=1950)) == 1950
+
+
 def test_a_member_cannot_change_the_shopping_list(app, admin_client, user_client):
     """The shopping list is shared. Only an admin can add or remove a film."""
 
