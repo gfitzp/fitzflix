@@ -70,11 +70,11 @@ CHANNELS_KEY = "fitzflix:dvr:channels"
 LINEUP_KEY = "fitzflix:dvr:lineup:{slug}"
 DURATIONS_KEY = "fitzflix:dvr:durations"
 
-# The series cursors of each channel (#460). The hash maps a series id
-# to its cursor. The cursor holds the day of the last window, the first
-# episode of that window, and the next episode to air.
+# The series cursors of each channel lived in this hash before #627.
+# The first build after the deploy reads it for a lineup with no
+# cursors. Delete the key, this constant and _legacy_cursors after it.
 
-CURSORS_KEY = "fitzflix:dvr:cursors:{slug}"
+LEGACY_CURSORS_KEY = "fitzflix:dvr:cursors:{slug}"
 REBUILD_FUNC = "app.dvr.build_channel_lineups"
 REBUILD_JOB_ID = "dvr-lineup-rebuild"
 
@@ -1058,12 +1058,16 @@ def build_channel_lineups(day=None):
 
         epoch = datetime.now(timezone.utc).timestamp()
         index = []
-        pending_cursors = {}
 
-        def store(number, slug, name, programs):
+        def store(number, slug, name, programs, cursors):
             """Write the lineup of one channel and index it.
 
-            This function drops the empty channels."""
+            The record holds the series cursors of the channel (#460). A
+            cursor holds the day of the last window, the first episode of
+            that window, and the next episode to air. The lineup and its
+            cursors go into Redis in 1 SET (#627). Thus, a build that keeps
+            the old lineup keeps the old cursors too. This function drops
+            the empty channels."""
 
             if not programs:
                 current_app.logger.warning(f"DVR: channel {slug} has no programs")
@@ -1074,6 +1078,7 @@ def build_channel_lineups(day=None):
                 "number": number,
                 "epoch": epoch,
                 "programs": programs,
+                "cursors": {str(key): value for key, value in cursors.items()},
             }
             redis_client.set(LINEUP_KEY.format(slug=slug), json.dumps(lineup))
             index.append({"number": number, "slug": slug, "name": name})
@@ -1122,13 +1127,11 @@ def build_channel_lineups(day=None):
 
             # The cursors of the series continue from the last build (#460).
 
-            cursors_key = CURSORS_KEY.format(slug=channel.slug)
-            cursors = {}
-            for field, raw in redis_client.hgetall(cursors_key).items():
-                try:
-                    cursors[int(field)] = json.loads(raw)
-                except ValueError:
-                    continue
+            stored = channel_lineup(redis_client, channel.slug) or {}
+            if "cursors" in stored:
+                cursors = {int(key): value for key, value in stored["cursors"].items()}
+            else:
+                cursors = _legacy_cursors(redis_client, channel.slug)
             starts = {}
             window = _channel_window(series_entries, day, episode_cap, cursors, starts)
 
@@ -1153,25 +1156,19 @@ def build_channel_lineups(day=None):
                 advance[series.id] = offset + 1
 
             # A cursor moves to the position after the last episode that
-            # aired. A series with none keeps its cursor. The write waits
-            # until the lineups are stored (follow-up #460).
+            # aired. A series with none keeps its cursor.
 
             member_ids = {entry["series"].id for entry in series_entries}
             for series_id, positions in advance.items():
                 episodes, start = starts[series_id]
                 cursors[series_id] = _advanced_cursor(day, episodes, start, positions)
 
-            pending_cursors[channel.slug] = {
-                str(series_id): json.dumps(cursor)
-                for series_id, cursor in cursors.items()
-                if series_id in member_ids
-            }
-
             store(
                 channel.number,
                 channel.slug,
                 channel.name,
                 _merge_programs(movie_programs, episode_programs),
+                {key: value for key, value in cursors.items() if key in member_ids},
             )
 
         if not index and (best or ctx["catalog"]):
@@ -1186,28 +1183,12 @@ def build_channel_lineups(day=None):
 
         redis_client.set(CHANNELS_KEY, json.dumps(index))
 
-        # The cursors change only with stored lineups. A build that kept
-        # the old lineups keeps the old cursors too (follow-up #460).
-
-        for entry in index:
-            mapping = pending_cursors.get(entry["slug"])
-            cursors_key = CURSORS_KEY.format(slug=entry["slug"])
-            pipe = redis_client.pipeline()
-            pipe.delete(cursors_key)
-            if mapping:
-                pipe.hset(cursors_key, mapping=mapping)
-            pipe.execute()
-
         # Without this, the stored lineup of a deleted or emptied channel
         # would answer its stream URL without end.
 
         kept = {LINEUP_KEY.format(slug=entry["slug"]) for entry in index}
         for key in redis_client.scan_iter(match=LINEUP_KEY.format(slug="*")):
             if key.decode() not in kept:
-                redis_client.delete(key)
-        kept_cursors = {CURSORS_KEY.format(slug=entry["slug"]) for entry in index}
-        for key in redis_client.scan_iter(match=CURSORS_KEY.format(slug="*")):
-            if key.decode() not in kept_cursors:
                 redis_client.delete(key)
 
         _prune_durations(redis_client)
@@ -1217,6 +1198,24 @@ def build_channel_lineups(day=None):
             f"({len(best)} owned films in pool)"
         )
         return True
+
+
+def _legacy_cursors(redis_client, slug):
+    """Return the cursors of a channel from the hash from before #627.
+
+    The first build after the deploy reads them. Thus, each series
+    continues from its last position. A field that does not parse is
+    dropped."""
+
+    cursors = {}
+    for field, raw in redis_client.hgetall(
+        LEGACY_CURSORS_KEY.format(slug=slug)
+    ).items():
+        try:
+            cursors[int(field)] = json.loads(raw)
+        except ValueError:
+            continue
+    return cursors
 
 
 def channel_index(redis_client):
