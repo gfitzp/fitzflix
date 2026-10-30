@@ -78,31 +78,15 @@ PLAYLIST_START_RE = re.compile(r'"playlist"\s*:\s*\[')
 MEDIA_ID_RE = re.compile(r"/films/([^/?#]+)")
 
 
-def leaving_page_candidates(today):
-    """Return the (url, departure date) candidates, most likely first.
+def leaving_page(today):
+    """Return the (url, departure date) of the leaving page of this month (#646)."""
 
-    The order is: the page of this month, the page of the next month,
-    then the page of the last month. The new page can appear before the
-    old departure passes. Early in a month, the new page can be absent.
-    """
-
-    candidates = []
-    for months_ahead in (0, 1, -1):
-        month = today.month + months_ahead
-        year = today.year
-        if month > 12:
-            month, year = month - 12, year + 1
-        elif month < 1:
-            month, year = month + 12, year - 1
-        last_day = calendar.monthrange(year, month)[1]
-        month_name = calendar.month_name[month].lower()
-        candidates.append(
-            (
-                f"{COLLECTION_ORIGIN}/leaving-{month_name}-{last_day}",
-                date(year, month, last_day),
-            )
-        )
-    return candidates
+    last_day = calendar.monthrange(today.year, today.month)[1]
+    month_name = calendar.month_name[today.month].lower()
+    return (
+        f"{COLLECTION_ORIGIN}/leaving-{month_name}-{last_day}",
+        date(today.year, today.month, last_day),
+    )
 
 
 def parse_collection_page(page_html):
@@ -193,7 +177,7 @@ def film_page_director(url):
     return director
 
 
-def fetch_collection_films(url, answered=None):
+def fetch_collection_films(url):
     """Return [{title, director, year}] scraped from 1 collection page,
     without duplicates.
 
@@ -202,15 +186,12 @@ def fetch_collection_films(url, answered=None):
     page. This is the generic half of the scraper. The leaving page and
     the newly-added feed (#246, app.newly_added) both read through
     it. A film whose film page did not answer gets "director_failed".
-    The callers do not match it that day (#539). answered, a list, gets
-    the url when the page answers 200, with films or without (#557)."""
+    The callers do not match it that day (#539)."""
 
     try:
         r = requests.get(url, timeout=15)
         if r.status_code != 200:
             return []
-        if answered is not None:
-            answered.append(url)
         films = parse_collection_page(r.text)
     except Exception:
         current_app.logger.warning(traceback.format_exc())
@@ -231,23 +212,13 @@ def fetch_collection_films(url, answered=None):
 
 
 def fetch_leaving_films():
-    """Return (departure date, source url, films, early) scraped from
-    the official leaving page.
+    """Return (departure date, source url, films) scraped from the leaving
+    page of this month.
 
-    early is True when the page of this month answered with no films and
-    a later page gave the films (#557). That can be one empty render.
-    Thus, the set of a later page is stored as replaceable. It returns
-    (None, None, [], False) if no candidate page has films."""
+    films is [] if the page does not answer or has no films."""
 
-    candidates = leaving_page_candidates(date.today())
-    this_url, this_departs = candidates[0]
-    answered = []
-    for url, departs in candidates:
-        films = fetch_collection_films(url, answered=answered)
-        if films:
-            early = departs > this_departs and this_url in answered
-            return departs, url, films, early
-    return None, None, [], False
+    url, departs = leaving_page(date.today())
+    return departs, url, fetch_collection_films(url)
 
 
 # The words that carry no meaning in a title comparison.
@@ -582,10 +553,11 @@ def refresh_leaving_criterion():
     """Scrape the leaving collection and store the set with its departure
     date.
 
-    This is a daily task. It matches each film to TMDB. It embeds the
-    enriched payloads. It does nothing while the departure of the
-    stored set is in the future, unless a TMDB failure left the set
-    incomplete. The daily cadence exists to retry
+    This is a daily task. It reads only the leaving page of this month
+    (#646). It matches each film to TMDB. It embeds the enriched
+    payloads. It does nothing while the departure of the stored set is
+    in the future, unless a TMDB failure left the set incomplete. A page
+    with no films keeps the stored set. The daily cadence exists to retry
     until Criterion publishes the page of the new month. That page
     appears at some time after the old set departs. The schedule is
     not known. The stored set has no TTL. The shelf hides after the
@@ -600,58 +572,11 @@ def refresh_leaving_criterion():
             ):
                 return True
 
-        departs, source, films, early = fetch_leaving_films()
+        departs, source, films = fetch_leaving_films()
         if not films:
             current_app.logger.warning(
-                "Leaving-Criterion: no films found on any candidate page"
-            )
-            return True
-
-        # A set stored after an empty render of this month's page gives
-        # way to an earlier page that has not departed (#557). Without
-        # this, the 2 gates below kept the wrong month.
-
-        replaceable = bool(
-            stored
-            and stored.get("early")
-            and date.today() <= departs < date.fromisoformat(stored["departs"])
-        )
-
-        # The candidates include the page of last month. It stays up for
-        # some days after its month. A failed fetch of this month must not
-        # replace the stored set with the departed one (#324). The stored
-        # set keeps its incomplete mark, and the next run tries again.
-
-        if (
-            stored
-            and not replaceable
-            and (
-                departs < date.fromisoformat(stored["departs"])
-                or departs < date.today()
-            )
-        ):
-            current_app.logger.warning(
-                f"Leaving-Criterion: '{source}' departs {departs.isoformat()}, "
-                f"before the stored set ({stored['departs']}). Keeping the "
+                f"Leaving-Criterion: no films found on '{source}'. Keeping the "
                 f"stored set"
-            )
-            return True
-
-        # The forward direction (#541). A stored set that did not depart
-        # yet is only completed. One empty render of its page let the
-        # page of next month replace it some days early. Then the films
-        # of this month lost their shelf, badges, alert and lineup.
-
-        if (
-            stored
-            and not replaceable
-            and date.fromisoformat(stored["departs"]) >= date.today()
-            and departs != date.fromisoformat(stored["departs"])
-        ):
-            current_app.logger.warning(
-                f"Leaving-Criterion: '{source}' departs {departs.isoformat()}, "
-                f"but the stored set departs {stored['departs']} and has not "
-                f"departed yet. Keeping the stored set"
             )
             return True
 
@@ -694,10 +619,7 @@ def refresh_leaving_criterion():
                     "departs": departs.isoformat(),
                     "source": source,
                     "items": items,
-                    # An early set is fetched again each day until the
-                    # page of this month answers or the month ends.
-                    "incomplete": bool(failures) or early,
-                    "early": early,
+                    "incomplete": bool(failures),
                 }
             ),
         )

@@ -79,19 +79,19 @@ class FakeResponse:
         return self._payload
 
 
-def test_leaving_page_candidates_roll_over_year_boundaries(app):
-    from app.leaving_criterion import leaving_page_candidates
+def test_leaving_page_is_the_page_of_this_month(app):
+    """The task reads the page of this month only (#646)."""
 
-    candidates = leaving_page_candidates(date(2026, 12, 15))
-    urls = [url for url, _ in candidates]
-    departures = [departs for _, departs in candidates]
+    from app.leaving_criterion import leaving_page
 
-    assert urls == [
+    assert leaving_page(date(2026, 12, 15)) == (
         "https://www.criterionchannel.com/discover/leaving-december-31",
-        "https://www.criterionchannel.com/discover/leaving-january-31",
-        "https://www.criterionchannel.com/discover/leaving-november-30",
-    ]
-    assert departures == [date(2026, 12, 31), date(2027, 1, 31), date(2026, 11, 30)]
+        date(2026, 12, 31),
+    )
+    assert leaving_page(date(2028, 2, 1)) == (
+        "https://www.criterionchannel.com/discover/leaving-february-29",
+        date(2028, 2, 29),
+    )
 
 
 def test_parse_collection_page_reads_the_playlist(app):
@@ -580,6 +580,34 @@ def test_refresh_task_retries_an_incomplete_set(app, monkeypatch):
     assert calls
 
 
+def test_an_empty_render_of_this_month_keeps_the_stored_set(app, monkeypatch, caplog):
+    """An empty page of this month keeps the stored set (#646).
+
+    The task asks no other month. The next daily run tries again."""
+
+    import app.leaving_criterion as leaving_criterion
+
+    url, _ = leaving_criterion.leaving_page(date.today())
+    planted = json.dumps(
+        {"departs": date.today().isoformat(), "items": [], "incomplete": True}
+    )
+    app.redis.set(leaving_criterion.LEAVING_KEY, planted)
+    calls = []
+
+    def fake_requests_get(url, params=None, timeout=None):
+        calls.append(url)
+        return FakeResponse(text=collection_page([]))
+
+    monkeypatch.setattr(leaving_criterion.requests, "get", fake_requests_get)
+
+    with caplog.at_level("WARNING"):
+        assert leaving_criterion.refresh_leaving_criterion() is True
+    assert calls == [url]
+    assert app.redis.get(leaving_criterion.LEAVING_KEY).decode() == planted
+    assert f"no films found on '{url}'" in caplog.text
+    assert dvr_rebuild_jobs(app) == []
+
+
 def shelf_item(tmdb_id, title, runtime=100, genre=(37, "Western")):
     """Return a stored leaving-set item, the trimmed enriched payload."""
 
@@ -1066,7 +1094,6 @@ def test_a_film_that_tmdb_deleted_does_not_keep_the_set_incomplete(app, monkeypa
             date.today() + timedelta(days=5),
             "https://example.test/leaving",
             [{"title": "Gone Film", "year": 1960, "director": None}],
-            False,
         ),
     )
     monkeypatch.setattr(leaving_criterion, "match_tmdb_id", lambda *a, **k: 4040)
@@ -1110,65 +1137,6 @@ def test_a_film_leaving_criterion_is_not_urgent_for_a_non_subscriber(app):
         assert urgent == []
         assert [row["movie"].id for row in rows] == [film.id]
         assert rows[0]["leaving"] is None
-
-
-def test_an_earlier_set_never_replaces_the_stored_set(app, monkeypatch):
-    """Last month's page must not replace an incomplete current set (#324)."""
-
-    import app.leaving_criterion as leaving_criterion
-
-    current = {
-        "departs": (date.today() + timedelta(days=20)).isoformat(),
-        "items": [{"title": "Still Leaving", "tmdb_id": None}],
-        "incomplete": True,
-    }
-    app.redis.set(leaving_criterion.LEAVING_KEY, json.dumps(current))
-    departed = [{"title": "Already Gone", "year": 1950, "director": None}]
-    monkeypatch.setattr(
-        leaving_criterion,
-        "fetch_leaving_films",
-        lambda: (
-            date.today() - timedelta(days=3),
-            "leaving-last-month",
-            departed,
-            False,
-        ),
-    )
-
-    with app.app_context():
-        assert leaving_criterion.refresh_leaving_criterion() is True
-    assert json.loads(app.redis.get(leaving_criterion.LEAVING_KEY)) == current
-
-
-def test_next_month_never_replaces_a_set_that_has_not_departed(app, monkeypatch):
-    """The page of next month waits for the stored set to depart (#541).
-
-    One empty render of this month's page made the fetch return the
-    November films 2 days early."""
-
-    import app.leaving_criterion as leaving_criterion
-
-    current = {
-        "departs": (date.today() + timedelta(days=2)).isoformat(),
-        "items": [{"title": "Still Leaving", "tmdb_id": None}],
-        "incomplete": True,
-    }
-    app.redis.set(leaving_criterion.LEAVING_KEY, json.dumps(current))
-    upcoming = [{"title": "Next Month", "year": 1950, "director": None}]
-    monkeypatch.setattr(
-        leaving_criterion,
-        "fetch_leaving_films",
-        lambda: (
-            date.today() + timedelta(days=33),
-            "leaving-next-month",
-            upcoming,
-            False,
-        ),
-    )
-
-    with app.app_context():
-        assert leaving_criterion.refresh_leaving_criterion() is True
-    assert json.loads(app.redis.get(leaving_criterion.LEAVING_KEY)) == current
 
 
 # The match rules of match_tmdb_id, 1 at a time. The cases are the cases
@@ -1359,45 +1327,6 @@ def test_a_film_page_with_no_film_data_is_a_failed_fetch(app, monkeypatch):
             is leaving_criterion.DIRECTOR_FETCH_FAILED
         )
     assert app.redis.get(key) is None
-
-
-def test_an_empty_render_of_this_month_stores_a_replaceable_set(app, monkeypatch):
-    """A first run with an empty render of this month stored next month (#557).
-
-    The next day, the #324 and #541 gates kept the wrong month until its
-    own departure. Now that set gives way to this month's page."""
-
-    import app.leaving_criterion as leaving_criterion
-
-    (this_url, this_departs), (next_url, next_departs) = (
-        leaving_criterion.leaving_page_candidates(date.today())[:2]
-    )
-    pages = {this_url: collection_page([]), next_url: LEAVING_HTML}
-    monkeypatch.setattr(
-        leaving_criterion.requests,
-        "get",
-        lambda url, timeout=None: FakeResponse(
-            text=pages.get(url, ""), status_code=200 if url in pages else 404
-        ),
-    )
-    monkeypatch.setattr(leaving_criterion, "film_page_director", lambda url: "Ford")
-    monkeypatch.setattr(leaving_criterion, "match_tmdb_id", lambda *a, **k: None)
-    monkeypatch.setattr("app.dvr.enqueue_lineup_rebuild", lambda *args, **kwargs: None)
-    app.redis.delete(leaving_criterion.LEAVING_KEY)
-    try:
-        with app.app_context():
-            assert leaving_criterion.refresh_leaving_criterion() is True
-            stored = json.loads(app.redis.get(leaving_criterion.LEAVING_KEY))
-            assert stored["departs"] == next_departs.isoformat()
-            assert stored["incomplete"] is True
-
-            pages[this_url] = LEAVING_HTML
-            assert leaving_criterion.refresh_leaving_criterion() is True
-            stored = json.loads(app.redis.get(leaving_criterion.LEAVING_KEY))
-            assert stored["departs"] == this_departs.isoformat()
-            assert not stored.get("early")
-    finally:
-        app.redis.delete(leaving_criterion.LEAVING_KEY)
 
 
 def test_the_leaving_inventory_ranks_a_record_by_its_movie_lane(app, monkeypatch):
