@@ -452,7 +452,7 @@ The on/off settings that are off by default are `PREVENT_ACCOUNT_CREATION`, `AWS
 
 #### The Settings page
 
-Some settings can also change on the **Admin > Settings** page, without a restart. A save on the page goes to each web and worker process at once, through a version number in Redis. A value that changes outside the page can take up to 60 seconds. While Redis is down, each process reads the table again after 5 seconds. The page settings are:
+Some settings can also change on the **Admin > Settings** page, without a restart. Each web and worker process reads the page values again after 5 seconds. Thus, a save gets to each process in 5 seconds. The page itself always reads the table, so it shows a save at once. The page settings are:
 
 - The on/off settings `PREVENT_ACCOUNT_CREATION`, `ARCHIVE_ORIGINAL_MEDIA`, `AWS_DOWNLOAD_VIA_CDN`, `CREATE_FLAC_TWINS`, `CREATE_ATMOS_TWINS`, and `CONVERT_HDR_TO_SDR`.
 - The health and log alerts `DISK_ALERT_FREE_GB`, `LOG_DIGEST_THRESHOLD`, and `LOG_DIGEST_IGNORE`.

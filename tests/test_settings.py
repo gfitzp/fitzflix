@@ -140,8 +140,8 @@ def test_page_value_that_does_not_parse_uses_the_default(app, monkeypatch):
         assert resolve("DVR_CHANNEL_FILMS") == (40, "default")
 
 
-def test_cache_holds_while_the_version_agrees(app, monkeypatch):
-    """Each process reads the table again when the version changes, or after a minute."""
+def test_cache_holds_for_some_seconds(app, monkeypatch):
+    """Each process reads the table at most 1 time in CACHE_SECONDS."""
 
     from app import settings
 
@@ -150,32 +150,18 @@ def test_cache_holds_while_the_version_agrees(app, monkeypatch):
     with app.app_context():
         assert settings.get_setting("CREATE_FLAC_TWINS") is True
         _store(app, "CREATE_FLAC_TWINS", "0", expire=False)
-        clock[0] += settings.CACHE_SECONDS
-        assert settings.get_setting("CREATE_FLAC_TWINS") is True
-        clock[0] += settings.VERSIONED_CACHE_SECONDS
-        assert settings.get_setting("CREATE_FLAC_TWINS") is False
-
-
-def test_cache_holds_for_some_seconds_without_redis(app, monkeypatch):
-    """Without Redis, each process reads the table at most 1 time in CACHE_SECONDS."""
-
-    from app import settings
-
-    clock = [1000.0]
-    monkeypatch.setattr(settings.time, "monotonic", lambda: clock[0])
-    monkeypatch.setattr(settings, "_settings_version", lambda: None)
-    with app.app_context():
-        assert settings.get_setting("CREATE_FLAC_TWINS") is True
-        _store(app, "CREATE_FLAC_TWINS", "0", expire=False)
         assert settings.get_setting("CREATE_FLAC_TWINS") is True
         clock[0] += settings.CACHE_SECONDS
         assert settings.get_setting("CREATE_FLAC_TWINS") is False
 
 
-def test_a_save_in_another_worker_reaches_this_cache_at_once(app, monkeypatch):
-    """The save of another web worker bumps the Redis version (#440).
+def test_the_page_shows_a_save_of_another_worker_at_once(
+    app, admin_client, monkeypatch
+):
+    """The Settings page reads the table, not the cache (#625).
 
-    Before, this worker showed the old value for CACHE_SECONDS. A save
+    The save of another web worker clears only its own cache. Before
+    #440, this worker showed the old value for CACHE_SECONDS. A save
     from that render could store the old value again."""
 
     from app import settings
@@ -183,18 +169,12 @@ def test_a_save_in_another_worker_reaches_this_cache_at_once(app, monkeypatch):
     clock = [1000.0]
     monkeypatch.setattr(settings.time, "monotonic", lambda: clock[0])
     with app.app_context():
-        assert settings.get_setting("CREATE_FLAC_TWINS") is True
+        assert settings.get_setting("LOG_DIGEST_THRESHOLD") != 30
+    _store(app, "LOG_DIGEST_THRESHOLD", "30", expire=False)
 
-        # The other worker stores the row and bumps the version. It
-        # clears only its own cache, not this one.
-        real_clear = settings.clear_cache
-        monkeypatch.setattr(settings, "clear_cache", lambda: None)
-        settings.set_setting("CREATE_FLAC_TWINS", False, "other-worker")
-        monkeypatch.setattr(settings, "clear_cache", real_clear)
+    page = admin_client.get("/settings").get_data(as_text=True)
 
-        assert settings.get_setting("CREATE_FLAC_TWINS") is False
-        settings.clear_setting("CREATE_FLAC_TWINS", "other-worker")
-        assert app.redis.get(settings.SETTINGS_VERSION_KEY) == b"2"
+    assert 'value="30"' in _row(page, "LOG_DIGEST_THRESHOLD")
 
 
 def _row(page, name):
@@ -477,7 +457,7 @@ def test_the_startup_check_reads_archival_from_the_page(app, monkeypatch, caplog
 def test_a_database_fault_keeps_the_last_values_for_some_seconds(
     app, monkeypatch, caplog
 ):
-    """Redis answers and the table read fails. The warning comes 1 time (follow-up #440)."""
+    """The table read fails. The warning comes 1 time in CACHE_SECONDS (follow-up #440)."""
 
     from sqlalchemy.exc import OperationalError
 
@@ -486,9 +466,8 @@ def test_a_database_fault_keeps_the_last_values_for_some_seconds(
     clock = [1000.0]
     monkeypatch.setattr(settings.time, "monotonic", lambda: clock[0])
     with app.app_context():
-        app.redis.set(settings.SETTINGS_VERSION_KEY, 7)
         assert settings.get_setting("CREATE_FLAC_TWINS") is True
-        clock[0] += settings.VERSIONED_CACHE_SECONDS + 1
+        clock[0] += settings.CACHE_SECONDS
 
         def broken_connect(*args, **kwargs):
             raise OperationalError("SELECT", {}, Exception("MariaDB is away"))

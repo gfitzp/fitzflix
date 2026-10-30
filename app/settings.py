@@ -190,19 +190,8 @@ SETTINGS = {
     )
 }
 
-_cache = {"values": {}, "loaded": None, "version": None}
+_cache = {"values": {}, "loaded": None}
 _cache_lock = threading.Lock()
-
-# Each save of the page bumps this Redis counter (#440). Each process
-# keeps its own cache. A cache whose version differs reads the table
-# again. Thus, the other web workers see a save at once.
-
-SETTINGS_VERSION_KEY = "fitzflix:settings:version"
-
-# A cache with the current version is still read again after this time.
-# A change outside the page then also arrives.
-
-VERSIONED_CACHE_SECONDS = 60
 
 
 def clear_cache():
@@ -211,59 +200,23 @@ def clear_cache():
     with _cache_lock:
         _cache["values"] = {}
         _cache["loaded"] = None
-        _cache["version"] = None
-
-
-def _settings_version():
-    """Return the settings version from Redis, or None when Redis does not answer."""
-
-    try:
-        version = current_app.redis.get(SETTINGS_VERSION_KEY)
-    except Exception:
-        return None
-    return version.decode() if isinstance(version, bytes) else str(version or "0")
-
-
-def _bump_settings_version():
-    """Tell the other processes that the page values changed (#440)."""
-
-    try:
-        current_app.redis.incr(SETTINGS_VERSION_KEY)
-    except Exception:
-        current_app.logger.warning(
-            "Cannot bump the settings version. The other processes see the "
-            f"change in {CACHE_SECONDS} seconds"
-        )
 
 
 def _page_values():
     """Return {name: stored text} for the page values, from the cache if new.
 
-    The cache is new while its version agrees with the Redis version,
-    for VERSIONED_CACHE_SECONDS at most. Without Redis, the cache is new
-    for CACHE_SECONDS. A failed read keeps the last values for
-    CACHE_SECONDS. Thus, a database fault does not stop the imports, and
-    the warning does not repeat on each read."""
+    The cache is new for CACHE_SECONDS. A failed read keeps the last
+    values for CACHE_SECONDS. Thus, a database fault does not stop the
+    imports, and the warning does not repeat on each read."""
 
     from app import db
     from app.models import AppSetting
 
     now = time.monotonic()
-    version = _settings_version()
     with _cache_lock:
         loaded = _cache["loaded"]
-        if loaded is not None:
-            age = now - loaded
-            cached_version = _cache["version"]
-            # A cache with no version (a failed table read, or no Redis at
-            # the read) holds for CACHE_SECONDS whatever the version says.
-            # Thus, a database fault does not cause a read and a warning
-            # at each call (follow-up #440).
-            if cached_version is None or version is None:
-                if age < CACHE_SECONDS:
-                    return _cache["values"]
-            elif version == cached_version and age < VERSIONED_CACHE_SECONDS:
-                return _cache["values"]
+        if loaded is not None and now - loaded < CACHE_SECONDS:
+            return _cache["values"]
     try:
         with db.engine.connect() as connection:
             rows = connection.execute(select(AppSetting.name, AppSetting.value)).all()
@@ -273,13 +226,11 @@ def _page_values():
         )
         with _cache_lock:
             _cache["loaded"] = now
-            _cache["version"] = None
             return _cache["values"]
     values = {name: value for name, value in rows}
     with _cache_lock:
         _cache["values"] = values
         _cache["loaded"] = now
-        _cache["version"] = version
     return values
 
 
@@ -419,7 +370,6 @@ def set_setting(name, value, username):
     db.session.add(row)
     db.session.commit()
     clear_cache()
-    _bump_settings_version()
     current_app.logger.info(
         f"Settings: {username} set {name} to {value!r} (was {old!r})"
     )
@@ -440,7 +390,6 @@ def clear_setting(name, username):
     db.session.delete(row)
     db.session.commit()
     clear_cache()
-    _bump_settings_version()
     current_app.logger.info(
         f"Settings: {username} reset {name} to the default "
         f"{default_value(name)!r} (was {old!r})"

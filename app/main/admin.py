@@ -110,6 +110,7 @@ from app.queue_page import listed_queues
 from app.queues import roster_queues
 from app.settings import (
     SETTINGS,
+    clear_cache,
     clear_setting,
     default_value,
     locked,
@@ -634,8 +635,11 @@ def settings():
     """Change the runtime settings. A setting that .env sets is locked.
 
     A saved value gets to each web and worker process in some seconds,
-    without a restart. The page stores only the values that change."""
+    without a restart. The page stores only the values that change. The
+    page reads the table, not the cache of this process. Thus, the page
+    after a save shows the saved values (#625)."""
 
+    clear_cache()
     locked_names = [name for name in SETTINGS if locked(name)]
 
     reset_form = ResetSettingForm()
