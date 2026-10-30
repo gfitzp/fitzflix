@@ -600,7 +600,6 @@ def test_running_banners_hold_first_run_order(app, admin_client):
     payload = admin_client.get("/api/queue-details").get_json()
     order = [item["id"] for item in payload["running"]]
     assert order == ["order-a-move", "order-b-localize"]
-    assert payload["running"][0]["first_run"] == "2026-01-01 10:00:00"
 
 
 def test_the_queue_table_and_the_banners_share_one_order(app, admin_client):

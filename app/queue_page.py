@@ -7,7 +7,6 @@ User.get_queue_details and User.get_queue_count call this module."""
 from datetime import datetime, timezone
 
 from flask import current_app
-from rq.exceptions import InvalidJobOperation, NoSuchJobError
 from rq.registry import ScheduledJobRegistry, StartedJobRegistry
 
 
@@ -95,8 +94,7 @@ def queue_details():
     def file_started(job):
         """Return the time that the FILE of the job first started to run.
 
-        The anchor of the trail is UTC with an offset (#405). An anchor
-        of an older trail has no offset and is local wall clock. The
+        The anchor of the trail is UTC with an offset (#405). The
         value is aware UTC, the same as the own started_at of rq.
         flask-moment reads each time as UTC."""
 
@@ -106,8 +104,6 @@ def queue_details():
                 stamp = datetime.fromisoformat(anchor)
             except ValueError:
                 return job.started_at
-            if stamp.tzinfo is None:
-                stamp = stamp.astimezone()
             return stamp.astimezone(timezone.utc)
         return job.started_at
 
@@ -166,17 +162,7 @@ def queue_details():
 
     running = []
     for job in running_jobs:
-        try:
-            started_at = file_started(job)
-            item = row(job, started_at)
-        except (InvalidJobOperation, NoSuchJobError):
-            # The job went away between the reads (#565). Skip its row.
-            continue
-        item["first_run"] = (
-            started_at.astimezone().strftime("%Y-%m-%d %H:%M:%S")
-            if started_at
-            else "9999"
-        )
+        item = row(job, file_started(job))
         item["progress"] = job.meta.get("progress", -1)
         running.append((job, item))
 
@@ -204,10 +190,7 @@ def queue_details():
             heads.add(head.decode() if isinstance(head, bytes) else head)
     queued = []
     for job in queued_jobs:
-        try:
-            item = row(job, None)
-        except (InvalidJobOperation, NoSuchJobError):
-            continue
+        item = row(job, None)
         item["fronted"] = job.id in fronted
         item["at_head"] = job.id in heads
         queued.append(item)
@@ -220,11 +203,7 @@ def queue_details():
     )
 
     details["all"] = [
-        {
-            key: value
-            for key, value in item.items()
-            if key not in ("first_run", "progress")
-        }
+        {key: value for key, value in item.items() if key != "progress"}
         for job, item in running
     ] + queued
     for i, task in enumerate(details["all"]):
@@ -253,10 +232,7 @@ def queue_details():
         )
         for job, (job_id, scheduled_for) in zip(jobs, entries):
             if job is not None and (only is None or job.func_name in only):
-                try:
-                    item = row(job, None)
-                except (InvalidJobOperation, NoSuchJobError):
-                    continue
+                item = row(job, None)
                 item["status"] = "scheduled"
                 item["ended_at"] = None
                 item["scheduled_for"] = scheduled_for
