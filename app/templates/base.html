@@ -101,8 +101,7 @@
 					{{ global_search_form("") }}
 				</li>
 				<li class="nav-item">
-					{% set queue_count = current_user.get_queue_count() %}
-					<a class="nav-link" href="{{ url_for('main.queue') }}" tabindex="-1">Queue <span class="badge text-bg-secondary ms-1" id="queue_count">{{ queue_count }}</span></a>
+					<a class="nav-link" href="{{ url_for('main.queue') }}" tabindex="-1">Queue <span class="badge text-bg-secondary ms-1" id="queue_count">{{ current_user.get_queue_details().count|default(0) }}</span></a>
 				</li>
 				{% if current_user.admin %}
 				<li class="nav-item dropdown">

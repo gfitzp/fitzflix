@@ -264,16 +264,16 @@ def test_the_criterion_refresh_button_uses_the_maintenance_queue(app, admin_clie
 
 
 def test_the_badge_counts_a_seeded_queue_without_a_fetch_per_job(app, monkeypatch):
-    """The count reads the hashes in 1 pipeline per queue (#526).
+    """The listing reads the jobs in 1 pipeline per list (#526).
 
     A 300-file drop made each page view 300 or more round trips. The
-    SQL queue counts only its pipeline stages. A missing hash does not
-    count."""
+    badge counts the listed jobs. The SQL queue lists only its pipeline
+    stages. A missing hash does not list."""
 
     from rq.queue import Queue
 
     from app.pipeline import STAGES
-    from app.queue_page import listed_jobs, queue_count
+    from app.queue_page import listed_jobs
 
     for number in range(5):
         app.import_queue.enqueue(
@@ -290,7 +290,6 @@ def test_the_badge_counts_a_seeded_queue_without_a_fetch_per_job(app, monkeypatc
 
     monkeypatch.setattr(Queue, "fetch_job", no_single_fetch)
     with app.app_context():
-        assert queue_count() == 6
         running, queued = listed_jobs()
     assert running == [] and len(queued) == 6
 
@@ -355,3 +354,31 @@ def test_a_job_deleted_after_the_listing_does_not_break_the_page(app, monkeypatc
     ids = [task["id"] for task in details["all"]]
     assert kept.id in ids
     assert later.id in ids
+
+
+def test_a_page_reads_the_queue_one_time_for_each_request(
+    app, admin_client, monkeypatch
+):
+    """The badge, the banners and the Queue table share one read (#640).
+
+    The next request reads the queue again. Its answer does not come
+    from the cache of the request before it."""
+
+    import app.queue_page as queue_page
+
+    calls = []
+    real = queue_page.queue_details
+
+    def counted():
+        calls.append(1)
+        return real()
+
+    monkeypatch.setattr(queue_page, "queue_details", counted)
+    _enqueue(app, "One Read (2001)")
+
+    body = admin_client.get("/queue").get_data(as_text=True)
+    assert len(calls) == 1
+    assert 'id="queue_count">1</span>' in body
+
+    assert admin_client.get("/api/queue-details").get_json()["count"] == 1
+    assert len(calls) == 2

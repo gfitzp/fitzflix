@@ -39,7 +39,6 @@ def test_the_queue_badge_is_empty_while_redis_is_down(app, redis_down, caplog):
         user = User.query.first()
         with caplog.at_level(logging.WARNING):
             assert user.get_queue_details() == {}
-            assert user.get_queue_count() == 0
             assert user.get_queue_details() == {}
     warnings = [r for r in caplog.records if "Redis is not reachable" in r.message]
     assert len(warnings) == 1

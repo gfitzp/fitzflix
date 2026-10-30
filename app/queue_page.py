@@ -2,7 +2,7 @@
 
 The queue page lists the jobs of the 5 pipeline queues. Each page shows
 the running banners of those jobs and the navbar badge counts them.
-User.get_queue_details and User.get_queue_count call this module."""
+User.get_queue_details calls this module."""
 
 from datetime import datetime, timezone
 
@@ -243,30 +243,3 @@ def queue_details():
     details["all"].extend(scheduled)
 
     return details
-
-
-def queue_count():
-    """Return the total of queued and running jobs for the navbar badge.
-
-    The badge counts the same jobs that the queue page lists. Each page
-    renders it (#526). Thus, a queue with no job filter only counts the
-    job hashes that exist, in 1 pipeline. Only the SQL queue reads its
-    jobs, for the stage filter."""
-
-    total = 0
-    for queue, only in listed_queues():
-        job_ids = StartedJobRegistry(queue=queue).get_job_ids() + queue.job_ids
-        if only is None:
-            pipeline = queue.connection.pipeline()
-            for job_id in job_ids:
-                pipeline.exists(queue.job_class.key_for(job_id))
-            total += sum(1 for exists in pipeline.execute() if exists)
-        else:
-            total += sum(
-                1
-                for job in queue.job_class.fetch_many(
-                    job_ids, connection=queue.connection
-                )
-                if job is not None and job.func_name in only
-            )
-    return total

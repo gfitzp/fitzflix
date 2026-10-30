@@ -309,7 +309,12 @@ class User(UserMixin, db.Model):
         return user
 
     def get_queue_details(self):
-        """Return the running and queued background jobs for the queue page."""
+        """Return the running and queued background jobs for the queue page.
+
+        The navbar badge, the running banners and the Queue page read
+        one copy for each request (#640). The badge shows its count key."""
+
+        from flask import g
 
         from app.queue_page import queue_details
         from app.redis_guard import REDIS_DOWN_ERRORS, warn_redis_down
@@ -317,23 +322,13 @@ class User(UserMixin, db.Model):
         # Each page renders this. A Redis outage gives an empty result,
         # not a failed page (#476).
 
-        try:
-            return queue_details()
-        except REDIS_DOWN_ERRORS as error:
-            warn_redis_down("The queue badge", error)
-            return {}
-
-    def get_queue_count(self):
-        """Return the total of queued and running jobs for the navbar badge."""
-
-        from app.queue_page import queue_count
-        from app.redis_guard import REDIS_DOWN_ERRORS, warn_redis_down
-
-        try:
-            return queue_count()
-        except REDIS_DOWN_ERRORS as error:
-            warn_redis_down("The queue badge", error)
-            return 0
+        if "queue_details" not in g:
+            try:
+                g.queue_details = queue_details()
+            except REDIS_DOWN_ERRORS as error:
+                warn_redis_down("The queue badge", error)
+                g.queue_details = {}
+        return g.queue_details
 
 
 class UserStreamingProvider(db.Model):

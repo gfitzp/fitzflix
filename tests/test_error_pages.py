@@ -23,7 +23,7 @@ def test_the_500_page_renders_with_the_site_layout(app):
 
 
 def test_the_500_page_renders_when_redis_is_away(app, monkeypatch):
-    """The layout reads the queue count from Redis. A Redis outage makes
+    """The layout reads the queue details from Redis. A Redis outage makes
     the full page fail. Then the plain page answers."""
 
     from app.models import User
@@ -31,7 +31,7 @@ def test_the_500_page_renders_when_redis_is_away(app, monkeypatch):
     def redis_away(self, *args, **kwargs):
         raise ConnectionError("Redis is away")
 
-    monkeypatch.setattr(User, "get_queue_count", redis_away)
+    monkeypatch.setattr(User, "get_queue_details", redis_away)
     body, status = _render_500_as_admin(app)
     assert status == 500
     assert "An unexpected error occurred" in body
