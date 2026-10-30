@@ -1384,7 +1384,7 @@ def _atmos_finish(state, phases):
 
     The library share carries 1 write here: the verified result."""
 
-    from app.aws_storage import archive_library_file, mark_archive_stale
+    from app.aws_storage import archive_library_file
     from app.tracks import (
         _rescan_after_a_failed_edit,
         flag_archive_before_rewrite,
@@ -1508,13 +1508,11 @@ def _atmos_finish(state, phases):
         db.session.commit()
     except Exception:
         # The library file has the twins, and the rows keep the old
-        # layout. A scan reads the rows from the file (#592). The archive
-        # is behind the library file now (#503). The weekly sync uploads
-        # a stale archive.
+        # layout. A scan reads the rows from the file (#592). The flag
+        # before the rename marked the archive stale (#503, #615).
 
         current_app.logger.error(traceback.format_exc())
         db.session.rollback()
-        mark_archive_stale(file_id, reason="the Atmos twin replaced the library file")
         _rescan_after_a_failed_edit(file_id, f"'{basename}'")
         raise
 
@@ -1529,9 +1527,8 @@ def _atmos_finish(state, phases):
     # restore from modified/ goes straight into the library. Thus, it never
     # pays for a second MediaConvert run (Glenn). The upload reads the
     # staging copy, not the library share. The library replacement above
-    # is already committed. Thus, an upload failure fails the job. The old
-    # key still has a date, and the S3 sync cannot see that it is behind.
-    # Thus, the failure marks the archive stale, and the sync uploads it.
+    # is already committed. Thus, an upload failure fails the job. The
+    # flag before the rename stays, and the sync uploads the file (#615).
 
     if get_setting("ARCHIVE_ORIGINAL_MEDIA"):
         phases.enter("Archiving to S3")
@@ -1540,8 +1537,5 @@ def _atmos_finish(state, phases):
         except Exception:
             current_app.logger.error(traceback.format_exc())
             db.session.rollback()
-            mark_archive_stale(
-                int(state["file_id"]), reason="re-archive after an Atmos supplement"
-            )
             raise
     return True

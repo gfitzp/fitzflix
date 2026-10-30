@@ -41,11 +41,7 @@ from app.tasks import (
     requeue_job_id,
 )
 from app import db, get_app
-from app.aws_storage import (
-    archive_library_file,
-    mark_archive_stale,
-    refuse_while_restore_pending,
-)
+from app.aws_storage import archive_library_file, refuse_while_restore_pending
 from app.models import File, FileAudioTrack, FileSubtitleTrack
 from app.naming import hidden
 from app.cache import cached_fetch
@@ -498,8 +494,6 @@ def track_metadata_scan_task(file_id):
             archive = bool(details.pop("rewritten", False)) and get_setting(
                 "ARCHIVE_ORIGINAL_MEDIA"
             )
-            if archive:
-                _flag_rewritten_archive(file_id)
 
             enqueue_task(
                 "app.videos.save_track_metadata",
@@ -556,15 +550,11 @@ def _fresh_file(file_id):
     return db.session.get(File, file_id)
 
 
-def _flag_rewritten_archive(file_id, strict=False):
-    """Mark the archive of a rewritten library file as stale.
+def _flag_rewritten_archive(file_id):
+    """Mark the archive of a library file as stale. A failure raises after the rollback (#561).
 
-    The upload after the save clears the flag. If the save or the
-    upload fails, the flag stays, and the weekly S3 sync uploads the
-    file. The scan read the row before its long rewrite. Thus, a new
-    transaction makes the change (MariaDB error 1020). After a scan,
-    the rewrite is done, and a failed flag only logs. With strict, a
-    failed flag raises after the rollback (#561)."""
+    The caller read the row before its slow work. Thus, a new
+    transaction makes the change (MariaDB error 1020)."""
 
     try:
         db.session.rollback()
@@ -572,44 +562,24 @@ def _flag_rewritten_archive(file_id, strict=False):
         db.session.commit()
     except Exception:
         db.session.rollback()
-        if strict:
-            raise
-        current_app.logger.warning(traceback.format_exc())
+        raise
 
 
 def flag_archive_before_rewrite(file_id):
-    """Mark the archive stale right before a library rewrite (#517).
+    """Mark the archive stale right before a tool may write the library file (#517, #615).
 
-    A failure after the write and before the commit leaves the new bytes
+    Each writer of a library file calls this before its first byte. A
+    failure after the write and before the commit leaves the new bytes
     on disk and the old row. Without the flag, the weekly sync never
     uploads the file again, and a restore would bring back the older
-    bytes. archive_library_file clears the flag after a good upload. The
-    flag is set only when Fitzflix archives the library files.
+    bytes. Only archive_library_file under the title lock clears the
+    flag. The flag is set only when Fitzflix archives the library files.
 
-    A failed flag raises (#561). This strict rule is for a caller that
-    has not written yet. Then the rewrite stops and the library file
-    stays as it was. The same database fault would fail the commit after
-    the rewrite. A caller whose tool already wrote the file uses
-    _flag_after_a_write (#584)."""
+    A failed flag raises (#561). Then the rewrite does not start, and
+    the library file stays as it was."""
 
     if get_setting("ARCHIVE_ORIGINAL_MEDIA"):
-        _flag_rewritten_archive(file_id, strict=True)
-
-
-def _flag_after_a_write(file_id):
-    """Mark the archive stale after a tool that can have written the file (#561).
-
-    mkvpropedit writes the file in place. A kill or an error exit after
-    its first write leaves new bytes on disk. A clean exit wrote them
-    for sure. This is best effort (#584). After a failure, the caller
-    raises the original error of the tool. After a success, the task
-    goes on to the row commit and the upload at its end. A raise there
-    skipped both and left the archive old with a clean flag."""
-
-    try:
-        flag_archive_before_rewrite(file_id)
-    except Exception:
-        current_app.logger.warning(traceback.format_exc())
+        _flag_rewritten_archive(file_id)
 
 
 def _rescan_after_a_failed_edit(file_id, name, reason="Track edit failed"):
@@ -770,14 +740,13 @@ def track_metadata_scan(file_id):
         current_app.lock_manager.unlock(lock)
         raise
 
-    # A rewritten file needs its archive to follow (#299). The save
-    # queues the upload after its commit.
+    # A rewritten file needs its archive to follow (#299). The rewrite
+    # marked the archive stale before it replaced the file (#517). The
+    # save queues the upload after its commit.
 
     archive = bool(details.pop("rewritten", False)) and get_setting(
         "ARCHIVE_ORIGINAL_MEDIA"
     )
-    if archive:
-        _flag_rewritten_archive(file_id)
     return save_track_metadata(file_id, details, lock=lock, archive=archive)
 
 
@@ -1430,7 +1399,11 @@ def mkvpropedit_unlocked(
             )
 
             if localization_arguments:
+                # mkvpropedit writes the file in place (#517). The flag goes
+                # on before the tool starts. A failed flag stops the edit
+                # before its first byte (#615).
 
+                flag_archive_before_rewrite(file_id)
                 mkvpropedit_task = subprocess.Popen(
                     [
                         current_app.config["MKVPROPEDIT_BIN"],
@@ -1443,32 +1416,15 @@ def mkvpropedit_unlocked(
                     bufsize=1,
                 )
                 try:
-                    try:
-                        for line in mkvpropedit_task.stdout:
-                            line = line.replace("\n", "")
-                            current_app.logger.info(f"'{file.basename}' {line}")
-                    except BaseException:
-                        # The child must not keep writing after a fault (#499).
-                        stop_process(mkvpropedit_task)
-                        raise
-
-                    wait_for_subprocess(mkvpropedit_task, ok_returncodes=(0, 1))
+                    for line in mkvpropedit_task.stdout:
+                        line = line.replace("\n", "")
+                        current_app.logger.info(f"'{file.basename}' {line}")
                 except BaseException:
-                    # The tool ran. It can have written the file before the
-                    # kill or the error exit (#561). Thus, the archive is
-                    # marked stale in this case too.
-
-                    _flag_after_a_write(file_id)
+                    # The child must not keep writing after a fault (#499).
+                    stop_process(mkvpropedit_task)
                     raise
 
-                # mkvpropedit writes the file in place (#517). The flag goes
-                # on after the tool reports success (follow-up #517), or
-                # after a failure once the tool ran (#561). A tool that
-                # could not start leaves the row clean. A stale row refuses
-                # a direct restore and costs an upload. The write is done.
-                # Thus, a failed flag only logs (#584).
-
-                _flag_after_a_write(file_id)
+                wait_for_subprocess(mkvpropedit_task, ok_returncodes=(0, 1))
 
                 # If the default audio track is not the first track, make a
                 # new file with the default audio track first. Then Plex
@@ -1541,37 +1497,17 @@ def mkvpropedit_unlocked(
             enqueue_plex_analyze(file_path)
 
         # The edited library file goes to modified/, or to transcoded/
-        # for a conversion (#299). The rip in untouched/ never changes.
+        # for a conversion (#299). The rip in untouched/ never changes. A
+        # failed upload leaves the stale flag of the write in place. The
+        # repair queue then uploads the file (#615).
 
         if get_setting("ARCHIVE_ORIGINAL_MEDIA"):
             try:
                 archive_library_file(file, file_path)
-
-            except OSError:
-                # The edit already succeeded and committed. Only the
-                # upload was lost.
-                #
-                # No other process can find that loss. The S3 key still
-                # exists. It has the date of the previous upload. Thus,
-                # the sync task reads the row as consistent. Then it fills
-                # the recorded size from the stale object. This makes the
-                # row consistent with the wrong copy. Without a repair,
-                # the archive stays a pre-edit file for ever. Thus, record
-                # the problem explicitly. The repair queue handles it.
-
-                current_app.logger.error(traceback.format_exc())
-                db.session.rollback()
-                mark_archive_stale(file_id, reason="re-archive after a track edit")
-                raise
-
             except Exception:
-                current_app.logger.error(traceback.format_exc())
                 db.session.rollback()
-                mark_archive_stale(file_id, reason="re-archive after a track edit")
                 raise
-
-            else:
-                db.session.commit()
+            db.session.commit()
 
         return True
 
@@ -2562,18 +2498,14 @@ def _remux_audio_plan_unlocked(file_id, plan):
 
             # The rebuilt library file goes to modified/, or to transcoded/
             # for a conversion (#299). The upload reads the staging copy.
-            # A failure marks the archive stale. Then the S3 sync uploads
-            # it again.
+            # A failure leaves the stale flag of the write in place. Then
+            # the S3 sync uploads it again (#615).
 
             if get_setting("ARCHIVE_ORIGINAL_MEDIA"):
                 try:
                     archive_library_file(file, final_staging)
                 except Exception:
-                    current_app.logger.error(traceback.format_exc())
                     db.session.rollback()
-                    mark_archive_stale(
-                        int(file_id), reason="re-archive after an audio remux"
-                    )
                     raise
             return True
 

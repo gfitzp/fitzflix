@@ -683,7 +683,8 @@ def test_the_placement_after_a_writer_that_began_first_ends_consistent(
     """A remux held the lock at the request. It writes while the placement waits.
 
     Its archive is refused. The placement does not replace the newer
-    file, the pending state ends, and the stale mark stays for the sync."""
+    file, the pending state ends, and the stale mark of the write stays
+    for the sync (#615)."""
 
     import app.videos as videos
     from app import aws_storage, db
@@ -691,6 +692,7 @@ def test_the_placement_after_a_writer_that_began_first_ends_consistent(
     from app.tracks import flag_archive_before_rewrite
     from tests.test_scheduling import scheduled_jobs
 
+    monkeypatch.setitem(app.config, "ARCHIVE_ORIGINAL_MEDIA", True)
     file_id, key, path = _direct_row(app, "Writer First", requested=False)
     with app.app_context():
         resource = db.session.get(File, file_id).file_identifier()
@@ -731,11 +733,11 @@ def test_the_placement_after_a_writer_that_began_first_ends_consistent(
 
 
 def test_the_import_of_the_restored_rip_clears_the_stale_mark(app):
-    """A refused archive of an untouched/ row marks it stale. The rip then imports.
+    """A refused archive of a stale untouched/ row keeps the mark. The rip then imports.
 
     The new library file is a fresh localization of the rip. A stale mark
     that stayed made the next sync upload the file to modified/ and
-    delete the untouched/ rip."""
+    delete the untouched/ rip. A refusal clears no mark (#615)."""
 
     from datetime import datetime
 
@@ -746,6 +748,7 @@ def test_the_import_of_the_restored_rip_clears_the_stale_mark(app):
         file_id, key, path = _pending_file(app, "Refused Untouched")
         file = db.session.get(File, file_id)
         file.untouched_basename = file.basename
+        file.aws_stale = True
         db.session.commit()
         assert aws_storage.archive_library_file(file, path) is None
         assert db.session.get(File, file_id).aws_stale is True

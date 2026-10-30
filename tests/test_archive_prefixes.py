@@ -320,8 +320,9 @@ def test_the_archive_of_a_conversion_clears_the_stale_flag(app, uploads):
         assert file.aws_key == "untouched/Cleared (2007) - [Bluray-2160p].mkv"
 
 
-def test_a_failed_upload_marks_the_archive_stale(app, monkeypatch):
-    """The old key still has a date. Only the stale flag shows the loss."""
+@pytest.mark.parametrize("stale", [True, False])
+def test_a_failed_upload_leaves_the_stale_flag_as_it_is(app, monkeypatch, stale):
+    """The writer set the flag before its write (#615). A failed upload changes nothing."""
 
     def failing_upload(*args, **kwargs):
         raise OSError("drill")
@@ -329,17 +330,51 @@ def test_a_failed_upload_marks_the_archive_stale(app, monkeypatch):
     monkeypatch.setattr(aws_storage, "aws_upload", failing_upload)
     with app.app_context():
         file = make_movie_file(
-            make_movie("Failed Upload", 2008),
+            make_movie(f"Failed Upload {stale}", 2008),
             "DVD",
-            aws_key="modified/Failed Upload (2008) - [DVD].mkv",
+            aws_key=f"modified/Failed Upload {stale} (2008) - [DVD].mkv",
             aws_date_uploaded=datetime.utcnow(),
+            aws_stale=stale,
         )
         db.session.commit()
         file_id = file.id
+        identifier = file.file_identifier()
 
     assert aws_storage.upload_task(file_id) is None
     with app.app_context():
+        assert db.session.get(File, file_id).aws_stale is stale
+    lock = app.lock_manager.lock(identifier, 1000)
+    assert lock
+    app.lock_manager.unlock(lock)
+
+
+def test_the_upload_waits_for_the_title_lock(app, monkeypatch, held_lock):
+    """Only an upload under the title lock clears the stale flag (#615).
+
+    A writer that holds the lock can change the file during the upload."""
+
+    from tests.test_scheduling import scheduled_jobs
+
+    uploads = []
+    monkeypatch.setattr(
+        aws_storage, "aws_upload", lambda *args, **kwargs: uploads.append(args)
+    )
+    with app.app_context():
+        file = make_movie_file(make_movie("Locked Upload", 2008), "DVD", aws_stale=True)
+        db.session.commit()
+        file_id = file.id
+        held_lock(file.file_identifier())
+
+    assert aws_storage.upload_task(file_id) is False
+    assert uploads == []
+    with app.app_context():
         assert db.session.get(File, file_id).aws_stale is True
+    (retry,) = [
+        job
+        for job in scheduled_jobs(app.file_queue)
+        if job.func_name == "app.videos.upload_task"
+    ]
+    assert retry.args == (file_id,)
 
 
 class FakeArchiveS3:
@@ -440,9 +475,12 @@ def test_the_backfill_keeps_an_archive_with_different_bytes(
 def test_a_scan_that_rewrites_the_file_queues_its_archive(app, monkeypatch):
     import app.tracks as tracks
 
-    monkeypatch.setattr(
-        tracks, "remove_empty_subtitle_tracks", lambda path, before_replace=None: True
-    )
+    def removal(path, before_replace=None):
+        # The real removal runs the flag right before its rename.
+        before_replace()
+        return True
+
+    monkeypatch.setattr(tracks, "remove_empty_subtitle_tracks", removal)
     monkeypatch.setattr(
         tracks,
         "_extract_media_details",
@@ -479,8 +517,8 @@ def test_a_scan_that_rewrites_the_file_queues_its_archive(app, monkeypatch):
     # The upload waits for the save. Both write the same row. An upload
     # that starts first loses its commit to MariaDB error 1020.
 
-    # The rewrite marks the archive stale at once. Thus, a failed save
-    # or upload leaves the repair to the weekly sync.
+    # The rewrite marks the archive stale before its rename (#517). Thus,
+    # a failed save or upload leaves the repair to the weekly sync.
 
     tracks.track_metadata_scan_task(file_id)
     with app.app_context():

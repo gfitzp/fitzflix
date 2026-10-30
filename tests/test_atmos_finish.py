@@ -163,6 +163,7 @@ def test_a_failed_row_commit_marks_the_archive_stale_and_queues_a_scan(
     from app.models import File
     from tests.test_scheduling import requeue_id, scheduled_jobs
 
+    monkeypatch.setitem(app.config, "ARCHIVE_ORIGINAL_MEDIA", True)
     with app.app_context():
         file, finish = _finish_job(app, monkeypatch, "Finish Rows Twice")
         file_id = file.id

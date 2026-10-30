@@ -1188,29 +1188,3 @@ def test_repair_asks_the_share_first_and_never_opens_a_wedged_one(app, monkeypat
 
         assert "share not responding" in result.output
         assert result.exception is None
-
-
-def test_repair_skips_a_file_whose_title_lock_is_held(app, monkeypatch):
-    """A file in a remux or a rename is not archived now (#489)."""
-
-    import app.cli as app_cli
-
-    from app import smb_probe
-
-    app_cli.register(app)
-    with app.app_context():
-        file = _stale_file("Locked Repair")
-        path = smb_probe.library_path(file)
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "wb") as f:
-            f.write(b"library file")
-        lock = app.lock_manager.lock(file.file_identifier(), 60000)
-        queued = []
-        monkeypatch.setattr(
-            app.file_queue, "enqueue", lambda *a, **kw: queued.append(a)
-        )
-        result = app.test_cli_runner().invoke(args=["smb", "repair", "--enqueue"])
-        app.lock_manager.unlock(lock)
-
-        assert "BUSY" in result.output
-        assert queued == []

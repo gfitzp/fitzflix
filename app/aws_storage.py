@@ -1839,14 +1839,38 @@ def _route_restore(sqs_client, key, receipt_handle, downloads_by_key, moves_by_k
 
 
 def upload_task(file_id):
-    """Upload the library file of a record to its AWS S3 archive."""
+    """Upload the library file of a record to its AWS S3 archive.
+
+    The task holds the title lock of the file (#615). Thus, no writer
+    changes the file during the upload, and the clear of the stale flag
+    is true. A failure leaves the flag as it is."""
+
+    from app.videos import acquire_lock_or_defer
 
     with app.app_context():
-        try:
-            # Get the record of the file for the upload to AWS S3 storage.
+        file = db.session.get(File, int(file_id))
+        if file is None:
+            return False
+        config = current_app.config
+        lock = acquire_lock_or_defer(
+            file.file_identifier(),
+            config["UPLOAD_TASK_TIMEOUT"] * 1000,
+            current_app.file_queue,
+            "app.videos.upload_task",
+            minutes=(5, 15),
+            timeout=config["UPLOAD_TASK_TIMEOUT"],
+            description=f"'{file.basename}'",
+            args=(file_id,),
+            key=int(file_id),
+        )
+        if not lock:
+            return False
 
-            file = File.query.filter_by(id=file_id).first()
-            file_path = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
+        try:
+            # The row can have changed while the task waited for the lock.
+
+            db.session.refresh(file)
+            file_path = os.path.join(config["LIBRARY_DIR"], file.file_path)
 
             # The library file goes to the archive of the record: modified/
             # for a normal file, transcoded/ for a conversion (#299). A rip
@@ -1864,14 +1888,12 @@ def upload_task(file_id):
         except Exception:
             current_app.logger.error(traceback.format_exc())
             db.session.rollback()
+            return None
 
-            # The library file changed, and its archive did not follow.
-            # The sync uploads a stale archive again.
+        finally:
+            current_app.lock_manager.unlock(lock)
 
-            mark_archive_stale(file_id, reason="failed upload")
-
-        else:
-            return True
+        return True
 
 
 # Supporting functions
@@ -2277,16 +2299,18 @@ def archive_library_file(file, path, delete_replaced=True):
     is cleared. Thus, an edit completes the move.
 
     A pending restore of the file refuses the upload (#610). The upload
-    can delete the key under restore. A writer that started before the
-    request can have changed the library file. Thus, the refusal marks
-    the archive stale, and it returns None."""
+    can delete the key under restore. The refusal returns None. A writer
+    marks the archive stale before it writes (#615). Thus, the flag of a
+    changed file stays for a later upload.
+
+    The caller holds the title lock. Only this function clears the
+    stale flag (#615)."""
 
     refused = refuse_while_restore_pending(file)
     if refused:
         current_app.logger.warning(
             f"'{file.basename}' {refused} The archive upload does not run"
         )
-        mark_archive_stale(file.id, reason="restore pending")
         return None
 
     config = current_app.config

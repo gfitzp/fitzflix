@@ -175,8 +175,6 @@ def repair_stale_archives(enqueue):
     way. Thus, this probes each file first and queues only the
     readable ones."""
 
-    from flask import current_app
-
     from app.models import File
     from app.smb_probe import (
         library_path,
@@ -195,7 +193,6 @@ def repair_stale_archives(enqueue):
     ready = []
     blocked = []
     offline = []
-    busy = []
     responsive = {}
     for file in files:
         path = library_path(file)
@@ -209,15 +206,6 @@ def repair_stale_archives(enqueue):
         if not responsive[share]:
             offline.append(file)
             click.echo(f"  UNREADABLE (share not responding)  {file.file_path}")
-            continue
-
-        # upload_task takes no title lock. A remux or a rename of the
-        # file can run now. Then the upload archives the old bytes and
-        # clears the stale mark (#489). The file waits for a later run.
-
-        if current_app.redis.exists(file.file_identifier()):
-            busy.append(file)
-            click.echo(f"  BUSY, a task holds the title lock  {file.file_path}")
             continue
 
         result = probe_path(path)
@@ -242,8 +230,7 @@ def repair_stale_archives(enqueue):
     click.echo(
         f"{len(files)} stale archive(s): {len(ready)} "
         f"{'queued' if enqueue else 'ready to repair'}, "
-        f"{len(blocked)} blocked by a lost handle, {len(offline)} unreadable, "
-        f"{len(busy)} busy"
+        f"{len(blocked)} blocked by a lost handle, {len(offline)} unreadable"
     )
     if ready and not enqueue:
         click.echo("Re-run with --enqueue to queue the repairs")
