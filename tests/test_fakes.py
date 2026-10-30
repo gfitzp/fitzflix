@@ -153,7 +153,8 @@ def test_a_poll_with_a_stale_handle_records_the_new_one(app, monkeypatch):
         assert aws_storage.sqs_retrieve_task() is True
 
     assert sqs.visibility == []
-    recorded = app.redis.get(SQS_HANDLE_KEY.format(job_id=job.id)).decode()
+    recorded = app.redis.get(SQS_HANDLE_KEY.format(key=key)).decode()
+    assert job.id in app.file_queue.job_ids
     assert recorded not in (None, stale)
     assert sqs.messages[0]["handle"] == recorded
 

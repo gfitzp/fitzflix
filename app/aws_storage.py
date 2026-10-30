@@ -52,7 +52,6 @@ from app.tasks import (
     live_jobs,
     report_progress,
     requeue,
-    requeue_job_id,
 )
 from app import db, get_app
 from app.email import notify_admin, notify_admin_text
@@ -96,63 +95,56 @@ def aws_sqs_client():
     )
 
 
-# A second receive of a message gives it a new receipt handle. The poll
-# records it here for the download job of the key. A running job saves its
-# own meta for its progress. Thus, the handle has its own key.
+# A second receive of a message gives it a new receipt handle. SQS can
+# ignore a delete with an older handle. A restore message is about 1 S3
+# object. Thus, the poll records the newest handle under the S3 key, on
+# every receive (#617). Only the poll writes it. Whoever deletes the
+# message deletes the entry.
 
-SQS_HANDLE_KEY = "fitzflix:sqs:handle:{job_id}"
+SQS_HANDLE_KEY = "fitzflix:sqs:handle:{key}"
 SQS_HANDLE_SECONDS = 14 * 86400
 
 
-def _latest_receipt_handle(receipt_handle, job_id=None):
-    """Return the newest receipt handle of the message of a download job.
+def record_receipt_handle(key, receipt_handle):
+    """Record the newest receipt handle of the restore message of key (#617)."""
 
-    SQS can ignore a delete with an older handle."""
+    current_app.redis.set(
+        SQS_HANDLE_KEY.format(key=key), receipt_handle, ex=SQS_HANDLE_SECONDS
+    )
 
-    if job_id is None:
-        job = rq.get_current_job()
-        job_id = job.id if job else None
-    if job_id is None:
+
+def _latest_receipt_handle(receipt_handle, key=None):
+    """Return the newest receipt handle of the restore message of key.
+
+    With no record, the given handle stays."""
+
+    if key is None:
         return receipt_handle
-    latest = current_app.redis.get(SQS_HANDLE_KEY.format(job_id=job_id))
+    latest = current_app.redis.get(SQS_HANDLE_KEY.format(key=key))
     return latest.decode() if latest else receipt_handle
 
 
-def _forget_stored_handle(retry_id=None):
-    """Delete the stored SQS handle of the current job after a retry took it (#600).
+def delete_download_message(receipt_handle, key, note="message", sqs_client=None):
+    """Delete the restore message of key, if there is one (#572, #617).
 
-    The retry carries the newest handle in its args or kwargs. The fixed
-    retry ids return in a later chain of the same key. A stale handle
-    under the id of this job would then shadow the handle of that chain.
-    A retry under the same id as this job owns the stored handle, so it
-    stays. This is best effort."""
+    A job that started with no handle can get one later through the
+    record of the poll. Thus, the newest handle decides. Return True if
+    there is no message, else the result of delete_sqs_message."""
 
-    job = rq.get_current_job()
-    if job is None or job.id == retry_id:
-        return
-    try:
-        current_app.redis.delete(SQS_HANDLE_KEY.format(job_id=job.id))
-    except Exception:
-        current_app.logger.warning(traceback.format_exc())
-
-
-def delete_download_message(receipt_handle, note="message", sqs_client=None):
-    """Delete the SQS message of a download job, if the job has one (#572).
-
-    A job that started with no handle can get one later through
-    SQS_HANDLE_KEY. Thus, the newest handle decides. Return True if the
-    job has no message, else the result of delete_sqs_message."""
-
-    handle = _latest_receipt_handle(receipt_handle)
-    if not handle:
+    if not _latest_receipt_handle(receipt_handle, key):
         return True
-    return delete_sqs_message(sqs_client or aws_sqs_client(), handle, note=note)
+    return delete_sqs_message(
+        sqs_client or aws_sqs_client(), receipt_handle, note=note, key=key
+    )
 
 
-def delete_sqs_message(sqs_client, receipt_handle, note="message"):
-    """Delete a message from the SQS queue. Return False if the delete fails."""
+def delete_sqs_message(sqs_client, receipt_handle, note="message", key=None):
+    """Delete a message from the SQS queue. Return False if the delete fails.
 
-    receipt_handle = _latest_receipt_handle(receipt_handle)
+    key is the S3 key of a restore message. The newest recorded handle
+    of key replaces receipt_handle. A good delete removes the record."""
+
+    receipt_handle = _latest_receipt_handle(receipt_handle, key)
     try:
         response = sqs_client.delete_message(
             QueueUrl=current_app.config["AWS_SQS_URL"],
@@ -167,12 +159,8 @@ def delete_sqs_message(sqs_client, receipt_handle, note="message"):
         return False
 
     current_app.logger.info(f"Deleted {note} '{receipt_handle}' from SQS")
-    # The stored handle belongs to this message. A later chain of the
-    # same file gets the same fixed retry id. A stale handle there would
-    # shadow its own handle (#587 follow-up).
-    job = rq.get_current_job()
-    if job is not None:
-        current_app.redis.delete(SQS_HANDLE_KEY.format(job_id=job.id))
+    if key is not None:
+        current_app.redis.delete(SQS_HANDLE_KEY.format(key=key))
     return True
 
 
@@ -1264,8 +1252,7 @@ def download_task(
     retired takes the kwargs of a retry that an older release booked.
     They have no use now.
 
-    Each exit forgets the stored SQS handle of this job (#600). A retry
-    under the id of this job owns that handle, so it stays then."""
+    The newest receipt handle of the message is under the key (#617)."""
 
     # A modified/ or transcoded/ object is a library file (#299). It goes
     # straight to the library path of its record, with no import. The id
@@ -1278,7 +1265,7 @@ def download_task(
             file = File.query.filter_by(aws_transcoded_key=key).first()
         file_id = file.id if file is not None else None
 
-    retry_ids = []
+    booked = []
     outcome = None
     try:
         outcome = _download_task(
@@ -1287,20 +1274,15 @@ def download_task(
             sqs_receipt_handle,
             transient_retries,
             volume_waits,
-            retry_ids,
+            booked,
             file_id,
         )
         # A status of aws_download is a truthy text. The job returns True.
         return True if isinstance(outcome, str) else outcome
     finally:
-        # A give-up or a failed delete also leaves the message in SQS. The
-        # retry ids are fixed per key and counter values. A later chain of
-        # the key can reach the id of this job and read a stale handle.
-        # The clear logs its own fault. Thus, it goes first.
         with app.app_context():
-            if not retry_ids and outcome != DOWNLOAD_RESTORE_PENDING:
+            if not booked and outcome != DOWNLOAD_RESTORE_PENDING:
                 end_restore_request(file_id)
-            _forget_stored_handle(retry_ids[0] if retry_ids else None)
 
 
 def _download_task(
@@ -1309,13 +1291,13 @@ def _download_task(
     sqs_receipt_handle,
     transient_retries,
     volume_waits,
-    retry_ids,
+    booked,
     file_id,
 ):
     """Run download_task. Return the status of aws_download, True, False or None.
 
-    file_id is the row of the key, or None. Each retry that this books
-    appends its id to retry_ids."""
+    file_id is the row of the key, or None. A booked retry appends True
+    to booked."""
 
     # The retry constants still live in app.videos. Import them lazily.
     # Thus, the module import direction stays videos to aws_storage.
@@ -1360,7 +1342,9 @@ def _download_task(
                 f"again first"
             )
             discard_kept_download()
-            return delete_download_message(sqs_receipt_handle, note="stale restore")
+            return delete_download_message(
+                sqs_receipt_handle, key, note="stale restore"
+            )
 
         if overtaken_by_import(file):
             current_app.logger.info(
@@ -1368,7 +1352,9 @@ def _download_task(
                 f"skipping the download"
             )
             discard_kept_download()
-            return delete_download_message(sqs_receipt_handle, note="overtaken restore")
+            return delete_download_message(
+                sqs_receipt_handle, key, note="overtaken restore"
+            )
 
         def dead_volumes():
             paths = [current_app.config["IMPORT_DIR"]]
@@ -1391,7 +1377,7 @@ def _download_task(
                 )
                 discard_kept_download()
                 return False
-            handle = _latest_receipt_handle(sqs_receipt_handle)
+            handle = _latest_receipt_handle(sqs_receipt_handle, key)
             counters = {
                 "transient_retries": transient_retries,
                 "volume_waits": volume_waits + 1,
@@ -1406,7 +1392,7 @@ def _download_task(
                 description=f"'{basename}' — Downloading from AWS",
                 meta={"sqs_receipt_handle": handle},
             )
-            retry_ids.append(requeue_job_id("app.videos.download_task", key, counters))
+            booked.append(True)
             return False
 
         dead = dead_volumes()
@@ -1572,7 +1558,9 @@ def _download_task(
 
         except PlacementRefused as e:
             current_app.logger.warning(str(e))
-            return delete_download_message(sqs_receipt_handle, note="stale restore")
+            return delete_download_message(
+                sqs_receipt_handle, key, note="stale restore"
+            )
 
         except OSError as e:
             if (
@@ -1585,7 +1573,7 @@ def _download_task(
 
                 # The retry is a new job. It carries the newest handle.
 
-                sqs_receipt_handle = _latest_receipt_handle(sqs_receipt_handle)
+                sqs_receipt_handle = _latest_receipt_handle(sqs_receipt_handle, key)
                 counters = {
                     "transient_retries": transient_retries + 1,
                     "volume_waits": volume_waits,
@@ -1603,9 +1591,7 @@ def _download_task(
                     description=f"'{basename}' — Downloading from AWS",
                     meta={"sqs_receipt_handle": sqs_receipt_handle},
                 )
-                retry_ids.append(
-                    requeue_job_id("app.videos.download_task", key, counters)
-                )
+                booked.append(True)
                 return False
             current_app.logger.error(traceback.format_exc())
             return None
@@ -1644,8 +1630,8 @@ def sqs_retrieve_task():
 
         # The download job of each key that waits, runs, or waits for a
         # retry. A message that comes back for such a key gets no second
-        # download. Its new receipt handle goes to that job. The move jobs
-        # are keyed the same way, by the key that they move.
+        # download. Its new receipt handle goes under the key (#617). The
+        # move jobs are keyed the same way, by the key that they move.
 
         downloads_by_key = {}
         moves_by_key = {}
@@ -1656,25 +1642,25 @@ def sqs_retrieve_task():
 
         for job in live_jobs(["file"]):
             restore_key = None
-            handle = job.meta.get("sqs_receipt_handle")
             if job.func_name == "app.videos.download_task" and job.args:
                 downloads_by_key[job.args[0]] = job
                 restore_key = job.args[0]
             elif job.func_name == "app.aws_storage.move_archive_object" and job.args:
-                # A lock retry of a move keeps its handle in its kwargs.
-                handle = handle or (job.kwargs or {}).get("sqs_receipt_handle")
                 restore_key = job.meta.get("archive_key")
                 if restore_key is None:
                     moving = db.session.get(File, int(job.args[0]))
                     restore_key = move_source(moving) if moving else None
                 if restore_key:
                     moves_by_key[restore_key] = job
-            if handle and restore_key:
+            handle = restore_key and _latest_receipt_handle(
+                job.meta.get("sqs_receipt_handle"), restore_key
+            )
+            if handle:
                 job_description = job.meta.get("description", job.description)
                 try:
                     sqs_client.change_message_visibility(
                         QueueUrl=current_app.config["AWS_SQS_URL"],
-                        ReceiptHandle=_latest_receipt_handle(handle, job_id=job.id),
+                        ReceiptHandle=handle,
                         VisibilityTimeout=SQS_VISIBILITY_SECONDS,
                     )
                     current_app.logger.info(
@@ -1735,17 +1721,13 @@ def sqs_retrieve_task():
                     ReceiptHandle=receipt_handle,
                 )
             elif key in downloads_by_key or key in moves_by_key:
-                waiting = downloads_by_key.get(key) or moves_by_key[key]
-                current_app.redis.set(
-                    SQS_HANDLE_KEY.format(job_id=waiting.id),
-                    receipt_handle,
-                    ex=SQS_HANDLE_SECONDS,
-                )
+                record_receipt_handle(key, receipt_handle)
                 current_app.logger.info(
                     f"'{key}' Already has a job. Recorded the new receipt "
                     f"handle of its message"
                 )
             else:
+                record_receipt_handle(key, receipt_handle)
                 _route_restore(
                     sqs_client, key, receipt_handle, downloads_by_key, moves_by_key
                 )
@@ -1823,10 +1805,7 @@ def _route_restore(sqs_client, key, receipt_handle, downloads_by_key, moves_by_k
         current_app.logger.info(
             f"'{key}' No record claims this key. Deleting its restore message"
         )
-        sqs_client.delete_message(
-            QueueUrl=current_app.config["AWS_SQS_URL"],
-            ReceiptHandle=receipt_handle,
-        )
+        delete_sqs_message(sqs_client, receipt_handle, note="message", key=key)
         return
     downloads_by_key[key] = enqueue_task(
         "app.videos.download_task",
@@ -2630,15 +2609,14 @@ def _copy_problem(original, copied):
     return None
 
 
-def _drop_message(sqs_receipt_handle, note):
-    """Delete the SQS message of a move, if the move came from a notification.
+def _drop_message(sqs_receipt_handle, note, key):
+    """Delete the restore message of a move, if the move came from a notification.
 
-    The newest handle decides, as in delete_download_message. A handle
-    can arrive while the job runs (#587)."""
+    key is the source key of the move, the key of the message. The
+    newest handle under key decides (#587, #617)."""
 
-    handle = _latest_receipt_handle(sqs_receipt_handle)
-    if handle:
-        delete_sqs_message(aws_sqs_client(), handle, note=note)
+    if _latest_receipt_handle(sqs_receipt_handle, key):
+        delete_sqs_message(aws_sqs_client(), sqs_receipt_handle, note=note, key=key)
 
 
 def _download_job_for(key):
@@ -2699,27 +2677,34 @@ def move_archive_object(file_id, sqs_receipt_handle=None):
     is the restore notification that started the job. The job deletes it
     when the notification is handled."""
 
-    from app.videos import acquire_lock_or_defer, lock_wait_job_id
+    from app.videos import acquire_lock_or_defer
 
     with app.app_context():
         config = current_app.config
 
-        # The poll records the handle of a later message for this job. The
-        # early returns below must delete that message too (#587).
+        # The message is about the source key of the move. The poll gives
+        # it to the job, or the job reads it from the row (#617). The early
+        # returns below delete that message too (#587).
 
-        sqs_receipt_handle = _latest_receipt_handle(sqs_receipt_handle)
+        job = get_current_job()
+        message_key = (job.meta or {}).get("archive_key") if job else None
         file = db.session.get(File, int(file_id))
         if file is None:
             current_app.logger.warning(
                 f"File id {file_id} no longer exists. Its archive move stops"
             )
-            _drop_message(sqs_receipt_handle, "archive move of a deleted record")
+            _drop_message(
+                sqs_receipt_handle, "archive move of a deleted record", message_key
+            )
             return False
+        message_key = message_key or move_source(file) or file.aws_key
         if not file.aws_key_target and archive_drift(file) is None:
             current_app.logger.info(
                 f"'{file.basename}' No archive move is pending. The job stops"
             )
-            _drop_message(sqs_receipt_handle, "archive move with no target")
+            _drop_message(
+                sqs_receipt_handle, "archive move with no target", message_key
+            )
             return True
 
         # A row with no target and a key that differs from its rule lost
@@ -2742,18 +2727,10 @@ def move_archive_object(file_id, sqs_receipt_handle=None):
             key=file.id,
         )
         if not lock:
-            if sqs_receipt_handle:
-                _forget_stored_handle(
-                    lock_wait_job_id(
-                        "app.aws_storage.move_archive_object",
-                        f"'{file.basename}' — Moving the archive",
-                        key=file.id,
-                    )
-                )
             return False
 
         try:
-            return _move_archive(file, sqs_receipt_handle)
+            return _move_archive(file, sqs_receipt_handle, message_key)
         finally:
             current_app.lock_manager.unlock(lock)
 
@@ -2803,9 +2780,9 @@ def _move_retry_delay():
 def _wait_move(file, source, sqs_receipt_handle, waits_for):
     """Book the archive move again in 25 to 35 minutes, and return MOVE_WAITING.
 
-    The retry keeps the receipt handle of the restore notification. Then
-    the poll can extend the restore and the message, and the retry
-    deletes the message when the move is done."""
+    The retry keeps the receipt handle and the key of the restore
+    notification. Then the poll can extend the restore and the message,
+    and the retry deletes the message when the move is done."""
 
     requeue(
         "app.aws_storage.move_archive_object",
@@ -2824,10 +2801,6 @@ def _wait_move(file, source, sqs_receipt_handle, waits_for):
         description=f"'{file.basename}' — Moving the archive",
         level="info",
     )
-    if sqs_receipt_handle:
-        _forget_stored_handle(
-            requeue_job_id("app.aws_storage.move_archive_object", file.id)
-        )
     return MOVE_WAITING
 
 
@@ -2889,8 +2862,11 @@ def _archive_lost_upload(file, source, column):
     return True
 
 
-def _move_archive(file, sqs_receipt_handle):
-    """Do the work of move_archive_object under the lock of the title."""
+def _move_archive(file, sqs_receipt_handle, message_key):
+    """Do the work of move_archive_object under the lock of the title.
+
+    message_key is the key of the restore message of the job. Each drop
+    uses it, also after the switch of the row to the new key (#617)."""
 
     config = current_app.config
     db.session.refresh(file)
@@ -2902,7 +2878,7 @@ def _move_archive(file, sqs_receipt_handle):
         current_app.logger.info(
             f"'{file.basename}' Each archive has the key of its name already"
         )
-        _drop_message(sqs_receipt_handle, "archive move with no work")
+        _drop_message(sqs_receipt_handle, "archive move with no work", message_key)
         return True
     source, target = drift
     if file.aws_key_target != target:
@@ -2950,7 +2926,9 @@ def _move_archive(file, sqs_receipt_handle):
                 file, source, sqs_receipt_handle, "the library volume to return"
             )
         if lost:
-            _drop_message(sqs_receipt_handle, "archive move of a missing object")
+            _drop_message(
+                sqs_receipt_handle, "archive move of a missing object", message_key
+            )
             return True
         current_app.logger.warning(
             f"'{file.basename}' The archive '{source}' is not in S3. The move to "
@@ -2958,7 +2936,9 @@ def _move_archive(file, sqs_receipt_handle):
         )
         clear_archive_target(file)
         db.session.commit()
-        _drop_message(sqs_receipt_handle, "archive move of a missing object")
+        _drop_message(
+            sqs_receipt_handle, "archive move of a missing object", message_key
+        )
         return False
 
     if not _object_is_readable(head):
@@ -2974,7 +2954,7 @@ def _move_archive(file, sqs_receipt_handle):
                 f"is requested for the move to '{target}'"
             )
             aws_restore(source, tier="Bulk", record_request=False)
-        _drop_message(sqs_receipt_handle, "stale message")
+        _drop_message(sqs_receipt_handle, "stale message", message_key)
         return MOVE_WAITING
 
     report_progress(get_current_job(), file.basename, "Moving the archive", None)
@@ -3038,7 +3018,7 @@ def _move_archive(file, sqs_receipt_handle):
             head.get("VersionId") if is_pending_archive(source) else None,
         )
     _download_after_move(file, source, target)
-    _drop_message(sqs_receipt_handle, "archive move")
+    _drop_message(sqs_receipt_handle, "archive move", message_key)
 
     # A conversion has a second archive. Its move comes next.
 
@@ -3534,18 +3514,18 @@ def _restore_has_expired(restore_status):
     return expiry <= datetime.now(timezone.utc)
 
 
-def _resolve_missing_object(sqs_client, basename, sqs_receipt_handle):
+def _resolve_missing_object(sqs_client, key, basename, sqs_receipt_handle):
     """Report an object that is not at AWS, and drop its SQS message.
 
     Return DOWNLOAD_OBJECT_MISSING, or False if the delete failed."""
 
     current_app.logger.info(f"'{basename}' doesn't exist in AWS S3")
-    if not delete_download_message(sqs_receipt_handle, sqs_client=sqs_client):
+    if not delete_download_message(sqs_receipt_handle, key, sqs_client=sqs_client):
         return False
     return DOWNLOAD_OBJECT_MISSING
 
 
-def _refuse_access_fault(sqs_client, basename, sqs_receipt_handle):
+def _refuse_access_fault(sqs_client, key, basename, sqs_receipt_handle):
     """Report a CloudFront refusal of an object that S3 can read.
 
     Only a change to the key pair, the key group, or the WAF allowlist
@@ -3561,7 +3541,7 @@ def _refuse_access_fault(sqs_client, basename, sqs_receipt_handle):
         f"allowlist, then request the restore again"
     )
     if not delete_download_message(
-        sqs_receipt_handle, note="CloudFront access fault", sqs_client=sqs_client
+        sqs_receipt_handle, key, note="CloudFront access fault", sqs_client=sqs_client
     ):
         return False
     return DOWNLOAD_ACCESS_DENIED
@@ -3593,7 +3573,7 @@ def _defer_to_restore(sqs_client, key, basename, sqs_receipt_handle, head_respon
         aws_restore(key, record_request=False)
 
     delete_download_message(
-        sqs_receipt_handle, note="stale message", sqs_client=sqs_client
+        sqs_receipt_handle, key, note="stale message", sqs_client=sqs_client
     )
     return DOWNLOAD_RESTORE_PENDING
 
@@ -3834,7 +3814,9 @@ def aws_download(
             )
             if error_code in ("404", "NoSuchKey") or status_code == 404:
                 _discard_partial(destination)
-                return _resolve_missing_object(sqs_client, basename, sqs_receipt_handle)
+                return _resolve_missing_object(
+                    sqs_client, key, basename, sqs_receipt_handle
+                )
 
             elif error_code == "InvalidObjectState":
                 try:
@@ -3864,7 +3846,9 @@ def aws_download(
         except CdnDownloadError as error:
             if error.status_code == 404:
                 _discard_partial(destination)
-                return _resolve_missing_object(sqs_client, basename, sqs_receipt_handle)
+                return _resolve_missing_object(
+                    sqs_client, key, basename, sqs_receipt_handle
+                )
 
             elif error.status_code == 403:
                 # A 403 from CloudFront has 4 possible causes. The object
@@ -3889,7 +3873,7 @@ def aws_download(
                     ):
                         _discard_partial(destination)
                         return _resolve_missing_object(
-                            sqs_client, basename, sqs_receipt_handle
+                            sqs_client, key, basename, sqs_receipt_handle
                         )
                     retry, last_fault = _spend_download_retry(retry, basename)
                     continue
@@ -3899,7 +3883,7 @@ def aws_download(
                 if _object_is_readable(head_response):
                     _discard_partial(destination)
                     return _refuse_access_fault(
-                        sqs_client, basename, sqs_receipt_handle
+                        sqs_client, key, basename, sqs_receipt_handle
                     )
                 else:
                     _discard_partial(destination)
@@ -3981,7 +3965,9 @@ def aws_download(
                     description=f"'{basename}' — Waiting for the import name",
                 )
 
-            if not delete_download_message(sqs_receipt_handle, sqs_client=sqs_client):
+            if not delete_download_message(
+                sqs_receipt_handle, key, sqs_client=sqs_client
+            ):
                 return False
             return DOWNLOAD_COMPLETE
 

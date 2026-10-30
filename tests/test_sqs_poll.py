@@ -114,7 +114,7 @@ def test_a_failed_extension_does_not_stop_the_poll(app, monkeypatch):
 
 
 def test_a_message_that_comes_back_gets_no_second_download(app, monkeypatch):
-    """The key already has a download job. The new handle goes to that job."""
+    """The key already has a download job. The new handle goes under the key (#617)."""
 
     key = "untouched/Busy Film (2003) - [DVD].mkv"
     sqs = FakeSQS([restore_event(key)])
@@ -131,7 +131,8 @@ def test_a_message_that_comes_back_gets_no_second_download(app, monkeypatch):
     assert aws_storage.sqs_retrieve_task() is True
     with app.app_context():
         assert downloads(app) == [key]
-        assert aws_storage._latest_receipt_handle("old-handle", job_id=job.id) == "r0"
+        assert aws_storage._latest_receipt_handle("old-handle", key) == "r0"
+        assert job.id in app.file_queue.job_ids
 
 
 def test_an_expired_restore_is_requested_again_not_downloaded(app, monkeypatch):
@@ -185,3 +186,27 @@ def test_the_poll_renews_a_restore_for_the_full_days(app, monkeypatch):
     assert aws_storage.sqs_retrieve_task() is True
     assert requests == [aws_storage.RESTORE_DAYS]
     assert aws_storage.RESTORE_DAYS >= 2
+
+
+def test_a_new_chain_of_a_key_reads_the_handle_of_its_own_message(app, monkeypatch):
+    """A stale record of an older chain never shadows the new message (#587, #617).
+
+    The poll records the handle under the key at each receive. The
+    download of the new chain deletes the new message, whatever its job
+    id is."""
+
+    key = "untouched/Second Chain (2004) - [DVD].mkv"
+    sqs = FakeSQS([restore_event(key)])
+    monkeypatch.setattr(aws_storage, "aws_sqs_client", lambda: sqs)
+    monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kw: FakeS3())
+    claim(app, key)
+    with app.app_context():
+        aws_storage.record_receipt_handle(key, "handle-of-the-old-chain")
+
+    assert aws_storage.sqs_retrieve_task() is True
+    with app.app_context():
+        assert downloads(app) == [key]
+        assert aws_storage._latest_receipt_handle(None, key) == "r0"
+        assert aws_storage.delete_download_message(None, key, sqs_client=sqs)
+    assert sqs.deleted == ["r0"]
+    assert app.redis.get(aws_storage.SQS_HANDLE_KEY.format(key=key)) is None

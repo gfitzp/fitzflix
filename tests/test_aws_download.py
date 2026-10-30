@@ -929,11 +929,9 @@ def test_a_handle_that_arrives_during_the_download_deletes_the_message(
 ):
     """A download queued with no handle can get one later (#572).
 
-    sqs_retrieve_task stores it under SQS_HANDLE_KEY. Every delete site
-    tested the original argument. Then the message came back and a
+    sqs_retrieve_task stores it under the S3 key (#617). Every delete
+    site tested the original argument. Then the message came back and a
     second full download ran."""
-
-    from types import SimpleNamespace
 
     import app.videos as videos
     from app import aws_storage
@@ -942,11 +940,8 @@ def test_a_handle_that_arrives_during_the_download_deletes_the_message(
     sqs = SQS()
     monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kwargs: s3)
     monkeypatch.setattr(aws_storage, "aws_sqs_client", lambda: sqs)
-    monkeypatch.setattr(
-        aws_storage.rq, "get_current_job", lambda: SimpleNamespace(id="late-job")
-    )
     monkeypatch.setattr(aws_storage, "place_restored_import", lambda *a: True)
-    handle_key = aws_storage.SQS_HANDLE_KEY.format(job_id="late-job")
+    handle_key = aws_storage.SQS_HANDLE_KEY.format(key="untouched/late.mkv")
     app.redis.set(handle_key, "late-handle")
     staged = os.path.join(app.config["IMPORT_DIR"], ".restore-untouched-late.mkv")
     try:
@@ -956,6 +951,7 @@ def test_a_handle_that_arrives_during_the_download_deletes_the_message(
                 == aws_storage.DOWNLOAD_COMPLETE
             )
         assert sqs.deleted == ["late-handle"]
+        assert app.redis.get(handle_key) is None
     finally:
         app.redis.delete(handle_key)
         if os.path.exists(staged):
@@ -1237,33 +1233,22 @@ def test_the_sqs_delete_lets_a_base_exception_through(app):
             aws_storage.delete_sqs_message(Stopping(), "receipt")
 
 
-def test_a_delivered_delete_clears_the_stored_handle_of_the_job(app, monkeypatch):
-    """A stale stored handle shadowed the handle of a later chain (#587 follow-up).
-
-    The move retry ids are fixed per file, and the stored handle lived
-    14 days. The next chain of the same file deleted with the old handle,
-    and its own message came back."""
-
-    from types import SimpleNamespace
+def test_a_delivered_delete_clears_the_stored_handle_of_the_key(app):
+    """The handle of a message lives under its S3 key until the delete (#587, #617)."""
 
     from app import aws_storage
 
     sqs = SQS()
-    monkeypatch.setattr(
-        aws_storage.rq, "get_current_job", lambda: SimpleNamespace(id="chain-job")
-    )
-    handle_key = aws_storage.SQS_HANDLE_KEY.format(job_id="chain-job")
+    key = "modified/Chain (2001) - [DVD].mkv"
+    handle_key = aws_storage.SQS_HANDLE_KEY.format(key=key)
     app.redis.set(handle_key, "stored-handle")
-    try:
-        with app.app_context():
-            assert aws_storage.delete_sqs_message(sqs, "kwarg-handle") is True
-        assert sqs.deleted == ["stored-handle"]
-        assert app.redis.get(handle_key) is None
-        with app.app_context():
-            assert aws_storage.delete_sqs_message(sqs, "kwarg-handle") is True
-        assert sqs.deleted == ["stored-handle", "kwarg-handle"]
-    finally:
-        app.redis.delete(handle_key)
+    with app.app_context():
+        assert aws_storage.delete_sqs_message(sqs, "kwarg-handle", key=key) is True
+    assert sqs.deleted == ["stored-handle"]
+    assert app.redis.get(handle_key) is None
+    with app.app_context():
+        assert aws_storage.delete_sqs_message(sqs, "kwarg-handle", key=key) is True
+    assert sqs.deleted == ["stored-handle", "kwarg-handle"]
 
 
 @pytest.mark.parametrize(
@@ -1381,32 +1366,23 @@ def test_a_lost_database_at_a_placement_check_keeps_the_download(app, monkeypatc
                 os.remove(path)
 
 
-def _stored_handle(app, monkeypatch, job_id, handle):
-    """Make job_id the current job and store handle for it. Return the Redis key."""
-
-    from types import SimpleNamespace
-
-    from app import aws_storage
-
-    monkeypatch.setattr(
-        aws_storage.rq, "get_current_job", lambda: SimpleNamespace(id=job_id)
-    )
-    handle_key = aws_storage.SQS_HANDLE_KEY.format(job_id=job_id)
-    app.redis.set(handle_key, handle)
-    return handle_key
-
-
 @pytest.mark.parametrize("fault", ["volume", "transient"])
-def test_a_download_requeue_forgets_the_stored_handle(app, monkeypatch, fault):
-    """The stored handle stayed under a fixed id that a later chain reuses (#600)."""
+def test_a_download_requeue_carries_the_newest_handle_of_the_key(
+    app, monkeypatch, fault
+):
+    """The retry carries the newest handle, and the record of the key stays (#617).
+
+    The message is still in SQS. Only a delete of the message removes
+    its record."""
 
     import errno
 
     import app.videos as videos
     from app import aws_storage
 
-    key, library_path = _direct_restore_row(app, f"Forget Handle {fault}")
-    handle_key = _stored_handle(app, monkeypatch, "download-chain-job", "handle-2")
+    key, library_path = _direct_restore_row(app, f"Carry Handle {fault}")
+    handle_key = aws_storage.SQS_HANDLE_KEY.format(key=key)
+    app.redis.set(handle_key, "handle-2")
     if fault == "volume":
         monkeypatch.setattr(videos, "_dead_volumes", lambda paths: ["/Volumes/Movies"])
     else:
@@ -1416,115 +1392,16 @@ def test_a_download_requeue_forgets_the_stored_handle(app, monkeypatch, fault):
             raise OSError(errno.EIO, "Input/output error")
 
         monkeypatch.setattr(aws_storage, "aws_download", lost)
-    try:
-        with app.app_context():
-            assert videos.download_task(key, os.path.basename(key), "handle-1") is False
-        (retry,) = [
-            job
-            for job in scheduled_jobs(app.file_queue)
-            if job.id.startswith(safe_job_id("retry:download_task"))
-        ]
-        assert retry.args[2] == "handle-2"
-        assert retry.meta["sqs_receipt_handle"] == "handle-2"
-        assert app.redis.get(handle_key) is None
-        retry.delete()
-    finally:
-        app.redis.delete(handle_key)
-
-
-def test_a_give_up_forgets_the_stored_handle_under_a_fixed_id(app, monkeypatch):
-    """A retry that gave up kept SQS_HANDLE_KEY of its fixed id (#600 follow-up).
-
-    A later chain of the key reaches the same id and read the stale
-    handle. Its own message then came back."""
-
-    import app.videos as videos
-    from app import aws_storage
-
-    key, library_path = _direct_restore_row(app, "Give Up Forgets Handle")
-    retry_id = requeue_id(
-        "app.videos.download_task", key, {"transient_retries": 1, "volume_waits": 0}
-    )
-    handle_key = _stored_handle(app, monkeypatch, retry_id, "handle-2")
-    monkeypatch.setattr(videos, "_dead_volumes", lambda paths: [])
-    # The download uses up its budget in place. The message stays.
-    monkeypatch.setattr(aws_storage, "aws_download", lambda *a, **k: False)
-    try:
-        with app.app_context():
-            assert (
-                videos.download_task(
-                    key, os.path.basename(key), "handle-1", transient_retries=1
-                )
-                is False
-            )
-            assert app.redis.get(handle_key) is None
-            assert aws_storage._latest_receipt_handle("handle-5") == "handle-5"
-    finally:
-        app.redis.delete(handle_key)
-
-
-@pytest.mark.parametrize("exit", ["error", "volume give-up"])
-def test_each_exit_with_no_retry_forgets_the_stored_handle(app, monkeypatch, exit):
-    """The logged error exit and the volume give-up kept the stored handle (#600 follow-up)."""
-
-    import app.videos as videos
-    from app import aws_storage
-
-    key, library_path = _direct_restore_row(app, f"Exit Forgets Handle {exit}")
-    handle_key = _stored_handle(app, monkeypatch, "fixed-retry-id", "handle-2")
-    kwargs = {}
-    if exit == "error":
-        monkeypatch.setattr(videos, "_dead_volumes", lambda paths: [])
-
-        def broken(*args, **kwargs):
-            raise RuntimeError("simulated fault")
-
-        monkeypatch.setattr(aws_storage, "aws_download", broken)
-    else:
-        monkeypatch.setattr(videos, "_dead_volumes", lambda paths: ["/Volumes/Movies"])
-        kwargs["volume_waits"] = aws_storage.MAX_VOLUME_WAITS
-    try:
-        with app.app_context():
-            assert not videos.download_task(
-                key, os.path.basename(key), "handle-1", **kwargs
-            )
-        assert app.redis.get(handle_key) is None
-        assert [
-            job
-            for job in scheduled_jobs(app.file_queue)
-            if job.id.startswith(safe_job_id("retry:download_task"))
-        ] == []
-    finally:
-        app.redis.delete(handle_key)
-
-
-def test_a_retry_under_the_id_of_the_job_keeps_the_stored_handle(app, monkeypatch):
-    """The retry owns the stored handle when it has the id of the current job (#600)."""
-
-    import errno
-
-    import app.videos as videos
-    from app import aws_storage
-
-    key, library_path = _direct_restore_row(app, "Same Id Keeps Handle")
-    retry_id = requeue_id(
-        "app.videos.download_task", key, {"transient_retries": 1, "volume_waits": 0}
-    )
-    handle_key = _stored_handle(app, monkeypatch, retry_id, "handle-2")
-    monkeypatch.setattr(videos, "_dead_volumes", lambda paths: [])
-
-    def lost(*args, **kwargs):
-        raise OSError(errno.EIO, "Input/output error")
-
-    monkeypatch.setattr(aws_storage, "aws_download", lost)
-    try:
-        with app.app_context():
-            assert videos.download_task(key, os.path.basename(key), "handle-1") is False
-        assert app.redis.get(handle_key) == b"handle-2"
-        for job in scheduled_jobs(app.file_queue):
-            job.delete()
-    finally:
-        app.redis.delete(handle_key)
+    with app.app_context():
+        assert videos.download_task(key, os.path.basename(key), "handle-1") is False
+    (retry,) = [
+        job
+        for job in scheduled_jobs(app.file_queue)
+        if job.id.startswith(safe_job_id("retry:download_task"))
+    ]
+    assert retry.args[2] == "handle-2"
+    assert retry.meta["sqs_receipt_handle"] == "handle-2"
+    assert app.redis.get(handle_key) == b"handle-2"
 
 
 @pytest.mark.parametrize("fault", ["ConnectionError", "TimeoutError"])
