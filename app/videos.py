@@ -374,11 +374,10 @@ def arguments_tag(args):
 def lock_wait_job_id(func, description, args=(), key=None):
     """Return the job id of the lock wait of a task (see schedule_retry).
 
-    The lock wait keeps its own id format. localization_pending matches
-    the localization form of it exactly (#287). A repeat deferral of a
-    task for 1 file replaces its pending retry. The track edits put a
-    digest of their arguments into the id (#595). Thus, 2 different
-    edits of 1 file wait apart."""
+    With a key, the id starts with the requeue prefix of the key, like
+    every other retry. A repeat deferral of a task for 1 file replaces
+    its pending retry. The track edits put a digest of their arguments
+    into the id (#595). Thus, 2 different edits of 1 file wait apart."""
 
     short_name = func.rsplit(".", 1)[-1]
     edit_tag = (

@@ -177,7 +177,7 @@ def test_localization_pending_sees_a_requeued_retry(app, incoming_dir):
         "tmdb_retries": 0,
     }
     with app.app_context():
-        assert not localization_pending(app.import_queue, path)
+        assert not localization_pending(path)
         requeue(
             "app.videos.localization_task",
             key=path,
@@ -187,13 +187,13 @@ def test_localization_pending_sees_a_requeued_retry(app, incoming_dir):
             kwargs={"file_path": path},
         )
         try:
-            assert localization_pending(app.import_queue, path)
+            assert localization_pending(path)
 
             # The retry of another file with the same basename is not
             # this file.
 
             other = os.path.join(incoming_dir, "sub", os.path.basename(path))
-            assert not localization_pending(app.import_queue, other)
+            assert not localization_pending(other)
         finally:
             ScheduledJobRegistry(queue=app.import_queue).remove(
                 requeue_job_id("app.videos.localization_task", path, counters),

@@ -107,22 +107,6 @@ def importable_basename(basename):
     )
 
 
-def retry_job_id(task, target, *attempt):
-    """Name a retry job after the attempt that it schedules, not only its target.
-
-    rq saves the payload of a job again when the job returns. Thus, a
-    retry scheduled under the id of the job that schedules it is
-    overwritten. The retry gets the stale kwargs of that job when the
-    job completes. The attempt counters never advance. The chain retries
-    forever and never gives up. This function puts the counters into
-    the id. Thus, a deferred attempt keeps the replacement semantics,
-    and each new attempt gets an id of its own.
-    """
-
-    counters = ":".join(str(count) for count in attempt)
-    return safe_job_id(f"retry:{task}:{target}:{counters}")
-
-
 def enqueue_import_scan(queue, description=None, at_front=False):
     """Queue a sweep of the import directory for files to import.
 

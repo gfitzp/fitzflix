@@ -37,11 +37,7 @@ from rq import get_current_job
 from rq.exceptions import NoSuchJobError
 from rq.job import Job
 from rq.timeouts import BaseTimeoutException
-from rq.registry import (
-    FinishedJobRegistry,
-    ScheduledJobRegistry,
-    StartedJobRegistry,
-)
+from rq.registry import FinishedJobRegistry
 from unidecode import unidecode
 
 from flask import current_app, render_template
@@ -49,11 +45,12 @@ from werkzeug.local import LocalProxy
 
 from app.custom_artwork import remove_episode_thumb_of
 from app.tasks import (
+    LIVE_JOB_STATES,
     delete_job,
     enqueue_task,
+    live_jobs,
     report_progress,
     requeue,
-    requeue_job_id,
 )
 from app import (
     db,
@@ -61,7 +58,6 @@ from app import (
     importable_basename,
     makedirs_on_mounted_volume,
     path_tag,
-    retry_job_id,
     safe_job_id,
 )
 from app.aws_storage import (
@@ -205,50 +201,15 @@ def space_wait_pending(redis, basename):
     return bool(redis.exists(SPACE_WAIT_KEY.format(basename)))
 
 
-def localization_pending(queue, path):
-    """Return True if a localization of this file is waiting or running (#287).
+# The tasks of the import pipeline, with the queue of each. Each one
+# names the file of the import as its source. The source stays in the
+# import directory until the cataloging removes it. A conversion (#292)
+# keeps it there for hours. The Sonarr adopt task comes before the
+# localization (#289). It waits for the Sonarr rename of the file and
+# then queues the localization. Its third argument is the path of the
+# download (#373).
 
-    The fixed job id of the file can be in the queue list or in the
-    StartedJobRegistry. It can also be in the intermediate queue, which
-    is the gap between the list and the worker. A retry of the file has
-    its own id. It can be scheduled, queued, or running. The fixed id
-    with a time tag counts as the fixed id (#371)."""
-
-    basename = os.path.basename(path)
-    job_id = safe_job_id(basename)
-
-    # A retry id from requeue starts with the name of the task and the
-    # digest of the path. The counters follow.
-
-    retry_id = requeue_job_id("app.videos.localization_task", path)
-
-    # A wait for the title lock has its own id (schedule_retry in
-    # app.videos). It has the basename and no counters.
-
-    lock_retry_id = safe_job_id(f"retry:localization_task:'{basename}'")
-
-    # The retries that were scheduled before requeue have the basename
-    # and the counters. With no counters, retry_job_id gives the prefix
-    # of each of them.
-
-    legacy_prefix = retry_job_id("localization_task", f"'{basename}'")
-    ids = set(queue.job_ids)
-    ids.update(queue.intermediate_queue.get_job_ids())
-    ids.update(StartedJobRegistry(queue=queue).get_job_ids())
-    ids.update(ScheduledJobRegistry(queue=queue).get_job_ids())
-    tagged = re.compile(re.escape(job_id) + r"_\d{10}")
-    return any(
-        i in (job_id, lock_retry_id, retry_id)
-        or i.startswith(retry_id + "_")
-        or i.startswith(legacy_prefix)
-        or tagged.fullmatch(i)
-        for i in ids
-    )
-
-
-# The stages after the localization. Each one has the source path as its
-# first argument. The source stays in the import directory until the
-# cataloging removes it. A conversion (#292) keeps it there for hours.
+ADOPT_EPISODE_TASK = "app.sonarr_push.adopt_episode_task"
 
 LATER_STAGES = {
     "app.videos.convert_localized_file": "transcode_queue",
@@ -256,47 +217,68 @@ LATER_STAGES = {
     "app.videos.finalize_localization": "sql_queue",
 }
 
+PIPELINE_TASKS = {
+    "app.videos.localization_task": "import_queue",
+    ADOPT_EPISODE_TASK: "request_queue",
+    **LATER_STAGES,
+}
 
-def _later_stage_jobs():
-    """Yield each conversion, move and cataloging job.
 
-    A job counts when it is queued, running, or scheduled for a retry.
-    A job in the dequeue gap (the intermediate queue of rq) counts too
-    (#523)."""
+def _source_of(job):
+    """Return the source path that a pipeline job names, or None."""
 
-    for queue_attr in set(LATER_STAGES.values()):
-        queue = getattr(current_app, queue_attr)
-        ids = set(queue.job_ids)
-        ids.update(queue.intermediate_queue.get_job_ids())
-        ids.update(StartedJobRegistry(queue=queue).get_job_ids())
-        ids.update(ScheduledJobRegistry(queue=queue).get_job_ids())
-        for job in Job.fetch_many(list(ids), connection=current_app.redis):
-            if job is None or job.func_name not in LATER_STAGES:
-                continue
-            yield job
+    if job.func_name == ADOPT_EPISODE_TASK:
+        source = job.args[2] if len(job.args) > 2 else None
+    elif job.args:
+        source = job.args[0]
+    else:
+        source = job.kwargs.get("file_path") or job.kwargs.get("source_path")
+    return source if isinstance(source, str) else None
+
+
+def pipeline_jobs(names=PIPELINE_TASKS):
+    """Yield (job, source path) for each live job of the import pipeline (#616).
+
+    names holds the tasks that count. A job counts when tasks.live_jobs
+    yields it. The match is by the source argument, not by the shape of
+    the job id. Thus, a retry, a lock wait and a time-tagged id all
+    count the same."""
+
+    queues = {getattr(current_app, PIPELINE_TASKS[name]) for name in names}
+    for job in live_jobs(queues):
+        if job.func_name in names:
+            yield job, _source_of(job)
+
+
+def _same_path(first, second):
+    """Return True if 2 path spellings name the same file."""
+
+    return bool(first and second) and os.path.abspath(first) == os.path.abspath(second)
+
+
+def localization_pending(path):
+    """Return True if a localization of this file waits or runs (#287, #616)."""
+
+    return any(
+        _same_path(source, path)
+        for _, source in pipeline_jobs({"app.videos.localization_task"})
+    )
 
 
 def later_stage_holds(path):
-    """Return True if a conversion, move, or cataloging job still holds this source (#296).
+    """Return True if a conversion, move, or cataloging job still holds this source (#296)."""
 
-    The job can be queued, running, or scheduled for a retry."""
-
-    for job in _later_stage_jobs():
-        source = job.args[0] if job.args else job.kwargs.get("source_path")
-        if source == path:
-            return True
-    return False
+    return any(_same_path(source, path) for _, source in pipeline_jobs(LATER_STAGES))
 
 
 def paths_held_by_later_stages():
     """Return each path argument of the conversion, move and cataloging jobs (#436).
 
-    A job counts when it is queued, running, or scheduled for a retry.
     The weekly orphan sweep must not delete the input of such a job. A
     conversion can wait in the transcode queue for more than 7 days."""
 
     held = set()
-    for job in _later_stage_jobs():
+    for job, _ in pipeline_jobs(LATER_STAGES):
         for value in list(job.args) + list((job.kwargs or {}).values()):
             if isinstance(value, str):
                 held.add(os.path.abspath(value))
@@ -312,7 +294,7 @@ def keys_held_by_later_stages():
     weekly prune must not delete its upload."""
 
     held = set()
-    for job in _later_stage_jobs():
+    for job, _ in pipeline_jobs(LATER_STAGES):
         for value in list(job.args) + list((job.kwargs or {}).values()):
             if isinstance(value, dict) and isinstance(value.get("aws_key"), str):
                 held.add(value["aws_key"])
@@ -343,45 +325,20 @@ def _series_title_of_name(basename):
     return _canonical_series_title(title)
 
 
-# The Sonarr adopt task comes before the localization (#289). It waits
-# for the Sonarr rename of the file and then queues the localization.
-# Its third argument is the path of the download (#373).
-
-ADOPT_EPISODE_TASK = "app.sonarr_push.adopt_episode_task"
-
-
 def series_import_in_flight(titles):
     """Return the source path of an import of a series that is not done, or None.
 
-    titles holds the series titles that count. The localization can be
-    queued, running, or scheduled for a retry. A later stage counts too,
-    and the Sonarr adopt task before the localization (#373). A series
-    rename waits for such an import (#370). The import attaches the
-    episode to the series by its title at the end."""
+    titles holds the series titles that count. Each live pipeline job
+    counts, from the Sonarr adopt task to the cataloging (#373). A
+    series rename waits for such an import (#370). The import attaches
+    the episode to the series by its title at the end."""
 
-    names = {
-        "app.videos.localization_task": "import_queue",
-        ADOPT_EPISODE_TASK: "request_queue",
-        **LATER_STAGES,
-    }
-    for queue_attr in set(names.values()):
-        queue = getattr(current_app, queue_attr)
-        ids = set(queue.job_ids)
-        ids.update(queue.intermediate_queue.get_job_ids())
-        ids.update(StartedJobRegistry(queue=queue).get_job_ids())
-        ids.update(ScheduledJobRegistry(queue=queue).get_job_ids())
-        for job in Job.fetch_many(list(ids), connection=current_app.redis):
-            if job is None or job.func_name not in names:
-                continue
-            if job.func_name == ADOPT_EPISODE_TASK:
-                source = job.args[2] if len(job.args) > 2 else None
-            else:
-                source = job.args[0] if job.args else job.kwargs.get("source_path")
-            if not isinstance(source, str):
-                continue
-            title = _series_title_of_name(os.path.basename(source))
-            if title is not None and title in titles:
-                return source
+    for _, source in pipeline_jobs():
+        if source is None:
+            continue
+        title = _series_title_of_name(os.path.basename(source))
+        if title is not None and title in titles:
+            return source
     return None
 
 
@@ -400,7 +357,7 @@ def enqueue_localization(path, at_front=False, quiet=False):
     queue = current_app.import_queue
     basename = os.path.basename(path)
     if (
-        localization_pending(queue, path)
+        localization_pending(path)
         or space_wait_pending(current_app.redis, basename)
         or later_stage_holds(path)
     ):
@@ -415,7 +372,9 @@ def enqueue_localization(path, at_front=False, quiet=False):
         old = None
     if old is None:
         FinishedJobRegistry(queue=queue).remove(job_id)
-    elif old.is_failed:
+    elif old.is_failed or old.get_status(refresh=False) in LIVE_JOB_STATES:
+        # A live job under the id imports a file of the same name at a
+        # different path (#616).
         job_id = f"{job_id}_{int(time.time())}"
     else:
         delete_job(old)
@@ -1211,6 +1170,7 @@ def _take_title_lock(file_details, run):
         timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
         description=f"'{run.basename}'",
         kwargs={"file_path": run.source_path, **run.counters},
+        key=run.source_path,
     )
     if lock:
         run.lock = lock
@@ -3758,7 +3718,7 @@ def _retry_failed_in_place_imports():
             continue
         if not os.path.isfile(path) or already_cataloged(path):
             continue
-        if localization_pending(queue, path):
+        if localization_pending(path):
             continue
         counter = IN_PLACE_RETRIES_KEY.format(path_tag(path))
         if int(redis.get(counter) or 0) >= MAX_IN_PLACE_RETRIES:

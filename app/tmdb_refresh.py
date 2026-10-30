@@ -24,7 +24,7 @@ from datetime import datetime, timedelta, timezone
 
 from flask import current_app
 from markupsafe import escape
-from rq.registry import ScheduledJobRegistry, StartedJobRegistry
+from rq.registry import ScheduledJobRegistry
 from werkzeug.local import LocalProxy
 
 from app.tasks import enqueue_task, requeue
@@ -266,32 +266,24 @@ def tmdb_refresh_status(library, id):
         return found is not None and (found[0], int(found[1])) == target
 
     from app.queue_page import scheduled_entries
+    from app.tasks import live_jobs
 
-    # The ids and the times come from 1 read (#511)
+    # The ids and the times of the retries come from 1 read (#511)
     scheduled = dict(
         scheduled_entries(ScheduledJobRegistry(queue=current_app.sql_queue))
     )
-    for job in current_app.sql_queue.job_class.fetch_many(
-        list(scheduled), connection=current_app.sql_queue.connection
-    ):
-        if job is not None and _matches(job):
+    pending = False
+    for job in live_jobs([current_app.request_queue, current_app.sql_queue]):
+        if not _matches(job):
+            continue
+        if job.id in scheduled:
             retry_at = scheduled[job.id]
             return {
                 "state": "deferred",
                 "retry_at": retry_at.astimezone(timezone.utc).replace(tzinfo=None),
             }
-
-    for queue in (current_app.request_queue, current_app.sql_queue):
-        candidates = list(queue.jobs)
-        candidates.extend(
-            queue.job_class.fetch_many(
-                StartedJobRegistry(queue=queue).get_job_ids(),
-                connection=queue.connection,
-            )
-        )
-        if any(_matches(job) for job in candidates):
-            return {"state": "pending"}
-    return None
+        pending = True
+    return {"state": "pending"} if pending else None
 
 
 def tmdb_refresh_pending(library, id):

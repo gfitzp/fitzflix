@@ -770,26 +770,16 @@ def _tv_library_missing():
     return True
 
 
-def _job_ids(queue):
-    """Return the ids of the jobs of a queue that wait, run, or are scheduled."""
-
-    from rq.registry import ScheduledJobRegistry, StartedJobRegistry
-
-    ids = set(queue.job_ids)
-    ids.update(queue.intermediate_queue.get_job_ids())
-    ids.update(StartedJobRegistry(queue=queue).get_job_ids())
-    ids.update(ScheduledJobRegistry(queue=queue).get_job_ids())
-    return ids
-
-
 def _job_pending(queue, *job_ids):
     """Return True if a job with one of these ids waits, runs, or is scheduled.
 
     An id with a time tag (the id, "_", and digits) counts as the id."""
 
+    from app.tasks import live_job_ids
+
     return any(
         found == job_id or re.fullmatch(re.escape(job_id) + r"_\d+", found)
-        for found in _job_ids(queue)
+        for found in live_job_ids(queue)
         for job_id in job_ids
     )
 
@@ -797,13 +787,10 @@ def _job_pending(queue, *job_ids):
 def _series_of_pending_rename(title):
     """Return the series that a rename to this title waits for, or None (#372)."""
 
-    from rq.job import Job
+    from app.tasks import TASKS, live_jobs
 
-    from app.tasks import TASKS, resolve_queue
-
-    queue = resolve_queue(TASKS[RENAME_TASK].queue)
-    for job in Job.fetch_many(list(_job_ids(queue)), connection=queue.connection):
-        if job is None or job.func_name != RENAME_TASK or len(job.args) < 2:
+    for job in live_jobs([TASKS[RENAME_TASK].queue]):
+        if job.func_name != RENAME_TASK or len(job.args) < 2:
             continue
         if job.args[1] == title:
             series = db.session.get(TVSeries, job.args[0])

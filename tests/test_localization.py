@@ -2076,7 +2076,7 @@ def test_a_tmdb_outage_retries_instead_of_rejecting(
     try:
         with app.app_context():
             assert localization_task(source) is True
-            assert localization_pending(app.import_queue, source)
+            assert localization_pending(source)
 
             # The TMDB tries have their own count. The transient count of
             # the staging copy stays at 0.

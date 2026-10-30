@@ -757,21 +757,17 @@ STUCK_DECISION_GRACE = timedelta(minutes=5)
 
 
 def _jobs_of(queues):
-    """Yield each queued, running, scheduled or failed job of the queues."""
+    """Yield each live or failed job of the queues (#616)."""
 
     from rq.job import Job
-    from rq.registry import (
-        FailedJobRegistry,
-        ScheduledJobRegistry,
-        StartedJobRegistry,
-    )
+    from rq.registry import FailedJobRegistry
 
+    from app.tasks import live_jobs
+
+    yield from live_jobs(queues)
     for queue in queues:
-        ids = set(queue.job_ids)
-        ids.update(queue.intermediate_queue.get_job_ids())
-        for registry in (StartedJobRegistry, ScheduledJobRegistry, FailedJobRegistry):
-            ids.update(registry(queue=queue).get_job_ids())
-        for job in Job.fetch_many(sorted(ids), connection=queue.connection):
+        failed = FailedJobRegistry(queue=queue).get_job_ids()
+        for job in Job.fetch_many(failed, connection=queue.connection):
             if job is not None:
                 yield job
 

@@ -172,7 +172,18 @@ def test_localization_defers_while_title_is_locked(app, held_lock, incoming_dir)
                 for job_id in scheduled_ids(app.import_queue)
                 if job_id.startswith("retry_")
             ]
-            assert retries == [safe_job_id(f"retry:localization_task:'{basename}'")]
+            # The lock wait carries the source as its key. Thus, its id
+            # starts with the requeue prefix of the file (#616).
+
+            from app.videos import lock_wait_job_id
+
+            prefix = requeue_id("app.videos.localization_task", file_path)
+            assert retries == [
+                lock_wait_job_id(
+                    "app.videos.localization_task", f"'{basename}'", key=file_path
+                )
+            ]
+            assert retries[0].startswith(prefix + "_")
             assert_binds(Job.fetch(retries[0], connection=app.redis))
 
             # The waiting retry counts as pending. A sweep must not queue
@@ -180,7 +191,7 @@ def test_localization_defers_while_title_is_locked(app, held_lock, incoming_dir)
 
             from app.importing import localization_pending
 
-            assert localization_pending(app.import_queue, file_path)
+            assert localization_pending(file_path)
     finally:
         os.remove(file_path)
 

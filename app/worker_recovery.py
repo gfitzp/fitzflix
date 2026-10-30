@@ -139,11 +139,11 @@ def _source_of(job):
 def _next_stage_holds(job, source):
     """Return True if a different later-stage job holds the source."""
 
-    from app.importing import _later_stage_jobs
+    from app.importing import LATER_STAGES, pipeline_jobs
 
     return any(
-        other.id != job.id and _source_of(other) == source
-        for other in _later_stage_jobs()
+        other.id != job.id and held == source
+        for other, held in pipeline_jobs(LATER_STAGES)
     )
 
 
@@ -230,27 +230,21 @@ def _abandon_atmos_job(job):
     from app.atmos import CHAIN_KEY
     from app.pipeline import close_trail
     from app.queues import roster_queues
-    from rq.job import Job
-    from rq.registry import ScheduledJobRegistry, StartedJobRegistry
+    from app.tasks import live_jobs
 
     state = job.args[0] if job.args else None
     lock = job.args[1] if len(job.args) > 1 else None
     if not isinstance(state, dict):
         return
-    for queue in roster_queues(current_app):
-        ids = set(queue.job_ids)
-        ids.update(StartedJobRegistry(queue=queue).get_job_ids())
-        ids.update(ScheduledJobRegistry(queue=queue).get_job_ids())
-        ids.discard(job.id)
-        for other in Job.fetch_many(list(ids), connection=current_app.redis):
-            if (
-                other is not None
-                and other.func_name in ATMOS_CHAIN_TASKS
-                and other.args
-                and isinstance(other.args[0], dict)
-                and other.args[0].get("chain") == state.get("chain")
-            ):
-                return
+    for other in live_jobs(roster_queues(current_app)):
+        if (
+            other.id != job.id
+            and other.func_name in ATMOS_CHAIN_TASKS
+            and other.args
+            and isinstance(other.args[0], dict)
+            and other.args[0].get("chain") == state.get("chain")
+        ):
+            return
     current_app.redis.delete(CHAIN_KEY.format(file_id=state.get("file_id")))
     if state.get("trail_job"):
         close_trail(current_app.redis, state["trail_job"])

@@ -35,10 +35,9 @@ import boto3
 from flask import current_app
 from pymediainfo import MediaInfo
 from rq import get_current_job
-from rq.registry import StartedJobRegistry
 
 from app import s3_layout
-from app.tasks import enqueue_task, free_job_id, report_progress
+from app.tasks import enqueue_task, free_job_id, live_job_ids, report_progress
 from app import db, get_app, safe_job_id
 from app.models import File, FileAudioTrack
 from app.naming import hidden
@@ -505,13 +504,8 @@ def maybe_enqueue_atmos_supplement(file_id, staged_source=None, queue=None):
     if current_app.redis.exists(CHAIN_KEY.format(file_id=int(file_id))):
         return False
     job_id = safe_job_id(f"atmos_supplement:{file_id}")
-    for queued in (
-        current_app.handoff_queue,
-        current_app.import_queue,
-        current_app.transcode_queue,
-    ):
-        started = StartedJobRegistry(queue=queued)
-        if job_id in queued.job_ids or job_id in started.get_job_ids():
+    for queued in ("handoff", "import", "transcode"):
+        if job_id in live_job_ids(queued):
             return False
 
     # A finished job under the fixed id gives its expiry to a new job

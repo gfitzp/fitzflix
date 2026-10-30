@@ -410,28 +410,53 @@ def task_func_names(name):
     return names
 
 
+def live_job_ids(queue):
+    """Return the ids of the jobs of a queue that wait or run (#616).
+
+    This is the one definition of a live job. A live job is in the queue
+    list, the started jobs or the scheduled jobs. It can also be in the
+    intermediate queue of rq, the gap between the list and the worker
+    (#523). A retry or a defer waits in the scheduled jobs. queue is a
+    roster key or a queue object."""
+
+    from rq.registry import ScheduledJobRegistry, StartedJobRegistry
+
+    queue = resolve_queue(queue)
+    ids = list(queue.job_ids)
+    ids.extend(queue.intermediate_queue.get_job_ids())
+    ids.extend(StartedJobRegistry(queue=queue).get_job_ids())
+    ids.extend(ScheduledJobRegistry(queue=queue).get_job_ids())
+    return list(dict.fromkeys(ids))
+
+
+def live_jobs(queues):
+    """Yield each job of the queues that waits or runs (#616).
+
+    A job is live if and only if this yields it. The ids come from
+    live_job_ids. The job hashes of each queue come in 1 round trip."""
+
+    from rq.job import Job
+
+    seen = set()
+    for queue in queues:
+        queue = resolve_queue(queue)
+        if queue.name in seen:
+            continue
+        seen.add(queue.name)
+        for job in Job.fetch_many(live_job_ids(queue), connection=queue.connection):
+            if job is not None:
+                yield job
+
+
 def live_task_job(name):
     """Return a job of the task called name that waits or runs on its queue, or None.
 
     The Run now button of the System page asks this before it queues a
     scheduled task. A second copy of a maintenance task behind the first
-    one does the same work 2 times (the import sweep, the S3 sync). The
-    check reads the queue and the started and the scheduled jobs. A
-    retry or a defer waits in the scheduled jobs."""
+    one does the same work 2 times (the import sweep, the S3 sync)."""
 
-    from rq.job import Job
-    from rq.registry import ScheduledJobRegistry, StartedJobRegistry
-
-    queue = resolve_queue(TASKS[name].queue)
     names = task_func_names(name)
-    ids = (
-        list(queue.job_ids)
-        + StartedJobRegistry(queue=queue).get_job_ids()
-        + ScheduledJobRegistry(queue=queue).get_job_ids()
-    )
-    for job in Job.fetch_many(ids, connection=queue.connection):
-        if job is None:
-            continue
+    for job in live_jobs([TASKS[name].queue]):
         if (job.meta or {}).get("func") == name or job.func_name in names:
             return job
     return None
@@ -498,24 +523,12 @@ def bulk_run_pending(prefix, *names):
     """Return True if a job with an id that starts with prefix waits or runs.
 
     prefix is a string or a tuple of strings. names are the tasks of the
-    run. The check reads the queue, the started jobs and the scheduled
-    jobs of the queue of each task."""
+    run. The check reads the live job ids of the queue of each task."""
 
-    from rq.registry import ScheduledJobRegistry, StartedJobRegistry
-
-    queues = {}
-    for name in names:
-        queue = resolve_queue(TASKS[name].queue)
-        queues[queue.name] = queue
-    for queue in queues.values():
-        ids = (
-            list(queue.job_ids)
-            + StartedJobRegistry(queue=queue).get_job_ids()
-            + ScheduledJobRegistry(queue=queue).get_job_ids()
-        )
-        if any(job_id.startswith(prefix) for job_id in ids):
-            return True
-    return False
+    queues = {TASKS[name].queue for name in names}
+    return any(
+        job_id.startswith(prefix) for queue in queues for job_id in live_job_ids(queue)
+    )
 
 
 def start_bulk_run(prefix, *names):
@@ -553,8 +566,8 @@ def requeue_job_id(name, key=None, counters=None, tag=None):
 
     The id is "retry", the short task name, a digest of key, and each
     counter as name=value in name order. Each attempt of a chain thus
-    gets an id of its own (see retry_job_id). The digest keeps apart 2
-    files with the same basename (#338). A retry with no key and no
+    gets an id of its own. The digest keeps apart 2 files with the same
+    basename (#338). A retry with no key and no
     counters has a fixed id, and a repeat defer replaces it. tag goes
     after the key digest. A track edit gives the digest of its arguments
     there. Then 2 edits of 1 file retry apart (#595)."""

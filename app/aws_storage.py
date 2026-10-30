@@ -47,12 +47,18 @@ from sqlalchemy import event as sa_event
 from sqlalchemy.orm import Session as OrmSession
 from werkzeug.local import LocalProxy
 
-from app.tasks import enqueue_task, report_progress, requeue, requeue_job_id
+from app.tasks import (
+    enqueue_task,
+    live_jobs,
+    report_progress,
+    requeue,
+    requeue_job_id,
+)
 from app import db, get_app
 from app.email import notify_admin, notify_admin_text
 from app import s3_layout
 from app import naming
-from app.queues import QUEUE_NAME, roster_queues
+from app.queues import roster_queues
 from app.settings import get_setting
 from app.file_ranking import tv_best_holder_ids
 from app.models import (
@@ -1666,7 +1672,7 @@ def sqs_retrieve_task():
         # here, and the change succeeds. A failure on 1 message must not
         # stop the poll (MessageNotInflight, an expired receipt handle).
 
-        for job in _file_queue_jobs():
+        for job in live_jobs(["file"]):
             restore_key = None
             handle = job.meta.get("sqs_receipt_handle")
             if job.func_name == "app.videos.download_task" and job.args:
@@ -2629,31 +2635,12 @@ def _drop_message(sqs_receipt_handle, note):
         delete_sqs_message(aws_sqs_client(), handle, note=note)
 
 
-def _file_queue_jobs():
-    """Return the jobs of the file queue that wait, run, or wait for a retry."""
-
-    queue = current_app.file_queue
-    job_ids = (
-        StartedJobRegistry(
-            QUEUE_NAME["file"], connection=current_app.redis
-        ).get_job_ids()
-        + list(queue.job_ids)
-        + ScheduledJobRegistry(queue=queue).get_job_ids()
-    )
-    jobs = []
-    for job_id in job_ids:
-        job = queue.fetch_job(job_id)
-        if job is not None:
-            jobs.append(job)
-    return jobs
-
-
 def _download_job_for(key):
     """Return True if a download of key waits, runs, or waits for a retry."""
 
     return any(
         job.func_name == "app.videos.download_task" and job.args and job.args[0] == key
-        for job in _file_queue_jobs()
+        for job in live_jobs(["file"])
     )
 
 

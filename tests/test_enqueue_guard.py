@@ -8,11 +8,13 @@ expires. A late run can import a file that is already in the library.
 
 import os
 
+import pytest
+
 from datetime import timedelta
 
 from rq.registry import FinishedJobRegistry, ScheduledJobRegistry
 
-from app import db, retry_job_id, safe_job_id
+from app import db, safe_job_id
 from tests.factories import make_movie, make_movie_file
 
 NAME = "Heat (1995) - [WEBDL-1080p].mkv"
@@ -29,7 +31,9 @@ def test_enqueue_skips_a_file_that_already_waits(app, tmp_path):
 
 
 def test_enqueue_skips_a_file_with_a_scheduled_retry(app, tmp_path):
-    """A retry of the file has its own id. It still counts as waiting."""
+    """A retry of the file has its own id. It still counts as waiting.
+
+    The match is by the source argument, not by the id (#616)."""
 
     from app.importing import enqueue_localization
 
@@ -38,7 +42,7 @@ def test_enqueue_skips_a_file_with_a_scheduled_retry(app, tmp_path):
             timedelta(minutes=5),
             "app.videos.localization_task",
             args=(str(tmp_path / NAME),),
-            job_id=retry_job_id("localization_task", f"'{NAME}'", 1, 0),
+            job_id="any-retry-id",
         )
         assert retry.id in ScheduledJobRegistry(queue=app.import_queue).get_job_ids()
         assert enqueue_localization(str(tmp_path / NAME)) is None
@@ -209,3 +213,29 @@ def test_a_later_stage_in_the_dequeue_gap_holds_its_source(app, tmp_path):
         assert job.id not in app.handoff_queue.job_ids
         assert later_stage_holds(path)
         assert os.path.abspath(path) in paths_held_by_later_stages()
+
+
+@pytest.mark.parametrize("dequeued", [False, True])
+def test_a_live_job_of_a_same_name_file_keeps_its_id(app, tmp_path, dequeued):
+    """A file of the same name at another path gets its own job (#616).
+
+    The fixed id holds a live job of the first path. The live job stays,
+    in the queue list or in the dequeue gap. The second path gets the
+    id with a time tag."""
+
+    from app.importing import enqueue_localization, localization_pending
+
+    first = str(tmp_path / NAME)
+    second = str(tmp_path / "sub" / NAME)
+    with app.app_context():
+        job = enqueue_localization(first)
+        if dequeued:
+            app.redis.lrem(app.import_queue.key, 0, job.id)
+            app.redis.rpush(app.import_queue.intermediate_queue.key, job.id)
+        assert localization_pending(first)
+        assert not localization_pending(second)
+        other = enqueue_localization(second)
+        assert other.id.startswith(safe_job_id(NAME) + "_")
+        assert app.redis.exists(f"rq:job:{job.id}")
+        assert localization_pending(first) and localization_pending(second)
+        app.redis.delete(app.import_queue.intermediate_queue.key)

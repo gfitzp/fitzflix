@@ -259,3 +259,29 @@ def test_enqueue_task_fills_the_spec_and_takes_overrides(app):
         finally:
             ScheduledJobRegistry(queue=app.maintenance_queue).remove(job)
             job.delete()
+
+
+def test_a_job_in_the_dequeue_gap_is_live_for_every_reader(app):
+    """A job between the queue list and the worker is live (#616).
+
+    The Run now check and the bulk check read tasks.live_job_ids. The
+    #523 fix had not reached them."""
+
+    from app.tasks import bulk_run_pending, live_job_ids, live_task_job
+
+    queue = app.maintenance_queue
+    with app.app_context():
+        job = queue.enqueue(
+            "app.videos.sync_aws_s3_storage_task", job_id="bulk-gap-test-1"
+        )
+        app.redis.lrem(queue.key, 0, job.id)
+        app.redis.rpush(queue.intermediate_queue.key, job.id)
+        try:
+            assert job.id not in queue.job_ids
+            assert job.id in live_job_ids("maintenance")
+            assert live_task_job("app.videos.sync_aws_s3_storage_task").id == job.id
+            assert bulk_run_pending("bulk-gap-test-", "app.maintenance.health_probe")
+        finally:
+            app.redis.delete(queue.intermediate_queue.key)
+            job.delete()
+        assert live_task_job("app.videos.sync_aws_s3_storage_task") is None
