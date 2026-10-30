@@ -691,13 +691,7 @@ def _extra_round():
     payload = current_app.redis.get(
         EXTRA_ROUND_KEY.format(user_id=int(current_user.id))
     )
-    if not payload:
-        return None
-    try:
-        round_ = json.loads(payload)
-    except (ValueError, UnicodeDecodeError):
-        return None
-    return round_ if isinstance(round_, dict) and round_.get("token") else None
+    return json.loads(payload) if payload else None
 
 
 def _save_extra_round(token, stage):
@@ -710,26 +704,31 @@ def _save_extra_round(token, stage):
     )
 
 
-# A mid-round post moves the round to its next stage only if the round
-# is still at the stage that the post read (#492). A second post can
-# end the round between the read and the save. A plain SET then made
-# the ended round live again.
+# A post moves or ends the round only if the round still has the token
+# and the stage that the post read (#492, #477). A second post can move
+# or end the round between the read and the write. An empty next value
+# ends the round.
 
 ADVANCE_SCRIPT = """
 local current = redis.call('GET', KEYS[1])
 if not current then return 0 end
-local ok, round = pcall(cjson.decode, current)
-if not ok or type(round) ~= 'table' then return 0 end
+local round = cjson.decode(current)
 if round['token'] ~= ARGV[1] or tonumber(round['stage'] or 1) ~= tonumber(ARGV[2]) then
   return 0
 end
-redis.call('SET', KEYS[1], ARGV[3], 'EX', ARGV[4])
+if ARGV[3] == '' then
+  redis.call('DEL', KEYS[1])
+else
+  redis.call('SET', KEYS[1], ARGV[3], 'EX', ARGV[4])
+end
 return 1
 """
 
 
 def _advance_extra_round(token, read_stage, next_stage):
-    """Move the live round of token from read_stage to next_stage. Return True if it moved."""
+    """Move the live round of token from read_stage to next_stage. Return True if it moved.
+
+    A next_stage of None ends the round. Only 1 post can do that."""
 
     return bool(
         current_app.redis.eval(
@@ -738,30 +737,14 @@ def _advance_extra_round(token, read_stage, next_stage):
             EXTRA_ROUND_KEY.format(user_id=int(current_user.id)),
             token,
             read_stage,
-            json.dumps({"token": token, "stage": next_stage}),
+            (
+                ""
+                if next_stage is None
+                else json.dumps({"token": token, "stage": next_stage})
+            ),
             DEALT_TTL,
         )
     )
-
-
-def _take_extra_round(token):
-    """Delete the live round atomically. Return True if it was the round of token.
-
-    If a different round was live, put it back. Only the post that
-    removed the round of token can grade its end."""
-
-    key = EXTRA_ROUND_KEY.format(user_id=int(current_user.id))
-    payload = current_app.redis.getdel(key)
-    if not payload:
-        return False
-    try:
-        round_ = json.loads(payload)
-    except (ValueError, UnicodeDecodeError):
-        return False
-    if not isinstance(round_, dict) or round_.get("token") != token:
-        current_app.redis.set(key, payload, ex=DEALT_TTL, nx=True)
-        return False
-    return True
 
 
 def _clear_extra_round():
@@ -1043,11 +1026,11 @@ def _extra_post(form, token, movie):
         return _render_extra_round(token, outcome.next_stage, form, missed=missed)
 
     # Only 1 post can end the round (#477). Two overlapping posts (a
-    # double tap, or 2 tabs) both read the live round. The atomic GETDEL
-    # gives the round to 1 of them. The other one deals or resumes, and
-    # banks nothing.
+    # double tap, or 2 tabs) both read the live round. The script gives
+    # the round to 1 of them. The other one deals or resumes, and banks
+    # nothing.
 
-    if not _take_extra_round(token):
+    if not _advance_extra_round(token, read_stage, None):
         return redirect(url_for("main.name_that_frame", difficulty="extra"))
     # A correct guess while zoomed in is the feat worth a brag. A
     # full-frame win is only a win.

@@ -2336,6 +2336,7 @@ def test_two_overlapping_extra_posts_grade_the_round_once(
     page = admin_client.get("/game?difficulty=extra&unrated=1").get_data(as_text=True)
     csrf = re.search(r'name="csrf_token"[^>]*value="([^"]+)"', page).group(1)
     live = {"token": token, "stage": game.EXTRA_STAGES}
+    app.redis.set(game.EXTRA_ROUND_KEY.format(user_id=admin_id), json.dumps(live))
     monkeypatch.setattr(game, "_extra_round", lambda: dict(live))
 
     def post():
@@ -2514,6 +2515,56 @@ def test_a_stale_mid_round_post_cannot_bring_back_an_ended_round(
     )
     assert response.status_code == 302
     assert app.redis.keys("fitzflix:frames:extra:*") == []
+
+
+def test_a_stale_post_cannot_end_a_round_that_moved_on(
+    app, admin_client, admin_id, monkeypatch
+):
+    """A hit that read stage 1 banks nothing after another post zoomed out (#634)."""
+
+    import re
+
+    from app import db
+    from app.main import game
+    from app.models import UserFrameScore
+
+    with app.app_context():
+        movie = make_movie("Moved Round Film", 2006)
+        make_movie_file(movie, "Bluray-1080p")
+        db.session.commit()
+        movie_id = movie.id
+
+    token = seed_image_frame(app, movie_id, size=(120, 80))
+    page = admin_client.get("/game?difficulty=extra&unrated=1").get_data(as_text=True)
+    csrf = re.search(r'name="csrf_token"[^>]*value="([^"]+)"', page).group(1)
+
+    # The other post moved the round to stage 2 after this post read stage 1.
+    key = game.EXTRA_ROUND_KEY.format(user_id=admin_id)
+    moved = json.dumps({"token": token, "stage": 2})
+    app.redis.set(key, moved)
+    monkeypatch.setattr(game, "_extra_round", lambda: {"token": token, "stage": 1})
+
+    def score():
+        with app.app_context():
+            row = UserFrameScore.query.filter_by(
+                user_id=admin_id, difficulty="extra"
+            ).first()
+            return row and (row.points, row.current_streak, row.rounds_won)
+
+    before = score()
+    response = admin_client.post(
+        "/game",
+        data={
+            "csrf_token": csrf,
+            "token": token,
+            "difficulty": "extra",
+            "guess": "Moved Round Film",
+            "guess_submit": "y",
+        },
+    )
+    assert response.status_code == 302
+    assert app.redis.get(key) == moved.encode()
+    assert score() == before
 
 
 def test_an_untick_of_unrated_films_resumes_the_live_extra_round(app, admin_client):
