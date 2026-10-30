@@ -3317,7 +3317,7 @@ def cdn_download(key, destination, progress, expected_size=0, etag=None):
 
     A resume sends If-Range with the ETag. A response whose ETag is not
     etag removes the partial and raises CdnStaleObject (#599). The
-    caller spends a retry, and the retry starts from byte zero.
+    caller then changes to the S3 transfer (#607).
     """
 
     url = cdn_signed_url(key)
@@ -3392,7 +3392,8 @@ def cdn_download(key, destination, progress, expected_size=0, etag=None):
 class CdnStaleObject(RuntimeError):
     """CloudFront sent a version of the key that is not the version of the S3 HEAD (#599).
 
-    The partial download is gone. The retry starts again from byte zero."""
+    The partial download is gone. aws_download continues with the S3
+    transfer (#607)."""
 
 
 def _bare_etag(etag):
@@ -3756,7 +3757,8 @@ def aws_download(
 
     When AWS_DOWNLOAD_VIA_CDN is set, the bytes come through CloudFront
     with a signed URL. The object size check and the restore-state
-    checks still use the S3 API.
+    checks still use the S3 API. A stale CloudFront copy changes the
+    rest of the attempts to the S3 transfer (#607).
 
     before_place runs after the download and before a direct placement.
     It gets the ETag and the size of the object at the start of the
@@ -3918,6 +3920,19 @@ def aws_download(
             else:
                 current_app.logger.error(f"'{basename}' {error}; giving up")
                 retry = 0
+
+        except CdnStaleObject as error:
+            # The signature is not part of the cache key. Each new signed
+            # URL reaches the same cached copy. Thus, the rest of the
+            # chain uses the S3 transfer, and spends no retry on the
+            # cache (#607). The warning makes the egress cost visible.
+
+            current_app.logger.warning(
+                f"'{basename}' {error}. The download changes to the S3 "
+                f"transfer, which costs S3 egress"
+            )
+            via_cdn = False
+            source = "AWS S3 storage"
 
         except requests.exceptions.RequestException:
             # A transport fault (connection, timeout, a broken body) spends

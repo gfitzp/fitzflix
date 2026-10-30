@@ -701,7 +701,7 @@ The scripts in `infra/` make and remove the distribution and its supporting reso
 4. Request the restores as usual. Only the download leg changes. Fitzflix signs a new URL for each attempt, and it streams the object into the import directory. The restore requests, the SQS notifications, and the size check stay on the S3 API.
 5. When the rebuild is complete, run `infra/teardown-cloudfront-cdn.sh`, and remove the four settings from `.env`.
 
-To test the path, run `flask aws cdn-url "untouched/<key>"`. It prints a signed URL that curl can fetch. A CloudFront 403 has three possible causes: the object is back in cold storage, the signature is wrong, or the WAF allowlist does not hold your address. Fitzflix asks S3 for the restore state to tell them apart. An object in cold storage gets a new restore request. A readable object with a 403 is an access fault, and the download gives up.
+To test the path, run `flask aws cdn-url "untouched/<key>"`. It prints a signed URL that curl can fetch. A CloudFront 403 has three possible causes: the object is back in cold storage, the signature is wrong, or the WAF allowlist does not hold your address. Fitzflix asks S3 for the restore state to tell them apart. An object in cold storage gets a new restore request. A readable object with a 403 is an access fault, and the download gives up. CloudFront can also serve a cached copy of an older version of the object. Then the download changes to the S3 transfer for the rest of its attempts, and the log records the S3 egress.
 
 
 ## Disaster recovery

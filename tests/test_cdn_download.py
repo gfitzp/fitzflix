@@ -833,16 +833,16 @@ def test_a_cached_older_version_of_the_same_length_is_refused(
     """CloudFront served an old copy with the S3 length. The checks passed (#599).
 
     The ETag of the response is not the ETag of the S3 HEAD. The body is
-    refused, and the retry starts from byte zero."""
+    refused. A new signed URL reaches the same cached copy. Thus, the
+    rest of the chain uses the S3 transfer (#607)."""
 
     from app import aws_storage
 
     stale = _FakeResponse(200, b"old")
     stale.headers["ETag"] = served
-    fresh = _FakeResponse(200, b"new")
-    fresh.headers["ETag"] = '"v1"'
-    cdn["responses"] = [stale, fresh]
-    _wire(monkeypatch, S3({"ContentLength": 3, "ETag": '"v1"'}), SQS())
+    cdn["responses"] = [stale]
+    s3 = S3({"ContentLength": 3, "ETag": '"v1"'}, download=b"new")
+    _wire(monkeypatch, s3, SQS())
 
     with app.app_context():
         assert (
@@ -851,7 +851,37 @@ def test_a_cached_older_version_of_the_same_length_is_refused(
         )
         landed = os.path.join(app.config["IMPORT_DIR"], "x.mkv")
         assert open(landed, "rb").read() == b"new"
-    assert len(cdn["signed"]) == 2
+    assert len(cdn["signed"]) == 1
+    assert s3.downloads == ["untouched/x.mkv"]
+
+
+def test_a_stale_copy_spends_no_retry_of_the_chain(app, monkeypatch, cdn, caplog):
+    """The fallback after a stale copy keeps the whole S3 retry budget (#607)."""
+
+    import logging
+
+    import botocore.exceptions
+
+    from app import aws_storage
+
+    stale = _FakeResponse(200, b"old")
+    stale.headers["ETag"] = '"v0"'
+    cdn["responses"] = [stale]
+    throttle = botocore.exceptions.ClientError(
+        {"Error": {"Code": "SlowDown"}}, "GetObject"
+    )
+    errors = [throttle] * (aws_storage.MAX_DOWNLOAD_RETRIES - 1)
+    s3 = S3({"ContentLength": 3, "ETag": '"v1"'}, errors=errors)
+    _wire(monkeypatch, s3, SQS())
+
+    with caplog.at_level(logging.WARNING), app.app_context():
+        assert (
+            aws_storage.aws_download("untouched/x.mkv", "x.mkv")
+            == aws_storage.DOWNLOAD_COMPLETE
+        )
+    assert s3.attempts == aws_storage.MAX_DOWNLOAD_RETRIES
+    fallbacks = [r for r in caplog.records if "costs S3 egress" in r.getMessage()]
+    assert len(fallbacks) == 1
 
 
 def test_a_stale_resume_body_drops_the_partial(app, monkeypatch, cdn):
@@ -863,10 +893,9 @@ def test_a_stale_resume_body_drops_the_partial(app, monkeypatch, cdn):
     first.headers["ETag"] = '"v1"'
     tail = _FakeResponse(206, b"X")
     tail.headers["ETag"] = '"v2"'
-    whole = _FakeResponse(200, b"cdn")
-    whole.headers["ETag"] = '"v1"'
-    cdn["responses"] = [first, tail, whole]
-    _wire(monkeypatch, S3({"ContentLength": 3, "ETag": '"v1"'}), SQS())
+    cdn["responses"] = [first, tail]
+    s3 = S3({"ContentLength": 3, "ETag": '"v1"'}, download=b"cdn")
+    _wire(monkeypatch, s3, SQS())
 
     with app.app_context():
         assert (
@@ -875,8 +904,5 @@ def test_a_stale_resume_body_drops_the_partial(app, monkeypatch, cdn):
         )
         landed = os.path.join(app.config["IMPORT_DIR"], "x.mkv")
         assert open(landed, "rb").read() == b"cdn"
-    assert cdn["headers"] == [
-        {},
-        {"Range": "bytes=2-", "If-Range": '"v1"'},
-        {},
-    ]
+    assert cdn["headers"] == [{}, {"Range": "bytes=2-", "If-Range": '"v1"'}]
+    assert s3.downloads == ["untouched/x.mkv"]
