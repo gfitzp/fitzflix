@@ -173,6 +173,106 @@ def test_filmography_merges_full_tmdb_career(app, admin_client, monkeypatch):
     assert page.count("data-state-movie=") == 2
 
 
+def test_filmography_library_filter_keeps_only_owned_titles(
+    app, admin_client, monkeypatch
+):
+    """Test the In-library filter of the filmography page.
+
+    The default shows the full career with the filter set to the full
+    career. The library filter keeps the films with an owned file and
+    the series with owned episodes. The review-only record and the
+    TMDB-only credits drop out."""
+
+    with app.app_context():
+        user_id = User.query.first().id
+        person = TMDBCredit(id=565656, name="Scoped Actor")
+        db.session.add(person)
+        owned = make_movie("Scoped Owned Film", 1980, tmdb_id=300)
+        make_movie_file(owned, "Bluray-1080p")
+        seen = make_movie("Scoped Seen Film", 1985, tmdb_id=350)
+        db.session.add(
+            UserMovieReview(
+                user_id=user_id,
+                movie_id=seen.id,
+                review="",
+                liked=True,
+                **star_rating_fields(4),
+            )
+        )
+        db.session.flush()
+        make_cast(person, owned)
+        make_cast(person, seen)
+        show = make_tv_series("Scoped Owned Show", tmdb_id=9401)
+        make_tv_file(show, 1, 1, "WEBDL-1080p")
+        db.session.commit()
+
+    fake_tmdb_get = tmdb_router(
+        {
+            "/person/565656/tv_credits": {
+                "cast": [
+                    {"id": 9401, "name": "Scoped Owned Show", "character": "Lead"},
+                    {"id": 9402, "name": "Scoped Guest Show", "character": "Guest"},
+                ],
+                "crew": [],
+            },
+            "/movie_credits": {
+                "cast": [
+                    {"id": 300, "title": "Scoped Owned Film", "character": "A"},
+                    {"id": 350, "title": "Scoped Seen Film", "character": "B"},
+                    {"id": 400, "title": "Scoped Unknown Film", "character": "C"},
+                ]
+            },
+        },
+        default={"name": "Scoped Actor"},
+    )
+    monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
+    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
+
+    page = admin_client.get("/library/movie?credit=565656").get_data(as_text=True)
+    assert 'id="filmography-filter-all" value="all" autocomplete="off" checked' in page
+    assert (
+        'id="filmography-filter-library" value="library" autocomplete="off" checked'
+        not in page
+    )
+    assert 'name="credit" value="565656"' in page
+    for title in ("Scoped Owned Film", "Scoped Seen Film", "Scoped Unknown Film"):
+        assert title in page
+    assert "Scoped Owned Show" in page
+    assert "Scoped Guest Show" in page
+
+    page = admin_client.get("/library/movie?credit=565656&filter=library").get_data(
+        as_text=True
+    )
+    assert (
+        'id="filmography-filter-library" value="library" autocomplete="off" checked'
+        in page
+    )
+    assert (
+        'id="filmography-filter-all" value="all" autocomplete="off" checked' not in page
+    )
+    assert "Scoped Owned Film" in page
+    assert "Scoped Seen Film" not in page
+    assert "Scoped Unknown Film" not in page
+    assert "Scoped Owned Show" in page
+    assert "Scoped Guest Show" not in page
+    assert page.count('data-card-url="/movie_card') == 1
+
+    # A stray value shows the full career. An empty library says so
+    page = admin_client.get("/library/movie?credit=565656&filter=bogus").get_data(
+        as_text=True
+    )
+    assert "Scoped Unknown Film" in page
+
+    with app.app_context():
+        db.session.add(TMDBCredit(id=575757, name="Fileless Actor"))
+        db.session.commit()
+    page = admin_client.get("/library/movie?credit=575757&filter=library").get_data(
+        as_text=True
+    )
+    assert "The library has no films of this person." in page
+    assert "Television" not in page
+
+
 def test_filmography_badges_recommended_owned_films(app, admin_client, monkeypatch):
     """Test that the filmography shows a badge on the recommended owned films.
 

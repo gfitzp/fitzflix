@@ -45,6 +45,19 @@
 {% if tmdb_unavailable %}
 <div class="alert alert-warning" role="alert">Fitzflix could not reach TMDB. This list shows only the films that have local records.</div>
 {% endif %}
+{# The filter is a radio button group (requested by Glenn,
+   2026-10-29). The full career is the default. "In library" keeps the
+   owned films and the owned series. A selection submits the GET. #}
+<form method="get" class="mb-3">
+	<input type="hidden" name="credit" value="{{ credit }}">
+	<div class="btn-group btn-group-sm" role="group" aria-label="Which titles to show">
+		{% for value, label in [("all", "Full career"), ("library", "In library")] %}
+		<input type="radio" class="btn-check" name="filter" id="filmography-filter-{{ value }}" value="{{ value }}" autocomplete="off"{% if library_only == (value == "library") %} checked{% endif %} onchange="this.form.submit()">
+		<label class="btn btn-outline-primary" for="filmography-filter-{{ value }}">{{ label }}</label>
+		{% endfor %}
+	</div>
+	<noscript><button type="submit" class="btn btn-sm btn-secondary ms-1">Go</button></noscript>
+</form>
 {# The filmography as a poster gallery (#45d). The poster popover carries
    the synopsis, credits, availability, and badges of each film. The
    revision by Glenn (2026-08) moved the library, funnel, and streaming
@@ -79,7 +92,7 @@
 	{% endfor %}
 </div>
 {% if not filmography %}
-<p class="lead">Fitzflix found no films for this person.</p>
+<p class="lead">{% if library_only %}The library has no films of this person.{% else %}Fitzflix found no films for this person.{% endif %}</p>
 {% endif %}
 {% if television %}
 {# The TV career as the same poster grid, with the same division of labor

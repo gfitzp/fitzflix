@@ -308,8 +308,12 @@ def merge_credit_rows(credits, local_by_tmdb_id, title_key, date_key):
     return rows
 
 
-def _filmography(credit):
-    """Render the filmography page of 1 TMDB person, the credit view of movie_library."""
+def _filmography(credit, library_only=False):
+    """Render the filmography page of 1 TMDB person, the credit view of movie_library.
+
+    The page shows the full career by default. With library_only, it
+    keeps only the films with an owned file and the series with owned
+    episodes (requested by Glenn, 2026-10-29)."""
 
     ranked_files = ranked_movie_files()
 
@@ -433,6 +437,15 @@ def _filmography(credit):
     filmography = sorted(
         rows.values(), key=lambda row: (row["year"] is None, row["year"] or 0)
     )
+
+    # The library filter keeps the films that have an owned file. The
+    # review-only records and the TMDB-only credits drop out. The
+    # filter runs before the streaming step. The owned films never
+    # carry streaming badges. Thus, the filtered page makes no
+    # availability lookups.
+
+    if library_only:
+        filmography = [row for row in filmography if row["file"] is not None]
     sets = user_film_sets_by_id(current_user.id, list(local.keys()))
     for row in filmography:
         row["seen"] = row["movie"] is not None and row["movie"].id in reviewed
@@ -528,6 +541,8 @@ def _filmography(credit):
     television = sorted(
         tv_rows.values(), key=lambda row: (row["year"] is None, row["year"] or 0)
     )
+    if library_only:
+        television = [row for row in television if row["owned"]]
 
     return render_template(
         "filmography.html",
@@ -535,6 +550,8 @@ def _filmography(credit):
         person_name=person_name,
         profile_path=person_profile_path,
         bio=bio,
+        credit=int(credit),
+        library_only=library_only,
         filmography=filmography,
         television=television,
         tmdb_unavailable=tmdb_credits is None,
@@ -551,10 +568,13 @@ def movie_library():
               films that the actor starred in.
     - q     : a substring. Fitzflix filters the movie list to the films
               that contain it.
+    - filter: "library" limits a credit view to the owned titles. Any
+              other value, or no value, shows the full career.
     """
 
     page = request.args.get("page", 1, type=int)
     credit = request.args.get("credit", None, type=int)
+    credit_filter = request.args.get("filter", "all", type=str)
     q = request.args.get("q", None, type=str)
     genre = request.args.get("genre", None, type=int)
     quality = request.args.get("quality", "0", type=str)
@@ -565,7 +585,7 @@ def movie_library():
         quality = "0"
 
     if credit:
-        return _filmography(credit)
+        return _filmography(credit, library_only=credit_filter == "library")
 
     # This subquery gets the best movie files.
 

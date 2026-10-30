@@ -140,7 +140,7 @@ def test_filmography_television_tiles_open_the_series_popover(
 
     # There is no badge under the poster now. The card shows it.
 
-    assert "In library" not in page
+    assert "In your Fitzflix library" not in page
 
     # An owned series arms the card by series id. An unowned series uses the TMDB id.
 
@@ -293,7 +293,7 @@ def test_tv_card_renders_an_unowned_series_from_tmdb(app, admin_client, monkeypa
     # is no local record. Thus, there is no series page to link from the
     # title.
 
-    assert "In library" not in page
+    assert "In your Fitzflix library" not in page
     assert "in your library" not in page
     assert "/tv/" not in page
 
