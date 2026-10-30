@@ -201,32 +201,87 @@ result = { before, after: abbr.attributes.title };
     }
 
 
-def test_a_healed_chip_or_a_late_anchor_repaints_the_queue_rows(admin_client, tmp_path):
-    """The repaint signature missed 2 server writes (#574).
+def test_an_unchanged_queue_answers_304_and_a_healed_chip_repaints(app, admin_client):
+    """The ETag of /queue/rows is a digest of the row data (#639).
 
-    The heal of an orphaned chip changes only the chip status. The late
-    queued rule moves only enqueued_at. The poll kept the old rows."""
+    A new CSRF token in the forms does not change it. Thus, an idle
+    queue answers 304, and the forms stay in place. The heal of a chip
+    writes only its status. It changes the ETag (#574)."""
+
+    import json as json_module
+
+    from app.pipeline import FILE_KEY, _digest
+
+    basename = "Etag Row (2001) - [DVD].mkv"
+    with app.app_context():
+        app.import_queue.enqueue("app.videos.localization_task", "/import/Head.mkv")
+        app.import_queue.enqueue(
+            "app.videos.localization_task", args=(f"/import/{basename}",)
+        )
+
+    page = admin_client.get("/queue").get_data(as_text=True)
+    first = admin_client.get("/queue/rows")
+    assert first.status_code == 200
+    assert 'class="queue-front"' in first.get_data(as_text=True)
+    etag = first.headers["ETag"]
+    assert f"var rowsEtag = {json_module.dumps(etag)};" in page
+
+    with admin_client.session_transaction() as session:
+        session.pop("csrf_token", None)
+    again = admin_client.get("/queue/rows", headers={"If-None-Match": etag})
+    assert again.status_code == 304
+    assert again.get_data() == b""
+
+    key = FILE_KEY.format(digest=_digest(basename))
+    trail = json_module.loads(app.redis.hget(key, "trail"))
+    trail[-1]["status"] = "started"
+    app.redis.hset(key, "trail", json_module.dumps(trail))
+    healed = admin_client.get("/queue/rows", headers={"If-None-Match": etag})
+    assert healed.status_code == 200
+    assert healed.headers["ETag"] != etag
+
+
+def test_the_rows_hook_swaps_only_on_a_new_answer(admin_client, tmp_path):
+    """A 304 keeps the rows. A 200 swaps them and localizes the tooltips (#639, #547)."""
 
     body = admin_client.get("/queue").get_data(as_text=True)
     test_code = r"""
-const trail = { basename: "Heal.mkv", updated: "t1", entries: [{ job: "j1", status: "queued" }] };
-const task = { position: 1, id: "j1", status: "queued", at_head: true, description: "d",
-               enqueued_at: "2026-10-28T10:00:00Z", started_at: null, scheduled_for: null };
-const base = rowsSignature([task], { j1: trail }, [trail]);
-const healed = JSON.parse(JSON.stringify(trail));
-healed.entries[0].status = "done";
-const later = Object.assign({}, task, { enqueued_at: "2026-10-28T09:00:00Z" });
-result = {
-    healed: rowsSignature([task], { j1: healed }, []) !== rowsSignature([task], { j1: trail }, []),
-    orphan: rowsSignature([], {}, [healed]) !== rowsSignature([], {}, [trail]),
-    anchor: rowsSignature([later], { j1: trail }, [trail]) !== base,
-    same: rowsSignature([task], { j1: trail }, [trail]) === base,
+const ROWS_URL = "/queue/rows";
+let rowsEtag = '"seed"';
+const sent = [];
+const rendered = [];
+let localized = 0;
+const tbody = { innerHTML: "old rows", querySelectorAll: () => ["span"] };
+document.getElementById = () => tbody;
+document.querySelectorAll = () => { localized += 1; return []; };
+globalThis.moment = () => ({ format: () => "local" });
+function flask_moment_render(span) { rendered.push(span); }
+let status = 304;
+answer = (url, options) => {
+    sent.push(options.headers["If-None-Match"] || null);
+    return Promise.resolve({
+        status,
+        headers: { get: () => '"new"' },
+        text: () => Promise.resolve("new rows"),
+    });
 };
+refreshRows().then(() => {
+    const kept = tbody.innerHTML;
+    status = 200;
+    return refreshRows().then(() => {
+        return refreshRows().then(() => {
+            result = { kept, swapped: tbody.innerHTML, sent, rendered: rendered.length, localized };
+        });
+    });
+});
 """
-    out = run_page_script(body, ["rowsSignature"], test_code, tmp_path)
+    out = run_page_script(
+        body, ["localizeFirstPaintTitles", "refreshRows"], test_code, tmp_path
+    )
     assert out["result"] == {
-        "healed": True,
-        "orphan": True,
-        "anchor": True,
-        "same": True,
+        "kept": "old rows",
+        "swapped": "new rows",
+        "sent": ['"seed"', '"seed"', '"new"'],
+        "rendered": 2,
+        "localized": 2,
     }

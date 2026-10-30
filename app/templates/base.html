@@ -457,10 +457,7 @@
 		// overlap and arrive out of order
 
 		(function() {
-			// A page can ask the poll for more file trails than the
-			// default 25 (the pipeline page wants the full retained set)
-			var QUEUE_URL = '{{ url_for('api.queue_details') }}'
-				+ (window.pipelineTrailLimit ? '?files=' + window.pipelineTrailLimit : '');
+			var QUEUE_URL = '{{ url_for('api.queue_details') }}';
 			var POLL_MS = 5000;
 			var queueBadge = document.getElementById("queue_count");
 			var lastCount = queueBadge ? parseInt(queueBadge.textContent, 10) : NaN;

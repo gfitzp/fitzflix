@@ -420,18 +420,20 @@ def test_non_pipeline_tasks_leave_no_trail(app):
     assert pipeline_trails(app.redis) == []
 
 
-def test_queue_details_payload_carries_the_trails(app, admin_client):
-    """Add files to the payload of the 5-second poll, newest first."""
+def test_the_queue_rows_route_paints_the_trails(app, admin_client):
+    """Paint the chips of each file on the rows that the poll fetches (#639)."""
 
     with app.app_context():
         app.import_queue.enqueue(
             "app.videos.localization_task",
             args=("/import/Trail Payload (2024) - [DVD].mkv",),
+            description="'Trail Payload (2024) - [DVD].mkv'",
         )
 
-    payload = admin_client.get("/api/queue-details").get_json()
-    assert payload["files"][0]["basename"] == "Trail Payload (2024) - [DVD].mkv"
-    assert payload["files"][0]["entries"][0]["stage"] == "Localizing"
+    rows = admin_client.get("/queue/rows").get_data(as_text=True)
+    assert "Trail Payload (2024) - [DVD].mkv" in rows
+    assert "Localizing &middot; queued" in rows
+    assert "<tbody" not in rows
 
 
 def test_trail_entries_carry_their_job_ids(app, admin_client):
@@ -446,9 +448,11 @@ def test_trail_entries_carry_their_job_ids(app, admin_client):
             args=("/import/Trail Job Id (2024) - [DVD].mkv",),
         )
 
-    payload = admin_client.get("/api/queue-details").get_json()
-    entry = payload["files"][0]["entries"][0]
+    from app.pipeline import pipeline_trails
+
+    entry = pipeline_trails(app.redis)[0]["entries"][0]
     assert entry["job"] == job.id
+    payload = admin_client.get("/api/queue-details").get_json()
     assert [task["id"] for task in payload["all"]] == [job.id]
     assert payload["all"][0]["position"] == 1
 
@@ -480,32 +484,9 @@ def test_deferred_retries_list_on_the_queue_page(app, admin_client):
     assert booked["position"] is None
     assert booked["scheduled_for"]
     assert booked["description"] == "Localizing Trail Deferred (2024) - [DVD].mkv"
-    assert payload["files"][0]["entries"][0]["job"] == deferred.id
-    assert payload["files"][0]["entries"][0]["status"] == "scheduled"
 
-
-def test_queue_details_files_limit_is_adjustable(app, admin_client):
-    """Clamp the ?files=… value of the shared poll.
-
-    The pipeline page asks the shared poll for more than the newest 25
-    of the queue page through ?files=…. Fitzflix clamps the value. Thus,
-    a hand-typed query cannot ask Redis for too much."""
-
-    with app.app_context():
-        for index in range(3):
-            app.import_queue.enqueue(
-                "app.videos.localization_task",
-                args=(f"/import/Trail Limit {index} (2024) - [DVD].mkv",),
-            )
-
-    limited = admin_client.get("/api/queue-details?files=2").get_json()
-    assert len(limited["files"]) == 2
-
-    clamped = admin_client.get("/api/queue-details?files=99999").get_json()
-    assert len(clamped["files"]) == 3
-
-    nonsense = admin_client.get("/api/queue-details?files=-5").get_json()
-    assert len(nonsense["files"]) == 1
+    rows = admin_client.get("/queue/rows").get_data(as_text=True)
+    assert "Localizing &middot; waiting to retry" in rows
 
 
 def test_pipeline_trails_render_on_the_queue_page_and_landed_cards(admin_client):
@@ -519,13 +500,11 @@ def test_pipeline_trails_render_on_the_queue_page_and_landed_cards(admin_client)
     gone."""
 
     queue_page = admin_client.get("/queue").get_data(as_text=True)
-    assert "window.pipelineTrailLimit = 100" in queue_page
     assert 'id="all-tasks"' in queue_page
 
     page = admin_client.get("/file-activity").get_data(as_text=True)
     assert 'id="pipeline-files-section"' not in page
     assert "In flight" not in page
-    assert "window.pipelineTrailLimit = " not in page
 
     assert admin_client.get("/maintenance/pipeline").status_code == 404
 
@@ -1081,8 +1060,8 @@ def test_queue_page_renders_its_rows_on_the_server(app, admin_client):
 
     Before, the table body was empty until the first poll filled it. The
     rows then popped into place a split second after the page loaded.
-    Now the server renders the same rows that renderAll paints. The
-    poll repaints them with the same markup."""
+    Now the server renders the rows. The poll fetches the same partial
+    from /queue/rows (#639)."""
 
     with app.app_context():
         app.import_queue.enqueue(
@@ -1283,11 +1262,10 @@ def test_the_atmos_twin_leaves_a_trail(app):
     ]
 
 
-def test_both_chip_painters_know_the_past_tense_of_each_stage():
-    """Keep the past tense of each chip the same in both painters.
+def test_the_chip_macro_knows_the_past_tense_of_each_stage():
+    """Give each done chip of the macro its past tense.
 
-    The server macro and paintChips in queue.html each carry the map. A
-    done chip with no entry kept its present tense ("Re-archiving to
+    A done chip with no entry kept its present tense ("Re-archiving to
     S3" after it completed)."""
 
     import pathlib
@@ -1299,14 +1277,8 @@ def test_both_chip_painters_know_the_past_tense_of_each_stage():
     macro = (templates / "_trail_chips.html").read_text()
     macro = macro[macro.index("chip_past_tense") :]
     macro = macro[: macro.index("} %}")]
-    script = (templates / "queue.html").read_text()
-    script = script[script.index("var chipPastTense") :]
-    script = script[: script.index("};")]
     pair = re.compile(r'"([^"]+)": "([^"]+)"')
     server = dict(pair.findall(macro))
-    browser = dict(pair.findall(script))
-
-    assert server == browser
 
     # The own chip of the Atmos job comes after all its steps. It reads as
     # the end of the job. "Added Atmos twin" read as 1 more step after the
@@ -1340,8 +1312,7 @@ def test_queue_rows_carry_the_phone_layout_markup(app, admin_client):
     """Give each queue row a line of times for a phone.
 
     On a phone, the 2 time columns do not show. The queue-times line in
-    the File cell shows the same times. Each phrase stays whole. The
-    poll (renderAll and phoneTimes) writes the same markup."""
+    the File cell shows the same times. Each phrase stays whole."""
 
     with app.app_context():
         app.import_queue.enqueue(
@@ -1358,10 +1329,6 @@ def test_queue_rows_carry_the_phone_layout_markup(app, admin_client):
     times = times[: times.index("</div>")]
     assert '<span class="text-nowrap">Enqueued ' in times
     assert "started " not in times
-    assert (
-        "fileCell.appendChild(phoneTimes(task, trailByJob[task.trail_job || task.id]))"
-        in page
-    )
 
 
 def test_a_job_that_starts_before_its_queued_stamp_keeps_its_enqueue_time(app):
@@ -1733,30 +1700,25 @@ def test_the_queue_poll_paints_each_page_through_its_hook(admin_client):
     home = admin_client.get("/").get_data(as_text=True)
     assert "var hooks = window.fitzflixQueueHooks || [];" in home
     assert "function renderRunning(running) {" in home
-    for painter in (
-        "function renderAll(",
-        "function paintChips(",
-        "function refreshCards(",
-    ):
+    for painter in ("function refreshRows(", "function refreshCards("):
         assert painter not in home
 
     # The painter owns its state. A variable left behind in base.html is
     # a ReferenceError that the poll swallows, and the table never
     # repaints (the first deploy of this move, 2026-10-25).
 
-    assert "var allSignature" not in home
+    assert "var rowsEtag" not in home
 
     queue = admin_client.get("/queue").get_data(as_text=True)
-    assert queue.count("var allSignature = null;") == 1
-    assert "function renderAll(tasks, files) {" in queue
-    assert "function paintChips(target, entries) {" in queue
-    assert "window.fitzflixQueueHooks.push(function(queue_details) {" in queue
+    assert queue.count("var rowsEtag = ") == 1
+    assert "function refreshRows() {" in queue
+    assert "window.fitzflixQueueHooks.push(refreshRows);" in queue
     assert "function refreshCards(" not in queue
 
     activity = admin_client.get("/file-activity").get_data(as_text=True)
     assert "function refreshCards() {" in activity
     assert "window.fitzflixQueueHooks.push(refreshCards);" in activity
-    assert "function renderAll(" not in activity
+    assert "function refreshRows(" not in activity
 
 
 def test_a_best_effort_trail_function_logs_and_returns_its_fallback(app, caplog):

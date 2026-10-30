@@ -3,36 +3,14 @@
 
 {% block app_content %}
 {{ page_header(title) }}
-{% from "_trail_chips.html" import trail_chips %}
 {# Every job that runs, waits, or is booked for a deferred retry, each
    with the pipeline trail of its file as stage chips. The server
-   renders the rows (queue_rows in app/pipeline.py). Thus, the table is
-   in place at the first paint. The 5-second poll of base.html then
-   calls renderAll below through window.fitzflixQueueHooks. renderAll
-   keeps the rows live with the same markup. The poll
-   asks for the full retained trail set. Thus, a file with no job left
-   to list under still shows as a trailing "no job in queue" row. The
-   relative times are flask-moment spans. The poll writes the same
-   wording with moment.js. #}
-<script>
-	window.pipelineTrailLimit = 100;
-	{% if front_form %}
-	{# An admin can move a waiting job to the front of its queue (#236).
-	   renderAll below builds the same form on each repaint. #}
-	window.queueFront = {
-		url: {{ url_for('main.queue_front')|tojson }},
-		token: {{ csrf_token()|tojson }}
-	};
-	{% endif %}
-	{% if dismiss_form %}
-	{# An admin can remove a "no job in queue" row. renderAll below
-	   builds the same form on each repaint. #}
-	window.queueDismiss = {
-		url: {{ url_for('main.queue_dismiss')|tojson }},
-		token: {{ csrf_token()|tojson }}
-	};
-	{% endif %}
-</script>
+   renders the rows (_queue_rows.html, from queue_rows in
+   app/pipeline.py). Thus, the table is in place at the first paint.
+   The 5-second poll of base.html then calls refreshRows below through
+   window.fitzflixQueueHooks. refreshRows fetches the same rows from
+   /queue/rows (#639). A trail with no job left to list under shows as
+   a trailing "no job in queue" row. #}
 <div class="table-responsive">
 {# On a phone, the 2 time columns do not show (the queue-table rules in
    bootstrap.html). The queue-times line in the File cell shows the same
@@ -48,70 +26,23 @@
 		</tr>
 	</thead>
 	<tbody id="all-tasks">
-		{% for row in rows %}
-		<tr class="d-flex">
-			<th scope="row" class="col-1 queue-position">{% if row.task and row.task.position is not none %}{{ row.task.position }}{% else %}&mdash;{% endif %}
-				{%- if front_form and row.task and row.task.status == "queued" and not row.task.at_head %}
-				<form method="post" action="{{ url_for('main.queue_front') }}" class="queue-front">
-					<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-					<input type="hidden" name="job_id" value="{{ row.task.id }}">
-					<button type="submit" class="btn btn-sm btn-outline-secondary" title="Move to the front of its queue" aria-label="Move to front">&#x2912;</button>
-				</form>
-				{%- endif %}
-				{%- if dismiss_form and not row.task and row.trail %}
-				<form method="post" action="{{ url_for('main.queue_dismiss') }}" class="queue-dismiss">
-					<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-					<input type="hidden" name="digest" value="{{ row.trail.digest }}">
-					<button type="submit" class="btn btn-sm btn-outline-secondary" title="Remove this row" aria-label="Dismiss">&times;</button>
-				</form>
-				{%- endif %}</th>
-			<td class="col-5 col-sm-5 col-lg-7 queue-file">
-				{% if row.task %}<div>{{ row.task.description }}</div>{% else %}<div class="text-muted">{{ row.trail.basename }}</div>{% endif %}
-				{% if row.trail %}<div class="mt-1">{{ trail_chips(row.trail.entries) }}</div>{% endif %}
-				<div class="queue-times d-sm-none small text-body-secondary">
-				{%- if row.task -%}
-					{%- set phrases = [] -%}
-					{%- if row.task.enqueued_at %}{% set _ = phrases.append(("Enqueued ", row.task.enqueued_at)) %}{% endif -%}
-					{%- if row.task.status == "scheduled" -%}
-						{%- if row.task.scheduled_for %}{% set _ = phrases.append(((row.task.scheduled_word or "retries") ~ " ", row.task.scheduled_for)) %}{% endif -%}
-					{%- elif row.task.started_at %}{% set _ = phrases.append(("started ", row.task.started_at)) %}{% endif -%}
-					{%- for word, stamp in phrases -%}
-						{%- if not loop.first %} &middot; {% endif -%}
-						<span class="text-nowrap">{{ word }}{{ moment(stamp).fromNow() }}</span>
-					{%- endfor -%}
-				{%- else -%}
-					No job in queue. Last update {{ row.trail.updated }}
-				{%- endif -%}
-				</div>
-			</td>
-			{% if row.task %}
-			<td class="col-3 col-sm-3 col-lg-2 queue-enqueued">{% if row.task.enqueued_at %}<abbr title="{{ row.task.enqueued_at }}">{{ moment(row.task.enqueued_at).fromNow() }}</abbr>{% endif %}</td>
-			{% if row.task.status == "scheduled" %}
-			<td class="col-3 col-sm-3 col-lg-2 queue-started">{% if row.task.scheduled_for %}<abbr title="{{ row.task.scheduled_for }}">{{ row.task.scheduled_word or "retries" }} {{ moment(row.task.scheduled_for).fromNow() }}</abbr>{% endif %}</td>
-			{% else %}
-			<td class="col-3 col-sm-3 col-lg-2 queue-started">{% if row.task.started_at %}<abbr title="{{ row.task.started_at }}">{{ moment(row.task.started_at).fromNow() }}</abbr>{% endif %}</td>
-			{% endif %}
-			{% else %}
-			<td class="col-3 col-sm-3 col-lg-2 queue-enqueued"></td>
-			<td class="col-3 col-sm-3 col-lg-2 queue-started small text-muted">No job in queue. Last update {{ row.trail.updated }}</td>
-			{% endif %}
-		</tr>
-		{% endfor %}
+		{% include "_queue_rows.html" %}
 	</tbody>
 </table>
 </div>
 <script>
 	(function() {
-		// The signature of the last painted table. A poll with the same
-		// signature paints nothing
+		// The ETag of the rows on the page. A poll sends it, and an
+		// unchanged queue answers 304. Then the rows and their forms
+		// stay in place.
 
-		var allSignature = null;
+		var ROWS_URL = {{ url_for('main.queue_rows_fragment')|tojson }};
+		var rowsEtag = {{ rows_etag|tojson }};
 
-		// The server rows carry the raw UTC stamp in each tooltip. The
-		// poll paints local times, but it skips a table with the same
-		// signature (#547). Thus, the first paint gets the local times
-		// from the stamp of the flask-moment span. moment.js loads in the
-		// scripts block, after this content. Thus, the work waits for
+		// The server rows carry the raw UTC stamp in each tooltip. Thus,
+		// the tooltips get the local time from the stamp of the
+		// flask-moment span (#547). moment.js loads in the scripts block,
+		// after this content. Thus, the first pass waits for
 		// DOMContentLoaded. A direct call threw a ReferenceError and
 		// stopped this whole script (follow-up #547).
 
@@ -135,324 +66,33 @@
 
 		scheduleFirstPaintTitles();
 
-		// The table of the queue page has 1 row per running, queued, or
-		// deferred job. Each row carries the pipeline trail of its FILE
-		// as stage chips below the description. The chips were in a
-		// separate in-flight list on the File Activity page. Glenn
-		// folded them into the rows here, 2026-08. A row finds its
-		// trail by job id. Every trail entry is stamped with the job
-		// that wrote it. Thus, a file with 2 jobs listed (an archive
-		// that runs, a conversion that waits) shows its journey on both
-		// rows. A trail whose last stage is not done yet has no job of
-		// its own to list under. Examples are a failure that nobody
-		// retried, and a chip frozen by a lost write. These trails come
-		// after the jobs as "no job in queue" rows. Thus, nothing in
-		// flight goes unseen.
-
-		function trailCell(task, trail) {
-			var cell = document.createElement("td");
-			cell.className = "col-5 col-sm-5 col-lg-7 queue-file";
-			var name = document.createElement("div");
-			name.textContent = task ? task.description : trail.basename;
-			if (!task) name.className = "text-muted";
-			cell.appendChild(name);
-			if (trail) {
-				var chips = document.createElement("div");
-				chips.className = "mt-1";
-				paintChips(chips, trail.entries);
-				cell.appendChild(chips);
-			}
-			return cell;
-		}
-
-		// kind is queue-enqueued or queue-started. On a phone, these 2
-		// cells do not show. The queue-times line in the File cell
-		// (phoneTimes) shows the same times.
-
-		// A relative time ("3 minutes ago") keeps its stamp and its
-		// prefix on the element. The table repaints only when a row
-		// changes. Thus, a minute timer writes the text again from the
-		// stamp, and the rows stay in place.
-
-		function relativeTime(element, stamp, prefix) {
-			element.setAttribute("data-stamp", stamp);
-			element.setAttribute("data-prefix", prefix || "");
-			element.textContent = (prefix || "") + moment(stamp).fromNow();
-			return element;
-		}
+		// The rows change only at a poll. Thus, a minute timer writes the
+		// relative times ("3 minutes ago") again from their stamps.
 
 		setInterval(function() {
-			if (document.hidden) return;
-			document.querySelectorAll("#all-tasks [data-stamp]").forEach(function(element) {
-				element.textContent = element.getAttribute("data-prefix")
-					+ moment(element.getAttribute("data-stamp")).fromNow();
-			});
+			if (document.hidden || typeof flask_moment_render === "undefined") return;
+			document.querySelectorAll("#all-tasks [data-timestamp]").forEach(flask_moment_render);
 		}, 60000);
 
-		function timeCell(stamp, prefix, kind) {
-			var cell = document.createElement("td");
-			cell.className = "col-3 col-sm-3 col-lg-2 " + kind;
-			if (stamp) {
-				// The tooltips carry the LOCAL time of the viewer, not
-				// the raw GMT timestamp that the API serves
-				var when = document.createElement("abbr");
-				when.setAttribute("title", moment(stamp).format("LLL"));
-				cell.appendChild(relativeTime(when, stamp, prefix));
-			}
-			return cell;
-		}
-
-		// The times of a row as 1 line of text below the chips, for a
-		// phone. Each phrase stays whole. Thus, a long line breaks
-		// between the phrases. This is the twin of the queue-times line
-		// in queue.html.
-
-		function phoneTimes(task, trail) {
-			var line = document.createElement("div");
-			line.className = "queue-times d-sm-none small text-body-secondary";
-			if (!task) {
-				line.textContent = "No job in queue. Last update " + trail.updated;
-				return line;
-			}
-			var phrases = [];
-			if (task.enqueued_at) phrases.push(["Enqueued ", task.enqueued_at]);
-			if (task.status === "scheduled") {
-				if (task.scheduled_for) {
-					phrases.push([(task.scheduled_word || "retries") + " ", task.scheduled_for]);
-				}
-			} else if (task.started_at) {
-				phrases.push(["started ", task.started_at]);
-			}
-			phrases.forEach(function(pair, index) {
-				if (index) line.appendChild(document.createTextNode(" · "));
-				var phrase = document.createElement("span");
-				phrase.className = "text-nowrap";
-				line.appendChild(relativeTime(phrase, pair[1], pair[0]));
-			});
-			return line;
-		}
-
-		function positionCell(text) {
-			var cell = document.createElement("th");
-			cell.setAttribute("scope", "row");
-			cell.className = "col-1 queue-position";
-			cell.textContent = text;
-			return cell;
-		}
-
-		// An admin can move a waiting job to the front of its queue
-		// (#236). queue.html sets window.queueFront for an admin only.
-		// This is the twin of the queue-front form in queue.html.
-
-		function frontForm(task) {
-			var form = document.createElement("form");
-			form.method = "post";
-			form.action = window.queueFront.url;
-			form.className = "queue-front";
-			[["csrf_token", window.queueFront.token], ["job_id", task.id]].forEach(function(pair) {
-				var input = document.createElement("input");
-				input.type = "hidden";
-				input.name = pair[0];
-				input.value = pair[1];
-				form.appendChild(input);
-			});
-			var button = document.createElement("button");
-			button.type = "submit";
-			button.className = "btn btn-sm btn-outline-secondary";
-			button.title = "Move to the front of its queue";
-			button.setAttribute("aria-label", "Move to front");
-			button.textContent = "\u2912";
-			form.appendChild(button);
-			return form;
-		}
-
-		// An admin can remove a "no job in queue" row. queue.html sets
-		// window.queueDismiss for an admin only. This is the twin of
-		// the queue-dismiss form in queue.html.
-
-		function dismissForm(trail) {
-			var form = document.createElement("form");
-			form.method = "post";
-			form.action = window.queueDismiss.url;
-			form.className = "queue-dismiss";
-			[["csrf_token", window.queueDismiss.token], ["digest", trail.digest]].forEach(function(pair) {
-				var input = document.createElement("input");
-				input.type = "hidden";
-				input.name = pair[0];
-				input.value = pair[1];
-				form.appendChild(input);
-			});
-			var button = document.createElement("button");
-			button.type = "submit";
-			button.className = "btn btn-sm btn-outline-secondary";
-			button.title = "Remove this row";
-			button.setAttribute("aria-label", "Dismiss");
-			button.textContent = "\u00d7";
-			form.appendChild(button);
-			return form;
-		}
-
-		function trailSettled(trail) {
-			var last = trail.entries[trail.entries.length - 1];
-			return !last || last.status === "done";
-		}
-
-		// The text of what the rows show. A poll repaints only when it
-		// changes. The heal of an orphaned chip writes only its status,
-		// and the late enqueue anchor moves only enqueued_at (#574). Both
-		// are in it.
-		function rowsSignature(tasks, trailByJob, orphans) {
-			function chipStatuses(trail) {
-				return trail.entries.map(function(entry) { return entry.status; }).join(",");
-			}
-			return tasks.map(function(task) {
-				var trail = trailByJob[task.trail_job || task.id];
-				return task.position + "|" + task.id + "|" + task.status + "|" + task.at_head + "|" + task.description
-					+ "|" + task.enqueued_at + "|" + task.started_at + "|" + task.scheduled_for
-					+ "|" + (trail ? trail.updated + "|" + trail.entries.length + "|" + chipStatuses(trail) : "");
-			}).concat(orphans.map(function(trail) {
-				return "orphan|" + trail.basename + "|" + trail.updated
-					+ "|" + trail.entries.length + "|" + chipStatuses(trail);
-			})).join("\n");
-		}
-
-		function renderAll(tasks, files) {
-			var tbody = document.getElementById("all-tasks");
-			if (!tbody) return;
-
-			var trailByJob = {};
-			files.forEach(function(trail) {
-				trail.entries.forEach(function(entry) {
-					if (entry.job) trailByJob[entry.job] = trail;
+		function refreshRows() {
+			var headers = rowsEtag ? { "If-None-Match": rowsEtag } : {};
+			return fetch(ROWS_URL, { credentials: "same-origin", cache: "no-store", headers: headers })
+				.then(function(response) {
+					if (response.status !== 200) return;
+					var etag = response.headers.get("ETag");
+					return response.text().then(function(html) {
+						var tbody = document.getElementById("all-tasks");
+						if (!tbody) return;
+						tbody.innerHTML = html;
+						tbody.querySelectorAll(".flask-moment").forEach(flask_moment_render);
+						localizeFirstPaintTitles();
+						rowsEtag = etag;
+					});
 				});
-			});
-
-			var listed = [];
-			tasks.forEach(function(task) {
-				var trail = trailByJob[task.trail_job || task.id] || null;
-				if (trail && listed.indexOf(trail) < 0) listed.push(trail);
-			});
-			var orphans = files.filter(function(trail) {
-				return listed.indexOf(trail) < 0 && !trailSettled(trail);
-			});
-
-			var signature = rowsSignature(tasks, trailByJob, orphans);
-			if (signature === allSignature) return;
-
-			tbody.textContent = "";
-			tasks.forEach(function(task) {
-				var row = document.createElement("tr");
-				row.className = "d-flex";
-				var position = positionCell(task.position === null ? "—" : task.position);
-				// The head job of a queue is next in its queue already
-				if (window.queueFront && task.status === "queued" && !task.at_head) {
-					position.appendChild(frontForm(task));
-				}
-				row.appendChild(position);
-				var fileCell = trailCell(task, trailByJob[task.trail_job || task.id]);
-				fileCell.appendChild(phoneTimes(task, trailByJob[task.trail_job || task.id]));
-				row.appendChild(fileCell);
-				row.appendChild(timeCell(task.enqueued_at, "", "queue-enqueued"));
-				// A deferred retry has not started. Its slot says
-				// when it is back in line
-				row.appendChild(task.status === "scheduled"
-					? timeCell(task.scheduled_for, (task.scheduled_word || "retries") + " ", "queue-started")
-					: timeCell(task.started_at, "", "queue-started"));
-				tbody.appendChild(row);
-			});
-			orphans.forEach(function(trail) {
-				var row = document.createElement("tr");
-				row.className = "d-flex";
-				var position = positionCell("—");
-				if (window.queueDismiss && trail.digest) position.appendChild(dismissForm(trail));
-				row.appendChild(position);
-				var orphanCell = trailCell(null, trail);
-				orphanCell.appendChild(phoneTimes(null, trail));
-				row.appendChild(orphanCell);
-				row.appendChild(timeCell(null, "", "queue-enqueued"));
-				var updated = timeCell(null, "", "queue-started");
-				updated.className += " small text-muted";
-				updated.textContent = "No job in queue. Last update " + trail.updated;
-				row.appendChild(updated);
-				tbody.appendChild(row);
-			});
-			allSignature = signature;
-		}
-
-		// The per-file pipeline trails show the journey of each recent
-		// file as stage chips. Done is green, running is blue, queued is
-		// gray, retry-wait is amber, and failed is red. The queue page
-		// paints them on its job rows (renderAll). paintChips must stay
-		// the twin of the trail_chips macro, which paints the chips of
-		// the File Activity cards on the server.
-
-		var chipClass = {
-			done: "text-bg-success",
-			started: "text-bg-primary",
-			queued: "text-bg-secondary",
-			scheduled: "text-bg-warning",
-			failed: "text-bg-danger"
-		};
-		var chipWord = {
-			done: "done",
-			started: "running",
-			queued: "queued",
-			scheduled: "waiting to retry",
-			failed: "failed"
-		};
-
-		// A completed stage reads as an accomplishment ("Localized").
-		// A running stage keeps the present tense of the registry with
-		// no suffix. The tense alone tells them apart
-
-		var chipPastTense = {
-			"Copying to staging": "Copied to staging",
-			"Localizing": "Localized",
-			"Moving into the library": "Moved into the library",
-			"Converting to SDR": "Converted to SDR",
-			"Waiting for a decision": "Held for a decision",
-			"Cataloging": "Cataloged",
-			"Archiving to S3": "Archived to S3",
-			"Re-archiving to S3": "Re-archived to S3",
-			"Moving the S3 archive": "Moved the S3 archive",
-			"Scanning track metadata": "Scanned track metadata",
-			"Setting track flags": "Set track flags",
-			"Remuxing": "Remuxed",
-			"Rebuilding audio": "Rebuilt audio",
-			"Restoring from S3": "Restored from S3",
-			"Replacing the library file": "Replaced the library file",
-			"Adding Atmos twin": "Atmos twin complete",
-			"Decoding TrueHD": "Decoded TrueHD",
-			"Encoding E-AC-3 Atmos": "Encoded E-AC-3 Atmos"
-		};
-
-		function paintChips(target, entries) {
-			target.textContent = "";
-			entries.forEach(function(entry, index) {
-				if (index) {
-					target.appendChild(document.createTextNode(" → "));
-				}
-				var chip = document.createElement("span");
-				// mb-1: a trail that wraps on a phone keeps a gap
-				// between its lines, like every other badge run
-				chip.className = "badge trail-chip fw-normal mb-1 "
-					+ (chipClass[entry.status] || "text-bg-light");
-				var label = entry.status === "done"
-					? (chipPastTense[entry.stage] || entry.stage)
-					: entry.stage;
-				chip.textContent = label
-					+ (entry.status === "done" || entry.status === "started"
-						? "" : " · " + (chipWord[entry.status] || entry.status));
-				chip.setAttribute("title", entry.stage + " — "
-					+ (chipWord[entry.status] || entry.status) + " at " + entry.at);
-				target.appendChild(chip);
-			});
 		}
 
 		window.fitzflixQueueHooks = window.fitzflixQueueHooks || [];
-		window.fitzflixQueueHooks.push(function(queue_details) {
-			renderAll(queue_details.all || [], queue_details.files || []);
-		});
+		window.fitzflixQueueHooks.push(refreshRows);
 	})();
 </script>
 {% endblock %}

@@ -99,8 +99,6 @@ def test_only_an_admin_sees_the_dismiss_button(app, admin_client, user_client):
     page = admin_client.get("/queue").get_data(as_text=True)
     assert page.count('class="queue-dismiss"') == 1
     assert _digest("Button Row (2004) - [DVD].mkv") in page
-    assert "window.queueDismiss = {" in page
 
     page = user_client.get("/queue").get_data(as_text=True)
     assert 'class="queue-dismiss"' not in page
-    assert "window.queueDismiss = {" not in page

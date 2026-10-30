@@ -205,11 +205,16 @@ def test_only_an_admin_sees_the_button_on_waiting_rows(app, admin_client, user_c
     admin_page = admin_client.get("/queue").get_data(as_text=True)
     assert admin_page.count('class="queue-front"') == 1
     assert 'aria-label="Move to front"' in admin_page
-    assert "window.queueFront" in admin_page
 
     member_page = user_client.get("/queue").get_data(as_text=True)
     assert 'class="queue-front"' not in member_page
-    assert "window.queueFront =" not in member_page
+
+    # The poll fetches the same partial (#639).
+
+    admin_rows = admin_client.get("/queue/rows").get_data(as_text=True)
+    assert admin_rows.count('class="queue-front"') == 1
+    member_rows = user_client.get("/queue/rows").get_data(as_text=True)
+    assert 'class="queue-front"' not in member_rows
 
 
 def test_the_head_job_of_each_queue_gets_no_button(app, admin_client):

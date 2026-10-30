@@ -1151,9 +1151,8 @@ def trail_entries_for(index, *names):
 def queue_rows(tasks, trails):
     """Return the rows of the queue page: the jobs, then the orphan trails.
 
-    This is the twin of renderAll in base.html. The server renders the
-    table from it. Thus, the rows are in place at the first paint. Each
-    row is {"task": task or None, "trail": trail or None}. A job finds
+    _queue_rows.html renders the table from it, at the first paint and
+    at each poll (#639). Each row is {"task": task or None, "trail": trail or None}. A job finds
     the trail of its file by the job id stamped on the trail entries. A
     trail whose last stage is not done, and that no listed job owns,
     comes after the jobs as a "no job in queue" row."""

@@ -47,7 +47,7 @@ def test_the_queue_badge_is_empty_while_redis_is_down(app, redis_down, caplog):
 def test_the_json_endpoints_answer_while_redis_is_down(app, user_client, redis_down):
     response = user_client.get("/api/queue-details")
     assert response.status_code == 200
-    assert response.get_json() == {"count": 0, "running": [], "all": [], "files": []}
+    assert response.get_json() == {"count": 0, "running": [], "all": []}
 
     response = user_client.get("/movie_states?movie_ids=1,2")
     assert response.status_code == 200

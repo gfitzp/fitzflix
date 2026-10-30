@@ -4,6 +4,8 @@ The pages are the system health, the scheduled tasks, the library
 maintenance, the triage pages, the queue, and the pipeline trails."""
 
 import errno
+import hashlib
+import json
 import os
 import shutil
 import traceback
@@ -1992,16 +1994,12 @@ def rejects():
     )
 
 
-@bp.route("/queue")
-@login_required
-def queue():
-    """Show a list of all localization and transcode tasks in the queue.
+def _queue_rows():
+    """Return the rows of the Queue table and the ETag of their data.
 
-    The server renders the rows from the same data that
-    api.queue_details serves. Thus, the table is in place at the first
-    paint. The 5-second poll then repaints the rows (renderAll in
-    base.html) with the live state.
-    """
+    The ETag is a digest of the row data and the admin flag, not of the
+    HTML. The forms carry a CSRF token, and Flask-WTF signs a new value
+    each second. Thus, a digest of the HTML changes at each poll (#639)."""
 
     from app.pipeline import pipeline_trails, queue_rows
     from app.redis_guard import REDIS_DOWN_ERRORS, warn_redis_down
@@ -2014,13 +2012,50 @@ def queue():
     except REDIS_DOWN_ERRORS as error:
         warn_redis_down("The Queue page", error)
         trails = []
+    rows = queue_rows(details.get("all", []), trails)
+    data = json.dumps([rows, current_user.admin], default=str, sort_keys=True)
+    return rows, hashlib.sha1(data.encode()).hexdigest()
+
+
+@bp.route("/queue")
+@login_required
+def queue():
+    """Show a list of all localization and transcode tasks in the queue.
+
+    The server renders the rows. Thus, the table is in place at the
+    first paint. The 5-second poll then fetches the rows from
+    queue_rows_fragment.
+    """
+
+    rows, etag = _queue_rows()
     return render_template(
         "queue.html",
         title="Queue",
-        rows=queue_rows(details.get("all", []), trails),
-        front_form=QueueFrontForm() if current_user.admin else None,
-        dismiss_form=QueueDismissForm() if current_user.admin else None,
+        rows=rows,
+        admin=current_user.admin,
+        rows_etag=f'"{etag}"',
     )
+
+
+@bp.route("/queue/rows")
+@login_required
+def queue_rows_fragment():
+    """Render the rows of the Queue table for the poll of the Queue page.
+
+    The poll sends the ETag of its rows. If the row data did not change,
+    the answer is 304 with no body. Then the Move to front and the
+    Dismiss forms stay in place."""
+
+    rows, etag = _queue_rows()
+    if request.if_none_match.contains_weak(etag):
+        response = current_app.response_class(status=304)
+        response.set_etag(etag)
+        return response
+    response = make_response(
+        render_template("_queue_rows.html", rows=rows, admin=current_user.admin)
+    )
+    response.set_etag(etag)
+    return response
 
 
 @bp.route("/queue/dismiss", methods=["POST"])
