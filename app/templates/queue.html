@@ -76,7 +76,7 @@
 
 		function refreshRows() {
 			var headers = rowsEtag ? { "If-None-Match": rowsEtag } : {};
-			return fetch(ROWS_URL, { credentials: "same-origin", cache: "no-store", headers: headers })
+			return fetchWithTimeout(ROWS_URL, { credentials: "same-origin", cache: "no-store", headers: headers }, POLL_TIMEOUT_MS)
 				.then(function(response) {
 					// A redirect is the sign-in page after the session
 					// ended. It must not land in the table.

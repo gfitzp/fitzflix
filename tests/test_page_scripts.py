@@ -43,8 +43,10 @@ const document = {
         setAttribute(name, value) { this.attributes[name] = value; },
     }),
 };
-function setTimeout(fn, ms) { record.timers += 1; return record.timers; }
-function clearTimeout(id) {}
+const POLL_TIMEOUT_MS = 20000;
+const pendingTimers = {};
+function setTimeout(fn, ms) { record.timers += 1; pendingTimers[record.timers] = fn; return record.timers; }
+function clearTimeout(id) { delete pendingTimers[id]; }
 let answer = () => Promise.resolve({ ok: true, redirected: false, json: () => Promise.resolve({}) });
 function fetch(url, options) { record.fetches += 1; return answer(url, options); }
 function fakeForm() {
@@ -59,6 +61,7 @@ let result = null;
 
 EPILOGUE = r"""
 setImmediate(() => setImmediate(() => {
+    record.live = Object.keys(pendingTimers).length;
     console.log(JSON.stringify({ record, result }));
 }));
 """
@@ -78,13 +81,18 @@ def run_page_script(body, names, test_code, tmp_path):
     return json.loads(result.stdout)
 
 
+POLL_FUNCTIONS = ["fetchWithTimeout", "startPoll"]
+
+
 def test_the_queue_poll_stops_after_a_401(admin_client, tmp_path):
-    """A 401 stops the poll. No timer is armed, and the tab coming back does not poll (#348)."""
+    """A 401 stops the poll. No timer stays armed, and the tab coming back does not poll (#348).
+
+    The one timer is the abort timer of the request. The answer clears it."""
 
     body = admin_client.get("/").get_data(as_text=True)
     out = run_page_script(
         body,
-        ["startPoll"],
+        POLL_FUNCTIONS,
         r"""
 answer = () => Promise.resolve({ ok: false, status: 401, redirected: false });
 let payloads = 0;
@@ -99,7 +107,8 @@ setImmediate(() => {
         tmp_path,
     )
     assert out["record"]["fetches"] == 1
-    assert out["record"]["timers"] == 0
+    assert out["record"]["timers"] == 1
+    assert out["record"]["live"] == 0
     assert out["result"]["payloads"] == 0
 
 
@@ -109,7 +118,7 @@ def test_a_good_answer_arms_the_next_poll(admin_client, tmp_path):
     body = admin_client.get("/").get_data(as_text=True)
     out = run_page_script(
         body,
-        ["startPoll"],
+        POLL_FUNCTIONS,
         r"""
 startPoll("/api/queue_details", 5000, () => {}, {
     json: true, stopOnFailure: true, immediate: true,
@@ -118,7 +127,88 @@ startPoll("/api/queue_details", 5000, () => {}, {
         tmp_path,
     )
     assert out["record"]["fetches"] == 1
-    assert out["record"]["timers"] == 1
+    assert out["record"]["timers"] == 2
+    assert out["record"]["live"] == 1
+
+
+def test_a_503_is_one_bad_tick_and_the_poll_goes_on(admin_client, tmp_path):
+    """A 503 from CloudFront during a web restart arms the next poll (#650).
+
+    Before the fix, every answer that was not OK stopped the poll for
+    good, and the page showed no change until a reload."""
+
+    body = admin_client.get("/").get_data(as_text=True)
+    out = run_page_script(
+        body,
+        POLL_FUNCTIONS,
+        r"""
+answer = () => Promise.resolve({ ok: false, status: 503, redirected: false });
+let payloads = 0;
+startPoll("/api/queue_details", 5000, () => { payloads += 1; }, {
+    json: true, stopOnFailure: true, immediate: true,
+});
+setImmediate(() => { result = { payloads }; });
+""",
+        tmp_path,
+    )
+    assert out["record"]["fetches"] == 1
+    assert out["record"]["live"] == 1
+    assert out["result"]["payloads"] == 0
+
+
+def test_a_redirect_to_the_login_page_stops_the_poll(admin_client, tmp_path):
+    """A redirected 200 is the login page, not page data. The poll stops (#348)."""
+
+    body = admin_client.get("/").get_data(as_text=True)
+    out = run_page_script(
+        body,
+        POLL_FUNCTIONS,
+        r"""
+answer = () => Promise.resolve({ ok: true, status: 200, redirected: true });
+let payloads = 0;
+startPoll("/api/queue_details", 5000, () => { payloads += 1; }, {
+    json: true, stopOnFailure: true, immediate: true,
+});
+setImmediate(() => { result = { payloads }; });
+""",
+        tmp_path,
+    )
+    assert out["record"]["live"] == 0
+    assert out["result"]["payloads"] == 0
+
+
+def test_a_request_that_never_settles_is_aborted_and_the_poll_goes_on(
+    admin_client, tmp_path
+):
+    """The abort timer ends a hung request, and the next poll is armed (#650).
+
+    The fake fetch settles only through the abort signal. The test fires
+    the one pending timer, which is the abort timer."""
+
+    body = admin_client.get("/").get_data(as_text=True)
+    out = run_page_script(
+        body,
+        POLL_FUNCTIONS,
+        r"""
+let aborted = 0;
+answer = (url, options) => new Promise((resolve, reject) => {
+    options.signal.addEventListener("abort", () => {
+        aborted += 1;
+        reject(new DOMException("aborted", "AbortError"));
+    });
+});
+startPoll("/api/queue_details", 5000, () => {}, {
+    json: true, stopOnFailure: true, immediate: true,
+});
+const armed = Object.keys(pendingTimers).length;
+pendingTimers[1]();
+setImmediate(() => { result = { aborted, armed }; });
+""",
+        tmp_path,
+    )
+    assert out["result"] == {"aborted": 1, "armed": 1}
+    assert out["record"]["fetches"] == 1
+    assert out["record"]["live"] == 1
 
 
 def test_a_second_tap_during_a_post_does_nothing(admin_client, tmp_path):
@@ -276,7 +366,10 @@ refreshRows().then(() => {
 });
 """
     out = run_page_script(
-        body, ["localizeFirstPaintTitles", "refreshRows"], test_code, tmp_path
+        body,
+        ["fetchWithTimeout", "localizeFirstPaintTitles", "refreshRows"],
+        test_code,
+        tmp_path,
     )
     assert out["result"] == {
         "kept": "old rows",

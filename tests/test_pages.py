@@ -892,9 +892,17 @@ def test_the_queue_poll_stops_when_the_session_ends(admin_client):
     assert "startPoll(QUEUE_URL, POLL_MS, function(queue_details) {" in body
     assert "stopOnFailure: true," in body
     assert "if (document.hidden || stopped) return;" in body
-    assert "if (!response.ok || response.redirected) {" in body
-    assert "if (options.stopOnFailure) {" in body
+    assert "var sessionEnded = response.status === 401 || response.redirected;" in body
+    assert "if (sessionEnded && options.stopOnFailure) {" in body
     assert "if (!document.hidden && !stopped) poll();" in body
+
+    # Another failure is one bad tick (#650). The poll and the hooks
+    # fetch through the shared timeout
+
+    assert "fetchWithTimeout(url, options.fetchOptions, POLL_TIMEOUT_MS)" in body
+    assert "var POLL_TIMEOUT_MS = 20000;" in body
+    for page in ("/queue", "/file-activity"):
+        assert "fetchWithTimeout(" in admin_client.get(page).get_data(as_text=True)
 
 
 def test_the_page_pollers_share_start_poll(app, admin_client):

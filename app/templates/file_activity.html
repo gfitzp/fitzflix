@@ -79,7 +79,7 @@
 		function refreshCards() {
 			if (!window.fileActivityCardsUrl) return null;
 			var headers = cardsEtag ? { "If-None-Match": cardsEtag } : {};
-			return fetch(window.fileActivityCardsUrl, { credentials: "same-origin", cache: "no-store", headers: headers })
+			return fetchWithTimeout(window.fileActivityCardsUrl, { credentials: "same-origin", cache: "no-store", headers: headers }, POLL_TIMEOUT_MS)
 				.then(function(response) {
 					if (response.status !== 200) return;
 					var etag = response.headers.get("ETag");

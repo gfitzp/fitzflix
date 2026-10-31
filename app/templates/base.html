@@ -358,9 +358,29 @@
 		// again when the tab shows. ms is a number, or a function that
 		// returns the next delay. onPayload gets the text or the JSON of a
 		// good answer, and returns false to stop the poll for good. With
-		// stopOnFailure, an answer that is not page data (an expired
-		// session answers 401 or redirects to the login page) also stops
-		// it. A network failure never stops it. after runs after each poll.
+		// stopOnFailure, the end of the session (an expired session
+		// answers 401 or redirects to the login page) also stops it.
+		// Another failure is one bad tick (#650): a 503 from CloudFront
+		// while the web process restarts, a network failure, or a
+		// request that the timeout below aborted. The next poll goes out
+		// on the normal cadence. after runs after each poll.
+
+		var POLL_TIMEOUT_MS = 20000;
+
+		// A request that does not settle in ms is aborted. Then the chain
+		// of the poll continues. Without this, a connection that Safari
+		// let hang held the poll until Safari dropped it (#650)
+
+		function fetchWithTimeout(url, fetchOptions, ms) {
+			var options = Object.assign({}, fetchOptions || {});
+			var controller = typeof AbortController === "function" ? new AbortController() : null;
+			var timer = null;
+			if (controller) {
+				options.signal = controller.signal;
+				timer = setTimeout(function() { controller.abort(); }, ms);
+			}
+			return fetch(url, options).finally(function() { clearTimeout(timer); });
+		}
 
 		function startPoll(url, ms, onPayload, options) {
 			options = options || {};
@@ -374,13 +394,14 @@
 			}
 
 			function poll() {
-				fetch(url, options.fetchOptions)
+				fetchWithTimeout(url, options.fetchOptions, POLL_TIMEOUT_MS)
 					.then(function(response) {
+						var sessionEnded = response.status === 401 || response.redirected;
+						if (sessionEnded && options.stopOnFailure) {
+							stopped = true;
+							return null;
+						}
 						if (!response.ok || response.redirected) {
-							if (options.stopOnFailure) {
-								stopped = true;
-								return null;
-							}
 							throw new Error(response.status);
 						}
 						return options.json ? response.json() : response.text();
