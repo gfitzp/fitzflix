@@ -34,6 +34,11 @@ overnight analysis pass. The manual analyze of Plex reads the streams
 again and regenerates the chapter thumbs. This takes approximately 2
 seconds on a 45 GB film (#194).
 
+An extra, for example a featurette under the folder of its film, is
+not in the item list of a section. Plex lists it only with its holder:
+the film, the season, or the show. Thus, the analyze asks the holder
+for its extras when no listed item holds the file (#651).
+
 This module does NOT touch the Media-level audioCodec and audioChannels
 summary. Plex shows that summary as the audio of an item. A measurement
 on 2026-08-24 over 3,153 films showed that the summary is the audio
@@ -304,14 +309,114 @@ def _sections_holding(sections, wanted):
     return owning or sections
 
 
+def _tail(path, parts):
+    """Return the last `parts` components of a path, joined again."""
+
+    return os.sep.join(path.rstrip(os.sep).split(os.sep)[-parts:])
+
+
+def _remember_holders(folders, item, path):
+    """Record the items that can hold the extras found beside this part.
+
+    Plex lists an extra only under its holder, never in a section page.
+    A movie holds the extras under its own folder. A season holds the
+    extras under the season folder. A show holds the extras under the
+    show folder, one level above the season folders.
+    """
+
+    folder = os.path.dirname(path)
+    own = [item.get("ratingKey"), item.get("parentRatingKey")]
+    folders.setdefault(folder, []).extend(key for key in own if key)
+    if item.get("grandparentRatingKey"):
+        above = os.path.dirname(folder)
+        folders.setdefault(above, []).append(item["grandparentRatingKey"])
+
+
+def _holders_of(folders, target):
+    """Return the holder keys for an extra at this path, in order.
+
+    An extra lives in a subfolder of its holder's folder. The lookup uses
+    the full path of that folder. When Plex reaches the library through
+    a different mount path, the last two components of the folder
+    identify it: the parent folder and the folder of the title.
+    """
+
+    folder = os.path.dirname(os.path.dirname(target))
+    keys = list(folders.get(folder, []))
+    if not keys:
+        tail = _tail(folder, 2)
+        for known, held in folders.items():
+            if _tail(known, 2) == tail:
+                keys.extend(held)
+    seen = set()
+    return [key for key in keys if not (key in seen or seen.add(key))]
+
+
+def _analyze_extras(section, targets, folders, analyzed):
+    """Analyze the target files that are extras of the items in a section.
+
+    An extra never appears in a section page. It appears only in the
+    `Extras` of its holder (#651). This function asks each possible
+    holder for its extras, once, and analyzes the extra whose part file
+    matches a target. A match is the full path, or the last three
+    components: the folder of the title, the folder of the extra type,
+    and the file name. An extra name alone, for example 'Trailer.mkv',
+    repeats across titles.
+    """
+
+    extras_of = {}
+    for target in sorted(targets - analyzed):
+        tail = _tail(target, 3)
+        for holder in _holders_of(folders, target):
+            if holder not in extras_of:
+                try:
+                    payload = plex_get(
+                        f"/library/metadata/{holder}", params={"includeExtras": 1}
+                    )
+                except Exception:
+                    current_app.logger.warning(traceback.format_exc())
+                    extras_of[holder] = []
+                    continue
+                extras_of[holder] = [
+                    extra
+                    for meta in payload.get("MediaContainer", {}).get("Metadata", [])
+                    or []
+                    for extra in meta.get("Extras", {}).get("Metadata", []) or []
+                ]
+            match = next(
+                (
+                    extra
+                    for extra in extras_of[holder]
+                    if extra.get("ratingKey")
+                    and any(
+                        os.path.abspath(path) == target or _tail(path, 3) == tail
+                        for path in _part_files(extra)
+                    )
+                ),
+                None,
+            )
+            if match is None:
+                continue
+            plex_command("PUT", f"/library/metadata/{match['ratingKey']}/analyze")
+            analyzed.add(target)
+            current_app.logger.info(
+                f"Plex analyze: {match['ratingKey']} '{os.path.basename(target)}' "
+                f"re-analyzed as an extra of {holder} in '{section.get('title')}'"
+            )
+            break
+
+
 def _analyze_section(section, targets, by_basename, analyzed):
     """Analyze every target file that this section holds.
 
     This function adds each matched file to `analyzed`. It matches a
     file on its full path. If Plex knows the library by a different
-    path, it matches the file on its basename."""
+    path, it matches the file on its basename. A target that no paged
+    item holds can be an extra. Then the function asks the items whose
+    folder holds the target for their extras."""
 
     key = section.get("key")
+    folders = {}
     start = 0
     while True:
         payload = plex_get(
@@ -329,6 +434,7 @@ def _analyze_section(section, targets, by_basename, analyzed):
             if not rating_key:
                 continue
             for path in _part_files(item):
+                _remember_holders(folders, item, path)
                 target = (
                     os.path.abspath(path)
                     if os.path.abspath(path) in targets
@@ -343,10 +449,12 @@ def _analyze_section(section, targets, by_basename, analyzed):
                     f"re-analyzed in '{section.get('title')}'"
                 )
         start += len(page)
-        if not page or start >= container.get("totalSize", 0):
-            return
         if analyzed == targets:
             return
+        if not page or start >= container.get("totalSize", 0):
+            break
+
+    _analyze_extras(section, targets, folders, analyzed)
 
 
 def analyze_plex_media(file_paths, retries=0):
