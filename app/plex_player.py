@@ -73,14 +73,12 @@ PLAYER_NETWORKS = [
     )
 ]
 
-# The play command of a non-admin carries a token for THEIR Plex Home
-# user. Fitzflix mints it through plex.tv and keeps it for some time.
-# Fitzflix also remembers a miss (no such Home user) for a short time.
-# Thus, the clicks of an unlinked member do not each wait on plex.tv.
-HOME_TOKEN_KEY = "fitzflix:plex:home-token:{user_id}"
-
-# The tokens of one Home user, by the uuid of that user. The stream
-# selection sync (#652) acts for every Home user. plex.tv limits the
+# The tokens of one Home user, by the uuid of that user. The play
+# command of a non-admin carries the token of THEIR Plex Home user
+# (#653). The stream selection sync (#652) acts for every Home user.
+# Each Home user has a cache of their own. Thus, a member who changes
+# their Plex username on the Profile page gets the token of the newly
+# linked user at the next play. Nothing needs to forget. plex.tv limits the
 # home switch, and answered 429 to 12 switches in one minute. Thus, the
 # account token of a switch lives 12 hours, not one run. The server
 # refuses that account token with a 401. A shared user reaches the
@@ -133,12 +131,14 @@ def player_token(user):
     """Return the Plex token that the play command gives the player of the user.
 
     An admin is the owner of the server. An admin gets the owner
-    token. Each other user gets a token for THEIR Plex Home user.
-    Fitzflix matches the Home user to User.plex_username by username
-    or by title. It mints the token through the home switch of plex.tv
-    and caches it. The result is None when no Home user matches, or
-    when that user is PIN-protected. A user links a Home user with the
-    Plex username field on their own Profile page. The owner token
+    token. Each other user gets the token with which THEIR Plex Home
+    user reaches the local server. Fitzflix matches the Home user to
+    User.plex_username by username or by title. The token comes from
+    the same per-Home-user cache as the stream selection sync (#652).
+    The server refuses the account token of the home switch itself
+    with a 401 (#653). The result is None when no Home user matches,
+    or when that user is PIN-protected. A user links a Home user with
+    the Plex username field on their own Profile page. The owner token
     never travels to a device that a non-admin chose. The probe of the
     Profile page only proves that something answered at the address.
     It does not prove that a Plex player answered (security review,
@@ -146,26 +146,10 @@ def player_token(user):
 
     if user.admin:
         return current_app.config["PLEX_TOKEN"]
-    if not user.plex_username:
+    home_user = _home_user_named(user.plex_username)
+    if home_user is None:
         return None
-    # A miss (no Home user matches) is cached as null for a short time.
-
-    return cached_fetch(
-        HOME_TOKEN_KEY.format(user_id=user.id),
-        HOME_TOKEN_SECONDS,
-        lambda: (_home_user_token(user.plex_username), True),
-        miss_ttl=HOME_TOKEN_MISS_SECONDS,
-    )
-
-
-def forget_home_token(user_id):
-    """Delete the cached Home token of the user.
-
-    The Profile page calls this when the Plex username changes. Thus,
-    the next play mints a token for the newly linked user, not for the
-    old one."""
-
-    current_app.redis.delete(HOME_TOKEN_KEY.format(user_id=user_id))
+    return _cached_access_token(home_user)
 
 
 def _plex_tv_headers():
@@ -208,23 +192,25 @@ def _switch_token(home_user):
     return r.json().get("authToken") or None
 
 
-def _home_user_token(plex_username):
-    """Return a token for the named Plex Home user, or None.
+def _home_user_named(plex_username):
+    """Return the Plex Home user with this username or title, or None.
 
     A member who claims the name of the owner on their Profile page
-    must not mint the token of the owner in this way. _switch_token
-    refuses the admin."""
+    must not get the token of the owner in this way. _switch_token
+    refuses the admin, so the match itself can include the owner."""
 
-    wanted = plex_username.strip().lower()
+    wanted = (plex_username or "").strip().lower()
     if not wanted:
         return None
     for home_user in _home_users():
+        if not home_user.get("uuid"):
+            continue
         names = {
             (home_user.get("username") or "").lower(),
             (home_user.get("title") or "").lower(),
         }
         if wanted in names:
-            return _switch_token(home_user)
+            return home_user
     return None
 
 

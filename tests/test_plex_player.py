@@ -8,6 +8,7 @@ card, and the probe-and-save device flow on the Profile page."""
 
 import json
 import re
+from contextlib import contextmanager
 
 from types import SimpleNamespace
 
@@ -107,6 +108,18 @@ class FakePlex:
     def player_get(self, url, params=None, headers=None, timeout=None):
         if url == "https://plex.tv/api/v2/home/users":
             return FakeResponse(HOME_USERS)
+        if url == "https://plex.tv/api/v2/resources":
+            # plex.tv lists the local server for the account, with the
+            # access token that the server accepts for that account
+            return FakeResponse(
+                [
+                    {
+                        "provides": "server",
+                        "clientIdentifier": "SERVER-ID",
+                        "accessToken": "ACCESS-FOR-" + headers["X-Plex-Token"],
+                    }
+                ]
+            )
         self.player_gets.append({"url": url, "params": params, "headers": headers})
         return FakeResponse({})
 
@@ -376,12 +389,14 @@ def test_play_route_uses_the_users_device(
     [command] = fake.player_gets
     assert command["url"].startswith("http://192.168.1.63:32500/")
     assert command["headers"]["X-Plex-Target-Client-Identifier"] == "MEMBER-ATV-ID"
-    # The device of a member gets a token for the Plex Home user of THAT
-    # member. The owner token never travels to an address that a member
-    # chose. Fitzflix built the play queue as that user. Thus, the token
-    # can fetch the queue
-    assert command["params"]["token"] == "HOME-TOKEN-MEMBER-UUID"
-    assert fake.queue_posts[0]["X-Plex-Token"] == "HOME-TOKEN-MEMBER-UUID"
+    # The device of a member gets the token with which the Plex Home
+    # user of THAT member reaches the server (#653). It never gets the
+    # account token of the home switch, which the server refuses. The owner
+    # token never travels to an address that a member chose. Fitzflix
+    # built the play queue as that user. Thus, the token can fetch the
+    # queue
+    assert command["params"]["token"] == "ACCESS-FOR-HOME-TOKEN-MEMBER-UUID"
+    assert fake.queue_posts[0]["X-Plex-Token"] == "ACCESS-FOR-HOME-TOKEN-MEMBER-UUID"
 
 
 def test_play_route_without_a_device_reports_kindly(
@@ -593,11 +608,27 @@ def test_home_token_is_cached(app, monkeypatch, server_config):
 
     monkeypatch.setattr(plex_player.requests, "post", counting_post)
     user = device_user(admin=False, plex_username="member")
-    with app.app_context():
+    with app.app_context(), _no_home_tokens(app, plex_player):
         first = plex_player.player_token(user)
         second = plex_player.player_token(user)
-    assert first == second == "HOME-TOKEN-MEMBER-UUID"
+    assert first == second == "ACCESS-FOR-HOME-TOKEN-MEMBER-UUID"
     assert len(switches) == 1
+
+
+@contextmanager
+def _no_home_tokens(app, plex_player):
+    """Run a test with empty Home token caches, and leave them empty."""
+
+    keys = [
+        key.format(uuid=user["uuid"])
+        for user in HOME_USERS["users"]
+        for key in (plex_player.HOME_SWITCH_KEY, plex_player.HOME_ACCESS_KEY)
+    ]
+    app.redis.delete(*keys)
+    try:
+        yield
+    finally:
+        app.redis.delete(*keys)
 
 
 def test_admin_keeps_the_owner_token(app, monkeypatch, server_config):
@@ -759,16 +790,14 @@ def test_blank_username_matches_no_managed_user(app, monkeypatch, server_config)
     assert calls == []
 
 
-def test_home_user_miss_is_remembered_briefly(app, monkeypatch, server_config):
+def test_unknown_plex_username_gets_no_token(app, monkeypatch, server_config):
     fake = FakePlex()
     plex_player = _wire(monkeypatch, fake)
     calls = _home_users_calls(monkeypatch, fake)
     user = device_user(admin=False, plex_username="nobody")
     with app.app_context():
         assert plex_player.player_token(user) is None
-        assert plex_player.player_token(user) is None
     assert len(calls) == 1
-    assert 0 < app.redis.ttl(plex_player.HOME_TOKEN_KEY.format(user_id=user.id)) <= 300
 
 
 def _plex_username_post(client, name):
@@ -783,19 +812,14 @@ def _plex_username_post(client, name):
     )
 
 
-def test_changing_the_plex_username_forgets_the_cached_home_token(app, user_client):
-    from app.models import User
-    from app.plex_player import HOME_TOKEN_KEY
-    from tests.conftest import MEMBER_EMAIL
+def test_changing_the_plex_username_takes_effect_at_once(app, user_client):
+    """Test that a new Plex username needs no cache to forget (#653).
 
-    with app.app_context():
-        user_id = User.query.filter_by(email=MEMBER_EMAIL).one().id
-    key = HOME_TOKEN_KEY.format(user_id=user_id)
-    app.redis.set(key, "HOME-TOKEN-OLD")
+    The token caches are per Home user, not per Fitzflix user."""
+
+    r = _plex_username_post(user_client, "member")
     try:
-        r = _plex_username_post(user_client, "member")
         assert "now count as yours" in r.get_data(as_text=True)
-        assert app.redis.get(key) is None
     finally:
         _plex_username_post(user_client, "")
 

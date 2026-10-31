@@ -53,7 +53,6 @@ from app.infuse_player import (
     submit_pin,
 )
 from app.plex_player import (
-    forget_home_token,
     player_address,
     probe_player,
     remote_playback_configured,
@@ -664,9 +663,6 @@ def _save_plex_username(form):
     current_user.plex_username = plex_username
     db.session.commit()
 
-    # Plex minted the cached Home token for the OLD name.
-
-    forget_home_token(current_user.id)
     if plex_username:
         flash(f"Plex watches by '{plex_username}' now count as yours.", "success")
     else:
