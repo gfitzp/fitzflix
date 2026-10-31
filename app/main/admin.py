@@ -51,6 +51,7 @@ from app.main.forms import (
     ManualImportForm,
     QueueDismissForm,
     QueueFrontForm,
+    QueueRetryForm,
     MissingRestoreForm,
     MissingScanForm,
     SubtitleTriageForm,
@@ -2046,6 +2047,61 @@ def queue_front():
     name = str(job.meta.get("description", job.description) or job_id).strip("'")
     queue_label = queue.name.removeprefix("fitzflix-")
     flash(f"Moved '{name}' to the front of the {queue_label} queue.", "info")
+    return redirect(url_for("main.queue"))
+
+
+@bp.route("/queue/retry", methods=["POST"])
+@login_required
+@admin_required
+def queue_retry():
+    """Move a booked retry into its queue now.
+
+    A deferred retry waits in the ScheduledJobRegistry for its time. An
+    admin who fixed the cause (a copy that completed, a lock that went)
+    does not wait for the timer. The job goes to the front of its
+    queue. The task runs its own checks again. If the cause holds, the
+    task books a new retry."""
+
+    from app.pipeline import retry_now
+
+    form = QueueRetryForm()
+    if not form.validate_on_submit():
+        flash("The form is not valid. Load the page again.", "danger")
+        return redirect(url_for("main.queue"))
+
+    job_id = form.job_id.data
+    try:
+        job = Job.fetch(job_id, connection=current_app.redis)
+    except NoSuchJobError:
+        job = None
+
+    queue = None
+    if job is not None:
+        for listed, only in listed_queues():
+            if listed.name == job.origin and (only is None or job.func_name in only):
+                queue = listed
+                break
+
+    result = retry_now(queue, job_id) if queue is not None else None
+    if result is None:
+        flash(
+            "That job is not booked for a retry now. It moved into its queue, or it is gone.",
+            "warning",
+        )
+        return redirect(url_for("main.queue"))
+    if result == "due":
+        flash(
+            "That retry is due. The scheduler moves it into its queue in a moment.",
+            "info",
+        )
+        return redirect(url_for("main.queue"))
+
+    name = str(job.meta.get("description", job.description) or job_id).strip("'")
+    queue_label = queue.name.removeprefix("fitzflix-")
+    flash(
+        f"Moved '{name}' to the front of the {queue_label} queue for a retry now.",
+        "info",
+    )
     return redirect(url_for("main.queue"))
 
 

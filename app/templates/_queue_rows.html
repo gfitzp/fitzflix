@@ -1,7 +1,7 @@
 {# The rows of the Queue table. The Queue page renders them at the first
    paint, and the /queue/rows route renders them for each poll (#639).
-   Thus, the rows have one renderer. An admin gets the Move to front and
-   the Dismiss forms. #}
+   Thus, the rows have one renderer. An admin gets the Move to front,
+   the Retry now and the Dismiss forms. #}
 {% from "_trail_chips.html" import trail_chips %}
 {% for row in rows %}
 <tr class="d-flex">
@@ -11,6 +11,13 @@
 			<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 			<input type="hidden" name="job_id" value="{{ row.task.id }}">
 			<button type="submit" class="btn btn-sm btn-outline-secondary" title="Move to the front of its queue" aria-label="Move to front">&#x2912;</button>
+		</form>
+		{%- endif %}
+		{%- if admin and row.task and row.task.status == "scheduled" %}
+		<form method="post" action="{{ url_for('main.queue_retry') }}" class="queue-retry">
+			<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+			<input type="hidden" name="job_id" value="{{ row.task.id }}">
+			<button type="submit" class="btn btn-sm btn-outline-secondary" title="Retry now, at the front of its queue" aria-label="Retry now">&#x21bb;</button>
 		</form>
 		{%- endif %}
 		{%- if admin and not row.task and row.trail %}

@@ -87,6 +87,25 @@ return index
 """
 
 
+# The on-demand retry (Glenn, 2026-10-30). The job must leave the
+# ScheduledJobRegistry before it goes into the queue. The scheduler
+# reads the due ids, enqueues them, then removes them, in 3 steps. A
+# retry that is due already belongs to it. Thus, the script claims only
+# a job whose time is still to come. -1 is "not booked", -2 is "due".
+
+_CLAIM_RETRY = """
+local score = redis.call('ZSCORE', KEYS[1], ARGV[1])
+if not score then
+    return -1
+end
+if tonumber(score) <= tonumber(ARGV[2]) then
+    return -2
+end
+redis.call('ZREM', KEYS[1], ARGV[1])
+return 0
+"""
+
+
 def _basename_from_path(args, kwargs):
     """Return the basename of the file from a leading path argument.
 
@@ -1309,6 +1328,29 @@ def move_to_front(queue, job_id):
         FRONT_TTL_SECONDS,
     )
     return None if index < 0 else index
+
+
+def retry_now(queue, job_id):
+    """Move a booked retry into its queue now, at the front.
+
+    The return value is "moved", "due", or None. None is a job that is
+    not booked on this queue. "due" is a job whose time came already.
+    The scheduler moves that job within seconds, so this leaves it. A
+    moved job gets the front mark of move_to_front. The claim and the
+    enqueue are 2 steps. A crash between them loses the job."""
+
+    from rq.registry import ScheduledJobRegistry
+
+    registry = ScheduledJobRegistry(queue=queue)
+    claimed = queue.connection.eval(_CLAIM_RETRY, 1, registry.key, job_id, time.time())
+    if claimed == -1:
+        return None
+    if claimed == -2:
+        return "due"
+    job = queue.job_class.fetch(job_id, connection=queue.connection)
+    queue.enqueue_job(job)
+    move_to_front(queue, job_id)
+    return "moved"
 
 
 def front_times(connection, job_ids):

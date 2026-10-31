@@ -525,6 +525,13 @@ class QueueFrontForm(FlaskForm):
     front_submit = SubmitField("Move to front")
 
 
+class QueueRetryForm(FlaskForm):
+    """Move a booked retry into its queue now (Queue page)."""
+
+    job_id = HiddenField(validators=[DataRequired()])
+    retry_submit = SubmitField("Retry now")
+
+
 class QueueDismissForm(FlaskForm):
     """Remove a "no job in queue" row from the Queue page."""
 
