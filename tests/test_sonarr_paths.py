@@ -1157,7 +1157,12 @@ def test_an_adopted_rename_takes_the_trail_of_the_file(app, sonarr):
 
     from app import db
     from app.models import File
-    from app.pipeline import pipeline_trails, record_job_event
+    from app.pipeline import (
+        index_trails,
+        pipeline_trails,
+        record_job_event,
+        trail_entries_for,
+    )
     from app.series_rename import reconcile_sonarr_series
 
     with app.app_context():
@@ -1179,5 +1184,10 @@ def test_an_adopted_rename_takes_the_trail_of_the_file(app, sonarr):
         series_id, [{"previousPath": old_path, "path": new_path}]
     )
     assert summary["adopted"] == 1
-    trails = pipeline_trails(app.redis)
-    assert [trail["basename"] for trail in trails] == [os.path.basename(new)]
+    # The trail stays under the import name (#649). The card of the
+    # adopted row finds it by that name.
+    with app.app_context():
+        row = db.session.get(File, file_id)
+        assert row.basename == os.path.basename(new)
+        index = index_trails(pipeline_trails(app.redis))
+        assert trail_entries_for(index, row.untouched_basename, row.basename)

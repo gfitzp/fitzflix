@@ -95,7 +95,7 @@ from app.models import (
     title_lock_key,
 )
 from app.tmdb_apply import tmdb_json
-from app.pipeline import migrate_trail, record_task_stage
+from app.pipeline import record_task_stage
 from app.sdr_conversion import (
     archived_original_from_file,
     converted_file_details,
@@ -1678,14 +1678,6 @@ def _hand_off(run, work_path, file_details, hidden_output_file, staged, conversi
             os.remove(work_path)
         except OSError:
             pass
-
-    # The parse can have renamed the file (the title made canonical
-    # against an existing series, or the container changed to .mkv). The
-    # key of the trail is the basename. Thus, merge the trail under the
-    # new name before the move job stamps "queued" on it.
-
-    if file_details.get("basename") != basename:
-        migrate_trail(current_app.redis, basename, file_details.get("basename"))
 
     # The localized file stays on staging until its move, and a
     # conversion writes more next to it. Shrink the reservation to what

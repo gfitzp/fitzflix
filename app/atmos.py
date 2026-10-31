@@ -879,6 +879,8 @@ def _atmos_prepare(file_id, phases, staged_source=None):
     return {
         "file_id": file.id,
         "basename": basename,
+        # The trail of the file is keyed by its import name (#649).
+        "trail_basename": file.untouched_basename or basename,
         "workspace": workspace,
         "staging_source": staging_source,
         "bucket": bucket,
@@ -1064,8 +1066,9 @@ def sweep_stale_atmos_workspaces():
 def _trail_phases(state, current):
     """Return the phases of the run, bound to the chips of the first job."""
 
+    trail_basename = state.get("trail_basename") or state["basename"]
     return TaskPhases(
-        target=(state["trail_job"], state["basename"], OWN_STAGE), current=current
+        target=(state["trail_job"], trail_basename, OWN_STAGE), current=current
     )
 
 

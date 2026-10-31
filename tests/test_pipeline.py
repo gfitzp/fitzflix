@@ -316,25 +316,17 @@ def test_a_phased_jobs_done_own_chip_hides(app, monkeypatch):
     assert chips(basename) == [("Adding Atmos twin", "done")]
 
 
-def test_a_mid_flight_rename_merges_the_trail(app):
-    """Merge the trail under the new name when the parse renames a file.
+def test_an_import_that_renames_its_file_keeps_the_trail_under_the_import_name(app):
+    """Key the trail by the import name when the parse renames a file (#649).
 
     The parse can rename a file in flight. Examples: the title becomes
     canonical against an existing series, or a container conversion.
-    The key of the trail is the basename. Thus, localization merges the
-    trail under the new name before it enqueues the move. 1 file stays
-    ONE trail. In 2026-08, the Futurama S11 imports split into 2 trails
-    that overwrote each other's chips on the File Activity card. A stamp
-    that arrives under the old name after the rename follows the alias
-    onto the merged trail. Example: the "done" of the localization
-    worker."""
+    The library-side jobs carry the import name in file_details. Thus,
+    their stamps go onto the trail of the import, and 1 file stays ONE
+    trail. In 2026-08, the Futurama S11 imports split into 2 trails
+    that overwrote each other's chips on the File Activity card."""
 
-    from app.pipeline import (
-        first_run,
-        migrate_trail,
-        pipeline_trails,
-        record_job_event,
-    )
+    from app.pipeline import first_run, pipeline_trails, record_job_event
 
     old = "Trail Rename (1999) - S01E01 - [WEBDL-1080p].mkv"
     new = "Trail Rename - S01E01 - [WEBDL-1080p].mkv"
@@ -345,27 +337,66 @@ def test_a_mid_flight_rename_merges_the_trail(app):
         )
         record_job_event(app.redis, localize, "started")
 
-        migrate_trail(app.redis, old, new)
-
         app.file_queue.enqueue(
             "app.videos.move_localized_file",
-            args=(f"/staging/.{new}", {"basename": new}, None, None),
+            args=(
+                f"/staging/.{new}",
+                {"basename": new, "untouched_basename": old},
+                None,
+                None,
+            ),
         )
 
     record_job_event(app.redis, localize, "done")
 
     trails = pipeline_trails(app.redis)
     assert len(trails) == 1
-    assert trails[0]["basename"] == new
+    assert trails[0]["basename"] == old
     assert [(entry["stage"], entry["status"]) for entry in trails[0]["entries"]] == [
         ("Localizing", "done"),
         ("Moving into the library", "queued"),
     ]
-
-    # The sort anchor of the running banners must also survive the
-    # rename. The "started" stamp wrote it under the old name.
-
     assert first_run(app.redis, localize) is not None
+
+
+def test_same_named_extras_of_two_films_keep_their_own_trails(app):
+    """Give each file its own trail when 2 files share a library name (#649).
+
+    Every movie trailer lands in the library as "Trailer.mkv". The
+    trails of 4 trailers merged into 1, and each of their cards showed
+    4 journeys. The import name carries the film. Thus, it keys the
+    trail, and the library name never does."""
+
+    from app.pipeline import pipeline_trails, record_job_event
+
+    names = [
+        "Film A (2001) - Trailers - Trailer [Bluray-1080p].mkv",
+        "Film B (2002) - Trailers - Trailer [Bluray-1080p].mkv",
+    ]
+    with app.app_context():
+        for name in names:
+            localize = app.import_queue.enqueue(
+                "app.videos.localization_task", args=(f"/import/{name}",)
+            )
+            record_job_event(app.redis, localize, "started")
+            app.file_queue.enqueue(
+                "app.videos.move_localized_file",
+                args=(
+                    "/staging/.Trailer.mkv",
+                    {"basename": "Trailer.mkv", "untouched_basename": name},
+                    None,
+                    None,
+                ),
+            )
+            record_job_event(app.redis, localize, "done")
+
+    trails = pipeline_trails(app.redis)
+    assert sorted(trail["basename"] for trail in trails) == names
+    for trail in trails:
+        assert [entry["stage"] for entry in trail["entries"]] == [
+            "Localizing",
+            "Moving into the library",
+        ]
 
 
 def test_a_rename_with_no_prior_trail_just_redirects(app):
@@ -1888,3 +1919,47 @@ def test_a_rename_back_with_an_expired_trail_leaves_no_alias_cycle(app):
     migrate_trail(app.redis, second, first)
     assert _resolve_basename(app.redis, first) == first
     assert _resolve_basename(app.redis, second) == first
+
+
+def test_cards_of_same_named_extras_find_their_own_trails(app, admin_client):
+    """Give each card the trail of its own file when the library names collide (#649).
+
+    Two films each own a "Trailer.mkv". The archive job of each row
+    stamps the trail of its import name. The card lookup tries the
+    import name first. Thus, each card shows its own chips, not the
+    chips of the other film."""
+
+    from app import db
+    from app.main.discover import _trail_lookup
+    from app.pipeline import pipeline_trails
+    from tests.factories import make_movie, make_movie_file
+
+    with app.app_context():
+        rows = []
+        for title, year in (("Collide A", 2001), ("Collide B", 2002)):
+            movie = make_movie(title, year)
+            rows.append(
+                make_movie_file(
+                    movie,
+                    "Bluray-1080p",
+                    feature_type_name="Trailers",
+                    plex_title="Trailer",
+                    untouched_basename=(
+                        f"{title} ({year}) - Trailers - Trailer [Bluray-1080p].mkv"
+                    ),
+                )
+            )
+        db.session.commit()
+        assert [row.basename for row in rows] == ["Trailer.mkv", "Trailer.mkv"]
+        jobs = [
+            app.file_queue.enqueue("app.videos.upload_task", args=(row.id,))
+            for row in rows
+        ]
+
+        trails = pipeline_trails(app.redis)
+        assert sorted(trail["basename"] for trail in trails) == sorted(
+            row.untouched_basename for row in rows
+        )
+        trail_for = _trail_lookup()
+        for row, job in zip(rows, jobs):
+            assert [entry["job"] for entry in trail_for(row)] == [job.id]

@@ -426,15 +426,26 @@ def _trail_of(app, *names):
 
 
 def _imported(app, source, library_name):
-    """Record the trail of an import of source that the import named library_name."""
+    """Record the trail of an import of source that the import named library_name.
 
-    from app.pipeline import migrate_trail, record_job_event
+    The trail stays under the import name (#649). The library name is
+    the name of the move job."""
+
+    from app.pipeline import record_job_event
 
     job = app.import_queue.enqueue(
         "app.videos.localization_task", args=(f"/import/{source}",)
     )
     record_job_event(app.redis, job, "started")
-    migrate_trail(app.redis, source, library_name)
+    app.file_queue.enqueue(
+        "app.videos.move_localized_file",
+        args=(
+            f"/staging/.{library_name}",
+            {"basename": library_name, "untouched_basename": source},
+            None,
+            None,
+        ),
+    )
     app.import_queue.remove(job)
 
 

@@ -921,9 +921,10 @@ def _trail_lookup(trails=None):
     """Return a function that gives the trail entries of a File row.
 
     The File Activity card template calls it for each card. The function
-    tries the basename of the row and the original import filename, each
-    as it is and as its stem. With trails=None, this reads the newest
-    100 trails from Redis."""
+    tries the import filename of the row and then its library name,
+    each as it is and as its stem. The trail is keyed by the import
+    name (#649). With trails=None, this reads the newest 100 trails
+    from Redis."""
 
     from app.pipeline import index_trails, pipeline_trails, trail_entries_for
 
@@ -932,7 +933,7 @@ def _trail_lookup(trails=None):
     index = index_trails(trails)
 
     def trail_for(file):
-        return trail_entries_for(index, file.basename, file.untouched_basename)
+        return trail_entries_for(index, file.untouched_basename, file.basename)
 
     return trail_for
 

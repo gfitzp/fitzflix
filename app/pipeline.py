@@ -24,12 +24,16 @@ days. This matches the SQL window of the File Activity page. Thus, a
 card that arrived keeps its chips while it stays on the page. Fitzflix
 keeps the newest 100 files.
 
-Trails are keyed by basename. The pipeline can RENAME a file while it
-is in progress. The parse makes titles canonical against existing
-series. The container conversion changes the extension to .mkv. Then
-the localization calls migrate_trail. That merges the trail under the
-new name and leaves an alias. Thus, 1 file stays 1 trail. It does not
-become 2 trails that fight over the same File Activity card.
+Trails are keyed by the IMPORT filename of the file (the untouched
+name). That name carries the title of the film or the episode. Thus, it
+is unique per file. The library name is not. Every movie trailer lands
+in the library as "Trailer.mkv". Two films can each have an interview
+named "James B. Harris.mkv". Trails keyed by the library name merged
+the chips of 4 trailers of different films into 1 trail (#649). The
+parse can rename a file while an import is in progress. The import name
+does not change. Thus, 1 file stays 1 trail through the import. A
+series rename changes the import name. Then migrate_renamed_file moves
+the trail under the new name and leaves an alias.
 """
 
 import functools
@@ -117,10 +121,15 @@ def _basename_from_path(args, kwargs):
 
 
 def _basename_from_details(args, kwargs):
-    """Return the basename inside a file_details dict (second argument)."""
+    """Return the import name inside a file_details dict (second argument).
+
+    The dict carries the untouched name from the localization. The
+    library name is the fallback for a job that was enqueued before
+    the dict carried it."""
 
     if len(args) > 1 and isinstance(args[1], dict):
-        return args[1].get("basename")
+        details = args[1]
+        return details.get("untouched_basename") or details.get("basename")
     return None
 
 
@@ -131,7 +140,9 @@ def _basename_from_second_arg(args, kwargs):
 
 
 def _basename_from_file_id(args, kwargs):
-    """Return the basename of the File record found by a leading file_id.
+    """Return the import name of the File record found by a leading file_id.
+
+    A row with no untouched name falls back to its library name.
 
     Enqueue-side hooks already run inside an app context. This includes
     the context of the test app. Never trust the get_app() singleton in
@@ -155,7 +166,9 @@ def _basename_from_file_id(args, kwargs):
 
     with flask_app.app_context():
         file = db.session.get(File, args[0])
-        return file.basename if file else None
+        if file is None:
+            return None
+        return file.untouched_basename or file.basename
 
 
 # Each per-file pipeline task, by rq function name. The value is the
@@ -199,9 +212,20 @@ STAGES = {
 # dates their rows by the anchors of the file. Thus, first_run and
 # first_enqueued find the file of these jobs here.
 
+
+def _basename_from_state(args, kwargs):
+    """Return the trail name in the state dict of an Atmos continuation job.
+
+    A state from before #649 has no trail_basename. Its basename is the
+    library name, which keyed the trail then."""
+
+    state = args[0]
+    return state.get("trail_basename") or state["basename"]
+
+
 CONTINUATIONS = {
-    "app.atmos.atmos_check_task": lambda args, kwargs: args[0]["basename"],
-    "app.atmos.atmos_finish_task": lambda args, kwargs: args[0]["basename"],
+    "app.atmos.atmos_check_task": _basename_from_state,
+    "app.atmos.atmos_finish_task": _basename_from_state,
 }
 
 
@@ -643,20 +667,12 @@ def _best_effort(fallback=None):
 
 @_best_effort()
 def migrate_trail(connection, old_basename, new_basename):
-    """Merge the trail of a file under its new basename.
+    """Merge the trail of a file under its new import name.
 
-    The pipeline can rename a file while it is in progress. The parse
-    makes a title canonical against an existing series. A container
-    conversion changes the extension to .mkv. Without this, the journey
-    splits into 2 trails. Both claim the same File Activity card and
-    overwrite the chips of the other. The Futurama S11 imports lost
-    their Moved and Cataloged chips this way (2026-08).
-
-    Localization calls this before it enqueues the move job. Thus, the
-    "queued" stamp of the move already goes onto the merged trail. An
-    alias redirects the writes that arrive under the old name AFTER the
-    rename onto it too. The own "done" stamp of the localization worker
-    occurs when the task body returns. This is advisory, like each
+    A series rename gives each episode a new import name. Without this,
+    the card of the new name has no chips for the life of the trail
+    (#375). An alias redirects the writes that arrive under the old name
+    AFTER the rename onto the merged trail. This is advisory, like each
     hook. It logs and catches failures. The retries are limited."""
 
     if not old_basename or not new_basename or old_basename == new_basename:
@@ -728,23 +744,17 @@ def migrate_trail(connection, old_basename, new_basename):
 
 @_best_effort()
 def migrate_renamed_file(connection, old_names, new_names):
-    """Merge the trail of a renamed File row under its new names (#375).
+    """Move the trail of a renamed File row under its new import name (#375).
 
     old_names and new_names are (basename, untouched_basename) pairs.
-    The import keeps the trail under the library name when the import
-    name differs from it (an .mp4 remuxed to .mkv, a canonical series
-    title). Thus, the library name moves first. The untouched name moves
-    only when it has no redirect of its own. A redirect already follows
-    the library name."""
+    The trail is keyed by the untouched name (#649). A row with no
+    untouched name is keyed by its library name. A Sonarr adoption
+    changes only the library name. Then the trail stays where it is."""
 
     (old_basename, old_untouched), (new_basename, new_untouched) = old_names, new_names
-    migrate_trail(connection, old_basename, new_basename)
-    if (
-        old_untouched
-        and old_untouched != old_basename
-        and _resolve_basename(connection, old_untouched) == old_untouched
-    ):
-        migrate_trail(connection, old_untouched, new_untouched)
+    migrate_trail(
+        connection, old_untouched or old_basename, new_untouched or new_basename
+    )
 
 
 @_best_effort()
@@ -1132,14 +1142,13 @@ def _stem(name):
 
 
 def index_trails(trails):
-    """Return the trails of pipeline_trails keyed by basename and by stem.
+    """Return the trails of pipeline_trails keyed by name and by stem.
 
     The cards of the File Activity page look their trail up here. The
-    basename of a trail can be the original import filename, while the
-    card carries the name of the File row. A container conversion also
-    changes the extension to .mkv. Thus, the index holds each trail under
-    its full name and under its stem. The newest trail wins a shared key.
-    This mirrors cardSlots and renderFiles in base.html."""
+    name of a trail is the import filename. A restore keys it by the
+    sanitized S3 name, and a container conversion changes the extension
+    to .mkv. Thus, the index holds each trail under its full name and
+    under its stem. The newest trail wins a shared key."""
 
     index = {}
     for trail in trails:
@@ -1155,8 +1164,8 @@ def trail_entries_for(index, *names):
     """Return the entries of the trail that matches one of the names, or [].
 
     Each name is tried as it is and then as its stem. The first match
-    wins. The names of a card are the basename of the File row and the
-    original import filename."""
+    wins. The names of a card are the import filename of the File row,
+    then its library name."""
 
     for name in names:
         if not name:
