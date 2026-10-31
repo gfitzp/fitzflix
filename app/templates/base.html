@@ -190,38 +190,27 @@
 	{{ super() }}
     {{ moment.include_moment(version="2.29.1") }}
 	<script>
-		// Offline support (the shopping list in stores with bad reception).
-		// Service workers run only in secure contexts. Thus, this does
-		// nothing over plain http.
-		//
-		// The scope of the worker is the shopping list (#647). Every
-		// request of a page under the scope waits for the worker. A
-		// suspended worker froze every page of the site in Safari. The
-		// other pages stay outside the scope. The older worker covered
-		// the whole site. Each page unregisters it first.
+		// Fitzflix has no service worker (#648). The earlier worker kept the
+		// first page of each shopping list for offline use, and it froze
+		// every page of the site in Safari when Safari suspended it (#647).
+		// A browser can still hold that worker and its caches. Each page
+		// removes them. Service workers exist only in secure contexts.
+		// Thus, this does nothing over plain http
 
 		if ("serviceWorker" in navigator && window.isSecureContext) {
 			navigator.serviceWorker.getRegistrations().then(function(registrations) {
-				return Promise.all(registrations.map(function(registration) {
-					if (new URL(registration.scope).pathname === "/shopping-list/") {
-						return null;
-					}
-					return registration.unregister();
-				}));
-			}).then(function() {
-				return navigator.serviceWorker.register("/sw.js", { scope: "/shopping-list/" });
+				registrations.forEach(function(registration) {
+					registration.unregister();
+				});
 			}).catch(function() {});
+			if ("caches" in window) {
+				caches.keys().then(function(keys) {
+					keys.forEach(function(key) {
+						caches.delete(key);
+					});
+				}).catch(function() {});
+			}
 		}
-{% if not current_user.is_authenticated %}
-
-		// The worker never sees a logout. The logout page is outside its
-		// scope. Thus, the login page deletes the kept shopping list
-		// pages. The next user of the browser cannot see them offline
-
-		if (window.isSecureContext && "caches" in window) {
-			caches.delete("fitzflix-pages-v4").catch(function() {});
-		}
-{% endif %}
 	</script>
 	{% if current_user.is_authenticated %}
 	<script>

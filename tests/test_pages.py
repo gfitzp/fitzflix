@@ -232,65 +232,30 @@ def test_tv_shopping_list_renders(admin_client):
     assert admin_client.get("/shopping-list/tv").status_code == 200
 
 
-def test_service_worker_is_served_from_the_root(client):
-    """Test that Fitzflix serves /sw.js from the root.
+def test_the_site_has_no_service_worker(client, admin_client):
+    """Test that /sw.js is gone and that each page removes an older worker (#648).
 
-    The service worker is the offline layer of the shopping list. The
-    pages register it with the scope /shopping-list/ (#647). A script at
-    the root permits that scope without a Service-Worker-Allowed header."""
+    A browser can still hold the earlier worker and its caches. A worker
+    that Safari suspended froze every page of the site (#647). Thus, each
+    page unregisters every registration and deletes every cache. The
+    update check of the older worker finds the 404 and clears it too."""
 
-    response = client.get("/sw.js")
-    assert response.status_code == 200
-    assert "javascript" in response.headers["Content-Type"]
-    assert b"fitzflix-v4" in response.data
-    assert b'SCOPE_PATH = "/shopping-list/"' in response.data
+    assert client.get("/sw.js").status_code == 404
 
-    # The cache-first rule excludes the manifest. Thus, the edits to
-    # start_url, icon, and shortcut reach the installed apps
-
-    assert b"site.webmanifest" in response.data
-
-
-def test_service_worker_only_caches_successful_responses(client):
-    """Test that the service worker caches only successful responses.
-
-    A failed response in a cache-first cache is permanent. The cache
-    stored a proxy 502 under the URL of a poster. The browser showed it
-    in place of the image until the user emptied the cache (#206).
-    Thus, each cache.put occurs only if the response is usable. The
-    static branch revalidates. Thus, a file that Fitzflix replaces in
-    place does not stay stale forever."""
-
-    body = client.get("/sw.js").get_data(as_text=True)
-
-    assert "function isCacheable(response)" in body
-    assert 'response.ok || response.type === "opaque"' in body
-
-    # No branch can write to the cache without the check
-
-    assert body.count("cache.put(request, copy)") == body.count(
-        "if (isCacheable(response)"
-    )
+    for body in (
+        client.get("/auth/login").get_data(as_text=True),
+        admin_client.get("/").get_data(as_text=True),
+    ):
+        assert "serviceWorker.register(" not in body
+        assert "serviceWorker.getRegistrations()" in body
+        assert "registration.unregister()" in body
+        assert "caches.keys()" in body
+        assert "caches.delete(key)" in body
+        assert "site.webmanifest" in body
 
 
-def test_pages_register_the_service_worker(admin_client):
-    """Test that each page registers the worker with the shopping list scope.
-
-    A page under the scope of a worker waits for it on every request. A
-    suspended worker froze every page of the site in Safari (#647). Thus,
-    the scope is the shopping list only. The older worker covered the
-    whole site. Each page unregisters it before the registration."""
-
+def test_the_home_page_carries_the_search_and_the_poll_scripts(admin_client):
     body = admin_client.get("/").get_data(as_text=True)
-    assert 'serviceWorker.register("/sw.js", { scope: "/shopping-list/" })' in body
-    assert "serviceWorker.getRegistrations()" in body
-    assert 'pathname === "/shopping-list/"' in body
-    assert "registration.unregister()" in body
-    assert "site.webmanifest" in body
-
-    # A signed-in page keeps the shopping list pages
-
-    assert 'caches.delete("fitzflix-pages-v4")' not in body
 
     # The search type-ahead includes its keyboard navigation
 
@@ -300,17 +265,6 @@ def test_pages_register_the_service_worker(admin_client):
     # The queue poller pauses when the tab is hidden
 
     assert "visibilitychange" in body
-
-
-def test_the_login_page_deletes_the_kept_shopping_list_pages(client):
-    """Test that the login page deletes the pages the worker kept (#334).
-
-    The logout page is outside the scope of the worker. Thus, the worker
-    never sees a logout. The login page deletes the kept pages instead."""
-
-    body = client.get("/auth/login").get_data(as_text=True)
-    assert 'caches.delete("fitzflix-pages-v4")' in body
-    assert '"caches" in window' in body
 
 
 def test_manifest_declares_installable_app():

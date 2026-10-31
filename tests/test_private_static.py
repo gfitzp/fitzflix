@@ -59,4 +59,4 @@ def test_the_private_static_subtrees_refuse_an_anonymous_request(client, user_cl
     assert user_client.get(path).status_code != 401
 
     # The public assets of the site stay public
-    assert client.get("/static/sw.js").status_code != 401
+    assert client.get("/static/site.webmanifest").status_code != 401

@@ -14,10 +14,10 @@ from flask_login import current_user, login_required
 from app.main import bp
 
 # The static subtrees that hold library material. The triage aids moved
-# out of the static tree (#468). The custom posters stay static, but only a signed-in user
-# gets them. The gate answers 401, not a redirect. The service worker
-# keeps each successful static response, and a followed redirect to the
-# sign-in page is a successful response.
+# out of the static tree (#468). The custom posters stay static, but only
+# a signed-in user gets them. The gate answers 401, not a redirect. A
+# redirect to the sign-in page would reach the browser cache as the
+# image.
 
 PRIVATE_STATIC_PREFIXES = ("/static/custom/",)
 
@@ -69,20 +69,4 @@ def favicon():
         os.path.join(current_app.root_path, "static"),
         "favicon.ico",
         mimetype="image/vnd.microsoft.icon",
-    )
-
-
-@bp.route("/sw.js")
-def service_worker():
-    """Serve the PWA service worker from the site root.
-
-    The pages register it with the scope /shopping-list/ (#647). A script
-    at the root permits that scope without a Service-Worker-Allowed header.
-    The private static subtrees are not in the way of the root path.
-    """
-
-    return send_from_directory(
-        os.path.join(current_app.root_path, "static"),
-        "sw.js",
-        mimetype="application/javascript",
     )
