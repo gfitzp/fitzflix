@@ -10,10 +10,13 @@ main audio track first and flags it default on import. Thus, Fitzflix
 makes the selection of Plex match the file.
 
 The rule: the selected audio stream is the default audio track of the
-file, or its first audio track when no track is flagged. The selected
-subtitle stream is the default subtitle track of the file, or none.
-One call sets both for one part and one account. The call is made only
-when the selection differs. Plex keeps the selection in a row per
+file, or its first audio track when no track is flagged. When the file
+flags a default subtitle track, that track is the selected subtitle
+stream. When the file flags none, the subtitle choice of the account
+stays as it is. An account can ask Plex for subtitles on every film,
+and a file without a flagged subtitle says nothing against that. One
+call sets the streams for one part and one account. The call is made
+only when the selection differs. Plex keeps the selection in a row per
 account and per part, and it keeps that row through an analyze.
 
 The accounts: the owner, through PLEX_TOKEN, and each Plex Home user
@@ -86,7 +89,8 @@ def wanted_streams(part):
 
     The audio id is the default audio track, or the first one. It is
     None for a part with no audio stream. The subtitle id is the default
-    subtitle track, or 0 for none."""
+    subtitle track, or None when the file flags no subtitle track. Then
+    the file has no opinion, and the account keeps its own choice."""
 
     audio = _streams(part, AUDIO)
     subtitles = _streams(part, SUBTITLE)
@@ -99,7 +103,7 @@ def wanted_streams(part):
     )
     return (
         wanted_audio["id"] if wanted_audio else None,
-        wanted_subtitle["id"] if wanted_subtitle else 0,
+        wanted_subtitle["id"] if wanted_subtitle else None,
     )
 
 
@@ -123,9 +127,10 @@ def selected_streams(part):
 def needs_selection(part):
     """Return False for a part whose selection cannot differ from the file.
 
-    One audio stream and no subtitle stream leave Plex no choice."""
+    One audio stream leaves Plex no choice of audio. Without a flagged
+    subtitle track, the file asks for no subtitle choice."""
 
-    return len(_streams(part, AUDIO)) > 1 or bool(_streams(part, SUBTITLE))
+    return len(_streams(part, AUDIO)) > 1 or wanted_streams(part)[1] is not None
 
 
 def align_part(part, token=None):
@@ -134,19 +139,18 @@ def align_part(part, token=None):
     Return True when a write was made. This is the one function that
     writes a selection."""
 
-    wanted = wanted_streams(part)
-    if wanted[0] is None or selected_streams(part) == wanted:
+    wanted_audio, wanted_subtitle = wanted_streams(part)
+    if wanted_audio is None:
         return False
-    plex_write(
-        "PUT",
-        f"/library/parts/{part['id']}",
-        params={
-            "audioStreamID": wanted[0],
-            "subtitleStreamID": wanted[1],
-            "allParts": 1,
-        },
-        token=token,
-    )
+    selected_audio, selected_subtitle = selected_streams(part)
+    params = {"allParts": 1}
+    if selected_audio != wanted_audio:
+        params["audioStreamID"] = wanted_audio
+    if wanted_subtitle is not None and selected_subtitle != wanted_subtitle:
+        params["subtitleStreamID"] = wanted_subtitle
+    if len(params) == 1:
+        return False
+    plex_write("PUT", f"/library/parts/{part['id']}", params=params, token=token)
     return True
 
 

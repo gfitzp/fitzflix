@@ -100,23 +100,26 @@ def test_the_file_asks_for_its_default_audio_and_subtitle():
     )
     assert plex_selection.wanted_streams(part) == (11, 22)
 
-    # No flagged track: the first audio track, and no subtitle.
+    # No flagged track: the first audio track, and no opinion on the
+    # subtitle. The account keeps its own subtitle choice.
 
     part = _part(
         8, [_stream(2, 12, 2, channels=6), _stream(2, 11, 1), _stream(3, 21, 3)]
     )
-    assert plex_selection.wanted_streams(part) == (11, 0)
+    assert plex_selection.wanted_streams(part) == (11, None)
 
     # No audio at all: nothing to select.
 
-    assert plex_selection.wanted_streams(_part(9, [_stream(3, 21, 1)])) == (None, 0)
+    assert plex_selection.wanted_streams(_part(9, [_stream(3, 21, 1)])) == (None, None)
 
 
 def test_align_writes_only_when_the_selection_differs(app, monkeypatch):
     fake = FakePlex({})
     plex_selection = _wire(app, monkeypatch, fake)
 
-    # Plex selected the 5.1 remix. The file flags the mono track.
+    # Plex selected the 5.1 remix, and the account chose a subtitle. The
+    # file flags the mono track and no subtitle. The audio changes, and
+    # the subtitle choice of the account stays.
 
     stale = _part(
         7,
@@ -128,9 +131,7 @@ def test_align_writes_only_when_the_selection_differs(app, monkeypatch):
     )
     with app.app_context():
         assert plex_selection.align_part(stale, token="home-token") is True
-    assert fake.writes == [
-        ("home-token", "7", {"audioStreamID": 11, "subtitleStreamID": 0, "allParts": 1})
-    ]
+    assert fake.writes == [("home-token", "7", {"audioStreamID": 11, "allParts": 1})]
 
     # The selection matches the file: no write.
 
@@ -177,11 +178,11 @@ def test_items_are_aligned_for_the_owner_and_each_home_user(app, monkeypatch):
     # The owner needed the episode set. Anne needed the movie set.
 
     expected_writes = [
-        (None, "70", {"audioStreamID": 11, "subtitleStreamID": 0, "allParts": 1}),
+        (None, "70", {"audioStreamID": 11, "allParts": 1}),
         (
             "anne-token",
             "70",
-            {"audioStreamID": 11, "subtitleStreamID": 0, "allParts": 1},
+            {"audioStreamID": 11, "allParts": 1},
         ),
     ]
     assert sorted(fake.writes, key=str) == sorted(expected_writes, key=str)
@@ -237,11 +238,11 @@ def test_the_sweep_reads_settled_items_for_the_owner_only(app, monkeypatch):
         ("no-access-token", "2"),
     ]
     assert fake.writes == [
-        (None, "2", {"audioStreamID": 21, "subtitleStreamID": 0, "allParts": 1}),
+        (None, "2", {"audioStreamID": 21, "allParts": 1}),
         (
             "kelly-token",
             "2",
-            {"audioStreamID": 21, "subtitleStreamID": 0, "allParts": 1},
+            {"audioStreamID": 21, "allParts": 1},
         ),
     ]
 
@@ -268,3 +269,27 @@ def test_enqueue_align_waits_and_collapses_a_repeat(app, monkeypatch):
             < due - due.__class__.now(due.tzinfo)
             <= timedelta(minutes=plex_selection.WEBHOOK_DELAY_MINUTES)
         )
+
+
+def test_a_flagged_subtitle_is_selected_without_touching_the_audio(app, monkeypatch):
+    """A file with a default subtitle track sets that track, and only that."""
+
+    fake = FakePlex({})
+    plex_selection = _wire(app, monkeypatch, fake)
+    part = _part(
+        9,
+        [
+            _stream(2, 11, 1, default=True, selected=True, channels=1),
+            _stream(3, 21, 2),
+            _stream(3, 22, 3, default=True),
+        ],
+    )
+    with app.app_context():
+        assert plex_selection.align_part(part, token="mary-token") is True
+    assert fake.writes == [("mary-token", "9", {"allParts": 1, "subtitleStreamID": 22})]
+    assert plex_selection.needs_selection(part) is True
+
+    # One audio stream and subtitles without a flag: nothing to decide.
+
+    quiet = _part(10, [_stream(2, 11, 1, selected=True), _stream(3, 21, 2)])
+    assert plex_selection.needs_selection(quiet) is False
