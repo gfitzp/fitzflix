@@ -354,6 +354,9 @@ class Config(object):
     # poller. The webhook token gates the /api/plex/webhook endpoint.
     PLEX_URL                            = os.environ.get("PLEX_URL") or None
     PLEX_TOKEN                          = os.environ.get("PLEX_TOKEN") or None
+    # Plex refuses the analyze of an extra over its API. The scanner on
+    # the Plex host does it by the id of the item (#651).
+    PLEX_SCANNER                        = os.environ.get("PLEX_SCANNER") or "/Applications/Plex Media Server.app/Contents/MacOS/Plex Media Scanner"
     PLEX_WEBHOOK_TOKEN                  = os.environ.get("PLEX_WEBHOOK_TOKEN") or None
 
     # Virtual DVR channels (#182). The token gates the M3U/XMLTV/stream

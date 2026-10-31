@@ -51,6 +51,7 @@ change that.
 """
 
 import os
+import subprocess
 import traceback
 from datetime import timedelta
 
@@ -84,6 +85,13 @@ SECTION_ITEM_TYPE = {"movie": 1, "show": 4}
 
 ANALYZE_RETRY_MINUTES = 20
 ANALYZE_MAX_RETRIES = 1
+
+# Plex answers 400 to an analyze request on a clip, that is, on an extra.
+# Its scanner analyzes one by the id of the item (#651). The scanner runs
+# on the Plex host, as the Plex user. PLEX_SCANNER names it. The analyze
+# of a 5 GB featurette takes some seconds.
+
+SCANNER_TIMEOUT = 600
 
 
 def _probe_target(path):
@@ -352,13 +360,27 @@ def _holders_of(folders, target):
     return [key for key in keys if not (key in seen or seen.add(key))]
 
 
+def _analyze_clip(rating_key):
+    """Run the Plex scanner for the analyze of one clip.
+
+    Plex refuses the analyze of a clip over its API with a 400. The
+    scanner does it by the id of the item (#651). A failure raises."""
+
+    subprocess.run(
+        [current_app.config["PLEX_SCANNER"], "--analyze", "--item", str(rating_key)],
+        check=True,
+        capture_output=True,
+        timeout=SCANNER_TIMEOUT,
+    )
+
+
 def _analyze_extras(section, targets, folders, analyzed):
     """Analyze the target files that are extras of the items in a section.
 
     An extra never appears in a section page. It appears only in the
     `Extras` of its holder (#651). This function asks each possible
-    holder for its extras, once, and analyzes the extra whose part file
-    matches a target. A match is the full path, or the last three
+    holder for its extras, once, and runs the scanner for the extra
+    whose part file matches a target. A match is the full path, or the last three
     components: the folder of the title, the folder of the extra type,
     and the file name. An extra name alone, for example 'Trailer.mkv',
     repeats across titles.
@@ -397,11 +419,25 @@ def _analyze_extras(section, targets, folders, analyzed):
             )
             if match is None:
                 continue
-            plex_command("PUT", f"/library/metadata/{match['ratingKey']}/analyze")
+            scanner = current_app.config.get("PLEX_SCANNER")
+            if not scanner or not os.path.exists(scanner):
+                # Without the scanner, nothing analyzes the clip. A retry
+                # changes nothing. Thus, the target counts as done.
+
+                current_app.logger.warning(
+                    f"Plex analyze: '{os.path.basename(target)}' is an extra. "
+                    f"Plex analyzes an extra only through its scanner, and "
+                    f"PLEX_SCANNER ({scanner!r}) is not on this host. Plex keeps "
+                    f"its old track list"
+                )
+                analyzed.add(target)
+                break
+            _analyze_clip(match["ratingKey"])
             analyzed.add(target)
             current_app.logger.info(
                 f"Plex analyze: {match['ratingKey']} '{os.path.basename(target)}' "
-                f"re-analyzed as an extra of {holder} in '{section.get('title')}'"
+                f"re-analyzed by the scanner as an extra of {holder} in "
+                f"'{section.get('title')}'"
             )
             break
 

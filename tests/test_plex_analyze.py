@@ -25,6 +25,7 @@ class FakePlexServer:
         self.paged = []
         self.analyzed = []
         self.extras_asked = []
+        self.scanned = []
 
     def get(self, path, params=None):
         if path == "/library/sections":
@@ -100,13 +101,19 @@ def _library(tmp_path):
     return movies, tv, str(film)
 
 
-def _wire(app, monkeypatch, fake):
+def _wire(app, monkeypatch, fake, scanner=None):
+    """Point the module at the fake. With `scanner`, a path that exists,
+    the scanner run of a clip is recorded instead of executed."""
+
     import app.plex_library as plex_library
 
     monkeypatch.setitem(app.config, "PLEX_URL", "http://plex.test")
     monkeypatch.setitem(app.config, "PLEX_TOKEN", "token")
     monkeypatch.setattr(plex_library, "plex_get", fake.get)
     monkeypatch.setattr(plex_library, "plex_command", fake.command)
+    if scanner is not None:
+        monkeypatch.setitem(app.config, "PLEX_SCANNER", str(scanner))
+        monkeypatch.setattr(plex_library, "_analyze_clip", fake.scanned.append)
     return plex_library
 
 
@@ -256,6 +263,14 @@ def _extra(folder, kind, name):
     return str(path)
 
 
+def _scanner(tmp_path):
+    """Create a file that stands in for the Plex scanner. Return its path."""
+
+    scanner = tmp_path / "Plex Media Scanner"
+    scanner.write_bytes(b"")
+    return scanner
+
+
 def test_an_extra_is_analyzed_through_its_film(app, monkeypatch, tmp_path):
     """Resolve an extra through the film that holds it (#651).
 
@@ -275,14 +290,16 @@ def test_an_extra_is_analyzed_through_its_film(app, monkeypatch, tmp_path):
         {"5": [("202", [film]), ("300", [str(feature)])]},
         {"300": [("301", [extra])]},
     )
-    plex_library = _wire(app, monkeypatch, fake)
+    plex_library = _wire(app, monkeypatch, fake, scanner=_scanner(tmp_path))
 
     assert plex_library.analyze_plex_media([extra]) is True
 
-    # Fitzflix analyzed the clip of the extra, not the film, and asked
-    # only the film whose folder holds the extra.
+    # Fitzflix ran the scanner for the clip of the extra. It analyzed
+    # nothing over the API, and it asked only the film whose folder
+    # holds the extra. Plex refuses the API analyze of a clip.
 
-    assert fake.analyzed == ["301"]
+    assert fake.scanned == ["301"]
+    assert fake.analyzed == []
     assert fake.extras_asked == ["300"]
 
 
@@ -307,10 +324,10 @@ def test_a_same_named_extra_resolves_to_its_own_film(app, monkeypatch, tmp_path)
         },
         {"300": [("301", [first_trailer])], "400": [("401", [second_trailer])]},
     )
-    plex_library = _wire(app, monkeypatch, fake)
+    plex_library = _wire(app, monkeypatch, fake, scanner=_scanner(tmp_path))
 
     assert plex_library.analyze_plex_media([second_trailer]) is True
-    assert fake.analyzed == ["401"]
+    assert fake.scanned == ["401"]
     assert fake.extras_asked == ["400"]
 
 
@@ -337,8 +354,35 @@ def test_a_show_extra_is_analyzed_through_the_show(app, monkeypatch, tmp_path):
         },
         {"301": [("310", [extra])]},
     )
-    plex_library = _wire(app, monkeypatch, fake)
+    plex_library = _wire(app, monkeypatch, fake, scanner=_scanner(tmp_path))
 
     assert plex_library.analyze_plex_media([extra]) is True
-    assert fake.analyzed == ["310"]
+    assert fake.scanned == ["310"]
     assert fake.extras_asked == ["301"]
+
+
+def test_an_extra_without_a_scanner_is_logged_and_not_retried(
+    app, monkeypatch, tmp_path
+):
+    """Without the scanner, nothing can analyze a clip. A retry changes nothing."""
+
+    movies, tv, film = _library(tmp_path)
+    folder = movies / "The Shining (1980)"
+    folder.mkdir()
+    feature = folder / "The Shining (1980) - [Bluray-1080p].mkv"
+    feature.write_bytes(b"")
+    extra = _extra(folder, "Behind The Scenes", "30 Impossible Shots.mkv")
+    fake = FakePlexServer(
+        [("5", "movie", "Movies", [str(movies)])],
+        {"5": [("300", [str(feature)])]},
+        {"300": [("301", [extra])]},
+    )
+    plex_library = _wire(app, monkeypatch, fake, scanner=tmp_path / "missing")
+
+    with app.app_context():
+        registry = app.maintenance_queue.scheduled_job_registry
+        before = registry.get_job_ids()
+        assert plex_library.analyze_plex_media([extra]) is True
+        assert fake.scanned == []
+        assert fake.analyzed == []
+        assert registry.get_job_ids() == before
