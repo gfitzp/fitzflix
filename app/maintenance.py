@@ -25,6 +25,7 @@ from sqlalchemy.engine import make_url
 from werkzeug.local import LocalProxy
 
 from app import db, get_app
+from app.access_log import access_log_path
 from app.email import task_send_email
 from app import s3_layout
 from app.queues import QUEUE_NAMES, queue_names
@@ -891,50 +892,59 @@ def system_health(flask_app):
     }
 
 
-def rotate_logs():
-    """Archive the current log file and delete the archives older than the retention window.
+def _rotate_log(log_file, retention_days):
+    """Archive one log file and delete its archives older than the retention window.
 
-    This task renames the log file with a date suffix and compresses it
+    Return (archive, deleted). The archive is None when the file is
+    absent or empty."""
+
+    archived = None
+    if os.path.isfile(log_file) and os.path.getsize(log_file) > 0:
+        stamp = datetime.now().strftime("%Y-%m-%d")
+        archive = f"{log_file}.{stamp}"
+        if os.path.exists(archive) or os.path.exists(f"{archive}.gz"):
+            # The log was already rotated today. Add a timestamp. Do
+            # not overwrite.
+            stamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+            archive = f"{log_file}.{stamp}"
+
+        os.rename(log_file, archive)
+        with open(archive, "rb") as source, gzip.open(f"{archive}.gz", "wb") as target:
+            shutil.copyfileobj(source, target)
+        os.remove(archive)
+        archived = f"{archive}.gz"
+
+    cutoff = datetime.now() - timedelta(days=retention_days)
+    deleted = []
+    for path in sorted(glob.glob(f"{log_file}.*.gz")):
+        if datetime.fromtimestamp(os.path.getmtime(path)) < cutoff:
+            os.remove(path)
+            deleted.append(os.path.basename(path))
+    return archived, deleted
+
+
+def rotate_logs():
+    """Archive the current log files and delete the archives older than the retention window.
+
+    This task renames each log file with a date suffix and compresses it
     with gzip. Every process writes through a WatchedFileHandler. Thus,
     each process opens the new log file on its next write. This task
-    deletes the archives older than LOG_RETENTION_DAYS.
+    deletes the archives older than LOG_RETENTION_DAYS. The files are
+    the application log and the access log of the web process.
     """
 
     with app.app_context():
         log_file = current_app.config["LOG_FILE"]
         retention_days = current_app.config["LOG_RETENTION_DAYS"]
 
-        archived = None
-        if os.path.isfile(log_file) and os.path.getsize(log_file) > 0:
-            stamp = datetime.now().strftime("%Y-%m-%d")
-            archive = f"{log_file}.{stamp}"
-            if os.path.exists(archive) or os.path.exists(f"{archive}.gz"):
-                # The log was already rotated today. Add a timestamp. Do
-                # not overwrite.
-                stamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
-                archive = f"{log_file}.{stamp}"
-
-            os.rename(log_file, archive)
-            with open(archive, "rb") as source, gzip.open(
-                f"{archive}.gz", "wb"
-            ) as target:
-                shutil.copyfileobj(source, target)
-            os.remove(archive)
-            archived = f"{archive}.gz"
-
-        cutoff = datetime.now() - timedelta(days=retention_days)
-        deleted = []
-        for path in sorted(glob.glob(f"{log_file}.*.gz")):
-            if datetime.fromtimestamp(os.path.getmtime(path)) < cutoff:
-                os.remove(path)
-                deleted.append(os.path.basename(path))
-
-        current_app.logger.info(
-            f"Rotated logs: "
-            f"archived {os.path.basename(archived) if archived else 'nothing'}, "
-            f"deleted {len(deleted)} archive(s) older than {retention_days} days"
-            f"{' ' + str(deleted) if deleted else ''}"
-        )
+        for path in (log_file, access_log_path(log_file)):
+            archived, deleted = _rotate_log(path, retention_days)
+            current_app.logger.info(
+                f"Rotated {os.path.basename(path)}: "
+                f"archived {os.path.basename(archived) if archived else 'nothing'}, "
+                f"deleted {len(deleted)} archive(s) older than {retention_days} days"
+                f"{' ' + str(deleted) if deleted else ''}"
+            )
 
 
 def _prune_backup_versions(client, bucket, prefix, cutoff, keep):

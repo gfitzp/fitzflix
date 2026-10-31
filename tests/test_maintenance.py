@@ -14,6 +14,7 @@ import time
 
 import pytest
 
+from app.access_log import access_log_path
 from app.maintenance import backup_database, rotate_logs
 
 
@@ -52,6 +53,27 @@ def test_rotate_logs_archives_and_prunes(app):
     assert len(glob.glob(f"{log_file}.*.gz")) == 2
 
     for path in glob.glob(f"{log_file}.*.gz"):
+        os.remove(path)
+
+
+def test_rotate_logs_archives_the_access_log_too(app):
+    log_file = app.config["LOG_FILE"]
+    access_log = access_log_path(log_file)
+    with open(access_log, "w") as f:
+        f.write('10.0.0.2 "GET / HTTP/1.1" 200\n')
+
+    with app.app_context():
+        rotate_logs()
+
+    assert not os.path.exists(access_log)
+    archives = glob.glob(f"{access_log}.*.gz")
+    assert len(archives) == 1, archives
+    with gzip.open(archives[0], "rb") as f:
+        assert f.read() == b'10.0.0.2 "GET / HTTP/1.1" 200\n'
+
+    # The run also archives the application log of the test app.
+
+    for path in archives + glob.glob(f"{log_file}.*.gz"):
         os.remove(path)
 
 

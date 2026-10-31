@@ -41,6 +41,7 @@ ROOT_SCRIPTS = (
     "fitzflix.py",
     "scheduler.py",
     "supervisor.py",
+    "gunicorn.conf.py",
     ".claude/mint_session_cookie.py",
 )
 TEMPLATE_DIRS = ("app/templates", "app/static")
