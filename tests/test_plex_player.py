@@ -854,10 +854,29 @@ def test_home_user_tokens_are_minted_once_and_a_refusal_is_retried(
             return RefusedResponse()
         return fake.post(url, params=params, headers=headers, timeout=timeout)
 
+    # plex.tv lists the local server for the account, with the access
+    # token that the server accepts for that account.
+
+    def resources(url, params=None, headers=None, timeout=None):
+        if url.endswith("/api/v2/resources"):
+            return FakeResponse(
+                [
+                    {
+                        "provides": "server",
+                        "clientIdentifier": "MACHINE",
+                        "accessToken": "ACCESS-FOR-" + headers["X-Plex-Token"],
+                    }
+                ]
+            )
+        return fake.player_get(url, params=params, headers=headers, timeout=timeout)
+
     monkeypatch.setattr(plex_player.requests, "post", switch)
+    monkeypatch.setattr(plex_player.requests, "get", resources)
+    monkeypatch.setattr(plex_player, "_server_machine_id", lambda: "MACHINE")
     keys = [
-        plex_player.HOME_SWITCH_KEY.format(uuid=user["uuid"])
+        key.format(uuid=user["uuid"])
         for user in HOME_USERS["users"]
+        for key in (plex_player.HOME_SWITCH_KEY, plex_player.HOME_ACCESS_KEY)
     ]
     with app.app_context():
         app.redis.delete(*keys)
@@ -867,14 +886,14 @@ def test_home_user_tokens_are_minted_once_and_a_refusal_is_retried(
 
             refuse.clear()
             assert plex_player.home_user_tokens() == [
-                ("Member", "HOME-TOKEN-MEMBER-UUID")
+                ("Member", "ACCESS-FOR-HOME-TOKEN-MEMBER-UUID")
             ]
             assert posts == ["MEMBER-UUID", "MEMBER-UUID"]
 
             # Within the cache window, no switch is sent at all.
 
             assert plex_player.home_user_tokens() == [
-                ("Member", "HOME-TOKEN-MEMBER-UUID")
+                ("Member", "ACCESS-FOR-HOME-TOKEN-MEMBER-UUID")
             ]
             assert posts == ["MEMBER-UUID", "MEMBER-UUID"]
         finally:

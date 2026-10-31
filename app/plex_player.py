@@ -79,12 +79,16 @@ PLAYER_NETWORKS = [
 # Thus, the clicks of an unlinked member do not each wait on plex.tv.
 HOME_TOKEN_KEY = "fitzflix:plex:home-token:{user_id}"
 
-# The switch token of one Home user, by the uuid of that user. The
-# stream selection sync (#652) acts for every Home user. plex.tv limits
-# the home switch, and answered 429 to 12 switches in one minute. Thus,
-# a token is minted once in 12 hours per user, not once per run.
+# The tokens of one Home user, by the uuid of that user. The stream
+# selection sync (#652) acts for every Home user. plex.tv limits the
+# home switch, and answered 429 to 12 switches in one minute. Thus, the
+# account token of a switch lives 12 hours, not one run. The server
+# refuses that account token with a 401. A shared user reaches the
+# server with the access token that plex.tv lists for that server in
+# the resources of the user. That token lives 12 hours too.
 
 HOME_SWITCH_KEY = "fitzflix:plex:home-switch:{uuid}"
+HOME_ACCESS_KEY = "fitzflix:plex:home-access:{uuid}"
 HOME_TOKEN_SECONDS = 12 * 3600
 HOME_TOKEN_MISS_SECONDS = 300
 
@@ -224,31 +228,89 @@ def _home_user_token(plex_username):
     return None
 
 
-def _cached_switch_token(home_user):
-    """Return the cached switch token of a Home user. Mint it on a miss.
+def _server_access_token(account_token):
+    """Return the token with which the account of this token reaches the local server.
+
+    plex.tv lists the servers that an account can reach, each with an
+    access token for that account. The server refuses the account token
+    itself with a 401. The result is None when the account cannot reach
+    the local server."""
+
+    machine_id = _server_machine_id()
+    r = requests.get(
+        f"{PLEX_TV}/api/v2/resources",
+        params={"includeHttps": 1},
+        headers={
+            "Accept": "application/json",
+            "X-Plex-Client-Identifier": CLIENT_IDENTIFIER,
+            "X-Plex-Token": account_token,
+        },
+        timeout=15,
+    )
+    r.raise_for_status()
+    for resource in r.json() or []:
+        if (
+            resource.get("provides") == "server"
+            and resource.get("clientIdentifier") == machine_id
+        ):
+            return resource.get("accessToken") or None
+    return None
+
+
+def _cached(key, home_user, fetch):
+    """Return the cached value of a token of a Home user. Fetch it on a miss.
 
     A refusal of plex.tv, for example a 429, caches nothing. The next
-    call tries again. The owner and a PIN-protected user give None,
-    which is cached as a miss for a short time."""
+    call tries again. A None result (the owner, a PIN-protected user,
+    a user without access to the server) is cached as a miss for a
+    short time."""
 
-    def fetch():
+    def guarded():
         try:
-            return _switch_token(home_user), True
+            return fetch(), True
         except requests.HTTPError:
             current_app.logger.warning(traceback.format_exc())
             return None, False
 
     return cached_fetch(
-        HOME_SWITCH_KEY.format(uuid=home_user["uuid"]),
+        key.format(uuid=home_user["uuid"]),
         HOME_TOKEN_SECONDS,
-        fetch,
+        guarded,
         miss_ttl=HOME_TOKEN_MISS_SECONDS,
     )
+
+
+def _cached_account_token(home_user):
+    """Return the account token of a Home user, from the cache or the home switch.
+
+    A refusal of plex.tv raises. The caller decides what a refusal
+    means for its own cache."""
+
+    return cached_fetch(
+        HOME_SWITCH_KEY.format(uuid=home_user["uuid"]),
+        HOME_TOKEN_SECONDS,
+        lambda: (_switch_token(home_user), True),
+        miss_ttl=HOME_TOKEN_MISS_SECONDS,
+    )
+
+
+def _cached_access_token(home_user):
+    """Return the server access token of a Home user, from the cache or plex.tv.
+
+    A refused switch raises inside the fetch. Then the guard of _cached
+    caches nothing at this level either."""
+
+    def fetch():
+        account_token = _cached_account_token(home_user)
+        return _server_access_token(account_token) if account_token else None
+
+    return _cached(HOME_ACCESS_KEY, home_user, fetch)
 
 
 def home_user_tokens():
     """Return [(title, token)] for every Home user that Fitzflix can switch to.
 
+    The token is the one that reaches the local server as that user.
     The owner and the PIN-protected users are not in the list. The
     stream selection sync (#652) acts for each of these accounts in
     turn. A user whose switch plex.tv refused is not in the list for
@@ -259,7 +321,7 @@ def home_user_tokens():
     for home_user in _home_users():
         if not home_user.get("uuid"):
             continue
-        token = _cached_switch_token(home_user)
+        token = _cached_access_token(home_user)
         if token:
             tokens.append((home_user.get("title") or home_user.get("username"), token))
     return tokens
