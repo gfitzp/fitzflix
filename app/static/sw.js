@@ -1,8 +1,18 @@
-// This is the Fitzflix service worker. It keeps the shopping list and the
-// search usable in stores with bad reception. The worker serves the static
-// assets (posters, icons, CDN styles) from the cache and revalidates them
-// in the background. The app shell pages are network-first. Thus, they are
-// always fresh online. The last good copy is the offline fallback.
+// This is the Fitzflix service worker. It keeps the shopping list usable
+// in stores with bad reception. The worker serves the static assets
+// (posters, icons, CDN styles) from the cache and revalidates them in
+// the background. The shopping list pages are network-first. Thus, they
+// are always fresh online. The last good copy is the offline fallback.
+//
+// The scope of the worker is /shopping-list/ (#647). Every request of a
+// page under the scope waits for the fetch handler of the worker. A
+// worker that Safari suspended froze every page of the site, and a new
+// window too, until Safari restarted it. The queue, the File Activity
+// page, and the other pages are outside the scope. Thus, a request of
+// those pages never passes through the worker. The page scripts
+// unregister the older worker, whose scope was the whole site. The
+// activate handler does the same when the browser updates that worker
+// in place.
 //
 // The worker caches only successful responses. A failure that is kept
 // cache-first is permanent. Example (#206): the reverse proxy returned a
@@ -14,41 +24,62 @@
 //
 // The worker keeps only the pages in SHELL_PAGES (#334). It never keeps
 // the profile page (it shows the API key), JSON answers, or the other
-// signed-in pages. A logout deletes the kept pages.
+// signed-in pages. The login page deletes the kept pages.
 
-const CACHE = "fitzflix-v3";
-const PAGES = "fitzflix-pages-v3";
+const CACHE = "fitzflix-v4";
+const PAGES = "fitzflix-pages-v4";
+const SCOPE_PATH = "/shopping-list/";
 
-// The pages that the worker keeps for offline use. The search page has a
-// different copy for each query. MAX_SEARCH_PAGES sets how many it keeps
+// The pages that the worker keeps for offline use
 
-const SHELL_PAGES = ["/", "/shopping-list/movie", "/shopping-list/tv"];
-const SEARCH_PAGE = "/search";
-const MAX_SEARCH_PAGES = 10;
-const LOGOUT_PAGE = "/auth/logout";
+const SHELL_PAGES = ["/shopping-list/movie", "/shopping-list/tv"];
 
 self.addEventListener("install", function () {
 	self.skipWaiting();
 });
 
+// A worker whose scope is not the shopping list is the older worker,
+// updated in place. It removes itself and its caches. Then the pages
+// register the scoped worker
+
+function isScopedToShoppingList() {
+	return new URL(self.registration.scope).pathname === SCOPE_PATH;
+}
+
+function deleteOtherCaches() {
+	return caches.keys().then(function (keys) {
+		return Promise.all(
+			keys
+				.filter(function (key) {
+					return key !== CACHE && key !== PAGES;
+				})
+				.map(function (key) {
+					return caches.delete(key);
+				})
+		);
+	});
+}
+
 self.addEventListener("activate", function (event) {
+	if (!isScopedToShoppingList()) {
+		event.waitUntil(
+			caches
+				.keys()
+				.then(function (keys) {
+					return Promise.all(keys.map(function (key) {
+						return caches.delete(key);
+					}));
+				})
+				.then(function () {
+					return self.registration.unregister();
+				})
+		);
+		return;
+	}
 	event.waitUntil(
-		caches
-			.keys()
-			.then(function (keys) {
-				return Promise.all(
-					keys
-						.filter(function (key) {
-							return key !== CACHE && key !== PAGES;
-						})
-						.map(function (key) {
-							return caches.delete(key);
-						})
-				);
-			})
-			.then(function () {
-				return self.clients.claim();
-			})
+		deleteOtherCaches().then(function () {
+			return self.clients.claim();
+		})
 	);
 });
 
@@ -80,25 +111,7 @@ function isShellPage(request, url) {
 	if (request.mode !== "navigate" || url.origin !== location.origin) {
 		return false;
 	}
-	if (url.pathname === SEARCH_PAGE) return true;
 	return url.search === "" && SHELL_PAGES.indexOf(url.pathname) !== -1;
-}
-
-// Delete the oldest search pages when there are more than MAX_SEARCH_PAGES
-
-function trimSearchPages(cache) {
-	return cache.keys().then(function (keys) {
-		var searches = keys.filter(function (key) {
-			return new URL(key.url).pathname === SEARCH_PAGE;
-		});
-		return Promise.all(
-			searches
-				.slice(0, Math.max(0, searches.length - MAX_SEARCH_PAGES))
-				.map(function (key) {
-					return cache.delete(key);
-				})
-		);
-	});
 }
 
 var OFFLINE_PAGE =
@@ -106,24 +119,11 @@ var OFFLINE_PAGE =
 	"<div style=\"font-family: sans-serif; margin: 3em auto; max-width: 30em; text-align: center;\">" +
 	"<h1>You're offline</h1>" +
 	"<p>This page hasn't been viewed while online yet, so there's no saved copy to show. " +
-	"The shopping lists, the home page, and recent searches are kept for offline use.</p></div>";
+	"The shopping lists are kept for offline use.</p></div>";
 
 self.addEventListener("fetch", function (event) {
 	var request = event.request;
 	var url = new URL(request.url);
-
-	// A logout deletes the kept pages. Thus, the next user of the browser
-	// cannot see them offline. A logout is a POST (#401). The request
-	// still goes to the network
-
-	if (
-		request.method === "POST" &&
-		url.origin === location.origin &&
-		url.pathname === LOGOUT_PAGE
-	) {
-		event.waitUntil(caches.delete(PAGES));
-		return;
-	}
 
 	// Only GET requests are cacheable. Shopping-cart toggles and other POST
 	// requests always go to the network
@@ -210,9 +210,7 @@ self.addEventListener("fetch", function (event) {
 				if (isCacheable(response) && isKeepablePage(response)) {
 					var copy = response.clone();
 					return caches.open(PAGES).then(function (cache) {
-						return cache.put(request, copy).then(function () {
-							return trimSearchPages(cache);
-						});
+						return cache.put(request, copy);
 					});
 				}
 			})

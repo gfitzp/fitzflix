@@ -63,11 +63,17 @@ function fakeFetch(request) {
     return Promise.resolve(new FakeResponse("body", spec));
 }
 
+const options = JSON.parse(process.argv[4] || "{}");
+let unregistered = false;
 const handlers = {};
 const self = {
     addEventListener: (type, fn) => { handlers[type] = fn; },
     skipWaiting: () => {},
     clients: { claim: () => Promise.resolve() },
+    registration: {
+        scope: options.scope || "https://fitzflix.test/shopping-list/",
+        unregister: () => { unregistered = true; return Promise.resolve(true); },
+    },
 };
 vm.runInNewContext(source, {
     self, caches, fetch: fakeFetch, Response: FakeResponse, URL,
@@ -75,6 +81,14 @@ vm.runInNewContext(source, {
 });
 
 (async () => {
+    if (options.activate) {
+        for (const name of options.caches) store(name).put({ url: "https://fitzflix.test/x" }, {});
+        const waits = [];
+        handlers.activate({ waitUntil: (p) => waits.push(p) });
+        await Promise.all(waits);
+        console.log(JSON.stringify({ caches: Object.keys(stores), unregistered }));
+        return;
+    }
     for (const item of requests) {
         respond = () => item.response || { headers: { "Content-Type": "text/html; charset=utf-8" } };
         const request = { url: "https://fitzflix.test" + item.path, method: item.method || "GET", mode: item.mode || "navigate" };
@@ -110,12 +124,32 @@ def run_worker(tmp_path, requests):
     return sorted(url for urls in kept.values() for url in urls)
 
 
+def run_activate(tmp_path, scope, caches):
+    """Run the activate handler under a scope. Return the caches left and the unregister flag."""
+
+    if shutil.which("node") is None:
+        pytest.skip("Node is not installed")
+    harness = tmp_path / "harness.js"
+    harness.write_text(HARNESS)
+    options = {"activate": True, "scope": scope, "caches": caches}
+    result = subprocess.run(
+        ["node", str(harness), SW_PATH, "[]", json.dumps(options)],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=True,
+    )
+    return json.loads(result.stdout)
+
+
 def test_worker_keeps_only_the_shell_pages(app, tmp_path):
     kept = run_worker(
         tmp_path,
         [
             {"path": "/"},
             {"path": "/shopping-list/movie"},
+            {"path": "/shopping-list/tv"},
+            {"path": "/search?q=star"},
             {"path": "/profile"},
             {"path": "/watchlist"},
             {"path": "/history"},
@@ -126,8 +160,8 @@ def test_worker_keeps_only_the_shell_pages(app, tmp_path):
         ],
     )
     assert kept == [
-        "https://fitzflix.test/",
         "https://fitzflix.test/shopping-list/movie",
+        "https://fitzflix.test/shopping-list/tv",
     ]
 
 
@@ -136,7 +170,7 @@ def test_worker_skips_redirects_and_no_store_pages(app, tmp_path):
         tmp_path,
         [
             {
-                "path": "/",
+                "path": "/shopping-list/movie",
                 "response": {
                     "redirected": True,
                     "headers": {"Content-Type": "text/html"},
@@ -157,32 +191,32 @@ def test_worker_skips_redirects_and_no_store_pages(app, tmp_path):
     assert kept == []
 
 
-def test_worker_caps_the_kept_search_pages(app, tmp_path):
-    kept = run_worker(tmp_path, [{"path": f"/search?q=film{n}"} for n in range(15)])
-    assert len(kept) == 10
-    assert "https://fitzflix.test/search?q=film14" in kept
-    assert "https://fitzflix.test/search?q=film0" not in kept
+def test_the_scoped_worker_deletes_only_the_older_caches(app, tmp_path):
+    """The activate under the shopping list scope keeps its own caches (#647)."""
 
-
-def test_logout_deletes_the_kept_pages(app, tmp_path):
-    kept = run_worker(
+    state = run_activate(
         tmp_path,
-        [
-            {"path": "/"},
-            {"path": "/shopping-list/movie"},
-            {"path": "/auth/logout", "method": "POST"},
-        ],
+        "https://fitzflix.test/shopping-list/",
+        ["fitzflix-v3", "fitzflix-pages-v3", "fitzflix-v4", "fitzflix-pages-v4"],
     )
-    assert kept == []
+    assert sorted(state["caches"]) == ["fitzflix-pages-v4", "fitzflix-v4"]
+    assert state["unregistered"] is False
 
 
-def test_a_get_of_the_logout_page_keeps_the_pages(app, tmp_path):
-    # A logout is a POST (#401). A prefetch GET is not a logout.
-    kept = run_worker(
+def test_the_worker_under_the_old_root_scope_removes_itself(app, tmp_path):
+    """An update of the older worker, whose scope is the site, removes it (#647).
+
+    The browser updates the script of the older registration in place.
+    That worker would then control every page again. Thus, it deletes
+    every cache and unregisters itself on activate."""
+
+    state = run_activate(
         tmp_path,
-        [{"path": "/shopping-list/movie"}, {"path": "/auth/logout"}],
+        "https://fitzflix.test/",
+        ["fitzflix-v3", "fitzflix-pages-v3", "fitzflix-v4"],
     )
-    assert kept
+    assert state["caches"] == []
+    assert state["unregistered"] is True
 
 
 def _run_with_put(tmp_path, put, requests):
@@ -220,9 +254,15 @@ def test_the_cache_writes_are_held_open_with_wait_until(app, tmp_path):
     kept = _run_with_put(
         tmp_path,
         slow,
-        [{"path": "/"}, {"path": "/static/site.css", "mode": "no-cors"}],
+        [
+            {"path": "/shopping-list/movie"},
+            {"path": "/static/site.css", "mode": "no-cors"},
+        ],
     )
-    assert kept == ["https://fitzflix.test/", "https://fitzflix.test/static/site.css"]
+    assert kept == [
+        "https://fitzflix.test/shopping-list/movie",
+        "https://fitzflix.test/static/site.css",
+    ]
 
 
 def test_a_refused_cache_write_is_caught(app, tmp_path):
@@ -233,7 +273,10 @@ def test_a_refused_cache_write_is_caught(app, tmp_path):
         _run_with_put(
             tmp_path,
             refused,
-            [{"path": "/"}, {"path": "/static/site.css", "mode": "no-cors"}],
+            [
+                {"path": "/shopping-list/movie"},
+                {"path": "/static/site.css", "mode": "no-cors"},
+            ],
         )
         == []
     )

@@ -74,12 +74,11 @@ def favicon():
 
 @bp.route("/sw.js")
 def service_worker():
-    # Fitzflix serves this file from the root, not from /static/. Thus, the
-    # scope of the service worker covers the whole application.
-
     """Serve the PWA service worker from the site root.
 
-    Thus, the scope of the service worker covers the whole application.
+    The pages register it with the scope /shopping-list/ (#647). A script
+    at the root permits that scope without a Service-Worker-Allowed header.
+    The private static subtrees are not in the way of the root path.
     """
 
     return send_from_directory(

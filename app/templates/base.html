@@ -192,11 +192,36 @@
 	<script>
 		// Offline support (the shopping list in stores with bad reception).
 		// Service workers run only in secure contexts. Thus, this does
-		// nothing over plain http
+		// nothing over plain http.
+		//
+		// The scope of the worker is the shopping list (#647). Every
+		// request of a page under the scope waits for the worker. A
+		// suspended worker froze every page of the site in Safari. The
+		// other pages stay outside the scope. The older worker covered
+		// the whole site. Each page unregisters it first.
 
 		if ("serviceWorker" in navigator && window.isSecureContext) {
-			navigator.serviceWorker.register("/sw.js").catch(function() {});
+			navigator.serviceWorker.getRegistrations().then(function(registrations) {
+				return Promise.all(registrations.map(function(registration) {
+					if (new URL(registration.scope).pathname === "/shopping-list/") {
+						return null;
+					}
+					return registration.unregister();
+				}));
+			}).then(function() {
+				return navigator.serviceWorker.register("/sw.js", { scope: "/shopping-list/" });
+			}).catch(function() {});
 		}
+{% if not current_user.is_authenticated %}
+
+		// The worker never sees a logout. The logout page is outside its
+		// scope. Thus, the login page deletes the kept shopping list
+		// pages. The next user of the browser cannot see them offline
+
+		if (window.isSecureContext && "caches" in window) {
+			caches.delete("fitzflix-pages-v4").catch(function() {});
+		}
+{% endif %}
 	</script>
 	{% if current_user.is_authenticated %}
 	<script>
