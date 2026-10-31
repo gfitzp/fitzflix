@@ -62,6 +62,35 @@ def _no_network(monkeypatch):
     monkeypatch.setattr(videos, "get_audio_tracks_from_file", lambda path: [])
 
 
+def test_the_import_keeps_the_staged_copy_only_for_an_atmos_candidate(app, monkeypatch):
+    """A file without a TrueHD Atmos track gets no space check and no log line.
+
+    The space check ran before the codec check. Thus, every import
+    under the staging reserve logged that the Atmos job copies from the
+    library. A PCM mono film with no job to come logged it too."""
+
+    import app.atmos as atmos
+    from app import importing
+
+    checked = []
+    monkeypatch.setattr(
+        atmos, "staged_handoff", lambda staged, library: checked.append(staged)
+    )
+    monkeypatch.setitem(app.config, "CREATE_ATMOS_TWINS", True)
+    pcm = [{"codec": "PCM", "language": "eng"}]
+    twinned = [
+        {"codec": atmos.EAC3_ATMOS_CODEC, "language": "eng"},
+        {"codec": atmos.TRUEHD_ATMOS_CODEC, "language": "eng"},
+    ]
+    wanting = [{"codec": atmos.TRUEHD_ATMOS_CODEC, "language": "eng"}]
+    with app.app_context():
+        assert importing._atmos_handoff("staged", "library", pcm) is None
+        assert importing._atmos_handoff("staged", "library", twinned) is None
+        assert checked == []
+        importing._atmos_handoff("staged", "library", wanting)
+        assert checked == ["staged"]
+
+
 def test_a_staged_copy_matches_until_the_library_file_changes(app, monkeypatch):
     """Use the staged copy only while the library file is the same.
 

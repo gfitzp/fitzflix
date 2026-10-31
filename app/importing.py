@@ -3223,12 +3223,16 @@ def _after_commit(
         step("email", send)
 
     # The staged copy can go to the Atmos job of this file. Then that job
-    # does not read the file back from the NAS. The Atmos decision comes
-    # later. Until then, keep the staged copy only if staging has space
-    # for it. With CREATE_ATMOS_TWINS off, no Atmos job comes. Thus, keep
-    # nothing. A failed step keeps nothing either.
+    # does not read the file back from the NAS. The job is queued later,
+    # after the codec check against the committed rows. Until then, keep
+    # the staged copy only for a file with an untwinned TrueHD Atmos
+    # track. Staging must also have space for it. With
+    # CREATE_ATMOS_TWINS off, no Atmos job comes. Thus, keep nothing. A
+    # failed step keeps nothing either.
 
-    atmos_handoff = step("atmos handoff", _atmos_handoff, staged_output, output_file)
+    atmos_handoff = step(
+        "atmos handoff", _atmos_handoff, staged_output, output_file, audio_tracks
+    )
     if atmos_handoff is None:
         _remove_staged_output(staged_output)
 
@@ -3383,12 +3387,18 @@ def _delete_worse_copies(worse_local_copies, output_file):
             remove_episode_thumb_of(worse_path)
 
 
-def _atmos_handoff(staged_output, output_file):
-    """Return the staged copy for the Atmos job, or None with CREATE_ATMOS_TWINS off."""
+def _atmos_handoff(staged_output, output_file, audio_tracks):
+    """Return the staged copy for the Atmos job, or None if no job can come.
 
-    from app.atmos import staged_handoff
+    No job comes with CREATE_ATMOS_TWINS off, or for a file without a
+    TrueHD Atmos track that wants a twin. Then this makes no space check
+    and writes no log line about the Atmos job."""
+
+    from app.atmos import atmos_supplement_candidates, staged_handoff
 
     if not get_setting("CREATE_ATMOS_TWINS"):
+        return None
+    if not atmos_supplement_candidates(audio_tracks):
         return None
     return staged_handoff(staged_output, output_file)
 

@@ -224,12 +224,12 @@ def test_a_failed_follow_up_does_not_skip_the_next_ones(
     Before the phase split, the first failure skipped every later step:
     here the source removal and the TMDB refresh."""
 
-    import app.atmos as atmos
+    from app import importing
 
     def broken(*args, **kwargs):
         raise RuntimeError("Redis is not reachable")
 
-    monkeypatch.setattr(atmos, "staged_handoff", broken)
+    monkeypatch.setattr(importing, "_delete_worse_copies", broken)
     basename = "Later Steps (2021) - [DVD].mkv"
     with app.app_context():
         source = _import(app, sample_mkv, incoming_dir, basename)

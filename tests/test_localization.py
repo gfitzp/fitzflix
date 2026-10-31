@@ -1681,7 +1681,11 @@ def test_finalize_gives_the_staged_copy_to_the_atmos_job(
     The Atmos job read the just-copied file back from the NAS (Gandhi:
     8 min 41 s). Now finalize offers the staged copy. It stays only if
     the job was queued. A staging volume short of space keeps nothing,
-    and the job then copies from the library."""
+    and the job then copies from the library. The offer is only for a
+    file with an untwinned TrueHD Atmos track. Thus, the test marks the
+    audio track of the sample as one."""
+
+    import copy
 
     import app.atmos as atmos
 
@@ -1718,7 +1722,11 @@ def test_finalize_gives_the_staged_copy_to_the_atmos_job(
             if job.func_name == "app.videos.finalize_localization"
             and job.args[0] == source
         )
-        finalize_localization(*job.args, **job.kwargs)
+        args = list(job.args)
+        inspection = copy.deepcopy(args[4])
+        inspection["audio_tracks"][0]["codec"] = atmos.TRUEHD_ATMOS_CODEC
+        args[4] = inspection
+        finalize_localization(*args, **job.kwargs)
 
         output = os.path.join(app.config["LIBRARY_DIR"], job.args[1]["file_path"])
         assert os.path.exists(output)
