@@ -1033,3 +1033,26 @@ def test_a_shaped_account_block_records_no_username(app, client, account):
     jobs = plex_jobs(app)
     assert len(jobs) == 1
     assert jobs[0].args[1] == ""
+
+
+def test_webhook_library_new_queues_the_stream_selection(app, client, monkeypatch):
+    """A new item gets its Plex selection matched to the file (#652)."""
+
+    monkeypatch.setitem(app.config, "PLEX_URL", "http://plex.test")
+    monkeypatch.setitem(app.config, "PLEX_TOKEN", "owner-token")
+    payload = {
+        "event": "library.new",
+        "Metadata": {"type": "movie", "title": "Barry Lyndon", "ratingKey": "9001"},
+    }
+    response = post_webhook(client, payload)
+    assert response.status_code == 204
+    assert plex_jobs(app) == []
+
+    with app.app_context():
+        from app import safe_job_id
+
+        job = app.maintenance_queue.fetch_job(safe_job_id("plex_select:9001"))
+        assert job is not None
+        assert job.func_name == "app.plex_selection.align_plex_items"
+        assert job.args == (["9001"],)
+        assert job.id in app.maintenance_queue.scheduled_job_registry.get_job_ids()

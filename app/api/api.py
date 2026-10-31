@@ -1,4 +1,5 @@
 import json
+import traceback
 import re
 import secrets
 
@@ -8,6 +9,7 @@ from flask import current_app, jsonify, request
 from flask_login import current_user
 
 from app.tasks import enqueue_task
+from app.plex_selection import enqueue_align
 from app.api import bp
 
 
@@ -73,6 +75,20 @@ def plex_webhook(token):
     metadata = payload.get("Metadata")
     if not isinstance(metadata, dict):
         metadata = {}
+    # A new item is a chance to make the selected streams of Plex match
+    # the file before anyone plays it (#652). Plex posts the event for a
+    # movie, an episode, a season, or a show. The task expands the
+    # last two to their episodes. The webhook never waits on Redis.
+
+    if payload.get("event") == "library.new":
+        rating_key = metadata.get("ratingKey")
+        if isinstance(rating_key, (str, int)) and str(rating_key).isdigit():
+            try:
+                enqueue_align(rating_key)
+            except Exception:
+                current_app.logger.warning(traceback.format_exc())
+        return "", 204
+
     if payload.get("event") != "media.scrobble" or metadata.get("type") != "movie":
         return "", 204
 

@@ -26,6 +26,7 @@ class FakePlexServer:
         self.analyzed = []
         self.extras_asked = []
         self.scanned = []
+        self.aligned = []
 
     def get(self, path, params=None):
         if path == "/library/sections":
@@ -111,6 +112,7 @@ def _wire(app, monkeypatch, fake, scanner=None):
     monkeypatch.setitem(app.config, "PLEX_TOKEN", "token")
     monkeypatch.setattr(plex_library, "plex_get", fake.get)
     monkeypatch.setattr(plex_library, "plex_command", fake.command)
+    monkeypatch.setattr(plex_library, "align_plex_items", fake.aligned.append)
     if scanner is not None:
         monkeypatch.setitem(app.config, "PLEX_SCANNER", str(scanner))
         monkeypatch.setattr(plex_library, "_analyze_clip", fake.scanned.append)
@@ -133,9 +135,11 @@ def test_analyze_hits_the_item_holding_the_file(app, monkeypatch, tmp_path):
 
     assert plex_library.analyze_plex_media([film]) is True
 
-    # Fitzflix analyzed the item of the film, and nothing else.
+    # Fitzflix analyzed the item of the film, and nothing else. Then it
+    # made the stream selection of that item match the file (#652).
 
     assert fake.analyzed == ["202"]
+    assert fake.aligned == [["202"]]
 
     # Fitzflix paged only the section that has the location of the file.
     # The analyze of a movie never walks the TV section. That section is
@@ -301,6 +305,7 @@ def test_an_extra_is_analyzed_through_its_film(app, monkeypatch, tmp_path):
     assert fake.scanned == ["301"]
     assert fake.analyzed == []
     assert fake.extras_asked == ["300"]
+    assert fake.aligned == [["301"]]
 
 
 def test_a_same_named_extra_resolves_to_its_own_film(app, monkeypatch, tmp_path):

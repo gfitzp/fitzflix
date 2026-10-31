@@ -62,6 +62,7 @@ from app.tasks import enqueue_task, requeue
 from app import get_app, path_tag, safe_job_id
 from app.maintenance import PLEX_TRASH_HELD_KEY, VOLUMES_ROOT, volume_alive
 from app.plex_api import plex_command, plex_get
+from app.plex_selection import align_plex_items
 from app.settings import get_setting
 
 app = LocalProxy(get_app)
@@ -387,7 +388,7 @@ def _analyze_extras(section, targets, folders, analyzed):
     """
 
     extras_of = {}
-    for target in sorted(targets - analyzed):
+    for target in sorted(targets - set(analyzed)):
         tail = _tail(target, 3)
         for holder in _holders_of(folders, target):
             if holder not in extras_of:
@@ -430,10 +431,10 @@ def _analyze_extras(section, targets, folders, analyzed):
                     f"PLEX_SCANNER ({scanner!r}) is not on this host. Plex keeps "
                     f"its old track list"
                 )
-                analyzed.add(target)
+                analyzed[target] = None
                 break
             _analyze_clip(match["ratingKey"])
-            analyzed.add(target)
+            analyzed[target] = match["ratingKey"]
             current_app.logger.info(
                 f"Plex analyze: {match['ratingKey']} '{os.path.basename(target)}' "
                 f"re-analyzed by the scanner as an extra of {holder} in "
@@ -445,8 +446,8 @@ def _analyze_extras(section, targets, folders, analyzed):
 def _analyze_section(section, targets, by_basename, analyzed):
     """Analyze every target file that this section holds.
 
-    This function adds each matched file to `analyzed`. It matches a
-    file on its full path. If Plex knows the library by a different
+    This function adds each matched file to `analyzed`, with the rating
+    key of the item that holds it. It matches a file on its full path. If Plex knows the library by a different
     path, it matches the file on its basename. A target that no paged
     item holds can be an extra. Then the function asks the items whose
     folder holds the target for their extras."""
@@ -479,13 +480,13 @@ def _analyze_section(section, targets, by_basename, analyzed):
                 if target is None or target in analyzed:
                     continue
                 plex_command("PUT", f"/library/metadata/{rating_key}/analyze")
-                analyzed.add(target)
+                analyzed[target] = rating_key
                 current_app.logger.info(
                     f"Plex analyze: {rating_key} '{os.path.basename(target)}' "
                     f"re-analyzed in '{section.get('title')}'"
                 )
         start += len(page)
-        if analyzed == targets:
+        if set(analyzed) == targets:
             return
         if not page or start >= container.get("totalSize", 0):
             break
@@ -564,17 +565,28 @@ def analyze_plex_media(file_paths, retries=0):
             if section.get("type") in SECTION_ITEM_TYPE
         ]
 
-        analyzed = set()
+        analyzed = {}
         candidates = _sections_holding(sections, readable) if readable else []
         for section in candidates:
             try:
                 _analyze_section(section, readable, by_basename, analyzed)
             except Exception:
                 current_app.logger.warning(traceback.format_exc())
-            if analyzed == readable:
+            if set(analyzed) == readable:
                 break
 
-        unmatched = sorted(os.path.basename(path) for path in wanted - analyzed)
+        # The analyzed items keep the selection rows of each account, but
+        # a new import has none yet. Make the selection match the file
+        # (#652). The alignment runs in this task, on the same worker.
+
+        items = sorted({key for key in analyzed.values() if key})
+        if items:
+            try:
+                align_plex_items(items)
+            except Exception:
+                current_app.logger.warning(traceback.format_exc())
+
+        unmatched = sorted(os.path.basename(path) for path in wanted - set(analyzed))
         if not unmatched:
             return True
 
@@ -597,7 +609,7 @@ def analyze_plex_media(file_paths, retries=0):
                 delay=timedelta(minutes=ANALYZE_RETRY_MINUTES),
                 reason=f"nothing analyzed for {unmatched}",
                 counters={"retries": retries + 1},
-                args=(sorted(wanted - analyzed),),
+                args=(sorted(wanted - set(analyzed)),),
                 description=f"Re-analyzing {len(unmatched)} file(s) in Plex",
                 level="info",
             )

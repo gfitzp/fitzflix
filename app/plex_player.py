@@ -156,40 +156,80 @@ def forget_home_token(user_id):
     current_app.redis.delete(HOME_TOKEN_KEY.format(user_id=user_id))
 
 
-def _home_user_token(plex_username):
-    """Return a token for the named Plex Home user, or None.
+def _plex_tv_headers():
+    """Return the headers of a plex.tv call as the owner."""
 
-    This never switches to the Home user with the admin flag. That
-    user is the owner of the server. A member who claims the name of
-    the owner on their Profile page must not mint the token of the
-    owner in this way."""
-
-    wanted = plex_username.strip().lower()
-    if not wanted:
-        return None
-    headers = {
+    return {
         "Accept": "application/json",
         "X-Plex-Client-Identifier": CLIENT_IDENTIFIER,
         "X-Plex-Token": current_app.config["PLEX_TOKEN"],
     }
-    r = requests.get(f"{PLEX_TV}/api/v2/home/users", headers=headers, timeout=15)
+
+
+def _home_users():
+    """Return the Home users of the owner, as plex.tv lists them."""
+
+    r = requests.get(
+        f"{PLEX_TV}/api/v2/home/users", headers=_plex_tv_headers(), timeout=15
+    )
     r.raise_for_status()
-    for home_user in r.json().get("users") or []:
+    return r.json().get("users") or []
+
+
+def _switch_token(home_user):
+    """Return a token for one Home user through the home switch, or None.
+
+    This never switches to the Home user with the admin flag. That
+    user is the owner of the server. A PIN-protected user needs the
+    PIN, which Fitzflix does not have."""
+
+    if not home_user.get("uuid"):
+        return None
+    if home_user.get("protected") or home_user.get("admin"):
+        return None
+    r = requests.post(
+        f"{PLEX_TV}/api/v2/home/users/{home_user['uuid']}/switch",
+        headers=_plex_tv_headers(),
+        timeout=15,
+    )
+    r.raise_for_status()
+    return r.json().get("authToken") or None
+
+
+def _home_user_token(plex_username):
+    """Return a token for the named Plex Home user, or None.
+
+    A member who claims the name of the owner on their Profile page
+    must not mint the token of the owner in this way. _switch_token
+    refuses the admin."""
+
+    wanted = plex_username.strip().lower()
+    if not wanted:
+        return None
+    for home_user in _home_users():
         names = {
             (home_user.get("username") or "").lower(),
             (home_user.get("title") or "").lower(),
         }
-        if wanted in names and home_user.get("uuid"):
-            if home_user.get("protected") or home_user.get("admin"):
-                return None
-            r = requests.post(
-                f"{PLEX_TV}/api/v2/home/users/{home_user['uuid']}/switch",
-                headers=headers,
-                timeout=15,
-            )
-            r.raise_for_status()
-            return r.json().get("authToken") or None
+        if wanted in names:
+            return _switch_token(home_user)
     return None
+
+
+def home_user_tokens():
+    """Return [(title, token)] for every Home user that Fitzflix can switch to.
+
+    The owner and the PIN-protected users are not in the list. The
+    stream selection sync (#652) acts for each of these accounts in
+    turn. The tokens are not cached. One run mints one token per user.
+    """
+
+    tokens = []
+    for home_user in _home_users():
+        token = _switch_token(home_user)
+        if token:
+            tokens.append((home_user.get("title") or home_user.get("username"), token))
+    return tokens
 
 
 def remote_playback_configured():

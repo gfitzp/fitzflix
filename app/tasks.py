@@ -183,6 +183,10 @@ TASKS = {
     "app.streaming.warm_title_availability": TaskSpec("maintenance", 1800),
     "app.criterion_now.poll_criterion_now": TaskSpec("maintenance", 300),
     "app.plex_library.analyze_plex_media": TaskSpec("maintenance", 1800),
+    "app.plex_selection.sync_plex_stream_selections": TaskSpec(
+        "maintenance", 7200, "Matching the Plex track selection to the files"
+    ),
+    "app.plex_selection.align_plex_items": TaskSpec("maintenance", 1800),
     # The import pipeline.
     "app.videos.localization_task": TaskSpec("import", "LOCALIZATION_TASK_TIMEOUT"),
     "app.videos.mkvmerge_task": TaskSpec("import", "LOCALIZATION_TASK_TIMEOUT"),

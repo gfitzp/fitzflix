@@ -336,6 +336,14 @@ To remove the device and its play buttons, clear the field.
 
 Fitzflix matches the films to the Plex library by the TMDB guid. If there is no match, it does a title search and verifies the guid. Thus, no other Plex configuration is necessary. Playback can fail with a message about an empty play queue, or about a container that cannot be retrieved. The usual cause is a `PLEX_PLAYER_SERVER_URI` that the device cannot reach. Test the address again from a device on the same network as the player.
 
+## Plex plays the default tracks of the file
+
+Plex picks the audio stream it plays from its own selection per account, not from the flags in the file. When no account has chosen a stream, Plex picks the audio stream with the most channels. A film with a mono main track and a stereo commentary then plays the commentary. Fitzflix puts the main audio track first and flags it default on import. Thus, Fitzflix makes the selection of Plex match the file (#652).
+
+The rule: the selected audio stream is the default audio track of the file, or its first audio track when no track is flagged. The selected subtitle stream is the default subtitle track of the file, or none. Fitzflix applies the rule for the owner and for each Plex Home user that is not PIN-protected. Plex friends outside the Home keep their own selection, because the server owner holds no token for their accounts.
+
+It runs in three places. A rewrite of a library file applies the rule after the Plex analyze. A new import applies it two minutes after the `library.new` webhook of Plex. A nightly sweep at 03:45 applies it to both libraries, for each account. Thus, a switch to a commentary track in a Plex app does not outlive the night. Infuse selects tracks by its own rules. This changes what the Plex apps play.
+
 ## Virtual DVR: live TV channels in Plex
 
 The library can broadcast itself. Fitzflix emulates a network tuner, and the Live TV & DVR function of Plex treats it as cable TV. The result is a dial of 24/7 channels with a full guide grid, streamed only from the files that you own. Fitzflix seeds the default dial on the first lineup build. The default dial contains these channels:

@@ -23,18 +23,25 @@ def _url(path):
     return current_app.config["PLEX_URL"] + path
 
 
-def _params(params):
-    """Return the query parameters with the Plex token added."""
+def _params(params, token=None):
+    """Return the query parameters with the Plex token added.
 
-    return {**(params or {}), "X-Plex-Token": current_app.config["PLEX_TOKEN"]}
+    The token of PLEX_TOKEN is the owner. A call for another account,
+    for example the stream selection of a Home user (#652), passes the
+    token of that account."""
+
+    return {
+        **(params or {}),
+        "X-Plex-Token": token or current_app.config["PLEX_TOKEN"],
+    }
 
 
-def plex_get(path, params=None, timeout=PLEX_TIMEOUT):
+def plex_get(path, params=None, timeout=PLEX_TIMEOUT, token=None):
     """Send 1 authenticated JSON GET to the local Plex server. Return the body."""
 
     r = requests.get(
         _url(path),
-        params=_params(params),
+        params=_params(params, token),
         headers={"Accept": "application/json"},
         timeout=timeout,
     )
@@ -42,7 +49,7 @@ def plex_get(path, params=None, timeout=PLEX_TIMEOUT):
     return r.json()
 
 
-def plex_write(method, path, params=None):
+def plex_write(method, path, params=None, token=None):
     """Send 1 write call (POST, PUT, or DELETE) to the local Plex server.
 
     Return the JSON answer, or {} for an empty answer."""
@@ -50,7 +57,7 @@ def plex_write(method, path, params=None):
     r = requests.request(
         method,
         _url(path),
-        params=_params(params),
+        params=_params(params, token),
         headers={"Accept": "application/json"},
         timeout=PLEX_TIMEOUT,
     )

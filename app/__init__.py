@@ -335,6 +335,13 @@ def cron_table(config):
 
         table.append(("50 5 * * *", "app.plex_collections.sync_criterion_collection"))
 
+        # Make the selected audio and subtitle streams of Plex match the
+        # default tracks of each file, for the owner and each Home user
+        # (#652). It runs after the episode titles, before the Plex
+        # maintenance window ends.
+
+        table.append(("45 3 * * *", "app.plex_selection.sync_plex_stream_selections"))
+
     # Reconcile the Plex and Fitzflix watchlists in both directions. The
     # account-level discover API needs only the token, not the server.
 
