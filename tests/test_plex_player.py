@@ -817,3 +817,65 @@ def test_plex_username_uniqueness_ignores_case(app, user_client):
         with app.app_context():
             User.query.filter_by(email=ADMIN_EMAIL).one().plex_username = None
             db.session.commit()
+
+
+class RefusedResponse:
+    """A plex.tv answer that raise_for_status turns into an HTTPError."""
+
+    status_code = 429
+
+    def json(self):
+        return {}
+
+    def raise_for_status(self):
+        import requests
+
+        raise requests.HTTPError("429 Client Error: Too Many Requests")
+
+
+def test_home_user_tokens_are_minted_once_and_a_refusal_is_retried(
+    app, monkeypatch, server_config
+):
+    """Mint the switch token of each Home user once in 12 hours (#652).
+
+    plex.tv limits the home switch. The owner and the PIN-protected user
+    are never in the list. A refused switch is not cached, so the next
+    call mints that user again."""
+
+    fake = FakePlex()
+    plex_player = _wire(monkeypatch, fake)
+    posts = []
+    refuse = {"MEMBER-UUID"}
+
+    def switch(url, params=None, headers=None, timeout=None):
+        uuid = url.rsplit("/", 2)[1]
+        posts.append(uuid)
+        if uuid in refuse:
+            return RefusedResponse()
+        return fake.post(url, params=params, headers=headers, timeout=timeout)
+
+    monkeypatch.setattr(plex_player.requests, "post", switch)
+    keys = [
+        plex_player.HOME_SWITCH_KEY.format(uuid=user["uuid"])
+        for user in HOME_USERS["users"]
+    ]
+    with app.app_context():
+        app.redis.delete(*keys)
+        try:
+            assert plex_player.home_user_tokens() == []
+            assert posts == ["MEMBER-UUID"]
+
+            refuse.clear()
+            assert plex_player.home_user_tokens() == [
+                ("Member", "HOME-TOKEN-MEMBER-UUID")
+            ]
+            assert posts == ["MEMBER-UUID", "MEMBER-UUID"]
+
+            # Within the cache window, no switch is sent at all.
+
+            assert plex_player.home_user_tokens() == [
+                ("Member", "HOME-TOKEN-MEMBER-UUID")
+            ]
+            assert posts == ["MEMBER-UUID", "MEMBER-UUID"]
+        finally:
+            app.redis.delete(*keys)

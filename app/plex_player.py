@@ -33,6 +33,7 @@ it). Thus, this module reports a connection failure at the player as
 
 import ipaddress
 import time
+import traceback
 from urllib.parse import urlsplit
 from xml.etree import ElementTree
 
@@ -77,6 +78,13 @@ PLAYER_NETWORKS = [
 # Fitzflix also remembers a miss (no such Home user) for a short time.
 # Thus, the clicks of an unlinked member do not each wait on plex.tv.
 HOME_TOKEN_KEY = "fitzflix:plex:home-token:{user_id}"
+
+# The switch token of one Home user, by the uuid of that user. The
+# stream selection sync (#652) acts for every Home user. plex.tv limits
+# the home switch, and answered 429 to 12 switches in one minute. Thus,
+# a token is minted once in 12 hours per user, not once per run.
+
+HOME_SWITCH_KEY = "fitzflix:plex:home-switch:{uuid}"
 HOME_TOKEN_SECONDS = 12 * 3600
 HOME_TOKEN_MISS_SECONDS = 300
 
@@ -216,17 +224,42 @@ def _home_user_token(plex_username):
     return None
 
 
+def _cached_switch_token(home_user):
+    """Return the cached switch token of a Home user. Mint it on a miss.
+
+    A refusal of plex.tv, for example a 429, caches nothing. The next
+    call tries again. The owner and a PIN-protected user give None,
+    which is cached as a miss for a short time."""
+
+    def fetch():
+        try:
+            return _switch_token(home_user), True
+        except requests.HTTPError:
+            current_app.logger.warning(traceback.format_exc())
+            return None, False
+
+    return cached_fetch(
+        HOME_SWITCH_KEY.format(uuid=home_user["uuid"]),
+        HOME_TOKEN_SECONDS,
+        fetch,
+        miss_ttl=HOME_TOKEN_MISS_SECONDS,
+    )
+
+
 def home_user_tokens():
     """Return [(title, token)] for every Home user that Fitzflix can switch to.
 
     The owner and the PIN-protected users are not in the list. The
     stream selection sync (#652) acts for each of these accounts in
-    turn. The tokens are not cached. One run mints one token per user.
+    turn. A user whose switch plex.tv refused is not in the list for
+    this run.
     """
 
     tokens = []
     for home_user in _home_users():
-        token = _switch_token(home_user)
+        if not home_user.get("uuid"):
+            continue
+        token = _cached_switch_token(home_user)
         if token:
             tokens.append((home_user.get("title") or home_user.get("username"), token))
     return tokens
