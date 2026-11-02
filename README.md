@@ -236,6 +236,7 @@ Fitzflix can operate downstream of Sonarr and Radarr, and import each file that 
 - URL: `http://<fitzflix host>:8000/api/sonarr/add` (Sonarr) or `http://<fitzflix host>:8000/api/radarr/add` (Radarr)
 - Triggers: **On Import** (Sonarr: On File Import) and **On Upgrade**, and also **On Manual Interaction Required** for the manual-import page (refer to [Manual imports](#manual-imports) below)
 - Method: `POST`, with the triggers **On Import** and **On Upgrade**
+- Radarr triggers for the poster restore: **On Movie File Delete** and **On Movie File Delete For Upgrade** (refer to [Custom posters](#custom-posters) below)
 - Credentials (HTTP Basic authentication): the username is the email address of an **admin** account. The password is the **API key** of that account. The admin page of the user shows the key. The webhook renames and imports files at the paths in the payload. Thus, Fitzflix refuses the key of a member account (403). The endpoint does not accept the password of the account. You can make a new key on the admin page without a change to your login password.
 
 Fitzflix acts only on files below the root folders of the apps, as this host sees them. The settings `RADARR_ROOT_FOLDERS` and `SONARR_ROOT_FOLDERS` in `.env` give the folders, separated by colons. The defaults are the `Movies` and `TV Shows` library directories. If a webhook names a file at a different location, Fitzflix refuses it with a 400 and writes a log line.
@@ -768,6 +769,8 @@ Two more review queues are available. A **TMDB triage** page lists the records w
 ### Custom posters
 
 Each movie or file can have custom artwork. The poster picker on a movie page shows the full TMDB poster gallery, in groups by language, with the TMDB default highlighted. Select a poster with one click, or upload a poster. Fitzflix keeps the custom posters under `app/static/custom/`. The nightly backup mirrors them to the S3 bucket. You can remove a custom poster with one click. Fitzflix then uses the precedence rules of the library.
+
+Fitzflix copies the poster of a movie into the library folder of each main feature. Plex reads the poster from that folder. Radarr links that copy to the movie file of the folder. When a rip upgrade replaces the movie file, the next Radarr scan deletes the copy with the old file record. The Radarr webhook then restores the copy within a minute, when the connection has the **On Movie File Delete** triggers. A nightly task at 05:55 restores the copy of any folder that lost it.
 
 ### Rejected files
 

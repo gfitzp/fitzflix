@@ -176,6 +176,12 @@ TASKS = {
     "app.series_rename.reconcile_sonarr_series": TaskSpec(
         "maintenance", 900, "Checking the Sonarr path of a series"
     ),
+    "app.custom_artwork.reconcile_library_posters": TaskSpec(
+        "maintenance", 1800, "Restoring the custom posters of the library folders"
+    ),
+    "app.custom_artwork.restore_folder_poster": TaskSpec(
+        "request", 600, "Restoring the custom poster of a library folder"
+    ),
     "app.dvr.build_channel_lineups": TaskSpec(
         "maintenance", 3600, "Building virtual DVR channel lineups"
     ),

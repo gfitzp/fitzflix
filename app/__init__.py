@@ -362,6 +362,14 @@ def cron_table(config):
     if config.get("SONARR_URL") and config.get("SONARR_API_KEY"):
         table.append(("45 5 * * *", "app.series_rename.reconcile_sonarr_paths"))
 
+    # Restore the custom poster copy of every main-feature folder that
+    # lost it (#654). Radarr deletes the copy with the movie file that
+    # it linked the copy to, after a rip upgrade. The Radarr webhook
+    # restores a copy at once. This task is the backstop. It runs after
+    # the 05:40 Radarr path check and the 05:45 Sonarr check.
+
+    table.append(("55 5 * * *", "app.custom_artwork.reconcile_library_posters"))
+
     # Rebuild the virtual DVR channel lineups nightly (#182). The task
     # rotates them the same way as the landing-page shelves rotate. The
     # per-file duration cache makes every build after the first
