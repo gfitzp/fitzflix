@@ -38,7 +38,6 @@ import rq
 
 from botocore.client import Config
 from rq import get_current_job
-from rq.job import JobStatus
 from rq.registry import StartedJobRegistry
 from s3transfer.utils import ChunksizeAdjuster
 
@@ -468,6 +467,12 @@ def _sync_deferred(job, volume_drops=0):
     scheduled retries do not count. A space wait has no limit, and it
     would hold the sync off for days (Oct 24 2026).
 
+    The check reads the queue registries, never the status in the job
+    hash (#655). The Criterion poll books its next run under its own id
+    while it runs. When that run ends, RQ writes "finished" over the
+    hash of the booked run. A status check then counts the booked run
+    as a live job, and the sync waits forever.
+
     The retry keeps volume_drops (#457). Without it, a defer reset the
     count, and MAX_SYNC_VOLUME_DROPS never stopped the sync."""
 
@@ -479,12 +484,15 @@ def _sync_deferred(job, volume_drops=0):
     own_id = job.id if job else None
     busy = []
     for queue in roster_queues(current_app):
+        active = set(queue.job_ids)
+        active.update(queue.intermediate_queue.get_job_ids())
+        active.update(StartedJobRegistry(queue=queue).get_job_ids())
         count = sum(
             1
             for live in live_jobs([queue])
             if live.id != own_id
             and (
-                live.get_status(refresh=False) != JobStatus.SCHEDULED
+                live.id in active
                 or live.func_name == "app.aws_storage.move_archive_object"
             )
         )

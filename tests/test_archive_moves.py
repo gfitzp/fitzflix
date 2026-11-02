@@ -956,6 +956,29 @@ def test_the_sync_counts_live_jobs_but_not_other_scheduled_retries(app):
         assert aws_storage._sync_deferred(None) is True
 
 
+def test_the_sync_ignores_a_booked_job_whose_hash_says_finished(app):
+    """A self-scheduling task books its next run under its own id (#655).
+
+    RQ writes "finished" over that hash when the run that booked it
+    ends. The booked run still only waits, so the sync does not."""
+
+    from rq.job import JobStatus
+
+    from app import aws_storage
+
+    with app.app_context():
+        job = app.maintenance_queue.enqueue_in(
+            timedelta(minutes=10),
+            "app.criterion_now.poll_criterion_now",
+            job_id="fitzflix-criterion-now-poll",
+        )
+        job.set_status(JobStatus.FINISHED)
+        try:
+            assert aws_storage._sync_deferred(None) is False
+        finally:
+            job.delete()
+
+
 def test_the_sync_does_not_upload_over_a_key_that_moved_after_the_listing(
     app, s3, monkeypatch
 ):
