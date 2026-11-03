@@ -110,11 +110,13 @@ def test_file_less_records_do_not_count(app, admin_client):
 
     page = admin_client.get("/people?q=Qualley").get_data(as_text=True)
     assert "Qualley Example" in page
-    assert "2 titles" in page
+    assert "2 titles in library" in page
     assert "3 titles" not in page
 
+    # The badge names what it counts (Glenn, 2026-11-03).
+
     page = admin_client.get("/search?q=qualley").get_data(as_text=True)
-    assert "Actor &middot; 2 titles" in page
+    assert "Actor &middot; 2 titles in library</span>" in page
 
     page = admin_client.get("/people?q=Record+Only").get_data(as_text=True)
     assert "Record Only Person" not in page
@@ -167,7 +169,7 @@ def test_people_search_widens_to_single_film_people(app, admin_client):
 
     page = admin_client.get("/people?q=Scene+Wonder").get_data(as_text=True)
     assert "One Scene Wonder" in page
-    assert "1 title<" in page or "1 title\n" in page or "1 title</span>" in page
+    assert "1 title in library</span>" in page
     assert "Repertory Regular" not in page
 
 
@@ -311,7 +313,7 @@ def test_search_finds_crew_people_with_roles(app, admin_client):
 
     payload = admin_client.get("/search.json?q=lens wi").get_json()
     people = [r for r in payload["results"] if r["type"] == "Person"]
-    assert people and people[0]["detail"] == "Cinematographer · 2 titles"
+    assert people and people[0]["detail"] == "Cinematographer · 2 titles in library"
 
 
 def test_people_nav_link_present(admin_client):

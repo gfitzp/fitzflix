@@ -445,6 +445,7 @@ def search_json():
                         (f"{person['role']} · " if person["role"] else "")
                         + f"{person['film_count']} title"
                         + ("s" if person["film_count"] != 1 else "")
+                        + " in library"
                     ),
                     "url": url_for("main.movie_library", credit=person["id"]),
                 }

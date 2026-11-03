@@ -31,7 +31,7 @@ def test_people_page_counts_tv_credits(app, admin_client):
     response = admin_client.get("/people?q=Falk")
     assert response.status_code == 200
     assert b"Peter Falk" in response.data
-    assert b"2 titles" in response.data
+    assert b"2 titles in library" in response.data
 
 
 def test_filmography_shows_television_section(app, admin_client, monkeypatch):
