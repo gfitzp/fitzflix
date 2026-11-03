@@ -277,10 +277,11 @@ def _tv_search_results(wildcard, limit=50, years=None):
 def _people_search_results(wildcard, limit=12):
     """Return the credited people whose names match.
 
-    Each person comes with a library film count and a dominant role. The
-    rules are the same as the People page. Cast and key crew roles
-    count. Uncredited-only roles never count. The matches sort by film
-    count, and the surname breaks ties.
+    Each person comes with a count of the owned films and series and a
+    dominant role. The rules are the same as the People page. Cast and
+    key crew roles count. Uncredited-only roles never count. A record
+    without a file never counts (#656). The matches sort by the count,
+    and the surname breaks ties.
     """
 
     pairs = _credited_film_pairs()

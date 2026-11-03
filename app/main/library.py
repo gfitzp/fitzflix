@@ -3061,37 +3061,64 @@ def _credited_film_pairs(role="all"):
     column. Nothing joins these ids back to a table. They are only
     counted.
 
+    Only the owned works count (#656). A movie counts when a main
+    feature file of it exists. A series counts when a file of it
+    exists. Fitzflix makes file-less records for the watchlist, the
+    diary, the catalogs, and the TMDB review page. The user cannot see
+    which records exist. Thus, a count of the records read as wrong
+    against the "In library" filter of the filmography page.
+
     The search paths always count all ("all"). The /people page passes
     its cast/crew filter through. Thus, the work counts show the
     selected credit type.
     """
 
-    cast_pairs = db.session.query(
-        MovieCast.credit_id.label("credit_id"),
-        MovieCast.movie_id.label("movie_id"),
-    ).filter(
-        db.or_(
-            MovieCast.character == None,
-            db.not_(MovieCast.character.like("%(uncredited)%")),
-        )
+    owned_movie_ids = db.session.query(File.movie_id).filter(
+        File.movie_id != None, File.feature_type_id == None
     )
-    tv_cast_pairs = db.session.query(
-        TVCast.credit_id.label("credit_id"),
-        (-TVCast.tv_id).label("movie_id"),
-    ).filter(
-        db.or_(
-            TVCast.character == None,
-            db.not_(TVCast.character.like("%(uncredited)%")),
+    owned_series_ids = db.session.query(File.series_id).filter(File.series_id != None)
+    cast_pairs = (
+        db.session.query(
+            MovieCast.credit_id.label("credit_id"),
+            MovieCast.movie_id.label("movie_id"),
         )
+        .filter(
+            db.or_(
+                MovieCast.character == None,
+                db.not_(MovieCast.character.like("%(uncredited)%")),
+            )
+        )
+        .filter(MovieCast.movie_id.in_(owned_movie_ids))
     )
-    crew_pairs = db.session.query(
-        MovieCrew.credit_id.label("credit_id"),
-        MovieCrew.movie_id.label("movie_id"),
-    ).filter(MovieCrew.job.in_(list(CREW_ROLE_LABELS)))
-    tv_crew_pairs = db.session.query(
-        TVCrew.credit_id.label("credit_id"),
-        (-TVCrew.tv_id).label("movie_id"),
-    ).filter(TVCrew.job.in_(list(CREW_ROLE_LABELS)))
+    tv_cast_pairs = (
+        db.session.query(
+            TVCast.credit_id.label("credit_id"),
+            (-TVCast.tv_id).label("movie_id"),
+        )
+        .filter(
+            db.or_(
+                TVCast.character == None,
+                db.not_(TVCast.character.like("%(uncredited)%")),
+            )
+        )
+        .filter(TVCast.tv_id.in_(owned_series_ids))
+    )
+    crew_pairs = (
+        db.session.query(
+            MovieCrew.credit_id.label("credit_id"),
+            MovieCrew.movie_id.label("movie_id"),
+        )
+        .filter(MovieCrew.job.in_(list(CREW_ROLE_LABELS)))
+        .filter(MovieCrew.movie_id.in_(owned_movie_ids))
+    )
+    tv_crew_pairs = (
+        db.session.query(
+            TVCrew.credit_id.label("credit_id"),
+            (-TVCrew.tv_id).label("movie_id"),
+        )
+        .filter(TVCrew.job.in_(list(CREW_ROLE_LABELS)))
+        .filter(TVCrew.tv_id.in_(owned_series_ids))
+    )
     if role == "cast":
         return cast_pairs.union(tv_cast_pairs).subquery()
     if role == "crew":

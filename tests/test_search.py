@@ -694,6 +694,8 @@ def test_search_finds_people(app, admin_client):
     with app.app_context():
         first = make_movie("Ensemble Piece", 1970)
         second = make_movie("Ensemble Piece II", 1972)
+        make_movie_file(first, "Bluray-1080p")
+        make_movie_file(second, "Bluray-1080p")
         make_person(901, "Prolific Player", [first, second])
         make_person(902, "Prolific Extra", [first], character="Extra (uncredited)")
         db.session.commit()
@@ -712,6 +714,7 @@ def test_search_finds_people(app, admin_client):
 def test_search_json_includes_people(app, admin_client):
     with app.app_context():
         movie = make_movie("Solo Show", 1980)
+        make_movie_file(movie, "Bluray-1080p")
         make_person(903, "Typeahead Thespian", [movie])
         db.session.commit()
 

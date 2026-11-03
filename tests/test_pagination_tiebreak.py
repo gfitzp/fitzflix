@@ -6,7 +6,7 @@ MariaDB. Then 1 row shows 2 times and its twin never."""
 from datetime import datetime
 
 from app import db
-from tests.factories import make_movie, make_person
+from tests.factories import make_movie, make_movie_file, make_person
 
 
 def _order_columns(query):
@@ -29,6 +29,7 @@ def test_two_namesakes_keep_one_order_across_pages(app, admin_client):
 
     with app.app_context():
         film = make_movie("Namesake Film", 2001)
+        make_movie_file(film, "Bluray-1080p")
         make_person(459002, "John Bishop", [film])
         make_person(459001, "John Bishop", [film])
         db.session.commit()

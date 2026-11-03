@@ -13,7 +13,9 @@ from time import sleep, time
 
 import requests
 
-from flask import current_app
+from flask import current_app, has_app_context
+from sqlalchemy import event as sa_event
+from sqlalchemy.orm import Session as OrmSession
 
 from app import db
 from app.email import notify_admin
@@ -44,12 +46,50 @@ def invalidate_people_ranking():
 
     The ranked list of every credited person is a full aggregation over
     the cast and crew tables. Thus, Redis holds the list, and Fitzflix
-    builds it again only after a credit write. The TMDB apply methods
-    call this function."""
+    builds it again only after a credit write or a file write. The
+    TMDB apply methods call this function. The commit hook below calls
+    it after a flush that adds or deletes a file row."""
 
     redis = current_app.redis
     keys = [PEOPLE_RANKING_KEY.format(role=role) for role in ("cast", "crew", "all")]
     redis.delete(*keys)
+
+
+# The session.info flag of a flush that added or deleted a file row.
+# The ranking counts only the owned works (#656). Thus, a file write
+# moves the counts in the same way as a credit write.
+
+_FILE_CHANGE = "fitzflix.people_ranking.file_change"
+
+
+@sa_event.listens_for(OrmSession, "after_flush")
+def _note_file_changes(session, flush_context):
+    """Record a flush that adds or deletes a file row."""
+
+    from app.models import File
+
+    rows = list(session.new) + list(session.deleted)
+    if any(isinstance(row, File) for row in rows):
+        session.info[_FILE_CHANGE] = True
+
+
+@sa_event.listens_for(OrmSession, "after_commit")
+def _invalidate_after_file_change(session):
+    """Delete the cached rankings after a commit that changed the file rows."""
+
+    if not session.info.pop(_FILE_CHANGE, None) or not has_app_context():
+        return
+    try:
+        invalidate_people_ranking()
+    except Exception:
+        current_app.logger.error(traceback.format_exc())
+
+
+@sa_event.listens_for(OrmSession, "after_rollback")
+def _forget_file_changes(session):
+    """Drop the file-change flag of a transaction that rolled back."""
+
+    session.info.pop(_FILE_CHANGE, None)
 
 
 # The counter of the TMDB requests of 1 second, shared by every process.

@@ -20,6 +20,8 @@ def test_people_page_counts_tv_credits(app, admin_client):
         db.session.add(falk)
         columbo = make_tv_series("Columbo", tmdb_id=1041)
         rockford = make_tv_series("The Rockford Files", tmdb_id=1042)
+        make_tv_file(columbo, 1, 1, "DVD")
+        make_tv_file(rockford, 1, 1, "DVD")
         db.session.add(
             TVCast(tv_id=columbo.id, credit_id=4886, character="Lt. Columbo")
         )

@@ -7,9 +7,18 @@ never counts. This is the specification from Glenn in GitHub #13.
 """
 
 from app import db
-from app.models import MovieCast, MovieCrew, TMDBCredit
+from app.models import Movie, MovieCast, MovieCrew, TMDBCredit
 from tests.factories import make_movie
+from tests.factories import make_movie_file
 from tests.factories import make_person
+
+
+def make_owned_movie(title, year):
+    """Make a movie with a main feature file. Only the owned works count (#656)."""
+
+    movie = make_movie(title, year)
+    make_movie_file(movie, "Bluray-1080p")
+    return movie
 
 
 def make_crew_person(person_id, name, jobs_by_movie):
@@ -32,8 +41,8 @@ def make_crew_person(person_id, name, jobs_by_movie):
 
 
 def build_population(app):
-    first = make_movie("People Film One", 1970)
-    second = make_movie("People Film Two", 1971)
+    first = make_owned_movie("People Film One", 1970)
+    second = make_owned_movie("People Film Two", 1971)
     make_person(801, "Repertory Regular", [first, second])
     make_person(802, "One Scene Wonder", [first])
     make_person(
@@ -63,22 +72,93 @@ def test_people_page_defaults_to_multi_film_credited_people(app, admin_client):
 
 
 def test_people_page_text_matches_the_counted_records(app, admin_client):
-    """Test that the page text says what the counts hold (#331).
+    """Test that the page text says what the counts hold (#331, #656).
 
-    The counts include the film records that have no file (watchlist,
-    diary, and catalog records). The text said "in the library", which
-    is not true for those records. The counts stay as they are."""
+    The counts hold only the films and the series that have a file.
+    The text says so. The #331 wording about watchlist and diary
+    records is gone with the records from the counts."""
 
     with app.app_context():
         build_population(app)
 
     page = admin_client.get("/people").get_data(as_text=True)
-    assert "in more than one film or series in the library" not in page
-    assert "that Fitzflix has a record of" in page
-    assert "films that are not in the library" in page
-
-    # The population has no files. The people still count
+    assert "in more than one film or series in the library" in page
+    assert "The counts hold only the films and the series that have a file." in page
+    assert "that Fitzflix has a record of" not in page
     assert "2 titles" in page
+
+
+def test_file_less_records_do_not_count(app, admin_client):
+    """Count only the owned works on the People page and in the search (#656).
+
+    A watchlist, a diary, a catalog, or the TMDB review page makes a
+    movie record without a file. The user cannot see which records
+    exist. A badge that counts them reads as wrong against the "In
+    library" filter of the filmography page. On 2026-11-03 Margaret
+    Qualley said "3 titles" in the search and showed 1 owned film."""
+
+    with app.app_context():
+        owned = [make_owned_movie(f"Owned Film {n}", 2000 + n) for n in range(2)]
+        listed = make_movie("Watchlist Only Film", 2010)
+        make_person(861, "Qualley Example", owned + [listed])
+        # An extra of an owned film is not a main feature. It does
+        # not make a second owned work.
+        make_movie_file(owned[0], "Bluray-1080p", "Featurettes")
+        # A person with only file-less records does not list at all.
+        make_person(862, "Record Only Person", [listed, make_movie("Diary Film", 2011)])
+        db.session.commit()
+
+    page = admin_client.get("/people?q=Qualley").get_data(as_text=True)
+    assert "Qualley Example" in page
+    assert "2 titles" in page
+    assert "3 titles" not in page
+
+    page = admin_client.get("/search?q=qualley").get_data(as_text=True)
+    assert "Actor &middot; 2 titles" in page
+
+    page = admin_client.get("/people?q=Record+Only").get_data(as_text=True)
+    assert "Record Only Person" not in page
+
+
+def test_a_file_commit_invalidates_the_people_ranking(app):
+    """Clear the cached ranking of each role after a commit that adds or deletes a file (#656).
+
+    The counts hold only the owned works. Thus, an import and a file
+    delete move them in the same way as a credit write. A rollback
+    leaves the ranking alone."""
+
+    from app.tmdb_apply import PEOPLE_RANKING_KEY
+
+    def prime():
+        for role in ("cast", "crew", "all"):
+            app.redis.set(PEOPLE_RANKING_KEY.format(role=role), "[]")
+
+    def cached():
+        return [
+            app.redis.get(PEOPLE_RANKING_KEY.format(role=role))
+            for role in ("cast", "crew", "all")
+        ]
+
+    with app.app_context():
+        movie = make_movie("Fresh Import", 2001)
+        db.session.commit()
+        prime()
+        file = make_movie_file(movie, "Bluray-1080p")
+        db.session.rollback()
+        assert all(cached())
+
+        file = make_movie_file(movie, "Bluray-1080p")
+        db.session.commit()
+        assert cached() == [None, None, None]
+
+        prime()
+        movie.title = "Fresh Import Renamed"
+        db.session.commit()
+        assert all(cached())
+
+        db.session.delete(file)
+        db.session.commit()
+        assert cached() == [None, None, None]
 
 
 def test_people_search_widens_to_single_film_people(app, admin_client):
@@ -93,7 +173,7 @@ def test_people_search_widens_to_single_film_people(app, admin_client):
 
 def test_people_ordered_by_film_count(app, admin_client):
     with app.app_context():
-        movies = [make_movie(f"Count Film {n}", 1980 + n) for n in range(4)]
+        movies = [make_owned_movie(f"Count Film {n}", 1980 + n) for n in range(4)]
         make_person(811, "Busy Actor", movies)
         make_person(812, "Occasional Actor", movies[:2])
         db.session.commit()
@@ -110,7 +190,7 @@ def test_people_counts_key_crew_roles_with_role_badges(app, admin_client):
     must not outrank directors."""
 
     with app.app_context():
-        movies = [make_movie(f"Crew Film {n}", 1970 + n) for n in range(3)]
+        movies = [make_owned_movie(f"Crew Film {n}", 1970 + n) for n in range(3)]
         make_crew_person(
             831,
             "Steady Director",
@@ -156,7 +236,7 @@ def test_people_role_filter_defaults_to_cast(app, admin_client):
     type."""
 
     with app.app_context():
-        movies = [make_movie(f"Role Filter Film {n}", 1960 + n) for n in range(3)]
+        movies = [make_owned_movie(f"Role Filter Film {n}", 1960 + n) for n in range(3)]
         make_person(841, "Pure Actor", movies[:2])
         make_crew_person(
             842,
@@ -214,7 +294,7 @@ def test_search_finds_crew_people_with_roles(app, admin_client):
     type-ahead detail show the dominant role."""
 
     with app.app_context():
-        movies = [make_movie(f"Lens Film {n}", 1980 + n) for n in range(2)]
+        movies = [make_owned_movie(f"Lens Film {n}", 1980 + n) for n in range(2)]
         make_crew_person(
             841,
             "Lens Wizard",
@@ -246,7 +326,7 @@ def test_film_count_ties_break_on_last_name(app, admin_client):
     field. Thus, the token replaces it."""
 
     with app.app_context():
-        movies = [make_movie(f"Tie Film {n}", 1960 + n) for n in range(2)]
+        movies = [make_owned_movie(f"Tie Film {n}", 1960 + n) for n in range(2)]
         # First-name order puts Alan first. Surname order puts Abbott first.
         make_person(821, "Alan Zed", movies)
         make_person(822, "Zoe Abbott", movies)
@@ -272,8 +352,17 @@ def test_people_ranking_is_cached_until_a_credit_write(app, admin_client):
     assert "Repertory Regular" in page
     assert app.redis.get(PEOPLE_RANKING_KEY.format(role="cast"))
 
+    # The films commit before the ranking is read. A file commit drops
+    # the ranking on its own (#656). This test covers the credit write.
+
     with app.app_context():
-        movies = [make_movie(f"Late Film {n}", 1990 + n) for n in range(3)]
+        movies = [make_owned_movie(f"Late Film {n}", 1990 + n) for n in range(3)]
+        db.session.commit()
+    page = admin_client.get("/people").get_data(as_text=True)
+    assert app.redis.get(PEOPLE_RANKING_KEY.format(role="cast"))
+
+    with app.app_context():
+        movies = Movie.query.filter(Movie.title.like("Late Film %")).all()
         make_person(821, "Late Arrival", movies)
         db.session.commit()
 
@@ -330,7 +419,10 @@ def test_people_ranking_pages_past_the_default_cap(app, admin_client):
     caller changes the limit."""
 
     with app.app_context():
-        movies = [make_movie("Cap Film One", 1980), make_movie("Cap Film Two", 1981)]
+        movies = [
+            make_owned_movie("Cap Film One", 1980),
+            make_owned_movie("Cap Film Two", 1981),
+        ]
         for n in range(125):
             make_person(9000 + n, f"Cap Person {n:03d}", movies)
         db.session.commit()
