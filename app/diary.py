@@ -908,8 +908,13 @@ def plex_history_poll():
                 timeout=30,
             )
             entries = (body.get("MediaContainer") or {}).get("Metadata") or []
-        except Exception:
-            current_app.logger.error(traceback.format_exc())
+        except Exception as e:
+            # The health probe of Plex sends the outage mail. Thus, a
+            # failed poll logs 1 line and keeps the cursor (#660).
+            current_app.logger.warning(
+                f"Plex history poll: could not read the history: "
+                f"{type(e).__name__}: {e}"
+            )
             return False
 
         # This maps a server-account id to a Plex username for the watcher

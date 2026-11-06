@@ -288,7 +288,7 @@ Plex cannot send credentials with a webhook. Thus, the secret in the URL is the 
 
 ### History poller (self-healing backstop; no Plex Pass needed)
 
-Set `PLEX_URL` (for example `http://<plex host>:32400`) and `PLEX_TOKEN` in `.env`, and restart. Refer to [finding your token](https://support.plex.tv/articles/204059436-finding-an-authentication-token-x-plex-token/) for the token. A scheduled task then reads the Plex watch history each 15 minutes, from a stored cursor. Thus, the next poll finds the watches that occurred while Fitzflix was down. The first poll only sets the cursor. Fitzflix does not import the history from before you enabled the function.
+Set `PLEX_URL` (for example `http://<plex host>:32400`) and `PLEX_TOKEN` in `.env`, and restart. Refer to [finding your token](https://support.plex.tv/articles/204059436-finding-an-authentication-token-x-plex-token/) for the token. A scheduled task then reads the Plex watch history each 15 minutes, from a stored cursor. Thus, the next poll finds the watches that occurred while Fitzflix was down. The first poll only sets the cursor. Fitzflix does not import the history from before you enabled the function. The health probe also checks Plex. When Plex is down, a poll writes 1 warning, and the health email reports the outage and its end.
 
 ### Mapping watchers to users
 

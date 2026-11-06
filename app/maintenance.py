@@ -1897,6 +1897,14 @@ HEALTH_PROBES = (
         ),
     ),
     (
+        "Plex",
+        lambda config: bool(config["PLEX_URL"] and config["PLEX_TOKEN"]),
+        lambda config: _probe_http(
+            f"{config['PLEX_URL']}/identity",
+            headers={"X-Plex-Token": config["PLEX_TOKEN"]},
+        ),
+    ),
+    (
         "AWS S3",
         lambda config: bool(
             config["AWS_BUCKET"]

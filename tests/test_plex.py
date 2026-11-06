@@ -341,6 +341,40 @@ def test_a_failed_lookup_holds_the_cursor_for_the_next_poll(
     assert int(app.redis.get("fitzflix:plex:history-cursor")) == cursor + 99
 
 
+def test_a_poll_that_cannot_reach_plex_logs_one_warning(
+    app, plex_server, monkeypatch, caplog
+):
+    """The health probe of Plex sends the outage mail (#660).
+
+    The poll logs 1 WARNING line with the fault and no traceback. The
+    URL in the fault carries the token, and the log does not show it."""
+
+    import logging
+
+    cursor = int(time.time()) - 3600
+    app.redis.set("fitzflix:plex:history-cursor", cursor)
+
+    def refused(url, *args, **kwargs):
+        raise ConnectionError(
+            "Max retries exceeded with url: /status?X-Plex-Token=plex-test-token"
+        )
+
+    from app import plex_api
+
+    monkeypatch.setattr(plex_api.requests, "get", refused)
+    with caplog.at_level(logging.WARNING, logger=app.logger.name):
+        with app.app_context():
+            assert plex_history_poll() is False
+
+    records = [r for r in caplog.records if r.name == app.logger.name]
+    assert [r.levelno for r in records] == [logging.WARNING]
+    message = records[0].getMessage()
+    assert "ConnectionError" in message
+    assert "Traceback" not in message
+    assert "plex-test-token" not in caplog.text
+    assert int(app.redis.get("fitzflix:plex:history-cursor")) == cursor
+
+
 def test_poller_first_run_only_plants_the_cursor(app, plex_server):
     with app.app_context():
         assert plex_history_poll() is True

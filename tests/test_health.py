@@ -746,6 +746,45 @@ def test_health_probe_reports_a_stale_backup_and_probes_s3(
     ]
 
 
+def test_health_probe_probes_plex_with_the_token_as_a_header(
+    app, health_env, monkeypatch
+):
+    """A Plex outage gives 1 alert and 1 recovery mail (#660).
+
+    The probe sends the token as a header, never in the URL."""
+
+    calls = []
+    down = []
+
+    def fake_probe_http(url, **kwargs):
+        calls.append((url, kwargs))
+        if down and "plex" in url:
+            raise ConnectionError("simulated Plex outage")
+
+    monkeypatch.setattr(maintenance, "_probe_http", fake_probe_http)
+    monkeypatch.setitem(app.config, "PLEX_URL", "http://plex.test:32400")
+    monkeypatch.setitem(app.config, "PLEX_TOKEN", "plex-test-token")
+
+    assert health_env.run() == []
+    probes = {p["service"] for p in maintenance.probe_health(health_env.redis)}
+    assert probes == {"TMDB", "Sonarr", "Radarr", "Plex"}
+    (plex,) = [(url, kwargs) for url, kwargs in calls if "plex" in url]
+    assert plex == (
+        "http://plex.test:32400/identity",
+        {"headers": {"X-Plex-Token": "plex-test-token"}},
+    )
+
+    down.append(True)
+    assert health_env.run() == []
+    (alert,) = health_env.run()
+    assert "Plex has failed 2 consecutive probes" in alert["body"]
+    assert health_env.run() == []
+
+    down.clear()
+    (recovery,) = health_env.run()
+    assert "Recovered:" in recovery["body"]
+
+
 def time_of(*parts):
     """Return the POSIX time of a UTC date and time."""
 
