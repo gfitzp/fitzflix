@@ -2640,6 +2640,16 @@ def finalize_localization(
                 file.id,
                 description=f"'{file.basename}'",
             )
+
+        # A file that replaced a library file of the same film or episode
+        # is a new part of an item that Plex has. Plex sends no webhook
+        # for it. The analyze after the next scan of Plex aligns the
+        # stream selection of each account (#661). It never raises.
+
+        if placement == "replaced" or worse_local_copies:
+            from app.plex_library import REPLACEMENT_ANALYZE_DELAY, enqueue_plex_analyze
+
+            enqueue_plex_analyze(output_file, delay=REPLACEMENT_ANALYZE_DELAY)
         return None
 
 

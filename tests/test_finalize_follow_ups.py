@@ -289,3 +289,99 @@ def test_a_failed_radarr_report_does_not_skip_the_tmdb_refresh(
         assert _roster_jobs(app, "app.videos.refresh_tmdb_info")
     assert os.listdir(app.config["STAGING_DIR"]) == []
     os.remove(output)
+
+
+def _booked_analyzes(app):
+    """Return {path: scheduled time} of each booked Plex analyze."""
+
+    from rq.registry import ScheduledJobRegistry
+
+    registry = ScheduledJobRegistry(queue=app.maintenance_queue)
+    booked = {}
+    for job_id in registry.get_job_ids():
+        job = app.maintenance_queue.fetch_job(job_id)
+        if job and job.func_name == "app.plex_library.analyze_plex_media":
+            booked[job.args[0][0]] = registry.get_scheduled_time(job_id)
+    return booked
+
+
+@pytest.mark.parametrize("second", ["upgrade", "same name"])
+def test_a_replacement_import_books_the_plex_analyze_after_the_scan(
+    app, sample_mkv, incoming_dir, monkeypatch, second
+):
+    """A new part of an item that Plex has gets no webhook (#661).
+
+    The analyze after the next scan finds the item by its path and
+    aligns the stream selection. A first import books nothing. The
+    library.new webhook covers it."""
+
+    from datetime import datetime, timedelta, timezone
+
+    from rq.registry import ScheduledJobRegistry
+
+    monkeypatch.setitem(app.config, "PLEX_URL", "http://plex.test:32400")
+    monkeypatch.setitem(app.config, "PLEX_TOKEN", "test-token")
+    _capture_emails(monkeypatch)
+    title = f"Plex Part {second.title()}"
+    movies = os.path.join(app.config["LIBRARY_DIR"], f"Movies/{title} (2021)")
+    dvd = os.path.join(movies, f"{title} (2021) - [DVD].mkv")
+    bluray = os.path.join(movies, f"{title} (2021) - [Bluray-1080p].mkv")
+    output = bluray if second == "upgrade" else dvd
+    registry = ScheduledJobRegistry(queue=app.maintenance_queue)
+    try:
+        with app.app_context():
+            _import(app, sample_mkv, incoming_dir, os.path.basename(dvd))
+            assert _booked_analyzes(app) == {}
+            _import(app, sample_mkv, incoming_dir, os.path.basename(output))
+
+            booked = _booked_analyzes(app)
+            assert list(booked) == [output]
+            due = booked[output].replace(tzinfo=timezone.utc)
+            assert due > datetime.now(timezone.utc) + timedelta(minutes=15)
+            assert not [
+                job
+                for job in app.maintenance_queue.jobs
+                if job.func_name == "app.plex_library.analyze_plex_media"
+            ]
+    finally:
+        for job_id in registry.get_job_ids():
+            registry.remove(job_id, delete_job=True)
+        for path in (dvd, bluray):
+            if os.path.exists(path):
+                os.remove(path)
+
+
+def test_a_failed_booking_of_the_plex_analyze_keeps_the_import(
+    app, sample_mkv, incoming_dir, monkeypatch, caplog
+):
+    """The booking never fails the import (#661)."""
+
+    import logging
+
+    from app import plex_library
+
+    monkeypatch.setitem(app.config, "PLEX_URL", "http://plex.test:32400")
+    monkeypatch.setitem(app.config, "PLEX_TOKEN", "test-token")
+    _capture_emails(monkeypatch)
+    movies = os.path.join(app.config["LIBRARY_DIR"], "Movies/Plex Fault (2021)")
+    dvd = os.path.join(movies, "Plex Fault (2021) - [DVD].mkv")
+
+    def refuse(*args, **kwargs):
+        raise RuntimeError("simulated Redis fault")
+
+    try:
+        with app.app_context():
+            _import(app, sample_mkv, incoming_dir, os.path.basename(dvd))
+            monkeypatch.setattr(plex_library, "enqueue_task", refuse)
+            with caplog.at_level(logging.WARNING):
+                source = _import(app, sample_mkv, incoming_dir, os.path.basename(dvd))
+            assert os.path.exists(dvd) and not os.path.exists(source)
+            assert File.query.filter_by(basename=os.path.basename(dvd)).one()
+            assert any(
+                "simulated Redis fault" in record.getMessage()
+                and record.levelno == logging.WARNING
+                for record in caplog.records
+            )
+    finally:
+        if os.path.exists(dvd):
+            os.remove(dvd)

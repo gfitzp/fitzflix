@@ -87,6 +87,13 @@ SECTION_ITEM_TYPE = {"movie": 1, "show": 4}
 ANALYZE_RETRY_MINUTES = 20
 ANALYZE_MAX_RETRIES = 1
 
+# An import that replaces the file of an item that Plex has gives Plex a
+# new part. Plex sends no `library.new` for it. The analyze then finds
+# the item by its path after the next scan, and it aligns the stream
+# selection of each account (#661).
+
+REPLACEMENT_ANALYZE_DELAY = timedelta(minutes=ANALYZE_RETRY_MINUTES)
+
 # Plex answers 400 to an analyze request on a clip, that is, on an extra.
 # Its scanner analyzes one by the id of the item (#651). The scanner runs
 # on the Plex host, as the Plex user. PLEX_SCANNER names it. The analyze
@@ -621,7 +628,7 @@ def analyze_plex_media(file_paths, retries=0):
         return True
 
 
-def enqueue_plex_analyze(file_path):
+def enqueue_plex_analyze(file_path, delay=None):
     """Queue a new analyze for a library file that was rewritten in place.
 
     Every in-place rewrite makes this call after its result is committed.
@@ -629,6 +636,9 @@ def enqueue_plex_analyze(file_path):
     already correct on disk and in the database. Thus, an unreachable
     Plex or a refused enqueue costs only a stale Plex analysis, not the
     rewrite.
+
+    delay books the analyze ahead. An import that replaces a file waits
+    for the next scan of Plex (#661).
     """
 
     try:
@@ -651,6 +661,7 @@ def enqueue_plex_analyze(file_path):
         enqueue_task(
             "app.plex_library.analyze_plex_media",
             [file_path],
+            delay=delay,
             queue=queue,
             description=f"Re-analyzing '{basename}' in Plex",
             job_id=job_id,

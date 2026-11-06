@@ -26,7 +26,8 @@ the Home keeps their own selection, because the owner holds no token for
 their account.
 
 Where it runs: after the Plex analyze of a rewritten file, and after
-the `library.new` webhook of a new import. A nightly sweep over both
+the `library.new` webhook of a new import. An import that replaces a
+file of an item queues that analyze too (#661). A nightly sweep over both
 libraries repeats it for each account. Thus, a switch to a commentary track in a
 Plex app does not outlive the night. The first track is the default
 for a reason. Infuse selects tracks by its own rules.
