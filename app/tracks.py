@@ -2148,8 +2148,10 @@ def supplement_lossless_tracks(file_path, file_id=None):
             plan = plan_audio_supplements(audio_tracks)
             conversions = sum(1 for action, _ in plan if action == "flac")
             if not conversions:
+                # A file with only FLAC, PCM, or lossy audio also comes
+                # here. Thus, the line does not say that twins exist.
                 current_app.logger.info(
-                    f"'{basename}' All lossless tracks already have FLAC twins"
+                    f"'{basename}' No audio track needs a FLAC twin"
                 )
                 return True
 
