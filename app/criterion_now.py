@@ -4,8 +4,8 @@ The Watch Live page of the Channel is the now-playing page of its 24/7
 feed. whatsonnow.criterionchannel.com was that page until 2026-10-19.
 Now it redirects to the Watch Live page, and the poller reads that page
 directly (#291). It is a Next.js app. The title of the current film is
-the page heading. If the page has no heading, the schedule entry that
-plays now names the film. The page also embeds
+the page heading. If the heading names no schedule entry, the entry
+that plays now names the film. The page also embeds
 the schedule of the feed as data. Each entry has a start time and an
 end time. The page has a Film Page link. A poller scrapes the page. It
 follows the Film Page link for the schema.org block of the film. That
@@ -270,21 +270,40 @@ def parse_whatson_page(page_html, now=None):
     ends_at as UTC stamps. The result is None if the title is not
     found. An end time that does not parse comes back as None. Then the
     poller does a short retry. It does not trust a guess. Stale is True
-    when the heading names a film that just ended. If the page has no
-    heading, the schedule entry that plays now names the film, and
-    heading is False (#291)."""
+    when the heading names a film that just ended. If the heading names
+    no schedule entry, the schedule entry that plays now names the
+    film, and heading is False (#291, #663). If no entry plays now, the
+    page is stale."""
 
     now = now or datetime.now(timezone.utc)
     entries = _schedule_entries(page_html)
     title_match = TITLE_RE.search(page_html)
+    title = slot = stale_end = None
     if title_match:
         title = _clean_text(re.sub(r"<[^>]+>", "", title_match.group(1)))
-    else:
+        slot, stale_end = _current_slot(entries, title, now)
+
+    # A heading names an entry when _current_slot finds one for it. At a
+    # film boundary the heading holds the channel name "Criterion 24/7"
+    # for a short time (#663). That is not a title. Then the entry that
+    # plays now names the film. With no entry on now, the page is stale
+    # until STALE_LIMIT after the last end. A page with no schedule
+    # keeps its heading as the title.
+
+    heading = title is not None and (
+        slot is not None or stale_end is not None or not entries
+    )
+    if not heading:
         playing = [entry for entry in entries if entry[0] <= now < entry[1]]
-        if not playing:
+        ended = [entry for entry in entries if entry[1] <= now < entry[1] + STALE_LIMIT]
+        if playing:
+            slot = playing[0]
+            title = slot[2]
+        elif ended:
+            stale_end = max(entry[1] for entry in ended)
+            title = title or max(ended, key=lambda entry: entry[1])[2]
+        else:
             return None
-        title = playing[0][2]
-    slot, stale_end = _current_slot(entries, title, now)
 
     starts_at = ends_at = guid = None
     if slot:
@@ -330,7 +349,7 @@ def parse_whatson_page(page_html, now=None):
         "upcoming": upcoming,
         "stale": stale_end is not None,
         "stale_since": stale_end,
-        "heading": title_match is not None,
+        "heading": heading,
     }
 
 
@@ -615,10 +634,10 @@ def poll_criterion_now():
                 late = now - parsed["stale_since"]
                 next_delay = STALE_RETRY if late < STALE_GRACE else STALE_BACKOFF
                 current_app.logger.info(
-                    f"Criterion 24/7 now: the page still shows "
-                    f"'{parsed['title']}', which ended "
-                    f"{int(late.total_seconds() // 60)} minutes ago. Trying "
-                    f"again in {int(next_delay.total_seconds())} seconds."
+                    f"Criterion 24/7 now: the page shows '{parsed['title']}', "
+                    f"which is not the current film. The page is "
+                    f"{int(late.total_seconds() // 60)} minutes stale. "
+                    f"Trying again in {int(next_delay.total_seconds())} seconds."
                 )
             elif parsed:
                 title = parsed["title"]
@@ -673,7 +692,7 @@ def poll_criterion_now():
                 source = (
                     ""
                     if parsed.get("heading", True)
-                    else " (no title heading on the page; the schedule names the film)"
+                    else " (the page heading names no film; the schedule names the film)"
                 )
                 current_app.logger.info(
                     f"Criterion 24/7 now: '{title}', {end_note}, "

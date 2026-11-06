@@ -127,31 +127,36 @@ def test_parse_whatson_page_reads_title_link_and_schedule(app):
     assert parsed["upcoming"] == []
 
     # A later showing that starts well after now is a rerun, not the
-    # film that is on. It gives no end time.
+    # film that is on. The entry that plays now names the film (#663).
     parsed = parse_whatson_page(
         whatson_html(minutes_left=83).replace(
             '<h1 class="Hero-module-less-module__epcjfa__title">Shock Corridor',
             '<h1 class="Hero-module-less-module__epcjfa__title">Stagecoach',
         )
     )
-    assert parsed["ends_at"] is None
+    assert parsed["title"] == "Shock Corridor"
+    assert parsed["heading"] is False
+    left = parsed["ends_at"] - datetime.now(timezone.utc)
+    assert timedelta(minutes=82) < left <= timedelta(minutes=83)
     assert parsed["stale"] is False
 
-    # A heading that is in no schedule entry gives no end time. Fitzflix
-    # never guesses. The 1st film link on the page is still the film.
-    # The upcoming films are the films that start after now
+    # A heading that is in no schedule entry is not a title (#663). The
+    # entry that plays now names the film, with its end time and its
+    # film link. The upcoming films are the films after it.
     parsed = parse_whatson_page(
         whatson_html().replace(
             '<h1 class="Hero-module-less-module__epcjfa__title">Shock Corridor',
             '<h1 class="Hero-module-less-module__epcjfa__title">Mystery Film',
         )
     )
-    assert parsed["title"] == "Mystery Film"
+    assert parsed["title"] == "Shock Corridor"
+    assert parsed["heading"] is False
     assert (
         parsed["more_url"]
         == "https://www.criterionchannel.com/films/8rWb21ax/shock-corridor"
     )
-    assert parsed["ends_at"] is None
+    left = parsed["ends_at"] - datetime.now(timezone.utc)
+    assert timedelta(minutes=82) < left <= timedelta(minutes=83)
     assert [entry["title"] for entry in parsed["upcoming"]] == ["Stagecoach"]
 
     assert parse_whatson_page("<html>redesigned</html>") is None
@@ -1238,10 +1243,12 @@ def test_page_stale_past_the_grace_never_stores_the_old_film(app, monkeypatch):
     wait = booked.astimezone() - datetime.now(timezone.utc)
     assert criterion_now.STALE_RETRY < wait <= criterion_now.STALE_BACKOFF
 
-    # Past STALE_LIMIT, the heading counts as a title in no entry.
-    later = datetime.now(timezone.utc) + criterion_now.STALE_LIMIT
+    # Past STALE_LIMIT, the heading names no entry. The entry that
+    # plays then names the film (#663).
+    later = datetime.now(timezone.utc) + timedelta(minutes=165)
     parsed = criterion_now.parse_whatson_page(page, later)
     assert parsed["stale"] is False
+    assert parsed["title"] == "Stagecoach"
 
 
 def test_failed_tmdb_call_is_enriched_again(app, monkeypatch):
@@ -1311,6 +1318,88 @@ def test_a_page_without_a_heading_uses_the_schedule(app):
 
         # With no heading and no film on now, there is nothing to show.
         assert parse_whatson_page(page, LIVE_NOW + timedelta(days=3)) is None
+
+
+def channel_heading_page():
+    """Return the page of 2026-10-20 with the channel name as its heading.
+
+    At a film boundary the heading holds "Criterion 24/7" for a short
+    time (#663)."""
+
+    return (
+        open(LIVE_FIXTURE)
+        .read()
+        .replace(
+            '<h1 class="epcjfa_title">Bleak Moments</h1>',
+            '<h1 class="epcjfa_title">Criterion 24/7</h1>',
+        )
+    )
+
+
+def test_a_heading_that_names_no_entry_is_not_the_title(app):
+    """The schedule entry that plays now names the film (#663)."""
+
+    from app.criterion_now import parse_whatson_page
+
+    with app.app_context():
+        parsed = parse_whatson_page(channel_heading_page(), LIVE_NOW)
+    assert parsed["title"] == "Bleak Moments"
+    assert parsed["heading"] is False
+    assert parsed["stale"] is False
+    assert parsed["ends_at"] == datetime(2026, 10, 20, 17, 57, 57, tzinfo=timezone.utc)
+    assert parsed["more_url"] == (
+        "https://www.criterionchannel.com/films/kTz05rvG/bleak-moments"
+    )
+    assert parsed["upcoming"][0]["title"] == "Drylongso"
+
+
+def test_a_heading_that_names_no_entry_with_no_film_on_is_stale(app, monkeypatch):
+    """With no entry on now, the poll keeps the stored film and retries soon (#663).
+
+    The schedule of the page of 2026-10-20 ends at 13:01:34 on the next
+    day. A poll 5 minutes later finds no film on now."""
+
+    import app.criterion_now as criterion_now
+
+    last_end = datetime(2026, 10, 21, 13, 1, 34, tzinfo=timezone.utc)
+    page = channel_heading_page()
+    with app.app_context():
+        parsed = criterion_now.parse_whatson_page(page, last_end + timedelta(minutes=5))
+        assert parsed["stale"] is True
+        assert parsed["stale_since"] == last_end
+        assert parsed["ends_at"] is None
+
+        # Past STALE_LIMIT the page has nothing to show.
+        late = last_end + criterion_now.STALE_LIMIT
+        assert criterion_now.parse_whatson_page(page, late) is None
+
+    class FrozenClock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return last_end + timedelta(minutes=5)
+
+    def fake_requests_get(url, timeout=None):
+        class FakeResponse:
+            text = page
+
+            def raise_for_status(self):
+                """Never an HTTP error."""
+
+        return FakeResponse()
+
+    monkeypatch.setattr(criterion_now, "datetime", FrozenClock)
+    monkeypatch.setattr(criterion_now.requests, "get", fake_requests_get)
+    with app.app_context():
+        app.redis.set(criterion_now.NOW_KEY, json.dumps({"title": "Kept Film"}))
+        assert criterion_now.poll_criterion_now() is True
+        assert json.loads(app.redis.get(criterion_now.NOW_KEY)) == {
+            "title": "Kept Film"
+        }
+        booked = app.maintenance_queue.scheduled_job_registry.get_scheduled_time(
+            criterion_now.POLL_JOB_ID
+        )
+    wait = booked.astimezone() - datetime.now(timezone.utc)
+    assert timedelta(seconds=30) < wait <= criterion_now.STALE_RETRY
 
 
 def test_the_poller_reads_the_watch_live_page():
