@@ -623,7 +623,7 @@ Fitzflix keeps all its AWS data in one S3 bucket (`AWS_BUCKET`). The bucket has 
 
 | Prefix | Contents | Lifecycle |
 | --- | --- | --- |
-| `untouched/` (`AWS_UNTOUCHED_PREFIX`) | The rips, as they arrived. Fitzflix uploads each file at import when `ARCHIVE_ORIGINAL_MEDIA` is set. Fitzflix never overwrites them. | Fitzflix uploads the objects as `STANDARD`. A day-0 lifecycle rule moves them to **Glacier Deep Archive**. |
+| `untouched/` (`AWS_UNTOUCHED_PREFIX`) | The rips, as they arrived. Fitzflix uploads each file at import when `ARCHIVE_ORIGINAL_MEDIA` is set. Fitzflix never overwrites them. | Fitzflix uploads the objects as `STANDARD`. A day-0 lifecycle rule moves them to **Glacier Deep Archive**. The same rule moves each noncurrent version there too. Thus, a version that is replaced before the daily lifecycle run does not stay in `STANDARD`. |
 | `modified/` (`AWS_MODIFIED_PREFIX`) | The current library file of a file that changed after import. The first change moves the archive of the file from `untouched/` to here. | The same rules as `untouched/` |
 | `transcoded/` (`AWS_TRANSCODED_PREFIX`) | The current 1080p library file of each [HDR conversion](#hdr-and-bt2020-imports). Its original stays in `untouched/`. | The same rules as `untouched/` |
 | `backup/` (`AWS_BACKUP_PREFIX`) | The nightly database dumps and the encrypted copy of `.env` | The backup task removes the old objects after its own retention period |

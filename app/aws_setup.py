@@ -91,10 +91,16 @@ MANAGED_RULE_FIELDS = (
     "Status",
     "Expiration",
     "NoncurrentVersionExpiration",
+    "NoncurrentVersionTransitions",
     "Transitions",
     "AbortIncompleteMultipartUpload",
 )
 MANAGED_RULE_ID_START = "fitzflix-"
+
+# The age at which a noncurrent archive version moves to Deep Archive
+# (#667). The value 0 matches the transition of the current version.
+
+NONCURRENT_TRANSITION_DAYS = 0
 
 
 def _rule_body(rule):
@@ -161,7 +167,8 @@ def _ensure_archive_rules(rules, report, changes, prefix, rule_id, retention_day
         )
 
     rule_for_prefix = next((rule for rule in rules if transitions_prefix(rule)), None)
-    if rule_for_prefix is not None:
+    new_rule = rule_for_prefix is None
+    if not new_rule:
         report(f"lifecycle: {prefix} Deep Archive transition", "present")
     else:
         rule_for_prefix = {
@@ -208,6 +215,32 @@ def _ensure_archive_rules(rules, report, changes, prefix, rule_id, retention_day
         rule_for_prefix["NoncurrentVersionExpiration"] = noncurrent
         changes.append(prefix)
         report(retention_label, "created" if current_days is None else "updated")
+
+    # The Transitions field moves only the current version of an object.
+    # An archive that is replaced or moved before the daily lifecycle run
+    # becomes a noncurrent version in STANDARD. No other field moves it.
+    # Thus, it would stay in STANDARD for the full retention (#667). This
+    # transition sends each noncurrent version to Deep Archive too.
+
+    noncurrent_label = f"lifecycle: {prefix} noncurrent-version Deep Archive transition"
+    noncurrent_transitions = list(
+        rule_for_prefix.get("NoncurrentVersionTransitions", [])
+    )
+    if any(
+        transition.get("StorageClass") == "DEEP_ARCHIVE"
+        for transition in noncurrent_transitions
+    ):
+        report(noncurrent_label, "present")
+    else:
+        noncurrent_transitions.append(
+            {
+                "NoncurrentDays": NONCURRENT_TRANSITION_DAYS,
+                "StorageClass": "DEEP_ARCHIVE",
+            }
+        )
+        rule_for_prefix["NoncurrentVersionTransitions"] = noncurrent_transitions
+        changes.append(prefix)
+        report(noncurrent_label, "created" if new_rule else "updated")
 
 
 def _as_list(value):

@@ -227,8 +227,11 @@ def test_provision_preserves_existing_hand_made_configuration(tmp_path):
     assert changed == {
         "lifecycle: bucket-wide incomplete-multipart abort": "created",
         "lifecycle: untouched/ noncurrent-version retention (180 days)": "updated",
+        "lifecycle: untouched/ noncurrent-version Deep Archive transition": "updated",
         "lifecycle: modified/ Deep Archive transition": "created",
         "lifecycle: transcoded/ Deep Archive transition": "created",
+        "lifecycle: modified/ noncurrent-version Deep Archive transition": "created",
+        "lifecycle: transcoded/ noncurrent-version Deep Archive transition": "created",
         "lifecycle: modified/ noncurrent-version retention (180 days)": "created",
         "lifecycle: transcoded/ noncurrent-version retention (180 days)": "created",
         "bucket restore-completed notification for modified/": "created",
@@ -246,6 +249,9 @@ def test_provision_preserves_existing_hand_made_configuration(tmp_path):
     assert untouched["Expiration"] == {"ExpiredObjectDeleteMarker": True}
     assert untouched["AbortIncompleteMultipartUpload"] == {"DaysAfterInitiation": 1}
     assert untouched["Transitions"] == hand_made_rules[0]["Transitions"]
+    assert untouched["NoncurrentVersionTransitions"] == [
+        {"NoncurrentDays": 0, "StorageClass": "DEEP_ARCHIVE"}
+    ]
     assert s3.rules[1] == hand_made_rules[1]
     assert s3.rules[2]["ID"] == ABORT_RULE_ID
     assert s3.rules[2]["Filter"] == {}
@@ -268,6 +274,60 @@ def test_provision_preserves_existing_hand_made_configuration(tmp_path):
         "fitzflix-restore-completed-transcoded",
     ]
     assert sqs.writes == []
+
+
+def test_provision_moves_the_noncurrent_archive_versions_to_deep_archive(tmp_path):
+    """Add the noncurrent-version transition to each archive rule (#667).
+
+    The Transitions field moves only the current version. A version that
+    is replaced before the lifecycle run stays in STANDARD without the
+    noncurrent transition. A second provision changes nothing."""
+
+    s3 = FakeS3(exists=False)
+    sqs = FakeSQS()
+    config = dict(CONFIG, LOG_FILE=str(tmp_path / "app.log"))
+    provision(config, s3, sqs, echo=lambda *_: None)
+
+    def archive_rules():
+        return [
+            rule
+            for rule in s3.rules
+            if any(
+                transition.get("StorageClass") == "DEEP_ARCHIVE"
+                for transition in rule.get("Transitions", [])
+            )
+        ]
+
+    # A bucket from before #667: the 3 archive rules lose the field.
+    assert sorted(rule["Filter"]["Prefix"] for rule in archive_rules()) == [
+        "modified/",
+        "transcoded/",
+        "untouched/",
+    ]
+    for rule in archive_rules():
+        del rule["NoncurrentVersionTransitions"]
+    writes = s3.writes.count("put_lifecycle")
+
+    results = dict(provision(config, s3, sqs, echo=lambda *_: None))
+    changed = {
+        component: status
+        for component, status in results.items()
+        if status != "present"
+    }
+    assert changed == {
+        f"lifecycle: {prefix} noncurrent-version Deep Archive transition": "updated"
+        for prefix in ("untouched/", "modified/", "transcoded/")
+    }
+    assert s3.writes.count("put_lifecycle") == writes + 1
+    for rule in archive_rules():
+        assert rule["NoncurrentVersionTransitions"] == [
+            {"NoncurrentDays": 0, "StorageClass": "DEEP_ARCHIVE"}
+        ]
+        assert rule["Transitions"] == [{"Days": 0, "StorageClass": "DEEP_ARCHIVE"}]
+
+    results = dict(provision(config, s3, sqs, echo=lambda *_: None))
+    assert all(status == "present" for status in results.values())
+    assert s3.writes.count("put_lifecycle") == writes + 1
 
 
 def test_provision_is_idempotent(tmp_path):
