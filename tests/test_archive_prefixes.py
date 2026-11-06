@@ -725,7 +725,14 @@ def test_a_re_archive_before_the_move_keeps_the_pending_rip(app, uploads, monkey
         assert _deletes(app) == [f"untouched/{name}", pending]
 
 
-def test_a_failed_copy_of_the_pending_rip_deletes_nothing(app, uploads, monkeypatch):
+def test_a_failed_copy_of_the_pending_rip_keeps_the_claim(app, uploads, monkeypatch):
+    """A failed copy changes no row (#659).
+
+    The row keeps the pending key and its target. Thus, the prune does
+    not delete the only copy of the rip. The stale flag stays, and the
+    next upload does the work again."""
+
+    from app.models import File
     from tests.fakes import ArchiveS3
 
     name = "Lost Copy (2024) - [DVD].mkv"
@@ -738,14 +745,90 @@ def test_a_failed_copy_of_the_pending_rip_deletes_nothing(app, uploads, monkeypa
             make_movie("Lost Copy", 2024),
             "DVD",
             aws_key=pending,
+            aws_key_target=f"untouched/{name}",
+            untouched_basename=name,
+            aws_stale=True,
+        )
+        db.session.commit()
+        file_id = file.id
+
+        assert aws_storage.archive_library_file(file, "/library/file.mkv") is None
+        assert _deletes(app) == []
+        assert app.file_queue.jobs == []
+
+    with app.app_context():
+        row = db.session.get(File, file_id)
+        assert row.aws_key == pending
+        assert row.aws_key_target == f"untouched/{name}"
+        assert row.aws_stale is True
+        assert pending.casefold() in aws_storage.key_claims()
+
+        fake.objects[pending] = {
+            "ContentLength": 50,
+            "ETag": '"rip"',
+            "StorageClass": "STANDARD",
+            "VersionId": "v1",
+        }
+        assert aws_storage.archive_library_file(row, "/library/file.mkv") == (
+            f"modified/{name}"
+        )
+        assert row.aws_key == f"modified/{name}"
+        assert row.aws_stale is False
+        assert fake.objects[f"untouched/{name}"]["ETag"] == '"rip"'
+        assert _deletes(app) == [f"untouched/{name}", pending]
+
+
+def test_the_row_keeps_the_pending_key_until_the_rip_is_copied(
+    app, uploads, monkeypatch
+):
+    """A worker that dies during the copy leaves the pending key claimed (#659)."""
+
+    from app.models import File
+    from tests.fakes import ArchiveS3
+
+    name = "Killed Copy (2024) - [DVD].mkv"
+    pending = f"pending-untouched/run7/{name}"
+    seen = []
+
+    def on_copy(*args, **kwargs):
+        # A new connection reads the committed state, as the prune does.
+        with db.engine.connect() as connection:
+            seen.append(
+                connection.execute(
+                    db.select(File.aws_key, File.aws_key_target).where(
+                        File.id == file_id
+                    )
+                ).one()
+            )
+
+    fake = ArchiveS3(
+        {
+            pending: {
+                "ContentLength": 50,
+                "ETag": '"rip"',
+                "StorageClass": "STANDARD",
+                "VersionId": "v1",
+            }
+        },
+        on_copy=on_copy,
+    )
+    monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kwargs: fake)
+    monkeypatch.setitem(app.config, "AWS_BUCKET", "test-bucket")
+    with app.app_context():
+        file = make_movie_file(
+            make_movie("Killed Copy", 2024),
+            "DVD",
+            aws_key=pending,
+            aws_key_target=f"untouched/{name}",
             untouched_basename=name,
         )
         db.session.commit()
+        file_id = file.id
 
         aws_storage.archive_library_file(file, "/library/file.mkv")
 
+        assert seen == [(pending, f"untouched/{name}")]
         assert file.aws_key == f"modified/{name}"
-        assert _deletes(app) == []
 
 
 def test_the_replaced_key_is_deleted_only_if_present(app, uploads):
@@ -774,3 +857,55 @@ def test_the_replaced_key_is_deleted_only_if_present(app, uploads):
         "untouched/Worse Copy (1998) - [DVD].mkv",
     ]
     assert all(job.kwargs == {"only_if_present": True} for job in deletes)
+
+
+def test_an_archive_that_changes_during_the_copy_stays_on_the_row(
+    app, uploads, monkeypatch
+):
+    """The row is read again after the copy (#659). A new archive is not given up."""
+
+    from app.models import File
+    from tests.fakes import ArchiveS3
+
+    name = "Moved Copy (2024) - [DVD].mkv"
+    pending = f"pending-untouched/run6/{name}"
+    newer = f"pending-untouched/run5/{name}"
+
+    def on_copy(*args, **kwargs):
+        with db.engine.begin() as connection:
+            connection.execute(
+                db.update(File).where(File.id == file_id).values(aws_key=newer)
+            )
+
+    fake = ArchiveS3(
+        {
+            pending: {
+                "ContentLength": 50,
+                "ETag": '"rip"',
+                "StorageClass": "STANDARD",
+                "VersionId": "v1",
+            }
+        },
+        on_copy=on_copy,
+    )
+    monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kwargs: fake)
+    monkeypatch.setitem(app.config, "AWS_BUCKET", "test-bucket")
+    with app.app_context():
+        file = make_movie_file(
+            make_movie("Moved Copy", 2024),
+            "DVD",
+            aws_key=pending,
+            aws_key_target=f"untouched/{name}",
+            untouched_basename=name,
+            aws_stale=True,
+        )
+        db.session.commit()
+        file_id = file.id
+
+        assert aws_storage.archive_library_file(file, "/library/file.mkv") is None
+        assert _deletes(app) == []
+
+    with app.app_context():
+        row = db.session.get(File, file_id)
+        assert row.aws_key == newer
+        assert row.aws_stale is True

@@ -2172,7 +2172,9 @@ def archive_library_file(file, path, delete_replaced=True):
 
     A pending move of the same archive (#369) ends here. The upload goes
     to the key of the new name, the old key is deleted, and the target
-    is cleared. Thus, an edit completes the move.
+    is cleared. Thus, an edit completes the move. A pending rip of an
+    import first goes to its untouched/ key. A failed copy returns None
+    and changes no row (#659).
 
     A pending restore of the file refuses the upload (#610). The upload
     can delete the key under restore. The refusal returns None. A writer
@@ -2217,7 +2219,36 @@ def archive_library_file(file, path, delete_replaced=True):
 
     db.session.commit()
 
+    # The row gives up a pending key only after the rip has its untouched/
+    # key (#659). A delete of the pending key removes each version, and
+    # the prune deletes a pending key that no row claims. Thus, the copy
+    # comes before the commit that changes the key. A failed copy changes
+    # no row. The stale flag stays, and a later upload tries again.
+
+    rip = None
     replaced = getattr(file, column)
+    if replaced and delete_replaced and is_pending_archive(replaced):
+        # The archive move of the import did not run yet (#495). The rip
+        # goes to its untouched/ key, as the move would do. Then the
+        # delete of that key below leaves the noncurrent version for the
+        # lifecycle window, as for the rip of any edited file.
+
+        rip = _keep_pending_rip(file, replaced)
+        if rip is None:
+            return None
+
+        # The copy of a large rip takes minutes. End the transaction
+        # again. The record then loads from a new snapshot. An archive
+        # that changed during the copy stays on the row.
+
+        db.session.commit()
+        if getattr(file, column) != replaced:
+            current_app.logger.warning(
+                f"'{file.basename}' The archive of the record changed during "
+                f"the copy of '{replaced}'. A later archive upload tries again"
+            )
+            return None
+
     if replaced == key:
         replaced = None
     if converted:
@@ -2239,16 +2270,7 @@ def archive_library_file(file, path, delete_replaced=True):
     db.session.commit()
     current_app.logger.info(f"'{file.basename}' Archived the library file as '{key}'")
 
-    doomed = [replaced] if replaced else []
-    if replaced and delete_replaced and is_pending_archive(replaced):
-        # The archive move of the import did not run yet (#495). A delete
-        # of the pending key removes each version at once. Thus, the rip
-        # first goes to its untouched/ key, as the move would do. Then
-        # its delete leaves the noncurrent version for the lifecycle
-        # window, as for the rip of any edited file.
-
-        rip = _keep_pending_rip(file, replaced)
-        doomed = [rip, replaced] if rip else []
+    doomed = [rip, replaced] if rip else [replaced] if replaced else []
     # A row that the sync uploads because it has no upload date can name
     # a key with no object. A plain delete then writes a marker at a key
     # that never existed (#588).
@@ -2268,7 +2290,8 @@ def _keep_pending_rip(file, pending):
     """Copy a pending upload to its untouched/ key. Return that key, or None (#495).
 
     The pending prefix is STANDARD. Thus, the copy needs no restore. A
-    failed copy keeps the pending key, and the caller deletes nothing."""
+    failed copy returns None. Then the caller keeps the pending key on
+    the row (#659)."""
 
     target = archive_key_for(file, current_app.config["AWS_UNTOUCHED_PREFIX"])
     s3_client = aws_s3_client(with_retries=True)
@@ -2287,7 +2310,8 @@ def _keep_pending_rip(file, pending):
     if problem:
         current_app.logger.error(
             f"'{file.basename}' The copy of the pending upload '{pending}' to "
-            f"'{target}' {problem}. The pending upload stays"
+            f"'{target}' {problem}. The record keeps the pending upload. A "
+            f"later archive upload tries again"
         )
         return None
     current_app.logger.info(
