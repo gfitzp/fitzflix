@@ -194,10 +194,10 @@ def mark_restore_pending(key):
 def end_restore_request(file_id):
     """Clear the pending restore of the File row file_id (#610).
 
-    download_task calls this when the download ends with no retry and no
-    new restore. Thus, a form never stays off for a restore that does not
-    come. The row id holds when an archive move changes the key during
-    the download. A fault of the clear goes to the log. The 14-day sweep
+    download_task calls this when the download ends with no retry, no
+    new restore and no SQS message that comes back (#658). Thus, a form
+    never stays off for a restore that does not come. The row id holds
+    when an archive move changes the key during the download. A fault of the clear goes to the log. The 14-day sweep
     then clears the row. This commits."""
 
     if file_id is None:
@@ -1210,7 +1210,9 @@ def download_task(
     download. The placement reads the path of the row under the lock.
     The end of the task clears the state by the row id, after the lock
     is released. A writer that comes first sees the state and refuses.
-    A booked retry and a new restore of the object keep the state.
+    A booked retry and a new restore of the object keep the state. A
+    give-up that leaves the SQS message keeps the state too (#658). The
+    next delivery of the message then downloads again.
 
     The newest receipt handle of the message is under the key (#617)."""
 
@@ -1226,8 +1228,11 @@ def download_task(
             file = live.filter(File.aws_transcoded_key == key).first()
         file_id = file.id if file is not None else None
 
+    # A fault that escapes the task leaves the SQS message in the queue.
+    # Thus, the state stays unless a status says otherwise.
+
     booked = []
-    outcome = None
+    outcome = DOWNLOAD_GAVE_UP
     try:
         outcome = _download_task(
             key,
@@ -1238,11 +1243,17 @@ def download_task(
             booked,
             file_id,
         )
-        # A status of aws_download is a truthy text. The job returns True.
+        # A give-up is a failure of the job. Each other status of
+        # aws_download is a handled message. The job returns True.
+        if outcome == DOWNLOAD_GAVE_UP:
+            return False
         return True if isinstance(outcome, str) else outcome
     finally:
         with app.app_context():
-            if not booked and outcome != DOWNLOAD_RESTORE_PENDING:
+            if not booked and outcome not in (
+                DOWNLOAD_RESTORE_PENDING,
+                DOWNLOAD_GAVE_UP,
+            ):
                 end_restore_request(file_id)
 
 
@@ -1255,10 +1266,11 @@ def _download_task(
     booked,
     file_id,
 ):
-    """Run download_task. Return the status of aws_download, True, False or None.
+    """Run download_task. Return the status of aws_download, True or False.
 
     file_id is the row of the key, or None. A booked retry appends True
-    to booked."""
+    to booked. A give-up that leaves the SQS message returns
+    DOWNLOAD_GAVE_UP (#658)."""
 
     # The retry constants still live in app.videos. Import them lazily.
     # Thus, the module import direction stays videos to aws_storage.
@@ -1337,7 +1349,7 @@ def _download_task(
                     f"'{basename}' {reason} after {volume_waits} waits; giving up"
                 )
                 discard_kept_download()
-                return False
+                return DOWNLOAD_GAVE_UP
             handle = _latest_receipt_handle(sqs_receipt_handle, key)
             counters = {
                 "transient_retries": transient_retries,
@@ -1533,21 +1545,18 @@ def _download_task(
                 booked.append(True)
                 return False
             current_app.logger.error(traceback.format_exc())
-            return None
+            return DOWNLOAD_GAVE_UP
 
         except Exception:
             current_app.logger.error(traceback.format_exc())
-            return None
+            return DOWNLOAD_GAVE_UP
 
         else:
-            # A truthy status means that the SQS message was handled. The
-            # file arrived (DOWNLOAD_COMPLETE), or there was nothing to
-            # download (object missing, restore pending). False means that
-            # the retry budget was used up, or that the message could not be
-            # deleted. download_task reads the status to keep the pending
-            # restore of DOWNLOAD_RESTORE_PENDING.
+            # download_task reads the status. It keeps the pending restore
+            # of DOWNLOAD_RESTORE_PENDING and of DOWNLOAD_GAVE_UP. In both
+            # cases the message or a new restore comes back to the task.
 
-            if not downloaded:
+            if not downloaded or downloaded == DOWNLOAD_GAVE_UP:
                 current_app.logger.error(
                     f"'{basename}' download from AWS S3 storage failed"
                 )
@@ -2939,11 +2948,10 @@ def aws_delete(key, only_if_present=False):
         return datetime.now(timezone.utc)
 
 
-# These are the aws_download results. A failure is a plain False. Each
-# success status is truthy. Thus, a caller that only needs to know if
-# the SQS message was handled can boolean-test the result. A caller that
-# needs to know if a file arrived compares the result with
-# DOWNLOAD_COMPLETE.
+# These are the aws_download results. A failed delete of the message is
+# a plain False. A give-up is DOWNLOAD_GAVE_UP. Each other status means
+# that the SQS message was handled. A caller that needs to know if a
+# file arrived compares the result with DOWNLOAD_COMPLETE.
 
 DOWNLOAD_COMPLETE = "complete"
 DOWNLOAD_OBJECT_MISSING = "object-missing"
@@ -2952,6 +2960,11 @@ DOWNLOAD_OBJECT_MISSING = "object-missing"
 # it. The SQS message is dropped, so the fault cannot loop.
 DOWNLOAD_ACCESS_DENIED = "access-denied"
 DOWNLOAD_RESTORE_PENDING = "restore-pending"
+# The download gave up and left the SQS message in the queue. SQS
+# delivers it again after its visibility timeout, and that delivery
+# tries again. Thus, the pending restore of the row stays (#658). This
+# status is a failure. download_task returns False for it.
+DOWNLOAD_GAVE_UP = "gave-up"
 
 MAX_DOWNLOAD_RETRIES = 10
 
@@ -3586,11 +3599,13 @@ def aws_download(
     Return DOWNLOAD_RESTORE_PENDING if the object is in cold storage.
     Then the completion notification of the restore triggers the
     download again. Return DOWNLOAD_ACCESS_DENIED if CloudFront refused
-    an object that S3 can read. These 4 values are truthy. They mean
-    that the SQS message was handled. Return False if the retry budget was used up,
-    or if the SQS message could not be deleted. download_task ends the
-    pending restore of the row after each status but
-    DOWNLOAD_RESTORE_PENDING (#610).
+    an object that S3 can read. These 4 values mean that the SQS
+    message was handled. Return DOWNLOAD_GAVE_UP if the retry budget was
+    used up or the CloudFront settings have a problem. Then the message
+    stays for a later delivery. Return False if the SQS message could not
+    be deleted. download_task ends the pending restore of the row after
+    each status but DOWNLOAD_RESTORE_PENDING and DOWNLOAD_GAVE_UP (#610,
+    #658).
 
     When AWS_DOWNLOAD_VIA_CDN is set, the bytes come through CloudFront
     with a signed URL. The object size check and the restore-state
@@ -3626,7 +3641,7 @@ def aws_download(
                 f"'{basename}' CloudFront download is enabled, but "
                 f"{problem}; giving up"
             )
-            return False
+            return DOWNLOAD_GAVE_UP
 
     source = "AWS CloudFront" if via_cdn else "AWS S3 storage"
     current_app.logger.info(f"'{basename}' downloading from {source}")
@@ -3841,7 +3856,7 @@ def aws_download(
     )
 
     _discard_partial(destination)
-    return False
+    return DOWNLOAD_GAVE_UP
 
 
 def aws_restore(key, tier="Standard", record_request=True):

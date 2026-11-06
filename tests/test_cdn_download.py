@@ -136,7 +136,10 @@ def test_flag_on_without_settings_gives_up(app, monkeypatch):
     _wire(monkeypatch, s3, sqs)
 
     with app.app_context():
-        assert aws_storage.aws_download("untouched/x.mkv", "x.mkv", "r1") is False
+        assert (
+            aws_storage.aws_download("untouched/x.mkv", "x.mkv", "r1")
+            == aws_storage.DOWNLOAD_GAVE_UP
+        )
 
     assert s3.downloads == []
     assert sqs.deleted == []
@@ -405,7 +408,10 @@ def test_cdn_400_gives_up_without_retry(app, monkeypatch, cdn):
     _wire(monkeypatch, S3(), SQS())
 
     with app.app_context():
-        assert aws_storage.aws_download("untouched/x.mkv", "x.mkv") is False
+        assert (
+            aws_storage.aws_download("untouched/x.mkv", "x.mkv")
+            == aws_storage.DOWNLOAD_GAVE_UP
+        )
 
     assert len(cdn["signed"]) == 1
 
@@ -724,7 +730,10 @@ def test_cdn_body_with_no_known_size_is_not_trusted(app, monkeypatch, cdn):
         landed = os.path.join(app.config["IMPORT_DIR"], "x.mkv")
         if os.path.exists(landed):  # left by an earlier test in this session
             os.remove(landed)
-        assert aws_storage.aws_download("untouched/x.mkv", "x.mkv") is False
+        assert (
+            aws_storage.aws_download("untouched/x.mkv", "x.mkv")
+            == aws_storage.DOWNLOAD_GAVE_UP
+        )
         assert not os.path.exists(os.path.join(app.config["IMPORT_DIR"], "x.mkv"))
         assert not os.path.exists(os.path.join(app.config["IMPORT_DIR"], ".x.mkv"))
 
@@ -748,7 +757,10 @@ def test_unreadable_private_key_fails_fast(app, monkeypatch, tmp_path):
 
     with app.app_context():
         assert "CDN_PRIVATE_KEY cannot be read" in aws_storage.cdn_settings_problem()
-        assert aws_storage.aws_download("untouched/x.mkv", "x.mkv") is False
+        assert (
+            aws_storage.aws_download("untouched/x.mkv", "x.mkv")
+            == aws_storage.DOWNLOAD_GAVE_UP
+        )
     assert requested == []
 
     (tmp_path / "missing.pem").write_text("not a key")
@@ -812,7 +824,10 @@ def test_the_give_up_writes_one_error_record(app, monkeypatch, cdn, caplog):
     _wire(monkeypatch, S3(), SQS())
 
     with caplog.at_level(logging.INFO), app.app_context():
-        assert aws_storage.aws_download("untouched/x.mkv", "x.mkv") is False
+        assert (
+            aws_storage.aws_download("untouched/x.mkv", "x.mkv")
+            == aws_storage.DOWNLOAD_GAVE_UP
+        )
 
     errors = [r.getMessage() for r in caplog.records if r.levelno >= logging.ERROR]
     assert len(errors) == 1 and "giving up" in errors[0]

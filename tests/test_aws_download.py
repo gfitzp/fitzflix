@@ -268,7 +268,10 @@ def test_aws_download_failed_status_check_spends_a_retry(app, monkeypatch):
     monkeypatch.setattr(aws_storage, "DOWNLOAD_RETRY_SLEEP", lambda seconds: None)
 
     with app.app_context():
-        assert videos.aws_download("untouched/x.mkv", "x.mkv", "receipt-503") is False
+        assert (
+            videos.aws_download("untouched/x.mkv", "x.mkv", "receipt-503")
+            == aws_storage.DOWNLOAD_GAVE_UP
+        )
 
     assert s3.head_calls == 20  # 10 retries, 2 head_object calls each
     assert sqs.deleted == []
@@ -296,7 +299,10 @@ def test_aws_download_exhausted_retries_clean_up_partial_file(app, monkeypatch):
     monkeypatch.setattr(aws_storage, "DOWNLOAD_RETRY_SLEEP", lambda seconds: None)
 
     with app.app_context():
-        assert videos.aws_download("untouched/x.mkv", "x.mkv", "receipt-reset") is False
+        assert (
+            videos.aws_download("untouched/x.mkv", "x.mkv", "receipt-reset")
+            == aws_storage.DOWNLOAD_GAVE_UP
+        )
 
         assert not os.path.exists(os.path.join(app.config["IMPORT_DIR"], ".x.mkv"))
 
@@ -320,7 +326,10 @@ def test_aws_download_backs_off_between_retries(app, monkeypatch):
     monkeypatch.setattr(aws_storage, "DOWNLOAD_RETRY_SLEEP", delays.append)
 
     with app.app_context():
-        assert videos.aws_download("untouched/x.mkv", "x.mkv") is False
+        assert (
+            videos.aws_download("untouched/x.mkv", "x.mkv")
+            == aws_storage.DOWNLOAD_GAVE_UP
+        )
 
     assert delays == [1, 2, 4, 8, 16, 32, 60, 60, 60]
 
@@ -349,7 +358,8 @@ def test_aws_download_gives_up_immediately_on_auth_errors(app, monkeypatch):
 
     with app.app_context():
         assert (
-            videos.aws_download("untouched/x.mkv", "x.mkv", "receipt-denied") is False
+            videos.aws_download("untouched/x.mkv", "x.mkv", "receipt-denied")
+            == aws_storage.DOWNLOAD_GAVE_UP
         )
 
     assert s3.attempts == 1
@@ -1277,7 +1287,7 @@ def test_an_access_fault_of_a_placement_check_still_discards(app, monkeypatch):
             raise _client_error("AccessDenied", 403, "HeadObject")
         return {"ContentLength": 3, "ETag": '"v1"'}
 
-    assert _place_with(app, monkeypatch, S3(head=head), key) is None
+    assert _place_with(app, monkeypatch, S3(head=head), key) is False
     assert not os.path.exists(staged)
     assert _volume_retries(app) == []
 

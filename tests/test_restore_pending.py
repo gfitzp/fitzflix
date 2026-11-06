@@ -400,10 +400,7 @@ def _denied():
     return _client_error("AccessDenied", 403, "GetObject")
 
 
-@pytest.mark.parametrize(
-    "outcome",
-    ["object missing", "non-retryable", "retries used up", "access denied"],
-)
+@pytest.mark.parametrize("outcome", ["object missing", "access denied"])
 def test_each_terminal_download_outcome_clears_the_state(app, monkeypatch, outcome):
     import app.videos as videos
     from app import aws_storage
@@ -412,10 +409,6 @@ def test_each_terminal_download_outcome_clears_the_state(app, monkeypatch, outco
     sqs = SQS()
     if outcome == "object missing":
         s3, expected = S3(errors=_missing()), aws_storage.DOWNLOAD_OBJECT_MISSING
-    elif outcome == "non-retryable":
-        s3, expected = S3(errors=_denied()), False
-    elif outcome == "retries used up":
-        s3, expected = S3(errors=RuntimeError("flaky")), False
     else:
         from tests.test_cdn_download import _FakeResponse
 
@@ -484,32 +477,92 @@ def test_a_pending_restore_again_keeps_the_state(app, monkeypatch, deleted):
     assert restored == [(key, {"record_request": False})] * 2
 
 
-@pytest.mark.parametrize("exit", ["volume give-up", "error", "refused"])
-def test_each_terminal_exit_of_the_task_clears_the_state(app, monkeypatch, exit):
+def test_a_refused_placement_clears_the_state(app, monkeypatch):
+    """A refusal deletes the SQS message. Thus, the state ends."""
+
     import app.videos as videos
     from app import aws_storage
 
-    file_id, key, path = _direct_row(app, f"Task Exit {exit}")
+    file_id, key, path = _direct_row(app, "Task Exit refused")
     _wire(monkeypatch, S3(), SQS())
-    kwargs = {}
-    if exit == "volume give-up":
-        monkeypatch.setattr(videos, "_dead_volumes", lambda paths: ["/Volumes/Movies"])
-        kwargs["volume_waits"] = aws_storage.MAX_VOLUME_WAITS
-    elif exit == "error":
 
-        def broken(*args, **kwargs):
-            raise RuntimeError("simulated fault")
+    def refuse(*args, **kwargs):
+        raise aws_storage.PlacementRefused("simulated refusal")
 
-        monkeypatch.setattr(aws_storage, "aws_download", broken)
-    else:
-
-        def refuse(*args, **kwargs):
-            raise aws_storage.PlacementRefused("simulated refusal")
-
-        monkeypatch.setattr(aws_storage, "aws_download", refuse)
+    monkeypatch.setattr(aws_storage, "aws_download", refuse)
     with app.app_context():
-        videos.download_task(key, os.path.basename(key), "r1", **kwargs)
+        videos.download_task(key, os.path.basename(key), "r1")
         assert _pending(file_id) is None
+
+
+@pytest.mark.parametrize(
+    "give_up",
+    [
+        "non-retryable",
+        "retries used up",
+        "CloudFront settings",
+        "volume give-up",
+        "error",
+        "escaped fault",
+    ],
+)
+def test_a_give_up_keeps_the_state_for_the_next_delivery(app, monkeypatch, give_up):
+    """A give-up leaves the SQS message in the queue (#658).
+
+    The state stays. The next delivery of the message then downloads and
+    places the file. Before the fix, the give-up cleared the state, and
+    the next delivery was dropped as an ended restore."""
+
+    import app.videos as videos
+    from app import aws_storage
+
+    file_id, key, path = _direct_row(app, f"Give Up {give_up}")
+    sqs = SQS()
+    _wire(monkeypatch, S3(), sqs)
+    kwargs = {}
+    with monkeypatch.context() as fault:
+        if give_up == "non-retryable":
+            _wire(fault, S3(errors=_denied()), sqs)
+        elif give_up == "retries used up":
+            _wire(fault, S3(errors=RuntimeError("flaky")), sqs)
+        elif give_up == "CloudFront settings":
+            fault.setitem(app.config, "AWS_DOWNLOAD_VIA_CDN", True)
+            fault.setattr(aws_storage, "cdn_settings_problem", lambda: "no key")
+        elif give_up == "volume give-up":
+            fault.setattr(videos, "_dead_volumes", lambda paths: ["/Volumes/Movies"])
+            kwargs["volume_waits"] = aws_storage.MAX_VOLUME_WAITS
+        elif give_up == "error":
+
+            def broken(*args, **kwargs):
+                raise RuntimeError("simulated fault")
+
+            fault.setattr(aws_storage, "aws_download", broken)
+        else:
+
+            def lost(*args, **kwargs):
+                raise RuntimeError("simulated fault outside the task body")
+
+            fault.setattr(aws_storage, "_download_task", lost)
+        with app.app_context():
+            if give_up == "escaped fault":
+                with pytest.raises(RuntimeError):
+                    videos.download_task(key, os.path.basename(key), "r1", **kwargs)
+            else:
+                assert (
+                    videos.download_task(key, os.path.basename(key), "r1", **kwargs)
+                    is False
+                )
+            assert _pending(file_id) is not None
+        assert sqs.deleted == []
+    try:
+        with app.app_context():
+            assert videos.download_task(key, os.path.basename(key), "r2") is True
+            assert _pending(file_id) is None
+        with open(path, "rb") as handle:
+            assert handle.read() == b"s3!"
+        assert sqs.deleted == ["r2"]
+    finally:
+        _remove(path)
 
 
 def test_the_sweep_clears_a_state_older_than_14_days(app, monkeypatch):
