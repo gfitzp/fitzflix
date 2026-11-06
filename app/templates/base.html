@@ -1146,26 +1146,21 @@
 					});
 				});
 			}
-			// A huge career page can hold more record-less films than
-			// the per-request TMDB fetch budget of the server. The ids
-			// that come back with no state at all are asked again in
-			// follow-up passes. Each pass paints when it arrives. The
-			// passes stop when a pass makes no progress. Thus, every
-			// page fills with no reload
-			function hydrate(movieIds, tmdbIds, rounds) {
+			// A career page can hold more record-less films than the
+			// TMDB fetch cap of 1 request (#662). The answer paints at
+			// once and names the ids that still need TMDB in "pending".
+			// The next pass asks for those ids only. The passes stop
+			// when none are left, or when a pass warms nothing (TMDB is
+			// down). Thus, every page fills with no reload
+			function hydrate(movieIds, tmdbIds) {
 				setLoading(movieIds, tmdbIds, true);
 				fetchStates(movieIds, tmdbIds)
 					.then(function(payload) {
 						paintFrom(payload);
 						setLoading(movieIds, tmdbIds, false);
-						var unresolved = tmdbIds.filter(function(id) {
-							var state = payload.tmdb[id];
-							return state && !state.has_review && !state.flagged
-								&& state.rating === null && state.estimated === null;
-						});
-						if (rounds > 0 && unresolved.length
-								&& unresolved.length < tmdbIds.length) {
-							hydrate([], unresolved, rounds - 1);
+						var pending = (payload.pending || []).map(String);
+						if (pending.length && pending.length < tmdbIds.length) {
+							hydrate([], pending);
 						}
 					})
 					.catch(function() {
@@ -1179,7 +1174,7 @@
 					(entry.attr === "data-state-movie" ? movieIds : tmdbIds)
 						.push(entry.id);
 				});
-				hydrate(movieIds, tmdbIds, 5);
+				hydrate(movieIds, tmdbIds);
 			}
 		})();
 

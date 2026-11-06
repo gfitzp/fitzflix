@@ -1325,14 +1325,14 @@ def tv_card():
 # guards against abuse.
 MOVIE_STATES_LIMIT = 300
 
-# How many enriched payloads one state batch can FETCH from TMDB for
-# the tmdb-keyed lane. The size covers a whole filmography page in one
-# hydration pass. The fetches run 10 at a time. Thus, approximately 100
-# fetches complete in 2 seconds. The cap also bounds the burst that one
-# request can aim at TMDB. Cached payloads and overlay hits cost
+# How long one state batch can wait for TMDB, in seconds (#662). The
+# shared limiter passes TMDB_REQUESTS_PER_SECOND requests each second for
+# all processes. Thus, one request fetches at most that rate times
+# these seconds. The response names the other ids in "pending", and the
+# page asks again for them. Cached payloads and overlay hits cost
 # nothing. They are never capped.
 
-MOVIE_STATES_TMDB_FETCHES = 100
+MOVIE_STATES_TMDB_SECONDS = 2
 
 
 @bp.route("/movie_states")
@@ -1482,13 +1482,14 @@ def _movie_states():
     # filmography page) still get an estimate. The estimate comes from
     # the overlay when the overlay holds them. Otherwise, they score
     # live from the enriched payloads. Missing payloads warm in PARALLEL
-    # first (the enrichment pattern of the rail). Thus, one hydration
-    # pass covers a whole career page in 2 seconds, instead of 20 films
-    # per reload. The fetch cap bounds the burst that a single request
-    # can aim at TMDB. The page itself never waits. The hydration is an
-    # async fetch after the render.
+    # first (the enrichment pattern of the rail), up to the fetch cap.
+    # The ids that still have no payload go back in "pending". The page
+    # paints this answer and asks again for those ids only. A request
+    # that warms nothing names no pending ids. TMDB is down then, and
+    # the page stops.
 
     tmdb_estimates = {}
+    pending = []
     unmatched = [tmdb_id for tmdb_id in tmdb_ids if tmdb_id not in tmdb_to_movie]
     if unmatched and profile:
         overlay = {
@@ -1510,18 +1511,25 @@ def _movie_states():
                 )
                 if payload
             }
-            to_fetch = [tmdb_id for tmdb_id in misses if tmdb_id not in cached][
-                :MOVIE_STATES_TMDB_FETCHES
-            ]
+            uncached = [tmdb_id for tmdb_id in misses if tmdb_id not in cached]
+            cap = (
+                current_app.config["TMDB_REQUESTS_PER_SECOND"]
+                * MOVIE_STATES_TMDB_SECONDS
+            )
+            to_fetch = uncached[:cap]
             if to_fetch and current_app.config["TMDB_API_KEY"]:
                 flask_app = current_app._get_current_object()
 
                 def warm(tmdb_id):
                     with flask_app.app_context():
-                        enriched_movie(tmdb_id)
+                        return enriched_movie(tmdb_id) is not None
 
                 with ThreadPoolExecutor(max_workers=10) as executor:
-                    list(executor.map(warm, to_fetch))
+                    warmed = dict(zip(to_fetch, executor.map(warm, to_fetch)))
+                if any(warmed.values()):
+                    pending = [
+                        tmdb_id for tmdb_id in uncached if not warmed.get(tmdb_id)
+                    ]
             scoreable = cached | set(to_fetch)
         for tmdb_id in unmatched:
             score = overlay.get(tmdb_id)
@@ -1586,6 +1594,7 @@ def _movie_states():
         {
             "movies": {str(movie_id): state_for(movie_id) for movie_id in movie_ids},
             "tmdb": {str(tmdb_id): tmdb_state_for(tmdb_id) for tmdb_id in tmdb_ids},
+            "pending": pending,
         }
     )
 

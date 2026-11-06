@@ -7,6 +7,8 @@ watchlist toggle out of the card, and moved the badges in. They also
 cover the data-card-url wiring on the gallery surfaces."""
 
 import json
+
+import pytest
 from datetime import datetime, timedelta
 
 from app import db
@@ -694,6 +696,125 @@ def test_movie_states_fills_a_whole_page_in_one_pass(app, admin_client, admin_id
         if payload["tmdb"][str(tmdb_id)]["estimated"] is not None
     ]
     assert len(estimated) == 30
+
+
+def career_payload(tmdb_id):
+    """Return an enriched payload that the tmdb lane can score."""
+
+    return {
+        "tmdb_id": tmdb_id,
+        "title": f"Career Film {tmdb_id}",
+        "year": "1994",
+        "original_language": "en",
+        "genres": [{"id": 35, "name": "Comedy"}],
+        "keywords": [],
+        "cast": [],
+        "crew": [],
+    }
+
+
+@pytest.fixture
+def career_page(app, admin_id, monkeypatch):
+    """Build a career page: 1 cached film, 1 watchlist film, and 25 uncached films.
+
+    TMDB passes 5 requests each second. Thus, 1 request fetches at most
+    10 payloads. The fake enriched_movie records each fetch and caches
+    the payload, as the real one does. tmdb_down makes it fail."""
+
+    from types import SimpleNamespace
+
+    from app.recommendations import PROFILE_KEY
+
+    with app.app_context():
+        listed = make_movie("Career Listed", 1990, tmdb_id=860000)
+        db.session.add(UserWatchlist(user_id=admin_id, movie_id=listed.id))
+        db.session.commit()
+    app.redis.set(
+        PROFILE_KEY.format(user_id=admin_id),
+        json.dumps(
+            {
+                "affinities": {},
+                "movies": 3,
+                "calibration": {
+                    "scores": [0.0, 0.1, 0.2, 0.3],
+                    "stars": [1.0, 2.0, 4.0, 4.5],
+                },
+            }
+        ),
+    )
+    app.redis.set(
+        "fitzflix:tmdb:movie:860001:enriched", json.dumps(career_payload(860001))
+    )
+    monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
+    monkeypatch.setitem(app.config, "TMDB_REQUESTS_PER_SECOND", 5)
+
+    env = SimpleNamespace(fetched=[], tmdb_down=False)
+
+    def fake_enriched_movie(tmdb_id):
+        env.fetched.append(tmdb_id)
+        if env.tmdb_down:
+            return None
+        payload = career_payload(tmdb_id)
+        app.redis.set(f"fitzflix:tmdb:movie:{tmdb_id}:enriched", json.dumps(payload))
+        return payload
+
+    monkeypatch.setattr("app.main.discover.enriched_movie", fake_enriched_movie)
+    env.uncached = list(range(870101, 870126))
+    env.ids = [860000, 860001] + env.uncached
+    return env
+
+
+def states(client, tmdb_ids):
+    """Ask /movie_states for these tmdb ids. Return the JSON answer."""
+
+    return client.get(
+        "/movie_states?tmdb_ids=" + ",".join(str(t) for t in tmdb_ids)
+    ).get_json()
+
+
+def test_movie_states_caps_the_tmdb_fetches_and_names_the_pending_ids(
+    admin_client, career_page
+):
+    """1 request waits for TMDB for about 2 seconds at most (#662).
+
+    The cap is the limiter rate times 2 seconds. The first answer
+    carries the watchlist face and the cached estimate. It names the
+    uncached ids over the cap in "pending". The page asks again for
+    those ids only, until none are left."""
+
+    first = states(admin_client, career_page.ids)
+    assert sorted(career_page.fetched) == career_page.uncached[:10]
+    assert first["pending"] == career_page.uncached[10:]
+    assert first["tmdb"]["860000"]["on_watchlist"] is True
+    assert first["tmdb"]["860001"]["estimated"] is not None
+    assert first["tmdb"][str(career_page.uncached[0])]["estimated"] is not None
+    assert first["tmdb"][str(career_page.uncached[10])]["estimated"] is None
+
+    career_page.fetched.clear()
+    second = states(admin_client, first["pending"])
+    assert sorted(career_page.fetched) == career_page.uncached[10:20]
+    assert second["pending"] == career_page.uncached[20:]
+
+    third = states(admin_client, second["pending"])
+    assert third["pending"] == []
+    assert all(state["estimated"] is not None for state in third["tmdb"].values())
+
+    # Everything is cached now. A request fetches nothing.
+    career_page.fetched.clear()
+    again = states(admin_client, career_page.ids)
+    assert career_page.fetched == []
+    assert again["pending"] == []
+
+
+def test_movie_states_that_warm_nothing_name_no_pending_ids(admin_client, career_page):
+    """A request that warms nothing ends the chain of the page (#662)."""
+
+    career_page.tmdb_down = True
+    first = states(admin_client, career_page.ids)
+    assert len(career_page.fetched) == 10
+    assert first["pending"] == []
+    assert first["tmdb"]["860000"]["on_watchlist"] is True
+    assert first["tmdb"]["860001"]["estimated"] is not None
 
 
 def test_the_live_tmdb_pages_take_the_theatrical_rating(app, admin_client, monkeypatch):
