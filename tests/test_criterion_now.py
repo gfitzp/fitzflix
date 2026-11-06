@@ -1276,6 +1276,129 @@ def test_failed_tmdb_call_is_enriched_again(app, monkeypatch):
     assert stored["tmdb_id"] == 33667 and "retry" not in stored
 
 
+def series_feed(monkeypatch, criterion_now, fetched, status):
+    """Serve a feed whose current film and next film share 1 film id.
+
+    An episode of a series carries the id of the series. Each film
+    page answers with status. Each film fetch is recorded."""
+
+    import requests
+
+    page = whatson_html(guid="bbbb1111")
+
+    def fake_requests_get(url, timeout=None):
+        if url != criterion_now.WHATSON_URL:
+            fetched.append(url)
+
+        class FakeResponse:
+            status_code = 200 if url == criterion_now.WHATSON_URL else status
+            text = page if url == criterion_now.WHATSON_URL else ""
+
+            def raise_for_status(self):
+                if self.status_code >= 400:
+                    raise requests.HTTPError(f"{self.status_code}", response=self)
+
+        return FakeResponse()
+
+    monkeypatch.setattr(criterion_now.requests, "get", fake_requests_get)
+
+
+def test_a_missing_film_page_is_fetched_one_time(app, monkeypatch):
+    """A film page that answers 404 is kept with its entry (#666).
+
+    The 2 entries share 1 film id. The first poll fetches 1 page. The
+    next poll fetches none."""
+
+    import app.criterion_now as criterion_now
+
+    fetched = []
+    series_feed(monkeypatch, criterion_now, fetched, 404)
+    assert criterion_now.poll_criterion_now() is True
+    assert fetched == ["https://www.criterionchannel.com/films/bbbb1111/shock-corridor"]
+    stored = json.loads(app.redis.get(criterion_now.NOW_KEY))
+    assert stored["page_missing"] is True
+    (upcoming,) = json.loads(app.redis.get(criterion_now.SCHEDULE_KEY))["upcoming"]
+    assert upcoming["page_missing"] is True
+
+    fetched.clear()
+    assert criterion_now.poll_criterion_now() is True
+    assert fetched == []
+    assert json.loads(app.redis.get(criterion_now.NOW_KEY))["page_missing"] is True
+
+
+def test_a_film_page_that_fails_with_no_404_is_fetched_again(app, monkeypatch):
+    """A 5xx is not kept. The next poll fetches the page again (#666).
+
+    In 1 poll, the 2 entries that share 1 film id still cost 1 fetch."""
+
+    import app.criterion_now as criterion_now
+
+    fetched = []
+    series_feed(monkeypatch, criterion_now, fetched, 503)
+    assert criterion_now.poll_criterion_now() is True
+    assert len(fetched) == 1
+    assert not json.loads(app.redis.get(criterion_now.NOW_KEY)).get("page_missing")
+
+    fetched.clear()
+    assert criterion_now.poll_criterion_now() is True
+    assert len(fetched) == 1
+
+
+def test_card_links_to_watch_live_when_the_film_page_is_missing(app, admin_client):
+    """The title, More, and the Up next tile do not link to a 404 (#666)."""
+
+    import app.criterion_now as criterion_now
+
+    subscribe_criterion(app)
+    now = datetime.now(timezone.utc)
+
+    def at(minutes):
+        return criterion_now._stamp(now + timedelta(minutes=minutes))
+
+    live = "https://www.criterionchannel.com/live/1emmgvqX/criterion-24-7"
+    missing = "https://www.criterionchannel.com/films/srs00001/episode-2"
+    app.redis.set(
+        criterion_now.NOW_KEY,
+        json.dumps(
+            {
+                "title": "ETERNITY'S PILLAR: Episode 2",
+                "more_url": missing,
+                "watch_url": live,
+                "page_missing": True,
+                "starts_at": at(-10),
+                "ends_at": at(20),
+            }
+        ),
+    )
+    app.redis.set(
+        criterion_now.SCHEDULE_KEY,
+        json.dumps(
+            {
+                "fetched_at": at(0),
+                "upcoming": [
+                    {
+                        "title": "ETERNITY'S PILLAR: Episode 3",
+                        "more_url": "https://www.criterionchannel.com/films/srs00001",
+                        "page_missing": True,
+                        "starts_at": at(20),
+                        "ends_at": at(50),
+                    }
+                ],
+            }
+        ),
+    )
+
+    body = admin_client.get("/").get_data(as_text=True)
+    assert "Episode 2" in body
+    assert "/films/srs00001" not in body
+    assert f'<a href="{live}" class="text-decoration-none text-body">' in body
+    more = 'target="_blank" rel="noreferrer" class="btn btn-sm btn-secondary py-0">More'
+    assert f'<a href="{live}" {more}' in body
+    assert (
+        f'<a href="{live}" class="text-decoration-none text-body" aria-label=' in body
+    )
+
+
 LIVE_FIXTURE = "tests/fixtures/criterion_live_2026-10-20.html"
 LIVE_NOW = datetime(2026, 10, 20, 17, 0, tzinfo=timezone.utc)
 

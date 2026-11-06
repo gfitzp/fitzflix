@@ -525,7 +525,11 @@ def matched_film(title, info, failures=None):
 
 
 def _film_info_from(more_url):
-    """Return the parsed film info of a film page, or the empty info."""
+    """Return the parsed film info of a film page, or the empty info.
+
+    A page that answers 404 gives the empty info with page_missing. The
+    page of a series episode does that (#666). Other failures give the
+    empty info only. Thus, the next poll tries them again."""
 
     info = {"director": None, "year": None, "country": None, "starring": None}
     if more_url:
@@ -537,13 +541,25 @@ def _film_info_from(more_url):
             current_app.logger.warning(
                 f"Criterion 24/7: could not read the film page {more_url}: {e}"
             )
+            response = getattr(e, "response", None)
+            if getattr(response, "status_code", None) == 404:
+                info["page_missing"] = True
     return info
 
 
 # The fields that the enrichment of a film adds. A later poll reuses
 # them for the same film and does not fetch its film page again.
+# page_missing marks a film page that answered 404 (#666).
 
-ENRICHED_FIELDS = ("tmdb_id", "poster_path", "director", "year", "country", "starring")
+ENRICHED_FIELDS = (
+    "tmdb_id",
+    "poster_path",
+    "director",
+    "year",
+    "country",
+    "starring",
+    "page_missing",
+)
 FILM_ID_RE = re.compile(r"/films/([^/?#]+)")
 
 
@@ -563,7 +579,8 @@ def _known_enrichments():
 
     An enrichment with no year, no director, and no TMDB id is not kept.
     The film page failed then. An enrichment marked retry is not kept.
-    A TMDB call failed then. The next poll tries both again."""
+    A TMDB call failed then. The next poll tries both again. A film page
+    that answered 404 is kept with its page_missing mark (#666)."""
 
     entries = []
     now_payload = current_app.redis.get(NOW_KEY)
@@ -577,7 +594,10 @@ def _known_enrichments():
     for entry in entries:
         if entry.get("retry"):
             continue
-        if not any(entry.get(field) for field in ("tmdb_id", "year", "director")):
+        if not any(
+            entry.get(field)
+            for field in ("tmdb_id", "year", "director", "page_missing")
+        ):
             continue
         key = _enrichment_key(entry.get("title") or "", entry.get("more_url"))
         known[key] = {field: entry.get(field) for field in ENRICHED_FIELDS}
@@ -590,9 +610,12 @@ def _enriched_entry(title, more_url, known=None):
     A year is sufficient to try TMDB. The poster comes as a direct TMDB
     link on a verified match. Otherwise the card renders plain. It
     never shows a guess. A film in known reuses its stored enrichment
-    and fetches nothing."""
+    and fetches nothing. The result goes into known. Thus, 1 poll
+    fetches the page of a film 1 time, also when 2 entries share the
+    film id (#666)."""
 
-    cached = (known or {}).get(_enrichment_key(title, more_url))
+    key = _enrichment_key(title, more_url)
+    cached = (known or {}).get(key)
     if cached:
         return dict(cached)
     info = _film_info_from(more_url)
@@ -605,6 +628,8 @@ def _enriched_entry(title, more_url, known=None):
     entry = {"tmdb_id": tmdb_id, "poster_path": poster_path, **info}
     if failures:
         entry["retry"] = True
+    if known is not None:
+        known[key] = dict(entry)
     return entry
 
 
@@ -820,7 +845,15 @@ def _turned_over(stored, upcoming, now):
     return stored, upcoming
 
 
-def _up_next(upcoming):
+def _film_link(entry, watch_url):
+    """Return the film page link of an entry for the card.
+
+    A film page that answered 404 gives the Watch Live link (#666)."""
+
+    return watch_url if entry.get("page_missing") else entry.get("more_url")
+
+
+def _up_next(upcoming, watch_url):
     """Return the previews of the next films of the feed, as a list.
 
     Each preview has the title, the year, the poster, the link, and the
@@ -835,7 +868,7 @@ def _up_next(upcoming):
                 "year": entry.get("year"),
                 "tmdb_id": entry.get("tmdb_id"),
                 "poster_path": entry.get("poster_path"),
-                "more_url": entry.get("more_url"),
+                "more_url": _film_link(entry, watch_url),
                 "starts_at": _clock(starts_at),
             }
         )
@@ -869,6 +902,7 @@ def criterion_now_card(user):
 
     tmdb_id = stored.get("tmdb_id")
     payload = enriched_movie(tmdb_id) if tmdb_id else None
+    watch_url = stored.get("watch_url") or WATCH_LIVE_URL
 
     # The elapsed time of the film. The start time of the schedule
     # gives it directly. Without 1, Fitzflix derives it as the predicted
@@ -900,12 +934,12 @@ def criterion_now_card(user):
         "starring": stored.get("starring"),
         "tmdb_id": tmdb_id,
         "poster_path": stored.get("poster_path"),
-        "more_url": stored.get("more_url"),
-        "watch_url": stored.get("watch_url") or WATCH_LIVE_URL,
+        "more_url": _film_link(stored, watch_url),
+        "watch_url": watch_url,
         "next_at": next_at,
         "ends_at_epoch_ms": int(ends_at.timestamp() * 1000) if ends_at else None,
         "minutes_in": minutes_in,
-        "up_next": _up_next(upcoming),
+        "up_next": _up_next(upcoming, watch_url),
         # The live refresh of the home page compares this fingerprint
         # between fetches. A changed film replaces the full card. An
         # unchanged film repaints only the status line and the preview.
