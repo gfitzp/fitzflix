@@ -16,7 +16,7 @@ from app.models import MOVIES, TV_SHOWS, File, Movie, RefQuality, TVSeries
 
 # The order of the copies in a movie group, best first. Never select a
 # fullscreen copy while a widescreen copy exists. Then select the best
-# quality. At the same quality, a real rip ranks above a 1080p SDR
+# quality. At the same quality, a real rip ranks above an SDR
 # conversion (#292). A tie goes to the lowest file id. Thus, the winner
 # is always the same.
 
@@ -642,7 +642,7 @@ def find_better_files(details):
                 .all()
             )
 
-    # A conversion to 1080p SDR (#292) has 2 more rules. An admin who
+    # A conversion to SDR (#292) has 2 more rules. An admin who
     # chose "Import" for a held conversion replaces the existing file,
     # whatever its quality. A file with HDR or BT.2020 colors never
     # blocks a conversion. The conversion replaces it.
@@ -721,7 +721,7 @@ def find_worse_files(file, replace_existing=False):
     These are the candidates for removal after an upgrade. file is the
     File row of the import. replace_existing is the "Import" choice of
     an admin for a held conversion. A
-    conversion to 1080p SDR (#292) also outranks the files with HDR
+    conversion to SDR (#292) also outranks the files with HDR
     or BT.2020 colors, in any quality. After an admin chose "Import"
     for a held conversion, it outranks every file of its title.
     """

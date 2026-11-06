@@ -8,6 +8,7 @@ from datetime import datetime
 import pytest
 
 import app.importing as importing
+import app.sdr_conversion as sdr_conversion
 import app.videos as videos
 from app import db
 from app.models import ArchivedOriginal, File, HeldImport, Movie, RefQuality, TVSeries
@@ -77,18 +78,73 @@ def test_describe_color(app):
 
 
 @pytest.mark.parametrize(
-    "source,target",
+    "source,max_height,target",
     [
-        ("Bluray-2160p", "Bluray-1080p"),
-        ("Bluray-2160p Remux", "Bluray-1080p"),
-        ("WEBDL-2160p", "WEBDL-1080p"),
-        ("WEBRip-2160p", "WEBRip-1080p"),
-        ("Bluray-1080p", "Bluray-1080p"),
-        ("WEBDL-1080p", "WEBDL-1080p"),
+        ("Bluray-2160p", 1080, "Bluray-1080p"),
+        ("Bluray-2160p Remux", 1080, "Bluray-1080p"),
+        ("WEBDL-2160p", 1080, "WEBDL-1080p"),
+        ("WEBRip-2160p", 1080, "WEBRip-1080p"),
+        ("Bluray-1080p", 1080, "Bluray-1080p"),
+        ("WEBDL-1080p", 1080, "WEBDL-1080p"),
+        # A 4K conversion keeps the resolution. It is still an encode.
+        ("Bluray-2160p", 2160, "Bluray-2160p"),
+        ("Bluray-2160p Remux", 2160, "Bluray-2160p"),
+        ("Remux-2160p", 2160, "Bluray-2160p"),
+        ("WEBDL-2160p", 2160, "WEBDL-2160p"),
+        ("Bluray-1080p Remux", 2160, "Bluray-1080p"),
+        ("WEBDL-1080p", 2160, "WEBDL-1080p"),
     ],
 )
-def test_converted_quality_title(source, target):
-    assert converted_quality_title(source) == target
+def test_converted_quality_title(source, max_height, target):
+    assert converted_quality_title(source, max_height) == target
+
+
+def test_each_mode_that_converts_has_a_size_a_preset_and_an_encode():
+    """The mode "keep" converts nothing. Each other mode has every table entry."""
+
+    from config import HDR_IMPORT_MODES
+
+    assert set(HDR_IMPORT_MODES) - set(sdr_conversion.CONVERSION_HEIGHTS) == {"keep"}
+    for height in sdr_conversion.CONVERSION_HEIGHTS.values():
+        assert height in sdr_conversion.CONVERSION_WIDTHS
+        assert height in sdr_conversion.CONVERSION_PRESETS
+        assert height in sdr_conversion.PLACEBO_ENCODES
+
+
+def test_the_encode_commands_follow_the_maximum_height(app):
+    with app.app_context():
+        hd = sdr_conversion.handbrake_command("in.mkv", "out.mkv", 1080)
+        uhd = sdr_conversion.handbrake_command("in.mkv", "out.mkv", 2160)
+        assert hd[hd.index("--preset") + 1] == app.config["CONVERSION_PRESET"]
+        assert uhd[uhd.index("--preset") + 1] == app.config["CONVERSION_PRESET_2160P"]
+
+        hd = sdr_conversion.placebo_command("in.mkv", "out.mkv", 1080)
+        uhd = sdr_conversion.placebo_command("in.mkv", "out.mkv", 2160)
+        assert "min(iw,1920)" in hd[hd.index("-vf") + 1]
+        assert "format=yuv420p:" not in hd[hd.index("-vf") + 1]
+        assert hd[hd.index("-vf") + 1].endswith(":format=yuv420p")
+        assert hd[hd.index("-c:v") + 1] == "libx264"
+        assert "min(iw,3840)" in uhd[uhd.index("-vf") + 1]
+        assert uhd[uhd.index("-vf") + 1].endswith(":format=yuv420p10le")
+        assert uhd[uhd.index("-c:v") + 1] == "libx265"
+
+
+def test_the_preset_file_has_the_preset_of_each_size(app):
+    from app.settings import preset_names
+
+    with open(app.config["HANDBRAKE_PRESET_FILE"]) as f:
+        export = json.load(f)
+    names = preset_names(export)
+    assert app.config["CONVERSION_PRESET"] in names
+    assert app.config["CONVERSION_PRESET_2160P"] in names
+    uhd = next(
+        preset
+        for preset in export["PresetList"]
+        if preset["PresetName"] == app.config["CONVERSION_PRESET_2160P"]
+    )
+    assert (uhd["PictureWidth"], uhd["PictureHeight"]) == (3840, 2160)
+    assert uhd["PictureAllowUpscaling"] is False
+    assert uhd["VideoEncoder"] == "x265_10bit"
 
 
 def test_converted_file_details_renames_the_quality():
@@ -237,6 +293,41 @@ def test_a_conversion_replaces_an_hdr_file_of_a_higher_quality(app):
         assert original in find_worse_files(conversion)
 
 
+def test_a_4k_conversion_ranks_as_each_2160p_file_does(app):
+    """A 4K conversion has a 2160p quality (#657).
+
+    It replaces a real 1080p rip and an earlier 1080p conversion of the
+    same original. A real SDR rip at 2160p makes it wait for a decision."""
+
+    with app.app_context():
+        movie = make_movie("Amadeus", 1984)
+        real_hd = make_movie_file(movie, "Bluray-1080p Remux")
+        conversion, details = _incoming(
+            movie, "Bluray-2160p", converted_from_quality="Bluray-2160p"
+        )
+        assert find_better_files(details) == []
+        assert real_rips_blocking(details) == []
+        assert real_hd in find_worse_files(conversion)
+
+        earlier = make_movie_file(
+            make_movie("The Maltese Falcon", 1941),
+            "Bluray-1080p",
+            converted_from_quality="Bluray-2160p",
+        )
+        later, details = _incoming(
+            earlier.movie, "Bluray-2160p", converted_from_quality="Bluray-2160p"
+        )
+        assert find_better_files(details) == []
+        assert earlier in find_worse_files(later)
+
+        blocked = make_movie("Star Wars", 1977)
+        sdr_4k = make_movie_file(blocked, "Bluray-2160p", color_primaries="BT.709")
+        _, details = _incoming(
+            blocked, "Bluray-2160p", converted_from_quality="Bluray-2160p"
+        )
+        assert real_rips_blocking(details) == [sdr_4k]
+
+
 def test_an_sdr_4k_file_still_blocks_a_conversion(app):
     with app.app_context():
         movie = make_movie("Star Wars", 1977)
@@ -375,7 +466,7 @@ def archive_on(monkeypatch):
     real_get_setting = importing.get_setting
 
     def get_setting(name, *args, **kwargs):
-        if name in ("ARCHIVE_ORIGINAL_MEDIA", "CONVERT_HDR_TO_SDR"):
+        if name == "ARCHIVE_ORIGINAL_MEDIA":
             return True
         return real_get_setting(name, *args, **kwargs)
 
@@ -404,6 +495,19 @@ def _place(directory, sample, basename):
 
 def _jobs(queue, name):
     return [job for job in queue.jobs if job.func_name == name]
+
+
+def _set_mode(monkeypatch, mode):
+    """Give the import an HDR_IMPORT_MODE. Each other setting stays."""
+
+    current = importing.get_setting
+    monkeypatch.setattr(
+        importing,
+        "get_setting",
+        lambda name, *a, **k: (
+            mode if name == "HDR_IMPORT_MODE" else current(name, *a, **k)
+        ),
+    )
 
 
 def test_an_hdr_import_becomes_a_1080p_sdr_conversion(
@@ -455,6 +559,105 @@ def test_an_hdr_import_becomes_a_1080p_sdr_conversion(
         assert not os.path.exists(source)
         assert os.listdir(app.config["STAGING_DIR"]) == []
         os.remove(output)
+
+
+def test_an_hdr_import_becomes_a_4k_sdr_conversion_in_the_4k_mode(
+    app, hdr10_mkv, incoming_dir, archive_on, monkeypatch
+):
+    """The conversion keeps the 2160p quality of its source (#657).
+
+    The sample is smaller than 4K. Thus, the conversion keeps the size
+    of the sample. The 4K preset makes 10-bit HEVC."""
+
+    basename = "UHD Mode (2020) - [Bluray-2160p].mkv"
+    _set_mode(monkeypatch, "sdr-2160p")
+    with app.app_context():
+        source = _place(incoming_dir, hdr10_mkv, basename)
+        assert importing.localization_task(source) is True
+        (convert_job,) = _jobs(app.transcode_queue, "app.videos.convert_localized_file")
+        details, plan = convert_job.args[1], convert_job.args[4]
+        assert plan["max_height"] == 2160
+        assert plan["target_quality"] == "Bluray-2160p"
+        assert details["basename"] == basename
+        assert details["converted_from_quality"] == "Bluray-2160p"
+
+        assert videos.convert_localized_file(*convert_job.args) is True
+        converted = sdr_conversion.probe_video(convert_job.args[3])
+        assert (converted["width"], converted["height"]) == (640, 360)
+        (move_job,) = _jobs(app.handoff_queue, "app.videos.move_localized_file")
+        assert videos.move_localized_file(*move_job.args) is True
+        (finalize_job,) = _jobs(app.sql_queue, "app.videos.finalize_localization")
+        videos.finalize_localization(*finalize_job.args)
+
+        file = File.query.filter_by(basename=basename).one()
+        assert file.quality.quality_title == "Bluray-2160p"
+        assert file.converted_from_quality == "Bluray-2160p"
+        assert file.converted_from_format == "HDR10"
+        assert file.color_primaries == "BT.709"
+        assert file.transfer_characteristics == "BT.709"
+        assert file.hdr_format is None
+        assert not file.needs_sdr_conversion
+        assert "HEVC" in file.codec
+        assert file.aws_key == f"untouched/{basename}"
+
+        output = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
+        assert os.path.exists(output)
+        assert not os.path.exists(source)
+        os.remove(output)
+
+
+@pytest.mark.parametrize("mode,passes", [("sdr-1080p", False), ("sdr-2160p", True)])
+def test_the_check_of_the_result_reads_the_size_of_the_plan(
+    app, hdr10_mkv, incoming_dir, archive_on, monkeypatch, log_capture, mode, passes
+):
+    """A 3840x2160 result fails a 1080p plan and passes a 4K plan (#657)."""
+
+    basename = f"Result Size {mode} (2020) - [Bluray-2160p].mkv"
+    _set_mode(monkeypatch, mode)
+    real_probe = sdr_conversion.probe_video
+
+    def probe(path):
+        result = real_probe(path)
+        if result and path.endswith(".sdr.mkv"):
+            result.update(width=3840, height=2160)
+        return result
+
+    with app.app_context():
+        source = _place(incoming_dir, hdr10_mkv, basename)
+        assert importing.localization_task(source) is True
+        (convert_job,) = _jobs(app.transcode_queue, "app.videos.convert_localized_file")
+        monkeypatch.setattr(sdr_conversion, "probe_video", probe)
+        assert videos.convert_localized_file(*convert_job.args) is passes
+
+        refusals = [
+            r.getMessage()
+            for r in log_capture
+            if "larger than 1920x1080" in r.getMessage()
+        ]
+        assert bool(refusals) is not passes
+        move_jobs = _jobs(app.handoff_queue, "app.videos.move_localized_file")
+        assert len(move_jobs) == (1 if passes else 0)
+        for job in move_jobs:
+            job.delete()
+        rejected = os.path.join(
+            app.config["REJECTS_DIR"], "conversion failed", basename
+        )
+        for path in (convert_job.args[3], source, rejected):
+            if os.path.exists(path):
+                os.remove(path)
+
+
+def test_a_conversion_larger_than_its_source_gets_a_warning(app, tmp_path, log_capture):
+    small, large = tmp_path / "small.mkv", tmp_path / "large.mkv"
+    small.write_bytes(b"x" * 10)
+    large.write_bytes(b"x" * 20)
+    with app.app_context():
+        assert sdr_conversion.warn_if_larger("Film", str(large), str(small)) is False
+        assert not any("larger than its source" in r.getMessage() for r in log_capture)
+        assert sdr_conversion.warn_if_larger("Film", str(small), str(large)) is True
+    (record,) = [r for r in log_capture if "larger than its source" in r.getMessage()]
+    assert record.levelname == "WARNING"
+    assert "20 bytes" in record.getMessage() and "10 bytes" in record.getMessage()
 
 
 def test_the_import_queues_the_transcoded_archive_after_it_releases_the_lock(
@@ -548,11 +751,7 @@ def test_a_conversion_needs_the_archive(app, hdr10_mkv, incoming_dir, monkeypatc
         lambda name, *a, **k: (
             False
             if name == "ARCHIVE_ORIGINAL_MEDIA"
-            else (
-                True
-                if name == "CONVERT_HDR_TO_SDR"
-                else real_get_setting(name, *a, **k)
-            )
+            else real_get_setting(name, *a, **k)
         ),
     )
     with app.app_context():
@@ -567,16 +766,9 @@ def test_a_conversion_needs_the_archive(app, hdr10_mkv, incoming_dir, monkeypatc
             os.remove(rejected)
 
 
-def test_the_flag_off_imports_hdr_as_it_is(app, hdr10_mkv, incoming_dir, monkeypatch):
-    basename = "Flag Off (2020) - [Bluray-2160p].mkv"
-    real_get_setting = importing.get_setting
-    monkeypatch.setattr(
-        importing,
-        "get_setting",
-        lambda name, *a, **k: (
-            False if name == "CONVERT_HDR_TO_SDR" else real_get_setting(name, *a, **k)
-        ),
-    )
+def test_the_keep_mode_imports_hdr_as_it_is(app, hdr10_mkv, incoming_dir, monkeypatch):
+    basename = "Keep Mode (2020) - [Bluray-2160p].mkv"
+    _set_mode(monkeypatch, "keep")
     with app.app_context():
         source = _place(incoming_dir, hdr10_mkv, basename)
         assert importing.localization_task(source) is True
@@ -1174,7 +1366,12 @@ def test_a_conversion_waits_while_another_task_holds_the_title_lock(
             {"basename": "Locked (2001) - [Bluray-1080p].mkv"},
             lock,
             str(hidden),
-            {"source_format": "HDR10", "source_quality": "x", "target_quality": "y"},
+            {
+                "source_format": "HDR10",
+                "source_quality": "x",
+                "target_quality": "y",
+                "max_height": 1080,
+            },
         )
 
     assert result is False
@@ -1215,7 +1412,12 @@ def test_a_conversion_that_loses_its_lock_keeps_the_localized_file(
             {"basename": "Lost (2001) - [Bluray-1080p].mkv"},
             None,
             str(hidden),
-            {"source_format": "HDR10", "source_quality": "x", "target_quality": "y"},
+            {
+                "source_format": "HDR10",
+                "source_quality": "x",
+                "target_quality": "y",
+                "max_height": 1080,
+            },
         )
 
     assert result is False

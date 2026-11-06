@@ -120,16 +120,27 @@ An import never fails for lack of space. It waits and tries again every 30 minut
 
 ### HDR and BT.2020 imports
 
-The library holds only Rec.709 SDR files. Thus, each file plays on the least capable equipment of the Fitzflix users. An import with HDR10, HDR10+, HLG, Dolby Vision, or BT.2020 colors becomes a 1080p SDR conversion:
+The library holds only Rec.709 SDR files. Thus, each file plays on the least capable equipment of the Fitzflix users. An import with HDR10, HDR10+, HLG, Dolby Vision, or BT.2020 colors becomes an SDR conversion. The **HDR imports** setting on the Settings page (`HDR_IMPORT_MODE`) gives the result:
+
+| Value | On the page | An HDR import becomes |
+| --- | --- | --- |
+| `sdr-1080p` (default) | Convert to 1080p SDR | An SDR conversion of 1080p or smaller |
+| `sdr-2160p` | Convert to 4K SDR | An SDR conversion of 4K or smaller |
+| `keep` | Keep HDR as it is | The file as it is, with its HDR colors |
+
+A conversion has these steps:
 
 1. Fitzflix archives the untouched original to S3, as for each import. The archive key keeps the name of the original, for example `[Bluray-2160p]`.
-2. HandBrake converts the video to 1080p (or to the source size if it is smaller), tone-mapped to Rec.709. The preset is `CONVERSION_PRESET` in `handbrake_presets.json` (x264, RF 15). Each audio track, subtitle track, and chapter of the localized file stays, unchanged. The conversion runs on the transcode queue, on the local staging disk. A 2.5-hour film takes approximately 4.5 hours.
-3. The conversion goes into the library with the quality of the original at 1080p. For example, `Bluray-2160p` becomes `[Bluray-1080p]`, and `WEBDL-2160p` becomes `[WEBDL-1080p]`. The file page shows the quality and the color format of the original.
+2. HandBrake converts the video to the size of the setting (or to the source size if it is smaller), tone-mapped to Rec.709. The preset of a 1080p conversion is `CONVERSION_PRESET` in `handbrake_presets.json` (x264, RF 15). The preset of a 4K conversion is `CONVERSION_PRESET_2160P` (10-bit x265, RF 17). Each audio track, subtitle track, and chapter of the localized file stays, unchanged. The conversion runs on the transcode queue, on the local staging disk. A 2.5-hour film takes approximately 4.5 hours at 1080p. A 4K conversion takes much longer.
+3. A 1080p conversion goes into the library with the quality of the original at 1080p. For example, `Bluray-2160p` becomes `[Bluray-1080p]`, and `WEBDL-2160p` becomes `[WEBDL-1080p]`. A 4K conversion keeps the resolution of the original. A remux loses its "Remux" name, because the conversion is an encode. The file page shows the quality and the color format of the original.
+
+A 4K conversion is a 10-bit HEVC file. It does not play on each device without a transcode by Plex. If a conversion is larger than the localized file of its source, the log shows a warning.
 
 A 4K file with Rec.709 SDR colors is not converted. A Dolby Vision Profile 5 file has no HDR10 base layer. It needs an ffmpeg build with libplacebo (`FFMPEG_PLACEBO_BIN`). Without it, Fitzflix rejects the file and sends an email. A conversion also needs `ARCHIVE_ORIGINAL_MEDIA`. Without the archive, the original would be lost.
 
 The ranking rules:
 
+- A conversion ranks by its quality, as each file does. Thus, a 4K conversion replaces a real 1080p rip of the title.
 - At the same quality, a real rip ranks above a conversion. A real rip replaces a conversion. Then the original of the conversion stays in S3 as an archived original.
 - A later conversion replaces an earlier conversion of the same quality or lower.
 - A conversion replaces a library file that has HDR or BT.2020 colors, of any quality.
@@ -137,7 +148,9 @@ The ranking rules:
 
 The **Held imports** page also lists the archived originals that have no library file. A restore of one imports it again, through the same rules. The S3 sync never prunes an archived original. The library file of a conversion never replaces its archive.
 
-To import HDR files as they are, turn off **Convert HDR to SDR** on the Settings page (`CONVERT_HDR_TO_SDR`).
+To import HDR files as they are, set **HDR imports** to **Keep HDR as it is** (`HDR_IMPORT_MODE=keep`). A change of the setting applies to the next imports. It does not change a file that is in the library.
+
+`HDR_IMPORT_MODE` replaced the on/off setting `CONVERT_HDR_TO_SDR`, which Fitzflix does not read. If your `.env` has `CONVERT_HDR_TO_SDR=0`, replace that line with `HDR_IMPORT_MODE=keep`.
 
 ### Using Fitzflix on a phone
 
@@ -391,7 +404,7 @@ Fitzflix is developed and operated on macOS with [Homebrew](https://brew.sh). Th
 | [MediaInfo](https://mediaarea.net/MediaInfo) (`libmediainfo`) | — (`pymediainfo` loads it as a library) | Scans the video, audio, and subtitle tracks of each imported file |
 | [mkvmerge](https://mkvtoolnix.download) (MKVToolNix) | `MKVMERGE_BIN` | Remuxes Matroska files: removes the tracks that are not in your language and the empty tracks, and converts other containers to Matroska |
 | [mkvpropedit](https://mkvtoolnix.download) (MKVToolNix) | `MKVPROPEDIT_LOCATION` | Edits Matroska properties in place: the default and forced track flags, and the track statistics |
-| [HandBrakeCLI](https://handbrake.fr) | `HANDBRAKE_BIN` | Converts HDR and BT.2020 imports to 1080p SDR (refer to `CONVERSION_PRESET` and `HANDBRAKE_PRESET_FILE` for the preset) |
+| [HandBrakeCLI](https://handbrake.fr) | `HANDBRAKE_BIN` | Converts HDR and BT.2020 imports to SDR (refer to `CONVERSION_PRESET`, `CONVERSION_PRESET_2160P`, and `HANDBRAKE_PRESET_FILE` for the presets) |
 | [ffmpeg](https://ffmpeg.org) | `FFMPEG_BIN` | Converts video |
 | [ffprobe](https://ffmpeg.org) | `FFPROBE_BIN` | Measures the durations and reads the streams for the triage aids, the frames, and the DVR lineups |
 | [mkvextract](https://mkvtoolnix.download) (MKVToolNix) | `MKVEXTRACT_BIN` | Extracts the TrueHD track for the E-AC-3 Atmos twin |
@@ -440,7 +453,7 @@ TMDB_API_KEY=<your TMDB API key>
 | `ARCHIVE_ORIGINAL_MEDIA` | Uploads each imported original file to AWS S3 for archival. It is on by default when `AWS_BUCKET`, `AWS_ACCESS_KEY`, and `AWS_SECRET_KEY` are set. To turn it off, set it to `0`. |
 | `AWS_BUCKET`, `AWS_ACCESS_KEY`, `AWS_SECRET_KEY` | The credentials for the archival bucket. Uploads need all three. |
 | `AWS_DOWNLOAD_VIA_CDN`, `CDN_DOMAIN`, `CDN_KEY_PAIR_ID`, `CDN_PRIVATE_KEY` | The CloudFront download path for a library rebuild. The flag turns it on. The other three name the distribution, the CloudFront key pair, and the local private key file (refer to [Downloading through CloudFront](#downloading-through-cloudfront)). |
-| `CONVERT_HDR_TO_SDR`, `CONVERSION_PRESET`, `HELD_DIR`, `FFMPEG_PLACEBO_BIN` | The conversion of HDR and BT.2020 imports to 1080p SDR (refer to [HDR and BT.2020 imports](#hdr-and-bt2020-imports)). The flag is on by default. `CONVERSION_PRESET` names the preset in the preset file (default `HDR to 1080p SDR`). `HELD_DIR` holds the originals that wait for a decision (default `held` in `MEDIA_LOCATION`). `FFMPEG_PLACEBO_BIN` is an ffmpeg build with libplacebo, for Dolby Vision Profile 5. It is empty by default. |
+| `HDR_IMPORT_MODE`, `CONVERSION_PRESET`, `CONVERSION_PRESET_2160P`, `HELD_DIR`, `FFMPEG_PLACEBO_BIN` | The conversion of HDR and BT.2020 imports to SDR (refer to [HDR and BT.2020 imports](#hdr-and-bt2020-imports)). `HDR_IMPORT_MODE` is `sdr-1080p` (default), `sdr-2160p`, or `keep`. Fitzflix does not start with a different value. `CONVERSION_PRESET` names the preset of a 1080p conversion in the preset file (default `HDR to 1080p SDR`). `CONVERSION_PRESET_2160P` names the preset of a 4K conversion (default `HDR to 2160p SDR`). `HELD_DIR` holds the originals that wait for a decision (default `held` in `MEDIA_LOCATION`). `FFMPEG_PLACEBO_BIN` is an ffmpeg build with libplacebo, for Dolby Vision Profile 5. It is empty by default. |
 | `CREATE_FLAC_TWINS`, `CREATE_ATMOS_TWINS` | The import adds audio twins. Each lossless track gets a FLAC twin, and each TrueHD Atmos track gets an E-AC-3 Atmos twin from MediaConvert. Both are on by default. The twins are for players that cannot pass the original audio through. With a passthrough player, the twins have no use. To turn one off, set it to `0`. The `flask audio atmos` command still adds an Atmos twin on request. |
 | `MAIL_SERVER`, `MAIL_PORT`, `MAIL_USERNAME`, `MAIL_PASSWORD`, `MAIL_USE_TLS` | The SMTP server for error notifications and password-reset emails. Fitzflix sends them from `SERVER_EMAIL` to `ADMIN_EMAIL`. Both default to `MAIL_USERNAME`. |
 | `MAIL_TIMEOUT` | The limit in seconds for the SMTP connect and for each later step. The default is 30. |
@@ -454,17 +467,18 @@ TMDB_API_KEY=<your TMDB API key>
 | `PLEX_CRITERION_COLLECTION` | The name of the Plex collection that the Criterion sync keeps in each movie library. The default is `Criterion Collection Films`. |
 | `PLEX_PLAYER_SERVER_URI` | Remote playback. This is an HTTPS server address that the playback devices can reach. Each user selects a device on the Profile page (refer to [Playing films on an Apple TV](#playing-films-on-an-apple-tv)). |
 | `DVR_TOKEN`, `DVR_TUNER_URL` | Virtual DVR channels. The token protects the tuner, guide, and stream endpoints. If the token is not set, the function is disabled. The tuner URL is the Fitzflix origin as Plex reaches it (refer to [Virtual DVR](#virtual-dvr-live-tv-channels-in-plex)). |
-| `HANDBRAKE_PRESET_FILE` | The file of custom presets that you export from HandBrake. It can hold more than one preset, also in folders. The default file is `handbrake_presets.json` in the Fitzflix folder. The SDR conversion uses its `CONVERSION_PRESET`. |
+| `HANDBRAKE_PRESET_FILE` | The file of custom presets that you export from HandBrake. It can hold more than one preset, also in folders. The default file is `handbrake_presets.json` in the Fitzflix folder. The SDR conversion uses its `CONVERSION_PRESET` or its `CONVERSION_PRESET_2160P`. |
 | `LOG_FILE`, `LOG_RETENTION_DAYS` | The location of the application log (default `logs/fitzflix.log`) and the number of days of rotated archives to keep (default 14) |
 | `*_TASK_TIMEOUT` | The job timeouts for each queue, in seconds (`LOCALIZATION_TASK_TIMEOUT`, `SQL_TASK_TIMEOUT`, `UPLOAD_TASK_TIMEOUT`, `TRANSCODE_TASK_TIMEOUT`, `MKVPROPEDIT_TASK_TIMEOUT`, `MOVE_TASK_TIMEOUT` for the library copy (default 2 hours), and `FILE_TASK_TIMEOUT` for small file jobs such as an S3 delete (default 10 minutes)) |
 
-The on/off settings that are off by default are `PREVENT_ACCOUNT_CREATION`, `AWS_DOWNLOAD_VIA_CDN`, `MAIL_USE_TLS`, `IGNORE_ETAGS`, and `FORCE_UPLOAD`. Such a setting is on when it is in `.env` with a value of any kind. To turn it off, remove it from `.env`. The on/off settings that are on by default are `CREATE_FLAC_TWINS`, `CREATE_ATMOS_TWINS`, `CONVERT_HDR_TO_SDR`, and `ARCHIVE_ORIGINAL_MEDIA`. Such a setting is off when its value in `.env` is `0`, `false`, `no`, or `off`. Each other value turns it on. Refer to [System requirements](#system-requirements) for the binary paths.
+The on/off settings that are off by default are `PREVENT_ACCOUNT_CREATION`, `AWS_DOWNLOAD_VIA_CDN`, `MAIL_USE_TLS`, `IGNORE_ETAGS`, and `FORCE_UPLOAD`. Such a setting is on when it is in `.env` with a value of any kind. To turn it off, remove it from `.env`. The on/off settings that are on by default are `CREATE_FLAC_TWINS`, `CREATE_ATMOS_TWINS`, and `ARCHIVE_ORIGINAL_MEDIA`. Such a setting is off when its value in `.env` is `0`, `false`, `no`, or `off`. Each other value turns it on. Refer to [System requirements](#system-requirements) for the binary paths.
 
 #### The Settings page
 
 Some settings can also change on the **Admin > Settings** page, without a restart. Each web and worker process reads the page values again after 5 seconds. Thus, a save gets to each process in 5 seconds. The page itself always reads the table, so it shows a save at once. The page settings are:
 
-- The on/off settings `PREVENT_ACCOUNT_CREATION`, `ARCHIVE_ORIGINAL_MEDIA`, `AWS_DOWNLOAD_VIA_CDN`, `CREATE_FLAC_TWINS`, `CREATE_ATMOS_TWINS`, and `CONVERT_HDR_TO_SDR`.
+- The on/off settings `PREVENT_ACCOUNT_CREATION`, `ARCHIVE_ORIGINAL_MEDIA`, `AWS_DOWNLOAD_VIA_CDN`, `CREATE_FLAC_TWINS`, and `CREATE_ATMOS_TWINS`.
+- The HDR import mode `HDR_IMPORT_MODE`.
 - The health and log alerts `DISK_ALERT_FREE_GB`, `LOG_DIGEST_THRESHOLD`, and `LOG_DIGEST_IGNORE`.
 - The Plex trash limit `PLEX_TRASH_LIMIT`.
 - The download labels `RADARR_WEBDL_MIN_SCORE` and `SONARR_WEBDL_MIN_SCORE`.
@@ -473,7 +487,7 @@ Some settings can also change on the **Admin > Settings** page, without a restar
 
 `.env` has priority. A setting that `.env` sets is locked on the page, and its field shows "Set in .env". For an on/off setting, the name in `.env` sets it, with the value that the list above gives. For each other setting, a value that is not empty sets it. To control a locked setting from the page, remove it from `.env` and restart. A setting that is not in `.env` uses the page value. When the page has no value, the setting uses its default. The page shows the source of each value: `.env`, the page, or the default. **Reset to default** removes the page value. The page stores only the values that change, and the log records each change with the email of the admin.
 
-The page does not turn on `ARCHIVE_ORIGINAL_MEDIA` until `AWS_BUCKET`, `AWS_ACCESS_KEY`, and `AWS_SECRET_KEY` are in `.env`. It does not turn on `AWS_DOWNLOAD_VIA_CDN` until the `CDN_*` settings are in `.env` and the private key can be read. The page has no HandBrake preset setting. The conversion uses `CONVERSION_PRESET` as it is, with no fallback. If the preset file does not contain that preset, the startup log shows a warning. Then correct the setting or the file.
+The page does not turn on `ARCHIVE_ORIGINAL_MEDIA` until `AWS_BUCKET`, `AWS_ACCESS_KEY`, and `AWS_SECRET_KEY` are in `.env`. It does not turn on `AWS_DOWNLOAD_VIA_CDN` until the `CDN_*` settings are in `.env` and the private key can be read. The page has no HandBrake preset setting. The conversion uses `CONVERSION_PRESET` or `CONVERSION_PRESET_2160P` as it is, with no fallback. If the preset file does not contain one of these presets, the startup log shows a warning. Then correct the setting or the file.
 
 The page values are in the `app_setting` table of the database. Thus, they are in the nightly backup, and a Redis flush does not remove them. The secrets, the delete fences (`ARR_DOWNLOAD_FOLDERS`, `RADARR_ROOT_FOLDERS`, `SONARR_ROOT_FOLDERS`), `PROXY_HOPS`, the paths, the binaries, and the task timeouts stay in `.env` only. The database backups are not encrypted the way the `.env` backup is. Also, a stolen admin session must not make the delete fences wider.
 
@@ -625,7 +639,7 @@ Fitzflix keeps all its AWS data in one S3 bucket (`AWS_BUCKET`). The bucket has 
 | --- | --- | --- |
 | `untouched/` (`AWS_UNTOUCHED_PREFIX`) | The rips, as they arrived. Fitzflix uploads each file at import when `ARCHIVE_ORIGINAL_MEDIA` is set. Fitzflix never overwrites them. | Fitzflix uploads the objects as `STANDARD`. A day-0 lifecycle rule moves them to **Glacier Deep Archive**. The same rule moves each noncurrent version there too. Thus, a version that is replaced before the daily lifecycle run does not stay in `STANDARD`. |
 | `modified/` (`AWS_MODIFIED_PREFIX`) | The current library file of a file that changed after import. The first change moves the archive of the file from `untouched/` to here. | The same rules as `untouched/` |
-| `transcoded/` (`AWS_TRANSCODED_PREFIX`) | The current 1080p library file of each [HDR conversion](#hdr-and-bt2020-imports). Its original stays in `untouched/`. | The same rules as `untouched/` |
+| `transcoded/` (`AWS_TRANSCODED_PREFIX`) | The current SDR library file of each [HDR conversion](#hdr-and-bt2020-imports). Its original stays in `untouched/`. | The same rules as `untouched/` |
 | `backup/` (`AWS_BACKUP_PREFIX`) | The nightly database dumps and the encrypted copy of `.env` | The backup task removes the old objects after its own retention period |
 | `custom-posters/` (`AWS_CUSTOM_POSTERS_PREFIX`) | A mirror of the custom artwork tree. The nightly backup syncs it, and deletions propagate. | The noncurrent versions expire after 30 days |
 | `mediaconvert-scratch/` (`AWS_MEDIACONVERT_PREFIX`) | The scratch area of the Atmos pipeline: the masters and the E-AC-3 twins of a run | The objects expire after 7 days, and the noncurrent versions after 1 day |

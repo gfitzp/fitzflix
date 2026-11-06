@@ -47,9 +47,9 @@ PAGE_FLAGS = (
     "ARCHIVE_ORIGINAL_MEDIA",
     "PREVENT_ACCOUNT_CREATION",
     "AWS_DOWNLOAD_VIA_CDN",
-    "CONVERT_HDR_TO_SDR",
 )
 PAGE_TUNABLES = (
+    "HDR_IMPORT_MODE",
     "DISK_ALERT_FREE_GB",
     "LOG_DIGEST_THRESHOLD",
     "LOG_DIGEST_IGNORE",
@@ -62,6 +62,30 @@ PAGE_TUNABLES = (
     "DVR_TV_CHANNELS",
     "DVR_CHANNEL_EPISODES",
 )
+
+
+# The results of an import with HDR or BT.2020 colors (#657). The first
+# 2 make an SDR conversion of that maximum size. The last one imports the
+# file as it is. The first value is the default.
+
+HDR_IMPORT_MODES = ("sdr-1080p", "sdr-2160p", "keep")
+
+
+def _hdr_import_mode():
+    """Return the HDR_IMPORT_MODE of the environment, or the default.
+
+    A value that is not a mode stops the start. The other choice is a
+    silent default, and that default converts a file that the admin
+    wanted to keep."""
+
+    raw = (os.environ.get("HDR_IMPORT_MODE") or "").strip().lower()
+    if not raw:
+        return HDR_IMPORT_MODES[0]
+    if raw not in HDR_IMPORT_MODES:
+        raise ValueError(
+            f"HDR_IMPORT_MODE '{raw}' is not one of {', '.join(HDR_IMPORT_MODES)}"
+        )
+    return raw
 
 
 # The values that turn off an on/off setting that is on by default.
@@ -234,11 +258,12 @@ class Config(object):
     CREATE_FLAC_TWINS                   = _on_by_default("CREATE_FLAC_TWINS")
     CREATE_ATMOS_TWINS                  = _on_by_default("CREATE_ATMOS_TWINS")
 
-    # Convert each HDR or BT.2020 import to 1080p SDR (#292). The import
-    # archives the original to S3 untouched. Only the conversion goes
-    # into the library. On by default. When it is off, an HDR file goes
-    # into the library as it is.
-    CONVERT_HDR_TO_SDR                  = _on_by_default("CONVERT_HDR_TO_SDR")
+    # What an import with HDR or BT.2020 colors becomes (#292, #657).
+    # "sdr-1080p" and "sdr-2160p" archive the original to S3 untouched.
+    # Then only an SDR conversion of that maximum size goes into the
+    # library. "keep" puts the file into the library as it is. The
+    # default is "sdr-1080p".
+    HDR_IMPORT_MODE                     = _hdr_import_mode()
 
     # MediaConvert (TrueHD Atmos -> E-AC-3 Atmos supplement pipeline)
     AWS_MEDIACONVERT_PREFIX             = os.environ.get("AWS_MEDIACONVERT_PREFIX") or "mediaconvert-scratch"
@@ -339,9 +364,11 @@ class Config(object):
     # The preset file holds the custom presets, exported from HandBrake.
     # The default is handbrake_presets.json in this folder, if it exists.
     # CONVERSION_PRESET is the preset in the file that makes the SDR video
-    # of a conversion.
+    # of a 1080p conversion. CONVERSION_PRESET_2160P is the preset of a
+    # 4K conversion (#657).
     HANDBRAKE_PRESET_FILE               = os.environ.get("HANDBRAKE_PRESET_FILE") or _default_preset_file()
     CONVERSION_PRESET                   = os.environ.get("CONVERSION_PRESET") or "HDR to 1080p SDR"
+    CONVERSION_PRESET_2160P             = os.environ.get("CONVERSION_PRESET_2160P") or "HDR to 2160p SDR"
 
     # Sonarr configuration
     SONARR_API_KEY                      = os.environ.get("SONARR_API_KEY") or None

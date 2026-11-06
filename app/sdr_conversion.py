@@ -1,16 +1,22 @@
-"""Convert HDR and wide-color imports to 1080p SDR (#292).
+"""Convert HDR and wide-color imports to SDR (#292, #657).
 
 The Plex library holds only Rec.709 SDR files. These play on the least
 capable equipment of the Fitzflix users. An import with HDR10, HDR10+,
 HLG, Dolby Vision, or BT.2020 colors is archived to S3 untouched. Then
-it is converted to 1080p SDR, and only the conversion goes into the
-library. The CONVERT_HDR_TO_SDR setting turns this off. Then an HDR
-file goes into the library as it is.
+it is converted to SDR, and only the conversion goes into the library.
+
+The HDR_IMPORT_MODE setting gives the result. "sdr-1080p" makes a
+conversion of 1080p or smaller. "sdr-2160p" makes a conversion of 4K or
+smaller. "keep" converts nothing. Then an HDR file goes into the
+library as it is.
+
+The plan of a conversion holds its maximum height. The quality name,
+the encode, and the check of the result all read that 1 value.
 
 The flow:
 
-- localization_task calls plan_conversion. A plan renames the import
-  to its 1080p quality, for example Bluray-2160p to Bluray-1080p.
+- localization_task calls plan_conversion. A 1080p plan renames the
+  import to its 1080p quality, for example Bluray-2160p to Bluray-1080p.
 - If the library has a real rip of the title at that quality or
   better, the original waits in HELD_DIR for an admin decision
   (hold_import). The choices are "Import", "Archive only", and
@@ -58,6 +64,28 @@ HDR_TRANSFERS = ("PQ", "HLG", "SMPTE ST 2084", "ARIB STD-B67")
 # gamut conversion. BT.601 (DVD) is not in the list. It is SDR.
 
 WIDE_PRIMARIES = ("BT.2020",)
+
+# The maximum height of the conversion of each HDR_IMPORT_MODE (#657).
+# The mode "keep" has no entry, because it converts nothing.
+
+CONVERSION_HEIGHTS = {"sdr-1080p": 1080, "sdr-2160p": 2160}
+
+# The maximum width that goes with each maximum height.
+
+CONVERSION_WIDTHS = {1080: 1920, 2160: 3840}
+
+# The config name of the HandBrake preset of each maximum height.
+
+CONVERSION_PRESETS = {1080: "CONVERSION_PRESET", 2160: "CONVERSION_PRESET_2160P"}
+
+# The pixel format and the encoder arguments of the libplacebo path, for
+# each maximum height. They copy the encode settings of the HandBrake
+# presets: x264 at RF 15 for 1080p, and 10-bit x265 at RF 17 for 4K.
+
+PLACEBO_ENCODES = {
+    1080: ("yuv420p", ["-c:v", "libx264", "-preset", "medium", "-crf", "15"]),
+    2160: ("yuv420p10le", ["-c:v", "libx265", "-preset", "medium", "-crf", "17"]),
+}
 
 # The title lock lives for 1 LOCALIZATION_TASK_TIMEOUT. A conversion can
 # take more hours than that. Refresh the lock at this interval.
@@ -123,22 +151,26 @@ def probe_video(file_path):
     return None
 
 
-def converted_quality_title(quality_title):
-    """Return the quality of the 1080p conversion of a source quality.
+def converted_quality_title(quality_title, max_height):
+    """Return the quality of the conversion of a source quality.
 
-    The resolution goes down to 1080p. "Remux" goes away, because the
-    conversion is an encode. A source below 1080p keeps its quality."""
+    "Remux" goes away, because the conversion is an encode. With a
+    maximum height of 1080, a 2160p source goes down to 1080p. With
+    2160, it keeps its resolution. A smaller source keeps its quality."""
 
     title = quality_title.replace(" Remux", "").replace("Remux-", "Bluray-")
-    return title.replace("2160p", "1080p")
+    if max_height < 2160:
+        title = title.replace("2160p", "1080p")
+    return title
 
 
-def plan_conversion(file_path, file_details):
+def plan_conversion(file_path, file_details, max_height):
     """Return the conversion plan of an import, or None if it needs no conversion.
 
-    The plan has the source and target qualities, the color format of
-    the source, and its Dolby Vision profile. Raise ValueError if the
-    target quality does not exist."""
+    The plan has the source and target qualities, the maximum height of
+    the conversion, the color format of the source, and its Dolby
+    Vision profile. Raise ValueError if the target quality does not
+    exist."""
 
     from app.models import RefQuality
     from app.tracks import parse_dolby_vision_profile
@@ -152,7 +184,7 @@ def plan_conversion(file_path, file_details):
         return None
 
     source = file_details["quality_title"]
-    target = converted_quality_title(source)
+    target = converted_quality_title(source, max_height)
     if not RefQuality.query.filter_by(quality_title=target).first():
         raise ValueError(
             f"There is no quality '{target}' for a conversion of '{source}'"
@@ -161,6 +193,7 @@ def plan_conversion(file_path, file_details):
     return {
         "source_quality": source,
         "target_quality": target,
+        "max_height": max_height,
         "source_format": describe_color(
             video["hdr_format"],
             video["color_primaries"],
@@ -272,8 +305,10 @@ def _remove_quietly(*paths):
             pass
 
 
-def handbrake_command(input_file, output_file):
-    """Return the HandBrake command that makes the SDR video track only."""
+def handbrake_command(input_file, output_file, max_height):
+    """Return the HandBrake command that makes the SDR video track only.
+
+    The preset of the maximum height gives the size and the encoder."""
 
     config = current_app.config
     preset_file = (
@@ -286,7 +321,7 @@ def handbrake_command(input_file, output_file):
         + preset_file
         + [
             "--preset",
-            config["CONVERSION_PRESET"],
+            config[CONVERSION_PRESETS[max_height]],
             "-i",
             input_file,
             "-o",
@@ -303,13 +338,14 @@ def handbrake_command(input_file, output_file):
     )
 
 
-def placebo_command(input_file, output_file):
+def placebo_command(input_file, output_file, max_height):
     """Return the ffmpeg command that makes the SDR video of a Dolby Vision Profile 5 file.
 
     libplacebo applies the Dolby Vision reshaping, then tone-maps to
-    Rec.709. The encode settings are those of the HandBrake preset:
-    x264, RF 15, the medium preset."""
+    Rec.709. The encode settings are those of the HandBrake preset of
+    the maximum height (PLACEBO_ENCODES)."""
 
+    pixel_format, encoder = PLACEBO_ENCODES[max_height]
     return [
         current_app.config["FFMPEG_PLACEBO_BIN"],
         "-hide_banner",
@@ -322,15 +358,11 @@ def placebo_command(input_file, output_file):
         "-map",
         "0:v:0",
         "-vf",
-        "libplacebo=w='min(iw,1920)':h=-2:apply_dolbyvision=1:tonemapping=bt.2390"
+        f"libplacebo=w='min(iw,{CONVERSION_WIDTHS[max_height]})':h=-2"
+        ":apply_dolbyvision=1:tonemapping=bt.2390"
         ":colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv"
-        ":format=yuv420p",
-        "-c:v",
-        "libx264",
-        "-preset",
-        "medium",
-        "-crf",
-        "15",
+        f":format={pixel_format}",
+        *encoder,
         "-an",
         "-sn",
         "-dn",
@@ -369,6 +401,25 @@ def mux_command(video_file, localized_file, output_file, language=None):
         localized_file,
     ]
     return command
+
+
+def warn_if_larger(basename, localized_file, converted_file):
+    """Warn if a conversion is larger than the localized file of its source (#657).
+
+    The 2 files differ only in their video. A conversion that is larger
+    than its source is a waste of library space. It still goes into the
+    library. The warning tells the admin to look at the encode settings.
+    Return True after a warning."""
+
+    source_bytes = os.path.getsize(localized_file)
+    converted_bytes = os.path.getsize(converted_file)
+    if converted_bytes <= source_bytes:
+        return False
+    current_app.logger.warning(
+        f"'{basename}' The conversion ({converted_bytes:,} bytes) is "
+        f"larger than its source ({source_bytes:,} bytes)"
+    )
+    return True
 
 
 class TitleLockLost(Exception):
@@ -439,7 +490,7 @@ def _watch_encode(process, job, basename, lock, total_seconds):
 def convert_localized_file(
     source_path, file_details, lock, hidden_output_file, plan, lock_waits=0
 ):
-    """Replace the video of a localized file with a 1080p SDR conversion.
+    """Replace the video of a localized file with an SDR conversion.
 
     This runs on the transcode queue, between the localization and the
     move into the library. The source of the encode is the localized
@@ -503,15 +554,17 @@ def convert_localized_file(
         try:
             source_video = probe_video(hidden_output_file) or {}
             total_seconds = source_video.get("duration")
+            max_height = plan["max_height"]
+            max_width = CONVERSION_WIDTHS[max_height]
 
             current_app.logger.info(
                 f"'{basename}' Converting {plan['source_format']} "
                 f"{plan['source_quality']} to {plan['target_quality']} SDR"
             )
             if needs_placebo(plan):
-                command = placebo_command(hidden_output_file, video_only)
+                command = placebo_command(hidden_output_file, video_only, max_height)
             else:
-                command = handbrake_command(hidden_output_file, video_only)
+                command = handbrake_command(hidden_output_file, video_only, max_height)
             _run_encode(command, job, basename, lock, total_seconds)
 
             report_progress(job, basename, "Joining the SDR video")
@@ -534,7 +587,8 @@ def convert_localized_file(
                 raise
             wait_for_subprocess(mux_process, ok_returncodes=(0, 1))
 
-            # Make sure that the result is SDR and complete.
+            # Make sure that the result is SDR, complete, and not larger
+            # than the size of the plan.
 
             result = probe_video(muxed) or {}
             if needs_conversion(
@@ -547,9 +601,12 @@ def convert_localized_file(
                     f"{result.get('color_primaries')}, "
                     f"{result.get('transfer_characteristics')}"
                 )
-            if (result.get("height") or 0) > 1080 or (result.get("width") or 0) > 1920:
+            if (result.get("height") or 0) > max_height or (
+                result.get("width") or 0
+            ) > max_width:
                 raise RuntimeError(
-                    f"The conversion is {result.get('width')}x{result.get('height')}"
+                    f"The conversion is {result.get('width')}x{result.get('height')}, "
+                    f"larger than {max_width}x{max_height}"
                 )
             if total_seconds and result.get("duration") is not None:
                 drift = abs(result["duration"] - total_seconds)
@@ -559,6 +616,7 @@ def convert_localized_file(
                         f"The source plays for {total_seconds:.1f} s"
                     )
 
+            warn_if_larger(basename, hidden_output_file, muxed)
             os.replace(muxed, hidden_output_file)
             _remove_quietly(video_only)
 

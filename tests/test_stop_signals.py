@@ -31,7 +31,12 @@ class _StoppedChild:
         pass
 
 
-PLAN = {"source_format": "HDR10", "source_quality": "x", "target_quality": "y"}
+PLAN = {
+    "source_format": "HDR10",
+    "source_quality": "x",
+    "target_quality": "y",
+    "max_height": 1080,
+}
 
 
 def _convert_with_child(app, tmp_path, monkeypatch, returncode):

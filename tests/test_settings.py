@@ -486,3 +486,144 @@ def test_a_database_fault_keeps_the_last_values_for_some_seconds(
             r for r in caplog.records if "Cannot read the page settings" in r.message
         ]
         assert len(warnings) == 2
+
+
+# The HDR import mode: a choice with text values and labels (#657)
+
+
+def test_a_text_choice_shows_its_labels_and_saves_its_value(
+    app, admin_client, log_capture
+):
+    page = admin_client.get("/settings").get_data(as_text=True)
+    mode = _row(page, "HDR_IMPORT_MODE")
+    assert '<option selected value="sdr-1080p">Convert to 1080p SDR</option>' in mode
+    assert '<option value="sdr-2160p">Convert to 4K SDR</option>' in mode
+    assert '<option value="keep">Keep HDR as it is</option>' in mode
+
+    response = admin_client.post(
+        "/settings", data=_form(app, admin_client, HDR_IMPORT_MODE="sdr-2160p")
+    )
+    assert response.status_code == 302
+    assert _stored(app, "HDR_IMPORT_MODE") == "sdr-2160p"
+
+    from app.settings import get_setting
+
+    with app.app_context():
+        assert get_setting("HDR_IMPORT_MODE") == "sdr-2160p"
+    page = admin_client.get("/settings").get_data(as_text=True)
+    mode = _row(page, "HDR_IMPORT_MODE")
+    assert '<option selected value="sdr-2160p">Convert to 4K SDR</option>' in mode
+    assert "Default: Convert to 1080p SDR" in mode
+
+
+def test_a_value_that_is_not_a_choice_is_refused(app, admin_client):
+    response = admin_client.post(
+        "/settings", data=_form(app, admin_client, HDR_IMPORT_MODE="sdr-720p")
+    )
+    assert response.status_code == 200
+    assert _stored(app, "HDR_IMPORT_MODE") is None
+
+
+def test_a_stored_text_that_is_not_a_choice_uses_the_default(app, log_capture):
+    from app.settings import get_setting
+
+    for name, text in (("HDR_IMPORT_MODE", "sdr-720p"), ("EAC3_ATMOS_BITRATE", "5")):
+        _store(app, name, text)
+    with app.app_context():
+        assert get_setting("HDR_IMPORT_MODE") == "sdr-1080p"
+        assert get_setting("EAC3_ATMOS_BITRATE") == app.config["EAC3_ATMOS_BITRATE"]
+    assert any("does not parse" in r.getMessage() for r in log_capture)
+
+
+def test_a_locked_text_choice_shows_its_label(app, admin_client, monkeypatch):
+    monkeypatch.setitem(app.config, "ENV_LOCKED", frozenset({"HDR_IMPORT_MODE"}))
+    monkeypatch.setitem(app.config, "HDR_IMPORT_MODE", "keep")
+
+    mode = _row(admin_client.get("/settings").get_data(as_text=True), "HDR_IMPORT_MODE")
+    assert 'value="Keep HDR as it is" disabled' in mode
+    assert 'name="HDR_IMPORT_MODE"' not in mode
+
+
+@pytest.mark.parametrize(
+    "raw, expected",
+    [
+        (None, "sdr-1080p"),
+        ("", "sdr-1080p"),
+        ("keep", "keep"),
+        (" SDR-2160p ", "sdr-2160p"),
+    ],
+)
+def test_the_mode_of_the_environment(monkeypatch, raw, expected):
+    import config
+
+    if raw is None:
+        monkeypatch.delenv("HDR_IMPORT_MODE", raising=False)
+    else:
+        monkeypatch.setenv("HDR_IMPORT_MODE", raw)
+    assert config._hdr_import_mode() == expected
+
+
+def test_a_wrong_mode_in_the_environment_stops_the_start(monkeypatch):
+    import config
+
+    monkeypatch.setenv("HDR_IMPORT_MODE", "off")
+    with pytest.raises(ValueError, match="HDR_IMPORT_MODE 'off' is not one of"):
+        config._hdr_import_mode()
+
+
+def _mode_migration():
+    import importlib.util
+    import os
+
+    path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "migrations",
+        "versions",
+        "a4c7e2b9d013_hdr_import_mode.py",
+    )
+    spec = importlib.util.spec_from_file_location("hdr_import_mode_migration", path)
+    migration = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(migration)
+    return migration
+
+
+@pytest.mark.parametrize(
+    "flag, mode, expected_mode",
+    [
+        ("0", None, "keep"),
+        ("1", None, None),
+        (None, None, None),
+        ("0", "sdr-2160p", "sdr-2160p"),
+    ],
+)
+def test_the_migration_changes_a_stored_flag_to_a_mode(app, flag, mode, expected_mode):
+    """A stored "off" becomes "keep". A stored "on" is the default mode."""
+
+    from app import db
+
+    migration = _mode_migration()
+    assert migration.down_revision == "e5d2a8c47f13"
+    for name, text in (("CONVERT_HDR_TO_SDR", flag), ("HDR_IMPORT_MODE", mode)):
+        if text is not None:
+            _store(app, name, text)
+    with app.app_context():
+        migration.flag_to_mode(db.session.connection())
+        db.session.commit()
+    assert _stored(app, "CONVERT_HDR_TO_SDR") is None
+    assert _stored(app, "HDR_IMPORT_MODE") == expected_mode
+
+
+@pytest.mark.parametrize(
+    "mode, expected_flag", [("keep", "0"), ("sdr-2160p", None), (None, None)]
+)
+def test_the_migration_goes_back_to_the_flag(app, mode, expected_flag):
+    from app import db
+
+    migration = _mode_migration()
+    if mode is not None:
+        _store(app, "HDR_IMPORT_MODE", mode)
+    with app.app_context():
+        migration.mode_to_flag(db.session.connection())
+        db.session.commit()
+    assert _stored(app, "HDR_IMPORT_MODE") is None
+    assert _stored(app, "CONVERT_HDR_TO_SDR") == expected_flag

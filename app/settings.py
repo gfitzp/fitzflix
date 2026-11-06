@@ -22,6 +22,8 @@ from flask import current_app, has_app_context
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 
+from config import HDR_IMPORT_MODES
+
 CACHE_SECONDS = 5
 
 # The bitrates (bps) that MediaConvert accepts for E-AC-3 Atmos.
@@ -42,7 +44,18 @@ class Setting:
     minimum: int = None
     maximum: int = None
     choices: tuple = ()
+    choice_labels: tuple = ()
     allow_empty: bool = False
+
+    def choice_label(self, value):
+        """Return the page text of a choice.
+
+        A choice with no label is a number. The page shows it with
+        thousands separators."""
+
+        if self.choice_labels and value in self.choices:
+            return self.choice_labels[self.choices.index(value)]
+        return f"{value:,}" if isinstance(value, int) else str(value)
 
 
 SETTINGS = {
@@ -78,12 +91,19 @@ SETTINGS = {
             "flag",
         ),
         Setting(
-            "CONVERT_HDR_TO_SDR",
-            "Convert HDR to SDR",
-            "The import archives each HDR or BT.2020 original to S3 and puts a "
-            "1080p SDR conversion into the library. Turn this off to import "
-            "HDR files as they are. The conversion needs Archive original media.",
-            "flag",
+            "HDR_IMPORT_MODE",
+            "HDR imports",
+            "What an import with HDR or BT.2020 colors becomes. A conversion "
+            "archives the original to S3 and puts an SDR copy into the "
+            "library. It needs Archive original media. A source that is "
+            "smaller than the conversion keeps its size.",
+            "choice",
+            choices=HDR_IMPORT_MODES,
+            choice_labels=(
+                "Convert to 1080p SDR",
+                "Convert to 4K SDR",
+                "Keep HDR as it is",
+            ),
         ),
         Setting(
             "CREATE_ATMOS_TWINS",
@@ -239,8 +259,16 @@ def parse_value(setting, text):
 
     if setting.kind == "flag":
         return text == "1"
-    if setting.kind in ("int", "choice"):
+    if setting.kind == "int":
         return int(text)
+    if setting.kind == "choice":
+        # A choice has the type of its choices: a number or a text. A
+        # stored text that is not a choice does not parse.
+
+        value = type(setting.choices[0])(text)
+        if value not in setting.choices:
+            raise ValueError(f"{text!r} is not a choice of {setting.name}")
+        return value
     return text
 
 

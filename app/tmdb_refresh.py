@@ -60,7 +60,7 @@ def library_name_details(file, file_details):
 
     The rename after a TMDB refresh evaluates the untouched name. That
     is the name of the original. The library file can have a different
-    name. A conversion (#292) has the quality of its 1080p library file,
+    name. A conversion (#292) has the quality of its SDR library file,
     not the quality of its original. A remux to Matroska has the "mkv"
     extension, not the extension of the original. The library name
     keeps both."""

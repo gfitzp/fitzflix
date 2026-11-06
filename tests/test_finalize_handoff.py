@@ -441,7 +441,12 @@ def test_a_failed_lock_extension_of_the_conversion_keeps_the_source(
             {"basename": hidden.name[1:]},
             lock,
             str(hidden),
-            {"source_format": "HDR10", "source_quality": "x", "target_quality": "y"},
+            {
+                "source_format": "HDR10",
+                "source_quality": "x",
+                "target_quality": "y",
+                "max_height": 1080,
+            },
         )
     assert result is False
     assert lock in unlocked
@@ -488,7 +493,12 @@ def test_a_failed_lock_refresh_during_the_encode_keeps_the_source(
             {"basename": hidden.name[1:]},
             lock,
             str(hidden),
-            {"source_format": "HDR10", "source_quality": "x", "target_quality": "y"},
+            {
+                "source_format": "HDR10",
+                "source_quality": "x",
+                "target_quality": "y",
+                "max_height": 1080,
+            },
         )
     assert result is False
     assert len(calls) == 2

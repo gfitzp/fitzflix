@@ -549,7 +549,7 @@ def _list_archives():
     """List the archive prefixes of the bucket. Return a Listing.
 
     The archives live in 3 prefixes (#299): untouched/ (the rips),
-    modified/ (library files after a change), and transcoded/ (the 1080p
+    modified/ (library files after a change), and transcoded/ (the SDR
     copies of the conversions). The sizes map each key to its object
     size. Thus, the file records can get the exact size that AWS bills
     for a restore."""

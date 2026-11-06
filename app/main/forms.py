@@ -564,8 +564,10 @@ def _settings_field(setting):
     if setting.kind == "choice":
         return SelectField(
             setting.label,
-            choices=[(choice, f"{choice:,}") for choice in setting.choices],
-            coerce=int,
+            choices=[
+                (choice, setting.choice_label(choice)) for choice in setting.choices
+            ],
+            coerce=type(setting.choices[0]),
         )
     # Strip a text value. A space in a regular expression can be a part
     # of the pattern.

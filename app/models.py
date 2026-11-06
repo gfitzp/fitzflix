@@ -981,7 +981,7 @@ class File(db.Model):
     color_primaries = db.Column(db.String(64))
     transfer_characteristics = db.Column(db.String(64))
 
-    # Set when this file is a 1080p SDR conversion (#292). It is the
+    # Set when this file is an SDR conversion (#292). It is the
     # quality of the original, for example "Bluray-2160p". The import
     # archived that original untouched in S3. Thus, the archive is NOT
     # a copy of this file. converted_from_format names the color of the
@@ -990,7 +990,7 @@ class File(db.Model):
     converted_from_quality = db.Column(db.String(32))
     converted_from_format = db.Column(db.String(255))
 
-    # The second archive of a conversion: its current 1080p library file,
+    # The second archive of a conversion: its current SDR library file,
     # in transcoded/ (#299). aws_key keeps the original. A restore of a
     # missing conversion uses this copy first, straight into the library
     # path.

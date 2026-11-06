@@ -42,7 +42,7 @@
 					{{ field(class_="form-control form-control-sm" ~ (" is-invalid" if field.errors else ""), spellcheck="false") }}
 					{% endif %}
 					{% else %}
-					<input class="form-control form-control-sm" type="text" id="{{ setting.name }}" value="{{ '{:,}'.format(row.value) if setting.kind == 'choice' else row.value }}" disabled>
+					<input class="form-control form-control-sm" type="text" id="{{ setting.name }}" value="{{ setting.choice_label(row.value) if setting.kind == 'choice' else row.value }}" disabled>
 					{% endif %}
 					{% endif %}
 					{% if field %}
@@ -56,7 +56,7 @@
 					<span class="badge text-bg-warning">Set in .env</span>
 					{% elif row.source == "page" %}
 					<span class="badge text-bg-primary">Set on this page</span>
-					<div class="small text-muted mt-1">Default: {{ ("on" if row.default else "off") if setting.kind == "flag" else (row.default if row.default != "" else "empty") }}</div>
+					<div class="small text-muted mt-1">Default: {{ ("on" if row.default else "off") if setting.kind == "flag" else (setting.choice_label(row.default) if setting.kind == "choice" else (row.default if row.default != "" else "empty")) }}</div>
 					<button type="submit" form="reset-{{ setting.name }}" name="reset_submit" value="Reset to default" class="btn btn-sm btn-outline-secondary mt-1">Reset to default</button>
 					{% else %}
 					<span class="badge text-bg-secondary">Default</span>

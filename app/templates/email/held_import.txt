@@ -10,7 +10,7 @@ Go here to choose:
 
 {{ url_for('main.held_imports', _external=True) }}
 
-- Import: convert the file to 1080p SDR and replace the library file.
+- Import: convert the file to SDR and replace the library file.
 - Archive only: archive the original to S3. The library does not change.
 - Discard: move the file to the rejects directory.
 

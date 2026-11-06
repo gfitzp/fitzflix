@@ -502,11 +502,12 @@ def check_config(app):
                     f"HandBrake preset export"
                 )
             else:
-                if app.config["CONVERSION_PRESET"] not in presets:
-                    app.logger.warning(
-                        f"CONVERSION_PRESET '{app.config['CONVERSION_PRESET']}' "
-                        f"is not in HANDBRAKE_PRESET_FILE (contains {presets})"
-                    )
+                for key in ("CONVERSION_PRESET", "CONVERSION_PRESET_2160P"):
+                    if app.config[key] not in presets:
+                        app.logger.warning(
+                            f"{key} '{app.config[key]}' "
+                            f"is not in HANDBRAKE_PRESET_FILE (contains {presets})"
+                        )
 
     aws_missing = [
         key

@@ -98,6 +98,7 @@ from app.models import (
 from app.tmdb_apply import tmdb_json
 from app.pipeline import record_task_stage
 from app.sdr_conversion import (
+    CONVERSION_HEIGHTS,
     archived_original_from_file,
     converted_file_details,
     held_decision,
@@ -1079,13 +1080,16 @@ def _identify(file_path, run):
         move_to_rejects(file_path, reason or "incorrect filename")
         return "stop"
 
-    # An HDR or BT.2020 import becomes a 1080p SDR conversion (#292). The
-    # plan renames it to its 1080p quality now. Thus, the quality checks
-    # compare the conversion, not the original.
+    # An HDR or BT.2020 import becomes an SDR conversion (#292). The
+    # HDR_IMPORT_MODE setting gives its maximum height, or no height for
+    # the mode that keeps HDR (#657). The plan renames the import to the
+    # quality of the conversion now. Thus, the quality checks compare
+    # the conversion, not the original.
 
     conversion = None
-    if get_setting("CONVERT_HDR_TO_SDR"):
-        conversion = _plan_conversion_or_reject(file_path, file_details)
+    max_height = CONVERSION_HEIGHTS.get(get_setting("HDR_IMPORT_MODE"))
+    if max_height:
+        conversion = _plan_conversion_or_reject(file_path, file_details, max_height)
         if conversion is False:
             return "stop"
         if conversion:
@@ -1864,7 +1868,7 @@ def abandon_handoff(source_path, lock, staged_output, pending_archive=None):
     )
 
 
-def _plan_conversion_or_reject(file_path, file_details):
+def _plan_conversion_or_reject(file_path, file_details, max_height):
     """Return the conversion plan of an import, None, or False after a reject (#292).
 
     A conversion needs ARCHIVE_ORIGINAL_MEDIA. The library gets only the
@@ -1874,7 +1878,7 @@ def _plan_conversion_or_reject(file_path, file_details):
 
     basename = os.path.basename(file_path)
     try:
-        plan = plan_conversion(file_path, file_details)
+        plan = plan_conversion(file_path, file_details, max_height)
     except ValueError as e:
         reason = str(e)
         plan = None
@@ -3299,7 +3303,7 @@ def _after_commit(
     if not atmos_queued:
         _remove_staged_output(staged_output)
 
-    # A conversion archives its 1080p library file in transcoded/ (#299).
+    # A conversion archives its SDR library file in transcoded/ (#299).
     # An Atmos job archives it when it finishes. Thus, the upload waits
     # for that job.
 
@@ -4657,7 +4661,7 @@ def reconstruct_filename(file_id, series_title=None):
     # TMDB can send a title with an empty release date. Then the year of
     # the record stands in. The untouched file of a conversion is its
     # original (#292). Its name keeps the quality of the original, not
-    # the 1080p quality of the library file. Else a converge run moves
+    # the quality of the library file. Else a converge run moves
     # the archive to the wrong key.
 
     parts = {

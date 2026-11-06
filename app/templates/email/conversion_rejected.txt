@@ -1,6 +1,6 @@
 Hello,
 
-The file '{{ basename }}' needs a conversion to 1080p SDR, but the conversion is not possible:
+The file '{{ basename }}' needs a conversion to SDR, but the conversion is not possible:
 
   {{ reason }}
 
