@@ -461,6 +461,38 @@ def _apply_stage_event(trail, first_run, first_enqueued, event):
     for position in range(len(trail) - 1, -1, -1):
         entry = trail[position]
         if entry.get("job") == job_id and entry.get("stage") == stage:
+            # A running job that books itself again under its own id waits
+            # for a lock a second time (#665). The id of the first wait is
+            # fixed. The entry is "deferred", as the first wait is under a
+            # different id. Thus, the stamp of the worker that returns now
+            # changes nothing. The mark "rebooked" keeps the entry in the
+            # journey, and the page shows it as a booked retry.
+
+            if (
+                not before_job
+                and status == "scheduled"
+                and entry.get("status") == "started"
+            ):
+                entry["status"] = "deferred"
+                entry["rebooked"] = True
+                entry["at"] = now
+                append = False
+                break
+
+            # The booking of a rebooked entry goes to its queue or starts.
+            # It continues the same journey. Thus, only its own entry
+            # changes, in place. The entries of other jobs after it stay,
+            # and first_run does not move.
+
+            if not before_job and entry.get("rebooked"):
+                if status not in ("queued", "started"):
+                    return trail, first_run, first_enqueued, False
+                entry.pop("rebooked")
+                entry["status"] = status
+                entry["at"] = now
+                append = False
+                break
+
             # The same job id runs again after its earlier run settled. The
             # worker stamps "started" again, or the queue stamps a new
             # enqueue that comes after the settled stamp. Then the earlier
@@ -536,8 +568,11 @@ def _apply_stage_event(trail, first_run, first_enqueued, event):
         if rerun:
             fresh_journey = True
         elif status in ("queued", "scheduled", "started") and not before_job:
+            # A rebooked entry waits (#665). It is not settled.
             fresh_journey = not trail or all(
-                existing.get("status") in ("done", "deferred") for existing in trail
+                existing.get("status") in ("done", "deferred")
+                and not existing.get("rebooked")
+                for existing in trail
             )
 
         # A running job that books a new job of its own stage for the same
@@ -1258,9 +1293,10 @@ def pipeline_trails(connection, limit=25, journey_only=False):
             if journey_only:
                 raw_entries = current_journey(raw_entries)
             # A deferred attempt does not show. Its retry chip stands for
-            # the stage. The done own chip of a phased job does not show
-            # when the job has phase chips. A job with no phase chips
-            # keeps it, because it is the only record of the job.
+            # the stage. A rebooked entry is its own retry chip (#665). The
+            # done own chip of a phased job does not show when the job has
+            # phase chips. A job with no phase chips keeps it, because it
+            # is the only record of the job.
 
             phased_jobs = {
                 entry.get("job")
@@ -1270,12 +1306,14 @@ def pipeline_trails(connection, limit=25, journey_only=False):
             entries = [
                 {
                     "stage": entry.get("stage"),
-                    "status": entry.get("status"),
+                    "status": (
+                        "scheduled" if entry.get("rebooked") else entry.get("status")
+                    ),
                     "at": entry.get("at"),
                     "job": entry.get("job"),
                 }
                 for entry in raw_entries
-                if entry.get("status") != "deferred"
+                if (entry.get("status") != "deferred" or entry.get("rebooked"))
                 and not (
                     entry.get("status") == "done"
                     and entry.get("stage") in PHASED_STAGES

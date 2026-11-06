@@ -1963,3 +1963,83 @@ def test_cards_of_same_named_extras_find_their_own_trails(app, admin_client):
         trail_for = _trail_lookup()
         for row, job in zip(rows, jobs):
             assert [entry["job"] for entry in trail_for(row)] == [job.id]
+
+
+def test_a_job_that_books_itself_again_waits_and_keeps_the_later_chips(app):
+    """A second lock wait under the same fixed id (#665).
+
+    The booking marks the running entry deferred, and the worker stamp
+    of the return changes nothing. The next start changes only that
+    entry. The chips of other jobs after it stay, and first_run does not
+    move. Before, the chip read done for the wait, and the start erased
+    each later chip."""
+
+    from app.pipeline import _apply_stage_event
+
+    move, edit, upload = "Moving the S3 archive", "Editing tracks", "Archiving to S3"
+    retry = "retry:move_archive_object:1"
+    trail = [
+        _entry("Cataloging", "done", "j0", journey=True),
+        _entry(move, "started", retry),
+    ]
+    first_run, first_enqueued = "2026-10-25 13:00:00+00:00", "2026-10-25 12:59:00"
+
+    def apply(status, job, stage, **fields):
+        nonlocal trail, first_run, first_enqueued
+        trail, first_run, first_enqueued, _ = _apply_stage_event(
+            trail, first_run, first_enqueued, _event(status, job, stage, **fields)
+        )
+
+    apply("scheduled", retry, move)
+    assert trail[1]["status"] == "deferred" and trail[1]["rebooked"]
+    apply("done", retry, move)
+    assert trail[1]["status"] == "deferred" and trail[1]["rebooked"]
+
+    for job, stage in (("edit-1", edit), ("upload-1", upload)):
+        apply("queued", job, stage, enqueued_at="2026-10-25 12:30:00")
+        apply("started", job, stage)
+        apply("done", job, stage)
+
+    apply("queued", retry, move, enqueued_at="2026-10-25 12:40:00")
+    apply("started", retry, move)
+    apply("done", retry, move)
+
+    assert [(e["stage"], e["status"], e["job"]) for e in trail] == [
+        ("Cataloging", "done", "j0"),
+        (move, "done", retry),
+        (edit, "done", "edit-1"),
+        (upload, "done", "upload-1"),
+    ]
+    assert [bool(e.get("journey")) for e in trail] == [True, False, False, False]
+    assert not any(e.get("rebooked") for e in trail)
+    assert first_run == "2026-10-25 13:00:00+00:00"
+    assert first_enqueued == "2026-10-25 12:59:00"
+
+
+def test_a_rebooked_entry_shows_as_a_booked_retry(app):
+    """The page shows the waiting entry as scheduled, not as done (#665)."""
+
+    import json
+
+    from app.pipeline import ACTIVE_KEY, FILE_KEY, _digest, pipeline_trails
+
+    basename = "Trail Rebooked (2026) - [DVD].mkv"
+    key = FILE_KEY.format(digest=_digest(basename))
+    trail = [
+        _entry("Cataloging", "done", "j0", journey=True),
+        _entry("Moving the S3 archive", "deferred", "gone-job", rebooked=True),
+        _entry("Moving the S3 archive", "deferred", "other-job"),
+    ]
+    app.redis.hset(
+        key, mapping={"basename": basename, "trail": json.dumps(trail), "updated": "x"}
+    )
+    app.redis.zadd(ACTIVE_KEY, {_digest(basename): 1})
+    try:
+        (found,) = [t for t in pipeline_trails(app.redis) if t["basename"] == basename]
+        assert [(e["stage"], e["status"]) for e in found["entries"]] == [
+            ("Cataloging", "done"),
+            ("Moving the S3 archive", "scheduled"),
+        ]
+    finally:
+        app.redis.delete(key)
+        app.redis.zrem(ACTIVE_KEY, _digest(basename))
