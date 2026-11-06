@@ -352,3 +352,35 @@ def test_a_raising_pending_check_keeps_the_source(
 
         kept = os.path.join(app.config["REJECTS_DIR"], "unarchived", BASENAME)
         assert os.path.exists(kept)
+
+
+def test_the_move_of_a_rerip_is_queued_after_the_title_lock(
+    app, sample_mkv, incoming_dir, monkeypatch
+):
+    """The import requests the move while it holds the title lock (#664).
+
+    The move job takes that lock. Thus, it enters the queue only after
+    the release, and it does not wait 5 to 15 minutes."""
+
+    from app import db
+    from app.models import File
+    from tests.localization_helpers import run_full_chain
+    from tests.test_archive_moves import _moves_enter_queue_unlocked
+
+    fake, row_id = _claimed_rip(app, monkeypatch, title="Rerip Guard")
+    source = _incoming(sample_mkv, incoming_dir)
+    with app.app_context():
+        keys = {row_id: db.session.get(File, row_id).file_identifier()}
+    seen = _moves_enter_queue_unlocked(app, monkeypatch, keys)
+
+    with app.app_context():
+        run_full_chain(app, source)
+
+        assert db.session.get(File, row_id).aws_key_target == KEY
+        (job,) = [
+            job
+            for job in app.file_queue.jobs
+            if job.func_name == "app.aws_storage.move_archive_object"
+        ]
+        assert job.args[0] == row_id
+    assert seen == [(row_id, True)]

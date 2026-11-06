@@ -43,7 +43,7 @@ from werkzeug.local import LocalProxy
 
 from app.custom_artwork import move_episode_thumb
 from app.tasks import delete_job, enqueue_task
-from app.aws_storage import request_archive_move
+from app.aws_storage import archive_moves_after_unlock, request_archive_move
 from app.pipeline import migrate_renamed_file
 from app import db, get_app, makedirs_on_mounted_volume, safe_job_id
 from app.models import TVSeries
@@ -178,9 +178,12 @@ def rename_tv_series_task(series_id, new_title, volume_waits=0):
 
     This is a task. After the rename, it updates the Sonarr path and
     queues a Plex rescan. volume_waits counts the retries for the TV
-    library volume (#575). It stops at MAX_RENAME_VOLUME_WAITS."""
+    library volume (#575). It stops at MAX_RENAME_VOLUME_WAITS.
 
-    with app.app_context():
+    The move job of each episode takes the lock of the episode. Thus,
+    the moves go to the queue after the release of the locks (#664)."""
+
+    with app.app_context(), archive_moves_after_unlock():
         series = db.session.get(TVSeries, series_id)
         if series is None:
             current_app.logger.warning(f"Series rename: no series {series_id}")
@@ -469,7 +472,8 @@ def _move_series(series, new_title, volume_waits=0):
         migrate_renamed_file(
             current_app.redis, old_names, (file.basename, file.untouched_basename)
         )
-        # The move job goes to the queue at this commit.
+        # The move job is booked at this commit. It goes to the queue
+        # after the release of the episode locks (#664).
         request_archive_move(file)
         db.session.commit()
 

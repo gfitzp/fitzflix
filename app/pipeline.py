@@ -1339,13 +1339,14 @@ def move_to_front(queue, job_id):
     return None if index < 0 else index
 
 
-def retry_now(queue, job_id):
+def retry_now(queue, job_id, front=True):
     """Move a booked retry into its queue now, at the front.
 
     The return value is "moved", "due", or None. None is a job that is
     not booked on this queue. "due" is a job whose time came already.
     The scheduler moves that job within seconds, so this leaves it. A
-    moved job gets the front mark of move_to_front. The claim and the
+    moved job gets the front mark of move_to_front. front=False puts it
+    at the end of the queue with no mark (#664). The claim and the
     enqueue are 2 steps. A crash between them loses the job."""
 
     from rq.registry import ScheduledJobRegistry
@@ -1358,7 +1359,8 @@ def retry_now(queue, job_id):
         return "due"
     job = queue.job_class.fetch(job_id, connection=queue.connection)
     queue.enqueue_job(job)
-    move_to_front(queue, job_id)
+    if front:
+        move_to_front(queue, job_id)
     return "moved"
 
 

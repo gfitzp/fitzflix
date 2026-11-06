@@ -29,6 +29,7 @@ import urllib.parse
 import uuid
 
 from collections import namedtuple
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 
 import boto3
@@ -2027,6 +2028,18 @@ def move_source(file):
 
 _MOVES_AFTER_COMMIT = "fitzflix_archive_moves"
 
+# The session info key of the moves that a holder of a title lock
+# requested (#664). The move job takes the title lock. Thus, a move that
+# starts before the unlock finds the lock and waits 5 to 15 minutes.
+
+_MOVES_HELD = "fitzflix_archive_moves_held"
+
+# A held move is booked this far ahead. The end of the hold moves it into
+# the queue at once. A holder that stops before that leaves the booking.
+# Then the move runs at its time.
+
+HELD_MOVE_DELAY = timedelta(minutes=15)
+
 
 def clear_archive_target(file):
     """Clear the pending target of a file and its request time. The caller commits."""
@@ -2075,14 +2088,60 @@ def _enqueue_requested_moves(session):
     """Queue the archive moves that request_archive_move recorded in this session."""
 
     pending = session.info.pop(_MOVES_AFTER_COMMIT, None)
+    held = session.info.get(_MOVES_HELD)
     for file_id, basename in sorted((pending or {}).items()):
         try:
-            _enqueue_move_once(file_id, basename)
+            if held is None:
+                _enqueue_move_once(file_id, basename)
+            elif file_id not in held:
+                held[file_id] = _enqueue_move_once(
+                    file_id, basename, delay=HELD_MOVE_DELAY
+                )
         except Exception:
             current_app.logger.error(traceback.format_exc())
 
 
-def _enqueue_move_once(file_id, basename):
+@contextmanager
+def archive_moves_after_unlock():
+    """Hold back the archive moves that the session commits in the block (#664).
+
+    The code in the block holds a title lock, and it releases the lock
+    in the block. A move that a commit requests is booked
+    HELD_MOVE_DELAY ahead. Thus, the request stays when the worker
+    stops. The end of the block moves each booking into the queue."""
+
+    session = db.session()
+    if _MOVES_HELD in session.info:
+        yield
+        return
+    held = session.info[_MOVES_HELD] = {}
+    try:
+        yield
+    finally:
+        session.info.pop(_MOVES_HELD, None)
+        _queue_held_moves(held)
+
+
+def _queue_held_moves(held):
+    """Move each held booking into its queue now. A fault only logs."""
+
+    from app.pipeline import retry_now
+    from app.tasks import TASKS, resolve_queue
+
+    queue = resolve_queue(TASKS["app.aws_storage.move_archive_object"].queue)
+    for file_id, job in sorted(held.items()):
+        if job is None:
+            continue
+        try:
+            retry_now(queue, job.id, front=False)
+        except Exception:
+            current_app.logger.warning(
+                f"File {file_id} Could not queue the held archive move. It "
+                f"runs at its booked time: " + traceback.format_exc()
+            )
+
+
+def _enqueue_move_once(file_id, basename, delay=None):
     """Queue the move job of a file, unless a move of the file waits in the queue (#384).
 
     The id is "archive-move-", the file id, and a random tag. A queued
@@ -2096,7 +2155,9 @@ def _enqueue_move_once(file_id, basename):
     queued with its receipt handle, does not count. A new request (a
     rename, or converge-keys with --again) can add 1 more job for such a
     file. That job finds the
-    restore in progress or the move done, and it changes nothing."""
+    restore in progress or the move done, and it changes nothing.
+
+    delay books the job ahead (#664)."""
 
     from app.tasks import TASKS, resolve_queue
 
@@ -2108,6 +2169,7 @@ def _enqueue_move_once(file_id, basename):
     return enqueue_task(
         name,
         file_id,
+        delay=delay,
         description=f"'{basename}' — Moving the archive",
         job_id=prefix + uuid.uuid4().hex[:12],
     )

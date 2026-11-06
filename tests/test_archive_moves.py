@@ -1383,3 +1383,88 @@ def test_a_move_wait_keeps_the_handle_record_of_its_key(app, s3, monkeypatch, wa
         finally:
             if held:
                 app.lock_manager.unlock(held)
+
+
+def _moves_enter_queue_unlocked(app, monkeypatch, lock_keys):
+    """Record, for each move job that enters a queue, if its title lock was free (#664).
+
+    lock_keys maps a file id to its title lock key. The enqueue can run
+    in an after_commit listener, where the session emits no SQL."""
+
+    from app.pipeline import TrackedQueue
+
+    seen = []
+    real_enqueue = TrackedQueue.enqueue_job
+
+    def enqueue_job(self, job, *args, **kwargs):
+        if job.func_name == "app.aws_storage.move_archive_object":
+            lock = app.lock_manager.lock(lock_keys[int(job.args[0])], 1000)
+            if lock:
+                app.lock_manager.unlock(lock)
+            seen.append((int(job.args[0]), bool(lock)))
+        return real_enqueue(self, job, *args, **kwargs)
+
+    monkeypatch.setattr(TrackedQueue, "enqueue_job", enqueue_job)
+    return seen
+
+
+def test_a_held_move_is_booked_and_then_queued_at_the_end_of_the_hold(app):
+    """A move that a lock holder requests waits as a booking (#664).
+
+    The booking stays when the worker stops in the block. The end of
+    the block moves it into the queue."""
+
+    from rq.registry import ScheduledJobRegistry
+
+    from app import aws_storage, db
+    from app.pipeline import front_times
+
+    registry = ScheduledJobRegistry(queue=app.file_queue)
+    with app.app_context():
+        file = archived_film("Held Move", 1968, key_name="Held (1968).mkv")
+        with aws_storage.archive_moves_after_unlock():
+            assert aws_storage.request_archive_move(file)
+            db.session.commit()
+            assert move_jobs(app) == []
+            (booked,) = [
+                job_id
+                for job_id in registry.get_job_ids()
+                if job_id.startswith(f"archive-move-{file.id}-")
+            ]
+            due = registry.get_scheduled_time(booked).replace(tzinfo=timezone.utc)
+            assert due > datetime.now(timezone.utc) + timedelta(minutes=14)
+            # A second request in the block adds nothing.
+            assert aws_storage.request_archive_move(file)
+            db.session.commit()
+        (job,) = move_jobs(app)
+        assert job.id == booked
+        assert booked not in registry.get_job_ids()
+        # The move waits its turn. It is not marked as moved by an admin.
+        assert front_times(app.redis, [booked]) == {}
+
+
+def test_the_series_rename_queues_each_move_after_the_episode_locks(
+    app, s3, monkeypatch
+):
+    """The move of an episode takes the lock that the rename holds (#664)."""
+
+    from app import db
+    from app.series_rename import rename_tv_series_task
+
+    with app.app_context():
+        series = make_tv_series("Batwoman", tmdb_id=2288)
+        files = [make_tv_file(series, 1, n, "Bluray-1080p") for n in (1, 2)]
+        for file in files:
+            file.untouched_basename = file.basename
+            file.aws_key = f"untouched/{file.basename}"
+            file.aws_date_uploaded = datetime(2026, 1, 1)
+        db.session.commit()
+        ids = sorted(file.id for file in files)
+        # The rename holds the locks of the old title.
+        keys = {file.id: file.file_identifier() for file in files}
+    seen = _moves_enter_queue_unlocked(app, monkeypatch, keys)
+    with app.app_context():
+
+        assert rename_tv_series_task(series.id, "Batwoman (1966)") is True
+        assert sorted(job.args[0] for job in move_jobs(app)) == ids
+    assert sorted(seen) == [(file_id, True) for file_id in ids]

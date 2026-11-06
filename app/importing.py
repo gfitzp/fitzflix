@@ -61,6 +61,7 @@ from app import (
     safe_job_id,
 )
 from app.aws_storage import (
+    archive_moves_after_unlock,
     clear_archive_target,
     discard_pending_archive,
     ensure_pending_upload,
@@ -2412,7 +2413,11 @@ def finalize_localization(
 
     from app.videos import _dead_volumes
 
-    with app.app_context():
+    # The archive move of the import takes the title lock. Thus, it goes
+    # to the queue after the release of the lock, as the upload does
+    # (#664).
+
+    with app.app_context(), archive_moves_after_unlock():
         # The queue page lists this job with a banner and a row. Name the
         # stage there, as the other stages of the pipeline do.
 
@@ -2778,8 +2783,8 @@ def _build_records(file_details, inspection, output_name, series_id=None):
 
     # A pending move of the old archive does not apply to the new one
     # (#369). A reused conversion can keep a transcoded/ copy under the
-    # old name. Its move is requested here, and it goes to the queue at
-    # the commit.
+    # old name. Its move is requested here. It goes to the queue after
+    # the release of the title lock (#664).
 
     if file.aws_key_target:
         clear_archive_target(file)
