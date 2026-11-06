@@ -4,7 +4,7 @@ The Watch Live page of the Channel is the now-playing page of its 24/7
 feed. whatsonnow.criterionchannel.com was that page until 2026-10-19.
 Now it redirects to the Watch Live page, and the poller reads that page
 directly (#291). It is a Next.js app. The title of the current film is
-the page heading. If the heading names no schedule entry, the entry
+the page heading. If the heading is the name of the channel, the entry
 that plays now names the film. The page also embeds
 the schedule of the feed as data. Each entry has a start time and an
 end time. The page has a Film Page link. A poller scrapes the page. It
@@ -46,6 +46,11 @@ from app.title_keys import match_key, title_key
 app = LocalProxy(get_app)
 
 CHANNEL_ORIGIN = "https://www.criterionchannel.com"
+
+# The name of the feed. The Watch Live page shows it as its heading
+# between 2 films (#663).
+
+CHANNEL_NAME = "Criterion 24/7"
 
 # The fallback for the Watch Live link. The page carries the current
 # link. The poller stores that one. This constant serves only while no
@@ -270,10 +275,10 @@ def parse_whatson_page(page_html, now=None):
     ends_at as UTC stamps. The result is None if the title is not
     found. An end time that does not parse comes back as None. Then the
     poller does a short retry. It does not trust a guess. Stale is True
-    when the heading names a film that just ended. If the heading names
-    no schedule entry, the schedule entry that plays now names the
-    film, and heading is False (#291, #663). If no entry plays now, the
-    page is stale."""
+    when the heading names a film that just ended. A page can have no
+    heading, or the name of the channel as its heading. Then the
+    schedule entry that plays now names the film, and heading is False
+    (#291, #663). If no entry plays then, the page is stale."""
 
     now = now or datetime.now(timezone.utc)
     entries = _schedule_entries(page_html)
@@ -283,15 +288,16 @@ def parse_whatson_page(page_html, now=None):
         title = _clean_text(re.sub(r"<[^>]+>", "", title_match.group(1)))
         slot, stale_end = _current_slot(entries, title, now)
 
-    # A heading names an entry when _current_slot finds one for it. At a
-    # film boundary the heading holds the channel name "Criterion 24/7"
-    # for a short time (#663). That is not a title. Then the entry that
-    # plays now names the film. With no entry on now, the page is stale
-    # until STALE_LIMIT after the last end. A page with no schedule
-    # keeps its heading as the title.
+    # At a film boundary the heading holds the channel name "Criterion
+    # 24/7" for a short time (#663). That is not a title. Then the entry
+    # that plays now names the film. With no entry on now, the page is
+    # stale until STALE_LIMIT after the last end. A page with no
+    # schedule keeps its heading as the title. Each other heading is
+    # the title, also when no schedule entry has it. Fitzflix never
+    # replaces the name of a film with a guess.
 
     heading = title is not None and (
-        slot is not None or stale_end is not None or not entries
+        not entries or title_key(title) != title_key(CHANNEL_NAME)
     )
     if not heading:
         playing = [entry for entry in entries if entry[0] <= now < entry[1]]

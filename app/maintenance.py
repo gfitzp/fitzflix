@@ -1896,11 +1896,13 @@ HEALTH_PROBES = (
             headers={"X-Api-Key": config["RADARR_API_KEY"]},
         ),
     ),
+    # Plex answers /identity with no token. The library list needs the
+    # token. Thus, the probe also finds a token that Plex refuses (#660).
     (
         "Plex",
         lambda config: bool(config["PLEX_URL"] and config["PLEX_TOKEN"]),
         lambda config: _probe_http(
-            f"{config['PLEX_URL']}/identity",
+            f"{config['PLEX_URL']}/library/sections",
             headers={"X-Plex-Token": config["PLEX_TOKEN"]},
         ),
     ),

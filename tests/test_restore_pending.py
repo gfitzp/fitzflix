@@ -495,6 +495,26 @@ def test_a_refused_placement_clears_the_state(app, monkeypatch):
         assert _pending(file_id) is None
 
 
+def test_a_give_up_with_no_message_ends_the_state(app, monkeypatch, admin_client):
+    """A download that started with no SQS message has no next delivery (#658).
+
+    A page queues such a download for an object that S3 can read
+    already. Its give-up clears the state, and the restore form works
+    again."""
+
+    import app.videos as videos
+
+    file_id, key, _path = _direct_row(app, "No Message Give Up")
+    sqs = SQS()
+    _wire(monkeypatch, S3(errors=RuntimeError("flaky")), sqs)
+    with app.app_context():
+        assert videos.download_task(key, os.path.basename(key)) is False
+        assert _pending(file_id) is None
+    assert sqs.deleted == []
+    page = admin_client.get(f"/file/{file_id}").get_data(as_text=True)
+    assert "disabled" not in _fieldset_of(page, "s3_download_submit")
+
+
 @pytest.mark.parametrize(
     "give_up",
     [

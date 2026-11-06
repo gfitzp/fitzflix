@@ -770,7 +770,7 @@ def test_health_probe_probes_plex_with_the_token_as_a_header(
     assert probes == {"TMDB", "Sonarr", "Radarr", "Plex"}
     (plex,) = [(url, kwargs) for url, kwargs in calls if "plex" in url]
     assert plex == (
-        "http://plex.test:32400/identity",
+        "http://plex.test:32400/library/sections",
         {"headers": {"X-Plex-Token": "plex-test-token"}},
     )
 

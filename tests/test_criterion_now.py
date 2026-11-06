@@ -127,36 +127,31 @@ def test_parse_whatson_page_reads_title_link_and_schedule(app):
     assert parsed["upcoming"] == []
 
     # A later showing that starts well after now is a rerun, not the
-    # film that is on. The entry that plays now names the film (#663).
+    # film that is on. It gives no end time.
     parsed = parse_whatson_page(
         whatson_html(minutes_left=83).replace(
             '<h1 class="Hero-module-less-module__epcjfa__title">Shock Corridor',
             '<h1 class="Hero-module-less-module__epcjfa__title">Stagecoach',
         )
     )
-    assert parsed["title"] == "Shock Corridor"
-    assert parsed["heading"] is False
-    left = parsed["ends_at"] - datetime.now(timezone.utc)
-    assert timedelta(minutes=82) < left <= timedelta(minutes=83)
+    assert parsed["ends_at"] is None
     assert parsed["stale"] is False
 
-    # A heading that is in no schedule entry is not a title (#663). The
-    # entry that plays now names the film, with its end time and its
-    # film link. The upcoming films are the films after it.
+    # A heading that is in no schedule entry gives no end time. Fitzflix
+    # never guesses. The 1st film link on the page is still the film.
+    # The upcoming films are the films that start after now
     parsed = parse_whatson_page(
         whatson_html().replace(
             '<h1 class="Hero-module-less-module__epcjfa__title">Shock Corridor',
             '<h1 class="Hero-module-less-module__epcjfa__title">Mystery Film',
         )
     )
-    assert parsed["title"] == "Shock Corridor"
-    assert parsed["heading"] is False
+    assert parsed["title"] == "Mystery Film"
     assert (
         parsed["more_url"]
         == "https://www.criterionchannel.com/films/8rWb21ax/shock-corridor"
     )
-    left = parsed["ends_at"] - datetime.now(timezone.utc)
-    assert timedelta(minutes=82) < left <= timedelta(minutes=83)
+    assert parsed["ends_at"] is None
     assert [entry["title"] for entry in parsed["upcoming"]] == ["Stagecoach"]
 
     assert parse_whatson_page("<html>redesigned</html>") is None
@@ -1243,12 +1238,10 @@ def test_page_stale_past_the_grace_never_stores_the_old_film(app, monkeypatch):
     wait = booked.astimezone() - datetime.now(timezone.utc)
     assert criterion_now.STALE_RETRY < wait <= criterion_now.STALE_BACKOFF
 
-    # Past STALE_LIMIT, the heading names no entry. The entry that
-    # plays then names the film (#663).
-    later = datetime.now(timezone.utc) + timedelta(minutes=165)
+    # Past STALE_LIMIT, the heading counts as a title in no entry.
+    later = datetime.now(timezone.utc) + criterion_now.STALE_LIMIT
     parsed = criterion_now.parse_whatson_page(page, later)
     assert parsed["stale"] is False
-    assert parsed["title"] == "Stagecoach"
 
 
 def test_failed_tmdb_call_is_enriched_again(app, monkeypatch):
@@ -1345,7 +1338,7 @@ def test_a_film_page_that_fails_with_no_404_is_fetched_again(app, monkeypatch):
 
 
 def test_card_links_to_watch_live_when_the_film_page_is_missing(app, admin_client):
-    """The title, More, and the Up next tile do not link to a 404 (#666)."""
+    """The title and the Up next tile do not link to a 404, and More is absent (#666)."""
 
     import app.criterion_now as criterion_now
 
@@ -1392,8 +1385,8 @@ def test_card_links_to_watch_live_when_the_film_page_is_missing(app, admin_clien
     assert "Episode 2" in body
     assert "/films/srs00001" not in body
     assert f'<a href="{live}" class="text-decoration-none text-body">' in body
-    more = 'target="_blank" rel="noreferrer" class="btn btn-sm btn-secondary py-0">More'
-    assert f'<a href="{live}" {more}' in body
+    # The More button would repeat the Watch live button. It is absent.
+    assert 'class="btn btn-sm btn-secondary py-0">More' not in body
     assert (
         f'<a href="{live}" class="text-decoration-none text-body" aria-label=' in body
     )

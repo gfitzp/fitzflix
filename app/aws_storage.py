@@ -120,6 +120,19 @@ def _latest_receipt_handle(receipt_handle, key=None):
     return latest.decode() if latest else receipt_handle
 
 
+def _message_comes_back(receipt_handle, key):
+    """Return True if a restore message of key exists that SQS delivers again (#658).
+
+    A download that a page queued for a readable object has no message.
+    A Redis fault counts as a message. Then the 14-day sweep ends the
+    state."""
+
+    try:
+        return bool(_latest_receipt_handle(receipt_handle, key))
+    except Exception:
+        return True
+
+
 def delete_download_message(receipt_handle, key, note="message", sqs_client=None):
     """Delete the restore message of key, if there is one (#572, #617).
 
@@ -1230,7 +1243,9 @@ def download_task(
         file_id = file.id if file is not None else None
 
     # A fault that escapes the task leaves the SQS message in the queue.
-    # Thus, the state stays unless a status says otherwise.
+    # Thus, the state stays unless a status says otherwise. A download
+    # that started with no message has nothing that comes back. Its
+    # give-up ends the state, and the person can request again.
 
     booked = []
     outcome = DOWNLOAD_GAVE_UP
@@ -1251,10 +1266,11 @@ def download_task(
         return True if isinstance(outcome, str) else outcome
     finally:
         with app.app_context():
-            if not booked and outcome not in (
-                DOWNLOAD_RESTORE_PENDING,
-                DOWNLOAD_GAVE_UP,
-            ):
+            kept = outcome == DOWNLOAD_RESTORE_PENDING or (
+                outcome == DOWNLOAD_GAVE_UP
+                and _message_comes_back(sqs_receipt_handle, key)
+            )
+            if not booked and not kept:
                 end_restore_request(file_id)
 
 
