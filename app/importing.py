@@ -4657,8 +4657,8 @@ def reconstruct_filename(file_id, series_title=None):
     # TMDB can send a title with an empty release date. Then the year of
     # the record stands in. The untouched file of a conversion is its
     # original (#292). Its name keeps the quality of the original, not
-    # the 1080p quality of the library file. Else a rename moves the
-    # archive to the wrong key.
+    # the 1080p quality of the library file. Else a converge run moves
+    # the archive to the wrong key.
 
     parts = {
         "library": MOVIES,

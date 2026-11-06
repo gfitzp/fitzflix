@@ -5,20 +5,17 @@ This is the fix for Plex disambiguation (Batman becomes Batman (1966)).
 Fitzflix keeps its own TV naming. A series folder carries a year only
 when Glenn added one. Sonarr is where a series gets renamed (#370). A
 rename in Sonarr carries over to Fitzflix: the title, the folder, the
-file rows, the untouched names, and then the archive keys. The Sonarr
-path check (reconcile_sonarr_paths) does this nightly. The Sonarr
-webhook queues the check of one series when its folder differs. A
+file rows, and the untouched names. The Sonarr path check
+(reconcile_sonarr_paths) does this nightly. The Sonarr webhook queues
+the check of one series when its folder differs. A
 Sonarr rename of episode files in the same folder changes only the
 rows. A series that Sonarr does not manage is not changed. Nothing
 adds a year to a series on its own.
 
-The archive keys follow the untouched names (#369). A rename rewrites
-the untouched name of each file. Then it requests the move of each
-archive to the key of the new name. The move job copies the S3 object
-on the server side, after a restore from Deep Archive when necessary.
-aws_key changes only after the copy is verified. Thus, aws_key names a
-real object at every moment. No S3 work starts before the check that
-each file carries the series title (#317).
+A rename rewrites the untouched name of each file. It makes no request
+to S3 (#668). Each archive keeps its key, and the record keeps that key.
+flask aws converge-keys moves the keys that lag their names. Glenn
+runs it 2 times a year.
 
 The task is resumable. Each file commits after its own disk move. A
 file that is already at its target counts as moved. A row that already
@@ -43,7 +40,6 @@ from werkzeug.local import LocalProxy
 
 from app.custom_artwork import move_episode_thumb
 from app.tasks import delete_job, enqueue_task
-from app.aws_storage import archive_moves_after_unlock, request_archive_move
 from app.pipeline import migrate_renamed_file
 from app import db, get_app, makedirs_on_mounted_volume, safe_job_id
 from app.models import TVSeries
@@ -180,10 +176,10 @@ def rename_tv_series_task(series_id, new_title, volume_waits=0):
     queues a Plex rescan. volume_waits counts the retries for the TV
     library volume (#575). It stops at MAX_RENAME_VOLUME_WAITS.
 
-    The move job of each episode takes the lock of the episode. Thus,
-    the moves go to the queue after the release of the locks (#664)."""
+    The rename makes no request to S3 (#668). An archive keeps its key.
+    flask aws converge-keys moves the keys that lag their names."""
 
-    with app.app_context(), archive_moves_after_unlock():
+    with app.app_context():
         series = db.session.get(TVSeries, series_id)
         if series is None:
             current_app.logger.warning(f"Series rename: no series {series_id}")
@@ -456,7 +452,7 @@ def _move_series(series, new_title, volume_waits=0):
             return False
         else:
             # There is no local copy. This is an archived-only record.
-            # The rows get the new name. The archive moves too.
+            # The rows get the new name. The archive keeps its key.
             db_only += 1
 
         old_names = (file.basename, file.untouched_basename)
@@ -472,9 +468,6 @@ def _move_series(series, new_title, volume_waits=0):
         migrate_renamed_file(
             current_app.redis, old_names, (file.basename, file.untouched_basename)
         )
-        # The move job is booked at this commit. It goes to the queue
-        # after the release of the episode locks (#664).
-        request_archive_move(file)
         db.session.commit()
 
     # An import can start during the loop. It can attach a file under the

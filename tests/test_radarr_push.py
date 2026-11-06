@@ -229,7 +229,6 @@ def refresh_rename_fixture(app, monkeypatch, title, year, tmdb_id, new_year):
     import os
     from datetime import date
 
-    from app import tmdb_refresh
     from tests.factories import make_movie, make_movie_file
 
     movie = make_movie(title, year, tmdb_id=tmdb_id)
@@ -242,7 +241,6 @@ def refresh_rename_fixture(app, monkeypatch, title, year, tmdb_id, new_year):
     os.makedirs(os.path.dirname(old_path), exist_ok=True)
     with open(old_path, "wb") as handle:
         handle.write(b"payload")
-    monkeypatch.setattr(tmdb_refresh, "request_archive_move", lambda *a, **k: False)
     return movie.id
 
 
@@ -283,12 +281,10 @@ def test_refresh_merge_withdraws_the_old_radarr_entry(app, monkeypatch):
     import os
     from datetime import date
 
-    from app import tmdb_refresh
     from app.videos import apply_tmdb_refresh
     from tests.factories import make_movie, make_movie_file
 
     fake = wire(app, monkeypatch)
-    monkeypatch.setattr(tmdb_refresh, "request_archive_move", lambda *a, **k: False)
     fake.movies[8] = {
         "id": 8,
         "tmdbId": 1111,
@@ -332,13 +328,11 @@ def test_a_merge_stops_when_the_files_do_not_move(app, monkeypatch):
 
     from sqlalchemy import inspect as sa_inspect
 
-    from app import tmdb_refresh
     from app.models import File, Movie
     from app.videos import apply_tmdb_refresh
     from tests.factories import make_movie, make_movie_file
 
     wire(app, monkeypatch)
-    monkeypatch.setattr(tmdb_refresh, "request_archive_move", lambda *a, **k: False)
     with app.app_context():
         source = make_movie("Stuck Entry", 2002, tmdb_id=1112)
         file = make_movie_file(source, "DVD")

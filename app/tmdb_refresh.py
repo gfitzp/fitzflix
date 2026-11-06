@@ -29,7 +29,6 @@ from werkzeug.local import LocalProxy
 
 from app.tasks import enqueue_task, requeue
 from app import db, get_app, makedirs_on_mounted_volume
-from app.aws_storage import request_archive_move
 from app.custom_artwork import (
     is_library_poster,
     move_movie_poster,
@@ -915,10 +914,7 @@ def _apply_movie_refresh(
             changed += 1
         f.untouched_basename = untouched_basename
 
-    # Commit the new basenames BEFORE you queue an archive
-    # move. A deferred re-archive reads the key that the record
-    # wants from its own session. Thus, it must not start while
-    # that key is only in this transaction.
+    # Commit the new basenames before the renames of the files.
 
     try:
         db.session.commit()
@@ -967,23 +963,8 @@ def _apply_movie_refresh(
             updated_movie_id, tmdb_id, tmdb_payload, description, volume_waits
         )
 
-    # Request the archive moves LAST, after the path commit above. The
-    # move job does not need the library file. It copies the S3 object
-    # to the key of the new untouched name (#369). The jobs go to the
-    # queue at the commit below.
-
-    for f in files:
-        try:
-            request_archive_move(f)
-        except Exception:
-            current_app.logger.error(traceback.format_exc())
-
-    try:
-        db.session.commit()
-
-    except Exception:
-        current_app.logger.error(traceback.format_exc())
-        db.session.rollback()
+    # The rename makes no request to S3 (#668). The archive keeps its
+    # key. flask aws converge-keys moves the keys that lag their names.
 
     # Radarr shares the library root. Thus, it must learn the
     # new folder, or it downloads the film again.

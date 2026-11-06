@@ -110,7 +110,8 @@ def register_cli(app):
         """List the archives whose key differs from the key of their untouched name (#369).
 
         The key of an archive is its prefix and its sanitized untouched
-        name. A rename before #369 kept the old key. With --apply, the
+        name. A rename keeps the old key (#668). Run this command 2 times
+        a year, and read the list before --apply. With --apply, the
         command requests a move for each listed archive. The move jobs
         copy the objects on the server side. A Deep Archive object first
         gets a Bulk restore. Without --apply, nothing changes. A move

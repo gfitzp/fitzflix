@@ -1,6 +1,7 @@
 """Test the archive moves: the archive key follows the untouched name (#369).
 
-A rename requests a move. The move job copies the S3 object on the
+A rename makes no request to S3 (#668). flask aws converge-keys requests
+the moves of the keys that lag their names. The move job copies the S3 object on the
 server side, verifies the copy, and only then writes the new key. A
 Deep Archive object first gets a Bulk restore. Its notification brings
 the move back. aws_key names a real object at every moment."""
@@ -584,8 +585,13 @@ def test_the_claims_include_the_pending_targets(app):
         )
 
 
-def test_the_series_rename_requests_a_move_for_each_tv_file(app, s3):
-    from app import aws_storage, db
+def test_the_series_rename_requests_no_archive_move(app):
+    """A series rename sets no target and queues no move (#668).
+
+    The dry run of converge-keys lists each key that lags. A rename back
+    removes the keys from the list."""
+
+    from app import db
     from app.models import File
     from app.series_rename import rename_tv_series_task
 
@@ -596,28 +602,33 @@ def test_the_series_rename_requests_a_move_for_each_tv_file(app, s3):
             file.untouched_basename = file.basename
             file.aws_key = f"untouched/{file.basename}"
             file.aws_date_uploaded = datetime(2026, 1, 1)
+            file.aws_filesize_bytes = SIZE
         db.session.commit()
         ids = [file.id for file in files]
+        series_id = series.id
         old_keys = [file.aws_key for file in files]
 
-        assert rename_tv_series_task(series.id, "Batman (1966)") is True
-        assert sorted(job.args[0] for job in move_jobs(app)) == sorted(ids)
+        assert rename_tv_series_task(series_id, "Batman (1966)") is True
+        assert move_jobs(app) == []
+        assert _scheduled_moves(app) == []
         db.session.expire_all()
         for file_id, old_key in zip(ids, old_keys):
             row = db.session.get(File, file_id)
-            assert row.aws_key == old_key
-            assert row.aws_key_target == f"untouched/{row.untouched_basename}"
-            assert row.aws_key_target.startswith("untouched/Batman (1966) - S01E0")
+            assert row.untouched_basename.startswith("Batman (1966) - S01E0")
+            assert (row.aws_key, row.aws_key_target) == (old_key, None)
+            assert row.archive_move_requested_at is None
 
-        # The moves complete the rule.
-        fake = s3({key: readable() for key in old_keys})
-        for file_id in ids:
-            assert aws_storage.move_archive_object(file_id) is True
-        db.session.expire_all()
-        for file_id in ids:
-            row = db.session.get(File, file_id)
-            assert row.aws_key == aws_storage.archive_key_for(row, "untouched")
-        assert len(fake.copies) == 2
+    output = _dry_run(app)
+    assert "2 archive key(s) differ" in output
+    for old_key in old_keys:
+        assert f"{old_key} -> untouched/Batman (1966) - S01E0" in output
+
+    # The series goes back to its old title. The keys agree again.
+
+    with app.app_context():
+        assert rename_tv_series_task(series_id, "Batman") is True
+        assert move_jobs(app) == []
+    assert "0 archive key(s) differ" in _dry_run(app)
 
 
 def test_the_series_rename_guard_requests_no_move(app, monkeypatch):
@@ -842,7 +853,8 @@ def test_each_producer_leaves_the_key_of_the_untouched_name(
         )
         assert "[Bluray-1080p]" in converted.aws_transcoded_key
 
-        # Rename: the series rename and its moves.
+        # Rename: the series rename keeps the key (#668). A converge
+        # request then moves it.
         series = make_tv_series("Producer Show")
         episode = make_tv_file(series, 1, 1, "WEBDL-1080p")
         episode.untouched_basename = episode.basename
@@ -852,6 +864,12 @@ def test_each_producer_leaves_the_key_of_the_untouched_name(
         os.remove(library)
 
     assert rename_tv_series_task(series_id, "Producer Show (2020)") is True
+    assert move_jobs(app) == []
+    with app.app_context():
+        row = db.session.get(File, episode_id)
+        assert (row.aws_key, row.aws_key_target) == (old_key, None)
+        assert aws_storage.request_archive_move(row)
+        db.session.commit()
     fake = s3({old_key: readable()})
     monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kw: fake)
     assert aws_storage.move_archive_object(episode_id) is True
@@ -912,8 +930,11 @@ def test_a_second_rename_during_an_upload_keeps_the_newest_target(app, s3, monke
         assert (row.aws_key, row.aws_key_target) == (second, None)
 
 
-def test_a_move_with_a_lost_target_computes_it_again(app, s3):
-    """A queued move whose target a race cleared still moves the archive."""
+def test_a_move_job_with_no_target_moves_nothing(app, s3):
+    """A key that lags its name with no target stays (#668).
+
+    Only a converge run requests the move of such a key. A queued move
+    job whose row has no target stops and copies nothing."""
 
     from app import aws_storage, db
     from app.models import File
@@ -923,14 +944,14 @@ def test_a_move_with_a_lost_target_computes_it_again(app, s3):
         file_id = file.id
         old_key = file.aws_key
         assert file.aws_key_target is None
+        assert aws_storage.archive_drift(file) is not None
         fake = s3({old_key: readable()})
 
         assert aws_storage.move_archive_object(file_id) is True
-        assert fake.copies == [
-            (old_key, "untouched/Lost Target (1971) - [Bluray-1080p].mkv")
-        ]
+        assert fake.copies == []
         db.session.expire_all()
-        assert db.session.get(File, file_id).aws_key_target is None
+        row = db.session.get(File, file_id)
+        assert (row.aws_key, row.aws_key_target) == (old_key, None)
 
 
 def test_the_sync_waits_for_a_scheduled_move(app):
@@ -1314,8 +1335,8 @@ def test_a_case_only_rename_keeps_the_archive_key(app, library):
 
 
 @pytest.mark.parametrize("library", ["film", "episode"])
-def test_a_real_rename_still_moves_the_archive(app, library):
-    """A rename that changes more than letter case still requests a move (#369)."""
+def test_a_real_rename_still_gets_a_move_on_request(app, library):
+    """A converge request moves a key that differs by more than letter case (#369)."""
 
     from app import aws_storage, db
 
@@ -1443,28 +1464,58 @@ def test_a_held_move_is_booked_and_then_queued_at_the_end_of_the_hold(app):
         assert front_times(app.redis, [booked]) == {}
 
 
-def test_the_series_rename_queues_each_move_after_the_episode_locks(
-    app, s3, monkeypatch
+def test_the_sync_report_names_the_keys_that_lag(app, monkeypatch):
+    """The weekly S3 sync mails 1 line with the count, the size and the command (#668)."""
+
+    from app import aws_storage
+
+    sent = []
+    monkeypatch.setattr(
+        aws_storage, "notify_admin_text", lambda *args: sent.append(args)
+    )
+    with app.app_context():
+        archived_film("Lag One", 1972, key_name="Lag One Old.mkv")
+        archived_film("Lag Two", 1973, key_name="Lag Two Old.mkv")
+        archived_film("No Lag", 1974)
+        aws_storage._mail_reports([], [])
+
+    ((subject, text, html),) = sent
+    assert subject == "Archive keys that lag their names"
+    gib = f"{2 * SIZE / 1024**3:.1f} GiB"
+    assert text == (
+        f"2 archive key(s) lag their names: {gib}. Run flask aws converge-keys "
+        f"to see the list."
+    )
+    assert html == f"<p>{text}</p>"
+
+
+def test_the_sync_report_sends_no_line_when_no_key_lags(app, monkeypatch):
+    from app import aws_storage
+
+    sent = []
+    monkeypatch.setattr(
+        aws_storage, "notify_admin_text", lambda *args: sent.append(args)
+    )
+    with app.app_context():
+        archived_film("In Step", 1975)
+        aws_storage._mail_reports([], [])
+    assert sent == []
+
+
+def test_a_fault_in_the_lag_count_does_not_fail_the_sync_reports(
+    app, monkeypatch, caplog
 ):
-    """The move of an episode takes the lock that the rename holds (#664)."""
+    from app import aws_storage
 
-    from app import db
-    from app.series_rename import rename_tv_series_task
+    def broken(claims=None):
+        raise RuntimeError("database gone")
 
+    sent = []
+    monkeypatch.setattr(aws_storage, "archive_drifts", broken)
+    monkeypatch.setattr(
+        aws_storage, "notify_admin_text", lambda *args: sent.append(args)
+    )
     with app.app_context():
-        series = make_tv_series("Batwoman", tmdb_id=2288)
-        files = [make_tv_file(series, 1, n, "Bluray-1080p") for n in (1, 2)]
-        for file in files:
-            file.untouched_basename = file.basename
-            file.aws_key = f"untouched/{file.basename}"
-            file.aws_date_uploaded = datetime(2026, 1, 1)
-        db.session.commit()
-        ids = sorted(file.id for file in files)
-        # The rename holds the locks of the old title.
-        keys = {file.id: file.file_identifier() for file in files}
-    seen = _moves_enter_queue_unlocked(app, monkeypatch, keys)
-    with app.app_context():
-
-        assert rename_tv_series_task(series.id, "Batwoman (1966)") is True
-        assert sorted(job.args[0] for job in move_jobs(app)) == ids
-    assert sorted(seen) == [(file_id, True) for file_id in ids]
+        assert aws_storage._mail_reports([], []) is None
+    assert sent == []
+    assert "could not count the archive keys that lag" in caplog.text

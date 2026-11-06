@@ -1119,6 +1119,42 @@ def _mail_reports(unreferenced_files, orphaned_files):
             orphaned_files=orphaned_files,
         )
 
+    _report_lagging_keys()
+
+
+def _report_lagging_keys():
+    """Mail the admin 1 line about the archive keys that lag their names (#668).
+
+    A rename keeps the key. flask aws converge-keys moves the keys that
+    lag. The mail comes only when at least 1 key lags. A fault only
+    logs. Thus, the line never fails the sync."""
+
+    try:
+        drifted = archive_drifts()
+    except Exception:
+        db.session.rollback()
+        current_app.logger.warning(
+            "S3 sync: could not count the archive keys that lag their names: "
+            + traceback.format_exc()
+        )
+        return
+    if not drifted:
+        return
+    total = sum(size for _, _, _, size in drifted)
+    line = (
+        f"{len(drifted)} archive key(s) lag their names: "
+        f"{total / 1024**3:.1f} GiB. Run flask aws converge-keys to see "
+        f"the list."
+    )
+    try:
+        notify_admin_text(
+            "Archive keys that lag their names",
+            line,
+            f"<p>{escape(line)}</p>",
+        )
+    except Exception:
+        current_app.logger.warning(traceback.format_exc())
+
 
 def _import_uncataloged(roots):
     """Queue the files of the library folders that have no record for an import."""
@@ -2078,9 +2114,9 @@ def request_archive_move(file, claims=None):
     Set aws_key_target, and queue move_archive_object after the next
     commit of the session. The caller commits. A pending target is
     replaced. The job reads the current target when it runs. A file
-    whose archives have their keys loses its pending target. A rename
-    that changes only letter case keeps the key, and a pending target
-    of that rename goes (#612). Return True if a move is pending."""
+    whose archives have their keys loses its pending target. A name
+    that differs from the key only by letter case keeps the key, and a
+    pending target goes (#612). Return True if a move is pending."""
 
     drift = archive_drift(file, claims)
     if drift is None:
@@ -2169,7 +2205,7 @@ def _enqueue_move_once(file_id, basename, delay=None):
     A known and accepted gap stays (review of 2026-10-26). A move that
     waits as a scheduled retry, or a move that a restore notification
     queued with its receipt handle, does not count. A new request (a
-    rename, or converge-keys with --again) can add 1 more job for such a
+    converge-keys run with --again) can add 1 more job for such a
     file. That job finds the
     restore in progress or the move done, and it changes nothing.
 
@@ -2339,7 +2375,7 @@ def archive_library_file(file, path, delete_replaced=True):
         file.aws_date_uploaded = uploaded
         file.aws_filesize_bytes = size
         file.aws_stale = False
-    # The upload took time. A second rename can have set a newer target
+    # The upload took time. A converge run can have set a newer target
     # meanwhile. The commit above loaded it. Thus, the target is computed
     # again, not cleared. A target that the upload completed goes.
 
@@ -2648,8 +2684,9 @@ def move_archive_object(file_id, sqs_receipt_handle=None):
     """Move the archive of a file to its pending target key (#369).
 
     The job holds the lock of the title. It reads the row and computes
-    the key again. A later rename can have changed the target. Then the
-    newest target applies.
+    the key again. A rename after the request changes the wanted key.
+    Then the newest key applies. A name that changed back clears the
+    target, and nothing moves.
 
     - The old object is missing: the target is cleared. The S3 sync
       reports the key. Return False.
@@ -2687,7 +2724,11 @@ def move_archive_object(file_id, sqs_receipt_handle=None):
             )
             return False
         message_key = message_key or move_source(file) or file.aws_key
-        if not file.aws_key_target and archive_drift(file) is None:
+        # A row with no target has no move to do. A key that lags its
+        # name is not a reason to move. Only a converge run moves such a
+        # key (#668).
+
+        if not file.aws_key_target:
             current_app.logger.info(
                 f"'{file.basename}' No archive move is pending. The job stops"
             )
@@ -2695,9 +2736,6 @@ def move_archive_object(file_id, sqs_receipt_handle=None):
                 sqs_receipt_handle, message_key, note="archive move with no target"
             )
             return True
-
-        # A row with no target and a key that differs from its rule lost
-        # its target to a race. The job computes the target again.
 
         lock = acquire_lock_or_defer(
             file.file_identifier(),

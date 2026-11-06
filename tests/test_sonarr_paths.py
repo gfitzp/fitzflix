@@ -294,8 +294,8 @@ def test_the_check_changes_nothing_without_the_tv_library(
 def test_the_rename_task_completes_a_series_that_sonarr_moved(app, sonarr):
     """The full chain: the files are at the new paths before the task runs.
 
-    The task completes the rows, rewrites the untouched names, requests
-    the archive moves, and puts the same path back to Sonarr."""
+    The task completes the rows, rewrites the untouched names, and puts
+    the same path back to Sonarr. The archives keep their keys (#668)."""
 
     from app import db
     from app.models import File, TVSeries
@@ -310,6 +310,7 @@ def test_the_rename_task_completes_a_series_that_sonarr_moved(app, sonarr):
             file.aws_date_uploaded = datetime(2026, 1, 1)
         db.session.commit()
         ids = [file.id for file in files]
+        old_keys = {file.id: file.aws_key for file in files}
         series_id = series.id
     for n in (1, 2):
         place(
@@ -328,7 +329,7 @@ def test_the_rename_task_completes_a_series_that_sonarr_moved(app, sonarr):
         for job in app.file_queue.jobs
         if job.func_name == "app.aws_storage.move_archive_object"
     ]
-    assert sorted(moves) == sorted(ids)
+    assert moves == []
     with app.app_context():
         assert db.session.get(TVSeries, series_id).title == "Batman (1966)"
         for file_id in ids:
@@ -336,7 +337,8 @@ def test_the_rename_task_completes_a_series_that_sonarr_moved(app, sonarr):
             assert row.dirname == "TV Shows/Batman (1966)/Season 01"
             assert row.basename.startswith("Batman (1966) - S01E0")
             assert row.untouched_basename == row.basename
-            assert row.aws_key_target == f"untouched/{row.untouched_basename}"
+            assert row.aws_key == old_keys[file_id]
+            assert row.aws_key_target is None
             assert os.path.isfile(
                 os.path.join(app.config["LIBRARY_DIR"], row.file_path)
             )

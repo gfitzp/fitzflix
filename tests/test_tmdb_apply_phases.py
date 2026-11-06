@@ -84,21 +84,28 @@ def test_apply_tmdb_refresh_round_trips_payload(app):
         assert refreshed.tmdb_name == "Payload Show Canonical"
 
 
-def test_tmdb_apply_requests_the_archive_move_after_the_commit(app, monkeypatch):
-    """Test that a movie rename requests the archive move, and queues it at the commit.
+def test_tmdb_apply_rename_requests_no_archive_move(app):
+    """A TMDB refresh that changes the year renames the file and makes no request to S3 (#668).
 
-    The move job reads the target from its own session. On 2026-09-05 a
-    job dequeued 11 ms after the disk rename, before the commit. Thus,
-    the job goes to the queue only when the target is committed (#369).
-    A Deep Archive object moves too: the move does not need the
-    library file."""
+    The archive keeps its key, and no target is set. The dry run of
+    flask aws converge-keys lists the key that lags. A refresh that
+    changes the year back removes it from the list."""
 
     from datetime import date
 
     from app import db
-    from app.models import File
+    from app.cli import register
+    from app.models import File, Movie
     from app.videos import apply_tmdb_refresh
     from tests.factories import make_movie, make_movie_file
+
+    if "aws" not in app.cli.commands:
+        register(app)
+
+    def dry_run():
+        result = app.test_cli_runner().invoke(args=["aws", "converge-keys"])
+        assert result.exit_code == 0, result.output
+        return result.output
 
     with app.app_context():
         movie = make_movie("Desert Tune", 1943)
@@ -106,42 +113,49 @@ def test_tmdb_apply_requests_the_archive_move_after_the_commit(app, monkeypatch)
         file.untouched_basename = file.basename
         file.aws_key = f"untouched/{file.basename}"
         file.aws_date_uploaded = date(2026, 1, 1)
+        file.aws_filesize_bytes = 5
         movie.tmdb_title = "Desert Tune"
         movie.tmdb_release_date = date(1944, 1, 1)
         db.session.commit()
         movie_id = movie.id
         file_id = file.id
+        old_key = file.aws_key
 
         old_path = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
         os.makedirs(os.path.dirname(old_path), exist_ok=True)
         with open(old_path, "wb") as handle:
             handle.write(b"payload")
 
-        seen = []
-        real_enqueue = app.file_queue.enqueue
-
-        def spy(name, *args, **kwargs):
-            if name == "app.aws_storage.move_archive_object":
-                # Record what the job sees from another connection.
-                with db.engine.connect() as connection:
-                    committed = connection.execute(
-                        db.text("SELECT aws_key_target FROM file WHERE id = :id"),
-                        {"id": file_id},
-                    ).scalar()
-                seen.append((kwargs["args"], committed))
-            return real_enqueue(name, *args, **kwargs)
-
-        monkeypatch.setattr(app.file_queue, "enqueue", spy)
-
         assert apply_tmdb_refresh("Movies", movie_id) is True
 
-        new_key = "untouched/Desert Tune (1944) - [HDTV-720p].mkv"
-        assert seen == [((file_id,), new_key)]
         db.session.expire_all()
-        moved = db.session.get(File, file_id)
-        assert moved.aws_key == "untouched/Desert Tune (1943) - [HDTV-720p].mkv"
-        assert moved.aws_key_target == new_key
+        renamed = db.session.get(File, file_id)
+        assert "(1944)" in renamed.untouched_basename
+        assert renamed.aws_key == old_key
+        assert renamed.aws_key_target is None
+        assert renamed.archive_move_requested_at is None
         assert not os.path.exists(old_path)
+        assert [
+            job
+            for job in app.file_queue.jobs
+            if job.func_name == "app.aws_storage.move_archive_object"
+        ] == []
+
+    output = dry_run()
+    assert "1 archive key(s) differ" in output
+    assert f"{old_key} -> untouched/Desert Tune (1944) - [HDTV-720p].mkv" in output
+
+    # TMDB changes the year back. The name and the key agree again.
+
+    with app.app_context():
+        db.session.get(Movie, movie_id).tmdb_release_date = date(1943, 1, 1)
+        db.session.commit()
+        assert apply_tmdb_refresh("Movies", movie_id) is True
+        db.session.expire_all()
+        row = db.session.get(File, file_id)
+        assert "(1943)" in row.untouched_basename
+        assert (row.aws_key, row.aws_key_target) == (old_key, None)
+    assert "0 archive key(s) differ" in dry_run()
 
 
 def test_tmdb_apply_defers_while_title_is_locked(app, held_lock):
