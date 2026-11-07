@@ -264,7 +264,7 @@ def dvr_guide(token):
     )
 
 
-def _ffmpeg_command(config, path, offset, audio_channels):
+def _ffmpeg_command(config, path, offset, audio_channels, subtitle_stream=None):
     """Return the ffmpeg command for one program.
 
     The command joins the file at the offset and paces to real time. It
@@ -273,6 +273,14 @@ def _ffmpeg_command(config, path, offset, audio_channels):
 
     It maps the first video track and the first audio track. The first
     audio track is always the default track (the house rule).
+
+    subtitle_stream is the container index of a bitmap subtitle track,
+    or None. The stream burns that track into the picture, because an
+    MPEG-TS tuner stream carries no subtitle track that Plex shows. The
+    overlay first scales the subtitle canvas to the picture. A VobSub
+    canvas is the DVD frame, which can be smaller than the picture.
+    Without the scale, the captions sit in the top-left corner. The
+    output scale to 1920 wide runs after the overlay.
 
     A track with fewer than 6 channels keeps its own layout. Without a
     layout, "-ac 4" and "-ac 5" give the 4.0 and 5.0 layouts of ffmpeg.
@@ -286,12 +294,19 @@ def _ffmpeg_command(config, path, offset, audio_channels):
     command = [config["FFMPEG_BIN"], "-hide_banner", "-loglevel", "error"]
     if offset > 0:
         command += ["-ss", f"{offset:.3f}"]
+    command += ["-re", "-i", path]
+    picture = "scale='min(1920,iw)':-2"
+    if subtitle_stream is None:
+        command += ["-map", "0:v:0", "-vf", picture]
+    else:
+        command += [
+            "-filter_complex",
+            f"[0:{int(subtitle_stream)}][0:v:0]scale2ref[sub][vid];"
+            f"[vid][sub]overlay,{picture}[v]",
+            "-map",
+            "[v]",
+        ]
     command += [
-        "-re",
-        "-i",
-        path,
-        "-map",
-        "0:v:0",
         "-map",
         "0:a:0?",
         "-c:v",
@@ -304,8 +319,6 @@ def _ffmpeg_command(config, path, offset, audio_channels):
         f"{bitrate * 2}k",
         "-pix_fmt",
         "yuv420p",
-        "-vf",
-        "scale='min(1920,iw)':-2",
         "-c:a",
         "ac3",
         "-b:a",
@@ -329,6 +342,10 @@ def dvr_stream(token, slug):
     a program if its file is missing or if its transcode dies without
     output. A full lap of failures ends the stream. The stream does not
     spin.
+
+    A program with a subtitle stream gets 1 more spawn without it when
+    the first spawn gives no output. A stream index from an old scan
+    can miss the track. That must not cost the program its slot.
     """
 
     if not _authorized(token):
@@ -359,23 +376,40 @@ def dvr_stream(token, slug):
                 offset, failures = 0.0, failures + 1
                 continue
             logger.info(f"DVR {slug}: playing {program['title']} @ {offset:.0f}s")
-            try:
-                process = subprocess.Popen(
-                    _ffmpeg_command(config, path, offset, program["audio_channels"]),
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.DEVNULL,
-                )
-            except OSError:
-                logger.warning(f"DVR {slug}: could not spawn ffmpeg; ending stream")
-                return
+            attempts = [program.get("subtitle_stream")]
+            if attempts[0] is not None:
+                attempts.append(None)
             produced = False
-            try:
-                while chunk := process.stdout.read(STREAM_CHUNK_BYTES):
-                    produced = True
-                    yield chunk
-            finally:
-                process.kill()
-                process.wait()
+            for subtitle_stream in attempts:
+                try:
+                    process = subprocess.Popen(
+                        _ffmpeg_command(
+                            config,
+                            path,
+                            offset,
+                            program["audio_channels"],
+                            subtitle_stream,
+                        ),
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.DEVNULL,
+                    )
+                except OSError:
+                    logger.warning(f"DVR {slug}: could not spawn ffmpeg; ending stream")
+                    return
+                try:
+                    while chunk := process.stdout.read(STREAM_CHUNK_BYTES):
+                        produced = True
+                        yield chunk
+                finally:
+                    process.kill()
+                    process.wait()
+                if produced:
+                    break
+                if subtitle_stream is not None:
+                    logger.warning(
+                        f"DVR {slug}: no output with subtitle stream "
+                        f"{subtitle_stream} of {path}; retrying without it"
+                    )
             failures = 0 if produced else failures + 1
             offset = 0.0
         logger.warning(f"DVR {slug}: no playable programs; ending stream")

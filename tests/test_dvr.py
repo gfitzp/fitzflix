@@ -1085,3 +1085,216 @@ def test_a_new_episode_does_not_move_the_series_cursor(app, monkeypatch):
 
     last = int(before[-1][-2:])
     assert after == [f"S01E{(last % 21) + 1:02d}", f"S01E{((last + 1) % 21) + 1:02d}"]
+
+
+def _subtitle_row(file, track, format, default, streamorder):
+    """Add 1 scanned subtitle track to the file. The caller commits."""
+
+    from app.models import FileSubtitleTrack
+
+    row = FileSubtitleTrack(
+        file_id=file.id,
+        track=track,
+        language="eng",
+        language_name="English",
+        format=format,
+        elements=100,
+        default=default,
+        forced=False,
+        streamorder=streamorder,
+    )
+    db.session.add(row)
+    return row
+
+
+@pytest.mark.parametrize(
+    "tracks, expected",
+    [
+        ([], None),
+        ([(1, "PGS", True, 3)], 3),
+        ([(1, "VobSub", True, 2)], 2),
+        ([(1, "UTF-8", True, 3)], None),
+        ([(1, "ASS", True, 3)], None),
+        ([(1, "PGS", False, 3)], None),
+        ([(1, "UTF-8", False, 2), (2, "VobSub", True, 4)], 4),
+    ],
+)
+def test_default_subtitle_stream_follows_the_default_flag(app, tracks, expected):
+    """The stream burns in the default subtitle track, and only a bitmap one."""
+
+    from app import dvr
+
+    with app.app_context():
+        movie = make_movie("Subtitled Film", 1999)
+        file = make_movie_file(movie, "Bluray-1080p")
+        db.session.flush()
+        for track, format, default, streamorder in tracks:
+            _subtitle_row(file, track, format, default, streamorder)
+        db.session.commit()
+        assert dvr._default_subtitle_stream(file.id) == expected
+
+
+def test_build_records_the_default_bitmap_subtitle_of_each_program(app, monkeypatch):
+    """A stored program carries the subtitle stream. The stream reads no database."""
+
+    from app import dvr
+
+    monkeypatch.setattr(dvr, "_probe_duration", lambda path: 3600.0)
+    with app.app_context():
+        movie = make_movie("Foreign Film", 1960)
+        file = make_movie_file(movie, "Bluray-1080p")
+        db.session.flush()
+        _subtitle_row(file, 1, "PGS", True, 3)
+        db.session.commit()
+        assert dvr.build_channel_lineups() is True
+        lineup = dvr.channel_lineup(app.redis, "fitzflix-mix")
+        assert [program["subtitle_stream"] for program in lineup["programs"]] == [3]
+
+
+def test_the_stream_burns_in_a_bitmap_subtitle(app):
+    """With a subtitle stream, the picture goes through a scaled overlay."""
+
+    from app.main.dvr import _ffmpeg_command
+
+    plain = _ffmpeg_command(app.config, "/library/x.mkv", 0, 6)
+    assert plain[plain.index("-map") + 1] == "0:v:0"
+    assert "-filter_complex" not in plain
+    assert plain[plain.index("-vf") + 1] == "scale='min(1920,iw)':-2"
+
+    burned = _ffmpeg_command(app.config, "/library/x.mkv", 0, 6, subtitle_stream=3)
+    graph = burned[burned.index("-filter_complex") + 1]
+    assert graph.startswith("[0:3][0:v:0]scale2ref[sub][vid];")
+    assert graph.endswith("[vid][sub]overlay,scale='min(1920,iw)':-2[v]")
+    assert burned[burned.index("-map") + 1] == "[v]"
+    assert "-vf" not in burned
+    assert burned[burned.index("-map", burned.index("-map") + 1) + 1] == "0:a:0?"
+    assert burned[-3:] == ["-f", "mpegts", "pipe:1"]
+
+
+def test_the_stream_retries_a_program_without_its_subtitle(app, client, monkeypatch):
+    """A subtitle overlay that gives no output gets 1 retry without the overlay."""
+
+    from app.main import dvr as dvr_routes
+
+    lineup = {
+        "slug": "subs",
+        "name": "Subs",
+        "number": 100,
+        "epoch": 0.0,
+        "programs": [
+            {
+                "title": "Burned Film",
+                "file_path": "Movies/Burned/Burned.mkv",
+                "duration": 3600.0,
+                "audio_channels": 6,
+                "subtitle_stream": 3,
+            }
+        ],
+    }
+    app.redis.set("fitzflix:dvr:lineup:subs", json.dumps(lineup))
+
+    class FakeProcess:
+        def __init__(self, data):
+            self.stdout = io.BytesIO(data)
+
+        def kill(self):
+            """Do nothing. There is no real process to kill."""
+
+        def wait(self):
+            """Return 0. There is no real process to reap."""
+            return 0
+
+    spawned = []
+
+    def fake_popen(command, stdout=None, stderr=None):
+        spawned.append(command)
+        if len(spawned) == 1:
+            return FakeProcess(b"")
+        if len(spawned) == 2:
+            return FakeProcess(b"S" * 70000)
+        raise OSError("ffmpeg exploded")
+
+    monkeypatch.setattr(dvr_routes.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(dvr_routes.os.path, "isfile", lambda path: True)
+
+    response = client.get(f"/dvr/{TOKEN}/stream/subs.ts")
+    assert response.status_code == 200
+    assert response.get_data() == b"S" * 70000
+    assert len(spawned) == 3
+    assert "-filter_complex" in spawned[0]
+    assert "-filter_complex" not in spawned[1]
+    assert "-ss" in spawned[0] and "-ss" in spawned[1]
+
+
+def test_build_asks_plex_to_reload_the_guide(app, monkeypatch):
+    """The build ends with a guide reload of the DVR on the Fitzflix tuner."""
+
+    from app import dvr
+
+    monkeypatch.setattr(dvr, "_probe_duration", lambda path: 3600.0)
+    monkeypatch.setitem(app.config, "PLEX_URL", "http://plex.test")
+    monkeypatch.setitem(app.config, "PLEX_TOKEN", "token")
+    calls = []
+
+    def fake_get(path, params=None, timeout=None, token=None):
+        assert path == "/livetv/dvrs"
+        return {
+            "MediaContainer": {
+                "Dvr": [
+                    {"key": "7", "Device": [{"uri": "http://other.test/dvr/else"}]},
+                    {
+                        "key": "18",
+                        "Device": [{"uri": f"http://127.0.0.1:8000/dvr/{TOKEN}"}],
+                    },
+                ]
+            }
+        }
+
+    monkeypatch.setattr(dvr, "plex_get", fake_get)
+    monkeypatch.setattr(
+        dvr,
+        "plex_command",
+        lambda method, path, params=None: calls.append((method, path)),
+    )
+    with app.app_context():
+        movie = make_movie("Reload Film", 2001)
+        make_movie_file(movie, "Bluray-1080p")
+        db.session.commit()
+        assert dvr.build_channel_lineups() is True
+    assert calls == [("POST", "/livetv/dvrs/18/reloadGuide")]
+
+
+def test_reload_plex_guide_costs_the_build_nothing(app, monkeypatch):
+    """No Plex, no matching DVR, or a refusal: the reload returns False and raises nothing."""
+
+    import requests
+
+    from app import dvr
+
+    with app.app_context():
+        assert dvr.reload_plex_guide() is False
+
+        monkeypatch.setitem(app.config, "PLEX_URL", "http://plex.test")
+        monkeypatch.setitem(app.config, "PLEX_TOKEN", "token")
+        commands = []
+        monkeypatch.setattr(
+            dvr, "plex_command", lambda method, path, params=None: commands.append(path)
+        )
+
+        monkeypatch.setattr(
+            dvr,
+            "plex_get",
+            lambda path, **kwargs: {
+                "MediaContainer": {
+                    "Dvr": [{"key": "7", "Device": [{"uri": "http://x/dvr/else"}]}]
+                }
+            },
+        )
+        assert dvr.reload_plex_guide() is False
+
+        def refused(path, **kwargs):
+            raise requests.ConnectionError("down")
+
+        monkeypatch.setattr(dvr, "plex_get", refused)
+        assert dvr.reload_plex_guide() is False
+        assert commands == []

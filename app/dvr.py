@@ -28,6 +28,8 @@ import re
 import subprocess
 import uuid
 
+import requests
+
 from datetime import date, datetime, timezone
 from fractions import Fraction
 from math import floor, gcd
@@ -43,10 +45,12 @@ from app.settings import get_setting
 from app.file_ranking import MOVIE_BEST_ORDER, TV_BEST_ORDER
 from app.leaving_criterion import CRITERION_PROVIDER_ID
 from app.maintenance import volume_alive
+from app.plex_api import plex_command, plex_get
 from app.models import (
     DVRChannel,
     File,
     FileAudioTrack,
+    FileSubtitleTrack,
     Movie,
     RefQuality,
     TMDBGenre,
@@ -141,6 +145,14 @@ TV_THEME_SPECS = (
 # downmixed. A source with fewer channels keeps its layout.
 
 AC3_MAX_CHANNELS = 6
+
+# The subtitle formats that the stream burns into the picture. ffmpeg
+# decodes these to bitmaps and overlays them. A text track (SubRip, ASS)
+# needs libass, which the ffmpeg of this host does not have. Thus, a
+# text track does not air. The names are the MediaInfo format names
+# that the track scan stores.
+
+BITMAP_SUBTITLE_FORMATS = ("PGS", "VobSub")
 
 
 def _slugify(name):
@@ -267,6 +279,32 @@ def _first_audio_channels(file_id):
     return AC3_MAX_CHANNELS
 
 
+def _default_subtitle_stream(file_id):
+    """Return the container stream index of the default subtitle track, or None.
+
+    The default flag is the house rule, as on the players: a
+    foreign-language film flags its full English track, and an English
+    film flags its forced track when it has one. The stream burns that
+    track into the picture. The result is None when the file flags no
+    subtitle track, and also when the flagged track is a text track
+    (BITMAP_SUBTITLE_FORMATS). The index is the StreamOrder of the scan.
+    It is the "0:N" specifier of ffmpeg.
+    """
+
+    track = (
+        FileSubtitleTrack.query.filter_by(file_id=file_id, default=True)
+        .order_by(FileSubtitleTrack.track.asc())
+        .first()
+    )
+    if (
+        track
+        and track.format in BITMAP_SUBTITLE_FORMATS
+        and track.streamorder is not None
+    ):
+        return int(track.streamorder)
+    return None
+
+
 def _on_disk(file):
     """Return True if the local copy of the file is present.
 
@@ -353,6 +391,7 @@ def _program(movie, file, duration, genres):
         "file_path": file.file_path,
         "duration": round(duration, 3),
         "audio_channels": _first_audio_channels(file.id),
+        "subtitle_stream": _default_subtitle_stream(file.id),
         "genres": genres,
     }
 
@@ -798,6 +837,7 @@ def _episode_program(series, file, duration):
         "file_path": file.file_path,
         "duration": round(duration, 3),
         "audio_channels": _first_audio_channels(file.id),
+        "subtitle_stream": _default_subtitle_stream(file.id),
         "genres": [],
     }
 
@@ -1191,7 +1231,53 @@ def build_channel_lineups(day=None):
             f"DVR: built {len(index)} channel lineups "
             f"({len(best)} owned films in pool)"
         )
+        reload_plex_guide()
         return True
+
+
+def reload_plex_guide():
+    """Ask Plex to fetch the guide again. Return True when it accepted.
+
+    A build gives every channel a new program list and a new epoch.
+    Plex fetches the guide 1 time a day, in its own refresh window.
+    Without this call, its grid shows the old lineups until that
+    window. The refresh window is at 02:00 and the build is at 06:30.
+    Thus, the grid was wrong for most of each day.
+
+    The DVR of Plex is the one whose tuner device points at the
+    Fitzflix token path. A Plex that is not configured, that has no
+    such DVR, or that refuses the call costs the build nothing. The
+    lineups are stored. The call is the last step.
+    """
+
+    if not (
+        current_app.config.get("PLEX_URL") and current_app.config.get("PLEX_TOKEN")
+    ):
+        return False
+    marker = f"/dvr/{current_app.config['DVR_TOKEN']}"
+    try:
+        dvrs = plex_get("/livetv/dvrs").get("MediaContainer", {}).get("Dvr", [])
+        keys = [
+            dvr["key"]
+            for dvr in dvrs
+            if any(
+                marker in (device.get("uri") or "") for device in dvr.get("Device", [])
+            )
+        ]
+        if not keys:
+            current_app.logger.warning(
+                "DVR: Plex has no DVR on the Fitzflix tuner; the guide keeps its old lineups"
+            )
+            return False
+        for key in keys:
+            plex_command("POST", f"/livetv/dvrs/{key}/reloadGuide")
+    except (requests.RequestException, ValueError, KeyError, TypeError) as fault:
+        current_app.logger.warning(
+            f"DVR: Plex did not reload the guide ({fault}); its grid catches up at its own refresh"
+        )
+        return False
+    current_app.logger.info(f"DVR: Plex reloads the guide of DVR {', '.join(keys)}")
+    return True
 
 
 def channel_index(redis_client):
