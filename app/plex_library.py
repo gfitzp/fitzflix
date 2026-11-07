@@ -184,6 +184,16 @@ def refresh_plex_libraries():
             current_app.logger.warning(traceback.format_exc())
             return True
 
+        # The renamed titles of the previous run meet the result of the
+        # previous scan here, before the new scan request.
+
+        from app.plex_rename import restore_add_dates
+
+        try:
+            restore_add_dates()
+        except Exception:
+            current_app.logger.warning(traceback.format_exc())
+
         redis = current_app.redis
         previous_ids = {
             mount.decode(): device.decode()

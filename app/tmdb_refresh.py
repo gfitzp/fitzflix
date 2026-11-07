@@ -639,6 +639,15 @@ def _rename_movie_file(f, tmdb_id, probe=True):
         )
         return VOLUME_DOWN
 
+    # Keep the Plex item of the main feature through the rename. The
+    # pin and the record come before the move. The item is at the old
+    # path only until the next scan.
+
+    if f.feature_type_id is None and old_file != new_file and os.path.exists(old_file):
+        from app.plex_rename import remember_rename
+
+        remember_rename(old_file, new_file, "movie", tmdb_id=tmdb_id or f.movie.tmdb_id)
+
     # Database first, disk second. The path update flushes
     # inside a savepoint. Thus, a unique-index conflict
     # shows BEFORE the file moves, and a failed move rolls

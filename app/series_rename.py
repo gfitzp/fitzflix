@@ -41,6 +41,7 @@ from werkzeug.local import LocalProxy
 from app.custom_artwork import move_episode_thumb
 from app.tasks import delete_job, enqueue_task
 from app.pipeline import migrate_renamed_file
+from app.plex_rename import remember_rename
 from app import db, get_app, makedirs_on_mounted_volume, safe_job_id
 from app.models import TVSeries
 
@@ -392,6 +393,33 @@ def _move_series(series, new_title, volume_waits=0):
             f"series title, so nothing changed: {unmatched[:5]}"
         )
         return False
+
+    # Keep the Plex item of the show through the rename. The show folder
+    # is the first folder that the plan changes. A resumed rename, whose
+    # rows carry the new folder already, has no folder to keep.
+
+    changed = next(
+        (
+            (file.dirname.split("/"), new_dirname.split("/"))
+            for file, new_dirname, _basename in plan
+            if file.dirname != new_dirname
+        ),
+        None,
+    )
+    if changed is not None:
+        old_parts, new_parts = changed
+        depth = next(
+            index
+            for index, (old_part, new_part) in enumerate(zip(old_parts, new_parts))
+            if old_part != new_part
+        )
+        remember_rename(
+            os.path.join(library_dir, *old_parts[: depth + 1]),
+            os.path.join(library_dir, *new_parts[: depth + 1]),
+            "show",
+            tmdb_id=series.tmdb_id,
+            tvdb_id=series.tvdb_id,
+        )
 
     moved = db_only = 0
     old_dirs = set()
