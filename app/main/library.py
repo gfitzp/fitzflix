@@ -82,6 +82,7 @@ from app.models import (
     sort_title,
     title_sort,
 )
+from app.auth.passkeys import identity_confirmed
 from app.main import bp
 from app.file_ranking import (
     MOVIE_BEST_ORDER,
@@ -2218,8 +2219,8 @@ def _request_restores(files):
 def tv_restore(series_id):
     """Request a restore of each archived episode of a series, for an admin.
 
-    A restore costs real money. Thus, the form needs the password of the
-    user."""
+    A restore costs real money. Thus, the form needs a proof of identity,
+    the password or a passkey (#669)."""
 
     tv = TVSeries.query.filter_by(id=series_id).first_or_404()
     series_restore_form = SeriesRestoreForm()
@@ -2229,10 +2230,7 @@ def tv_restore(series_id):
     ):
         flash_form_errors(series_restore_form)
         return redirect(url_for("main.tv", series_id=tv.id))
-    if not current_user.check_password(series_restore_form.password.data):
-        flash("Incorrect password provided!", "danger")
-
-    else:
+    if identity_confirmed(series_restore_form):
         series_restorable = _series_restorable(series_id)
         series_restore_estimate = restore_cost_estimate(series_restorable, bulk=True)
         _request_restores(series_restorable)
@@ -2433,10 +2431,7 @@ def season_restore(series_id, season):
     ):
         flash_form_errors(season_restore_form)
         return redirect(back)
-    if not current_user.check_password(season_restore_form.password.data):
-        flash("Incorrect password provided!", "danger")
-
-    else:
+    if identity_confirmed(season_restore_form):
         restorable = _season_restorable(_season_files(series_id, season))
         season_restore_estimate = restore_cost_estimate(restorable, bulk=True)
         _request_restores(restorable)
@@ -2662,8 +2657,7 @@ def _restore_post(estimate):
     """Return the handler of a Glacier restore of the file at the estimated cost."""
 
     def handler(file, form):
-        if not current_user.check_password(form.password.data):
-            flash("Incorrect password provided!", "danger")
+        if not identity_confirmed(form):
             return
         if not file.restore_key:
             flash(f"'{file.basename}' has no archive in AWS to restore.", "warning")

@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_identity.html" import identity_fields with context %}
 {% from "_page_header.html" import page_header %}
 
 {% block app_content %}
@@ -198,8 +199,8 @@
     <div class="col-md-4">
     	<form action="" method="post">
     		{{ sync_form.hidden_tag() }}
-    		{{ sync_form.password.label }}
-    		{{ sync_form.password(class_="form-control form-control-sm mb-2") }}
+    		{% if current_user.has_password %}{{ sync_form.password.label }}{% endif %}
+    		{{ identity_fields(sync_form, class_="form-control form-control-sm mb-2") }}
     		{{ sync_form.sync_submit(class_="btn btn-sm btn-danger") }}
     	</form>
     	<em class="small"><b>WARNING:</b> This deletes all the files from AWS that are not in the Fitzflix database. Make sure that you want to delete them before you click.</em>

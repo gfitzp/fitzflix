@@ -242,6 +242,18 @@ class User(UserMixin, db.Model):
         cascade="all,delete,delete-orphan",
     )
 
+    # The passkeys of this user (#669). An account with a passkey can
+    # drop its password. Then the passkeys are the only way in. The
+    # Profile handlers keep at least 1 way in.
+
+    passkeys = db.relationship(
+        "Passkey",
+        backref="user",
+        lazy="dynamic",
+        cascade="all,delete,delete-orphan",
+        order_by="Passkey.date_created",
+    )
+
     def __repr__(self):
         return f"<User '{self.email}'>"
 
@@ -250,9 +262,21 @@ class User(UserMixin, db.Model):
 
         self.password_hash = generate_password_hash(password)
 
-    def check_password(self, password):
-        """Return True if the password matches the stored hash."""
+    @property
+    def has_password(self):
+        """Return True if the account has a password. A passkey-only account has none."""
 
+        return bool(self.password_hash)
+
+    def check_password(self, password):
+        """Return True if the password matches the stored hash.
+
+        An account with no password matches nothing (#669). Thus, a
+        password post on a passkey-only account is a plain failure. It
+        does not tell that the account has no password."""
+
+        if not self.password_hash or not password:
+            return False
         return check_password_hash(self.password_hash, password)
 
     def password_fingerprint(self):
@@ -1781,6 +1805,52 @@ class TMDBSeason(db.Model, TMDBMixin):
 
     def __repr__(self):
         return f"<TMDBSeason '{self.id}'>"
+
+
+class Passkey(db.Model):
+    """A WebAuthn credential of a user (#669).
+
+    A user adds a passkey on the Profile page. The authenticator of the
+    browser makes the key pair and keeps the private key. Fitzflix keeps
+    the public key, and checks the signature of each sign-in with it.
+    The sign count detects a cloned authenticator. A passkey that syncs
+    between devices reports 0 each time."""
+
+    __tablename__ = "passkey"
+    __table_args__ = (
+        db.UniqueConstraint("credential_id", name="uq_passkey_credential_id"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(
+        db.Integer,
+        db.ForeignKey("user.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    # The id that the authenticator gave the credential. A sign-in names
+    # it, and Fitzflix finds the passkey by it. The standard permits
+    # 1023 bytes at most.
+
+    credential_id = db.Column(db.VARBINARY(1023), nullable=False)
+    public_key = db.Column(db.LargeBinary, nullable=False)
+    sign_count = db.Column(db.BigInteger, nullable=False, default=0)
+    transports = db.Column(db.String(128))
+    name = db.Column(db.String(64))
+    date_created = db.Column(
+        db.DateTime, nullable=False, default=db.func.utc_timestamp()
+    )
+    date_last_used = db.Column(db.DateTime)
+
+    def __repr__(self):
+        return f"<Passkey {self.id} of user {self.user_id}>"
+
+    @property
+    def display_name(self):
+        """Return the name that the user gave the passkey, or a plain label."""
+
+        return self.name or "Passkey"
 
 
 @login.user_loader

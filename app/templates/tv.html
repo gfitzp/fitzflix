@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_identity.html" import identity_fields with context %}
 {% from "_page_header.html" import breadcrumb %}
 {% from "_find_button.html" import find_button, cart_toggle with context %}
 {% from "_cert_chip.html" import cert_chip %}
@@ -68,7 +69,7 @@
 	<div class="col-sm-3 col-md-2">
 		<form action="{{ url_for('main.tv_restore', series_id=tv.id) }}" method="post">
 			{{ series_restore_form.hidden_tag() }}
-			{{ series_restore_form.password(class_="form-control form-control-sm mb-1", placeholder="Password") }}
+			{{ identity_fields(series_restore_form) }}
 			{{ series_restore_form.series_restore_submit(class_="btn btn-sm btn-primary container") }}
 		</form>
 		{% if series_restore_estimate.count %}

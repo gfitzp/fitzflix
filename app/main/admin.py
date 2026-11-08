@@ -83,6 +83,7 @@ from app.models import (
     title_sort,
 )
 from app.file_ranking import ranked_movie_files, ranked_tv_files
+from app.auth.passkeys import identity_confirmed
 from app.main import bp
 from app.main.helpers import (
     admin_required,
@@ -826,14 +827,13 @@ def _refresh_tmdb_post(form):
 
 
 def _sync_storage_post(form):
-    """Queue the S3 sync after a password check.
+    """Queue the S3 sync after a proof of identity.
 
     The sync runs for hours. The maintenance queue holds it, as in the
     cron table. On the single sql worker it blocked the cataloging of
     each import (#314)."""
 
-    if not current_user.check_password(form.password.data):
-        flash("Incorrect password provided!", "danger")
+    if not identity_confirmed(form):
         return
     name = "app.videos.sync_aws_s3_storage_task"
     # A sync that waits for idle queues books its retry under this id.
@@ -1004,7 +1004,7 @@ def missing_files():
 
     The page reads the stored result of the nightly scan. Scan now runs
     the scan again on the maintenance queue. The restore form requests
-    a restore from AWS for each selected file, after a password check.
+    a restore from AWS for each selected file, after a proof of identity.
     That is the same path as the restore button of the file page. A
     restore costs real money. Thus, the page shows the cost estimate
     of the whole list."""
@@ -1033,8 +1033,7 @@ def missing_files():
 
     restore_form = MissingRestoreForm()
     if restore_form.missing_restore_submit.data and restore_form.validate_on_submit():
-        if not current_user.check_password(restore_form.password.data):
-            flash("Incorrect password provided!", "danger")
+        if not identity_confirmed(restore_form):
             return redirect(url_for("main.missing_files"))
 
         selected = decimal_ids(request.form.getlist("file_id"))
@@ -1170,8 +1169,7 @@ def held_imports():
 
     restore_form = ArchivedRestoreForm()
     if restore_form.restore_submit.data and restore_form.validate_on_submit():
-        if not current_user.check_password(restore_form.password.data):
-            flash("Incorrect password provided!", "danger")
+        if not identity_confirmed(restore_form):
             return redirect(url_for("main.held_imports"))
         archived_id = decimal_id(restore_form.archived_id.data)
         archived = (

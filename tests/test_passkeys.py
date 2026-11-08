@@ -1,0 +1,505 @@
+"""Test the passkey sign-in, the passkey-only account, and the confirmation (#669).
+
+A software authenticator stands in for the browser. It holds an ES256
+key pair, answers a registration with a "none" attestation, and signs
+a sign-in. The JSON fields are base64url, as the browser sends them.
+"""
+
+import hashlib
+import json
+import struct
+
+import cbor2
+import pytest
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric import ec
+from webauthn.helpers import bytes_to_base64url
+
+from tests.conftest import (
+    ADMIN_EMAIL,
+    MEMBER_EMAIL,
+    MEMBER_PASSWORD,
+    _signed_in_client,
+    csrf_token_from,
+    page_csrf_token,
+)
+
+ORIGIN = "http://localhost"
+RP_ID = "localhost"
+
+
+class SoftAuthenticator:
+    """A software authenticator with 1 ES256 credential and a sign counter."""
+
+    def __init__(self, credential_id=b"soft-credential-0001"):
+        self.key = ec.generate_private_key(ec.SECP256R1())
+        self.credential_id = credential_id
+        self.counter = 0
+
+    def _cose_key(self):
+        numbers = self.key.public_key().public_numbers()
+        return cbor2.dumps(
+            {
+                1: 2,
+                3: -7,
+                -1: 1,
+                -2: numbers.x.to_bytes(32, "big"),
+                -3: numbers.y.to_bytes(32, "big"),
+            }
+        )
+
+    @staticmethod
+    def _client_data(kind, challenge):
+        return json.dumps(
+            {
+                "type": kind,
+                "challenge": challenge,
+                "origin": ORIGIN,
+                "crossOrigin": False,
+            }
+        ).encode()
+
+    def register(self, options):
+        """Answer a registration. The flags are user present, verified, attested."""
+
+        client_data = self._client_data("webauthn.create", options["challenge"])
+        auth_data = (
+            hashlib.sha256(RP_ID.encode()).digest()
+            + bytes([0x45])
+            + struct.pack(">I", 0)
+            + bytes(16)
+            + struct.pack(">H", len(self.credential_id))
+            + self.credential_id
+            + self._cose_key()
+        )
+        attestation = cbor2.dumps({"fmt": "none", "attStmt": {}, "authData": auth_data})
+        encoded = bytes_to_base64url(self.credential_id)
+        return {
+            "id": encoded,
+            "rawId": encoded,
+            "type": "public-key",
+            "clientExtensionResults": {},
+            "authenticatorAttachment": "platform",
+            "response": {
+                "clientDataJSON": bytes_to_base64url(client_data),
+                "attestationObject": bytes_to_base64url(attestation),
+                "transports": ["internal", "hybrid"],
+            },
+        }
+
+    def sign(self, options, tamper=False, origin=ORIGIN):
+        """Answer a sign-in. The counter grows by 1 each time."""
+
+        self.counter += 1
+        client_data = json.dumps(
+            {
+                "type": "webauthn.get",
+                "challenge": options["challenge"],
+                "origin": origin,
+                "crossOrigin": False,
+            }
+        ).encode()
+        auth_data = (
+            hashlib.sha256(RP_ID.encode()).digest()
+            + bytes([0x05])
+            + struct.pack(">I", self.counter)
+        )
+        signature = self.key.sign(
+            auth_data + hashlib.sha256(client_data).digest(), ec.ECDSA(hashes.SHA256())
+        )
+        if tamper:
+            signature = signature[:-1] + bytes([signature[-1] ^ 1])
+        encoded = bytes_to_base64url(self.credential_id)
+        return {
+            "id": encoded,
+            "rawId": encoded,
+            "type": "public-key",
+            "clientExtensionResults": {},
+            "response": {
+                "clientDataJSON": bytes_to_base64url(client_data),
+                "authenticatorData": bytes_to_base64url(auth_data),
+                "signature": bytes_to_base64url(signature),
+                "userHandle": None,
+            },
+        }
+
+
+@pytest.fixture
+def member_password_restored(app):
+    """Put the password of the member back after a test that removes it."""
+
+    yield
+    from app import db
+    from app.models import User
+
+    with app.app_context():
+        user = User.query.filter_by(email=MEMBER_EMAIL).one()
+        user.set_password(MEMBER_PASSWORD)
+        db.session.commit()
+
+
+def register_passkey(client, authenticator, name="Phone"):
+    """Run the 2 registration posts for a signed-in client. Return the second answer."""
+
+    token = page_csrf_token(client, "/profile")
+    options = client.post(
+        "/auth/passkey/register/options", headers={"X-CSRFToken": token}
+    ).get_json()
+    return client.post(
+        "/auth/passkey/register",
+        json={"credential": authenticator.register(options), "name": name},
+        headers={"X-CSRFToken": token},
+    )
+
+
+def passkey_sign_in(app, authenticator, **kwargs):
+    """Run the 2 sign-in posts from a fresh client. Return the client and the answer."""
+
+    client = app.test_client()
+    token = page_csrf_token(client, "/auth/login")
+    options = client.post(
+        "/auth/passkey/login/options", headers={"X-CSRFToken": token}
+    ).get_json()
+    response = client.post(
+        "/auth/passkey/login",
+        json={"credential": authenticator.sign(options, **kwargs)},
+        headers={"X-CSRFToken": token},
+    )
+    return client, response
+
+
+def member_with_passkey(app):
+    """Return a signed-in member client and the authenticator of its new passkey."""
+
+    client = _signed_in_client(app, MEMBER_EMAIL)
+    authenticator = SoftAuthenticator()
+    assert register_passkey(client, authenticator).status_code == 200
+    return client, authenticator
+
+
+def test_the_sign_in_page_offers_a_passkey(app):
+    page = app.test_client().get("/auth/login").get_data(as_text=True)
+    assert "Sign in with a passkey" in page
+    assert "/auth/passkey/login/options" in page
+
+
+def test_a_user_adds_a_passkey_and_the_profile_lists_it(app):
+    from app.models import Passkey, User
+
+    client = _signed_in_client(app, MEMBER_EMAIL)
+    authenticator = SoftAuthenticator()
+    response = register_passkey(client, authenticator, name="Work laptop")
+    assert response.status_code == 200
+    assert response.get_json()["redirect"] == "/profile"
+    with app.app_context():
+        member = User.query.filter_by(email=MEMBER_EMAIL).one()
+        passkey = Passkey.query.filter_by(user_id=member.id).one()
+        assert passkey.credential_id == authenticator.credential_id
+        assert passkey.name == "Work laptop"
+        assert passkey.transports == "internal,hybrid"
+    page = client.get("/profile").get_data(as_text=True)
+    assert "Work laptop" in page
+    assert "Remove my password" in page
+
+
+def test_a_registration_needs_the_csrf_header(app):
+    client = _signed_in_client(app, MEMBER_EMAIL)
+    response = client.post("/auth/passkey/register/options")
+    assert response.status_code == 400
+    assert "out of date" in response.get_json()["error"]
+
+
+def test_a_passkey_signs_the_user_in(app):
+    _, authenticator = member_with_passkey(app)
+    client, response = passkey_sign_in(app, authenticator)
+    assert response.status_code == 200
+    assert response.get_json()["redirect"] == "/index"
+    page = client.get("/profile")
+    assert page.status_code == 200
+    assert MEMBER_EMAIL in page.get_data(as_text=True)
+
+
+def test_a_tampered_signature_is_refused(app):
+    _, authenticator = member_with_passkey(app)
+    client, response = passkey_sign_in(app, authenticator, tamper=True)
+    assert response.status_code == 401
+    assert "passkey check failed" in response.get_json()["error"]
+    assert client.get("/profile").status_code == 302
+
+
+def test_an_answer_from_another_origin_is_refused(app):
+    _, authenticator = member_with_passkey(app)
+    _, response = passkey_sign_in(app, authenticator, origin="https://evil.test")
+    assert response.status_code == 401
+
+
+def test_an_unknown_passkey_is_refused(app):
+    _, response = passkey_sign_in(app, SoftAuthenticator(b"never-registered"))
+    assert response.status_code == 401
+    assert "does not know" in response.get_json()["error"]
+
+
+def test_a_challenge_serves_one_time(app):
+    _, authenticator = member_with_passkey(app)
+    client = app.test_client()
+    token = page_csrf_token(client, "/auth/login")
+    options = client.post(
+        "/auth/passkey/login/options", headers={"X-CSRFToken": token}
+    ).get_json()
+    first = client.post(
+        "/auth/passkey/login",
+        json={"credential": authenticator.sign(options)},
+        headers={"X-CSRFToken": token},
+    )
+    assert first.status_code == 200
+    client.get("/auth/logout")
+    second = client.post(
+        "/auth/passkey/login",
+        json={"credential": authenticator.sign(options)},
+        headers={"X-CSRFToken": token},
+    )
+    assert second.status_code == 401
+    assert "expired" in second.get_json()["error"]
+
+
+def test_a_sign_count_that_does_not_grow_is_refused(app):
+    """A cloned authenticator repeats a counter. The library refuses it."""
+
+    _, authenticator = member_with_passkey(app)
+    _, response = passkey_sign_in(app, authenticator)
+    assert response.status_code == 200
+    authenticator.counter = 0
+    _, response = passkey_sign_in(app, authenticator)
+    assert response.status_code == 401
+
+
+def test_a_password_remove_needs_a_passkey(app):
+    from app.models import User
+
+    client = _signed_in_client(app, MEMBER_EMAIL)
+    token = page_csrf_token(client, "/profile")
+    response = client.post(
+        "/profile",
+        data={"csrf_token": token, "remove_password_submit": "Remove my password"},
+        follow_redirects=True,
+    )
+    assert "Add a passkey before you remove your password." in response.get_data(
+        as_text=True
+    )
+    with app.app_context():
+        assert User.query.filter_by(email=MEMBER_EMAIL).one().has_password
+
+
+def test_a_passkey_only_account(app, member_password_restored):
+    """Remove the password, stay signed in, and sign in with the passkey only."""
+
+    from app.models import User
+
+    client, authenticator = member_with_passkey(app)
+    token = page_csrf_token(client, "/profile")
+    response = client.post(
+        "/profile",
+        data={"csrf_token": token, "remove_password_submit": "Remove my password"},
+        follow_redirects=True,
+    )
+    page = response.get_data(as_text=True)
+    assert "You sign in with a passkey now." in page
+    assert "This account has no password." in page
+    assert "Email me a link to set a password" in page
+
+    # The session that removed the password stays signed in.
+    assert client.get("/profile").status_code == 200
+
+    with app.app_context():
+        member = User.query.filter_by(email=MEMBER_EMAIL).one()
+        assert not member.has_password
+        assert member.check_password(MEMBER_PASSWORD) is False
+        assert member.check_password("") is False
+
+    # The password form fails as a plain wrong password.
+    fresh = app.test_client()
+    token = page_csrf_token(fresh, "/auth/login")
+    response = fresh.post(
+        "/auth/login",
+        data={"csrf_token": token, "email": MEMBER_EMAIL, "password": MEMBER_PASSWORD},
+    )
+    assert response.status_code == 302
+    assert "/auth/login" in response.headers["Location"]
+
+    # The passkey signs in.
+    signed, response = passkey_sign_in(app, authenticator)
+    assert response.status_code == 200
+    assert signed.get("/profile").status_code == 200
+
+
+def test_the_last_passkey_of_a_passkey_only_account_stays(
+    app, member_password_restored
+):
+    from app.models import Passkey
+
+    client, _ = member_with_passkey(app)
+    token = page_csrf_token(client, "/profile")
+    client.post(
+        "/profile",
+        data={"csrf_token": token, "remove_password_submit": "Remove my password"},
+    )
+    with app.app_context():
+        passkey_id = Passkey.query.one().id
+    token = page_csrf_token(client, "/profile")
+    response = client.post(
+        "/profile",
+        data={
+            "csrf_token": token,
+            "passkey_id": str(passkey_id),
+            "passkey_delete_submit": "Remove",
+        },
+        follow_redirects=True,
+    )
+    assert "your only way to sign in" in response.get_data(as_text=True)
+    with app.app_context():
+        assert Passkey.query.count() == 1
+
+
+def test_a_passkey_delete_with_a_password_works(app):
+    from app.models import Passkey
+
+    client, _ = member_with_passkey(app)
+    with app.app_context():
+        passkey_id = Passkey.query.one().id
+    token = page_csrf_token(client, "/profile")
+    response = client.post(
+        "/profile",
+        data={
+            "csrf_token": token,
+            "passkey_id": str(passkey_id),
+            "passkey_delete_submit": "Remove",
+        },
+        follow_redirects=True,
+    )
+    assert "Removed the passkey" in response.get_data(as_text=True)
+    with app.app_context():
+        assert Passkey.query.count() == 0
+
+
+def test_a_user_cannot_delete_the_passkey_of_another_user(app):
+    from app.models import Passkey
+
+    member_with_passkey(app)
+    with app.app_context():
+        passkey_id = Passkey.query.one().id
+    admin = _signed_in_client(app, ADMIN_EMAIL)
+    token = page_csrf_token(admin, "/profile")
+    response = admin.post(
+        "/profile",
+        data={
+            "csrf_token": token,
+            "passkey_id": str(passkey_id),
+            "passkey_delete_submit": "Remove",
+        },
+        follow_redirects=True,
+    )
+    assert "not on your account" in response.get_data(as_text=True)
+    with app.app_context():
+        assert Passkey.query.count() == 1
+
+
+def test_the_reset_link_sets_a_password_on_a_passkey_only_account(
+    app, member_password_restored
+):
+    from app.models import User
+
+    client, _ = member_with_passkey(app)
+    token = page_csrf_token(client, "/profile")
+    client.post(
+        "/profile",
+        data={"csrf_token": token, "remove_password_submit": "Remove my password"},
+    )
+    with app.app_context():
+        member = User.query.filter_by(email=MEMBER_EMAIL).one()
+        reset_token = member.get_reset_password_token()
+
+    # The signed-in user follows the link of the email.
+    page = client.get(f"/auth/reset-password/{reset_token}")
+    assert page.status_code == 200
+    response = client.post(
+        f"/auth/reset-password/{reset_token}",
+        data={
+            "csrf_token": csrf_token_from(page.get_data(as_text=True)),
+            "password": "a-new-password",
+            "password2": "a-new-password",
+        },
+    )
+    assert response.status_code == 302
+    with app.app_context():
+        member = User.query.filter_by(email=MEMBER_EMAIL).one()
+        assert member.check_password("a-new-password")
+
+
+def test_the_sync_form_takes_a_passkey_in_place_of_the_password(app, monkeypatch):
+    """The 6 forms that cost money share identity_confirmed (#669)."""
+
+    from app.main import admin
+
+    calls = []
+    monkeypatch.setattr(admin, "enqueue_task", lambda name, *a, **k: calls.append(name))
+    monkeypatch.setattr(admin, "start_bulk_run", lambda *a, **k: True)
+    client = _signed_in_client(app, ADMIN_EMAIL)
+    authenticator = SoftAuthenticator(b"admin-credential")
+    assert register_passkey(client, authenticator).status_code == 200
+
+    page = client.get("/maintenance").get_data(as_text=True)
+    assert "Confirm with passkey" in page
+    token = csrf_token_from(page)
+    options = client.post(
+        "/auth/passkey/confirm/options", headers={"X-CSRFToken": token}
+    ).get_json()
+    assert options["allowCredentials"][0]["id"] == bytes_to_base64url(
+        b"admin-credential"
+    )
+    response = client.post(
+        "/maintenance",
+        data={
+            "csrf_token": token,
+            "passkey_assertion": json.dumps(authenticator.sign(options)),
+            "sync_submit": "Sync",
+        },
+        follow_redirects=True,
+    )
+    assert "Incorrect password" not in response.get_data(as_text=True)
+    assert calls == ["app.videos.sync_aws_s3_storage_task"]
+
+
+def test_a_confirmation_with_the_passkey_of_another_user_fails(app, monkeypatch):
+    from app.main import admin
+
+    calls = []
+    monkeypatch.setattr(admin, "enqueue_task", lambda name, *a, **k: calls.append(name))
+    _, member_authenticator = member_with_passkey(app)
+    client = _signed_in_client(app, ADMIN_EMAIL)
+    page = client.get("/maintenance").get_data(as_text=True)
+    token = csrf_token_from(page)
+    options = client.post(
+        "/auth/passkey/confirm/options", headers={"X-CSRFToken": token}
+    ).get_json()
+    assert options["allowCredentials"] == []
+    response = client.post(
+        "/maintenance",
+        data={
+            "csrf_token": token,
+            "passkey_assertion": json.dumps(member_authenticator.sign(options)),
+            "sync_submit": "Sync",
+        },
+        follow_redirects=True,
+    )
+    assert "does not know this passkey" in response.get_data(as_text=True)
+    assert calls == []
+
+
+def test_a_blank_post_to_a_restore_form_is_a_wrong_password(app, admin_client):
+    page = admin_client.get("/maintenance").get_data(as_text=True)
+    response = admin_client.post(
+        "/maintenance",
+        data={"csrf_token": csrf_token_from(page), "sync_submit": "Sync"},
+        follow_redirects=True,
+    )
+    assert "Incorrect password provided!" in response.get_data(as_text=True)

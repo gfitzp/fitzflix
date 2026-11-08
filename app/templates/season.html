@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_identity.html" import identity_fields with context %}
 {% from "_page_header.html" import page_header, breadcrumb %}
 
 {% block app_content %}
@@ -43,7 +44,7 @@
 	<div class="col-sm-4 col-md-3">
 		<form action="{{ url_for('main.season_restore', series_id=tv.id, season=season) }}" method="post">
 			{{ season_restore_form.hidden_tag() }}
-			{{ season_restore_form.password(class_="form-control form-control-sm mb-1", placeholder="Password") }}
+			{{ identity_fields(season_restore_form) }}
 			{{ season_restore_form.season_restore_submit(class_="btn btn-sm btn-primary container") }}
 		</form>
 		{% if season_restore_estimate.count %}

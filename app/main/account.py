@@ -23,10 +23,13 @@ from flask import (
 )
 
 # Flask 2.4 removed flask.Markup. Import it from its actual home.
-from flask_login import current_user, login_required
+from flask_login import current_user, login_required, login_user
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import contains_eager
 
+from app.auth.email import send_password_reset_email
+from app.auth.passkeys import relying_party_id
+from app.auth.throttle import allow_reset_request
 from app.tasks import enqueue_task
 from app import db
 from app.main.forms import (
@@ -44,6 +47,9 @@ from app.main.forms import (
     ResetFrameScoresForm,
     StreamingProvidersForm,
     UpdateAPIKeyForm,
+    PasskeyDeleteForm,
+    RemovePasswordForm,
+    SetPasswordEmailForm,
 )
 from app.infuse_player import (
     COMPANION_PORT,
@@ -817,6 +823,63 @@ def _save_alerts(form):
     flash("Updated your watchlist alerts.", "success")
 
 
+def _delete_passkey(form):
+    """Remove 1 passkey of the user (#669).
+
+    An account always has a password or a passkey. This handler and
+    _remove_password are the 2 places that keep that true. The last
+    passkey of an account with no password stays."""
+
+    passkey = current_user.passkeys.filter_by(
+        id=decimal_id(form.passkey_id.data)
+    ).first()
+    if passkey is None:
+        flash("That passkey is not on your account.", "warning")
+        return
+    if not current_user.has_password and current_user.passkeys.count() == 1:
+        flash(
+            "This passkey is your only way to sign in. Set a password before "
+            "you remove it.",
+            "danger",
+        )
+        return
+    name = passkey.display_name
+    db.session.delete(passkey)
+    db.session.commit()
+    current_app.logger.info(f"Passkey removed: {current_user.email} removed '{name}'")
+    flash(f"Removed the passkey '{name}'.", "success")
+
+
+def _remove_password(form):
+    """Remove the password. The account then signs in with a passkey only (#669).
+
+    The session id holds the password fingerprint. Thus, the handler
+    signs this session in again. Every other session of the account
+    ends, and a remembered browser must sign in again."""
+
+    if current_user.passkeys.count() == 0:
+        flash("Add a passkey before you remove your password.", "danger")
+        return
+    user = current_user._get_current_object()
+    user.password_hash = None
+    db.session.commit()
+    login_user(user)
+    current_app.logger.info(f"Password removed: {user.email} signs in with a passkey")
+    flash("Removed your password. You sign in with a passkey now.", "success")
+
+
+def _send_set_password_email(form):
+    """Mail the link that sets a password on a passkey-only account (#669).
+
+    This is the reset link of the Sign In page. The limit of #263
+    applies. Over the limit, the page shows the same message but sends
+    no email."""
+
+    if allow_reset_request(current_user.email):
+        send_password_reset_email(current_user._get_current_object())
+    flash("Check your email for a link to set a password.", "info")
+
+
 @bp.route("/profile", methods=["GET", "POST"])
 @login_required
 def profile():
@@ -833,6 +896,9 @@ def profile():
     plex_player_form = PlexPlayerForm()
     infuse_form = InfusePlayerForm()
     infuse_pin_form = InfusePinForm()
+    passkey_delete_form = PasskeyDeleteForm()
+    remove_password_form = RemovePasswordForm()
+    set_password_email_form = SetPasswordEmailForm()
 
     # The app that plain play buttons target. Fitzflix asks only while
     # both apps are configured. With 1 app, there is no choice.
@@ -880,6 +946,21 @@ def profile():
             _streaming_saver(registry, subscribed),
         ),
         (alerts_form, alerts_form.alerts_submit, _save_alerts),
+        (
+            passkey_delete_form,
+            passkey_delete_form.passkey_delete_submit,
+            _delete_passkey,
+        ),
+        (
+            remove_password_form,
+            remove_password_form.remove_password_submit,
+            _remove_password,
+        ),
+        (
+            set_password_email_form,
+            set_password_email_form.set_password_email_submit,
+            _send_set_password_email,
+        ),
     )
     for form, submit, handler in handlers:
         if submit.data and form.validate_on_submit():
@@ -929,6 +1010,10 @@ def profile():
         remote_playback=remote_playback_configured(),
         infuse_form=infuse_form,
         infuse_pin_form=infuse_pin_form,
+        passkey_delete_form=passkey_delete_form,
+        passkey_host=relying_party_id(),
+        remove_password_form=remove_password_form,
+        set_password_email_form=set_password_email_form,
         infuse_pairing_pending=pairing_pending(current_user.id),
         default_player_form=default_player_form,
         streaming_form=streaming_form,

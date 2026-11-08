@@ -397,23 +397,23 @@ class ReviewUploadForm(FlaskForm):
 
 
 class S3DownloadForm(FlaskForm):
-    """Restore a file from AWS after a password check (file page)."""
+    """Restore a file from AWS after a proof of identity (file page)."""
 
-    password = PasswordField("Password:", validators=[DataRequired()])
+    password = PasswordField("Password:", validators=[Optional()])
     s3_download_submit = SubmitField("Restore from AWS")
 
 
 class SeasonRestoreForm(FlaskForm):
-    """Restore a season from AWS in bulk after a password check (season page)."""
+    """Restore a season from AWS in bulk after a proof of identity (season page)."""
 
-    password = PasswordField("Password:", validators=[DataRequired()])
+    password = PasswordField("Password:", validators=[Optional()])
     season_restore_submit = SubmitField("Bulk restore season from AWS")
 
 
 class SeriesRestoreForm(FlaskForm):
-    """Restore a series from AWS in bulk after a password check (series page)."""
+    """Restore a series from AWS in bulk after a proof of identity (series page)."""
 
-    password = PasswordField("Password:", validators=[DataRequired()])
+    password = PasswordField("Password:", validators=[Optional()])
     series_restore_submit = SubmitField("Bulk restore series from AWS")
 
 
@@ -450,9 +450,9 @@ class MKVMergeForm(FlaskForm):
 
 
 class SyncAWSStorageForm(FlaskForm):
-    """Sync and prune the S3 storage after a password check (Maintenance page)."""
+    """Sync and prune the S3 storage after a proof of identity (Maintenance page)."""
 
-    password = PasswordField("Password:", validators=[DataRequired()])
+    password = PasswordField("Password:", validators=[Optional()])
     sync_submit = SubmitField("Sync AWS S3 Storage")
 
 
@@ -728,10 +728,10 @@ class HeldImportForm(FlaskForm):
 
 
 class ArchivedRestoreForm(FlaskForm):
-    """Request a restore of an archive-only original after a password check (#292)."""
+    """Request a restore of an archive-only original after a proof of identity (#292)."""
 
     archived_id = HiddenField(validators=[DataRequired()])
-    password = PasswordField("Password", validators=[DataRequired()])
+    password = PasswordField("Password", validators=[Optional()])
     restore_submit = SubmitField("Restore")
 
 
@@ -741,12 +741,31 @@ class MissingScanForm(FlaskForm):
     missing_scan_submit = SubmitField("Scan now")
 
 
+class PasskeyDeleteForm(FlaskForm):
+    """Remove 1 passkey of the user (Profile page, #669)."""
+
+    passkey_id = HiddenField(validators=[DataRequired()])
+    passkey_delete_submit = SubmitField("Remove")
+
+
+class RemovePasswordForm(FlaskForm):
+    """Remove the password of an account that has a passkey (Profile page, #669)."""
+
+    remove_password_submit = SubmitField("Remove my password")
+
+
+class SetPasswordEmailForm(FlaskForm):
+    """Mail the link that sets a password on a passkey-only account (Profile page, #669)."""
+
+    set_password_email_submit = SubmitField("Email me a link to set a password")
+
+
 class MissingRestoreForm(FlaskForm):
-    """Request a restore of the selected missing files after a password check.
+    """Request a restore of the selected missing files after a proof of identity.
 
     The selected file ids come from the checkboxes of the table. The
     form reads them from the request. Thus, the form has no field for
     them."""
 
-    password = PasswordField("Password:", validators=[DataRequired()])
+    password = PasswordField("Password:", validators=[Optional()])
     missing_restore_submit = SubmitField("Request restore of selected files")

@@ -2,14 +2,29 @@ import secrets
 
 from sqlalchemy.exc import IntegrityError
 
-from flask import render_template, flash, redirect, url_for, request
+from flask import (
+    current_app,
+    flash,
+    jsonify,
+    redirect,
+    render_template,
+    request,
+    url_for,
+)
 from flask_wtf.csrf import validate_csrf
 from wtforms.validators import ValidationError
-from flask_login import current_user, login_user, logout_user
+from flask_login import current_user, login_required, login_user, logout_user
 
 from app import db, local_path
 from app.auth import bp
 from app.auth.email import send_password_reset_email
+from app.auth.passkeys import (
+    PasskeyError,
+    authentication_options,
+    finish_authentication,
+    finish_registration,
+    registration_options,
+)
 from app.auth.throttle import (
     allow_reset_request,
     login_lock_seconds,
@@ -203,11 +218,14 @@ def reset_password(token):
     An email with a time-limited token sends the user to this page.
     """
 
-    if current_user.is_authenticated:
-        return redirect(url_for("main.index"))
+    # A passkey-only account asks for this link from the Profile page
+    # (#669). Thus, a signed-in user can follow a link for their own
+    # account. A link for another account goes to the home page.
 
     user = User.verify_reset_password_token(token)
     if not user:
+        return redirect(url_for("main.index"))
+    if current_user.is_authenticated and current_user.id != user.id:
         return redirect(url_for("main.index"))
 
     form = ResetPasswordForm()
@@ -218,3 +236,105 @@ def reset_password(token):
         return redirect(url_for("auth.login"))
 
     return render_template("auth/reset_password.html", form=form)
+
+
+# The passkey ceremonies (#669). Each route is a JSON post from
+# passkeys.js. The post carries the csrf token of the page in the
+# X-CSRFToken header. The routes read no FlaskForm. Thus, they check
+# the token by hand, as the logout does.
+
+
+def _csrf_header_valid():
+    """Return True if the JSON post carries the csrf token of its page."""
+
+    try:
+        validate_csrf(request.headers.get("X-CSRFToken"))
+    except ValidationError:
+        return False
+    return True
+
+
+def _json_error(message, status):
+    """Return a JSON error for passkeys.js to show next to its button."""
+
+    return jsonify(error=message), status
+
+
+def _json_options(options):
+    """Return the options JSON of the webauthn library as a response."""
+
+    return current_app.response_class(options, mimetype="application/json")
+
+
+STALE_PAGE = "That page was out of date. Reload it and try again."
+
+
+@bp.route("/passkey/register/options", methods=["POST"])
+@login_required
+def passkey_register_options():
+    """Give the browser the options to make a passkey for the signed-in user."""
+
+    if not _csrf_header_valid():
+        return _json_error(STALE_PAGE, 400)
+    return _json_options(registration_options(current_user))
+
+
+@bp.route("/passkey/register", methods=["POST"])
+@login_required
+def passkey_register():
+    """Store the passkey that the browser made. Answer with the Profile address."""
+
+    if not _csrf_header_valid():
+        return _json_error(STALE_PAGE, 400)
+    body = request.get_json(silent=True) or {}
+    try:
+        passkey = finish_registration(
+            current_user, body.get("credential") or {}, body.get("name")
+        )
+    except PasskeyError as error:
+        return _json_error(str(error), 400)
+    flash(f"Added the passkey '{passkey.display_name}'.", "success")
+    return jsonify(redirect=url_for("main.profile"))
+
+
+@bp.route("/passkey/login/options", methods=["POST"])
+def passkey_login_options():
+    """Give the browser the options for a sign-in with any passkey of this site."""
+
+    if not _csrf_header_valid():
+        return _json_error(STALE_PAGE, 400)
+    return _json_options(authentication_options())
+
+
+@bp.route("/passkey/login", methods=["POST"])
+def passkey_login():
+    """Sign the owner of the passkey in. Answer with the address of the next page.
+
+    The passkey names its account. Thus, the sign-in has no email
+    address and no password, and the throttle of #263 does not apply."""
+
+    if not _csrf_header_valid():
+        return _json_error(STALE_PAGE, 400)
+    body = request.get_json(silent=True) or {}
+    try:
+        passkey = finish_authentication(body.get("credential") or {}, kind="login")
+    except PasskeyError as error:
+        return _json_error(str(error), 401)
+    login_user(passkey.user, remember=bool(body.get("remember")))
+    current_app.logger.info(
+        f"Passkey sign-in: {passkey.user.email} with '{passkey.display_name}'"
+    )
+    next_page = body.get("next")
+    if not local_path(next_page):
+        next_page = url_for("main.index")
+    return jsonify(redirect=next_page)
+
+
+@bp.route("/passkey/confirm/options", methods=["POST"])
+@login_required
+def passkey_confirm_options():
+    """Give the browser the options for a confirmation by the signed-in user."""
+
+    if not _csrf_header_valid():
+        return _json_error(STALE_PAGE, 400)
+    return _json_options(authentication_options(current_user))

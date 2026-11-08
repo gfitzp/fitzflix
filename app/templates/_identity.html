@@ -1,0 +1,17 @@
+{# The proof of identity on a form that costs money (#669). The form
+   shows the password field when the account has a password, and a
+   passkey button when the account has a passkey. The button puts the
+   assertion in the hidden field and submits the form. The button
+   stays hidden until passkeys.js finds support in the browser. #}
+{% macro identity_fields(form, class_="form-control form-control-sm mb-1", placeholder="Password", style=None) %}
+{% if current_user.has_password %}
+{% set attrs = {"class_": class_, "placeholder": placeholder} %}
+{% if style %}{% set attrs = dict(attrs, style=style) %}{% endif %}
+{{ form.password(**attrs) }}
+{% endif %}
+{% if current_user.passkeys.count() %}
+<input type="hidden" name="passkey_assertion" value="">
+<button type="button" class="btn btn-sm btn-outline-secondary mb-1" data-passkey-confirm data-options-url="{{ url_for('auth.passkey_confirm_options') }}" hidden>Confirm with passkey</button>
+<span class="small text-danger" data-passkey-status></span>
+{% endif %}
+{% endmacro %}

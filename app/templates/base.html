@@ -189,6 +189,7 @@
 {% block scripts %}
 	{{ super() }}
     {{ moment.include_moment(version="2.29.1") }}
+	<script src="{{ url_for('static', filename='passkeys.js') }}"></script>
 	<script>
 		// Fitzflix has no service worker (#648). The earlier worker kept the
 		// first page of each shopping list for offline use, and it froze

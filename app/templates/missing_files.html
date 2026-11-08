@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_identity.html" import identity_fields with context %}
 {% from "_page_header.html" import page_header, breadcrumb %}
 
 {% block app_content %}
@@ -56,7 +57,7 @@
 	{# One flex-wrap row with a gap. Thus, the password box and the
 	   button keep a gap when a phone wraps them. #}
 	<div class="d-flex flex-wrap align-items-center gap-2">
-		{{ restore_form.password(class_="form-control form-control-sm", style="width: 16rem; max-width: 100%;", placeholder="Password") }}
+		{{ identity_fields(restore_form, class_="form-control form-control-sm", style="width: 16rem; max-width: 100%;") }}
 		{{ restore_form.missing_restore_submit(class_="btn btn-sm btn-success") }}
 	</div>
 </form>
