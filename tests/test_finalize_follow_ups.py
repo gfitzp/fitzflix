@@ -20,6 +20,14 @@ from tests.localization_helpers import run_full_chain, separate_library_volume
 # The pins of the finalize_localization follow-ups that the phase split
 # moves (tranche 3). Each test passed against the old function.
 
+# The codec names of MediaInfo that the audio alerts read.
+
+AC3 = "Dolby Digital"
+DDP = "Dolby Digital Plus"
+DDP_ATMOS = "Dolby Digital Plus with Dolby Atmos"
+TRUEHD_ATMOS = "Dolby TrueHD with Dolby Atmos"
+FLAC = "FLAC"
+
 
 def _roster_jobs(app, func_name):
     """Return the queued jobs of func_name on every queue of the roster."""
@@ -249,25 +257,178 @@ def test_a_failed_follow_up_does_not_skip_the_next_ones(
 @pytest.mark.parametrize(
     "tracks, expected",
     [
-        ([], (False, False)),
-        ([{"language": "eng", "compression_mode": "Lossy"}], (False, False)),
-        ([{"language": "und"}, {"language": "fre"}], (False, False)),
-        ([{"language": "fre", "compression_mode": "Lossless"}], (True, False)),
+        ([], (False, False, False)),
+        ([{"language": "eng", "compression_mode": "Lossy"}], (False, False, False)),
+        ([{"language": "und"}, {"language": "fre"}], (False, False, False)),
+        ([{"language": "fre", "compression_mode": "Lossless"}], (True, False, False)),
         (
             [
                 {"language": "eng", "compression_mode": "Lossy"},
                 {"language": "eng", "compression_mode": "Lossless"},
             ],
-            (False, True),
+            (False, True, False),
+        ),
+        (
+            [
+                {"language": "eng", "compression_mode": "Lossy", "codec": AC3},
+                {"language": "eng", "compression_mode": "Lossy", "codec": DDP_ATMOS},
+            ],
+            (False, False, True),
         ),
     ],
 )
 def test_audio_alerts(app, tracks, expected):
-    """The foreign-audio and lossy-lead flags of the import emails are pure."""
+    """The foreign-audio, lossy-lead and Atmos-order flags of the import emails are pure."""
 
     from app.importing import _audio_alerts
 
     assert _audio_alerts(tracks, "eng") == expected
+
+
+def _audio(codec, language="eng"):
+    """Return a track dict with the fields that the Atmos rules read."""
+
+    return {
+        "language": language,
+        "language_name": {"eng": "English", "fre": "French"}[language],
+        "codec": codec,
+        "format": "FLAC" if codec == FLAC else None,
+        "channels": "5.1",
+        "default": False,
+        "compression_mode": "Lossless" if codec in (FLAC, TRUEHD_ATMOS) else "Lossy",
+    }
+
+
+@pytest.mark.parametrize(
+    "codecs, expected",
+    [
+        # No Atmos track of this type.
+        ([AC3, DDP], False),
+        ([FLAC, TRUEHD_ATMOS], False),
+        # The Atmos track leads.
+        ([DDP_ATMOS], False),
+        ([DDP_ATMOS, AC3], False),
+        # The Atmos track is behind a lossy track.
+        ([AC3, DDP_ATMOS], True),
+        # The shape of file 34161: the Atmos track is behind the lossless pair.
+        ([FLAC, TRUEHD_ATMOS, DDP_ATMOS], True),
+        # The 3-track set of the Atmos pipeline.
+        ([DDP_ATMOS, FLAC, TRUEHD_ATMOS], False),
+        # The pipeline put the twin before a source that was not first.
+        ([FLAC, DDP_ATMOS, FLAC, TRUEHD_ATMOS], False),
+        ([AC3, DDP_ATMOS, TRUEHD_ATMOS], False),
+        # A placed twin does not excuse a second Atmos track.
+        ([AC3, DDP_ATMOS, TRUEHD_ATMOS, DDP_ATMOS], True),
+        # The twin position needs the language of the source.
+        ([AC3, (DDP_ATMOS, "fre"), TRUEHD_ATMOS], True),
+        ([AC3, (DDP_ATMOS, "fre"), (FLAC, "fre"), (TRUEHD_ATMOS, "fre")], False),
+    ],
+)
+def test_atmos_not_lead(app, codecs, expected):
+    """A Dolby Digital Plus Atmos track behind the first track is flagged.
+
+    The position that the Atmos pipeline gives a twin is not flagged."""
+
+    from app.importing import _audio_alerts
+
+    tracks = [
+        _audio(*codec) if isinstance(codec, tuple) else _audio(codec)
+        for codec in codecs
+    ]
+    assert _audio_alerts(tracks, "eng")[2] is expected
+
+
+def _finalize_with_audio(app, sample_mkv, incoming_dir, basename, tracks):
+    """Import a sample and finalize it with the given audio tracks. Return the output path."""
+
+    import copy
+
+    source = os.path.join(incoming_dir, basename)
+    with open(sample_mkv, "rb") as f_in, open(source, "wb") as f_out:
+        f_out.write(f_in.read())
+    assert localization_task(source) is True
+    (move,) = list(app.handoff_queue.jobs)
+    assert videos.move_localized_file(*move.args) is True
+    (finalize,) = list(app.sql_queue.jobs)
+    args = list(finalize.args)
+    inspection = copy.deepcopy(args[4])
+    lead = inspection["audio_tracks"][0]
+    inspection["audio_tracks"] = [dict(lead, **track) for track in tracks]
+    args[4] = inspection
+    finalize_localization(*args, **finalize.kwargs)
+    return os.path.join(
+        app.config["LIBRARY_DIR"],
+        File.query.filter_by(basename=basename).one().file_path,
+    )
+
+
+def test_an_atmos_track_behind_the_lead_sends_its_email(
+    app, sample_mkv, incoming_dir, monkeypatch
+):
+    """The email names the file, links its page and lists the tracks in order."""
+
+    from flask import render_template
+
+    from app import importing
+
+    sent = []
+    monkeypatch.setattr(
+        importing,
+        "notify_admin",
+        lambda subject, template, **context: sent.append((template, context)),
+    )
+    basename = "Atmos Order (2021) - [WEBDL-1080p].mkv"
+    tracks = [_audio(FLAC), _audio(TRUEHD_ATMOS), _audio(DDP_ATMOS)]
+    with app.app_context():
+        output = _finalize_with_audio(app, sample_mkv, incoming_dir, basename, tracks)
+        ((template, context),) = sent
+        assert template == "ddp_atmos_not_first"
+        file_id = File.query.filter_by(basename=basename).one().id
+        with app.test_request_context(base_url="http://fitzflix.test/"):
+            text = render_template(f"email/{template}.txt", **context)
+            html = render_template(f"email/{template}.html", **context)
+    link = f"http://fitzflix.test/file/{file_id}"
+    for body in (text, html):
+        assert basename in body
+        assert link in body
+        assert (
+            body.index(FLAC) < body.index(TRUEHD_ATMOS) < body.index(DDP_ATMOS + ", ")
+        )
+    assert "3. English, Dolby Digital Plus with Dolby Atmos, 5.1 channels" in text
+    assert "<li>English, FLAC, 5.1 channels</li>" in html
+    os.remove(output)
+
+
+@pytest.mark.parametrize("queued, mailed", [(True, False), (False, True)])
+def test_a_coming_atmos_lead_sends_no_atmos_order_email(
+    app, sample_mkv, incoming_dir, monkeypatch, queued, mailed
+):
+    """The queued Atmos job puts its twin first. Without the job, the email goes out."""
+
+    from app import importing
+
+    sent = _capture_emails(monkeypatch)
+    monkeypatch.setattr(importing, "_atmos_handoff", lambda *args: None)
+    monkeypatch.setattr(importing, "_enqueue_atmos_twin", lambda *args: queued)
+    basename = f"Atmos Coming {int(queued)} (2021) - [Bluray-1080p].mkv"
+    tracks = [_audio(FLAC), _audio(TRUEHD_ATMOS), _audio(DDP_ATMOS, "fre")]
+    with app.app_context():
+        output = _finalize_with_audio(app, sample_mkv, incoming_dir, basename, tracks)
+        assert (("notify", "ddp_atmos_not_first") in sent) is mailed
+    os.remove(output)
+
+
+def test_an_atmos_twin_behind_another_track_does_not_lead(app):
+    """A twin leads only if the insertion point of a source that wants it is 0."""
+
+    from app.importing import _atmos_twin_will_lead
+
+    assert _atmos_twin_will_lead([_audio(FLAC), _audio(TRUEHD_ATMOS)])
+    assert _atmos_twin_will_lead([_audio(TRUEHD_ATMOS), _audio(AC3)])
+    assert not _atmos_twin_will_lead([_audio(AC3), _audio(FLAC), _audio(TRUEHD_ATMOS)])
+    assert not _atmos_twin_will_lead(
+        [_audio(FLAC), _audio(TRUEHD_ATMOS), _audio(DDP_ATMOS)]
+    )
 
 
 def test_a_failed_radarr_report_does_not_skip_the_tmdb_refresh(

@@ -3311,7 +3311,7 @@ def _after_commit(
         "transcoded archive", _transcoded_archive_due, file, atmos_queued
     )
 
-    possibly_foreign_language, lossy_lead = _audio_alerts(
+    possibly_foreign_language, lossy_lead, atmos_not_lead = _audio_alerts(
         audio_tracks, current_app.config["NATIVE_LANGUAGE"]
     )
     if possibly_foreign_language and len(audio_tracks) > 1:
@@ -3336,15 +3336,31 @@ def _after_commit(
             "lossy_audio",
             file=file,
         )
+
+    # The Atmos job of this file can put its new twin in the first
+    # position. Then the file gets an Atmos lead without the admin.
+    # Thus, that file sends no email. The job puts each other twin
+    # directly before its source, and that position is correct.
+
+    if atmos_not_lead and not (atmos_queued and _atmos_twin_will_lead(audio_tracks)):
+        step(
+            "atmos order email",
+            notify_admin,
+            "Added a file that has a Dolby Atmos track behind the first audio track",
+            "ddp_atmos_not_first",
+            file=file,
+            audio_tracks=audio_tracks,
+        )
     return archive_due is True
 
 
 def _audio_alerts(audio_tracks, native_language):
-    """Return (possibly_foreign_language, lossy_lead) for the audio tracks of an import.
+    """Return (possibly_foreign_language, lossy_lead, atmos_not_lead) for an import.
 
     The first track is possibly foreign if its language is not native,
     "und", or "zxx". The lead is lossy if the first track is lossy and
-    another track is lossless."""
+    another track is lossless. The third flag is the result of
+    _atmos_not_lead."""
 
     first_language = audio_tracks[0].get("language") if audio_tracks else None
     possibly_foreign_language = bool(audio_tracks) and not (
@@ -3355,7 +3371,69 @@ def _audio_alerts(audio_tracks, native_language):
         track.get("compression_mode", "Lossy") == "Lossless" for track in audio_tracks
     ]
     first_audio_track_lossy = not (lossless and lossless[0])
-    return possibly_foreign_language, first_audio_track_lossy and any(lossless)
+    return (
+        possibly_foreign_language,
+        first_audio_track_lossy and any(lossless),
+        _atmos_not_lead(audio_tracks),
+    )
+
+
+def _atmos_not_lead(audio_tracks):
+    """Return True if a Dolby Digital Plus Atmos track is out of place behind the first track.
+
+    The first audio track of a library file is its default track. Thus,
+    the decision uses the track order and not the default flag. The file
+    is in order if its first track is Dolby Digital Plus Atmos. A
+    lossless first track does not change the result: the Atmos pipeline
+    also puts its twin before the lossless pair.
+
+    A track in the position that the Atmos pipeline gives a twin is
+    there on purpose (Glenn, 2026-08-24). That position is directly
+    before its TrueHD Atmos source, or before the FLAC twin of the
+    source. Thus, such a track does not count."""
+
+    # This import is lazy. The atmos module resolves the worker app
+    # singleton at module import time.
+
+    from app.atmos import EAC3_ATMOS_CODEC
+
+    codecs = [track.get("codec") or "" for track in audio_tracks]
+    if not codecs or codecs[0] == EAC3_ATMOS_CODEC:
+        return False
+    return any(
+        codec == EAC3_ATMOS_CODEC and not _is_placed_atmos_twin(audio_tracks, index)
+        for index, codec in enumerate(codecs)
+    )
+
+
+def _is_placed_atmos_twin(audio_tracks, index):
+    """Return True if the track at index is where the Atmos pipeline puts a twin.
+
+    Without the track, the next track or the track after it must be a
+    TrueHD Atmos track in the same language. The insertion point of that
+    source must be the position of the track."""
+
+    from app.atmos import TRUEHD_ATMOS_CODEC, insertion_point
+
+    language = audio_tracks[index].get("language")
+    others = audio_tracks[:index] + audio_tracks[index + 1 :]
+    return any(
+        (others[source].get("codec") or "") == TRUEHD_ATMOS_CODEC
+        and others[source].get("language") == language
+        and insertion_point(others, source) == index
+        for source in range(index, min(index + 2, len(others)))
+    )
+
+
+def _atmos_twin_will_lead(audio_tracks):
+    """Return True if the Atmos job puts a new twin in the first audio position."""
+
+    from app.atmos import atmos_supplement_candidates, insertion_point
+
+    return any(
+        insertion_point(audio_tracks, source) == 0
+        for source in atmos_supplement_candidates(audio_tracks)
+    )
 
 
 def _report_film_move(file, file_path, output_directory):

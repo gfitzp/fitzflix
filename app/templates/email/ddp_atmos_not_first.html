@@ -1,0 +1,13 @@
+<p>Hello,</p>
+<p/>
+<p>Fitzflix added the file '{{ file.basename }}'. It has a Dolby Digital Plus with Dolby Atmos track, but that track is not the first audio track. The first audio track is the default track.</p>
+<p/>
+<p>These are the audio tracks of the file, in order:</p>
+<ol>
+{% for track in audio_tracks %}<li>{{ track.language_name or track.language }}, {{ track.codec or track.format or "unknown codec" }}{% if track.channels %}, {{ track.channels }} channels{% endif %}{% if track.default %}, default flag{% endif %}</li>
+{% endfor %}</ol>
+<p>Go <a href="{{ url_for('main.file', file_id=file.id, _external=True) }}">here</a> to make the Atmos track the default track if necessary. Fitzflix then moves it to the first position:</p>
+<p/>
+<p>{{ url_for('main.file', file_id=file.id, _external=True) }}</p>
+<p/>
+<p>- Fitzflix</p>
