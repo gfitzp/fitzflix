@@ -5,8 +5,8 @@ The file '{{ file.basename }}' was added. It has a Dolby Digital Plus with Dolby
 These are the audio tracks of the file, in order:
 
 {% for track in audio_tracks %}{{ loop.index }}. {{ track.language_name or track.language }}, {{ track.codec or track.format or "unknown codec" }}{% if track.channels %}, {{ track.channels }} channels{% endif %}{% if track.default %}, default flag{% endif %}
-
-{% endfor %}Go here to make the Atmos track the default track if necessary. Fitzflix then moves it to the first position:
+{% endfor %}
+Go here to make the Atmos track the default track if necessary. Fitzflix then moves it to the first position:
 
 {{ url_for('main.file', file_id=file.id, _external=True) }}
 

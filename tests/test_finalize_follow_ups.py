@@ -394,7 +394,11 @@ def test_an_atmos_track_behind_the_lead_sends_its_email(
         assert (
             body.index(FLAC) < body.index(TRUEHD_ATMOS) < body.index(DDP_ATMOS + ", ")
         )
-    assert "3. English, Dolby Digital Plus with Dolby Atmos, 5.1 channels" in text
+    assert (
+        "\n1. English, FLAC, 5.1 channels"
+        "\n2. English, Dolby TrueHD with Dolby Atmos, 5.1 channels"
+        "\n3. English, Dolby Digital Plus with Dolby Atmos, 5.1 channels\n\nGo here"
+    ) in text
     assert "<li>English, FLAC, 5.1 channels</li>" in html
     os.remove(output)
 
