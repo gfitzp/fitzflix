@@ -448,7 +448,9 @@ def test_the_sync_form_takes_a_passkey_in_place_of_the_password(app, monkeypatch
     assert register_passkey(client, authenticator).status_code == 200
 
     page = client.get("/maintenance").get_data(as_text=True)
-    assert "Confirm with passkey" in page
+    assert 'name="passkey_assertion"' in page
+    assert 'data-options-url="/auth/passkey/confirm/options"' in page
+    assert "Confirm with passkey" not in page
     token = csrf_token_from(page)
     options = client.post(
         "/auth/passkey/confirm/options", headers={"X-CSRFToken": token}
@@ -467,6 +469,64 @@ def test_the_sync_form_takes_a_passkey_in_place_of_the_password(app, monkeypatch
     )
     assert "Incorrect password" not in response.get_data(as_text=True)
     assert calls == ["app.videos.sync_aws_s3_storage_task"]
+
+
+def test_each_archived_restore_form_takes_a_passkey(app, monkeypatch):
+    """The Held imports page has 1 restore form for each archived original."""
+
+    from app import db
+    from app.main import admin
+    from app.models import ArchivedOriginal
+
+    calls = []
+    monkeypatch.setattr(admin, "request_restore", lambda key, **k: calls.append(key))
+    client = _signed_in_client(app, ADMIN_EMAIL)
+    authenticator = SoftAuthenticator(b"admin-held-credential")
+    assert register_passkey(client, authenticator).status_code == 200
+    with app.app_context():
+        rows = [
+            ArchivedOriginal(
+                media_library="Movies",
+                quality_title="Bluray-2160p",
+                untouched_basename=f"Passkey Test {number} (1984) - [Bluray-2160p].mkv",
+                aws_key=f"untouched/Passkey Test {number} (1984) - [Bluray-2160p].mkv",
+                reason="archive only",
+            )
+            for number in (1, 2)
+        ]
+        db.session.add_all(rows)
+        db.session.commit()
+        ids = [row.id for row in rows]
+    try:
+        page = client.get("/maintenance/held-imports").get_data(as_text=True)
+        forms = page.count('name="restore_submit"')
+        assert forms >= 2
+        assert page.count('name="passkey_assertion"') == forms
+        assert page.count('name="password"') == forms
+        assert 'id="password"' not in page
+        assert "required" not in page.split('name="password"')[1].split(">")[0]
+        token = csrf_token_from(page)
+        options = client.post(
+            "/auth/passkey/confirm/options", headers={"X-CSRFToken": token}
+        ).get_json()
+        response = client.post(
+            "/maintenance/held-imports",
+            data={
+                "csrf_token": token,
+                "archived_id": str(ids[0]),
+                "passkey_assertion": json.dumps(authenticator.sign(options)),
+                "restore_submit": "Restore",
+            },
+            follow_redirects=True,
+        )
+        assert "Requesting a restore" in response.get_data(as_text=True)
+        assert calls == ["untouched/Passkey Test 1 (1984) - [Bluray-2160p].mkv"]
+    finally:
+        with app.app_context():
+            ArchivedOriginal.query.filter(ArchivedOriginal.id.in_(ids)).delete(
+                synchronize_session=False
+            )
+            db.session.commit()
 
 
 def test_a_confirmation_with_the_passkey_of_another_user_fails(app, monkeypatch):

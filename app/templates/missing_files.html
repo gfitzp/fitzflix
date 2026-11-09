@@ -14,7 +14,7 @@
 <p class="lead">The first scan has not run yet.</p>
 <p class="text-muted">The scan runs nightly at 01:15. It stats every best-quality file on the library disk. Scan now runs it at once on the maintenance queue. Load this page again when the scan is complete.</p>
 {% elif report.rows %}
-<p class="text-muted">There {{ "is" if report.rows|length == 1 else "are" }} {{ report.rows|length }} best-quality file{{ "s" if report.rows|length != 1 }} with no local copy, of {{ report.ranked }} titles scanned {{ moment(report.checked).fromNow() }}. A title with no fallback is not playable until a restore is complete. Select the files to restore, enter your password, and request the restore. A restore costs real money. The estimate for the whole list is &asymp; ${{ "%.2f"|format(restore_estimate.cost) }} (~{{ "%.1f"|format(restore_estimate.gigabytes) }} GB).</p>
+<p class="text-muted">There {{ "is" if report.rows|length == 1 else "are" }} {{ report.rows|length }} best-quality file{{ "s" if report.rows|length != 1 }} with no local copy, of {{ report.ranked }} titles scanned {{ moment(report.checked).fromNow() }}. A title with no fallback is not playable until a restore is complete. Select the files to restore and request the restore. The request needs your password or a passkey. A restore costs real money. The estimate for the whole list is &asymp; ${{ "%.2f"|format(restore_estimate.cost) }} (~{{ "%.1f"|format(restore_estimate.gigabytes) }} GB).</p>
 <form action="" method="post" id="missing-restore-form">
 	{{ restore_form.hidden_tag() }}
 	<div class="table-responsive">

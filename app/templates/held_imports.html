@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% from "_page_header.html" import page_header, breadcrumb %}
+{% from "_identity.html" import identity_fields with context %}
 
 {% block app_content %}
 {{ breadcrumb([("Library Maintenance", url_for('main.maintenance')), (title, none)]) }}
@@ -68,7 +69,7 @@
 		<form action="" method="post" class="d-flex flex-wrap gap-2 align-items-center">
 			{{ restore_form.csrf_token() }}
 			<input type="hidden" name="archived_id" value="{{ item.id }}">
-			<input type="password" class="form-control form-control-sm w-auto" name="password" placeholder="Password" aria-label="Password" autocomplete="current-password" required>
+			{{ identity_fields(restore_form, class_="form-control form-control-sm w-auto", unique_id=false, has_passkey=has_passkey) }}
 			<button class="btn btn-sm btn-outline-primary" name="restore_submit" value="Restore" type="submit">Restore</button>
 		</form>
 	</div>

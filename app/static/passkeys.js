@@ -99,12 +99,20 @@
 		return scope.querySelector("[data-passkey-status]");
 	}
 
-	function run(button, steps) {
+	function say(status, text) {
+		if (!status) return;
+		status.textContent = text;
+		status.hidden = !text;
+	}
+
+	// failed is optional. It gets the error and returns the text to show.
+
+	function run(button, steps, failed) {
 		var status = statusOf(button);
-		if (status) status.textContent = "";
+		say(status, "");
 		button.disabled = true;
 		steps().catch(function(error) {
-			if (status) status.textContent = message(error);
+			say(status, failed ? failed(error) : message(error));
 			button.disabled = false;
 		});
 	}
@@ -147,40 +155,80 @@
 		});
 	}
 
-	// Confirm a form that costs money with a passkey of the signed-in
-	// account. The assertion goes into the hidden field of the form,
-	// and the form submits with its own submit button.
+	// A form that costs money has a hidden passkey_assertion field
+	// when the account has a passkey. The submit button of the form
+	// asks for the passkey. The assertion goes into the hidden field,
+	// and the form submits again with the same button. The password
+	// field of the form stays hidden until a passkey request fails.
+	// A password in a visible field submits with no passkey request.
 
-	function confirm(button) {
-		var form = button.form || button.closest("form");
+	var sentButtons = [];
+
+	function showPassword(form, visible) {
+		var password = form.querySelector("input[name=password]");
+		if (!password) return false;
+		password.hidden = !visible;
+		var label = password.id ? form.querySelector("label[for='" + password.id + "']") : null;
+		if (label) label.hidden = !visible;
+		return true;
+	}
+
+	function confirmOnSubmit(event) {
+		var form = event.target;
 		var field = form.querySelector("input[name=passkey_assertion]");
-		var submit = form.querySelector("input[type=submit], button[type=submit]");
-		run(button, function() {
-			return post(button.getAttribute("data-options-url")).then(function(options) {
+		if (!field || field.value) return;
+		var password = form.querySelector("input[name=password]");
+		if (password && !password.hidden && password.value) return;
+		event.preventDefault();
+		var submit = event.submitter || form.querySelector("input[type=submit], button[type=submit]");
+		run(submit, function() {
+			return post(field.getAttribute("data-options-url")).then(function(options) {
 				return navigator.credentials.get({publicKey: requestOptions(options)});
 			}).then(function(credential) {
 				field.value = JSON.stringify(credentialJSON(credential));
+				// A disabled button is not in the form data. Thus, the
+				// button is on for the submit and off again after it.
+				submit.disabled = false;
 				if (form.requestSubmit) form.requestSubmit(submit);
 				else submit.click();
+				sentButtons.push(submit);
+				window.setTimeout(function() { submit.disabled = true; }, 0);
 			});
+		}, function(error) {
+			var text = message(error);
+			if (showPassword(form, true)) text += " Try again, or type your password.";
+			return text;
 		});
 	}
 
+	// An assertion is good for 1 post. A page that comes back from
+	// the history starts with empty fields and live buttons.
+
+	window.addEventListener("pageshow", function() {
+		document.querySelectorAll("input[name=passkey_assertion]").forEach(function(field) {
+			field.value = "";
+		});
+		sentButtons.splice(0).forEach(function(button) { button.disabled = false; });
+	});
+
 	document.addEventListener("DOMContentLoaded", function() {
 		if (!supported()) return;
-		document.querySelectorAll("[data-passkey-add], [data-passkey-login], [data-passkey-confirm]").forEach(function(element) {
+		document.querySelectorAll("[data-passkey-add], [data-passkey-login]").forEach(function(element) {
 			element.hidden = false;
 		});
 		document.querySelectorAll("[data-passkey-unsupported]").forEach(function(element) {
 			element.hidden = true;
 		});
+		document.querySelectorAll("input[name=passkey_assertion]").forEach(function(field) {
+			if (field.form) showPassword(field.form, false);
+		});
+		document.addEventListener("submit", confirmOnSubmit);
 		document.addEventListener("click", function(event) {
-			var button = event.target.closest("[data-passkey-register], [data-passkey-signin], [data-passkey-confirm]");
+			var button = event.target.closest("[data-passkey-register], [data-passkey-signin]");
 			if (!button) return;
 			event.preventDefault();
 			if (button.hasAttribute("data-passkey-register")) register(button);
-			else if (button.hasAttribute("data-passkey-signin")) signIn(button);
-			else confirm(button);
+			else signIn(button);
 		});
 	});
 })();

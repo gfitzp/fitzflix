@@ -1194,6 +1194,7 @@ def held_imports():
     return render_template(
         "held_imports.html",
         title="Held imports",
+        has_passkey=current_user.passkeys.count() > 0,
         held=HeldImport.query.order_by(HeldImport.date_held.asc()).all(),
         archived=ArchivedOriginal.query.order_by(
             ArchivedOriginal.date_added.desc()

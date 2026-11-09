@@ -1,17 +1,21 @@
 {# The proof of identity on a form that costs money (#669). The form
-   shows the password field when the account has a password, and a
-   passkey button when the account has a passkey. The button puts the
-   assertion in the hidden field and submits the form. The button
-   stays hidden until passkeys.js finds support in the browser. #}
-{% macro identity_fields(form, class_="form-control form-control-sm mb-1", placeholder="Password", style=None) %}
+   shows the password field when the account has a password. When the
+   account has a passkey, the form also has a hidden field for the
+   assertion. Then the submit button of the form asks for the passkey.
+   passkeys.js hides the password field and starts the request on the
+   submit. The password field shows again if the passkey request
+   fails. A browser with no passkey support keeps the password field.
+   A page with many forms gives unique_id=false and has_passkey. Thus,
+   the page has no repeated id and counts the passkeys 1 time. #}
+{% macro identity_fields(form, class_="form-control form-control-sm mb-1", placeholder="Password", style=None, unique_id=true, has_passkey=None) %}
 {% if current_user.has_password %}
-{% set attrs = {"class_": class_, "placeholder": placeholder} %}
+{% set attrs = {"class_": class_, "placeholder": placeholder, "aria_label": placeholder, "autocomplete": "current-password"} %}
 {% if style %}{% set attrs = dict(attrs, style=style) %}{% endif %}
+{% if not unique_id %}{% set attrs = dict(attrs, id=false) %}{% endif %}
 {{ form.password(**attrs) }}
 {% endif %}
-{% if current_user.passkeys.count() %}
-<input type="hidden" name="passkey_assertion" value="">
-<button type="button" class="btn btn-sm btn-outline-secondary mb-1" data-passkey-confirm data-options-url="{{ url_for('auth.passkey_confirm_options') }}" hidden>Confirm with passkey</button>
-<span class="small text-danger" data-passkey-status></span>
+{% if (current_user.passkeys.count() if has_passkey is none else has_passkey) %}
+<input type="hidden" name="passkey_assertion" value="" data-options-url="{{ url_for('auth.passkey_confirm_options') }}">
+<div class="small text-danger mb-1" data-passkey-status hidden></div>
 {% endif %}
 {% endmacro %}
