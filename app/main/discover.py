@@ -734,52 +734,17 @@ def file_activity():
 
     # The import activity comes from the live state: the deferred retries
     # and the contents of the rejects folder. The running and queued
-    # imports show on the Queue page.
+    # imports show on the Queue page. The entry is the first card of the
+    # polled list. Thus, only page 1 shows it.
 
-    import_activity = None
-    if page == 1:
-        # Read the ids and their times in 1 call (#511)
-
-        from app.queue_page import scheduled_entries
-
-        deferred = []
-        registry = ScheduledJobRegistry(queue=current_app.import_queue)
-        for job_id, next_run in scheduled_entries(registry):
-            job = current_app.import_queue.fetch_job(job_id)
-            if job is not None and job.func_name == "app.videos.localization_task":
-                deferred.append(
-                    {"description": job.description or job.id, "next_run": next_run}
-                )
-        deferred.sort(key=lambda entry: entry["next_run"])
-
-        # A file can collect several scheduled retries. Show each file one
-        # time, with its soonest retry time.
-
-        unique_deferred = []
-        seen_descriptions = set()
-        for entry in deferred:
-            if entry["description"] not in seen_descriptions:
-                seen_descriptions.add(entry["description"])
-                unique_deferred.append(entry)
-        deferred = unique_deferred
-
-        rejects = rejected_files()
-        reject_count = len(rejects)
-        rejects = rejects[:10]
-
-        if deferred or rejects:
-            import_activity = {
-                "deferred": deferred,
-                "rejects": rejects,
-                "reject_count": reject_count,
-            }
+    import_activity = _import_activity() if page == 1 else None
 
     # Only page 1 is live. A deeper page gets no chips and no card
     # versions, the same as before.
 
     if page == 1:
         trail_for = _trail_lookup()
-        card_version, _ = _card_versions(trail_for)
+        card_version, _ = _card_versions(trail_for, import_activity)
     else:
         trail_for = _trail_lookup(trails=[])
         card_version = {}
@@ -790,6 +755,7 @@ def file_activity():
         recently_added=recently_added.items,
         native_language=_native_language_keys(),
         import_activity=import_activity,
+        import_activity_version=_import_activity_version(import_activity),
         next_url=next_url,
         prev_url=prev_url,
         pages=recently_added,
@@ -880,16 +846,70 @@ def _recent_file_cards():
     )
 
 
-def _card_versions(trail_for):
+def _import_activity():
+    """Return the deferred retries and the recent rejects, or None.
+
+    The deferred retries are the import jobs in the scheduled registry
+    of the import queue: a file that is still copying in, or a locked
+    title. The rejects come from the rejects folder. The result is None
+    when there is nothing to show."""
+
+    from app.queue_page import scheduled_entries
+
+    # Read the ids and their times in 1 call (#511)
+
+    deferred = []
+    registry = ScheduledJobRegistry(queue=current_app.import_queue)
+    for job_id, next_run in scheduled_entries(registry):
+        job = current_app.import_queue.fetch_job(job_id)
+        if job is not None and job.func_name == "app.videos.localization_task":
+            deferred.append(
+                {"description": job.description or job.id, "next_run": next_run}
+            )
+    deferred.sort(key=lambda entry: entry["next_run"])
+
+    # A file can collect several scheduled retries. Show each file one
+    # time, with its soonest retry time.
+
+    unique_deferred = []
+    seen_descriptions = set()
+    for entry in deferred:
+        if entry["description"] not in seen_descriptions:
+            seen_descriptions.add(entry["description"])
+            unique_deferred.append(entry)
+    deferred = unique_deferred
+
+    rejects = rejected_files()
+    reject_count = len(rejects)
+    rejects = rejects[:10]
+
+    if not deferred and not rejects:
+        return None
+    return {"deferred": deferred, "rejects": rejects, "reject_count": reject_count}
+
+
+def _import_activity_version(import_activity):
+    """Return the version of the import activity entry, a 12-digit hash.
+
+    A retry that books a new time, a retry that runs, and a file that
+    lands in the rejects folder each change it. The poll of the File
+    Activity page swaps the entry when the version changes."""
+
+    stamp = json.dumps(import_activity, default=str, sort_keys=True)
+    return hashlib.sha1(stamp.encode()).hexdigest()[:12]
+
+
+def _card_versions(trail_for, import_activity):
     """Return the version of each card on page 1, and the version of the list.
 
     The version of a card is a hash of the times of its file and of its
     trail entries. It changes when a stage writes the file or the trail.
     The version of the list is a hash of the card ids and versions in
-    their order. The cards route serves it as the ETag. This reads only
-    the ids, names, and times of the files. Thus, a poll that finds no
-    change does not render the cards (about 20 ms instead of 100 ms for
-    100 cards, measured 2026-10-14)."""
+    their order. The version of the import activity entry comes first.
+    The cards route serves it as the ETag. This reads only the ids,
+    names, and times of the files. Thus, a poll that finds no change
+    does not render the cards (about 20 ms instead of 100 ms for 100
+    cards, measured 2026-10-14)."""
 
     rows = (
         _recent_files(
@@ -912,7 +932,8 @@ def _card_versions(trail_for):
         )
         card_version[row.id] = hashlib.sha1(stamp.encode()).hexdigest()[:12]
     listing = "\n".join(
-        f"{file_id}:{version}" for file_id, version in card_version.items()
+        [f"import-activity:{_import_activity_version(import_activity)}"]
+        + [f"{file_id}:{version}" for file_id, version in card_version.items()]
     )
     return card_version, hashlib.sha1(listing.encode()).hexdigest()
 
@@ -949,10 +970,13 @@ def file_activity_cards():
     not change, and it puts in the new cards in the order of this list.
     Thus, the chips stay live, and the card of a new file appears in its
     place. A file whose row is not committed yet is not in the list. It
-    appears at a later poll."""
+    appears at a later poll. The import activity entry leads the list.
+    Thus, a retry that books a new time shows the new time at the next
+    poll. The page does not need a reload for it."""
 
     trail_for = _trail_lookup()
-    card_version, etag = _card_versions(trail_for)
+    import_activity = _import_activity()
+    card_version, etag = _card_versions(trail_for, import_activity)
     if request.if_none_match.contains_weak(etag):
         response = current_app.response_class(status=304)
         response.set_etag(etag)
@@ -967,6 +991,8 @@ def file_activity_cards():
             card_upgradable=_card_upgradable(files),
             trail_for=trail_for,
             card_version=card_version,
+            import_activity=import_activity,
+            import_activity_version=_import_activity_version(import_activity),
         )
     )
     response.set_etag(etag)

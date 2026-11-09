@@ -1,6 +1,10 @@
 {# The cards of the File Activity dashboard, in the order of the query.
    The page renders this list in its holder. /file-activity/cards serves
-   it alone for the queue poll. #}
+   it alone for the queue poll. The import activity entry (the deferred
+   retries and the recent rejects) leads the list on page 1. #}
+{% if import_activity %}
+{% include "_import_activity_card.html" %}
+{% endif %}
 {% for file in recently_added %}
 {% include "_file_activity_card.html" %}
 {% endfor %}

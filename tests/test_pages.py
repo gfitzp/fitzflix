@@ -1120,3 +1120,64 @@ def test_a_file_with_no_episode_number_prints_no_none(app, admin_client):
     season = admin_client.get(f"/tv/{series_id}/1").get_data(as_text=True)
     cells = re.findall(r'<td class="align-middle">([^<]*)</td>', season)
     assert "None" not in cells
+
+
+def test_file_activity_cards_carry_the_retry_list_and_its_new_times(app, admin_client):
+    """The import activity entry is in the polled list and tracks a re-booked retry.
+
+    Before, the Waiting to retry list rendered once with the page. A
+    retry that booked a new time every minute kept the stamp of the
+    page load. Its relative time drifted to "11 minutes ago" until a
+    reload (Glenn, 2026-11-09). Now the entry leads the polled list.
+    Its version digests the retry times, and the list ETag changes with
+    it."""
+
+    from datetime import timedelta
+
+    description = "'Retry Twice (2001) - [DVD].mkv' waits"
+    app.import_queue.enqueue_in(
+        timedelta(minutes=10),
+        "app.videos.localization_task",
+        "/nowhere/Retry Twice (2001) - [DVD].mkv",
+        description=description,
+    )
+
+    page = admin_client.get("/file-activity").get_data(as_text=True)
+    holder = page.index('id="file-activity-cards"')
+    entry = page.index('data-card-key="import-activity"')
+    assert holder < entry
+    assert "Retry Twice (2001)" in page
+
+    response = admin_client.get("/file-activity/cards")
+    assert response.status_code == 200
+    body = response.get_data(as_text=True)
+    assert "Retry Twice (2001)" in body
+    version = re.search(
+        r'data-card-key="import-activity" data-card-version="(\w{12})"', body
+    ).group(1)
+    etag = response.headers["ETag"]
+    assert (
+        admin_client.get(
+            "/file-activity/cards", headers={"If-None-Match": etag}
+        ).status_code
+        == 304
+    )
+
+    # The retry books a sooner time, as a file that is still copying
+    # does every minute. The list answers 200 with a new entry version.
+
+    app.import_queue.enqueue_in(
+        timedelta(minutes=2),
+        "app.videos.localization_task",
+        "/nowhere/Retry Twice (2001) - [DVD].mkv",
+        description=description,
+    )
+    changed = admin_client.get("/file-activity/cards", headers={"If-None-Match": etag})
+    assert changed.status_code == 200
+    assert changed.headers["ETag"] != etag
+    new_version = re.search(
+        r'data-card-key="import-activity" data-card-version="(\w{12})"',
+        changed.get_data(as_text=True),
+    ).group(1)
+    assert new_version != version
+    assert changed.get_data(as_text=True).count("Retry Twice (2001)") == 1

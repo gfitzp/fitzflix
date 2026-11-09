@@ -11,33 +11,13 @@
    window.fitzflixQueueHooks. It fetches the cards of page 1 again
    (/file-activity/cards). Thus, the chips stay live, and the card of a
    new file appears in its place. window.fileActivityCardsUrl switches
-   the poll into that mode. Thus, it only exists on page 1. #}
+   the poll into that mode. Thus, it only exists on page 1. The import
+   activity entry (the deferred retries and the recent rejects) is the
+   first entry of that list. Thus, a retry that books a new time shows
+   the new time at the next poll. #}
 
 {% block app_content %}
 {{ page_header(title) }}
-{% if import_activity.deferred or import_activity.rejects %}
-<div class="card mb-3">
-	<div class="card-body py-2">
-		<h5 class="card-title mb-2">Import activity</h5>
-		{% if import_activity.deferred %}
-		<p class="mb-0"><b>Waiting to retry</b> <span class="small text-muted">(file still copying, or its title is locked)</span>:</p>
-		<ul class="mb-0 small">
-			{% for job in import_activity.deferred %}
-			<li>{{ job.description }} <span class="small text-muted">retries {{ moment(job.next_run).fromNow(refresh=True) }}</span></li>
-			{% endfor %}
-		</ul>
-		{% endif %}
-		{% if import_activity.rejects %}
-		<p class="mb-0"><b>Recently rejected</b> <span class="small text-muted">(in the rejects folder{% if import_activity.reject_count > import_activity.rejects|length %}, {{ import_activity.rejects|length }} of {{ import_activity.reject_count }} shown{% endif %})</span>:</p>
-		<ul class="mb-0 small">
-			{% for reject in import_activity.rejects %}
-			<li>{{ reject.basename }} &middot; <span class="badge text-bg-warning">{{ reject.reason }}</span> <span class="small text-muted">{{ moment(reject.rejected_at).fromNow(refresh=True) }}</span></li>
-			{% endfor %}
-		</ul>
-		{% endif %}
-	</div>
-</div>
-{% endif %}
 {% if not pages or pages.page == 1 %}
 <script>
 	window.fileActivityCardsUrl = "{{ url_for('main.file_activity_cards') }}";
@@ -52,6 +32,14 @@
 		// card that left the list goes.
 
 		var cardsEtag = null;
+
+		// The list changes only at a poll. Thus, a minute timer writes
+		// the relative times ("3 minutes ago") again from their stamps.
+
+		setInterval(function() {
+			if (document.hidden || typeof flask_moment_render === "undefined") return;
+			document.querySelectorAll("#file-activity-cards [data-timestamp]").forEach(flask_moment_render);
+		}, 60000);
 
 		function placeCards(holder, html) {
 			var wrapper = document.createElement("div");
