@@ -384,3 +384,201 @@ def test_the_move_of_a_rerip_is_queued_after_the_title_lock(
         ]
         assert job.args[0] == row_id
     assert seen == [(row_id, True)]
+
+
+# A restore of a renamed record (#678). The record keeps the key of its
+# old name. Its untouched name is the new name.
+
+LAG_BASENAME = "Lag Guard (2021) - [DVD].mkv"
+LAG_KEY = "untouched/Old Lag Guard (2021) - [DVD].mkv"
+LAG_NEW_KEY = f"untouched/{LAG_BASENAME}"
+
+
+def _lagging_row(app, monkeypatch, sample_mkv, etag=None, present=True):
+    """Make a record whose key lags its untouched name, and a fake S3 with its object.
+
+    By default the object holds the bytes of sample_mkv. etag gives other
+    bytes. present=False leaves the object out."""
+
+    import hashlib
+
+    from app import aws_storage, db
+    from tests.factories import make_movie, make_movie_file
+    from tests.fakes import ArchiveS3
+
+    with open(sample_mkv, "rb") as handle:
+        body = handle.read()
+    head = {
+        "ContentLength": len(body),
+        "ETag": etag or f'"{hashlib.md5(body).hexdigest()}"',
+        "StorageClass": "DEEP_ARCHIVE",
+        "VersionId": "v-lag",
+    }
+    fake = ArchiveS3({LAG_KEY: head} if present else {})
+    monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kwargs: fake)
+    monkeypatch.setitem(app.config, "AWS_BUCKET", "test-bucket")
+    monkeypatch.setitem(app.config, "ARCHIVE_ORIGINAL_MEDIA", True)
+    with app.app_context():
+        row = make_movie_file(
+            make_movie("Lag Guard", 2021),
+            "DVD",
+            aws_key=LAG_KEY,
+            aws_date_uploaded=datetime.now(timezone.utc) - timedelta(days=30),
+            aws_filesize_bytes=len(body),
+            untouched_basename=LAG_BASENAME,
+        )
+        db.session.commit()
+        return fake, row.id
+
+
+def _restored(sample_mkv, incoming_dir):
+    source = os.path.join(incoming_dir, LAG_BASENAME)
+    os.makedirs(incoming_dir, exist_ok=True)
+    with open(sample_mkv, "rb") as f_in, open(source, "wb") as f_out:
+        f_out.write(f_in.read())
+    return source
+
+
+def _deletes_queued(app, key):
+    return [
+        job
+        for job in app.handoff_queue.jobs
+        if job.func_name == "app.videos.aws_delete" and job.args == (key,)
+    ]
+
+
+def test_a_restore_of_a_lagging_key_keeps_that_key(
+    app, sample_mkv, incoming_dir, monkeypatch
+):
+    """The import of the restored rip uploads nothing and replaces nothing (#678)."""
+
+    from app import db
+    from app.models import File
+    from tests.localization_helpers import run_full_chain
+
+    fake, row_id = _lagging_row(app, monkeypatch, sample_mkv)
+    source = _restored(sample_mkv, incoming_dir)
+    with app.app_context():
+        run_full_chain(app, source)
+
+        db.session.expire_all()
+        row = db.session.get(File, row_id)
+        assert row.aws_key == LAG_KEY
+        assert row.aws_key_target is None
+        assert fake.uploads == []
+        assert fake.deletes == [] and fake.markers == {}
+        assert fake.objects[LAG_KEY]["VersionId"] == "v-lag"
+        assert _deletes_queued(app, LAG_KEY) == []
+
+
+def test_a_same_name_rip_with_other_bytes_uploads_as_before(
+    app, sample_mkv, incoming_dir, monkeypatch
+):
+    """Other bytes under the lagging key: the rip uploads to the key of its name."""
+
+    from app import db
+    from app.models import File
+    from tests.localization_helpers import run_full_chain
+
+    fake, row_id = _lagging_row(app, monkeypatch, sample_mkv, etag='"other-rip"')
+    source = _restored(sample_mkv, incoming_dir)
+    with app.app_context():
+        run_full_chain(app, source)
+
+        db.session.expire_all()
+        assert db.session.get(File, row_id).aws_key == LAG_NEW_KEY
+        assert fake.uploads == [LAG_NEW_KEY]
+        # The old object is untouched until the queued delete runs.
+        assert fake.objects[LAG_KEY]["ETag"] == '"other-rip"'
+        assert len(_deletes_queued(app, LAG_KEY)) == 1
+
+
+def test_a_missing_lagging_object_uploads_as_before(
+    app, sample_mkv, incoming_dir, monkeypatch
+):
+    """The lagging key has no object. The rip uploads to the key of its name."""
+
+    from app import db
+    from app.models import File
+    from tests.localization_helpers import run_full_chain
+
+    fake, row_id = _lagging_row(app, monkeypatch, sample_mkv, present=False)
+    source = _restored(sample_mkv, incoming_dir)
+    with app.app_context():
+        run_full_chain(app, source)
+
+        db.session.expire_all()
+        assert db.session.get(File, row_id).aws_key == LAG_NEW_KEY
+        assert fake.uploads == [LAG_NEW_KEY]
+
+
+def test_a_new_rip_with_no_record_uploads_as_before(app, monkeypatch, tmp_path):
+    """No record has the untouched name. The rip uploads to the key of its name."""
+
+    from app import aws_storage
+    from tests.fakes import ArchiveS3
+
+    fake = ArchiveS3()
+    monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kwargs: fake)
+    monkeypatch.setitem(app.config, "AWS_BUCKET", "test-bucket")
+    path = tmp_path / "Brand New (2022) - [DVD].mkv"
+    path.write_bytes(b"new rip")
+    with app.app_context():
+        key, _, size = aws_storage.upload_untouched(
+            str(path), lambda claimed: "unused/" + claimed
+        )
+    assert key == "untouched/Brand New (2022) - [DVD].mkv" and size == 7
+    assert fake.uploads == [key]
+
+
+def test_force_upload_never_takes_a_lagging_key(app, monkeypatch, sample_mkv, tmp_path):
+    """FORCE_UPLOAD skips each comparison of bytes. Thus, it takes no other key."""
+
+    from app import aws_storage
+
+    fake, _ = _lagging_row(app, monkeypatch, sample_mkv)
+    monkeypatch.setitem(app.config, "FORCE_UPLOAD", True)
+    path = tmp_path / LAG_BASENAME
+    with open(sample_mkv, "rb") as handle:
+        path.write_bytes(handle.read())
+    with app.app_context():
+        key, _, _ = aws_storage.upload_untouched(str(path), lambda claimed: claimed)
+    assert key == LAG_NEW_KEY
+    assert fake.uploads == [LAG_NEW_KEY]
+
+
+def test_a_restore_of_a_case_only_lag_keeps_its_key(
+    app, monkeypatch, sample_mkv, tmp_path
+):
+    """The key columns fold case on MariaDB, and S3 does not (#612, #678).
+
+    The record of the old spelling claims the key of the new spelling.
+    That key has no object. The import keeps the key of the record."""
+
+    from app import aws_storage, db
+    from app.models import File
+
+    fake, row_id = _lagging_row(app, monkeypatch, sample_mkv)
+    case_name = "Lag guard (2021) - [DVD].mkv"
+    old_key = "untouched/Lag Guard (2021) - [DVD].mkv"
+    with app.app_context():
+        row = db.session.get(File, row_id)
+        row.aws_key = old_key
+        row.untouched_basename = case_name
+        db.session.commit()
+    fake.objects[old_key] = fake.objects.pop(LAG_KEY)
+
+    # The claim check of MariaDB folds case.
+    monkeypatch.setattr(
+        aws_storage,
+        "untouched_key_still_claimed",
+        lambda key: key.casefold() == old_key.casefold(),
+    )
+    path = tmp_path / case_name
+    with open(sample_mkv, "rb") as handle:
+        path.write_bytes(handle.read())
+    with app.app_context():
+        key, _, size = aws_storage.upload_untouched(str(path), lambda claimed: claimed)
+    assert key == old_key
+    assert size == os.path.getsize(path)
+    assert fake.uploads == []

@@ -4289,24 +4289,32 @@ def upload_untouched(file_path, other_key):
     Then the upload goes to other_key, and the claimed object stays. A
     failed import cannot leave foreign bytes under the key of a good
     rip. other_key is a function of the normal key that returns the
-    other key."""
+    other key.
+
+    When no record claims the normal key, a renamed record can hold
+    these bytes under its older key. The function returns that key, and
+    it uploads nothing (#678)."""
 
     config = current_app.config
     prefix = config["AWS_UNTOUCHED_PREFIX"]
     key = os.path.join(prefix, sanitize_s3_key(os.path.basename(file_path)))
-    if config["IGNORE_ETAGS"] or not untouched_key_still_claimed(key):
+    if config["IGNORE_ETAGS"]:
         return aws_upload(file_path, prefix)
+    if not untouched_key_still_claimed(key):
+        return _lagging_archive_of(file_path, key) or aws_upload(file_path, prefix)
+
+    # The claim can be a key that differs only by letter case. The key
+    # columns fold case, and S3 does not (#612). Then the normal key has
+    # no object, and the record holds the bytes under its own spelling.
 
     head = _head_or_none(aws_s3_client(with_retries=True), key)
     if head is None:
-        return aws_upload(file_path, prefix)
-    if not config["FORCE_UPLOAD"]:
-        remote_etag = (head.get("ETag") or "").replace('"', "")
-        if calculate_etag(file_path) == remote_etag:
-            current_app.logger.info(
-                f"'{file_path}' is the same as '{key}', no need to re-upload"
-            )
-            return key, head.get("LastModified"), head.get("ContentLength")
+        return _lagging_archive_of(file_path, key) or aws_upload(file_path, prefix)
+    if not config["FORCE_UPLOAD"] and _holds_bytes_of(head, file_path, {}):
+        current_app.logger.info(
+            f"'{file_path}' is the same as '{key}', no need to re-upload"
+        )
+        return key, head.get("LastModified"), head.get("ContentLength")
 
     target = other_key(key)
     current_app.logger.warning(
@@ -4319,6 +4327,63 @@ def upload_untouched(file_path, other_key):
         key_name=os.path.basename(target),
         force_upload=True,
     )
+
+
+def _holds_bytes_of(head, file_path, etags):
+    """Return True if the object of a HEAD holds the bytes of a local file.
+
+    The sizes must agree, and then the ETags. etags is a dict that keeps
+    the ETag of the file. Thus, a second object costs no second read."""
+
+    if head is None or head.get("ContentLength") != os.path.getsize(file_path):
+        return False
+    if "etag" not in etags:
+        etags["etag"] = calculate_etag(file_path)
+    return etags["etag"] == (head.get("ETag") or "").replace('"', "")
+
+
+def _lagging_archive_of(file_path, key):
+    """Return the archive of these bytes under an older untouched/ key, or None (#678).
+
+    A key moves to the key of its name only in a converge run that a
+    person starts (#668). Thus, a renamed row keeps its old key. A
+    restore puts its rip in the import directory under the new name.
+    The import then takes the old key of that row. It uploads nothing,
+    and it replaces nothing.
+
+    Only an equal size and an equal ETag prove the bytes. A missing
+    object, other bytes, or a pending move gives None. The return value
+    is (key, date_uploaded, filesize_bytes)."""
+
+    if current_app.config["FORCE_UPLOAD"]:
+        return None
+    prefix = current_app.config["AWS_UNTOUCHED_PREFIX"]
+    # The key columns fold case. Thus, the exact compare with key is in
+    # Python. A key that differs only by case is an older key too (#612).
+
+    rows = File.query.filter(
+        File.untouched_basename == os.path.basename(file_path),
+        File.aws_date_deleted.is_(None),
+        File.aws_date_uploaded.isnot(None),
+        File.aws_key_target.is_(None),
+    ).all()
+    candidates = sorted(
+        {
+            row.aws_key
+            for row in rows
+            if row.aws_key != key and _in_prefix(row.aws_key, prefix)
+        }
+    )
+    etags = {}
+    for candidate in candidates:
+        head = _head_or_none(aws_s3_client(with_retries=True), candidate)
+        if _holds_bytes_of(head, file_path, etags):
+            current_app.logger.info(
+                f"'{file_path}' is the same as '{candidate}', the archive of a "
+                f"record with this untouched name. The import keeps that key"
+            )
+            return candidate, head.get("LastModified"), head.get("ContentLength")
+    return None
 
 
 def ensure_pending_upload(file, source_path):
