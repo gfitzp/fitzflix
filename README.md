@@ -489,7 +489,7 @@ Some settings can also change on the **Admin > Settings** page, without a restar
 
 The page does not turn on `ARCHIVE_ORIGINAL_MEDIA` until `AWS_BUCKET`, `AWS_ACCESS_KEY`, and `AWS_SECRET_KEY` are in `.env`. It does not turn on `AWS_DOWNLOAD_VIA_CDN` until the `CDN_*` settings are in `.env` and the private key can be read. The page has no HandBrake preset setting. The conversion uses `CONVERSION_PRESET` or `CONVERSION_PRESET_2160P` as it is, with no fallback. If the preset file does not contain one of these presets, the startup log shows a warning. Then correct the setting or the file.
 
-The page values are in the `app_setting` table of the database. Thus, they are in the nightly backup, and a Redis flush does not remove them. The secrets, the delete fences (`ARR_DOWNLOAD_FOLDERS`, `RADARR_ROOT_FOLDERS`, `SONARR_ROOT_FOLDERS`), `PROXY_HOPS`, the paths, the binaries, and the task timeouts stay in `.env` only. The database backups are not encrypted the way the `.env` backup is. Also, a stolen admin session must not make the delete fences wider.
+The page values are in the `app_setting` table of the database. Thus, they are in the nightly backup, and a Redis flush does not remove them. The secrets, the delete fences (`ARR_DOWNLOAD_FOLDERS`, `RADARR_ROOT_FOLDERS`, `SONARR_ROOT_FOLDERS`), `PROXY_HOPS`, `TRUSTED_PROXIES`, the paths, the binaries, and the task timeouts stay in `.env` only. The database backups are not encrypted the way the `.env` backup is. Also, a stolen admin session must not make the delete fences wider.
 
 ## Installation
 

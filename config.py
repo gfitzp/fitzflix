@@ -71,6 +71,12 @@ PAGE_TUNABLES = (
 HDR_IMPORT_MODES = ("sdr-1080p", "sdr-2160p", "keep")
 
 
+def _address_set(raw):
+    """Parse a comma-separated list of addresses into a frozenset."""
+
+    return frozenset(entry.strip() for entry in (raw or "").split(",") if entry.strip())
+
+
 def _hdr_import_mode():
     """Return the HDR_IMPORT_MODE of the environment, or the default.
 
@@ -353,11 +359,20 @@ class Config(object):
     # library (#281).
     PLEX_CRITERION_COLLECTION           = os.environ.get("PLEX_CRITERION_COLLECTION") or "Criterion Collection Films"
 
-    # The number of proxy hops in front of gunicorn. CloudFront uses 2:
-    # the edge server of the viewer, then a second CloudFront layer. Each
-    # adds 1 X-Forwarded-For entry (measured 2026-09-25, #263). ProxyFix
-    # and the sign-in throttle read the client address from this count.
+    # The proxies in front of gunicorn. CloudFront takes the request of
+    # the viewer and adds the address of the viewer to X-Forwarded-For.
+    # The reverse proxy of the home network takes the request of
+    # CloudFront and adds the address of that CloudFront server. Thus,
+    # the chain has 2 entries from proxies (measured 2026-09-25, #263).
+    # ProxyFix and the sign-in throttle read the client address from
+    # this count.
     PROXY_HOPS                          = int(os.environ.get("PROXY_HOPS") or 2)
+
+    # The addresses of the proxies that connect to gunicorn, separated
+    # by commas. Fitzflix reads X-Forwarded-For only from these peers.
+    # A different host of the network cannot name a false client
+    # address. An empty value trusts each peer.
+    TRUSTED_PROXIES                     = _address_set(os.environ.get("TRUSTED_PROXIES"))
     SUPERVISORCTL_BIN                   = os.environ.get("SUPERVISORCTL_BIN") or "/opt/homebrew/bin/supervisorctl"
 
     # Conversion configuration (#292)

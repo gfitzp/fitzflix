@@ -566,6 +566,43 @@ def check_config(app):
         )
 
 
+class TrustedProxyFix:
+    """Read X-Forwarded-For only from a request that a trusted proxy sent.
+
+    ProxyFix takes the client address from the forwarding chain of each
+    request. A host that connects to gunicorn directly writes that chain
+    itself. Thus, it can name a false client address, and the sign-in
+    lock per address never counts it. This wrapper applies ProxyFix only
+    when the peer of the connection is in TRUSTED_PROXIES. The request
+    of a different peer loses its chain, and its remote_addr is the
+    peer. An empty setting trusts each peer.
+
+    The setting is read at each request. A chain from a peer that is
+    not trusted gives 1 warning for each peer in each process. That
+    warning shows a reverse proxy that got a new address."""
+
+    def __init__(self, app, wsgi_app, hops):
+        self.app = app
+        self.direct = wsgi_app
+        self.forwarded = ProxyFix(wsgi_app, x_for=hops)
+        self.warned = set()
+
+    def __call__(self, environ, start_response):
+        trusted = self.app.config.get("TRUSTED_PROXIES")
+        peer = environ.get("REMOTE_ADDR")
+        if not trusted or peer in trusted:
+            return self.forwarded(environ, start_response)
+        if "HTTP_X_FORWARDED_FOR" in environ:
+            del environ["HTTP_X_FORWARDED_FOR"]
+            if peer not in self.warned:
+                self.warned.add(peer)
+                self.app.logger.warning(
+                    f"X-Forwarded-For from {peer}, which is not in "
+                    f"TRUSTED_PROXIES. Fitzflix does not read it"
+                )
+        return self.direct(environ, start_response)
+
+
 def create_app(config_class=Config, watch_import_dir=False):
     """Build and fully connect an app instance.
 
@@ -629,21 +666,20 @@ def create_app(config_class=Config, watch_import_dir=False):
     mail.init_app(app)
     moment.init_app(app)
 
-    # CloudFront is in front of gunicorn. It uses 2 hops, and each hop
-    # adds 1 X-Forwarded-For entry. The entry that the first hop added
-    # is the client. A value that the client sends comes before it.
-    # Thus, x_for=PROXY_HOPS gives remote_addr the real address, and
-    # the client cannot forge it through CloudFront. The sign-in
-    # throttle needs that address (#263). A request that goes around
-    # CloudFront can forge the header. The lock per account does not
-    # use the address, so it still holds for such a request. Before
-    # #263 this call did not wrap wsgi_app, so it had no effect. The
-    # proto, host, and prefix options stay off. Inside a request, an
-    # external URL takes the scheme of the request, not
+    # CloudFront and the reverse proxy of the home network are in front
+    # of gunicorn. Each adds 1 X-Forwarded-For entry. The entry that
+    # CloudFront added is the client. A value that the client sends
+    # comes before it. Thus, x_for=PROXY_HOPS gives remote_addr the
+    # real address, and the client cannot forge it through CloudFront.
+    # The sign-in throttle needs that address (#263). TrustedProxyFix
+    # reads the header only from a peer of TRUSTED_PROXIES. A different
+    # host of the network that connects to gunicorn cannot forge it.
+    # The proto, host, and prefix options stay off. Inside a request,
+    # an external URL takes the scheme of the request, not
     # PREFERRED_URL_SCHEME. FitzflixFlask.url_for sets the scheme of
     # each external URL (#454). Only the mails build external URLs.
 
-    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=app.config["PROXY_HOPS"])
+    app.wsgi_app = TrustedProxyFix(app, app.wsgi_app, app.config["PROXY_HOPS"])
 
     from app import models
 

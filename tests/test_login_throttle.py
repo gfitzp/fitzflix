@@ -357,3 +357,56 @@ def test_a_sign_in_upgrades_an_older_password_hash(app):
             member = User.query.filter_by(email=MEMBER_EMAIL).one()
             member.set_password(MEMBER_PASSWORD)
             db.session.commit()
+
+
+def _failed_sign_in(app, peer, chain=None):
+    """Post a wrong password from a peer address, with a forwarding chain."""
+
+    client = app.test_client()
+    token = page_csrf_token(client, "/auth/login")
+    return client.post(
+        "/auth/login",
+        data={"csrf_token": token, "email": "peer@example.test", "password": "wrong"},
+        headers={"X-Forwarded-For": chain} if chain else {},
+        environ_base={"REMOTE_ADDR": peer},
+    )
+
+
+def test_only_a_trusted_proxy_gives_the_client_address(app, monkeypatch):
+    """A direct peer cannot name a different client with a forwarding chain."""
+
+    from app.auth import throttle
+
+    monkeypatch.setitem(app.config, "TRUSTED_PROXIES", frozenset({"192.0.2.80"}))
+
+    # The reverse proxy sends the chain of CloudFront. The client entry counts.
+    _failed_sign_in(app, "192.0.2.80", f"203.0.113.50, {CLOUDFRONT_HOP}")
+    assert app.redis.get(f"{throttle.KEY_PREFIX}fail:address:203.0.113.50") == b"1"
+
+    # A host of the same network sends a forged chain. Its own address counts.
+    _failed_sign_in(app, "192.0.2.99", f"198.51.100.1, {CLOUDFRONT_HOP}")
+    assert app.redis.get(f"{throttle.KEY_PREFIX}fail:address:192.0.2.99") == b"1"
+    assert app.redis.get(f"{throttle.KEY_PREFIX}fail:address:198.51.100.1") is None
+
+    # A short chain from that host does not skip the lock per address.
+    _failed_sign_in(app, "192.0.2.99", CLOUDFRONT_HOP)
+    assert app.redis.get(f"{throttle.KEY_PREFIX}fail:address:192.0.2.99") == b"2"
+
+
+def test_with_no_trusted_proxy_setting_each_peer_is_trusted(app, monkeypatch):
+    """The setting is empty by default. Then the chain of each peer counts, as before."""
+
+    from app.auth import throttle
+
+    monkeypatch.setitem(app.config, "TRUSTED_PROXIES", frozenset())
+    _failed_sign_in(app, "192.0.2.99", f"203.0.113.60, {CLOUDFRONT_HOP}")
+    assert app.redis.get(f"{throttle.KEY_PREFIX}fail:address:203.0.113.60") == b"1"
+
+
+def test_the_trusted_proxy_setting_reads_a_list_of_addresses(monkeypatch):
+    import config
+
+    assert config._address_set(" 192.0.2.80 , 192.0.2.81,, ") == frozenset(
+        {"192.0.2.80", "192.0.2.81"}
+    )
+    assert config._address_set(None) == frozenset()
