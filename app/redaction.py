@@ -75,6 +75,23 @@ def secret_values(config):
     )
 
 
+# A line inside a message that starts like a log entry: a line break,
+# then a timestamp and a level. The log digest reads the log file by
+# lines, and it takes such a line for a new entry. A file name, a
+# passkey name or a title from outside can hold a line break.
+
+FORGED_ENTRY = re.compile(r"(?<=[\r\n])(?=\d{4}-\d\d-\d\d \d\d:\d\d:\d\d,\d+ [A-Z]+: )")
+
+
+def one_entry(text):
+    """Return the text with no inner line that reads as a new log entry.
+
+    Each such line gets 2 spaces at its start. Thus, 1 record is 1 entry
+    for the log digest, and the text of the line stays."""
+
+    return FORGED_ENTRY.sub("  ", text)
+
+
 class SecretRedactor(logging.Filter):
     """Remove credentials from each record that a logger logs."""
 
@@ -101,12 +118,12 @@ class SecretRedactor(logging.Filter):
             message = record.getMessage()
         except Exception:
             message = str(record.msg)
-        record.msg = self.redact(message)
+        record.msg = one_entry(self.redact(message))
         record.args = ()
 
         if record.exc_info and not record.exc_text:
-            record.exc_text = self.redact(
-                logging.Formatter().formatException(record.exc_info)
+            record.exc_text = one_entry(
+                self.redact(logging.Formatter().formatException(record.exc_info))
             )
         return True
 

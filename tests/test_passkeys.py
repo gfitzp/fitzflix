@@ -1264,3 +1264,50 @@ def test_the_profile_forms_of_an_account_with_a_passkey_ask_for_it(
     for form in forms:
         assert 'name="password"' not in form
         assert 'name="passkey_assertion"' in form
+
+
+def test_a_wrong_proof_password_counts_as_a_failed_sign_in(app):
+    """The proof check has the lock of the sign-in. Thus, it is no place to guess."""
+
+    from app.auth import throttle
+
+    client = _signed_in_client(app, MEMBER_EMAIL)
+    token = page_csrf_token(client, "/profile")
+    head = {"X-CSRFToken": token}
+    try:
+        for _ in range(throttle.ACCOUNT_FAILURE_LIMIT):
+            response = client.post(
+                "/auth/passkey/register/options",
+                json={"password": "a-guess"},
+                headers=head,
+            )
+            assert response.status_code == 400
+        locked = client.post(
+            "/auth/passkey/register/options",
+            json={"password": MEMBER_PASSWORD},
+            headers=head,
+        )
+        assert locked.status_code == 400
+        assert "challenge" not in locked.get_json()
+        assert "Too many" in locked.get_json()["error"]
+    finally:
+        for key in app.redis.scan_iter(throttle.KEY_PREFIX + "*"):
+            app.redis.delete(key)
+
+
+def test_a_passkey_name_keeps_no_line_break(app):
+    client = _signed_in_client(app, MEMBER_EMAIL)
+    authenticator = SoftAuthenticator()
+    forged = "phone\n2026-11-10 10:00:00,0 ERROR: forged"
+    register_passkey(client, authenticator, name=forged)
+    from app import db
+    from app.models import Passkey, User
+
+    with app.app_context():
+        member = User.query.filter_by(email=MEMBER_EMAIL).one()
+        try:
+            names = [p.name for p in member.passkeys]
+            assert names and all("\n" not in name for name in names)
+        finally:
+            Passkey.query.filter_by(user_id=member.id).delete()
+            db.session.commit()

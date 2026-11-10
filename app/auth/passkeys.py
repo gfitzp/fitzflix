@@ -46,6 +46,7 @@ from webauthn.helpers.structs import (
 
 from app import db, local_path
 from app.models import Passkey
+from app.auth.throttle import login_lock_seconds, record_login_failure
 from app.redis_guard import REDIS_DOWN_ERRORS, warn_redis_down
 
 RP_NAME = "Fitzflix"
@@ -66,6 +67,7 @@ class PasskeyError(Exception):
 EXPIRED = "The passkey request expired. Try again."
 REDIS_FAULT = "The passkey request failed. Try again."
 WRONG_PASSWORD = "Incorrect password provided!"
+TOO_MANY_ATTEMPTS = "Too many failed attempts. Try again later."
 
 
 def relying_party_host():
@@ -204,7 +206,7 @@ def finish_registration(user, credential, name=None):
         public_key=verified.credential_public_key,
         sign_count=verified.sign_count,
         transports=transports,
-        name=(name or "").strip()[:64] or None,
+        name=" ".join(str(name or "").split())[:64] or None,
     )
     db.session.add(passkey)
     db.session.commit()
@@ -282,7 +284,16 @@ def check_identity(password, assertion, path):
 
     if assertion:
         finish_authentication(assertion, kind="confirm", user=current_user, path=path)
-    elif not (isinstance(password, str) and current_user.check_password(password)):
+        return
+
+    # A password proof has the lock of the sign-in. Without it, a person
+    # with a session of the account could guess the password here with
+    # no limit.
+
+    if login_lock_seconds(current_user.email):
+        raise PasskeyError(TOO_MANY_ATTEMPTS)
+    if not (isinstance(password, str) and current_user.check_password(password)):
+        record_login_failure(current_user.email)
         raise PasskeyError(WRONG_PASSWORD)
 
 

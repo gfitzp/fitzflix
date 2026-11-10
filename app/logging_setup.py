@@ -54,6 +54,11 @@ class ErrorMailHandler(SMTPHandler):
             self.handleError(record)
 
 
+# The format of 1 entry of the log file. The log digest reads it back.
+
+LOG_FORMAT = "%(asctime)s %(levelname)s: %(message)s [in %(pathname)s:%(lineno)d]"
+
+
 def configure_logging(app):
     """Install the redaction filter and, outside debug mode, the mail and file handlers."""
 
@@ -107,11 +112,7 @@ def configure_logging(app):
             # the next write.
 
             file_handler = WatchedFileHandler(app.config["LOG_FILE"])
-            file_handler.setFormatter(
-                logging.Formatter(
-                    "%(asctime)s %(levelname)s: %(message)s [in %(pathname)s:%(lineno)d]"
-                )
-            )
+            file_handler.setFormatter(logging.Formatter(LOG_FORMAT))
             file_handler.setLevel(logging.INFO)
             app.logger.addHandler(file_handler)
 

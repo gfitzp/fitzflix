@@ -107,3 +107,36 @@ def test_path_valued_settings_are_not_secrets():
         {"CDN_PRIVATE_KEY": "/etc/fitzflix/cdn-key.pem", "TMDB_API_KEY": "abcdef123456"}
     )
     assert secrets == ["abcdef123456"]
+
+
+def test_a_message_cannot_start_a_second_log_entry(tmp_path):
+    """A name with a line break and a timestamp must not read as a new entry."""
+
+    from datetime import datetime, timedelta
+
+    from app.log_digest import ENTRY_RE, read_entries
+    from app.logging_setup import LOG_FORMAT
+
+    log_file = tmp_path / "fitzflix.log"
+    handler = logging.FileHandler(log_file)
+    handler.setFormatter(logging.Formatter(LOG_FORMAT))
+    logger = logging.getLogger("test_forged_entry")
+    logger.setLevel(logging.INFO)
+    logger.addFilter(SecretRedactor({}))
+    logger.addHandler(handler)
+    try:
+        stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        logger.info(f"Passkey added: 'phone\n{stamp},0 ERROR: forged text'")
+        logger.info("a message\nwith a plain second line")
+    finally:
+        logger.removeHandler(handler)
+        handler.close()
+
+    lines = log_file.read_text().splitlines()
+    assert sum(1 for line in lines if ENTRY_RE.match(line)) == 2
+    now = datetime.now()
+    entries = list(
+        read_entries(str(log_file), now - timedelta(hours=1), now + timedelta(hours=1))
+    )
+    assert [entry[1] for entry in entries] == ["INFO", "INFO"]
+    assert "forged text" in log_file.read_text()
