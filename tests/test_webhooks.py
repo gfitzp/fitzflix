@@ -220,6 +220,54 @@ def test_download_with_already_web_quality_skips_rename(app, client, tmp_path):
     assert app.import_queue.fetch_job(safe_job_id(original)) is not None
 
 
+@pytest.mark.parametrize("service", ["radarr", "sonarr"])
+def test_a_webhook_that_renames_nothing_sends_no_command(
+    app, client, tmp_path, monkeypatch, service
+):
+    """A webhook that renames nothing sends no command to the arr (#672).
+
+    A rescan then made Sonarr drop the records of the episodes that the
+    import had stored under the Fitzflix name. It also blocked the
+    request thread."""
+
+    sent = []
+    monkeypatch.setattr("app.api.arr.send_arr_command", lambda *args: sent.append(args))
+    for key in ("RADARR_URL", "SONARR_URL"):
+        monkeypatch.setitem(app.config, key, "http://arr.test")
+    for key in ("RADARR_API_KEY", "SONARR_API_KEY"):
+        monkeypatch.setitem(app.config, key, "key")
+    if service == "radarr":
+        folder = tmp_path / "Heat (1995)"
+        name = "Heat (1995) - [WEBDL-1080p].mkv"
+        owner = {"movie": {"id": 3, "folderPath": str(folder)}}
+        file_key = "movieFile"
+    else:
+        folder = tmp_path / "Show"
+        name = "Show - S01E01 - Pilot [WEBDL-1080p].mkv"
+        owner = {
+            "series": {"id": 4, "path": str(folder), "title": "Show"},
+            "episodes": [{"airDate": "2020-01-01"}],
+        }
+        file_key = "episodeFile"
+    folder.mkdir()
+    (folder / name).write_bytes(b"media")
+
+    response = client.post(
+        f"/api/{service}/add",
+        json={
+            "eventType": "Download",
+            **owner,
+            file_key: {"id": 9, "relativePath": name, "quality": "WEBDL-1080p"},
+            "customFormatInfo": {"customFormatScore": 2000},
+        },
+        headers=auth_header(),
+    )
+    assert response.status_code == 200
+    assert (folder / name).exists()
+    assert app.import_queue.fetch_job(safe_job_id(name)) is not None
+    assert sent == []
+
+
 def test_incomplete_download_is_refused_and_marked_failed(
     app, client, tmp_path, monkeypatch
 ):

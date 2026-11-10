@@ -198,13 +198,18 @@ def rename_download_locally(arr, downloaded_path, new_path, owner_id, title=None
     when arr cannot rename its own file. Then arr can lose the file. arr
     can send a webhook when Fitzflix has no address for it. The rename
     is done in that case too. Thus, the caller still gets to the
-    localization."""
+    localization.
+
+    A call that renames nothing sends no command to arr (#672). A rescan
+    then changed nothing on disk. It made Sonarr drop the records of the
+    episodes that the import had stored under the Fitzflix name."""
 
     from app.api.arr import send_arr_command
 
-    if downloaded_path != new_path:
-        shutil.move(downloaded_path, new_path)
-        current_app.logger.info(f"'{downloaded_path}' renamed as '{new_path}'")
+    if downloaded_path == new_path:
+        return
+    shutil.move(downloaded_path, new_path)
+    current_app.logger.info(f"'{downloaded_path}' renamed as '{new_path}'")
     if owner_id and configured(arr):
         current_app.logger.info(f"Rescanning {arr.noun} '{title or owner_id}'")
         send_arr_command(
