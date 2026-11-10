@@ -5,8 +5,14 @@ Fitzflix gives each download a web quality title, because it keeps the
 physical-media titles for its own disc rips. A rename in Fitzflix made
 Radarr lose its file and download the film again. Thus, Sonarr changes
 the quality of its own episode-file record and renames the file. Its
-naming formats hold the quality title. Thus, the Sonarr name is the name
-that Fitzflix wants, and Sonarr keeps its record.
+naming formats hold the quality title. Thus, the Sonarr name has the
+quality that Fitzflix wants.
+
+The import can still store the episode under a different name, for
+example without the year of the series. Then Sonarr drops its record at
+the next scan, and the new record has no release data. Thus, the import
+queues restore_download_record_task, which writes the scene name and
+the release group onto the new record (#671).
 """
 
 import time
@@ -17,6 +23,7 @@ from app.arr_client import (
     adopt_download,
     arr_request,
     configured,
+    restore_download_record,
 )
 from app.arr_client import rename_download_locally as _rename_locally
 
@@ -74,3 +81,36 @@ def adopt_episode_task(
             lambda: rename_download_locally(downloaded_path, new_path, series_id),
             at_front=at_front,
         )
+
+
+def restore_download_record_task(series_id, library_path, scene_name, release_group):
+    """Write the release data of a Sonarr download onto its new file record (#671).
+
+    This is a task. The import stored the episode under a different
+    name. Sonarr then drops its record at the next scan, and it
+    downloads the same release again. A failure is logged. It does not
+    raise. The file is already in place."""
+
+    import traceback
+
+    from flask import current_app
+
+    from app import get_app
+
+    with get_app().app_context():
+        try:
+            return restore_download_record(
+                SONARR,
+                _sonarr,
+                series_id,
+                library_path,
+                scene_name,
+                release_group,
+                SONARR_RENAME_WAIT,
+            )
+        except Exception:
+            current_app.logger.warning(
+                f"'{library_path}' The Sonarr record update failed: "
+                + traceback.format_exc()
+            )
+            return False

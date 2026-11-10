@@ -250,6 +250,8 @@ TASKS = {
     "app.radarr_push.follow_import_move_task": TaskSpec("request", 300),
     "app.radarr_push.follow_rename_task": TaskSpec("request", 300),
     "app.sonarr_push.adopt_episode_task": TaskSpec("request", 300),
+    "app.radarr_push.restore_download_record_task": TaskSpec("request", 300),
+    "app.sonarr_push.restore_download_record_task": TaskSpec("request", 300),
 }
 
 

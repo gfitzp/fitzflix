@@ -3294,6 +3294,7 @@ def _after_commit(
         step("source removal", _remove_source, file_path)
 
     step("radarr", _report_film_move, file, file_path, output_directory)
+    step("arr record", _restore_arr_record, file_path, output_file)
 
     step("tmdb refresh", _enqueue_tmdb_enrichment, file, file_details)
 
@@ -3441,6 +3442,32 @@ def _report_film_move(file, file_path, output_directory):
 
     if file.movie_id:
         _report_import_move_to_radarr(os.path.dirname(file_path), output_directory)
+
+
+def _restore_arr_record(file_path, output_file):
+    """Queue the arr record update of a download stored under a new name (#671).
+
+    The webhook kept the release data of an arr download for its path.
+    When the library file has a different path, arr drops its record at
+    the next scan, and it downloads the same release again. Thus, a task
+    writes the release data onto the new record. The kept data goes in
+    each case."""
+
+    from app.arr_client import ARRS, take_remembered_download
+
+    remembered = take_remembered_download(file_path)
+    if not remembered or os.path.realpath(file_path) == os.path.realpath(output_file):
+        return
+    arr = ARRS[remembered["service"]]
+    enqueue_task(
+        arr.restore_task,
+        remembered["owner_id"],
+        output_file,
+        remembered["scene_name"],
+        remembered["release_group"],
+        description=f"'{os.path.basename(output_file)}' Updating the {arr.name} record",
+        result_ttl=86400,
+    )
 
 
 def _transcoded_archive_due(file, atmos_queued):

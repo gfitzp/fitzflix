@@ -38,6 +38,7 @@ from app.arr_client import (
     arr_request,
     configured,
     fallback_rename,
+    restore_download_record,
 )
 from app.arr_client import rename_download_locally as _rename_locally
 from app.naming import plain_movie_folder
@@ -268,8 +269,8 @@ def follow_import_move_task(source_folder, new_folder):
             return False
 
 
-def _point_entry_at(entry, new_folder):
-    """Rewrite the path of one Radarr movie, then request a rescan.
+def _set_entry_folder(entry, new_folder):
+    """Rewrite the path of one Radarr movie. Radarr moves no file.
 
     Each path that Fitzflix writes to Radarr comes through here. Radarr
     must never own a file that Fitzflix keeps as an edition (#670).
@@ -283,6 +284,12 @@ def _point_entry_at(entry, new_folder):
         entry["path"] = new_path
         _radarr("PUT", f"/api/v3/movie/{entry['id']}?moveFiles=false", entry)
         current_app.logger.info(f"Radarr path {old_path!r} -> {new_path!r}")
+
+
+def _point_entry_at(entry, new_folder):
+    """Rewrite the path of one Radarr movie, then request a rescan."""
+
+    _set_entry_folder(entry, new_folder)
     _radarr(
         "POST", "/api/v3/command", {"name": "RefreshMovie", "movieIds": [entry["id"]]}
     )
@@ -398,10 +405,10 @@ def adopt_download_task(movie_id, movie_file_id, downloaded_path, new_path, qual
     """Give a Radarr download the quality of Fitzflix, then queue its import.
 
     This is a task (#288). Radarr changes the quality of its file record
-    and renames the file. Thus, Radarr keeps the file, and it does not
-    download the film again. If Radarr cannot do it, Fitzflix renames the
+    and renames the file. If Radarr cannot do it, Fitzflix renames the
     file as before. In both cases the import of the file goes on the
-    queue after the rename."""
+    queue after the rename. An import that stores the file under a
+    different name queues restore_download_record_task (#671)."""
 
     from app import get_app
 
@@ -417,3 +424,43 @@ def adopt_download_task(movie_id, movie_file_id, downloaded_path, new_path, qual
             RADARR_RENAME_WAIT,
             lambda: rename_download_locally(downloaded_path, new_path, movie_id),
         )
+
+
+def restore_download_record_task(movie_id, library_path, scene_name, release_group):
+    """Write the release data of a Radarr download onto its new file record (#671).
+
+    This is a task. The import stored the file under a different name.
+    Radarr then drops its record at the next scan, and it downloads the
+    same release again. The movie first points at the folder of the
+    library file. Then the rescan finds the file. A file in an edition
+    folder is not a Radarr file (#670), and it gets nothing. A failure
+    is logged. It does not raise. The file is already in place."""
+
+    import traceback
+
+    from app import get_app
+
+    with get_app().app_context():
+        folder = os.path.basename(os.path.dirname(library_path))
+        if plain_movie_folder(folder) != folder:
+            current_app.logger.info(
+                f"'{library_path}' is an edition. Radarr does not own it"
+            )
+            return False
+        try:
+            _set_entry_folder(_radarr("GET", f"/api/v3/movie/{int(movie_id)}"), folder)
+            return restore_download_record(
+                RADARR,
+                _radarr,
+                movie_id,
+                library_path,
+                scene_name,
+                release_group,
+                RADARR_RENAME_WAIT,
+            )
+        except Exception:
+            current_app.logger.warning(
+                f"'{library_path}' The Radarr record update failed: "
+                + traceback.format_exc()
+            )
+            return False

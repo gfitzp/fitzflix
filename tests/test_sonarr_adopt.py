@@ -177,3 +177,24 @@ def test_a_late_sonarr_rename_imports_the_sonarr_file(app, monkeypatch, tmp_path
 
     assert (season / RENAMED).exists()
     assert app.import_queue.fetch_job(safe_job_id(RENAMED)) is not None
+
+
+def test_the_adopt_task_carries_the_kept_release_data(app, monkeypatch, tmp_path):
+    """The import reads the renamed path. The webhook data moves there (#671)."""
+
+    import app.sonarr_push as sonarr_push
+    from app.arr_client import SONARR, remember_download, take_remembered_download
+
+    _, season = _download(tmp_path)
+    monkeypatch.setattr(sonarr_push, "_sonarr", FakeSonarr(season))
+    monkeypatch.setattr(sonarr_push.time, "sleep", lambda seconds: None)
+    with app.app_context():
+        remember_download(SONARR, str(season / ORIGINAL), 4, {"releaseGroup": "GRP"})
+    assert sonarr_push.adopt_episode_task(
+        4, 9, str(season / ORIGINAL), str(season / RENAMED), "WEBDL-1080p"
+    )
+    with app.app_context():
+        assert take_remembered_download(str(season / ORIGINAL)) is None
+        assert take_remembered_download(str(season / RENAMED))["release_group"] == (
+            "GRP"
+        )

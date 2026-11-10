@@ -393,7 +393,11 @@ def handle_import_event(arr, payload, priority=None):
     a recent episode."""
 
     from app.arr_client import configured, rescan_command
-    from app.arr_client import rename_download_locally
+    from app.arr_client import (
+        carry_remembered_download,
+        remember_download,
+        rename_download_locally,
+    )
     from app.importing import enqueue_localization
     from app.settings import get_setting
     from app.tasks import enqueue_task
@@ -460,6 +464,12 @@ def handle_import_event(arr, payload, priority=None):
     at_front = bool(priority and priority(new_name))
     file_id = media_file.get("id")
 
+    # The import can store the file under a different name than arr gave
+    # it. Then the import writes this release data back onto the new arr
+    # record (#671). An arr rename moves the data to the new path.
+
+    remember_download(arr, downloaded_file_path, owner_id, media_file)
+
     # A rename in Fitzflix made arr lose its file, and arr downloaded it
     # again (#288). Thus, arr changes the quality of its own record and
     # renames the file, in a task. The task then queues the import. This
@@ -495,6 +505,7 @@ def handle_import_event(arr, payload, priority=None):
         owner_id,
         title=owner.get("title") or os.path.dirname(downloaded_file_path),
     )
+    carry_remembered_download(downloaded_file_path, new_path)
     queued = (
         enqueue_localization(new_path, at_front=True)
         if at_front

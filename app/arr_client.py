@@ -23,6 +23,7 @@ command and history helpers of app.api.arr still use urllib3. They
 work, and a change gives nothing.
 """
 
+import json
 import os
 import shutil
 import time
@@ -30,9 +31,12 @@ import traceback
 
 from dataclasses import dataclass
 
+import redis
 import requests
 
 from flask import current_app
+
+from app.cache import cache_json
 
 # The connect and read timeouts of an arr call, in seconds. A host that
 # is down fails at the connect. Thus, it costs 5 seconds, not 30. The
@@ -73,6 +77,7 @@ class Arr:
     folder_field: str
     min_score_setting: str
     adopt_task: str
+    restore_task: str
     noun: str
 
 
@@ -90,6 +95,7 @@ RADARR = Arr(
     folder_field="folderPath",
     min_score_setting="RADARR_WEBDL_MIN_SCORE",
     adopt_task="app.radarr_push.adopt_download_task",
+    restore_task="app.radarr_push.restore_download_record_task",
     noun="movie",
 )
 
@@ -107,8 +113,11 @@ SONARR = Arr(
     folder_field="path",
     min_score_setting="SONARR_WEBDL_MIN_SCORE",
     adopt_task="app.sonarr_push.adopt_episode_task",
+    restore_task="app.sonarr_push.restore_download_record_task",
     noun="series",
 )
+
+ARRS = {arr.name: arr for arr in (RADARR, SONARR)}
 
 
 def configured(arr):
@@ -157,38 +166,141 @@ def quality_resource(arr, call, name):
     raise arr.error(f"{arr.name} has no quality named {name!r}")
 
 
+def run_command(arr, call, body, wait, what):
+    """Send a command to arr and wait until it ends. Raise if it fails.
+
+    wait is the longest wait, in seconds. what names the command in the
+    error, for example "rename"."""
+
+    command = call("POST", "/api/v3/command", body)
+    deadline = time.monotonic() + wait
+    while True:
+        status = call("GET", f"/api/v3/command/{command['id']}").get("status")
+        if status == "completed":
+            return
+        if status in ("failed", "aborted", "cancelled", "orphaned"):
+            raise arr.error(f"The {arr.name} {what} ended with the status {status!r}")
+        if time.monotonic() > deadline:
+            raise arr.error(f"The {arr.name} {what} did not end in time")
+        time.sleep(1)
+
+
 def rename_to_quality(arr, call, owner_id, file_id, quality_name, wait):
     """Give a file record of arr a new quality, and let arr rename the file.
 
     Return the new absolute path from the record. The naming format of
-    arr holds the quality title. Thus, arr keeps its record of the file.
-    It does not see a missing file (#288, #289). wait is the longest wait
-    for the RenameFiles command, in seconds."""
+    arr holds the quality title. Thus, the name of arr has the quality
+    of Fitzflix (#288, #289). The import can still store the file under
+    a different name. Then restore_download_record writes the release
+    data onto the new record of arr (#671). wait is the longest wait for
+    the RenameFiles command, in seconds."""
 
     record_path = f"/api/v3/{arr.record}/{int(file_id)}"
     record = call("GET", record_path)
     record["quality"] = quality_resource(arr, call, quality_name)
     call("PUT", record_path, record)
-    command = call(
-        "POST",
-        "/api/v3/command",
+    run_command(
+        arr,
+        call,
         {
             "name": "RenameFiles",
             arr.owner_id: int(owner_id),
             "files": [int(file_id)],
         },
+        wait,
+        "rename",
     )
-    deadline = time.monotonic() + wait
-    while True:
-        status = call("GET", f"/api/v3/command/{command['id']}").get("status")
-        if status == "completed":
-            break
-        if status in ("failed", "aborted", "cancelled", "orphaned"):
-            raise arr.error(f"The {arr.name} rename ended with the status {status!r}")
-        if time.monotonic() > deadline:
-            raise arr.error(f"The {arr.name} rename did not end in time")
-        time.sleep(1)
     return call("GET", record_path)["path"]
+
+
+# The release data of an arr download, for the import of its path (#671).
+# The import can store the file under a different name. Then arr drops
+# its record at the next disk scan, and the new record has no scene name
+# and no release group. arr then downloads the same release again. The
+# key expires by itself when no import reads it.
+
+DOWNLOAD_RECORD_KEY = "fitzflix:arr:download:{path}"
+DOWNLOAD_RECORD_TTL = 4 * 86400
+
+
+def remember_download(arr, path, owner_id, media_file):
+    """Keep the release data of a webhook download for the import of path.
+
+    media_file is the episodeFile or movieFile block of the payload. A
+    download with no scene name and no release group has nothing to
+    keep."""
+
+    scene_name = media_file.get("sceneName")
+    release_group = media_file.get("releaseGroup")
+    if not owner_id or not (scene_name or release_group) or not configured(arr):
+        return
+    cache_json(
+        DOWNLOAD_RECORD_KEY.format(path=path),
+        {
+            "service": arr.name,
+            "owner_id": int(owner_id),
+            "scene_name": scene_name,
+            "release_group": release_group,
+        },
+        DOWNLOAD_RECORD_TTL,
+    )
+
+
+def carry_remembered_download(old_path, new_path):
+    """Move the release data of a download to its new path after a rename."""
+
+    if old_path == new_path:
+        return
+    try:
+        current_app.redis.rename(
+            DOWNLOAD_RECORD_KEY.format(path=old_path),
+            DOWNLOAD_RECORD_KEY.format(path=new_path),
+        )
+    except redis.exceptions.ResponseError:
+        pass  # No release data was kept for the old path.
+
+
+def take_remembered_download(path):
+    """Return the release data kept for the import of path, and delete it.
+
+    Return None when nothing was kept."""
+
+    raw = current_app.redis.getdel(DOWNLOAD_RECORD_KEY.format(path=path))
+    return json.loads(raw) if raw else None
+
+
+def restore_download_record(
+    arr, call, owner_id, library_path, scene_name, release_group, wait
+):
+    """Write the release data of a download onto the arr record of its library file.
+
+    The import stored the file under a different name than arr gave it
+    (#671). arr rescans, and it then has a new record at library_path
+    with no scene name and no release group. This function finds that
+    record and PUTs it back whole with the 2 values. arr keeps a scene
+    name only when it is a scene title. It keeps a release group always.
+    Return True if a record was written."""
+
+    run_command(arr, call, rescan_command(arr, owner_id), wait, "rescan")
+    wanted = os.path.realpath(library_path)
+    for record in call("GET", f"/api/v3/{arr.record}?{arr.owner_id}={int(owner_id)}"):
+        path = record.get("path")
+        if path and os.path.realpath(path) == wanted:
+            if fenced_arr_path(arr.name, path) is None:
+                return False
+            record["sceneName"] = scene_name
+            record["releaseGroup"] = release_group
+            call("PUT", f"/api/v3/{arr.record}/{int(record['id'])}", record)
+            current_app.logger.info(
+                f"'{library_path}' {arr.name} file record {record['id']} has "
+                f"the release data of the download again"
+            )
+            return True
+    current_app.logger.warning(
+        f"'{library_path}' {arr.name} has no file record at this path after "
+        f"the rescan. Its release data is not written"
+    )
+    return False
 
 
 def rename_download_locally(arr, downloaded_path, new_path, owner_id, title=None):
@@ -298,9 +410,10 @@ def adopt_download(
     """Give a download the quality of Fitzflix through arr, then queue its import.
 
     arr changes the quality of its file record and renames the file.
-    Thus, arr keeps the file and does not download it again. If arr
-    cannot do it, Fitzflix renames the file as before (rename_locally).
-    In both cases the import goes on the queue after the rename."""
+    Thus, the name of arr has the quality of Fitzflix. If arr cannot do
+    it, Fitzflix renames the file as before (rename_locally). In both
+    cases the import goes on the queue after the rename. The release data
+    that the webhook kept moves to the new path (#671)."""
 
     from app.importing import enqueue_localization
 
@@ -325,6 +438,7 @@ def adopt_download(
             rename_locally,
             service=arr.name,
         )
+    carry_remembered_download(downloaded_path, path)
     queued = (
         enqueue_localization(path, at_front=True)
         if at_front
