@@ -1,7 +1,12 @@
 {% extends "base.html" %}
 {% from "_page_header.html" import page_header %}
+{% from "_identity.html" import identity_fields with context %}
 
 {% block app_content %}
+{# A change of the ways in to the account needs a proof of identity
+   (#675): the email, the passkeys, and the password. The page has
+   many such forms. Thus, it counts the passkeys 1 time. #}
+{% set has_passkey = current_user.passkeys.count() > 0 %}
 {{ page_header('Profile') }}
 {# g-3: the gutters keep a gap between the columns when a phone
    stacks them. Thus, a button never touches the next block. #}
@@ -18,6 +23,7 @@
 				{{ email_form.email2.label }}
 				{{ email_form.email2(size=32, class_="form-control form-control-sm") }}
 			</div>
+			{{ identity_fields(email_form, class_="form-control form-control-sm mb-2", unique_id=false, has_passkey=has_passkey) }}
 			{{ email_form.submit(class_="btn btn-sm btn-warning") }}
     	</form>
     </div>
@@ -116,9 +122,10 @@
 	{% for passkey in current_user.passkeys %}
 	<li class="list-group-item d-flex justify-content-between align-items-center gap-2">
 		<span>{{ passkey.display_name }} <span class="small text-muted">added {{ moment(passkey.date_created).format("LL") }}{% if passkey.date_last_used %}, last used {{ moment(passkey.date_last_used).fromNow() }}{% endif %}</span></span>
-		<form action="" method="post">
+		<form action="" method="post" class="d-flex flex-wrap justify-content-end align-items-center gap-2">
 			{{ passkey_delete_form.csrf_token }}
 			{{ passkey_delete_form.passkey_id(value=passkey.id) }}
+			{{ identity_fields(passkey_delete_form, class_="form-control form-control-sm w-auto", unique_id=false, has_passkey=has_passkey) }}
 			{{ passkey_delete_form.passkey_delete_submit(class_="btn btn-sm btn-outline-danger") }}
 		</form>
 	</li>
@@ -126,16 +133,18 @@
 	<li class="list-group-item text-muted">No passkeys yet.</li>
 	{% endfor %}
 </ul>
-<div class="d-flex flex-wrap align-items-center gap-2 mb-3" data-passkey-add hidden>
+<form action="" method="post" class="d-flex flex-wrap align-items-center gap-2 mb-3" data-passkey-add hidden>
 	<input type="text" class="form-control form-control-sm" style="width: 16rem; max-width: 100%;" maxlength="64" placeholder="Name, for example iPhone" data-passkey-name>
-	<button type="button" class="btn btn-sm btn-warning" data-passkey-register data-options-url="{{ url_for('auth.passkey_register_options') }}" data-register-url="{{ url_for('auth.passkey_register') }}">Add a passkey</button>
+	{{ identity_fields(passkey_add_form, class_="form-control form-control-sm w-auto", unique_id=false, has_passkey=has_passkey) }}
+	<button type="submit" class="btn btn-sm btn-warning" data-passkey-register data-options-url="{{ url_for('auth.passkey_register_options') }}" data-register-url="{{ url_for('auth.passkey_register') }}">Add a passkey</button>
 	<span class="small text-danger" data-passkey-status></span>
-</div>
+</form>
 <p class="small text-muted" data-passkey-unsupported>This browser does not support passkeys.</p>
 {% if current_user.has_password %}
 	{% if current_user.passkeys.count() %}
 	<form action="" method="post" class="mb-2">
 		{{ remove_password_form.hidden_tag() }}
+		{{ identity_fields(remove_password_form, class_="form-control form-control-sm mb-2", style="width: 16rem; max-width: 100%;", unique_id=false, has_passkey=has_passkey) }}
 		{{ remove_password_form.remove_password_submit(class_="btn btn-sm btn-outline-danger") }}
 	</form>
 	<p class="small text-muted">With no password, only a passkey signs you in. Your other sessions end. If you lose each device, the "Forget your password?" link of the Sign In page sets a new password.</p>

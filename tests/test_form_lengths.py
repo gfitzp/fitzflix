@@ -6,7 +6,7 @@ the length. Thus, these tests check the form validation and the message."""
 
 import re
 
-from tests.conftest import MEMBER_EMAIL, _signed_in_client
+from tests.conftest import ADMIN_PASSWORD, MEMBER_EMAIL, _signed_in_client
 
 
 def _token(page):
@@ -188,6 +188,7 @@ def test_a_concurrent_email_change_gets_the_message(app, admin_client, monkeypat
             "csrf_token": token,
             "email": taken,
             "email2": taken,
+            "password": ADMIN_PASSWORD,
             "submit": "Update",
         },
         follow_redirects=True,

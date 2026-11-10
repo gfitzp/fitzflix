@@ -42,7 +42,7 @@ class ResetFrameScoresForm(FlaskForm):
 
 
 class EditProfileForm(FlaskForm):
-    """Change the account email, on the Profile page."""
+    """Change the account email after a proof of identity (Profile page, #675)."""
 
     # The lengths match the VARCHAR columns of the user table (#329)
 
@@ -52,6 +52,7 @@ class EditProfileForm(FlaskForm):
     email2 = StringField(
         "Confirm Email Address", validators=[DataRequired(), Email(), EqualTo("email")]
     )
+    password = PasswordField("Password:", validators=[Optional()])
     submit = SubmitField("Update")
 
     def __init__(self, original_email, *args, **kwargs):
@@ -741,16 +742,27 @@ class MissingScanForm(FlaskForm):
     missing_scan_submit = SubmitField("Scan now")
 
 
+class PasskeyAddForm(FlaskForm):
+    """Hold the proof of identity for a new passkey (Profile page, #675).
+
+    passkeys.js posts the proof as JSON. The page renders only the
+    password field of this form."""
+
+    password = PasswordField("Password:", validators=[Optional()])
+
+
 class PasskeyDeleteForm(FlaskForm):
-    """Remove 1 passkey of the user (Profile page, #669)."""
+    """Remove 1 passkey of the user after a proof of identity (Profile page, #669)."""
 
     passkey_id = HiddenField(validators=[DataRequired()])
+    password = PasswordField("Password:", validators=[Optional()])
     passkey_delete_submit = SubmitField("Remove")
 
 
 class RemovePasswordForm(FlaskForm):
-    """Remove the password of an account that has a passkey (Profile page, #669)."""
+    """Remove the password after a proof of identity (Profile page, #669)."""
 
+    password = PasswordField("Password:", validators=[Optional()])
     remove_password_submit = SubmitField("Remove my password")
 
 

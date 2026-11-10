@@ -117,13 +117,25 @@
 		});
 	}
 
-	// Add a passkey to the signed-in account (Profile page).
+	// Add a passkey to the signed-in account (Profile page). The add
+	// form has the identity fields (#675). The server checks the proof
+	// before it gives the options. The proof is a passkey confirmation
+	// when the form has the hidden field and no typed password.
 
-	function register(button) {
-		var row = button.closest("[data-passkey-add]");
-		var nameInput = row ? row.querySelector("[data-passkey-name]") : null;
+	function register(form, button) {
+		var nameInput = form.querySelector("[data-passkey-name]");
+		var field = form.querySelector("input[name=passkey_assertion]");
+		var password = form.querySelector("input[name=password]");
 		run(button, function() {
-			return post(button.getAttribute("data-options-url")).then(function(options) {
+			var typed = password && !password.hidden ? password.value : "";
+			var proof = field && !typed ? askPasskey(form, field) : Promise.resolve();
+			return proof.then(function() {
+				return post(button.getAttribute("data-options-url"), {
+					password: typed,
+					passkey_assertion: field ? field.value : ""
+				});
+			}).then(function(options) {
+				if (field) field.value = "";
 				return navigator.credentials.create({publicKey: creationOptions(options)});
 			}).then(function(credential) {
 				return post(button.getAttribute("data-register-url"), {
@@ -133,6 +145,11 @@
 			}).then(function(data) {
 				window.location.assign(data.redirect);
 			});
+		}, function(error) {
+			if (field) field.value = "";
+			var text = message(error);
+			if (field && showPassword(form, true)) text += " Try again, or type your password.";
+			return text;
 		});
 	}
 
@@ -155,8 +172,8 @@
 		});
 	}
 
-	// A form that costs money has a hidden passkey_assertion field
-	// when the account has a passkey. The submit button of the form
+	// A form that costs money or changes a way in to the account has
+	// a hidden passkey_assertion field when the account has a passkey. The submit button of the form
 	// asks for the passkey. The assertion goes into the hidden field,
 	// and the form submits again with the same button. The password
 	// field of the form stays hidden until a passkey request fails.
@@ -180,19 +197,32 @@
 		return true;
 	}
 
+	// Ask the authenticator for a confirmation for the form, and put
+	// the answer in the hidden field.
+
+	function askPasskey(form, field) {
+		return post(field.getAttribute("data-options-url"), {path: formPath(form)}).then(function(options) {
+			return navigator.credentials.get({publicKey: requestOptions(options)});
+		}).then(function(credential) {
+			field.value = JSON.stringify(credentialJSON(credential));
+		});
+	}
+
 	function confirmOnSubmit(event) {
 		var form = event.target;
+		var submit = event.submitter || form.querySelector("input[type=submit], button[type=submit]");
+		if (form.hasAttribute("data-passkey-add")) {
+			event.preventDefault();
+			register(form, submit);
+			return;
+		}
 		var field = form.querySelector("input[name=passkey_assertion]");
 		if (!field || field.value) return;
 		var password = form.querySelector("input[name=password]");
 		if (password && !password.hidden && password.value) return;
 		event.preventDefault();
-		var submit = event.submitter || form.querySelector("input[type=submit], button[type=submit]");
 		run(submit, function() {
-			return post(field.getAttribute("data-options-url"), {path: formPath(form)}).then(function(options) {
-				return navigator.credentials.get({publicKey: requestOptions(options)});
-			}).then(function(credential) {
-				field.value = JSON.stringify(credentialJSON(credential));
+			return askPasskey(form, field).then(function() {
 				// A disabled button is not in the form data. Thus, the
 				// button is on for the submit and off again after it.
 				submit.disabled = false;
@@ -231,11 +261,10 @@
 		});
 		document.addEventListener("submit", confirmOnSubmit);
 		document.addEventListener("click", function(event) {
-			var button = event.target.closest("[data-passkey-register], [data-passkey-signin]");
+			var button = event.target.closest("[data-passkey-signin]");
 			if (!button) return;
 			event.preventDefault();
-			if (button.hasAttribute("data-passkey-register")) register(button);
-			else signIn(button);
+			signIn(button);
 		});
 	});
 })();

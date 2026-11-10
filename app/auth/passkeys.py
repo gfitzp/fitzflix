@@ -65,6 +65,7 @@ class PasskeyError(Exception):
 
 EXPIRED = "The passkey request expired. Try again."
 REDIS_FAULT = "The passkey request failed. Try again."
+WRONG_PASSWORD = "Incorrect password provided!"
 
 
 def relying_party_host():
@@ -271,25 +272,33 @@ def finish_authentication(credential, kind="login", user=None, path=None):
     return passkey
 
 
+def check_identity(password, assertion, path):
+    """Raise PasskeyError unless the proof is good for the signed-in user.
+
+    The proof is the password of the account, or a passkey assertion
+    that a confirmation on path asked for. The restore forms, the S3
+    sync form, the Profile forms and the passkey registration share
+    this check (#675)."""
+
+    if assertion:
+        finish_authentication(assertion, kind="confirm", user=current_user, path=path)
+    elif not (isinstance(password, str) and current_user.check_password(password)):
+        raise PasskeyError(WRONG_PASSWORD)
+
+
 def identity_confirmed(form):
     """Return True if the post proves the identity of the signed-in user.
 
-    The restore forms and the S3 sync form ask for proof. A restore
-    costs real money. The proof is the password of the form, or the
-    passkey assertion that the page put in the form. A failure flashes
-    its message here. Thus, the 6 forms share 1 check (#669)."""
+    A restore costs real money, and a change of the sign-in methods
+    can take the account. Thus, these forms ask for proof. The proof is
+    the password of the form, or the passkey assertion that the page
+    put in the form. A failure flashes its message here (#669)."""
 
-    assertion = request.form.get("passkey_assertion")
-    if assertion:
-        try:
-            finish_authentication(
-                assertion, kind="confirm", user=current_user, path=request.path
-            )
-            return True
-        except PasskeyError as error:
-            flash(str(error), "danger")
-            return False
-    if current_user.check_password(form.password.data):
-        return True
-    flash("Incorrect password provided!", "danger")
-    return False
+    try:
+        check_identity(
+            form.password.data, request.form.get("passkey_assertion"), request.path
+        )
+    except PasskeyError as error:
+        flash(str(error), "danger")
+        return False
+    return True

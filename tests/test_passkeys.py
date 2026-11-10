@@ -17,6 +17,7 @@ from webauthn.helpers import bytes_to_base64url
 
 from tests.conftest import (
     ADMIN_EMAIL,
+    ADMIN_PASSWORD,
     MEMBER_EMAIL,
     MEMBER_PASSWORD,
     _signed_in_client,
@@ -142,13 +143,35 @@ def member_password_restored(app):
         db.session.commit()
 
 
-def register_passkey(client, authenticator, name="Phone"):
+def proof(client, token, password=None, prover=None):
+    """Return the proof of identity for a Profile post (#675).
+
+    With prover, the proof is a passkey confirmation that the Profile
+    page asked for. Otherwise, it is the password."""
+
+    if prover is None:
+        return {"password": password or ""}
+    options = confirm_options(client, token, "/profile")
+    return {"passkey_assertion": json.dumps(prover.sign(options))}
+
+
+def register_options(client, token, password=MEMBER_PASSWORD, prover=None):
+    """Post the registration options request with a proof. Return the answer."""
+
+    return client.post(
+        "/auth/passkey/register/options",
+        json=proof(client, token, password, prover),
+        headers={"X-CSRFToken": token},
+    )
+
+
+def register_passkey(
+    client, authenticator, name="Phone", password=MEMBER_PASSWORD, prover=None
+):
     """Run the 2 registration posts for a signed-in client. Return the second answer."""
 
     token = page_csrf_token(client, "/profile")
-    options = client.post(
-        "/auth/passkey/register/options", headers={"X-CSRFToken": token}
-    ).get_json()
+    options = register_options(client, token, password, prover).get_json()
     return client.post(
         "/auth/passkey/register",
         json={"credential": authenticator.register(options), "name": name},
@@ -294,7 +317,11 @@ def test_a_password_remove_needs_a_passkey(app):
     token = page_csrf_token(client, "/profile")
     response = client.post(
         "/profile",
-        data={"csrf_token": token, "remove_password_submit": "Remove my password"},
+        data={
+            "csrf_token": token,
+            "password": MEMBER_PASSWORD,
+            "remove_password_submit": "Remove my password",
+        },
         follow_redirects=True,
     )
     assert "Add a passkey before you remove your password." in response.get_data(
@@ -313,7 +340,11 @@ def test_a_passkey_only_account(app, member_password_restored):
     token = page_csrf_token(client, "/profile")
     response = client.post(
         "/profile",
-        data={"csrf_token": token, "remove_password_submit": "Remove my password"},
+        data={
+            "csrf_token": token,
+            "password": MEMBER_PASSWORD,
+            "remove_password_submit": "Remove my password",
+        },
         follow_redirects=True,
     )
     page = response.get_data(as_text=True)
@@ -351,11 +382,15 @@ def test_the_last_passkey_of_a_passkey_only_account_stays(
 ):
     from app.models import Passkey
 
-    client, _ = member_with_passkey(app)
+    client, authenticator = member_with_passkey(app)
     token = page_csrf_token(client, "/profile")
     client.post(
         "/profile",
-        data={"csrf_token": token, "remove_password_submit": "Remove my password"},
+        data={
+            "csrf_token": token,
+            "password": MEMBER_PASSWORD,
+            "remove_password_submit": "Remove my password",
+        },
     )
     with app.app_context():
         passkey_id = Passkey.query.one().id
@@ -366,6 +401,7 @@ def test_the_last_passkey_of_a_passkey_only_account_stays(
             "csrf_token": token,
             "passkey_id": str(passkey_id),
             "passkey_delete_submit": "Remove",
+            **proof(client, token, prover=authenticator),
         },
         follow_redirects=True,
     )
@@ -386,6 +422,7 @@ def test_a_passkey_delete_with_a_password_works(app):
         data={
             "csrf_token": token,
             "passkey_id": str(passkey_id),
+            "password": MEMBER_PASSWORD,
             "passkey_delete_submit": "Remove",
         },
         follow_redirects=True,
@@ -408,6 +445,7 @@ def test_a_user_cannot_delete_the_passkey_of_another_user(app):
         data={
             "csrf_token": token,
             "passkey_id": str(passkey_id),
+            "password": ADMIN_PASSWORD,
             "passkey_delete_submit": "Remove",
         },
         follow_redirects=True,
@@ -426,7 +464,11 @@ def test_the_reset_link_sets_a_password_on_a_passkey_only_account(
     token = page_csrf_token(client, "/profile")
     client.post(
         "/profile",
-        data={"csrf_token": token, "remove_password_submit": "Remove my password"},
+        data={
+            "csrf_token": token,
+            "password": MEMBER_PASSWORD,
+            "remove_password_submit": "Remove my password",
+        },
     )
     with app.app_context():
         member = User.query.filter_by(email=MEMBER_EMAIL).one()
@@ -459,7 +501,10 @@ def test_the_sync_form_takes_a_passkey_in_place_of_the_password(app, monkeypatch
     monkeypatch.setattr(admin, "start_bulk_run", lambda *a, **k: True)
     client = _signed_in_client(app, ADMIN_EMAIL)
     authenticator = SoftAuthenticator(b"admin-credential")
-    assert register_passkey(client, authenticator).status_code == 200
+    assert (
+        register_passkey(client, authenticator, password=ADMIN_PASSWORD).status_code
+        == 200
+    )
 
     page = client.get("/maintenance").get_data(as_text=True)
     assert 'name="passkey_assertion"' in page
@@ -494,7 +539,10 @@ def test_each_archived_restore_form_takes_a_passkey(app, monkeypatch):
     monkeypatch.setattr(admin, "request_restore", lambda key, **k: calls.append(key))
     client = _signed_in_client(app, ADMIN_EMAIL)
     authenticator = SoftAuthenticator(b"admin-held-credential")
-    assert register_passkey(client, authenticator).status_code == 200
+    assert (
+        register_passkey(client, authenticator, password=ADMIN_PASSWORD).status_code
+        == 200
+    )
     with app.app_context():
         rows = [
             ArchivedOriginal(
@@ -601,7 +649,10 @@ def admin_passkey(app, monkeypatch):
     monkeypatch.setattr(admin, "start_bulk_run", lambda *a, **k: True)
     client = _signed_in_client(app, ADMIN_EMAIL)
     authenticator = SoftAuthenticator(b"admin-replay-credential", synced=True)
-    assert register_passkey(client, authenticator).status_code == 200
+    assert (
+        register_passkey(client, authenticator, password=ADMIN_PASSWORD).status_code
+        == 200
+    )
     return client, authenticator, calls
 
 
@@ -757,14 +808,21 @@ def test_a_redis_fault_refuses_the_passkey_request(app, monkeypatch):
 # A change of the sign-in methods ends each other session (#673).
 
 
-def _remove_password(client):
-    """Post the Remove my password form of the Profile page."""
+def _remove_password(client, password=MEMBER_PASSWORD):
+    """Post the Remove my password form of the Profile page. Check that it worked."""
 
     token = page_csrf_token(client, "/profile")
-    return client.post(
+    response = client.post(
         "/profile",
-        data={"csrf_token": token, "remove_password_submit": "Remove my password"},
+        data={
+            "csrf_token": token,
+            "password": password,
+            "remove_password_submit": "Remove my password",
+        },
+        follow_redirects=True,
     )
+    assert "You sign in with a passkey now." in response.get_data(as_text=True)
+    return response
 
 
 def _delete_passkey(client, passkey_id):
@@ -776,6 +834,7 @@ def _delete_passkey(client, passkey_id):
         data={
             "csrf_token": token,
             "passkey_id": str(passkey_id),
+            "password": MEMBER_PASSWORD,
             "passkey_delete_submit": "Remove",
         },
         follow_redirects=True,
@@ -840,7 +899,7 @@ def test_a_session_of_an_earlier_passkey_only_period_stays_ended(
     _reset_password(app, "a-new-password")
     assert old_session.get("/profile").status_code == 302
 
-    _remove_password(_signed_in_client(app, MEMBER_EMAIL))
+    _remove_password(_signed_in_client(app, MEMBER_EMAIL), "a-new-password")
     replay = app.test_client()
     replay.set_cookie("session", cookie, domain="localhost")
     assert replay.get("/profile").status_code == 302
@@ -953,3 +1012,224 @@ def test_the_migration_ends_each_older_session(app):
     assert all(after[i] != before[i] and len(after[i]) == 32 for i in before)
     assert len(set(after.values())) == len(after)
     assert member.get("/profile").status_code == 302
+
+
+# A change of the sign-in methods needs a fresh proof of identity (#675).
+
+NEW_EMAIL = "member-new@example.com"
+
+
+@pytest.fixture
+def member_email_restored(app):
+    """Put the email address of the member back after a test that changes it."""
+
+    yield
+    from app import db
+    from app.models import User
+
+    with app.app_context():
+        user = User.query.filter_by(email=NEW_EMAIL).first()
+        if user is not None:
+            user.email = MEMBER_EMAIL
+            db.session.commit()
+
+
+def _proof_for(kind, client, token, authenticator):
+    """Return the proof fields of 1 kind: none, wrong, password or passkey."""
+
+    if kind == "none":
+        return {}
+    if kind == "wrong":
+        return {"password": "not-the-password"}
+    if kind == "password":
+        return {"password": MEMBER_PASSWORD}
+    return proof(client, token, prover=authenticator)
+
+
+def _profile_action(app, action, client, token, fields):
+    """Post 1 Profile action with the proof fields. Return (done, page text)."""
+
+    from app.models import User
+
+    if action == "add_passkey":
+        response = client.post(
+            "/auth/passkey/register/options",
+            json=fields,
+            headers={"X-CSRFToken": token},
+        )
+        body = response.get_json()
+        return response.status_code == 200 and "challenge" in body, str(body)
+    data = {"csrf_token": token, **fields}
+    if action == "email":
+        data.update(email=NEW_EMAIL, email2=NEW_EMAIL, submit="Update")
+    elif action == "delete_passkey":
+        with app.app_context():
+            member = User.query.filter_by(email=MEMBER_EMAIL).one()
+            passkey_id = member.passkeys.one().id
+        data.update(passkey_id=str(passkey_id), passkey_delete_submit="Remove")
+    else:
+        data.update(remove_password_submit="Remove my password")
+    page = client.post("/profile", data=data, follow_redirects=True)
+    with app.app_context():
+        changed = User.query.filter_by(email=NEW_EMAIL).first() is not None
+        member = User.query.filter_by(email=NEW_EMAIL if changed else MEMBER_EMAIL)
+        member = member.one()
+        done = {
+            "email": changed,
+            "delete_passkey": member.passkeys.count() == 0,
+            "remove_password": not member.has_password,
+        }[action]
+    return done, page.get_data(as_text=True)
+
+
+ACTIONS = ("email", "delete_passkey", "remove_password", "add_passkey")
+
+
+@pytest.mark.parametrize("action", ACTIONS)
+@pytest.mark.parametrize("kind", ("none", "wrong"))
+def test_a_profile_change_with_no_good_proof_is_refused(
+    app, member_password_restored, member_email_restored, action, kind
+):
+    client, authenticator = member_with_passkey(app)
+    token = page_csrf_token(client, "/profile")
+    fields = _proof_for(kind, client, token, authenticator)
+    done, text = _profile_action(app, action, client, token, fields)
+    assert not done
+    assert "Incorrect password provided!" in text
+
+
+@pytest.mark.parametrize("action", ACTIONS)
+@pytest.mark.parametrize("kind", ("password", "passkey"))
+def test_a_profile_change_with_a_proof_passes(
+    app, member_password_restored, member_email_restored, action, kind
+):
+    client, authenticator = member_with_passkey(app)
+    token = page_csrf_token(client, "/profile")
+    fields = _proof_for(kind, client, token, authenticator)
+    done, text = _profile_action(app, action, client, token, fields)
+    assert done, text
+    assert "Incorrect password provided!" not in text
+
+
+@pytest.mark.parametrize("action", ACTIONS)
+def test_the_passkey_of_another_user_is_no_proof(
+    app, member_password_restored, member_email_restored, action
+):
+    admin = _signed_in_client(app, ADMIN_EMAIL)
+    admin_key = SoftAuthenticator(b"admin-profile-credential")
+    assert (
+        register_passkey(admin, admin_key, password=ADMIN_PASSWORD).status_code == 200
+    )
+    client, _ = member_with_passkey(app)
+    token = page_csrf_token(client, "/profile")
+    fields = proof(client, token, prover=admin_key)
+    done, text = _profile_action(app, action, client, token, fields)
+    assert not done
+    assert "does not know this passkey" in text
+
+
+def test_a_confirmation_for_another_form_is_no_proof_for_a_new_passkey(app):
+    client, authenticator = member_with_passkey(app)
+    token = page_csrf_token(client, "/profile")
+    options = confirm_options(client, token, "/maintenance")
+    fields = {"passkey_assertion": json.dumps(authenticator.sign(options))}
+    done, text = _profile_action(app, "add_passkey", client, token, fields)
+    assert not done
+    assert "expired" in text
+
+
+def test_a_session_cookie_alone_cannot_add_a_passkey(app):
+    from app.models import Passkey
+
+    client = _signed_in_client(app, MEMBER_EMAIL)
+    token = page_csrf_token(client, "/profile")
+    response = client.post(
+        "/auth/passkey/register/options", headers={"X-CSRFToken": token}
+    )
+    assert response.status_code == 400
+    assert response.get_json()["error"] == "Incorrect password provided!"
+    response = client.post(
+        "/auth/passkey/register",
+        json={"credential": SoftAuthenticator().register({"challenge": "AAAA"})},
+        headers={"X-CSRFToken": token},
+    )
+    assert response.status_code == 400
+    with app.app_context():
+        assert Passkey.query.count() == 0
+
+
+def test_a_passkey_only_account_adds_a_passkey_with_a_passkey(
+    app, member_password_restored
+):
+    from app.models import Passkey
+
+    client, authenticator = member_with_passkey(app)
+    _remove_password(client)
+    second = SoftAuthenticator(b"soft-credential-0002")
+    response = register_passkey(client, second, name="Tablet", prover=authenticator)
+    assert response.status_code == 200
+    with app.app_context():
+        assert Passkey.query.count() == 2
+
+    # The password is no proof for an account with no password.
+    token = page_csrf_token(client, "/profile")
+    response = register_options(client, token, MEMBER_PASSWORD)
+    assert response.status_code == 400
+
+
+def _forms_of(page):
+    """Return the text of each form of a page."""
+
+    return [part.split("</form>")[0] for part in page.split("<form")[1:]]
+
+
+PROFILE_SUBMITS = (
+    'name="submit"',
+    'name="passkey_delete_submit"',
+    'name="remove_password_submit"',
+    "data-passkey-register",
+)
+
+
+def _identity_forms(page):
+    """Return the Profile forms that change a way in to the account."""
+
+    return [
+        form
+        for form in _forms_of(page)
+        if any(submit in form for submit in PROFILE_SUBMITS)
+    ]
+
+
+def test_the_profile_forms_of_a_password_account_ask_for_the_password(app):
+    page = _signed_in_client(app, MEMBER_EMAIL).get("/profile").get_data(as_text=True)
+    forms = _identity_forms(page)
+    # The email form and the add form. No passkey: no remove forms.
+    assert len(forms) == 2
+    for form in forms:
+        assert 'name="password"' in form
+        assert 'name="passkey_assertion"' not in form
+    assert 'id="password"' not in page
+
+
+def test_the_profile_forms_of_an_account_with_a_passkey_ask_for_it(
+    app, member_password_restored
+):
+    client, _ = member_with_passkey(app)
+    page = client.get("/profile").get_data(as_text=True)
+    forms = _identity_forms(page)
+    # The email form, 1 passkey remove form, the add form, the password remove form.
+    assert len(forms) == 4
+    for form in forms:
+        assert 'name="password"' in form
+        assert 'name="passkey_assertion"' in form
+        assert 'data-options-url="/auth/passkey/confirm/options"' in form
+
+    _remove_password(client)
+    page = client.get("/profile").get_data(as_text=True)
+    forms = _identity_forms(page)
+    # The email form, the passkey remove form, the add form.
+    assert len(forms) == 3
+    for form in forms:
+        assert 'name="password"' not in form
+        assert 'name="passkey_assertion"' in form

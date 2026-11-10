@@ -28,7 +28,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import contains_eager
 
 from app.auth.email import send_password_reset_email
-from app.auth.passkeys import relying_party_id
+from app.auth.passkeys import identity_confirmed, relying_party_id
 from app.auth.throttle import allow_reset_request
 from app.tasks import enqueue_task
 from app import db
@@ -42,6 +42,7 @@ from app.main.forms import (
     ReviewExportForm,
     ReviewUploadForm,
     LetterboxdUsernameForm,
+    PasskeyAddForm,
     PlexPlayerForm,
     PlexUsernameForm,
     ResetFrameScoresForm,
@@ -604,8 +605,13 @@ def _player_from_address(value, default_port=None):
 
 
 def _save_email(form):
-    """Update the email address of the user."""
+    """Update the email address of the user after a proof of identity (#675).
 
+    The reset email goes to this address. Thus, a new address is a way
+    into the account."""
+
+    if not identity_confirmed(form):
+        return
     current_user.email = form.email.data
     try:
         db.session.commit()
@@ -828,8 +834,11 @@ def _delete_passkey(form):
 
     An account always has a password or a passkey. This handler and
     _remove_password are the 2 places that keep that true. The last
-    passkey of an account with no password stays."""
+    passkey of an account with no password stays. The post needs a
+    proof of identity (#675)."""
 
+    if not identity_confirmed(form):
+        return
     passkey = current_user.passkeys.filter_by(
         id=decimal_id(form.passkey_id.data)
     ).first()
@@ -869,8 +878,11 @@ def _remove_password(form):
     """Remove the password. The account then signs in with a passkey only (#669).
 
     Every other session of the account ends, also a session from an
-    earlier passkey-only period (#673). This session stays signed in."""
+    earlier passkey-only period (#673). This session stays signed in.
+    The post needs a proof of identity (#675)."""
 
+    if not identity_confirmed(form):
+        return
     if current_user.passkeys.count() == 0:
         flash("Add a passkey before you remove your password.", "danger")
         return
@@ -909,6 +921,7 @@ def profile():
     plex_player_form = PlexPlayerForm()
     infuse_form = InfusePlayerForm()
     infuse_pin_form = InfusePinForm()
+    passkey_add_form = PasskeyAddForm()
     passkey_delete_form = PasskeyDeleteForm()
     remove_password_form = RemovePasswordForm()
     set_password_email_form = SetPasswordEmailForm()
@@ -1023,6 +1036,7 @@ def profile():
         remote_playback=remote_playback_configured(),
         infuse_form=infuse_form,
         infuse_pin_form=infuse_pin_form,
+        passkey_add_form=passkey_add_form,
         passkey_delete_form=passkey_delete_form,
         passkey_host=relying_party_id(),
         remove_password_form=remove_password_form,

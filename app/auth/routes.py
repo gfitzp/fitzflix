@@ -21,6 +21,7 @@ from app.auth.email import send_password_reset_email
 from app.auth.passkeys import (
     PasskeyError,
     authentication_options,
+    check_identity,
     finish_authentication,
     finish_registration,
     registration_options,
@@ -272,11 +273,22 @@ STALE_PAGE = "That page was out of date. Reload it and try again."
 @bp.route("/passkey/register/options", methods=["POST"])
 @login_required
 def passkey_register_options():
-    """Give the browser the options to make a passkey for the signed-in user."""
+    """Give the browser the options to make a passkey for the signed-in user.
+
+    A new passkey is a new way into the account. Thus, the body must
+    carry a proof of identity, as the Profile forms do (#675). It is
+    the password, or a passkey confirmation that the Profile page asked
+    for."""
 
     if not _csrf_header_valid():
         return _json_error(STALE_PAGE, 400)
+    body = request.get_json(silent=True) or {}
     try:
+        check_identity(
+            body.get("password"),
+            body.get("passkey_assertion"),
+            url_for("main.profile"),
+        )
         return _json_options(registration_options(current_user))
     except PasskeyError as error:
         return _json_error(str(error), 400)
