@@ -674,3 +674,41 @@ def test_the_time_limit_of_rq_in_a_follow_up_ends_the_cataloging(
             )
     assert app.redis.get('{"title": "Time Limit"}') is None
     assert removed == []
+
+
+def test_a_failed_move_request_keeps_the_source_and_the_replaced_archive(
+    app, tmp_path, monkeypatch
+):
+    """The row stays on its pending key. Nothing that it needs goes (#690)."""
+
+    from app import importing
+
+    calls = _record_steps(monkeypatch)
+    monkeypatch.setattr(importing, "ensure_pending_upload", lambda file, path: True)
+
+    def refuse(file):
+        raise RuntimeError("simulated commit fault")
+
+    monkeypatch.setattr(importing, "_request_final_archive_key", refuse)
+    monkeypatch.setattr(
+        importing,
+        "_delete_replaced_archive",
+        lambda key: calls.append(("archive delete", key)),
+    )
+    source = str(tmp_path / "import" / "Follow Up.mkv")
+    output = str(tmp_path / "Movies" / "Follow Up (2021) - [DVD].mkv")
+    row = _Row(aws_key="pending-untouched/run2/Follow Up.mkv")
+    with app.app_context():
+        importing._after_commit(
+            row,
+            source,
+            {"media_library": "Movies"},
+            output,
+            str(tmp_path / "Movies"),
+            None,
+            [],
+            ["untouched/Follow Up.mkv"],
+            [],
+            [],
+        )
+    assert calls == [("hold", source, "unarchived"), ("arr record", source)]

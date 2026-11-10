@@ -1641,3 +1641,48 @@ def test_a_reimported_conversion_with_a_current_original_moves_its_copy(app, s3)
         assert row.aws_transcoded_key == retagged
         assert row.aws_key == original
         assert fake.copies == [(transcoded, retagged)]
+
+
+def test_the_sync_requests_the_move_of_a_pending_key_with_no_target(app, s3):
+    """A failed request of an import left the row on its pending key (#690).
+
+    The S3 sync requests the move. A row that has a target keeps it."""
+
+    from app import aws_storage, db
+    from app.models import File
+
+    with app.app_context():
+        stuck = archived_film("Pending Stuck", 1961)
+        stuck.aws_key = f"pending-untouched/run3/{stuck.basename}"
+        waiting = archived_film("Pending Waiting", 1962)
+        waiting.aws_key = f"pending-untouched/run4/{waiting.basename}"
+        waiting.aws_key_target = "untouched/Elsewhere (1962).mkv"
+        settled = archived_film("Pending Settled", 1963)
+        db.session.commit()
+        ids = (stuck.id, waiting.id, settled.id)
+
+        assert aws_storage._request_pending_moves() == 1
+
+        rows = {row.id: row for row in File.query.filter(File.id.in_(ids))}
+        assert rows[ids[0]].aws_key_target == f"untouched/{rows[ids[0]].basename}"
+        assert rows[ids[1]].aws_key_target == "untouched/Elsewhere (1962).mkv"
+        assert rows[ids[2]].aws_key_target is None
+        assert [job.args for job in move_jobs(app)] == [(ids[0],)]
+
+
+def test_the_weekly_sync_runs_the_pending_moves_phase(app, monkeypatch):
+    """The phase runs in the sync, also after a failed listing (#690)."""
+
+    from app import aws_storage
+
+    ran = []
+    monkeypatch.setattr(aws_storage, "_sync_deferred", lambda job, drops=0: False)
+    monkeypatch.setattr(
+        aws_storage, "_list_archives", lambda: (_ for _ in ()).throw(OSError("S3"))
+    )
+    monkeypatch.setattr(aws_storage, "_mail_reports", lambda *a: None)
+    monkeypatch.setattr(aws_storage, "_import_uncataloged", lambda roots: None)
+    monkeypatch.setattr(aws_storage, "_request_pending_moves", lambda: ran.append(1))
+    with pytest.raises(RuntimeError, match="listing"):
+        aws_storage.sync_aws_s3_storage_task()
+    assert ran == [1]

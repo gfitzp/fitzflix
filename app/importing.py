@@ -3386,14 +3386,20 @@ def _after_commit(
     # first read of the row after the commit (#689). The source goes only
     # if that step returned True.
 
+    # Invariant: a record whose archive is under pending-untouched/ has a
+    # pending move (#690). If the move request fails, the source and the
+    # replaced archives stay. The weekly S3 sync requests the move again.
+
     source_can_go = (
         step("pending upload", _pending_upload_ready, file, file_path, output_file)
         is True
     )
-    step("archive key", _request_final_archive_key, file)
+    move_requested = step("archive key", _request_final_archive_key, file) is True
+    source_can_go = source_can_go and move_requested
 
-    for worse_key in worse_aws_keys:
-        step("archive delete", _delete_replaced_archive, worse_key)
+    if move_requested:
+        for worse_key in worse_aws_keys:
+            step("archive delete", _delete_replaced_archive, worse_key)
 
     # Remove the imported file, unless the localized file replaced it.
     # Fitzflix must not remove the file that it just made.
@@ -3401,7 +3407,7 @@ def _after_commit(
     # The archive move runs later. If the pending upload is gone and the
     # new upload failed, the source is the only copy of the rip (#494).
     # Then it goes to rejects/unarchived, out of the import sweep. A
-    # failed check does the same.
+    # failed check or a failed move request does the same.
 
     if file_path != output_file and not source_can_go:
         step("source hold", move_to_rejects, file_path, "unarchived")
@@ -3663,11 +3669,13 @@ def _request_final_archive_key(file):
 
     The records are committed. Thus, a replaced record no longer claims
     the key, and the move can take it. A record that still claims the
-    key keeps it. Then the move gives this file the key with its id."""
+    key keeps it. Then the move gives this file the key with its id.
+    Return True when no move is necessary or the request is committed."""
 
     if file.aws_key and is_pending_archive(file.aws_key):
         request_archive_move(file)
         db.session.commit()
+    return True
 
 
 def _delete_replaced_archive(worse_key):

@@ -405,9 +405,9 @@ def sync_aws_s3_storage_task(volume_drops=0):
     """Add the files to AWS, and remove the files that are not in the library.
 
     The sync runs in phases (#358). Each phase has its own error
-    handling. A failed phase is logged, and the best-effort phases (the
-    inventory, the reports, the mails, the import of the uncataloged
-    files) still run. The prune deletes objects. Thus, it runs only
+    handling. A failed phase is logged. The best-effort phases (the
+    inventory, the pending moves, the reports, the mails, the import of
+    the uncataloged files) still run. The prune deletes objects. Thus, it runs only
     after a clean listing and a clean pass over the file records. After
     a failed phase, the task raises at the end. Then the job is in the
     FailedJobRegistry, and it does not report a success."""
@@ -450,6 +450,11 @@ def sync_aws_s3_storage_task(volume_drops=0):
             phase("dangling claims", _report_dangling_claims, listing)
             if reconciled:
                 phase("prune", _prune_unclaimed, listing, job, unreferenced_files)
+
+        # The moves change keys. Thus, they go to the queue after the
+        # prune, which reads the listing.
+
+        phase("pending moves", _request_pending_moves)
         phase("reports", _mail_reports, unreferenced_files, orphaned_files)
         phase(
             "uncataloged files",
@@ -942,6 +947,37 @@ def _claimed_keys():
             .all()
         }
     )
+
+
+def _request_pending_moves():
+    """Request the move of each live archive under pending-untouched/ with no target (#690).
+
+    Invariant: a record whose archive is under pending-untouched/ has a
+    pending move. An import requests the move after its commit. A failed
+    request leaves the row on a key that the lifecycle rule of the
+    bucket expires after 60 days. The sync runs only when each queue is
+    idle. Thus, no import waits to request its own move. The commit
+    queues the moves. Return the count of the requests."""
+
+    rows = (
+        File.query.filter(
+            File.aws_key.like(f"{PENDING_ARCHIVE_PREFIX}/%"),
+            File.aws_date_deleted.is_(None),
+            File.aws_key_target.is_(None),
+        )
+        .order_by(File.id)
+        .all()
+    )
+    requested = 0
+    for file in rows:
+        if request_archive_move(file):
+            requested += 1
+            current_app.logger.warning(
+                f"'{file.aws_key}' This archive had no move to its final key. "
+                f"The move is requested now"
+            )
+    db.session.commit()
+    return requested
 
 
 def _report_dangling_claims(listing):
