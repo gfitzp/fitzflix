@@ -51,7 +51,7 @@ from app.models import (
     title_lock_key,
 )
 from app.tmdb_apply import canonical_movie_name, tmdb_json_or, TMDBUnavailable
-from app.naming import retag_quality, with_extension
+from app.naming import plain_movie_folder, retag_quality, with_extension
 from app.title_keys import title_key
 
 
@@ -449,29 +449,25 @@ def save_failed_payload(library, id, tmdb_payload):
 
 
 def _movie_folder(files):
-    """Return the folder name of a movie from its file rows.
+    """Return the plain folder name of a movie from its file rows, for Radarr.
 
     A dirname is "Movies/<folder>" or "Movies/<folder>/<feature type>".
-    Thus, the second component is the folder. A film can own a plain
-    folder and edition folders (Brazil, 1985). Radarr downloads go to
-    the plain folder. Thus, the plain folder of a main feature wins.
-    Next is the folder of an edition main feature. A folder that holds
-    only special features is last. Radarr finds no movie file there.
-    The rows come in a stable order, so the choice is the same on each
-    call."""
+    Thus, the second component is the folder. Radarr must never own a
+    file that Fitzflix keeps as an edition (#670). Thus, an edition
+    folder gives its plain name, also when the plain folder does not
+    exist. The folder of a main feature wins over a folder that holds
+    only special features. The rows come in a stable order, so the
+    choice is the same on each call."""
 
     candidates = []
     for f in files:
         parts = os.path.normpath(f.dirname or "").split(os.sep)
         if len(parts) < 2:
             continue
-        folder = parts[1]
-        candidates.append(
-            (f.feature_type_id is not None, "{edition-" in folder, folder)
-        )
+        candidates.append((f.feature_type_id is not None, plain_movie_folder(parts[1])))
     if not candidates:
         return None
-    return min(candidates)[2]
+    return min(candidates)[1]
 
 
 def _follow_rename_in_radarr(old_tmdb_id, new_tmdb_id, new_folder):

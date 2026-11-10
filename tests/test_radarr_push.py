@@ -404,8 +404,12 @@ def test_refresh_rename_survives_a_radarr_outage(app, monkeypatch):
     assert run_radarr_pushes(app) == [True]
 
 
-def test_movie_folder_prefers_the_plain_folder_of_the_main_feature(app):
-    """Radarr downloads go to the plain folder, not to an edition folder."""
+def test_movie_folder_gives_radarr_only_a_plain_folder(app):
+    """Radarr must never hold an edition folder as the path of a film (#670).
+
+    Radarr deletes its movie file on an upgrade. An edition file in a
+    Radarr folder is thus at risk. A film with only an edition folder
+    gives the plain name, which does not exist on disk."""
 
     from app.tmdb_refresh import _movie_folder
     from tests.factories import make_movie, make_movie_file
@@ -419,17 +423,35 @@ def test_movie_folder_prefers_the_plain_folder_of_the_main_feature(app):
         db.session.commit()
 
         assert _movie_folder([edition, extra, plain]) == "Brazil (1985)"
-        # An edition main feature outranks a plain folder that holds only
-        # special features. Radarr finds no movie file in that folder.
-
-        assert _movie_folder([edition, extra]) == (
-            "Brazil (1985) {edition-Love Conquers All Version}"
-        )
+        assert _movie_folder([plain, edition]) == "Brazil (1985)"
+        assert _movie_folder([edition, extra]) == "Brazil (1985)"
         assert _movie_folder([extra]) == "Brazil (1985)"
-        assert _movie_folder([edition]) == (
-            "Brazil (1985) {edition-Love Conquers All Version}"
-        )
+        assert _movie_folder([edition]) == "Brazil (1985)"
         assert _movie_folder([]) is None
+
+        tagged = make_movie("Train Man", 2005)
+        rip = make_movie_file(tagged, "DVD")
+        rip.dirname = "Movies/Train Man (2005) {tmdb-36135} {edition-Original Rip}"
+        db.session.commit()
+        assert _movie_folder([rip]) == "Train Man (2005) {tmdb-36135}"
+
+
+def test_no_radarr_write_names_an_edition_folder(app, monkeypatch):
+    """Each Radarr path write drops the edition tag of its folder (#670)."""
+
+    import app.radarr_push as radarr_push
+
+    fake = wire(app, monkeypatch)
+    fake.movies[6] = {"id": 6, "tmdbId": 11, "path": "/Volumes/Movies/Star Wars (1977)"}
+    fake.movies[7] = {"id": 7, "tmdbId": 12, "path": "/Volumes/Movies/Old (1980)"}
+    with app.app_context():
+        radarr_push.follow_rename(11, "Star Wars (1977) {edition-D+77 v2.4}")
+        radarr_push.follow_rename(12, "New (1980) {edition-Director's Cut}")
+
+    # Star Wars stays on its plain folder. Thus, no PUT goes to Radarr.
+    assert [(i, m["path"]) for i, _, m in fake.updated] == [
+        (7, "/Volumes/Movies/New (1980)")
+    ]
 
 
 def import_move_fixture(app, tmp_path, source_name, output_name):
@@ -471,6 +493,33 @@ def test_import_move_points_radarr_at_the_fitzflix_folder(app, monkeypatch, tmp_
     ]
     assert fake.commands == [{"name": "RefreshMovie", "movieIds": [3]}]
     assert not os.path.isdir(source)
+
+
+def test_import_into_an_edition_folder_keeps_radarr_on_the_plain_folder(
+    app, monkeypatch, tmp_path
+):
+    """A Radarr download that Fitzflix files as an edition stays out of Radarr (#670).
+
+    Radarr keeps the plain folder. The rescan then drops the record of
+    the moved file. Thus, a later upgrade cannot delete the edition."""
+
+    import os
+
+    from app.importing import _report_import_move_to_radarr
+
+    fake = wire(app, monkeypatch)
+    source, output = import_move_fixture(
+        app, tmp_path, "Star Wars (1977)", "Star Wars (1977) {edition-D+77 v2.4}"
+    )
+    fake.movies[3] = {"id": 3, "tmdbId": 11, "path": source}
+    with app.app_context():
+        _report_import_move_to_radarr(source, output)
+    assert run_radarr_pushes(app) == [True]
+
+    assert fake.updated == []
+    assert fake.movies[3]["path"] == source
+    assert fake.commands == [{"name": "RefreshMovie", "movieIds": [3]}]
+    assert "{edition-" not in os.path.basename(fake.movies[3]["path"])
 
 
 def test_import_in_place_leaves_radarr_alone(app, monkeypatch, tmp_path):
@@ -578,6 +627,64 @@ def test_path_check_repoints_an_entry_whose_folder_is_gone(
         (1, "/Volumes/Movies/Missed Rename (1951)")
     ]
     assert fake.commands == [{"name": "RefreshMovie", "movieIds": [1]}]
+
+    # The next run finds nothing to change.
+    assert radarr_push.reconcile_radarr_paths() == "0 repointed, 0 for review"
+
+
+def test_path_check_moves_an_entry_off_an_edition_folder(
+    app, monkeypatch, library_folders
+):
+    """An entry on an edition folder moves to the plain folder (#670).
+
+    The edition folder exists, and the plain folder does not. The check
+    moves the entry all the same. A plain entry of a film with a plain
+    and an edition folder (Brazil, 1985) stays."""
+
+    import os
+
+    import app.radarr_push as radarr_push
+
+    fake = wire(app, monkeypatch)
+    library = app.config["MOVIE_LIBRARY"]
+    with app.app_context():
+        lone = make_movie("Star Wars", 1977, tmdb_id=9401)
+        edition = make_movie_file(lone, "WEBDL-1080p")
+        edition.dirname = "Movies/Star Wars (1977) {edition-D+77 v2.4}"
+        brazil = make_movie("Brazil", 1985, tmdb_id=9402)
+        make_movie_file(brazil, "DVD")
+        cut = make_movie_file(brazil, "Bluray-1080p")
+        cut.dirname = "Movies/Brazil (1985) {edition-Final Cut}"
+        db.session.commit()
+    for name in (
+        "Star Wars (1977) {edition-D+77 v2.4}",
+        "Brazil (1985)",
+        "Brazil (1985) {edition-Final Cut}",
+    ):
+        os.makedirs(os.path.join(library, name), exist_ok=True)
+        library_folders.append(os.path.join(library, name))
+    fake.movies[1] = {
+        "id": 1,
+        "tmdbId": 9401,
+        "path": "/Volumes/Movies/Star Wars (1977) {edition-D+77 v2.4}",
+    }
+    fake.movies[2] = {"id": 2, "tmdbId": 9402, "path": "/Volumes/Movies/Brazil (1985)"}
+    fake.movies[3] = {
+        "id": 3,
+        "tmdbId": 9403,
+        "path": "/Volumes/Movies/Not Held (1990) {edition-Workprint}",
+    }
+
+    assert radarr_push.reconcile_radarr_paths() == "2 repointed, 0 for review"
+    assert [(i, m["path"]) for i, _, m in fake.updated] == [
+        (1, "/Volumes/Movies/Star Wars (1977)"),
+        (3, "/Volumes/Movies/Not Held (1990)"),
+    ]
+    assert fake.commands == [
+        {"name": "RefreshMovie", "movieIds": [1]},
+        {"name": "RefreshMovie", "movieIds": [3]},
+    ]
+    assert not os.path.isdir(os.path.join(library, "Star Wars (1977)"))
 
     # The next run finds nothing to change.
     assert radarr_push.reconcile_radarr_paths() == "0 repointed, 0 for review"

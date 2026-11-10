@@ -40,6 +40,7 @@ from app.arr_client import (
     fallback_rename,
 )
 from app.arr_client import rename_download_locally as _rename_locally
+from app.naming import plain_movie_folder
 from app.tasks import enqueue_task
 
 # This is the set of TMDB ids that Radarr manages, cached for 1 hour,
@@ -268,10 +269,16 @@ def follow_import_move_task(source_folder, new_folder):
 
 
 def _point_entry_at(entry, new_folder):
-    """Rewrite the path of one Radarr movie, then request a rescan."""
+    """Rewrite the path of one Radarr movie, then request a rescan.
+
+    Each path that Fitzflix writes to Radarr comes through here. Radarr
+    must never own a file that Fitzflix keeps as an edition (#670).
+    Radarr deletes its movie file on an upgrade. Thus, an edition folder
+    becomes its plain folder here, also when the plain folder does not
+    exist. Radarr then shows the film as missing."""
 
     old_path = (entry.get("path") or "").rstrip("/")
-    new_path = os.path.join(os.path.dirname(old_path), new_folder)
+    new_path = os.path.join(os.path.dirname(old_path), plain_movie_folder(new_folder))
     if old_path and old_path != new_path:
         entry["path"] = new_path
         _radarr("PUT", f"/api/v3/movie/{entry['id']}?moveFiles=false", entry)
@@ -298,10 +305,12 @@ def reconcile_radarr_paths():
     download the film again. This check finds such an entry by TMDB id
     and compares its folder with the folder that _movie_folder picks.
 
-    The check repoints an entry only when the Fitzflix folder exists and
-    the Radarr folder does not. When both folders exist, it logs the
-    case and changes nothing. A film that Fitzflix holds no file for is
-    not checked. Radarr can be downloading it."""
+    The check repoints an entry when the Fitzflix folder exists and the
+    Radarr folder does not. When both folders exist, it logs the case
+    and changes nothing. An entry on an edition folder always moves to
+    the plain folder, also when that folder does not exist (#670). An
+    other film that Fitzflix holds no file for is not checked. Radarr
+    can be downloading it."""
 
     from app import get_app
     from app.models import File, Movie
@@ -328,16 +337,15 @@ def reconcile_radarr_paths():
         fixes = []
         ambiguous = 0
         for entry in entries:
-            files = files_by_tmdb.get(entry.get("tmdbId"))
-            if not files:
-                continue
-            wanted = _movie_folder(files)
             held = os.path.basename((entry.get("path") or "").rstrip("/"))
+            on_edition = plain_movie_folder(held) != held
+            files = files_by_tmdb.get(entry.get("tmdbId"), [])
+            wanted = _movie_folder(files) or plain_movie_folder(held)
             if not wanted or wanted == held:
                 continue
             wanted_exists = os.path.isdir(os.path.join(library, wanted))
             held_exists = bool(held) and os.path.isdir(os.path.join(library, held))
-            if wanted_exists and not held_exists:
+            if on_edition or (wanted_exists and not held_exists):
                 fixes.append((entry, held, wanted))
             else:
                 ambiguous += 1

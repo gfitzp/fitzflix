@@ -13,6 +13,7 @@ current names.
 """
 
 import os
+import re
 
 from app.models import TV_SHOWS
 
@@ -85,6 +86,19 @@ def library_name(parts):
     if version:
         return plex_title, f"{plex_title} [{quality}].{extension}"
     return plex_title, f"{plex_title} - [{quality}].{extension}"
+
+
+EDITION_TAG = re.compile(r"\s*\{edition-[^{}]+\}")
+
+
+def plain_movie_folder(folder):
+    """Return the plain folder name of a film from one of its folder names.
+
+    library_name puts the edition tag last in the head of a film name.
+    Thus, the plain folder is the edition folder with its tag removed. A
+    plain folder name comes back unchanged."""
+
+    return EDITION_TAG.sub("", folder)
 
 
 def retag_quality(name, old, new):
