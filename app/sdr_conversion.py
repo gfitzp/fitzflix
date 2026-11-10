@@ -714,7 +714,8 @@ def convert_localized_file(
             return False
 
         except BaseException as error:
-            # A stop signal keeps the source for the next sweep (#497).
+            # A stop signal or an outage of the database keeps the source
+            # for the next sweep (#497, #681).
             abandon_failed_stage(
                 error,
                 source_path,

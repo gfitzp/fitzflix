@@ -39,6 +39,7 @@ from rq.job import Job
 from rq.timeouts import BaseTimeoutException
 from rq.registry import FinishedJobRegistry
 from unidecode import unidecode
+from sqlalchemy.exc import DBAPIError
 
 from flask import current_app, render_template
 from werkzeug.local import LocalProxy
@@ -929,7 +930,8 @@ def localization_task(
             # place, and the track statistics, the FLAC twins, or the MP4
             # metadata removal can rewrite it before a failure. The
             # untouched archive goes up first, so the original bytes stay
-            # in S3. A stop signal keeps the source (#497).
+            # in S3. A stop signal keeps the source (#497). An outage of
+            # the database keeps it too, and the job fails (#681).
 
             abandon_failed_stage(
                 error,
@@ -1773,24 +1775,62 @@ def interrupted(error):
     )
 
 
+# The pymysql error codes of a lost or refused connection to MariaDB
+# (#681): cannot connect through the socket or to the host, the server
+# went away, and a connection lost during a query.
+
+DATABASE_OUTAGE_CODES = frozenset({2002, 2003, 2006, 2013})
+
+
+def database_outage(error):
+    """Return True if a lost or refused connection to MariaDB ended the stage (#681).
+
+    The file is good. The database did not answer. A constraint error, a
+    deadlock (1213), a lock wait timeout (1205), or a changed record
+    (1020) is not an outage."""
+
+    if not isinstance(error, DBAPIError):
+        return False
+    if error.connection_invalidated:
+        return True
+    args = getattr(error.orig, "args", None) or ()
+    return bool(args) and args[0] in DATABASE_OUTAGE_CODES
+
+
 def abandon_failed_stage(error, source_path, lock, may_keep=True, **kwargs):
-    """Clean up a stage after error. Re-raise an error that is not an Exception.
+    """Clean up a stage after error. Re-raise a stop signal or an outage of the database.
 
-    A stop signal keeps the source in the import directory for the
-    hourly sweep (#497). Any other error rejects the source. With
-    may_keep False, a stop signal rejects the source too."""
+    A stop signal keeps the source for the hourly sweep (#497). An
+    outage of the database keeps it too (#681). Any other error rejects
+    the source. With may_keep False, a stop signal or an outage rejects
+    the source too. A kept outage fails the job. Thus, the hourly retry
+    of the failed in-place imports finds a source outside the import
+    directory. The cleanup needs no database. The session rolls back
+    last."""
 
-    stop = may_keep and interrupted(error)
-    if stop:
+    name = os.path.basename(source_path)
+    outage = may_keep and database_outage(error)
+    if may_keep and interrupted(error):
         current_app.logger.warning(
-            f"'{os.path.basename(source_path)}' A stop signal interrupted "
-            f"the import ({error!r}). The source stays for the next sweep"
+            f"'{name}' A stop signal interrupted the import ({error!r}). The "
+            f"source stays for the next sweep"
+        )
+        kwargs["keep_source"] = True
+    elif outage:
+        current_app.logger.warning(
+            f"'{name}' The database did not answer ({error.orig!r}). The source "
+            f"stays for the next sweep"
         )
         kwargs["keep_source"] = True
     else:
         current_app.logger.error(traceback.format_exc())
     abandon_import(source_path, lock, **kwargs)
-    if not isinstance(error, Exception):
+    if outage:
+        try:
+            db.session.rollback()
+        except Exception:
+            current_app.logger.warning(traceback.format_exc())
+    if outage or not isinstance(error, Exception):
         raise error
 
 
@@ -2312,7 +2352,8 @@ def move_localized_file(
 
         except BaseException as error:
             # Remove both hidden copies. The original source is unchanged.
-            # Fitzflix rejects the source. A stop signal keeps it (#497).
+            # Fitzflix rejects the source. A stop signal or an outage of the
+            # database keeps it (#497, #681).
 
             abandon_failed_stage(
                 error,
@@ -2576,14 +2617,20 @@ def finalize_localization(
             return False
 
         except BaseException as error:
-            db.session.rollback()
+            # After an outage of the database, the rollback can fail too.
+            # The lock and the source must not depend on it (#681).
+
+            try:
+                db.session.rollback()
+            except Exception:
+                current_app.logger.warning(traceback.format_exc())
 
             # The source goes to rejects. Remove the hidden library copy,
             # or the renamed file when no record keeps it. A rename over an
             # existing file already replaced that file, and its record
             # still points to it. For an in-place import the renamed file
-            # IS file_path, and it goes to rejects. A stop signal keeps
-            # the source (#497).
+            # IS file_path, and it goes to rejects. A stop signal or an
+            # outage of the database keeps the source (#497, #681).
 
             stray = None
             if placement is None:

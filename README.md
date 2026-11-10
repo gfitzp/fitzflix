@@ -515,7 +515,7 @@ cp fitzflix_supervisor.ini /opt/homebrew/etc/supervisor.d/ &&
 brew services start supervisor
 ```
 
-A stop of the import, transcode, and file-operation programs sends SIGTERM to the worker only, not to its child tools. The worker finishes its job, then stops. Supervisor waits 10 minutes for the import and file-operation workers and 30 minutes for the transcode worker. After that time, it stops the worker and its tools. A stage that a stop signal interrupts keeps its source in the import directory for the next hourly sweep.
+A stop of the import, transcode, and file-operation programs sends SIGTERM to the worker only, not to its child tools. The worker finishes its job, then stops. Supervisor waits 10 minutes for the import and file-operation workers and 30 minutes for the transcode worker. After that time, it stops the worker and its tools. A stage that a stop signal interrupts keeps its source in the import directory for the next hourly sweep. A lost or refused connection to MariaDB is the same (#681). The stage keeps its source, writes 1 warning, and fails its job. The hourly sweep imports the file when the database answers again. Sonarr and Radarr put their downloads in the library. The hourly retry of the failed in-place imports queues such a localization again.
 
 ## Worker queues
 
