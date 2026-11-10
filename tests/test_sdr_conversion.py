@@ -1674,3 +1674,113 @@ def test_a_child_that_ignores_the_kill_does_not_hide_the_fault(
     assert process.killed
     assert process.wait_timeouts == [tracks.STOP_PROCESS_WAIT_SECONDS]
     assert "Process 4242 did not end" in caplog.text
+
+
+@pytest.mark.parametrize(
+    "max_height,hours,frame_rate,expected",
+    [
+        # 4 hours at 24 frames per second, at 1 frame per second: 96 hours.
+        (2160, 4, 24.0, 4 * 3600 * 24 + 1),
+        # An unknown frame rate counts as 24 frames per second.
+        (2160, 4, None, 4 * 3600 * 24 + 1),
+        # 2 hours of 4K fit inside the 48-hour limit.
+        (2160, 2, 23.976, None),
+        # A 1080p conversion keeps the fixed limit at any length.
+        (1080, 4, 24.0, None),
+        (1080, 10, 60.0, None),
+    ],
+)
+def test_the_timeout_of_a_conversion_follows_the_length_of_the_film(
+    app, max_height, hours, frame_rate, expected
+):
+    """The time limit of a conversion job comes from the length of the film (#674)."""
+
+    plan = {"max_height": max_height, "duration": hours * 3600.0}
+    plan["frame_rate"] = frame_rate
+    with app.app_context():
+        limit = app.config["TRANSCODE_TASK_TIMEOUT"]
+        timeout = sdr_conversion.conversion_timeout(plan)
+    assert timeout == (expected if expected is not None else limit)
+    if max_height == 2160 and hours == 4:
+        assert timeout > 48 * 3600
+
+
+def test_a_plan_with_no_duration_keeps_the_fixed_limit(app):
+    """A plan from before #674 has no duration. It keeps TRANSCODE_TASK_TIMEOUT."""
+
+    with app.app_context():
+        assert (
+            sdr_conversion.conversion_timeout({"max_height": 2160})
+            == app.config["TRANSCODE_TASK_TIMEOUT"]
+        )
+
+
+def test_a_long_4k_conversion_is_queued_with_a_longer_timeout(
+    app, hdr10_mkv, incoming_dir, archive_on, monkeypatch
+):
+    """The enqueue of the conversion gives the job the timeout of the plan (#674).
+
+    The sample plays for some seconds. Thus, the floor speed shrinks to
+    make the encode of the sample longer than the fixed limit."""
+
+    basename = "Long Film (2020) - [Bluray-2160p].mkv"
+    _set_mode(monkeypatch, "sdr-2160p")
+    monkeypatch.setitem(sdr_conversion.CONVERSION_FLOOR_FPS, 2160, 0.0001)
+    with app.app_context():
+        source = _place(incoming_dir, hdr10_mkv, basename)
+        assert importing.localization_task(source) is True
+        (convert_job,) = _jobs(app.transcode_queue, "app.videos.convert_localized_file")
+        plan = convert_job.args[4]
+        assert plan["duration"] and plan["frame_rate"]
+        assert convert_job.timeout == sdr_conversion.conversion_timeout(plan)
+        assert convert_job.timeout > app.config["TRANSCODE_TASK_TIMEOUT"]
+
+        lock = convert_job.args[2]
+        if lock:
+            app.lock_manager.unlock(lock)
+        for job in app.transcode_queue.jobs:
+            job.delete()
+        for path in os.listdir(app.config["STAGING_DIR"]):
+            os.remove(os.path.join(app.config["STAGING_DIR"], path))
+        os.remove(source)
+
+
+def test_a_conversion_that_waits_for_its_lock_keeps_its_timeout(
+    app, tmp_path, monkeypatch
+):
+    """The retry after a lock wait has the timeout of the plan too (#674)."""
+
+    from app import sdr_conversion
+
+    hidden = tmp_path / ".Long Wait (2001) - [Bluray-2160p].mkv"
+    hidden.write_bytes(b"localized")
+    source = tmp_path / "Long Wait (2001) - [Bluray-2160p].mkv"
+    source.write_bytes(b"source")
+    resource = '{"title": "Long Wait Conversion"}'
+    plan = {
+        "source_format": "HDR10",
+        "source_quality": "Bluray-2160p",
+        "target_quality": "Bluray-2160p",
+        "max_height": 2160,
+        "duration": 4 * 3600.0,
+        "frame_rate": 24.0,
+    }
+
+    with app.app_context():
+        lock = _foreign_lock(app, resource)
+        result = sdr_conversion.convert_localized_file(
+            str(source),
+            {"basename": "Long Wait (2001) - [Bluray-2160p].mkv"},
+            lock,
+            str(hidden),
+            plan,
+        )
+        expected = sdr_conversion.conversion_timeout(plan)
+
+    assert result is False
+    (retry,) = [
+        job
+        for job in scheduled_jobs(app.transcode_queue)
+        if job.func_name == "app.videos.convert_localized_file"
+    ]
+    assert retry.timeout == expected > 48 * 3600

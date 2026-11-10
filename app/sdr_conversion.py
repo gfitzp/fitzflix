@@ -78,6 +78,18 @@ CONVERSION_WIDTHS = {1080: 1920, 2160: 3840}
 
 CONVERSION_PRESETS = {1080: "CONVERSION_PRESET", 2160: "CONVERSION_PRESET_2160P"}
 
+# The lowest encode speed, in frames per second, that a conversion of a
+# maximum height can have on this server (#674). The job timeout of a
+# conversion gives the encode at least this speed. The benchmark of Nov 6
+# 2026 measured 1.6 frames per second for x265 medium. A height with no
+# entry keeps TRANSCODE_TASK_TIMEOUT.
+
+CONVERSION_FLOOR_FPS = {2160: 1.0}
+
+# The frame rate of a source whose rate is unknown.
+
+DEFAULT_FRAME_RATE = 24.0
+
 # The pixel format and the encoder arguments of the libplacebo path, for
 # each maximum height. They copy the encode settings of the HandBrake
 # presets: x264 at RF 15 for 1080p, and 10-bit x265 at RF 17 for 4K.
@@ -146,9 +158,37 @@ def probe_video(file_path):
             "width": track.width,
             "height": track.height,
             "duration": float(track.duration) / 1000 if track.duration else None,
+            "frame_rate": _frame_rate(track.frame_rate),
             "language": track.language,
         }
     return None
+
+
+def _frame_rate(value):
+    """Return a MediaInfo frame rate as a number, or None if it is not known."""
+
+    try:
+        rate = float(value)
+    except (TypeError, ValueError):
+        return None
+    return rate if rate > 0 else None
+
+
+def conversion_timeout(plan):
+    """Return the job timeout of a conversion, in seconds (#674).
+
+    The time limit of a conversion job comes from the length of the
+    film. The encode of each frame of the source at the floor speed of
+    the target height must fit. The result is never less than
+    TRANSCODE_TASK_TIMEOUT."""
+
+    timeout = current_app.config["TRANSCODE_TASK_TIMEOUT"]
+    floor_fps = CONVERSION_FLOOR_FPS.get(plan.get("max_height"))
+    duration = plan.get("duration")
+    if not floor_fps or not duration:
+        return timeout
+    frames = duration * (plan.get("frame_rate") or DEFAULT_FRAME_RATE)
+    return max(timeout, int(frames / floor_fps) + 1)
 
 
 def converted_quality_title(quality_title, max_height):
@@ -169,8 +209,9 @@ def plan_conversion(file_path, file_details, max_height):
 
     The plan has the source and target qualities, the maximum height of
     the conversion, the color format of the source, and its Dolby
-    Vision profile. Raise ValueError if the target quality does not
-    exist."""
+    Vision profile. It also has the duration and the frame rate of the
+    source, for the job timeout. Raise ValueError if the target quality
+    does not exist."""
 
     from app.models import RefQuality
     from app.tracks import parse_dolby_vision_profile
@@ -201,6 +242,8 @@ def plan_conversion(file_path, file_details, max_height):
         ),
         "dolby_vision_profile": parse_dolby_vision_profile(video["hdr_format"]),
         "video_language": video["language"],
+        "duration": video.get("duration"),
+        "frame_rate": video.get("frame_rate"),
     }
 
 
@@ -534,6 +577,7 @@ def convert_localized_file(
                 {"lock_waits": lock_waits},
                 source_path,
                 basename,
+                timeout=conversion_timeout(plan),
             )
             return False
 

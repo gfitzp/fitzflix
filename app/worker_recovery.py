@@ -3,7 +3,7 @@
 A SIGKILL (the end of the supervisor stop wait, a reboot, an OOM kill)
 ends a worker before its job can clean up. rq keeps the worker hash,
 the execution and the started entry for the full job timeout. That is
-24 hours for an import and 48 hours for a transcode. During that time,
+24 hours for an import and 48 hours or more for a transcode. During that time,
 every busy check sees the dead job as running. The title lock blocks the
 title, the staging reservation stays, and the manual-import marker
 hides the Import button.

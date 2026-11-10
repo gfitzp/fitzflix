@@ -100,6 +100,7 @@ from app.pipeline import record_task_stage
 from app.sdr_conversion import (
     CONVERSION_HEIGHTS,
     archived_original_from_file,
+    conversion_timeout,
     converted_file_details,
     held_decision,
     hold_import,
@@ -415,14 +416,15 @@ def _hold_title_lock(lock, basename):
 TITLE_LOCK_WAIT = timedelta(minutes=30)
 
 
-def defer_for_title_lock(func, args, counters, source_path, basename):
+def defer_for_title_lock(func, args, counters, source_path, basename, timeout=None):
     """Run a stage again after TITLE_LOCK_WAIT, with the same lock (#339).
 
     The lock of the stage expired, and another task took it. The retry
     keeps the old lock token. When the other task releases the lock, the
     extend script of _hold_title_lock takes it again with that token.
     counters holds every attempt counter of the stage. lock_waits counts
-    the waits. The queue and the timeout come from the task registry."""
+    the waits. The queue comes from the task registry. The timeout comes
+    from the task registry too, unless the caller gives one."""
 
     counters = {**counters, "lock_waits": int(counters.get("lock_waits") or 0) + 1}
     requeue(
@@ -433,6 +435,7 @@ def defer_for_title_lock(func, args, counters, source_path, basename):
         counters=counters,
         args=args,
         description=f"'{basename}'",
+        timeout=timeout,
     )
 
 
@@ -1702,7 +1705,8 @@ def _hand_off(run, work_path, file_details, hidden_output_file, staged, conversi
             )
 
         # A conversion first goes to the transcode queue. That task gives
-        # the file to move_localized_file after the encode.
+        # the file to move_localized_file after the encode. Its timeout
+        # comes from the length of the film (#674).
 
         if conversion:
             enqueue_task(
@@ -1713,6 +1717,7 @@ def _hand_off(run, work_path, file_details, hidden_output_file, staged, conversi
                 hidden_output_file,
                 conversion,
                 description=f"'{file_details.get('basename')}'",
+                timeout=conversion_timeout(conversion),
             )
         else:
             enqueue_task(
