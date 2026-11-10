@@ -193,6 +193,74 @@ def test_no_record_at_the_new_path_logs_one_warning(app, monkeypatch, caplog):
     assert "has no file record at this path" in warnings[0].getMessage()
 
 
+def test_a_record_that_an_older_scan_missed_is_found_by_a_second_scan(app, monkeypatch):
+    """Sonarr gives back a scan that already runs. That scan can be too old for the file."""
+
+    import app.sonarr_push as sonarr_push
+
+    library = os.path.join(app.config["TV_LIBRARY"], "Show", "Show - S01E01.mkv")
+
+    class LateArr(FakeArr):
+        def __call__(self, method, path, payload=None):
+            answer = super().__call__(method, path, payload)
+            scans = [c for c in self.calls if c[0] == "POST"]
+            if len(scans) == 2 and not self.records:
+                self.records = [{"id": 9, "path": library}]
+            return answer
+
+    fake = LateArr("episodefile")
+    monkeypatch.setattr(sonarr_push, "_sonarr", fake)
+    assert sonarr_push.restore_download_record_task(4, library, SCENE, "GRP") is True
+    assert len([c for c in fake.calls if c[0] == "POST"]) == 2
+    assert [put["releaseGroup"] for put in fake.puts] == ["GRP"]
+
+
+def test_a_download_with_no_release_data_forgets_the_older_data_of_its_path(app):
+    from app.arr_client import SONARR, remember_download, take_remembered_download
+
+    with app.app_context():
+        remember_download(SONARR, "/tv/a.mkv", 4, {"releaseGroup": "OLD"})
+        remember_download(SONARR, "/tv/a.mkv", 4, {})
+        assert take_remembered_download("/tv/a.mkv") is None
+
+
+def test_a_held_download_keeps_its_release_data_for_the_held_path(
+    app, monkeypatch, tmp_path
+):
+    from app.arr_client import (
+        DOWNLOAD_RECORD_KEY,
+        DOWNLOAD_RECORD_TTL,
+        RADARR,
+        remember_download,
+        take_remembered_download,
+    )
+
+    held_dir = tmp_path / "held"
+    monkeypatch.setitem(app.config, "HELD_DIR", str(held_dir))
+    monkeypatch.setattr(
+        "app.sdr_conversion.makedirs_on_mounted_volume",
+        lambda path: os.makedirs(path, exist_ok=True),
+    )
+    source = tmp_path / "Film (2020) - [WEBDL-2160p].mkv"
+    source.write_bytes(b"x")
+    with app.app_context():
+        from app import db
+        from app.models import HeldImport
+        from app.sdr_conversion import hold_import
+
+        remember_download(RADARR, str(source), 7, {"releaseGroup": "GRP"})
+        plan = {"max_height": 1080, "source_format": "HDR10"}
+        held = hold_import(str(source), {"quality_title": "Bluray-1080p"}, plan, [])
+        try:
+            assert _kept(app, str(source)) is None
+            key = DOWNLOAD_RECORD_KEY.format(path=held.held_path)
+            assert app.redis.ttl(key) > DOWNLOAD_RECORD_TTL
+            assert take_remembered_download(held.held_path)["release_group"] == "GRP"
+        finally:
+            db.session.delete(db.session.get(HeldImport, held.id))
+            db.session.commit()
+
+
 def test_an_arr_that_is_down_is_logged(app, monkeypatch, caplog):
     import app.sonarr_push as sonarr_push
 

@@ -887,6 +887,37 @@ def test_removing_the_password_ends_the_other_sessions(app, member_password_rest
     assert other.get("/profile").status_code == 302
 
 
+def test_a_new_email_address_ends_the_other_sessions(app, member_email_restored):
+    """The reset email goes to the address. Thus, a new address ends each other session."""
+
+    client = _signed_in_client(app, MEMBER_EMAIL)
+    other = _signed_in_client(app, MEMBER_EMAIL)
+    token = page_csrf_token(client)
+    done, _ = _profile_action(
+        app, "email", client, token, {"password": MEMBER_PASSWORD}
+    )
+    assert done
+    assert client.get("/profile").status_code == 200
+    assert other.get("/profile").status_code == 302
+
+
+@pytest.mark.parametrize(
+    "route",
+    (
+        "/auth/passkey/register/options",
+        "/auth/passkey/register",
+        "/auth/passkey/confirm/options",
+        "/auth/passkey/login",
+    ),
+)
+@pytest.mark.parametrize("body", ([1], 5, "text"))
+def test_a_json_body_that_is_no_object_is_a_plain_refusal(app, route, body):
+    client = _signed_in_client(app, MEMBER_EMAIL)
+    token = page_csrf_token(client)
+    response = client.post(route, json=body, headers={"X-CSRFToken": token})
+    assert response.status_code in (400, 401)
+
+
 def test_a_session_of_an_earlier_passkey_only_period_stays_ended(
     app, member_password_restored
 ):

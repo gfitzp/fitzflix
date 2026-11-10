@@ -281,9 +281,10 @@ class User(UserMixin, db.Model):
         """Give the account a new session epoch (#673).
 
         Each session id, remember cookie and reset token from before
-        stops loading. The 3 changes of the sign-in methods call this:
-        a new password, a removed password, and a removed passkey. A
-        handler that must keep its own session signs it in again."""
+        stops loading. The 4 changes of the sign-in methods call this:
+        a new password, a removed password, a removed passkey, and a new
+        email address. A handler that must keep its own session signs it
+        in again."""
 
         self.session_epoch = new_session_epoch()
 

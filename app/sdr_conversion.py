@@ -303,6 +303,7 @@ def hold_import(file_path, file_details, plan, blockers):
     held", and the function returns None (#435). The held original, its
     decision and its date stay."""
 
+    from app.arr_client import HELD_DOWNLOAD_RECORD_TTL, carry_remembered_download
     from app.importing import move_to_rejects
     from app.models import HeldImport
     from app.pipeline import record_task_stage
@@ -323,6 +324,11 @@ def hold_import(file_path, file_details, plan, blockers):
             move_to_rejects(file_path, "already held")
             return None
         shutil.move(file_path, held_path)
+
+        # The release data of an arr download goes with the file. Thus,
+        # an "Import" decision still gives it to the arr record (#671).
+
+        carry_remembered_download(file_path, held_path, HELD_DOWNLOAD_RECORD_TTL)
 
     held = HeldImport.query.filter_by(held_path=held_path).first()
     if held is None:

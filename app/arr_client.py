@@ -222,20 +222,29 @@ def rename_to_quality(arr, call, owner_id, file_id, quality_name, wait):
 DOWNLOAD_RECORD_KEY = "fitzflix:arr:download:{path}"
 DOWNLOAD_RECORD_TTL = 4 * 86400
 
+# A held import waits for a decision of the admin. Its release data
+# lives this long at the held path.
+
+HELD_DOWNLOAD_RECORD_TTL = 30 * 86400
+
 
 def remember_download(arr, path, owner_id, media_file):
     """Keep the release data of a webhook download for the import of path.
 
     media_file is the episodeFile or movieFile block of the payload. A
     download with no scene name and no release group has nothing to
-    keep."""
+    keep. Then the data of an older download of the same path goes.
+    That download did not finish its import, and its data is not the
+    data of this file."""
 
+    key = DOWNLOAD_RECORD_KEY.format(path=path)
     scene_name = media_file.get("sceneName")
     release_group = media_file.get("releaseGroup")
     if not owner_id or not (scene_name or release_group) or not configured(arr):
+        current_app.redis.delete(key)
         return
     cache_json(
-        DOWNLOAD_RECORD_KEY.format(path=path),
+        key,
         {
             "service": arr.name,
             "owner_id": int(owner_id),
@@ -246,18 +255,21 @@ def remember_download(arr, path, owner_id, media_file):
     )
 
 
-def carry_remembered_download(old_path, new_path):
-    """Move the release data of a download to its new path after a rename."""
+def carry_remembered_download(old_path, new_path, ttl=None):
+    """Move the release data of a download to its new path after a rename.
+
+    ttl gives the data a new life in seconds. A held import uses it,
+    because it can wait for a decision longer than an import runs."""
 
     if old_path == new_path:
         return
+    new_key = DOWNLOAD_RECORD_KEY.format(path=new_path)
     try:
-        current_app.redis.rename(
-            DOWNLOAD_RECORD_KEY.format(path=old_path),
-            DOWNLOAD_RECORD_KEY.format(path=new_path),
-        )
+        current_app.redis.rename(DOWNLOAD_RECORD_KEY.format(path=old_path), new_key)
     except redis.exceptions.ResponseError:
-        pass  # No release data was kept for the old path.
+        return  # No release data was kept for the old path.
+    if ttl:
+        current_app.redis.expire(new_key, ttl)
 
 
 def take_remembered_download(path):
@@ -279,23 +291,31 @@ def restore_download_record(
     with no scene name and no release group. This function finds that
     record and PUTs it back whole with the 2 values. arr keeps a scene
     name only when it is a scene title. It keeps a release group always.
-    Return True if a record was written."""
+    Return True if a record was written.
 
-    run_command(arr, call, rescan_command(arr, owner_id), wait, "rescan")
+    arr gives back a command that already runs when it gets the same
+    command again. Such a rescan can be older than the library file, for
+    example in a season batch. Thus, when the first rescan shows no
+    record at the path, the function sends 1 more. That rescan is new,
+    because the first one has ended."""
+
     wanted = os.path.realpath(library_path)
-    for record in call("GET", f"/api/v3/{arr.record}?{arr.owner_id}={int(owner_id)}"):
-        path = record.get("path")
-        if path and os.path.realpath(path) == wanted:
-            if fenced_arr_path(arr.name, path) is None:
-                return False
-            record["sceneName"] = scene_name
-            record["releaseGroup"] = release_group
-            call("PUT", f"/api/v3/{arr.record}/{int(record['id'])}", record)
-            current_app.logger.info(
-                f"'{library_path}' {arr.name} file record {record['id']} has "
-                f"the release data of the download again"
-            )
-            return True
+    for _ in range(2):
+        run_command(arr, call, rescan_command(arr, owner_id), wait, "rescan")
+        records = call("GET", f"/api/v3/{arr.record}?{arr.owner_id}={int(owner_id)}")
+        for record in records:
+            path = record.get("path")
+            if path and os.path.realpath(path) == wanted:
+                if fenced_arr_path(arr.name, path) is None:
+                    return False
+                record["sceneName"] = scene_name
+                record["releaseGroup"] = release_group
+                call("PUT", f"/api/v3/{arr.record}/{int(record['id'])}", record)
+                current_app.logger.info(
+                    f"'{library_path}' {arr.name} file record {record['id']} has "
+                    f"the release data of the download again"
+                )
+                return True
     current_app.logger.warning(
         f"'{library_path}' {arr.name} has no file record at this path after "
         f"the rescan. Its release data is not written"

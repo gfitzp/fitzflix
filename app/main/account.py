@@ -608,13 +608,14 @@ def _save_email(form):
     """Update the email address of the user after a proof of identity (#675).
 
     The reset email goes to this address. Thus, a new address is a way
-    into the account."""
+    into the account, and each other session of the account ends (#673)."""
 
     if not identity_confirmed(form):
         return
-    current_user.email = form.email.data
+    user = current_user._get_current_object()
+    user.email = form.email.data
     try:
-        db.session.commit()
+        _end_other_sessions(user)
     except IntegrityError:
         # A concurrent post took the address after the form check. The
         # unique index refuses this one (#577), as on the register page.

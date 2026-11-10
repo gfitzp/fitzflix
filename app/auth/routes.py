@@ -245,6 +245,13 @@ def reset_password(token):
 # the token by hand, as the logout does.
 
 
+def _json_body():
+    """Return the JSON object of the post. A body that is no object counts as empty."""
+
+    body = request.get_json(silent=True)
+    return body if isinstance(body, dict) else {}
+
+
 def _csrf_header_valid():
     """Return True if the JSON post carries the csrf token of its page."""
 
@@ -282,7 +289,7 @@ def passkey_register_options():
 
     if not _csrf_header_valid():
         return _json_error(STALE_PAGE, 400)
-    body = request.get_json(silent=True) or {}
+    body = _json_body()
     try:
         check_identity(
             body.get("password"),
@@ -301,7 +308,7 @@ def passkey_register():
 
     if not _csrf_header_valid():
         return _json_error(STALE_PAGE, 400)
-    body = request.get_json(silent=True) or {}
+    body = _json_body()
     try:
         passkey = finish_registration(
             current_user, body.get("credential") or {}, body.get("name")
@@ -333,7 +340,7 @@ def passkey_login():
 
     if not _csrf_header_valid():
         return _json_error(STALE_PAGE, 400)
-    body = request.get_json(silent=True) or {}
+    body = _json_body()
     try:
         passkey = finish_authentication(body.get("credential") or {}, kind="login")
     except PasskeyError as error:
@@ -358,7 +365,7 @@ def passkey_confirm_options():
 
     if not _csrf_header_valid():
         return _json_error(STALE_PAGE, 400)
-    body = request.get_json(silent=True) or {}
+    body = _json_body()
     try:
         return _json_options(authentication_options(current_user, body.get("path")))
     except PasskeyError as error:

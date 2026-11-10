@@ -2564,7 +2564,9 @@ def untouched_key_still_claimed(key):
     the target of a pending move (#369).
 
     The key columns fold case on MariaDB. A case-only rename keeps its
-    key (#612). Thus, no claim differs from key only by case."""
+    key (#612). Thus, a claim can differ from key only by letter case.
+    upload_untouched reads the object of the exact key for that case
+    (#678)."""
 
     return _key_claimed(key, live_only=True)
 
