@@ -29,12 +29,16 @@ RP_ID = "localhost"
 
 
 class SoftAuthenticator:
-    """A software authenticator with 1 ES256 credential and a sign counter."""
+    """A software authenticator with 1 ES256 credential and a sign counter.
 
-    def __init__(self, credential_id=b"soft-credential-0001"):
+    A synced passkey reports a count of 0 each time. Then the library
+    does not check the count, and only the challenge stops a replay."""
+
+    def __init__(self, credential_id=b"soft-credential-0001", synced=False):
         self.key = ec.generate_private_key(ec.SECP256R1())
         self.credential_id = credential_id
         self.counter = 0
+        self.step = 0 if synced else 1
 
     def _cose_key(self):
         numbers = self.key.public_key().public_numbers()
@@ -88,9 +92,9 @@ class SoftAuthenticator:
         }
 
     def sign(self, options, tamper=False, origin=ORIGIN):
-        """Answer a sign-in. The counter grows by 1 each time."""
+        """Answer a sign-in. The counter grows by 1 each time, or stays 0 if synced."""
 
-        self.counter += 1
+        self.counter += self.step
         client_data = json.dumps(
             {
                 "type": "webauthn.get",
@@ -166,6 +170,16 @@ def passkey_sign_in(app, authenticator, **kwargs):
         headers={"X-CSRFToken": token},
     )
     return client, response
+
+
+def confirm_options(client, token, path):
+    """Ask for the options of a confirmation on the form at path (#676)."""
+
+    return client.post(
+        "/auth/passkey/confirm/options",
+        json={"path": path},
+        headers={"X-CSRFToken": token},
+    ).get_json()
 
 
 def member_with_passkey(app):
@@ -452,9 +466,7 @@ def test_the_sync_form_takes_a_passkey_in_place_of_the_password(app, monkeypatch
     assert 'data-options-url="/auth/passkey/confirm/options"' in page
     assert "Confirm with passkey" not in page
     token = csrf_token_from(page)
-    options = client.post(
-        "/auth/passkey/confirm/options", headers={"X-CSRFToken": token}
-    ).get_json()
+    options = confirm_options(client, token, "/maintenance")
     assert options["allowCredentials"][0]["id"] == bytes_to_base64url(
         b"admin-credential"
     )
@@ -506,9 +518,7 @@ def test_each_archived_restore_form_takes_a_passkey(app, monkeypatch):
         assert 'id="password"' not in page
         assert "required" not in page.split('name="password"')[1].split(">")[0]
         token = csrf_token_from(page)
-        options = client.post(
-            "/auth/passkey/confirm/options", headers={"X-CSRFToken": token}
-        ).get_json()
+        options = confirm_options(client, token, "/maintenance/held-imports")
         response = client.post(
             "/maintenance/held-imports",
             data={
@@ -538,9 +548,7 @@ def test_a_confirmation_with_the_passkey_of_another_user_fails(app, monkeypatch)
     client = _signed_in_client(app, ADMIN_EMAIL)
     page = client.get("/maintenance").get_data(as_text=True)
     token = csrf_token_from(page)
-    options = client.post(
-        "/auth/passkey/confirm/options", headers={"X-CSRFToken": token}
-    ).get_json()
+    options = confirm_options(client, token, "/maintenance")
     assert options["allowCredentials"] == []
     response = client.post(
         "/maintenance",
@@ -563,3 +571,184 @@ def test_a_blank_post_to_a_restore_form_is_a_wrong_password(app, admin_client):
         follow_redirects=True,
     )
     assert "Incorrect password provided!" in response.get_data(as_text=True)
+
+
+# The challenge waits in Redis and serves 1 time (#676).
+
+
+def _sync_post(client, token, assertion):
+    """Post the S3 sync form of the Maintenance page with a passkey assertion."""
+
+    return client.post(
+        "/maintenance",
+        data={
+            "csrf_token": token,
+            "passkey_assertion": json.dumps(assertion),
+            "sync_submit": "Sync",
+        },
+        follow_redirects=True,
+    )
+
+
+@pytest.fixture
+def admin_passkey(app, monkeypatch):
+    """Return a signed-in admin client, its authenticator, and the queued sync names."""
+
+    from app.main import admin
+
+    calls = []
+    monkeypatch.setattr(admin, "enqueue_task", lambda name, *a, **k: calls.append(name))
+    monkeypatch.setattr(admin, "start_bulk_run", lambda *a, **k: True)
+    client = _signed_in_client(app, ADMIN_EMAIL)
+    authenticator = SoftAuthenticator(b"admin-replay-credential", synced=True)
+    assert register_passkey(client, authenticator).status_code == 200
+    return client, authenticator, calls
+
+
+def test_the_session_cookie_holds_no_challenge(app):
+    from app.auth.passkeys import CHALLENGE_KEY
+
+    client = app.test_client()
+    token = page_csrf_token(client, "/auth/login")
+    options = client.post(
+        "/auth/passkey/login/options", headers={"X-CSRFToken": token}
+    ).get_json()
+    with client.session_transaction() as session:
+        ceremony_id = session["passkey_challenge"]
+    assert options["challenge"] not in str(ceremony_id)
+    key = CHALLENGE_KEY.format(ceremony_id=ceremony_id)
+    assert options["challenge"] in app.redis.get(key).decode()
+    assert 0 < app.redis.ttl(key) <= 300
+
+
+def test_a_replayed_cookie_does_not_repeat_a_passkey_sign_in(app):
+    client = _signed_in_client(app, MEMBER_EMAIL)
+    authenticator = SoftAuthenticator(synced=True)
+    assert register_passkey(client, authenticator).status_code == 200
+    client = app.test_client()
+    token = page_csrf_token(client, "/auth/login")
+    options = client.post(
+        "/auth/passkey/login/options", headers={"X-CSRFToken": token}
+    ).get_json()
+    cookie = client.get_cookie("session").value
+    answer = authenticator.sign(options)
+    first = client.post(
+        "/auth/passkey/login",
+        json={"credential": answer},
+        headers={"X-CSRFToken": token},
+    )
+    assert first.status_code == 200
+
+    # A second browser has the cookie from before the answer and the body.
+    replay = app.test_client()
+    replay.set_cookie("session", cookie, domain="localhost")
+    second = replay.post(
+        "/auth/passkey/login",
+        json={"credential": answer},
+        headers={"X-CSRFToken": token},
+    )
+    assert second.status_code == 401
+    assert "expired" in second.get_json()["error"]
+    assert replay.get("/profile").status_code == 302
+
+
+def test_a_replayed_cookie_does_not_repeat_a_confirmation(app, admin_passkey):
+    client, authenticator, calls = admin_passkey
+    token = csrf_token_from(client.get("/maintenance").get_data(as_text=True))
+    options = confirm_options(client, token, "/maintenance")
+    cookie = client.get_cookie("session").value
+    answer = authenticator.sign(options)
+    _sync_post(client, token, answer)
+    assert calls == ["app.videos.sync_aws_s3_storage_task"]
+
+    client.set_cookie("session", cookie, domain="localhost")
+    response = _sync_post(client, token, answer)
+    assert "The passkey request expired." in response.get_data(as_text=True)
+    assert calls == ["app.videos.sync_aws_s3_storage_task"]
+
+
+def test_a_confirmation_for_one_form_fails_on_another(app, admin_passkey, monkeypatch):
+    from app.main import admin
+
+    restores = []
+    monkeypatch.setattr(admin, "request_restore", lambda key, **k: restores.append(key))
+    client, authenticator, calls = admin_passkey
+    token = csrf_token_from(client.get("/maintenance").get_data(as_text=True))
+    options = confirm_options(client, token, "/maintenance/held-imports")
+    response = _sync_post(client, token, authenticator.sign(options))
+    assert "The passkey request expired." in response.get_data(as_text=True)
+    assert calls == []
+
+
+def test_a_confirmation_needs_a_local_path(app, admin_passkey):
+    client, _, _ = admin_passkey
+    token = csrf_token_from(client.get("/maintenance").get_data(as_text=True))
+    for body in ({}, {"path": "https://evil.test/maintenance"}, {"path": ["/x"]}):
+        response = client.post(
+            "/auth/passkey/confirm/options",
+            json=body,
+            headers={"X-CSRFToken": token},
+        )
+        assert response.status_code == 400
+        assert "not for a form of this site" in response.get_json()["error"]
+
+
+def test_an_expired_challenge_is_refused(app):
+    import time
+
+    _, authenticator = member_with_passkey(app)
+    client = app.test_client()
+    token = page_csrf_token(client, "/auth/login")
+    options = client.post(
+        "/auth/passkey/login/options", headers={"X-CSRFToken": token}
+    ).get_json()
+    for key in app.redis.scan_iter("fitzflix:passkey:challenge:*"):
+        app.redis.pexpire(key, 1)
+    time.sleep(0.01)
+    response = client.post(
+        "/auth/passkey/login",
+        json={"credential": authenticator.sign(options)},
+        headers={"X-CSRFToken": token},
+    )
+    assert response.status_code == 401
+    assert "expired" in response.get_json()["error"]
+
+
+def test_a_login_challenge_does_not_serve_a_confirmation(app, admin_passkey):
+    client, authenticator, calls = admin_passkey
+    token = csrf_token_from(client.get("/maintenance").get_data(as_text=True))
+    options = client.post(
+        "/auth/passkey/login/options", headers={"X-CSRFToken": token}
+    ).get_json()
+    response = _sync_post(client, token, authenticator.sign(options))
+    assert "The passkey request expired." in response.get_data(as_text=True)
+    assert calls == []
+
+
+def test_a_redis_fault_refuses_the_passkey_request(app, monkeypatch):
+    import redis
+
+    _, authenticator = member_with_passkey(app)
+    client = app.test_client()
+    token = page_csrf_token(client, "/auth/login")
+    options = client.post(
+        "/auth/passkey/login/options", headers={"X-CSRFToken": token}
+    ).get_json()
+
+    def down(*args, **kwargs):
+        raise redis.exceptions.ConnectionError("Redis is down")
+
+    monkeypatch.setattr(app.redis, "set", down)
+    monkeypatch.setattr(app.redis, "getdel", down)
+    response = client.post(
+        "/auth/passkey/login/options", headers={"X-CSRFToken": token}
+    )
+    assert response.status_code == 400
+    assert response.get_json()["error"] == "The passkey request failed. Try again."
+    response = client.post(
+        "/auth/passkey/login",
+        json={"credential": authenticator.sign(options)},
+        headers={"X-CSRFToken": token},
+    )
+    assert response.status_code == 401
+    assert response.get_json()["error"] == "The passkey request failed. Try again."

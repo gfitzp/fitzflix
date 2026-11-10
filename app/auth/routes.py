@@ -276,7 +276,10 @@ def passkey_register_options():
 
     if not _csrf_header_valid():
         return _json_error(STALE_PAGE, 400)
-    return _json_options(registration_options(current_user))
+    try:
+        return _json_options(registration_options(current_user))
+    except PasskeyError as error:
+        return _json_error(str(error), 400)
 
 
 @bp.route("/passkey/register", methods=["POST"])
@@ -303,7 +306,10 @@ def passkey_login_options():
 
     if not _csrf_header_valid():
         return _json_error(STALE_PAGE, 400)
-    return _json_options(authentication_options())
+    try:
+        return _json_options(authentication_options())
+    except PasskeyError as error:
+        return _json_error(str(error), 400)
 
 
 @bp.route("/passkey/login", methods=["POST"])
@@ -333,8 +339,15 @@ def passkey_login():
 @bp.route("/passkey/confirm/options", methods=["POST"])
 @login_required
 def passkey_confirm_options():
-    """Give the browser the options for a confirmation by the signed-in user."""
+    """Give the browser the options for a confirmation by the signed-in user.
+
+    The body names the path that the form posts to. The answer is good
+    only on that path (#676)."""
 
     if not _csrf_header_valid():
         return _json_error(STALE_PAGE, 400)
-    return _json_options(authentication_options(current_user))
+    body = request.get_json(silent=True) or {}
+    try:
+        return _json_options(authentication_options(current_user, body.get("path")))
+    except PasskeyError as error:
+        return _json_error(str(error), 400)

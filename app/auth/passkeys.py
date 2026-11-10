@@ -4,18 +4,22 @@ A passkey is a WebAuthn credential. The authenticator of the browser
 holds the private key. Fitzflix holds the public key in the passkey
 table. Each ceremony has 2 steps. The first step gives the browser its
 options with a fresh challenge. The second step checks the answer of
-the authenticator against that challenge. The challenge waits in the
-signed session cookie. It serves 1 time, for 1 kind of ceremony, and
-for 5 minutes at most.
+the authenticator against that challenge. The challenge waits in
+Redis, and the session holds only its random id. It serves 1 time, for
+1 kind of ceremony, and for 5 minutes at most. A second answer to the
+same challenge finds nothing, also with an older copy of the session
+cookie (#676).
 
 There are 3 kinds of ceremony. A "register" makes a new passkey for
 the signed-in user. A "login" takes any passkey of this site, with no
 email address. A "confirm" takes a passkey of the signed-in user in
-place of the password on the restore forms.
+place of the password on the restore forms. A confirmation is good
+only on the path of the form that asked for it.
 """
 
+import json
+import secrets
 from datetime import datetime
-from time import time
 from urllib.parse import urlsplit
 
 from flask import current_app, flash, request, session
@@ -40,12 +44,14 @@ from webauthn.helpers.structs import (
     UserVerificationRequirement,
 )
 
-from app import db
+from app import db, local_path
 from app.models import Passkey
+from app.redis_guard import REDIS_DOWN_ERRORS, warn_redis_down
 
 RP_NAME = "Fitzflix"
 CHALLENGE_SECONDS = 300
 PENDING_CEREMONY = "passkey_challenge"
+CHALLENGE_KEY = "fitzflix:passkey:challenge:{ceremony_id}"
 
 # The verify functions raise a family of exceptions. A malformed post
 # also raises a plain ValueError or a KeyError from the parser.
@@ -55,6 +61,10 @@ VERIFY_ERRORS = (WebAuthnException, ValueError, KeyError, TypeError)
 
 class PasskeyError(Exception):
     """A passkey ceremony failed. The message is safe to show to the user."""
+
+
+EXPIRED = "The passkey request expired. Try again."
+REDIS_FAULT = "The passkey request failed. Try again."
 
 
 def relying_party_host():
@@ -83,26 +93,52 @@ def expected_origin():
     return f"{scheme}://{relying_party_host()}"
 
 
-def _store_challenge(kind, challenge, user_id=None):
-    """Put the challenge of a new ceremony in the session. It replaces an older one."""
+def _store_challenge(kind, challenge, user_id=None, path=None):
+    """Put the challenge of a new ceremony in Redis. It replaces an older one.
 
-    session[PENDING_CEREMONY] = {
+    The session holds only the random id of the Redis key. Thus, a new
+    id replaces the older one, and the older key expires unused. Each
+    key expires after CHALLENGE_SECONDS. path is the form path that a
+    confirmation is good for. A Redis fault raises PasskeyError."""
+
+    ceremony_id = secrets.token_hex(16)
+    record = {
         "kind": kind,
         "challenge": bytes_to_base64url(challenge),
         "user_id": user_id,
-        "expires": time() + CHALLENGE_SECONDS,
+        "path": path,
     }
+    try:
+        current_app.redis.set(
+            CHALLENGE_KEY.format(ceremony_id=ceremony_id),
+            json.dumps(record),
+            ex=CHALLENGE_SECONDS,
+        )
+    except REDIS_DOWN_ERRORS as error:
+        warn_redis_down("The passkey ceremony", error)
+        raise PasskeyError(REDIS_FAULT)
+    session[PENDING_CEREMONY] = ceremony_id
 
 
-def _take_challenge(kind):
+def _take_challenge(kind, path=None):
     """Return the challenge and the user id of the pending ceremony, and forget it.
 
-    The ceremony must be of the given kind and not expired. A second
-    answer to the same challenge finds nothing."""
+    GETDEL reads and deletes the Redis key in 1 step. Thus, a second
+    answer to the same challenge finds nothing. The ceremony must be of
+    the given kind. A confirmation must also come on the path that
+    asked for it."""
 
-    pending = session.pop(PENDING_CEREMONY, None)
-    if not pending or pending.get("kind") != kind or pending.get("expires", 0) < time():
-        raise PasskeyError("The passkey request expired. Try again.")
+    ceremony_id = session.pop(PENDING_CEREMONY, None)
+    if not isinstance(ceremony_id, str):
+        raise PasskeyError(EXPIRED)
+    try:
+        raw = current_app.redis.getdel(CHALLENGE_KEY.format(ceremony_id=ceremony_id))
+    except REDIS_DOWN_ERRORS as error:
+        warn_redis_down("The passkey ceremony", error)
+        raise PasskeyError(REDIS_FAULT)
+    pending = json.loads(raw) if raw else None
+    if not pending or pending.get("kind") != kind or pending.get("path") != path:
+        raise PasskeyError(EXPIRED)
     return base64url_to_bytes(pending["challenge"]), pending.get("user_id")
 
 
@@ -177,32 +213,37 @@ def finish_registration(user, credential, name=None):
     return passkey
 
 
-def authentication_options(user=None):
+def authentication_options(user=None, path=None):
     """Return the JSON options for a sign-in, or for a confirmation by the user.
 
     With no user, this is a sign-in. The browser offers each passkey of
     this site. With a user, this is a confirmation. Only the passkeys
-    of that user are allowed."""
+    of that user are allowed, and the answer is good only on path. A
+    path that is not a local path raises PasskeyError."""
 
+    if user is not None and not (isinstance(path, str) and local_path(path)):
+        raise PasskeyError("The passkey request was not for a form of this site.")
     options = generate_authentication_options(
         rp_id=relying_party_id(),
         allow_credentials=_descriptors(user) if user else [],
         user_verification=UserVerificationRequirement.PREFERRED,
     )
-    _store_challenge(
-        "confirm" if user else "login", options.challenge, user.id if user else None
-    )
+    if user is None:
+        _store_challenge("login", options.challenge)
+    else:
+        _store_challenge("confirm", options.challenge, user.id, path)
     return options_to_json(options)
 
 
-def finish_authentication(credential, kind="login", user=None):
+def finish_authentication(credential, kind="login", user=None, path=None):
     """Check a sign-in or a confirmation answer. Return the passkey that signed it.
 
     The passkey must exist, and for a confirmation it must belong to
-    the user. The sign count must grow, unless the authenticator
-    reports none. A failure raises PasskeyError."""
+    the user. A confirmation must come on the path that asked for it.
+    The sign count must grow, unless the authenticator reports none. A
+    failure raises PasskeyError."""
 
-    challenge, _ = _take_challenge(kind)
+    challenge, _ = _take_challenge(kind, path)
     try:
         parsed = parse_authentication_credential_json(credential)
     except VERIFY_ERRORS:
@@ -241,7 +282,9 @@ def identity_confirmed(form):
     assertion = request.form.get("passkey_assertion")
     if assertion:
         try:
-            finish_authentication(assertion, kind="confirm", user=current_user)
+            finish_authentication(
+                assertion, kind="confirm", user=current_user, path=request.path
+            )
             return True
         except PasskeyError as error:
             flash(str(error), "danger")

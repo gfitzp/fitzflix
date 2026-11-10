@@ -164,6 +164,13 @@
 
 	var sentButtons = [];
 
+	// The path that the form posts to. The server binds the passkey
+	// answer to this path (#676). An empty action is the page itself.
+
+	function formPath(form) {
+		return new URL(form.getAttribute("action") || "", window.location.href).pathname;
+	}
+
 	function showPassword(form, visible) {
 		var password = form.querySelector("input[name=password]");
 		if (!password) return false;
@@ -182,7 +189,7 @@
 		event.preventDefault();
 		var submit = event.submitter || form.querySelector("input[type=submit], button[type=submit]");
 		run(submit, function() {
-			return post(field.getAttribute("data-options-url")).then(function(options) {
+			return post(field.getAttribute("data-options-url"), {path: formPath(form)}).then(function(options) {
 				return navigator.credentials.get({publicKey: requestOptions(options)});
 			}).then(function(credential) {
 				field.value = JSON.stringify(credentialJSON(credential));
