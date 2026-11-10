@@ -1519,3 +1519,125 @@ def test_a_fault_in_the_lag_count_does_not_fail_the_sync_reports(
         assert aws_storage._mail_reports([], []) is None
     assert sent == []
     assert "could not count the archive keys that lag" in caplog.text
+
+
+def _reimported_conversion(app, title, lagging_original):
+    """Make a renamed conversion row and import it again on its record (#683).
+
+    The transcoded/ copy has the old name. If lagging_original, the key
+    of the original has the old name too, as a restore keeps it (#678).
+    Return the file id, the old original key and the old transcoded key."""
+
+    from app import db, importing
+    from app.models import File
+
+    old = f"Old {title} (2001)"
+    new = f"{title} (2001)"
+    file = make_movie_file(
+        make_movie(title, 2001), "Bluray-1080p", converted_from_quality="Bluray-2160p"
+    )
+    file.untouched_basename = f"{new} - [Bluray-2160p].mkv"
+    original = (
+        f"untouched/{old} - [Bluray-2160p].mkv"
+        if lagging_original
+        else f"untouched/{new} - [Bluray-2160p].mkv"
+    )
+    file.aws_key = original
+    file.aws_date_uploaded = datetime(2026, 1, 1)
+    file.aws_transcoded_key = f"transcoded/{old} - [Bluray-1080p].mkv"
+    file.aws_transcoded_date_uploaded = datetime(2026, 1, 2)
+    db.session.commit()
+    file_id, transcoded = file.id, file.aws_transcoded_key
+    details = {
+        "file_path": file.file_path,
+        "basename": file.basename,
+        "media_library": "Movies",
+        "title": title,
+        "year": 2001,
+        "quality_title": "Bluray-1080p",
+        "converted_from_quality": "Bluray-2160p",
+        "untouched_basename": file.untouched_basename,
+        "aws_key": original,
+        "aws_date_uploaded": datetime(2026, 1, 1),
+        "aws_filesize_bytes": SIZE,
+    }
+    inspection = {
+        "video": {},
+        "audio_tracks": [],
+        "subtitle_tracks": [],
+        "filesize_bytes": SIZE,
+    }
+    importing._build_records(details, inspection, file.basename)
+    db.session.commit()
+    db.session.expire_all()
+    assert db.session.get(File, file_id).aws_key == original
+    return file_id, original, transcoded
+
+
+def test_a_reimported_conversion_moves_only_its_transcoded_copy(app, s3):
+    """The original key lags its name. Only the transcoded/ copy moves (#683).
+
+    Only a converge run moves the key of the original. The census still
+    lists that key."""
+
+    from app import aws_storage, db
+    from app.models import File
+
+    with app.app_context():
+        file_id, original, transcoded = _reimported_conversion(
+            app, "Lagging Convert", lagging_original=True
+        )
+        retagged = "transcoded/Lagging Convert (2001) - [Bluray-1080p].mkv"
+        row = db.session.get(File, file_id)
+        assert row.aws_key_target == retagged
+
+        fake = s3(
+            {
+                original: frozen(),
+                transcoded: readable(VersionId="transcoded-version"),
+            }
+        )
+        assert aws_storage.move_archive_object(file_id) is True
+        db.session.expire_all()
+        row = db.session.get(File, file_id)
+        assert row.aws_transcoded_key == retagged
+        assert row.aws_key == original
+        assert row.aws_key_target is None
+        assert fake.copies == [(transcoded, retagged)]
+        assert fake.restores == []
+
+        # The census of converge-keys still lists the lagging original.
+        drifts = [
+            (file.id, source, target)
+            for file, source, target, _ in aws_storage.archive_drifts()
+            if file.id == file_id
+        ]
+        assert drifts == [
+            (
+                file_id,
+                original,
+                "untouched/Lagging Convert (2001) - [Bluray-2160p].mkv",
+            )
+        ]
+
+
+def test_a_reimported_conversion_with_a_current_original_moves_its_copy(app, s3):
+    """The original has the key of its name. The transcoded/ copy moves as before."""
+
+    from app import aws_storage, db
+    from app.models import File
+
+    with app.app_context():
+        file_id, original, transcoded = _reimported_conversion(
+            app, "Current Convert", lagging_original=False
+        )
+        retagged = "transcoded/Current Convert (2001) - [Bluray-1080p].mkv"
+        assert db.session.get(File, file_id).aws_key_target == retagged
+        assert [job.args for job in move_jobs(app)][-1] == (file_id,)
+        fake = s3({original: readable(), transcoded: readable()})
+        assert aws_storage.move_archive_object(file_id) is True
+        db.session.expire_all()
+        row = db.session.get(File, file_id)
+        assert row.aws_transcoded_key == retagged
+        assert row.aws_key == original
+        assert fake.copies == [(transcoded, retagged)]

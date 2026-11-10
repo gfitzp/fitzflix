@@ -2030,7 +2030,7 @@ def same_archive_key(key, rule_key):
     return key.casefold() == rule_key.casefold()
 
 
-def archive_drift(file, claims=None):
+def archive_drift(file, claims=None, column=None):
     """Return (key, rule key) of the first archive of a file that has the wrong key.
 
     The archive in aws_key comes first. Then the transcoded/ copy of a
@@ -2038,17 +2038,28 @@ def archive_drift(file, claims=None):
     untouched name. A deleted archive, or one with no upload, does not
     count. A key that differs from its rule key only by letter case is
     correct (same_archive_key). flask aws converge-keys uses this rule
-    too."""
+    too.
+
+    column limits the check to 1 key column, "aws_key" or
+    "aws_transcoded_key". A move that is not a converge run moves only
+    the archive that it asks for. A lagging key in the other column
+    stays for the converge run (#683)."""
 
     config = current_app.config
-    if file.aws_key and file.aws_date_uploaded and file.aws_date_deleted is None:
+    if (
+        column in (None, "aws_key")
+        and file.aws_key
+        and file.aws_date_uploaded
+        and file.aws_date_deleted is None
+    ):
         prefix = _archive_prefix_of(file.aws_key)
         if prefix:
             wanted = archive_key_for(file, prefix, claims)
             if not same_archive_key(file.aws_key, wanted):
                 return file.aws_key, wanted
     if (
-        file.converted_from_quality
+        column in (None, "aws_transcoded_key")
+        and file.converted_from_quality
         and file.aws_transcoded_key
         and file.aws_transcoded_date_uploaded
         and _in_prefix(file.aws_transcoded_key, config["AWS_TRANSCODED_PREFIX"])
@@ -2108,7 +2119,7 @@ def _set_archive_target(file, target):
         file.archive_move_requested_at = datetime.now(timezone.utc)
 
 
-def request_archive_move(file, claims=None):
+def request_archive_move(file, claims=None, column=None):
     """Request the move of the archive of a file to the key of its untouched name (#369).
 
     Set aws_key_target, and queue move_archive_object after the next
@@ -2116,9 +2127,11 @@ def request_archive_move(file, claims=None):
     replaced. The job reads the current target when it runs. A file
     whose archives have their keys loses its pending target. A name
     that differs from the key only by letter case keeps the key, and a
-    pending target goes (#612). Return True if a move is pending."""
+    pending target goes (#612). column limits the request to the
+    archive of that key column (archive_drift). Return True if a move
+    is pending."""
 
-    drift = archive_drift(file, claims)
+    drift = archive_drift(file, claims, column)
     if drift is None:
         if file.aws_key_target:
             clear_archive_target(file)
@@ -2380,7 +2393,7 @@ def archive_library_file(file, path, delete_replaced=True):
     # again, not cleared. A target that the upload completed goes.
 
     if file.aws_key_target and _target_column(file) == column:
-        request_archive_move(file)
+        request_archive_move(file, column=column)
     db.session.commit()
     current_app.logger.info(f"'{file.basename}' Archived the library file as '{key}'")
 
@@ -2899,13 +2912,20 @@ def _move_archive(file, sqs_receipt_handle, message_key):
 
     config = current_app.config
     db.session.refresh(file)
-    drift = archive_drift(file)
+
+    # The job moves only the archive of the column of its target. A
+    # lagging key in the other column waits for a converge run (#683).
+    # A target that went during the wait leaves nothing to move.
+
+    column = _target_column(file) if file.aws_key_target else None
+    drift = archive_drift(file, column=column) if column else None
     if drift is None:
         if file.aws_key_target:
             clear_archive_target(file)
             db.session.commit()
         current_app.logger.info(
-            f"'{file.basename}' Each archive has the key of its name already"
+            f"'{file.basename}' The archive of the move has the key of its "
+            f"name already, or no move is pending"
         )
         delete_download_message(
             sqs_receipt_handle, message_key, note="archive move with no work"
@@ -2917,7 +2937,6 @@ def _move_archive(file, sqs_receipt_handle, message_key):
             f"'{file.basename}' The archive '{source}' now moves to '{target}'"
         )
         _set_archive_target(file, target)
-    column = _target_column(file)
 
     # This commit records the newest target. It also ends the snapshot of
     # this session before the slow copy (MariaDB error 1020).
@@ -3051,9 +3070,11 @@ def _move_archive(file, sqs_receipt_handle, message_key):
     _download_after_move(file, source, target)
     delete_download_message(sqs_receipt_handle, message_key, note="archive move")
 
-    # A conversion has a second archive. Its move comes next.
+    # A conversion has a second archive. After the move of the original,
+    # the move of the transcoded/ copy comes next. The move of a
+    # transcoded/ copy never requests the move of the original (#683).
 
-    if request_archive_move(file):
+    if column == "aws_key" and request_archive_move(file, column="aws_transcoded_key"):
         db.session.commit()
     return True
 
