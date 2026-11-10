@@ -3516,8 +3516,9 @@ def _restore_arr_record(file_path, output_file):
     The webhook kept the release data of an arr download for its path.
     When the library file has a different path, arr drops its record at
     the next scan, and it downloads the same release again. Thus, a task
-    writes the release data onto the new record. The kept data goes in
-    each case."""
+    writes the release data onto the new record. The data leaves Redis
+    in each case. It goes on in the arguments of the task, and each try
+    that the task books again carries it (#680)."""
 
     from app.arr_client import ARRS, take_remembered_download
 

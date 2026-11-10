@@ -30,6 +30,7 @@ import time
 import traceback
 
 from dataclasses import dataclass
+from datetime import timedelta
 
 import redis
 import requests
@@ -281,8 +282,26 @@ def take_remembered_download(path):
     return json.loads(raw) if raw else None
 
 
+# A run of the record update makes 1 rescan (#680). The rescan can fail
+# or not end in time, or the record is not at the path yet. Then the run
+# books the task again after RESTORE_RETRY_DELAY. The last try is
+# RESTORE_MAX_TRIES, about 1 hour after the import. A season batch makes
+# the rescans of Sonarr fail while it imports. It is over in that time.
+
+RESTORE_RETRY_DELAY = timedelta(minutes=10)
+RESTORE_MAX_TRIES = 6
+
+
 def restore_download_record(
-    arr, call, owner_id, library_path, scene_name, release_group, wait
+    arr,
+    call,
+    owner_id,
+    library_path,
+    scene_name,
+    release_group,
+    wait,
+    tries=1,
+    prepare=None,
 ):
     """Write the release data of a download onto the arr record of its library file.
 
@@ -293,34 +312,118 @@ def restore_download_record(
     name only when it is a scene title. It keeps a release group always.
     Return True if a record was written.
 
-    arr gives back a command that already runs when it gets the same
-    command again. Such a rescan can be older than the library file, for
-    example in a season batch. Thus, when the first rescan shows no
-    record at the path, the function sends 1 more. That rescan is new,
-    because the first one has ended."""
+    A run makes 1 rescan (#680). The rescan can fail or not end in time.
+    arr can also give back an older rescan that runs already, or be
+    down. Then no record is written yet, and the task books itself again
+    with the same data and tries 1 higher. The last try writes 1
+    warning, and the release data is lost. A record outside the root
+    folders, or a library file that is gone, stops the tries. prepare
+    runs first in each try. tries is the number of this try."""
 
-    wanted = os.path.realpath(library_path)
-    for _ in range(2):
-        run_command(arr, call, rescan_command(arr, owner_id), wait, "rescan")
-        records = call("GET", f"/api/v3/{arr.record}?{arr.owner_id}={int(owner_id)}")
-        for record in records:
-            path = record.get("path")
-            if path and os.path.realpath(path) == wanted:
-                if fenced_arr_path(arr.name, path) is None:
-                    return False
-                record["sceneName"] = scene_name
-                record["releaseGroup"] = release_group
-                call("PUT", f"/api/v3/{arr.record}/{int(record['id'])}", record)
-                current_app.logger.info(
-                    f"'{library_path}' {arr.name} file record {record['id']} has "
-                    f"the release data of the download again"
-                )
-                return True
-    current_app.logger.warning(
-        f"'{library_path}' {arr.name} has no file record at this path after "
-        f"the rescan. Its release data is not written"
+    if not os.path.exists(library_path):
+        current_app.logger.info(
+            f"'{library_path}' is not in the library. Its {arr.name} record "
+            f"gets no release data"
+        )
+        return False
+    try:
+        if prepare is not None:
+            prepare()
+        written = _write_download_record(
+            arr, call, owner_id, library_path, scene_name, release_group, wait
+        )
+    except (OSError, arr.error) as error:
+        written = f"The {arr.name} call failed: {error}"
+    if isinstance(written, bool):
+        return written
+    if tries >= RESTORE_MAX_TRIES:
+        current_app.logger.warning(
+            f"'{library_path}' {written}. After {tries} tries, the release data "
+            f"is lost, and the {arr.name} record keeps no release group"
+        )
+        return False
+    _book_restore_try(
+        arr, owner_id, library_path, scene_name, release_group, tries + 1, written
     )
     return False
+
+
+def _write_download_record(
+    arr, call, owner_id, library_path, scene_name, release_group, wait
+):
+    """Make 1 rescan, and write the release data onto the record at library_path.
+
+    Return True if a record was written. Return False if the record is
+    outside the root folders. Return the reason as text when no record
+    is at the path yet. A rescan that fails raises the error of arr."""
+
+    run_command(arr, call, rescan_command(arr, owner_id), wait, "rescan")
+    wanted = os.path.realpath(library_path)
+    records = call("GET", f"/api/v3/{arr.record}?{arr.owner_id}={int(owner_id)}")
+    for record in records:
+        path = record.get("path")
+        if path and os.path.realpath(path) == wanted:
+            if fenced_arr_path(arr.name, path) is None:
+                return False
+            record["sceneName"] = scene_name
+            record["releaseGroup"] = release_group
+            call("PUT", f"/api/v3/{arr.record}/{int(record['id'])}", record)
+            current_app.logger.info(
+                f"'{library_path}' {arr.name} file record {record['id']} has "
+                f"the release data of the download again"
+            )
+            return True
+    return f"{arr.name} has no file record at this path after the rescan"
+
+
+def _book_restore_try(
+    arr, owner_id, library_path, scene_name, release_group, tries, reason
+):
+    """Book the record update of library_path again after RESTORE_RETRY_DELAY.
+
+    The job id holds the path and the try. Thus, it differs from the id
+    of the running job. A booking of the same path that waits goes
+    first. Thus, 1 path has at most 1 booking. A finished job under the
+    new id is deleted, and the booking does not take its expiry (#371)."""
+
+    from rq.registry import ScheduledJobRegistry
+
+    from app.tasks import (
+        TASKS,
+        delete_job,
+        free_job_id,
+        requeue,
+        requeue_job_id,
+        resolve_queue,
+    )
+
+    name = arr.restore_task
+    queue = resolve_queue(TASKS[name].queue)
+    for job_id in ScheduledJobRegistry(queue=queue).get_job_ids():
+        job = queue.fetch_job(job_id)
+        if job and job.func_name == name and job.args[1:2] == (library_path,):
+            delete_job(job)
+    counters = {"tries": tries}
+    if not free_job_id(name, requeue_job_id(name, library_path, counters)):
+        current_app.logger.info(
+            f"'{library_path}' Try {tries} of the {arr.name} record update "
+            f"waits in the queue already"
+        )
+        return
+    requeue(
+        name,
+        key=library_path,
+        delay=RESTORE_RETRY_DELAY,
+        reason=(
+            f"has no release data yet ({reason}). Try {tries} of "
+            f"{RESTORE_MAX_TRIES}"
+        ),
+        counters=counters,
+        args=(owner_id, library_path, scene_name, release_group),
+        description=f"'{os.path.basename(library_path)}' Updating the "
+        f"{arr.name} record",
+        level="info",
+    )
 
 
 def rename_download_locally(arr, downloaded_path, new_path, owner_id, title=None):

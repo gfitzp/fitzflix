@@ -426,15 +426,19 @@ def adopt_download_task(movie_id, movie_file_id, downloaded_path, new_path, qual
         )
 
 
-def restore_download_record_task(movie_id, library_path, scene_name, release_group):
+def restore_download_record_task(
+    movie_id, library_path, scene_name, release_group, tries=1
+):
     """Write the release data of a Radarr download onto its new file record (#671).
 
     This is a task. The import stored the file under a different name.
     Radarr then drops its record at the next scan, and it downloads the
-    same release again. The movie first points at the folder of the
-    library file. Then the rescan finds the file. A file in an edition
-    folder is not a Radarr file (#670), and it gets nothing. A failure
-    is logged. It does not raise. The file is already in place."""
+    same release again. Each try first points the movie at the folder
+    of the library file. Then the rescan finds the file. A file in an
+    edition folder is not a Radarr file (#670), and it gets nothing. A
+    try that writes nothing yet books the task again (#680). tries is
+    the number of this try. An unexpected failure is logged. It does not
+    raise. The file is already in place."""
 
     import traceback
 
@@ -448,7 +452,6 @@ def restore_download_record_task(movie_id, library_path, scene_name, release_gro
             )
             return False
         try:
-            _set_entry_folder(_radarr("GET", f"/api/v3/movie/{int(movie_id)}"), folder)
             return restore_download_record(
                 RADARR,
                 _radarr,
@@ -457,6 +460,10 @@ def restore_download_record_task(movie_id, library_path, scene_name, release_gro
                 scene_name,
                 release_group,
                 RADARR_RENAME_WAIT,
+                tries=tries,
+                prepare=lambda: _set_entry_folder(
+                    _radarr("GET", f"/api/v3/movie/{int(movie_id)}"), folder
+                ),
             )
         except Exception:
             current_app.logger.warning(
