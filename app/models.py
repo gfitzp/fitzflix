@@ -1325,7 +1325,8 @@ class HeldImport(db.Model):
     The library already has a real rip of the title. The original file
     waits in HELD_DIR. The admin chooses "Import", "Archive only", or
     "Discard" on the Held imports page. file_details is the JSON of the
-    parsed filename, with the conversion fields."""
+    parsed filename, with the conversion fields and the maximum height
+    of the conversion (#677)."""
 
     id = db.Column(db.Integer, primary_key=True)
     held_path = db.Column(db.String(512), nullable=False, unique=True)

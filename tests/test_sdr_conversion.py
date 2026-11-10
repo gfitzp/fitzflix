@@ -1784,3 +1784,120 @@ def test_a_conversion_that_waits_for_its_lock_keeps_its_timeout(
         if job.func_name == "app.videos.convert_localized_file"
     ]
     assert retry.timeout == expected > 48 * 3600
+
+
+def _hold_in_1080p_mode(app, hdr10_mkv, incoming_dir, monkeypatch, basename):
+    """Hold an HDR import in the mode sdr-1080p and choose Import. Return the path."""
+
+    _set_mode(monkeypatch, "sdr-1080p")
+    movie = make_movie(basename.split(" (")[0], 2020)
+    real = make_movie_file(movie, "Bluray-1080p")
+    db.session.commit()
+    source = _place(incoming_dir, hdr10_mkv, basename)
+    assert importing.localization_task(source) is False
+    held = HeldImport.query.one()
+    assert held.details()[sdr_conversion.HELD_HEIGHT_FIELD] == 1080
+    held.decision = "import"
+    db.session.commit()
+    return held.held_path, real
+
+
+def test_import_on_a_held_file_ignores_a_change_to_the_keep_mode(
+    app, hdr10_mkv, incoming_dir, archive_on, monkeypatch
+):
+    """The decision on a held file does not depend on a later mode (#677).
+
+    Without the stored height, the mode "keep" made no plan. The file
+    then went to rejects as inferior to the real rip."""
+
+    basename = "Held Keep (2020) - [Bluray-2160p].mkv"
+    with app.app_context():
+        held_path, real = _hold_in_1080p_mode(
+            app, hdr10_mkv, incoming_dir, monkeypatch, basename
+        )
+        assert real.converted_from_quality is None
+        _set_mode(monkeypatch, "keep")
+        assert importing.localization_task(held_path) is True
+        (convert_job,) = _jobs(app.transcode_queue, "app.videos.convert_localized_file")
+        details, plan = convert_job.args[1], convert_job.args[4]
+        assert plan["max_height"] == 1080
+        assert details["replace_existing"] is True
+        assert details["basename"] == "Held Keep (2020) - [Bluray-1080p].mkv"
+
+        assert videos.convert_localized_file(*convert_job.args) is True
+        (move_job,) = _jobs(app.handoff_queue, "app.videos.move_localized_file")
+        assert videos.move_localized_file(*move_job.args) is True
+        (finalize_job,) = _jobs(app.sql_queue, "app.videos.finalize_localization")
+        videos.finalize_localization(*finalize_job.args)
+
+        # The conversion replaces the real rip in the library.
+        db.session.expire_all()
+        (file,) = File.query.filter_by(movie_id=real.movie_id).all()
+        assert file.basename == details["basename"]
+        assert file.converted_from_quality == "Bluray-2160p"
+        assert file.hdr_format is None
+        assert not os.path.exists(held_path)
+        rejected = [
+            name for _, _, names in os.walk(app.config["REJECTS_DIR"]) for name in names
+        ]
+        assert basename not in rejected
+        os.remove(os.path.join(app.config["LIBRARY_DIR"], file.file_path))
+
+
+def test_import_on_a_held_file_keeps_the_stored_target_in_the_4k_mode(
+    app, hdr10_mkv, incoming_dir, archive_on, monkeypatch
+):
+    """A change to sdr-2160p does not change the target of a held file (#677)."""
+
+    basename = "Held Four (2020) - [Bluray-2160p].mkv"
+    with app.app_context():
+        held_path, _ = _hold_in_1080p_mode(
+            app, hdr10_mkv, incoming_dir, monkeypatch, basename
+        )
+        _set_mode(monkeypatch, "sdr-2160p")
+        assert importing.localization_task(held_path) is True
+        (convert_job,) = _jobs(app.transcode_queue, "app.videos.convert_localized_file")
+        details, plan = convert_job.args[1], convert_job.args[4]
+        assert plan["max_height"] == 1080
+        assert plan["target_quality"] == "Bluray-1080p"
+        assert details["replace_existing"] is True
+
+        lock = convert_job.args[2]
+        if lock:
+            app.lock_manager.unlock(lock)
+        for job in app.transcode_queue.jobs:
+            job.delete()
+        for path in os.listdir(app.config["STAGING_DIR"]):
+            os.remove(os.path.join(app.config["STAGING_DIR"], path))
+        os.remove(held_path)
+
+
+@pytest.mark.parametrize("mode,height", [("keep", 1080), ("sdr-2160p", 2160)])
+def test_a_held_row_from_before_the_stored_height_falls_back(
+    app, hdr10_mkv, incoming_dir, archive_on, monkeypatch, mode, height
+):
+    """A hold with no stored height takes the mode, or 1080 for "keep" (#677)."""
+
+    basename = f"Held Old {height} (2020) - [Bluray-2160p].mkv"
+    with app.app_context():
+        held_path, _ = _hold_in_1080p_mode(
+            app, hdr10_mkv, incoming_dir, monkeypatch, basename
+        )
+        held = HeldImport.query.one()
+        details = held.details()
+        del details[sdr_conversion.HELD_HEIGHT_FIELD]
+        held.file_details = json.dumps(details)
+        db.session.commit()
+        _set_mode(monkeypatch, mode)
+        assert importing.localization_task(held_path) is True
+        (convert_job,) = _jobs(app.transcode_queue, "app.videos.convert_localized_file")
+        assert convert_job.args[4]["max_height"] == height
+
+        lock = convert_job.args[2]
+        if lock:
+            app.lock_manager.unlock(lock)
+        for job in app.transcode_queue.jobs:
+            job.delete()
+        for path in os.listdir(app.config["STAGING_DIR"]):
+            os.remove(os.path.join(app.config["STAGING_DIR"], path))
+        os.remove(held_path)

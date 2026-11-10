@@ -144,7 +144,7 @@ The ranking rules:
 - At the same quality, a real rip ranks above a conversion. A real rip replaces a conversion. Then the original of the conversion stays in S3 as an archived original.
 - A later conversion replaces an earlier conversion of the same quality or lower.
 - A conversion replaces a library file that has HDR or BT.2020 colors, of any quality.
-- The library can already have a real rip of the title at the quality of the conversion or better. Then the original waits in `HELD_DIR` for a decision. Fitzflix sends an email. On the **Held imports** page (Library Maintenance), **Import** converts the file and replaces the library file. **Archive only** archives the original to S3, and the library does not change. **Discard** moves the original to the rejects directory.
+- The library can already have a real rip of the title at the quality of the conversion or better. Then the original waits in `HELD_DIR` for a decision. Fitzflix sends an email. On the **Held imports** page (Library Maintenance), **Import** converts the file to the quality that the page shows and replaces the library file. A change to `HDR_IMPORT_MODE` while the file waits does not change that quality. **Archive only** archives the original to S3, and the library does not change. **Discard** moves the original to the rejects directory.
 
 The **Held imports** page also lists the archived originals that have no library file. A restore of one imports it again, through the same rules. The S3 sync never prunes an archived original. The library file of a conversion never replaces its archive.
 

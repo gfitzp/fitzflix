@@ -103,6 +103,7 @@ from app.sdr_conversion import (
     conversion_timeout,
     converted_file_details,
     held_decision,
+    held_max_height,
     hold_import,
     needs_placebo,
     plan_conversion,
@@ -1089,8 +1090,19 @@ def _identify(file_path, run):
     # quality of the conversion now. Thus, the quality checks compare
     # the conversion, not the original.
 
+    # The decision on a held file does not depend on a setting that
+    # changed while the file waited (#677). The file converts to the
+    # height that its hold stored, and the mode is not read for it.
+
     conversion = None
-    max_height = CONVERSION_HEIGHTS.get(get_setting("HDR_IMPORT_MODE"))
+    held = held_decision(file_path)
+    max_height = held_max_height(held) if held is not None else None
+    if max_height is None:
+        max_height = CONVERSION_HEIGHTS.get(get_setting("HDR_IMPORT_MODE"))
+        if held is not None:
+            # A hold from before #677 stored no height. An admin chose
+            # to import a conversion. Thus, the mode "keep" gives 1080.
+            max_height = max_height or 1080
     if max_height:
         conversion = _plan_conversion_or_reject(file_path, file_details, max_height)
         if conversion is False:

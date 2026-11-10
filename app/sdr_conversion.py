@@ -271,12 +271,28 @@ def converted_file_details(file_details, plan):
     return details
 
 
+# The field of the stored file details of a held file that holds the
+# maximum height of its conversion (#677).
+
+HELD_HEIGHT_FIELD = "conversion_max_height"
+
+
 def held_decision(file_path):
     """Return the HeldImport row of a held file that an admin chose to import, if any."""
 
     from app.models import HeldImport
 
     return HeldImport.query.filter_by(held_path=file_path, decision="import").first()
+
+
+def held_max_height(held):
+    """Return the maximum height that a held file converts to, or None (#677).
+
+    The hold stores the height of its plan. The page shows the quality
+    of that plan. Thus, "Import" makes that conversion, whatever the
+    mode is now. A row from before #677 has no stored height."""
+
+    return held.details().get(HELD_HEIGHT_FIELD)
 
 
 def hold_import(file_path, file_details, plan, blockers):
@@ -313,7 +329,9 @@ def hold_import(file_path, file_details, plan, blockers):
         held = HeldImport(held_path=held_path)
         db.session.add(held)
     held.untouched_basename = basename
-    held.file_details = json.dumps(file_details)
+    held.file_details = json.dumps(
+        {**file_details, HELD_HEIGHT_FIELD: plan["max_height"]}
+    )
     held.source_format = plan["source_format"]
     held.filesize_bytes = os.path.getsize(held_path)
     held.existing_file_id = blockers[0].id if blockers else None
