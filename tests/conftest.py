@@ -74,6 +74,11 @@ class TestConfig(Config):
     REMEMBER_COOKIE_SECURE = False
     PREVENT_ACCOUNT_CREATION = False
 
+    # The .env of a server names its reverse proxy. The test client is
+    # a different peer. Thus, the tests trust each peer (#682). A test
+    # of the trust rule sets its own value.
+    TRUSTED_PROXIES = frozenset()
+
     SQLALCHEMY_DATABASE_URI = f"sqlite:///{_TMP}/fitzflix-test.db"
     REDIS_URL = "redis://localhost:6379/9"
 

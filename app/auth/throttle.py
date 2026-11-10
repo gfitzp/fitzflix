@@ -50,15 +50,17 @@ RESET_EMAIL_LIMIT = 3
 def client_address():
     """Return the address of the client, or None if it is not known.
 
-    A request through CloudFront carries PROXY_HOPS entries of
-    X-Forwarded-For, or more if the client added its own. ProxyFix then
-    puts the address that CloudFront saw into remote_addr. A request
-    with no such header came directly, for example on the LAN. Its
-    remote_addr is the client. A request with fewer entries than
-    PROXY_HOPS came through fewer hops than the config expects. Then
-    remote_addr is a CloudFront server, not the client. The result is
-    None. Thus, the lock per address does not lock the visitors of that
-    server together."""
+    A request through CloudFront and the reverse proxy carries
+    PROXY_HOPS entries of X-Forwarded-For, or more if the client added
+    its own. ProxyFix then puts the address that CloudFront saw into
+    remote_addr. A request with no such header came directly, for
+    example on the LAN. Its remote_addr is the client. That is also the
+    case for a peer that is not in TRUSTED_PROXIES, because
+    TrustedProxyFix removes its header. A request with fewer entries
+    than PROXY_HOPS came through fewer hops than the config expects.
+    Then remote_addr is the reverse proxy, not the client. The result
+    is None. Thus, the lock per address does not lock the visitors of
+    that proxy together."""
 
     chain = [
         entry
