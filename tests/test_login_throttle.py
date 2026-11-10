@@ -313,3 +313,47 @@ def test_a_wrong_password_keeps_the_next_path(app):
         data={"csrf_token": token, "email": ADMIN_EMAIL, "password": ADMIN_PASSWORD},
     )
     assert response.headers["Location"].endswith("/history")
+
+
+def test_a_sign_in_for_an_unknown_email_costs_one_password_hash(app, monkeypatch):
+    """An unknown email and an account with no password take the time of a real check."""
+
+    import app.models as models
+
+    calls = []
+    real = models.check_password_hash
+
+    def counted(stored, password):
+        calls.append(stored)
+        return real(stored, password)
+
+    monkeypatch.setattr(models, "check_password_hash", counted)
+    response = sign_in(app, "nobody@example.test", "a-guess", "198.51.100.90")
+    assert not signed_in(response)
+    assert len(calls) == 1
+
+
+def test_a_sign_in_upgrades_an_older_password_hash(app):
+    from werkzeug.security import generate_password_hash
+
+    from app import db
+    from app.models import User
+    from tests.conftest import MEMBER_EMAIL, MEMBER_PASSWORD
+
+    with app.app_context():
+        member = User.query.filter_by(email=MEMBER_EMAIL).one()
+        member.password_hash = generate_password_hash(
+            MEMBER_PASSWORD, method="pbkdf2:sha256:500"
+        )
+        db.session.commit()
+    try:
+        assert signed_in(sign_in(app, MEMBER_EMAIL, MEMBER_PASSWORD, "198.51.100.91"))
+        with app.app_context():
+            member = User.query.filter_by(email=MEMBER_EMAIL).one()
+            assert not member.password_hash.startswith("pbkdf2:sha256:500$")
+            assert member.check_password(MEMBER_PASSWORD)
+    finally:
+        with app.app_context():
+            member = User.query.filter_by(email=MEMBER_EMAIL).one()
+            member.set_password(MEMBER_PASSWORD)
+            db.session.commit()

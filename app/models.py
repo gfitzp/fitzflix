@@ -3,6 +3,7 @@ import hmac
 import json
 import os
 import re
+import functools
 import secrets
 
 from datetime import datetime
@@ -118,6 +119,29 @@ from app.tmdb_apply import (  # noqa: E402
     _movie_certifications,
     _tmdb_date,
 )
+
+
+@functools.lru_cache(maxsize=1)
+def _dummy_password_hash():
+    """Return a hash that no password matches, made with the current method."""
+
+    return generate_password_hash(secrets.token_hex(16))
+
+
+def sign_in_password_matches(user, password):
+    """Return True if the password signs the user in. Each call costs 1 hash check.
+
+    An unknown email and an account with no password run the check on
+    a dummy hash of the current method. An account with an older hash
+    method still answers in a different time. Its first sign-in gives
+    it the current method (upgrade_password_hash). After that, the time
+    of the answer does not tell which email addresses have an
+    account."""
+
+    if user is None or not user.password_hash or not password:
+        check_password_hash(_dummy_password_hash(), password or "")
+        return False
+    return check_password_hash(user.password_hash, password)
 
 
 def new_session_epoch():
@@ -304,6 +328,19 @@ class User(UserMixin, db.Model):
         if not self.password_hash or not password:
             return False
         return check_password_hash(self.password_hash, password)
+
+    def upgrade_password_hash(self, password):
+        """Store the password with the current hash method if its hash is older.
+
+        The caller has just checked the password. The session id holds a
+        fingerprint of the hash. Thus, the upgrade ends each other
+        session of the account 1 time. Return True if the hash changed."""
+
+        current = _dummy_password_hash().split("$", 1)[0]
+        if self.password_hash.split("$", 1)[0] == current:
+            return False
+        self.password_hash = generate_password_hash(password)
+        return True
 
     def password_fingerprint(self):
         """Return a keyed fingerprint of the password hash and the session epoch.

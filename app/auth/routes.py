@@ -38,7 +38,7 @@ from app.auth.forms import (
     ResetPasswordForm,
     ResetPasswordRequestForm,
 )
-from app.models import User
+from app.models import User, sign_in_password_matches
 from app.settings import get_setting
 
 
@@ -82,7 +82,7 @@ def login():
             )
 
         user = User.query.filter_by(email=form.email.data).first()
-        if user is None or not user.check_password(form.password.data):
+        if not sign_in_password_matches(user, form.password.data):
             record_login_failure(form.email.data)
             flash("Invalid username or password")
 
@@ -95,6 +95,8 @@ def login():
             return redirect(url_for("auth.login"))
 
         record_login_success(form.email.data)
+        if user.upgrade_password_hash(form.password.data):
+            db.session.commit()
         login_user(user, remember=form.remember_me.data)
         next_page = request.args.get("next")
         if not local_path(next_page):
