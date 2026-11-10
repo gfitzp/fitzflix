@@ -374,17 +374,19 @@ def test_a_later_stage_rejects_a_source_that_no_sweep_finds(app, tmp_path, monke
     assert app.redis.get('{"title": "Outage Library"}') is None
 
 
-def test_a_stage_keeps_no_source_that_the_import_wrote_over(app, tmp_path, monkeypatch):
-    """The cataloging renamed the new file over the source. That file is not the rip.
+def _cataloging_over_the_source(app, tmp_path, monkeypatch, name, error, record):
+    """Run a cataloging whose new file replaces its own source, and whose commit fails.
 
-    A kept file would import again as an original (#424). Thus, a stop
-    signal rejects it too."""
+    The real _place_file renames the hidden copy over the library file
+    of the source. Return (source, rejected path, File id or None)."""
 
     import app.importing as importing
     import app.videos as videos
+    from app import db
+    from tests.factories import make_file
 
-    name = "Outage Same (2023) - [DVD].mkv"
-    library = tmp_path / "Movies" / "Outage Same (2023)"
+    dirname = f"Movies/{name[:-4]}"
+    library = tmp_path / dirname
     library.mkdir(parents=True)
     source = library / name
     source.write_bytes(b"source")
@@ -392,30 +394,104 @@ def test_a_stage_keeps_no_source_that_the_import_wrote_over(app, tmp_path, monke
     hidden.write_bytes(b"library copy")
     details = {
         "basename": name,
-        "dirname": "Movies/Outage Same (2023)",
-        "file_path": f"Movies/Outage Same (2023)/{name}",
+        "dirname": dirname,
+        "file_path": f"{dirname}/{name}",
         "media_library": "Movies",
     }
     monkeypatch.setitem(app.config, "LIBRARY_DIR", str(tmp_path))
     monkeypatch.setitem(app.config, "IMPORT_DIR", str(tmp_path / "import"))
-
-    def place(file_path, file_details, lock, hidden_output, output_file, *rest):
-        os.replace(hidden_output, output_file)
-        return "renamed"
-
     monkeypatch.setattr(importing, "_build_records", lambda *a, **k: (None,) * 5)
-    monkeypatch.setattr(importing, "_place_file", place)
-    monkeypatch.setattr(importing, "_commit_records", _raiser(SystemExit()))
-    rejected = _rejected(app, name)
+    monkeypatch.setattr(importing, "_commit_records", _raiser(error))
     with app.app_context():
-        lock = app.lock_manager.lock('{"title": "Outage Same"}', 60000)
-        try:
-            with pytest.raises(SystemExit):
+        file_id = None
+        if record:
+            file_id = make_file(name, dirname, name[:-4], "Movies", "DVD").id
+            db.session.commit()
+        lock = app.lock_manager.lock(f'{{"title": "{name}"}}', 60000)
+        if isinstance(error, Exception):
+            assert (
                 videos.finalize_localization(
                     str(source), details, lock, str(hidden), {}
                 )
-            assert not source.exists()
-            with open(rejected, "rb") as handle:
-                assert handle.read() == b"library copy"
-        finally:
-            _remove(rejected)
+                is None
+            )
+        else:
+            with pytest.raises(type(error)):
+                videos.finalize_localization(
+                    str(source), details, lock, str(hidden), {}
+                )
+        assert app.redis.get(f'{{"title": "{name}"}}') is None
+    assert not hidden.exists()
+    return source, _rejected(app, name), file_id
+
+
+@pytest.mark.parametrize(
+    "error", [SystemExit(), RuntimeError("commit")], ids=["stop", "error"]
+)
+def test_a_file_that_its_record_points_to_stays_at_its_path(
+    app, tmp_path, monkeypatch, error
+):
+    """The new file replaced the file of a record. The repair of #592 covers it (#688)."""
+
+    import app.importing as importing
+    from app import db
+    from app.models import File
+
+    scans = []
+    monkeypatch.setattr(
+        importing,
+        "_rescan_after_a_failed_edit",
+        lambda file_id, name: scans.append(file_id),
+    )
+    name = f"Over Record {type(error).__name__} (2023) - [DVD].mkv"
+    source, rejected, file_id = _cataloging_over_the_source(
+        app, tmp_path, monkeypatch, name, error, record=True
+    )
+    assert source.read_bytes() == b"library copy"
+    assert not os.path.exists(rejected)
+    assert scans == [file_id]
+    with app.app_context():
+        assert db.session.get(File, file_id).aws_stale
+
+
+@pytest.mark.parametrize(
+    "error", [SystemExit(), RuntimeError("commit")], ids=["stop", "error"]
+)
+def test_a_file_over_its_source_with_no_record_goes_to_rejects(
+    app, tmp_path, monkeypatch, error
+):
+    """That file is not the rip. A kept file would import again as an original (#424)."""
+
+    name = f"Over Nothing {type(error).__name__} (2023) - [DVD].mkv"
+    source, rejected, _ = _cataloging_over_the_source(
+        app, tmp_path, monkeypatch, name, error, record=False
+    )
+    try:
+        assert not source.exists()
+        with open(rejected, "rb") as handle:
+            assert handle.read() == b"library copy"
+    finally:
+        _remove(rejected)
+
+
+def test_a_file_over_its_source_stays_when_the_record_lookup_fails(
+    app, tmp_path, monkeypatch
+):
+    """A row can point to the path, and the database did not say. The file stays (#688)."""
+
+    import app.importing as importing
+
+    class Unreadable:
+        """A File model whose id column fails like a lost connection."""
+
+        @property
+        def id(self):
+            raise outage(2013, "Lost connection")
+
+    monkeypatch.setattr(importing, "File", Unreadable())
+    name = "Over Unknown (2023) - [DVD].mkv"
+    source, rejected, _ = _cataloging_over_the_source(
+        app, tmp_path, monkeypatch, name, RuntimeError("commit"), record=False
+    )
+    assert source.read_bytes() == b"library copy"
+    assert not os.path.exists(rejected)

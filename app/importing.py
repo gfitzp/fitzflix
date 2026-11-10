@@ -2646,38 +2646,30 @@ def finalize_localization(
                 current_app.logger.warning(traceback.format_exc())
 
             # The source goes to rejects. Remove the hidden library copy,
-            # or the renamed file when no record keeps it. A rename over an
-            # existing file already replaced that file, and its record
-            # still points to it. For an in-place import the renamed file
-            # IS file_path, and it goes to rejects. A stop signal or an
-            # outage of the database keeps the source (#497, #681).
+            # or the renamed file when no record keeps it. A stop signal or
+            # an outage of the database keeps the source (#497, #681).
 
+            # The rename can have put the new file over the source (the
+            # name that an arr gave is the library name). Then the file at
+            # that path is not the rip.
+
+            overwritten = placement is not None and file_path == output_file
             stray = None
             if placement is None:
                 stray = hidden_output_file
-            elif placement == "renamed" and file_path != output_file:
+            elif placement == "renamed" and not overwritten:
                 stray = output_file
-            elif placement == "replaced":
-                # The new file replaced the file of an existing record, and
-                # the commit of its rows failed. The row keeps the track
-                # rows, the size and the archive of the old file. The
-                # rescan reads the rows again (#592). The stale flag makes
-                # the repair upload the new file (#592 follow-up).
-                replaced_id = _row_id_at(file_details.get("file_path"))
-                if replaced_id is not None:
-                    _rescan_after_a_failed_edit(replaced_id, f"'{output_file}'")
-                    mark_archive_stale(
-                        replaced_id,
-                        reason="an import replaced the file and its commit failed",
-                    )
+            claimed = (placement == "replaced" or overwritten) and _claim_at_path(
+                file_details.get("file_path"), output_file
+            )
             _release_title_lock(lock)
 
-            # The rename can have put the new file over the source (the
-            # name that an arr gave is the library name). That file is
-            # not the rip. A kept file would import again as an
-            # original. Thus, nothing keeps it (#424, #681).
+            # Invariant: a file that a record points to stays at its path
+            # (#688). The repair of _claim_at_path covers it, for each failure.
+            # A file over the source with no record is a localized copy. A
+            # kept file would import again as an original. Thus, it goes
+            # to rejects (#424, #681).
 
-            overwritten = placement is not None and file_path == output_file
             abandon_failed_stage(
                 error,
                 file_path,
@@ -2686,6 +2678,7 @@ def finalize_localization(
                 later_stage=True,
                 strays=(stray, staged_output),
                 pending_archive=pending_archive_of(file_details),
+                keep_source=overwritten and claimed,
             )
             return None
 
@@ -3250,16 +3243,21 @@ def _place_file(
     return "replaced" if replaced_existing else "renamed"
 
 
-def _row_id_at(library_file_path):
-    """Return the id of the File row at a library path, or None.
+def _claim_at_path(library_file_path, output_file):
+    """Return True if a File row can point to a library path that a failed import wrote.
 
-    This is best effort. A fault of the database gives None and a
-    warning."""
+    A found row gets the repair of #592. The row keeps the track rows,
+    the size and the archive of the old file. The rescan reads the rows
+    again, and the stale flag makes the repair upload the new file.
+
+    A lookup that fails gives True with a warning. A row can exist, and
+    the database did not say. A kept file with a row can be repaired. A
+    rejected file leaves its row with no file (#688)."""
 
     if not library_file_path:
-        return None
+        return False
     try:
-        return (
+        row_id = (
             db.session.query(File.id)
             .filter(File.file_path == library_file_path)
             .order_by(File.id)
@@ -3267,9 +3265,22 @@ def _row_id_at(library_file_path):
             .scalar()
         )
     except Exception:
-        db.session.rollback()
-        current_app.logger.warning(traceback.format_exc())
-        return None
+        try:
+            db.session.rollback()
+        except Exception:
+            pass
+        current_app.logger.warning(
+            f"'{output_file}' The lookup of its record failed. The file stays "
+            f"at its path: " + traceback.format_exc()
+        )
+        return True
+    if row_id is None:
+        return False
+    _rescan_after_a_failed_edit(row_id, f"'{output_file}'")
+    mark_archive_stale(
+        row_id, reason="an import replaced the file and its commit failed"
+    )
+    return True
 
 
 def _commit_records(file, kept_archives, file_path):
