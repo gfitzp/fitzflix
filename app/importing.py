@@ -1797,19 +1797,38 @@ def database_outage(error):
     return bool(args) and args[0] in DATABASE_OUTAGE_CODES
 
 
-def abandon_failed_stage(error, source_path, lock, may_keep=True, **kwargs):
+def _in_import_directory(path):
+    """Return True if path is a file of the import directory."""
+
+    import_dir = os.path.abspath(current_app.config["IMPORT_DIR"])
+    return os.path.dirname(os.path.abspath(path)) == import_dir
+
+
+def abandon_failed_stage(
+    error, source_path, lock, may_keep=True, later_stage=False, **kwargs
+):
     """Clean up a stage after error. Re-raise a stop signal or an outage of the database.
 
-    A stop signal keeps the source for the hourly sweep (#497). An
-    outage of the database keeps it too (#681). Any other error rejects
-    the source. With may_keep False, a stop signal or an outage rejects
-    the source too. A kept outage fails the job. Thus, the hourly retry
-    of the failed in-place imports finds a source outside the import
-    directory. The cleanup needs no database. The session rolls back
-    last."""
+    A stop signal keeps the source for the hourly sweep (#497). Any
+    other error rejects the source. With may_keep False, a stop signal
+    rejects the source too.
+
+    An outage of the database keeps the source only when a sweep finds
+    it again (#681). The hourly sweep of the import directory queues
+    each file there. The hourly retry of the in-place imports reads
+    only the failed localization jobs. Thus, the localization keeps
+    each source for an outage, and its job fails. A later stage
+    (later_stage) keeps only a source of the import directory. It
+    rejects a download in the library, as each other error does. A
+    person then sees it on the Rejects page. The cleanup needs no
+    database. The session rolls back last."""
 
     name = os.path.basename(source_path)
-    outage = may_keep and database_outage(error)
+    outage = (
+        may_keep
+        and database_outage(error)
+        and (not later_stage or _in_import_directory(source_path))
+    )
     if may_keep and interrupted(error):
         current_app.logger.warning(
             f"'{name}' A stop signal interrupted the import ({error!r}). The "
@@ -2359,6 +2378,7 @@ def move_localized_file(
                 error,
                 source_path,
                 lock,
+                later_stage=True,
                 strays=(hidden_output_file, destination_hidden),
                 pending_archive=pending_archive_of(file_details),
             )
@@ -2651,10 +2671,19 @@ def finalize_localization(
                         reason="an import replaced the file and its commit failed",
                     )
             _release_title_lock(lock)
+
+            # The rename can have put the new file over the source (the
+            # name that an arr gave is the library name). That file is
+            # not the rip. A kept file would import again as an
+            # original. Thus, nothing keeps it (#424, #681).
+
+            overwritten = placement is not None and file_path == output_file
             abandon_failed_stage(
                 error,
                 file_path,
                 None,
+                may_keep=not overwritten,
+                later_stage=True,
                 strays=(stray, staged_output),
                 pending_archive=pending_archive_of(file_details),
             )

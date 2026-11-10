@@ -317,23 +317,38 @@ def restore_download_record(
     down. Then no record is written yet, and the task books itself again
     with the same data and tries 1 higher. The last try writes 1
     warning, and the release data is lost. A record outside the root
-    folders, or a library file that is gone, stops the tries. prepare
-    runs first in each try. tries is the number of this try."""
+    folders, or a library file that is gone, stops the tries. A library
+    volume that does not answer is not a missing file. Then the task
+    books itself again. prepare runs first in each try. tries is the
+    number of this try."""
+
+    from app.videos import _dead_volumes
 
     if not os.path.exists(library_path):
-        current_app.logger.info(
-            f"'{library_path}' is not in the library. Its {arr.name} record "
-            f"gets no release data"
-        )
-        return False
-    try:
-        if prepare is not None:
-            prepare()
-        written = _write_download_record(
-            arr, call, owner_id, library_path, scene_name, release_group, wait
-        )
-    except (OSError, arr.error) as error:
-        written = f"The {arr.name} call failed: {error}"
+        if not _dead_volumes([library_path]):
+            current_app.logger.info(
+                f"'{library_path}' is not in the library. Its {arr.name} record "
+                f"gets no release data"
+            )
+            return False
+        # A dead mount shows no file. The file is not gone.
+        written = "The library volume does not answer"
+    else:
+        try:
+            if prepare is not None:
+                prepare()
+            written = _write_download_record(
+                arr,
+                call,
+                owner_id,
+                library_path,
+                scene_name,
+                release_group,
+                wait,
+                tries,
+            )
+        except (OSError, arr.error) as error:
+            written = f"The {arr.name} call failed: {error}"
     if isinstance(written, bool):
         return written
     if tries >= RESTORE_MAX_TRIES:
@@ -349,15 +364,25 @@ def restore_download_record(
 
 
 def _write_download_record(
-    arr, call, owner_id, library_path, scene_name, release_group, wait
+    arr, call, owner_id, library_path, scene_name, release_group, wait, tries
 ):
     """Make 1 rescan, and write the release data onto the record at library_path.
 
-    Return True if a record was written. Return False if the record is
-    outside the root folders. Return the reason as text when no record
-    is at the path yet. A rescan that fails raises the error of arr."""
+    Return True if the record has release data. Return False if the
+    record is outside the root folders. Return the reason as text when
+    no record is at the path yet.
 
-    run_command(arr, call, rescan_command(arr, owner_id), wait, "rescan")
+    The function reads the records also after a rescan that failed or
+    did not end in time. An earlier rescan can have made the record,
+    and the rescan of a large series runs longer than the wait. On a
+    later try, a record that has a scene name got it from a newer
+    download of the same path. That data stays."""
+
+    missing = f"{arr.name} has no file record at this path after the rescan"
+    try:
+        run_command(arr, call, rescan_command(arr, owner_id), wait, "rescan")
+    except arr.error as error:
+        missing = str(error)
     wanted = os.path.realpath(library_path)
     records = call("GET", f"/api/v3/{arr.record}?{arr.owner_id}={int(owner_id)}")
     for record in records:
@@ -365,6 +390,12 @@ def _write_download_record(
         if path and os.path.realpath(path) == wanted:
             if fenced_arr_path(arr.name, path) is None:
                 return False
+            if tries > 1 and record.get("sceneName"):
+                current_app.logger.info(
+                    f"'{library_path}' {arr.name} file record {record['id']} "
+                    f"has the release data of a newer download. It stays"
+                )
+                return True
             record["sceneName"] = scene_name
             record["releaseGroup"] = release_group
             call("PUT", f"/api/v3/{arr.record}/{int(record['id'])}", record)
@@ -373,7 +404,7 @@ def _write_download_record(
                 f"the release data of the download again"
             )
             return True
-    return f"{arr.name} has no file record at this path after the rescan"
+    return missing
 
 
 def _book_restore_try(

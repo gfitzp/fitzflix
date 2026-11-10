@@ -255,7 +255,9 @@ def test_a_conversion_whose_database_goes_away_keeps_the_source(
 
     hidden = tmp_path / ".Outage Convert (2001) - [Bluray-1080p].mkv"
     hidden.write_bytes(b"localized")
-    source = tmp_path / "Outage Convert (2001) - [Remux-2160p].mkv"
+    monkeypatch.setitem(app.config, "IMPORT_DIR", str(tmp_path / "import"))
+    (tmp_path / "import").mkdir()
+    source = tmp_path / "import" / "Outage Convert (2001) - [Remux-2160p].mkv"
     source.write_bytes(b"source")
     monkeypatch.setattr(
         sdr_conversion, "probe_video", _raiser(outage(2006, "gone away"))
@@ -296,7 +298,9 @@ def test_a_cataloging_whose_database_goes_away_keeps_the_source(
     hidden.write_bytes(b"library copy")
     staged = tmp_path / f"staged-{name}"
     staged.write_bytes(b"staged copy")
-    source = tmp_path / name
+    monkeypatch.setitem(app.config, "IMPORT_DIR", str(tmp_path / "import"))
+    (tmp_path / "import").mkdir()
+    source = tmp_path / "import" / name
     source.write_bytes(b"source")
     details = {
         "basename": name,
@@ -328,3 +332,90 @@ def test_a_cataloging_whose_database_goes_away_keeps_the_source(
     assert not os.path.exists(
         os.path.join(app.config["REJECTS_DIR"], "exception", name)
     )
+
+
+def test_a_later_stage_rejects_a_source_that_no_sweep_finds(app, tmp_path, monkeypatch):
+    """An arr download is outside the import directory. No sweep retries its cataloging.
+
+    Thus, an outage in the cataloging rejects it with an ERROR, as before
+    #681. A person then sees it on the Rejects page."""
+
+    import app.importing as importing
+    import app.videos as videos
+
+    name = "Outage Library (2022) - [DVD].mkv"
+    hidden = tmp_path / f".{name}"
+    hidden.write_bytes(b"library copy")
+    source = tmp_path / "library" / name
+    source.parent.mkdir()
+    source.write_bytes(b"source")
+    details = {
+        "basename": name,
+        "dirname": "Movies/Outage Library (2022)",
+        "file_path": f"Movies/Outage Library (2022)/{name}",
+        "media_library": "Movies",
+    }
+    monkeypatch.setitem(app.config, "IMPORT_DIR", str(tmp_path / "import"))
+    monkeypatch.setattr(importing, "_build_records", _raiser(outage(2006, "gone away")))
+    rejected = _rejected(app, name)
+    with app.app_context():
+        lock = app.lock_manager.lock('{"title": "Outage Library"}', 60000)
+        try:
+            assert (
+                videos.finalize_localization(
+                    str(source), details, lock, str(hidden), {}
+                )
+                is None
+            )
+            assert not source.exists()
+            assert os.path.exists(rejected)
+        finally:
+            _remove(rejected)
+    assert app.redis.get('{"title": "Outage Library"}') is None
+
+
+def test_a_stage_keeps_no_source_that_the_import_wrote_over(app, tmp_path, monkeypatch):
+    """The cataloging renamed the new file over the source. That file is not the rip.
+
+    A kept file would import again as an original (#424). Thus, a stop
+    signal rejects it too."""
+
+    import app.importing as importing
+    import app.videos as videos
+
+    name = "Outage Same (2023) - [DVD].mkv"
+    library = tmp_path / "Movies" / "Outage Same (2023)"
+    library.mkdir(parents=True)
+    source = library / name
+    source.write_bytes(b"source")
+    hidden = library / f".{name}"
+    hidden.write_bytes(b"library copy")
+    details = {
+        "basename": name,
+        "dirname": "Movies/Outage Same (2023)",
+        "file_path": f"Movies/Outage Same (2023)/{name}",
+        "media_library": "Movies",
+    }
+    monkeypatch.setitem(app.config, "LIBRARY_DIR", str(tmp_path))
+    monkeypatch.setitem(app.config, "IMPORT_DIR", str(tmp_path / "import"))
+
+    def place(file_path, file_details, lock, hidden_output, output_file, *rest):
+        os.replace(hidden_output, output_file)
+        return "renamed"
+
+    monkeypatch.setattr(importing, "_build_records", lambda *a, **k: (None,) * 5)
+    monkeypatch.setattr(importing, "_place_file", place)
+    monkeypatch.setattr(importing, "_commit_records", _raiser(SystemExit()))
+    rejected = _rejected(app, name)
+    with app.app_context():
+        lock = app.lock_manager.lock('{"title": "Outage Same"}', 60000)
+        try:
+            with pytest.raises(SystemExit):
+                videos.finalize_localization(
+                    str(source), details, lock, str(hidden), {}
+                )
+            assert not source.exists()
+            with open(rejected, "rb") as handle:
+                assert handle.read() == b"library copy"
+        finally:
+            _remove(rejected)

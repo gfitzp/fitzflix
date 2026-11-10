@@ -720,6 +720,7 @@ def convert_localized_file(
                 error,
                 source_path,
                 lock,
+                later_stage=True,
                 strays=(video_only, muxed, hidden_output_file),
                 reservation=source_name,
                 reason="conversion failed",

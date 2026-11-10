@@ -244,7 +244,7 @@ def test_a_failed_rescan_books_the_task_again_and_the_next_try_writes(
     import app.sonarr_push as sonarr_push
 
     library = _library_episode(app)
-    fake = FakeArr("episodefile", records=[{"id": 9, "path": library}], status="failed")
+    fake = FakeArr("episodefile", status="failed")
     monkeypatch.setattr(sonarr_push, "_sonarr", fake)
     caplog.set_level(logging.INFO)
     assert sonarr_push.restore_download_record_task(4, library, SCENE, "GRP") is False
@@ -254,6 +254,7 @@ def test_a_failed_rescan_books_the_task_again_and_the_next_try_writes(
     assert [r for r in caplog.records if r.levelno >= logging.WARNING] == []
 
     fake.status = "completed"
+    fake.records = [{"id": 9, "path": library}]
     assert _run_booked(app, job) is True
     assert [put["releaseGroup"] for put in fake.puts] == ["GRP"]
     assert _booked_tries(app) == []
@@ -272,13 +273,17 @@ def test_a_rescan_that_does_not_end_in_time_books_the_task_again(app, monkeypatc
         SimpleNamespace(monotonic=lambda: next(ticks), sleep=lambda seconds: None),
     )
     library = _library_episode(app)
-    fake = FakeArr(
-        "episodefile", records=[{"id": 9, "path": library}], status="started"
-    )
+    fake = FakeArr("episodefile", status="started")
     monkeypatch.setattr(sonarr_push, "_sonarr", fake)
     assert sonarr_push.restore_download_record_task(4, library, SCENE, "GRP") is False
     assert fake.puts == []
     _assert_booked_once(app, library, 2)
+
+    # The rescan of a large series runs longer than the wait. An earlier
+    # rescan made the record. The try reads the records in each case.
+    fake.records = [{"id": 9, "path": library}]
+    assert sonarr_push.restore_download_record_task(4, library, SCENE, "GRP") is True
+    assert [put["releaseGroup"] for put in fake.puts] == ["GRP"]
 
 
 def test_no_record_at_the_new_path_books_the_task_again(app, monkeypatch):
@@ -522,7 +527,6 @@ def test_each_try_of_a_film_points_the_movie_at_its_folder(app, monkeypatch):
     open(library, "wb").close()
     fake = FakeArr(
         "moviefile",
-        records=[{"id": 72, "path": library}],
         movie={"id": 3, "path": "/Volumes/Movies/Old Retry (1990)"},
         status="failed",
     )
@@ -534,6 +538,37 @@ def test_each_try_of_a_film_points_the_movie_at_its_folder(app, monkeypatch):
 
     fake.calls.clear()
     fake.status = "completed"
+    fake.records = [{"id": 72, "path": library}]
     assert _run_booked(app, job) is True
     assert [call[:2] for call in fake.calls][0] == ("GET", "/api/v3/movie/3")
     assert fake.movie["path"] == "/Volumes/Movies/Retry Film (1990)"
+
+
+def test_a_library_volume_that_does_not_answer_books_the_task_again(app, monkeypatch):
+    """A dead mount shows no file. The file is not gone, and the data stays."""
+
+    import app.sonarr_push as sonarr_push
+    import app.videos as videos
+
+    library = _library_episode(app)
+    os.remove(library)
+    fake = FakeArr("episodefile", records=[{"id": 9, "path": library}])
+    monkeypatch.setattr(sonarr_push, "_sonarr", fake)
+    monkeypatch.setattr(videos, "_dead_volumes", lambda paths: ["/Volumes/TV Shows"])
+    assert sonarr_push.restore_download_record_task(4, library, SCENE, "GRP") is False
+    assert fake.calls == []
+    _assert_booked_once(app, library, 2)
+
+
+def test_a_later_try_leaves_the_data_of_a_newer_download(app, monkeypatch):
+    """A second download of the path wrote its data. The older chain must not replace it."""
+
+    import app.sonarr_push as sonarr_push
+
+    library = _library_episode(app)
+    record = {"id": 9, "path": library, "sceneName": "Newer.S01E01.1080p.WEB.h264-NEW"}
+    fake = FakeArr("episodefile", records=[record])
+    monkeypatch.setattr(sonarr_push, "_sonarr", fake)
+    assert sonarr_push.restore_download_record_task(4, library, SCENE, "GRP", 2) is True
+    assert fake.puts == []
+    assert _booked_tries(app) == []
