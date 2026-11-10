@@ -25,7 +25,8 @@ class FakePlex:
     """A Plex server with one movie section and one show section.
 
     items: {rating_key: {"section", "type", "file", "guid", "ids",
-    "addedAt", "show"}}. The fake answers the section list, the
+    "addedAt", "show", "edition"}}. As on the live server, an edition
+    item has the guid of the film and an editionTitle (#679). The fake answers the section list, the
     section pages, the metadata of one item, the match search and the
     writes. A match PUT gives the item the ids of the match on the
     second metadata read, like the background fetch of Plex."""
@@ -37,7 +38,18 @@ class FakePlex:
         self.puts = []
         self.pending_ids = {}
 
-    def add(self, key, section, kind, file, guid="", ids=(), added=100, show=None):
+    def add(
+        self,
+        key,
+        section,
+        kind,
+        file,
+        guid="",
+        ids=(),
+        added=100,
+        show=None,
+        edition=None,
+    ):
         self.items[key] = {
             "section": section,
             "type": kind,
@@ -46,6 +58,7 @@ class FakePlex:
             "ids": set(ids),
             "addedAt": added,
             "show": show,
+            "edition": edition,
         }
 
     def get(self, path, params=None, timeout=None):
@@ -88,18 +101,15 @@ class FakePlex:
         item = self.items[key]
         if key in self.pending_ids:
             item["ids"] |= self.pending_ids.pop(key)
-        return {
-            "MediaContainer": {
-                "Metadata": [
-                    {
-                        "ratingKey": key,
-                        "guid": item["guid"],
-                        "Guid": [{"id": guid} for guid in sorted(item["ids"])],
-                        "addedAt": item["addedAt"],
-                    }
-                ]
-            }
+        meta = {
+            "ratingKey": key,
+            "guid": item["guid"],
+            "Guid": [{"id": guid} for guid in sorted(item["ids"])],
+            "addedAt": item["addedAt"],
         }
+        if item["edition"]:
+            meta["editionTitle"] = item["edition"]
+        return {"MediaContainer": {"Metadata": [meta]}}
 
     def command(self, method, path, params=None):
         self.puts.append((method, path, dict(params or {})))
@@ -173,10 +183,22 @@ def test_an_item_that_carries_the_id_needs_no_pin(app, plex):
 
 
 def test_an_edition_and_a_missing_match_keep_their_guid(app, plex):
+    """The pin sends no Fix Match request for an edition item (#679).
+
+    As on the live server, the edition has the guid of the theatrical
+    item and an editionTitle. Plex has a match for it. Thus, only the
+    edition guard stops the request."""
+
+    theatrical = _movie_path(plex, "Shine (1980)", "Shine (1980).mkv")
     edition = _movie_path(plex, "Shine (1980) {edition-Cut}", "Shine.mkv")
     lost = _movie_path(plex, "Lost (1999)", "Lost (1999).mkv")
-    plex.add("8", "5", "movie", edition, "plex://movie/shine/edition/Cut")
+    plex.add("7", "5", "movie", theatrical, "plex://movie/5d77shine")
+    plex.add("8", "5", "movie", edition, "plex://movie/5d77shine", edition="Cut")
     plex.add("9", "5", "movie", lost, "plex://movie/lost")
+    plex.matches["8"] = [
+        {"guid": "plex://movie/5d77other", "name": "Shine", "year": 1980},
+        {"id": "tmdb://1"},
+    ]
 
     with app.app_context():
         remember_rename(edition, edition + ".new", "movie", tmdb_id=1)
@@ -184,6 +206,7 @@ def test_an_edition_and_a_missing_match_keep_their_guid(app, plex):
 
     # No match PUT for either. Both are still recorded for the guard.
     assert plex.puts == []
+    assert plex.items["8"]["guid"] == plex.items["7"]["guid"]
     with app.app_context():
         assert app.redis.hlen(PENDING_KEY) == 2
 
