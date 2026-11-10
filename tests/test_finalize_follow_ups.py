@@ -550,3 +550,127 @@ def test_a_failed_booking_of_the_plex_analyze_keeps_the_import(
     finally:
         if os.path.exists(dvd):
             os.remove(dvd)
+
+
+class _Row:
+    """A committed File row of an import. A listed column fails like an outage."""
+
+    def __init__(self, failing=(), **columns):
+        object.__setattr__(self, "_failing", set(failing))
+        self.__dict__.update(
+            id=7,
+            basename="Follow Up (2021) - [DVD].mkv",
+            aws_key=None,
+            movie_id=None,
+            converted_from_quality=None,
+        )
+        self.__dict__.update(columns)
+
+    def __getattribute__(self, name):
+        if name != "_failing" and name in object.__getattribute__(self, "_failing"):
+            from pymysql import err as mysql_err
+            from sqlalchemy import exc as sa_exc
+
+            raise sa_exc.OperationalError(
+                "SELECT", {}, mysql_err.OperationalError(2013, "Lost connection")
+            )
+        return object.__getattribute__(self, name)
+
+
+def _record_steps(monkeypatch):
+    """Record the source steps and the arr record step of _after_commit."""
+
+    from app import importing
+
+    calls = []
+    monkeypatch.setattr(
+        importing, "_remove_source", lambda path: calls.append(("removal", path))
+    )
+    monkeypatch.setattr(
+        importing,
+        "move_to_rejects",
+        lambda path, reason="": calls.append(("hold", path, reason)),
+    )
+    monkeypatch.setattr(
+        importing,
+        "_restore_arr_record",
+        lambda path, output: calls.append(("arr record", path)),
+    )
+    return calls
+
+
+def test_a_failed_first_read_after_the_commit_stops_no_later_follow_up(
+    app, tmp_path, monkeypatch
+):
+    """The read of the archive key is a step. The later steps run (#689).
+
+    The state of the archive is not known. Thus, the source goes to
+    rejects/unarchived, as a missing pending upload does."""
+
+    from app import importing
+
+    calls = _record_steps(monkeypatch)
+    source = str(tmp_path / "import" / "Follow Up.mkv")
+    output = str(tmp_path / "Movies" / "Follow Up (2021) - [DVD].mkv")
+    with app.app_context():
+        assert (
+            importing._after_commit(
+                _Row(failing={"aws_key"}),
+                source,
+                {"media_library": "Movies"},
+                output,
+                str(tmp_path / "Movies"),
+                None,
+                [],
+                [],
+                [],
+                [],
+            )
+            is False
+        )
+    assert calls == [("hold", source, "unarchived"), ("arr record", source)]
+
+
+def test_the_time_limit_of_rq_in_a_follow_up_ends_the_cataloging(
+    app, tmp_path, monkeypatch
+):
+    """The time limit passes the handler of the caller (#376, #689). The lock goes."""
+
+    from rq.timeouts import JobTimeoutException
+
+    from app import importing
+
+    def hang(path, output):
+        raise JobTimeoutException("Task exceeded maximum timeout value")
+
+    name = "Time Limit (2021) - [DVD].mkv"
+    details = {
+        "basename": name,
+        "dirname": "Movies/Time Limit (2021)",
+        "file_path": f"Movies/Time Limit (2021)/{name}",
+        "media_library": "Movies",
+    }
+    monkeypatch.setitem(app.config, "LIBRARY_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        importing, "_build_records", lambda *a, **k: (_Row(), [], [], [], [])
+    )
+    monkeypatch.setattr(importing, "_place_file", lambda *a, **k: "renamed")
+    monkeypatch.setattr(importing, "_commit_records", lambda *a, **k: None)
+    monkeypatch.setattr(importing, "_remove_source", lambda path: None)
+    monkeypatch.setattr(importing, "_restore_arr_record", hang)
+    removed = []
+    monkeypatch.setattr(
+        importing, "_enqueue_tmdb_enrichment", lambda *a: removed.append("tmdb")
+    )
+    with app.app_context():
+        lock = app.lock_manager.lock('{"title": "Time Limit"}', 60000)
+        with pytest.raises(JobTimeoutException):
+            importing.finalize_localization(
+                str(tmp_path / "import" / name),
+                details,
+                lock,
+                str(tmp_path / f".{name}"),
+                {"audio_tracks": []},
+            )
+    assert app.redis.get('{"title": "Time Limit"}') is None
+    assert removed == []

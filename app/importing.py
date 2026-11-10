@@ -2469,8 +2469,9 @@ def finalize_localization(
     worse files. _place_file renames the hidden library copy into place,
     or gives the copy back to move_localized_file. Then the task commits.
     _after_commit does the follow-up work. Each follow-up is best effort.
-    A failure after the commit never moves the file, and never stops the
-    next follow-up.
+    Each read of the database after the commit is in a follow-up. Thus,
+    a failure after the commit never moves the file, and never stops the
+    next follow-up. Only the time limit of rq stops them. It ends the job.
 
     hidden_output_file is the hidden library copy that move_localized_file
     made. inspection is the media details that it read from the file.
@@ -2683,7 +2684,8 @@ def finalize_localization(
             return None
 
         # Each follow-up guards itself. This guard is for the code between
-        # them. Nothing after the commit moves the file.
+        # them. Nothing after the commit moves the file. The time limit of
+        # rq ends the job, as in _follow_up (#376, #689).
 
         archive_due = False
         try:
@@ -2699,6 +2701,8 @@ def finalize_localization(
                 emails,
                 inspection["audio_tracks"],
             )
+        except BaseTimeoutException:
+            raise
         except Exception:
             current_app.logger.error(traceback.format_exc())
             db.session.rollback()
@@ -2721,14 +2725,18 @@ def finalize_localization(
         # The upload takes the title lock. Thus, it is queued after the
         # release. Otherwise it waits for this task (#615 follow-up).
 
+        # The id and the name are reads of the row. Thus, they are in the
+        # step too (#689).
+
         if archive_due:
             _follow_up(
                 output_file,
                 "transcoded archive",
-                enqueue_task,
-                "app.videos.upload_task",
-                file.id,
-                description=f"'{file.basename}'",
+                lambda: enqueue_task(
+                    "app.videos.upload_task",
+                    file.id,
+                    description=f"'{file.basename}'",
+                ),
             )
 
         # A file that replaced a library file of the same film or episode
@@ -3304,7 +3312,8 @@ def _follow_up(output_file, name, step, *args, **kwargs):
 
     The import itself succeeded. A failed step is logged, and the
     session rolls back. The file stays, and the next step runs. The
-    timeout of rq and an interrupt are not caught (#376)."""
+    time limit of rq and an interrupt are not caught (#376). The caller
+    lets them pass too (#689)."""
 
     try:
         return step(*args, **kwargs)
@@ -3373,15 +3382,14 @@ def _after_commit(
 
     # The move runs later, and the source is removed now. Thus, the
     # pending object must exist first (#494). A missing object gets a new
-    # upload of the source. The check is its own step. The source goes
-    # only if that step returned True. A failure in the step, or in the
-    # move request after it, keeps the source.
+    # upload of the source. The check is its own step, and it makes the
+    # first read of the row after the commit (#689). The source goes only
+    # if that step returned True.
 
-    source_can_go = True
-    if file_path != output_file and file.aws_key and is_pending_archive(file.aws_key):
-        source_can_go = (
-            step("pending upload", ensure_pending_upload, file, file_path) is True
-        )
+    source_can_go = (
+        step("pending upload", _pending_upload_ready, file, file_path, output_file)
+        is True
+    )
     step("archive key", _request_final_archive_key, file)
 
     for worse_key in worse_aws_keys:
@@ -3392,7 +3400,8 @@ def _after_commit(
 
     # The archive move runs later. If the pending upload is gone and the
     # new upload failed, the source is the only copy of the rip (#494).
-    # Then it goes to rejects/unarchived, out of the import sweep.
+    # Then it goes to rejects/unarchived, out of the import sweep. A
+    # failed check does the same.
 
     if file_path != output_file and not source_can_go:
         step("source hold", move_to_rejects, file_path, "unarchived")
@@ -3632,6 +3641,21 @@ def _atmos_handoff(staged_output, output_file, audio_tracks):
     if not atmos_supplement_candidates(audio_tracks):
         return None
     return staged_handoff(staged_output, output_file)
+
+
+def _pending_upload_ready(file, file_path, output_file):
+    """Return True if the archive of a committed import does not need its source (#494).
+
+    Only a run-scoped upload (#430) can need it. Its object must exist
+    before the source goes. A read of the row that fails raises. Then
+    the caller keeps the source, because the state of the archive is
+    not known (#689)."""
+
+    if file_path == output_file:
+        return True
+    if not (file.aws_key and is_pending_archive(file.aws_key)):
+        return True
+    return ensure_pending_upload(file, file_path)
 
 
 def _request_final_archive_key(file):
