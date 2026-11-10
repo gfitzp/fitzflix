@@ -2659,3 +2659,58 @@ def test_enter_in_the_review_editor_saves_and_keeps_the_stars(app, admin_client)
         row = db.session.get(UserMovieReview, row_id)
         assert float(row.rating) == 2.0
         assert row.review == "A note."
+
+
+def test_an_export_that_unpacks_too_large_is_refused(app, monkeypatch):
+    import pytest
+
+    import app.diary as diary
+
+    monkeypatch.setattr(diary, "MAX_EXPORT_BYTES", 2000)
+    rows = "Date,Name,Year,Letterboxd URI,Rating\n" + "2026-01-01,Jaws,1975,x,4\n" * 200
+    with pytest.raises(ValueError):
+        diary.parse_letterboxd_export(letterboxd_zip({"ratings.csv": rows}))
+
+
+def test_an_export_with_a_field_that_is_too_long_is_refused(app):
+    import pytest
+
+    from app.videos import parse_letterboxd_export
+
+    rows = (
+        "Date,Name,Year,Letterboxd URI,Rating\n2026-01-01,"
+        + "x" * 200000
+        + ",1975,x,4\n"
+    )
+    with pytest.raises(ValueError):
+        parse_letterboxd_export(letterboxd_zip({"ratings.csv": rows}))
+
+
+def _patched_zip(flag_bit=None, method=None):
+    """Return a Letterboxd zip with a changed header field in each record."""
+
+    data = bytearray(letterboxd_zip(SAMPLE_EXPORT))
+    for signature, flag_at, method_at in (
+        (b"PK\x03\x04", 6, 8),
+        (b"PK\x01\x02", 8, 10),
+    ):
+        start = 0
+        while (start := data.find(signature, start)) != -1:
+            if flag_bit is not None:
+                data[start + flag_at] |= flag_bit
+            if method is not None:
+                data[start + method_at] = method
+            start += 4
+    return bytes(data)
+
+
+def test_an_export_that_zipfile_cannot_read_is_refused(app):
+    """An encrypted entry or an unknown compression is a refusal, not an error page."""
+
+    import pytest
+
+    from app.videos import parse_letterboxd_export
+
+    for broken in (_patched_zip(flag_bit=1), _patched_zip(method=99)):
+        with pytest.raises((ValueError, zipfile.BadZipFile)):
+            parse_letterboxd_export(broken)

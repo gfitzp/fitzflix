@@ -23,6 +23,7 @@ import re
 import time
 import traceback
 import zipfile
+import zlib
 
 from datetime import datetime, timedelta, timezone
 
@@ -147,6 +148,17 @@ def star_rating_fields(rating):
     }
 
 
+# The largest unpacked size of a Letterboxd export that Fitzflix reads.
+# The export of a very active account is some megabytes. The parse
+# needs about 16 times the size of the CSV text in memory.
+
+MAX_EXPORT_BYTES = 10 * 1024 * 1024
+
+# The errors of zipfile and csv for an export that they cannot read.
+
+UNREADABLE_EXPORT = (csv.Error, RuntimeError, NotImplementedError, zlib.error, EOFError)
+
+
 def parse_letterboxd_export(zip_bytes):
     """Parse a Letterboxd account-export zip into one record per film.
 
@@ -156,7 +168,21 @@ def parse_letterboxd_export(zip_bytes):
     films. Each film has a list of entries. The entries follow the rules
     of the importer of Letterboxd: one entry per watched date, plus an
     entry without a date for a film that the user only rated or liked.
+
+    An export that zipfile or csv cannot read raises ValueError. That
+    covers an encrypted entry, an unknown compression, damaged data, and
+    a field that is too long. The caller refuses it with a plain
+    message.
     """
+
+    try:
+        return _read_letterboxd_export(zip_bytes)
+    except UNREADABLE_EXPORT as error:
+        raise ValueError(f"The export is not readable: {error!r}")
+
+
+def _read_letterboxd_export(zip_bytes):
+    """Read the CSV files of a Letterboxd export. Return the list of films."""
 
     def rows(zf, name):
         if name not in zf.namelist():
@@ -186,6 +212,13 @@ def parse_letterboxd_export(zip_bytes):
         return films[key]
 
     with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
+        # A small zip can unpack to gigabytes. The parse holds each row
+        # in memory on the request thread. zipfile reads no more than
+        # the size that an entry states. Thus, the stated sizes limit
+        # the memory.
+
+        if sum(info.file_size for info in zf.infolist()) > MAX_EXPORT_BYTES:
+            raise ValueError("The export unpacks to more than Fitzflix reads")
         for row in rows(zf, "ratings.csv"):
             key = film_key(row)
             if key and row.get("Rating"):
