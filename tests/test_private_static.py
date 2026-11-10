@@ -60,3 +60,100 @@ def test_the_private_static_subtrees_refuse_an_anonymous_request(client, user_cl
 
     # The public assets of the site stay public
     assert client.get("/static/site.webmanifest").status_code != 401
+
+
+def test_no_other_spelling_of_a_private_path_serves_an_anonymous_request(
+    app, client, user_client, monkeypatch, tmp_path
+):
+    """The gate reads the file on disk, not the text of the path.
+
+    A file system that ignores letter case serves "Custom" as "custom".
+    A dot segment resolves into the private tree too."""
+
+    poster = tmp_path / "custom" / "movie" / "1" / "poster.jpg"
+    poster.parent.mkdir(parents=True)
+    poster.write_bytes(b"jpg")
+    (tmp_path / "public.txt").write_text("public")
+    monkeypatch.setattr(app, "static_folder", str(tmp_path))
+
+    assert user_client.get("/static/custom/movie/1/poster.jpg").status_code == 200
+    for path in (
+        "/static/custom/movie/1/poster.jpg",
+        "/static/Custom/movie/1/poster.jpg",
+        "/static/CUSTOM/Movie/1/POSTER.JPG",
+        "/static/%2E/custom/movie/1/poster.jpg",
+        "/static/./custom/movie/1/poster.jpg",
+        "/static/x/../custom/movie/1/poster.jpg",
+        "/static/custom/../custom/movie/1/poster.jpg",
+    ):
+        response = client.get(path)
+        assert response.status_code != 200, path
+        assert response.data != b"jpg", path
+    assert client.get("/static/public.txt").status_code == 200
+
+
+def test_a_path_that_the_file_system_refuses_is_a_plain_404(app, client):
+    """A NUL byte in the path must not raise. An error would mail the admin."""
+
+    for path in ("/static/%00", "/static/custom/%00", "/static/custom/a%00b.jpg"):
+        assert client.get(path).status_code in (401, 404), path
+
+
+def test_the_gate_checks_the_file_that_the_static_route_sends(
+    app, client, monkeypatch, tmp_path
+):
+    """A link in the tree must not move the check to a different file."""
+
+    static = tmp_path / "a-long-name-for-the-static-folder"
+    poster = static / "custom" / "movie" / "1" / "poster.jpg"
+    poster.parent.mkdir(parents=True)
+    poster.write_bytes(b"jpg")
+    (static / "a" / "b").mkdir(parents=True)
+    (static / "link").symlink_to(static / "a" / "b")
+    monkeypatch.setattr(app, "static_folder", str(static))
+
+    response = client.get("/static/link/../custom/movie/1/poster.jpg")
+    assert response.status_code != 200 and response.data != b"jpg"
+
+
+def test_a_private_directory_behind_a_link_stays_private(
+    app, client, user_client, monkeypatch, tmp_path
+):
+    """The posters can move to a different volume behind a link."""
+
+    static = tmp_path / "a-long-name-for-the-static-folder"
+    static.mkdir()
+    elsewhere = tmp_path / "p"
+    (elsewhere / "movie" / "1").mkdir(parents=True)
+    (elsewhere / "movie" / "1" / "poster.jpg").write_bytes(b"jpg")
+    (static / "custom").symlink_to(elsewhere)
+    monkeypatch.setattr(app, "static_folder", str(static))
+
+    assert client.get("/static/custom/movie/1/poster.jpg").status_code == 401
+    assert user_client.get("/static/custom/movie/1/poster.jpg").status_code == 200
+
+
+def test_a_public_static_file_needs_no_user_lookup(
+    app, user_client, monkeypatch, tmp_path
+):
+    """The gate reads the path first. Thus, an icon costs no query for the user."""
+
+    from sqlalchemy import event
+
+    from app import db
+
+    (tmp_path / "public.txt").write_text("public")
+    monkeypatch.setattr(app, "static_folder", str(tmp_path))
+    statements = []
+    with app.app_context():
+        engine = db.engine
+
+    def count(conn, cursor, statement, parameters, context, executemany):
+        statements.append(statement)
+
+    event.listen(engine, "before_cursor_execute", count)
+    try:
+        assert user_client.get("/static/public.txt").status_code == 200
+    finally:
+        event.remove(engine, "before_cursor_execute", count)
+    assert statements == []
