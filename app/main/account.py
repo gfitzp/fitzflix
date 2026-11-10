@@ -23,7 +23,7 @@ from flask import (
 )
 
 # Flask 2.4 removed flask.Markup. Import it from its actual home.
-from flask_login import current_user, login_required, login_user
+from flask_login import current_user, login_remembered, login_required, login_user
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import contains_eager
 
@@ -844,26 +844,39 @@ def _delete_passkey(form):
         )
         return
     name = passkey.display_name
+    user = current_user._get_current_object()
     db.session.delete(passkey)
-    db.session.commit()
-    current_app.logger.info(f"Passkey removed: {current_user.email} removed '{name}'")
+    _end_other_sessions(user)
+    current_app.logger.info(f"Passkey removed: {user.email} removed '{name}'")
     flash(f"Removed the passkey '{name}'.", "success")
+
+
+def _end_other_sessions(user):
+    """Commit a change of the sign-in methods, and keep only this session (#673).
+
+    The session id holds the password fingerprint, and a new session
+    epoch changes it. Thus, each other session and each remember cookie
+    of the account stops loading. This session signs in again. If this
+    browser had a remember cookie, it gets a new one."""
+
+    remembered = login_remembered()
+    user.rotate_session_epoch()
+    db.session.commit()
+    login_user(user, remember=remembered)
 
 
 def _remove_password(form):
     """Remove the password. The account then signs in with a passkey only (#669).
 
-    The session id holds the password fingerprint. Thus, the handler
-    signs this session in again. Every other session of the account
-    ends, and a remembered browser must sign in again."""
+    Every other session of the account ends, also a session from an
+    earlier passkey-only period (#673). This session stays signed in."""
 
     if current_user.passkeys.count() == 0:
         flash("Add a passkey before you remove your password.", "danger")
         return
     user = current_user._get_current_object()
     user.password_hash = None
-    db.session.commit()
-    login_user(user)
+    _end_other_sessions(user)
     current_app.logger.info(f"Password removed: {user.email} signs in with a passkey")
     flash("Removed your password. You sign in with a passkey now.", "success")
 

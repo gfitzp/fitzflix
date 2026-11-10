@@ -3,6 +3,7 @@ import hmac
 import json
 import os
 import re
+import secrets
 
 from datetime import datetime
 from time import time
@@ -119,12 +120,25 @@ from app.tmdb_apply import (  # noqa: E402
 )
 
 
+def new_session_epoch():
+    """Return a fresh random session epoch: 32 hex characters (#673)."""
+
+    return secrets.token_hex(16)
+
+
 class User(UserMixin, db.Model):
     """An account: credentials, admin flag, API key, and Plex mapping."""
 
     id = db.Column(db.Integer, primary_key=True)
     email = db.Column(db.String(120), index=True, unique=True)
     password_hash = db.Column(db.String(256))
+
+    # A random value that changes at each change of the sign-in methods
+    # (#673). The session id, the remember cookie and the reset token
+    # carry a fingerprint of it. Thus, a change ends each older session.
+    # A new row gets a value at its insert.
+
+    session_epoch = db.Column(db.String(32), default=new_session_epoch)
     admin = db.Column(db.Boolean, default=False)
     api_key = db.Column(db.String(32))
 
@@ -258,9 +272,20 @@ class User(UserMixin, db.Model):
         return f"<User '{self.email}'>"
 
     def set_password(self, password):
-        """Store a salted hash of the password."""
+        """Store a salted hash of the password. Each other session ends."""
 
         self.password_hash = generate_password_hash(password)
+        self.rotate_session_epoch()
+
+    def rotate_session_epoch(self):
+        """Give the account a new session epoch (#673).
+
+        Each session id, remember cookie and reset token from before
+        stops loading. The 3 changes of the sign-in methods call this:
+        a new password, a removed password, and a removed passkey. A
+        handler that must keep its own session signs it in again."""
+
+        self.session_epoch = new_session_epoch()
 
     @property
     def has_password(self):
@@ -280,15 +305,16 @@ class User(UserMixin, db.Model):
         return check_password_hash(self.password_hash, password)
 
     def password_fingerprint(self):
-        """Return a keyed fingerprint of the password hash.
+        """Return a keyed fingerprint of the password hash and the session epoch.
 
-        A new password changes the fingerprint. The reset token and the
-        login session carry it. Thus, a password change makes each older
-        token and session not valid."""
+        A change of the sign-in methods gives a new epoch, and thus a
+        new fingerprint (#673). The reset token and the login session
+        carry it. Thus, each older token and session is not valid. An
+        account with no password also gets a new fingerprint."""
 
         return hmac.new(
             current_app.config["SECRET_KEY"].encode(),
-            (self.password_hash or "").encode(),
+            f"{self.password_hash or ''}:{self.session_epoch or ''}".encode(),
             hashlib.sha256,
         ).hexdigest()[:32]
 
@@ -317,7 +343,8 @@ class User(UserMixin, db.Model):
         """Return the User that a reset token identifies, or None.
 
         The result is None if the token is not valid, has expired, or was
-        used. A used token holds the fingerprint of the old password."""
+        used. A used token holds the fingerprint of the old password and
+        the old session epoch."""
 
         try:
             claims = jwt.decode(
@@ -1858,8 +1885,9 @@ def load_user(id):
     """Load a user for flask-login.
 
     The session id holds the password fingerprint. A session from before
-    a password change does not load. A session id with no fingerprint
-    (from before the fingerprint) does not load either."""
+    a change of the sign-in methods does not load (#673). A session id
+    with no fingerprint (from before the fingerprint) does not load
+    either."""
 
     user_id, _, fingerprint = str(id).partition(":")
     try:

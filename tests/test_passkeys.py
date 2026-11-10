@@ -752,3 +752,204 @@ def test_a_redis_fault_refuses_the_passkey_request(app, monkeypatch):
     )
     assert response.status_code == 401
     assert response.get_json()["error"] == "The passkey request failed. Try again."
+
+
+# A change of the sign-in methods ends each other session (#673).
+
+
+def _remove_password(client):
+    """Post the Remove my password form of the Profile page."""
+
+    token = page_csrf_token(client, "/profile")
+    return client.post(
+        "/profile",
+        data={"csrf_token": token, "remove_password_submit": "Remove my password"},
+    )
+
+
+def _delete_passkey(client, passkey_id):
+    """Post the Remove form of 1 passkey on the Profile page."""
+
+    token = page_csrf_token(client, "/profile")
+    return client.post(
+        "/profile",
+        data={
+            "csrf_token": token,
+            "passkey_id": str(passkey_id),
+            "passkey_delete_submit": "Remove",
+        },
+        follow_redirects=True,
+    )
+
+
+def _reset_password(app, password):
+    """Set a new password for the member with the link of the reset email."""
+
+    from app.models import User
+
+    with app.app_context():
+        reset_token = (
+            User.query.filter_by(email=MEMBER_EMAIL).one().get_reset_password_token()
+        )
+    client = app.test_client()
+    page = client.get(f"/auth/reset-password/{reset_token}")
+    assert page.status_code == 200
+    response = client.post(
+        f"/auth/reset-password/{reset_token}",
+        data={
+            "csrf_token": csrf_token_from(page.get_data(as_text=True)),
+            "password": password,
+            "password2": password,
+        },
+    )
+    assert response.headers["Location"] == "/auth/login"
+    return reset_token
+
+
+def test_removing_a_passkey_ends_the_other_sessions(app):
+    from app.models import Passkey
+
+    client, _ = member_with_passkey(app)
+    other = _signed_in_client(app, MEMBER_EMAIL)
+    assert other.get("/profile").status_code == 200
+    with app.app_context():
+        passkey_id = Passkey.query.one().id
+    response = _delete_passkey(client, passkey_id)
+    assert "Removed the passkey" in response.get_data(as_text=True)
+    assert client.get("/profile").status_code == 200
+    assert other.get("/profile").status_code == 302
+
+
+def test_removing_the_password_ends_the_other_sessions(app, member_password_restored):
+    client, _ = member_with_passkey(app)
+    other = _signed_in_client(app, MEMBER_EMAIL)
+    _remove_password(client)
+    assert client.get("/profile").status_code == 200
+    assert other.get("/profile").status_code == 302
+
+
+def test_a_session_of_an_earlier_passkey_only_period_stays_ended(
+    app, member_password_restored
+):
+    client, _ = member_with_passkey(app)
+    _remove_password(client)
+    old_session = _signed_in_client(app, MEMBER_EMAIL)
+    cookie = old_session.get_cookie("session").value
+    assert old_session.get("/profile").status_code == 200
+
+    _reset_password(app, "a-new-password")
+    assert old_session.get("/profile").status_code == 302
+
+    _remove_password(_signed_in_client(app, MEMBER_EMAIL))
+    replay = app.test_client()
+    replay.set_cookie("session", cookie, domain="localhost")
+    assert replay.get("/profile").status_code == 302
+
+
+def test_a_remembered_browser_keeps_a_new_remember_cookie(
+    app, member_password_restored
+):
+    """The acting browser gets a new remember cookie. The old cookie stops loading."""
+
+    client = _signed_in_client(app, MEMBER_EMAIL)
+    authenticator = SoftAuthenticator()
+    assert register_passkey(client, authenticator).status_code == 200
+    signed = app.test_client()
+    token = page_csrf_token(signed, "/auth/login")
+    options = signed.post(
+        "/auth/passkey/login/options", headers={"X-CSRFToken": token}
+    ).get_json()
+    response = signed.post(
+        "/auth/passkey/login",
+        json={"credential": authenticator.sign(options), "remember": True},
+        headers={"X-CSRFToken": token},
+    )
+    assert response.status_code == 200
+    old_remember = signed.get_cookie("remember_token").value
+
+    _remove_password(signed)
+    new_remember = signed.get_cookie("remember_token").value
+    assert new_remember != old_remember
+    for value, status in ((new_remember, 200), (old_remember, 302)):
+        browser = app.test_client()
+        browser.set_cookie("remember_token", value, domain="localhost")
+        assert browser.get("/profile").status_code == status
+
+
+def test_a_session_without_a_remember_cookie_gets_none(app, member_password_restored):
+    client, _ = member_with_passkey(app)
+    _remove_password(client)
+    assert client.get_cookie("remember_token") is None
+    assert client.get("/profile").status_code == 200
+
+
+def test_a_reset_link_works_one_time(app, member_password_restored):
+    from app.models import User
+
+    reset_token = _reset_password(app, "a-new-password")
+    with app.app_context():
+        assert (
+            User.query.filter_by(email=MEMBER_EMAIL)
+            .one()
+            .check_password("a-new-password")
+        )
+        assert User.verify_reset_password_token(reset_token) is None
+    response = app.test_client().get(f"/auth/reset-password/{reset_token}")
+    assert response.status_code == 302
+
+
+def test_a_new_password_ends_each_session(app, member_password_restored):
+    other = _signed_in_client(app, MEMBER_EMAIL)
+    _reset_password(app, "a-new-password")
+    assert other.get("/profile").status_code == 302
+
+
+def test_a_new_user_gets_a_session_epoch(app):
+    from app import db
+    from app.models import User
+
+    with app.app_context():
+        user = User(email="epoch@example.test")
+        db.session.add(user)
+        db.session.commit()
+        try:
+            assert len(user.session_epoch) == 32
+            int(user.session_epoch, 16)
+            other = User.query.filter_by(email=MEMBER_EMAIL).one()
+            assert user.session_epoch != other.session_epoch
+        finally:
+            db.session.delete(user)
+            db.session.commit()
+
+
+def test_the_migration_ends_each_older_session(app):
+    """The upgrade gives each user a new random epoch. Old cookies stop loading."""
+
+    import importlib.util
+    import os
+
+    from app import db
+    from app.models import User
+
+    path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "migrations",
+        "versions",
+        "c8e4f1a2d305_session_epoch.py",
+    )
+    spec = importlib.util.spec_from_file_location("session_epoch_migration", path)
+    migration = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(migration)
+    assert migration.down_revision == "b7c3d9e1f204"
+
+    member = _signed_in_client(app, MEMBER_EMAIL)
+    assert member.get("/profile").status_code == 200
+    with app.app_context():
+        before = {u.id: u.session_epoch for u in User.query.all()}
+        migration.give_each_user_an_epoch(db.session.connection())
+        db.session.commit()
+        db.session.expire_all()
+        after = {u.id: u.session_epoch for u in User.query.all()}
+    assert all(after[i] != before[i] and len(after[i]) == 32 for i in before)
+    assert len(set(after.values())) == len(after)
+    assert member.get("/profile").status_code == 302
