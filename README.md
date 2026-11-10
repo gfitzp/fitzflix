@@ -446,6 +446,7 @@ TMDB_API_KEY=<your TMDB API key>
 
 | Setting | Function |
 | --- | --- |
+| `SECRET_KEY` | The key that signs the sessions and the password-reset links. Use a long random value. Fitzflix does not start with the built-in default, except in debug mode. |
 | `MEDIA_LOCATION` | The root of the media folders. `IMPORT_DIR`, `LIBRARY_DIR`, `REJECTS_DIR`, and `HELD_DIR` default to `import`, `library`, `rejects`, and `held` in this root. You can set each one separately. Fitzflix creates the `import`, `staging`, `rejects`, and `held` directories at startup when they are missing. It does not create a directory on a volume that is not mounted. The library directories are never created, because an empty library folder would hide a lost volume. |
 | `ISO_639_2_NATIVE_LANGUAGE` | The three-letter code of *your* language (default `eng`). The import removes the audio tracks and the subtitle tracks in other languages. Foreign-language films are an exception. |
 | `SERVER_NAME`, `PREFERRED_URL_SCHEME` | The hostname and the scheme for the links in emails |
@@ -468,6 +469,16 @@ TMDB_API_KEY=<your TMDB API key>
 | `PLEX_PLAYER_SERVER_URI` | Remote playback. This is an HTTPS server address that the playback devices can reach. Each user selects a device on the Profile page (refer to [Playing films on an Apple TV](#playing-films-on-an-apple-tv)). |
 | `DVR_TOKEN`, `DVR_TUNER_URL` | Virtual DVR channels. The token protects the tuner, guide, and stream endpoints. If the token is not set, the function is disabled. The tuner URL is the Fitzflix origin as Plex reaches it (refer to [Virtual DVR](#virtual-dvr-live-tv-channels-in-plex)). |
 | `HANDBRAKE_PRESET_FILE` | The file of custom presets that you export from HandBrake. It can hold more than one preset, also in folders. The default file is `handbrake_presets.json` in the Fitzflix folder. The SDR conversion uses its `CONVERSION_PRESET` or its `CONVERSION_PRESET_2160P`. |
+| `MOVIE_LIBRARY`, `TV_LIBRARY` | The folders of the 2 libraries. The defaults are `Movies` and `TV Shows` in `LIBRARY_DIR`. Keep these names. The file paths in the database start with `Movies/` and `TV Shows/`. |
+| `CUSTOM_ARTWORK_DIR` | The folder of the custom posters. The default is `app/static/custom` in the Fitzflix folder. The pages get the posters at `/static/custom/`. Thus, a different folder needs a link with the name `custom` in `app/static`. |
+| `TRIAGE_SNAPSHOT_DIR` | The folder of the triage aids: the frames and the sound samples of the subtitle triage and of the audio triage. The default is `triage` in the Fitzflix folder. It is outside the static folder, and only a signed-in user gets a file from it. |
+| `FRAME_POOL_DIR`, `FRAME_POOL_SIZE`, `FRAME_POOL_ROTATE`, `FRAME_POOL_MIN_RATED` | The frame pool of [Name That Frame](#name-that-frame). `FRAME_POOL_DIR` is its folder (default `app/frame_pool`). `FRAME_POOL_SIZE` is the number of frames in the pool (default 600). The nightly task replaces at least `FRAME_POOL_ROTATE` frames (default 60). It gives each reviewer at least `FRAME_POOL_MIN_RATED` frames from the films that they rated (default 200). |
+| `MEDIACONVERT_ENDPOINT`, `MEDIACONVERT_REGION` | The AWS Elemental MediaConvert endpoint and its region, for the Atmos twins. The defaults are `https://mediaconvert.us-east-1.amazonaws.com` and `us-east-1`. |
+| `CDN_URL_EXPIRY` | The life of a signed CloudFront URL, in seconds. The default is 3600. |
+| `ENV_FILE` | The environment file that the nightly backup encrypts and uploads. The default is `.env` in the Fitzflix folder. Fitzflix reads its settings from that default file in each case. |
+| `TMDB_API_URL`, `WIKIDATA_SPARQL_URL` | The addresses of the TMDB API and of the Wikidata query service. The defaults are `https://api.themoviedb.org/3` and `https://query.wikidata.org/sparql`. |
+| `APPLICATION_ROOT` | The path of the application on its host, for Flask. The default is `/`. Fitzflix has no test with a different path. |
+| `SQLALCHEMY_TRACK_MODIFICATIONS` | A setting of Flask-SQLAlchemy. It is on when the name is in `.env`. Fitzflix does not use it. |
 | `LOG_FILE`, `LOG_RETENTION_DAYS` | The location of the application log (default `logs/fitzflix.log`) and the number of days of rotated archives to keep (default 14) |
 | `*_TASK_TIMEOUT` | The job timeouts for each queue, in seconds (`LOCALIZATION_TASK_TIMEOUT`, `SQL_TASK_TIMEOUT`, `UPLOAD_TASK_TIMEOUT`, `TRANSCODE_TASK_TIMEOUT`, `MKVPROPEDIT_TASK_TIMEOUT`, `MOVE_TASK_TIMEOUT` for the library copy (default 2 hours), and `FILE_TASK_TIMEOUT` for small file jobs such as an S3 delete (default 10 minutes)) |
 
