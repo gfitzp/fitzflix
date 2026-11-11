@@ -48,10 +48,12 @@ PAGE_SIZE = 100
 # is not a mass removal. The walk refuses a listing that holds fewer
 # items than the totalSize of page 1 (ListingAnomaly). The sync also
 # skips a run whose listing holds less than half of the snapshot, if
-# the snapshot holds more than ANOMALY_FLOOR films. A real mass removal
-# gives the same short listing on the next run. Thus, the sync accepts
-# a short listing when SHRINK_KEY holds the same listing from the run
-# before.
+# the snapshot holds more than ANOMALY_FLOOR films (_is_short). A real
+# mass removal gives the same short listing on the next run. Thus, the
+# sync accepts a short listing when SHRINK_KEY holds the same listing
+# from the run before. An EMPTY short listing never applies (#701).
+# Each glitch gives the same empty listing, so a repeat proves nothing.
+# To clear the whole watchlist, the owner clears it in Fitzflix.
 
 ANOMALY_FLOOR = 10
 SHRINK_KEY = "fitzflix:plex:watchlist:shrink"
@@ -311,17 +313,36 @@ def _sync_user():
     return user
 
 
+def _is_short(listing, reference):
+    """Return True if the listing holds less than half of the reference.
+
+    A reference of ANOMALY_FLOOR films or fewer gives no short listing.
+    The read before the reconcile and the read after the pushes both use
+    this rule."""
+
+    return len(reference) > ANOMALY_FLOOR and len(listing) < len(reference) // 2
+
+
 def _short_listing(plex, snapshot):
     """Return True if the run must stop because the listing is short.
 
-    A listing with less than half of a snapshot of more than
-    ANOMALY_FLOOR films is short. The run after the first short listing
-    accepts the same listing. That is a real mass removal on Plex."""
+    The run after the first short listing accepts the same listing.
+    That is a real mass removal on Plex. An empty short listing stops
+    each run and is never stored as a listing to accept (#701). All
+    empty answers are the same, so a repeat does not prove a removal."""
 
     redis = current_app.redis
-    if len(snapshot) <= ANOMALY_FLOOR or len(plex) >= len(snapshot) // 2:
+    if not _is_short(plex, snapshot):
         redis.delete(SHRINK_KEY)
         return False
+    if not plex:
+        redis.delete(SHRINK_KEY)
+        current_app.logger.warning(
+            f"Plex watchlist: the API returned no items against a "
+            f"{len(snapshot)}-item snapshot. Anomaly, skipping this run. An "
+            f"empty listing never applies as a removal."
+        )
+        return True
     listing = json.dumps(sorted(plex))
     previous = redis.get(SHRINK_KEY)
     if (
@@ -569,6 +590,18 @@ def sync_plex_watchlist():
                 raise
             except Exception:
                 current_app.logger.warning(traceback.format_exc())
+                landed = None
+            # A short or empty answer is an anomaly, as on the first
+            # read. The reference is the films that the run expects on
+            # Plex now. A short answer must not mark the pushes as
+            # phantoms (#701).
+
+            if landed is not None and _is_short(landed, synced):
+                current_app.logger.warning(
+                    f"Plex watchlist: the check after the pushes returned "
+                    f"{len(landed)} items against {len(synced)} expected "
+                    f"items. The next run checks the pushes again."
+                )
                 landed = None
             if landed is None:
                 # The sync cannot verify. Keep the pushes OUT of the

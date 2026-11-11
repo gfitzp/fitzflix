@@ -784,6 +784,94 @@ def test_a_listing_under_half_the_snapshot_needs_two_runs(app, monkeypatch):
         assert app.redis.get(plex_watchlist.SHRINK_KEY) is None
 
 
+def _twenty_films(app, user_id, plex_watchlist):
+    """Put 20 films on the watchlist and in the snapshot. Return the ids."""
+
+    ids = list(range(901, 921))
+    for tmdb_id in ids:
+        movie = make_movie(f"Film {tmdb_id}", 2000, tmdb_id=tmdb_id)
+        db.session.add(UserWatchlist(user_id=user_id, movie_id=movie.id))
+    db.session.commit()
+    app.redis.set(plex_watchlist.SNAPSHOT_KEY, json.dumps(ids))
+    return ids
+
+
+def test_an_empty_listing_never_applies_on_any_run(app, monkeypatch):
+    """Test that each run refuses an empty listing (#701).
+
+    Each empty answer of Plex is the same listing. Thus, the two-run
+    rule of a short listing cannot tell a glitch from a removal."""
+    import app.plex_watchlist as plex_watchlist
+
+    with app.app_context():
+        user_id = setup_user(app)
+        ids = _twenty_films(app, user_id, plex_watchlist)
+
+        fake = FakePlex({})
+        wire(app, monkeypatch, fake)
+        for _ in range(3):
+            assert plex_watchlist.sync_plex_watchlist() is True
+            assert fitzflix_watchlist_tmdb_ids(user_id) == set(ids)
+            assert json.loads(app.redis.get(plex_watchlist.SNAPSHOT_KEY)) == ids
+            assert app.redis.get(plex_watchlist.SHRINK_KEY) is None
+        assert fake.adds == [] and fake.removes == []
+
+
+def test_a_listing_of_5_of_20_films_applies_on_the_second_run(app, monkeypatch):
+    """Test that a short listing that is not empty keeps the two-run rule."""
+    import app.plex_watchlist as plex_watchlist
+
+    with app.app_context():
+        user_id = setup_user(app)
+        ids = _twenty_films(app, user_id, plex_watchlist)
+
+        kept = ids[:5]
+        fake = FakePlex({tmdb_id: (f"Film {tmdb_id}", 2000) for tmdb_id in kept})
+        wire(app, monkeypatch, fake)
+        assert plex_watchlist.sync_plex_watchlist() is True
+        assert fitzflix_watchlist_tmdb_ids(user_id) == set(ids)
+        assert plex_watchlist.sync_plex_watchlist() is True
+        assert fitzflix_watchlist_tmdb_ids(user_id) == set(kept)
+
+
+def test_an_empty_read_after_the_pushes_marks_no_film_unsyncable(app, monkeypatch):
+    """Test that an empty listing after the pushes cannot verify them (#701).
+
+    The pushed film must not go into the unsyncable set. It stays out
+    of the snapshot, and the next run checks it again."""
+    import app.plex_watchlist as plex_watchlist
+
+    with app.app_context():
+        user_id = setup_user(app)
+        ids = _twenty_films(app, user_id, plex_watchlist)
+        fake = FakePlex({tmdb_id: (f"Film {tmdb_id}", 2000) for tmdb_id in ids})
+        new = make_movie("New Film", 2001, tmdb_id=950)
+        db.session.add(UserWatchlist(user_id=user_id, movie_id=new.id))
+        db.session.commit()
+
+        def get(url, params=None):
+            if "watchlist/all" in url and fake.adds:
+                return {"MediaContainer": {"totalSize": 0, "Metadata": []}}
+            return fake.get(url, params)
+
+        monkeypatch.setitem(app.config, "PLEX_TOKEN", "test-token")
+        monkeypatch.setattr(plex_watchlist, "_plex_get", get)
+        monkeypatch.setattr(plex_watchlist, "_plex_put", fake.put)
+        assert plex_watchlist.sync_plex_watchlist() is True
+
+        assert fake.adds == [950]
+        assert app.redis.smembers(plex_watchlist.UNSYNCABLE_KEY) == set()
+        assert json.loads(app.redis.get(plex_watchlist.SNAPSHOT_KEY)) == ids
+        assert fitzflix_watchlist_tmdb_ids(user_id) == set(ids) | {950}
+
+        # The next run reads the film on Plex and takes it into the
+        # snapshot.
+        wire(app, monkeypatch, fake)
+        assert plex_watchlist.sync_plex_watchlist() is True
+        assert fake.adds == [950]
+        assert json.loads(app.redis.get(plex_watchlist.SNAPSHOT_KEY)) == ids + [950]
+
+
 def test_a_re_pointed_watchlist_film_gets_no_second_row(app, monkeypatch):
     """Test that a Plex add of a watchlisted film with no tmdb id adds no row (#485)."""
     import app.plex_watchlist as plex_watchlist
