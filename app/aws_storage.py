@@ -1976,6 +1976,15 @@ def _archive_prefix_of(key):
     return s3_layout.prefix_value(entry)
 
 
+def _claim_key(key):
+    """Return the key of the claims map for an archive key (#706).
+
+    The map folds letter case, as the key columns do on MariaDB (#612).
+    Each writer and each reader of the map goes through this function."""
+
+    return key.casefold()
+
+
 def key_claims():
     """Return {casefolded key: claimant ids} for each archive key that a record claims.
 
@@ -1991,9 +2000,9 @@ def key_claims():
     ).all():
         for key in row[1:]:
             if key:
-                claims.setdefault(key.casefold(), set()).add(row[0])
+                claims.setdefault(_claim_key(key), set()).add(row[0])
     for (key,) in db.session.query(ArchivedOriginal.aws_key).all():
-        claims.setdefault(key.casefold(), set()).add(None)
+        claims.setdefault(_claim_key(key), set()).add(None)
     return claims
 
 
@@ -2026,7 +2035,7 @@ def _claimed_by_another(file, key, claims=None):
     """Return True if a record other than file claims key."""
 
     if claims is not None:
-        return bool(claims.get(key.casefold(), set()) - {file.id})
+        return bool(claims.get(_claim_key(key), set()) - {file.id})
     return _key_claimed(key, exclude_id=file.id)
 
 
@@ -2190,8 +2199,13 @@ def request_archive_move(file, claims=None, column=None):
             f"'{file.basename}' The archive '{source}' moves to '{target}'"
         )
     _set_archive_target(file, target)
+    # The target is a claim for each later file of the same run (#706).
+    # A replaced or cleared target stays in claims. That stale claim can
+    # only add an id to the key of a later file. It never gives 2 files
+    # the same target.
+
     if claims is not None:
-        claims.setdefault(target, set()).add(file.id)
+        claims.setdefault(_claim_key(target), set()).add(file.id)
     db.session.info.setdefault(_MOVES_AFTER_COMMIT, {})[file.id] = file.basename
     return True
 

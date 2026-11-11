@@ -1708,3 +1708,31 @@ def test_the_sync_requests_no_move_of_a_pending_archive_that_is_lost(app, s3):
             assert move_jobs(app) == []
         finally:
             app.redis.hdel(aws_storage.ARCHIVE_LOST_KEY, lost.aws_key)
+
+
+@pytest.mark.parametrize(
+    "second_name", ["Twin Name (1970).mkv", "TWIN NAME (1970).mkv"]
+)
+def test_a_target_of_a_converge_run_is_a_claim_for_the_later_files(app, second_name):
+    """2 files want the same key in 1 run. The second gets its id (#706).
+
+    The claims map folds letter case. A target that the run adds is a
+    claim under its folded key too. Names that differ only by case give
+    the same claim."""
+
+    from app import aws_storage, db
+
+    with app.app_context():
+        first = archived_film("Twin First", 1970, key_name="Twin Old A (1970).mkv")
+        second = archived_film("Twin Second", 1971, key_name="Twin Old B (1970).mkv")
+        first.untouched_basename = "Twin Name (1970).mkv"
+        second.untouched_basename = second_name
+        db.session.commit()
+
+        claims = aws_storage.key_claims()
+        assert aws_storage.request_archive_move(first, claims)
+        assert aws_storage.request_archive_move(second, claims)
+        stem, extension = os.path.splitext(second_name)
+        assert first.aws_key_target == "untouched/Twin Name (1970).mkv"
+        assert second.aws_key_target == f"untouched/{stem} ({second.id}){extension}"
+        db.session.rollback()

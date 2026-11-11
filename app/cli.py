@@ -8,9 +8,10 @@ from app.models import Movie, TVSeries
 def register(app):
     """Attach the CLI commands of the application to the Flask app.
 
-    The refresh group and the one-line enqueue commands live here. The
-    aws, recs, triage, audio and tracks groups live next to the
-    modules that they drive, each with its own register_cli."""
+    The refresh, alerts, frames, tv and catalog groups and the one-line
+    enqueue commands live here. The aws, recs, triage and audio groups
+    live next to the modules that they drive, each with its own
+    register_cli."""
 
     @app.cli.group()
     def refresh():
