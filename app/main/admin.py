@@ -1062,8 +1062,12 @@ def missing_files():
                 f"that {'are' if len(present) != 1 else 'is'} in the library again.",
                 "info",
             )
+        # One request gives one result message (#691). The skip message
+        # covers a selection that is in the library again.
+
         if not files:
-            flash("No archived files were selected.", "warning")
+            if not present:
+                flash("No archived files were selected.", "warning")
             return redirect(url_for("main.missing_files"))
 
         for file in files:

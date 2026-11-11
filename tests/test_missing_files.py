@@ -299,6 +299,94 @@ def test_restore_skips_a_file_that_is_back_since_the_scan(
     assert [job.args[0] for job in app.request_queue.jobs] == ["g.mkv"]
 
 
+# One request gives one result message (#691)
+
+
+def _restore_flashes(app, admin_client, monkeypatch, back, gone):
+    """Post a restore of back + gone films with back on disk. Return the flashes.
+
+    back and gone are lists of titles. Each film has an archive."""
+
+    from app import missing_files
+
+    monkeypatch.setattr(missing_files, "missing_volumes", lambda config: [])
+    paths, ids = [], []
+    with app.app_context():
+        for year, title in enumerate(back + gone, start=1950):
+            file = make_movie_file(
+                make_movie(title, year), "WEBRip-1080p", aws_key=f"{title}.mkv"
+            )
+            db.session.flush()
+            ids.append(str(file.id))
+            if title in back:
+                paths.append(os.path.join(app.config["LIBRARY_DIR"], file.file_path))
+        db.session.commit()
+        missing_files.missing_best_files_task()
+    for path in paths:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        open(path, "wb").close()
+
+    page = admin_client.get("/maintenance/missing").get_data(as_text=True)
+    try:
+        admin_client.post(
+            "/maintenance/missing",
+            data={
+                "csrf_token": csrf_token_from(page),
+                "password": ADMIN_PASSWORD,
+                "file_id": ids,
+                "missing_restore_submit": "Request restore of selected files",
+            },
+        )
+    finally:
+        for path in paths:
+            os.remove(path)
+    with admin_client.session_transaction() as session:
+        return [message for _, message in session.get("_flashes", [])]
+
+
+def test_a_selection_that_is_all_back_gives_only_the_skip_message(
+    app, admin_client, monkeypatch
+):
+    """Each selected file is in the library again. The page says that 1 time."""
+
+    flashes = _restore_flashes(
+        app, admin_client, monkeypatch, ["All Back One", "All Back Two"], []
+    )
+    assert flashes == ["Skipped 2 files that are in the library again."]
+    assert app.request_queue.jobs == []
+
+
+def test_no_selection_gives_the_no_archived_files_message(app, admin_client):
+    """A form with no usable selection says that nothing was selected."""
+
+    page = admin_client.get("/maintenance/missing").get_data(as_text=True)
+    admin_client.post(
+        "/maintenance/missing",
+        data={
+            "csrf_token": csrf_token_from(page),
+            "password": ADMIN_PASSWORD,
+            "missing_restore_submit": "Request restore of selected files",
+        },
+    )
+    with admin_client.session_transaction() as session:
+        flashes = [message for _, message in session.get("_flashes", [])]
+    assert flashes == ["No archived files were selected."]
+
+
+def test_a_mixed_selection_gives_the_skip_and_the_queued_messages(
+    app, admin_client, monkeypatch
+):
+    """A file that is back is skipped. The other file is queued."""
+
+    flashes = _restore_flashes(
+        app, admin_client, monkeypatch, ["Mixed Back"], ["Mixed Gone"]
+    )
+    assert len(flashes) == 2
+    assert flashes[0] == "Skipped 1 file that is in the library again."
+    assert flashes[1].startswith("Requesting 1 file to be restored from AWS Glacier")
+    assert [job.args[0] for job in app.request_queue.jobs] == ["Mixed Gone.mkv"]
+
+
 def test_scan_now_beside_the_running_cron_copy_queues_nothing(app, admin_client):
     """The nightly cron runs the scan under its own id (#527).
 
