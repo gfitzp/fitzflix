@@ -8,7 +8,8 @@ The main collection (#281) uses the rule of the criterion_collection
 reporting view. A main-feature file belongs in it when it is the best
 copy of its title group. Its quality must be physical media. Its movie
 must have a custom poster and a Criterion spine number that no other
-movie shares. Box sets that share 1 spine are not included. There is no
+movie with files shares. Box sets that share 1 spine are not included.
+A catalog record with no files does not count (#696). There is no
 extras rule, because some box-set films have no extras of their own.
 
 Each Criterion box set gets its own collection (#282), named for the
@@ -98,11 +99,19 @@ def _one_version(rows):
 
 
 def criterion_paths():
-    """Return the absolute paths of the files that belong in the collection."""
+    """Return the absolute paths of the files that belong in the collection.
 
+    A film stays out when another film with files shares its spine. Only
+    such films make a box set (#696). A catalog record with no files
+    does not. A set title alone does not keep a film out (#472)."""
+
+    with_files = db.session.query(File.movie_id).filter(File.movie_id.isnot(None))
     shared = (
         db.session.query(Movie.criterion_spine_number)
-        .filter(Movie.criterion_spine_number.isnot(None))
+        .filter(
+            Movie.criterion_spine_number.isnot(None),
+            Movie.id.in_(with_files),
+        )
         .group_by(Movie.criterion_spine_number)
         .having(db.func.count(Movie.id) > 1)
     )

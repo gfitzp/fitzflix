@@ -176,6 +176,48 @@ def test_the_rule_matches_the_view(app, monkeypatch):
         assert plex_collections.criterion_paths() == {paths["selected"]}
 
 
+def test_a_catalog_record_with_no_files_makes_no_box_set(app, monkeypatch):
+    """A record with no files does not make a box set of a spine (#696).
+
+    The Wikidata list makes a catalog record for each member of a set. A
+    record with the spine of an owned film and no files kept that film
+    out of the main collection. 2 owned films with 1 spine stay out."""
+
+    import app.plex_collections as plex_collections
+    from app import db
+
+    paths = _library(app)
+    with app.app_context():
+        owned = make_movie(
+            "War and Peace", 1966, criterion_spine_number=983, custom_poster="p.jpg"
+        )
+        kept = make_movie_file(owned, "Bluray-1080p")
+        make_movie(
+            "War and Peace, Part I: Andrei Bolkonsky",
+            1965,
+            criterion_spine_number=983,
+            criterion_set_title="War and Peace",
+        )
+
+        # A set title alone does not keep a film out (#472)
+
+        titled = make_movie(
+            "Infernal Affairs",
+            2002,
+            criterion_spine_number=1159,
+            criterion_set_title="The Infernal Affairs Trilogy",
+            custom_poster="p.jpg",
+        )
+        also_kept = make_movie_file(titled, "Bluray-1080p")
+        make_movie("Infernal Affairs II", 2003, criterion_spine_number=1159)
+        db.session.commit()
+        kept = {_path(kept), _path(also_kept)}
+
+    monkeypatch.setitem(app.config, "LIBRARY_DIR", LIBRARY)
+    with app.app_context():
+        assert plex_collections.criterion_paths() == {paths["selected"], *kept}
+
+
 def test_sync_creates_fills_and_trims_each_movie_library(app, monkeypatch):
     """The collection mirrors the rule in every movie library.
 
