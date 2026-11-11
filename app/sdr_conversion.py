@@ -303,7 +303,7 @@ def hold_import(file_path, file_details, plan, blockers):
     held", and the function returns None (#435). The held original, its
     decision and its date stay."""
 
-    from app.arr_client import HELD_DOWNLOAD_RECORD_TTL, carry_remembered_download
+    from app.arr_client import carry_remembered_download
     from app.importing import move_to_rejects
     from app.models import HeldImport
     from app.pipeline import record_task_stage
@@ -328,7 +328,7 @@ def hold_import(file_path, file_details, plan, blockers):
         # The release data of an arr download goes with the file. Thus,
         # an "Import" decision still gives it to the arr record (#671).
 
-        carry_remembered_download(file_path, held_path, HELD_DOWNLOAD_RECORD_TTL)
+        carry_remembered_download(file_path, held_path)
 
     held = HeldImport.query.filter_by(held_path=held_path).first()
     if held is None:
@@ -788,6 +788,7 @@ def archive_held_task(held_id):
     This is the "Archive only" choice. The library does not change. The
     held file is deleted after the upload."""
 
+    from app.arr_client import take_remembered_download
     from app.aws_storage import upload_untouched
     from app.models import ArchivedOriginal, HeldImport, Movie, TVSeries
 
@@ -848,6 +849,13 @@ def archive_held_task(held_id):
                 db.session.commit()
             return False
 
+        # The held file leaves with no import. Its release data goes too
+        # (#687). A fault of Redis only logs: the archive is done.
+
+        try:
+            take_remembered_download(held_path)
+        except Exception:
+            current_app.logger.warning(traceback.format_exc())
         if _same_file(held_path, uploaded_stat):
             _remove_quietly(held_path)
         else:

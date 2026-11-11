@@ -1105,6 +1105,7 @@ def held_imports():
     originals in S3. A restore of one imports it again. If a real rip
     still exists, the import waits here again."""
 
+    from app.arr_client import take_remembered_download
     from app.importing import enqueue_localization
     from app.sdr_conversion import clear_stuck_decisions, prune_held_imports
     from app.videos import move_to_rejects
@@ -1127,6 +1128,10 @@ def held_imports():
 
         name = held.untouched_basename
         if form.discard_submit.data:
+            # The held file leaves with no import. Its release data goes
+            # first. A later held file of the same name must not read it
+            # (#687).
+            take_remembered_download(held.held_path)
             move_to_rejects(held.held_path, "discarded")
             db.session.delete(held)
             db.session.commit()

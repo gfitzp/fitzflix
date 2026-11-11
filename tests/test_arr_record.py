@@ -361,7 +361,6 @@ def test_a_held_download_keeps_its_release_data_for_the_held_path(
 ):
     from app.arr_client import (
         DOWNLOAD_RECORD_KEY,
-        DOWNLOAD_RECORD_TTL,
         RADARR,
         remember_download,
         take_remembered_download,
@@ -386,7 +385,7 @@ def test_a_held_download_keeps_its_release_data_for_the_held_path(
         try:
             assert _kept(app, str(source)) is None
             key = DOWNLOAD_RECORD_KEY.format(path=held.held_path)
-            assert app.redis.ttl(key) > DOWNLOAD_RECORD_TTL
+            assert app.redis.ttl(key) > 29 * 86400
             assert take_remembered_download(held.held_path)["release_group"] == "GRP"
         finally:
             db.session.delete(db.session.get(HeldImport, held.id))
@@ -490,6 +489,28 @@ def test_a_film_in_an_edition_folder_gets_nothing(app, monkeypatch):
     )
     assert radarr_push.restore_download_record_task(3, library, None, "GRP") is False
     assert fake.calls == []
+
+
+def test_the_release_data_outlives_the_longest_wait_of_an_import(app):
+    """The key lives 30 days, and a carry gives it 30 days again (#687)."""
+
+    from app.arr_client import (
+        DOWNLOAD_RECORD_KEY,
+        SONARR,
+        carry_remembered_download,
+        remember_download,
+    )
+
+    with app.app_context():
+        remember_download(SONARR, "/tv/long.mkv", 4, {"releaseGroup": "GRP"})
+        assert app.redis.ttl(DOWNLOAD_RECORD_KEY.format(path="/tv/long.mkv")) > (
+            29 * 86400
+        )
+        app.redis.expire(DOWNLOAD_RECORD_KEY.format(path="/tv/long.mkv"), 100)
+        carry_remembered_download("/tv/long.mkv", "/tv/longer.mkv")
+        assert app.redis.ttl(DOWNLOAD_RECORD_KEY.format(path="/tv/longer.mkv")) > (
+            29 * 86400
+        )
 
 
 def test_an_arr_rename_carries_the_kept_data_to_the_new_path(app):

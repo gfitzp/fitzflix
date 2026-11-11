@@ -884,6 +884,7 @@ def test_archive_only_uploads_the_held_file(app, monkeypatch):
         )
         db.session.add(held)
         db.session.commit()
+        _remember_release(app, held_path)
 
         monkeypatch.setattr(
             aws_storage,
@@ -902,6 +903,24 @@ def test_archive_only_uploads_the_held_file(app, monkeypatch):
         assert archived.quality_title == "Bluray-2160p"
         assert archived.hdr_format == "HDR10"
         assert archived.reason == "archive only"
+        assert _release_of(app, held_path) is None
+
+
+def _remember_release(app, path):
+    """Keep the release data of an arr download for path (#671)."""
+
+    from app.arr_client import RADARR, remember_download
+
+    remember_download(RADARR, path, 7, {"releaseGroup": "GRP"})
+    assert _release_of(app, path) is not None
+
+
+def _release_of(app, path):
+    """Return the raw release data that Redis keeps for path, or None."""
+
+    from app.arr_client import DOWNLOAD_RECORD_KEY
+
+    return app.redis.get(DOWNLOAD_RECORD_KEY.format(path=path))
 
 
 # The Held imports page
@@ -1055,8 +1074,10 @@ def test_discard_moves_the_held_file_to_rejects(app, admin_client):
     basename = "Discard Test (1998) - [Bluray-2160p].mkv"
     with app.app_context():
         held_id, path = _held_row(app, basename)
+        _remember_release(app, path)
     _decide(admin_client, held_id, "discard_submit")
     assert not os.path.exists(path)
+    assert _release_of(app, path) is None
     rejected = os.path.join(app.config["REJECTS_DIR"], "discarded", basename)
     assert os.path.exists(rejected)
     os.remove(rejected)

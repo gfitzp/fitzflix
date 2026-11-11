@@ -220,13 +220,15 @@ def rename_to_quality(arr, call, owner_id, file_id, quality_name, wait):
 # and no release group. arr then downloads the same release again. The
 # key expires by itself when no import reads it.
 
+# Invariant: the data lives as long as the import of its file can take
+# (#687). Only the end of the import reads it. The waits before that
+# end can take more than 7 days: the space waits have no limit, and the
+# transcode queue can be long. A held import waits for the admin. Thus,
+# the key lives 30 days, and each move to a new path gives it 30 days
+# again. The next webhook for the same path replaces or deletes it.
+
 DOWNLOAD_RECORD_KEY = "fitzflix:arr:download:{path}"
-DOWNLOAD_RECORD_TTL = 4 * 86400
-
-# A held import waits for a decision of the admin. Its release data
-# lives this long at the held path.
-
-HELD_DOWNLOAD_RECORD_TTL = 30 * 86400
+DOWNLOAD_RECORD_TTL = 30 * 86400
 
 
 def remember_download(arr, path, owner_id, media_file):
@@ -256,11 +258,10 @@ def remember_download(arr, path, owner_id, media_file):
     )
 
 
-def carry_remembered_download(old_path, new_path, ttl=None):
+def carry_remembered_download(old_path, new_path):
     """Move the release data of a download to its new path after a rename.
 
-    ttl gives the data a new life in seconds. A held import uses it,
-    because it can wait for a decision longer than an import runs."""
+    The data gets DOWNLOAD_RECORD_TTL again at the new path."""
 
     if old_path == new_path:
         return
@@ -269,14 +270,15 @@ def carry_remembered_download(old_path, new_path, ttl=None):
         current_app.redis.rename(DOWNLOAD_RECORD_KEY.format(path=old_path), new_key)
     except redis.exceptions.ResponseError:
         return  # No release data was kept for the old path.
-    if ttl:
-        current_app.redis.expire(new_key, ttl)
+    current_app.redis.expire(new_key, DOWNLOAD_RECORD_TTL)
 
 
 def take_remembered_download(path):
     """Return the release data kept for the import of path, and delete it.
 
-    Return None when nothing was kept."""
+    Return None when nothing was kept. A held file that leaves with no
+    import calls this too. Then a later held file of the same name with
+    no release data cannot read the data of this file (#687)."""
 
     raw = current_app.redis.getdel(DOWNLOAD_RECORD_KEY.format(path=path))
     return json.loads(raw) if raw else None
