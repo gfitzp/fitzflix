@@ -274,6 +274,7 @@ def register(app):
                 enqueue_task(
                     "app.videos.aws_delete",
                     aws_key,
+                    only_if_unclaimed=True,
                     description=f"Deleting '{aws_key}' from AWS",
                 )
         click.echo(

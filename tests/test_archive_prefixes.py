@@ -217,7 +217,9 @@ def test_the_sync_restores_the_transcoded_copy_and_prunes_all_prefixes(
     monkeypatch.setattr(
         aws_storage, "aws_restore", lambda key, **kw: restores.append(key)
     )
-    monkeypatch.setattr(aws_storage, "aws_delete", lambda key: deletes.append(key))
+    monkeypatch.setattr(
+        aws_storage, "aws_delete", lambda key, **kw: deletes.append(key)
+    )
     monkeypatch.setattr("app.email.send_email", lambda *a, **k: None)
 
     class FakeClient:
@@ -270,7 +272,7 @@ def test_the_sync_uploads_the_stale_transcoded_copy_again(app, monkeypatch):
     monkeypatch.setattr(
         aws_storage, "aws_restore", lambda key, **kw: restores.append(key)
     )
-    monkeypatch.setattr(aws_storage, "aws_delete", lambda key: None)
+    monkeypatch.setattr(aws_storage, "aws_delete", lambda key, **kw: None)
     monkeypatch.setattr("app.email.send_email", lambda *a, **k: None)
 
     class FakeClient:
@@ -598,7 +600,9 @@ def test_the_prune_keeps_a_recent_unclaimed_upload(app, monkeypatch):
         lambda bucket, prefix="": objects.get(prefix, []),
     )
     deletes = []
-    monkeypatch.setattr(aws_storage, "aws_delete", lambda key: deletes.append(key))
+    monkeypatch.setattr(
+        aws_storage, "aws_delete", lambda key, **kw: deletes.append(key)
+    )
     monkeypatch.setattr(aws_storage, "aws_restore", lambda key, **kw: None)
     monkeypatch.setattr("app.email.send_email", lambda *a, **k: None)
 
@@ -666,7 +670,9 @@ def test_the_prune_keeps_the_upload_of_an_import_that_waits_for_space(app, monke
         lambda bucket, prefix="": objects.get(prefix, []),
     )
     deletes = []
-    monkeypatch.setattr(aws_storage, "aws_delete", lambda key: deletes.append(key))
+    monkeypatch.setattr(
+        aws_storage, "aws_delete", lambda key, **kw: deletes.append(key)
+    )
     monkeypatch.setattr(aws_storage, "aws_restore", lambda key, **kw: None)
     monkeypatch.setattr("app.email.send_email", lambda *a, **k: None)
 
@@ -856,7 +862,10 @@ def test_the_replaced_key_is_deleted_only_if_present(app, uploads):
         "untouched/Marker Archive (1998) - [DVD].mkv",
         "untouched/Worse Copy (1998) - [DVD].mkv",
     ]
-    assert all(job.kwargs == {"only_if_present": True} for job in deletes)
+    assert all(
+        job.kwargs == {"only_if_present": True, "only_if_unclaimed": True}
+        for job in deletes
+    )
 
 
 def test_an_archive_that_changes_during_the_copy_stays_on_the_row(

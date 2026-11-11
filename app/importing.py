@@ -3683,7 +3683,8 @@ def _delete_replaced_archive(worse_key):
 
     The new file can claim the same key that its predecessor held (a
     repointed key, or a re-import on the same basename). Never delete a
-    key that a surviving row claims."""
+    key that a surviving row claims. The task asks for the claim again
+    when it runs (#686)."""
 
     if untouched_key_still_claimed(worse_key):
         current_app.logger.info(
@@ -3697,6 +3698,7 @@ def _delete_replaced_archive(worse_key):
         "app.videos.aws_delete",
         worse_key,
         only_if_present=True,
+        only_if_unclaimed=True,
         description=f"Deleting '{worse_key}' from AWS",
     )
 

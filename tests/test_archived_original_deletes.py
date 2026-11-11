@@ -5,7 +5,7 @@ kept claiming their S3 keys, and the objects were never pruned."""
 
 from app import db
 from tests.conftest import csrf_token_from
-from tests.factories import make_movie, make_tv_file, make_tv_series
+from tests.factories import make_movie, make_movie_file, make_tv_file, make_tv_series
 
 
 def _original(**owner):
@@ -205,6 +205,102 @@ def test_the_purge_delete_skips_a_key_with_no_object(app, monkeypatch):
     assert "untouched/Not Yet.mkv" not in s3.markers
     aws_storage.aws_delete("untouched/Here.mkv", only_if_present=True)
     assert [key for key, _ in s3.deletes] == ["untouched/Here.mkv"]
+
+
+# The claim check and the delete of an archive are one step (#686)
+
+
+def test_a_queued_delete_keeps_a_key_that_a_record_claims_before_it_runs(
+    app, monkeypatch, caplog
+):
+    """A page queues the delete of an unclaimed key. A re-import claims it first."""
+
+    import logging
+
+    from app import aws_storage
+    from app.main.library import _queue_archive_deletes
+    from tests.fakes import ArchiveS3
+
+    key = "untouched/Claimed Later (1997) - [Bluray-1080p].mkv"
+    s3 = ArchiveS3(objects={key: {"ContentLength": 1}})
+    monkeypatch.setattr(aws_storage, "aws_s3_client", lambda *a, **k: s3)
+    monkeypatch.setitem(app.config, "AWS_BUCKET", "test-bucket")
+    with app.app_context():
+        _queue_archive_deletes([key])
+    jobs = [
+        job
+        for job in app.request_queue.jobs
+        if job.func_name == "app.videos.aws_delete" and job.args == (key,)
+    ]
+    assert len(jobs) == 1
+
+    # The same rip comes in again before the job runs. Its row claims the key.
+
+    with app.app_context():
+        movie = make_movie("Claimed Later", 1997)
+        make_movie_file(movie, "Bluray-1080p", aws_key=key)
+        db.session.commit()
+
+    with caplog.at_level(logging.INFO):
+        aws_storage.aws_delete(*jobs[0].args, **jobs[0].kwargs)
+    assert s3.deletes == []
+    assert key in s3.objects
+    kept = [r for r in caplog.records if "claims it now" in r.message]
+    assert len(kept) == 1
+
+
+def test_a_delete_for_an_unclaimed_key_still_deletes(app, monkeypatch):
+    """With no claim, the option deletes as before. only_if_present still works."""
+
+    from app import aws_storage
+    from tests.fakes import ArchiveS3
+
+    s3 = ArchiveS3(objects={"untouched/Nobody (1990).mkv": {"ContentLength": 1}})
+    monkeypatch.setattr(aws_storage, "aws_s3_client", lambda *a, **k: s3)
+    monkeypatch.setitem(app.config, "AWS_BUCKET", "test-bucket")
+    aws_storage.aws_delete(
+        "untouched/Not There (1990).mkv", only_if_present=True, only_if_unclaimed=True
+    )
+    assert s3.deletes == []
+    assert "untouched/Not There (1990).mkv" not in s3.markers
+    aws_storage.aws_delete(
+        "untouched/Nobody (1990).mkv", only_if_present=True, only_if_unclaimed=True
+    )
+    assert [key for key, _ in s3.deletes] == ["untouched/Nobody (1990).mkv"]
+
+
+def test_a_delete_with_no_option_deletes_a_claimed_key_as_before(app, monkeypatch):
+    """A job that the older code queued has no option. It deletes as before."""
+
+    from app import aws_storage
+    from tests.fakes import ArchiveS3
+
+    key = "untouched/Old Job (1991) - [DVD].mkv"
+    s3 = ArchiveS3(objects={key: {"ContentLength": 1}})
+    monkeypatch.setattr(aws_storage, "aws_s3_client", lambda *a, **k: s3)
+    monkeypatch.setitem(app.config, "AWS_BUCKET", "test-bucket")
+    with app.app_context():
+        make_movie_file(make_movie("Old Job", 1991), "DVD", aws_key=key)
+        db.session.commit()
+    aws_storage.aws_delete(key, only_if_present=True)
+    assert [deleted for deleted, _ in s3.deletes] == [key]
+
+
+def test_a_delete_keeps_a_key_that_an_archived_original_claims(app, monkeypatch):
+    """The task uses the same claim rule as the pages. An original counts."""
+
+    from app import aws_storage
+    from tests.fakes import ArchiveS3
+
+    with app.app_context():
+        movie = make_movie("Original Claim", 1992)
+        key = _original(movie_id=movie.id)
+        db.session.commit()
+    s3 = ArchiveS3(objects={key: {"ContentLength": 1}})
+    monkeypatch.setattr(aws_storage, "aws_s3_client", lambda *a, **k: s3)
+    monkeypatch.setitem(app.config, "AWS_BUCKET", "test-bucket")
+    aws_storage.aws_delete(key, only_if_present=True, only_if_unclaimed=True)
+    assert s3.deletes == []
 
 
 def test_a_wedged_share_at_the_unlink_still_removes_the_triage_aids(app, monkeypatch):

@@ -70,7 +70,9 @@ def test_the_prune_keeps_the_pending_upload_of_a_waiting_import(app, monkeypatch
         lambda bucket, prefix="": objects.get(prefix, []),
     )
     deletes = []
-    monkeypatch.setattr(aws_storage, "aws_delete", lambda key: deletes.append(key))
+    monkeypatch.setattr(
+        aws_storage, "aws_delete", lambda key, **kw: deletes.append(key)
+    )
     monkeypatch.setattr(aws_storage, "aws_restore", lambda key, **kw: None)
     monkeypatch.setattr("app.email.send_email", lambda *a, **k: None)
 
@@ -181,7 +183,9 @@ def test_the_prune_keeps_the_upload_of_a_scheduled_conversion_retry(app, monkeyp
         lambda bucket, prefix="": objects.get(prefix, []),
     )
     deletes = []
-    monkeypatch.setattr(aws_storage, "aws_delete", lambda key: deletes.append(key))
+    monkeypatch.setattr(
+        aws_storage, "aws_delete", lambda key, **kw: deletes.append(key)
+    )
     monkeypatch.setattr(aws_storage, "aws_restore", lambda key, **kw: None)
     monkeypatch.setattr("app.email.send_email", lambda *a, **k: None)
 
@@ -226,7 +230,9 @@ def test_the_prune_keeps_the_untouched_upload_of_a_rejected_import(app, monkeypa
         lambda bucket, prefix="": objects.get(prefix, []),
     )
     deletes = []
-    monkeypatch.setattr(aws_storage, "aws_delete", lambda key: deletes.append(key))
+    monkeypatch.setattr(
+        aws_storage, "aws_delete", lambda key, **kw: deletes.append(key)
+    )
     monkeypatch.setattr(aws_storage, "aws_restore", lambda key, **kw: None)
     monkeypatch.setattr("app.email.send_email", lambda *a, **k: None)
 

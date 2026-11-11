@@ -1105,7 +1105,7 @@ def _prune_unclaimed(listing, job, unreferenced_files):
             continue
 
         if remote_key not in aws_keys and remote_key not in archive_prefixes:
-            aws_delete(remote_key)
+            aws_delete(remote_key, only_if_unclaimed=True)
             unreferenced_files.append(remote_key)
 
 
@@ -2444,6 +2444,7 @@ def archive_library_file(file, path, delete_replaced=True):
                 "app.videos.aws_delete",
                 doomed_key,
                 only_if_present=True,
+                only_if_unclaimed=True,
                 description=f"Deleting '{doomed_key}' from AWS",
             )
     return key
@@ -3115,17 +3116,28 @@ def _move_archive(file, sqs_receipt_handle, message_key):
     return True
 
 
-def aws_delete(key, only_if_present=False):
+def aws_delete(key, only_if_present=False, only_if_unclaimed=False):
     """Delete an object from AWS S3 storage.
 
     only_if_present reads the head first. A key with no object is left
     alone (follow-up #515). The purge of a pending move named its target.
     On the versioned bucket, a plain delete wrote a delete marker at a
-    key that did not exist yet."""
+    key that did not exist yet.
+
+    only_if_unclaimed asks untouched_key_still_claimed immediately before
+    the delete. A key that a record claims now is left alone (#686). A
+    queued delete can wait for hours, and an import can claim the key
+    in that time. A job that the older code queued has no such argument.
+    It deletes as before."""
 
     # This needs app.app_context(). Thus, the web application can call it
     # directly.
     with app.app_context():
+        if only_if_unclaimed and untouched_key_still_claimed(key):
+            current_app.logger.info(
+                f"Keeping '{key}' in AWS. A file record claims it now"
+            )
+            return None
         current_app.logger.info(f"Preparing to delete '{key}' from AWS...")
         s3_client = aws_s3_client()
         if only_if_present:

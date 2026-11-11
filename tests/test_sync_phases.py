@@ -22,7 +22,7 @@ def _sync_env(app, monkeypatch, objects, fail_delete=None, fail_listing=False):
             raise ConnectionError("S3 is away")
         return objects.get(prefix, [])
 
-    def delete(key):
+    def delete(key, **kwargs):
         if key == fail_delete:
             raise ConnectionError("S3 delete failed")
         calls["deletes"].append(key)

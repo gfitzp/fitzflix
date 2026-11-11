@@ -624,7 +624,9 @@ def test_the_s3_sync_requests_a_restore_and_keeps_its_key(app, monkeypatch):
         lambda bucket, prefix="": objects.get(prefix, []),
     )
     deletes = []
-    monkeypatch.setattr(aws_storage, "aws_delete", lambda key: deletes.append(key))
+    monkeypatch.setattr(
+        aws_storage, "aws_delete", lambda key, **kw: deletes.append(key)
+    )
     monkeypatch.setattr("app.email.send_email", lambda *a, **k: None)
 
     class SyncS3:

@@ -2712,7 +2712,8 @@ def _queue_archive_deletes(aws_keys):
 
     The delete reads the head first. A pending move target has no
     object yet. A plain delete wrote a delete marker there (follow-up
-    #515)."""
+    #515). The task asks for the claim again when it runs (#686). The
+    check here only keeps useless jobs out of the queue."""
 
     for aws_key in dict.fromkeys(aws_keys):
         if untouched_key_still_claimed(aws_key):
@@ -2721,6 +2722,7 @@ def _queue_archive_deletes(aws_keys):
             "app.videos.aws_delete",
             aws_key,
             only_if_present=True,
+            only_if_unclaimed=True,
             # A delete from a page uses the request workers. The handoff
             # queue can hold long library copies.
             queue="request",
