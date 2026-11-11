@@ -239,6 +239,7 @@ TASKS = {
     "app.videos.save_track_metadata": TaskSpec("sql", "SQL_TASK_TIMEOUT"),
     "app.videos.track_metadata_scan_library": TaskSpec("sql", "SQL_TASK_TIMEOUT"),
     "app.videos.review_task": TaskSpec("sql", "SQL_TASK_TIMEOUT"),
+    "app.importing.repair_replaced_file_task": TaskSpec("sql", "SQL_TASK_TIMEOUT"),
     # The work that a user or an outside service asks for.
     "app.videos.refresh_tmdb_info": TaskSpec("request", "SQL_TASK_TIMEOUT"),
     "app.videos.aws_restore": TaskSpec("request", "SQL_TASK_TIMEOUT"),

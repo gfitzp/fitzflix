@@ -429,9 +429,12 @@ def _cataloging_over_the_source(app, tmp_path, monkeypatch, name, error, record)
     "error", [SystemExit(), RuntimeError("commit")], ids=["stop", "error"]
 )
 def test_a_file_that_its_record_points_to_stays_at_its_path(
-    app, tmp_path, monkeypatch, error
+    app, tmp_path, monkeypatch, error, caplog
 ):
-    """The new file replaced the file of a record. The repair of #592 covers it (#688)."""
+    """The new file replaced the file of a record. The repair of #592 covers it (#688).
+
+    A stop signal is no fault of the import. Its record in the log is a
+    warning."""
 
     import app.importing as importing
     from app import db
@@ -452,6 +455,27 @@ def test_a_file_that_its_record_points_to_stays_at_its_path(
     assert scans == [file_id]
     with app.app_context():
         assert db.session.get(File, file_id).aws_stale
+    errors = [r for r in caplog.records if r.levelno >= logging.ERROR]
+    assert bool(errors) == isinstance(error, Exception)
+
+
+def test_a_fault_in_the_record_lookup_does_not_keep_the_title_lock(
+    app, tmp_path, monkeypatch
+):
+    """The helper of the failure branch raises. The lock is free and the file stays."""
+
+    import app.importing as importing
+
+    def broken(library_file_path, output_file):
+        raise OSError("the repair failed")
+
+    monkeypatch.setattr(importing, "_claim_at_path", broken)
+    name = "Over Broken (2023) - [DVD].mkv"
+    source, rejected, _ = _cataloging_over_the_source(
+        app, tmp_path, monkeypatch, name, RuntimeError("commit"), record=False
+    )
+    assert source.read_bytes() == b"library copy"
+    assert not os.path.exists(rejected)
 
 
 @pytest.mark.parametrize(
@@ -495,3 +519,97 @@ def test_a_file_over_its_source_stays_when_the_record_lookup_fails(
     )
     assert source.read_bytes() == b"library copy"
     assert not os.path.exists(rejected)
+
+
+def test_a_failed_record_lookup_books_the_repair_of_the_kept_file(
+    app, tmp_path, monkeypatch
+):
+    """The database did not answer for the lookup. The repair runs when it answers.
+
+    Without it, the row keeps the size, the tracks and the archive of
+    the old file, and nothing finds that later."""
+
+    import app.importing as importing
+    from app import db
+    from app.models import File
+    from rq.registry import ScheduledJobRegistry
+
+    real_file = importing.File
+
+    class Unreadable:
+        @property
+        def id(self):
+            raise outage(2013, "Lost connection")
+
+    def lose_the_database(*args, **kwargs):
+        monkeypatch.setattr(importing, "File", Unreadable())
+        raise outage(2013, "Lost connection")
+
+    monkeypatch.setattr(
+        "tests.test_database_outage._raiser", lambda error: lose_the_database
+    )
+    name = "Over Outage (2023) - [DVD].mkv"
+    source, rejected, file_id = _cataloging_over_the_source(
+        app, tmp_path, monkeypatch, name, RuntimeError("unused"), record=True
+    )
+    monkeypatch.setattr(importing, "File", real_file)
+    assert source.read_bytes() == b"library copy"
+    assert not os.path.exists(rejected)
+
+    scans, stale = [], []
+    monkeypatch.setattr(
+        importing, "_rescan_after_a_failed_edit", lambda fid, label: scans.append(fid)
+    )
+    monkeypatch.setattr(
+        importing, "mark_archive_stale", lambda fid, **kwargs: stale.append(fid)
+    )
+    with app.app_context():
+        registry = ScheduledJobRegistry(queue=app.sql_queue)
+        booked = [
+            job
+            for job in map(app.sql_queue.fetch_job, registry.get_job_ids())
+            if job and job.func_name == "app.importing.repair_replaced_file_task"
+        ]
+        assert len(booked) == 1
+        job = booked[0]
+        assert job.args[0] == f"Movies/{name[:-4]}/{name}"
+        try:
+            # The row still has the size of the old file. The task repairs it.
+            assert job.func(*job.args, **job.kwargs) is True
+            assert scans == [file_id] and stale == [file_id]
+
+            # A row that agrees with the file needs no repair.
+            row = db.session.get(File, file_id)
+            row.filesize_bytes = os.path.getsize(source)
+            db.session.commit()
+            assert job.func(*job.args, **job.kwargs) is False
+            assert scans == [file_id] and stale == [file_id]
+        finally:
+            registry.remove(job, delete_job=True)
+
+
+def test_the_repair_of_a_kept_file_waits_for_the_database(app, tmp_path, monkeypatch):
+    """The task books itself while the database is away, up to its maximum."""
+
+    import app.importing as importing
+
+    booked = []
+    monkeypatch.setattr(
+        importing,
+        "_book_replaced_file_repair",
+        lambda path, output, tries: booked.append(tries),
+    )
+
+    class Unreadable:
+        @property
+        def id(self):
+            raise outage(2013, "Lost connection")
+
+    monkeypatch.setattr(importing, "File", Unreadable())
+    output = tmp_path / "Kept (2023) - [DVD].mkv"
+    output.write_bytes(b"library copy")
+    path = "Movies/Kept (2023)/Kept (2023) - [DVD].mkv"
+    last = importing.REPLACED_REPAIR_MAX_TRIES
+    assert importing.repair_replaced_file_task(path, str(output), 1) is False
+    assert importing.repair_replaced_file_task(path, str(output), last) is False
+    assert booked == [2]

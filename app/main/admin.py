@@ -1062,7 +1062,7 @@ def missing_files():
                 f"that {'are' if len(present) != 1 else 'is'} in the library again.",
                 "info",
             )
-        # One request gives one result message (#691). The skip message
+        # No 2 result messages contradict (#691). The skip message
         # covers a selection that is in the library again.
 
         if not files:

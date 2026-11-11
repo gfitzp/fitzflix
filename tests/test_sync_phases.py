@@ -15,7 +15,7 @@ def _sync_env(app, monkeypatch, objects, fail_delete=None, fail_listing=False):
 
     from app import aws_storage
 
-    calls = {"deletes": [], "mails": [], "uncataloged": []}
+    calls = {"deletes": [], "delete_options": [], "mails": [], "uncataloged": []}
 
     def listing(bucket, prefix=""):
         if fail_listing:
@@ -26,6 +26,7 @@ def _sync_env(app, monkeypatch, objects, fail_delete=None, fail_listing=False):
         if key == fail_delete:
             raise ConnectionError("S3 delete failed")
         calls["deletes"].append(key)
+        calls["delete_options"].append(kwargs)
 
     class FakeClient:
         def put_object(self, **kwargs):
@@ -85,6 +86,11 @@ def test_a_failed_prune_fails_the_job_and_still_reports(app, monkeypatch):
         aws_storage.sync_aws_s3_storage_task()
 
     assert calls["deletes"] == ["untouched/A Stray (2001) - [DVD].mkv"]
+
+    # The prune has its own claim set, exact in letter case. The claim
+    # check of aws_delete folds case and would keep some orphans (#686).
+
+    assert calls["delete_options"] == [{}]
     assert "Fitzflix - Deleted unreferenced AWS files" in calls["mails"]
     assert calls["uncataloged"] == [1]
 

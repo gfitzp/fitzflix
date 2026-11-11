@@ -1807,11 +1807,14 @@ def _in_import_directory(path):
 def abandon_failed_stage(
     error, source_path, lock, may_keep=True, later_stage=False, **kwargs
 ):
-    """Clean up a stage after error. Re-raise a stop signal or an outage of the database.
+    """Clean up a stage after error. Re-raise a stop signal, and an outage that keeps the source.
 
     A stop signal keeps the source for the hourly sweep (#497). Any
     other error rejects the source. With may_keep False, a stop signal
-    rejects the source too.
+    rejects the source too, and an outage is a plain error that does
+    not raise again. A caller that passes keep_source=True keeps the
+    source for each error (#688). The cataloging does that for a file
+    that a record points to.
 
     An outage of the database keeps the source only when a sweep finds
     it again (#681). The hourly sweep of the import directory queues
@@ -1829,10 +1832,10 @@ def abandon_failed_stage(
         and database_outage(error)
         and (not later_stage or _in_import_directory(source_path))
     )
-    if may_keep and interrupted(error):
+    if interrupted(error) and (may_keep or kwargs.get("keep_source")):
         current_app.logger.warning(
             f"'{name}' A stop signal interrupted the import ({error!r}). The "
-            f"source stays for the next sweep"
+            f"source stays"
         )
         kwargs["keep_source"] = True
     elif outage:
@@ -2660,9 +2663,17 @@ def finalize_localization(
                 stray = hidden_output_file
             elif placement == "renamed" and not overwritten:
                 stray = output_file
-            claimed = (placement == "replaced" or overwritten) and _claim_at_path(
-                file_details.get("file_path"), output_file
-            )
+            # A fault in the lookup or in its repair must not skip the
+            # release of the lock and the clean-up below. Then the file
+            # stays, as for a lookup that failed.
+
+            claimed = False
+            if placement == "replaced" or overwritten:
+                try:
+                    claimed = _claim_at_path(file_details.get("file_path"), output_file)
+                except Exception:
+                    current_app.logger.warning(traceback.format_exc())
+                    claimed = True
             _release_title_lock(lock)
 
             # Invariant: a file that a record points to stays at its path
@@ -3259,8 +3270,11 @@ def _claim_at_path(library_file_path, output_file):
     again, and the stale flag makes the repair upload the new file.
 
     A lookup that fails gives True with a warning. A row can exist, and
-    the database did not say. A kept file with a row can be repaired. A
-    rejected file leaves its row with no file (#688)."""
+    the database did not say. A rejected file leaves its row with no
+    file (#688). The file stays, and repair_replaced_file_task is booked.
+    That task makes the lookup again when the database answers. Without
+    it, a row keeps the size, the tracks and the archive of the old
+    file, and nothing finds that later."""
 
     if not library_file_path:
         return False
@@ -3281,6 +3295,7 @@ def _claim_at_path(library_file_path, output_file):
             f"'{output_file}' The lookup of its record failed. The file stays "
             f"at its path: " + traceback.format_exc()
         )
+        _book_replaced_file_repair(library_file_path, output_file, 1)
         return True
     if row_id is None:
         return False
@@ -3289,6 +3304,95 @@ def _claim_at_path(library_file_path, output_file):
         row_id, reason="an import replaced the file and its commit failed"
     )
     return True
+
+
+# The repair of a file that stayed at its path after a record lookup
+# failed (#688). The task waits this long for the database, this many
+# times.
+
+REPLACED_REPAIR_DELAY = timedelta(minutes=10)
+REPLACED_REPAIR_MAX_TRIES = 6
+
+
+def _book_replaced_file_repair(library_file_path, output_file, tries):
+    """Book repair_replaced_file_task for a later time. Redis holds the booking.
+
+    The booking needs no database. A fault of the booking is a warning.
+    The failure handler of the cataloging calls this, and it must end."""
+
+    name = "app.importing.repair_replaced_file_task"
+    try:
+        requeue(
+            name,
+            key=library_file_path,
+            delay=REPLACED_REPAIR_DELAY,
+            reason=(
+                f"waits for the database. Try {tries} of "
+                f"{REPLACED_REPAIR_MAX_TRIES}"
+            ),
+            counters={"tries": tries},
+            args=(library_file_path, output_file),
+            description=f"'{os.path.basename(output_file)}' Checking the record",
+            level="info",
+        )
+    except Exception:
+        current_app.logger.warning(
+            f"'{output_file}' The repair of its record could not be booked: "
+            + traceback.format_exc()
+        )
+
+
+def repair_replaced_file_task(library_file_path, output_file, tries=1):
+    """Repair the record of a file that a failed import left at its path (#688).
+
+    This is a task. The cataloging wrote the new file over the file of
+    a record, its commit failed, and the lookup of the record failed
+    too. The task makes the lookup again. A row that does not agree
+    with the size of the file gets the repair of #592: a rescan and a
+    stale archive. A row that agrees needs nothing. A later import or a
+    rescan made it correct. With no row, the file has no record, and 1
+    warning says so. The weekly sync imports such a file. While the
+    database does not answer, the task books itself again. Return True
+    if it queued a repair."""
+
+    from app import get_app
+
+    with get_app().app_context():
+        try:
+            row = (
+                db.session.query(File.id, File.filesize_bytes)
+                .filter(File.file_path == library_file_path)
+                .order_by(File.id)
+                .first()
+            )
+        except DBAPIError:
+            try:
+                db.session.rollback()
+            except Exception:
+                pass
+            if tries >= REPLACED_REPAIR_MAX_TRIES:
+                current_app.logger.warning(
+                    f"'{output_file}' The database did not answer in "
+                    f"{tries} tries. The record of this file is not checked"
+                )
+                return False
+            _book_replaced_file_repair(library_file_path, output_file, tries + 1)
+            return False
+        if not os.path.exists(output_file):
+            return False
+        if row is None:
+            current_app.logger.warning(
+                f"'{output_file}' A failed import left this file, and no "
+                f"record points to it"
+            )
+            return False
+        if row.filesize_bytes == os.path.getsize(output_file):
+            return False
+        _rescan_after_a_failed_edit(row.id, f"'{output_file}'")
+        mark_archive_stale(
+            row.id, reason="an import replaced the file and its commit failed"
+        )
+        return True
 
 
 def _commit_records(file, kept_archives, file_path):

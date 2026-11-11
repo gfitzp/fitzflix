@@ -1361,7 +1361,9 @@ def restore_drill():
 
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
             stderr = (e.stderr or b"").decode("utf-8", "replace")[:300]
-            current_app.logger.error(f"Restore drill failed running mysql: {stderr}")
+            current_app.logger.error(
+                f"Restore drill failed running mysql ({type(e).__name__}): {stderr}"
+            )
             raise
 
         finally:

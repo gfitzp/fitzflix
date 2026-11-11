@@ -955,10 +955,16 @@ def _request_pending_moves():
     Invariant: a record whose archive is under pending-untouched/ has a
     pending move. An import requests the move after its commit. A failed
     request leaves the row on a key that the lifecycle rule of the
-    bucket expires after 60 days. The sync runs only when each queue is
-    idle. Thus, no import waits to request its own move. The commit
-    queues the moves. Return the count of the requests."""
+    bucket expires after 60 days. The sync starts only when each queue
+    is idle. An import that starts later can request the same move, and
+    the move is queued 1 time. A key that the sync reported as lost has
+    no object to move, and it gets no request. The commit queues the
+    moves. Return the count of the requests."""
 
+    lost = {
+        key.decode() if isinstance(key, bytes) else key
+        for key in current_app.redis.hkeys(ARCHIVE_LOST_KEY)
+    }
     rows = (
         File.query.filter(
             File.aws_key.like(f"{PENDING_ARCHIVE_PREFIX}/%"),
@@ -970,6 +976,8 @@ def _request_pending_moves():
     )
     requested = 0
     for file in rows:
+        if file.aws_key in lost:
+            continue
         if request_archive_move(file):
             requested += 1
             current_app.logger.warning(
@@ -1104,8 +1112,12 @@ def _prune_unclaimed(listing, job, unreferenced_files):
         ):
             continue
 
+        # The claim set above is exact in letter case, as S3 is. The
+        # check of aws_delete folds case, and it would keep an orphan
+        # whose key differs from a claimed key only by case (#686).
+
         if remote_key not in aws_keys and remote_key not in archive_prefixes:
-            aws_delete(remote_key, only_if_unclaimed=True)
+            aws_delete(remote_key)
             unreferenced_files.append(remote_key)
 
 

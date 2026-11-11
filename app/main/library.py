@@ -3142,8 +3142,9 @@ def _dominant_roles(credit_ids):
 
     That is the key role that covers the most distinct library works
     (films and series both). ROLE_PRECEDENCE breaks ties. Only the owned
-    works count, with the rule of _credited_film_pairs (#692). Thus, the
-    role and the count of a person come from the same works."""
+    works count, with the rule of _credited_film_pairs (#692). The role
+    reads the cast and the crew credits together. The count of the page
+    follows its cast or crew filter."""
 
     if not credit_ids:
         return {}

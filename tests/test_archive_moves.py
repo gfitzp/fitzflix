@@ -1686,3 +1686,25 @@ def test_the_weekly_sync_runs_the_pending_moves_phase(app, monkeypatch):
     with pytest.raises(RuntimeError, match="listing"):
         aws_storage.sync_aws_s3_storage_task()
     assert ran == [1]
+
+
+def test_the_sync_requests_no_move_of_a_pending_archive_that_is_lost(app, s3):
+    """The object of a pending key expired, and the sync reported it lost.
+
+    A move has nothing to copy. A request each week gives only a job
+    and 2 warnings."""
+
+    from app import aws_storage, db
+
+    with app.app_context():
+        lost = archived_film("Pending Lost", 1964)
+        lost.aws_key = f"pending-untouched/run5/{lost.basename}"
+        db.session.commit()
+        app.redis.hset(aws_storage.ARCHIVE_LOST_KEY, lost.aws_key, lost.basename)
+        try:
+            assert aws_storage._request_pending_moves() == 0
+            db.session.refresh(lost)
+            assert lost.aws_key_target is None
+            assert move_jobs(app) == []
+        finally:
+            app.redis.hdel(aws_storage.ARCHIVE_LOST_KEY, lost.aws_key)
