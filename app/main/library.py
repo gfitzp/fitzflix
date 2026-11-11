@@ -1503,25 +1503,27 @@ def _films_and_features(movie_id):
 
 
 def _criterion_form(movie):
-    """Return the Criterion form of a film, with its quality choices and default."""
+    """Return the Criterion form of a film, with its quality choices and default.
 
-    # The choices are the Unknown tier (id 1) and the physical DVD,
-    # 1080p, and 2160p tiers, worst first.
+    The first choice is "Unknown". It carries the empty value, and the
+    save stores no format for it (#685). Thus, a film with no recorded
+    format keeps none after a save. The other choices are the physical
+    DVD, 1080p, and 2160p tiers, worst first. The list validates a
+    posted value against these choices."""
 
     criterion_form = CriterionForm()
     tiers = sorted(
-        (
-            (tier.preference, tier.id, title)
-            for title, tier in quality_anchors().items()
-            if tier.id == 1
-            or (
-                tier.physical_media
-                and (title == "DVD" or title.endswith(("1080p", "2160p")))
-            )
-        ),
+        (tier.preference, tier.id, title)
+        for title, tier in quality_anchors().items()
+        if tier.physical_media
+        and (title == "DVD" or title.endswith(("1080p", "2160p")))
     )
-    criterion_form.quality.choices = [(str(id), title) for (_, id, title) in tiers]
-    criterion_form.quality.default = movie.criterion_quality_id
+    criterion_form.quality.choices = [("", "Unknown")] + [
+        (str(id), title) for (_, id, title) in tiers
+    ]
+    criterion_form.quality.default = (
+        str(movie.criterion_quality_id) if movie.criterion_quality_id else ""
+    )
     return criterion_form
 
 
@@ -1704,7 +1706,9 @@ def movie_criterion(movie_id):
 
     movie.criterion_in_print = criterion_form.in_print.data
     movie.criterion_disc_owned = criterion_form.owned.data
-    movie.criterion_quality_id = criterion_form.quality.data
+    movie.criterion_quality_id = (
+        int(criterion_form.quality.data) if criterion_form.quality.data else None
+    )
 
     db.session.commit()
     flash(f"Updated Criterion Collection details for '{movie.display_title}'")
