@@ -119,10 +119,11 @@ def adjacency_scores(candidates, features, anchor_features):
     return scores
 
 
-def suggestions_after_rating(user_id, exclude=(), count=SUGGESTION_COUNT):
-    """Return (anchor movie id, suggested movie ids) after a positive rating.
+def suggestions_after_rating(user_id, movie_id, exclude=(), count=SUGGESTION_COUNT):
+    """Return the suggested movie ids of the page of movie_id after a positive rating.
 
-    Return (None, []) if there is no positive rating. These are enjoyment
+    Return [] with no query of the candidates unless the last positive
+    rating of the user is for movie_id (#705). These are enjoyment
     picks, not elicitation picks. They are unseen candidates that share
     features with the rated film. Fitzflix ranks them by the score of the
     taste profile plus the adjacency bonus. The signal of the new rating
@@ -132,28 +133,33 @@ def suggestions_after_rating(user_id, exclude=(), count=SUGGESTION_COUNT):
 
     redis = current_app.redis
     last = last_response(redis, user_id)
-    if not last or last.get("action") != "rated" or not last.get("positive"):
-        return None, []
+    if (
+        not last
+        or last.get("action") != "rated"
+        or not last.get("positive")
+        or last.get("movie_id") != movie_id
+    ):
+        return []
     profile = stored_profile(redis, user_id)
     if not profile:
-        return None, []
+        return []
 
-    anchor_id = last["movie_id"]
+    excluded = set(exclude)
     candidates = [
-        movie_id
-        for movie_id in elicitation_candidates(user_id)
-        if movie_id not in set(exclude)
+        candidate
+        for candidate in elicitation_candidates(user_id)
+        if candidate not in excluded
     ]
     if not candidates:
-        return anchor_id, []
+        return []
 
-    features = collect_features(candidates + [anchor_id])
-    adjacency = adjacency_scores(candidates, features, features.get(anchor_id, []))
+    features = collect_features(candidates + [movie_id])
+    adjacency = adjacency_scores(candidates, features, features.get(movie_id, []))
     scored = []
-    for movie_id in candidates:
-        if adjacency.get(movie_id, 0.0) <= 0:
+    for candidate in candidates:
+        if adjacency.get(candidate, 0.0) <= 0:
             continue
-        taste, _ = score_movie(features.get(movie_id, []), profile)
-        scored.append((taste + ADJACENCY_WEIGHT * adjacency[movie_id], movie_id))
+        taste, _ = score_movie(features.get(candidate, []), profile)
+        scored.append((taste + ADJACENCY_WEIGHT * adjacency[candidate], candidate))
     scored.sort(reverse=True)
-    return anchor_id, [movie_id for _, movie_id in scored[:count]]
+    return [candidate for _, candidate in scored[:count]]

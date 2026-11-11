@@ -120,7 +120,9 @@ def test_movie_page_ladder_logs_a_quick_rating(app, admin_client, admin_id):
         assert float(review.rating) == 4.0
 
 
-def test_movie_page_positive_rating_earns_suggestions(app, admin_client, admin_id):
+def test_movie_page_positive_rating_earns_suggestions(
+    app, admin_client, admin_id, monkeypatch
+):
     """Make sure a positive rating on the movie page earns suggestions.
 
     A ladder tap of 3 or more earns the "since you liked" strip on the
@@ -178,10 +180,26 @@ def test_movie_page_positive_rating_earns_suggestions(app, admin_client, admin_i
     assert "Since you liked Page Strip Anchor" in body
     assert "Page Strip Similar (1961)" in body
 
-    # Only the page of the anchor shows the strip.
+    # Only the page of the anchor shows the strip. Another page does
+    # not compute the suggestions at all (#705).
 
+    from app import elicitation
+
+    feature_reads = []
+    real_collect_features = elicitation.collect_features
+
+    def counted_collect_features(*args, **kwargs):
+        """Count the feature reads of the suggestions."""
+
+        feature_reads.append(args)
+        return real_collect_features(*args, **kwargs)
+
+    monkeypatch.setattr(elicitation, "collect_features", counted_collect_features)
     other = admin_client.get(f"/movie/{unrelated_id}").get_data(as_text=True)
     assert "Since you liked" not in other
+    assert feature_reads == []
+    admin_client.get(f"/movie/{anchor_id}")
+    assert len(feature_reads) == 1
 
     # A banked suggestion goes on the watchlist. The anchor and the
     # steering do not change.

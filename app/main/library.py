@@ -1377,11 +1377,11 @@ def movie(movie_id):
     # The "since you liked…" strip renders when the last positive rating
     # of the session was for THIS film. That is directly after the
     # redirect of the log arrives back here (review_tmdb logs arrive
-    # here too).
+    # here too). The page of another film computes nothing (#705).
 
-    anchor_id, suggested_ids = suggestions_after_rating(current_user.id)
+    suggested_ids = suggestions_after_rating(current_user.id, movie.id)
     suggestions = []
-    if anchor_id == movie.id and suggested_ids:
+    if suggested_ids:
         suggested_movies = {
             m.id: m for m in Movie.query.filter(Movie.id.in_(suggested_ids))
         }
