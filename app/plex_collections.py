@@ -162,8 +162,7 @@ def box_set_groups():
     every edition (#286). Then each edition is an item of the set, and a
     film matches through the file that Plex has, also a digital copy.
     The set titles that the database compares as equal are 1 set, under
-    the spelling of set_title_spellings (#697). box_set_titles uses the
-    same spellings.
+    the spelling of set_title_spellings (#697).
     """
 
     rows = (
@@ -190,19 +189,11 @@ def box_set_groups():
 
 
 # The box sets that the sync made or filled. Only such a set empties
-# its Plex collection when it shrinks (#558). A hand-made collection
-# with the name of a single-film set is not ours. The key has no TTL.
+# its Plex collection when it shrinks (#558) or when no record names its
+# title any more (#702). A hand-made collection was never in the record.
+# Thus, the sync never empties it. The key has no TTL.
 
 SYNCED_SETS_KEY = "fitzflix:plex:synced-box-sets"
-
-
-def box_set_titles():
-    """Return the title of each Criterion box set that a movie record names.
-
-    A set under BOX_SET_MIN_FILMS has no group in box_set_groups. Its
-    Plex collection must still empty (#544), if the sync filled it."""
-
-    return set(set_title_spellings().values())
 
 
 def _paged(path, params=None):
@@ -370,22 +361,18 @@ def sync_criterion_collection():
             redis = current_app.redis
             if qualifying:
                 redis.sadd(SYNCED_SETS_KEY, *qualifying)
-            # A set that shrank under BOX_SET_MIN_FILMS kept its Plex
-            # collection with every former member (#544). An empty plan
-            # empties a collection that exists. It makes no new one. Only
-            # a set that the sync filled before shrinks (#558).
-            synced = {
-                name.decode() if isinstance(name, bytes) else name
-                for name in redis.smembers(SYNCED_SETS_KEY)
-            }
-            titles = box_set_titles()
-            # A set title that no record names any more (a renamed set)
-            # leaves the record. Its old collection is not ours (#558).
-            stale = sorted(synced - titles)
-            if stale:
-                redis.srem(SYNCED_SETS_KEY, *stale)
-                synced -= set(stale)
-            shrunk = sorted((titles - set(qualifying)) & synced)
+            # A set that the sync filled, and that has no plan now, is
+            # retired. It shrank under BOX_SET_MIN_FILMS (#544), or no
+            # record names its title any more, after a corrected spelling
+            # (#702). It gets an empty plan for 1 run. An empty plan
+            # empties a collection that exists. It makes no new one.
+            retired = sorted(
+                {
+                    name.decode() if isinstance(name, bytes) else name
+                    for name in redis.smembers(SYNCED_SETS_KEY)
+                }
+                - set(qualifying)
+            )
             machine = _server_machine_id()
             sections = plex_get("/library/sections").get("MediaContainer", {})
         except Exception:
@@ -397,7 +384,7 @@ def sync_criterion_collection():
             for section in sections.get("Directory", []) or []
             if section.get("type") == "movie"
         ]
-        failed = set() if sections else set(shrunk)
+        failed = set() if sections else set(retired)
         for section in sections:
             try:
                 by_path = _items_by_path(section["key"])
@@ -412,10 +399,16 @@ def sync_criterion_collection():
                 }
             except Exception:
                 current_app.logger.warning(traceback.format_exc())
-                failed.update(shrunk)
+                failed.update(retired)
                 continue
-            stale = [(name, [], SORT_RELEASE) for name in shrunk if name in collections]
-            for name, groups, sort in plans + stale:
+            # The empty plans go first. If Plex takes 2 titles that differ
+            # only by letter case as 1 collection, the plan of the new
+            # spelling then fills it again.
+
+            empties = [
+                (name, [], SORT_RELEASE) for name in retired if name in collections
+            ]
+            for name, groups, sort in empties + plans:
                 try:
                     _sync_collection(
                         section, collections, by_path, groups, name, machine, sort
@@ -426,9 +419,10 @@ def sync_criterion_collection():
 
         # An emptied set is no longer ours. A later collection of that
         # name is left alone. A failed section keeps the name for the
-        # next run.
+        # next run. A section with no collection of that name has
+        # nothing to empty.
 
-        emptied = [name for name in shrunk if name not in failed]
+        emptied = [name for name in retired if name not in failed]
         if emptied:
             current_app.redis.srem(SYNCED_SETS_KEY, *emptied)
         return True

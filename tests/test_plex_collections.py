@@ -413,7 +413,7 @@ def test_equal_set_titles_are_1_box_set(app, monkeypatch):
     """Set titles that MariaDB compares as equal are 1 set (#697).
 
     The test database compares the titles exactly. Thus, the grouping
-    rule is in Python. box_set_titles gives the same spelling."""
+    rule is in Python."""
 
     import app.plex_collections as plex_collections
     from app import db
@@ -431,7 +431,6 @@ def test_equal_set_titles_are_1_box_set(app, monkeypatch):
     monkeypatch.setitem(app.config, "LIBRARY_DIR", LIBRARY)
     with app.app_context():
         groups = plex_collections.box_set_groups()
-        assert plex_collections.box_set_titles() == {"Set"}
     assert set(groups) == {"Set"}
     assert sorted(sorted(group) for group in groups["Set"]) == expected
 
@@ -648,11 +647,11 @@ def test_a_hand_made_collection_named_like_a_small_set_stays(app, monkeypatch):
     assert fake.collections["5"]["Lonely Set"][1] == {"34", "35"}
 
 
-def test_a_set_title_that_no_record_names_leaves_the_synced_record(app, monkeypatch):
-    """A renamed set kept its old name in the synced record (#558 follow-up).
+def test_a_set_title_that_no_record_names_empties_its_collection(app, monkeypatch):
+    """A synced set title that no record names gets an empty plan (#702).
 
-    The old name was not in box_set_titles. Thus, it never reached the
-    shrunk list, and the record held it for good."""
+    The sync filled the collection, so it is ours. A hand-made collection
+    whose name was never in the record keeps its items (#558)."""
 
     paths = _box_sets(app)
     plex_collections, fake = _setup(
@@ -660,11 +659,88 @@ def test_a_set_title_that_no_record_names_leaves_the_synced_record(app, monkeypa
         monkeypatch,
         {"5": ("movie", "Movies", {"31": paths["web"], "34": paths["lonely"]})},
     )
-    fake.collections["5"] = {"Old Set Name": ["700", {"34", "35"}]}
+    fake.collections["5"] = {
+        "Old Set Name": ["700", {"34", "35"}],
+        "Favourites": ["701", {"31", "34"}],
+    }
     app.redis.sadd(plex_collections.SYNCED_SETS_KEY, "Old Set Name")
 
     assert plex_collections.sync_criterion_collection() is True
+    assert fake.collections["5"]["Old Set Name"][1] == set()
+    assert fake.collections["5"]["Favourites"][1] == {"31", "34"}
     assert not app.redis.sismember(plex_collections.SYNCED_SETS_KEY, "Old Set Name")
     assert app.redis.sismember(plex_collections.SYNCED_SETS_KEY, "Olympia Films")
-    # The old collection is not ours. Its members stay.
-    assert fake.collections["5"]["Old Set Name"][1] == {"34", "35"}
+
+
+def _synced_members(app, plex_collections):
+    """Return the set titles in the record of the synced sets."""
+
+    return {
+        name.decode() if isinstance(name, bytes) else name
+        for name in app.redis.smembers(plex_collections.SYNCED_SETS_KEY)
+    }
+
+
+def test_a_corrected_set_title_moves_the_films_to_1_collection(app, monkeypatch):
+    """The old spelling of a corrected set loses its films (#702).
+
+    Before, the old collection kept every film, and each film of the set
+    was in 2 collections."""
+
+    from app import db
+    from app.criterion_catalog import record_set_title
+    from app.models import Movie
+
+    paths = _box_sets(app)
+    plex_collections, fake = _setup(
+        app,
+        monkeypatch,
+        {"5": ("movie", "Movies", {"31": paths["web"], "32": paths["bluray"]})},
+    )
+    app.redis.delete(plex_collections.SYNCED_SETS_KEY)
+    assert plex_collections.sync_criterion_collection() is True
+    assert fake.collections["5"]["Olympia Films"][1] == {"31", "32"}
+
+    with app.app_context():
+        movie = Movie.query.filter_by(title="Olympia Part Two").one()
+        record_set_title(movie, "Olympia films")
+        db.session.commit()
+
+    assert plex_collections.sync_criterion_collection() is True
+    assert fake.collections["5"]["Olympia Films"][1] == set()
+    assert fake.collections["5"]["Olympia films"][1] == {"31", "32"}
+    assert _synced_members(app, plex_collections) == {"Olympia films"}
+
+
+def test_a_failed_section_keeps_the_stale_title_for_the_next_run(app, monkeypatch):
+    """A stale title leaves the record only after each section emptied it (#702)."""
+
+    paths = _box_sets(app)
+    plex_collections, fake = _setup(
+        app,
+        monkeypatch,
+        {
+            "5": ("movie", "Movies", {"31": paths["web"]}),
+            "6": ("movie", "Movies 4K", {"61": paths["bluray"]}),
+        },
+    )
+    fake.collections["5"] = {"Old Set Name": ["700", {"31"}]}
+    fake.collections["6"] = {"Old Set Name": ["701", {"61"}]}
+    app.redis.delete(plex_collections.SYNCED_SETS_KEY)
+    app.redis.sadd(plex_collections.SYNCED_SETS_KEY, "Old Set Name")
+
+    def get(path, params=None):
+        if path == "/library/sections/6/collections":
+            raise RuntimeError("Plex section 6 is down")
+        return fake.get(path, params)
+
+    monkeypatch.setattr(plex_collections, "plex_get", get)
+    assert plex_collections.sync_criterion_collection() is True
+    assert fake.collections["5"]["Old Set Name"][1] == set()
+    assert fake.collections["6"]["Old Set Name"][1] == {"61"}
+    assert "Old Set Name" in _synced_members(app, plex_collections)
+
+    monkeypatch.setattr(plex_collections, "plex_get", fake.get)
+    assert plex_collections.sync_criterion_collection() is True
+    assert fake.collections["6"]["Old Set Name"][1] == set()
+    assert "Old Set Name" not in _synced_members(app, plex_collections)
