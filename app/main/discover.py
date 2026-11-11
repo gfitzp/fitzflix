@@ -29,6 +29,7 @@ from flask_login import current_user, login_required
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import contains_eager, selectinload
 
+from app.redis_guard import nothing_stored
 from app.tasks import enqueue_task
 from app import db, local_path
 from app.main.forms import (
@@ -138,6 +139,21 @@ WATCHLIST_SHELF_SIZE = 18
 RECS_REQUESTED_KEY = "fitzflix:recs:requested:{user_id}"
 RAIL_REQUESTED_KEY = "fitzflix:rail:requested:{user_id}"
 REQUESTED_SECONDS = 3600
+
+
+@nothing_stored("The compute request", default=False)
+def _request_compute(marker_key, name, description):
+    """Queue the task called name for the current user 1 time each REQUESTED_SECONDS.
+
+    marker_key is a key pattern with a user_id field. The marker stops a
+    new enqueue on each page load. Return True if the task was queued.
+    During a Redis fault, nothing is queued (#699)."""
+
+    marker = marker_key.format(user_id=int(current_user.id))
+    if not current_app.redis.set(marker, "1", nx=True, ex=REQUESTED_SECONDS):
+        return False
+    enqueue_task(name, description=description)
+    return True
 
 
 def _fits(movie, minutes):
@@ -435,16 +451,11 @@ def index():
         # or a new reviewer). Compute one time now instead of a wait for
         # tonight. The marker prevents a new enqueue on each page load.
 
-        if current_app.redis.set(
-            RECS_REQUESTED_KEY.format(user_id=int(current_user.id)),
-            "1",
-            nx=True,
-            ex=REQUESTED_SECONDS,
-        ):
-            enqueue_task(
-                "app.recommendations.recompute_recommendations",
-                description="Computing film recommendations",
-            )
+        _request_compute(
+            RECS_REQUESTED_KEY,
+            "app.recommendations.recompute_recommendations",
+            "Computing film recommendations",
+        )
 
     # The source of the rewatch shelf: owned films that the user liked
     # and whose last watch is long past. Old favorites have no other
@@ -499,16 +510,11 @@ def index():
     elif user_provider_ids(current_user) and stored_profile(
         current_app.redis, current_user.id
     ):
-        if current_app.redis.set(
-            RAIL_REQUESTED_KEY.format(user_id=int(current_user.id)),
-            "1",
-            nx=True,
-            ex=REQUESTED_SECONDS,
-        ):
-            enqueue_task(
-                "app.streaming_rail.recompute_streaming_rail",
-                description="Computing the streaming rail",
-            )
+        _request_compute(
+            RAIL_REQUESTED_KEY,
+            "app.streaming_rail.recompute_streaming_rail",
+            "Computing the streaming rail",
+        )
 
     # The source of the departure shelf: the films that leave the
     # Criterion Channel at the end of the month, taste-ranked, for

@@ -30,6 +30,7 @@ from requests.exceptions import HTTPError
 from werkzeug.local import LocalProxy
 
 from app.cache import MISS, cache_json, cached_fetch, cached_json
+from app.redis_guard import nothing_stored
 from app.tasks import enqueue_task
 from app import db, get_app
 from app.models import File, Movie, User, UserMovieReview, UserMovieStatus
@@ -645,6 +646,7 @@ def recompute_streaming_rail():
         return True
 
 
+@nothing_stored("The streaming shelf")
 def stored_rail(redis, user_id):
     """Return the stored rail of the nightly recompute for a user, or None."""
 

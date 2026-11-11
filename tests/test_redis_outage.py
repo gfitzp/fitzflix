@@ -79,3 +79,102 @@ def test_the_rows_poll_logs_no_traceback_while_redis_is_down(
         for _ in range(3):
             assert user_client.get("/queue/rows").status_code == 200
     assert "Traceback" not in caplog.text
+
+
+class DownRedis:
+    """A Redis client whose each command raises ConnectionError (#699)."""
+
+    def __getattr__(self, name):
+        def down(*args, **kwargs):
+            raise redis.exceptions.ConnectionError("Redis is down (test)")
+
+        return down
+
+
+@pytest.fixture
+def redis_raises(app, monkeypatch):
+    """Replace app.redis and the connection of every queue with DownRedis."""
+
+    from app import redis_guard
+    from app.queues import roster_queues
+
+    down = DownRedis()
+    monkeypatch.setattr(app, "redis", down)
+    for queue in roster_queues(app):
+        monkeypatch.setattr(queue, "connection", down)
+    monkeypatch.setitem(redis_guard._last_warning, "at", None)
+    return down
+
+
+def _member_with_a_watchlist(app):
+    """Give the member a watchlist, liked anchors, shelf picks and 2 services.
+
+    The anchors share a genre and a keyword with 5 owned picks. Thus,
+    the Recommendations page has shelves to build. The services include
+    the Criterion Channel. Thus, the Criterion shelves and the card run."""
+
+    from app import db
+    from app.leaving_criterion import CRITERION_PROVIDER_ID
+    from app.models import TMDBKeyword, User, UserStreamingProvider, UserWatchlist
+    from tests.conftest import MEMBER_EMAIL
+    from tests.factories import make_movie, make_movie_file
+    from tests.test_elicitation import make_candidate
+    from tests.test_recommendations import genre, log_watch
+
+    with app.app_context():
+        user = User.query.filter_by(email=MEMBER_EMAIL).one()
+        western = genre(37, "Western")
+        heist = TMDBKeyword(id=9717, name="heist")
+        db.session.add(heist)
+        films = [
+            make_candidate(f"Outage Anchor {n}", 1961 + n, genre_row=western)
+            for n in range(2)
+        ] + [
+            make_candidate(f"Outage Pick {n}", 1975 + n, genre_row=western)
+            for n in range(5)
+        ]
+        for film in films:
+            film.keywords.append(heist)
+        log_watch(user.id, films[0], rating=5, liked=True)
+        log_watch(user.id, films[1], rating=4, liked=True)
+        wanted = make_movie("Outage Wanted", 1994, tmdb_id=7101)
+        make_movie_file(wanted, "Bluray-1080p")
+        streaming = make_movie("Outage Streaming", 1995, tmdb_id=7102)
+        for film in (wanted, streaming):
+            db.session.add(UserWatchlist(user_id=user.id, movie_id=film.id))
+        for provider_id, name in ((8, "Netflix"), (CRITERION_PROVIDER_ID, "Criterion")):
+            db.session.add(
+                UserStreamingProvider(
+                    user_id=user.id,
+                    provider_id=provider_id,
+                    name=name,
+                    logo_path=f"/{provider_id}.jpg",
+                )
+            )
+        db.session.commit()
+
+
+@pytest.mark.parametrize("watchlist", [True, False])
+@pytest.mark.parametrize("path", ["/", "/recommendations"])
+def test_the_discovery_pages_answer_while_redis_is_down(
+    app, user_client, redis_raises, caplog, monkeypatch, path, watchlist
+):
+    """The landing page and the Recommendations page answer 200 (#699).
+
+    A Redis fault is "nothing stored" for that render. Nothing is
+    queued."""
+
+    queued = []
+    monkeypatch.setattr(
+        "app.main.discover.enqueue_task", lambda *args, **kwargs: queued.append(args)
+    )
+    if watchlist:
+        _member_with_a_watchlist(app)
+    with caplog.at_level(logging.WARNING):
+        response = user_client.get(path)
+    assert response.status_code == 200
+    assert queued == []
+    if watchlist and path == "/":
+        assert "Outage Wanted" in response.get_data(as_text=True)
+    warnings = [r for r in caplog.records if "Redis is not reachable" in r.message]
+    assert len(warnings) == 1

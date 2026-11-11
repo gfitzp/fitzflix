@@ -38,6 +38,7 @@ import re
 from flask import current_app
 
 from app import db
+from app.redis_guard import nothing_stored
 from app.models import (
     Movie,
     MovieAward,
@@ -160,6 +161,13 @@ KEYWORD_CASE_MAJORITY = 0.6
 KEYWORD_CASE_SAMPLE = 400
 
 
+def _plain_keyword_name(name):
+    """Return the keyword with an uppercase first character (#699)."""
+
+    return f"{name[:1].upper()}{name[1:]}"
+
+
+@nothing_stored("The keyword labels", default=_plain_keyword_name)
 def keyword_display_name(name):
     """Return the keyword with its real-world capitalization.
 
@@ -202,7 +210,7 @@ def keyword_display_name(name):
             counts[casing] = counts.get(casing, 0) + 1
             total += 1
 
-    resolved = f"{name[:1].upper()}{name[1:]}"
+    resolved = _plain_keyword_name(name)
     if total:
         best = max(counts, key=counts.get)
         if best != name and counts[best] / total >= KEYWORD_CASE_MAJORITY:

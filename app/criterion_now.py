@@ -39,6 +39,7 @@ from werkzeug.local import LocalProxy
 
 from app.tasks import enqueue_task
 from app import get_app
+from app.redis_guard import nothing_stored
 from app.leaving_criterion import CRITERION_PROVIDER_ID, match_tmdb_id
 from app.streaming_rail import enriched_movie
 from app.title_keys import match_key, title_key
@@ -881,6 +882,7 @@ def _up_next(upcoming, watch_url):
     return previews
 
 
+@nothing_stored("The Criterion card")
 def criterion_now_card(user):
     """Return the now-playing card for one user, or None.
 

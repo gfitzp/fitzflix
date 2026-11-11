@@ -38,6 +38,7 @@ from werkzeug.local import LocalProxy
 from app import db, get_app
 from app.models import File, Movie
 from app.funnel import user_film_sets
+from app.redis_guard import nothing_stored
 from app.recommendations import (
     record_lane_scores,
     stored_profile,
@@ -656,7 +657,7 @@ def leaving_shelf(user):
     subscribed = {row.provider_id for row in user.streaming_providers}
     if CRITERION_PROVIDER_ID not in subscribed:
         return None
-    payload = current_app.redis.get(LEAVING_KEY)
+    payload = _stored_leaving_set()
     if not payload:
         return None
     stored = json.loads(payload)
@@ -715,6 +716,13 @@ def leaving_shelf(user):
     return {"departs": departs, "url": stored["source"], "items": items}
 
 
+@nothing_stored("The Criterion departures")
+def _stored_leaving_set():
+    """Return the raw stored leaving set, or None (#699)."""
+
+    return current_app.redis.get(LEAVING_KEY)
+
+
 def leaving_departure(tmdb_id):
     """Return the departure date, as "August 31", or None.
 
@@ -730,7 +738,7 @@ def leaving_departure(tmdb_id):
     index = getattr(g, "_leaving_criterion_index", None)
     if index is None:
         index = {}
-        payload = current_app.redis.get(LEAVING_KEY)
+        payload = _stored_leaving_set()
         if payload:
             stored = json.loads(payload)
             departs = date.fromisoformat(stored["departs"])

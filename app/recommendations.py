@@ -25,6 +25,7 @@ from flask import current_app, g
 from werkzeug.local import LocalProxy
 
 from app import db, get_app
+from app.redis_guard import nothing_stored
 from app.models import (
     File,
     Movie,
@@ -1193,6 +1194,13 @@ def _other_shelf_cards(redis_client, user_id, shelf, day):
     return cards
 
 
+def _fresh_pick(redis_client, user_id, shelf, eligible_ids, pick, day=None, size=None):
+    """Return a fresh pick of 1 shelf that is not frozen. Redis is not reachable (#699)."""
+
+    return pick(frozenset())
+
+
+@nothing_stored("The frozen shelves", default=_fresh_pick)
 def frozen_shelf(redis_client, user_id, shelf, eligible_ids, pick, day=None, size=None):
     """Return the stable ordered card ids of the day for 1 shelf.
 
@@ -1365,6 +1373,7 @@ def daily_shelf(
     return [by_key[row_key] for row_key in ids if row_key in by_key]
 
 
+@nothing_stored("The stored recommendations")
 def stored_recommendations(redis, user_id):
     """Return the stored payload of the nightly recompute for a user, or None."""
 
@@ -1372,6 +1381,7 @@ def stored_recommendations(redis, user_id):
     return json.loads(payload) if payload else None
 
 
+@nothing_stored("The stored scores", default={})
 def stored_scores(redis, user_id):
     """Return the score map, or {} before the first compute.
 
@@ -1507,6 +1517,7 @@ def resolved_tmdb_score(redis, user_id, tmdb_id, profile, scores=None):
     return score
 
 
+@nothing_stored("The taste profile")
 def stored_profile(redis, user_id):
     """Return the stored taste profile of the nightly recompute for a user, or None."""
 

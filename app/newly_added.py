@@ -39,6 +39,7 @@ from flask import current_app, g
 from werkzeug.local import LocalProxy
 
 from app import db, get_app
+from app.redis_guard import nothing_stored
 from app.funnel import user_film_sets
 from app.leaving_criterion import (
     CRITERION_PROVIDER_ID,
@@ -245,7 +246,7 @@ def newly_added_shelves(user):
     for provider_id, feed in FEEDS.items():
         if provider_id not in subscribed:
             continue
-        raw = current_app.redis.get(NEWLY_ADDED_KEY.format(provider_id=provider_id))
+        raw = _stored_feed(provider_id)
         if not raw:
             continue
         stored = json.loads(raw)
@@ -526,6 +527,13 @@ def poster_fold(user, tmdb_id, movie_id=None):
     return ("new", label) if label else None
 
 
+@nothing_stored("The newly added shelves")
+def _stored_feed(provider_id):
+    """Return the raw stored newly-added feed of the provider, or None (#699)."""
+
+    return current_app.redis.get(NEWLY_ADDED_KEY.format(provider_id=provider_id))
+
+
 def _fold_index():
     """Return {(provider_id, tmdb_id): "August 5"} for every recent arrival
     across the stored feeds.
@@ -538,7 +546,7 @@ def _fold_index():
     if index is None:
         index = {}
         for pid in FEEDS:
-            raw = current_app.redis.get(NEWLY_ADDED_KEY.format(provider_id=pid))
+            raw = _stored_feed(pid)
             if not raw:
                 continue
             stored = json.loads(raw)

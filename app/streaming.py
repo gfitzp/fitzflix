@@ -27,6 +27,7 @@ from werkzeug.local import LocalProxy
 from app import db, get_app
 from app.cache import cache_json, cached_fetch
 from app.models import Movie
+from app.redis_guard import nothing_stored
 from app.tmdb_apply import tmdb_json, tmdb_json_or
 
 # The app instance of this process. Fitzflix resolves it lazily. Thus,
@@ -147,6 +148,7 @@ def _fetch_title_availability(tmdb_id):
     return payload, True
 
 
+@nothing_stored("The streaming availability", default=({}, []))
 def batch_title_availability(
     tmdb_ids, max_workers=REFRESH_WORKERS, fetch_limit=None, refresh=False
 ):
