@@ -49,6 +49,7 @@ from app.frames import (
     POOL_KEY,
     dealt_key,
     frame_path,
+    playable_film_filters,
     pool_entries,
 )
 from app.main import bp
@@ -440,8 +441,10 @@ def _rated_only(difficulty):
 
 
 def _rated_movie_ids():
-    """Return the movies that the current user RATED.
+    """Return the films that the current user RATED and that the game can deal.
 
+    A rated film with no main-feature file cannot be the answer. Thus, it
+    is not in the world of Easy and the rated-films filter (#704).
     A rating is a star rating, not only a diary row. The world of Easy
     and the rated-films filter read this. Before, this accepted each
     diary entry. But the Netflix history import seeded unrated watches
@@ -451,9 +454,10 @@ def _rated_movie_ids():
     return {
         movie_id
         for (movie_id,) in db.session.query(UserMovieReview.movie_id)
+        .join(Movie, Movie.id == UserMovieReview.movie_id)
         .filter(UserMovieReview.user_id == int(current_user.id))
-        .filter(UserMovieReview.movie_id.isnot(None))
         .filter(UserMovieReview.rating.isnot(None))
+        .filter(*playable_film_filters())
     }
 
 
@@ -512,8 +516,11 @@ def _build_options(answer_id, difficulty, rated_only=False, seed=None):
     Easy walks the ladder over the rated films of the user first. The
     same applies to a difficulty with the rated-films filter on,
     because an unrated option would mark the answer by elimination.
-    Then it pads from the whole library. The last resort is any film.
-    Thus, a round can always fill its slots.
+    Then it pads from the whole library. The last resort is any film of
+    the library. Each option is a film with a main-feature file, as the
+    answer is (playable_film_filters, #704). A catalog record cannot be
+    the answer, and as an option it gives the answer away. A library
+    with fewer films than the slots gives a shorter list.
 
     seed makes the draw repeatable (#573). A resumed round then shows
     the same options as before. A second draw let the player find the
@@ -529,7 +536,7 @@ def _build_options(answer_id, difficulty, rated_only=False, seed=None):
             Movie.id, Movie.year, Movie.tmdb_title, Movie.tmdb_release_date
         )
         .filter(Movie.id != answer_id)
-        .filter(Movie.tmdb_id.isnot(None))
+        .filter(*playable_film_filters())
     }
     rated = (
         _rated_movie_ids() - {answer_id}

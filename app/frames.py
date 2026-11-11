@@ -122,6 +122,16 @@ def _forget_dropped_tokens(pooled):
             current_app.redis.zrem(key, *gone)
 
 
+def playable_film_filters():
+    """Return the SQL conditions of a film that the game can deal (#704).
+
+    The film has a main-feature file and a TMDB id (#205). The frame pool
+    takes its frames only from such films. Thus, each option of a round
+    and each film that a guess can name obeys the same rule."""
+
+    return (Movie.files.any(File.feature_type_id.is_(None)), Movie.tmdb_id.isnot(None))
+
+
 def frame_path(token):
     """Return the image path of the pooled frame for one token."""
 
@@ -261,13 +271,12 @@ def refresh_frame_pool_task():
 
         playable = {
             movie_id
-            for (movie_id,) in db.session.query(Movie.id).filter(
-                Movie.files.any(File.feature_type_id.is_(None))
-            )
             # The game never deals a home movie or a different recording
             # without a TMDB entry (#205). This also prunes the ones that
             # are already pooled.
-            .filter(Movie.tmdb_id.isnot(None))
+            for (movie_id,) in db.session.query(Movie.id).filter(
+                *playable_film_filters()
+            )
         }
         valid = {}
         for token, entry in entries.items():
@@ -429,9 +438,9 @@ def replace_frame_task(movie_id):
         pooled_movies = {entry.get("movie_id") for entry in entries.values()}
         playable = {
             candidate_id
-            for (candidate_id,) in db.session.query(Movie.id)
-            .filter(Movie.files.any(File.feature_type_id.is_(None)))
-            .filter(Movie.tmdb_id.isnot(None))
+            for (candidate_id,) in db.session.query(Movie.id).filter(
+                *playable_film_filters()
+            )
         }
         candidates = list(playable - pooled_movies)
         replacement = random.choice(candidates) if candidates else movie_id

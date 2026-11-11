@@ -622,9 +622,13 @@ def test_options_stay_within_the_answers_era(app, admin_client, monkeypatch, adm
     with app.app_context():
         answer = make_movie("Era Answer", 1960)
         make_movie_file(answer, "Bluray-1080p")
-        make_movie("Era Near", 1961)  # inside ±2
-        make_movie("Era Mid", 1964)  # inside ±5 only
-        make_movie("Era Far", 1990)  # outside each window
+        # Each option is a library film with a main-feature file (#704).
+        for title, year in (
+            ("Era Near", 1961),  # inside ±2
+            ("Era Mid", 1964),  # inside ±5 only
+            ("Era Far", 1990),  # outside each window
+        ):
+            make_movie_file(make_movie(title, year), "Bluray-1080p")
         db.session.commit()
         answer_id = answer.id
 
@@ -642,6 +646,8 @@ def test_options_stay_within_the_answers_era(app, admin_client, monkeypatch, adm
         rated_near = make_movie("Era Rated Near", 1963)  # rated, ±5
         rated_wide = make_movie("Era Rated Wide", 1968)  # rated, ±10 only
         rated_far = make_movie("Era Rated Far", 1990)  # rated, out of era
+        for movie in (rated_near, rated_wide, rated_far):
+            make_movie_file(movie, "Bluray-1080p")
         for movie in (rated_near, rated_wide, rated_far, answer):
             db.session.add(
                 UserMovieReview(
@@ -912,7 +918,9 @@ def test_options_prefer_shared_cast_then_genre(app, admin_client, monkeypatch):
         make_movie_file(answer, "Bluray-1080p")
         castmate = make_movie("Ladder Castmate", 1961)
         genremate = make_movie("Ladder Genremate", 1961)
-        make_movie("Ladder Plain", 1961)
+        plain = make_movie("Ladder Plain", 1961)
+        for movie in (castmate, genremate, plain):
+            make_movie_file(movie, "Bluray-1080p")
         lead = TMDBCredit(id=911911, name="Ladder Lead")
         db.session.add(lead)
         db.session.flush()
@@ -964,7 +972,9 @@ def test_options_fall_back_to_shared_genre_outside_the_era(
         answer = make_movie("Ladder Era Answer", 1960)
         make_movie_file(answer, "Bluray-1080p")
         far_genre = make_movie("Ladder Far Genremate", 1990)
-        make_movie("Ladder Far Plain", 1991)
+        far_plain = make_movie("Ladder Far Plain", 1991)
+        for movie in (far_genre, far_plain):
+            make_movie_file(movie, "Bluray-1080p")
         genre = TMDBGenre(id=987655, name="Ladder Noir")
         db.session.add(genre)
         db.session.flush()
@@ -2793,3 +2803,72 @@ def test_a_switch_on_the_resume_url_keeps_the_dealt_options(app, admin_client):
     ).get_data(as_text=True)
     assert f'src="/game/frame/{token}"' in switched
     assert options(switched) == dealt
+
+
+def test_each_option_is_a_film_with_a_main_feature_file(app, admin_client):
+    """Offer only films that could be the answer (#704).
+
+    The answer always has a main-feature file. A catalog record with no
+    file cannot be the answer. As an option, it gives the answer away."""
+
+    from app import db
+
+    with app.app_context():
+        answer = make_movie("Owned Answer", 1960)
+        make_movie_file(answer, "Bluray-1080p")
+        owned = make_movie("Owned Other", 1961)
+        make_movie_file(owned, "Bluray-1080p")
+        for n in range(5):
+            make_movie(f"Catalog Only {n}", 1960 + n % 2)
+        db.session.commit()
+        answer_id = answer.id
+
+    seed_frame(app, answer_id)
+    page = admin_client.get("/game?difficulty=difficult&unrated=1").get_data(
+        as_text=True
+    )
+    assert "Owned Other (1961)" in page
+    assert "Catalog Only" not in page
+    assert page.count('name="choice"') == 2
+
+
+def test_easy_offers_only_the_rated_films_with_a_file(app, admin_client, admin_id):
+    """The rated films of Easy are films with a main-feature file (#704).
+
+    A rated film with no file cannot be the answer. The library pads
+    the list after the rated film that has a file."""
+
+    from app import db
+    from app.models import UserMovieReview
+    from app.videos import star_rating_fields
+
+    with app.app_context():
+        answer = make_movie("Easy Owned Answer", 1980)
+        make_movie_file(answer, "Bluray-1080p")
+        rated_owned = make_movie("Easy Rated Owned", 1981)
+        make_movie_file(rated_owned, "Bluray-1080p")
+        rated_records = [
+            make_movie(f"Easy Rated Record {n}", 1981 + n) for n in range(2)
+        ]
+        for n in range(2):
+            padding = make_movie(f"Easy Padding {n}", 1982 + n)
+            make_movie_file(padding, "Bluray-1080p")
+        for movie in [answer, rated_owned] + rated_records:
+            db.session.add(
+                UserMovieReview(
+                    user_id=admin_id,
+                    movie_id=movie.id,
+                    liked=True,
+                    **star_rating_fields(4.0),
+                )
+            )
+        db.session.commit()
+        answer_id = answer.id
+
+    seed_frame(app, answer_id)
+    page = admin_client.get("/game?difficulty=easy").get_data(as_text=True)
+    assert "Easy Rated Owned (1981)" in page
+    assert "Easy Rated Record" not in page
+    assert "Easy Padding 0 (1982)" in page
+    assert "Easy Padding 1 (1983)" in page
+    assert page.count('name="choice"') == 4
