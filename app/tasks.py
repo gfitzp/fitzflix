@@ -490,18 +490,19 @@ def finish_task_run(name):
     current_app.redis.delete(_bulk_gate(f"run-now:{name}"))
 
 
-def free_job_id(name, job_id):
+def free_job_id(name, job_id, queue=None):
     """Make the fixed id of a task free for a new job. Return False if a job under it is live.
 
     A finished, failed, stopped or canceled job under the id is deleted,
     with its registry entry. A new job under the same id must not stay
     in the FailedJobRegistry, and must not take the expiry of the old
-    hash (#371, #438). A job that waits or runs keeps the id."""
+    hash (#371, #438). A job that waits or runs keeps the id. queue
+    replaces the queue of the task, as in enqueue_task."""
 
     from rq.exceptions import NoSuchJobError
     from rq.job import Job
 
-    queue = resolve_queue(TASKS[name].queue)
+    queue = resolve_queue(queue if queue is not None else TASKS[name].queue)
     try:
         old = Job.fetch(job_id, connection=queue.connection)
     except NoSuchJobError:
@@ -625,7 +626,14 @@ def requeue(
     caller gives them. job_id replaces the id from requeue_job_id. The
     result ttl of 1 day keeps the record of a finished retry alive. The
     function writes 1 log line at the given level. A caller that wrote a
-    more detailed line itself gives level=None."""
+    more detailed line itself gives level=None.
+
+    A new chain of a key gets the id of the first job of the last chain.
+    Thus, requeue first deletes a finished, failed, stopped or canceled
+    job under the id. Else the new hash keeps the expiry of the old hash
+    and can go before the booked time (#700). A job that waits or runs
+    under the id stays, and the booking replaces its data. The S3 sync
+    books itself in this way while it runs."""
 
     if isinstance(delay, tuple):
         delay = timedelta(minutes=random.randint(*delay))
@@ -637,6 +645,7 @@ def requeue(
         getattr(current_app.logger, level)(
             f"{label} {reason}, returning to queue after {_wait_text(delay)}"
         )
+    free_job_id(name, job_id, queue=queue)
     _submit(
         name,
         args,

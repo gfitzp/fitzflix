@@ -416,8 +416,10 @@ def _book_restore_try(
 
     The job id holds the path and the try. Thus, it differs from the id
     of the running job. A booking of the same path that waits goes
-    first. Thus, 1 path has at most 1 booking. A finished job under the
-    new id is deleted, and the booking does not take its expiry (#371)."""
+    first. Thus, 1 path has at most 1 booking. requeue deletes a finished
+    job under the new id (#371, #700). The check of the id here stays. A
+    job of the same path and try can wait in the queue or run. A second
+    booking would then run that try 2 times."""
 
     from rq.registry import ScheduledJobRegistry
 
