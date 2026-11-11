@@ -924,21 +924,19 @@ def test_a_new_localization_ends_the_pending_restore(app, monkeypatch, stage):
         _remove(path)
 
 
-@pytest.mark.parametrize("on_demand", [False, True])
-def test_the_scan_does_not_rewrite_the_file_of_a_pending_restore(
-    app, monkeypatch, on_demand
-):
+def test_the_scan_does_not_rewrite_the_file_of_a_pending_restore(app, monkeypatch):
     """The scan removes empty subtitle tracks. A pending restore keeps the file.
 
     The read part of the scan still runs. A rewrite marked the archive
     stale, and the placement then refused the restore. The library scan,
-    the rescan after a failed edit and the page scan all reach it."""
+    the rescan after a failed edit and the page scan all queue this task
+    (#695)."""
 
     from app import db, tracks
     from app.models import File
 
     with app.app_context():
-        file_id, _, path = _pending_file(app, f"Scan Writer {on_demand}")
+        file_id, _, path = _pending_file(app, "Scan Writer")
         db.session.get(File, file_id).container = "Matroska"
         db.session.commit()
 
@@ -970,12 +968,7 @@ def test_the_scan_does_not_rewrite_the_file_of_a_pending_restore(
     monkeypatch.setattr(tracks, "save_track_metadata", save)
     try:
         with app.app_context():
-            scan = (
-                tracks.track_metadata_scan
-                if on_demand
-                else tracks.track_metadata_scan_task
-            )
-            assert scan(file_id) is True
+            assert tracks.track_metadata_scan_task(file_id) is True
             assert db.session.get(File, file_id).aws_stale is False
         assert rewrites == []
         assert saved == [(file_id, False)]

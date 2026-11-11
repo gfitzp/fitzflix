@@ -705,45 +705,6 @@ def save_track_metadata(file_id, details, lock=None, archive=False):
         return True
 
 
-def track_metadata_scan(file_id):
-    """Scan the metadata of a file again on demand.
-
-    A different task can hold the lock of this title (for example, a
-    remux, a property edit, or a transcode in progress). Then this
-    function returns False without a scan.
-    """
-
-    file = File.query.filter_by(id=file_id).first()
-    lock = current_app.lock_manager.lock(
-        file.file_identifier(),
-        current_app.config["MKVPROPEDIT_TASK_TIMEOUT"] * 1000,
-    )
-    if not lock:
-        current_app.logger.warning(
-            f"'{file.basename}' Lock exists, not rescanning track metadata"
-        )
-        return False
-
-    try:
-        details = extract_track_metadata(
-            os.path.join(current_app.config["LIBRARY_DIR"], file.file_path),
-            file_id,
-            rewrite=_may_rewrite(file),
-        )
-    except Exception:
-        current_app.lock_manager.unlock(lock)
-        raise
-
-    # A rewritten file needs its archive to follow (#299). The rewrite
-    # marked the archive stale before it replaced the file (#517). The
-    # save queues the upload after its commit.
-
-    archive = bool(details.pop("rewritten", False)) and get_setting(
-        "ARCHIVE_ORIGINAL_MEDIA"
-    )
-    return save_track_metadata(file_id, details, lock=lock, archive=archive)
-
-
 # These are the languages that a track can have. Fitzflix reads them
 # from the table of mkvtoolnix. Thus, the file page can never offer a
 # code that the edit would reject. The keys are the ISO 639-2 codes.

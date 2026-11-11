@@ -31,7 +31,7 @@ from flask_login import current_user, login_required
 from flask_sqlalchemy.pagination import Pagination
 from sqlalchemy.exc import IntegrityError
 
-from app.tasks import enqueue_task
+from app.tasks import enqueue_task, free_job_id, requeue_job_id
 from app import db
 from app.aws_storage import (
     refuse_while_restore_pending,
@@ -157,7 +157,6 @@ from app.videos import (
     stored_criterion_releases,
     file_language_choices,
     resolve_language_code,
-    track_metadata_scan,
     untouched_key_still_claimed,
 )
 
@@ -2554,16 +2553,23 @@ def _remux_form(audio_tracks, subtitle_tracks):
 
 
 def _scan_file_post(file, form):
-    """Scan the track metadata of the file again."""
+    """Queue a scan of the track metadata of the file (#695).
 
-    if track_metadata_scan(file.id):
-        flash(f"Rescanned track metadata for '{file.basename}'", "info")
-    else:
+    The scan can remux the file to remove empty subtitle tracks. No web
+    request rewrites a library file. Thus, a worker does the scan. The
+    job has the id of the lock-busy retry of the scan. Thus, a second
+    click while a scan waits or runs queues nothing new."""
+
+    name = "app.videos.track_metadata_scan_task"
+    job_id = requeue_job_id(name, int(file.id))
+    if not free_job_id(name, job_id):
         flash(
-            f"A different task is processing '{file.basename}'. "
-            f"Try again when it finishes.",
-            "warning",
+            f"A scan of the track metadata of '{file.basename}' is already queued.",
+            "info",
         )
+        return
+    enqueue_task(name, file.id, description=f"'{file.basename}'", job_id=job_id)
+    flash(f"Queued a scan of the track metadata of '{file.basename}'", "info")
 
 
 def _propedit_post(audio_tracks, subtitle_tracks):

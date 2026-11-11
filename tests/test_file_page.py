@@ -123,17 +123,37 @@ def test_a_local_form_refuses_an_absent_file(app, admin_client, queued, data):
     assert queued == []
 
 
-def test_the_scan_form_rescans_the_tracks(app, admin_client, monkeypatch):
-    import app.main.library as library
+def test_the_scan_form_queues_one_scan(app, admin_client, monkeypatch):
+    """The Scan button queues the scan task. The request reads no file (#695).
 
-    scanned = []
+    The scan can remux the file. No web request rewrites a library file.
+    The job has the id of the lock-busy retry of the scan. Thus, a second
+    click while the scan waits queues nothing new."""
+
+    import app.tracks as tracks
+    from app.tasks import requeue_job_id
+
+    read = []
     monkeypatch.setattr(
-        library, "track_metadata_scan", lambda file_id: scanned.append(file_id) or True
+        tracks,
+        "extract_track_metadata",
+        lambda *args, **kwargs: read.append(args) or {},
     )
     file_id = _file(app)
+    wanted = requeue_job_id("app.videos.track_metadata_scan_task", file_id)
+
     page = _post(admin_client, file_id, {"scan_submit": "Scan"})
-    assert scanned == [file_id]
-    assert "Rescanned track metadata for" in page
+    assert "Queued a scan of the track metadata of" in page
+    assert app.file_queue.job_ids == [wanted]
+    job = app.file_queue.fetch_job(wanted)
+    assert job.func_name == "app.videos.track_metadata_scan_task"
+    assert job.args == (file_id,)
+
+    page = _post(admin_client, file_id, {"scan_submit": "Scan"})
+    assert "A scan of the track metadata of" in page
+    assert "is already queued." in page
+    assert app.file_queue.job_ids == [wanted]
+    assert read == []
 
 
 def test_the_remux_form_queues_the_remux(app, admin_client, queued):
