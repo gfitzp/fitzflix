@@ -22,6 +22,7 @@ from rq import Queue, Worker, get_current_job
 from rq.registry import StartedJobRegistry
 from sqlalchemy import text
 from sqlalchemy.engine import make_url
+from sqlalchemy.exc import SQLAlchemyError
 from werkzeug.local import LocalProxy
 
 from app import db, get_app
@@ -1214,6 +1215,13 @@ RESTORE_CHECK_DATABASE = "fitzflix_restore_check"
 RESTORE_CHECK_TABLES = ("movie", "file", "tv_series", "user", "user_movie_review")
 RESTORE_CHECK_TOLERANCE = 0.9
 
+# The time limits of the mysql program in the drill, in seconds. The
+# whole drill of Nov 1 2026 took 35 seconds. A limit stops a wait before
+# the time limit of the job, and the job then reports it (#684).
+
+RESTORE_MYSQL_TIMEOUT = 15 * 60
+DROP_MYSQL_TIMEOUT = 2 * 60
+
 
 def _newest_backup_key(objects, database):
     """Return the most recent database dump in a backup-prefix S3 listing."""
@@ -1287,12 +1295,15 @@ def restore_drill():
         if url.port:
             mysql_command.append(f"--port={url.port}")
 
-        def run_mysql(arguments, **kwargs):
+        def run_mysql(arguments, timeout, **kwargs):
+            """Run the mysql program with a time limit. A failure raises."""
+
             return subprocess.run(
                 mysql_command + arguments,
                 env=mysql_env,
                 check=True,
                 capture_output=True,
+                timeout=timeout,
                 **kwargs,
             )
 
@@ -1302,10 +1313,13 @@ def restore_drill():
                     "-e",
                     f"DROP DATABASE IF EXISTS {RESTORE_CHECK_DATABASE}; "
                     f"CREATE DATABASE {RESTORE_CHECK_DATABASE}",
-                ]
+                ],
+                DROP_MYSQL_TIMEOUT,
             )
             with gzip.open(download_path, "rb") as f:
-                run_mysql([RESTORE_CHECK_DATABASE], input=f.read())
+                run_mysql(
+                    [RESTORE_CHECK_DATABASE], RESTORE_MYSQL_TIMEOUT, input=f.read()
+                )
 
             # The restored schema must be at a migration state.
 
@@ -1345,16 +1359,37 @@ def restore_drill():
                 f"{version} ({', '.join(summary)})"
             )
 
-        except subprocess.CalledProcessError as e:
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
             stderr = (e.stderr or b"").decode("utf-8", "replace")[:300]
             current_app.logger.error(f"Restore drill failed running mysql: {stderr}")
             raise
 
         finally:
+            # The reads above keep a transaction open. It holds a lock on
+            # each scratch table that it read, and the DROP on the other
+            # connection waits for these locks. Thus, the drill ends it
+            # first (#684).
+
             try:
-                run_mysql(["-e", f"DROP DATABASE IF EXISTS {RESTORE_CHECK_DATABASE}"])
-            except Exception:
-                pass
+                db.session.rollback()
+            except SQLAlchemyError as e:
+                current_app.logger.warning(
+                    f"Restore drill could not end its read transaction: {e}"
+                )
+
+            # Only a failure of the DROP stops here. The time limit of
+            # the job is not one of these errors. Thus, it ends the job.
+
+            try:
+                run_mysql(
+                    ["-e", f"DROP DATABASE IF EXISTS {RESTORE_CHECK_DATABASE}"],
+                    DROP_MYSQL_TIMEOUT,
+                )
+            except (subprocess.SubprocessError, OSError) as e:
+                current_app.logger.warning(
+                    f"Restore drill could not drop the scratch database "
+                    f"{RESTORE_CHECK_DATABASE}: {type(e).__name__}"
+                )
             try:
                 os.remove(download_path)
             except OSError:

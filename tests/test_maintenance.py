@@ -468,6 +468,153 @@ def test_restore_drill_skips_without_aws(app):
         assert restore_drill() is True
 
 
+# restore_drill: the drill holds no lock of its own at the DROP (#684)
+
+
+@pytest.fixture
+def drill(app, monkeypatch, tmp_path):
+    """Run the restore drill against fakes of S3 and of the mysql program.
+
+    The scratch database is the test database itself ("main" in SQLite).
+    Thus, the count queries really run through db.session. The fixture
+    gives a dict. Put a callable at "on_drop" to run inside the DROP.
+    """
+
+    import subprocess
+
+    import app.videos as videos
+    import app.maintenance as maintenance
+    from app import db
+    from sqlalchemy import text
+
+    monkeypatch.setitem(app.config, "AWS_BUCKET", "drill-bucket")
+    monkeypatch.setitem(app.config, "DB_BACKUP_DIR", str(tmp_path))
+    monkeypatch.setattr(maintenance, "RESTORE_CHECK_DATABASE", "main")
+    monkeypatch.setattr(maintenance, "RESTORE_CHECK_TABLES", ("movie",))
+
+    key = "backup/fitzflix-2026-11-01.sql.gz"
+    monkeypatch.setattr(
+        videos, "get_matching_s3_objects", lambda bucket, prefix=None: []
+    )
+    monkeypatch.setattr(
+        maintenance, "_newest_backup_key", lambda objects, database: key
+    )
+
+    class Client:
+        """Write a small gzip dump where the drill asks for the download."""
+
+        def download_file(self, bucket, name, path):
+            """Write the fake dump."""
+
+            with gzip.open(path, "wb") as f:
+                f.write(b"-- dump\n")
+
+    monkeypatch.setattr(videos, "aws_s3_client", lambda **kwargs: Client())
+    state = {"on_drop": None, "calls": []}
+
+    def fake_run(command, **kwargs):
+        """Record a mysql call and run the DROP hook on the clean-up DROP."""
+
+        state["calls"].append((command, kwargs))
+        statement = command[-1]
+        if statement.startswith("DROP DATABASE") and "CREATE" not in statement:
+            if state["on_drop"] is not None:
+                state["on_drop"]()
+        return subprocess.CompletedProcess(command, 0, b"", b"")
+
+    monkeypatch.setattr(maintenance.subprocess, "run", fake_run)
+
+    with app.app_context():
+        db.session.execute(
+            text("CREATE TABLE IF NOT EXISTS alembic_version (version_num TEXT)")
+        )
+        db.session.execute(text("INSERT INTO alembic_version VALUES ('drill')"))
+        db.session.commit()
+    try:
+        yield state
+    finally:
+        with app.app_context():
+            db.session.rollback()
+            db.session.execute(text("DROP TABLE IF EXISTS alembic_version"))
+            db.session.commit()
+
+
+def test_restore_drill_ends_its_read_transaction_before_the_drop(app, drill):
+    """The DROP runs on another connection. No transaction of the drill is open."""
+
+    from app import db
+    from app.maintenance import DROP_MYSQL_TIMEOUT, restore_drill
+
+    seen = []
+    drill["on_drop"] = lambda: seen.append(db.session().in_transaction())
+    with app.app_context():
+        assert restore_drill() is True
+    assert seen == [False]
+
+    # Each mysql call has a time limit.
+
+    assert all(kwargs.get("timeout") for _, kwargs in drill["calls"])
+    assert drill["calls"][-1][1]["timeout"] == DROP_MYSQL_TIMEOUT
+
+
+def test_restore_drill_ends_its_read_transaction_when_a_count_fails(
+    app, drill, monkeypatch
+):
+    """A failed count check raises. The DROP still runs with no open transaction."""
+
+    import app.maintenance as maintenance
+    from app import db
+
+    # The test users are rows. A tolerance above 1 makes each count fail.
+
+    monkeypatch.setattr(maintenance, "RESTORE_CHECK_TABLES", ("user",))
+    monkeypatch.setattr(maintenance, "RESTORE_CHECK_TOLERANCE", 2.0)
+    seen = []
+    drill["on_drop"] = lambda: seen.append(db.session().in_transaction())
+    with app.app_context():
+        with pytest.raises(RuntimeError, match="restored"):
+            maintenance.restore_drill()
+    assert seen == [False]
+
+
+def test_restore_drill_logs_a_drop_that_times_out(app, drill, caplog):
+    """A DROP that times out gives a warning. The result of the drill stays."""
+
+    import logging
+    import subprocess
+
+    from app.maintenance import restore_drill
+
+    def time_out():
+        """Act as a mysql program that waits past its limit."""
+
+        raise subprocess.TimeoutExpired("mysql", 120)
+
+    drill["on_drop"] = time_out
+    with app.app_context(), caplog.at_level(logging.WARNING):
+        assert restore_drill() is True
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert any("could not drop the scratch database" in r.message for r in warnings)
+
+
+def test_restore_drill_lets_the_job_time_limit_through_the_drop(app, drill):
+    """The time limit of rq during the DROP ends the task as that exception."""
+
+    from rq.timeouts import JobTimeoutException
+
+    from app.maintenance import restore_drill
+
+    def job_limit():
+        """Act as the time limit of the job."""
+
+        raise JobTimeoutException("Task exceeded maximum timeout value (3600 seconds)")
+
+    drill["on_drop"] = job_limit
+    with app.app_context():
+        with pytest.raises(JobTimeoutException):
+            restore_drill()
+
+
 # volume_alive: a path under the volumes root must BE a mountpoint (#227)
 
 
