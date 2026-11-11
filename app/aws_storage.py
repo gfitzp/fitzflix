@@ -2325,7 +2325,10 @@ def pending_archive_moves():
 def archive_drifts(claims=None):
     """Return (file, key, rule key, bytes) for each archive that has the wrong key.
 
-    This is the census of the backfill (flask aws converge-keys)."""
+    This is the census of the backfill (flask aws converge-keys). Each
+    target of the census is a claim for the later files, as in
+    request_archive_move (#706). Thus, the list that the admin reads
+    shows the targets that the moves get."""
 
     claims = claims if claims is not None else key_claims()
     drifted = []
@@ -2340,6 +2343,7 @@ def archive_drifts(claims=None):
         if drift is None:
             continue
         source, target = drift
+        claims.setdefault(_claim_key(target), set()).add(file.id)
         size = (
             file.aws_transcoded_filesize_bytes
             if source == file.aws_transcoded_key

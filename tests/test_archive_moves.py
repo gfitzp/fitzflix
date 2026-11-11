@@ -1730,9 +1730,20 @@ def test_a_target_of_a_converge_run_is_a_claim_for_the_later_files(app, second_n
         db.session.commit()
 
         claims = aws_storage.key_claims()
+
+        # The census is the list that the admin reads before --apply. It
+        # shows the targets that the moves get.
+
+        census = {
+            file.id: target for file, _, target, _ in aws_storage.archive_drifts(claims)
+        }
         assert aws_storage.request_archive_move(first, claims)
         assert aws_storage.request_archive_move(second, claims)
         stem, extension = os.path.splitext(second_name)
         assert first.aws_key_target == "untouched/Twin Name (1970).mkv"
         assert second.aws_key_target == f"untouched/{stem} ({second.id}){extension}"
+        assert census == {
+            first.id: first.aws_key_target,
+            second.id: second.aws_key_target,
+        }
         db.session.rollback()

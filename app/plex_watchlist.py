@@ -53,7 +53,13 @@ PAGE_SIZE = 100
 # sync accepts a short listing when SHRINK_KEY holds the same listing
 # from the run before. An EMPTY short listing never applies (#701).
 # Each glitch gives the same empty listing, so a repeat proves nothing.
-# To clear the whole watchlist, the owner clears it in Fitzflix.
+#
+# The rule has 2 limits. A snapshot of ANOMALY_FLOOR films or fewer has
+# no guard: the sync applies each listing, also an empty one. And a
+# removal of every film on Plex never reaches Fitzflix. The sync then
+# stops each run with a warning and pushes nothing. To make such a
+# removal apply, leave or add 1 film on Plex. A listing of 1 film is a
+# short listing that is not empty, and the second run accepts it.
 
 ANOMALY_FLOOR = 10
 SHRINK_KEY = "fitzflix:plex:watchlist:shrink"

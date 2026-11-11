@@ -440,25 +440,29 @@ def _rated_only(difficulty):
     return difficulty in RATED_FILTER_DIFFICULTIES and not _include_unrated(difficulty)
 
 
-def _rated_movie_ids():
+def _rated_movie_ids(dealable=True):
     """Return the films that the current user RATED and that the game can deal.
 
     A rated film with no main-feature file cannot be the answer. Thus, it
-    is not in the world of Easy and the rated-films filter (#704).
+    is not in the world of Easy and the rated-films filter (#704). With
+    dealable False, the result is each rated film. The bonus for an
+    unrated film asks only if the player rated the film.
     A rating is a star rating, not only a diary row. The world of Easy
     and the rated-films filter read this. Before, this accepted each
     diary entry. But the Netflix history import seeded unrated watches
     that nobody remembers (reported by Glenn for The Conversation,
     2026-08-27). Thus, a bare watch no longer counts."""
 
-    return {
-        movie_id
-        for (movie_id,) in db.session.query(UserMovieReview.movie_id)
-        .join(Movie, Movie.id == UserMovieReview.movie_id)
+    rated = (
+        db.session.query(UserMovieReview.movie_id)
         .filter(UserMovieReview.user_id == int(current_user.id))
         .filter(UserMovieReview.rating.isnot(None))
-        .filter(*playable_film_filters())
-    }
+    )
+    if dealable:
+        rated = rated.join(Movie, Movie.id == UserMovieReview.movie_id).filter(
+            *playable_film_filters()
+        )
+    return {movie_id for (movie_id,) in rated}
 
 
 def _shared_cast_movie_ids(answer_id):
@@ -1045,7 +1049,9 @@ def _extra_post(form, token, movie):
     # The unrated bonus stays secret until it applies. The round prompt
     # quoted the base points. Only now can the reveal say that the
     # player had not rated the film.
-    doubled = bool(outcome.points_won) and movie.id not in _rated_movie_ids()
+    doubled = bool(outcome.points_won) and movie.id not in _rated_movie_ids(
+        dealable=False
+    )
     if doubled:
         outcome = outcome._replace(points_won=outcome.points_won * UNRATED_BONUS)
     score = _score_row("extra")

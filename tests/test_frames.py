@@ -2050,6 +2050,55 @@ def test_extra_unrated_hit_earns_a_hidden_double_bonus(app, admin_client):
         assert (score.points, score.current_streak) == (10, 2)
 
 
+def test_extra_rated_hit_earns_no_bonus_when_the_game_cannot_deal_the_film(
+    app, admin_client
+):
+    """The bonus asks if the player rated the film, not if the game can deal it (#704).
+
+    The films that the game can deal have a main-feature file and a
+    TMDB id. A pooled frame can be older than its film: the pool is
+    pruned 1 time each day. A rated film outside that rule is still a
+    rated film, and a correct guess earns the base points."""
+
+    import re
+
+    from app import db
+    from app.models import User, UserFrameScore, UserMovieReview
+    from app.videos import star_rating_fields
+
+    with app.app_context():
+        # A home movie has a file and no TMDB id. The game cannot deal it.
+
+        movie = make_movie("Rated Secret Film", 2008, tmdb_id=None)
+        make_movie_file(movie, "Bluray-1080p")
+        admin = User.query.filter_by(admin=True).first()
+        db.session.add(
+            UserMovieReview(
+                user_id=admin.id, movie_id=movie.id, **star_rating_fields(4.0)
+            )
+        )
+        db.session.commit()
+        movie_id = movie.id
+
+    token = seed_image_frame(app, movie_id)
+    page = admin_client.get("/game?difficulty=extra&unrated=1").get_data(as_text=True)
+    csrf = re.search(r'name="csrf_token"[^>]*value="([^"]+)"', page).group(1)
+    body = admin_client.post(
+        "/game",
+        data={
+            "csrf_token": csrf,
+            "token": token,
+            "difficulty": "extra",
+            "guess": "Rated Secret Film",
+            "guess_submit": "y",
+        },
+    ).get_data(as_text=True)
+    assert "bonus for an unrated film" not in body
+    with app.app_context():
+        score = UserFrameScore.query.filter_by(difficulty="extra").one()
+        assert score.points == 3
+
+
 def test_zoomed_win_offers_bragging_rights(app, admin_client):
     """Offer bragging rights after a zoomed win.
 
