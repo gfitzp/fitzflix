@@ -407,6 +407,32 @@ def test_tv_seasons_summarized_by_worst_rank_one_quality(app, admin_client):
     assert 'text-bg-success me-1 mb-1" title="1 episode">Season 2: Bluray-1080p' in page
 
 
+def test_tv_search_season_grade_is_the_shared_season_grade(app, admin_client):
+    """Test that the search grades a season with season_grades (#694).
+
+    A 2-episode file holds episodes 12 and 13. An older and worse single
+    file of episode 13 stays on disk. The span is the best holder of
+    episode 13. Thus, the old single file does not pull the season down.
+    The page and the type-ahead show the grade of season_grades."""
+
+    from app.file_ranking import season_grades
+
+    with app.app_context():
+        series = make_tv_series("Span Holder (1989)")
+        make_tv_file(series, 28, 12, "WEBDL-1080p", last_episode=13)
+        make_tv_file(series, 28, 13, "HDTV-720p")
+        db.session.commit()
+        grade = season_grades([series.id])[(series.id, 28)]
+
+    assert grade.quality_title == "WEBDL-1080p"
+    assert grade.episodes == 2
+    page = admin_client.get("/search?q=span+holder").get_data(as_text=True)
+    assert 'title="2 episodes">Season 28: WEBDL-1080p' in page
+    payload = admin_client.get("/search.json?q=span+holder").get_json()
+    details = [row["detail"] for row in payload["results"] if row["type"] == "TV"]
+    assert details == ["1 season, worst WEBDL-1080p"]
+
+
 def test_physical_media_seasons_are_not_upgrade_candidates(app, admin_client):
     """Test that the physical-media seasons are not upgrade candidates.
 

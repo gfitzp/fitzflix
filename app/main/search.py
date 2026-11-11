@@ -21,12 +21,11 @@ from flask_login import current_user, login_required
 from app import db
 from app.models import File, Movie, RefQuality, TMDBCredit, TVSeries, UserMovieReview
 from app.main import bp
-from app.file_ranking import MOVIE_BEST_ORDER, copy_upgradable, ranked_tv_files
+from app.file_ranking import MOVIE_BEST_ORDER, copy_upgradable, season_grades
 from app.tmdb_apply import tmdb_json
 from app.main.helpers import (
     _upgrade_threshold,
     decimal_id,
-    season_episode_counts,
     library_upgradable,
     series_upgradable,
 )
@@ -154,10 +153,9 @@ def _movie_search_results(wildcard, limit=50, years=None):
 def _tv_search_results(wildcard, limit=50, years=None):
     """Return the TV series whose titles match, with a summary per season.
 
-    The summary of a season is the worst quality among its best (rank 1)
-    episode files. A TV show is usually bought season by season. Thus, a
-    series-wide "best quality" would hide the seasons that need an
-    upgrade. In a store, the weakest link of each season is what counts.
+    The summary of a season is its grade from season_grades. A TV show
+    is usually bought season by season. Thus, a series-wide "best
+    quality" would hide the seasons that need an upgrade.
     """
 
     # Exact, then prefix, then substring. This is the same ranking as the
@@ -204,62 +202,29 @@ def _tv_search_results(wildcard, limit=50, years=None):
     upgrade_threshold = _upgrade_threshold()
     series_ids = [series.id for series in series_list]
 
-    # This has the same shape as the TV library page. Rank the copies of
-    # each episode, keep the best copy per episode, then take the worst
-    # best-copy of each season.
-
-    ranked_files = ranked_tv_files()
-
-    season_aggregate = (
-        db.session.query(
-            File.series_id,
-            File.season,
-            db.func.count(db.func.distinct(File.episode)).label("episodes"),
-            db.func.min(RefQuality.preference).label("preference"),
-        )
-        .group_by(File.series_id, File.season)
-        .join(RefQuality, (RefQuality.id == File.quality_id))
-        .join(ranked_files, (ranked_files.c.id == File.id))
-        .filter(ranked_files.c.rank == 1)
-        .filter(File.series_id.in_(series_ids))
-        .subquery()
-    )
-
-    season_rows = (
-        db.session.query(
-            season_aggregate.c.series_id,
-            season_aggregate.c.season,
-            season_aggregate.c.episodes,
-            season_aggregate.c.preference,
-            RefQuality.physical_media,
-            RefQuality.quality_title,
-        )
-        .join(RefQuality, (RefQuality.preference == season_aggregate.c.preference))
-        .order_by(
-            season_aggregate.c.series_id,
-            db.case((season_aggregate.c.season == 0, 1), else_=0).asc(),
-            season_aggregate.c.season.asc(),
-        )
-        .all()
-    )
-
-    # The episode count expands multi-episode files (#330)
-
-    episode_counts = season_episode_counts(series_ids)
+    # The grade of each season is the shared grade of the TV library page
+    # (#479, #694). Each episode number gets its best holder, and the
+    # season gets its worst episode.
 
     seasons_by_series = {}
-    for series_id, season, episodes, preference, physical, worst_quality in season_rows:
+    for (series_id, season), grade in sorted(
+        season_grades(series_ids).items(),
+        key=lambda item: (item[0][0], item[0][1] == 0, item[0][1]),
+    ):
         seasons_by_series.setdefault(series_id, []).append(
             {
                 "season": season,
-                "episode_count": episode_counts.get((series_id, season), episodes),
-                "worst_quality": worst_quality,
-                "preference": preference,
+                "episode_count": grade.episodes,
+                "worst_quality": grade.quality_title,
+                "preference": grade.preference,
                 # A physical-media season (DVD, SD/720p Blu-ray) is often the
                 # only release that will exist. Thus, it does not count as
                 # upgradable.
                 "upgradable": copy_upgradable(
-                    False, preference, upgrade_threshold, physical=physical
+                    False,
+                    grade.preference,
+                    upgrade_threshold,
+                    physical=grade.physical_media,
                 ),
             }
         )
