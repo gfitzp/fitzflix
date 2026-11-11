@@ -730,3 +730,152 @@ def test_the_rail_gives_the_verified_films_to_the_lane_scores(app, monkeypatch):
     with app.app_context():
         streaming_rail.compute_user_rail(db.session.get(User, user_id))
     assert calls == [[5001, 5002]]
+
+
+def _plant_stored_rail(app, user_id):
+    """Store the rail of an earlier good run and return its bytes."""
+
+    from app.streaming_rail import RAIL_KEY
+
+    item = {
+        "tmdb_id": 6101,
+        "title": "Rail Of Last Night",
+        "year": "1994",
+        "poster_path": "/rail.jpg",
+        "runtime": 95,
+        "providers": [{**NETFLIX, "kind": "flatrate"}],
+        "because": ["popular on Netflix"],
+        "score": 1.0,
+    }
+    app.redis.set(
+        RAIL_KEY.format(user_id=user_id),
+        json.dumps({"computed_at": "2026-11-09 02:15", "items": [item]}),
+    )
+    return app.redis.get(RAIL_KEY.format(user_id=user_id))
+
+
+def _rail_warnings(caplog):
+    """Return the warnings of the rail that say that TMDB gave no answer."""
+
+    return [
+        record
+        for record in caplog.records
+        if record.levelname == "WARNING" and "gave no answer" in record.getMessage()
+    ]
+
+
+def _run_with_tmdb(app, monkeypatch, routes, default):
+    """Run the nightly task with a fake tmdb_get from tests.fakes."""
+
+    from tests.fakes import tmdb_router
+
+    from app.streaming_rail import recompute_streaming_rail
+
+    monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
+    monkeypatch.setattr("app.tmdb_apply.tmdb_get", tmdb_router(routes, default))
+    assert recompute_streaming_rail() is True
+
+
+def test_a_run_with_no_answer_from_tmdb_keeps_the_stored_rail(app, monkeypatch, caplog):
+    """Each discover call fails. The rail of the last good run stays (#698)."""
+
+    from app.streaming_rail import RAIL_KEY
+
+    user_id = subscribe(app, 8, "Netflix")
+    plant_profile(app, user_id, COMEDY_PROFILE)
+    before = _plant_stored_rail(app, user_id)
+
+    _run_with_tmdb(app, monkeypatch, {}, Response(None, status=503))
+
+    assert app.redis.get(RAIL_KEY.format(user_id=user_id)) == before
+    assert len(_rail_warnings(caplog)) == 1
+
+
+def test_a_run_with_no_availability_answer_keeps_the_stored_rail(
+    app, monkeypatch, caplog
+):
+    """Discover answers, but each availability lookup fails (#698).
+
+    Then no candidate can be verified. That is no answer, not a rail
+    with nothing that streams."""
+
+    from app.streaming_rail import RAIL_KEY
+
+    user_id = subscribe(app, 8, "Netflix")
+    plant_profile(app, user_id, COMEDY_PROFILE)
+    before = _plant_stored_rail(app, user_id)
+
+    _run_with_tmdb(
+        app,
+        monkeypatch,
+        {"/discover/movie": {"results": DISCOVER_ITEMS}},
+        Response(None, status=503),
+    )
+
+    assert app.redis.get(RAIL_KEY.format(user_id=user_id)) == before
+    assert len(_rail_warnings(caplog)) == 1
+
+
+def test_a_run_with_no_enrichment_answer_keeps_the_stored_rail(
+    app, monkeypatch, caplog
+):
+    """Each candidate streams, but each enrichment call fails (#698)."""
+
+    from app.streaming_rail import RAIL_KEY
+
+    user_id = subscribe(app, 8, "Netflix")
+    plant_profile(app, user_id, COMEDY_PROFILE)
+    plant_availability(app, 5001, [NETFLIX])
+    plant_availability(app, 5002, [NETFLIX])
+    before = _plant_stored_rail(app, user_id)
+
+    _run_with_tmdb(
+        app,
+        monkeypatch,
+        {"/discover/movie": {"results": DISCOVER_ITEMS}},
+        Response(None, status=503),
+    )
+
+    assert app.redis.get(RAIL_KEY.format(user_id=user_id)) == before
+    assert len(_rail_warnings(caplog)) == 1
+
+
+def test_a_run_with_empty_answers_stores_the_empty_rail(app, monkeypatch, caplog):
+    """TMDB answers each discover call with no results (#698).
+
+    That is an answer. The empty rail replaces the stored rail."""
+
+    from app.streaming_rail import RAIL_KEY
+
+    user_id = subscribe(app, 8, "Netflix")
+    plant_profile(app, user_id, COMEDY_PROFILE)
+    _plant_stored_rail(app, user_id)
+
+    _run_with_tmdb(app, monkeypatch, {"/discover/movie": {"results": []}}, None)
+
+    stored = json.loads(app.redis.get(RAIL_KEY.format(user_id=user_id)))
+    assert stored["items"] == []
+    assert not _rail_warnings(caplog)
+
+
+def test_a_run_with_nothing_that_streams_stores_the_empty_rail(app, monkeypatch):
+    """Each availability lookup answers that the film does not stream (#698)."""
+
+    from app.streaming_rail import RAIL_KEY
+
+    user_id = subscribe(app, 8, "Netflix")
+    plant_profile(app, user_id, COMEDY_PROFILE)
+    _plant_stored_rail(app, user_id)
+
+    _run_with_tmdb(
+        app,
+        monkeypatch,
+        {
+            "/discover/movie": {"results": DISCOVER_ITEMS},
+            "/watch/providers": {"results": {}},
+        },
+        Response(None, status=503),
+    )
+
+    stored = json.loads(app.redis.get(RAIL_KEY.format(user_id=user_id)))
+    assert stored["items"] == []

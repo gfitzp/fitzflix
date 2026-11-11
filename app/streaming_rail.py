@@ -98,11 +98,13 @@ STORED_RAIL_ITEMS = 50
 
 
 def _discover(params):
-    """Return the results of one discover page, or [] on failure.
+    """Return the results of 1 discover page, or None when TMDB gave no answer.
 
-    On failure, the rail only becomes less deep."""
+    An answer with no results is []. One failed page makes the rail less
+    deep. A run in which no page answered keeps the stored rail (#698)."""
 
-    return (tmdb_json_or("/discover/movie", params, None) or {}).get("results") or []
+    body = tmdb_json_or("/discover/movie", params, None)
+    return None if body is None else body.get("results") or []
 
 
 def _base_params(provider_ids):
@@ -139,19 +141,25 @@ def provider_pool(provider_id, provider_name):
 
     The pool holds the popular, acclaimed, and newly streaming pages.
     Fitzflix caches it for 1 day. Thus, an on-demand rail compute does
-    not fetch again what the nightly run already pulled."""
+    not fetch again what the nightly run already pulled. The result is
+    None when TMDB gave no answer to any page (#698)."""
 
     def fetch():
         pool = {}
+        answered = False
         for tag, sort_by, vote_floor in POOL_SORTS:
             for page in range(1, POOL_PAGES + 1):
                 params = _base_params([provider_id])
                 params.update(
                     {"sort_by": sort_by, "page": page, "vote_count.gte": vote_floor}
                 )
-                _merge(pool, _discover(params), f"{tag} on {provider_name}")
-        # An empty pool is a failed fetch. It is not cached
-        return {str(k): v for k, v in pool.items()}, bool(pool)
+                results = _discover(params)
+                if results is not None:
+                    answered = True
+                    _merge(pool, results, f"{tag} on {provider_name}")
+        # An empty pool is not cached. The next compute asks again
+        pool = {str(k): v for k, v in pool.items()}
+        return (pool if answered else None), bool(pool)
 
     return cached_fetch(
         POOL_KEY.format(provider_id=int(provider_id)), POOL_CACHE_SECONDS, fetch
@@ -415,6 +423,12 @@ def compute_user_rail(user):
     affinity ranking. Third, the per-title availability verification
     (discover lies, the watch-provider cache does not). Fourth, the
     credits enrichment and the full-feature rescoring of the survivors.
+
+    The result is also None when TMDB gave no answer to any call of the
+    discovery, of the verification or of the enrichment. The task then
+    keeps the stored rail of the last good run (#698). An empty answer
+    is an answer. A step in which some calls answered gives a less deep
+    rail.
     """
 
     profile = stored_profile(current_app.redis, user.id)
@@ -425,10 +439,14 @@ def compute_user_rail(user):
     provider_names = {row.provider_id: row.name for row in user.streaming_providers}
 
     pool = {}
+    answered = False
     for provider_id in sorted(provider_ids):
         shared = provider_pool(
             provider_id, provider_names.get(provider_id) or f"provider {provider_id}"
         )
+        if shared is None:
+            continue
+        answered = True
         for tmdb_id, entry in shared.items():
             _merge(pool, [entry["item"]], entry["sources"][0])
             for source in entry["sources"][1:]:
@@ -437,7 +455,12 @@ def compute_user_rail(user):
     for tag, extra_params, pages in _taste_queries(profile, provider_ids):
         for page in range(1, pages + 1):
             params = {**_base_params(provider_ids), **extra_params, "page": page}
-            _merge(pool, _discover(params), tag)
+            results = _discover(params)
+            if results is not None:
+                answered = True
+                _merge(pool, results, tag)
+    if not answered:
+        return _no_answer(user, "discovery")
 
     excluded = _excluded_tmdb_ids(user.id)
     ranked = []
@@ -458,6 +481,12 @@ def compute_user_rail(user):
     availability, _ = batch_title_availability(
         [tmdb_id for _, _, tmdb_id, _ in candidates]
     )
+    # A payload of None is no answer. A film that streams nowhere has an
+    # empty payload.
+    if candidates and all(
+        availability.get(tmdb_id) is None for _, _, tmdb_id, _ in candidates
+    ):
+        return _no_answer(user, "verification")
     verified = []
     for score, popularity, tmdb_id, entry in candidates:
         matches = streaming_matches(
@@ -474,17 +503,21 @@ def compute_user_rail(user):
     flask_app = current_app._get_current_object()
 
     def enrich(tmdb_id):
-        """Return one enriched payload under its own app context."""
+        """Return the state of one enriched payload under its own app context."""
 
         with flask_app.app_context():
-            return tmdb_id, enriched_movie(tmdb_id)
+            return tmdb_id, enriched_movie_state(tmdb_id)
 
     payloads = {}
+    states = set()
     with ThreadPoolExecutor(max_workers=10) as executor:
-        for tmdb_id, payload in executor.map(
+        for tmdb_id, (state, payload) in executor.map(
             enrich, [tmdb_id for tmdb_id, _, _ in verified]
         ):
+            states.add(state)
             payloads[tmdb_id] = payload
+    if states == {"unknown"}:
+        return _no_answer(user, "enrichment")
 
     # A film with a record shows the movie-id lane number on its tile.
     # Thus, the rail ranks it by that number (#535).
@@ -526,6 +559,19 @@ def compute_user_rail(user):
 
     items.sort(key=lambda item: item["score"], reverse=True)
     return items[:STORED_RAIL_ITEMS]
+
+
+def _no_answer(user, step):
+    """Log that TMDB gave no answer to a step of the rail of user. Return None.
+
+    The task writes nothing for None. Thus, the rail of the last good
+    run stays (#698)."""
+
+    current_app.logger.warning(
+        f"Streaming rail: TMDB gave no answer to the {step} for user "
+        f"{user.id}. The stored rail stays"
+    )
+    return None
 
 
 def ensure_rail_records(items):
