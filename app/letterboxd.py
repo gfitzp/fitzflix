@@ -173,6 +173,20 @@ def fetch_letterboxd_feed(username):
         return None
 
 
+def _same_watch_across_midnight(stamp, watched_date):
+    """Return True if a stamp on the day next to the Letterboxd day is the same watch.
+
+    A stamp on the next day counts only before noon. A stamp on the day
+    before counts only at noon or later. This is the one definition of
+    a watch whose clock crossed the Letterboxd calendar date near
+    midnight. The merge rule and the date rule of the feed both use it."""
+
+    day_start = datetime.combine(watched_date.date(), datetime.min.time())
+    day_end = day_start + timedelta(days=1)
+    noon = timedelta(hours=12)
+    return day_end <= stamp < day_end + noon or day_start - noon <= stamp < day_start
+
+
 def _find_merge_target(user_id, movie_id, watched_date):
     """Return the diary row without a guid that a feed item must claim.
 
@@ -215,10 +229,9 @@ def _find_merge_target(user_id, movie_id, watched_date):
         UserMovieReview.date_watched < day_end + timedelta(days=1),
     ):
         stamp = row.date_watched
-        if day_end <= stamp and stamp.hour < 12:
-            candidates.append((stamp - day_end, row.id, row))
-        elif stamp < day_start and stamp.hour >= 12:
-            candidates.append((day_start - stamp, row.id, row))
+        if _same_watch_across_midnight(stamp, watched_date):
+            distance = stamp - day_end if stamp >= day_end else day_start - stamp
+            candidates.append((distance, row.id, row))
     if not candidates:
         return None
     return min(candidates, key=lambda item: item[:2])[2]
@@ -275,15 +288,18 @@ def _apply_entry_fields(row, entry, owned=False):
     # date is different from the feed, it follows the feed. Examples are
     # the day drift of the UTC era, or a date edited on Letterboxd. A
     # row with a real clock time (a Plex scrobble) keeps its timestamp
-    # when the times cross midnight.
+    # only when it is the same watch across midnight. For any other
+    # difference, the row follows the feed (#703). It takes midnight of
+    # the feed date, because the feed has no clock time.
 
     if entry["watched_date"] is not None:
-        if row.date_watched is None:
-            row.date_watched = entry["watched_date"]
-            changed = True
-        elif (
-            row.date_watched.date() != entry["watched_date"].date()
-            and row.date_watched.time() == datetime.min.time()
+        stamp = row.date_watched
+        if stamp is None or (
+            stamp.date() != entry["watched_date"].date()
+            and (
+                stamp.time() == datetime.min.time()
+                or not _same_watch_across_midnight(stamp, entry["watched_date"])
+            )
         ):
             row.date_watched = entry["watched_date"]
             changed = True

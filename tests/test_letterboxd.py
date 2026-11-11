@@ -6,6 +6,8 @@ and Plex bare-watch completion."""
 
 from datetime import datetime
 
+import pytest
+
 from app import db
 from app.models import Movie, User, UserMovieReview
 from tests.factories import make_movie
@@ -392,6 +394,53 @@ def test_sync_corrects_drifted_dates_on_midnight_rows(app, monkeypatch):
         db.session.expire_all()
         row = UserMovieReview.query.filter_by(movie_id=drifted_id).one()
         assert row.date_watched == datetime(2025, 10, 27)
+
+
+@pytest.mark.parametrize(
+    "stamp, watched, expected",
+    [
+        # A date corrected on Letterboxd by 2 days reaches the row. The
+        # row takes midnight, because the feed has no clock time (#703).
+        (datetime(2026, 11, 3, 21, 40), "2026-11-01", datetime(2026, 11, 1)),
+        # The same watch across midnight keeps the clock of the scrobble.
+        (datetime(2026, 11, 3, 23, 50), "2026-11-04", datetime(2026, 11, 3, 23, 50)),
+        (datetime(2026, 11, 4, 0, 20), "2026-11-03", datetime(2026, 11, 4, 0, 20)),
+        # A next-day stamp from noon on is not the same watch.
+        (datetime(2026, 11, 4, 13, 0), "2026-11-03", datetime(2026, 11, 3)),
+    ],
+)
+def test_a_clock_row_follows_a_feed_date_outside_the_midnight_window(
+    app, monkeypatch, stamp, watched, expected
+):
+    """Test that a row with a clock time keeps it only across midnight."""
+    from app.videos import star_rating_fields
+
+    with app.app_context():
+        user = User.query.first()
+        user.letterboxd_username = "test"
+        movie = make_movie("Speedy", 1928, tmdb_id=32595)
+        db.session.add(
+            UserMovieReview(
+                user_id=user.id,
+                movie_id=movie.id,
+                review="",
+                date_watched=stamp,
+                letterboxd_guid="letterboxd-watch-70",
+                **star_rating_fields(None),
+            )
+        )
+        db.session.commit()
+        movie_id = movie.id
+
+        xml = build_feed(
+            feed_item(
+                "letterboxd-watch-70", 32595, title="Speedy", year=1928, watched=watched
+            )
+        )
+        run_sync(app, xml, monkeypatch)
+        db.session.expire_all()
+        row = UserMovieReview.query.filter_by(movie_id=movie_id).one()
+        assert row.date_watched == expected
 
 
 def test_feed_logged_at_is_local_wall_clock(app):
