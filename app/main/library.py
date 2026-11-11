@@ -150,6 +150,7 @@ from app.triage import (
     lossy_audio_candidates,
 )
 from app.tracks import pop_stopped_edit
+from app.criterion_catalog import set_title_key, stored_set_title
 from app.videos import (
     clear_watchlist,
     criterion_release_lookups,
@@ -805,14 +806,14 @@ def criterion_sort_key(row):
     The order is 1 spine order across owned and unowned rows. The set
     members sort at the spine of their set (year, then title inside the
     set). The local rows without a spine keep their old place at the
-    end."""
+    end. The spellings of 1 set title sort together (#697)."""
 
     spine = row.get("spine")
     title = sort_title(row.get("title"))
     return (
         0 if spine is not None else 1,
         spine if spine is not None else 0,
-        row.get("set_title") or "",
+        set_title_key(row.get("set_title") or ""),
         row.get("year") or 9999,
         title.upper(),
     )
@@ -1697,11 +1698,9 @@ def movie_criterion(movie_id):
         flash_form_errors(criterion_form)
         return redirect(url_for("main.movie", movie_id=movie.id))
     movie.criterion_spine_number = criterion_form.spine_number.data
-    if criterion_form.set_title.data:
-        movie.criterion_set_title = criterion_form.set_title.data
-
-    else:
-        movie.criterion_set_title = None
+    movie.criterion_set_title = stored_set_title(
+        criterion_form.set_title.data, movie.id
+    )
 
     movie.criterion_in_print = criterion_form.in_print.data
     movie.criterion_disc_owned = criterion_form.owned.data

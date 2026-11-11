@@ -25,6 +25,7 @@ import json
 import re
 import time
 import traceback
+import unicodedata
 
 import requests
 
@@ -327,6 +328,49 @@ def criterion_release_lookups(criterion_collection):
     return by_tmdb_id, by_title_year
 
 
+def set_title_key(title):
+    """Return the key under which the database compares 2 set titles (#697).
+
+    The column collation of MariaDB (utf8mb4_general_ci) ignores letter
+    case, accents and the spaces at the end. The test database does not.
+    Thus, the rule is in Python, and each reader of a set title uses it."""
+
+    decomposed = unicodedata.normalize("NFD", title.rstrip(" "))
+    return "".join(ch for ch in decomposed if not unicodedata.combining(ch)).casefold()
+
+
+def set_title_spellings(exclude_movie_id=None):
+    """Return {set title key: 1 stored spelling} for each set title (#697).
+
+    The spelling of a key is the lowest of its stored spellings. Thus,
+    the choice does not change from 1 call to the next. exclude_movie_id
+    leaves out the set title of that movie. The query reads every row,
+    not DISTINCT. DISTINCT on MariaDB keeps only 1 of the equal titles."""
+
+    query = db.session.query(Movie.criterion_set_title).filter(
+        Movie.criterion_set_title.isnot(None)
+    )
+    if exclude_movie_id is not None:
+        query = query.filter(Movie.id != exclude_movie_id)
+    spellings = {}
+    for title in sorted({title for (title,) in query}):
+        spellings.setdefault(set_title_key(title), title)
+    return spellings
+
+
+def stored_set_title(title, movie_id=None):
+    """Return the set title to store for a movie, or None (#697).
+
+    The spaces around the title go. A set title of a different movie that
+    the database compares as equal gives its spelling. Thus, a typing
+    slip or a Wikidata label never makes a second spelling of a set."""
+
+    title = (title or "").strip()
+    if not title:
+        return None
+    return set_title_spellings(movie_id).get(set_title_key(title), title)
+
+
 def assign_criterion_release(movie, by_tmdb_id, by_title_year):
     """Record the Criterion spine number of a movie if a release matches.
 
@@ -348,7 +392,7 @@ def assign_criterion_release(movie, by_tmdb_id, by_title_year):
     if release.get("criterion_film_id"):
         movie.criterion_film_id = release["criterion_film_id"]
     if release.get("set_title") and movie.criterion_set_title == None:
-        movie.criterion_set_title = release["set_title"]
+        movie.criterion_set_title = stored_set_title(release["set_title"], movie.id)
     if movie.criterion_in_print == None:
         movie.criterion_in_print = True
     if movie.criterion_disc_owned == None:

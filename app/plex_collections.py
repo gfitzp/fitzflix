@@ -48,6 +48,7 @@ from werkzeug.local import LocalProxy
 from app.tasks import enqueue_task
 from app import db, get_app
 from app.models import File, Movie, RefQuality
+from app.criterion_catalog import set_title_key, set_title_spellings
 from app.file_ranking import ranked_movie_files
 from app.plex_api import plex_get, plex_write
 
@@ -141,6 +142,9 @@ def box_set_groups():
     physical media. Each film gives all of its main-feature paths, of
     every edition (#286). Then each edition is an item of the set, and a
     film matches through the file that Plex has, also a digital copy.
+    The set titles that the database compares as equal are 1 set, under
+    the spelling of set_title_spellings (#697). box_set_titles uses the
+    same spellings.
     """
 
     on_disc = (
@@ -159,9 +163,11 @@ def box_set_groups():
         .all()
     )
     library = current_app.config["LIBRARY_DIR"]
+    spellings = set_title_spellings()
     sets = defaultdict(lambda: defaultdict(set))
     for set_title, movie_id, path in rows:
-        sets[set_title][movie_id].add(_normal(os.path.join(library, path)))
+        name = spellings.get(set_title_key(set_title), set_title)
+        sets[name][movie_id].add(_normal(os.path.join(library, path)))
     return {
         set_title: list(films.values())
         for set_title, films in sets.items()
@@ -182,12 +188,7 @@ def box_set_titles():
     A set under BOX_SET_MIN_FILMS has no group in box_set_groups. Its
     Plex collection must still empty (#544), if the sync filled it."""
 
-    return {
-        title
-        for (title,) in db.session.query(Movie.criterion_set_title)
-        .filter(Movie.criterion_set_title.isnot(None))
-        .distinct()
-    }
+    return set(set_title_spellings().values())
 
 
 def _paged(path, params=None):

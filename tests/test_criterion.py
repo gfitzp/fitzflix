@@ -1049,6 +1049,23 @@ def test_a_film_with_its_own_spine_also_gets_its_set_title(app):
         assert curated.criterion_set_title == "Hand Set"
 
 
+def test_a_wikidata_set_title_takes_the_spelling_of_its_set(app):
+    """The Wikidata label of a set takes the stored spelling of the set (#697)."""
+
+    from app.criterion_catalog import (
+        assign_criterion_release,
+        criterion_release_lookups,
+    )
+
+    by_tmdb_id, by_title_year = criterion_release_lookups(_apu_releases())
+    with app.app_context():
+        make_movie("Aparajito", 1956, criterion_set_title="the apu trilogy ")
+        db.session.commit()
+        movie = Movie(title="Pather Panchali", year=1955, tmdb_id=5801)
+        assert assign_criterion_release(movie, by_tmdb_id, by_title_year)
+        assert movie.criterion_set_title == "the apu trilogy "
+
+
 def test_the_stored_releases_reassign_without_wikidata(app, monkeypatch):
     """Apply the set titles to existing records from the stored copy (#472)."""
 

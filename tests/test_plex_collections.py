@@ -381,6 +381,33 @@ def test_box_set_rule(app, monkeypatch):
     )
 
 
+def test_equal_set_titles_are_1_box_set(app, monkeypatch):
+    """Set titles that MariaDB compares as equal are 1 set (#697).
+
+    The test database compares the titles exactly. Thus, the grouping
+    rule is in Python. box_set_titles gives the same spelling."""
+
+    import app.plex_collections as plex_collections
+    from app import db
+    from app.models import Movie
+
+    with app.app_context():
+        upper = make_movie("Set Film A", 1960, criterion_set_title="Set")
+        lower = make_movie("Set Film B", 1961, criterion_set_title="set ")
+        first = make_movie_file(upper, "Bluray-1080p")
+        second = make_movie_file(lower, "Bluray-1080p")
+        db.session.commit()
+        assert Movie.query.filter(Movie.criterion_set_title == "Set").count() == 1
+        expected = sorted([[_path(first)], [_path(second)]])
+
+    monkeypatch.setitem(app.config, "LIBRARY_DIR", LIBRARY)
+    with app.app_context():
+        groups = plex_collections.box_set_groups()
+        assert plex_collections.box_set_titles() == {"Set"}
+    assert set(groups) == {"Set"}
+    assert sorted(sorted(group) for group in groups["Set"]) == expected
+
+
 def test_box_set_collection_mirrors_and_sorts_by_release(app, monkeypatch):
     """The set collection matches a film through its digital copy.
 

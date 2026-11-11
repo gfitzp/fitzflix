@@ -194,6 +194,23 @@ def test_criterion_sort_key_puts_set_members_at_the_spine_of_their_set(app):
     ]
 
 
+def test_criterion_sort_key_keeps_the_spellings_of_a_set_together(app):
+    """2 spellings of 1 set title sort together (#697)."""
+
+    from app.main.library import criterion_sort_key
+
+    rows = [
+        {"spine": 50, "title": "One", "year": 1960, "set_title": "Set"},
+        {"spine": 50, "title": "Two", "year": 1950, "set_title": "Tango"},
+        {"spine": 50, "title": "Three", "year": 1970, "set_title": "set "},
+    ]
+    assert [row["title"] for row in sorted(rows, key=criterion_sort_key)] == [
+        "One",
+        "Three",
+        "Two",
+    ]
+
+
 def test_merge_credit_rows_folds_cast_and_crew_into_1_row(app):
     from app.main.library import merge_credit_rows
 

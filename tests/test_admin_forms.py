@@ -106,6 +106,42 @@ def _selected_quality(page):
     return selected.group(1) if selected else None
 
 
+def test_a_set_title_takes_the_spelling_of_its_set(app, admin_client):
+    """The form stores the spelling that the set already has (#697).
+
+    MariaDB compares set titles without letter case and spaces at the
+    end. The test database compares them exactly. Thus, the handler
+    finds the equal title by its own rule, not by the database."""
+
+    with app.app_context():
+        first = _film(
+            "Fist of Fury", 1972, criterion_set_title="Bruce Lee: His Greatest Hits"
+        )
+        second = _film("Game of Death", 1978)
+        exact = Movie.query.filter(
+            Movie.criterion_set_title == "bruce lee: his greatest hits"
+        ).count()
+        assert exact == 0
+
+    response = _post_criterion(
+        admin_client, second, set_title=" bruce lee: his greatest hits ", quality=""
+    )
+    assert response.status_code == 200
+    with app.app_context():
+        assert db.session.get(Movie, second).criterion_set_title == (
+            "Bruce Lee: His Greatest Hits"
+        )
+        assert db.session.get(Movie, first).criterion_set_title == (
+            "Bruce Lee: His Greatest Hits"
+        )
+
+    # A new set keeps its own spelling, without the spaces around it
+
+    _post_criterion(admin_client, second, set_title="  A New Set  ", quality="")
+    with app.app_context():
+        assert db.session.get(Movie, second).criterion_set_title == "A New Set"
+
+
 def test_a_save_with_no_recorded_format_keeps_it_unrecorded(app, admin_client):
     """Tick Owned and leave the list as it is. The film with a DVD copy stays open."""
 
