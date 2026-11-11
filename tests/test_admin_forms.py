@@ -142,6 +142,33 @@ def test_a_set_title_takes_the_spelling_of_its_set(app, admin_client):
         assert db.session.get(Movie, second).criterion_set_title == "A New Set"
 
 
+def test_a_new_spelling_on_a_film_of_the_set_renames_the_set(app, admin_client):
+    """The admin can correct the spelling of a set that 2 films hold (#697).
+
+    The film already has the set title. A post of the same title in a
+    different spelling is a correction. Each film of the set gets it.
+    Without this rule, each film takes back the spelling of the other."""
+
+    with app.app_context():
+        first = _film(
+            "Fist of Fury", 1972, criterion_set_title="Bruce Lee: His Greatest hits"
+        )
+        second = _film(
+            "Game of Death", 1978, criterion_set_title="Bruce Lee: His Greatest hits"
+        )
+        other = _film("Pather Panchali", 1955, criterion_set_title="The Apu Trilogy")
+
+    _post_criterion(
+        admin_client, first, set_title="Bruce Lee: His Greatest Hits", quality=""
+    )
+    with app.app_context():
+        for movie_id in (first, second):
+            assert db.session.get(Movie, movie_id).criterion_set_title == (
+                "Bruce Lee: His Greatest Hits"
+            )
+        assert db.session.get(Movie, other).criterion_set_title == "The Apu Trilogy"
+
+
 def test_a_save_with_no_recorded_format_keeps_it_unrecorded(app, admin_client):
     """Tick Owned and leave the list as it is. The film with a DVD copy stays open."""
 

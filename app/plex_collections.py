@@ -9,8 +9,10 @@ reporting view. A main-feature file belongs in it when it is the best
 copy of its title group. Its quality must be physical media. Its movie
 must have a custom poster and a Criterion spine number that no other
 movie with files shares. Box sets that share 1 spine are not included.
-A catalog record with no files does not count (#696). There is no
-extras rule, because some box-set films have no extras of their own.
+Only a movie with a main feature on physical media counts, because
+only such a movie can be in a box-set collection (#696). A catalog
+record with no files does not count. There is no extras rule, because
+some box-set films have no extras of their own.
 
 Each Criterion box set gets its own collection (#282), named for the
 set. A film belongs in it when its movie has the set title and at least
@@ -99,19 +101,36 @@ def _one_version(rows):
     }
 
 
+def _films_on_disc():
+    """Return the query of the ids of the movies with a main feature on physical media.
+
+    Only such a movie can be a film of a box-set collection."""
+
+    return (
+        db.session.query(File.movie_id)
+        .join(RefQuality, RefQuality.id == File.quality_id)
+        .filter(
+            File.movie_id.isnot(None),
+            File.feature_type_id.is_(None),
+            RefQuality.physical_media == True,
+        )
+    )
+
+
 def criterion_paths():
     """Return the absolute paths of the files that belong in the collection.
 
-    A film stays out when another film with files shares its spine. Only
-    such films make a box set (#696). A catalog record with no files
-    does not. A set title alone does not keep a film out (#472)."""
+    A film stays out when another film shares its spine and each of the
+    2 has a main feature on physical media. Only such films make a box
+    set (#696). A catalog record with no files does not, and a film with
+    a digital copy or with extras only does not. A set title alone does
+    not keep a film out (#472)."""
 
-    with_files = db.session.query(File.movie_id).filter(File.movie_id.isnot(None))
     shared = (
         db.session.query(Movie.criterion_spine_number)
         .filter(
             Movie.criterion_spine_number.isnot(None),
-            Movie.id.in_(with_files),
+            Movie.id.in_(_films_on_disc()),
         )
         .group_by(Movie.criterion_spine_number)
         .having(db.func.count(Movie.id) > 1)
@@ -147,18 +166,13 @@ def box_set_groups():
     same spellings.
     """
 
-    on_disc = (
-        db.session.query(File.movie_id)
-        .join(RefQuality, RefQuality.id == File.quality_id)
-        .filter(File.feature_type_id.is_(None), RefQuality.physical_media == True)
-    )
     rows = (
         db.session.query(Movie.criterion_set_title, Movie.id, File.file_path)
         .join(File, File.movie_id == Movie.id)
         .filter(
             Movie.criterion_set_title.isnot(None),
             File.feature_type_id.is_(None),
-            Movie.id.in_(on_disc),
+            Movie.id.in_(_films_on_disc()),
         )
         .all()
     )

@@ -150,7 +150,7 @@ from app.triage import (
     lossy_audio_candidates,
 )
 from app.tracks import pop_stopped_edit
-from app.criterion_catalog import set_title_key, stored_set_title
+from app.criterion_catalog import record_set_title, set_title_key
 from app.videos import (
     clear_watchlist,
     criterion_release_lookups,
@@ -1698,9 +1698,7 @@ def movie_criterion(movie_id):
         flash_form_errors(criterion_form)
         return redirect(url_for("main.movie", movie_id=movie.id))
     movie.criterion_spine_number = criterion_form.spine_number.data
-    movie.criterion_set_title = stored_set_title(
-        criterion_form.set_title.data, movie.id
-    )
+    record_set_title(movie, criterion_form.set_title.data)
 
     movie.criterion_in_print = criterion_form.in_print.data
     movie.criterion_disc_owned = criterion_form.owned.data

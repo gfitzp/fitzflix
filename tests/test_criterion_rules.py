@@ -211,6 +211,27 @@ def test_criterion_sort_key_keeps_the_spellings_of_a_set_together(app):
     ]
 
 
+def test_set_title_key_follows_the_collation_of_the_database(app):
+    """The key agrees with utf8mb4_general_ci on the pairs that a live SELECT gave.
+
+    The database compares each of these pairs as equal or as different.
+    The pairs come from SELECT 'a' = 'b' on the production server."""
+
+    from app.criterion_catalog import set_title_key
+
+    equal = [
+        ("Set", "set  "),
+        ("Noël", "Noel"),
+        ("Straße", "Strase"),
+        ("ıi", "ii"),
+    ]
+    different = [("a–b", "a-b"), (" Set", "Set"), ("Set", "Sets")]
+    for left, right in equal:
+        assert set_title_key(left) == set_title_key(right), (left, right)
+    for left, right in different:
+        assert set_title_key(left) != set_title_key(right), (left, right)
+
+
 def test_merge_credit_rows_folds_cast_and_crew_into_1_row(app):
     from app.main.library import merge_credit_rows
 

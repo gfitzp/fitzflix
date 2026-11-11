@@ -178,3 +178,23 @@ def test_the_discovery_pages_answer_while_redis_is_down(
         assert "Outage Wanted" in response.get_data(as_text=True)
     warnings = [r for r in caplog.records if "Redis is not reachable" in r.message]
     assert len(warnings) == 1
+
+
+def test_a_task_does_not_read_a_redis_fault_as_nothing_stored(app, redis_down):
+    """Outside a web request, a guarded reader raises the fault of Redis (#699).
+
+    A page can show nothing for 1 render. A task goes on and writes what
+    it read. The DVR build would delete the lineup of a channel. The
+    catalog check would decide a film for good. Thus, a task fails as
+    it did before the guard."""
+
+    from app.recommendations import stored_profile
+    from app.streaming import batch_title_availability
+
+    with app.app_context():
+        with pytest.raises(redis.exceptions.ConnectionError):
+            stored_profile(app.redis, 1)
+        with pytest.raises(redis.exceptions.ConnectionError):
+            batch_title_availability([603])
+        with app.test_request_context("/"):
+            assert stored_profile(app.redis, 1) is None

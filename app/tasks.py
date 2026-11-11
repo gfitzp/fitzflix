@@ -23,6 +23,7 @@ from collections import namedtuple
 from datetime import timedelta
 
 from flask import current_app
+from rq import get_current_job
 
 from app import path_tag, safe_job_id
 from app.queues import QUEUE_NAME
@@ -497,10 +498,15 @@ def free_job_id(name, job_id, queue=None):
     with its registry entry. A new job under the same id must not stay
     in the FailedJobRegistry, and must not take the expiry of the old
     hash (#371, #438). A job that waits or runs keeps the id. queue
-    replaces the queue of the task, as in enqueue_task."""
+    replaces the queue of the task, as in enqueue_task.
+
+    A booking in the scheduled jobs is live, whatever its hash says. A
+    job that booked itself under its own id wrote "finished" over the
+    hash of that booking when it ended (#700)."""
 
     from rq.exceptions import NoSuchJobError
     from rq.job import Job
+    from rq.registry import ScheduledJobRegistry
 
     queue = resolve_queue(queue if queue is not None else TASKS[name].queue)
     try:
@@ -508,6 +514,8 @@ def free_job_id(name, job_id, queue=None):
     except NoSuchJobError:
         return True
     if old.get_status(refresh=False) in LIVE_JOB_STATES:
+        return False
+    if job_id in ScheduledJobRegistry(queue=queue):
         return False
     delete_job(old)
     return True
@@ -600,6 +608,11 @@ def _wait_text(delay):
     return "1 minute" if minutes == 1 else f"{minutes} minutes"
 
 
+# The record of a finished retry lives for 1 day.
+
+RETRY_RESULT_TTL = 86400
+
+
 def requeue(
     name,
     *,
@@ -632,8 +645,16 @@ def requeue(
     Thus, requeue first deletes a finished, failed, stopped or canceled
     job under the id. Else the new hash keeps the expiry of the old hash
     and can go before the booked time (#700). A job that waits or runs
-    under the id stays, and the booking replaces its data. The S3 sync
-    books itself in this way while it runs."""
+    under the id stays. A booking over a job that waits replaces it.
+
+    A task can book itself under its own id while it runs. The S3 sync
+    does, and the scan of the Scan button does. When such a job ends, rq
+    writes its own data and the status "finished" over the hash of the
+    new booking. The hash also gets the expiry of the result ttl. The
+    booking stays in the scheduled jobs, and the task is the same task. But the default
+    result ttl of rq is 500 seconds, less than some delays. Thus, a job
+    that books itself under its own id takes the result ttl of a retry.
+    free_job_id reads such a booking as live."""
 
     if isinstance(delay, tuple):
         delay = timedelta(minutes=random.randint(*delay))
@@ -646,6 +667,9 @@ def requeue(
             f"{label} {reason}, returning to queue after {_wait_text(delay)}"
         )
     free_job_id(name, job_id, queue=queue)
+    current = get_current_job()
+    if current is not None and current.id == job_id:
+        current.result_ttl = RETRY_RESULT_TTL
     _submit(
         name,
         args,
@@ -656,6 +680,6 @@ def requeue(
         description=description,
         job_id=job_id,
         meta=meta,
-        result_ttl=86400,
+        result_ttl=RETRY_RESULT_TTL,
     )
     return delay

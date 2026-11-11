@@ -333,9 +333,17 @@ def set_title_key(title):
 
     The column collation of MariaDB (utf8mb4_general_ci) ignores letter
     case, accents and the spaces at the end. The test database does not.
-    Thus, the rule is in Python, and each reader of a set title uses it."""
+    Thus, the rule is in Python, and each reader of a set title uses it.
+    The key follows the collation for case, accents, the spaces at the
+    end, the sharp s and the dotless i. It is not the full weight table
+    of the collation. The test of this function lists the pairs that a
+    SELECT on the production server confirmed."""
 
-    decomposed = unicodedata.normalize("NFD", title.rstrip(" "))
+    # The collation gives the sharp s the weight of 1 "s". casefold makes
+    # "ss" of it. The dotless i has no decomposition.
+
+    plain = title.rstrip(" ").replace("ß", "s").replace("ı", "i")
+    decomposed = unicodedata.normalize("NFD", plain)
     return "".join(ch for ch in decomposed if not unicodedata.combining(ch)).casefold()
 
 
@@ -369,6 +377,27 @@ def stored_set_title(title, movie_id=None):
     if not title:
         return None
     return set_title_spellings(movie_id).get(set_title_key(title), title)
+
+
+def record_set_title(movie, title):
+    """Store the set title that the admin typed for a movie (#697).
+
+    A movie that joins a set takes the spelling of the set. A movie that
+    has the set title already, and gets it in a different spelling,
+    corrects the set: each movie of the set takes the new spelling.
+    Without this rule, 2 movies of a set take back the spelling of each
+    other, and the admin can never correct it."""
+
+    typed = (title or "").strip()
+    current = movie.criterion_set_title
+    if not (typed and current and set_title_key(typed) == set_title_key(current)):
+        movie.criterion_set_title = stored_set_title(typed, movie.id)
+        return
+    key = set_title_key(typed)
+    members = Movie.query.filter(Movie.criterion_set_title.isnot(None)).all()
+    for member in members:
+        if set_title_key(member.criterion_set_title) == key:
+            member.criterion_set_title = typed
 
 
 def assign_criterion_release(movie, by_tmdb_id, by_title_year):

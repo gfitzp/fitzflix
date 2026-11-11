@@ -338,3 +338,63 @@ def test_a_running_job_that_books_itself_under_its_own_id_keeps_the_booking(app)
             assert queue.fetch_job(job_id).get_status() == "scheduled"
         finally:
             _delete_job_id(app, queue, job_id)
+
+
+def test_a_job_that_books_itself_keeps_the_booking_after_it_ends(app):
+    """The end of a job must not take away the retry that it booked under its own id.
+
+    The Scan button of a file page queues the scan under the id of its
+    lock-busy retry, with the default result ttl of rq. The scan finds
+    the lock busy and books itself again under that id, 15 minutes from
+    now. Then the job ends: rq writes "finished" over the hash of the
+    new booking, with the result ttl of the job that ends. The booking
+    must have a hash when it is due, and its id is not free."""
+
+    from rq.job import _job_stack
+    from rq.registry import FinishedJobRegistry, ScheduledJobRegistry
+
+    from app.tasks import (
+        TASKS,
+        enqueue_task,
+        free_job_id,
+        requeue,
+        requeue_job_id,
+        resolve_queue,
+    )
+
+    name = "app.videos.track_metadata_scan_task"
+    with app.app_context():
+        queue = resolve_queue(TASKS[name].queue)
+        job_id = requeue_job_id(name, 77)
+        try:
+            running = enqueue_task(name, 77, job_id=job_id)
+            queue.remove(job_id)
+            running.set_status("started")
+            _job_stack.push(running)
+            try:
+                requeue(
+                    name,
+                    key=77,
+                    delay=timedelta(minutes=15),
+                    reason="Lock exists",
+                    kwargs={"file_id": 77},
+                )
+            finally:
+                _job_stack.pop()
+
+            # The worker ends the job as rq does in handle_job_success.
+
+            result_ttl = running.get_result_ttl(500)
+            with queue.connection.pipeline() as pipeline:
+                running._handle_success(result_ttl, pipeline=pipeline)
+                running.cleanup(result_ttl, pipeline=pipeline, remove_from_queue=False)
+                pipeline.execute()
+
+            assert queue.connection.ttl(running.key) > 15 * 60
+            assert queue.fetch_job(job_id).get_status() == "finished"
+            assert free_job_id(name, job_id) is False
+            assert job_id in ScheduledJobRegistry(queue=queue).get_job_ids()
+            assert queue.fetch_job(job_id) is not None
+        finally:
+            FinishedJobRegistry(queue=queue).remove(job_id)
+            _delete_job_id(app, queue, job_id)

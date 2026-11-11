@@ -218,6 +218,34 @@ def test_a_catalog_record_with_no_files_makes_no_box_set(app, monkeypatch):
         assert plex_collections.criterion_paths() == {paths["selected"], *kept}
 
 
+def test_a_film_with_no_disc_copy_makes_no_box_set(app, monkeypatch):
+    """Only a film that a box-set collection can hold makes a box set of a spine.
+
+    box_set_groups takes a film with a main feature on physical media.
+    A film with a digital copy or with extras only is in no set. Thus,
+    it does not keep the other film of its spine out of the main
+    collection."""
+
+    import app.plex_collections as plex_collections
+    from app import db
+
+    paths = _library(app)
+    with app.app_context():
+        on_disc = make_movie(
+            "Monterey Pop", 1968, criterion_spine_number=167, custom_poster="p.jpg"
+        )
+        kept = _path(make_movie_file(on_disc, "Bluray-1080p"))
+        digital = make_movie("Jimi Plays Monterey", 1986, criterion_spine_number=167)
+        make_movie_file(digital, "WEBDL-1080p")
+        extras = make_movie("Shake! Otis at Monterey", 1987, criterion_spine_number=167)
+        make_movie_file(extras, "Bluray-1080p", "Featurettes")
+        db.session.commit()
+
+    monkeypatch.setitem(app.config, "LIBRARY_DIR", LIBRARY)
+    with app.app_context():
+        assert plex_collections.criterion_paths() == {paths["selected"], kept}
+
+
 def test_sync_creates_fills_and_trims_each_movie_library(app, monkeypatch):
     """The collection mirrors the rule in every movie library.
 

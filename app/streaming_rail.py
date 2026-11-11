@@ -425,10 +425,11 @@ def compute_user_rail(user):
     (discover lies, the watch-provider cache does not). Fourth, the
     credits enrichment and the full-feature rescoring of the survivors.
 
-    The result is also None when TMDB gave no answer to any call of the
-    discovery, of the verification or of the enrichment. The task then
-    keeps the stored rail of the last good run (#698). An empty answer
-    is an answer. A step in which some calls answered gives a less deep
+    The result is also None when a step got no answer: each call of the
+    discovery, of the verification or of the enrichment failed. The task
+    then keeps the stored rail of the last good run (#698). An empty
+    answer is an answer, and a cached answer of an earlier run is an
+    answer too. A step in which some calls answered gives a less deep
     rail.
     """
 
