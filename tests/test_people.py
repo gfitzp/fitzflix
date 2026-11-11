@@ -122,6 +122,40 @@ def test_file_less_records_do_not_count(app, admin_client):
     assert "Record Only Person" not in page
 
 
+def test_the_role_counts_only_the_owned_works(app, admin_client):
+    """The role and the count of a person come from the same owned works (#692).
+
+    The person acts in 2 owned films and directs 3 records with no file.
+    The directing credits do not make the person a director."""
+
+    with app.app_context():
+        owned = [make_owned_movie(f"Owned Role Film {n}", 2020 + n) for n in range(2)]
+        unowned = [make_movie(f"Listed Role Film {n}", 2023 + n) for n in range(3)]
+        make_person(871, "Owned Role Example", owned)
+        db.session.add_all(
+            MovieCrew(
+                movie_id=movie.id,
+                credit_id=871,
+                department="Directing",
+                job="Director",
+            )
+            for movie in unowned
+        )
+        db.session.commit()
+
+    page = admin_client.get("/people?role=all&q=Owned+Role").get_data(as_text=True)
+    assert "Owned Role Example" in page
+    assert "Actor &middot; 2 titles" in page
+    assert "Director &middot;" not in page
+
+    page = admin_client.get("/search?q=owned+role+example").get_data(as_text=True)
+    assert "Actor &middot; 2 titles in library</span>" in page
+
+    payload = admin_client.get("/search.json?q=owned role ex").get_json()
+    people = [r for r in payload["results"] if r["type"] == "Person"]
+    assert people and people[0]["detail"] == "Actor · 2 titles in library"
+
+
 def test_a_file_commit_invalidates_the_people_ranking(app):
     """Clear the cached ranking of each role after a commit that adds or deletes a file (#656).
 

@@ -3051,6 +3051,20 @@ class ListPagination(Pagination):
         return len(self._rows)
 
 
+def _owned_work_ids():
+    """Return the queries of the owned movie ids and the owned series ids (#656).
+
+    This is the one rule of "in the library" for the people surfaces. A
+    movie is owned when a main feature file of it exists. A series is
+    owned when a file of it exists."""
+
+    owned_movie_ids = db.session.query(File.movie_id).filter(
+        File.movie_id != None, File.feature_type_id == None
+    )
+    owned_series_ids = db.session.query(File.series_id).filter(File.series_id != None)
+    return owned_movie_ids, owned_series_ids
+
+
 def _credited_film_pairs(role="all"):
     """Return the (credit_id, movie_id) pairs that the people surfaces count.
 
@@ -3073,10 +3087,7 @@ def _credited_film_pairs(role="all"):
     selected credit type.
     """
 
-    owned_movie_ids = db.session.query(File.movie_id).filter(
-        File.movie_id != None, File.feature_type_id == None
-    )
-    owned_series_ids = db.session.query(File.series_id).filter(File.series_id != None)
+    owned_movie_ids, owned_series_ids = _owned_work_ids()
     cast_pairs = (
         db.session.query(
             MovieCast.credit_id.label("credit_id"),
@@ -3130,14 +3141,18 @@ def _dominant_roles(credit_ids):
     """Return the dominant credited role of each person.
 
     That is the key role that covers the most distinct library works
-    (films and series both). ROLE_PRECEDENCE breaks ties."""
+    (films and series both). ROLE_PRECEDENCE breaks ties. Only the owned
+    works count, with the rule of _credited_film_pairs (#692). Thus, the
+    role and the count of a person come from the same works."""
 
     if not credit_ids:
         return {}
+    owned_movie_ids, owned_series_ids = _owned_work_ids()
     counts = {}
     for credit_id, tally in (
         db.session.query(TVCast.credit_id, db.func.count(db.distinct(TVCast.tv_id)))
         .filter(TVCast.credit_id.in_(credit_ids))
+        .filter(TVCast.tv_id.in_(owned_series_ids))
         .filter(
             db.or_(
                 TVCast.character == None,
@@ -3153,6 +3168,7 @@ def _dominant_roles(credit_ids):
             TVCrew.credit_id, TVCrew.job, db.func.count(db.distinct(TVCrew.tv_id))
         )
         .filter(TVCrew.credit_id.in_(credit_ids))
+        .filter(TVCrew.tv_id.in_(owned_series_ids))
         .filter(TVCrew.job.in_(list(CREW_ROLE_LABELS)))
         .group_by(TVCrew.credit_id, TVCrew.job)
     ):
@@ -3164,6 +3180,7 @@ def _dominant_roles(credit_ids):
             MovieCast.credit_id, db.func.count(db.distinct(MovieCast.movie_id))
         )
         .filter(MovieCast.credit_id.in_(credit_ids))
+        .filter(MovieCast.movie_id.in_(owned_movie_ids))
         .filter(
             db.or_(
                 MovieCast.character == None,
@@ -3181,6 +3198,7 @@ def _dominant_roles(credit_ids):
             db.func.count(db.distinct(MovieCrew.movie_id)),
         )
         .filter(MovieCrew.credit_id.in_(credit_ids))
+        .filter(MovieCrew.movie_id.in_(owned_movie_ids))
         .filter(MovieCrew.job.in_(list(CREW_ROLE_LABELS)))
         .group_by(MovieCrew.credit_id, MovieCrew.job)
     ):
