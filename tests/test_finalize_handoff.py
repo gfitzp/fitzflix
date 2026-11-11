@@ -177,6 +177,44 @@ def test_an_in_place_retry_counts_only_a_queued_job_in_a_fixed_window(
         assert app.redis.ttl(counter) <= 100
 
 
+def test_an_in_place_path_gets_3_retries_in_each_window(app, tmp_path, monkeypatch):
+    """A fourth retry waits for the end of the window. Then it comes (#693)."""
+
+    from rq.job import JobStatus
+    from rq.registry import FailedJobRegistry
+
+    import app.importing as importing
+    from app import path_tag
+
+    library_file = tmp_path / "Weekly In Place (2021) - [WEBDL-1080p].mkv"
+    library_file.write_bytes(b"arr import")
+    queue = app.import_queue
+    job = queue.enqueue("app.videos.localization_task", str(library_file))
+    queue.remove(job)
+    job.set_status(JobStatus.FAILED)
+    FailedJobRegistry(queue=queue).add(job, ttl=3600, exc_string="killed")
+    counter = importing.IN_PLACE_RETRIES_KEY.format(path_tag(str(library_file)))
+    queued = []
+    monkeypatch.setattr(
+        importing,
+        "enqueue_localization",
+        lambda path, **kwargs: queued.append(path) or object(),
+    )
+
+    with app.app_context():
+        for _ in range(importing.MAX_IN_PLACE_RETRIES + 1):
+            importing._retry_failed_in_place_imports()
+        assert len(queued) == importing.MAX_IN_PLACE_RETRIES == 3
+        window = app.redis.ttl(counter)
+        assert importing.IN_PLACE_RETRY_WINDOW - 60 < window
+        assert window <= importing.IN_PLACE_RETRY_WINDOW == 7 * 86400
+
+        app.redis.delete(counter)
+        importing._retry_failed_in_place_imports()
+        assert len(queued) == 4
+        assert app.redis.get(counter) == b"1"
+
+
 def _refuse(*args, **kwargs):
     raise ConnectionError("Redis is away")
 
