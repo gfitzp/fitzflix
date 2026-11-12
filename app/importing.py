@@ -3491,9 +3491,10 @@ def _after_commit(
     # if that step returned True.
 
     # Invariant: a record whose archive is under pending-untouched/ has a
-    # pending move (#690). If the move request fails, the source and the
-    # replaced archives stay. The weekly S3 sync requests the move again.
-    # It does the same for a move whose job did not run (#707).
+    # pending move (#690). If the move request fails before its commit,
+    # the source and the replaced archives stay. The weekly S3 sync
+    # requests the move again. It does the same for a move whose job was
+    # not queued or did not run (#707). Then the source is gone already.
 
     source_can_go = (
         step("pending upload", _pending_upload_ready, file, file_path, output_file)

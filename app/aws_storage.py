@@ -950,23 +950,29 @@ def _claimed_keys():
 
 
 def _request_pending_moves():
-    """Request the move of each live archive under pending-untouched/ (#690, #707).
+    """Request the move of each live archive under pending-untouched/ that has no job (#690, #707).
 
     Invariant: a record whose archive is under pending-untouched/ has a
     move job that will run. An import requests the move after its
     commit. The request can fail, and the job can fail after the record
     got its target. Each case leaves the row on a key that the lifecycle
-    rule of the bucket expires after 60 days. The sync starts only when
-    each queue is idle and no move waits for a retry. Thus, a row that
-    is on its pending key now has no job, with a target or with no
-    target. An import that starts later can request the same move, and
-    the move is queued 1 time. A key that the sync reported as lost has
-    no object to move, and it gets no request. The commit queues the
-    moves. Return the count of the requests."""
+    rule of the bucket expires after 60 days. Thus, a row with no target
+    gets a request. A row with a target gets one when no job of its move
+    waits or runs. An import during the sync books its move for the end
+    of the sync. That row has its job, and it gets no request.
+    A key that the sync reported as lost has no object to move, and it
+    gets no request. The commit queues the moves. Return the count of
+    the requests."""
 
+    name = "app.aws_storage.move_archive_object"
     lost = {
         key.decode() if isinstance(key, bytes) else key
         for key in current_app.redis.hkeys(ARCHIVE_LOST_KEY)
+    }
+    moving = {
+        int(job.args[0])
+        for job in live_jobs(["file"])
+        if job.func_name == name and job.args
     }
     rows = (
         File.query.filter(
@@ -979,6 +985,8 @@ def _request_pending_moves():
     requested = 0
     for file in rows:
         if file.aws_key in lost:
+            continue
+        if file.aws_key_target and file.id in moving:
             continue
         if request_archive_move(file):
             requested += 1

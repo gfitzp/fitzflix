@@ -1673,6 +1673,31 @@ def test_the_sync_requests_the_move_of_each_pending_key(app, s3):
         assert [job.args for job in move_jobs(app)] == [(ids[0],), (ids[1],)]
 
 
+def test_the_sync_leaves_a_pending_key_whose_move_waits(app, s3, caplog):
+    """An import during the sync booked the move of its record (#707).
+
+    The move waits for the end of the sync. The record has its target
+    and a live job. The sync requests nothing and writes no warning."""
+
+    from app import aws_storage, db
+    from app.tasks import live_jobs
+
+    with app.app_context():
+        booked = archived_film("Pending Booked", 1965)
+        booked.aws_key = f"pending-untouched/run6/{booked.basename}"
+        booked.aws_key_target = f"untouched/{booked.basename}"
+        db.session.commit()
+        aws_storage._wait_move(booked, booked.aws_key, None, "the S3 sync")
+        before = [job.id for job in live_jobs(["file"])]
+        assert len(before) == 1
+
+        caplog.clear()
+        assert aws_storage._request_pending_moves() == 0
+
+        assert [job.id for job in live_jobs(["file"])] == before
+        assert "had no job" not in caplog.text
+
+
 def test_the_weekly_sync_runs_the_pending_moves_phase(app, monkeypatch):
     """The phase runs in the sync, also after a failed listing (#690)."""
 
