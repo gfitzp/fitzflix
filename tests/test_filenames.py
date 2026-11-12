@@ -1149,15 +1149,74 @@ def test_an_extra_never_gets_a_hidden_name(app):
     assert (plex_title, basename) == ("And More", "And More.mkv")
 
 
-def test_a_title_of_only_periods_keeps_its_name(app):
-    """No name is left when each character goes. Then the title stays as it is."""
+@pytest.mark.parametrize(
+    "title",
+    [
+        '"...Quoted"',
+        "?...Quoted",
+        "\uff0e\uff0e\uff0eQuoted",
+        "\u00a0...Quoted",
+        "\u200b...Quoted",
+    ],
+)
+def test_the_sanitizer_cannot_put_the_periods_back(app, title):
+    """The sanitizer removes some characters, and unidecode makes periods (#722).
 
-    from app.naming import library_name
+    The rule reads the name as the disk gets it. Thus, a character that
+    goes at the start cannot leave a period there."""
 
-    plex_title, _ = library_name(
-        {"library": "Movies", "title": "...", "year": 1971, "extension": "mkv"}
-    )
-    assert plex_title == "... (1971)"
+    from tests.factories import make_movie
+
+    with app.app_context():
+        make_movie(title, 1979, tmdb_id=17444)
+        details = evaluate_filename(
+            "Quoted (1979) {tmdb-17444} - [Bluray-1080p].mkv", log=False
+        )
+    folder, name = details["file_path"].split("/")[1:]
+    assert folder.startswith("Quoted")
+    assert name.startswith("Quoted")
+
+
+def test_a_title_of_only_periods_is_refused(app):
+    """No name is left when each period goes. The import refuses the file (#722)."""
+
+    from app.naming import visible_name
+    from tests.factories import make_movie
+
+    assert visible_name("...") == ""
+    with app.app_context():
+        make_movie("...", 1971, tmdb_id=17445)
+        details = evaluate_filename(
+            "Dots (1971) {tmdb-17445} - [Bluray-1080p].mkv", log=False
+        )
+    assert not details
+    assert details.detail == "a title with no visible name"
+
+
+def test_an_extra_of_only_periods_is_refused(app):
+    """An extra whose name is only periods has no name (#722)."""
+
+    from tests.factories import make_movie
+
+    with app.app_context():
+        make_movie("Jaws", 1975, tmdb_id=578)
+        details = evaluate_filename(
+            "Jaws (1975) {tmdb-578} - Featurettes - ... [DVD].mkv", log=False
+        )
+    assert not details
+    assert details.detail == "a Featurettes extra with no name"
+
+
+def test_a_show_folder_never_starts_with_a_period(app):
+    """The show folder gets the same rule as the names of the episodes (#722)."""
+
+    from tests.factories import make_tv_series
+
+    with app.app_context():
+        make_tv_series(".hack", tmdb_id=4640)
+        details = evaluate_filename("hack {tmdb-4640} - S01E01 - [DVD].mkv", log=False)
+    assert details["file_path"].split("/")[1].startswith("hack")
+    assert details["file_path"].split("/")[-1].startswith("hack")
 
 
 def test_an_s3_key_part_never_starts_with_a_period(app):

@@ -15,6 +15,9 @@ current names.
 import os
 import re
 
+from pathvalidate import sanitize_filename
+from unidecode import unidecode
+
 from app.models import TV_SHOWS
 
 
@@ -36,23 +39,44 @@ def episode_code(season, episode, last_episode=None):
     return code
 
 
-# unidecode makes 3 periods from the ellipsis character. Thus, the
-# characters that go from the start of a name include it.
-
-_HIDDEN_START = ".\u2026 "
-
-
 def visible_name(name):
-    """Return a name with no period at its start (#717).
+    """Return a name that the disk does not hide (#717, #722).
 
     Invariant: a library name never starts with a period. A name that
     starts with a period is hidden. Plex does not scan it, and each walk
     of the library leaves it out. TMDB names some films with an ellipsis
     at the start, for example "...And Justice for All". The record keeps
-    that title. Only the folder and the file lose the periods. A name of
-    only periods stays as it is, because no name is left."""
+    that title. Only the folder and the file lose the periods.
 
-    return name.lstrip(_HIDDEN_START) or name
+    The rule reads the name as the disk gets it, after unidecode and
+    sanitize_filename. unidecode makes 3 periods from the ellipsis
+    character. The sanitizer removes a quotation mark, and then the
+    periods after the mark are at the start. Thus, the first character
+    goes while the name on the disk starts with a period. A space at
+    the start goes too. The result is empty when no name is left. The
+    name parsers refuse such a file."""
+
+    visible = name
+    while visible and _starts_hidden(visible):
+        visible = visible[1:]
+    return visible
+
+
+def _starts_hidden(name):
+    """Return True if the first character of a name must go (visible_name).
+
+    The sanitizer returns an empty text for a name of only periods, and
+    for a name of only characters that it removes. Such a name has no
+    character that the disk shows."""
+
+    plain = unidecode(name)
+    on_disk = sanitize_filename(plain)
+    return (
+        name[0].isspace()
+        or plain.startswith(".")
+        or on_disk.startswith(".")
+        or not on_disk.strip()
+    )
 
 
 def library_name(parts):

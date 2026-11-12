@@ -83,7 +83,7 @@ from app.criterion_catalog import (
 )
 from app.email import admin_email, notify_admin
 from app.email import send_email
-from app.naming import hidden, library_name, with_extension
+from app.naming import hidden, library_name, visible_name, with_extension
 from app.models import (
     MOVIES,
     TV_SHOWS,
@@ -4318,7 +4318,12 @@ def _parse_tv(basename, log):
     # does:
     # https://github.com/Sonarr/Sonarr/blob/phantom-develop/src/NzbDrone.Core/Organizer/FileNameBuilder.cs#L353
 
-    folder_title = title
+    # The show folder starts as the episode names do, with no period
+    # (#722).
+
+    folder_title = visible_name(title)
+    if not folder_title:
+        return FilenameRejection(None, "a title with no visible name")
     while folder_title.endswith(" ") or folder_title.endswith("."):
         folder_title = folder_title.strip(" ")
         folder_title = folder_title.strip(".")
@@ -4499,6 +4504,11 @@ def _parse_movie(basename, tmdb_id, log):
         return identity
     title, year, tmdb_id = identity
 
+    # A title of only periods leaves no name that the disk shows (#722).
+
+    if not visible_name(title):
+        return FilenameRejection(None, "a title with no visible name")
+
     if log:
         current_app.logger.info(f"File: {basename}")
         current_app.logger.info(f"Movie: {title} ({year})")
@@ -4616,7 +4626,7 @@ def _movie_layout(parts, version_text):
                 type.upper()
             ) + 1
             special_feature = " - ".join(version_strings[type_position:])
-            if not special_feature:
+            if not visible_name(special_feature):
                 return FilenameRejection(None, f"a {type} extra with no name")
             feature_type = type
             dirname = os.path.join(dirname, sanitize_filename(unidecode(feature_type)))
