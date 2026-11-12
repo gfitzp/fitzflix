@@ -24,7 +24,6 @@ import re
 import secrets
 
 from collections import namedtuple
-from datetime import datetime
 from difflib import SequenceMatcher
 
 from flask import (
@@ -951,7 +950,6 @@ def apply_outcome(score, outcome):
     new_best = outcome.correct and score.current_streak > score.best_streak
     if new_best:
         score.best_streak = score.current_streak
-        score.date_best = datetime.now()
     return new_best
 
 

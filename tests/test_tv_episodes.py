@@ -5,7 +5,6 @@ billed-cast surface. By design, Fitzflix does not store episode
 metadata from any source."""
 
 from app import db
-from app.models import TMDBSeason
 
 from tests.factories import make_tv_series
 
@@ -159,32 +158,6 @@ def test_tv_page_shows_billed_cast(app, admin_client):
     assert response.status_code == 200
     assert b"Peter Falk" in response.data
     assert b"Lt. Columbo" in response.data
-
-
-def test_apply_heals_stale_season_counts(app):
-    with app.app_context():
-        series = make_tv_series("Bob's Burgers", tmdb_id=32726)
-        stale = TMDBSeason(id=5555, season_number=13, episode_count=1)
-        db.session.add(stale)
-        series.seasons.append(stale)
-        db.session.commit()
-
-        series.tmdb_tv_apply(
-            {
-                "id": 32726,
-                "seasons": [
-                    {
-                        "id": 5555,
-                        "season_number": 13,
-                        "episode_count": 22,
-                        "name": "Season 13",
-                    }
-                ],
-            }
-        )
-        db.session.commit()
-
-        assert db.session.get(TMDBSeason, 5555).episode_count == 22
 
 
 def test_apply_skips_malformed_credit_entries(app, caplog):

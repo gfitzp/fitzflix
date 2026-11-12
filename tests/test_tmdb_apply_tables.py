@@ -295,7 +295,6 @@ TV_PAYLOAD = {
 
 
 def test_a_full_tv_apply_stores_every_field_and_link(app):
-    from app.models import TMDBSeason
 
     with app.app_context():
         series = make_tv_series("Pinned Series Local")
@@ -335,14 +334,6 @@ def test_a_full_tv_apply_stores_every_field_and_link(app):
             "US",
         )
         assert _names(stored.production_companies) == ["TV Studio"]
-        seasons = sorted(stored.seasons, key=lambda s: s.season_number)
-        assert [(s.id, s.episode_count, s.name) for s in seasons] == [
-            (78001, 20, "Season 1"),
-            (78002, 20, "Season 2"),
-        ]
-        assert seasons[0].air_date == datetime(2001, 2, 3)
-        assert seasons[0].tmdb_poster_path == "/s1.jpg"
-        assert seasons[1].air_date is None
         assert [
             (c.credit_id, c.character, c.episode_count)
             for c in TVCast.query.filter_by(tv_id=series.id)
@@ -352,8 +343,8 @@ def test_a_full_tv_apply_stores_every_field_and_link(app):
             for c in TVCrew.query.filter_by(tv_id=series.id)
         ] == [(7102, "Writing", "Writer")]
 
-        # The season fields refresh on every apply. An unlinked season goes
-        # (#305). A series that runs again loses its final counts (#554).
+        # A series that runs again loses its final counts (#554). The
+        # season list of the payload is not stored (#724).
 
         second = dict(
             TV_PAYLOAD,
@@ -364,8 +355,6 @@ def test_a_full_tv_apply_stores_every_field_and_link(app):
         stored.tmdb_tv_apply(second)
         db.session.commit()
         stored = db.session.get(TVSeries, series.id)
-        assert [(s.id, s.episode_count) for s in stored.seasons] == [(78001, 22)]
-        assert db.session.get(TMDBSeason, 78002) is None
         assert stored.tmdb_number_of_episodes is None
         assert stored.tmdb_number_of_seasons is None
 
@@ -388,7 +377,6 @@ def test_a_full_tv_apply_stores_every_field_and_link(app):
         assert _names(stored.keywords) == ["time travel"]
         assert _names(stored.networks) == ["HBO"]
         assert _names(stored.production_companies) == ["TV Studio"]
-        assert stored.seasons.count() == 1
         assert stored.tmdb_content_rating == "TV-MA"
 
         stored.tmdb_tv_clear()
@@ -404,7 +392,6 @@ def test_a_full_tv_apply_stores_every_field_and_link(app):
             "keywords",
             "networks",
             "production_companies",
-            "seasons",
         ):
             assert getattr(stored, rel).count() == 0, rel
         assert TVCast.query.filter_by(tv_id=series.id).count() == 0
@@ -480,4 +467,3 @@ def test_a_bare_association_entry_is_skipped_not_fatal(app):
         stored = db.session.get(TVSeries, series.id)
         assert _names(stored.genres) == ["Drama"]
         assert [network.name for network in stored.networks] == ["HBO"]
-        assert [season.id for season in stored.seasons] == [78005]

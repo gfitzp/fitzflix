@@ -501,7 +501,6 @@ def test_high_scores_persist_per_difficulty(app, admin_client):
     with app.app_context():
         difficult = UserFrameScore.query.filter_by(difficulty="difficult").one()
         assert (difficult.current_streak, difficult.best_streak) == (0, 2)
-        assert difficult.date_best is not None
         siracusa = UserFrameScore.query.filter_by(difficulty="siracusa").one()
         assert (siracusa.current_streak, siracusa.best_streak) == (0, 0)
 
@@ -2357,11 +2356,11 @@ def test_apply_outcome_updates_the_score_row(app):
     from app.main.game import Outcome, apply_outcome
 
     score = SimpleNamespace(
-        points=None, current_streak=2, best_streak=2, rounds_won=None, date_best=None
+        points=None, current_streak=2, best_streak=2, rounds_won=None
     )
     assert apply_outcome(score, Outcome(True, None, None, True)) is True
     assert (score.points, score.current_streak, score.best_streak) == (None, 3, 3)
-    assert score.rounds_won == 1 and score.date_best is not None
+    assert score.rounds_won == 1
 
     assert apply_outcome(score, Outcome(True, None, 0, False)) is False
     assert (score.points, score.current_streak, score.best_streak) == (0, 0, 3)

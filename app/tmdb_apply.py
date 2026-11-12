@@ -220,10 +220,8 @@ class TMDBAssociation:
     the linked model class. path is the key path of the payload list. A
     payload object at the path counts as a list of 1. key is the payload
     field that holds the id of a row. fields maps each column of a new
-    row to a payload field, or to a function of the payload entry. With
-    refresh_fields, an existing row gets the fields again on each apply.
-    prune_link is a link-table column. After the apply, each row that no
-    link names goes (#305). no_guard lets an empty payload clear the
+    row to a payload field, or to a function of the payload entry.
+    no_guard lets an empty payload clear the
     links. Collections use it, because most films belong to no
     collection. resolve replaces the find-or-create of the rows. label
     names the group in the guard warning, and kept names what stays."""
@@ -237,8 +235,6 @@ class TMDBAssociation:
         fields=None,
         label=None,
         kept="ones",
-        refresh_fields=False,
-        prune_link=None,
         no_guard=False,
         resolve=None,
     ):
@@ -249,8 +245,6 @@ class TMDBAssociation:
         self.fields = fields or {"name": "name"}
         self.label = label or rel.replace("_", " ")
         self.kept = kept
-        self.refresh_fields = refresh_fields
-        self.prune_link = prune_link
         self.no_guard = no_guard
         self.resolve = resolve
 
@@ -476,20 +470,10 @@ class TMDBMixin(object):
                 if not row:
                     row = model(id=entry.get(spec.key), **spec.values(entry))
                     db.session.add(row)
-                elif spec.refresh_fields:
-                    for column, value in spec.values(entry).items():
-                        setattr(row, column, value)
                 rows.append(row)
         for row in rows:
             if links.filter(model.id == row.id).count() == 0:
                 links.append(row)
-
-        if spec.prune_link is not None:
-            db.session.flush()
-            linked = db.session.query(spec.prune_link).filter(
-                spec.prune_link.isnot(None)
-            )
-            model.query.filter(~model.id.in_(linked)).delete(synchronize_session=False)
 
     def _apply_scalars(self, tmdb_info):
         """Copy the external ids, the scalars and the dates of the payload.

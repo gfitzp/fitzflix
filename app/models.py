@@ -96,13 +96,6 @@ tv_production_companies = db.Table(
 )
 
 
-tv_seasons = db.Table(
-    "tv_seasons",
-    db.Column("tv_id", db.Integer, db.ForeignKey("tv_series.id")),
-    db.Column("season_id", db.Integer, db.ForeignKey("tmdb_season.id")),
-)
-
-
 # The 2 library names. They are the directory names under LIBRARY_DIR
 # and the values of File.media_library
 
@@ -110,14 +103,13 @@ MOVIES = "Movies"
 TV_SHOWS = "TV Shows"
 
 # The TMDB fetch and apply half of the models lives in app.tmdb_apply.
-# The models below use these 4 names. Import the other names of that
+# The models below use these 3 names. Import the other names of that
 # module from app.tmdb_apply (#644).
 
 from app.tmdb_apply import (  # noqa: E402
     TMDBAssociation,
     TMDBMixin,
     _movie_certifications,
-    _tmdb_date,
 )
 
 
@@ -862,18 +854,6 @@ class TVSeries(db.Model, TMDBMixin):
         backref=db.backref("tv_series", lazy="dynamic"),
         lazy="dynamic",
     )
-    # No delete cascade: 2 series records with 1 TMDB id share their
-    # season rows. The cascade deleted the shared rows (#305), as it did
-    # the shared genres before 423b475. tmdb_tv_apply removes the season
-    # rows that no series links to.
-
-    seasons = db.relationship(
-        "TMDBSeason",
-        secondary=tv_seasons,
-        backref=db.backref("tv_series", lazy="dynamic"),
-        lazy="dynamic",
-    )
-
     # The apply tables of the TMDB mixin. The episode counts change only
     # for an ended series, and the content rating has its own pick.
 
@@ -926,26 +906,6 @@ class TVSeries(db.Model, TMDBMixin):
                 "country": "origin_country",
                 "tmdb_logo_path": "logo_path",
             },
-        ),
-        # The season fields change on every refresh, not only at the
-        # creation. The create-only code kept episode_count frozen at the
-        # value of the first sight. A season that TMDB renumbered, or the
-        # season of a deleted series, has no link after the apply. It
-        # goes (#305).
-        TMDBAssociation(
-            "seasons",
-            "TMDBSeason",
-            ("seasons",),
-            fields={
-                "air_date": lambda season: _tmdb_date(season.get("air_date")),
-                "episode_count": "episode_count",
-                "name": "name",
-                "overview": "overview",
-                "tmdb_poster_path": "poster_path",
-                "season_number": "season_number",
-            },
-            refresh_fields=True,
-            prune_link=tv_seasons.c.season_id,
         ),
     )
 
@@ -1722,7 +1682,6 @@ class UserFrameScore(db.Model):
     difficulty = db.Column(db.String(16), nullable=False)
     current_streak = db.Column(db.Integer, nullable=False, default=0)
     best_streak = db.Column(db.Integer, nullable=False, default=0)
-    date_best = db.Column(db.DateTime)
     # The running total of Extra Difficult (#202): 3, 2, or 1 points by
     # how early in the zoom-out the guess arrived.
     points = db.Column(db.Integer, nullable=False, default=0, server_default="0")
@@ -1841,21 +1800,6 @@ class TMDBSpokenLanguage(db.Model, TMDBMixin):
 
     def __repr__(self):
         return f"<TMDBSpokenLanguage '{self.name}'>"
-
-
-class TMDBSeason(db.Model, TMDBMixin):
-    """A TMDB season summary associated with a series."""
-
-    id = db.Column(db.Integer, primary_key=True)
-    air_date = db.Column(db.DateTime)
-    episode_count = db.Column(db.Integer)
-    name = db.Column(db.String(128))
-    overview = db.Column(db.Text)
-    tmdb_poster_path = db.Column(db.String(64))
-    season_number = db.Column(db.Integer)
-
-    def __repr__(self):
-        return f"<TMDBSeason '{self.id}'>"
 
 
 class Passkey(db.Model):

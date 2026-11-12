@@ -289,7 +289,7 @@ def test_no_many_to_many_relationship_carries_a_delete_cascade(app):
     """Test that no relationship with a secondary table cascades a delete.
 
     A delete cascade on a many-to-many removes the SHARED rows: the
-    genre, the certification, the season (423b475, #305). The mapper
+    genre and the certification (423b475, #305). The mapper
     registry is the one place that sees every relationship."""
 
     with app.app_context():
