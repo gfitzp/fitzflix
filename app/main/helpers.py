@@ -294,14 +294,6 @@ def _hold_verdict_lock(name):
     return True
 
 
-# The keys of every star-row state. The page script reads them from the
-# live ladder post, the batched hydration, the history row edit and the
-# Criterion 24/7 card. One builder keeps the 4 payloads in step (#335).
-LADDER_KEYS = frozenset(
-    ["rating", "has_review", "flagged", "estimated", "on_watchlist"]
-)
-
-
 def ladder_payload(row, flagged, estimated, on_watchlist, **extra):
     """Return the state of a star row as a dict.
 

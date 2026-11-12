@@ -776,19 +776,6 @@ def single_movie_score(user_id, movie, profile):
     return total
 
 
-def not_interested_movie_ids(user_id):
-    """Return the movie ids that the user refused. Each recommendation
-    surface excludes them."""
-
-    return {
-        movie_id
-        for (movie_id,) in db.session.query(UserMovieStatus.movie_id).filter(
-            UserMovieStatus.user_id == int(user_id),
-            UserMovieStatus.kind == "not_interested",
-        )
-    }
-
-
 def local_candidates(user_id):
     """Return the movie ids with a local full-feature file, without the
     films that the user logged or refused.
@@ -1089,31 +1076,6 @@ def rotate_partition(items, count, day_index):
         ]
         picks.append(tier_items[day_index % len(tier_items)])
     return picks
-
-
-def rotate_daily(items, count, seed, decay=0.93):
-    """Return a selection of `count` items from a ranked list that
-    changes each day.
-
-    This is weighted sampling without replacement. It favors the top of
-    the ranking geometrically. Thus, the quality holds while the middle
-    rotates. The seed must embed the user and the calendar day. Then
-    the page is stable across reloads but new across days. The
-    selection comes back in the original rank order. The result is
-    deterministic for a given seed.
-    """
-
-    if len(items) <= count:
-        return list(items)
-    rng = random.Random(seed)
-    pool = list(enumerate(items))
-    selected = []
-    while pool and len(selected) < count:
-        weights = [decay**rank for rank, _ in pool]
-        pick = rng.choices(range(len(pool)), weights=weights, k=1)[0]
-        selected.append(pool.pop(pick))
-    selected.sort(key=lambda pair: pair[0])
-    return [item for _, item in selected]
 
 
 def shuffle_daily(items, seed):

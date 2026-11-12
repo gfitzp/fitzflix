@@ -1219,16 +1219,6 @@ class File(db.Model):
             )
         return cls(**{key: value for key, value in details.items() if key in mapped})
 
-    def delete_local_file(self, delete_directory_tree=False):
-        """Delete the library copy.
-
-        A missing file is not an error. With delete_directory_tree, this
-        method also deletes the folders that became empty.
-        """
-
-        File.delete_library_copy(self.file_path, self.id, delete_directory_tree)
-        return self
-
     @staticmethod
     def delete_library_copy(file_path, file_id, delete_directory_tree=False):
         """Delete the library copy at file_path, for the row file_id.

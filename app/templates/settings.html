@@ -7,7 +7,7 @@
 
 {# The reset buttons are outside the main form, because a form cannot
    contain a form. Each button names its form with the form attribute. #}
-<form action="" method="post" id="settings-form" novalidate>
+<form action="" method="post" novalidate>
 	{{ form.hidden_tag() }}
 	<div class="list-group mb-3">
 		{% for row in rows %}

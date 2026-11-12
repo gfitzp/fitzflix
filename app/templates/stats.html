@@ -87,7 +87,7 @@
 {% if not totals.viewings %}
 <p class="text-body-secondary">No dated viewings yet. The stats count the films in your diary that have a watch date.</p>
 {% else %}
-<div class="row g-3 mb-4" id="stats-totals">
+<div class="row g-3 mb-4">
 	<div class="col-6 col-md-3">
 		<div class="text-body-secondary small">Films watched</div>
 		<div class="stats-figure">{{ "{:,}".format(totals.viewings) }}</div>
@@ -129,7 +129,7 @@
 	{{ ranked_list("stats-directors", "Directors", stats.directors, kind="person") }}
 	{{ ranked_list("stats-cast", "Actors", stats.cast, kind="person") }}
 	{{ ranked_list("stats-countries", "Countries", stats.countries) }}
-	<div class="col-12 col-md-6 col-lg-4 mb-4" id="stats-most-watched">
+	<div class="col-12 col-md-6 col-lg-4 mb-4">
 		<h5>Most watched</h5>
 		{% if stats.most_watched %}
 		<ol class="list-group list-group-numbered">

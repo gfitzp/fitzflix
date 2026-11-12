@@ -4,13 +4,9 @@ create_app calls register_template_helpers right after it loads the
 configuration.
 """
 
-from urllib.parse import quote_plus
-
 
 def register_template_helpers(app):
     """Add the template filters and the csrf_token global to the Jinja environment of app."""
-
-    app.jinja_env.filters["quote_plus"] = lambda u: quote_plus(u)
 
     from app.richtext import review_html
 

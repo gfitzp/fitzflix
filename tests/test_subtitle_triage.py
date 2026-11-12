@@ -458,7 +458,7 @@ def test_import_candidates_enqueue_snapshot_generation(app):
 
 
 def test_deleting_the_local_file_removes_triage_aids(app):
-    """Test that delete_local_file removes the aids on deletion and replacement."""
+    """Test that delete_library_copy removes the aids on deletion and replacement."""
 
     from app.triage import triage_snapshot_dir
 
@@ -469,7 +469,7 @@ def test_deleting_the_local_file_removes_triage_aids(app):
         with open(os.path.join(aids_dir, "timeline.json"), "w") as f:
             f.write("{}")
 
-        file.delete_local_file()
+        File.delete_library_copy(file.file_path, file.id)
         assert not os.path.isdir(triage_snapshot_dir(file.id))
 
 

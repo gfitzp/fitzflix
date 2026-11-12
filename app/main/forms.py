@@ -523,14 +523,12 @@ class QueueFrontForm(FlaskForm):
     """Move a waiting job to the front of its queue (Queue page, #236)."""
 
     job_id = HiddenField(validators=[DataRequired()])
-    front_submit = SubmitField("Move to front")
 
 
 class QueueRetryForm(FlaskForm):
     """Move a booked retry into its queue now (Queue page)."""
 
     job_id = HiddenField(validators=[DataRequired()])
-    retry_submit = SubmitField("Retry now")
 
 
 class QueueDismissForm(FlaskForm):

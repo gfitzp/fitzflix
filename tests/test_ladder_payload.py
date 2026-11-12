@@ -14,13 +14,20 @@ from tests.factories import make_movie
 
 LADDER = {"X-Requested-With": "ladder"}
 
+# The keys of every star-row state. The page script reads them from the
+# 4 answers. ladder_payload is the one builder of the dict (#335).
+
+LADDER_KEYS = frozenset(
+    ["rating", "has_review", "flagged", "estimated", "on_watchlist"]
+)
+
 
 def _csrf(page):
     return re.search(r'name="csrf_token"[^>]*value="([^"]+)"', page).group(1)
 
 
 def test_ladder_payload_reads_the_row():
-    from app.main.helpers import LADDER_KEYS, ladder_payload
+    from app.main.helpers import ladder_payload
 
     class Row:
         rating = 3
@@ -47,7 +54,6 @@ def test_ladder_payload_reads_the_row():
 def test_the_four_ladder_responses_share_their_keys(app, admin_client):
     from app import db
     from app.criterion_now import _ladder_state_for
-    from app.main.helpers import LADDER_KEYS
     from app.models import User, UserMovieReview
     from app.videos import star_rating_fields
 

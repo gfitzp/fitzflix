@@ -288,16 +288,6 @@ def test_the_task_refuses_a_uid_that_is_gone(app, two_by_two_mkv, uid):
         os.remove(path)
 
 
-def _clear_uids(app, file_id):
-    from app import db
-    from app.models import FileAudioTrack, FileSubtitleTrack
-
-    with app.app_context():
-        for model in (FileAudioTrack, FileSubtitleTrack):
-            model.query.filter_by(file_id=file_id).update({"uid": None})
-        db.session.commit()
-
-
 def _migration(name):
     path = os.path.join(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))),

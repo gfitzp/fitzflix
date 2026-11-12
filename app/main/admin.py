@@ -1616,7 +1616,6 @@ def subtitle_triage(file_id):
         ),
         candidates=candidates,
         focus_file=focus_file,
-        origin=origin,
         triage_form=triage_form,
     )
 
@@ -1776,7 +1775,6 @@ def lossy_audio_triage(file_id):
         ),
         candidates=candidates,
         focus_file=focus_file,
-        origin=origin,
         triage_form=triage_form,
     )
 
