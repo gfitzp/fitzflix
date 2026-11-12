@@ -81,6 +81,52 @@ def library_name_details(file, file_details):
     return details
 
 
+# The columns of a Movie record that a person sets, or that the Wikidata
+# task sets for a person to correct. A merge carries them (#719). TMDB
+# writes each tmdb_ column again.
+
+PERSON_SET_COLUMNS = (
+    "criterion_spine_number",
+    "criterion_film_id",
+    "criterion_set_title",
+    "criterion_in_print",
+    "criterion_disc_owned",
+    "criterion_quality_id",
+    "shopping_list_exclude",
+    "shopping_cart_add_date",
+    "shopping_cart_priority",
+)
+
+# These columns stay with their record. The survivor keeps its identity
+# and its dates. move_movie_poster moves the custom poster.
+
+NOT_CARRIED = (
+    "id",
+    "title",
+    "year",
+    "date_created",
+    "date_updated",
+    "imdb_id",
+    "custom_poster",
+)
+
+
+def carry_person_set_values(old_movie, new_movie):
+    """Give the survivor of a merge each person-set value that it lacks (#719).
+
+    Invariant: a merge loses no value that a person set. The survivor is
+    the oldest record with the TMDB id. Frequently it is a record of the
+    watchlist or the diary, and the record that goes has the files and
+    the values of the owner. A value of the survivor stays. An empty
+    value, and a False, give way to the value of the record that goes.
+    The Wikidata task writes False for a disc that nobody marked."""
+
+    for column in PERSON_SET_COLUMNS:
+        value = getattr(old_movie, column)
+        if value is not None and not getattr(new_movie, column):
+            setattr(new_movie, column, value)
+
+
 def move_movie_rows(old_movie_id, new_movie_id):
     """Move the per-movie rows of a merged movie record to the survivor.
 
@@ -88,7 +134,8 @@ def move_movie_rows(old_movie_id, new_movie_id):
     archive-only originals, the reviews, the DVR channel picks, and the
     custom poster. A row that the
     survivor already has stays behind. The delete of the
-    old record removes it. Thus, no unique key fails."""
+    old record removes it. Thus, no unique key fails. The values that a
+    person set on the old record go to the survivor too (#719)."""
 
     keys = (
         (UserWatchlist, ("user_id",)),
@@ -122,6 +169,7 @@ def move_movie_rows(old_movie_id, new_movie_id):
         # The custom poster goes to the survivor if it has none (#463).
 
         move_movie_poster(db.session, old_movie, new_movie)
+        carry_person_set_values(old_movie, new_movie)
 
 
 def find_or_create_tmdb_movie(tmdb_id, film_title, year, details=None):

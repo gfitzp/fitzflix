@@ -733,3 +733,67 @@ def test_a_merge_stamps_the_survivor(app):
     with app.app_context():
         assert db.session.get(Movie, newer_id) is None
         assert db.session.get(Movie, older_id).date_updated is not None
+
+
+def test_a_merge_keeps_the_values_that_a_person_set(app):
+    """The record that goes has values that the owner typed (#719).
+
+    The survivor takes each value that it does not have. A value of the
+    survivor stays."""
+
+    from app.models import RefQuality
+    from app.tmdb_refresh import move_movie_rows
+
+    with app.app_context():
+        quality = RefQuality.query.filter_by(quality_title="Bluray-1080p").one()
+        old = make_movie(
+            "Typed Record",
+            2004,
+            criterion_disc_owned=True,
+            criterion_quality_id=quality.id,
+            criterion_set_title="A Box Set",
+            criterion_in_print=True,
+            shopping_list_exclude=True,
+            shopping_cart_priority=3,
+        )
+        # The Wikidata task writes False for a disc that nobody marked.
+        new = make_movie(
+            "Older Record",
+            2004,
+            tmdb_id=901,
+            criterion_disc_owned=False,
+            criterion_spine_number=77,
+            shopping_cart_priority=5,
+        )
+        db.session.commit()
+
+        move_movie_rows(old.id, new.id)
+        db.session.delete(old)
+        db.session.commit()
+
+        assert new.criterion_disc_owned is True
+        assert new.criterion_quality_id == quality.id
+        assert new.criterion_set_title == "A Box Set"
+        assert new.criterion_in_print is True
+        assert new.shopping_list_exclude is True
+        assert new.criterion_spine_number == 77
+        assert new.shopping_cart_priority == 5
+
+
+def test_each_column_of_a_film_has_a_merge_rule():
+    """A new column of the Movie record must say what a merge does with it (#719).
+
+    TMDB writes each tmdb_ column again. The merge carries the columns
+    of PERSON_SET_COLUMNS. The columns of NOT_CARRIED belong to the
+    record itself, or another step moves them."""
+
+    from app.models import Movie
+    from app.tmdb_refresh import NOT_CARRIED, PERSON_SET_COLUMNS
+
+    columns = {
+        column.name
+        for column in Movie.__table__.columns
+        if not column.name.startswith("tmdb_")
+    }
+    assert set(PERSON_SET_COLUMNS) | set(NOT_CARRIED) == columns
+    assert not set(PERSON_SET_COLUMNS) & set(NOT_CARRIED)
