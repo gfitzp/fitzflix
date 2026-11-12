@@ -141,9 +141,9 @@ SETTINGS = {
         Setting(
             "PLEX_TRASH_LIMIT",
             "Plex trash limit",
-            "The Plex refresh does not empty the trash of a library that holds "
-            "more items. Then a share that drops during a scan cannot delete "
-            "the library.",
+            "The Plex refresh does not empty the trash of a library when the "
+            "trash holds more items. Then a share that drops during a scan "
+            "cannot delete the library.",
             "int",
             minimum=0,
             maximum=100000,

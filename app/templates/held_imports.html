@@ -5,7 +5,7 @@
 {% block app_content %}
 {{ breadcrumb([("Library Maintenance", url_for('main.maintenance')), (title, none)]) }}
 {{ page_header(title) }}
-<p class="text-muted">Fitzflix converts each HDR or BT.2020 import to SDR. When the library already has a real rip of the title, the original waits here for your decision.</p>
+<p class="text-muted">The two SDR modes of the HDR imports setting convert each HDR or BT.2020 import to SDR. When the library already has a real rip of the title, the original waits here for your decision. The mode "Keep HDR as it is" converts nothing and holds no import.</p>
 <ul class="small text-muted">
 	<li><strong>Import</strong> converts the original and replaces the library file.</li>
 	<li><strong>Archive only</strong> archives the original to S3. The library does not change.</li>

@@ -193,7 +193,7 @@ def register(app):
         """Rename a TV series on the disk and in the database.
 
         This is the Plex-disambiguation fix. The untouched names get the
-        new title (#362), and the archive keys follow them (#369)."""
+        new title (#362). The archive keys do not change (#668)."""
 
         from app import db
         from app.series_rename import rename_refusal, rename_timeout

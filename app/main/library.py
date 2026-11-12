@@ -2322,7 +2322,11 @@ def tv_delete(series_id):
     for file_id in file_ids:
         _after_commit(remove_custom_artwork, "file", file_id)
 
-    flash(f"Deleted TV series '{title}' and its files from the database.", "success")
+    flash(
+        f"Deleted TV series '{title}', its records and its library files. "
+        f"The delete of its archives in S3 is in the queue.",
+        "success",
+    )
     return redirect(url_for("main.tv_library"))
 
 
