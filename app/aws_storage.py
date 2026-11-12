@@ -190,9 +190,9 @@ RESTORE_PENDING_MESSAGE = (
 def mark_restore_pending(key):
     """Record a restore request of key on each File row that claims it (#610).
 
-    The archive or the transcoded/ copy of a row can be key. A row with
-    a deleted archive does not get the state. Each request records its
-    own time. A key with no File row (an ArchivedOriginal) gets nothing.
+    The archive or the transcoded/ copy of a row can be key. Each
+    request records its own time. A key with no File row (an
+    ArchivedOriginal) gets nothing.
     This commits."""
 
     rows = File.query.filter(
@@ -999,8 +999,9 @@ def _request_pending_moves():
 def _report_dangling_claims(listing):
     """Mail the admin the claimed keys that have no object in S3.
 
-    This is the rename-skew tripwire. An ACTIVE claim with no matching
-    object means that a restore would return a 404. The 2026-08-17 audit
+    This is the rename-skew tripwire. A claim of an uploaded archive
+    with no matching object means that a restore would return a 404. The
+    2026-08-17 audit
     found 1,184 cases of this silent damage. The sync reports it loudly
     each week. Thus, it can never accumulate."""
 
@@ -2109,8 +2110,7 @@ def archive_drift(file, claims=None, column=None):
 
     The archive in aws_key comes first. Then the transcoded/ copy of a
     conversion. Return None when each archive has the key of its
-    untouched name. A deleted archive, or one with no upload, does not
-    count. A key that differs from its rule key only by letter case is
+    untouched name. An archive with no upload does not count. A key that differs from its rule key only by letter case is
     correct (same_archive_key). flask aws converge-keys uses this rule
     too.
 
