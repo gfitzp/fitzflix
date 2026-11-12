@@ -221,7 +221,7 @@
 {% if rated_only %}
 <p class="text-muted">You did not rate the films of the frames in the pool. Rate some more films. As an alternative, select &ldquo;Include films that I have not rated&rdquo; above to use the full library.</p>
 {% else %}
-<p class="text-muted">The Easy mode uses only the films that you rated. Rate some films on the <a href="{{ url_for('main.recommendations') }}">Recommendations</a> page or in your <a href="{{ url_for('main.movie_library') }}">library</a>. As an alternative, try <a href="{{ url_for('main.name_that_frame', difficulty='difficult') }}">Hard</a>, which uses the full library.</p>
+<p class="text-muted">The Easy mode uses only the films that you rated. Rate some films on the <a href="{{ url_for('main.recommendations') }}">Recommendations</a> page or in your <a href="{{ url_for('main.movie_library') }}">library</a>. As an alternative, try <a href="{{ url_for('main.name_that_frame', difficulty='difficult') }}">Hard</a> and select &ldquo;Include films that I have not rated&rdquo; there. Then Hard uses the full library.</p>
 {% endif %}
 {% else %}
 <p class="lead">The frame pool is still empty.</p>

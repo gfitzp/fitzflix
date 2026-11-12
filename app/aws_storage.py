@@ -1217,12 +1217,12 @@ def _report_lagging_keys():
 def _import_uncataloged(roots):
     """Queue the files of the library folders that have no record for an import.
 
-    Invariant: the walk never enters a hidden directory (#710). The
-    download folders of Sonarr and Radarr are hidden directories in the
-    library folders. A download there belongs to those apps and to the
-    Manual imports page. Its name matches no naming format, and an
-    import would move it to the rejects. The walk also stays out of the
-    metadata directories of the NAS."""
+    Invariant: the walk never enters a hidden directory (#710). A
+    download folder of Sonarr or Radarr in a library folder must be a
+    hidden directory, for example .sabnzbd. A download there belongs
+    to those apps and to the Manual imports page. Its name matches no
+    naming format, and an import would move it to the rejects. The walk
+    also stays out of the metadata directories of the NAS."""
 
     from app.importing import enqueue_localization
 

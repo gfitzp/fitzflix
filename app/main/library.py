@@ -2324,7 +2324,8 @@ def tv_delete(series_id):
 
     flash(
         f"Deleted TV series '{title}', its records and its library files. "
-        f"The delete of its archives in S3 is in the queue.",
+        f"The delete of each archive in S3 that no other record claims is "
+        f"in the queue.",
         "success",
     )
     return redirect(url_for("main.tv_library"))

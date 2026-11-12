@@ -281,7 +281,7 @@ Sometimes the download client completes a download, but Sonarr or Radarr cannot 
 
 The **Manual imports** page (Library Maintenance → Finish manual imports) reads the live queues of both apps. For each blocked download, it shows the reason from the app and the matched title. It also shows the video files in the download folder and a proposed Fitzflix filename. The proposed name uses the matched title, the year or the episode numbers, and the downgraded web quality title from the table above. You can change the name before the import. **Import** copies the selected file to the import directory under that name, deletes the download folder, and removes the queue items from the app. The copy lands under a hidden name, so the import watcher only sees the complete file. The import then follows the usual path. **Discard** removes the queue items and tells the download client to delete the download.
 
-Fitzflix copies and deletes only below the folders in `ARR_DOWNLOAD_FOLDERS` in `.env`, separated by colons. These are the completed-download folders of the download client, as this host sees them. Without this setting, the page lists the downloads but cannot act on them.
+Fitzflix copies and deletes only below the folders in `ARR_DOWNLOAD_FOLDERS` in `.env`, separated by colons. These are the completed-download folders of the download client, as this host sees them. Without this setting, the page lists the downloads but cannot act on them. A download folder in a library folder must have a name that starts with a dot, for example `.sabnzbd`. The weekly S3 sync imports each file of a library folder that has no record, and it stays out of the hidden directories.
 
 ## Tracking Plex watches
 
@@ -402,7 +402,7 @@ Fitzflix is developed and operated on macOS with [Homebrew](https://brew.sh). Th
 | [mkvmerge](https://mkvtoolnix.download) (MKVToolNix) | `MKVMERGE_BIN` | Remuxes Matroska files: removes the tracks that are not in your language and the empty tracks, and converts other containers to Matroska |
 | [mkvpropedit](https://mkvtoolnix.download) (MKVToolNix) | `MKVPROPEDIT_LOCATION` | Edits Matroska properties in place: the default and forced track flags, and the track statistics |
 | [HandBrakeCLI](https://handbrake.fr) | `HANDBRAKE_BIN` | Converts HDR and BT.2020 imports to SDR (refer to `CONVERSION_PRESET`, `CONVERSION_PRESET_2160P`, and `HANDBRAKE_PRESET_FILE` for the presets) |
-| [ffmpeg](https://ffmpeg.org) | `FFMPEG_BIN` | Makes the FLAC twins, the triage aids, the Name That Frame frames, and the DVR streams |
+| [ffmpeg](https://ffmpeg.org) | `FFMPEG_BIN` | Makes the FLAC twins, the lead-track remuxes of the lossy audio triage, the triage aids, the Name That Frame frames, and the DVR streams |
 | [ffprobe](https://ffmpeg.org) | `FFPROBE_BIN` | Measures the durations and reads the streams for the triage aids, the frames, and the DVR lineups |
 | [mkvextract](https://mkvtoolnix.download) (MKVToolNix) | `MKVEXTRACT_BIN` | Extracts the TrueHD track for the E-AC-3 Atmos twin. It also copies the cover art into each audio remux that ffmpeg makes. Thus, Fitzflix needs it also without the Atmos twins. |
 | truehdd | `TRUEHDD_BIN` | Decodes a TrueHD Atmos track to the master that MediaConvert encodes. The default is `/Users/server/bin/truehdd`. Without it, a new import gets no Atmos twin. |
@@ -416,7 +416,7 @@ The Atmos twins also need an AWS Elemental MediaConvert role. Set its ARN in `ME
 brew install mediainfo mkvtoolnix handbrake ffmpeg atomicparsley mariadb redis awscli
 ```
 
-At startup, Fitzflix writes a warning to the log for each configured binary or directory that it cannot find. Thus, a missing tool shows in `logs/fitzflix.log`.
+At startup, Fitzflix writes a warning to the log for each configured binary or directory that it cannot find. Thus, a missing tool shows in `logs/fitzflix.log`. The dumps come from MariaDB. If your MariaDB formula has only the commands `mariadb` and `mariadb-dump`, set `MYSQL_BIN` and `MYSQLDUMP_BIN` to them, and use `mariadb` in the restore command of the disaster recovery.
 
 ### Optional services
 
@@ -558,7 +558,7 @@ python scheduler.py
 
 #### Workers
 
-Each worker runs `supervisor.py`, as the supervisor programs do. A plain `rq worker` does not monitor the import directory, writes no trails, and does not reclaim the locks of a killed worker.
+Each worker runs `supervisor.py`, as the supervisor programs do. A plain `rq worker` does not monitor the import directory, and it does not reclaim the locks of a killed worker. It also does not write the running, done, and failed stages of the trails.
 
 Run a maximum of one SQL worker, so the database operations occur in sequence.
 
@@ -604,7 +604,7 @@ flask run
 
 ## Command-line tasks
 
-Run these commands from the project root, with the venv active. Most commands put a background job in a queue. Thus, the workers must run, or nothing occurs. The `flask recs` commands, `flask alerts availability`, `flask catalog reassign`, `flask aws provision`, and `flask aws cdn-url` do their work in the shell. `flask aws converge-keys` makes its list in the shell, and the moves that `--apply` requests run as jobs:
+Run these commands from the project root, with the venv active. Some commands put a background job in a queue. These commands need the workers, or nothing occurs. The `flask recs` commands, `flask alerts availability`, `flask catalog reassign`, `flask aws provision`, and `flask aws cdn-url` do their work in the shell. `flask catalog exclude` deletes the record in the shell and queues the S3 deletes. `flask aws converge-keys` makes its list in the shell, and the moves that `--apply` requests run as jobs:
 
 | Command | Function |
 | --- | --- |
@@ -742,7 +742,7 @@ The command `flask aws provision` also needs `s3:CreateBucket`, `s3:PutBucketVer
 
 The archives are in S3 Glacier Deep Archive. Thus, a restore has two steps. A restore uses the `transcoded/` copy of a conversion, or the archive of the file. An object from `modified/` or `transcoded/` is the library file. It goes straight to its place in the library, with its track edits, and the track records do not change. An object from `untouched/` is a rip. It goes through the import, as a new file does.
 
-1. On the detail page of the file, request the download. Fitzflix asks AWS to restore the object from Glacier. A restore from Deep Archive usually takes some hours. To restore many files, use the **Bulk restore series from AWS** button on a TV series page. A season page has the **Bulk restore season from AWS** button. Each button requests each best-ranked archived file at the same time. A restore has a cost. Thus, each restore button shows an estimated cost, and you must prove that you are the account holder. If your account has a passkey, the button asks for it. The password field shows only if the passkey request fails. An account with no passkey enters its password. The estimate includes the fee for each request, the retrieval fee for each GB, and the transfer fee for each GB. A season or series restore uses the cheaper Bulk retrieval tier. A single file uses the Standard tier. Set the values `AWS_RESTORE_PER_1K_REQUEST_COST`, `AWS_RESTORE_PER_1K_REQUEST_BULK_COST`, `AWS_RESTORE_PER_GB_COST`, `AWS_RESTORE_PER_GB_BULK_COST`, and `AWS_DOWNLOAD_PER_GB_COST` in `.env` to match the current AWS prices.
+1. On the detail page of the file, request the download. Fitzflix asks AWS to restore the object from Glacier. A restore from Deep Archive usually takes some hours. To restore many files, use the **Bulk restore series from AWS** button on a TV series page. A season page has the **Bulk restore season from AWS** button. Each button requests each best-ranked archived file at the same time. A restore has a cost. Thus, each restore button shows an estimated cost, and you must prove that you are the account holder. If your account has a passkey, the button asks for it. If the passkey request fails and the account has a password, the password field shows. An account with no passkey enters its password. The estimate includes the fee for each request, the retrieval fee for each GB, and the transfer fee for each GB. A season or series restore uses the cheaper Bulk retrieval tier. A single file uses the Standard tier. Set the values `AWS_RESTORE_PER_1K_REQUEST_COST`, `AWS_RESTORE_PER_1K_REQUEST_BULK_COST`, `AWS_RESTORE_PER_GB_COST`, `AWS_RESTORE_PER_GB_BULK_COST`, and `AWS_DOWNLOAD_PER_GB_COST` in `.env` to match the current AWS prices.
 2. When AWS completes the restore, it sends a notification to the SQS queue (`AWS_SQS_URL`). Configure the S3 bucket to send its restore-completed event notifications to that queue. Fitzflix polls the queue each hour and downloads each completed restore into the library. To poll now, run `flask sqs`.
 
 ### Downloading through CloudFront
