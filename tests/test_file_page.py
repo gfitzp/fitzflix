@@ -48,7 +48,7 @@ def _file(
                     channels="8",
                     compression_mode="Lossless",
                     bit_depth=24,
-                    sampling_rate_khz=48,
+                    sampling_rate=48000,
                     default=True,
                 ),
                 FileAudioTrack(
@@ -256,13 +256,27 @@ def test_the_track_labels(app):
         channels="8",
         compression_mode="Lossless",
         bit_depth=24,
-        sampling_rate_khz=48,
+        sampling_rate=48000,
     )
     lossy = FileAudioTrack(
         language_name="French", codec="AC-3", channels="6", bitrate_kbps=640
     )
     bare = FileAudioTrack(language_name="Latin", codec="PCM", channels="2")
     assert lossless.label == "English: TrueHD 8 (24-bit 48 kHz)"
+    # The rate of a CD is 44.1 kHz. The label must not cut it to 44 (#725).
+    cd = FileAudioTrack(
+        language_name="English",
+        codec="FLAC",
+        channels="2",
+        compression_mode="Lossless",
+        bit_depth=16,
+        sampling_rate=44100,
+    )
+    assert cd.quality_label == "16-bit 44.1 kHz"
+    high = FileAudioTrack(
+        compression_mode="Lossless", bit_depth=24, sampling_rate=176400
+    )
+    assert high.quality_label == "24-bit 176.4 kHz"
     assert lossy.label == "French: AC-3 6 (640 kbps)"
     assert bare.label == "Latin: PCM 2" and bare.quality_label is None
     subtitle = FileSubtitleTrack(elements=1200, language_name="English")

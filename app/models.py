@@ -1355,7 +1355,6 @@ class FileAudioTrack(db.Model):
     bitrate_kbps = db.Column(db.Integer)
     bit_depth = db.Column(db.Integer)
     sampling_rate = db.Column(db.Integer)
-    sampling_rate_khz = db.Column(db.Integer)
     language_name = db.Column(db.String(64), nullable=False)
     compression_mode = db.Column(db.String(64))
 
@@ -1373,14 +1372,15 @@ class FileAudioTrack(db.Model):
         """Return the quality of the track as text, or None if it is unknown.
 
         A lossless track with a known depth and rate reads "24-bit 48 kHz".
-        Another track with a known bitrate reads "640 kbps"."""
+        The rate comes from the Hz value, so 44,100 Hz reads "44.1 kHz"
+        (#725). Another track with a known bitrate reads "640 kbps"."""
 
         if (
             self.compression_mode == "Lossless"
             and self.bit_depth
-            and self.sampling_rate_khz
+            and self.sampling_rate
         ):
-            return f"{self.bit_depth}-bit {self.sampling_rate_khz} kHz"
+            return f"{self.bit_depth}-bit {self.sampling_rate / 1000:g} kHz"
         if self.bitrate_kbps:
             return f"{self.bitrate_kbps} kbps"
         return None

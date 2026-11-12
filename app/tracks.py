@@ -1708,11 +1708,6 @@ def get_audio_tracks_from_file(file_path):
                 if str(track.to_data().get("sampling_rate", "")).isdigit()
                 else None
             )
-            audio_track["sampling_rate_khz"] = (
-                int(int(track.to_data().get("sampling_rate")) / 1000)
-                if str(track.to_data().get("sampling_rate", "")).isdigit()
-                else None
-            )
             audio_track["compression_mode"] = track.to_data().get("compression_mode")
             if (
                 audio_track["compression_mode"] is None
