@@ -196,8 +196,7 @@ def mark_restore_pending(key):
     This commits."""
 
     rows = File.query.filter(
-        db.or_(File.aws_key == key, File.aws_transcoded_key == key),
-        File.aws_date_deleted.is_(None),
+        db.or_(File.aws_key == key, File.aws_transcoded_key == key)
     )
     requested = datetime.now(timezone.utc)
     for row in rows.all():
@@ -977,7 +976,6 @@ def _request_pending_moves():
     rows = (
         File.query.filter(
             File.aws_key.like(f"{PENDING_ARCHIVE_PREFIX}/%"),
-            File.aws_date_deleted.is_(None),
         )
         .order_by(File.id)
         .all()
@@ -1009,9 +1007,7 @@ def _report_dangling_claims(listing):
     s3_key_set = listing.keys
     dangling_claims = sorted(
         key
-        for (key,) in db.session.query(File.aws_key)
-        .filter(File.aws_key.isnot(None))
-        .filter(File.aws_date_deleted.is_(None))
+        for (key,) in db.session.query(File.aws_key).filter(File.aws_key.isnot(None))
         # A row whose first upload never ran claims no object yet (#534).
         # The transcoded union has the same rule.
         .filter(File.aws_date_uploaded.isnot(None))
@@ -1342,10 +1338,9 @@ def download_task(
     # a deleted row then raises (#588).
 
     with app.app_context():
-        live = File.query.filter(File.aws_date_deleted.is_(None))
-        file = live.filter(File.aws_key == key).first()
+        file = File.query.filter(File.aws_key == key).first()
         if file is None:
-            file = live.filter(File.aws_transcoded_key == key).first()
+            file = File.query.filter(File.aws_transcoded_key == key).first()
         file_id = file.id if file is not None else None
 
     # A fault that escapes the task leaves the SQS message in the queue.
@@ -2028,19 +2023,19 @@ def key_claims():
     return claims
 
 
-def _key_claimed(key, exclude_id=None, live_only=False):
+def _key_claimed(key, exclude_id=None):
     """Return True if a record claims the S3 key.
 
     A File row claims its aws_key, its aws_transcoded_key and its pending
     aws_key_target. An archive-only original claims its key. exclude_id
-    leaves out 1 File row. With live_only, a row whose archive is deleted
-    does not claim its aws_key."""
+    leaves out 1 File row."""
 
-    own_key = File.aws_key == key
-    if live_only:
-        own_key = db.and_(own_key, File.aws_date_deleted.is_(None))
     files = db.session.query(File.id).filter(
-        db.or_(own_key, File.aws_transcoded_key == key, File.aws_key_target == key)
+        db.or_(
+            File.aws_key == key,
+            File.aws_transcoded_key == key,
+            File.aws_key_target == key,
+        )
     )
     if exclude_id is not None:
         files = files.filter(File.id != exclude_id)
@@ -2125,12 +2120,7 @@ def archive_drift(file, claims=None, column=None):
     stays for the converge run (#683)."""
 
     config = current_app.config
-    if (
-        column in (None, "aws_key")
-        and file.aws_key
-        and file.aws_date_uploaded
-        and file.aws_date_deleted is None
-    ):
+    if column in (None, "aws_key") and file.aws_key and file.aws_date_uploaded:
         prefix = _archive_prefix_of(file.aws_key)
         if prefix:
             wanted = archive_key_for(file, prefix, claims)
@@ -2670,7 +2660,7 @@ def untouched_key_still_claimed(key):
     upload_untouched reads the object of the exact key for that case
     (#678)."""
 
-    return _key_claimed(key, live_only=True)
+    return _key_claimed(key)
 
 
 # The status of a move that waits for a restore of its object. It is
@@ -4496,7 +4486,6 @@ def _lagging_archive_of(file_path, key):
 
     rows = File.query.filter(
         File.untouched_basename == os.path.basename(file_path),
-        File.aws_date_deleted.is_(None),
         File.aws_date_uploaded.isnot(None),
         File.aws_key_target.is_(None),
     ).all()

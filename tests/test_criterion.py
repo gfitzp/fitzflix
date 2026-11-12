@@ -278,8 +278,6 @@ def test_criterion_page_row_grammar_and_badges(app, admin_client):
                 movie_id=settled.id,
                 rating=9,
                 modified_rating=9,
-                whole_stars=4,
-                half_stars=1,
             )
         )
         db.session.commit()

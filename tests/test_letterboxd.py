@@ -300,7 +300,7 @@ def test_sync_adopts_csv_twin_and_completes_plex_watch(app, monkeypatch):
 
         # The unrated feed item keeps the stars of the CSV row (#542)
         assert float(adopted.rating) == 4.0
-        assert adopted.whole_stars == 4 and adopted.half_stars == 0
+        assert float(adopted.modified_rating) == 4.0
 
         # The sync completed the Plex bare watch across the midnight
         # straddle. The watch keeps its clock-accurate timestamp
@@ -648,8 +648,6 @@ def test_a_text_less_claim_keeps_the_spoiler_flag_of_the_kept_text(app):
         date_reviewed=datetime(2026, 7, 1),
         rating=None,
         modified_rating=None,
-        whole_stars=None,
-        half_stars=None,
     )
     entry = {
         "guid": "letterboxd-watch-40",

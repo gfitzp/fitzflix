@@ -18,7 +18,6 @@ stays one-way.
 
 import csv
 import io
-import math
 import re
 import time
 import traceback
@@ -133,19 +132,8 @@ def star_rating_fields(rating):
     The rating can also be None."""
 
     if rating is None:
-        return {
-            "rating": None,
-            "modified_rating": None,
-            "whole_stars": None,
-            "half_stars": None,
-        }
-    modified_rating = round(rating * 2) / 2
-    return {
-        "rating": rating,
-        "modified_rating": modified_rating,
-        "whole_stars": math.floor(modified_rating),
-        "half_stars": 0 if modified_rating % 1 == 0 else 1,
-    }
+        return {"rating": None, "modified_rating": None}
+    return {"rating": rating, "modified_rating": round(rating * 2) / 2}
 
 
 # The largest unpacked size of a Letterboxd export that Fitzflix reads.

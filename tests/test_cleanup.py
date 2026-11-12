@@ -335,8 +335,6 @@ def test_shared_untouched_key_is_never_deleted(app):
     guard reports the key as claimed until no surviving record holds
     it."""
 
-    from datetime import datetime
-
     from app import db
     from app.videos import untouched_key_still_claimed
     from tests.factories import make_movie, make_movie_file
@@ -359,10 +357,9 @@ def test_shared_untouched_key_is_never_deleted(app):
         db.session.commit()
         assert untouched_key_still_claimed(shared) is True
 
-        # The purge can delete the key only when no active record holds
-        # it.
+        # The purge can delete the key only when no record holds it.
 
-        keeper.aws_date_deleted = datetime.now()
+        db.session.delete(keeper)
         db.session.commit()
         assert untouched_key_still_claimed(shared) is False
 

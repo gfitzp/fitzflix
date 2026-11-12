@@ -905,37 +905,6 @@ def test_a_rename_during_the_download_places_at_the_new_path(app, monkeypatch):
                 os.remove(path)
 
 
-def test_a_restore_lands_on_the_live_row_of_a_shared_key(app, monkeypatch):
-    """A row with a deleted archive and a lower id does not take the restore."""
-
-    from datetime import datetime, timezone
-
-    from app import db
-    from app.models import File
-    from tests.factories import make_movie, make_movie_file
-
-    with app.app_context():
-        dead = make_movie_file(make_movie("Dead Sharer", 1951), "DVD")
-        db.session.commit()
-        dead_id = dead.id
-        dead_path = os.path.join(app.config["LIBRARY_DIR"], dead.file_path)
-    key, live_path = _direct_restore_row(app, "Live Sharer")
-    with app.app_context():
-        dead = db.session.get(File, dead_id)
-        assert dead.id < File.query.filter_by(aws_key=key).one().id
-        dead.aws_key = key
-        dead.aws_date_deleted = datetime.now(timezone.utc)
-        db.session.commit()
-    try:
-        assert _place_with(app, monkeypatch, S3(), key) is True
-        assert open(live_path, "rb").read() == b"s3!"
-        assert not os.path.exists(dead_path)
-    finally:
-        for path in (live_path, dead_path):
-            if os.path.exists(path):
-                os.remove(path)
-
-
 def test_a_new_archive_during_the_download_refuses_the_placement(app, monkeypatch):
     """A track edit archived the file again during the download (#563).
 

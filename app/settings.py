@@ -394,7 +394,6 @@ def set_setting(name, value, username):
     old = get_setting(name)
     row = db.session.get(AppSetting, name) or AppSetting(name=name)
     row.value = store_text(setting, value)
-    row.updated_by = username
     db.session.add(row)
     db.session.commit()
     clear_cache()

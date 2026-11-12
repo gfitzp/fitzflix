@@ -185,8 +185,6 @@ def test_movie_page_funnel_badges(app, admin_client, admin_id):
                 movie_id=movie_id,
                 rating=8,
                 modified_rating=8,
-                whole_stars=4,
-                half_stars=0,
             )
         )
         # The direct diary row bypasses the auto-remove of the log path.

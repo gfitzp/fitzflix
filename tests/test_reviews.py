@@ -190,7 +190,7 @@ def test_apply_letterboxd_import_loads_review_table(app, admin_client):
         first, second = reviews
         assert first.date_watched == datetime(2015, 1, 9)
         assert first.rating == 4
-        assert first.whole_stars == 4 and first.half_stars == 0
+        assert float(first.modified_rating) == 4.0
         assert first.liked is True
         assert first.rewatch is False
 
@@ -241,7 +241,7 @@ def test_apply_creates_missing_movie_and_enqueues_refresh(app):
         review = UserMovieReview.query.filter_by(user_id=7, movie_id=movie.id).one()
         assert review.liked is True
         assert review.rating is None
-        assert review.whole_stars is None
+        assert review.modified_rating is None
 
         refresh_jobs = [
             job
@@ -740,7 +740,7 @@ def test_movie_page_ladder_auto_flags_liked_at_three_stars(app, admin_client):
         ).one()
         assert review.liked is True
         assert float(review.rating) == 3.0
-        assert review.whole_stars == 3
+        assert float(review.modified_rating) == 3.0
         assert review.date_watched is None
 
     page = admin_client.get(f"/movie/{meh_id}").get_data(as_text=True)
@@ -975,7 +975,7 @@ def test_review_tmdb_creates_movie_and_enqueues_refresh(app, admin_client, monke
             user_id=user_id, movie_id=movie.id
         ).one()
         assert float(review.rating) == 4.0
-        assert review.whole_stars == 4 and review.half_stars == 0
+        assert float(review.modified_rating) == 4.0
         assert review.liked is True
         assert review.review == "Still a decent shark."
         assert review.date_watched == datetime(2026, 8, 1)
@@ -1206,7 +1206,7 @@ def test_review_edit_updates_the_viewing_in_place(app, admin_client):
         db.session.expire_all()
         row = db.session.get(UserMovieReview, row_id)
         assert float(row.rating) == 4.0
-        assert row.whole_stars == 4 and row.half_stars == 0
+        assert float(row.modified_rating) == 4.0
         assert row.liked is True
 
 

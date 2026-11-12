@@ -479,8 +479,6 @@ class UserMovieReview(db.Model):
 
     rating = db.Column(db.Float)
     modified_rating = db.Column(db.Float)
-    whole_stars = db.Column(db.Integer)
-    half_stars = db.Column(db.Integer)
     review = db.Column(db.Text)
     liked = db.Column(db.Boolean, nullable=False, default=False, server_default="0")
     date_watched = db.Column(db.DateTime)
@@ -1051,7 +1049,6 @@ class File(db.Model):
     edition = db.Column(db.String(219), index=True)
     quality_id = db.Column(db.Integer, db.ForeignKey("ref_quality.id"))
     fullscreen = db.Column(db.Boolean, nullable=False, index=True, default=False)
-    crop = db.Column(db.String(19))
     container = db.Column(db.String(64))
     format = db.Column(db.String(64))
     codec = db.Column(db.String(64))
@@ -1137,7 +1134,6 @@ class File(db.Model):
     archive_move_requested_at = db.Column(db.DateTime)
     aws_filesize_bytes = db.Column(db.BigInteger)
     aws_date_uploaded = db.Column(db.DateTime)
-    aws_date_deleted = db.Column(db.DateTime)
 
     # Set when an archive upload was lost and the S3 object is known to be
     # older than the local file. No other field can tell. The key still
@@ -1675,7 +1671,6 @@ class AppSetting(db.Model):
 
     name = db.Column(db.String(64), primary_key=True)
     value = db.Column(db.Text, nullable=False)
-    updated_by = db.Column(db.String(120))
     date_updated = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
 
     def __repr__(self):

@@ -41,8 +41,6 @@ def build_library(app):
             movie_id=seen_movie.id,
             rating=8,
             modified_rating=8,
-            whole_stars=4,
-            half_stars=0,
         )
     )
 
@@ -131,8 +129,6 @@ def test_search_badges_recommended_owned_films(app, admin_client):
                 movie_id=logged_since.id,
                 rating=6,
                 modified_rating=6,
-                whole_stars=3,
-                half_stars=0,
             )
         )
         db.session.commit()
@@ -190,8 +186,6 @@ def test_search_funnel_badges_coexist_and_exclude(app, admin_client):
                 movie_id=seen.id,
                 rating=9,
                 modified_rating=9,
-                whole_stars=4,
-                half_stars=1,
             )
         )
         db.session.add(UserWatchlist(user_id=admin.id, movie_id=fresh.id))
@@ -246,8 +240,6 @@ def test_search_tmdb_funnel_badges(app, admin_client, monkeypatch):
                 movie_id=owned_seen.id,
                 rating=7,
                 modified_rating=7,
-                whole_stars=3,
-                half_stars=1,
             )
         )
         db.session.add(UserWatchlist(user_id=admin.id, movie_id=wanted.id))
