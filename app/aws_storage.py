@@ -950,13 +950,16 @@ def _claimed_keys():
 
 
 def _request_pending_moves():
-    """Request the move of each live archive under pending-untouched/ with no target (#690).
+    """Request the move of each live archive under pending-untouched/ (#690, #707).
 
     Invariant: a record whose archive is under pending-untouched/ has a
-    pending move. An import requests the move after its commit. A failed
-    request leaves the row on a key that the lifecycle rule of the
-    bucket expires after 60 days. The sync starts only when each queue
-    is idle. An import that starts later can request the same move, and
+    move job that will run. An import requests the move after its
+    commit. The request can fail, and the job can fail after the record
+    got its target. Each case leaves the row on a key that the lifecycle
+    rule of the bucket expires after 60 days. The sync starts only when
+    each queue is idle and no move waits for a retry. Thus, a row that
+    is on its pending key now has no job, with a target or with no
+    target. An import that starts later can request the same move, and
     the move is queued 1 time. A key that the sync reported as lost has
     no object to move, and it gets no request. The commit queues the
     moves. Return the count of the requests."""
@@ -969,7 +972,6 @@ def _request_pending_moves():
         File.query.filter(
             File.aws_key.like(f"{PENDING_ARCHIVE_PREFIX}/%"),
             File.aws_date_deleted.is_(None),
-            File.aws_key_target.is_(None),
         )
         .order_by(File.id)
         .all()
@@ -981,8 +983,8 @@ def _request_pending_moves():
         if request_archive_move(file):
             requested += 1
             current_app.logger.warning(
-                f"'{file.aws_key}' This archive had no move to its final key. "
-                f"The move is requested now"
+                f"'{file.aws_key}' This archive had no job for the move to "
+                f"its final key. The move is requested now"
             )
     db.session.commit()
     return requested

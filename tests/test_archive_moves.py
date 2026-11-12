@@ -1643,10 +1643,12 @@ def test_a_reimported_conversion_with_a_current_original_moves_its_copy(app, s3)
         assert fake.copies == [(transcoded, retagged)]
 
 
-def test_the_sync_requests_the_move_of_a_pending_key_with_no_target(app, s3):
-    """A failed request of an import left the row on its pending key (#690).
+def test_the_sync_requests_the_move_of_each_pending_key(app, s3):
+    """A record is on its pending key, and no move job waits (#690, #707).
 
-    The S3 sync requests the move. A row that has a target keeps it."""
+    The request of the import failed, or the job of the move did not
+    run. The S3 sync requests the move for a row with no target and for
+    a row with a target. A row on its final key gets no request."""
 
     from app import aws_storage, db
     from app.models import File
@@ -1654,20 +1656,21 @@ def test_the_sync_requests_the_move_of_a_pending_key_with_no_target(app, s3):
     with app.app_context():
         stuck = archived_film("Pending Stuck", 1961)
         stuck.aws_key = f"pending-untouched/run3/{stuck.basename}"
-        waiting = archived_film("Pending Waiting", 1962)
-        waiting.aws_key = f"pending-untouched/run4/{waiting.basename}"
-        waiting.aws_key_target = "untouched/Elsewhere (1962).mkv"
+        jobless = archived_film("Pending Jobless", 1962)
+        jobless.aws_key = f"pending-untouched/run4/{jobless.basename}"
+        jobless.aws_key_target = f"untouched/{jobless.basename}"
         settled = archived_film("Pending Settled", 1963)
         db.session.commit()
-        ids = (stuck.id, waiting.id, settled.id)
+        ids = (stuck.id, jobless.id, settled.id)
+        assert move_jobs(app) == []
 
-        assert aws_storage._request_pending_moves() == 1
+        assert aws_storage._request_pending_moves() == 2
 
         rows = {row.id: row for row in File.query.filter(File.id.in_(ids))}
         assert rows[ids[0]].aws_key_target == f"untouched/{rows[ids[0]].basename}"
-        assert rows[ids[1]].aws_key_target == "untouched/Elsewhere (1962).mkv"
+        assert rows[ids[1]].aws_key_target == f"untouched/{rows[ids[1]].basename}"
         assert rows[ids[2]].aws_key_target is None
-        assert [job.args for job in move_jobs(app)] == [(ids[0],)]
+        assert [job.args for job in move_jobs(app)] == [(ids[0],), (ids[1],)]
 
 
 def test_the_weekly_sync_runs_the_pending_moves_phase(app, monkeypatch):
