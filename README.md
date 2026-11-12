@@ -410,13 +410,13 @@ Fitzflix is developed and operated on macOS with [Homebrew](https://brew.sh). Th
 | [mkvextract](https://mkvtoolnix.download) (MKVToolNix) | `MKVEXTRACT_BIN` | Extracts the TrueHD track for the E-AC-3 Atmos twin |
 | truehdd | `TRUEHDD_BIN` | Decodes a TrueHD Atmos track to the master that MediaConvert encodes. The default is `/Users/server/bin/truehdd`. Without it, a new import gets no Atmos twin. |
 | [AtomicParsley](https://github.com/wez/atomicparsley) | `ATOMICPARSLEY_BIN` | Removes the embedded metadata from MP4 files that Fitzflix cannot convert to Matroska |
-| [mysqldump](https://dev.mysql.com) and mysql | `MYSQLDUMP_BIN`, `MYSQL_BIN` | Make the nightly database dumps, and restore a dump |
+| mysqldump and mysql ([MariaDB](https://mariadb.org)) | `MYSQLDUMP_BIN`, `MYSQL_BIN` | Make the nightly database dumps, and restore a dump |
 | [supervisorctl](http://supervisord.org) | `SUPERVISORCTL_BIN` | Reads the state of the worker programs, and starts or restarts a worker that the health check finds stopped |
 
 The Atmos twins also need an AWS Elemental MediaConvert role. Set its ARN in `MEDIACONVERT_ROLE_ARN`.
 
 ```
-brew install mediainfo mkvtoolnix handbrake ffmpeg atomicparsley mysql redis
+brew install mediainfo mkvtoolnix handbrake ffmpeg atomicparsley mariadb redis awscli
 ```
 
 At startup, Fitzflix writes a warning to the log for each configured binary or directory that it cannot find. Thus, a missing tool shows in `logs/fitzflix.log`.
@@ -561,40 +561,42 @@ python scheduler.py
 
 #### Workers
 
+Each worker runs `supervisor.py`, as the supervisor programs do. A plain `rq worker` does not monitor the import directory, writes no trails, and does not reclaim the locks of a killed worker.
+
 Run a maximum of one SQL worker, so the database operations occur in sequence.
 
 ```
 source venv/bin/activate &&
-rq worker fitzflix-sql
+python supervisor.py fitzflix-sql
 ```
 
 Run one maintenance worker for the scheduled maintenance tasks, such as log rotation:
 
 ```
 source venv/bin/activate &&
-rq worker fitzflix-maintenance
+python supervisor.py fitzflix-maintenance
 ```
 
 Run as many of the workers below as you need:
 
 ```
 source venv/bin/activate &&
-rq worker fitzflix-user-request
+python supervisor.py fitzflix-user-request
 ```
 
 ```
 source venv/bin/activate &&
-rq worker fitzflix-handoff fitzflix-import fitzflix-file-operation
+python supervisor.py fitzflix-handoff fitzflix-import fitzflix-file-operation
 ```
 
 ```
 source venv/bin/activate &&
-rq worker fitzflix-handoff fitzflix-transcode fitzflix-import fitzflix-file-operation
+python supervisor.py fitzflix-handoff fitzflix-transcode fitzflix-import fitzflix-file-operation
 ```
 
 ```
 source venv/bin/activate &&
-rq worker fitzflix-handoff fitzflix-file-operation fitzflix-import
+python supervisor.py fitzflix-handoff fitzflix-file-operation fitzflix-import
 ```
 
 ### Flask
@@ -707,11 +709,34 @@ The app operates with a policy that is limited to its bucket and its queue. The 
         },
         {
             "Effect": "Allow",
-            "Action": ["sqs:ReceiveMessage", "sqs:DeleteMessage", "sqs:GetQueueAttributes"],
+            "Action": [
+                "sqs:ReceiveMessage",
+                "sqs:DeleteMessage",
+                "sqs:ChangeMessageVisibility",
+                "sqs:GetQueueAttributes"
+            ],
             "Resource": "arn:aws:sqs:<region>:<account>:<queue>"
         }
     ]
 }
+```
+
+The Atmos twins also need the two statements below. Add them to the `Statement` list only when you use the Atmos twins. The pipeline submits, reads and cancels MediaConvert jobs, and it gives the jobs the role in `MEDIACONVERT_ROLE_ARN`:
+
+```json
+[
+    {
+        "Effect": "Allow",
+        "Action": ["mediaconvert:CreateJob", "mediaconvert:GetJob", "mediaconvert:CancelJob"],
+        "Resource": "arn:aws:mediaconvert:<region>:<account>:*"
+    },
+    {
+        "Effect": "Allow",
+        "Action": "iam:PassRole",
+        "Resource": "<MEDIACONVERT_ROLE_ARN>",
+        "Condition": {"StringEquals": {"iam:PassedToService": "mediaconvert.amazonaws.com"}}
+    }
+]
 ```
 
 The command `flask aws provision` also needs `s3:CreateBucket`, `s3:PutBucketVersioning`, `s3:GetBucketVersioning`, `s3:PutLifecycleConfiguration`, `s3:GetLifecycleConfiguration`, `s3:PutBucketNotification`, `s3:GetBucketNotification`, `sqs:CreateQueue`, and `sqs:SetQueueAttributes`. Grant these permissions for a short time. As an alternative, run the command one time with an admin credential, and then return to the runtime policy.
@@ -742,7 +767,7 @@ To test the path, run `flask aws cdn-url "untouched/<key>"`. It prints a signed 
 
 You can rebuild Fitzflix on a new machine from three items that you keep away from the machine: **the AWS credentials and the bucket name, the `BACKUP_PASSPHRASE`, and access to this git repository**. Keep all three in a password manager. Do these steps in sequence:
 
-1. **Install the system requirements.** Use Homebrew to install MariaDB, Redis, supervisor, and the third-party binaries listed above. Clone this repository, make the virtualenv, and run `pip install -r requirements.txt`.
+1. **Install the system requirements.** Use Homebrew to install MariaDB, Redis, supervisor, the AWS CLI, and the third-party binaries listed above. Clone this repository, make the virtualenv, and run `pip install -r requirements.txt`.
 2. **Recover `.env`.** Download the newest `backup/dotenv-<date>.enc` from the S3 bucket and decrypt it into the project root:
 
    ```
@@ -756,7 +781,7 @@ You can rebuild Fitzflix on a new machine from three items that you keep away fr
 4. **Restore the newest dump** from `backup/` in the bucket:
 
    ```
-   zcat fitzflix_db-<date>.sql.gz | mysql --user=<user> --password <database>
+   gzcat fitzflix_db-<date>.sql.gz | mysql --user=<user> --password <database>
    ```
 
    Then run `flask db upgrade` to update the schema to the current code. If the code is not newer than the dump, this command changes nothing.
