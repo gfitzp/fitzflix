@@ -1215,19 +1215,31 @@ def _report_lagging_keys():
 
 
 def _import_uncataloged(roots):
-    """Queue the files of the library folders that have no record for an import."""
+    """Queue the files of the library folders that have no record for an import.
+
+    Invariant: the walk never enters a hidden directory (#710). The
+    download folders of Sonarr and Radarr are hidden directories in the
+    library folders. A download there belongs to those apps and to the
+    Manual imports page. Its name matches no naming format, and an
+    import would move it to the rejects. The walk also stays out of the
+    metadata directories of the NAS."""
 
     from app.importing import enqueue_localization
 
     library = []
     for root in roots:
         for path, subdirs, local_files in os.walk(root):
+            subdirs[:] = [
+                name
+                for name in subdirs
+                if not name.startswith(".") and name != "@eaDir"
+            ]
             for name in local_files:
                 if name.startswith(ARTWORK_PREFIXES) and name.endswith(
                     ARTWORK_SUFFIXES
                 ):
                     continue
-                if not name.startswith(".") and "@eaDir" not in path:
+                if not name.startswith("."):
                     library_file = os.path.join(path, name)
                     file_path = os.path.relpath(
                         library_file, current_app.config["LIBRARY_DIR"]

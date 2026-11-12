@@ -166,6 +166,39 @@ def test_the_uncataloged_import_walks_each_root_once(app, monkeypatch, tmp_path)
     ]
 
 
+def test_the_uncataloged_phase_never_enters_a_hidden_directory(
+    app, tmp_path, monkeypatch
+):
+    """The download folders of Sonarr and Radarr are in the library folders (#710).
+
+    A download below .sabnzbd waits for Radarr or for a manual import.
+    The phase must not send it to the import. A metadata directory of
+    the NAS is not a library folder either."""
+
+    from app import aws_storage, importing
+
+    film = tmp_path / "Movies" / "Film (2002)"
+    download = tmp_path / "Movies" / ".sabnzbd" / "Some.Film.1957.1080p.BluRay-GRP"
+    screens = download / "Screens"
+    metadata = film / "@eaDir" / "Film (2002) - [DVD].mkv"
+    for folder in (film, screens, metadata):
+        folder.mkdir(parents=True)
+    (film / "Film (2002) - [DVD].mkv").write_bytes(b"x")
+    (download / "Some.Film.1957.1080p.BluRay-GRP.mkv").write_bytes(b"x")
+    (screens / "01.png").write_bytes(b"x")
+    (metadata / "SYNOVIDEO_VIDEO_SCREENSHOT.jpg").write_bytes(b"x")
+
+    queued = []
+    monkeypatch.setattr(
+        importing, "enqueue_localization", lambda path: queued.append(path)
+    )
+    monkeypatch.setitem(app.config, "LIBRARY_DIR", str(tmp_path))
+    with app.app_context():
+        aws_storage._import_uncataloged((str(tmp_path / "Movies"),))
+
+    assert queued == [str(film / "Film (2002) - [DVD].mkv")]
+
+
 def _absent_archived_film(app, title, year):
     """Make a rank-1 film whose archive is in S3 and whose library file is absent."""
 
