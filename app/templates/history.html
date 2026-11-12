@@ -60,10 +60,10 @@
 		<h5 class="mt-0 mb-0"><a href="{{ url_for('main.movie', movie_id=review.movie.id) }}" class="text-decoration-none text-body">{{ review.movie|display_title }} ({{ review.movie|display_year }})</a></h5>
 		{# Each viewing carries its own live star row that posts to
 		   review_edit. Stars only, never the ✕: the floor of a logged
-		   film is 1 star. The typed text goes with a star tap, because
-		   both fields belong to the same form. An unrated viewing (a Plex
-		   watch or an unrated import) shows the estimate of the engine
-		   until real stars arrive. Feed-originated rows show their stars
+		   film is 1 star. A star tap sends no text. The text has its own
+		   form below. An unrated viewing (a Plex watch or an unrated
+		   import) shows the estimate of the engine until real stars
+		   arrive. Feed-originated rows show their stars
 		   read-only. The next poll asserts the Letterboxd verdict again
 		   over any local edit. Thus, edits happen there instead. #}
 		{% if review.letterboxd_guid %}

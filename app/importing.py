@@ -3787,13 +3787,16 @@ def _delete_replaced_archive(worse_key):
     """Queue the AWS delete of a replaced archive that no row claims.
 
     The new file can claim the same key that its predecessor held (a
-    repointed key, or a re-import on the same basename). Never delete a
-    key that a surviving row claims. The task asks for the claim again
-    when it runs (#686)."""
+    repointed key, or a re-import on the same basename). The claim can
+    also be the pending target of the new file. Then the archive move of
+    that file puts the new rip at the key (#709). Never delete a key
+    that a surviving row claims. The task asks for the claim again when
+    it runs (#686)."""
 
     if untouched_key_still_claimed(worse_key):
         current_app.logger.info(
-            f"Keeping '{worse_key}' in AWS — another file record still claims it"
+            f"Keeping '{worse_key}' in AWS. A file record claims it, or the "
+            f"archive move of a record has it as its target"
         )
         return
     # The replaced row can name a key with no object. A plain delete
