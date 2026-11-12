@@ -56,7 +56,6 @@ def _finish_fakes(monkeypatch):
     monkeypatch.setattr(atmos.MediaInfo, "parse", lambda path: _MediaInfo())
     monkeypatch.setattr(atmos.subprocess, "Popen", fake_popen)
     monkeypatch.setattr("app.tracks.watch_mkvmerge_progress", lambda *a, **k: None)
-    monkeypatch.setattr("app.tracks.remove_empty_subtitle_tracks", lambda path: None)
     monkeypatch.setattr("app.tracks.get_audio_tracks_from_file", tracks_of)
     monkeypatch.setattr("app.tracks.get_subtitle_tracks_from_file", lambda path: [])
     monkeypatch.setattr(atmos, "_run_step", lambda *a, **k: None)

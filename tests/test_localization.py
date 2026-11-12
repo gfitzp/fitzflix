@@ -2060,7 +2060,6 @@ def test_a_staging_remux_short_of_space_waits_instead_of_rejecting(
     def failing_inspection(*args, **kwargs):
         raise subprocess.CalledProcessError(2, "mkvmerge")
 
-    monkeypatch.setattr("app.importing.inspect_localized_file", failing_inspection)
     monkeypatch.setattr(importing, "inspect_localized_file", failing_inspection)
     monkeypatch.setattr(
         importing.shutil, "disk_usage", lambda path: SimpleNamespace(free=0)

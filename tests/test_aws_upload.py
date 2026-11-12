@@ -5,6 +5,7 @@ weekly S3 sync try the archive again.
 """
 
 import errno
+import os
 
 import pytest
 
@@ -82,11 +83,6 @@ def test_a_transient_mount_error_does_not_reject_the_file(app, tmp_path, monkeyp
     path = str(tmp_path / "transient.mkv")
     open(path, "wb").write(b"x")
 
-    rejected = []
-    monkeypatch.setattr(
-        "app.importing.move_to_rejects", lambda p, reason="": rejected.append(p)
-    )
-
     class ExplodingClient:
         def head_object(self, **kwargs):
             from tests.fakes import missing_object
@@ -104,7 +100,8 @@ def test_a_transient_mount_error_does_not_reject_the_file(app, tmp_path, monkeyp
         with pytest.raises(OSError):
             aws_storage.aws_upload(path, "untouched")
 
-        assert rejected == []
+        # The upload never moves the file. The caller decides.
+        assert os.path.exists(path)
 
 
 @pytest.mark.parametrize(
