@@ -18,6 +18,9 @@
 
 {% if movie_results %}
 <h4 class="mt-3 mb-2">Movies</h4>
+{% if movie_results_truncated %}
+<p class="small text-muted mb-2">Showing the first {{ search_results_limit }} movie matches. More are available.</p>
+{% endif %}
 {# The movie matches show as a poster gallery (#45d). The popover
    carries the synopsis and the badges. The shopping-colored quality
    tier moved there in the revision by Glenn, 2026-08. The tile keeps
@@ -41,6 +44,9 @@
 
 {% if tv_results %}
 <h4 class="mt-3 mb-2">TV Shows</h4>
+{% if tv_results_truncated %}
+<p class="small text-muted mb-2">Showing the first {{ search_results_limit }} TV shows. More are available.</p>
+{% endif %}
 <div class="list-group mb-4">
 	{% for result in tv_results %}
 	{% set tv = result.series %}

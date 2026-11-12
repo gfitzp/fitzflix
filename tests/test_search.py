@@ -5,6 +5,8 @@ found), the /search.json type-ahead endpoint, and the /search/tmdb
 lookup with the in-library annotations.
 """
 
+from datetime import datetime
+
 from app import db
 from app.models import User, UserMovieReview
 
@@ -88,6 +90,27 @@ def test_search_tiers_owned_upgradable_and_topped_out(app, admin_client):
         'text-bg-success align-middle me-1 mb-1" title="In your Fitzflix library'
         in card
     )
+
+
+def test_year_only_search_warns_when_more_than_fifty_movies_match(app, admin_client):
+    with app.app_context():
+        for index in range(51):
+            movie = make_movie(f"Yearly Film {index:02d}", 1980)
+            make_movie_file(movie, "DVD")
+            make_tv_series(
+                f"Yearly Show {index:02d}",
+                tmdb_first_air_date=datetime(1980, 1, 1),
+            )
+        db.session.commit()
+
+    page = admin_client.get("/search?q=y%3A1980").get_data(as_text=True)
+
+    assert "Yearly Film 49 (1980)" in page
+    assert "Yearly Film 50 (1980)" not in page
+    assert "Showing the first 50 movie matches. More are available." in page
+    assert "Yearly Show 49" in page
+    assert "Yearly Show 50" not in page
+    assert "Showing the first 50 TV shows. More are available." in page
 
 
 def test_search_omits_reviewed_movies_without_files(app, admin_client):

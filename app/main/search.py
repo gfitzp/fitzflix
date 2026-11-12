@@ -45,6 +45,8 @@ from app.streaming import (
     user_provider_ids,
 )
 
+SEARCH_RESULTS_LIMIT = 50
+
 
 def _parse_query(q):
     """Split the modifier tokens out of a search query (#185).
@@ -69,7 +71,7 @@ def _parse_query(q):
     return " ".join(words), years
 
 
-def _movie_search_results(wildcard, limit=50, years=None):
+def _movie_search_results(wildcard, limit=SEARCH_RESULTS_LIMIT, years=None):
     """Return the movies whose titles match, each with its best owned copy.
 
     Only films with a local main-feature file appear. A review-only
@@ -150,7 +152,7 @@ def _movie_search_results(wildcard, limit=50, years=None):
     return results
 
 
-def _tv_search_results(wildcard, limit=50, years=None):
+def _tv_search_results(wildcard, limit=SEARCH_RESULTS_LIMIT, years=None):
     """Return the TV series whose titles match, with a summary per season.
 
     The summary of a season is its grade from season_grades. A TV show
@@ -299,6 +301,8 @@ def search():
     movie_results = []
     tv_results = []
     people_results = []
+    movie_results_truncated = False
+    tv_results_truncated = False
 
     if q:
         # Spaces become wildcards. Thus, the word order and the
@@ -308,8 +312,16 @@ def search():
         # for a person.
 
         wildcard = text.replace(" ", "%")
-        movie_results = _movie_search_results(wildcard, years=years)
-        tv_results = _tv_search_results(wildcard, years=years)
+        movie_results = _movie_search_results(
+            wildcard, limit=SEARCH_RESULTS_LIMIT + 1, years=years
+        )
+        movie_results_truncated = len(movie_results) > SEARCH_RESULTS_LIMIT
+        movie_results = movie_results[:SEARCH_RESULTS_LIMIT]
+        tv_results = _tv_search_results(
+            wildcard, limit=SEARCH_RESULTS_LIMIT + 1, years=years
+        )
+        tv_results_truncated = len(tv_results) > SEARCH_RESULTS_LIMIT
+        tv_results = tv_results[:SEARCH_RESULTS_LIMIT]
         people_results = _people_search_results(wildcard) if text else []
 
         # The personal funnel badges are "Might interest you" (in the
@@ -351,8 +363,11 @@ def search():
         q=q,
         q_text=text,
         movie_results=movie_results,
+        movie_results_truncated=movie_results_truncated,
         tv_results=tv_results,
+        tv_results_truncated=tv_results_truncated,
         people_results=people_results,
+        search_results_limit=SEARCH_RESULTS_LIMIT,
     )
 
 
