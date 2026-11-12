@@ -69,7 +69,12 @@ def _parse_query(q):
     return " ".join(words), years
 
 
-def _movie_search_results(wildcard, limit=50, years=None):
+# The search page shows this many films and this many series.
+
+PAGE_RESULTS = 50
+
+
+def _movie_search_results(wildcard, limit=PAGE_RESULTS, years=None):
     """Return the movies whose titles match, each with its best owned copy.
 
     Only films with a local main-feature file appear. A review-only
@@ -150,7 +155,7 @@ def _movie_search_results(wildcard, limit=50, years=None):
     return results
 
 
-def _tv_search_results(wildcard, limit=50, years=None):
+def _tv_search_results(wildcard, limit=PAGE_RESULTS, years=None):
     """Return the TV series whose titles match, with a summary per season.
 
     The summary of a season is its grade from season_grades. A TV show
@@ -298,6 +303,7 @@ def search():
     text, years = _parse_query(q)
     movie_results = []
     tv_results = []
+    movies_cut = tv_cut = False
     people_results = []
 
     if q:
@@ -308,8 +314,19 @@ def search():
         # for a person.
 
         wildcard = text.replace(" ", "%")
-        movie_results = _movie_search_results(wildcard, years=years)
-        tv_results = _tv_search_results(wildcard, years=years)
+
+        # A person reads a list as complete (#715). Thus, each query
+        # asks for 1 row more than the page shows. The extra row says
+        # that the list is cut, and the page says so.
+
+        movie_results = _movie_search_results(
+            wildcard, limit=PAGE_RESULTS + 1, years=years
+        )
+        tv_results = _tv_search_results(wildcard, limit=PAGE_RESULTS + 1, years=years)
+        movies_cut = len(movie_results) > PAGE_RESULTS
+        tv_cut = len(tv_results) > PAGE_RESULTS
+        movie_results = movie_results[:PAGE_RESULTS]
+        tv_results = tv_results[:PAGE_RESULTS]
         people_results = _people_search_results(wildcard) if text else []
 
         # The personal funnel badges are "Might interest you" (in the
@@ -353,6 +370,9 @@ def search():
         movie_results=movie_results,
         tv_results=tv_results,
         people_results=people_results,
+        movies_cut=movies_cut,
+        tv_cut=tv_cut,
+        page_results=PAGE_RESULTS,
     )
 
 

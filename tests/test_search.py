@@ -1146,3 +1146,54 @@ def test_search_tmdb_year_modifier(app, admin_client, monkeypatch):
     )
     assert "Add a title to the year filter" in page
     assert not captured
+
+
+def _year_of_films(count, year):
+    """Make count owned films of one year. Their titles sort in number sequence."""
+
+    for number in range(1, count + 1):
+        movie = make_movie(f"Cutoff Film {number:02d}", year)
+        make_movie_file(movie, "DVD")
+    db.session.commit()
+
+
+def test_the_search_says_when_the_film_list_is_cut(app, admin_client):
+    """A year with more films than the list holds gets a notice (#715).
+
+    A person reads the list as complete. A film after the last row is
+    then a film that they think they do not own."""
+
+    with app.app_context():
+        _year_of_films(51, 1940)
+
+    page = admin_client.get("/search?q=y:1940").get_data(as_text=True)
+    assert "Cutoff Film 50 (1940)" in page
+    assert "Cutoff Film 51 (1940)" not in page
+    assert "The list shows the first 50 films" in page
+
+
+def test_the_search_gives_no_notice_for_a_complete_list(app, admin_client):
+    """A list that holds each match has no notice (#715)."""
+
+    with app.app_context():
+        _year_of_films(50, 1941)
+
+    page = admin_client.get("/search?q=y:1941").get_data(as_text=True)
+    assert "Cutoff Film 50 (1941)" in page
+    assert "The list shows the first" not in page
+
+
+def test_the_search_says_when_the_series_list_is_cut(app, admin_client):
+    """The series list has the same notice as the film list (#715)."""
+
+    with app.app_context():
+        for number in range(1, 52):
+            series = make_tv_series(f"Cutoff Show {number:02d}")
+            make_tv_file(series, 1, 1, "DVD")
+        db.session.commit()
+
+    page = admin_client.get("/search?q=cutoff+show").get_data(as_text=True)
+    assert "Cutoff Show 50" in page
+    assert "Cutoff Show 51" not in page
+    assert "The list shows the first 50 series" in page
+    assert "The list shows the first 50 films" not in page
