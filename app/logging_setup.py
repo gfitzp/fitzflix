@@ -16,12 +16,7 @@ class ErrorMailHandler(SMTPHandler):
     The stdlib handler starts TLS only when it has a username. With
     MAIL_USE_TLS and no MAIL_USERNAME, each ERROR mail went in clear, or
     a relay that requires STARTTLS refused it. This handler starts TLS
-    whenever secure is set, logs in only with a username, and uses
-    SMTP_SSL for MAIL_USE_SSL."""
-
-    def __init__(self, *args, use_ssl=False, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.use_ssl = use_ssl
+    whenever secure is set, and it logs in only with a username."""
 
     def emit(self, record):
         """Send 1 log record as an email."""
@@ -31,18 +26,15 @@ class ErrorMailHandler(SMTPHandler):
             import smtplib
             from email.message import EmailMessage
 
-            smtp_class = smtplib.SMTP_SSL if self.use_ssl else smtplib.SMTP
-            port = self.mailport or (
-                smtplib.SMTP_SSL_PORT if self.use_ssl else smtplib.SMTP_PORT
-            )
-            smtp = smtp_class(self.mailhost, port, timeout=self.timeout)
+            port = self.mailport or smtplib.SMTP_PORT
+            smtp = smtplib.SMTP(self.mailhost, port, timeout=self.timeout)
             message = EmailMessage()
             message["From"] = self.fromaddr
             message["To"] = ",".join(self.toaddrs)
             message["Subject"] = self.getSubject(record)
             message["Date"] = email.utils.localtime()
             message.set_content(self.format(record))
-            if self.secure is not None and not self.use_ssl:
+            if self.secure is not None:
                 smtp.ehlo()
                 smtp.starttls(*self.secure)
                 smtp.ehlo()
@@ -97,7 +89,6 @@ def configure_logging(app):
                 subject="Fitzflix Failure",
                 credentials=auth,
                 secure=secure,
-                use_ssl=bool(app.config.get("MAIL_USE_SSL")),
             )
             mail_handler.setLevel(logging.ERROR)
             app.logger.addHandler(mail_handler)
