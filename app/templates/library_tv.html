@@ -4,10 +4,8 @@
 
 {% block app_content %}
 {# The own search of the TV library (#210) searches this library
-   only, with the grammar of the movie library. The series matches and
-   the episode matches render as separate sections, like the main
-   search page. A matched episode never pulls its series into the
-   series list #}
+   only, with the grammar of the movie library. It matches the title
+   and the TMDB name of a series. It does not match episode titles #}
 {% call page_header(title) %}
 	{{ library_search(library_search_form) }}
 {% endcall %}

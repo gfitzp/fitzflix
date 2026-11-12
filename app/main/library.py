@@ -1891,11 +1891,10 @@ def tv_library():
     """Show the worst quality in each season for each TV show in the library.
 
     ?q= narrows the listing inside the TV library only (#210). The
-    series list holds only the series whose TITLE matches. The episodes
-    whose TMDB titles match render as their own section below. This is
-    the grammar of the main search page. A matched episode never pulls
-    its whole series into the series list (Glenn: a search for
-    "venture" must not show Bob's Burgers)."""
+    list holds only the series whose title or TMDB name matches. The
+    search does not read the titles of episodes. An episode title must
+    never pull its series into the list (Glenn: a search for "venture"
+    must not show Bob's Burgers)."""
 
     # The grade of each season is its worst episode. Each episode number
     # of a multi-episode file counts (#479). The In-library badge and the
