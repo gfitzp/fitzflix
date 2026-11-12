@@ -1190,7 +1190,7 @@ def test_a_title_of_only_periods_is_refused(app):
             "Dots (1971) {tmdb-17445} - [Bluray-1080p].mkv", log=False
         )
     assert not details
-    assert details.detail == "a title with no visible name"
+    assert details.reason == "no visible title"
 
 
 def test_an_extra_of_only_periods_is_refused(app):
@@ -1217,6 +1217,43 @@ def test_a_show_folder_never_starts_with_a_period(app):
         details = evaluate_filename("hack {tmdb-4640} - S01E01 - [DVD].mkv", log=False)
     assert details["file_path"].split("/")[1].startswith("hack")
     assert details["file_path"].split("/")[-1].startswith("hack")
+
+
+def test_a_show_named_with_characters_that_have_no_ascii_form_keeps_its_name(app):
+    """A TV name gets no unidecode. Thus, such a show is visible on the disk (#722)."""
+
+    from app.naming import library_name, visible_name
+
+    assert visible_name("\U0001f600", transliterate=False) == "\U0001f600"
+    assert visible_name("\U0001f600") == ""
+    plex_title, _ = library_name(
+        {
+            "library": "TV Shows",
+            "title": "\U0001f600",
+            "season": 1,
+            "episode": 1,
+            "quality_title": "DVD",
+            "extension": "mkv",
+        }
+    )
+    assert plex_title.startswith("\U0001f600")
+
+
+def test_the_refresh_lock_of_a_film_is_the_lock_of_its_first_import(app):
+    """The 2 keys must be the same text, also for a title with periods (#722)."""
+
+    from app.models import MOVIES, title_lock_key
+    from app.tmdb_refresh import _movie_base_lock
+
+    assert _movie_base_lock("...And Justice for All", 1979) == title_lock_key(
+        MOVIES,
+        "...And Justice for All",
+        year=1979,
+        plex_title="And Justice for All (1979)",
+    )
+    assert _movie_base_lock("Jaws", 1975) == title_lock_key(
+        MOVIES, "Jaws", year=1975, plex_title="Jaws (1975)"
+    )
 
 
 def test_an_s3_key_part_never_starts_with_a_period(app):

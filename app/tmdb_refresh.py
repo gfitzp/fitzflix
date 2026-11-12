@@ -51,7 +51,12 @@ from app.models import (
     title_lock_key,
 )
 from app.tmdb_apply import canonical_movie_name, tmdb_json_or, TMDBUnavailable
-from app.naming import plain_movie_folder, retag_quality, with_extension
+from app.naming import (
+    library_name,
+    plain_movie_folder,
+    retag_quality,
+    with_extension,
+)
 from app.title_keys import title_key
 
 
@@ -83,7 +88,7 @@ def library_name_details(file, file_details):
 
 # The columns of a Movie record that a person sets, or that the Wikidata
 # task sets for a person to correct. A merge carries them (#719). TMDB
-# writes each tmdb_ column again.
+# writes each other tmdb_ column again.
 
 PERSON_SET_COLUMNS = (
     "criterion_spine_number",
@@ -97,8 +102,19 @@ PERSON_SET_COLUMNS = (
     "shopping_cart_priority",
 )
 
-# These columns stay with their record. The survivor keeps its identity
-# and its dates. move_movie_poster moves the custom poster.
+# The Wikidata task writes these columns from the catalog entry of the
+# TMDB id of a record.
+
+CATALOG_COLUMNS = (
+    "criterion_spine_number",
+    "criterion_film_id",
+    "criterion_set_title",
+    "criterion_in_print",
+)
+
+# These columns stay with their record. The survivor keeps its identity,
+# its dates and its own choice of "TMDB has no record of this film".
+# move_movie_poster moves the custom poster.
 
 NOT_CARRIED = (
     "id",
@@ -107,27 +123,42 @@ NOT_CARRIED = (
     "date_created",
     "date_updated",
     "imdb_id",
+    "tmdb_ignored",
     "custom_poster",
 )
 
 
-def carry_person_set_values(old_movie, new_movie):
+def carry_person_set_values(old_movie, new_movie, same_film=True):
     """Give the survivor of a merge each person-set value that it lacks (#719).
 
     Invariant: a merge loses no value that a person set. The survivor is
     the oldest record with the TMDB id. Frequently it is a record of the
     watchlist or the diary, and the record that goes has the files and
-    the values of the owner. A value of the survivor stays. An empty
-    value, and a False, give way to the value of the record that goes.
-    The Wikidata task writes False for a disc that nobody marked."""
+    the values of the owner. A value of the survivor stays, also a False
+    that a person set. Only an empty value gives way. The disc-owned
+    False is the exception, because the Wikidata task writes it for a
+    disc that nobody marked.
 
+    same_film is False when the record that goes had a different TMDB
+    id. Then a catalog entry of that other film gave it its spine, and
+    the catalog values describe the other film. They stay behind. A
+    record with no catalog entry has only typed values, and they go."""
+
+    from_other_film = not same_film and (
+        old_movie.criterion_film_id is not None
+        or old_movie.criterion_spine_number is not None
+    )
     for column in PERSON_SET_COLUMNS:
+        if from_other_film and column in CATALOG_COLUMNS:
+            continue
         value = getattr(old_movie, column)
-        if value is not None and not getattr(new_movie, column):
+        kept = getattr(new_movie, column)
+        lacks = kept in (None, "") or (column == "criterion_disc_owned" and not kept)
+        if value is not None and lacks:
             setattr(new_movie, column, value)
 
 
-def move_movie_rows(old_movie_id, new_movie_id):
+def move_movie_rows(old_movie_id, new_movie_id, same_film=True):
     """Move the per-movie rows of a merged movie record to the survivor.
 
     These are the watchlist rows, the status flags, the awards, the
@@ -135,7 +166,9 @@ def move_movie_rows(old_movie_id, new_movie_id):
     custom poster. A row that the
     survivor already has stays behind. The delete of the
     old record removes it. Thus, no unique key fails. The values that a
-    person set on the old record go to the survivor too (#719)."""
+    person set on the old record go to the survivor too (#719).
+    same_film is False when the old record had a different TMDB id
+    (carry_person_set_values)."""
 
     keys = (
         (UserWatchlist, ("user_id",)),
@@ -169,7 +202,7 @@ def move_movie_rows(old_movie_id, new_movie_id):
         # The custom poster goes to the survivor if it has none (#463).
 
         move_movie_poster(db.session, old_movie, new_movie)
-        carry_person_set_values(old_movie, new_movie)
+        carry_person_set_values(old_movie, new_movie, same_film)
 
 
 def find_or_create_tmdb_movie(tmdb_id, film_title, year, details=None):
@@ -232,9 +265,14 @@ def find_or_create_tmdb_movie(tmdb_id, film_title, year, details=None):
 
 
 def _movie_base_lock(title, year):
-    """Return the base main-feature lock resource of a movie title and year."""
+    """Return the base main-feature lock resource of a movie title and year.
 
-    return title_lock_key(MOVIES, title, year=year, plex_title=f"{title} ({year})")
+    The import builds its key from the library name. Thus, the Plex
+    title comes from library_name here too (#722). The 2 keys differ
+    only for a title that starts with a period."""
+
+    plex_title, _ = library_name({"library": MOVIES, "title": title, "year": year})
+    return title_lock_key(MOVIES, title, year=year, plex_title=plex_title)
 
 
 def _movie_refresh_lock_resources(*movies, names=()):
@@ -1031,7 +1069,13 @@ def _apply_movie_refresh(
         # awards move to the new movie. The delete of the old record
         # would delete them with it.
 
-        move_movie_rows(original_movie_id, movie.id)
+        # A record with no TMDB id has no catalog entry of an other film.
+
+        move_movie_rows(
+            original_movie_id,
+            movie.id,
+            same_film=original_tmdb_id in (None, movie.tmdb_id),
+        )
         movie.date_updated = datetime.now(timezone.utc)
         db.session.flush()
 

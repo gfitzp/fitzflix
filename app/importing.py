@@ -4321,9 +4321,9 @@ def _parse_tv(basename, log):
     # The show folder starts as the episode names do, with no period
     # (#722).
 
-    folder_title = visible_name(title)
+    folder_title = visible_name(title, transliterate=False)
     if not folder_title:
-        return FilenameRejection(None, "a title with no visible name")
+        return FilenameRejection("no visible title")
     while folder_title.endswith(" ") or folder_title.endswith("."):
         folder_title = folder_title.strip(" ")
         folder_title = folder_title.strip(".")
@@ -4506,8 +4506,12 @@ def _parse_movie(basename, tmdb_id, log):
 
     # A title of only periods leaves no name that the disk shows (#722).
 
+    # The reason gives the file a rejects folder of its own and a true
+    # log line. A new name for the file does not help, because the
+    # title comes from the record of TMDB.
+
     if not visible_name(title):
-        return FilenameRejection(None, "a title with no visible name")
+        return FilenameRejection("no visible title")
 
     if log:
         current_app.logger.info(f"File: {basename}")

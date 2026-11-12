@@ -3112,14 +3112,18 @@ def _move_archive(file, sqs_receipt_handle, message_key):
         # The job fails loudly. The FailedJobRegistry and the badge of the
         # System page show it. The target stays. flask aws converge-keys
         # --apply --again requests the move again. Without --again, the
-        # command leaves out a record that has its target (#721). The
-        # weekly sync requests again only a move from pending-untouched/
-        # (#707).
+        # command leaves out a record that has its target (#721). With
+        # --again and no --limit, it requests each move of its list.
+        # Thus, the text says to read the list first. The System page
+        # shows 200 characters of the text, so the repair comes early.
+        # The weekly sync requests again only a move from
+        # pending-untouched/ (#707).
         s3_layout.delete(s3_client, bucket, target, copied.get("VersionId"))
         raise RuntimeError(
-            f"'{file.basename}' The copy of '{source}' at '{target}' {problem}. "
-            f"The archive keeps its key, and the copy is deleted. To request "
-            f"the move again, run: flask aws converge-keys --apply --again"
+            f"'{file.basename}' The copy of its archive at the new key "
+            f"{problem}. To repair: flask aws converge-keys, read the list, "
+            f"then add --apply --again. The archive keeps its key "
+            f"'{source}', and the copy at '{target}' is deleted"
         )
 
     # An edit can archive the file during the copy. It clears the target.

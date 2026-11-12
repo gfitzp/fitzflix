@@ -39,7 +39,7 @@ def episode_code(season, episode, last_episode=None):
     return code
 
 
-def visible_name(name):
+def visible_name(name, transliterate=True):
     """Return a name that the disk does not hide (#717, #722).
 
     Invariant: a library name never starts with a period. A name that
@@ -48,35 +48,30 @@ def visible_name(name):
     at the start, for example "...And Justice for All". The record keeps
     that title. Only the folder and the file lose the periods.
 
-    The rule reads the name as the disk gets it, after unidecode and
-    sanitize_filename. unidecode makes 3 periods from the ellipsis
-    character. The sanitizer removes a quotation mark, and then the
-    periods after the mark are at the start. Thus, the first character
-    goes while the name on the disk starts with a period. A space at
-    the start goes too. The result is empty when no name is left. The
-    name parsers refuse such a file."""
+    The rule reads the name as the disk gets it. A film name goes
+    through unidecode and sanitize_filename, and a TV name goes through
+    sanitize_filename only (transliterate is False). unidecode makes 3
+    periods from the ellipsis character. The sanitizer removes a
+    quotation mark, and then the periods after the mark are at the
+    start. Thus, the first character goes while the name on the disk
+    starts with a period. A space at the start goes too. The result is
+    empty when no name is left. The name parsers refuse such a file."""
 
     visible = name
-    while visible and _starts_hidden(visible):
+    while visible and _starts_hidden(visible, transliterate):
         visible = visible[1:]
     return visible
 
 
-def _starts_hidden(name):
+def _starts_hidden(name, transliterate):
     """Return True if the first character of a name must go (visible_name).
 
     The sanitizer returns an empty text for a name of only periods, and
     for a name of only characters that it removes. Such a name has no
     character that the disk shows."""
 
-    plain = unidecode(name)
-    on_disk = sanitize_filename(plain)
-    return (
-        name[0].isspace()
-        or plain.startswith(".")
-        or on_disk.startswith(".")
-        or not on_disk.strip()
-    )
+    on_disk = sanitize_filename(unidecode(name) if transliterate else name)
+    return name[0].isspace() or on_disk.startswith(".") or not on_disk.strip()
 
 
 def library_name(parts):
@@ -106,9 +101,10 @@ def library_name(parts):
     version = parts.get("version")
     quality = parts.get("quality_title")
     extension = parts.get("extension")
-    title = visible_name(f"{parts.get('title')}")
+    tv = parts.get("library") == TV_SHOWS
+    title = visible_name(f"{parts.get('title')}", transliterate=not tv)
 
-    if parts.get("library") == TV_SHOWS:
+    if tv:
         code = episode_code(
             parts.get("season"), parts.get("episode"), parts.get("last_episode")
         )

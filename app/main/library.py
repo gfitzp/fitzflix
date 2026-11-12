@@ -2277,8 +2277,8 @@ def tv_delete(series_id):
     )
     if locks is None:
         flash(
-            f"A task works on a file of '{title}'. Delete the series when the "
-            f"task is done.",
+            f"A title lock of '{title}' is not free. A task works on 1 of "
+            f"its files. Delete the series when the task is done.",
             "warning",
         )
         return redirect(url_for("main.tv", series_id=tv.id))
@@ -2742,7 +2742,10 @@ def _claimed_archive_keys(file):
 DELETE_LOCK_SECONDS = 120
 DELETE_LOCK_SECONDS_PER_FILE = 5
 
-DELETE_REFUSED = "A task works on this file. Delete it when the task is done."
+DELETE_REFUSED = (
+    "The title lock of this file is not free. A task works on this title. "
+    "Delete the file when the task is done."
+)
 
 
 def _delete_locks(identifiers):

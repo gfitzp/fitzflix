@@ -652,7 +652,9 @@ def test_a_file_delete_waits_for_the_job_that_holds_the_title_lock(app, admin_cl
         response = admin_client.post(
             f"/file/{file_id}", data=data, follow_redirects=True
         )
-        assert "A task works on this file" in response.get_data(as_text=True)
+        assert "The title lock of this file is not free" in response.get_data(
+            as_text=True
+        )
         with app.app_context():
             assert db.session.get(File, file_id) is not None
         assert os.path.exists(os.path.join(lib, file_path))
@@ -698,7 +700,7 @@ def test_a_series_delete_waits_for_a_job_of_one_episode(app, admin_client):
         response = admin_client.post(
             f"/tv/{series_id}/delete", data=data, follow_redirects=True
         )
-        assert "A task works on" in response.get_data(as_text=True)
+        assert "is not free" in response.get_data(as_text=True)
         with app.app_context():
             assert db.session.get(TVSeries, series_id) is not None
             assert all(db.session.get(File, file_id) is not None for file_id in ids)

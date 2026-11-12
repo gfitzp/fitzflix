@@ -783,17 +783,107 @@ def test_a_merge_keeps_the_values_that_a_person_set(app):
 def test_each_column_of_a_film_has_a_merge_rule():
     """A new column of the Movie record must say what a merge does with it (#719).
 
-    TMDB writes each tmdb_ column again. The merge carries the columns
-    of PERSON_SET_COLUMNS. The columns of NOT_CARRIED belong to the
-    record itself, or another step moves them."""
+    TMDB writes each other tmdb_ column again. The merge carries the
+    columns of PERSON_SET_COLUMNS. The columns of NOT_CARRIED belong to
+    the record itself, or another step moves them."""
 
     from app.models import Movie
     from app.tmdb_refresh import NOT_CARRIED, PERSON_SET_COLUMNS
 
+    # tmdb_ignored is a choice of a person, not a value of TMDB.
+
     columns = {
         column.name
         for column in Movie.__table__.columns
-        if not column.name.startswith("tmdb_")
+        if not column.name.startswith("tmdb_") or column.name == "tmdb_ignored"
     }
     assert set(PERSON_SET_COLUMNS) | set(NOT_CARRIED) == columns
     assert not set(PERSON_SET_COLUMNS) & set(NOT_CARRIED)
+
+
+def test_a_merge_after_a_new_tmdb_id_leaves_the_catalog_values_behind(app):
+    """The record that goes was matched to a different film, a Criterion one (#719).
+
+    Its spine, its film id, its set title and its in-print value came
+    from the catalog entry of that other film. They do not go to the
+    survivor. The values of the disc do."""
+
+    from app.models import RefQuality
+    from app.tmdb_refresh import move_movie_rows
+
+    with app.app_context():
+        quality = RefQuality.query.filter_by(quality_title="Bluray-1080p").one()
+        old = make_movie(
+            "Wrong Match",
+            2005,
+            criterion_spine_number=55,
+            criterion_film_id="Q55",
+            criterion_set_title="A Set Of The Other Film",
+            criterion_in_print=True,
+            criterion_disc_owned=True,
+            criterion_quality_id=quality.id,
+        )
+        new = make_movie("Right Film", 2005, tmdb_id=902)
+        db.session.commit()
+
+        move_movie_rows(old.id, new.id, same_film=False)
+        db.session.delete(old)
+        db.session.commit()
+
+        assert new.criterion_spine_number is None
+        assert new.criterion_film_id is None
+        assert new.criterion_set_title is None
+        assert new.criterion_in_print is None
+        assert new.criterion_disc_owned is True
+        assert new.criterion_quality_id == quality.id
+
+
+def test_a_merge_after_a_new_tmdb_id_keeps_a_typed_set_title(app):
+    """The record that goes has no catalog entry. A person typed its set title (#719)."""
+
+    from app.tmdb_refresh import move_movie_rows
+
+    with app.app_context():
+        old = make_movie("Bonus Film", 2006, criterion_set_title="A Typed Box Set")
+        new = make_movie("Bonus Film Again", 2006, tmdb_id=903)
+        db.session.commit()
+
+        move_movie_rows(old.id, new.id, same_film=False)
+        db.session.delete(old)
+        db.session.commit()
+
+        assert new.criterion_set_title == "A Typed Box Set"
+
+
+def test_a_merge_keeps_a_false_that_a_person_set_on_the_survivor(app):
+    """Out of print and "not excluded" are values of a person (#719).
+
+    Only the disc-owned False of the Wikidata task gives way."""
+
+    from app.tmdb_refresh import move_movie_rows
+
+    with app.app_context():
+        old = make_movie(
+            "Newer Twin",
+            2007,
+            criterion_in_print=True,
+            shopping_list_exclude=True,
+            criterion_disc_owned=True,
+        )
+        new = make_movie(
+            "Older Twin",
+            2007,
+            tmdb_id=904,
+            criterion_in_print=False,
+            shopping_list_exclude=False,
+            criterion_disc_owned=False,
+        )
+        db.session.commit()
+
+        move_movie_rows(old.id, new.id)
+        db.session.delete(old)
+        db.session.commit()
+
+        assert new.criterion_in_print is False
+        assert new.shopping_list_exclude is False
+        assert new.criterion_disc_owned is True
