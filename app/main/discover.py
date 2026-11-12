@@ -105,7 +105,6 @@ from app.radarr_push import (
     radarr_configured,
     radarr_tmdb_ids,
     request_movie,
-    withdraw_movie,
 )
 from app.leaving_criterion import (
     CRITERION_PROVIDER_ID,
@@ -1794,9 +1793,8 @@ def watchlist():
         .filter(Movie.files.any(File.feature_type_id.is_(None)))
     }
 
-    # The ad-hoc Radarr hand-off: admins get request and withdraw
-    # entries on the Find menus of unowned tiles, from the hour-cached
-    # id set.
+    # The ad-hoc Radarr hand-off: admins get a request entry on the
+    # Find menus of unowned tiles, from the hour-cached id set.
 
     radarr_ids = (
         radarr_tmdb_ids() if current_user.admin and radarr_configured() else set()
@@ -1957,11 +1955,10 @@ def radarr_request():
     This is the ad-hoc Radarr hand-off. It is a per-film action that
     the user takes on purpose from the Find menu on the movie page or a
     watchlist tile. It is never automatic. An auto-sync of the whole
-    watchlist would fill the volume. The withdraw branch has no UI
-    since Glenn removed the Un-request entry (2026-08). The user
-    removes films in Radarr itself. But the branch stays as the
-    route-level counterpart. An `origin` query param carries where the
-    visitor came from. Fitzflix validates it to a local path."""
+    watchlist would fill the volume. Fitzflix has no withdraw action.
+    The user removes a film in Radarr itself. An `origin` query param
+    carries where the visitor came from. Fitzflix validates it to a
+    local path."""
 
     radarr_form = RadarrForm()
     origin = request.args.get("origin", "", type=str)
@@ -1998,9 +1995,6 @@ def radarr_request():
                 f"arrives, Fitzflix imports it automatically.",
                 "success",
             )
-        elif radarr_form.radarr_remove_submit.data:
-            withdraw_movie(movie.tmdb_id)
-            flash(f"Removed '{title}' from Radarr.", "success")
     except RadarrError as e:
         flash(str(e), "warning")
     except Exception:

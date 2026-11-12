@@ -117,39 +117,26 @@ def test_request_uses_the_house_settings(app, admin_client, monkeypatch):
     assert "Requested through Radarr" in page
     assert 'title="Radarr is monitoring this film">Radarr</a>' in page
     assert "radarr_request_submit" not in page
-    assert "radarr_remove_submit" not in page
 
 
-def test_withdraw_deletes_keeping_files(app, admin_client, monkeypatch):
-    # This test is route-level only because the Un-request entry left
-    # the UI (2026-08). It stays as the counterpart to the request branch
+def test_withdraw_deletes_keeping_files(app, monkeypatch):
+    """The withdraw of an entry keeps the files of Radarr on the disk.
+
+    No page has a withdraw action. A TMDB refresh uses the function
+    when a record moves to an other TMDB id."""
+
+    from app.radarr_push import withdraw_movie
+
     fake = wire(app, monkeypatch)
+    fake.movies[8] = {
+        "id": 8,
+        "tmdbId": 9942,
+        "path": "/Volumes/Movies/Major League (1989)",
+    }
     with app.app_context():
-        movie = make_movie("Major League", 1989, tmdb_id=9942)
-        db.session.commit()
-        movie_id = movie.id
-
-    page = admin_client.get(f"/movie/{movie_id}").get_data(as_text=True)
-    token = csrf_token_from(page)
-    admin_client.post(
-        "/radarr",
-        data={
-            "csrf_token": token,
-            "movie_id": movie_id,
-            "radarr_request_submit": "Request via Radarr",
-        },
-    )
-    response = admin_client.post(
-        "/radarr",
-        data={
-            "csrf_token": token,
-            "movie_id": movie_id,
-            "radarr_remove_submit": "Remove from Radarr",
-        },
-        follow_redirects=True,
-    )
-    assert "Removed" in response.get_data(as_text=True)
+        withdraw_movie(9942)
     ((radarr_id, path),) = fake.deleted
+    assert radarr_id == 8
     assert "deleteFiles=false" in path
     assert fake.movies == {}
 
@@ -190,7 +177,6 @@ def test_watchlist_tiles_offer_request_then_plain_link(app, admin_client, monkey
     assert "Un-request" not in page
     assert 'title="Radarr is monitoring this film">Radarr</a>' in page
     assert "radarr_request_submit" not in page
-    assert "radarr_remove_submit" not in page
 
 
 def test_request_refuses_owned_films_and_non_admins(

@@ -4,10 +4,9 @@ Glenn revised the original always-sync design. A push of every
 watchlist film to Radarr would queue hundreds of downloads and fill
 the volume. Thus, a request is a deliberate action for one film. The
 action is an entry on the Find menu of unowned movie pages and
-watchlist tiles. The matching withdraw exists only as a route. Glenn
-removed the Un-request entry in 2026-08. The user removes films in
-Radarr itself. Thus, the cached badge set can show such a removal
-late, by up to its TTL of 1 hour.
+watchlist tiles. Fitzflix has no withdraw action for a person. The
+user removes films in Radarr itself. Thus, the cached badge set can
+show such a removal late, by up to its TTL of 1 hour.
 The root folder of Radarr is the library volume itself. Thus, a
 granted request downloads, renames, and comes back in through the
 existing Radarr webhook. No other connection is necessary.

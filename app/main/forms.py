@@ -369,14 +369,13 @@ class WatchlistForm(FlaskForm):
 
 
 class RadarrForm(FlaskForm):
-    """Request an unowned film for download through Radarr, or withdraw it.
+    """Request an unowned film for download through Radarr.
 
     This is the ad-hoc Radarr hand-off. It handles one film at a time.
     A person makes the request. Fitzflix never makes it automatically."""
 
     movie_id = IntegerField(widget=HiddenInput(), validators=[Optional()], default=None)
     radarr_request_submit = SubmitField("Request via Radarr")
-    radarr_remove_submit = SubmitField("Remove from Radarr")
 
 
 class ReviewExportForm(FlaskForm):
