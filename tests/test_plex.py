@@ -529,7 +529,7 @@ def test_profile_maps_and_unmaps_plex_username(app, admin_client):
 
 
 def test_reviews_page_badges_rewatches(app, admin_client):
-    from app.videos import star_rating_fields
+    from app.diary import star_rating_fields
 
     with app.app_context():
         user_id = User.query.first().id
@@ -725,7 +725,7 @@ def test_review_edit_preserves_plex_timestamp(app, admin_client):
 
     import re
 
-    from app.videos import star_rating_fields
+    from app.diary import star_rating_fields
 
     with app.app_context():
         user_id = User.query.first().id
@@ -913,7 +913,7 @@ def test_a_scrobble_after_midnight_joins_the_letterboxd_row_of_the_day_before(
     next day is the same viewing. A watch in the afternoon is a new
     viewing."""
 
-    from app.videos import star_rating_fields
+    from app.diary import star_rating_fields
 
     with app.app_context():
         movie = make_movie("Past Midnight", 1982, tmdb_id=4425)

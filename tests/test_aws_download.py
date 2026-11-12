@@ -104,8 +104,6 @@ def test_aws_download_reraises_transient_volume_errors(app, monkeypatch):
 
     import errno
 
-    import app.videos as videos
-
     from app import aws_storage
 
     s3 = S3(
@@ -118,7 +116,7 @@ def test_aws_download_reraises_transient_volume_errors(app, monkeypatch):
 
     with app.app_context():
         with pytest.raises(OSError):
-            videos.aws_download("untouched/x.mkv", "x.mkv")
+            aws_storage.aws_download("untouched/x.mkv", "x.mkv")
 
         hidden = os.path.join(app.config["IMPORT_DIR"], ".x.mkv")
         assert not os.path.exists(hidden)
@@ -145,8 +143,6 @@ def test_aws_download_missing_object_is_not_retried(app, monkeypatch):
     download retries. The function deletes the SQS message. Thus, SQS
     cannot deliver it again. No partial file remains."""
 
-    import app.videos as videos
-
     from app import aws_storage
 
     s3 = S3(
@@ -159,7 +155,7 @@ def test_aws_download_missing_object_is_not_retried(app, monkeypatch):
 
     with app.app_context():
         assert (
-            videos.aws_download("untouched/x.mkv", "x.mkv", "receipt-404")
+            aws_storage.aws_download("untouched/x.mkv", "x.mkv", "receipt-404")
             == aws_storage.DOWNLOAD_OBJECT_MISSING
         )
         assert not os.path.exists(os.path.join(app.config["IMPORT_DIR"], ".x.mkv"))
@@ -167,7 +163,7 @@ def test_aws_download_missing_object_is_not_retried(app, monkeypatch):
         # Without a receipt handle, there is no message to remove
 
         assert (
-            videos.aws_download("untouched/x.mkv", "x.mkv")
+            aws_storage.aws_download("untouched/x.mkv", "x.mkv")
             == aws_storage.DOWNLOAD_OBJECT_MISSING
         )
 
@@ -180,8 +176,6 @@ def test_aws_download_expired_restore_requests_new_restore(app, monkeypatch):
     The restored copy can expire before the download. Then the function
     requests a new restore and deletes the stale SQS message. The
     completion notification of the restore starts the download again."""
-
-    import app.videos as videos
 
     from app import aws_storage
 
@@ -201,7 +195,7 @@ def test_aws_download_expired_restore_requests_new_restore(app, monkeypatch):
 
     with app.app_context():
         assert (
-            videos.aws_download("untouched/x.mkv", "x.mkv", "receipt-stale")
+            aws_storage.aws_download("untouched/x.mkv", "x.mkv", "receipt-stale")
             == aws_storage.DOWNLOAD_RESTORE_PENDING
         )
 
@@ -214,8 +208,6 @@ def test_aws_download_waits_for_restore_already_underway(app, monkeypatch):
 
     The function makes no duplicate restore request. It still deletes
     the stale SQS message."""
-
-    import app.videos as videos
 
     from app import aws_storage
 
@@ -233,7 +225,7 @@ def test_aws_download_waits_for_restore_already_underway(app, monkeypatch):
 
     with app.app_context():
         assert (
-            videos.aws_download("untouched/x.mkv", "x.mkv", "receipt-stale")
+            aws_storage.aws_download("untouched/x.mkv", "x.mkv", "receipt-stale")
             == aws_storage.DOWNLOAD_RESTORE_PENDING
         )
 
@@ -248,8 +240,6 @@ def test_aws_download_failed_status_check_spends_a_retry(app, monkeypatch):
     That failure uses a retry, as each other error does. It does not
     escape the loop. The function leaves the SQS message for
     redelivery."""
-
-    import app.videos as videos
 
     from app import aws_storage
 
@@ -269,7 +259,7 @@ def test_aws_download_failed_status_check_spends_a_retry(app, monkeypatch):
 
     with app.app_context():
         assert (
-            videos.aws_download("untouched/x.mkv", "x.mkv", "receipt-503")
+            aws_storage.aws_download("untouched/x.mkv", "x.mkv", "receipt-503")
             == aws_storage.DOWNLOAD_GAVE_UP
         )
 
@@ -283,8 +273,6 @@ def test_aws_download_exhausted_retries_clean_up_partial_file(app, monkeypatch):
     The import scans skip the dotfiles. Thus, a download that uses its
     complete retry budget must remove its partial file. If not, the
     file leaks and is invisible."""
-
-    import app.videos as videos
 
     from app import aws_storage
 
@@ -300,7 +288,7 @@ def test_aws_download_exhausted_retries_clean_up_partial_file(app, monkeypatch):
 
     with app.app_context():
         assert (
-            videos.aws_download("untouched/x.mkv", "x.mkv", "receipt-reset")
+            aws_storage.aws_download("untouched/x.mkv", "x.mkv", "receipt-reset")
             == aws_storage.DOWNLOAD_GAVE_UP
         )
 
@@ -315,8 +303,6 @@ def test_aws_download_backs_off_between_retries(app, monkeypatch):
     The retries back off exponentially, with a limit of 60 seconds.
     They do not hit S3 back-to-back. The final failure does not sleep."""
 
-    import app.videos as videos
-
     from app import aws_storage
 
     s3 = S3(head={"ContentLength": 100}, errors=RuntimeError("connection reset"))
@@ -327,7 +313,7 @@ def test_aws_download_backs_off_between_retries(app, monkeypatch):
 
     with app.app_context():
         assert (
-            videos.aws_download("untouched/x.mkv", "x.mkv")
+            aws_storage.aws_download("untouched/x.mkv", "x.mkv")
             == aws_storage.DOWNLOAD_GAVE_UP
         )
 
@@ -341,8 +327,6 @@ def test_aws_download_gives_up_immediately_on_auth_errors(app, monkeypatch):
     Thus, the function does not use the retry budget on it. There is 1
     attempt and no backoff. The function leaves the SQS message for
     redelivery after the operator repairs the account."""
-
-    import app.videos as videos
 
     from app import aws_storage
 
@@ -358,7 +342,7 @@ def test_aws_download_gives_up_immediately_on_auth_errors(app, monkeypatch):
 
     with app.app_context():
         assert (
-            videos.aws_download("untouched/x.mkv", "x.mkv", "receipt-denied")
+            aws_storage.aws_download("untouched/x.mkv", "x.mkv", "receipt-denied")
             == aws_storage.DOWNLOAD_GAVE_UP
         )
 
@@ -814,7 +798,6 @@ def test_a_deferred_placement_keeps_the_finished_download(app, monkeypatch):
     288 waits downloaded the whole object again. The next run places the
     kept file with no new download."""
 
-    import app.videos as videos
     from app import aws_storage
 
     s3 = S3(head={"ContentLength": 3, "ETag": '"v1"'})
@@ -829,7 +812,7 @@ def test_a_deferred_placement_keeps_the_finished_download(app, monkeypatch):
     try:
         with app.app_context():
             with pytest.raises(aws_storage.PlacementDeferred):
-                videos.aws_download(
+                aws_storage.aws_download(
                     "modified/y.mkv", "y.mkv", place_at=library, before_place=refuse
                 )
             assert s3.downloads == ["modified/y.mkv"]
@@ -838,7 +821,7 @@ def test_a_deferred_placement_keeps_the_finished_download(app, monkeypatch):
 
             os.makedirs(os.path.dirname(library), exist_ok=True)
             assert (
-                videos.aws_download(
+                aws_storage.aws_download(
                     "modified/y.mkv",
                     "y.mkv",
                     place_at=library,
@@ -943,7 +926,6 @@ def test_a_handle_that_arrives_during_the_download_deletes_the_message(
     site tested the original argument. Then the message came back and a
     second full download ran."""
 
-    import app.videos as videos
     from app import aws_storage
 
     s3 = S3()
@@ -957,7 +939,7 @@ def test_a_handle_that_arrives_during_the_download_deletes_the_message(
     try:
         with app.app_context():
             assert (
-                videos.aws_download("untouched/late.mkv", "late.mkv")
+                aws_storage.aws_download("untouched/late.mkv", "late.mkv")
                 == aws_storage.DOWNLOAD_COMPLETE
             )
         assert sqs.deleted == ["late-handle"]
@@ -1062,7 +1044,6 @@ def test_a_transient_placement_fault_keeps_the_download_for_the_retry(app, monke
 
     import errno
 
-    import app.videos as videos
     from app import aws_storage
 
     s3 = S3()
@@ -1080,7 +1061,7 @@ def test_a_transient_placement_fault_keeps_the_download_for_the_retry(app, monke
             with monkeypatch.context() as patch:
                 patch.setattr(aws_storage, "place_in_library", volume_drop)
                 with pytest.raises(OSError):
-                    videos.aws_download(
+                    aws_storage.aws_download(
                         "modified/z.mkv",
                         "z.mkv",
                         place_at=library,
@@ -1090,7 +1071,7 @@ def test_a_transient_placement_fault_keeps_the_download_for_the_retry(app, monke
             assert aws_storage.place_in_library is real_place
             os.makedirs(os.path.dirname(library), exist_ok=True)
             assert (
-                videos.aws_download(
+                aws_storage.aws_download(
                     "modified/z.mkv",
                     "z.mkv",
                     place_at=library,

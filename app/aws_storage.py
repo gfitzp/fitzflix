@@ -4713,7 +4713,7 @@ def sanitize_s3_key(key):
     See https://docs.aws.amazon.com/AmazonS3/latest/dev/UsingMetadata.html
     """
 
-    from app.videos import sanitize_string
+    from app.importing import sanitize_string
 
     # fmt: off
     aws_bad_chars  = [   "&",  "$",   "@",  "=", ";", ":", "+", ",", "?", "\\", "{", "^", "}", "%", "`", '"', ">", "~", "<", "#", "|"]

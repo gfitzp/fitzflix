@@ -28,7 +28,7 @@ def test_a_failed_move_releases_the_staging_reservation(app, incoming_dir, monke
     def broken(*args, **kwargs):
         raise RuntimeError("simulated inspection failure")
 
-    monkeypatch.setattr(videos, "inspect_localized_file", broken)
+    monkeypatch.setattr("app.importing.inspect_localized_file", broken)
     monkeypatch.setattr(importing, "inspect_localized_file", broken)
     with app.app_context():
         importing.set_staging_reservation(basename, 1000, [basename])

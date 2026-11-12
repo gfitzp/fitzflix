@@ -49,17 +49,16 @@ def _no_network(monkeypatch):
     """Stop the Atmos job after its staging step, with no AWS calls."""
 
     import app.atmos as atmos
-    import app.videos as videos
 
     monkeypatch.setattr(atmos, "STAGED_HANDOFF_RESERVE_BYTES", 0)
     monkeypatch.setattr(atmos, "WORKSPACE_HEADROOM_BYTES", 0)
     monkeypatch.setattr(atmos, "_cleanup_s3_prefix", lambda *args: None)
-    monkeypatch.setattr(videos, "aws_s3_client", lambda *args, **kwargs: None)
+    monkeypatch.setattr("app.aws_storage.aws_s3_client", lambda *args, **kwargs: None)
 
     # The staged file has no Atmos track. Thus, the job ends right after
     # its staging step, which is the step under test.
 
-    monkeypatch.setattr(videos, "get_audio_tracks_from_file", lambda path: [])
+    monkeypatch.setattr("app.tracks.get_audio_tracks_from_file", lambda path: [])
 
 
 def test_the_import_keeps_the_staged_copy_only_for_an_atmos_candidate(app, monkeypatch):

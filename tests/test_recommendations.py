@@ -35,7 +35,7 @@ def log_watch(user_id, movie, rating=None, liked=False):
 
     from app import db
     from app.models import UserMovieReview
-    from app.videos import star_rating_fields
+    from app.diary import star_rating_fields
 
     row = UserMovieReview(
         user_id=user_id,
@@ -87,7 +87,7 @@ def test_latest_rating_supersedes_earlier_ones(app, admin_id):
     from app import db
     from app.models import UserMovieReview
     from app.recommendations import latest_ratings, user_movie_weights
-    from app.videos import star_rating_fields
+    from app.diary import star_rating_fields
 
     with app.app_context():
         user_id = admin_id
@@ -622,7 +622,7 @@ def test_runtime_filter_says_when_the_rewatch_shelf_empties(
 
     from app import db
     from app.models import UserMovieReview
-    from app.videos import star_rating_fields
+    from app.diary import star_rating_fields
 
     with app.app_context():
         user_id = admin_id
@@ -744,7 +744,7 @@ def test_watch_again_shelf_picks_stale_favorites(app, admin_id):
     from app import db
     from app.models import UserMovieReview
     from app.recommendations import watch_again_shelf
-    from app.videos import star_rating_fields
+    from app.diary import star_rating_fields
 
     with app.app_context():
         user_id = admin_id
@@ -807,7 +807,7 @@ def test_index_watch_again_shelf_renders(app, admin_client, admin_id):
 
     from app import db
     from app.models import UserMovieReview, UserWatchlist
-    from app.videos import star_rating_fields
+    from app.diary import star_rating_fields
 
     with app.app_context():
         user_id = admin_id
@@ -1111,7 +1111,7 @@ def test_movie_page_shows_estimated_rating(app, admin_client, admin_id):
 
     from app import db
     from app.recommendations import PROFILE_KEY, SCORES_KEY
-    from app.videos import star_rating_fields
+    from app.diary import star_rating_fields
     from app.models import UserMovieReview
 
     with app.app_context():

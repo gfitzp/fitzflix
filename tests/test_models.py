@@ -243,7 +243,7 @@ def test_a_file_from_details_keeps_only_the_columns(app):
 def test_a_widescreen_copy_blocks_a_full_screen_import(app):
     """A full screen file has the plex title and the edition of its widescreen copy."""
 
-    from app.videos import evaluate_filename
+    from app.importing import evaluate_filename
 
     with app.app_context():
         movie = make_movie("Kept Wide", 2001)

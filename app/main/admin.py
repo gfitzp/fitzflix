@@ -133,9 +133,7 @@ from app.triage import (
     runtime_mismatch_candidates,
     triage_presentation,
 )
-from app.videos import (
-    evaluate_filename,
-)
+from app.importing import evaluate_filename
 from rq.cron import CronScheduler
 from rq.exceptions import NoSuchJobError
 from rq.job import Job
@@ -1112,7 +1110,7 @@ def held_imports():
     from app.arr_client import take_remembered_download
     from app.importing import enqueue_localization
     from app.sdr_conversion import clear_stuck_decisions, prune_held_imports
-    from app.videos import move_to_rejects
+    from app.importing import move_to_rejects
 
     form = HeldImportForm()
     if (

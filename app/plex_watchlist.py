@@ -463,7 +463,7 @@ def sync_plex_watchlist():
         # The Fitzflix side: add the films that Plex has. Remove the
         # films that Plex removed.
 
-        from app.videos import find_or_create_tmdb_movie
+        from app.tmdb_refresh import find_or_create_tmdb_movie
 
         for tmdb_id in sorted(target - fitz_ids):
             item = plex.get(tmdb_id) or {}

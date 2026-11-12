@@ -13,7 +13,7 @@ from datetime import datetime, timedelta
 
 from app import db
 from app.models import Movie, UserMovieReview, UserMovieStatus, UserWatchlist
-from app.videos import star_rating_fields
+from app.diary import star_rating_fields
 from tests.factories import make_movie, make_movie_file
 from tests.conftest import csrf_token_from
 from tests.test_elicitation import make_candidate

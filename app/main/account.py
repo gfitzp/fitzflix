@@ -92,7 +92,7 @@ from app.email import send_email
 from app.streaming import (
     provider_registry,
 )
-from app.videos import parse_letterboxd_export
+from app.diary import parse_letterboxd_export
 
 
 @bp.route("/review/<int:review_id>/edit", methods=["GET", "POST"])

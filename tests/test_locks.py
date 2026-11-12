@@ -12,7 +12,7 @@ import json
 
 import pytest
 
-from app.videos import evaluate_filename
+from app.importing import evaluate_filename
 
 from tests.factories import make_movie, make_movie_file, make_tv_file, make_tv_series
 

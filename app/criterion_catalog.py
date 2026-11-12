@@ -477,7 +477,7 @@ def create_criterion_catalog_records(criterion_collection, by_tmdb_id, by_title_
     # The TMDB record functions stay in app.videos. The import is lazy.
     # Thus, the module import direction stays one-way.
 
-    from app.videos import find_or_create_tmdb_movie
+    from app.tmdb_refresh import find_or_create_tmdb_movie
 
     tmdb_ids = [
         release["tmdb_id"] for release in criterion_collection if release.get("tmdb_id")

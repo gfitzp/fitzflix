@@ -21,10 +21,12 @@ from tests.test_scheduling import scheduled_jobs
 from app import safe_job_id
 
 import app.videos as videos
+from app import aws_storage, importing
 import app.maintenance as maintenance
 
 from app.models import File
-from app.videos import finalize_localization, localization_task, move_to_rejects
+from app.videos import finalize_localization, localization_task
+from app.importing import move_to_rejects
 
 from tests.localization_helpers import (
     rejected_files,
@@ -457,7 +459,8 @@ def test_library_copy_transient_error_defers_and_keeps_lock(
     }
 
     monkeypatch.setattr(
-        videos, "inspect_localized_file", lambda *args, **kwargs: {"filesize_bytes": 16}
+        "app.importing.inspect_localized_file",
+        lambda *args, **kwargs: {"filesize_bytes": 16},
     )
 
     def flaky_rename(src, dst, **kwargs):
@@ -524,7 +527,8 @@ def test_library_copy_rejects_after_max_retries(app, incoming_dir, monkeypatch):
     }
 
     monkeypatch.setattr(
-        videos, "inspect_localized_file", lambda *args, **kwargs: {"filesize_bytes": 16}
+        "app.importing.inspect_localized_file",
+        lambda *args, **kwargs: {"filesize_bytes": 16},
     )
 
     def flaky_rename(src, dst, **kwargs):
@@ -1007,7 +1011,7 @@ def test_upload_progress_callback_dedupes_by_percent(app, tmp_path, log_capture)
     source.write_bytes(b"x" * 1000)
 
     with app.app_context():
-        callback = videos.UploadProgressPercentage(str(source))
+        callback = aws_storage.UploadProgressPercentage(str(source))
         for _ in range(200):
             callback(5)  # 0.5% per call, 2 calls per whole percent
 
@@ -1218,7 +1222,7 @@ def test_completeness_budget_exhausted_imports_anyway(app, incoming_dir):
     with app.app_context():
         assert (
             localization_task(
-                source, completeness_retries=videos.MAX_COMPLETENESS_RETRIES
+                source, completeness_retries=importing.MAX_COMPLETENESS_RETRIES
             )
             is True
         )
@@ -1360,7 +1364,8 @@ def test_library_copy_waits_for_space_before_copying(app, incoming_dir, monkeypa
 
     inspected = []
     monkeypatch.setattr(
-        videos, "inspect_localized_file", lambda *a, **k: inspected.append(a) or {}
+        "app.importing.inspect_localized_file",
+        lambda *a, **k: inspected.append(a) or {},
     )
     monkeypatch.setattr(importing, "_crosses_volumes", lambda *args: True)
     monkeypatch.setattr(importing, "_free_bytes", lambda path: 0)
@@ -1411,7 +1416,7 @@ def test_library_copy_out_of_space_mid_copy_waits(app, incoming_dir, monkeypatch
         app.config["LIBRARY_DIR"], details["dirname"], f".{basename}"
     )
 
-    monkeypatch.setattr(videos, "inspect_localized_file", lambda *a, **k: {})
+    monkeypatch.setattr("app.importing.inspect_localized_file", lambda *a, **k: {})
 
     def full_during_copy(src, dst, **kwargs):
         with open(dst, "wb") as f:
@@ -2055,7 +2060,7 @@ def test_a_staging_remux_short_of_space_waits_instead_of_rejecting(
     def failing_inspection(*args, **kwargs):
         raise subprocess.CalledProcessError(2, "mkvmerge")
 
-    monkeypatch.setattr(videos, "inspect_localized_file", failing_inspection)
+    monkeypatch.setattr("app.importing.inspect_localized_file", failing_inspection)
     monkeypatch.setattr(importing, "inspect_localized_file", failing_inspection)
     monkeypatch.setattr(
         importing.shutil, "disk_usage", lambda path: SimpleNamespace(free=0)

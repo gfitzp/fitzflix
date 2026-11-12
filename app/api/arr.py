@@ -266,7 +266,7 @@ def import_source_incomplete(file_path):
     truncation verdict counts. A file that the probe cannot read continues
     normally. The retries of the import pipeline then deal with it."""
 
-    from app.videos import probe_file_completeness
+    from app.importing import probe_file_completeness
 
     return probe_file_completeness(file_path) is False
 

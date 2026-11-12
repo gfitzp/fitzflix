@@ -262,7 +262,7 @@ def test_a_match_without_a_payload_keeps_its_tmdb_id(app, monkeypatch):
 def test_shelf_surfaces_recent_arrivals_and_excludes(app, admin_client):
     from app import db
     from app.models import UserMovieReview, UserWatchlist
-    from app.videos import star_rating_fields
+    from app.diary import star_rating_fields
 
     user_id = subscribe_criterion(app)
     today = date.today().isoformat()
@@ -443,7 +443,7 @@ def test_newly_added_page_lists_the_complete_inventory(app, admin_client):
 
     from app import db
     from app.models import UserMovieReview, UserWatchlist
-    from app.videos import star_rating_fields
+    from app.diary import star_rating_fields
 
     # A taste profile but no subscription. The page must still render
 
@@ -901,7 +901,7 @@ def test_the_shelf_reads_the_weights_1_time_per_call(app, monkeypatch):
     from app import db
     from app.models import MovieCopref, User, UserMovieReview
     from app.newly_added import newly_added_shelves
-    from app.videos import star_rating_fields
+    from app.diary import star_rating_fields
     from tests.test_tmdb_apply import _count_queries
 
     user_id = subscribe_criterion(app)
@@ -942,7 +942,7 @@ def test_the_shelf_scores_only_the_films_that_it_shows(app, monkeypatch):
     import app.newly_added as newly_added
     from app import db
     from app.models import User, UserMovieReview
-    from app.videos import star_rating_fields
+    from app.diary import star_rating_fields
 
     user_id = subscribe_criterion(app)
     today = date.today().isoformat()

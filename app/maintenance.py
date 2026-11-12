@@ -1064,7 +1064,7 @@ def backup_database():
         if current_app.config["AWS_BUCKET"]:
             # Import here, because app.videos imports this module.
 
-            from app.videos import aws_s3_client, get_matching_s3_objects
+            from app.aws_storage import aws_s3_client, get_matching_s3_objects
 
             backup_prefix = current_app.config["AWS_BACKUP_PREFIX"]
             uploaded_key = f"{backup_prefix}/{os.path.basename(backup_file)}"
@@ -1259,7 +1259,7 @@ def restore_drill():
 
         # Import here, because app.videos imports this module.
 
-        from app.videos import aws_s3_client, get_matching_s3_objects
+        from app.aws_storage import aws_s3_client, get_matching_s3_objects
 
         url = make_url(current_app.config["SQLALCHEMY_DATABASE_URI"])
         backup_prefix = current_app.config["AWS_BACKUP_PREFIX"]
@@ -1899,7 +1899,7 @@ def _probe_http(url, **kwargs):
 def _probe_s3(config):
     """Ask S3 for the head of the archive bucket, with no retries."""
 
-    from app.videos import aws_s3_client
+    from app.aws_storage import aws_s3_client
 
     aws_s3_client(with_retries=False).head_bucket(Bucket=config["AWS_BUCKET"])
 

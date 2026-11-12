@@ -120,10 +120,8 @@ from app.newly_added import (
     poster_fold,
 )
 from app.streaming_rail import ENRICHED_KEY, enriched_movie, stored_rail
-from app.videos import (
-    clear_watchlist,
-    find_or_create_tmdb_movie,
-)
+from app.diary import clear_watchlist
+from app.tmdb_refresh import find_or_create_tmdb_movie
 from rq.registry import ScheduledJobRegistry
 
 # The top watchlist shelf is bigger than the 12-card discovery shelves

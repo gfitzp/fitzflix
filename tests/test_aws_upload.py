@@ -78,14 +78,13 @@ def test_a_transient_mount_error_does_not_reject_the_file(app, tmp_path, monkeyp
     state arrives: from inside the close of s3transfer."""
 
     import app.aws_storage as aws_storage
-    import app.videos as videos
 
     path = str(tmp_path / "transient.mkv")
     open(path, "wb").write(b"x")
 
     rejected = []
     monkeypatch.setattr(
-        videos, "move_to_rejects", lambda p, reason="": rejected.append(p)
+        "app.importing.move_to_rejects", lambda p, reason="": rejected.append(p)
     )
 
     class ExplodingClient:

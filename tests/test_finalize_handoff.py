@@ -341,7 +341,7 @@ def test_a_failed_space_wait_inside_the_copy_keeps_the_source(
 
     basename = "Space Wait Fault (2021) - [DVD].mkv"
     source, hidden, details = space_move_fixture(app, incoming_dir, basename)
-    monkeypatch.setattr(videos, "inspect_localized_file", lambda *a, **k: {})
+    monkeypatch.setattr("app.importing.inspect_localized_file", lambda *a, **k: {})
     monkeypatch.setattr(videos, "_rename_with_retries", full)
     monkeypatch.setattr(importing, "requeue", _refuse)
     unlocked = _lock_watch(app, monkeypatch)

@@ -153,15 +153,10 @@ from app.triage import (
 )
 from app.tracks import pop_stopped_edit
 from app.criterion_catalog import record_set_title, set_title_key
-from app.videos import (
-    clear_watchlist,
-    criterion_release_lookups,
-    language_names,
-    stored_criterion_releases,
-    file_language_choices,
-    resolve_language_code,
-    untouched_key_still_claimed,
-)
+from app.aws_storage import untouched_key_still_claimed
+from app.criterion_catalog import criterion_release_lookups, stored_criterion_releases
+from app.diary import clear_watchlist
+from app.tracks import language_names, file_language_choices, resolve_language_code
 
 # The crew jobs that count as key roles for search and filmographies.
 # They are the same roles that the taste engine scores, labeled as

@@ -37,7 +37,6 @@ def _finish_fakes(monkeypatch):
     """Fake the remux tools. The output of mkvmerge is its -o argument."""
 
     import app.atmos as atmos
-    import app.videos as videos
 
     def fake_popen(command, **kwargs):
         with open(command[command.index("-o") + 1], "wb") as f:
@@ -56,10 +55,10 @@ def _finish_fakes(monkeypatch):
 
     monkeypatch.setattr(atmos.MediaInfo, "parse", lambda path: _MediaInfo())
     monkeypatch.setattr(atmos.subprocess, "Popen", fake_popen)
-    monkeypatch.setattr(videos, "watch_mkvmerge_progress", lambda *a, **k: None)
-    monkeypatch.setattr(videos, "remove_empty_subtitle_tracks", lambda path: None)
-    monkeypatch.setattr(videos, "get_audio_tracks_from_file", tracks_of)
-    monkeypatch.setattr(videos, "get_subtitle_tracks_from_file", lambda path: [])
+    monkeypatch.setattr("app.tracks.watch_mkvmerge_progress", lambda *a, **k: None)
+    monkeypatch.setattr("app.tracks.remove_empty_subtitle_tracks", lambda path: None)
+    monkeypatch.setattr("app.tracks.get_audio_tracks_from_file", tracks_of)
+    monkeypatch.setattr("app.tracks.get_subtitle_tracks_from_file", lambda path: [])
     monkeypatch.setattr(atmos, "_run_step", lambda *a, **k: None)
     monkeypatch.setattr(atmos, "enqueue_plex_analyze", lambda path: None)
     monkeypatch.setattr(atmos, "get_setting", lambda name: False)
@@ -187,20 +186,18 @@ def test_a_file_that_has_its_twins_gets_its_rows_back(app, monkeypatch):
     """The rows say no twin, the staged copy has it. The rows follow the file (#503)."""
 
     import app.atmos as atmos
-    import app.videos as videos
     from app.models import FileAudioTrack
 
     with app.app_context():
         file, job, _ = _setup(app, monkeypatch, "Rows Back")
         monkeypatch.setattr(
-            videos,
-            "get_audio_tracks_from_file",
+            "app.tracks.get_audio_tracks_from_file",
             lambda path: [
                 {"codec": TWIN, "language": "eng", "language_name": "English"},
                 {"codec": ATMOS, "language": "eng", "language_name": "English"},
             ],
         )
-        monkeypatch.setattr(videos, "get_subtitle_tracks_from_file", lambda path: [])
+        monkeypatch.setattr("app.tracks.get_subtitle_tracks_from_file", lambda path: [])
 
         assert atmos.atmos_supplement_task(file.id) is True
 
@@ -405,20 +402,18 @@ def test_the_row_rebuild_of_a_twinned_file_starts_a_new_transaction(app, monkeyp
 
     import app.atmos as atmos
     import app.tracks as tracks
-    import app.videos as videos
     from app import db
 
     with app.app_context():
         file, job, _ = _setup(app, monkeypatch, "Fresh Snapshot")
         monkeypatch.setattr(
-            videos,
-            "get_audio_tracks_from_file",
+            "app.tracks.get_audio_tracks_from_file",
             lambda path: [
                 {"codec": TWIN, "language": "eng", "language_name": "English"},
                 {"codec": ATMOS, "language": "eng", "language_name": "English"},
             ],
         )
-        monkeypatch.setattr(videos, "get_subtitle_tracks_from_file", lambda path: [])
+        monkeypatch.setattr("app.tracks.get_subtitle_tracks_from_file", lambda path: [])
         events = []
         real_rollback = db.session.rollback
         real_replace = tracks.replace_track_rows

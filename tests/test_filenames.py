@@ -11,7 +11,7 @@ import logging
 
 import pytest
 
-from app.videos import evaluate_filename
+from app.importing import evaluate_filename
 
 # The README examples: (filename, expected library file path)
 

@@ -85,7 +85,7 @@ def _todays_review(stars):
     """Make a Jaws 2 record with no TMDB id and a review of today."""
 
     from app.models import UserMovieReview
-    from app.videos import star_rating_fields
+    from app.diary import star_rating_fields
 
     movie = make_movie("Jaws 2", 1978)
     db.session.add(

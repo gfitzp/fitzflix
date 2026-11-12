@@ -215,7 +215,7 @@ def test_compute_user_rail_excludes_verifies_and_explains(app, monkeypatch):
     from app import db
     from app.models import User, UserMovieReview
     from app.streaming_rail import compute_user_rail
-    from app.videos import star_rating_fields
+    from app.diary import star_rating_fields
 
     user_id = subscribe(app, 8, "Netflix")
     plant_profile(app, user_id, COMEDY_PROFILE)
@@ -335,7 +335,7 @@ def test_landing_page_renders_the_rail(app, admin_client):
     from app import db
     from app.models import UserMovieReview, User
     from app.streaming_rail import RAIL_KEY
-    from app.videos import star_rating_fields
+    from app.diary import star_rating_fields
 
     subscribe(app, 8, "Netflix")
     with app.app_context():

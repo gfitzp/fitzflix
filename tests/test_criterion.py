@@ -14,7 +14,7 @@ from app.videos import refresh_criterion_collection_info
 from tests.factories import make_movie
 from tests.fakes import Response
 
-import app.videos as videos
+from app.criterion_catalog import CRITERION_CACHE_KEY
 
 SPARQL_RESPONSE = {
     "results": {
@@ -182,7 +182,7 @@ def test_single_movie_refresh_uses_cache(app, monkeypatch):
 
         # The cached payload is well-formed JSON that holds the parsed rows.
 
-        cached = json.loads(app.redis.get(videos.CRITERION_CACHE_KEY))
+        cached = json.loads(app.redis.get(CRITERION_CACHE_KEY))
         assert {release["spine_number"] for release in cached} == {1, 2, 1000}
 
 
@@ -387,7 +387,7 @@ def test_criterion_page_row_grammar_and_badges(app, admin_client):
 def _seed_release_cache(app, releases):
     """Store a canned spine catalog at the location that the page reads."""
 
-    app.redis.set(videos.CRITERION_CACHE_KEY, json.dumps(releases))
+    app.redis.set(CRITERION_CACHE_KEY, json.dumps(releases))
 
 
 def release(spine, title, year, tmdb_id=None, set_title=None):
@@ -896,7 +896,7 @@ def test_stored_releases_never_query_wikidata(app, monkeypatch):
         assert job.func_name == "app.criterion_catalog.refresh_criterion_releases"
         app.request_queue.empty()
 
-        app.redis.set(videos.CRITERION_CACHE_KEY, json.dumps([{"spine_number": 7}]))
+        app.redis.set(CRITERION_CACHE_KEY, json.dumps([{"spine_number": 7}]))
         assert criterion_catalog.stored_criterion_releases() == [{"spine_number": 7}]
 
 
@@ -910,8 +910,8 @@ def test_refresh_stores_a_copy_with_no_expiry(app, monkeypatch):
     app.redis.set(criterion_catalog.CRITERION_QUEUED_KEY, 1)
 
     assert criterion_catalog.refresh_criterion_releases() is True
-    assert len(json.loads(app.redis.get(videos.CRITERION_CACHE_KEY))) == 3
-    assert app.redis.ttl(videos.CRITERION_CACHE_KEY) == -1
+    assert len(json.loads(app.redis.get(CRITERION_CACHE_KEY))) == 3
+    assert app.redis.ttl(CRITERION_CACHE_KEY) == -1
     assert app.redis.get(criterion_catalog.CRITERION_FETCHED_KEY)
     assert not app.redis.exists(criterion_catalog.CRITERION_QUEUED_KEY)
     with app.app_context():
@@ -925,19 +925,19 @@ def test_failed_or_short_fetch_keeps_the_last_good_copy(app, monkeypatch):
 
     monkeypatch.setitem(app.config, "WIKIDATA_SPARQL_URL", "https://wikidata.test")
     good = json.dumps([{"spine_number": n} for n in range(10)])
-    app.redis.set(videos.CRITERION_CACHE_KEY, good)
+    app.redis.set(CRITERION_CACHE_KEY, good)
 
     # The fake returns 3 releases. That is less than half of the 10 stored.
     fake_sparql(monkeypatch)
     assert criterion_catalog.refresh_criterion_releases() is True
-    assert app.redis.get(videos.CRITERION_CACHE_KEY).decode() == good
+    assert app.redis.get(CRITERION_CACHE_KEY).decode() == good
 
     def explode(*args, **kwargs):
         raise OSError("connection refused")
 
     monkeypatch.setattr(criterion_catalog.requests, "get", explode)
     assert criterion_catalog.refresh_criterion_releases() is True
-    assert app.redis.get(videos.CRITERION_CACHE_KEY).decode() == good
+    assert app.redis.get(CRITERION_CACHE_KEY).decode() == good
 
 
 def test_criterion_page_without_a_copy_does_not_wait(app, admin_client, monkeypatch):
@@ -1071,7 +1071,7 @@ def test_the_stored_releases_reassign_without_wikidata(app, monkeypatch):
 
     _no_wikidata(monkeypatch)
     with app.app_context():
-        app.redis.delete(videos.CRITERION_CACHE_KEY)
+        app.redis.delete(CRITERION_CACHE_KEY)
         assert reassign_stored_criterion_releases() is None
 
         movie = make_movie(
@@ -1079,7 +1079,7 @@ def test_the_stored_releases_reassign_without_wikidata(app, monkeypatch):
         )
         db.session.commit()
         movie_id = movie.id
-        app.redis.set(videos.CRITERION_CACHE_KEY, json.dumps(_apu_releases()))
+        app.redis.set(CRITERION_CACHE_KEY, json.dumps(_apu_releases()))
         try:
             assert reassign_stored_criterion_releases() == 1
             db.session.expire_all()
@@ -1088,7 +1088,7 @@ def test_the_stored_releases_reassign_without_wikidata(app, monkeypatch):
             assert movie.criterion_set_title == "The Apu Trilogy"
             assert reassign_stored_criterion_releases() == 0
         finally:
-            app.redis.delete(videos.CRITERION_CACHE_KEY)
+            app.redis.delete(CRITERION_CACHE_KEY)
             db.session.delete(db.session.get(Movie, movie_id))
             db.session.commit()
 
@@ -1119,11 +1119,8 @@ def test_an_item_id_label_is_not_a_title(app, monkeypatch):
     )
     assert named["label"] == "Q Planes"
 
-    import app.videos as videos_module
-
     monkeypatch.setattr(
-        videos_module,
-        "find_or_create_tmdb_movie",
+        "app.tmdb_refresh.find_or_create_tmdb_movie",
         lambda *args: (_ for _ in ()).throw(AssertionError("created a record")),
     )
     with app.app_context():
@@ -1178,7 +1175,7 @@ def test_an_empty_box_set_answer_keeps_the_last_good_copy(app, monkeypatch):
         [{"spine_number": 1}]
         + [{"spine_number": 900 + n, "set_title": "A Box"} for n in range(3)]
     )
-    app.redis.set(videos.CRITERION_CACHE_KEY, good)
+    app.redis.set(CRITERION_CACHE_KEY, good)
 
     def fake_get(url, params=None, headers=None, timeout=None):
         if "P527" in (params or {}).get("query", ""):
@@ -1187,7 +1184,7 @@ def test_an_empty_box_set_answer_keeps_the_last_good_copy(app, monkeypatch):
 
     monkeypatch.setattr(criterion_catalog.requests, "get", fake_get)
     assert criterion_catalog.refresh_criterion_releases() is True
-    assert app.redis.get(videos.CRITERION_CACHE_KEY).decode() == good
+    assert app.redis.get(CRITERION_CACHE_KEY).decode() == good
 
 
 def test_a_set_with_no_label_gets_no_q_id_title(app, monkeypatch):

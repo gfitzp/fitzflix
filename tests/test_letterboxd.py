@@ -240,7 +240,7 @@ def test_sync_adds_rows_and_is_idempotent(app, monkeypatch):
 
 
 def test_sync_adopts_csv_twin_and_completes_plex_watch(app, monkeypatch):
-    from app.videos import star_rating_fields
+    from app.diary import star_rating_fields
 
     with app.app_context():
         user = User.query.first()
@@ -341,7 +341,7 @@ def test_sync_creates_missing_movie_records(app, monkeypatch):
 
 
 def test_sync_corrects_drifted_dates_on_midnight_rows(app, monkeypatch):
-    from app.videos import star_rating_fields
+    from app.diary import star_rating_fields
 
     with app.app_context():
         user = User.query.first()
@@ -413,7 +413,7 @@ def test_a_clock_row_follows_a_feed_date_outside_the_midnight_window(
     app, monkeypatch, stamp, watched, expected
 ):
     """Test that a row with a clock time keeps it only across midnight."""
-    from app.videos import star_rating_fields
+    from app.diary import star_rating_fields
 
     with app.app_context():
         user = User.query.first()

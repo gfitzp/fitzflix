@@ -5,12 +5,13 @@ is the file copy with progress and retries after transient errors, and
 the acquire-or-defer sequence for the title lock. It is also the
 subprocess supervision and the dead-volume probe.
 
-All the other names are re-exports from the modules that the strangler
-split created (aws_storage, criterion_catalog, diary, tracks,
-importing, tmdb_refresh). The rq job names are strings stored in Redis,
-in cron tables, and in the pipeline trail registry. Thus,
-"app.videos.X" must resolve forever. New code must import from the
-real homes. The shim exists for the strings and the history.
+The other names are the task functions of the modules that the
+strangler split created (aws_storage, criterion_catalog, diary,
+importing, sdr_conversion, tmdb_refresh, tracks). The rq job names are
+strings stored in Redis, in cron tables, and in the pipeline trail
+registry. Thus, "app.videos.X" must resolve forever for each job name.
+This module re-exports only those names (#724). Each other name comes
+from its real module, in the app and in the tests.
 """
 
 import errno
@@ -27,191 +28,78 @@ from app.tasks import report_progress, requeue
 from app.maintenance import VOLUMES_ROOT, volume_alive
 
 # The AWS storage layer moved to app.aws_storage. These re-exports keep
-# every stored rq job string and import site resolving through
-# app.videos. The callers of this module continue to work unchanged.
+# each stored rq job string resolving through app.videos.
 
 from app.aws_storage import (
-    EIGHT_MEGABYTES,
-    DownloadProgressPercentage,
-    UploadProgressPercentage,
     aws_delete,
-    aws_download,
     aws_restore,
-    aws_s3_client,
-    aws_sqs_client,
-    aws_upload,
-    calculate_etag,
-    delete_sqs_message,
     download_task,
-    get_matching_s3_objects,
-    sanitize_s3_key,
     sqs_retrieve_task,
     sync_aws_s3_storage_task,
-    untouched_key_still_claimed,
     upload_task,
 )
 
 # The Criterion spine catalog moved to app.criterion_catalog. The diary
 # writers moved to app.diary. The re-export contract is the same as above.
 
-from app.criterion_catalog import (
-    CRITERION_CACHE_KEY,
-    CRITERION_FETCHED_KEY,
-    assign_criterion_release,
-    create_criterion_catalog_records,
-    criterion_release_lookups,
-    get_criterion_collection_from_wikidata,
-    refresh_criterion_collection_info,
-    refresh_criterion_releases,
-    stored_criterion_releases,
-    wikidata_retry_after_seconds,
-)
+from app.criterion_catalog import refresh_criterion_collection_info
 from app.diary import (
     apply_letterboxd_import,
     apply_plex_watch,
-    clear_not_interested,
-    clear_watchlist,
     letterboxd_import_task,
-    parse_letterboxd_export,
     plex_history_poll,
     review_task,
-    star_rating_fields,
 )
 from app.importing import (
-    COMPLETENESS_QUIET_SECONDS,
-    MAX_COMPLETENESS_RETRIES,
-    SELF_SIZING_FORMATS,
-    convert_to_matroska,
-    evaluate_filename,
     finalize_localization,
-    inspect_localized_file,
-    iso_639_3_native_language,
     localization_task,
     manual_import_task,
     move_localized_file,
-    move_to_rejects,
-    probe_file_completeness,
-    reconstruct_filename,
-    sanitize_string,
 )
 from app.sdr_conversion import archive_held_task, convert_localized_file
 from app.tmdb_refresh import (
     apply_tmdb_refresh,
-    find_or_create_tmdb_movie,
     refresh_tmdb_info,
 )
 from app.tracks import (
-    build_supplement_args,
-    extract_track_metadata,
-    flag_possibly_forced_subtitles,
-    get_audio_tracks_from_file,
-    get_subtitle_tracks_from_file,
-    iso_639_2_languages,
-    language_names,
-    file_language_choices,
-    library_language_choices,
     mkvmerge_task,
-    mkvmerge_unlocked,
     mkvpropedit_task,
-    mkvpropedit_unlocked,
-    parse_dolby_vision_profile,
-    plan_audio_supplements,
-    record_filesize,
-    remove_empty_subtitle_tracks,
     remux_audio_plan_task,
-    resolve_language_code,
     save_track_metadata,
-    supplement_lossless_tracks,
     track_metadata_scan_library,
     track_metadata_scan_task,
-    watch_mkvmerge_progress,
 )
 
 # __all__ marks the re-exports as public on purpose. The rq job strings
-# and the import sites resolve them through app.videos. It also tells
-# pyflakes that they are used.
+# resolve them through app.videos. It also tells pyflakes that they are
+# used. tests/test_task_registry.py pins the list to the job names.
 
 __all__ = [
-    "EIGHT_MEGABYTES",
-    "DownloadProgressPercentage",
-    "UploadProgressPercentage",
     "aws_delete",
-    "aws_download",
     "aws_restore",
-    "aws_s3_client",
-    "aws_sqs_client",
-    "aws_upload",
-    "calculate_etag",
-    "delete_sqs_message",
     "download_task",
-    "get_matching_s3_objects",
-    "sanitize_s3_key",
     "sqs_retrieve_task",
     "sync_aws_s3_storage_task",
-    "untouched_key_still_claimed",
     "upload_task",
-    "CRITERION_CACHE_KEY",
-    "CRITERION_FETCHED_KEY",
-    "assign_criterion_release",
-    "create_criterion_catalog_records",
-    "criterion_release_lookups",
-    "get_criterion_collection_from_wikidata",
     "refresh_criterion_collection_info",
-    "refresh_criterion_releases",
-    "stored_criterion_releases",
-    "wikidata_retry_after_seconds",
     "apply_letterboxd_import",
     "apply_plex_watch",
-    "clear_not_interested",
-    "clear_watchlist",
     "letterboxd_import_task",
-    "parse_letterboxd_export",
     "plex_history_poll",
     "review_task",
-    "star_rating_fields",
-    "build_supplement_args",
-    "extract_track_metadata",
-    "flag_possibly_forced_subtitles",
-    "get_audio_tracks_from_file",
-    "get_subtitle_tracks_from_file",
-    "iso_639_2_languages",
-    "language_names",
-    "file_language_choices",
-    "library_language_choices",
     "mkvmerge_task",
-    "mkvmerge_unlocked",
     "mkvpropedit_task",
-    "mkvpropedit_unlocked",
-    "parse_dolby_vision_profile",
-    "plan_audio_supplements",
-    "record_filesize",
-    "remove_empty_subtitle_tracks",
     "remux_audio_plan_task",
-    "resolve_language_code",
     "save_track_metadata",
-    "supplement_lossless_tracks",
     "track_metadata_scan_library",
     "track_metadata_scan_task",
-    "watch_mkvmerge_progress",
-    "COMPLETENESS_QUIET_SECONDS",
-    "MAX_COMPLETENESS_RETRIES",
-    "SELF_SIZING_FORMATS",
-    "convert_to_matroska",
-    "evaluate_filename",
     "finalize_localization",
     "archive_held_task",
     "convert_localized_file",
-    "inspect_localized_file",
-    "iso_639_3_native_language",
     "localization_task",
     "manual_import_task",
     "move_localized_file",
-    "move_to_rejects",
-    "probe_file_completeness",
-    "reconstruct_filename",
-    "sanitize_string",
     "apply_tmdb_refresh",
-    "find_or_create_tmdb_movie",
     "refresh_tmdb_info",
 ]
 

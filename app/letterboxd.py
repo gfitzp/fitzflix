@@ -246,7 +246,7 @@ def _apply_entry_fields(row, entry, owned=False):
     it is present. An owned row already belongs to this feed entry. A
     claim of a row by an unrated entry keeps the stars of the row."""
 
-    from app.videos import star_rating_fields
+    from app.diary import star_rating_fields
 
     changed = False
 
@@ -393,11 +393,8 @@ def _ingest_entry(user_id, entry, created_movies):
     changed. Complete a matching bare watch. Or add a new row. Return
     what occurred, for the sync log line."""
 
-    from app.videos import (
-        clear_not_interested,
-        clear_watchlist,
-        find_or_create_tmdb_movie,
-    )
+    from app.diary import clear_not_interested, clear_watchlist
+    from app.tmdb_refresh import find_or_create_tmdb_movie
 
     existing = UserMovieReview.query.filter_by(
         user_id=user_id, letterboxd_guid=entry["guid"]
@@ -462,7 +459,7 @@ def _ingest_entry(user_id, entry, created_movies):
             .first()
             is not None
         )
-    from app.videos import star_rating_fields
+    from app.diary import star_rating_fields
 
     row = UserMovieReview(
         user_id=user_id,

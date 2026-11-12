@@ -60,7 +60,7 @@ SAMPLE_EXPORT = {
 
 
 def test_parse_letterboxd_export_merges_per_film(app):
-    from app.videos import parse_letterboxd_export
+    from app.diary import parse_letterboxd_export
 
     films = {
         (f["title"], f["year"]): f
@@ -134,7 +134,8 @@ def test_match_task_resolves_library_films_and_hands_off(app):
     import does not fail."""
 
     from app import db
-    from app.videos import letterboxd_import_task, parse_letterboxd_export
+    from app.videos import letterboxd_import_task
+    from app.diary import parse_letterboxd_export
 
     with app.app_context():
         movie = make_movie("Jaws", 1975)
@@ -160,7 +161,8 @@ def test_match_task_resolves_library_films_and_hands_off(app):
 def test_apply_letterboxd_import_loads_review_table(app, admin_client):
     from app import db
     from app.models import UserMovieReview
-    from app.videos import apply_letterboxd_import, parse_letterboxd_export
+    from app.videos import apply_letterboxd_import
+    from app.diary import parse_letterboxd_export
 
     with app.app_context():
         movie = make_movie("Jaws", 1975)
@@ -313,7 +315,7 @@ def test_review_export_uses_letterboxd_import_format(app, admin_client, monkeypa
 
     from app import db
     from app.models import User, UserMovieReview
-    from app.videos import star_rating_fields
+    from app.diary import star_rating_fields
 
     with app.app_context():
         user_id = User.query.first().id
@@ -443,7 +445,7 @@ def test_incremental_export_covers_only_entries_since_last_export(
 
     from app import db
     from app.models import User, UserMovieReview
-    from app.videos import star_rating_fields
+    from app.diary import star_rating_fields
 
     with app.app_context():
         user = User.query.first()
@@ -528,7 +530,7 @@ def test_incremental_export_covers_only_entries_since_last_export(
 def test_full_export_checkbox_exports_everything(app, admin_client, monkeypatch):
     from app import db
     from app.models import User, UserMovieReview
-    from app.videos import star_rating_fields
+    from app.diary import star_rating_fields
 
     with app.app_context():
         user = User.query.first()
@@ -562,7 +564,7 @@ def test_incremental_export_with_nothing_new_sends_no_email(
 ):
     from app import db
     from app.models import User, UserMovieReview
-    from app.videos import star_rating_fields
+    from app.diary import star_rating_fields
 
     with app.app_context():
         user = User.query.first()
@@ -632,7 +634,7 @@ def test_movie_page_renders_unrated_liked_review(app, admin_client):
 
     from app import db
     from app.models import User, UserMovieReview
-    from app.videos import star_rating_fields
+    from app.diary import star_rating_fields
 
     with app.app_context():
         user_id = User.query.first().id
@@ -1065,7 +1067,7 @@ def test_reviews_page_renders_local_rating_distribution(app, admin_client):
 
     from app import db
     from app.models import User, UserMovieReview
-    from app.videos import star_rating_fields
+    from app.diary import star_rating_fields
 
     with app.app_context():
         user_id = User.query.first().id
@@ -1105,7 +1107,7 @@ def test_reviews_page_renders_local_rating_distribution(app, admin_client):
 def test_history_page_offers_per_viewing_edit_links(app, admin_client):
     from app import db
     from app.models import User, UserMovieReview
-    from app.videos import star_rating_fields
+    from app.diary import star_rating_fields
 
     with app.app_context():
         user_id = User.query.first().id
@@ -1139,7 +1141,7 @@ def test_history_page_offers_per_viewing_edit_links(app, admin_client):
 def test_review_edit_updates_the_viewing_in_place(app, admin_client):
     from app import db
     from app.models import User, UserMovieReview
-    from app.videos import star_rating_fields
+    from app.diary import star_rating_fields
 
     with app.app_context():
         user_id = User.query.first().id
@@ -1213,7 +1215,7 @@ def test_review_edit_updates_the_viewing_in_place(app, admin_client):
 def test_review_edit_adds_review_to_bare_plex_viewing(app, admin_client):
     from app import db
     from app.models import User, UserMovieReview
-    from app.videos import star_rating_fields
+    from app.diary import star_rating_fields
 
     with app.app_context():
         user_id = User.query.first().id
@@ -1260,7 +1262,7 @@ def test_stars_on_a_bare_rewatch_become_the_current_verdict(app, admin_client):
     from app import db
     from app.main.helpers import _latest_review_row
     from app.models import User, UserMovieReview
-    from app.videos import star_rating_fields
+    from app.diary import star_rating_fields
 
     with app.app_context():
         user_id = User.query.first().id
@@ -1316,7 +1318,7 @@ def test_stars_on_a_bare_rewatch_become_the_current_verdict(app, admin_client):
 def test_review_edit_accepts_clearing_to_a_bare_watch(app, admin_client):
     from app import db
     from app.models import User, UserMovieReview
-    from app.videos import star_rating_fields
+    from app.diary import star_rating_fields
 
     with app.app_context():
         user_id = User.query.first().id
@@ -1355,7 +1357,7 @@ def test_review_edit_accepts_clearing_to_a_bare_watch(app, admin_client):
 def test_review_edit_is_owner_only(app, admin_client, user_client):
     from app import db
     from app.models import User, UserMovieReview
-    from app.videos import star_rating_fields
+    from app.diary import star_rating_fields
 
     with app.app_context():
         admin_id = User.query.filter_by(admin=True).first().id
@@ -1378,7 +1380,7 @@ def test_review_edit_is_owner_only(app, admin_client, user_client):
 def test_review_edit_keeps_review_date_and_stamps_updated(app, admin_client):
     from app import db
     from app.models import User, UserMovieReview
-    from app.videos import star_rating_fields
+    from app.diary import star_rating_fields
 
     with app.app_context():
         user_id = User.query.first().id
@@ -1426,7 +1428,7 @@ def test_review_edit_keeps_review_date_and_stamps_updated(app, admin_client):
 def test_history_hides_update_date_from_the_same_day(app, admin_client):
     from app import db
     from app.models import User, UserMovieReview
-    from app.videos import star_rating_fields
+    from app.diary import star_rating_fields
 
     with app.app_context():
         user_id = User.query.first().id
@@ -1458,7 +1460,7 @@ def test_history_orders_by_watch_date_with_unreviewed_on_top(app, admin_client):
 
     from app import db
     from app.models import User, UserMovieReview
-    from app.videos import star_rating_fields
+    from app.diary import star_rating_fields
 
     with app.app_context():
         user_id = User.query.first().id
@@ -1510,7 +1512,7 @@ def test_history_row_star_tap_preserves_date_and_text(app, admin_client):
 
     from app import db
     from app.models import User, UserMovieReview
-    from app.videos import star_rating_fields
+    from app.diary import star_rating_fields
 
     with app.app_context():
         user = User.query.filter_by(admin=True).first()
@@ -1577,7 +1579,7 @@ def test_review_edit_redirects_back_to_the_history_page_it_came_from(app, admin_
 
     from app import db
     from app.models import User, UserMovieReview
-    from app.videos import star_rating_fields
+    from app.diary import star_rating_fields
 
     with app.app_context():
         user_id = User.query.first().id
@@ -1629,7 +1631,7 @@ def test_feed_created_rows_never_export_back_to_letterboxd(
 
     from app import db
     from app.models import User, UserMovieReview
-    from app.videos import star_rating_fields
+    from app.diary import star_rating_fields
 
     with app.app_context():
         user_id = User.query.first().id
@@ -1693,7 +1695,7 @@ def test_history_previews_estimates_for_unrated_viewings(app, admin_client):
     from app import db
     from app.models import User, UserMovieReview
     from app.recommendations import PROFILE_KEY, SCORES_KEY
-    from app.videos import star_rating_fields
+    from app.diary import star_rating_fields
 
     with app.app_context():
         user_id = User.query.first().id
@@ -1754,7 +1756,7 @@ def test_clearing_stars_repaints_back_to_the_estimate(app, admin_client):
     from app import db
     from app.models import User, UserMovieReview
     from app.recommendations import PROFILE_KEY, SCORES_KEY
-    from app.videos import star_rating_fields
+    from app.diary import star_rating_fields
 
     with app.app_context():
         user_id = User.query.first().id
@@ -1841,7 +1843,7 @@ def test_history_letterboxd_rows_edit_on_letterboxd(app, admin_client):
 
     from app import db
     from app.models import User, UserMovieReview
-    from app.videos import star_rating_fields
+    from app.diary import star_rating_fields
 
     with app.app_context():
         user_id = User.query.first().id
@@ -1886,7 +1888,7 @@ def test_review_edit_refuses_letterboxd_rows(app, admin_client):
 
     from app import db
     from app.models import User, UserMovieReview
-    from app.videos import star_rating_fields
+    from app.diary import star_rating_fields
 
     with app.app_context():
         user_id = User.query.first().id
@@ -2118,7 +2120,7 @@ def _guid_row(app, title, tmdb_id, rating, date_watched, date_reviewed):
 
     from app import db
     from app.models import User, UserMovieReview
-    from app.videos import star_rating_fields
+    from app.diary import star_rating_fields
 
     with app.app_context():
         user_id = User.query.filter_by(admin=True).first().id
@@ -2320,7 +2322,7 @@ def test_a_star_edit_on_history_queues_the_profile_recompute(app, admin_client):
 
     from app import db
     from app.models import User, UserMovieReview, UserWatchlist
-    from app.videos import star_rating_fields
+    from app.diary import star_rating_fields
 
     def recomputes():
         return [
@@ -2474,7 +2476,7 @@ def test_a_star_edit_of_an_old_viewing_keeps_a_rewatch_entry(app, admin_client):
 
     from app import db
     from app.models import User, UserMovieReview, UserWatchlist
-    from app.videos import star_rating_fields
+    from app.diary import star_rating_fields
 
     with app.app_context():
         user_id = User.query.first().id
@@ -2536,7 +2538,7 @@ def test_a_star_edit_of_a_date_only_row_removes_a_same_day_add(app, admin_client
 
     from app import db
     from app.models import User, UserMovieReview, UserWatchlist
-    from app.videos import star_rating_fields
+    from app.diary import star_rating_fields
 
     with app.app_context():
         user_id = User.query.first().id
@@ -2623,7 +2625,7 @@ def test_enter_in_the_review_editor_saves_and_keeps_the_stars(app, admin_client)
 
     from app import db
     from app.models import User, UserMovieReview
-    from app.videos import star_rating_fields
+    from app.diary import star_rating_fields
 
     with app.app_context():
         user_id = User.query.first().id
@@ -2675,7 +2677,7 @@ def test_an_export_that_unpacks_too_large_is_refused(app, monkeypatch):
 def test_an_export_with_a_field_that_is_too_long_is_refused(app):
     import pytest
 
-    from app.videos import parse_letterboxd_export
+    from app.diary import parse_letterboxd_export
 
     rows = (
         "Date,Name,Year,Letterboxd URI,Rating\n2026-01-01,"
@@ -2709,7 +2711,7 @@ def test_an_export_that_zipfile_cannot_read_is_refused(app):
 
     import pytest
 
-    from app.videos import parse_letterboxd_export
+    from app.diary import parse_letterboxd_export
 
     for broken in (_patched_zip(flag_bit=1), _patched_zip(method=99)):
         with pytest.raises((ValueError, zipfile.BadZipFile)):

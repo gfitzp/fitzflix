@@ -688,7 +688,7 @@ def subscribe_criterion(app):
 def test_shelf_ranks_and_excludes(app, admin_client):
     from app import db
     from app.models import UserMovieReview, UserWatchlist
-    from app.videos import star_rating_fields
+    from app.diary import star_rating_fields
 
     user_id = subscribe_criterion(app)
 
@@ -897,7 +897,7 @@ def test_leaving_page_lists_the_complete_inventory(app, admin_client):
 
     from app import db
     from app.models import UserMovieReview, UserWatchlist
-    from app.videos import star_rating_fields
+    from app.diary import star_rating_fields
 
     empty = admin_client.get("/leaving").get_data(as_text=True)
     assert "No film is scheduled to leave now." in empty
@@ -1375,7 +1375,7 @@ def test_the_leaving_shelf_scores_only_the_films_that_it_shows(app, monkeypatch)
     import app.leaving_criterion as leaving_criterion
     from app import db
     from app.models import User, UserMovieReview
-    from app.videos import star_rating_fields
+    from app.diary import star_rating_fields
 
     user_id = subscribe_criterion(app)
     with app.app_context():

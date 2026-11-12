@@ -55,7 +55,7 @@ def test_the_four_ladder_responses_share_their_keys(app, admin_client):
     from app import db
     from app.criterion_now import _ladder_state_for
     from app.models import User, UserMovieReview
-    from app.videos import star_rating_fields
+    from app.diary import star_rating_fields
 
     with app.app_context():
         user = User.query.filter_by(email=ADMIN_EMAIL).first()

@@ -336,7 +336,7 @@ def test_shared_untouched_key_is_never_deleted(app):
     it."""
 
     from app import db
-    from app.videos import untouched_key_still_claimed
+    from app.aws_storage import untouched_key_still_claimed
     from tests.factories import make_movie, make_movie_file
 
     with app.app_context():

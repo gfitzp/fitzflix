@@ -80,7 +80,6 @@ def _setup(app, monkeypatch, title):
     import rq
 
     import app.atmos as atmos
-    import app.videos as videos
     from app import db
     from app.models import FileAudioTrack
 
@@ -88,10 +87,9 @@ def _setup(app, monkeypatch, title):
     monkeypatch.setattr(atmos, "WORKSPACE_HEADROOM_BYTES", 0)
     monkeypatch.setattr(atmos, "_run_step", _fake_run_step)
     monkeypatch.setattr(atmos, "mediaconvert_client", lambda: mediaconvert)
-    monkeypatch.setattr(videos, "aws_s3_client", lambda *a, **k: _FakeS3())
+    monkeypatch.setattr("app.aws_storage.aws_s3_client", lambda *a, **k: _FakeS3())
     monkeypatch.setattr(
-        videos,
-        "get_audio_tracks_from_file",
+        "app.tracks.get_audio_tracks_from_file",
         lambda path: [{"codec": ATMOS, "language": "eng", "streamorder": 1}],
     )
 
@@ -467,16 +465,15 @@ def test_a_stop_after_the_atmos_rename_leaves_the_archive_stale(
     from app.models import File
 
     import app.atmos as atmos
-    import app.videos as videos
 
     class Phases:
         def enter(self, name):
             pass
 
     monkeypatch.setitem(app.config, "ARCHIVE_ORIGINAL_MEDIA", True)
-    monkeypatch.setattr(videos, "aws_s3_client", lambda: None)
-    monkeypatch.setattr(videos, "get_audio_tracks_from_file", lambda path: [])
-    monkeypatch.setattr(videos, "get_subtitle_tracks_from_file", lambda path: [])
+    monkeypatch.setattr("app.aws_storage.aws_s3_client", lambda: None)
+    monkeypatch.setattr("app.tracks.get_audio_tracks_from_file", lambda path: [])
+    monkeypatch.setattr("app.tracks.get_subtitle_tracks_from_file", lambda path: [])
     with app.app_context():
         file = make_movie_file(make_movie("Atmos Stop", 2021), "Bluray-1080p")
         db.session.commit()

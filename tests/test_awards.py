@@ -385,7 +385,7 @@ def test_sparql_client_honors_retry_after_on_429(app, monkeypatch):
 
     import app.awards as awards
     import app.criterion_catalog as criterion_catalog
-    from app.videos import wikidata_retry_after_seconds
+    from app.criterion_catalog import wikidata_retry_after_seconds
 
     class FakeResponse:
         def __init__(self, status_code, headers=None, bindings=None):

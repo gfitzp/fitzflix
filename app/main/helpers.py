@@ -48,11 +48,7 @@ from app.recommendations import (
     resolved_score,
     stored_profile,
 )
-from app.videos import (
-    clear_not_interested,
-    clear_watchlist,
-    star_rating_fields,
-)
+from app.diary import clear_not_interested, clear_watchlist, star_rating_fields
 
 from collections import namedtuple
 from functools import wraps

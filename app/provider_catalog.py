@@ -202,7 +202,7 @@ def _process_pending(subscribed):
     # The TMDB record code stays in app.videos. The import is lazy. Thus,
     # the module import direction stays one-way
 
-    from app.videos import find_or_create_tmdb_movie
+    from app.tmdb_refresh import find_or_create_tmdb_movie
 
     redis = current_app.redis
     ids = sorted(int(member) for member in redis.srandmember(PENDING_KEY, PROCESS_CAP))

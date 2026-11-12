@@ -335,14 +335,13 @@ def test_a_raise_in_the_batch_removes_nothing(app, monkeypatch):
     import pytest
 
     import app.provider_catalog as pc
-    import app.videos as videos
 
     _streaming_batch(app, monkeypatch, [501, 502])
 
     def fault(*args, **kwargs):
         raise RuntimeError("Lock wait timeout exceeded")
 
-    monkeypatch.setattr(videos, "find_or_create_tmdb_movie", fault)
+    monkeypatch.setattr("app.tmdb_refresh.find_or_create_tmdb_movie", fault)
     with app.app_context():
         with pytest.raises(RuntimeError):
             pc._process_pending({258})

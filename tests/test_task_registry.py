@@ -287,6 +287,39 @@ def test_a_job_in_the_dequeue_gap_is_live_for_every_reader(app):
         assert live_task_job("app.videos.sync_aws_s3_storage_task") is None
 
 
+def test_the_videos_shim_re_exports_only_the_job_names(app):
+    """app.videos re-exports a name only when a job string needs it (#724).
+
+    A job name is a string in Redis and in the schedule, so
+    "app.videos.X" must resolve for it. Each other name comes from its
+    real module. A new re-export for a caller fails here."""
+
+    import ast
+    import inspect as std_inspect
+
+    from app import cron_table, videos
+    from app.tasks import TASKS
+
+    names = set(TASKS) | {entry["func"] for entry in cron_table(app.config)}
+    job_names = {
+        name.rsplit(".", 1)[1] for name in names if name.startswith("app.videos.")
+    }
+    assert set(videos.__all__) == job_names
+
+    # The module imports no other name from the app, except the names
+    # that its own code uses.
+
+    tree = ast.parse(std_inspect.getsource(videos))
+    imported = {
+        alias.asname or alias.name
+        for node in tree.body
+        if isinstance(node, ast.ImportFrom) and (node.module or "").startswith("app")
+        for alias in node.names
+    }
+    used = {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}
+    assert imported - job_names <= used
+
+
 def test_the_retired_task_signatures_are_gone(app):
     """The old jobs drained before the deploy. No code reads a retired signature (#622)."""
 

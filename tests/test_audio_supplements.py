@@ -35,7 +35,7 @@ def test_lossless_track_gains_a_leading_flac_twin(app):
 
     A lossy track keeps its position after the pair."""
 
-    from app.videos import plan_audio_supplements
+    from app.tracks import plan_audio_supplements
 
     tracks = [
         track("MLP FBA", "Lossless"),
@@ -51,7 +51,7 @@ def test_lossless_track_gains_a_leading_flac_twin(app):
 def test_flac_and_pcm_originals_need_no_twin(app):
     """Plan no twin for FLAC and PCM. They already play natively."""
 
-    from app.videos import plan_audio_supplements
+    from app.tracks import plan_audio_supplements
 
     tracks = [
         track("FLAC", "Lossless"),
@@ -71,7 +71,7 @@ def test_existing_twin_makes_the_pass_a_no_op(app):
     That rip already has a FLAC twin before the lossless original. Thus,
     a re-import never stacks twins."""
 
-    from app.videos import plan_audio_supplements
+    from app.tracks import plan_audio_supplements
 
     tracks = [
         track("FLAC", "Lossless"),
@@ -91,7 +91,7 @@ def test_twins_match_count_wise_within_a_group(app):
     The second lossless track has no FLAC before it. Thus, it still gets
     its twin, in place."""
 
-    from app.videos import plan_audio_supplements
+    from app.tracks import plan_audio_supplements
 
     tracks = [
         track("FLAC", "Lossless"),
@@ -115,7 +115,7 @@ def test_twins_match_by_language_not_channels(app):
     (and each FLAC decode of it) is 5.1. Thus, a channel-strict match
     would stack redundant twins on correct rips (the LOTR discs)."""
 
-    from app.videos import plan_audio_supplements
+    from app.tracks import plan_audio_supplements
 
     tracks = [
         track("FLAC", "Lossless", language="fr"),
@@ -146,7 +146,7 @@ def test_builder_numbers_by_output_position(app):
     index. The first output is the default. The builder clears each
     different disposition."""
 
-    from app.videos import build_supplement_args
+    from app.tracks import build_supplement_args
 
     plan = [("flac", 0), ("copy", 0), ("copy", 1)]
     assert build_supplement_args(plan) == [
@@ -305,7 +305,7 @@ def test_trailing_flac_is_never_counted_as_a_twin(app):
     track gets a new twin before it. The unknown FLAC keeps its place.
     The planner does not judge its identity."""
 
-    from app.videos import plan_audio_supplements
+    from app.tracks import plan_audio_supplements
 
     tracks = [
         track("DTS-HD Master Audio", "Lossless"),
@@ -339,7 +339,7 @@ def test_non_adjacent_flac_is_not_a_twin(app):
     not count. This is true even when the language and the channels
     match."""
 
-    from app.videos import plan_audio_supplements
+    from app.tracks import plan_audio_supplements
 
     tracks = [
         track("FLAC", "Lossless"),

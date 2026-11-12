@@ -723,7 +723,7 @@ def test_health_probe_reports_a_stale_backup_and_probes_s3(
         def head_bucket(self, Bucket):
             probed.append(Bucket)
 
-    monkeypatch.setattr("app.videos.aws_s3_client", lambda with_retries: FakeS3())
+    monkeypatch.setattr("app.aws_storage.aws_s3_client", lambda with_retries: FakeS3())
     monkeypatch.setitem(app.config, "AWS_BUCKET", "bucket-test")
     monkeypatch.setitem(app.config, "AWS_ACCESS_KEY", "key-test")
     monkeypatch.setitem(app.config, "AWS_SECRET_KEY", "secret-test")

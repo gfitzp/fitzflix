@@ -7,7 +7,7 @@ of each film. The badge color shows if the film is upgradable."""
 
 from app import db
 from app.models import Movie, MovieCrew, TMDBCredit, User, UserMovieReview
-from app.videos import star_rating_fields
+from app.diary import star_rating_fields
 from tests.factories import make_movie, make_movie_file, make_tv_file, make_tv_series
 from tests.factories import make_cast
 from tests.fakes import tmdb_router

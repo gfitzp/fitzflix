@@ -8,7 +8,7 @@ from tests.factories import make_movie, make_movie_file
 
 
 def test_parse_dolby_vision_profile_reads_mediainfo_strings(app):
-    from app.videos import parse_dolby_vision_profile
+    from app.tracks import parse_dolby_vision_profile
 
     # Blu-ray dual-layer (profile 7).
     assert (

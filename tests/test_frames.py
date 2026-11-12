@@ -304,7 +304,7 @@ def test_easy_serves_only_rated_films(app, admin_client, admin_id):
 
     from app import db
     from app.models import UserMovieReview
-    from app.videos import star_rating_fields
+    from app.diary import star_rating_fields
 
     with app.app_context():
         rated = make_movie("Frame Rated Film", 1995)
@@ -521,7 +521,7 @@ def test_refresh_guarantees_the_rated_floor(app, monkeypatch, admin_id):
     from app import db
     from app.models import UserMovieReview
     from app.frames import refresh_frame_pool_task
-    from app.videos import star_rating_fields
+    from app.diary import star_rating_fields
 
     monkeypatch.setitem(app.config, "FRAME_POOL_SIZE", 3)
     monkeypatch.setitem(app.config, "FRAME_POOL_ROTATE", 1)
@@ -612,7 +612,7 @@ def test_options_stay_within_the_answers_era(app, admin_client, monkeypatch, adm
 
     from app import db
     from app.models import UserMovieReview
-    from app.videos import star_rating_fields
+    from app.diary import star_rating_fields
 
     # Difficult has 3 options. Thus, 2 distractors decide the tiers
 
@@ -769,7 +769,7 @@ def test_rotation_cannot_undercut_the_rated_floor(app, monkeypatch, admin_id):
     from app import db
     from app.models import UserMovieReview
     from app.frames import refresh_frame_pool_task
-    from app.videos import star_rating_fields
+    from app.diary import star_rating_fields
 
     monkeypatch.setitem(app.config, "FRAME_POOL_SIZE", 3)
     monkeypatch.setitem(app.config, "FRAME_POOL_ROTATE", 1)
@@ -827,7 +827,7 @@ def test_the_pool_never_grows_past_its_configured_size(app, monkeypatch, admin_i
     from app import db
     from app.models import UserMovieReview
     from app.frames import pool_entries, refresh_frame_pool_task
-    from app.videos import star_rating_fields
+    from app.diary import star_rating_fields
 
     monkeypatch.setitem(app.config, "FRAME_POOL_SIZE", 4)
     monkeypatch.setitem(app.config, "FRAME_POOL_ROTATE", 1)
@@ -1008,7 +1008,7 @@ def test_extra_difficult_zooms_out_and_scores_points(app, admin_client, admin_id
 
     from app import db
     from app.models import UserFrameScore, UserMovieReview
-    from app.videos import star_rating_fields
+    from app.diary import star_rating_fields
 
     with app.app_context():
         movie = make_movie("Extra Round Film", 2001)
@@ -1272,7 +1272,7 @@ def test_rated_films_are_the_default_world(app, admin_client, admin_id):
 
     from app import db
     from app.models import UserMovieReview
-    from app.videos import star_rating_fields
+    from app.diary import star_rating_fields
 
     with app.app_context():
         rated = make_movie("Filter Rated Film", 1990)
@@ -1717,7 +1717,7 @@ def test_unrated_watches_do_not_count_as_rated(app, admin_client, admin_id):
 
     from app import db
     from app.models import UserMovieReview
-    from app.videos import star_rating_fields
+    from app.diary import star_rating_fields
 
     with app.app_context():
         watched = make_movie("Unrated Watch Film", 1974)
@@ -1760,7 +1760,7 @@ def test_pool_floor_ignores_unrated_watches(app, monkeypatch, admin_id):
     from app import db
     from app.models import UserMovieReview
     from app.frames import refresh_frame_pool_task
-    from app.videos import star_rating_fields
+    from app.diary import star_rating_fields
 
     monkeypatch.setitem(app.config, "FRAME_POOL_SIZE", 1)
     monkeypatch.setitem(app.config, "FRAME_POOL_ROTATE", 1)
@@ -2063,7 +2063,7 @@ def test_extra_rated_hit_earns_no_bonus_when_the_game_cannot_deal_the_film(
 
     from app import db
     from app.models import User, UserFrameScore, UserMovieReview
-    from app.videos import star_rating_fields
+    from app.diary import star_rating_fields
 
     with app.app_context():
         # A home movie has a file and no TMDB id. The game cannot deal it.
@@ -2713,7 +2713,7 @@ def test_the_floor_spares_are_rated_films_of_the_reviewer(app, monkeypatch, admi
     import app.frames as frames
     from app import db
     from app.models import UserMovieReview
-    from app.videos import star_rating_fields
+    from app.diary import star_rating_fields
 
     monkeypatch.setitem(app.config, "FRAME_POOL_SIZE", 3)
     monkeypatch.setitem(app.config, "FRAME_POOL_ROTATE", 2)
@@ -2812,7 +2812,7 @@ def test_a_switch_on_the_resume_url_keeps_the_dealt_options(app, admin_client):
 
     from app import db
     from app.models import User, UserMovieReview
-    from app.videos import star_rating_fields
+    from app.diary import star_rating_fields
 
     with app.app_context():
         admin_id = User.query.filter_by(admin=True).first().id
@@ -2888,7 +2888,7 @@ def test_easy_offers_only_the_rated_films_with_a_file(app, admin_client, admin_i
 
     from app import db
     from app.models import UserMovieReview
-    from app.videos import star_rating_fields
+    from app.diary import star_rating_fields
 
     with app.app_context():
         answer = make_movie("Easy Owned Answer", 1980)

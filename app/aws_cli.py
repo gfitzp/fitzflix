@@ -33,7 +33,7 @@ def register_cli(app):
 
         from app.aws_setup import StaleReadSuspected
         from app.aws_setup import provision as provision_aws
-        from app.videos import aws_s3_client, aws_sqs_client
+        from app.aws_storage import aws_s3_client, aws_sqs_client
 
         if not app.config["AWS_BUCKET"]:
             raise click.ClickException(

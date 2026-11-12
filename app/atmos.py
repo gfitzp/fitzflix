@@ -669,12 +669,9 @@ def _atmos_prepare(file_id, phases, staged_source=None):
     """
 
     from app.tracks import replace_track_rows
-    from app.videos import (
-        aws_s3_client,
-        copy_with_progress,
-        get_audio_tracks_from_file,
-        get_subtitle_tracks_from_file,
-    )
+    from app.videos import copy_with_progress
+    from app.aws_storage import aws_s3_client
+    from app.tracks import get_audio_tracks_from_file, get_subtitle_tracks_from_file
 
     job = get_current_job()
     file = db.session.get(File, int(file_id))
@@ -966,7 +963,7 @@ def _close_run(state, lock, ended_early=True):
     conversion (#505). The import left that upload to the run. The
     upload takes the title lock. Thus, it is queued after the release."""
 
-    from app.videos import aws_s3_client
+    from app.aws_storage import aws_s3_client
 
     shutil.rmtree(state["workspace"], ignore_errors=True)
     try:
@@ -1252,10 +1249,10 @@ def _remux_twins(state, phases, inserts, job):
     becomes True. A tool or I/O fault raises FinishInterrupted (#502). A
     failed verification raises RuntimeError."""
 
-    from app.videos import (
+    from app.videos import wait_for_subprocess
+    from app.tracks import (
         get_audio_tracks_from_file,
         get_subtitle_tracks_from_file,
-        wait_for_subprocess,
         watch_mkvmerge_progress,
     )
 
@@ -1393,9 +1390,9 @@ def _atmos_finish(state, phases):
         flag_archive_before_rewrite,
         replace_track_rows,
     )
-    from app.videos import (
-        aws_s3_client,
-        copy_with_progress,
+    from app.videos import copy_with_progress
+    from app.aws_storage import aws_s3_client
+    from app.tracks import (
         get_audio_tracks_from_file,
         get_subtitle_tracks_from_file,
         record_filesize,

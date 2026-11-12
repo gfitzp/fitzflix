@@ -11,6 +11,7 @@ import pytest
 
 
 import app.videos as videos
+from app import importing
 
 from app.models import File
 from app.videos import finalize_localization, localization_task
@@ -155,7 +156,7 @@ def test_finalize_gives_back_an_output_that_is_on_another_volume(
         ]
         move.delete()
         source_path, details, lock, hidden = move.args
-        inspection = videos.inspect_localized_file(hidden, "Matroska")
+        inspection = importing.inspect_localized_file(hidden, "Matroska")
         separate_library_volume(app, monkeypatch)
         assert (
             finalize_localization(source_path, details, lock, hidden, inspection)

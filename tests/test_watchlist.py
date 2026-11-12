@@ -247,7 +247,8 @@ def test_letterboxd_watchlist_imports_and_watches_clear(app, admin_id):
     from app import db
     from app.models import UserMovieReview
     from app.models import UserWatchlist
-    from app.videos import apply_letterboxd_import, parse_letterboxd_export
+    from app.videos import apply_letterboxd_import
+    from app.diary import parse_letterboxd_export
 
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:

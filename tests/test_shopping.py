@@ -6,7 +6,7 @@ candidates."""
 
 from app import db
 from app.models import Movie, User, UserMovieReview
-from app.videos import star_rating_fields
+from app.diary import star_rating_fields
 from tests.factories import make_movie, make_movie_file, make_tv_file, make_tv_series
 
 
