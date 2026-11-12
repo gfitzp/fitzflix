@@ -3111,11 +3111,15 @@ def _move_archive(file, sqs_receipt_handle, message_key):
     if problem:
         # The job fails loudly. The FailedJobRegistry and the badge of the
         # System page show it. The target stays. flask aws converge-keys
-        # --apply requests the move again.
+        # --apply --again requests the move again. Without --again, the
+        # command leaves out a record that has its target (#721). The
+        # weekly sync requests again only a move from pending-untouched/
+        # (#707).
         s3_layout.delete(s3_client, bucket, target, copied.get("VersionId"))
         raise RuntimeError(
             f"'{file.basename}' The copy of '{source}' at '{target}' {problem}. "
-            f"The archive keeps its key, and the copy is deleted"
+            f"The archive keeps its key, and the copy is deleted. To request "
+            f"the move again, run: flask aws converge-keys --apply --again"
         )
 
     # An edit can archive the file during the copy. It clears the target.
@@ -4357,8 +4361,10 @@ def aws_upload(
         except OSError as e:
             if e.errno in TRANSIENT_COPY_ERRNOS:
                 current_app.logger.error(
-                    f"'{file_path}' upload failed on a transient filesystem "
-                    f"error ({e.strerror}); leaving the file where it is"
+                    f"'{file_path}' The upload failed on a transient "
+                    f"filesystem error ({e.strerror}). The upload does not "
+                    f"move the file. An import rejects its source after "
+                    f"this error"
                 )
             raise
 

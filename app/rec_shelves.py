@@ -383,8 +383,7 @@ def _weighted_order(rng, weighted_items):
 def _top_heavy_sample(rng, ranked, count, decay=0.93):
     """Return `count` items from a best-first list, in the original rank order.
 
-    The sample prefers the top geometrically. This is the rotate_daily
-    recipe of the landing rails, with the rng of this page."""
+    The sample prefers the top geometrically, with the rng of this page."""
 
     if len(ranked) <= count:
         return list(ranked)

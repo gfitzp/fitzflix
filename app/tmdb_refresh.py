@@ -1182,8 +1182,8 @@ def sync_certification_list():
 def refresh_in_production_tv():
     """Enqueue the standard TMDB refresh again for every series in production.
 
-    This is the nightly sweep. Thus, the new episodes and the season
-    counts stay current without a manual bulk refresh.
+    This is the nightly sweep. Thus, the season counts and the details
+    of the series stay current without a manual bulk refresh.
 
     Ended and canceled series change rarely. The refresh-on-import
     trigger and the bulk refresh of the maintenance page cover them. A

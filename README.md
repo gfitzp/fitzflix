@@ -399,10 +399,10 @@ Fitzflix is developed and operated on macOS with [Homebrew](https://brew.sh). Th
 | Binary | `.env` setting | Function |
 | --- | --- | --- |
 | [MediaInfo](https://mediaarea.net/MediaInfo) (`libmediainfo`) | — (`pymediainfo` loads it as a library) | Scans the video, audio, and subtitle tracks of each imported file |
-| [mkvmerge](https://mkvtoolnix.download) (MKVToolNix) | `MKVMERGE_BIN` | Remuxes Matroska files: removes the tracks that are not in your language and the empty tracks, and converts other containers to Matroska |
+| [mkvmerge](https://mkvtoolnix.download) (MKVToolNix) | `MKVMERGE_BIN` | Remuxes Matroska files: removes the tracks that are not in your language and the empty tracks, puts a new default audio track in the first position, and converts other containers to Matroska |
 | [mkvpropedit](https://mkvtoolnix.download) (MKVToolNix) | `MKVPROPEDIT_LOCATION` | Edits Matroska properties in place: the default and forced track flags, and the track statistics |
 | [HandBrakeCLI](https://handbrake.fr) | `HANDBRAKE_BIN` | Converts HDR and BT.2020 imports to SDR (refer to `CONVERSION_PRESET`, `CONVERSION_PRESET_2160P`, and `HANDBRAKE_PRESET_FILE` for the presets) |
-| [ffmpeg](https://ffmpeg.org) | `FFMPEG_BIN` | Makes the FLAC twins, the lead-track remuxes of the lossy audio triage, the triage aids, the Name That Frame frames, and the DVR streams |
+| [ffmpeg](https://ffmpeg.org) | `FFMPEG_BIN` | Makes the FLAC twins, the triage aids, the Name That Frame frames, and the DVR streams |
 | [ffprobe](https://ffmpeg.org) | `FFPROBE_BIN` | Measures the durations and reads the streams for the triage aids, the frames, and the DVR lineups |
 | [mkvextract](https://mkvtoolnix.download) (MKVToolNix) | `MKVEXTRACT_BIN` | Extracts the TrueHD track for the E-AC-3 Atmos twin. It also copies the cover art into each audio remux that ffmpeg makes. Thus, Fitzflix needs it also without the Atmos twins. |
 | truehdd | `TRUEHDD_BIN` | Decodes a TrueHD Atmos track to the master that MediaConvert encodes. The default is `/Users/server/bin/truehdd`. Without it, a new import gets no Atmos twin. |

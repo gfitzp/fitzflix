@@ -285,7 +285,7 @@ def cron_table(config):
         # coverage of that sweep. Thus, the TMDB-heavy window stays
         # contiguous.
         ("35 3 * * *", "app.tmdb_changes.refresh_changed_records"),
-        # Fetch the episode data for in-production TV series again
+        # Refresh the TMDB record of each in-production TV series again
         # nightly, clear of the 03:05 frame pool and 03:25 Plex title
         # windows.
         ("45 3 * * *", "app.tmdb_refresh.refresh_in_production_tv"),
