@@ -81,6 +81,8 @@ from app.models import (
     movie_genres,
     sort_title,
     title_sort,
+    TV_SHOWS,
+    title_lock_key,
 )
 from app.auth.passkeys import identity_confirmed
 from app.main import bp
@@ -2258,6 +2260,37 @@ def tv_delete(series_id):
     ):
         flash_form_errors(series_delete_form)
         return redirect(url_for("main.tv", series_id=tv.id))
+
+    # The delete holds the title lock of each episode. A task that holds
+    # one of them refuses the delete (#718).
+
+    episodes = sorted(
+        {
+            (file.season, file.episode)
+            for file in File.query.filter(File.series_id == series_id)
+        },
+        key=str,
+    )
+    locks = _delete_locks(
+        title_lock_key(TV_SHOWS, tv.title, season=season, episode=episode)
+        for season, episode in episodes
+    )
+    if locks is None:
+        flash(
+            f"A task works on a file of '{title}'. Delete the series when the "
+            f"task is done.",
+            "warning",
+        )
+        return redirect(url_for("main.tv", series_id=tv.id))
+    try:
+        return _delete_series(tv, series_id, title)
+    finally:
+        _release_delete_locks(locks)
+
+
+def _delete_series(tv, series_id, title):
+    """Delete the series and its files under the title locks. Return the next page."""
+
     aws_keys = []
     leftover_dirs = set()
     file_ids = []
@@ -2703,6 +2736,49 @@ def _claimed_archive_keys(file):
     return [key for key in dict.fromkeys(keys) if key]
 
 
+# A delete holds the title lock of each file for this long, plus a
+# time for each file of a series.
+
+DELETE_LOCK_SECONDS = 120
+DELETE_LOCK_SECONDS_PER_FILE = 5
+
+DELETE_REFUSED = "A task works on this file. Delete it when the task is done."
+
+
+def _delete_locks(identifiers):
+    """Take the title lock of each file of a delete. Return the locks, or None (#718).
+
+    Invariant: a delete never runs while a task rewrites the file. A
+    track edit holds the title lock of its file for its whole run. At
+    its end, it puts its result at the path of the file. A delete in
+    that time lets the task put the file back with no record. Thus, a
+    lock that a task holds refuses the delete, and the locks that this
+    call took are free again."""
+
+    identifiers = list(identifiers)
+    ttl_ms = 1000 * (
+        DELETE_LOCK_SECONDS + DELETE_LOCK_SECONDS_PER_FILE * len(identifiers)
+    )
+    locks = []
+    for identifier in identifiers:
+        lock = current_app.lock_manager.lock(identifier, ttl_ms)
+        if not lock:
+            _release_delete_locks(locks)
+            return None
+        locks.append(lock)
+    return locks
+
+
+def _release_delete_locks(locks):
+    """Free the title locks of a delete. A fault only logs. The locks expire."""
+
+    for lock in locks:
+        try:
+            current_app.lock_manager.unlock(lock)
+        except Exception:
+            current_app.logger.warning(traceback.format_exc())
+
+
 def _after_commit(step, *args, **kwargs):
     """Run 1 cleanup step of a committed delete. Log a failure and go on (follow-up #513).
 
@@ -2741,7 +2817,23 @@ def _queue_archive_deletes(aws_keys):
 
 
 def _delete_file_post(file, form):
-    """Delete the file and its record. Return the page to go to next."""
+    """Delete the file and its record. Return the page to go to next.
+
+    The delete holds the title lock of the file. A task that holds it
+    refuses the delete (#718)."""
+
+    locks = _delete_locks([file.file_identifier()])
+    if locks is None:
+        flash(DELETE_REFUSED, "warning")
+        return None
+    try:
+        return _delete_file(file)
+    finally:
+        _release_delete_locks(locks)
+
+
+def _delete_file(file):
+    """Delete the file and its record under its title lock. Return the next page."""
 
     aws_keys = _claimed_archive_keys(file)
     file_id = file.id

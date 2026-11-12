@@ -622,3 +622,98 @@ def test_cleanup_removes_an_old_direct_restore_copy_with_no_owner(
             for path in (copy, copy + ".etag"):
                 if os.path.exists(path):
                     os.remove(path)
+
+
+def test_a_file_delete_waits_for_the_job_that_holds_the_title_lock(app, admin_client):
+    """A remux of the file runs. A delete now lets the job put the file back (#718).
+
+    The delete is refused while a task holds the title lock. The record
+    and the library file stay. After the task, the delete works."""
+
+    from app import db
+    from app.models import File
+    from tests.factories import make_movie, make_movie_file
+
+    with app.app_context():
+        movie = make_movie("Busy Film", 2002)
+        file = make_movie_file(movie, "DVD")
+        db.session.commit()
+        file_id = file.id
+        file_path = file.file_path
+        identifier = file.file_identifier()
+        held = app.lock_manager.lock(identifier, 60000)
+        assert held
+
+    lib = app.config["LIBRARY_DIR"]
+    plant(os.path.join(lib, file_path))
+    token = _admin_csrf_token(admin_client, f"/file/{file_id}")
+    data = {"csrf_token": token, "delete_submit": "Delete File"}
+    try:
+        response = admin_client.post(
+            f"/file/{file_id}", data=data, follow_redirects=True
+        )
+        assert "A task works on this file" in response.get_data(as_text=True)
+        with app.app_context():
+            assert db.session.get(File, file_id) is not None
+        assert os.path.exists(os.path.join(lib, file_path))
+    finally:
+        with app.app_context():
+            app.lock_manager.unlock(held)
+
+    response = admin_client.post(f"/file/{file_id}", data=data)
+    assert response.status_code == 302
+    with app.app_context():
+        assert db.session.get(File, file_id) is None
+        # The delete released its own lock.
+        again = app.lock_manager.lock(identifier, 1000)
+        assert again
+        app.lock_manager.unlock(again)
+    assert not os.path.exists(os.path.join(lib, file_path))
+
+
+def test_a_series_delete_waits_for_a_job_of_one_episode(app, admin_client):
+    """A task holds the title lock of 1 episode. The series delete is refused (#718)."""
+
+    from app import db
+    from app.models import File, TVSeries
+    from tests.factories import make_tv_file, make_tv_series
+
+    with app.app_context():
+        series = make_tv_series("Busy Show")
+        first = make_tv_file(series, 1, 1, "DVD")
+        second = make_tv_file(series, 1, 2, "DVD")
+        db.session.commit()
+        series_id = series.id
+        ids = (first.id, second.id)
+        paths = (first.file_path, second.file_path)
+        held = app.lock_manager.lock(second.file_identifier(), 60000)
+        assert held
+
+    lib = app.config["LIBRARY_DIR"]
+    for path in paths:
+        plant(os.path.join(lib, path))
+    token = _admin_csrf_token(admin_client, f"/tv/{series_id}")
+    data = {"csrf_token": token, "delete_submit": "Delete Series"}
+    try:
+        response = admin_client.post(
+            f"/tv/{series_id}/delete", data=data, follow_redirects=True
+        )
+        assert "A task works on" in response.get_data(as_text=True)
+        with app.app_context():
+            assert db.session.get(TVSeries, series_id) is not None
+            assert all(db.session.get(File, file_id) is not None for file_id in ids)
+            # The lock of the first episode is free again after the refusal.
+            free = app.lock_manager.lock(
+                db.session.get(File, ids[0]).file_identifier(), 1000
+            )
+            assert free
+            app.lock_manager.unlock(free)
+        assert all(os.path.exists(os.path.join(lib, path)) for path in paths)
+    finally:
+        with app.app_context():
+            app.lock_manager.unlock(held)
+
+    response = admin_client.post(f"/tv/{series_id}/delete", data=data)
+    assert response.status_code == 302
+    with app.app_context():
+        assert db.session.get(TVSeries, series_id) is None
