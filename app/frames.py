@@ -192,6 +192,40 @@ def _drop_entry(token):
         pass
 
 
+# An extraction writes its image before its pool entry. Thus, a new
+# image with no entry is not a leftover yet.
+
+UNPOOLED_IMAGE_SECONDS = 3600
+
+
+def _remove_unpooled_images(entries):
+    """Remove each old image of the pool directory that no entry names (#720).
+
+    The pool entries are only in Redis. After a Redis loss, the images
+    of the lost entries stay on the disk, and no other code reads the
+    directory. Return the count of the removed images."""
+
+    folder = current_app.config["FRAME_POOL_DIR"]
+    cutoff = time.time() - UNPOOLED_IMAGE_SECONDS
+    try:
+        names = os.listdir(folder)
+    except OSError:
+        return 0
+    removed = 0
+    for name in names:
+        token, extension = os.path.splitext(name)
+        if extension != ".jpg" or token in entries:
+            continue
+        path = os.path.join(folder, name)
+        try:
+            if os.path.getmtime(path) < cutoff:
+                os.remove(path)
+                removed += 1
+        except OSError:
+            continue
+    return removed
+
+
 def _frame_has_picture(path):
     """Return True if the extracted image has enough picture for a guess.
 
@@ -286,6 +320,12 @@ def refresh_frame_pool_task():
                 _drop_entry(token)
             else:
                 valid[token] = entry
+
+        unpooled = _remove_unpooled_images(entries)
+        if unpooled:
+            current_app.logger.info(
+                f"Frame pool: removed {unpooled} image(s) that no entry names"
+            )
 
         pooled = len(valid)
         pooled_movies = {entry["movie_id"] for entry in valid.values()}

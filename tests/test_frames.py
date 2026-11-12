@@ -2921,3 +2921,43 @@ def test_easy_offers_only_the_rated_films_with_a_file(app, admin_client, admin_i
     assert "Easy Padding 0 (1982)" in page
     assert "Easy Padding 1 (1983)" in page
     assert page.count('name="choice"') == 4
+
+
+def test_refresh_removes_the_old_images_that_the_pool_does_not_name(app):
+    """A Redis loss empties the pool, and its images stay on the disk (#720).
+
+    The nightly pass removes an old image with no entry. A new image
+    with no entry stays, because an extraction writes the image before
+    its entry. A file that is not an image of the pool stays too."""
+
+    from app import db
+    from app.frames import frame_path, refresh_frame_pool_task
+
+    with app.app_context():
+        kept = make_movie("Frame Named", 1994)
+        make_movie_file(kept, "Bluray-1080p")
+        db.session.commit()
+        kept_id = kept.id
+    kept_token = seed_frame(app, kept_id)
+
+    with app.app_context():
+        folder = os.path.dirname(frame_path(kept_token))
+        old_orphan = os.path.join(folder, "orphanold0001.jpg")
+        new_orphan = os.path.join(folder, "orphannew0001.jpg")
+        other = os.path.join(folder, "notes.txt")
+        for path in (old_orphan, new_orphan, other):
+            with open(path, "wb") as handle:
+                handle.write(b"x")
+        day_ago = time.time() - 86400
+        os.utime(old_orphan, (day_ago, day_ago))
+        os.utime(other, (day_ago, day_ago))
+        os.utime(frame_path(kept_token), (day_ago, day_ago))
+
+        refresh_frame_pool_task()
+
+        assert not os.path.exists(old_orphan)
+        assert os.path.exists(new_orphan)
+        assert os.path.exists(other)
+        assert os.path.exists(frame_path(kept_token))
+        os.remove(new_orphan)
+        os.remove(other)
