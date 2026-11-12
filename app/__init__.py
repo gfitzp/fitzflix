@@ -459,17 +459,13 @@ def check_config(app):
     library.
     """
 
-    for key in (
-        "ATOMICPARSLEY_BIN",
-        "HANDBRAKE_BIN",
-        "MKVMERGE_BIN",
-        "MKVPROPEDIT_BIN",
-        "FFMPEG_BIN",
-        "MYSQLDUMP_BIN",
-        "SUPERVISORCTL_BIN",
-    ):
+    # Each setting whose name ends in _BIN is the path of a tool (#713).
+    # Thus, a new tool setting gets its check with no edit here. An
+    # optional tool with no value is not in use.
+
+    for key in sorted(key for key in app.config if key.endswith("_BIN")):
         path = app.config[key]
-        if not (os.path.isfile(path) and os.access(path, os.X_OK)):
+        if path and not (os.path.isfile(path) and os.access(path, os.X_OK)):
             app.logger.warning(f"{key} '{path}' is not an executable file")
 
     for key in (
@@ -484,7 +480,12 @@ def check_config(app):
             app.logger.warning(f"{key} '{path}' is not an existing directory")
 
     preset_file = app.config["HANDBRAKE_PRESET_FILE"]
-    if preset_file:
+    if not preset_file:
+        app.logger.warning(
+            "HANDBRAKE_PRESET_FILE has no value, and handbrake_presets.json is "
+            "not in the project folder. HDR imports cannot be converted to SDR"
+        )
+    else:
         if not os.path.isfile(preset_file):
             app.logger.warning(
                 f"HANDBRAKE_PRESET_FILE '{preset_file}' does not exist, "

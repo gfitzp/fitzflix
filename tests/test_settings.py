@@ -434,6 +434,34 @@ def test_get_setting_works_outside_an_app_context(app):
     assert get_setting("DVR_CHANNEL_EPISODES") == 12
 
 
+def test_the_startup_check_tests_each_configured_binary(app, monkeypatch, caplog):
+    """A tool that came after the first list gets its warning too (#713).
+
+    An optional tool with no value gets no warning."""
+
+    from app import check_config
+
+    for key in ("FFPROBE_BIN", "MKVEXTRACT_BIN", "TRUEHDD_BIN", "MYSQL_BIN"):
+        monkeypatch.setitem(app.config, key, f"/nonexistent/{key.lower()}")
+    monkeypatch.setitem(app.config, "FFMPEG_PLACEBO_BIN", None)
+    with caplog.at_level(logging.WARNING):
+        check_config(app)
+    for key in ("FFPROBE_BIN", "MKVEXTRACT_BIN", "TRUEHDD_BIN", "MYSQL_BIN"):
+        assert f"{key} '/nonexistent/{key.lower()}' is not an executable" in caplog.text
+    assert "FFMPEG_PLACEBO_BIN" not in caplog.text
+
+
+def test_the_startup_check_warns_when_no_preset_file_exists(app, monkeypatch, caplog):
+    """The default preset file is missing, and the setting has no value (#713)."""
+
+    from app import check_config
+
+    monkeypatch.setitem(app.config, "HANDBRAKE_PRESET_FILE", None)
+    with caplog.at_level(logging.WARNING):
+        check_config(app)
+    assert "HANDBRAKE_PRESET_FILE has no value" in caplog.text
+
+
 def test_the_startup_check_reads_archival_from_the_page(app, monkeypatch, caplog):
     """The page can turn archival on. The startup check must see it.
 
