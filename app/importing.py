@@ -4973,11 +4973,11 @@ def sanitize_string(
 
     string = string.strip()
 
-    # If the name starts with a period, remove the period. Then the file is
-    # not invisible. Use startswith, not string[0]. Then an empty string
-    # does not crash.
-    if string.startswith("."):
-        string = string[1:]
+    # A name must not start with a period. Then the file is not
+    # invisible. Each period at the start goes, as in the library names
+    # (#717).
+
+    string = string.lstrip(". ")
 
     # Fail loudly. An empty name must not go into the construction of a file
     # name or an S3 key. There it would make degenerate paths.

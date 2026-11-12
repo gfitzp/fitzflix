@@ -66,7 +66,7 @@ When you copy files manually over a slow or unreliable connection, use a tempora
 Title (Year) - [Quality].ext
 ```
 
-The quality tag must be one of the known quality titles. Examples are `SDTV`, `DVD`, `WEBDL-480p`, `HDTV-720p`, `WEBRip-1080p`, `Bluray-1080p`, and `Bluray-2160p Remux`. Fitzflix rejects a file that has an unknown quality tag. An `{edition-...}` tag identifies an alternative cut of the film. A version string between the title and the quality can identify a full screen version.
+The quality tag must be one of the known quality titles. Examples are `SDTV`, `DVD`, `WEBDL-480p`, `HDTV-720p`, `WEBRip-1080p`, `Bluray-1080p`, and `Bluray-2160p Remux`. Fitzflix rejects a file that has an unknown quality tag. An `{edition-...}` tag identifies an alternative cut of the film. A version string between the title and the quality can identify a full screen version. Fitzflix names the film as TMDB names it. TMDB names some films with periods at the start, for example `...And Justice for All`. The folder and the file get that name with no periods at the start, because a name that starts with a period is hidden.
 
 A Plex external-id tag can follow the year. The tag is `{tmdb-NNN}`, `{imdb-ttNNN}`, or `{tvdb-NNN}`. The tag and the `{edition-...}` tag can be in either order. The id selects the exact title on TMDB, and Fitzflix does not do a search by name. The library folder and the filename keep the tag in its `{tmdb-NNN}` form. If the name has a `{tmdb-NNN}` tag, you can omit the year. If TMDB does not know the id, Fitzflix rejects the file and does not do a search by title:
 

@@ -36,6 +36,25 @@ def episode_code(season, episode, last_episode=None):
     return code
 
 
+# unidecode makes 3 periods from the ellipsis character. Thus, the
+# characters that go from the start of a name include it.
+
+_HIDDEN_START = ".\u2026 "
+
+
+def visible_name(name):
+    """Return a name with no period at its start (#717).
+
+    Invariant: a library name never starts with a period. A name that
+    starts with a period is hidden. Plex does not scan it, and each walk
+    of the library leaves it out. TMDB names some films with an ellipsis
+    at the start, for example "...And Justice for All". The record keeps
+    that title. Only the folder and the file lose the periods. A name of
+    only periods stays as it is, because no name is left."""
+
+    return name.lstrip(_HIDDEN_START) or name
+
+
 def library_name(parts):
     """Return (plex_title, basename) of a library file.
 
@@ -55,27 +74,31 @@ def library_name(parts):
     - fullscreen: True for a full screen copy of a film
     - extension: the extension, with no period
 
-    The basename is not sanitized. An episode keeps "Full Screen" in its
-    version text. A film puts it before the quality tag."""
+    The basename is not sanitized. The title, and the name of an extra,
+    lose each period at their start (visible_name). An episode keeps
+    "Full Screen" in its version text. A film puts it before the
+    quality tag."""
 
     version = parts.get("version")
     quality = parts.get("quality_title")
     extension = parts.get("extension")
+    title = visible_name(f"{parts.get('title')}")
 
     if parts.get("library") == TV_SHOWS:
         code = episode_code(
             parts.get("season"), parts.get("episode"), parts.get("last_episode")
         )
         if version:
-            plex_title = f"{parts.get('title')} - {code} - {version}"
+            plex_title = f"{title} - {code} - {version}"
             return plex_title, f"{plex_title} [{quality}].{extension}"
-        plex_title = f"{parts.get('title')} - {code}"
+        plex_title = f"{title} - {code}"
         return plex_title, f"{plex_title} - [{quality}].{extension}"
 
     if parts.get("feature_type") and version:
+        version = visible_name(version)
         return version, f"{version}.{extension}"
 
-    head = f"{parts.get('title')} ({parts.get('year')})"
+    head = f"{title} ({parts.get('year')})"
     if parts.get("id_tag"):
         head = f"{head} {parts['id_tag']}"
     if parts.get("edition"):

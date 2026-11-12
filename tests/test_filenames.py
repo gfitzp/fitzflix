@@ -1103,3 +1103,67 @@ def test_reconstruct_filename_of_an_episode_takes_the_series_title(app):
             "Earth - S01E05-E06 - Pilot [Bluray-1080p].mkv"
         )
         assert reconstruct_filename(odd.id) == "odd name.mkv"
+
+
+@pytest.mark.parametrize(
+    "title",
+    ["...And Justice for All", "…And Justice for All", ". . . And Justice for All"],
+)
+def test_a_library_name_never_starts_with_a_period(app, title):
+    """TMDB names some films with an ellipsis at the start (#717).
+
+    A name that starts with a period is hidden. Plex does not scan it,
+    and the walks of the library leave it out. The record keeps the
+    title of TMDB. Only the folder and the file lose the periods."""
+
+    from tests.factories import make_movie
+
+    with app.app_context():
+        make_movie(title, 1979, tmdb_id=17443)
+        details = evaluate_filename(
+            "And Justice for All (1979) {tmdb-17443} - [Bluray-1080p].mkv", log=False
+        )
+    assert details["title"] == title
+    assert details["file_path"] == (
+        "Movies/And Justice for All (1979) {tmdb-17443}/"
+        "And Justice for All (1979) {tmdb-17443} - [Bluray-1080p].mkv"
+    )
+
+
+def test_an_extra_never_gets_a_hidden_name(app):
+    """The name of an extra is the name of its file (#717)."""
+
+    from app.naming import library_name
+
+    plex_title, basename = library_name(
+        {
+            "library": "Movies",
+            "title": "Jaws",
+            "year": 1975,
+            "feature_type": "Featurettes",
+            "version": "...And More",
+            "quality_title": "Bluray-1080p",
+            "extension": "mkv",
+        }
+    )
+    assert (plex_title, basename) == ("And More", "And More.mkv")
+
+
+def test_a_title_of_only_periods_keeps_its_name(app):
+    """No name is left when each character goes. Then the title stays as it is."""
+
+    from app.naming import library_name
+
+    plex_title, _ = library_name(
+        {"library": "Movies", "title": "...", "year": 1971, "extension": "mkv"}
+    )
+    assert plex_title == "... (1971)"
+
+
+def test_an_s3_key_part_never_starts_with_a_period(app):
+    """The key of an archive uses the same rule as the library name (#717)."""
+
+    from app.importing import sanitize_string
+
+    with app.app_context():
+        assert sanitize_string("...And Justice for All") == "And Justice for All"

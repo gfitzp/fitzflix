@@ -625,6 +625,8 @@ def test_a_title_with_a_period_at_the_end_is_safe(app):
         assert _filesystem_safe(title.replace(":", " -")), title
     assert not _filesystem_safe("Bad/Name")
     assert not _filesystem_safe("...")
+    # A folder that starts with a period is hidden (#717).
+    assert not _filesystem_safe(".hack")
 
 
 def test_the_sonarr_path_of_a_folder_with_a_slash_at_the_end(app, monkeypatch):

@@ -102,10 +102,15 @@ def _filesystem_safe(title):
     keeps them in the show folder and the episode names, for example
     "Les Misérables (2018)" (#408). The test reads the folder that the
     task writes (_folder_title), with no period at the end (#552). Thus,
-    "The Venture Bros." is safe."""
+    "The Venture Bros." is safe. A folder that starts with a period is
+    hidden, and it is not safe (#717)."""
 
     folder = _folder_title(title)
-    return bool(folder) and sanitize_filename(folder) == folder
+    return (
+        bool(folder)
+        and sanitize_filename(folder) == folder
+        and not folder.startswith(".")
+    )
 
 
 def _renamed_folder(part, old_folder, new_folder):
