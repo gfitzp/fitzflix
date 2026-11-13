@@ -352,7 +352,7 @@ def test_review_export_uses_letterboxd_import_format(app, admin_client, monkeypa
     def fake_send_email(subject, sender, recipients, **kwargs):
         sent["attachments"] = kwargs.get("attachments")
 
-    monkeypatch.setattr(account, "send_email", fake_send_email)
+    monkeypatch.setattr(account, "task_send_email", fake_send_email)
 
     page = admin_client.get("/profile").get_data(as_text=True)
     response = admin_client.post(
@@ -403,7 +403,7 @@ def test_review_export_uses_letterboxd_import_format(app, admin_client, monkeypa
 
 
 def capture_sent_attachments(monkeypatch):
-    """Stub the send_email of the History page.
+    """Stub the task_send_email of the History page.
 
     Return the list that collects the attachments of each call."""
 
@@ -414,7 +414,7 @@ def capture_sent_attachments(monkeypatch):
     def fake_send_email(subject, sender, recipients, **kwargs):
         sent.append(kwargs.get("attachments"))
 
-    monkeypatch.setattr(account, "send_email", fake_send_email)
+    monkeypatch.setattr(account, "task_send_email", fake_send_email)
     return sent
 
 
@@ -603,6 +603,57 @@ def test_incremental_export_with_nothing_new_sends_no_email(
 
     with app.app_context():
         assert db.session.get(User, user_id).date_reviews_exported == baseline
+
+
+def test_an_export_whose_mail_fails_marks_no_entry_as_exported(
+    app, admin_client, monkeypatch
+):
+    """The mail server refuses the mail. The entries stay "new" (#746).
+
+    The send ran in a thread, and its fault was only logged. The page
+    said "Emailed", the markers moved, and the next export had nothing."""
+
+    import app.main.account as account
+    from app import db
+    from app.diary import star_rating_fields
+    from app.models import User, UserMovieReview
+
+    with app.app_context():
+        user = User.query.first()
+        user.date_reviews_exported = None
+        user.last_export_review_id = None
+        user_id = user.id
+        db.session.add(
+            UserMovieReview(
+                user_id=user_id,
+                movie_id=make_movie("Unsent Watch", 2011).id,
+                date_watched=datetime(2024, 5, 1),
+                **star_rating_fields(3.0),
+            )
+        )
+        db.session.commit()
+
+    def refused(*args, **kwargs):
+        raise ConnectionRefusedError("the mail server is away")
+
+    monkeypatch.setattr(account, "task_send_email", refused)
+    token = csrf_token_from(admin_client.get("/profile").get_data(as_text=True))
+    page = admin_client.post(
+        "/profile",
+        data={"csrf_token": token, "export_submit": "Export Reviews"},
+        follow_redirects=True,
+    ).get_data(as_text=True)
+    assert "did not go out" in page
+    assert "Emailed" not in page
+    with app.app_context():
+        user = db.session.get(User, user_id)
+        assert user.date_reviews_exported is None
+        assert user.last_export_review_id is None
+
+    # The next export has the entry.
+    sent = capture_sent_attachments(monkeypatch)
+    export_reviews(admin_client, token)
+    assert len(sent) == 1
 
 
 def test_legacy_json_lines_upload_still_works(app, admin_client):
@@ -1663,7 +1714,7 @@ def test_feed_created_rows_never_export_back_to_letterboxd(
     def fake_send_email(subject, sender, recipients, **kwargs):
         sent["attachments"] = kwargs.get("attachments")
 
-    monkeypatch.setattr(account, "send_email", fake_send_email)
+    monkeypatch.setattr(account, "task_send_email", fake_send_email)
 
     page = admin_client.get("/profile").get_data(as_text=True)
     admin_client.post(

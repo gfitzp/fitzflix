@@ -7,6 +7,7 @@ import csv
 import io
 import json
 import secrets
+import traceback
 import zipfile
 
 
@@ -88,7 +89,7 @@ from app.recommendations import (
     stored_profile,
     stored_scores,
 )
-from app.email import send_email
+from app.email import task_send_email
 from app.streaming import (
     provider_registry,
 )
@@ -325,22 +326,39 @@ def _review_export_response(review_export_form):
     else:
         filename = "reviews.csv"
 
-    send_email(
-        "Fitzflix - Your movie reviews",
-        sender=("Fitzflix", current_app.config["SERVER_EMAIL"]),
-        recipients=[current_user.email],
-        text_body=render_template("email/reviews.txt", user=current_user),
-        html_body=render_template("email/reviews.html", user=current_user),
-        # Attach the file as UTF-8 bytes. With a str payload, the email
-        # package uses raw-unicode-escape. That changes curly quotes
-        # into literal \\u2019 sequences in the file.
-        attachments=[
-            (filename, "text/csv; charset=utf-8", f.getvalue().encode("utf-8"))
-        ],
-    )
+    # Invariant: an entry leaves the "new" set only after its mail went
+    # out (#746). The send runs in the request, and a fault raises. A
+    # send in a thread only logged its fault. Then the entries were
+    # marked as exported, and the next export left them out.
+
+    try:
+        task_send_email(
+            "Fitzflix - Your movie reviews",
+            sender=("Fitzflix", current_app.config["SERVER_EMAIL"]),
+            recipients=[current_user.email],
+            text_body=render_template("email/reviews.txt", user=current_user),
+            html_body=render_template("email/reviews.html", user=current_user),
+            # Attach the file as UTF-8 bytes. With a str payload, the email
+            # package uses raw-unicode-escape. That changes curly quotes
+            # into literal \\u2019 sequences in the file.
+            attachments=[
+                (filename, "text/csv; charset=utf-8", f.getvalue().encode("utf-8"))
+            ],
+        )
+    except Exception:
+        current_app.logger.error(
+            "Could not send the review export:\n" + traceback.format_exc()
+        )
+        f.close()
+        flash(
+            "The mail with your reviews did not go out. No entry is marked "
+            "as exported. Try again later.",
+            "danger",
+        )
+        return redirect(url_for("main.profile"))
 
     # Advance the export records. Both modes make Letterboxd current
-    # through this moment.
+    # through this moment, because the mail went out.
 
     current_user.date_reviews_exported = datetime.now()
     current_user.last_export_review_id = (
