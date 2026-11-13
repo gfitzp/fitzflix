@@ -716,96 +716,129 @@ def test_a_failed_move_request_keeps_the_source_and_the_replaced_archive(
     assert calls == [("hold", source, "unarchived"), ("arr record", source)]
 
 
-def _respelled_import(app, monkeypatch, title):
-    """Build the records of an import whose path differs from its record by letter case.
+def _record_with_other_spelling(app, monkeypatch, title):
+    """Make a film record whose path is the lower case of its library path.
 
-    MariaDB finds the record of the other spelling. The test database
-    does not. Thus, the lookup is given that record directly. Return
-    (file id, old path, details, worse local copies)."""
+    MariaDB finds this record for the path in any letter case. The test
+    database does not. Thus, the lookup is given the record directly.
+    Return (file id, old path, library path of the name in title case)."""
 
     from app import db, importing
     from tests.factories import make_movie, make_movie_file
 
     file = make_movie_file(make_movie(title, 1962), "DVD")
+    new_relative = file.file_path
+    file.basename = file.basename.lower()
+    file.file_path = os.path.join(file.dirname, file.basename)
     db.session.commit()
-    old_path = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
-    new_basename = file.basename.replace(title, title.upper())
-    details = {
-        "file_path": os.path.join(file.dirname, new_basename),
-        "dirname": file.dirname,
-        "basename": new_basename,
-        "plex_title": f"{title.upper()} (1962)",
-        "edition": None,
-        "media_library": "Movies",
-        "title": title,
-        "year": 1962,
-        "quality_title": "DVD",
-        "untouched_basename": new_basename,
-    }
-    inspection = {
-        "video": {},
-        "audio_tracks": [],
-        "subtitle_tracks": [],
-        "filesize_bytes": 5,
-    }
-    monkeypatch.setattr(importing, "_record_at_path", lambda path: file)
-    records = importing._build_records(details, inspection, new_basename)
-    db.session.commit()
-    return file.id, old_path, details, records[1]
+    file_id = file.id
+    monkeypatch.setattr(
+        importing, "_record_at_path", lambda path: db.session.get(File, file_id)
+    )
+    library = app.config["LIBRARY_DIR"]
+    return (
+        file_id,
+        os.path.join(library, file.file_path),
+        os.path.join(library, new_relative),
+    )
 
 
 def test_a_record_with_an_other_letter_case_takes_the_path_of_the_new_file(
-    app, monkeypatch
+    app, monkeypatch, sample_mkv
 ):
     """The path lookup of MariaDB ignores letter case, and the shares do not (#739).
 
-    The record got the tracks and the archive of the new file and kept
-    its old path. That path named no file. The record must follow the
-    file, and the file at the old spelling is the replaced file."""
+    Sonarr or Radarr replaced the file, so no file is at the old
+    spelling. The record got the tracks and the archive of the new file
+    and kept its old path, which named no file. The record must follow
+    the file. The thumb of an episode moves with it, as in a rename."""
 
-    from app import db
-    from app.models import File
+    from app import db, importing
 
+    thumbs = []
+    monkeypatch.setattr(
+        importing, "move_episode_thumb", lambda old, new: thumbs.append((old, new))
+    )
     with app.app_context():
-        file_id, old_path, details, worse = _respelled_import(
+        file_id, old_path, new_path = _record_with_other_spelling(
             app, monkeypatch, "Mixed Case Film"
         )
+        os.makedirs(os.path.dirname(new_path), exist_ok=True)
+        shutil.copy(sample_mkv, new_path)
+        finalize = _chain_until_the_cataloging(app, new_path)
+        finalize_localization(*finalize.args, **finalize.kwargs)
+
+        db.session.expire_all()
         row = db.session.get(File, file_id)
-        assert row.file_path == details["file_path"]
-        assert row.basename == details["basename"]
-        assert row.plex_title == details["plex_title"]
-        assert worse == [(old_path, None)]
+        assert row.file_path == os.path.relpath(new_path, app.config["LIBRARY_DIR"])
+        assert row.basename == os.path.basename(new_path)
+        assert File.query.count() == 1
+        assert thumbs == [(old_path, new_path)]
+    assert os.path.basename(new_path) in os.listdir(os.path.dirname(new_path))
+    os.remove(new_path)
 
 
-def test_a_file_at_the_old_spelling_goes_to_the_rejects(app, monkeypatch, tmp_path):
-    """The file at the old spelling can be a different extra of the film (#739).
+def test_a_file_at_the_other_spelling_makes_the_new_file_a_reject(
+    app, monkeypatch, tmp_path
+):
+    """The file at the old spelling can be a different extra of the film (#749).
 
     "Trailer.mkv" and "trailer.mkv" are 2 files on the shares, and only
-    1 can have a record. Thus, the file is never deleted. It goes to
-    the rejects. A path that names the new file itself is not touched.
-    A volume that ignores letter case has 1 file for the 2 spellings."""
+    1 can have a record. The new file goes to the rejects before any
+    work. The record, its file and its archive do not change."""
 
-    from app import importing
+    from types import SimpleNamespace
 
-    removed, rejected = [], []
-    monkeypatch.setattr(importing.os, "remove", removed.append)
+    from app import db, importing
+
+    rejected, released = [], []
     monkeypatch.setattr(
         importing,
         "move_to_rejects",
         lambda path, reason: rejected.append((path, reason)),
     )
-    new_file = tmp_path / "TRAILER.mkv"
-    new_file.write_bytes(b"new")
-    link = tmp_path / "an other name of the new file.mkv"
-    os.link(new_file, link)
-    other_extra = tmp_path / "A Different Trailer.mkv"
-    other_extra.write_bytes(b"old")
+    source = tmp_path / "Other Spelling Film (1962) - [DVD].mkv"
+    source.write_bytes(b"the new file")
     with app.app_context():
-        importing._delete_worse_copies(
-            [(str(link), None), (str(other_extra), None)], str(new_file)
+        file_id, old_path, new_path = _record_with_other_spelling(
+            app, monkeypatch, "Other Spelling Film"
         )
-    assert removed == []
-    assert rejected == [(str(other_extra), "other spelling")]
+        os.makedirs(os.path.dirname(old_path), exist_ok=True)
+        with open(old_path, "wb") as handle:
+            handle.write(b"the file of the record")
+        details = {
+            "file_path": os.path.relpath(new_path, app.config["LIBRARY_DIR"]),
+            "dirname": os.path.dirname(
+                os.path.relpath(new_path, app.config["LIBRARY_DIR"])
+            ),
+            "media_library": "Movies",
+            "title": "Other Spelling Film",
+            "year": 1962,
+            "quality_title": "DVD",
+        }
+        run = SimpleNamespace(
+            basename=source.name,
+            counters={"space_waits": 0},
+            release_lock=lambda: released.append(True),
+        )
+        before = db.session.get(File, file_id).file_path
+
+        assert importing._file_at_other_spelling(str(source), details) == old_path
+        assert (
+            importing._quality_and_space_gate(str(source), details, None, run)
+            == "reject"
+        )
+        assert rejected == [(str(source), "other spelling")]
+        assert released == [True]
+        assert db.session.get(File, file_id).file_path == before
+        with open(old_path, "rb") as handle:
+            assert handle.read() == b"the file of the record"
+
+        # A path that names the source itself is no other file. A volume
+        # that ignores letter case has 1 file for the 2 spellings.
+        assert importing._file_at_other_spelling(old_path, details) is None
+        os.remove(old_path)
+        assert importing._file_at_other_spelling(str(source), details) is None
 
 
 def _chain_until_the_cataloging(app, source):

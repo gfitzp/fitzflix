@@ -46,7 +46,7 @@ from sqlalchemy.exc import DBAPIError
 from flask import current_app, render_template
 from werkzeug.local import LocalProxy
 
-from app.custom_artwork import remove_episode_thumb_of
+from app.custom_artwork import move_episode_thumb, remove_episode_thumb_of
 from app.tasks import (
     LIVE_JOB_STATES,
     delete_job,
@@ -1202,6 +1202,22 @@ def _quality_and_space_gate(file_path, file_details, conversion, run):
                 held = hold_import(file_path, file_details, conversion, blockers)
                 run.release_lock()
                 return "hold" if held is not None else "reject"
+
+    # A record has this path in an other letter case, and its file is
+    # still on the disk (#749). The 2 files can be different works, for
+    # example 2 extras of a film. Only 1 can have a record. A person
+    # decides. The record, its file and its archive stay as they are.
+
+    other_spelling = _file_at_other_spelling(file_path, file_details)
+    if other_spelling:
+        current_app.logger.warning(
+            f"'{basename}' The library has '{other_spelling}', whose name "
+            f"differs only by letter case or accents. Fitzflix cannot hold "
+            f"both. The new file goes to the rejects"
+        )
+        move_to_rejects(file_path, "other spelling")
+        run.release_lock()
+        return "reject"
 
     # Look for better-quality versions of this file that already exist.
 
@@ -2862,15 +2878,16 @@ def _build_records(file_details, inspection, output_name, series_id=None):
     # the new file (#739). The lookup ignores letter case and accents on
     # MariaDB, and the library shares do not. A record with an other
     # spelling takes the path of the new file. A second record is not
-    # possible, because the unique key of the path ignores them too. A
-    # file that is still at the old spelling has no record then. It can
-    # be an older copy of this file, or a different extra of the film
-    # ("Trailer.mkv" and "trailer.mkv"). Thus, it goes to the rejects
-    # after the commit, and it is not deleted.
+    # possible, because the unique key of the path ignores them too. The
+    # gate of the localization rejects the new file while a file is at
+    # the old spelling (#749). Thus, no file is there now: Radarr or
+    # Sonarr replaced it. The old path goes to the follow-up work, which
+    # moves the thumb of an episode.
 
-    respelled_from = None
     if file and file.file_path != file_details.get("file_path"):
-        respelled_from = os.path.join(current_app.config["LIBRARY_DIR"], file.file_path)
+        file_details["respelled_from"] = os.path.join(
+            current_app.config["LIBRARY_DIR"], file.file_path
+        )
         current_app.logger.warning(
             f"{file} The record has the path '{file.file_path}'. It takes the "
             f"path of the new file, '{file_details.get('file_path')}'"
@@ -3016,9 +3033,24 @@ def _build_records(file_details, inspection, output_name, series_id=None):
     )
     if replaced_key:
         worse_aws_keys.insert(0, replaced_key)
-    if respelled_from:
-        worse_local_copies.append((respelled_from, None))
     return file, worse_local_copies, worse_aws_keys, kept_archives, pending_emails
+
+
+def _file_at_other_spelling(source_path, file_details):
+    """Return the library path of an other file whose record has this path in an other spelling.
+
+    The result is None when no record has an other spelling, or when
+    its file is not on the disk. It is None too when its path names the
+    source itself. That is a source in the library on a volume that
+    ignores letter case."""
+
+    record = _record_at_path(file_details.get("file_path"))
+    if record is None or record.file_path == file_details.get("file_path"):
+        return None
+    other = os.path.join(current_app.config["LIBRARY_DIR"], record.file_path)
+    if not os.path.isfile(other) or _same_file(other, source_path):
+        return None
+    return other
 
 
 def _record_at_path(library_file_path):
@@ -3719,6 +3751,12 @@ def _after_commit(
     step = partial(_follow_up, output_file)
 
     step("worse copies", _delete_worse_copies, worse_local_copies, output_file)
+
+    # The record took the spelling of the new file (#739). The thumb of
+    # an episode has the name of its video. It moves, as in a rename.
+
+    if file_details.get("respelled_from"):
+        step("thumb", move_episode_thumb, file_details["respelled_from"], output_file)
     for send in pending_emails:
         step("email", send)
 
@@ -3981,20 +4019,12 @@ def _delete_worse_copies(worse_local_copies, output_file):
     """Delete the library copies of the worse files and their triage snapshots.
 
     The new file never has the path of a worse file. The check is a
-    guard. A path with an other spelling can name the new file itself on
-    a volume that ignores letter case (#739). Such a path is not
-    touched. An entry with no id is the old spelling of the record of
-    the new file. A file there goes to the rejects. Its triage snapshots
-    and its thumb stay with the record."""
+    guard."""
 
     from app.triage import remove_triage_snapshots
 
     for worse_path, worse_id in worse_local_copies:
-        if worse_path == output_file or _same_file(worse_path, output_file):
-            continue
-        if worse_id is None:
-            if os.path.isfile(worse_path):
-                move_to_rejects(worse_path, "other spelling")
+        if worse_path == output_file:
             continue
         try:
             os.remove(worse_path)

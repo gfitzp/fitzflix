@@ -976,6 +976,9 @@ IMPORT_DETAIL_KEYS = frozenset(
         "replace_existing",
         # The size and the time of a source in the library (#742).
         "source_stamp",
+        # The old path of a record that took the spelling of the new
+        # file (#739, #749).
+        "respelled_from",
     }
 )
 
