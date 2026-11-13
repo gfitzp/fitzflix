@@ -649,10 +649,12 @@ def test_every_render_template_target_exists(app):
 
 
 def test_the_file_size_filter_uses_the_units_of_the_file_page(app):
-    """The file_size filter divides by 1024 and says MB, then GB (#772).
+    """The file_size filter divides by 1024 and says KB, MB, then GB (#772).
 
-    The GB step tests the rounded MB figure (#241). The Jinja filter
-    filesizeformat divides by 1000. It gave "92.3 GB" for this file."""
+    The GB step tests the rounded MB figure (#241), and the MB step tests
+    the rounded KB figure. The Jinja filter filesizeformat divides by
+    1000. It gave "92.3 GB" for this file. A file that is not empty
+    never reads "0 KB"."""
 
     file_size = app.jinja_env.filters["file_size"]
     assert file_size(92301176600) == "86.0 GB"
@@ -660,24 +662,35 @@ def test_the_file_size_filter_uses_the_units_of_the_file_page(app):
     assert file_size(1073689500) == "1.0 GB"
     assert file_size(1073600000) == "1023.9 MB"
     assert file_size(9698581) == "9.2 MB"
-    assert file_size(0) == "0.0 MB"
+    assert file_size(1048064) == "1.0 MB"
+    assert file_size(1047552) == "1023 KB"
+    assert file_size(524288) == "512 KB"
+    assert file_size(300) == "1 KB"
+    assert file_size(0) == "0 KB"
     assert file_size(None) == ""
 
 
 def test_no_template_uses_filesizeformat(app):
-    """Every page formats a size with the file_size filter (#772).
+    """No template calls the Jinja filter filesizeformat (#772).
 
-    The Jinja filter filesizeformat divides by 1000 and also says GB.
-    Thus, 1 file had 2 sizes on 2 pages."""
+    filesizeformat divides by 1000 and also says GB. Thus, 1 file had 2
+    sizes on 2 pages. The test reads each text file of the templates
+    folder, of any suffix. It skips only a file that is not text, for
+    example a .DS_Store of the Finder."""
 
     from pathlib import Path
 
     templates = Path(app.root_path) / "templates"
-    users = [
-        str(path.relative_to(templates))
-        for path in templates.rglob("*")
-        if path.suffix in (".html", ".txt") and "filesizeformat" in path.read_text()
-    ]
+    users = []
+    for path in templates.rglob("*"):
+        if not path.is_file():
+            continue
+        try:
+            text = path.read_bytes().decode("utf-8")
+        except UnicodeDecodeError:
+            continue
+        if "filesizeformat" in text:
+            users.append(str(path.relative_to(templates)))
     assert users == []
 
 

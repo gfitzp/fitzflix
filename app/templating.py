@@ -12,11 +12,16 @@ def file_size(size):
     The pages divide by 1024. Below 1024 MB, the text is MB with 1
     decimal. Then it is GB with 1 decimal. The GB step tests the ROUNDED
     MB figure, as the dropped filesize_megabytes column did. Thus, a file
-    at 1023.95 MiB shows as "1.0 GB", not as "1024.0 MB" (#241). None
-    gives no text."""
+    at 1023.95 MiB shows as "1.0 GB", not as "1024.0 MB" (#241). Below
+    1024 rounded KB, the text is whole KB. Thus, a sample or an .nfo on
+    Rejects does not show as "0.0 MB". A file that is not empty shows at
+    least "1 KB". Thus, "0 KB" is an empty file. None gives no text."""
 
     if size is None:
         return ""
+    kilobytes = round(size / 1024)
+    if kilobytes < 1024:
+        return f"{max(kilobytes, 1 if size else 0)} KB"
     megabytes = size / 1024**2
     if round(megabytes, 1) >= 1024:
         return f"{size / 1024**3:.1f} GB"

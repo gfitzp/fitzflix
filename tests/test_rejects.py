@@ -50,6 +50,21 @@ def test_rejects_page_lists_files_with_reasons(app, admin_client):
     assert "incorrect filename" in page
 
 
+def test_rejects_page_shows_each_size_through_the_file_size_filter(app, admin_client):
+    """A row shows the size in the units of the File page (#772).
+
+    A small file reads in whole KB, not as "0.0 MB"."""
+
+    reject_a_file(app, "exception", "Sample (2021) - [DVD].mkv", b"\0" * 512 * 1024)
+    reject_a_file(app, "exception", "Empty (2021) - [DVD].mkv", b"")
+    reject_a_file(app, "exception", "Part (2021) - [DVD].mkv", b"\0" * 3 * 1024**2)
+
+    page = admin_client.get("/rejects").get_data(as_text=True)
+    assert 'text-muted">512 KB &middot;' in page
+    assert 'text-muted">0 KB &middot;' in page
+    assert 'text-muted">3.0 MB &middot;' in page
+
+
 def test_reimport_moves_file_to_import_directory(app, admin_client):
     source = reject_a_file(app, "exception", "Retry Me (2021) - [DVD].mkv")
 
