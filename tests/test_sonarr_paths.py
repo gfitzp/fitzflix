@@ -231,7 +231,7 @@ def test_a_sonarr_folder_that_the_rename_cannot_give_is_a_conflict(app, sonarr, 
     """The folder goes through the checks of the rename task first.
 
     A folder with a character that a filesystem refuses is not safe for
-    the task. A folder with no file at its new path would leave the rows
+    the task. A folder with no file of the series would leave the rows
     at a folder with no files."""
 
     from app.series_rename import reconcile_sonarr_paths
@@ -249,7 +249,7 @@ def test_a_sonarr_folder_that_the_rename_cannot_give_is_a_conflict(app, sonarr, 
     assert summary["conflicts"] == 2 and summary["renamed"] == 0
     assert rename_jobs(app) == []
     assert "is not safe as a folder name" in caplog.text
-    assert "no file is at its new path in the Sonarr folder" in caplog.text
+    assert "no file of the series is in the Sonarr folder" in caplog.text
 
 
 def test_the_check_changes_nothing_over_the_limit(app, sonarr, caplog, monkeypatch):
@@ -348,6 +348,117 @@ def test_the_rename_task_completes_a_series_that_sonarr_moved(app, sonarr):
 
     # The next check finds the folders equal.
     assert reconcile_sonarr_paths()["renamed"] == 0
+
+
+def two_batman_episodes(app):
+    """Make Batman with E01 and E02 in the old folder. Return the series and file ids."""
+
+    from app import db
+
+    with app.app_context():
+        series = make_tv_series("Batman", tvdb_id=TVDB, tmdb_id=2287)
+        files = [make_tv_file(series, 1, n, "Bluray-1080p") for n in (1, 2)]
+        for file in files:
+            file.untouched_basename = file.basename
+        db.session.commit()
+        return series.id, [file.id for file in files]
+
+
+SECOND = "TV Shows/Batman (1966)/Season 01/Batman (1966) - S01E02 - [Bluray-1080p].mkv"
+
+
+def test_a_file_under_its_old_name_in_the_sonarr_folder_gets_the_new_name(app, sonarr):
+    """Sonarr moved the folder and did not rename an untracked file (#758).
+
+    The file keeps its old name in the new folder. The task renames it to
+    the planned name, with its thumb. Both records name their files."""
+
+    from app import db
+    from app.models import File, TVSeries
+    from app.series_rename import reconcile_sonarr_paths
+
+    series_id, ids = two_batman_episodes(app)
+    place(app, MOVED)
+    old_name = place(app, f"{NEW_FOLDER}/Batman - S01E02 - [Bluray-1080p].mkv")
+    old_thumb = place(app, f"{NEW_FOLDER}/Batman - S01E02 - [Bluray-1080p].jpg")
+    sonarr(sonarr_series("Batman (1966)"))
+
+    assert reconcile_sonarr_paths()["renamed"] == 1
+    (job,) = rename_jobs(app)
+    assert job.func(*job.args) is True
+
+    library = app.config["LIBRARY_DIR"]
+    with app.app_context():
+        assert db.session.get(TVSeries, series_id).title == "Batman (1966)"
+        paths = [db.session.get(File, file_id).file_path for file_id in ids]
+    assert paths == [MOVED, SECOND]
+    assert all(os.path.isfile(os.path.join(library, path)) for path in paths)
+    assert not os.path.exists(old_name) and not os.path.exists(old_thumb)
+    assert os.path.isfile(os.path.join(library, SECOND[: -len(".mkv")] + ".jpg"))
+
+
+def test_a_file_that_no_record_accounts_for_stops_the_rename(app, sonarr, caplog):
+    """Sonarr gave a file an other quality name (#758).
+
+    The file is at neither name of its record. The check and the task
+    refuse the rename with 1 warning, and no record changes."""
+
+    from app import db
+    from app.models import File, TVSeries
+    from app.series_rename import reconcile_sonarr_paths, rename_tv_series_task
+
+    series_id, ids = two_batman_episodes(app)
+    with app.app_context():
+        before = [db.session.get(File, file_id).file_path for file_id in ids]
+    place(app, MOVED)
+    other = f"{NEW_FOLDER}/Batman (1966) - S01E02 - [HDTV-1080p].mkv"
+    place(app, other)
+    place(app, f"{NEW_FOLDER}/Batman (1966) - S01E02 - [HDTV-1080p].en.srt")
+    place(app, f"{NEW_FOLDER}/.Batman - S01E03 - [Bluray-1080p].mkv")
+    place(app, "TV Shows/Batman (1966)/@eaDir/Batman - S01E04 - [DVD].mkv")
+    place(app, "TV Shows/Batman (1966)/poster.png")
+    sonarr(sonarr_series("Batman (1966)"))
+
+    summary = reconcile_sonarr_paths()
+    assert summary["conflicts"] == 1 and summary["renamed"] == 0
+    assert rename_jobs(app) == []
+    assert (
+        f"Not renamed, because 1 media file(s) in the Sonarr folder belong to "
+        f"no record of the series: [{other!r}]" in caplog.text
+    )
+
+    # The folder can change between the check and the task.
+    caplog.clear()
+    assert rename_tv_series_task(series_id, "Batman (1966)") is False
+    assert caplog.text.count("belong to no record of the series") == 1
+    with app.app_context():
+        assert db.session.get(TVSeries, series_id).title == "Batman"
+        assert [db.session.get(File, file_id).file_path for file_id in ids] == before
+
+
+def test_a_record_with_no_library_file_still_gets_the_new_name(app, sonarr):
+    """Each file in the Sonarr folder belongs to a record (#758).
+
+    Then a record with no file anywhere is an archived-only record, and
+    it gets the new name."""
+
+    from app import db
+    from app.models import File
+    from app.series_rename import reconcile_sonarr_paths
+
+    _series_id, ids = two_batman_episodes(app)
+    place(app, MOVED)
+    sonarr(sonarr_series("Batman (1966)"))
+
+    assert reconcile_sonarr_paths()["renamed"] == 1
+    (job,) = rename_jobs(app)
+    assert job.func(*job.args) is True
+    with app.app_context():
+        assert [db.session.get(File, file_id).file_path for file_id in ids] == [
+            MOVED,
+            SECOND,
+        ]
+    assert not os.path.exists(os.path.join(app.config["LIBRARY_DIR"], SECOND))
 
 
 # The episode-path adoption of a Sonarr rename.

@@ -343,6 +343,65 @@ def _rows_not_renamed(series, old_title, new_title):
     return left
 
 
+def _show_dir(folder, dirname):
+    """Return the part of a planned dirname that ends with its show folder."""
+
+    parts = dirname.split("/")
+    return "/".join(parts[: parts.index(folder) + 1])
+
+
+def _raise(error):
+    """Raise the error of os.walk. A silent walk can hide a file."""
+
+    raise error
+
+
+def _account_for_files(targets):
+    """Return the claimed and the unclaimed media files of the new show folders (#758).
+
+    targets holds (file, (folder, new_dirname, new_basename)) for each
+    record of the series. Invariant: each media file in the new show
+    folders belongs to exactly 1 record. The file has the planned name,
+    or it has the old basename of its record. Sonarr moves a series
+    folder and keeps the name of a file that it does not track. The old
+    path of each file is then gone. Thus, a record can be an archived-only
+    record only when no file of the new folders is left unclaimed.
+
+    The walk never enters a hidden directory or an @eaDir tree. It
+    reads only video files, so artwork, thumbs and subtitles do not
+    count. Return 2 sets of paths relative to LIBRARY_DIR. A read fault
+    raises OSError."""
+
+    from app.manual_imports import VIDEO_EXTENSIONS
+
+    library_dir = current_app.config["LIBRARY_DIR"]
+    found = set()
+    for show_dir in sorted({_show_dir(folder, d) for _f, (folder, d, _b) in targets}):
+        top = os.path.join(library_dir, show_dir)
+        if not os.path.isdir(top):
+            continue
+        for path, subdirs, names in os.walk(top, onerror=_raise):
+            subdirs[:] = [
+                name
+                for name in subdirs
+                if not name.startswith(".") and name != "@eaDir"
+            ]
+            found.update(
+                os.path.relpath(os.path.join(path, name), library_dir)
+                for name in names
+                if not name.startswith(".") and name.lower().endswith(VIDEO_EXTENSIONS)
+            )
+
+    claimed = set()
+    for file, (_folder, new_dirname, new_basename) in targets:
+        for name in (new_basename, file.basename):
+            path = f"{new_dirname}/{name}"
+            if path in found and path not in claimed:
+                claimed.add(path)
+                break
+    return claimed, found - claimed
+
+
 def _tv_library_down():
     """Return True if the TV library is not there or does not answer (#551).
 
@@ -359,7 +418,10 @@ def _move_series(series, new_title, volume_waits=0):
     """Move the files and rewrite the rows of a series. The caller holds the locks.
 
     An unmounted TV library defers the rename. It must not rewrite the
-    rows of files that it cannot see (#551)."""
+    rows of files that it cannot see (#551). A media file in the new
+    folder that no record accounts for stops the rename before a row
+    changes (#758). A record whose file has its old basename in the new
+    folder gets the file renamed to the planned name."""
 
     if _tv_library_down():
         _requeue_rename(
@@ -384,6 +446,7 @@ def _move_series(series, new_title, volume_waits=0):
     # Sonarr path for a folder that did not exist (#317).
 
     plan = []
+    targets = []
     unmatched = []
     sonarr_folder = _folder_title(new_title)
     for file in series.files.all():
@@ -393,10 +456,38 @@ def _move_series(series, new_title, volume_waits=0):
             continue
         sonarr_folder, new_dirname, new_basename = target
         plan.append((file, new_dirname, new_basename))
+        targets.append((file, target))
     if unmatched:
         current_app.logger.warning(
             f"Series rename: {len(unmatched)} file(s) don't carry the "
             f"series title, so nothing changed: {unmatched[:5]}"
+        )
+        return False
+
+    # The nightly check counted the files of the new folder. Sonarr can
+    # write there after the check, so the task counts them again before
+    # it changes a row (#758).
+
+    try:
+        _claimed, unclaimed = _account_for_files(targets)
+    except OSError as error:
+        current_app.logger.warning(
+            f"Series rename: the new folder of {old_title!r} could not be read: "
+            f"{type(error).__name__}: {error}"
+        )
+        _requeue_rename(
+            series,
+            new_title,
+            "waits for the TV library volume",
+            volume_waits=volume_waits,
+            volume=True,
+        )
+        return False
+    if unclaimed:
+        current_app.logger.warning(
+            f"Series rename: {len(unclaimed)} media file(s) in the new folder "
+            f"belong to no record of the series, so nothing changed: "
+            f"{sorted(unclaimed)[:5]}"
         )
         return False
 
@@ -433,6 +524,11 @@ def _move_series(series, new_title, volume_waits=0):
         new_path = f"{new_dirname}/{new_basename}"
         src = os.path.join(library_dir, file.file_path)
         dst = os.path.join(library_dir, new_path)
+        # Sonarr moved the folder and kept the name of a file that it
+        # does not track (#758). The file is in the new folder under its
+        # old basename.
+        kept_name = os.path.join(library_dir, new_dirname, file.basename)
+        source = src if os.path.isfile(src) else kept_name
 
         if new_path == file.file_path:
             # An earlier run renamed this row (#374).
@@ -440,17 +536,19 @@ def _move_series(series, new_title, volume_waits=0):
                 moved += 1
             else:
                 db_only += 1
-        elif os.path.isfile(src):
+        elif os.path.isfile(src) or (
+            os.path.isfile(kept_name) and not os.path.isfile(dst)
+        ):
             # os.rename replaces a file at the target without a word. The
             # movie rename refuses this shape (#554). A case-only rename
             # on a case-insensitive volume is the same file. It goes on.
-            if os.path.exists(dst) and not os.path.samefile(src, dst):
+            if os.path.exists(dst) and not os.path.samefile(source, dst):
                 # A retry cannot clear this (#575). Notify 1 time and stop.
                 _refuse_duplicate_target(series, file.file_path, new_path)
                 return False
             try:
                 makedirs_on_mounted_volume(os.path.dirname(dst))
-                _rename_with_retries(src, dst)
+                _rename_with_retries(source, dst)
             except OSError as error:
                 # The share dropped inside the loop (follow-up #551). The
                 # rows renamed so far are committed. The retry resumes.
@@ -467,8 +565,9 @@ def _move_series(series, new_title, volume_waits=0):
                 )
                 return False
             # The episode thumb goes with its video (#469)
-            move_episode_thumb(src, dst)
-            old_dirs.add(os.path.dirname(src))
+            move_episode_thumb(source, dst)
+            if source == src:
+                old_dirs.add(os.path.dirname(src))
             moved += 1
         elif os.path.isfile(dst):
             # A previous partial run moved the file. Complete the row.
@@ -485,8 +584,9 @@ def _move_series(series, new_title, volume_waits=0):
             )
             return False
         else:
-            # There is no local copy. This is an archived-only record.
-            # The rows get the new name. The archive keeps its key.
+            # There is no local copy. Each media file of the new folder
+            # belongs to a record (#758), so this is an archived-only
+            # record. The rows get the new name. The archive keeps its key.
             db_only += 1
 
         old_names = (file.basename, file.untouched_basename)
@@ -656,14 +756,38 @@ def fitzflix_folders(series):
     return folders
 
 
+def _unaccounted_reason(targets):
+    """Return the reason that the files of the Sonarr folder stop a rename, or None.
+
+    targets holds (file, planned target) for each record. Each media file
+    of the Sonarr folder must belong to a record (#758). At least 1 file
+    must be there. Otherwise the task moves nothing, and the records
+    point at a folder with no files."""
+
+    if any(target is None for _file, target in targets):
+        return "a file does not carry the series title"
+    try:
+        claimed, unclaimed = _account_for_files(targets)
+    except OSError as error:
+        return f"the Sonarr folder could not be read: {type(error).__name__}"
+    if unclaimed:
+        return (
+            f"{len(unclaimed)} media file(s) in the Sonarr folder belong to no "
+            f"record of the series: {sorted(unclaimed)[:5]}"
+        )
+    if not claimed:
+        return "no file of the series is in the Sonarr folder"
+    return None
+
+
 def _rename_title(series, folder, sonarr_folder):
     """Return the title that gives the series the Sonarr folder, or None.
 
     The title goes through the checks of the rename task. The title must
     be safe and free. The folder that the task makes from it must be the
-    Sonarr folder. At least one file must already be at its new path.
-    Otherwise the task moves nothing, and the records point at a folder
-    with no files. A refusal writes one warning."""
+    Sonarr folder. Each media file of the Sonarr folder must belong to a
+    record of the series, and at least 1 file must be there (#758). A
+    refusal writes one warning."""
 
     old_folder = _folder_title(series.title)
     tail = folder[len(old_folder) :] if folder.startswith(old_folder) else None
@@ -686,17 +810,11 @@ def _rename_title(series, folder, sonarr_folder):
     ):
         reason = f"a series titled {title!r} exists"
     else:
-        library_dir = current_app.config["LIBRARY_DIR"]
         targets = [
-            _planned_target(file, series.title, title) for file in series.files.all()
+            (file, _planned_target(file, series.title, title))
+            for file in series.files.all()
         ]
-        if None in targets:
-            reason = "a file does not carry the series title"
-        elif not any(
-            os.path.isfile(os.path.join(library_dir, dirname, basename))
-            for _folder, dirname, basename in targets
-        ):
-            reason = "no file is at its new path in the Sonarr folder"
+        reason = _unaccounted_reason(targets)
     if reason:
         current_app.logger.warning(
             f"Sonarr path check: {series.title!r} is at {sonarr_folder!r} in "
