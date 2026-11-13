@@ -5,8 +5,9 @@ SxxEyy - Title [Quality]". The filename parse stores this segment in
 file.edition. The Doctor Who (1963) specials are the population. They
 have custom episode numbers that no agent will title. The rule from
 Glenn: if a TV file has an edition, that edition IS the title of the
-episode. This applies to all shows and all seasons. A nightly sweep
-writes the title to Plex through the local API. It locks the title
+episode. This applies to all shows and all seasons of the first show
+library of Plex (_tv_section_key). Plex has 1 show library today. A
+nightly sweep writes the title to Plex through the local API. It locks the title
 field. This sweep replaces the external cron that wrote directly to
 the SQLite database of Plex. That cron used a hardcoded path offset of
 70 characters. A library move would have broken it.

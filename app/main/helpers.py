@@ -264,8 +264,9 @@ def _hold_verdict_lock(name):
     2 posts that run at the same time both read the latest review row
     before either commits. Thus, a double tap could write 2 rows for 1
     gesture. The second post waits here until the first post sends its
-    answer. Then it sees the committed row. The lock goes when the
-    response goes. If Redis fails, the post runs without the lock."""
+    answer, for 5 seconds at most. Then it sees the committed row. The
+    lock goes when the response goes. After the 5 seconds, or if Redis
+    fails, the post runs without the lock."""
 
     lock = current_app.redis.lock(
         VERDICT_LOCK_KEY.format(user_id=int(current_user.id), name=name),

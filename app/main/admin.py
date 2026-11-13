@@ -142,7 +142,8 @@ from rq.registry import FailedJobRegistry
 
 # The scheduled tasks that the Run now button of the System page does
 # not queue (#456). Each has a Maintenance page button with a bulk gate.
-# The S3 sync also needs the password there.
+# The S3 sync also needs a proof of identity there: a passkey or the
+# password.
 
 MAINTENANCE_PAGE_TASKS = frozenset(
     {
@@ -1003,7 +1004,9 @@ def missing_files():
     The page reads the stored result of the nightly scan. Scan now runs
     the scan again on the maintenance queue. The restore form requests
     a restore from AWS for each selected file, after a proof of identity.
-    That is the same path as the restore button of the file page. A
+    It calls request_restore, as the restore button of the file page
+    does. It has no check for a pending restore or for a newer library
+    file. It leaves out the files that are in the library again. A
     restore costs real money. Thus, the page shows the cost estimate
     of the whole list."""
 
@@ -1433,8 +1436,11 @@ def tmdb_triage():
         # This is the by-hand match of the movie and TV pages, without
         # their complex redirects. Enqueue the refresh at the front of the
         # queue. Then give it a moment to apply. Thus, the row is gone on
-        # reload. If the id already belongs to a different record, the
-        # merge path of the refresh merges this record into it
+        # reload. If the id already belongs to a different film record,
+        # the merge path of the refresh merges this record into it. A
+        # series has no merge path. Then 2 series records have the same
+        # id, and each later refresh of this record goes to the older
+        # one (#163)
 
         refresh_job = enqueue_task(
             "app.videos.refresh_tmdb_info",
@@ -1476,8 +1482,10 @@ def subtitle_triage(file_id):
     """Triage the subtitle tracks that look forced but have no flag.
 
     A file can hide more than 1 forced track. Thus, the candidates have
-    checkboxes. One mkvpropedit call flags the selected set. It keeps
-    the current defaults of the file. Dismiss marks the subtitles of
+    checkboxes. One mkvpropedit call flags the selected set. It keeps 1
+    default audio track and 1 default subtitle track of the file. If 2
+    tracks of a kind have the default flag, only the first that the
+    lookup returns keeps it. Dismiss marks the subtitles of
     the whole file as reviewed. Both actions delete the inspection aids
     of the file.
 

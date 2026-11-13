@@ -8,7 +8,8 @@ The main collection (#281) uses the rule of the criterion_collection
 reporting view. A main-feature file belongs in it when it is the best
 copy of its title group. Its quality must be physical media. Its movie
 must have a custom poster and a Criterion spine number that no other
-movie with files shares. Box sets that share 1 spine are not included.
+movie with a main feature on physical media shares. Box sets that share
+1 spine are not included.
 Only a movie with a main feature on physical media counts, because
 only such a movie can be in a box-set collection (#696). A catalog
 record with no files does not count. There is no extras rule, because

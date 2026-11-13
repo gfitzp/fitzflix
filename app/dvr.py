@@ -5,21 +5,26 @@ them as an M3U tuner. A channel is a frozen, ordered program list and
 an epoch timestamp stored in Redis. The schedule is pure arithmetic
 over the cumulative program durations. It repeats from the epoch
 without end. Thus, the XMLTV guide and the stream compute "what is on
-at time T" from the same snapshot. They can never disagree. Nothing
-runs and no file is opened until Plex tunes a stream URL.
+at time T" from the same snapshot. They agree while each file of the
+lineup is at its path. Nothing runs and no file is opened until Plex
+tunes a stream URL.
 
 The program durations must be the real container durations. A
 schedule from the TMDB runtime would drift the stream away from the
 guide by the accumulated error. Thus, the build probes each file 1
 time with ffprobe. It caches the result in Redis, keyed by file id. A
-file row is never changed in place. Thus, the cache needs no
-invalidation.
+file row can change in place: an import uses a record again, and a
+rewrite changes the size. Thus, each cached duration keeps the size and
+the localized date of its file, and a different file is probed again
+(#395).
 
 The lineup build is the only expensive part. It runs as a nightly
 maintenance task. It rotates the lineups in the same way that the
 landing-page shelves rotate. The guide that Plex holds between its own
-refreshes can be some hours behind a rebuild. The stream is always
-correct. The label can be stale. This is authentically cable.
+refreshes can be some hours behind a rebuild. The stream plays the
+lineup of the last build, and the label can be stale. A file that moved
+after the build is left out, and the stream then runs ahead of the
+guide until the next tune. This is authentically cable.
 """
 
 import json

@@ -9,7 +9,8 @@ PLEX_TOKEN with the Fitzflix user whose plex_username matches it. Each
 run is a two-way reconcile against the last-synced snapshot. The next
 state is (kept by both) plus (new adds from each side). The sync pushes
 each side to that state. Then the snapshot advances to the films that
-both sides hold. The FIRST run has an empty snapshot. Thus, the same
+both sides hold, plus the films whose removal at Plex failed. The FIRST
+run has an empty snapshot. Thus, the same
 formula gives a full union with no special case. Glenn chose this
 bootstrap. Films that fail to push stay out of the snapshot. Thus, they
 retry on each run. The sync never reads them as a removal.
