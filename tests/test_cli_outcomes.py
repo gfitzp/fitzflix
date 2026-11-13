@@ -150,7 +150,10 @@ def test_recs_leaving_says_that_it_kept_a_current_set(app, monkeypatch):
 
     result = _runner(app).invoke(args=["recs", "leaving"])
     assert result.exit_code == 0, result.output
-    assert "Kept the stored set of 1 film(s)" in result.output
+    assert (
+        f"Kept the stored set of 1 film(s) that depart on {date.today().isoformat()}"
+        in result.output
+    )
     assert "Nothing was fetched" in result.output
     assert "refreshed" not in result.output
     assert fetches == []
@@ -188,23 +191,44 @@ def test_recs_leaving_force_fetches_a_current_set(app, monkeypatch):
 
 
 def test_recs_leaving_says_that_the_page_had_no_films(app, monkeypatch):
-    """A page with no films keeps the stored set, and the command says so (#770)."""
+    """A fetch with no films changes no stored set, and the command says so (#770).
+
+    The command says only what it knows. With no stored set, nothing was
+    kept. After --force over a current set, the daily run keeps that set
+    and does not try again."""
+
+    from app.leaving_criterion import LEAVING_KEY
 
     monkeypatch.setattr(
         "app.leaving_criterion.fetch_leaving_films",
         lambda: (date.today(), "https://example.test/leaving", []),
     )
+    runner = _runner(app)
 
-    result = _runner(app).invoke(args=["recs", "leaving"])
+    result = runner.invoke(args=["recs", "leaving"])
     assert result.exit_code == 0, result.output
-    assert "Found no films on https://example.test/leaving" in result.output
-    assert "Kept the stored set" in result.output
+    assert (
+        "Found no films on https://example.test/leaving. The stored set did not "
+        "change. The daily run tries again."
+    ) in result.output
+    assert "Kept" not in result.output
+
+    planted = _plant_current_leaving_set(app)
+    result = runner.invoke(args=["recs", "leaving", "--force"])
+    assert result.exit_code == 0, result.output
+    assert (
+        "Found no films on https://example.test/leaving. The stored set did not "
+        "change."
+    ) in result.output
+    assert "daily run" not in result.output
+    assert app.redis.get(LEAVING_KEY).decode() == planted
 
 
 def test_recs_newly_added_counts_the_feeds(app, monkeypatch):
     """The command prints the count of the read and the failed feeds (#770).
 
-    When each feed failed, it exits with code 1."""
+    When each feed failed, it exits with code 1. A feed that raises counts
+    as failed, as a feed with no films does."""
 
     films = []
     monkeypatch.setattr("app.newly_added.fetch_collection_films", lambda url: films)
@@ -220,3 +244,73 @@ def test_recs_newly_added_counts_the_feeds(app, monkeypatch):
     result = runner.invoke(args=["recs", "newly-added"])
     assert result.exit_code == 0, result.output
     assert "Read 1 newly-added feed(s). 0 failed." in result.output
+
+    def broken_match(*args, **kwargs):
+        raise RuntimeError("TMDB is down")
+
+    films.append({"title": "Other Arrival", "year": 1961, "director": None})
+    monkeypatch.setattr("app.newly_added.match_tmdb_id", broken_match)
+    result = runner.invoke(args=["recs", "newly-added"])
+    assert result.exit_code == 1, result.output
+    assert "Read 0 newly-added feed(s). 1 failed." in result.output
+    assert "Each feed failed" in result.output
+
+
+def test_recs_newly_added_exits_0_when_some_feeds_failed(app, monkeypatch):
+    """A run with 1 read feed and 1 failed feed exits with code 0 (#770)."""
+
+    import app.newly_added as newly_added
+
+    pages = {
+        "https://example.test/read": [
+            {"title": "New Arrival", "year": 1960, "director": None}
+        ],
+        "https://example.test/empty": [],
+    }
+    monkeypatch.setattr(
+        newly_added,
+        "FEEDS",
+        {
+            9701: {"url": "https://example.test/read"},
+            9702: {"url": "https://example.test/empty"},
+        },
+    )
+    monkeypatch.setattr("app.newly_added.fetch_collection_films", pages.get)
+    monkeypatch.setattr("app.newly_added.match_tmdb_id", lambda *a, **k: None)
+
+    result = _runner(app).invoke(args=["recs", "newly-added"])
+    assert result.exit_code == 0, result.output
+    assert "Read 1 newly-added feed(s). 1 failed." in result.output
+    assert "Each feed failed" not in result.output
+
+
+def test_a_stored_feed_counts_as_read_when_the_lineup_build_raises(
+    app, monkeypatch, caplog
+):
+    """The queue fault after the store gives a warning, not a failed feed (#770)."""
+
+    import app.newly_added as newly_added
+
+    def broken_rebuild(*args, **kwargs):
+        raise RuntimeError("the queue is down")
+
+    app.redis.set(
+        newly_added.NEWLY_ADDED_KEY.format(
+            provider_id=newly_added.CRITERION_PROVIDER_ID
+        ),
+        json.dumps({"items": []}),
+    )
+    monkeypatch.setattr(
+        "app.newly_added.fetch_collection_films",
+        lambda url: [{"title": "New Arrival", "year": 1960, "director": None}],
+    )
+    monkeypatch.setattr("app.newly_added.match_tmdb_id", lambda *a, **k: 3110)
+    monkeypatch.setattr("app.newly_added.enriched_movie", lambda tmdb_id: None)
+    monkeypatch.setattr("app.newly_added.movie_gone", lambda tmdb_id: False)
+    monkeypatch.setattr("app.dvr.enqueue_lineup_rebuild", broken_rebuild)
+
+    with caplog.at_level("WARNING"):
+        result = _runner(app).invoke(args=["recs", "newly-added"])
+    assert result.exit_code == 0, result.output
+    assert "Read 1 newly-added feed(s). 0 failed." in result.output
+    assert "the queue is down" in caplog.text

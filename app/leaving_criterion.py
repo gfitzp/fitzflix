@@ -551,7 +551,8 @@ def match_tmdb_id(title, year, director=None, failures=None):
 
 # The result of refresh_leaving_criterion (#770). The outcome "kept"
 # means that the stored set is current and the task fetched nothing.
-# "no films" means that the page had no films and the stored set stays.
+# "no films" means that the fetch gave no films (an empty page, or a page
+# that did not answer) and the stored set did not change.
 # "stored" means that the task stored a new set. films is the count of
 # the films of the set. departs is the ISO date of the departure. The
 # value is truthy for each outcome.
@@ -568,16 +569,18 @@ def refresh_leaving_criterion(force=False):
     payloads. It does nothing while the departure of the stored set is
     in the future, unless a TMDB failure left the set incomplete. With
     force, it fetches the page also then. A page with no films keeps
-    the stored set. The daily cadence exists to retry
-    until Criterion publishes the page of the new month. That page
+    the stored set. A new set with the matched films and the departure
+    of the stored set queues no build of the DVR lineups. The daily
+    cadence exists to retry until Criterion publishes the page of the
+    new month. That page
     appears at some time after the old set departs. The schedule is
     not known. The stored set has no TTL. The shelf hides after the
     departure date passes."""
 
     with app.app_context():
-        stored = current_app.redis.get(LEAVING_KEY)
+        raw = current_app.redis.get(LEAVING_KEY)
+        stored = json.loads(raw) if raw else None
         if stored and not force:
-            stored = json.loads(stored)
             if date.fromisoformat(stored["departs"]) >= date.today() and not stored.get(
                 "incomplete"
             ):
@@ -652,12 +655,31 @@ def refresh_leaving_criterion(force=False):
         # the same day when an owned film is on it. The Channel
         # publishes the page of the new month on its own clock. On
         # 2026-09-01, that was after the nightly build.
-        from app.dvr import enqueue_lineup_rebuild
+        # Invariant: a set with the same matched films and the same
+        # departure as the stored set queues no rebuild (#770). A
+        # rebuild gives each channel a new start and reloads the Plex
+        # guide. A forced run can store the same set again.
+        if stored is None or _set_identity(stored) != _set_identity(
+            {"departs": departs.isoformat(), "items": items}
+        ):
+            from app.dvr import enqueue_lineup_rebuild
 
-        enqueue_lineup_rebuild(
-            "new leaving-Criterion set", tmdb_ids=[item["tmdb_id"] for item in items]
-        )
+            enqueue_lineup_rebuild(
+                "new leaving-Criterion set",
+                tmdb_ids=[item["tmdb_id"] for item in items],
+            )
         return LeavingRefresh("stored", len(items), departs.isoformat(), source)
+
+
+def _set_identity(leaving_set):
+    """Return the departure date and the sorted matched TMDB ids of a set.
+
+    The dial reads only these 2 facts of the set (_leaving_set). Thus, 2
+    sets with the same value give the dial the same input (#770)."""
+
+    items = leaving_set.get("items") or []
+    ids = sorted({item["tmdb_id"] for item in items if item.get("tmdb_id")})
+    return leaving_set.get("departs"), ids
 
 
 def leaving_shelf(user):

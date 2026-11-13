@@ -153,7 +153,8 @@ def _stored_entry(film, tmdb_id, payload, first_seen):
 def _refresh_feed(provider_id, feed):
     """Scrape, diff, and store the feed of one provider.
 
-    Return True when it stored the feed, False when the page had no films."""
+    Return True when it stored the feed. Return False when the fetch gave
+    no films (an empty page, or a page that did not answer)."""
 
     films = fetch_collection_films(feed["url"])
     if not films:
@@ -237,13 +238,18 @@ def _refresh_feed(provider_id, feed):
     )
     # An owned day-one arrival joins the Criterion channel of the DVR
     # through the synthesized match. Thus, the dial catches up the same
-    # day.
+    # day. The feed is stored before this step. Thus, a fault here gives a
+    # warning, and the feed counts as read (#770). The nightly build of
+    # the lineups catches up.
     if arrived and provider_id == CRITERION_PROVIDER_ID:
         from app.dvr import enqueue_lineup_rebuild
 
-        enqueue_lineup_rebuild(
-            f"{len(arrived)} newly-added Criterion films", tmdb_ids=arrived
-        )
+        try:
+            enqueue_lineup_rebuild(
+                f"{len(arrived)} newly-added Criterion films", tmdb_ids=arrived
+            )
+        except Exception:
+            current_app.logger.warning(traceback.format_exc())
     return True
 
 

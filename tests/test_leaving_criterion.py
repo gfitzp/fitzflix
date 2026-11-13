@@ -614,6 +614,98 @@ def test_an_empty_render_of_this_month_keeps_the_stored_set(app, monkeypatch, ca
     assert dvr_rebuild_jobs(app) == []
 
 
+def test_a_forced_store_of_the_same_set_builds_no_lineups(app, monkeypatch):
+    """Only a set with other matched films or another departure queues a build (#770).
+
+    A build gives each DVR channel a new start and reloads the Plex guide.
+    --force can store the set of the page again while a person watches."""
+
+    import app.leaving_criterion as leaving_criterion
+    from app import db
+
+    with app.app_context():
+        make_movie_file(make_movie("The Searchers", 1956, tmdb_id=3110), "DVD")
+        make_movie_file(make_movie("Rio Bravo", 1959, tmdb_id=301), "DVD")
+        db.session.commit()
+
+    departs = date.today()
+    films = [{"title": "The Searchers", "year": 1956, "director": "John Ford"}]
+    matches = {"The Searchers": 3110, "Rio Bravo": 301, "Love & Mercy": None}
+    monkeypatch.setattr(
+        "app.leaving_criterion.fetch_leaving_films",
+        lambda: (departs, "https://example.test/leaving", list(films)),
+    )
+    monkeypatch.setattr(
+        "app.leaving_criterion.match_tmdb_id",
+        lambda title, *args, **kwargs: matches[title],
+    )
+    monkeypatch.setattr(
+        "app.leaving_criterion.enriched_movie",
+        lambda tmdb_id: {"id": tmdb_id, "title": f"Film {tmdb_id}"},
+    )
+    app.redis.set(
+        leaving_criterion.LEAVING_KEY,
+        json.dumps(
+            {
+                "departs": departs.isoformat(),
+                "items": [{"title": "The Searchers", "tmdb_id": 3110}],
+            }
+        ),
+    )
+
+    # The page gives the stored set again, with 1 more film that has no
+    # match. The dial reads only the matched films and the departure.
+
+    films.append({"title": "Love & Mercy", "year": 2015, "director": "Bill Pohlad"})
+    result = leaving_criterion.refresh_leaving_criterion(force=True)
+    assert result.outcome == "stored"
+    assert result.films == 2
+    assert dvr_rebuild_jobs(app) == []
+
+    # A set with another matched film queues the build.
+
+    films.append({"title": "Rio Bravo", "year": 1959, "director": "Howard Hawks"})
+    assert leaving_criterion.refresh_leaving_criterion(force=True).outcome == "stored"
+    assert len(dvr_rebuild_jobs(app)) == 1
+
+
+def test_a_set_with_another_departure_builds_the_lineups(app, monkeypatch):
+    """The same films with another departure date queue a build (#770)."""
+
+    import app.leaving_criterion as leaving_criterion
+    from app import db
+
+    with app.app_context():
+        make_movie_file(make_movie("The Searchers", 1956, tmdb_id=3110), "DVD")
+        db.session.commit()
+
+    departs = date.today()
+    monkeypatch.setattr(
+        "app.leaving_criterion.fetch_leaving_films",
+        lambda: (
+            departs,
+            "https://example.test/leaving",
+            [{"title": "The Searchers", "year": 1956, "director": "John Ford"}],
+        ),
+    )
+    monkeypatch.setattr("app.leaving_criterion.match_tmdb_id", lambda *a, **k: 3110)
+    monkeypatch.setattr(
+        "app.leaving_criterion.enriched_movie", lambda tmdb_id: {"id": tmdb_id}
+    )
+    app.redis.set(
+        leaving_criterion.LEAVING_KEY,
+        json.dumps(
+            {
+                "departs": (departs - timedelta(days=1)).isoformat(),
+                "items": [{"title": "The Searchers", "tmdb_id": 3110}],
+            }
+        ),
+    )
+
+    assert leaving_criterion.refresh_leaving_criterion().outcome == "stored"
+    assert len(dvr_rebuild_jobs(app)) == 1
+
+
 def shelf_item(tmdb_id, title, runtime=100, genre=(37, "Western")):
     """Return a stored leaving-set item, the trimmed enriched payload."""
 

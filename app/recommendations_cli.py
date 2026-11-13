@@ -42,7 +42,9 @@ def register_cli(app):
         "--force",
         is_flag=True,
         help="Fetch the page also when the stored set is current. A cached "
-        "TMDB match of a film stays for 60 days. This option does not change it.",
+        "TMDB match of a film stays for 60 days. This option does not change it. "
+        "When the page gives the matched films and the departure of the stored "
+        "set, the DVR lineups are not built again.",
     )
     def leaving(force):
         """Run the daily refresh of the leaving-Criterion film set now.
@@ -62,9 +64,14 @@ def register_cli(app):
                 f"the page again."
             )
         elif result.outcome == "no films":
+            # Only an unforced run can say that the daily run tries again.
+            # It gets here only when the stored set is not current, and
+            # then the daily run fetches too. A forced run over a current
+            # set gets here too, and the daily run then keeps that set.
+
             click.echo(
-                f"Found no films on {result.source}. Kept the stored set. The "
-                f"daily run tries again."
+                f"Found no films on {result.source}. The stored set did not "
+                f"change." + ("" if force else " The daily run tries again.")
             )
         else:
             click.echo(
