@@ -397,16 +397,32 @@ def test_a_file_under_its_old_name_in_the_sonarr_folder_gets_the_new_name(app, s
     assert os.path.isfile(os.path.join(library, SECOND[: -len(".mkv")] + ".jpg"))
 
 
-def test_a_file_that_no_record_accounts_for_stops_the_rename(app, sonarr, caplog):
+def admin_mails(monkeypatch):
+    """Record the subject and the text of each admin mail."""
+
+    sent = []
+    monkeypatch.setattr(
+        "app.email.notify_admin_text",
+        lambda subject, text, html: sent.append((subject, text)),
+    )
+    return sent
+
+
+def test_a_file_that_no_record_accounts_for_stops_the_rename(
+    app, sonarr, caplog, monkeypatch
+):
     """Sonarr gave a file an other quality name (#758).
 
     The file is at neither name of its record. The check and the task
-    refuse the rename with 1 warning, and no record changes."""
+    refuse the rename with 1 warning, and no record changes. A video in
+    a hidden directory does not count. The admin gets 1 mail for the
+    life of the conflict, not 1 for each night."""
 
     from app import db
     from app.models import File, TVSeries
     from app.series_rename import reconcile_sonarr_paths, rename_tv_series_task
 
+    sent = admin_mails(monkeypatch)
     series_id, ids = two_batman_episodes(app)
     with app.app_context():
         before = [db.session.get(File, file_id).file_path for file_id in ids]
@@ -416,24 +432,239 @@ def test_a_file_that_no_record_accounts_for_stops_the_rename(app, sonarr, caplog
     place(app, f"{NEW_FOLDER}/Batman (1966) - S01E02 - [HDTV-1080p].en.srt")
     place(app, f"{NEW_FOLDER}/.Batman - S01E03 - [Bluray-1080p].mkv")
     place(app, "TV Shows/Batman (1966)/@eaDir/Batman - S01E04 - [DVD].mkv")
+    place(app, "TV Shows/Batman (1966)/.grab/Batman - S01E05 - [DVD].mkv")
     place(app, "TV Shows/Batman (1966)/poster.png")
     sonarr(sonarr_series("Batman (1966)"))
 
-    summary = reconcile_sonarr_paths()
-    assert summary["conflicts"] == 1 and summary["renamed"] == 0
+    for _night in range(2):
+        summary = reconcile_sonarr_paths()
+        assert summary["conflicts"] == 1 and summary["renamed"] == 0
     assert rename_jobs(app) == []
     assert (
         f"Not renamed, because 1 media file(s) in the Sonarr folder belong to "
         f"no record of the series: [{other!r}]" in caplog.text
     )
+    ((subject, text),) = sent
+    assert subject == "Series rename needs triage"
+    assert "'Batman'" in text and "'Batman (1966)'" in text
+    assert "1 video file(s)" in text and other in text
 
     # The folder can change between the check and the task.
     caplog.clear()
     assert rename_tv_series_task(series_id, "Batman (1966)") is False
     assert caplog.text.count("belong to no record of the series") == 1
+    assert len(sent) == 1
     with app.app_context():
         assert db.session.get(TVSeries, series_id).title == "Batman"
         assert [db.session.get(File, file_id).file_path for file_id in ids] == before
+
+
+def test_a_stray_file_in_an_other_season_folder_stops_the_rename(app, sonarr, caplog):
+    """The count reads each season folder of the show, not only the planned ones (#758)."""
+
+    from app.series_rename import reconcile_sonarr_paths
+
+    two_batman_episodes(app)
+    place(app, MOVED)
+    place(app, SECOND)
+    stray = "TV Shows/Batman (1966)/Season 02/Batman (1966) - S02E01 - [HDTV-1080p].mkv"
+    place(app, stray)
+    sonarr(sonarr_series("Batman (1966)"))
+
+    summary = reconcile_sonarr_paths()
+    assert summary["conflicts"] == 1 and rename_jobs(app) == []
+    assert f"belong to no record of the series: [{stray!r}]" in caplog.text
+
+
+def test_an_import_in_flight_is_not_a_stray_file(app, sonarr):
+    """A Sonarr Download of a moved series queues the rename (review of #758).
+
+    The new episode is in the Sonarr folder, and its record does not
+    exist yet. The task waits for the import and counts again."""
+
+    from app.series_rename import SONARR_CONFLICT_KEY, reconcile_sonarr_series
+
+    series_id, _ids = two_batman_episodes(app)
+    place(app, MOVED)
+    place(app, SECOND)
+    place(app, f"{NEW_FOLDER}/Batman (1966) - S01E03 - [WEBDL-1080p].mkv")
+    localizing(app, "Batman (1966) - S01E03 - [WEBDL-1080p].mkv")
+    sonarr(sonarr_series("Batman (1966)"))
+
+    summary = reconcile_sonarr_series(series_id)
+    assert summary["renamed"] == 1 and summary["conflicts"] == 0
+    assert len(rename_jobs(app)) == 1
+    assert not app.redis.exists(SONARR_CONFLICT_KEY.format(series_id=series_id))
+
+
+def rename_retries(app):
+    """Return the booked retries of the series rename."""
+
+    from tests.test_scheduling import scheduled_jobs
+
+    return [
+        job
+        for job in scheduled_jobs(app.file_queue)
+        if job.func_name == "app.series_rename.rename_tv_series_task"
+    ]
+
+
+def test_a_resumed_rename_that_meets_a_stray_file_books_a_retry(
+    app, sonarr, caplog, monkeypatch
+):
+    """Run 1 renames each row and waits for an import (review of #758).
+
+    The import fails, and its file stays in the Sonarr folder with no
+    record. Run 2 must not stop for good: the rows carry the new folder,
+    so the nightly check never queues the rename again. The retries have
+    a limit, and the last one tells the admin."""
+
+    import app.importing as importing
+    from app import db
+    from app.models import File, TVSeries
+    from app.series_rename import (
+        MAX_RENAME_STRAY_WAITS,
+        reconcile_sonarr_paths,
+        rename_tv_series_task,
+    )
+
+    sent = admin_mails(monkeypatch)
+    series_id, ids = two_batman_episodes(app)
+    place(app, MOVED)
+    place(app, SECOND)
+    sonarr(sonarr_series("Batman (1966)"))
+    assert reconcile_sonarr_paths()["renamed"] == 1
+    (job,) = rename_jobs(app)
+
+    # The import is in flight only at the end of the loop of run 1.
+    real_flight = importing.series_import_in_flight
+    calls = []
+    new = f"{NEW_FOLDER}/Batman (1966) - S01E03 - [WEBDL-1080p].mkv"
+
+    def flight(titles):
+        calls.append(titles)
+        return new if len(calls) == 2 else real_flight(titles)
+
+    monkeypatch.setattr(importing, "series_import_in_flight", flight)
+    assert job.func(*job.args) is False
+    monkeypatch.setattr(importing, "series_import_in_flight", real_flight)
+    with app.app_context():
+        assert db.session.get(TVSeries, series_id).title == "Batman"
+        assert [db.session.get(File, i).file_path for i in ids] == [MOVED, SECOND]
+    for retry in rename_retries(app):
+        retry.delete()
+
+    place(app, new)
+    caplog.clear()
+    assert rename_tv_series_task(series_id, "Batman (1966)") is False
+    assert "nothing changed" not in caplog.text
+    assert "The rows that are renamed already stay renamed" in caplog.text
+    (retry,) = rename_retries(app)
+    assert retry.kwargs == {"stray_waits": 1}
+    retry.delete()
+    assert sent == []
+
+    # The last retry stops, and the admin gets a mail.
+    caplog.clear()
+    assert (
+        rename_tv_series_task(
+            series_id, "Batman (1966)", stray_waits=MAX_RENAME_STRAY_WAITS
+        )
+        is False
+    )
+    assert rename_retries(app) == []
+    assert "It stops" in caplog.text
+    ((subject, text),) = sent
+    assert subject == "Series rename needs triage"
+    assert new in text and f"flask tv rename {series_id}" in text
+
+
+def test_a_fault_of_the_walk_books_the_volume_wait(app, sonarr, monkeypatch):
+    """os.walk reports a read fault through onerror. The task waits for the volume (#758)."""
+
+    from app import db
+    from app.models import File
+    from app.series_rename import rename_tv_series_task
+
+    series_id, ids = two_batman_episodes(app)
+    with app.app_context():
+        before = [db.session.get(File, file_id).file_path for file_id in ids]
+    place(app, MOVED)
+    place(app, SECOND)
+    show = os.path.join(app.config["TV_LIBRARY"], "Batman (1966)")
+    real_walk = os.walk
+
+    def walk(top, onerror=None, **kwargs):
+        if top == show:
+            onerror(PermissionError(13, "Permission denied", top))
+            return iter(())
+        return real_walk(top, onerror=onerror, **kwargs)
+
+    monkeypatch.setattr("app.series_rename.os.walk", walk)
+    assert rename_tv_series_task(series_id, "Batman (1966)") is False
+    (retry,) = rename_retries(app)
+    assert retry.kwargs == {"volume_waits": 1}
+    with app.app_context():
+        assert [db.session.get(File, file_id).file_path for file_id in ids] == before
+
+
+def test_a_copy_under_the_old_name_is_not_claimed_while_the_old_path_holds_the_file(
+    app, sonarr, caplog, monkeypatch
+):
+    """A record claims its old name in the new folder only when its old path is empty.
+
+    Else a copy made by hand passes the count and stays with no record
+    (review of #758)."""
+
+    from app import db
+    from app.models import File, TVSeries
+    from app.series_rename import rename_tv_series_task
+
+    sent = admin_mails(monkeypatch)
+    with app.app_context():
+        series_id, file_id = batman(app)
+        before = db.session.get(File, file_id).file_path
+    copy = f"{NEW_FOLDER}/Batman - S01E01 - [Bluray-1080p].mkv"
+    place(app, copy)
+
+    assert rename_tv_series_task(series_id, "Batman (1966)") is False
+    assert f"belong to no record of the series, so nothing changed: [{copy!r}]" in (
+        caplog.text
+    )
+    with app.app_context():
+        assert db.session.get(TVSeries, series_id).title == "Batman"
+        assert db.session.get(File, file_id).file_path == before
+    assert [subject for subject, _text in sent] == ["Series rename needs triage"]
+
+
+def test_a_file_with_an_other_size_than_the_record_is_not_claimed(app, sonarr, caplog):
+    """Sonarr gave the library file the planned name of an S3-only sibling (review of #758).
+
+    The sibling is an other quality of the same episode. Its size is not
+    the size of the file. Thus, the file stays unclaimed, and the check
+    refuses the rename. A record with the size of its file claims it."""
+
+    from app import db
+    from app.series_rename import reconcile_sonarr_paths
+
+    with app.app_context():
+        series = make_tv_series("Batman", tvdb_id=TVDB, tmdb_id=2287)
+        files = [
+            make_tv_file(series, 1, 1, "Bluray-1080p", filesize_bytes=5),
+            make_tv_file(series, 1, 1, "DVD", filesize_bytes=999),
+            make_tv_file(series, 1, 2, "Bluray-1080p", filesize_bytes=5),
+        ]
+        for file in files:
+            file.untouched_basename = file.basename
+        db.session.commit()
+    renamed = f"{NEW_FOLDER}/Batman (1966) - S01E01 - [DVD].mkv"
+    place(app, renamed)
+    place(app, SECOND)
+    sonarr(sonarr_series("Batman (1966)"))
+
+    summary = reconcile_sonarr_paths()
+    assert summary["conflicts"] == 1 and rename_jobs(app) == []
+    assert f"belong to no record of the series: [{renamed!r}]" in caplog.text
 
 
 def test_a_record_with_no_library_file_still_gets_the_new_name(app, sonarr):
@@ -894,8 +1125,11 @@ def test_a_series_matched_by_tmdb_takes_the_tvdb_id_and_is_repointed(app, sonarr
     assert reconcile_sonarr_paths()["repointed"] == 0
 
 
-def test_a_conflict_stops_the_download_checks_for_a_day(app, client, sonarr):
-    """A series in conflict queues no check for each Download. A Rename still does."""
+def test_a_conflict_stops_the_download_checks_for_2_days(app, client, sonarr):
+    """A series in conflict queues no check for each Download. A Rename still does.
+
+    The marker lives 2 days. A life of 1 day ended at the next nightly
+    check, with no margin (review of #758)."""
 
     from app.series_rename import SONARR_CONFLICT_KEY, reconcile_sonarr_series
 
@@ -906,7 +1140,7 @@ def test_a_conflict_stops_the_download_checks_for_a_day(app, client, sonarr):
 
     assert reconcile_sonarr_series(series_id)["conflicts"] == 1
     marker = SONARR_CONFLICT_KEY.format(series_id=series_id)
-    assert 0 < app.redis.ttl(marker) <= 86400
+    assert 86400 < app.redis.ttl(marker) <= 2 * 86400
 
     extra = download_fields(app, "Batman (1966)")
     client.post(

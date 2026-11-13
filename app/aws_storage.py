@@ -649,6 +649,13 @@ def _reconcile_files(listing, job):
     restores of the missing best files, and stores the object sizes.
     The inventory lists the best files for a bulk restore.
 
+    The pass requests no restore of a TV file whose series has the
+    Sonarr conflict marker (review of #758). After a refused Sonarr
+    rename, the records name the folder that Sonarr moved away. Then
+    each best copy of the series looks absent, and the files are in the
+    Sonarr folder. The markers are read 1 time for the pass. A Redis
+    fault there holds the restore of each TV file for this run.
+
     A library volume can drop during the pass (#431). Then each later
     file looks absent, and the pass would request a paid restore of
     each. Thus, the pass checks the volumes and the device ids of the
@@ -682,6 +689,7 @@ def _reconcile_files(listing, job):
 
     current_app.logger.info(f"Evaluating {len(files)} files for S3 sync")
 
+    held_restores = _HeldRestores({file.series_id for file, _rank in files})
     inventory_export = []
     orphaned_files = []
 
@@ -736,7 +744,7 @@ def _reconcile_files(listing, job):
                         f"'{file.aws_transcoded_key}' does not exist in "
                         f"the local library"
                     )
-                    _sync_restore(file.aws_transcoded_key)
+                    held_restores.restore(file, file.aws_transcoded_key)
 
         # The next branches test the state of the archive of the file.
 
@@ -802,7 +810,7 @@ def _reconcile_files(listing, job):
                     current_app.logger.info(
                         f"'{file.aws_key}' does not exist in the local library"
                     )
-                    _sync_restore(file.aws_key)
+                    held_restores.restore(file, file.aws_key)
 
         # The file is not in S3 and does not exist in the filesystem.
         elif file.aws_key not in s3_keys and not local:
@@ -820,9 +828,67 @@ def _reconcile_files(listing, job):
     # Store the AWS object sizes that this filled in.
 
     db.session.commit()
+    held_restores.report()
 
     current_app.logger.info(f"Orphaned files: {orphaned_files}")
     return inventory_export, orphaned_files
+
+
+class _HeldRestores:
+    """Hold the sync restores of the TV series with a Sonarr conflict (review of #758).
+
+    The markers of all series are read 1 time, with 1 MGET. A Redis
+    fault does not stop the sync. The safe side is no restore of a TV
+    file in this run, because a paid restore cannot be taken back. The
+    films are not touched."""
+
+    def __init__(self, series_ids):
+        from app.series_rename import series_in_sonarr_conflict
+
+        self.fault = None
+        self.counts = {}
+        try:
+            self.held = series_in_sonarr_conflict(
+                {series_id for series_id in series_ids if series_id is not None}
+            )
+        except Exception as error:
+            self.held = None
+            self.fault = f"{type(error).__name__}: {error}"
+
+    def restore(self, file, key):
+        """Request the restore of a key, or hold it for the series of the file."""
+
+        series_id = file.series_id
+        if series_id is not None and (self.held is None or series_id in self.held):
+            self.counts[series_id] = self.counts.get(series_id, 0) + 1
+            return
+        _sync_restore(key)
+
+    def report(self):
+        """Write 1 warning for each held series, or 1 warning after a Redis fault."""
+
+        if self.fault is not None:
+            current_app.logger.warning(
+                f"S3 sync: the Sonarr conflict markers could not be read "
+                f"({self.fault}). Thus, the sync requested no restore of "
+                f"{sum(self.counts.values())} TV file(s)"
+            )
+            return
+        if not self.counts:
+            return
+        from app.models import TVSeries
+
+        titles = dict(
+            db.session.query(TVSeries.id, TVSeries.title).filter(
+                TVSeries.id.in_(self.counts)
+            )
+        )
+        for series_id, count in sorted(self.counts.items()):
+            current_app.logger.warning(
+                f"S3 sync: requested no restore of {count} file(s) of the series "
+                f"{titles.get(series_id, series_id)!r}, because the Sonarr path "
+                f"check found a conflict for the series"
+            )
 
 
 def _sync_restore(key):

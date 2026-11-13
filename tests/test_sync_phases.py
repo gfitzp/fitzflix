@@ -384,3 +384,100 @@ def test_a_remount_in_the_file_pass_fails_the_pass(app, monkeypatch):
         listing = aws_storage._list_archives()
         with pytest.raises(aws_storage.LibraryVolumeDropped, match="mounted again"):
             aws_storage._reconcile_files(listing, None)
+
+
+def _absent_archived_episode(app, title, tvdb_id):
+    """Make a best-copy episode whose archive is in S3 and whose library file is absent."""
+
+    from app import db
+    from tests.factories import make_tv_file, make_tv_series
+
+    with app.app_context():
+        series = make_tv_series(title, tvdb_id=tvdb_id)
+        file = make_tv_file(
+            series,
+            1,
+            1,
+            "DVD",
+            aws_key=f"untouched/{title} - S01E01 - [DVD].mkv",
+            aws_date_uploaded=OLD,
+            aws_filesize_bytes=1,
+        )
+        db.session.commit()
+        return series.id, file.aws_key
+
+
+def _restores_of_the_file_pass(app, monkeypatch, keys):
+    """Run the file pass over a listing of keys. Return the restore requests."""
+
+    from app import aws_storage
+
+    restores = []
+    monkeypatch.setattr(
+        aws_storage, "aws_restore", lambda key, **kw: restores.append(key)
+    )
+    objects = [{"Key": key, "Size": 1, "LastModified": OLD} for key in keys]
+    monkeypatch.setattr(
+        aws_storage,
+        "get_matching_s3_objects",
+        lambda bucket, prefix="": objects if prefix == "untouched/" else [],
+    )
+    monkeypatch.setitem(app.config, "AWS_BUCKET", "test-bucket")
+    with app.app_context():
+        aws_storage._reconcile_files(aws_storage._list_archives(), None)
+    return restores
+
+
+def _sonarr_warnings(caplog):
+    return [
+        record.getMessage()
+        for record in caplog.records
+        if record.levelname == "WARNING" and "Sonarr" in record.getMessage()
+    ]
+
+
+def test_a_missing_best_episode_gets_its_restore_request(app, monkeypatch):
+    _series_id, key = _absent_archived_episode(app, "Batman", 77871)
+
+    assert _restores_of_the_file_pass(app, monkeypatch, [key]) == [key]
+
+
+def test_a_series_with_a_sonarr_conflict_gets_no_restore(app, monkeypatch, caplog):
+    """The records of a refused Sonarr rename name the folder that Sonarr moved (#758).
+
+    Each best copy then looks absent. The sync requests no paid restore
+    for the series while its conflict marker stands. It writes 1 warning
+    for the series. Other series and the films are not touched."""
+
+    from app.series_rename import SONARR_CONFLICT_KEY
+
+    series_id, held = _absent_archived_episode(app, "Batman", 77871)
+    _other_id, other = _absent_archived_episode(app, "Columbo", 78325)
+    film = _absent_archived_film(app, "Absent Film", 2004)
+    app.redis.set(SONARR_CONFLICT_KEY.format(series_id=series_id), "1")
+
+    restores = _restores_of_the_file_pass(app, monkeypatch, [held, other, film])
+    assert sorted(restores) == sorted([other, film])
+    assert _sonarr_warnings(caplog) == [
+        "S3 sync: requested no restore of 1 file(s) of the series 'Batman', "
+        "because the Sonarr path check found a conflict for the series"
+    ]
+
+
+def test_a_fault_of_the_conflict_markers_holds_each_tv_restore(
+    app, monkeypatch, caplog
+):
+    """A Redis fault does not stop the sync. No TV file gets a restore in that run (#758)."""
+
+    _series_id, episode = _absent_archived_episode(app, "Columbo", 78325)
+    film = _absent_archived_film(app, "Absent Film", 2004)
+
+    def down(*args, **kwargs):
+        raise ConnectionError("Redis is away")
+
+    monkeypatch.setattr(app.redis, "mget", down)
+    assert _restores_of_the_file_pass(app, monkeypatch, [episode, film]) == [film]
+    assert _sonarr_warnings(caplog) == [
+        "S3 sync: the Sonarr conflict markers could not be read (ConnectionError: "
+        "Redis is away). Thus, the sync requested no restore of 1 TV file(s)"
+    ]

@@ -178,12 +178,15 @@ def rename_refusal(series, new_title):
     return None
 
 
-def rename_tv_series_task(series_id, new_title, volume_waits=0):
+def rename_tv_series_task(series_id, new_title, volume_waits=0, stray_waits=0):
     """Rename the folder, files, and database rows of a TV series.
 
     This is a task. After the rename, it updates the Sonarr path and
     queues a Plex rescan. volume_waits counts the retries for the TV
     library volume (#575). It stops at MAX_RENAME_VOLUME_WAITS.
+    stray_waits counts the retries of a resumed rename that finds a media
+    file with no record (review of #758). It stops at
+    MAX_RENAME_STRAY_WAITS. Each retry carries both counts.
 
     The rename makes no request to S3 (#668). An archive keeps its key.
     flask aws converge-keys moves the keys that lag their names."""
@@ -199,11 +202,12 @@ def rename_tv_series_task(series_id, new_title, volume_waits=0):
             current_app.logger.warning(f"Series rename: {refusal}")
             return False
 
-        locks = _take_series_locks(series, new_title, volume_waits)
+        waits = {"volume_waits": volume_waits, "stray_waits": stray_waits}
+        locks = _take_series_locks(series, new_title, waits)
         if locks is None:
             return False
         try:
-            return _move_series(series, new_title, volume_waits)
+            return _move_series(series, new_title, waits)
         finally:
             for lock in locks:
                 current_app.lock_manager.unlock(lock)
@@ -222,6 +226,13 @@ RENAME_TASK = "app.series_rename.rename_tv_series_task"
 
 RENAME_SECONDS_PER_FILE = 30
 
+# A resumed rename that finds a media file with no record waits this
+# many times for the import of the file (review of #758). With the waits
+# of RENAME_WAIT_MINUTES, that is about 2 hours. Then the rename stops,
+# and the admin gets a mail.
+
+MAX_RENAME_STRAY_WAITS = 12
+
 
 def rename_timeout(series):
     """Return the time limit of the rename of a series, in seconds.
@@ -233,14 +244,14 @@ def rename_timeout(series):
     return max(floor, RENAME_SECONDS_PER_FILE * series.files.count())
 
 
-def _take_series_locks(series, new_title, volume_waits=0):
+def _take_series_locks(series, new_title, waits=None):
     """Take the title lock of each episode of a series. Return the locks.
 
     Return None after the rename goes back on its queue. An import takes
     the lock of its episode. A new episode has no lock yet, so the
     rename also waits for each import of the series that is not done.
     Else the import attaches by the old title at its end and makes a
-    second series (#370)."""
+    second series (#370). waits holds the retry counts of the task."""
 
     from app.importing import series_import_in_flight
     from app.models import TV_SHOWS, title_lock_key
@@ -263,7 +274,7 @@ def _take_series_locks(series, new_title, volume_waits=0):
         return locks
     for lock in locks:
         current_app.lock_manager.unlock(lock)
-    _requeue_rename(series, new_title, reason, volume_waits=volume_waits)
+    _requeue_rename(series, new_title, reason, waits)
     return None
 
 
@@ -283,33 +294,44 @@ def _lock_seconds(series):
     return rename_timeout(series)
 
 
-def _requeue_rename(series, new_title, reason, volume_waits=0, volume=False):
+def _requeue_rename(series, new_title, reason, waits=None, counted=None):
     """Put the rename of a series back on its queue after RENAME_WAIT_MINUTES.
 
-    A wait for the volume counts (#575). After MAX_RENAME_VOLUME_WAITS
-    waits, the rename stops with an ERROR, as the movie rename does.
-    Each retry carries the count."""
+    Return False when the rename stops at its limit, else True. waits
+    holds the retry counts of the task. counted names the count that
+    this wait adds 1 to. A wait for the volume counts (#575), and so
+    does a wait for the record of a media file (review of #758). At the
+    limit of its count, the rename stops with an ERROR, as the movie
+    rename does. Each retry carries every count that is not 0 (#351)."""
 
     from app.tasks import requeue
     from app.tmdb_refresh import MAX_RENAME_VOLUME_WAITS
 
-    if volume:
-        if volume_waits >= MAX_RENAME_VOLUME_WAITS:
+    waits = dict(waits or {})
+    limits = {
+        "volume_waits": MAX_RENAME_VOLUME_WAITS,
+        "stray_waits": MAX_RENAME_STRAY_WAITS,
+    }
+    if counted:
+        done = waits.get(counted, 0)
+        if done >= limits[counted]:
             current_app.logger.error(
                 f"Series rename of {series.title!r} {reason} after "
-                f"{volume_waits} waits. It stops. Rename the series again later"
+                f"{done} waits. It stops. Rename the series again later"
             )
-            return
-        volume_waits += 1
+            return False
+        waits[counted] = done + 1
+    counters = {name: count for name, count in waits.items() if count}
     requeue(
         RENAME_TASK,
         key=series.id,
         delay=RENAME_WAIT_MINUTES,
         reason=f"Series rename of {series.title!r} {reason}",
-        counters={"volume_waits": volume_waits} if volume_waits else None,
+        counters=counters or None,
         args=(series.id, new_title),
         timeout=rename_timeout(series),
     )
+    return True
 
 
 def _refuse_duplicate_target(series, src_relative, dst_relative):
@@ -332,6 +354,65 @@ def _refuse_duplicate_target(series, src_relative, dst_relative):
         f"{escape(detail)}.</p><p>Delete one of the copies, then rename "
         f"the series again.</p>",
     )
+
+
+def _tell_admin_of_stray_files(series, new_title, stray, resumed=False):
+    """Mail the admin about the media files that stop a series rename (review of #758).
+
+    stray holds the paths, relative to LIBRARY_DIR, of the media files
+    that belong to no record. A refusal mails 1 time for each life of
+    SONARR_STRAY_MAIL_KEY. Each refusal gives the marker a new life, as
+    the conflict marker gets each night. Thus, a refusal that comes back
+    each night sends 1 mail. A resumed rename (resumed=True) mails when
+    its waits are used up. That occurs 1 time for each rename. The
+    function never raises."""
+
+    from markupsafe import escape
+
+    from app.email import notify_admin_text
+
+    try:
+        if not resumed:
+            key = SONARR_STRAY_MAIL_KEY.format(series_id=series.id)
+            try:
+                fresh = current_app.redis.set(key, "1", ex=SONARR_CONFLICT_TTL, nx=True)
+                if not fresh:
+                    current_app.redis.expire(key, SONARR_CONFLICT_TTL)
+                    return
+            except Exception:
+                # A Redis fault must not hide the refusal. Send the mail.
+                current_app.logger.warning(traceback.format_exc())
+        names = sorted(stray)[:5]
+        intro = (
+            f"The series '{series.title}' is only partly renamed to "
+            f"'{new_title}'. The records have the new folder, but the title "
+            f"did not change."
+            if resumed
+            else f"The series '{series.title}' was not renamed to '{new_title}'."
+        )
+        found = (
+            f"{len(stray)} video file(s) in the new folder belong to no record "
+            f"of the series."
+        )
+        action = (
+            "Import each file or remove it. You can also give a file the name "
+            "of its record again."
+        )
+        then = (
+            f"Then run flask tv rename {series.id} '{new_title}' again."
+            if resumed
+            else "Then the nightly Sonarr check renames the series."
+        )
+        listing = "\n".join(f"- {name}" for name in names)
+        notify_admin_text(
+            "Series rename needs triage",
+            f"{intro} {found}\n\n{listing}\n\n{action} {then}",
+            f"<p>{escape(intro)} {escape(found)}</p><ul>"
+            + "".join(f"<li>{escape(name)}</li>" for name in names)
+            + f"</ul><p>{escape(action)} {escape(then)}</p>",
+        )
+    except Exception:
+        current_app.logger.error(traceback.format_exc())
 
 
 def _rows_not_renamed(series, old_title, new_title):
@@ -363,16 +444,24 @@ def _account_for_files(targets):
 
     targets holds (file, (folder, new_dirname, new_basename)) for each
     record of the series. Invariant: each media file in the new show
-    folders belongs to exactly 1 record. The file has the planned name,
-    or it has the old basename of its record. Sonarr moves a series
-    folder and keeps the name of a file that it does not track. The old
-    path of each file is then gone. Thus, a record can be an archived-only
-    record only when no file of the new folders is left unclaimed.
+    folders belongs to exactly 1 record. A record claims a file of its
+    planned folder that has its planned name. It claims a file under its
+    old basename only when its old path holds no other file. Thus, a
+    copy made by hand does not pass. On a volume that ignores case, the
+    old path of a case-only rename is the same file. The size of the
+    file must be the size of the record, when the record has one. Thus,
+    an S3-only record of an other quality does not claim a file that
+    Sonarr gave its name (review of #758). Sonarr moves a series folder and keeps the name of a file
+    that it does not track. The old path of each file is then gone.
+    Thus, a record can be an archived-only record only when no file of
+    the new folders is left unclaimed.
 
     The walk never enters a hidden directory or an @eaDir tree. It
     reads only video files, so artwork, thumbs and subtitles do not
-    count. Return 2 sets of paths relative to LIBRARY_DIR. A read fault
-    raises OSError."""
+    count. Return 2 sets of paths relative to LIBRARY_DIR. A fault of
+    the walk or of a size read raises OSError. A show folder that
+    os.path.isdir does not find is not read, also when its stat fails.
+    os.walk does not enter a subdirectory that it cannot stat."""
 
     from app.manual_imports import VIDEO_EXTENSIONS
 
@@ -394,13 +483,25 @@ def _account_for_files(targets):
                 if not name.startswith(".") and name.lower().endswith(VIDEO_EXTENSIONS)
             )
 
+    def claims(file, path):
+        if path not in found or path in claimed:
+            return False
+        size = file.filesize_bytes
+        absolute = os.path.join(library_dir, path)
+        return size is None or os.path.getsize(absolute) == int(size)
+
+    def copy_of(old, kept):
+        old, kept = os.path.join(library_dir, old), os.path.join(library_dir, kept)
+        return os.path.isfile(old) and not os.path.samefile(old, kept)
+
     claimed = set()
     for file, (_folder, new_dirname, new_basename) in targets:
-        for name in (new_basename, file.basename):
-            path = f"{new_dirname}/{name}"
-            if path in found and path not in claimed:
-                claimed.add(path)
-                break
+        planned = f"{new_dirname}/{new_basename}"
+        kept = f"{new_dirname}/{file.basename}"
+        if claims(file, planned):
+            claimed.add(planned)
+        elif claims(file, kept) and not copy_of(file.file_path, kept):
+            claimed.add(kept)
     return claimed, found - claimed
 
 
@@ -416,22 +517,25 @@ def _tv_library_down():
     return not os.path.isdir(tv_library) or bool(_dead_volumes([tv_library]))
 
 
-def _move_series(series, new_title, volume_waits=0):
+def _move_series(series, new_title, waits=None):
     """Move the files and rewrite the rows of a series. The caller holds the locks.
 
     An unmounted TV library defers the rename. It must not rewrite the
     rows of files that it cannot see (#551). A media file in the new
     folder that no record accounts for stops the rename before a row
     changes (#758). A record whose file has its old basename in the new
-    folder gets the file renamed to the planned name."""
+    folder gets the file renamed to the planned name. A resumed rename
+    whose rows changed already waits for the record of such a file. It
+    must not stop for good: the nightly check finds the new folder in
+    the rows and does not queue the rename again (review of #758)."""
 
     if _tv_library_down():
         _requeue_rename(
             series,
             new_title,
             "waits for the TV library volume",
-            volume_waits=volume_waits,
-            volume=True,
+            waits,
+            counted="volume_waits",
         )
         return False
 
@@ -481,16 +585,33 @@ def _move_series(series, new_title, volume_waits=0):
             series,
             new_title,
             "waits for the TV library volume",
-            volume_waits=volume_waits,
-            volume=True,
+            waits,
+            counted="volume_waits",
         )
         return False
     if unclaimed:
+        names = sorted(unclaimed)[:5]
+        if any(file.file_path == f"{d}/{b}" for file, d, b in plan):
+            current_app.logger.warning(
+                f"Series rename: {len(unclaimed)} media file(s) in the new "
+                f"folder belong to no record of the series. The rows that are "
+                f"renamed already stay renamed: {names}"
+            )
+            if not _requeue_rename(
+                series,
+                new_title,
+                "waits for a record of each media file in the new folder",
+                waits,
+                counted="stray_waits",
+            ):
+                _tell_admin_of_stray_files(series, new_title, unclaimed, resumed=True)
+            return False
         current_app.logger.warning(
             f"Series rename: {len(unclaimed)} media file(s) in the new folder "
-            f"belong to no record of the series, so nothing changed: "
-            f"{sorted(unclaimed)[:5]}"
+            f"belong to no record of the series, so nothing changed: {names}"
         )
+        _mark_conflict(series)
+        _tell_admin_of_stray_files(series, new_title, unclaimed)
         return False
 
     # Keep the Plex item of the show through the rename. The show folder
@@ -538,9 +659,7 @@ def _move_series(series, new_title, volume_waits=0):
                 moved += 1
             else:
                 db_only += 1
-        elif os.path.isfile(src) or (
-            os.path.isfile(kept_name) and not os.path.isfile(dst)
-        ):
+        elif os.path.isfile(src) or os.path.isfile(kept_name):
             # os.rename replaces a file at the target without a word. The
             # movie rename refuses this shape (#554). A case-only rename
             # on a case-insensitive volume is the same file. It goes on.
@@ -562,14 +681,15 @@ def _move_series(series, new_title, volume_waits=0):
                     series,
                     new_title,
                     "waits for the TV library volume",
-                    volume_waits=volume_waits,
-                    volume=True,
+                    waits,
+                    counted="volume_waits",
                 )
                 return False
-            # The episode thumb goes with its video (#469)
+            # The episode thumb goes with its video (#469). The old
+            # folder of a file that Sonarr moved is gone already, and
+            # clear_leftover_directory returns at once for it.
             move_episode_thumb(source, dst)
-            if source == src:
-                old_dirs.add(os.path.dirname(src))
+            old_dirs.add(os.path.dirname(src))
             moved += 1
         elif os.path.isfile(dst):
             # A previous partial run moved the file. Complete the row.
@@ -581,14 +701,17 @@ def _move_series(series, new_title, volume_waits=0):
                 series,
                 new_title,
                 "waits for the TV library volume",
-                volume_waits=volume_waits,
-                volume=True,
+                waits,
+                counted="volume_waits",
             )
             return False
         else:
-            # There is no local copy. Each media file of the new folder
-            # belongs to a record (#758), so this is an archived-only
-            # record. The rows get the new name. The archive keeps its key.
+            # No file is at the old path, at the planned name or under the
+            # old basename. The count found a record for each media file
+            # of the new show folders (#758). Thus, this record counts as
+            # an archived-only record. The count does not read a folder
+            # outside the new show folders. The rows get the new name. The
+            # archive keeps its key.
             db_only += 1
 
         old_names = (file.basename, file.untouched_basename)
@@ -622,7 +745,7 @@ def _move_series(series, new_title, volume_waits=0):
             if source
             else f"found {len(left)} file(s) with the old title: {left[:5]}"
         )
-        _requeue_rename(series, new_title, reason, volume_waits=volume_waits)
+        _requeue_rename(series, new_title, reason, waits)
         return False
 
     # This step is aware of junk files. It is not a plain rmdir. The
@@ -673,13 +796,24 @@ MAX_SONARR_FIXES = 20
 
 SONARR_SERIES_EVENTS = ("Rename", "Download", "SeriesAdd")
 
-# A series with a conflict gets this marker for 1 day. While it stands,
+# A series with a conflict gets this marker for 2 days. While it stands,
 # a Download event of the series queues no check. A Rename and a
 # SeriesAdd still do. Thus, a series that stays in conflict does not
-# write a warning for each episode.
+# write a warning for each episode. The weekly S3 sync requests no
+# restore of a file of a series with the marker (review of #758).
+# The nightly check sets the marker again each night at 05:45. A life
+# of 1 day ended at the next check, with no margin. A life of 2 days
+# keeps the marker through 1 night with no check. Then the marker of
+# Friday still stands at the sync of Sunday 02:00.
 
 SONARR_CONFLICT_KEY = "fitzflix:sonarr:conflict:{series_id}"
-SONARR_CONFLICT_TTL = 86400
+SONARR_CONFLICT_TTL = 2 * 86400
+
+# A refusal for media files with no record mails the admin 1 time for
+# each life of this marker (review of #758). It has the life of the
+# conflict marker.
+
+SONARR_STRAY_MAIL_KEY = "fitzflix:sonarr:stray-mail:{series_id}"
 
 
 def _summary(**counts):
@@ -758,28 +892,45 @@ def fitzflix_folders(series):
     return folders
 
 
-def _unaccounted_reason(targets):
-    """Return the reason that the files of the Sonarr folder stop a rename, or None.
+def _unaccounted_reason(targets, titles):
+    """Return the reason that the Sonarr folder stops a rename, and the stray files.
 
     targets holds (file, planned target) for each record. Each media file
     of the Sonarr folder must belong to a record (#758). At least 1 file
     must be there. Otherwise the task moves nothing, and the records
-    point at a folder with no files."""
+    point at a folder with no files. The reason is None when the rename
+    can go on. The stray files are the paths with no record when they
+    are the reason, else an empty set.
+
+    An import of the series that is not done is not a stray file (review
+    of #758). Its record does not exist yet. titles holds the old and
+    the new title. When an import of either title is in flight and at
+    least 1 file is claimed, the rename goes on. The task waits for that
+    import in _take_series_locks and counts the files again under the
+    locks. Thus, a real stray file still stops it there."""
 
     if any(target is None for _file, target in targets):
-        return "a file does not carry the series title"
+        return "a file does not carry the series title", set()
     try:
         claimed, unclaimed = _account_for_files(targets)
     except OSError as error:
-        return f"the Sonarr folder could not be read: {type(error).__name__}"
-    if unclaimed:
+        return f"the Sonarr folder could not be read: {type(error).__name__}", set()
+    if unclaimed and not (claimed and _import_in_flight(titles)):
         return (
             f"{len(unclaimed)} media file(s) in the Sonarr folder belong to no "
             f"record of the series: {sorted(unclaimed)[:5]}"
-        )
+        ), unclaimed
     if not claimed:
-        return "no file of the series is in the Sonarr folder"
-    return None
+        return "no file of the series is in the Sonarr folder", set()
+    return None, set()
+
+
+def _import_in_flight(titles):
+    """Return True if an import of a series with one of these titles is not done."""
+
+    from app.importing import series_import_in_flight
+
+    return series_import_in_flight(titles) is not None
 
 
 def _rename_title(series, folder, sonarr_folder):
@@ -789,7 +940,9 @@ def _rename_title(series, folder, sonarr_folder):
     be safe and free. The folder that the task makes from it must be the
     Sonarr folder. Each media file of the Sonarr folder must belong to a
     record of the series, and at least 1 file must be there (#758). A
-    refusal writes one warning."""
+    file of an import that is not done does not count. A refusal writes
+    one warning. A refusal for media files with no record also mails the
+    admin, 1 time for each life of SONARR_STRAY_MAIL_KEY."""
 
     old_folder = _folder_title(series.title)
     tail = folder[len(old_folder) :] if folder.startswith(old_folder) else None
@@ -798,6 +951,7 @@ def _rename_title(series, folder, sonarr_folder):
         title = sonarr_folder[: -len(tail)]
 
     reason = None
+    stray = set()
     if tail is None:
         reason = f"the Fitzflix folder does not start with {old_folder!r}"
     elif title == series.title:
@@ -816,21 +970,23 @@ def _rename_title(series, folder, sonarr_folder):
             (file, _planned_target(file, series.title, title))
             for file in series.files.all()
         ]
-        reason = _unaccounted_reason(targets)
+        reason, stray = _unaccounted_reason(targets, {series.title, title})
     if reason:
         current_app.logger.warning(
             f"Sonarr path check: {series.title!r} is at {sonarr_folder!r} in "
             f"Sonarr and at {folder!r} in Fitzflix. Not renamed, because "
             f"{reason}"
         )
+        if stray:
+            _tell_admin_of_stray_files(series, title, stray)
         return None
     return title
 
 
-def _conflict(series):
-    """Return the conflict branch and mark the series for SONARR_CONFLICT_TTL.
+def _mark_conflict(series):
+    """Mark the series as a Sonarr conflict for SONARR_CONFLICT_TTL.
 
-    A Redis fault does not stop the check."""
+    A Redis fault does not stop the caller."""
 
     try:
         current_app.redis.set(
@@ -840,7 +996,29 @@ def _conflict(series):
         )
     except Exception:
         current_app.logger.warning(traceback.format_exc())
+
+
+def _conflict(series):
+    """Return the conflict branch and mark the series for SONARR_CONFLICT_TTL."""
+
+    _mark_conflict(series)
     return "conflict", None
+
+
+def series_in_sonarr_conflict(series_ids):
+    """Return the ids of the series that have the Sonarr conflict marker.
+
+    The weekly S3 sync calls this 1 time for its file pass (review of
+    #758). 1 MGET reads the markers of all the series. A Redis fault
+    raises, and the caller decides the safe side."""
+
+    ids = sorted(series_ids)
+    if not ids:
+        return set()
+    values = current_app.redis.mget(
+        [SONARR_CONFLICT_KEY.format(series_id=series_id) for series_id in ids]
+    )
+    return {series_id for series_id, value in zip(ids, values) if value is not None}
 
 
 def _sonarr_branch(series, entry):
