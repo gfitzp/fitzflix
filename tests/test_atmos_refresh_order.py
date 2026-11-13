@@ -182,3 +182,23 @@ def test_tv_page_shows_a_deferred_refresh(app, admin_client):
 
     page = admin_client.get(f"/tv/{series_id}").get_data(as_text=True)
     assert "A TMDB refresh is waiting for another task that holds this title" in page
+
+
+def test_a_fetch_on_the_maintenance_queue_is_a_pending_refresh(app):
+    """A catalog discovery puts its fetch on the maintenance queue (#740).
+
+    The status read only the request queue and the sql queue. The film
+    page and the lock check of the Atmos job did not see such a fetch."""
+
+    from app import db
+    from app.tmdb_refresh import tmdb_refresh_pending
+    from tests.factories import make_movie
+
+    with app.app_context():
+        movie = make_movie("Discovered Film", 2020)
+        db.session.commit()
+        assert tmdb_refresh_pending("Movies", movie.id) is False
+        app.maintenance_queue.enqueue(
+            "app.videos.refresh_tmdb_info", "Movies", movie.id, 740001
+        )
+        assert tmdb_refresh_pending("Movies", movie.id) is True

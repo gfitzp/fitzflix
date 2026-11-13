@@ -12,8 +12,9 @@ enqueued. A deferred retry shows as "scheduled". PipelineWorker records
 "started", "done", or "failed" around the execution. The STAGES
 registry derives the file of a job from the function name and the
 arguments of the job. Tasks that the registry does not know are not
-trails (SQL refreshes, maintenance sweeps). The 1 permitted in-task
-emitter is record_task_stage. It is for a phase that has no job
+trails (SQL refreshes, maintenance sweeps). The in-task emitters are
+record_task_stage and, for the later jobs of a run, record_stage_for
+through TaskPhases. record_task_stage is for a phase that has no job
 boundary of its own (the copy to the staging directory during
 localization). It also derives the file from the current job through
 the registry.

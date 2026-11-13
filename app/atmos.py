@@ -16,7 +16,9 @@ exactly. MediaConvert bills by the minute (about $0.85 for each feature
 film). The pass is idempotent. A file that has its twins plans nothing.
 Thus, a re-import never pays 2 times. DAMF intermediate files are about
 8 GB for each film. The pipeline removes them from staging and from S3
-if the job succeeds or fails.
+if the job succeeds or fails. A worker that dies leaves them. Then the
+sweep of stale workspaces and the lifecycle rule of the scratch prefix
+remove them.
 """
 
 import contextlib
@@ -579,8 +581,9 @@ def atmos_supplement_task(file_id, staged_source=None):
     title lock and gives it to atmos_check_task, with the state of the
     run. The chips of this job stay open until atmos_finish_task closes
     them. staged_source is the staged copy that the import gave to this
-    job, or None. The deferred retries carry it. When the job ends, a
-    staged copy that it did not use is removed."""
+    job, or None. The retries of the TMDB wait and of the lock wait carry
+    it. A wait for staging space does not, and the copy is removed. When
+    the job ends, a staged copy that it did not use is removed."""
 
     from app.aws_storage import refuse_while_restore_pending
     from app.tmdb_refresh import tmdb_refresh_pending

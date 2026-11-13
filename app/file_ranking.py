@@ -321,8 +321,9 @@ def copy_upgradable(
 
     This is the one rule of the amber badge. A copy on physical media
     that only has a physical release (DVD, SD or 720p Blu-ray TV) is
-    final. Thus, it is never upgradable. A fullscreen copy is always
-    upgradable. Otherwise the copy is upgradable below the target. The
+    final. Thus, it is never upgradable, also when it is full screen.
+    Each other fullscreen copy is upgradable. Otherwise the copy is
+    upgradable below the target. The
     target is the app-wide threshold. With the quality of a Criterion
     release, the target is that quality, capped at the threshold. The
     caller applies the exclusion of the shopping list."""

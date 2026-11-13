@@ -565,8 +565,11 @@ def convert_localized_file(
     apply. After the conversion, the task gives the file to
     move_localized_file. The title lock passes through.
 
-    A failure rejects the import and releases the lock. The original is
-    still in the import directory, and its archive is in S3.
+    A failure releases the lock and the staging space, and it deletes a
+    run-scoped upload. An upload at the normal key stays in S3. A stop
+    signal or a fault of Redis keeps the source. An outage of the
+    database keeps a source of the import directory. Each other error
+    moves the source to the rejects (abandon_failed_stage).
 
     If another task holds the title lock, the conversion waits and tries
     again later (#339). It does not convert without the lock."""
@@ -714,8 +717,8 @@ def convert_localized_file(
             return False
 
         except BaseException as error:
-            # A stop signal or an outage of the database keeps the source
-            # for the next sweep (#497, #681).
+            # A stop signal keeps the source. An outage of the database
+            # keeps a source of the import directory (#497, #681).
             abandon_failed_stage(
                 error,
                 source_path,

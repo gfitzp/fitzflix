@@ -3,14 +3,15 @@
 refresh_tmdb_info fetches the canonical TMDB payload of a record on the
 network queue. apply_tmdb_refresh applies the payload on the
 single-worker sql queue. That step does the record updates, the file
-renames, the duplicate merges, and the untouched-key handoff in S3.
+renames and the duplicate merges. It makes no request to S3 (#668).
 find_or_create_tmdb_movie is the shared record-creation door. Every
 review and watchlist surface goes through it.
 
-app.videos re-exports every name here. Thus, the stored rq job strings
-("app.videos.refresh_tmdb_info") and the import sites continue to
-resolve. The filename plumbing lives in app.importing. This module
-imports it lazily. Thus, the module import direction stays one-way.
+app.videos re-exports the 2 jobs of this pair. Thus, the stored rq job
+strings ("app.videos.refresh_tmdb_info") continue to resolve. The other
+jobs of this module go to the queue under their app.tmdb_refresh names.
+Each other name is imported from this module. The filename plumbing
+lives in app.importing. This module imports it lazily.
 """
 
 import gzip
@@ -292,8 +293,10 @@ def _movie_refresh_lock_resources(*movies, names=()):
 
     The list covers the identifier of each existing file. It also covers
     the base main-feature identifier of each movie. Thus, a new first
-    file of the title that arrives during the refresh is also
-    serialized. names holds more (title, year) pairs. The caller gives
+    main-feature file with no edition that arrives during the refresh
+    is also serialized. The key of a first extra or of a first edition
+    has its type or its edition in it. This list does not have that
+    key. names holds more (title, year) pairs. The caller gives
     the canonical name of the payload. An import of a file with the new
     name builds its key from the new name, and the renames run in its
     folder (#603). The list is sorted. Thus, 2 refreshes that take locks
@@ -336,10 +339,12 @@ def _refresh_job_target(job):
 def tmdb_refresh_status(library, id):
     """Return the state of a TMDB refresh of this record, or None.
 
-    The refresh is 2 jobs. The fetch runs on the request queue. It hands
-    its payload to the apply on the sql queue. The apply takes the title
-    lock. When the lock is busy, the apply puts a retry in the scheduled
-    registry of the sql queue. This function reads all of these places.
+    The refresh is 2 jobs. The fetch runs on the request queue, on the
+    sql queue (a page that waits) or on the maintenance queue (a catalog
+    discovery). It hands its payload to the apply on the sql queue. The
+    apply takes the title lock. When the lock is busy, the apply puts a
+    retry in the scheduled registry of the sql queue. This function
+    reads all of these places (#740).
 
     The result is a dict with a "state" key. The state is "deferred" when
     a retry waits for its time. Then "retry_at" gives that time as a
@@ -369,7 +374,12 @@ def tmdb_refresh_status(library, id):
         scheduled_entries(ScheduledJobRegistry(queue=current_app.sql_queue))
     )
     pending = False
-    for job in live_jobs([current_app.request_queue, current_app.sql_queue]):
+    queues = [
+        current_app.request_queue,
+        current_app.sql_queue,
+        current_app.maintenance_queue,
+    ]
+    for job in live_jobs(queues):
         if not _matches(job):
             continue
         if job.id in scheduled:
@@ -486,9 +496,10 @@ def refresh_tmdb_info(
     This phase queries TMDB. Then it gives the payload to
     apply_tmdb_refresh on the sql queue.
 
-    This phase runs on the user-request queue. There, several jobs can
-    run at the same time. This is safe, because the phase writes nothing
-    to the database. Every database and library-file change occurs in
+    This phase runs on the user-request queue, where several jobs can
+    run at the same time. A page that waits puts it on the sql queue,
+    and a catalog discovery puts it on the maintenance queue. Each is
+    safe, because the phase writes nothing to the database. Every database and library-file change occurs in
     apply_tmdb_refresh. The single sql worker serializes those changes.
 
     Return True when TMDB sent data, TMDB_NO_MATCH when it sent nothing,
@@ -1146,10 +1157,12 @@ def apply_tmdb_refresh(
     rewrites the file paths and merges duplicate records.
 
     This phase runs on the single-worker sql queue. Thus, the refreshes
-    are serialized against each other and against all other database
-    writes. A movie refresh also holds the locks of the affected titles
-    for its duration. Thus, it cannot interleave with an import of the
-    same title. With notify_if_missing (used for new imports), Fitzflix
+    are serialized against each other and against the other jobs of that
+    queue. The imports, the web process and the series rename write the
+    same tables from other processes. A movie refresh also holds the
+    locks of the affected titles for its duration. Thus, it cannot
+    interleave with an import of a main feature of the same title that
+    has no edition (_movie_refresh_lock_resources). With notify_if_missing (used for new imports), Fitzflix
     sends an email if the movie still has no TMDB match after the
     payload is applied. A payload whose apply raises goes to a file
     (save_failed_payload). With rematch, a payload clears the

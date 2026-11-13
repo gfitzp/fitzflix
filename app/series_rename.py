@@ -22,9 +22,10 @@ file that is already at its target counts as moved. A row that already
 has its new folder and name counts as done (#374). Thus, a retry after
 a stop in the loop completes the series. A record whose
 local file was deleted intentionally (archived-only physical media)
-gets new rows with no disk operation. The weekly sync cannot run during
-a rename. The sync defers unless every queue is idle, and this task
-occupies one queue.
+gets new rows with no disk operation. The weekly sync does not start
+during a rename. It checks 1 time, at its start, that every queue is
+idle, and this task occupies one queue. A rename that starts later can
+overlap the file pass of the sync.
 """
 
 import os
