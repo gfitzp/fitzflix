@@ -53,6 +53,7 @@ from datetime import datetime, timezone
 
 from rq import Queue, SimpleWorker
 from rq.exceptions import DeserializationError
+from rq.serializers import DefaultSerializer
 from rq.timeouts import BaseTimeoutException
 
 FILE_KEY = "fitzflix:pipeline:file:{digest}"
@@ -997,10 +998,11 @@ def _waiting_chip_fate(connection, job_id):
     """Return what happens to a waiting chip of a job.
 
     None keeps the chip. "gone" removes it, because rq does not know
-    the job. "done" or "failed" settles it, because the job ended and
-    its own stamp was lost. On 2026-10-22, 6 track jobs failed before
-    the failure stamp could find their file. Their chips stayed
-    "queued" for 7 days."""
+    the job. "done", "skipped" or "failed" settles it, because the job
+    ended and its own stamp was lost. On 2026-10-22, 6 track jobs failed
+    before the failure stamp could find their file. Their chips stayed
+    "queued" for 7 days. A finished job with the mark of
+    mark_job_skipped settles to "skipped" (#766 review)."""
 
     if connection.exists(CONTINUES_KEY.format(job_id=job_id)):
         return None
@@ -1008,7 +1010,12 @@ def _waiting_chip_fate(connection, job_id):
     if status is None:
         return None if connection.exists(f"rq:job:{job_id}") else "gone"
     status = status.decode() if isinstance(status, bytes) else status
-    return SETTLED_STATUS.get(status)
+    fate = SETTLED_STATUS.get(status)
+    if fate == "done":
+        meta = connection.hget(f"rq:job:{job_id}", "meta")
+        if meta and DefaultSerializer.loads(meta).get("trail_skipped"):
+            return "skipped"
+    return fate
 
 
 def _job_meta(job):
@@ -1020,23 +1027,14 @@ def _job_meta(job):
         return job.meta or {}
 
 
-def trail_continues(job):
-    """Return True if a later job of the run closes the chips of this job.
-
-    The first Atmos job returns when MediaConvert has the encode. The
-    run is not done. Thus, the worker does not stamp its chip done."""
-
-    return bool(_job_meta(job).get("trail_continues"))
-
-
 @_best_effort()
 def mark_job_skipped():
     """Make the worker stamp the chip of the current job "skipped" (#766).
 
     A green chip means that the stage did its work. A task that returns
-    with no work done calls this. An example is an archive upload that a
-    pending restore refuses. The chip then reads "did not run". Outside
-    a worker, this does nothing."""
+    before its stage completed its work calls this. An example is an
+    archive upload that a pending restore refuses. The chip then reads
+    "not done". Outside a worker, this does nothing."""
 
     from rq import get_current_job
 
@@ -1045,6 +1043,22 @@ def mark_job_skipped():
         return
     job.meta["trail_skipped"] = True
     job.save_meta()
+
+
+@_best_effort()
+def clear_job_skipped():
+    """Remove a "skipped" mark from the meta of the current job (#766 review).
+
+    A lock wait books a fixed id. It can book that id while the job under
+    the id runs. Then rq keeps the meta field of the hash for the
+    booking. Thus, a mark of the earlier run can reach the next run. A
+    task that calls mark_job_skipped calls this when it starts."""
+
+    from rq import get_current_job
+
+    job = get_current_job()
+    if job is not None and job.meta.pop("trail_skipped", None):
+        job.save_meta()
 
 
 def first_run(connection, job):
@@ -1110,10 +1124,10 @@ def _heal_orphaned_entries(connection, digest, entries):
     not early. This removes those entries.
 
     A job that ended can also keep a waiting chip, when its own stamp
-    was lost. This settles that chip to "done" or "failed", from the
-    status of the job in rq.
+    was lost. This settles that chip to "done", "skipped" or "failed",
+    from the status and the meta of the job in rq.
 
-    Terminal chips (done, failed) are history and always stay. This
+    Terminal chips (done, skipped, failed) are history and always stay. This
     returns the entries that remain, or None if the full trail was
     orphaned and deleted. This is advisory, like each trail write. On a
     failure, it returns the entries as they were.
@@ -1152,7 +1166,7 @@ def _heal_orphaned_entries(connection, digest, entries):
                 if fate == "gone":
                     changed = True
                     continue
-                if fate in ("done", "failed"):
+                if fate in ("done", "skipped", "failed"):
                     entry = dict(entry, status=fate)
                     changed = True
                 kept.append(entry)
@@ -1595,7 +1609,9 @@ class PipelineWorker(SimpleWorker):
     def handle_job_success(self, job, queue, started_job_registry):
         """Run the success handling of rq. Then stamp the trail done or skipped.
 
-        A job that called mark_job_skipped is "skipped" (#766)."""
+        A job that called mark_job_skipped is "skipped" (#766). The first
+        Atmos job sets trail_continues in its meta. Its run is not done,
+        so the worker leaves its chip open."""
 
         super().handle_job_success(job, queue, started_job_registry)
         meta = _job_meta(job)

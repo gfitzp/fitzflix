@@ -2037,20 +2037,27 @@ def upload_task(file_id):
     is true. A failure leaves the flag as it is.
 
     The invariant of the chip (#766): only an upload that stored its
-    archive ends "done". An upload that raises rolls back, releases the
-    lock and raises again. Thus, its job fails, and the worker reports it
-    (#759). A refused upload returns False with a "skipped" chip. A wait
-    for the title lock is a booked retry, and its retry chip stands for
-    the stage."""
+    archive ends "done" in the stamp of the worker. An upload that raises
+    rolls back, releases the lock and raises again. Thus, its job fails,
+    and the worker reports it (#759). A refused upload returns False with
+    a "skipped" chip. A job that meets the title lock books the lock
+    wait, and the retry chip stands for the stage. That job also marks
+    itself "skipped", because a wait that is booked already adds no new
+    chip. Only the lock wait job itself does not mark itself.
 
-    from app.pipeline import mark_job_skipped
-    from app.videos import acquire_lock_or_defer
+    The trail can heal a chip whose stamp was lost. It reads the mark in
+    the job hash while that hash exists."""
 
+    from app.pipeline import clear_job_skipped, mark_job_skipped
+    from app.videos import acquire_lock_or_defer, lock_wait_job_id
+
+    clear_job_skipped()
     with app.app_context():
         file = db.session.get(File, int(file_id))
         if file is None:
             return False
         config = current_app.config
+        description = f"'{file.basename}'"
         lock = acquire_lock_or_defer(
             file.file_identifier(),
             config["UPLOAD_TASK_TIMEOUT"] * 1000,
@@ -2058,11 +2065,24 @@ def upload_task(file_id):
             "app.videos.upload_task",
             minutes=(5, 15),
             timeout=config["UPLOAD_TASK_TIMEOUT"],
-            description=f"'{file.basename}'",
+            description=description,
             args=(file_id,),
             key=int(file_id),
         )
         if not lock:
+            # A second upload job of the file can meet the lock while the
+            # wait is booked. Then no new chip takes the place of its chip,
+            # and that chip must not end "done" (#766 review). The wait
+            # job books itself under its own id, and rq keeps the meta of
+            # that hash for the booking. Thus, the wait job does not mark
+            # itself.
+
+            job = get_current_job()
+            wait_id = lock_wait_job_id(
+                "app.videos.upload_task", description, (file_id,), key=int(file_id)
+            )
+            if job is not None and job.id != wait_id:
+                mark_job_skipped()
             return False
 
         try:
@@ -2086,7 +2106,9 @@ def upload_task(file_id):
             db.session.commit()
 
         except Exception:
-            # The worker logs the traceback with the task name (#759).
+            # The worker reports the failure with the task name (#759). It
+            # adds the traceback when aws_upload logged no error of its
+            # own.
 
             db.session.rollback()
             raise

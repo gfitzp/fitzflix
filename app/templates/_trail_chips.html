@@ -2,10 +2,10 @@
    macro is the one painter of the chips. The Queue rows and the File
    Activity cards use it at the first paint and at each poll. Done is
    green, running is blue, queued is gray, a deferred retry is amber,
-   and a failure is red. A job that returned with no work done is light
-   gray and reads "did not run" (#766). A completed stage reads as an
-   accomplishment ("Localized"). A running stage keeps the present
-   tense of the registry with no suffix. #}
+   and a failure is red. A job that returned before its stage completed
+   its work is light gray and reads "not done" (#766). A completed stage
+   reads as an accomplishment ("Localized"). A running stage keeps the
+   present tense of the registry with no suffix. #}
 {% set chip_class = {
 	"done": "text-bg-success",
 	"started": "text-bg-primary",
@@ -19,7 +19,7 @@
 	"started": "running",
 	"queued": "queued",
 	"scheduled": "waiting to retry",
-	"skipped": "did not run",
+	"skipped": "not done",
 	"failed": "failed"
 } %}
 {% set chip_past_tense = {

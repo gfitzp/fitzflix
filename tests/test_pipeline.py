@@ -126,6 +126,52 @@ def test_a_skipped_chip_is_settled_like_a_done_chip(app):
     assert [entry["status"] for entry in trails[0]["entries"]] == ["skipped"]
     assert queue_rows([], trails) == []
 
+    # A later job of the same file opens a new journey. The Queue row then
+    # shows its chips from the new mark only (#766 review).
+
+    with app.app_context():
+        later = app.import_queue.enqueue(
+            "app.videos.localization_task",
+            args=("/import/Trail Skipped (2023) - [DVD].mkv",),
+        )
+    (trail,) = pipeline_trails(app.redis)
+    assert [(entry["status"], entry["job"]) for entry in trail["entries"]] == [
+        ("skipped", job.id),
+        ("queued", later.id),
+    ]
+    (trail,) = pipeline_trails(app.redis, journey_only=True)
+    assert [(entry["status"], entry["job"]) for entry in trail["entries"]] == [
+        ("queued", later.id)
+    ]
+
+
+def test_a_fixed_id_booked_again_after_a_skipped_end_is_a_rerun(app):
+    """The lock wait id of a file can be booked again after it ended skipped.
+
+    The earlier run leaves the trail, and the booking opens a new journey
+    (#766 review)."""
+
+    from app.pipeline import _apply_stage_event
+
+    trail = [
+        _entry("Cataloging", "done", "j0", journey=True),
+        _entry("Localizing", "skipped", "wait"),
+    ]
+    new_trail, _, _, changed = _apply_stage_event(
+        trail,
+        None,
+        None,
+        _event("scheduled", job="wait", enqueued_at="2026-10-25 11:30:00"),
+    )
+
+    assert changed
+    assert [
+        (entry["stage"], entry["status"], entry.get("journey")) for entry in new_trail
+    ] == [
+        ("Cataloging", "done", True),
+        ("Localizing", "scheduled", True),
+    ]
+
 
 def test_lifecycle_updates_one_entry_in_place(app):
     """Keep 1 trail line for a job that moves from queued to started to done.
@@ -840,6 +886,24 @@ def test_an_ended_jobs_waiting_chip_settles(app, rq_status, chip):
 
     trails = pipeline_trails(app.redis)
     assert [entry["status"] for entry in trails[0]["entries"]] == [chip]
+
+
+def test_a_lost_stamp_of_a_skipped_job_heals_to_skipped(app):
+    """A finished job with the skipped mark heals to "skipped", not "done" (#766)."""
+
+    from app.pipeline import pipeline_trails
+
+    with app.app_context():
+        job = app.import_queue.enqueue(
+            "app.videos.localization_task",
+            args=("/import/Trail Lost Skip (2025) - [DVD].mkv",),
+        )
+    job.meta["trail_skipped"] = True
+    job.save_meta()
+    app.redis.hset(f"rq:job:{job.id}", "status", "finished")
+
+    trails = pipeline_trails(app.redis)
+    assert [entry["status"] for entry in trails[0]["entries"]] == ["skipped"]
 
 
 def test_a_continued_jobs_chip_does_not_settle(app):

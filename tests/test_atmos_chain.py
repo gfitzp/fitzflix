@@ -140,10 +140,10 @@ def test_the_run_hands_off_around_the_mediaconvert_wait(app, admin_client, monke
     import app.atmos as atmos
     from app.pipeline import (
         CONTINUES_KEY,
+        _job_meta,
         pipeline_trails,
         queue_rows,
         record_job_event,
-        trail_continues,
     )
 
     with app.app_context():
@@ -154,7 +154,7 @@ def test_the_run_hands_off_around_the_mediaconvert_wait(app, admin_client, monke
         # The first job ended. The worker must leave its chip open. The
         # title lock stays with the run. The encode chip runs.
 
-        assert trail_continues(job)
+        assert _job_meta(job).get("trail_continues") is True
         assert not app.lock_manager.lock(file.file_identifier(), 1000)
         assert app.redis.exists(atmos.CHAIN_KEY.format(file_id=file.id))
         assert _chips(app, file.basename) == [
