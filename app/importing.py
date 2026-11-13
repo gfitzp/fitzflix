@@ -3301,9 +3301,15 @@ def _place_file(
 
 
 def _upload_columns(file_details):
-    """Return the archive columns of the run-scoped upload of an import, or None (#727)."""
+    """Return the archive columns of the upload of an import, or None (#727).
 
-    if not pending_archive_of(file_details):
+    The upload is at a run-scoped key when a record claims the normal
+    key for different bytes. It is at the normal key when no record
+    claims that key. That is the case for a record whose film was
+    renamed, because its archive keeps the key of the old name (#734).
+    None means that the import uploaded nothing."""
+
+    if not (file_details or {}).get("aws_key"):
         return None
     columns = ("aws_key", "aws_date_uploaded", "aws_filesize_bytes")
     return {
@@ -3314,14 +3320,15 @@ def _upload_columns(file_details):
 
 
 def _adopt_upload(row_id, upload, output_file):
-    """Give a record the run-scoped upload of a failed import as its archive (#727).
+    """Give a record the upload of a failed import as its archive (#727, #734).
 
     The localized file of the import replaced the file of the record,
     and the commit of the import failed. The upload holds the original
     of the file that is now at the path. Thus, the record claims it, as
     the commit would have done, and the archive is current. The weekly
-    sync requests the move of the upload to its final key. A pending
-    move of the old archive does not apply to the new one.
+    sync requests the move of a run-scoped upload to its final key. A
+    pending move of the old archive does not apply to the new one. A
+    pending restore of the old file ends, and the old archive goes.
 
     A conversion has a second archive in transcoded/ and columns of its
     own. The commit of the import writes them, and this repair does
@@ -3346,15 +3353,35 @@ def _adopt_upload(row_id, upload, output_file):
                 f"of the new file. It stays in S3 until the weekly sync prunes it"
             )
             return False
+        replaced_key = None
+        if (
+            file.aws_date_uploaded
+            and file.aws_key
+            and file.aws_key != upload["aws_key"]
+        ):
+            replaced_key = file.aws_key
         file.aws_key = upload["aws_key"]
         file.aws_date_uploaded = upload["aws_date_uploaded"]
         file.aws_filesize_bytes = upload["aws_filesize_bytes"]
         file.aws_stale = False
+
+        # The commit of an import ends a pending restore of the record
+        # (#620). The old archive must not come back over the new file.
+        # The adoption does the same (#734).
+
+        file.restore_requested_at = None
         if upload["untouched_basename"]:
             file.untouched_basename = upload["untouched_basename"]
         if file.aws_key_target:
             clear_archive_target(file)
         db.session.commit()
+
+        # The archive of the old file has no record now. It goes, as
+        # after the commit of an import. Then a download of that key
+        # that waits in the queue finds no object, and it stops (#734).
+
+        if replaced_key:
+            _delete_replaced_archive(replaced_key)
     except Exception:
         try:
             db.session.rollback()

@@ -516,6 +516,73 @@ def test_the_record_takes_the_original_of_a_file_that_replaced_its_source(
         assert not row.aws_stale
 
 
+def test_the_record_takes_an_upload_at_the_normal_key(app, tmp_path, monkeypatch):
+    """No record claims the normal key of the name. The upload goes to it (#734).
+
+    That is the case for a record that keeps the key of an older name.
+    The record must take this upload too. An upload with no record is
+    pruned after its grace."""
+
+    import app.importing as importing
+    from app import db
+    from app.models import File
+
+    monkeypatch.setattr(importing, "_rescan_after_a_failed_edit", lambda *a: None)
+    name = "Over Record Normal Key (2023) - [DVD].mkv"
+    upload = {**_run_scoped_upload(name), "aws_key": f"untouched/{name}"}
+    source, rejected, file_id = _cataloging_over_the_source(
+        app, tmp_path, monkeypatch, name, RuntimeError("commit"), True, upload
+    )
+    with app.app_context():
+        row = db.session.get(File, file_id)
+        assert row.aws_key == f"untouched/{name}"
+        assert not row.aws_stale
+
+
+def test_an_adoption_ends_a_pending_restore_and_removes_the_old_archive(
+    app, tmp_path, monkeypatch
+):
+    """The commit of an import ends a pending restore of its record (#620).
+
+    The adoption after a failed commit does the same (#734). Else the
+    old archive can come back over the new file. The archive of the
+    old file has no record, and its delete is queued."""
+
+    from datetime import datetime
+
+    import app.importing as importing
+    from app import db
+    from app.models import File
+
+    monkeypatch.setattr(importing, "_rescan_after_a_failed_edit", lambda *a: None)
+    deleted = []
+    monkeypatch.setattr(importing, "_delete_replaced_archive", deleted.append)
+    real = importing._claim_at_path
+
+    def claim_of_a_record_under_restore(library_file_path, output_file, upload=None):
+        File.query.filter_by(file_path=library_file_path).update(
+            {
+                "aws_key": "untouched/Old Name (2023) - [DVD].mkv",
+                "aws_date_uploaded": datetime(2026, 1, 1),
+                "restore_requested_at": datetime(2026, 11, 12, 20, 0),
+            }
+        )
+        db.session.commit()
+        return real(library_file_path, output_file, upload)
+
+    monkeypatch.setattr(importing, "_claim_at_path", claim_of_a_record_under_restore)
+    name = "Over Restore (2023) - [DVD].mkv"
+    upload = _run_scoped_upload(name)
+    source, rejected, file_id = _cataloging_over_the_source(
+        app, tmp_path, monkeypatch, name, RuntimeError("commit"), True, upload
+    )
+    with app.app_context():
+        row = db.session.get(File, file_id)
+        assert row.aws_key == upload["aws_key"]
+        assert row.restore_requested_at is None
+    assert deleted == ["untouched/Old Name (2023) - [DVD].mkv"]
+
+
 def test_a_conversion_does_not_take_the_original_of_the_new_file(
     app, tmp_path, monkeypatch, caplog
 ):
