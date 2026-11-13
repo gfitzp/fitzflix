@@ -44,6 +44,7 @@ from unidecode import unidecode
 from sqlalchemy.exc import DBAPIError
 
 from flask import current_app, render_template
+from markupsafe import escape
 from werkzeug.local import LocalProxy
 
 from app.custom_artwork import move_episode_thumb, remove_episode_thumb_of
@@ -83,7 +84,7 @@ from app.criterion_catalog import (
     criterion_release_lookups,
     stored_criterion_releases,
 )
-from app.email import admin_email, notify_admin
+from app.email import admin_email, notify_admin, notify_admin_text
 from app.email import send_email
 from app.naming import hidden, library_name, visible_name, with_extension
 from app.models import (
@@ -1217,6 +1218,16 @@ def _quality_and_space_gate(file_path, file_details, conversion, run):
         )
         move_to_rejects(file_path, "other spelling")
         run.release_lock()
+        notify_admin_text(
+            "Rejected a file whose name differs only by letter case",
+            f"'{basename}' went to the rejects folder 'other spelling'. The "
+            f"library has '{other_spelling}', and Fitzflix can hold only 1 of "
+            f"the 2 names. Give 1 of the files an other name, or delete it.",
+            f"<p>'{escape(basename)}' went to the rejects folder 'other "
+            f"spelling'. The library has '{escape(other_spelling)}', and "
+            f"Fitzflix can hold only 1 of the 2 names. Give 1 of the files an "
+            f"other name, or delete it.</p>",
+        )
         return "reject"
 
     # Look for better-quality versions of this file that already exist.
@@ -2677,8 +2688,8 @@ def finalize_localization(
 
             db.session.rollback()
             current_app.logger.warning(
-                f"'{file_path}' An other program changed this file during its "
-                f"import. The import starts again for the new file"
+                f"'{file_path}' An other program changed or removed this file "
+                f"during its import. The localized copy of the old file goes"
             )
             abandon_import(
                 file_path,
@@ -3041,8 +3052,8 @@ def _file_at_other_spelling(source_path, file_details):
 
     The result is None when no record has an other spelling, or when
     its file is not on the disk. It is None too when its path names the
-    source itself. That is a source in the library on a volume that
-    ignores letter case."""
+    source itself. That is a source at the old spelling of the record,
+    or a source in the library on a volume that ignores letter case."""
 
     record = _record_at_path(file_details.get("file_path"))
     if record is None or record.file_path == file_details.get("file_path"):
@@ -3820,15 +3831,22 @@ def _after_commit(
     # A source in the library that changed during the chain is a new
     # download (#742). It stays, and its own import is queued.
 
-    if file_path != output_file and _source_changed(file_path, file_details):
+    # The release data that Sonarr or Radarr gave for the path is the
+    # data of the new download then. It stays for the import of that
+    # download, and Radarr keeps its folder. Thus, the 2 arr steps do
+    # not run for a changed source.
+
+    changed = file_path != output_file and _source_changed(file_path, file_details)
+    if changed:
         step("changed source", _import_changed_source, file_path)
     elif file_path != output_file and not source_can_go:
         step("source hold", move_to_rejects, file_path, "unarchived")
     elif file_path != output_file:
         step("source removal", _remove_source, file_path)
 
-    step("radarr", _report_film_move, file, file_path, output_directory)
-    step("arr record", _restore_arr_record, file_path, output_file)
+    if not changed:
+        step("radarr", _report_film_move, file, file_path, output_directory)
+        step("arr record", _restore_arr_record, file_path, output_file)
 
     step("tmdb refresh", _enqueue_tmdb_enrichment, file, file_details)
 
@@ -4138,8 +4156,10 @@ def _in_library(path):
 def _source_changed(file_path, file_details):
     """Return True if an other program changed a library source during its import (#742).
 
-    A source with no stamp is never "changed". A fault of the read is
-    not a change. Then the source gets the handling of before."""
+    A source with no stamp is never "changed". A fault of the read
+    counts as a change. The state of the file is not known then, and a
+    source that stays is the safe direction. The weekly sync imports a
+    library file with no record."""
 
     try:
         refuse_changed_library_file(file_details.get("source_stamp"), file_path)
@@ -4147,6 +4167,7 @@ def _source_changed(file_path, file_details):
         return True
     except OSError:
         current_app.logger.warning(traceback.format_exc())
+        return True
     return False
 
 
@@ -4173,7 +4194,11 @@ def _import_changed_source(file_path):
             reason="An other program changed the file during its import",
             args=(file_path,),
             description=f"'{os.path.basename(file_path)}'",
-            level="info",
+            level=None,
+        )
+        current_app.logger.info(
+            f"'{file_path}' The import of the new file at this path starts in "
+            f"{int(CHANGED_SOURCE_DELAY.total_seconds() // 60)} minute"
         )
     except Exception:
         current_app.logger.warning(

@@ -669,7 +669,10 @@ def enqueue_plex_analyze(file_path, delay=None):
         # Under the id of the job that runs, it would take the hash that
         # the first job marks as finished at its end (#744).
 
-        if job_id in queue.job_ids:
+        if any(
+            queued == job_id or queued.startswith(f"{job_id}_")
+            for queued in queue.job_ids
+        ):
             return False
         running = queue.fetch_job(job_id)
         if running is not None and running.get_status(refresh=False) == "started":

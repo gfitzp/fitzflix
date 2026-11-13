@@ -1439,8 +1439,8 @@ def tmdb_triage():
         # reload. If the id already belongs to a different film record,
         # the merge path of the refresh merges this record into it. A
         # series has no merge path. Then 2 series records have the same
-        # id, and each later refresh of this record goes to the older
-        # one (#163)
+        # id. Each later refresh of one of them goes to the first record
+        # with that id that the query returns (#163)
 
         refresh_job = enqueue_task(
             "app.videos.refresh_tmdb_info",

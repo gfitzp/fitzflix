@@ -359,12 +359,15 @@ def _submit(
     if description is not None:
         options["description"] = description
     if job_id is not None:
-        # Invariant: a job never takes the hash of an older job (#371,
-        # #438, #744). A finished job keeps its hash for the result ttl
-        # of rq, 500 seconds. A new job under the same id took that hash
-        # with its expiry, and it could expire in the queue. Thus, each
-        # use of a fixed id frees it here first. A job that waits or
-        # runs under the id keeps it.
+        # Invariant: a job never takes the hash of a job that is done
+        # (#371, #438, #744). A finished job keeps its hash for the
+        # result ttl of rq, 500 seconds. A new job under the same id took
+        # that hash with its expiry, and it could expire in the queue.
+        # Thus, a finished, failed, stopped or canceled job under the id
+        # is deleted here first. A job that waits or runs under the id
+        # is not deleted, and the new job still goes under that id. A
+        # caller that can queue beside such a job checks free_job_id
+        # itself, or it uses an id of its own.
         free_job_id(name, job_id, queue=target)
         options["job_id"] = job_id
     if meta is not None:

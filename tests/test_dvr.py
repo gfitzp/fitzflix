@@ -1062,6 +1062,55 @@ def test_an_episode_that_only_a_worse_span_file_holds_still_airs(app, monkeypatc
         assert dvr._series_catalog()[series.id]["episodes"] == 3
 
 
+def test_the_cursor_moves_past_2_files_with_the_same_first_episode(app, monkeypatch):
+    """A single of episode 6 and a file of episodes 6 and 7 are 2 programs (#743).
+
+    The cursor of a series stored the first episode of the next file.
+    The 2 files have the same first episode. Thus, the cursor went back
+    to the single at each build, and the series aired 1 episode for
+    good. The cursor stores the episode that each file airs for."""
+
+    from datetime import timedelta
+    from types import SimpleNamespace
+
+    from app import dvr
+
+    monkeypatch.setattr(dvr, "_on_disk", lambda file: True)
+    with app.app_context():
+        series = make_tv_series("Cursor Span Show")
+        make_tv_file(series, 1, 5, "DVD")
+        single = make_tv_file(series, 1, 6, "Bluray-1080p")
+        span = make_tv_file(series, 1, 6, "DVD", last_episode=7)
+        make_tv_file(series, 1, 8, "DVD")
+        db.session.commit()
+
+        episodes = dvr._series_episodes(series.id)
+        assert [dvr._episode_key(file) for file in episodes] == [
+            [1, 5],
+            [1, 6],
+            [1, 7],
+            [1, 8],
+        ]
+
+        member = {"series": SimpleNamespace(id=series.id, title=series.title)}
+        cursors = {}
+        aired = []
+        day = date(2026, 11, 13)
+        for _ in range(5):
+            starts = {}
+            window = dvr._channel_window([member], day, 1, cursors, starts)
+            aired.extend(file.id for _, file in window)
+            listed, start = starts[series.id]
+            cursors[series.id] = dvr._advanced_cursor(day, listed, start, 1)
+            day += timedelta(days=1)
+
+        # Each file airs in its turn, and the fifth day starts the list again.
+        ids = [file.id for file in episodes]
+        assert ids[1:3] == [single.id, span.id]
+        start = ids.index(aired[0])
+        assert aired == [ids[(start + step) % 4] for step in range(5)]
+
+
 def test_a_new_episode_does_not_move_the_series_cursor(app, monkeypatch):
     """The next window continues after the last episode that aired (#460).
 

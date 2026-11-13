@@ -6,15 +6,15 @@ an epoch timestamp stored in Redis. The schedule is pure arithmetic
 over the cumulative program durations. It repeats from the epoch
 without end. Thus, the XMLTV guide and the stream compute "what is on
 at time T" from the same snapshot. They agree while each file of the
-lineup is at its path. Nothing runs and no file is opened until Plex
-tunes a stream URL.
+lineup is at its path and keeps the length that the build probed.
+Nothing runs and no file is opened until Plex tunes a stream URL.
 
 The program durations must be the real container durations. A
 schedule from the TMDB runtime would drift the stream away from the
 guide by the accumulated error. Thus, the build probes each file 1
 time with ffprobe. It caches the result in Redis, keyed by file id. A
 file row can change in place: an import uses a record again, and a
-rewrite changes the size. Thus, each cached duration keeps the size and
+remux changes the size. Thus, each cached duration keeps the size and
 the localized date of its file, and a different file is probed again
 (#395).
 
@@ -450,15 +450,8 @@ def _leaving_owned(best):
     return ids, departs
 
 
-def _span_of(season, episode, last_episode):
-    """Return the (season, episode) pairs of a file. A span file has more than 1."""
-
-    last = last_episode if last_episode and last_episode > episode else episode
-    return {(season, number) for number in range(episode, last + 1)}
-
-
-def _program_files(pairs):
-    """Return the files that air for (file, quality) pairs of TV files, in broadcast order.
+def _programs(pairs):
+    """Return (file, season, episode) for each TV file that airs, in broadcast order.
 
     Invariant: one rule says which file is the best copy of an episode
     (#738, #743). That rule is best_episode_holders. It counts each
@@ -468,19 +461,21 @@ def _program_files(pairs):
     episodes never aired. A file that airs for a later episode shows
     its first episodes again. That is better than a lost episode.
 
-    The pairs are (File, RefQuality) or 2 times a TVRankRow. The order
-    is the order of the first episode that each file is the best
-    holder of."""
+    The pairs are (File, RefQuality) or 2 times a TVRankRow. The season
+    and the episode of a result are the first episode that the file is
+    the best holder of. That is the broadcast position of the file. It
+    is not always the first episode of the file. The positions of a
+    series are all different, and the list is in their order."""
 
     holders = best_episode_holders(pairs)
-    files = []
+    programs = []
     seen = set()
     for slot in sorted(holders):
         file = holders[slot][0]
         if file.id not in seen:
             seen.add(file.id)
-            files.append(file)
-    return files
+            programs.append((file, slot[1], slot[2]))
+    return programs
 
 
 def _series_catalog():
@@ -497,7 +492,8 @@ def _series_catalog():
     # agrees with the programs that air when each file is on the disk.
 
     counts = {}
-    for row in _program_files((row, row) for row in tv_rank_rows() if row.season > 0):
+    regular = (row for row in tv_rank_rows() if row.season and row.season > 0)
+    for row, _, _ in _programs((row, row) for row in regular):
         counts[row.series_id] = counts.get(row.series_id, 0) + 1
     if not counts:
         return {}
@@ -657,9 +653,15 @@ def _rotation_turns(index, days, count, cap):
 
 
 def _episode_key(file):
-    """Return the broadcast position of an episode file as [season, episode]."""
+    """Return the broadcast position of an episode file as [season, episode].
 
-    return [file.season, file.episode]
+    _series_episodes gives each file the first episode that it airs for
+    (airs_from). 2 files of a list can have the same first episode. A
+    cursor by the first episode would then go back to the first of them
+    at each build (#743). A file with no such value has the position of
+    its first episode."""
+
+    return list(getattr(file, "airs_from", None) or (file.season, file.episode))
 
 
 def _locate(episodes, key):
@@ -670,7 +672,7 @@ def _locate(episodes, key):
 
     target = tuple(key)
     for position, file in enumerate(episodes):
-        if (file.season, file.episode) >= target:
+        if tuple(_episode_key(file)) >= target:
             return position
     return 0
 
@@ -789,10 +791,11 @@ def _series_episodes(series_id):
     """Return the best copy on disk of each regular episode, in broadcast order.
 
     The rule is best_episode_holders, the rule of the library pages and
-    of the S3 sync (_program_files). Specials are excluded. Rows whose
-    file is absent are left out before the ranking, in the same way as
+    of the S3 sync (_programs). Specials are excluded. Rows whose file
+    is absent are left out before the ranking, in the same way as
     _best_files_by_movie skips them. Thus, an other copy of the episode
-    on the disk airs."""
+    on the disk airs. Each file gets airs_from, the broadcast position
+    that the cursor of the series stores (_episode_key)."""
 
     rows = (
         File.query.join(RefQuality, RefQuality.id == File.quality_id)
@@ -800,7 +803,13 @@ def _series_episodes(series_id):
         .filter(File.season > 0)
         .all()
     )
-    return _program_files((file, file.quality) for file in rows if _on_disk(file))
+    episodes = []
+    for file, season, episode in _programs(
+        (file, file.quality) for file in rows if _on_disk(file)
+    ):
+        file.airs_from = (season, episode)
+        episodes.append(file)
+    return episodes
 
 
 def _episode_program(series, file, duration):

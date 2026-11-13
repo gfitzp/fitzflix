@@ -223,6 +223,37 @@ def test_a_library_file_that_an_arr_removed_is_not_put_back(app, monkeypatch):
         db.session.rollback()
 
 
+@pytest.mark.parametrize(
+    "found, scans",
+    [(b"1234567", 1), (b"the newer release of the film", 0)],
+    ids=["own result", "other file"],
+)
+def test_a_finish_retry_scans_only_its_own_result(app, monkeypatch, found, scans):
+    """A share can report a fault for a rename that it did (#732, #741).
+
+    The retry of the finish then finds its own result as "changed". A
+    scan reads the track rows from it. A file of an other size is the
+    file of an other program. A scan would store its size, and the
+    import that waits would take the file as cataloged already."""
+
+    import app.atmos as atmos
+    from app import db
+    from tests.test_default_audio_track import _scheduled_scans
+
+    with app.app_context():
+        file, finish = _finish_job(app, monkeypatch, f"Retry Scan {scans}")
+        library = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
+        os.remove(library)
+        with open(library, "wb") as f:
+            f.write(found)
+
+        # The fake remux writes 7 bytes. "own result" has that size.
+        assert atmos.atmos_finish_task(*finish.args, finish_retries=1) is False
+        assert len(_scheduled_scans(app, file.id)) == scans
+        assert open(library, "rb").read() == found
+        db.session.rollback()
+
+
 def test_a_run_of_the_older_code_has_no_stamp_and_still_finishes(app, monkeypatch):
     """A run that waits through the deploy has no stamp in its state (#732)."""
 

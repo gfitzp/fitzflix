@@ -38,6 +38,7 @@ import traceback
 from datetime import timedelta
 
 from flask import current_app
+from rq.registry import ScheduledJobRegistry
 from werkzeug.local import LocalProxy
 
 from app import get_app, safe_job_id
@@ -265,6 +266,10 @@ def enqueue_align(rating_key, delay_minutes=WEBHOOK_DELAY_MINUTES):
     # under the same id would lose its hash then (#744).
 
     if job is not None and job.get_status(refresh=False) == "started":
+        queue = current_app.maintenance_queue
+        waiting = list(queue.job_ids) + ScheduledJobRegistry(queue=queue).get_job_ids()
+        if any(waiting_id.startswith(f"{job_id}_") for waiting_id in waiting):
+            return False
         job_id = f"{job_id}_{int(time.time())}"
     enqueue_task(
         "app.plex_selection.align_plex_items",

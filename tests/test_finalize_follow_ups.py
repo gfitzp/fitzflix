@@ -791,11 +791,14 @@ def test_a_file_at_the_other_spelling_makes_the_new_file_a_reject(
 
     from app import db, importing
 
-    rejected, released = [], []
+    rejected, released, mails = [], [], []
     monkeypatch.setattr(
         importing,
         "move_to_rejects",
         lambda path, reason: rejected.append((path, reason)),
+    )
+    monkeypatch.setattr(
+        importing, "notify_admin_text", lambda subject, text, html: mails.append(text)
     )
     source = tmp_path / "Other Spelling Film (1962) - [DVD].mkv"
     source.write_bytes(b"the new file")
@@ -830,6 +833,7 @@ def test_a_file_at_the_other_spelling_makes_the_new_file_a_reject(
         )
         assert rejected == [(str(source), "other spelling")]
         assert released == [True]
+        assert len(mails) == 1 and source.name in mails[0]
         assert db.session.get(File, file_id).file_path == before
         with open(old_path, "rb") as handle:
             assert handle.read() == b"the file of the record"
@@ -921,21 +925,60 @@ def test_a_changed_source_of_a_conversion_is_not_removed(app, tmp_path, monkeypa
     """A conversion has an other name than its source. The source goes at the end (#742).
 
     A source that an other program changed during the chain is a new
-    download. It stays, and its import is booked."""
+    download. It stays, and its import is booked. The release data of
+    Sonarr or Radarr for the path is the data of the new download.
+    Thus, the 2 arr steps do not run. An unchanged source goes, and the
+    arr steps run, as before."""
 
+    calls = _record_steps(monkeypatch)
+    monkeypatch.setattr(
+        importing, "_report_film_move", lambda *a: calls.append(("radarr", a[1]))
+    )
     booked = []
     monkeypatch.setattr(
         importing, "requeue", lambda name, **kw: booked.append(kw["args"])
     )
     monkeypatch.setitem(app.config, "LIBRARY_DIR", str(tmp_path))
-    source = tmp_path / "Converted (2021) - [Remux-2160p].mkv"
+    source = tmp_path / "Movies" / "Converted (2021) - [Remux-2160p].mkv"
+    source.parent.mkdir()
     source.write_bytes(b"first download")
+    output = str(tmp_path / "Movies" / "Converted (2021) - [Bluray-1080p].mkv")
+
+    def after_commit(details):
+        return importing._after_commit(
+            _Row(),
+            str(source),
+            details,
+            output,
+            str(tmp_path / "Movies"),
+            None,
+            [],
+            [],
+            [],
+            [],
+        )
+
     with app.app_context():
-        details = {"source_stamp": importing.library_stamp(str(source))}
-        assert importing._source_changed(str(source), details) is False
+        details = {
+            "media_library": "Movies",
+            "source_stamp": importing.library_stamp(str(source)),
+        }
+        after_commit(dict(details))
+        assert calls == [
+            ("removal", str(source)),
+            ("radarr", str(source)),
+            ("arr record", str(source)),
+        ]
+        assert booked == []
+
+        calls.clear()
         source.write_bytes(b"the second download, of an other size")
-        assert importing._source_changed(str(source), details) is True
-        assert importing._source_changed(str(source), {}) is False
-        importing._import_changed_source(str(source))
-    assert booked == [(str(source),)]
-    assert source.exists()
+        after_commit(dict(details))
+        assert calls == []
+        assert booked == [(str(source),)]
+        assert source.exists()
+
+        # A source with no stamp is a source of the older code. It goes.
+        calls.clear()
+        after_commit({"media_library": "Movies"})
+        assert calls[0] == ("removal", str(source))
