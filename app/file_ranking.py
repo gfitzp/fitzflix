@@ -558,12 +558,13 @@ def find_better_files(details):
         #
         # If the new file is a full screen version, these existing
         # files prevent the import of this file:
-        # - same TV episode range, also full screen, in the same quality
+        # - same TV episode range, also full screen, in a better quality
+        #   (#737). A copy of the same quality does not block. The new
+        #   file replaces it, as for a film and for a widescreen episode.
         # - wider TV episode range, also full screen, in the same or
         #   better quality
-        # - same TV episode range, NOT full screen, in the same quality
-        # - wider TV episode range, NOT full screen, in the same or
-        #   better quality
+        # - same or wider TV episode range, NOT full screen, in any
+        #   quality (#553)
 
         # The span of an existing file is the same, or it holds the span
         # of the new file and more (#479). A span "S19E06-E07" holds a
@@ -592,7 +593,7 @@ def find_better_files(details):
                     db.or_(
                         db.and_(
                             same_span,
-                            RefQuality.preference == source_quality.preference,
+                            RefQuality.preference > source_quality.preference,
                         ).self_group(),
                         db.and_(
                             wider_span,

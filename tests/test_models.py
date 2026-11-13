@@ -485,6 +485,24 @@ def test_a_widescreen_episode_blocks_a_fullscreen_import(app):
         )
 
 
+def test_a_better_fullscreen_episode_blocks_a_fullscreen_import(app):
+    """A full screen DVD must not go in beside a full screen Bluray (#737).
+
+    The rule compared for an equal quality only. A copy of the same
+    quality does not block. The new file replaces it, as for a film."""
+
+    with app.app_context():
+        series = make_tv_series("Fullscreen Tiers Show")
+        fullscreen_bluray = make_tv_file(series, 1, 1, "Bluray-1080p", fullscreen=True)
+        assert find_better_files(_tv_details(fullscreen_bluray, "DVD", True)) == [
+            fullscreen_bluray
+        ]
+        assert (
+            find_better_files(_tv_details(fullscreen_bluray, "Bluray-1080p", True))
+            == []
+        )
+
+
 @pytest.mark.parametrize("library", ["movie", "tv"])
 def test_a_widescreen_copy_replaces_a_better_fullscreen_copy(app, library):
     """A non-full screen file removes each full screen copy, at any tier (#553).
