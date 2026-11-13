@@ -2078,6 +2078,29 @@ def _log_and_raise():
     raise RuntimeError("the task logged this failure")
 
 
+def _warn_and_raise():
+    """Log a WARNING on the "app" logger, then raise."""
+
+    import logging
+
+    logging.getLogger("app").warning("A warning of the task itself")
+    raise RuntimeError("the task warned first")
+
+
+def _error_in_an_other_thread_and_raise():
+    """Log an ERROR from an other thread, then raise in the job thread."""
+
+    import logging
+    import threading
+
+    thread = threading.Thread(
+        target=lambda: logging.getLogger("app").error("An error of an other thread")
+    )
+    thread.start()
+    thread.join()
+    raise RuntimeError("the job thread logged no error")
+
+
 def _stop_the_worker():
     """Raise the SystemExit of a cold stop inside the job."""
 
@@ -2108,6 +2131,11 @@ class _Records:
         import logging
 
         logging.getLogger("app").removeHandler(self.handler)
+
+    def records_at(self, level):
+        """Return the records of the level."""
+
+        return [record for record in self.records if record.levelno == level]
 
     def at(self, level):
         """Return the records of the level, with their full text."""
@@ -2197,6 +2225,145 @@ def test_a_job_timeout_is_an_error(app):
     (error,) = records.at(logging.ERROR)
     assert "tests.test_pipeline._time_out" in error
     assert "JobTimeoutException" in error
+
+
+def _run_in_one_worker(app, *calls):
+    """Run 1 job for each (func, args, meta) in 1 PipelineWorker.
+
+    Return the jobs and the records."""
+
+    from app.pipeline import PipelineWorker
+
+    with app.app_context():
+        jobs = [
+            app.maintenance_queue.enqueue(func, *args, meta=meta)
+            for func, args, meta in calls
+        ]
+    with _Records() as records:
+        PipelineWorker([app.maintenance_queue], connection=app.redis).work(burst=True)
+    return jobs, records
+
+
+def test_2_failed_jobs_in_1_worker_give_2_errors_with_1_signature(app):
+    """Each failed job of a worker sends its mail. The digest groups them (#759).
+
+    The worker takes the error count before each job. The job id is in
+    quotes, so the digest signature does not change with the id."""
+
+    import logging
+
+    from app.log_digest import signature
+
+    call = ("os.listdir", ("/no/such/folder/759",), None)
+    jobs, records = _run_in_one_worker(app, call, call)
+
+    errors = records.records_at(logging.ERROR)
+    assert len(errors) == 2
+    assert records.records_at(logging.WARNING) == []
+    messages = [record.getMessage() for record in errors]
+    for job, message in zip(jobs, messages):
+        assert f"(job '{job.id}')" in message
+    assert messages[0] != messages[1]
+    first, second = (signature("ERROR", message, [])[:2] for message in messages)
+    assert first == second
+
+
+def test_a_job_that_logged_a_warning_and_raised_is_an_error(app):
+    """Only a record at ERROR of the job itself makes the report a WARNING."""
+
+    import logging
+
+    job, records = _run_one(app, "tests.test_pipeline._warn_and_raise")
+
+    (error,) = records.at(logging.ERROR)
+    assert "tests.test_pipeline._warn_and_raise" in error
+    assert "Traceback" in error
+    assert records.at(logging.WARNING) == ["A warning of the task itself"]
+
+
+def test_an_error_of_an_other_thread_does_not_count_for_the_job(app):
+    """The error count is for the thread of the job (#759)."""
+
+    import logging
+
+    job, records = _run_one(
+        app, "tests.test_pipeline._error_in_an_other_thread_and_raise"
+    )
+
+    errors = records.at(logging.ERROR)
+    assert len(errors) == 2
+    assert "An error of an other thread" in errors[0]
+    assert "_error_in_an_other_thread_and_raise" in errors[1]
+    assert records.at(logging.WARNING) == []
+
+
+def test_the_report_names_the_task_of_the_scheduler(app):
+    """A job of the scheduler carries the registry name in its meta."""
+
+    import logging
+
+    jobs, records = _run_in_one_worker(
+        app,
+        ("os.listdir", ("/no/such/folder/759",), {"func": "app.maintenance.probe"}),
+    )
+
+    (error,) = records.records_at(logging.ERROR)
+    assert error.getMessage().startswith("The task app.maintenance.probe failed")
+
+
+def test_a_job_with_data_that_does_not_load_is_an_unknown_task(app):
+    """The report of a job whose function does not load still reaches the log."""
+
+    import logging
+
+    with app.app_context():
+        job = app.maintenance_queue.enqueue("os.listdir", "/no/such/folder/759")
+    app.redis.hset(job.key, "data", b"not a pickle")
+    with _Records() as records:
+        from app.pipeline import PipelineWorker
+
+        PipelineWorker([app.maintenance_queue], connection=app.redis).work(burst=True)
+
+    (error,) = records.records_at(logging.ERROR)
+    assert error.getMessage().startswith("The task an unknown task failed")
+    assert job.id in error.getMessage()
+
+
+@pytest.mark.parametrize("error_before", [False, True])
+def test_an_abandoned_job_gives_1_error_on_the_app_logger(app, error_before):
+    """rq fails a job that a dead worker left. The report reaches the log (#759).
+
+    rq calls the handler from clean_registries with a stack summary, not a
+    traceback. With error_before, the last job of the worker logged an
+    ERROR. That count is not for the abandoned job."""
+
+    import logging
+
+    from rq.job import Job, JobStatus
+    from rq.registry import FailedJobRegistry
+
+    from app.pipeline import PipelineWorker
+
+    queue = app.maintenance_queue
+    worker = PipelineWorker([queue], connection=app.redis)
+    if error_before:
+        with app.app_context():
+            queue.enqueue("tests.test_pipeline._log_and_raise")
+        worker.work(burst=True)
+
+    job = Job.create("os.getpid", connection=app.redis, origin=queue.name)
+    job.set_status(JobStatus.STARTED)
+    job.save()
+    app.redis.zadd(f"rq:wip:{queue.name}", {f"{job.id}:deadbeef": 1})
+    with _Records() as records:
+        worker.clean_registries()
+
+    (error,) = records.records_at(logging.ERROR)
+    assert error.getMessage() == (
+        f"The task os.getpid failed (job '{job.id}'): AbandonedJobError"
+    )
+    assert records.records_at(logging.WARNING) == []
+    assert job.id in FailedJobRegistry(queue=queue).get_job_ids()
 
 
 def test_a_fault_in_the_failure_report_does_not_stop_the_worker(app, monkeypatch):

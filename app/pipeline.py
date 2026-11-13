@@ -46,12 +46,13 @@ import os
 import threading
 import time
 import traceback
+import types
 
 from collections import namedtuple
 from datetime import datetime, timezone
 
 from rq import Queue, SimpleWorker
-from rq.exceptions import DeserializationError, StopRequested
+from rq.exceptions import DeserializationError
 from rq.timeouts import BaseTimeoutException
 
 FILE_KEY = "fitzflix:pipeline:file:{digest}"
@@ -1501,8 +1502,8 @@ class PipelineWorker(SimpleWorker):
     """A SimpleWorker that stamps the trail around the execution.
 
     It stamps started when it picks up a job. It stamps done or failed
-    when the job completes. It reports each job that raises on the "app"
-    logger (#759)."""
+    when the job completes. It reports a failed job on the "app" logger
+    (#759)."""
 
     def __init__(self, *args, **kwargs):
         """Build the worker of rq. Then add the failure report to its exception handlers."""
@@ -1510,49 +1511,75 @@ class PipelineWorker(SimpleWorker):
         super().__init__(*args, **kwargs)
         self._error_counter = _app_error_counter()
         self._errors_before_job = self._error_counter.count
+        self._running_job_id = None
         self.push_exc_handler(self.report_job_exception)
 
     def execute_job(self, job, queue):
-        """Stamp started and clear a front mark. Then run the job as SimpleWorker does."""
+        """Stamp started and clear a front mark. Then run the job as SimpleWorker does.
+
+        The worker takes the error count of its thread before the job.
+        The failure report compares the count only for this job (#759)."""
 
         self._errors_before_job = self._error_counter.count
-        record_job_event(self.connection, job, "started")
-        self.connection.zrem(FRONT_KEY, job.id)
-        return super().execute_job(job, queue)
+        self._running_job_id = job.id
+        try:
+            record_job_event(self.connection, job, "started")
+            self.connection.zrem(FRONT_KEY, job.id)
+            return super().execute_job(job, queue)
+        finally:
+            self._running_job_id = None
 
     def report_job_exception(self, job, exc_type, exc_value, tb):
-        """Log 1 record on the "app" logger for a job that raised (#759).
+        """Log 1 record on the "app" logger for a failed job (#759).
 
         rq logs the exception of a job only on its own logger, to the
         stderr file of the worker. The mail and the log file of Fitzflix
-        are on the "app" logger. The invariant: 1 failed job sends 1 mail.
+        are on the "app" logger. rq calls this for a job that raises in
+        the worker. It also calls this from clean_registries for a job
+        that a dead worker left (AbandonedJobError). Then tb is a stack
+        summary, not a traceback, and the record has no traceback.
+
+        The invariant: each of these failed jobs gives 1 record, and it
+        gives 1 ERROR record when the job logged no ERROR of its own.
 
         - A stop of the worker is not a failure of the job. An exception
-          that is not an Exception, or StopRequested, logs a WARNING.
+          that is not an Exception logs a WARNING.
         - A job that logged a record at ERROR sent its own mail. Then this
           logs a WARNING with no traceback.
-        - Each other exception logs an ERROR with the traceback. A job
-          timeout is such a failure.
+        - Each other failure logs an ERROR, with the traceback when rq
+          gives one. A job timeout and an abandoned job are such failures.
 
-        This never raises. It returns True. Thus, rq continues with its
-        own failure handling: the failed registry and the trail stamp."""
+        Not every failed job comes here. A page that reads the started
+        jobs makes rq clean them up with no handler. Thus, a page can fail
+        an abandoned job first, and then that job gives no record.
+        reclaim_dead_workers fails the job of a dead worker with its own
+        WARNING and no ERROR.
+
+        The job id is in quotes. Thus, the log digest gives the reports of
+        1 task and 1 exception 1 signature. This never raises. rq does its
+        own failure handling after this, whatever this returns. True lets
+        the next handler of the worker run."""
 
         try:
             name = _task_name(job)
             message = str(exc_value)
             text = f"{exc_type.__name__}: {message}" if message else exc_type.__name__
+            if not isinstance(tb, types.TracebackType):
+                tb = None
+            logged_its_own_error = (
+                job.id == self._running_job_id
+                and self._error_counter.count > self._errors_before_job
+            )
             logger = logging.getLogger("app")
-            if not issubclass(exc_type, Exception) or issubclass(
-                exc_type, StopRequested
-            ):
+            if not issubclass(exc_type, Exception):
                 logger.warning(
-                    "The worker stopped the task %s (job %s): %s", name, job.id, text
+                    "The worker stopped the task %s (job '%s'): %s", name, job.id, text
                 )
-            elif self._error_counter.count > self._errors_before_job:
-                logger.warning("The task %s failed (job %s): %s", name, job.id, text)
+            elif logged_its_own_error:
+                logger.warning("The task %s failed (job '%s'): %s", name, job.id, text)
             else:
                 logger.error(
-                    "The task %s failed (job %s): %s",
+                    "The task %s failed (job '%s'): %s",
                     name,
                     job.id,
                     text,
