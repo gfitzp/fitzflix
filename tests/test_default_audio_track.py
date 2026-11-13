@@ -522,7 +522,8 @@ def test_an_edit_whose_record_is_deleted_puts_no_file_back(
 
     _change_record_during_the_remux(monkeypatch, tracks, delete_record_and_file)
     with app.app_context():
-        with pytest.raises(tracks.RecordChanged):
+        # The file went from the path. That stops the edit first (#741).
+        with pytest.raises(tracks.LibraryFileChanged):
             tracks.mkvmerge_unlocked(file_id, uids[:1], [])
     assert not os.path.exists(library_path)
     assert _hidden_files(library_path) == []
@@ -558,12 +559,103 @@ def test_an_edit_whose_record_moved_leaves_the_old_path_empty(
 
     _change_record_during_the_remux(monkeypatch, tracks, rename_record_and_file)
     with app.app_context():
-        with pytest.raises(tracks.RecordChanged):
+        # The file went from the path. That stops the edit first (#741).
+        with pytest.raises(tracks.LibraryFileChanged):
             tracks.mkvmerge_unlocked(file_id, uids[:1], [])
     assert not os.path.exists(library_path)
     with open(new_path, "rb") as handle:
         assert handle.read() == before
     assert _hidden_files(new_path) == []
+
+
+def test_an_edit_whose_record_is_deleted_keeps_a_file_that_stays(
+    app, monkeypatch, three_audio_mkv
+):
+    """The record went, and the file is still at its path (#726).
+
+    The stamp of the file is the same, so only the check of the record
+    stops the edit. The file keeps its bytes."""
+
+    from app import db
+    from app.models import File
+    import app.tracks as tracks
+
+    file_id, library_path = _propedit_fixture(
+        app,
+        monkeypatch,
+        three_audio_mkv,
+        "Record Only Deleted",
+        app.config["MKVPROPEDIT_BIN"],
+    )
+    with app.app_context():
+        uids = _uids(file_id)
+    with open(library_path, "rb") as handle:
+        before = handle.read()
+
+    def delete_record():
+        db.session.delete(db.session.get(File, file_id))
+        db.session.commit()
+
+    _change_record_during_the_remux(monkeypatch, tracks, delete_record)
+    with app.app_context():
+        with pytest.raises(tracks.RecordChanged):
+            tracks.mkvmerge_unlocked(file_id, uids[:1], [])
+    with open(library_path, "rb") as handle:
+        assert handle.read() == before
+    assert _hidden_files(library_path) == []
+
+
+def _replace_like_an_arr(library_path):
+    """Put an other release at the path of a library file, as Radarr does."""
+
+    os.remove(library_path)
+    with open(library_path, "wb") as handle:
+        handle.write(b"the newer release of the film")
+
+
+@pytest.mark.parametrize("staged", [True, False], ids=["on staging", "in place"])
+def test_an_edit_does_not_replace_a_file_that_an_arr_upgraded(
+    app, monkeypatch, three_audio_mkv, tmp_path, staged
+):
+    """Radarr upgrades the film at the same path during a track edit (#741).
+
+    The title lock does not stop Radarr. The edit must not put the remux
+    of the old file over the new file. It also must not store a size on
+    the record, and it queues no scan. Else the import of the new file,
+    which waits for the lock, takes the file as cataloged already."""
+
+    from app import db
+    from app.models import File
+    import app.tracks as tracks
+
+    file_id, library_path = _propedit_fixture(
+        app,
+        monkeypatch,
+        three_audio_mkv,
+        f"Upgraded In Edit {staged}",
+        app.config["MKVPROPEDIT_BIN"],
+    )
+    if staged:
+        monkeypatch.setitem(app.config, "STAGING_DIR", str(tmp_path / "staging"))
+        os.makedirs(app.config["STAGING_DIR"], exist_ok=True)
+        monkeypatch.setattr(tracks, "_on_volume_of", lambda path, directory: False)
+    with app.app_context():
+        uids = _uids(file_id)
+        size_before = db.session.get(File, file_id).filesize_bytes
+    _change_record_during_the_remux(
+        monkeypatch, tracks, lambda: _replace_like_an_arr(library_path)
+    )
+    with app.app_context():
+        with pytest.raises(tracks.LibraryFileChanged):
+            tracks.mkvmerge_task(file_id, uids[:1], [])
+        db.session.rollback()
+        row = db.session.get(File, file_id)
+        assert row.filesize_bytes == size_before
+        assert not row.aws_stale
+        assert _scheduled_scans(app, file_id) == []
+    with open(library_path, "rb") as handle:
+        assert handle.read() == b"the newer release of the film"
+    assert _hidden_files(library_path) == []
 
 
 def test_a_record_check_does_not_need_the_archive_setting(app, three_audio_mkv):

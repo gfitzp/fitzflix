@@ -84,6 +84,53 @@ def _run_mkvmerge(command, job, name, activity):
     wait_for_subprocess(process, ok_returncodes=(0, 1))
 
 
+class LibraryFileChanged(RuntimeError):
+    """An other program changed a library file during a rewrite of it (#732, #741)."""
+
+    def __init__(self, library_path):
+        super().__init__(
+            f"An other program changed '{library_path}' during the rewrite. "
+            f"The rewrite stops, and the file stays as it is"
+        )
+        self.library_path = library_path
+
+
+def library_stamp(library_path):
+    """Return the size and the modification time of a library file."""
+
+    library = os.stat(library_path)
+    return {"size": library.st_size, "mtime": library.st_mtime}
+
+
+def refuse_changed_library_file(stamp, library_path):
+    """Raise LibraryFileChanged if a library file is not the file of the stamp.
+
+    Invariant: a rewrite never replaces a library file that changed
+    after the rewrite read it (#732, #741). The title lock stops each
+    job of Fitzflix for the minutes or hours of a rewrite. It does not
+    stop Radarr or Sonarr. They put an upgrade at the same path, and
+    the import of that file waits for the lock. The copy that the
+    rewrite works on is then the older release. Each rewrite takes
+    library_stamp before it reads the file, and it calls this function
+    before it writes.
+
+    With no stamp, there is no check. An upgrade with a new quality in
+    its name deletes the old file. Then the file is gone and its folder
+    is there, and that is a change too. With no folder, the volume is
+    away, and the OSError of the stat goes to the caller."""
+
+    if not stamp:
+        return
+    try:
+        now = library_stamp(library_path)
+    except FileNotFoundError:
+        if not os.path.isdir(os.path.dirname(library_path)):
+            raise
+        now = None
+    if now != stamp:
+        raise LibraryFileChanged(library_path)
+
+
 # The tries of the staging reservation of a remux while its lock is busy.
 
 REMUX_RESERVATION_TRIES = 3
@@ -106,13 +153,19 @@ def remux_file(file_path, build_command, job, name, activity, before_replace=Non
     rewrite passes confirm_rewrite. That call stops the rename when the
     record went or moved during the remux (#726). It also marks the
     archive stale before the bytes change (#517). A raise of
-    before_replace removes the result."""
+    before_replace removes the result.
+
+    The remux takes the stamp of the file before it reads it. A file
+    that an other program changed since then is not replaced (#741).
+    That check comes before before_replace. Thus, a file that the remux
+    does not replace gets no stale flag."""
 
     from app.importing import release_staging_reservation, reserve_staging
     from app.videos import copy_with_progress
 
     directory, basename = os.path.split(file_path)
     staging_dir = current_app.config["STAGING_DIR"]
+    stamp = library_stamp(file_path)
 
     # The staging names hold a digest of the library path. The basename
     # of an extra is not unique. For example, many films have a
@@ -165,6 +218,7 @@ def remux_file(file_path, build_command, job, name, activity, before_replace=Non
         hidden_output = hidden(os.path.join(directory, basename), ".remux.mkv")
         try:
             _run_mkvmerge(build_command(file_path, hidden_output), job, name, activity)
+            refuse_changed_library_file(stamp, file_path)
             if before_replace:
                 before_replace()
             os.replace(hidden_output, file_path)
@@ -183,9 +237,15 @@ def remux_file(file_path, build_command, job, name, activity, before_replace=Non
         )
         _run_mkvmerge(build_command(staged_source, staged_output), job, name, activity)
         os.remove(staged_source)
+
+        # The check comes before the long copy back, and again right
+        # before the rename (#741).
+
+        refuse_changed_library_file(stamp, file_path)
         copy_with_progress(
             staged_output, hidden_library, job, name, "Moving into the library"
         )
+        refuse_changed_library_file(stamp, file_path)
         if before_replace:
             before_replace()
         os.replace(hidden_library, file_path)
@@ -1063,8 +1123,9 @@ def _locked_edit(
     or books a lock wait and returns True. A pending restore refuses the
     edit (#610). run() is the edit. Any raise of run() queues 1 track
     scan and raises again. A repeat of an edit reads the file again and
-    rebuilds the rows (#611). Thus, the scan is always safe. A failure
-    before the tool wrote costs 1 scan that only reads the file.
+    rebuilds the rows (#611). A failure before the tool wrote costs 1
+    scan that only reads the file. LibraryFileChanged queues no scan
+    (#741). The import of the changed file does that work.
 
     retry(error, name) can book a retry of a transient fault. It returns
     True if it did. Then the task returns False with no scan, because
@@ -1114,7 +1175,14 @@ def _locked_edit(
             if booked:
                 return False
             current_app.logger.error(traceback.format_exc())
-            _rescan_after_a_failed_edit(file_id, name)
+
+            # An other program put a different file at the path (#741).
+            # Its import waits for this lock. A scan now would store the
+            # size of that file on the record, and the import would then
+            # take the file as cataloged already (already_cataloged).
+
+            if not isinstance(error, LibraryFileChanged):
+                _rescan_after_a_failed_edit(file_id, name)
             raise
         finally:
             current_app.lock_manager.unlock(lock)
@@ -2329,6 +2397,7 @@ def _remux_audio_plan_unlocked(file_id, plan):
             elif status != "ok":
                 raise RuntimeError(f"'{basename}' not enough staging space")
 
+            stamp = library_stamp(file_path)
             copy_with_progress(
                 file_path, staging_source, job, basename, "Copying to local staging"
             )
@@ -2431,6 +2500,7 @@ def _remux_audio_plan_unlocked(file_id, plan):
 
             hidden_library = hidden(os.path.join(os.path.dirname(file_path), basename))
             try:
+                refuse_changed_library_file(stamp, file_path)
                 copy_with_progress(
                     final_staging,
                     hidden_library,
@@ -2438,6 +2508,7 @@ def _remux_audio_plan_unlocked(file_id, plan):
                     basename,
                     "Moving into the library",
                 )
+                refuse_changed_library_file(stamp, file_path)
                 confirm_rewrite(int(file_id), file_path)
                 os.replace(hidden_library, file_path)
             except BaseException:

@@ -45,7 +45,12 @@ from app.models import File, FileAudioTrack
 from app.naming import hidden
 from app.settings import get_setting
 from app.pipeline import TaskPhases, close_trail, keep_trail_open
-from app.tracks import stop_process
+from app.tracks import (
+    LibraryFileChanged,
+    library_stamp,
+    refuse_changed_library_file,
+    stop_process,
+)
 from app.plex_library import enqueue_plex_analyze
 
 app = get_app()
@@ -105,48 +110,6 @@ def staged_handoff(staged_path, library_path):
         "size": library.st_size,
         "mtime": library.st_mtime,
     }
-
-
-class LibraryFileChanged(RuntimeError):
-    """An other program changed the library file during the Atmos run (#732)."""
-
-
-def _library_stamp(library_path):
-    """Return the size and the modification time of a library file."""
-
-    library = os.stat(library_path)
-    return {"size": library.st_size, "mtime": library.st_mtime}
-
-
-def _refuse_changed_library_file(state, library_path):
-    """Raise LibraryFileChanged if the library file is not the file that the run copied.
-
-    Invariant: the Atmos finish never replaces a library file that
-    changed after the run copied it (#732). The title lock stops each
-    job of Fitzflix for the hours of the encode. It does not stop Radarr
-    or Sonarr. They put an upgrade at the same path, and the import of
-    that file waits for the lock. The staged copy is then the older
-    release. A run that the older code started has no stamp in its
-    state. Its finish makes no check. An upgrade with a new quality in
-    its name deletes the old file. Then the file is gone and its folder
-    is there, and that is a change too. With no folder, the volume is
-    away. That raises the OSError of the stat, and the finish tries
-    again."""
-
-    stamp = state.get("library")
-    if not stamp:
-        return
-    try:
-        now = _library_stamp(library_path)
-    except FileNotFoundError:
-        if not os.path.isdir(os.path.dirname(library_path)):
-            raise
-        now = None
-    if now != stamp:
-        raise LibraryFileChanged(
-            f"The library file changed during the Atmos run. The run ends, "
-            f"and '{library_path}' stays as it is"
-        )
 
 
 def discard_staged_source(staged_source):
@@ -788,8 +751,8 @@ def _atmos_prepare(file_id, phases, staged_source=None):
     # The stamp of the file that the run copies. The finish compares it
     # (#732). A change during the copy gives a different stamp there.
 
-    library_stamp = _library_stamp(file_path)
-    needed = copies * library_stamp["size"] + WORKSPACE_HEADROOM_BYTES
+    stamp = library_stamp(file_path)
+    needed = copies * stamp["size"] + WORKSPACE_HEADROOM_BYTES
     if staging_free < needed:
         current_app.logger.warning(
             f"'{basename}' Staging space is insufficient for the Atmos "
@@ -951,7 +914,7 @@ def _atmos_prepare(file_id, phases, staged_source=None):
         "trail_basename": file.untouched_basename or basename,
         "workspace": workspace,
         "staging_source": staging_source,
-        "library": library_stamp,
+        "library": stamp,
         "bucket": bucket,
         "prefix": prefix,
         "audio_tracks": audio_tracks,
@@ -1270,15 +1233,21 @@ def atmos_finish_task(state, lock, finish_retries=0):
             # catalogs the file and starts a run for it. Thus, this run
             # queues no archive of the file.
             current_app.logger.warning(f"'{state['basename']}' {error}")
-            phases.fail()
-            phases.close("failed")
-            _close_run(state, lock, ended_early=False)
 
             # A share can report a fault for a rename that it did. Then
             # the retry of the finish finds its own result as "changed".
-            # A scan reads the track rows from the file that is there.
+            # A scan reads the track rows from that file. A file of an
+            # other size is the file of an other program. It gets no
+            # scan, because the scan would store its size, and the
+            # import that waits would take it as cataloged already.
 
-            if finish_retries:
+            own_result = bool(finish_retries) and _same_size(
+                error.library_path, state.get("staging_source")
+            )
+            phases.fail()
+            phases.close("failed")
+            _close_run(state, lock, ended_early=False)
+            if own_result:
                 from app.tracks import _rescan_after_a_failed_edit
 
                 _rescan_after_a_failed_edit(state["file_id"], f"'{state['basename']}'")
@@ -1301,6 +1270,15 @@ def atmos_finish_task(state, lock, finish_retries=0):
         phases.finish()
         phases.close("done")
         return result
+
+
+def _same_size(path, other):
+    """Return True if 2 files exist and have the same size."""
+
+    try:
+        return os.path.getsize(path) == os.path.getsize(other)
+    except (OSError, TypeError):
+        return False
 
 
 def _book_finish_retry(state, lock, retries, error):
@@ -1561,7 +1539,7 @@ def _atmos_finish(state, phases):
                 # The check comes before the long copy, and again right
                 # before the rename (#732).
 
-                _refuse_changed_library_file(state, file_path)
+                refuse_changed_library_file(state.get("library"), file_path)
                 copy_with_progress(
                     final_staging,
                     hidden_output,
@@ -1575,7 +1553,7 @@ def _atmos_finish(state, phases):
                 # makes the weekly sync upload the file. A good archive
                 # below clears it.
 
-                _refuse_changed_library_file(state, file_path)
+                refuse_changed_library_file(state.get("library"), file_path)
                 confirm_rewrite(file_id, file_path)
                 os.rename(hidden_output, file_path)
             except BaseException:
