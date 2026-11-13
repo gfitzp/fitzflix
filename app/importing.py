@@ -3489,6 +3489,14 @@ def _adopt_upload(row_id, upload, output_file):
         file.aws_filesize_bytes = upload["aws_filesize_bytes"]
         file.aws_stale = False
 
+        # A record with no stale flag has the size of its library file
+        # (#750, replaced_from_outside in app/tracks.py). With the old
+        # size, the scan of the repair and the weekly sync read the
+        # new file as a file from outside. Its import then deleted the
+        # archive that the record takes here.
+
+        record_filesize(file, os.path.getsize(output_file))
+
         # The commit of an import ends a pending restore of the record
         # (#620). The old archive must not come back over the new file.
         # The adoption does the same (#734).
@@ -3542,9 +3550,10 @@ def _unclaimed_upload_text(upload):
 def _repair_replaced_record(row_id, output_file, upload):
     """Repair the record of a file that a failed import replaced (#592, #727).
 
-    The track scan reads the rows and the size again from the new file.
-    The record takes the upload of the import as its archive. Without
-    an upload, the stale flag makes the sync upload the new file."""
+    The track scan reads the rows again from the new file. The record
+    takes the upload of the import as its archive, and the size of the
+    new file with it. Without an upload, the stale flag makes the sync
+    upload the new file, and the scan stores the size."""
 
     _rescan_after_a_failed_edit(row_id, f"'{output_file}'")
     if not _adopt_upload(row_id, upload, output_file):

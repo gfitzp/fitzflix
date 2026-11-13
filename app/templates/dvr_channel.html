@@ -165,7 +165,7 @@ document.querySelectorAll(".dvr-title-lookahead").forEach(function (input) {
 		active = -1;
 	}
 
-	input.addEventListener("input", function () {
+	function typed() {
 		clearTimeout(timer);
 		const q = input.value.trim();
 		if (q.length < 2) {
@@ -174,7 +174,9 @@ document.querySelectorAll(".dvr-title-lookahead").forEach(function (input) {
 		}
 		wanted = q;
 		timer = setTimeout(function () { lookup(q); }, 250);
-	});
+	}
+
+	input.addEventListener("input", typed);
 
 	function lookup(q) {
 		const url = "{{ url_for('main.dvr_title_search') }}?kind=" +
@@ -190,6 +192,11 @@ document.querySelectorAll(".dvr-title-lookahead").forEach(function (input) {
 	}
 
 	input.addEventListener("keydown", function (event) {
+		// Escape also stops an answer that is on its way (#756).
+		if (event.key === "Escape") {
+			hide();
+			return;
+		}
 		const items = menu.querySelectorAll(".dropdown-item");
 		if (!items.length) return;
 		if (event.key === "ArrowDown" || event.key === "ArrowUp") {
@@ -200,8 +207,6 @@ document.querySelectorAll(".dvr-title-lookahead").forEach(function (input) {
 			// Fill the input. A second Enter (or the button) submits.
 			event.preventDefault();
 			input.value = items[active].textContent;
-			hide();
-		} else if (event.key === "Escape") {
 			hide();
 		}
 	});

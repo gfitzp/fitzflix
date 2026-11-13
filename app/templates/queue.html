@@ -33,8 +33,8 @@
 <script>
 	(function() {
 		// The ETag of the rows on the page. A poll sends it, and an
-		// unchanged queue answers 304. Then the rows and their forms
-		// stay in place.
+		// unchanged queue answers with no body. Then the rows and their
+		// forms stay in place.
 
 		var ROWS_URL = {{ url_for('main.queue_rows_fragment')|tojson }};
 		var rowsEtag = {{ rows_etag|tojson }};

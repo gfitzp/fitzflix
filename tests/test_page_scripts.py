@@ -514,29 +514,89 @@ def test_two_fast_replacements_do_not_bring_in_the_same_film(tmp_path):
     Both requests then named the same films, and the server gave the
     same best film to both."""
 
-    body = _template_source("recommendations.html")
+    body = _template_source("base.html") + _template_source("recommendations.html")
     test_code = REPLACEMENT_FAKES + r"""
 replaceCell(shelf, tile());
 replaceCell(shelf, tile()).then(() => { result = { shown, urls }; });
 """
     out = run_page_script(
-        body, ["fetchReplacement", "replaceCell"], test_code, tmp_path
+        body,
+        ["fetchWithTimeout", "fetchReplacement", "replaceCell"],
+        test_code,
+        tmp_path,
     )
     assert out["result"]["shown"] == ["1", "2", "101", "102"]
     assert out["result"]["urls"][1].endswith("exclude=1,2,101")
 
 
+def test_two_fast_replacements_with_the_fade_do_not_bring_in_the_same_film(tmp_path):
+    """The fade of the old tile is a part of the wait (#754).
+
+    Most people see the fade. The film is in the page only at its end."""
+
+    body = _template_source("base.html") + _template_source("recommendations.html")
+    test_code = REPLACEMENT_FAKES + r"""
+window.matchMedia = () => ({ matches: false });
+const fades = [];
+window.setTimeout = (fn, ms) => { fades.push(ms); fn(); };
+replaceCell(shelf, tile());
+replaceCell(shelf, tile()).then(() => { result = { shown, urls, fades }; });
+"""
+    out = run_page_script(
+        body,
+        ["fetchWithTimeout", "fetchReplacement", "replaceCell"],
+        test_code,
+        tmp_path,
+    )
+    assert out["result"]["shown"] == ["1", "2", "101", "102"]
+    assert out["result"]["urls"][1].endswith("exclude=1,2,101")
+    assert out["result"]["fades"] == [250, 250]
+
+
+def test_a_replacement_with_no_answer_does_not_hold_the_next_one(tmp_path):
+    """The requests wait for each other. A request has a time limit (#754, #650)."""
+
+    body = _template_source("base.html") + _template_source("recommendations.html")
+    test_code = REPLACEMENT_FAKES + r"""
+const served = answer;
+let calls = 0;
+// The first request gets no answer. Its time limit stops it.
+answer = (url, options) => {
+    calls += 1;
+    if (calls > 1) return served(url, options);
+    return new Promise((resolve, reject) => {
+        if (!options.signal) return;
+        options.signal.addEventListener("abort", () => reject(new Error("aborted")));
+    });
+};
+replaceCell(shelf, tile());
+replaceCell(shelf, tile()).then(() => { result = { shown, calls }; });
+// The fake timers do not run by themselves. Run the time limit.
+Promise.resolve().then(() => { Object.values(pendingTimers).forEach((fn) => fn()); });
+"""
+    out = run_page_script(
+        body,
+        ["fetchWithTimeout", "fetchReplacement", "replaceCell"],
+        test_code,
+        tmp_path,
+    )
+    assert out["result"] == {"shown": ["1", "2", "101"], "calls": 2}
+
+
 def test_a_tile_that_left_the_page_gets_no_second_replacement(tmp_path):
     """Two actions on 1 tile ask for 1 new film (#754)."""
 
-    body = _template_source("recommendations.html")
+    body = _template_source("base.html") + _template_source("recommendations.html")
     test_code = REPLACEMENT_FAKES + r"""
 const cell = tile();
 replaceCell(shelf, cell);
 replaceCell(shelf, cell).then(() => { result = { shown, fetches: urls.length }; });
 """
     out = run_page_script(
-        body, ["fetchReplacement", "replaceCell"], test_code, tmp_path
+        body,
+        ["fetchWithTimeout", "fetchReplacement", "replaceCell"],
+        test_code,
+        tmp_path,
     )
     assert out["result"] == {"shown": ["1", "2", "101"], "fetches": 1}
 
@@ -588,23 +648,61 @@ next();
     out = run_page_script(body, ["post"], test_code, tmp_path)
     assert out["result"] == [
         "Your session ended. Reload the page and sign in again.",
-        "The server did not answer. Try again in a moment.",
-        "The server did not answer. Try again in a moment.",
+        "The server could not do this step. Try again in a moment.",
+        "The server could not do this step. Try again in a moment.",
         "The passkey was not accepted.",
         {"redirect": "/"},
     ]
 
 
+def test_a_whole_passkey_error_gets_no_password_hint(tmp_path):
+    """The password field does not help after an ended session (#755)."""
+
+    import os
+
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    with open(os.path.join(root, "app", "static", "passkeys.js")) as script:
+        body = script.read()
+    test_code = r"""
+function csrfToken() { return "token"; }
+const shownFor = [];
+function showPassword(form, show) { shownFor.push(form); return true; }
+answer = () => Promise.resolve({
+    ok: true, status: 200, redirected: true,
+    headers: { get: () => "text/html" },
+});
+post("/auth/passkey/confirm/options", {}).catch((ended) => {
+    const refused = new Error("The passkey was not accepted.");
+    result = {
+        ended: failedProof(ended, "form 1"),
+        refused: failedProof(refused, "form 2"),
+        shownFor,
+    };
+});
+"""
+    out = run_page_script(body, ["post", "message", "failedProof"], test_code, tmp_path)
+    assert out["result"] == {
+        "ended": "Your session ended. Reload the page and sign in again.",
+        "refused": "The passkey was not accepted. Try again, or type your password.",
+        "shownFor": ["form 2"],
+    }
+
+
 SUGGESTION_FAKES = r"""
+// The variables of the closure of the page script. hide, typed and the
+// fetch function come from the page.
 let wanted = null;
+let timer = null;
 let activeIndex = -1;
+let active = -1;
 const pending = {};
+const input = { value: "", dataset: { kind: "series" } };
 const menu = {
-    innerHTML: "", children: [], shown: false,
+    children: [], shown: false,
+    set innerHTML(html) { menu.children = []; },
     classList: { add() { menu.shown = true; }, remove() { menu.shown = false; } },
     appendChild(item) { menu.children.push(item.textContent); },
 };
-function hide() { wanted = null; menu.shown = false; menu.children = []; }
 // Each request waits until the test settles it.
 answer = (url) => new Promise((resolve) => {
     const q = decodeURIComponent(url.split("q=")[1]);
@@ -616,44 +714,69 @@ answer = (url) => new Promise((resolve) => {
 // The harness prints after 2 turns of the event loop. Thus, a wait
 // uses only the queue of the promises.
 const tick = async () => { for (let i = 0; i < 20; i += 1) await Promise.resolve(); };
+// The person types text. Then the wait of the type-ahead ends.
+function type(text) {
+    input.value = text;
+    typed();
+    Object.keys(pendingTimers).forEach((id) => { const fn = pendingTimers[id]; delete pendingTimers[id]; fn(); });
+}
+const state = () => ({ shown: menu.shown, items: menu.children.slice() });
+"""
+
+SUGGESTION_STEPS = r"""
+(async () => {
+    const seen = {};
+    // The box is cleared while the answer for "st" is on its way.
+    type("st");
+    type("");
+    pending["st"]();
+    await tick();
+    seen.cleared = state();
+
+    // "st", then "sta". The answer for "sta" comes first.
+    type("st");
+    type("sta");
+    pending["sta"]();
+    await tick();
+    pending["st"]();
+    await tick();
+    seen.overtaken = state();
+
+    // The menu is closed while the answer for "xy" is on its way.
+    type("xy");
+    hide();
+    pending["xy"]();
+    await tick();
+    seen.closed = state();
+
+    // An answer for the text in the box opens the menu.
+    type("zz");
+    pending["zz"]();
+    await tick();
+    seen.current = state();
+    result = seen;
+})();
 """
 
 
 def test_an_old_search_answer_does_not_paint_the_menu(admin_client, tmp_path):
     """An answer paints only for the text that the box holds (#756).
 
-    The person typed more, or cleared the box, while the request was on
-    its way. The old answer opened the menu under the new text."""
+    The person typed more, cleared the box or closed the menu while the
+    request was on its way. The old answer opened the menu."""
 
     body = admin_client.get("/").get_data(as_text=True)
-    test_code = SUGGESTION_FAKES + r"""
-(async () => {
-    const seen = {};
-    // The box is cleared while the answer for "st" is on its way.
-    wanted = "st";
-    suggest("st");
-    hide();
-    pending["st"]();
-    await tick();
-    seen.cleared = { shown: menu.shown, items: menu.children.slice() };
-
-    // "st", then "sta". The answer for "sta" comes first.
-    wanted = "st";
-    suggest("st");
-    wanted = "sta";
-    suggest("sta");
-    pending["sta"]();
-    await tick();
-    pending["st"]();
-    await tick();
-    seen.overtaken = { shown: menu.shown, items: menu.children.slice() };
-    result = seen;
-})();
-"""
-    out = run_page_script(body, ["suggest"], test_code, tmp_path)
+    out = run_page_script(
+        body,
+        ["hide", "suggest", "typed"],
+        SUGGESTION_FAKES + SUGGESTION_STEPS,
+        tmp_path,
+    )
     assert out["result"] == {
         "cleared": {"shown": False, "items": []},
         "overtaken": {"shown": True, "items": ["sta — film"]},
+        "closed": {"shown": False, "items": []},
+        "current": {"shown": True, "items": ["zz — film"]},
     }
 
 
@@ -662,20 +785,15 @@ def test_an_old_dvr_title_answer_does_not_paint_the_menu(tmp_path):
 
     body = _template_source("dvr_channel.html")
     test_code = SUGGESTION_FAKES + r"""
-const input = { dataset: { kind: "series" } };
-const painted = [];
-function render(results) { painted.push(results.map((item) => item.title)); }
-(async () => {
-    wanted = "do";
-    lookup("do");
-    wanted = "doc";
-    lookup("doc");
-    pending["doc"]();
-    await tick();
-    pending["do"]();
-    await tick();
-    result = painted;
-})();
-"""
-    out = run_page_script(body, ["lookup"], test_code, tmp_path)
-    assert out["result"] == [["doc"]]
+function render(results) {
+    menu.children = results.map((item) => item.title + " — film");
+    menu.shown = results.length > 0;
+}
+""" + SUGGESTION_STEPS
+    out = run_page_script(body, ["hide", "lookup", "typed"], test_code, tmp_path)
+    assert out["result"] == {
+        "cleared": {"shown": False, "items": []},
+        "overtaken": {"shown": True, "items": ["sta — film"]},
+        "closed": {"shown": False, "items": []},
+        "current": {"shown": True, "items": ["zz — film"]},
+    }

@@ -38,12 +38,18 @@
 
 	// Each planned answer of the passkey routes is JSON. Three answers
 	// are not: the sign-in page after a redirect when the session ended,
-	// the error page of a proxy during a restart, and a server error
-	// page. The script read each answer as JSON first, and the person
-	// saw the message of the parser of the browser (#755).
+	// the error page of a proxy during a restart, and an error page of
+	// the server. The script read each answer as JSON first, and the
+	// person saw the message of the parser of the browser (#755). Such
+	// an error is complete (whole): the password field does not help.
 
 	function post(url, body) {
-		var NO_ANSWER = "The server did not answer. Try again in a moment.";
+		function whole(text) {
+			var error = new Error(text);
+			error.whole = true;
+			return error;
+		}
+		var NOT_DONE = "The server could not do this step. Try again in a moment.";
 		var SESSION_ENDED = "Your session ended. Reload the page and sign in again.";
 		return fetch(url, {
 			method: "POST",
@@ -53,14 +59,14 @@
 		}).then(function(response) {
 			var type = response.headers.get("Content-Type") || "";
 			if (type.indexOf("application/json") === -1) {
-				throw new Error(response.redirected ? SESSION_ENDED : NO_ANSWER);
+				throw whole(response.redirected ? SESSION_ENDED : NOT_DONE);
 			}
 			return response.json().then(function(data) {
 				if (!response.ok) throw new Error(data.error || "The request failed.");
 				return data;
 			});
 		}, function() {
-			throw new Error(NO_ANSWER);
+			throw whole(NOT_DONE);
 		});
 	}
 
@@ -106,6 +112,17 @@
 		if (error && error.name === "NotAllowedError") return "The passkey request was cancelled.";
 		if (error && error.name === "InvalidStateError") return "This device already has a passkey for this account.";
 		return (error && error.message) || "The passkey request failed.";
+	}
+
+	// The text of a passkey proof that failed. The form then shows its
+	// password field, if the account has a password. An error that is
+	// whole says what to do, and the password does not help for it.
+
+	function failedProof(error, form) {
+		var text = message(error);
+		if (error && error.whole) return text;
+		if (showPassword(form, true)) text += " Try again, or type your password.";
+		return text;
 	}
 
 	function statusOf(element) {
@@ -161,9 +178,7 @@
 			});
 		}, function(error) {
 			if (field) field.value = "";
-			var text = message(error);
-			if (field && showPassword(form, true)) text += " Try again, or type your password.";
-			return text;
+			return field ? failedProof(error, form) : message(error);
 		});
 	}
 
@@ -246,9 +261,7 @@
 				window.setTimeout(function() { submit.disabled = true; }, 0);
 			});
 		}, function(error) {
-			var text = message(error);
-			if (showPassword(form, true)) text += " Try again, or type your password.";
-			return text;
+			return failedProof(error, form);
 		});
 	}
 

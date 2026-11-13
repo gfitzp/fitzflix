@@ -130,7 +130,9 @@
 			if (!cell.isConnected) return null;
 			var params = "criteria=" + encodeURIComponent(shelf.getAttribute("data-criteria"))
 				+ "&exclude=" + shownIds().join(",");
-			return fetch(TILE_URL + "?" + params, {credentials: "same-origin"})
+			// A request with no answer must not hold the requests after
+			// it. base.html has the fetch with a time limit (#650).
+			return fetchWithTimeout(TILE_URL + "?" + params, {credentials: "same-origin"}, POLL_TIMEOUT_MS)
 				.then(function(response) {
 					if (response.status === 204) return null;
 					if (!response.ok) throw new Error("tile fetch failed");

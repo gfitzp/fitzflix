@@ -601,12 +601,22 @@ def track_metadata_scan_task(file_id):
 def replaced_from_outside(filesize_bytes, stale, file_path):
     """Return True if the library file at file_path is not the file of its record (#750).
 
-    Each writer of Fitzflix stores the new size on the record. When
-    Fitzflix archives the library files, the writer sets the stale flag
-    before its write (confirm_rewrite). Thus, a file with an other size
-    than its record and with no stale flag came from Radarr, from Sonarr
-    or from a person. Its import did not run. Only an import makes the
-    record of such a file: new tracks, a new size and a new archive.
+    Invariant: a record with no stale flag has the size of its library
+    file, or an outside writer replaced that file. Each writer of
+    Fitzflix stores the new size on the record. When Fitzflix archives
+    the library files, the writer sets the stale flag before its write
+    (confirm_rewrite). Each step that clears the flag does it with the
+    size stored. The commit of an import stores it. The upload of the
+    library file comes after the commit of its edit, and upload_task
+    stores the size of an edit that died. A record that takes the
+    upload of a failed import stores it too (_adopt_upload). The move
+    of an archive to modified/ clears the flag only for a file that has
+    the bytes of its archive.
+
+    Thus, a file with an other size than its record and with no stale
+    flag came from Radarr, from Sonarr or from a person. Its import did
+    not run. Only an import makes the record of such a file: new
+    tracks, a new size and a new archive.
 
     A record with no size makes no claim. When Fitzflix does not
     archive, no flag is set, and an edit that died after its write looks

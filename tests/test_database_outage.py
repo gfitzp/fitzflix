@@ -516,6 +516,39 @@ def test_the_record_takes_the_original_of_a_file_that_replaced_its_source(
         assert not row.aws_stale
 
 
+def test_the_record_that_takes_an_upload_takes_the_size_of_the_new_file(
+    app, tmp_path, monkeypatch
+):
+    """The adoption clears the stale flag. The size must agree then (#750).
+
+    A file with an other size than its record and no stale flag is a
+    file that Fitzflix did not write. The scan of the repair then sent
+    the localized file to the import as a new original. That import
+    deleted the archive that the record had just taken."""
+
+    import app.importing as importing
+    from app import db
+    from app.models import File
+    from app.tracks import replaced_from_outside
+
+    monkeypatch.setattr(importing, "_rescan_after_a_failed_edit", lambda *a: None)
+    name = "Over Record Size (2023) - [DVD].mkv"
+    source, rejected, file_id = _cataloging_over_the_source(
+        app,
+        tmp_path,
+        monkeypatch,
+        name,
+        RuntimeError("commit"),
+        True,
+        _run_scoped_upload(name),
+    )
+    with app.app_context():
+        row = db.session.get(File, file_id)
+        assert not row.aws_stale
+        assert row.filesize_bytes == len(b"library copy")
+        assert not replaced_from_outside(row.filesize_bytes, row.aws_stale, str(source))
+
+
 def test_the_record_takes_an_upload_at_the_normal_key(app, tmp_path, monkeypatch):
     """No record claims the normal key of the name. The upload goes to it (#734).
 
