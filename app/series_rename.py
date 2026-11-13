@@ -7,9 +7,11 @@ when Glenn added one. Sonarr is where a series gets renamed (#370). A
 rename in Sonarr carries over to Fitzflix: the title, the folder, the
 file rows, and the untouched names. The Sonarr path check
 (reconcile_sonarr_paths) does this nightly. The Sonarr webhook queues
-the check of one series when its folder differs. A
-Sonarr rename of episode files in the same folder changes only the
-rows. A series that Sonarr does not manage is not changed. Nothing
+the check of one series when its folder differs. A Rename event of
+episode files in the same folder changes only the rows. Sonarr sends a
+Rename event only when its On Rename trigger is on, and the set-up of
+the README does not turn it on (#773). A series that Sonarr does not
+manage is not changed. Nothing
 adds a year to a series on its own.
 
 A rename rewrites the untouched name of each file. It makes no request
