@@ -42,7 +42,11 @@ from app.tasks import enqueue_task
 from app import db, get_app
 from app.availability_alerts import _leaving_set
 from app.settings import get_setting
-from app.file_ranking import MOVIE_BEST_ORDER, TV_BEST_ORDER
+from app.file_ranking import (
+    MOVIE_BEST_ORDER,
+    best_episode_holders,
+    tv_rank_rows,
+)
 from app.leaving_criterion import CRITERION_PROVIDER_ID
 from app.maintenance import volume_alive
 from app.plex_api import plex_command, plex_get
@@ -448,20 +452,30 @@ def _span_of(season, episode, last_episode):
     return {(season, number) for number in range(episode, last + 1)}
 
 
-def _program_count(rows):
-    """Return the programs of (season, episode, last_episode) rows in broadcast order.
+def _program_files(pairs):
+    """Return the files that air for (file, quality) pairs of TV files, in broadcast order.
 
-    A row whose first episode is in a span that came before it is not a
-    new program (#428)."""
+    Invariant: one rule says which file is the best copy of an episode
+    (#738, #743). That rule is best_episode_holders. It counts each
+    episode of a file with 2 or more episodes. A file airs 1 time if it
+    is the best holder of 1 or more of its episodes. Before, a file was
+    left out when a better file had its FIRST episode. Then its later
+    episodes never aired. A file that airs for a later episode shows
+    its first episodes again. That is better than a lost episode.
 
-    covered = set()
-    count = 0
-    for season, episode, last_episode in rows:
-        if (season, episode) in covered:
-            continue
-        covered |= _span_of(season, episode, last_episode)
-        count += 1
-    return count
+    The pairs are (File, RefQuality) or 2 times a TVRankRow. The order
+    is the order of the first episode that each file is the best
+    holder of."""
+
+    holders = best_episode_holders(pairs)
+    files = []
+    seen = set()
+    for slot in sorted(holders):
+        file = holders[slot][0]
+        if file.id not in seen:
+            seen.add(file.id)
+            files.append(file)
+    return files
 
 
 def _series_catalog():
@@ -469,32 +483,17 @@ def _series_catalog():
 
     The annotations are the episode count, the TMDB genre names, the
     lowercase keywords, and the network countries. This is the pool
-    that each TV channel selects from. This function builds it in 4
+    that each TV channel selects from. This function builds it in 5
     queries."""
 
-    # A span file counts 1 time. A single file of an episode that a span
-    # covers is not a program of its own (#428).
+    # A file of 2 or more episodes counts 1 time. A single file of an
+    # episode that such a file holds better is not a program of its own
+    # (#428). The rule is the rule of _series_episodes (#743). The count
+    # agrees with the programs that air when each file is on the disk.
 
-    # The order is the order of _series_episodes. Thus, a single file and
-    # a span with the same first episode tie the same way in both. The
-    # count then agrees with the programs that air (follow-up #428).
-
-    episodes_by_series = {}
-    for series_id, season, episode, last_episode in (
-        db.session.query(File.series_id, File.season, File.episode, File.last_episode)
-        .join(RefQuality, RefQuality.id == File.quality_id)
-        .filter(File.series_id != None)  # noqa: E711
-        .filter(File.season > 0)
-        .order_by(File.series_id, File.season, File.episode, *TV_BEST_ORDER)
-        .all()
-    ):
-        episodes_by_series.setdefault(series_id, []).append(
-            (season, episode, last_episode)
-        )
-    counts = {
-        series_id: _program_count(rows)
-        for series_id, rows in episodes_by_series.items()
-    }
+    counts = {}
+    for row in _program_files((row, row) for row in tv_rank_rows() if row.season > 0):
+        counts[row.series_id] = counts.get(row.series_id, 0) + 1
     if not counts:
         return {}
     catalog = {
@@ -784,33 +783,19 @@ def _channel_window(members, day, cap, cursors=None, starts=None):
 def _series_episodes(series_id):
     """Return the best copy on disk of each regular episode, in broadcast order.
 
-    The order is TV_BEST_ORDER, the per-episode ranking of the library
-    pages. Specials are excluded. Rows whose
-    file is absent are skipped, in the same way as _best_files_by_movie
-    skips them."""
+    The rule is best_episode_holders, the rule of the library pages and
+    of the S3 sync (_program_files). Specials are excluded. Rows whose
+    file is absent are left out before the ranking, in the same way as
+    _best_files_by_movie skips them. Thus, an other copy of the episode
+    on the disk airs."""
 
     rows = (
         File.query.join(RefQuality, RefQuality.id == File.quality_id)
         .filter(File.series_id == series_id)
         .filter(File.season > 0)
-        .order_by(
-            File.season.asc(),
-            File.episode.asc(),
-            *TV_BEST_ORDER,
-        )
         .all()
     )
-    # A span file covers each episode of its span. A single file of an
-    # episode in an aired span would air it two times (#428).
-
-    episodes = []
-    covered = set()
-    for file in rows:
-        key = (file.season, file.episode)
-        if key not in covered and _on_disk(file):
-            covered |= _span_of(file.season, file.episode, file.last_episode)
-            episodes.append(file)
-    return episodes
+    return _program_files((file, file.quality) for file in rows if _on_disk(file))
 
 
 def _episode_program(series, file, duration):

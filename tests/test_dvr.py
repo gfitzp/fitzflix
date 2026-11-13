@@ -1034,6 +1034,34 @@ def test_the_catalog_count_ties_a_single_and_a_span_as_the_dvr_airs_them(app):
         assert dvr._series_catalog()[series.id]["episodes"] == len(episodes)
 
 
+def test_an_episode_that_only_a_worse_span_file_holds_still_airs(app, monkeypatch):
+    """A better single of episode 6 and a worse file of episodes 6 and 7 (#743).
+
+    The list took a file only when its FIRST episode was not covered.
+    The file of 2 episodes was left out, and episode 7 never aired. The
+    rule is the rule of the pages and of the S3 sync now. Each file
+    that is the best holder of an episode airs 1 time."""
+
+    from app import dvr
+
+    monkeypatch.setattr(dvr, "_on_disk", lambda file: True)
+    with app.app_context():
+        series = make_tv_series("Lost Episode Show")
+        single = make_tv_file(series, 1, 6, "Bluray-1080p")
+        span = make_tv_file(series, 1, 6, "DVD", last_episode=7)
+        make_tv_file(series, 1, 8, "DVD")
+        db.session.commit()
+
+        episodes = dvr._series_episodes(series.id)
+        assert [file.id for file in episodes[:2]] == [single.id, span.id]
+        assert [(f.episode, f.last_episode) for f in episodes] == [
+            (6, 6),
+            (6, 7),
+            (8, 8),
+        ]
+        assert dvr._series_catalog()[series.id]["episodes"] == 3
+
+
 def test_a_new_episode_does_not_move_the_series_cursor(app, monkeypatch):
     """The next window continues after the last episode that aired (#460).
 
