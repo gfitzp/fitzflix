@@ -19,7 +19,7 @@
 		<p class="mb-1 small">
 			<span class="badge text-bg-secondary">{{ entry.service }}</span>
 			{% if entry.quality %}<span class="badge text-bg-light">{{ entry.quality }}</span>{% endif %}
-			<span class="text-muted">{{ entry.size|filesizeformat }}</span>
+			<span class="text-muted">{{ entry.size|file_size }}</span>
 			{% if entry.record %}
 			&middot; matched to
 			{% if entry.record_url %}<a href="{{ entry.record_url }}">{{ entry.record.title }}{% if entry.record.year %} ({{ entry.record.year }}){% endif %}</a>
@@ -50,7 +50,7 @@
 			{% for candidate in entry.candidates %}
 			<div class="form-check small">
 				<input class="form-check-input" type="radio" name="source" id="source-{{ loop.index }}-{{ entry.download_id }}" value="{{ candidate.relative }}"{% if loop.first %} checked{% endif %}>
-				<label class="form-check-label text-break" for="source-{{ loop.index }}-{{ entry.download_id }}">{{ candidate.relative }} <span class="text-muted">({{ candidate.size|filesizeformat }})</span></label>
+				<label class="form-check-label text-break" for="source-{{ loop.index }}-{{ entry.download_id }}">{{ candidate.relative }} <span class="text-muted">({{ candidate.size|file_size }})</span></label>
 			</div>
 			{% endfor %}
 			<div class="input-group input-group-sm my-2">

@@ -5,6 +5,24 @@ configuration.
 """
 
 
+def file_size(size):
+    """Return a byte count as the size text of the pages (#772).
+
+    Invariant: 1 file has 1 size on every page, and "GB" has 1 meaning.
+    The pages divide by 1024. Below 1024 MB, the text is MB with 1
+    decimal. Then it is GB with 1 decimal. The GB step tests the ROUNDED
+    MB figure, as the dropped filesize_megabytes column did. Thus, a file
+    at 1023.95 MiB shows as "1.0 GB", not as "1024.0 MB" (#241). None
+    gives no text."""
+
+    if size is None:
+        return ""
+    megabytes = size / 1024**2
+    if round(megabytes, 1) >= 1024:
+        return f"{size / 1024**3:.1f} GB"
+    return f"{megabytes:.1f} MB"
+
+
 def register_template_helpers(app):
     """Add the template filters and the csrf_token global to the Jinja environment of app."""
 
@@ -52,6 +70,11 @@ def register_template_helpers(app):
         return language_key(code)
 
     app.jinja_env.filters["language_key"] = language_key_filter
+
+    # Each page formats a size with this filter, not with filesizeformat
+    # of Jinja. That filter divides by 1000 (#772).
+
+    app.jinja_env.filters["file_size"] = file_size
 
     # The action forms of the poster tiles render their own csrf inputs.
     # They do not need a form object passed through every gallery route.

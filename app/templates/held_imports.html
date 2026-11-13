@@ -20,7 +20,7 @@
 		<p class="mb-1 small">
 			<span class="badge text-bg-secondary">{{ item.source_format }}</span>
 			<span class="badge text-bg-light">to {{ details.quality_title }} SDR</span>
-			<span class="text-muted">{{ item.filesize_bytes|filesizeformat }}</span>
+			<span class="text-muted">{{ item.filesize_bytes|file_size }}</span>
 		</p>
 		{% if item.existing_file %}
 		<p class="mb-1 small">In the library: <a href="{{ url_for('main.file', file_id=item.existing_file.id) }}">{{ item.existing_file.basename }}</a></p>
@@ -63,7 +63,7 @@
 		<p class="mb-1 small">
 			<span class="badge text-bg-light">{{ item.quality_title }}</span>
 			{% if item.hdr_format %}<span class="badge text-bg-secondary">{{ item.hdr_format }}</span>{% endif %}
-			{% if item.aws_filesize_bytes %}<span class="text-muted">{{ item.aws_filesize_bytes|filesizeformat }}</span>{% endif %}
+			{% if item.aws_filesize_bytes %}<span class="text-muted">{{ item.aws_filesize_bytes|file_size }}</span>{% endif %}
 			<span class="text-muted">&middot; {{ item.reason }}</span>
 		</p>
 		<form action="" method="post" class="d-flex flex-wrap gap-2 align-items-center">

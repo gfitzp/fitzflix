@@ -47,7 +47,7 @@
 				<td class="text-break small d-none d-md-table-cell"><a href="{{ url_for('main.file', file_id=file.id) }}">{{ file.basename }}</a></td>
 				<td>{{ row.quality }}</td>
 				<td>{% if row.fallback %}{{ row.fallback }}{% else %}<span class="text-danger">none</span>{% endif %}</td>
-				<td class="text-end">{% if file.filesize_bytes %}{{ file.filesize_bytes|filesizeformat }}{% else %}&mdash;{% endif %}</td>
+				<td class="text-end">{% if file.filesize_bytes %}{{ file.filesize_bytes|file_size }}{% else %}&mdash;{% endif %}</td>
 				<td>{% if row.archived %}<span class="badge text-bg-success">archived</span>{% else %}<span class="badge text-bg-danger">not archived</span>{% endif %}</td>
 			</tr>
 			{% endfor %}

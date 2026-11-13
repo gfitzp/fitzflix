@@ -29,7 +29,7 @@
 			<td class="text-end">{{ movie.tmdb_runtime }}m</td>
 			<td class="text-end">&asymp;{{ entry.estimated_minutes|round|int }}m</td>
 			<td class="text-end{% if entry.ratio > 1 %} text-warning-emphasis{% else %} text-danger{% endif %}">{{ entry.ratio|round(1) }}&times;</td>
-			<td class="text-end">{{ file.filesize_bytes|filesizeformat }}</td>
+			<td class="text-end">{{ file.filesize_bytes|file_size }}</td>
 			<td class="text-end">
 				<form action="" method="post" class="d-inline">
 					{{ runtime_form.csrf_token }}

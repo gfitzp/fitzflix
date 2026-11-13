@@ -672,6 +672,39 @@ def test_every_render_template_target_exists(app):
     assert not unresolved, f"missing render_template targets: {unresolved}"
 
 
+def test_the_file_size_filter_uses_the_units_of_the_file_page(app):
+    """The file_size filter divides by 1024 and says MB, then GB (#772).
+
+    The GB step tests the rounded MB figure (#241). The Jinja filter
+    filesizeformat divides by 1000. It gave "92.3 GB" for this file."""
+
+    file_size = app.jinja_env.filters["file_size"]
+    assert file_size(92301176600) == "86.0 GB"
+    assert file_size(44933835055) == "41.8 GB"
+    assert file_size(1073689500) == "1.0 GB"
+    assert file_size(1073600000) == "1023.9 MB"
+    assert file_size(9698581) == "9.2 MB"
+    assert file_size(0) == "0.0 MB"
+    assert file_size(None) == ""
+
+
+def test_no_template_uses_filesizeformat(app):
+    """Every page formats a size with the file_size filter (#772).
+
+    The Jinja filter filesizeformat divides by 1000 and also says GB.
+    Thus, 1 file had 2 sizes on 2 pages."""
+
+    from pathlib import Path
+
+    templates = Path(app.root_path) / "templates"
+    users = [
+        str(path.relative_to(templates))
+        for path in templates.rglob("*")
+        if path.is_file() and "filesizeformat" in path.read_text()
+    ]
+    assert users == []
+
+
 def test_a_film_with_a_tmdb_title_and_no_date_renders(app, admin_client):
     """TMDB can send a title with an empty release date (an announced film)."""
 
