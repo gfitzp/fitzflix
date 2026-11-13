@@ -63,37 +63,21 @@ class FakePlex:
     """Provide the GET endpoints of the server and record the queue and
     player requests.
 
-    items maps a ratingKey to the part file of a movie. titles gives the
-    Plex title of an item. The file filter of a section page is a text
-    match, and a comma splits its value into words, as on the live
-    server (#761). The guid filter finds nothing and the search matches
-    the Plex title, also as on the live server."""
+    items maps a ratingKey to the part file of a movie. The file filter
+    of a section page is a text match that ignores the case. A comma
+    splits its value into words, and an item matches any word. Each word
+    keeps its spaces, as on the live server (#761)."""
 
-    def __init__(self, items=None, queue_count=1, titles=None):
+    def __init__(self, items=None, queue_count=1):
         self.items = items or {}
-        self.titles = titles or {}
         self.queue_count = queue_count
         self.queue_posts = []
         self.player_gets = []
-        self.file_filters = []
 
     def get(self, path, params=None):
         params = params or {}
         if path == "/":
             return {"MediaContainer": {"machineIdentifier": "SERVER-ID"}}
-        if path == "/library/all":
-            return {"MediaContainer": {"Metadata": []}}
-        if path == "/search":
-            query = params["query"].lower()
-            return {
-                "MediaContainer": {
-                    "Metadata": [
-                        {"type": "movie", "ratingKey": key, "title": title}
-                        for key, title in self.titles.items()
-                        if query in title.lower()
-                    ]
-                }
-            }
         if path == "/library/sections":
             return {
                 "MediaContainer": {
@@ -112,8 +96,7 @@ class FakePlex:
                 }
             }
         if path == "/library/sections/5/all":
-            words = [word.strip().lower() for word in params["file"].split(",")]
-            self.file_filters.append(params["file"])
+            words = [word.lower() for word in params["file"].split(",")]
             return {
                 "MediaContainer": {
                     "Metadata": [
@@ -284,9 +267,7 @@ def test_a_film_with_another_plex_title_plays_by_its_path(
         "/lib/Movies/Harry Potter and the Philosopher's Stone (2001)/"
         "Harry Potter and the Philosopher's Stone (2001) - [Bluray-1080p].mkv"
     )
-    fake = FakePlex(
-        items={"300": path}, titles={"300": "Harry Potter and the Sorcerer's Stone"}
-    )
+    fake = FakePlex(items={"300": path})
     plex_player = _wire(monkeypatch, fake)
 
     with app.app_context():
@@ -309,7 +290,7 @@ def test_a_film_with_no_tmdb_id_plays_by_its_path(app, monkeypatch, server_confi
         "/lib/Movies/Apollo 50 - Go for the Moon (2019)/"
         "Apollo 50 - Go for the Moon (2019) - [Bluray-1080p].mkv"
     )
-    fake = FakePlex(items={"301": path}, titles={"301": "Apollo 50 Go for the Moon"})
+    fake = FakePlex(items={"301": path})
     plex_player = _wire(monkeypatch, fake)
 
     with app.app_context():
@@ -347,13 +328,52 @@ def test_the_best_copy_that_plex_lists_plays(app, monkeypatch, server_config):
         assert plex_player._movie_rating_key(movie) is None
 
 
+def test_the_plain_cut_plays_when_2_editions_have_the_same_quality(
+    app, monkeypatch, server_config
+):
+    """The plain cut comes before a named edition on a tie (#761).
+
+    The named edition has the lower file id, as for Brazil (1985) in the
+    library. A better named edition still plays first."""
+
+    from tests.factories import make_movie_file
+
+    with app.app_context():
+        movie = make_movie("Brazil", 1985, tmdb_id=68)
+        named = make_movie_file(
+            movie,
+            "Bluray-1080p",
+            edition="Love Conquers All Version",
+            plex_title="Brazil (1985) {edition-Love Conquers All Version}",
+        )
+        plain = make_movie_file(movie, "Bluray-1080p")
+        assert named.id < plain.id
+
+        fake = FakePlex(
+            items={"30": f"/lib/{named.file_path}", "31": f"/lib/{plain.file_path}"}
+        )
+        plex_player = _wire(monkeypatch, fake)
+        assert plex_player._movie_rating_key(movie) == "31"
+
+        better = make_movie_file(
+            movie,
+            "Bluray-2160p",
+            edition="Director's Cut",
+            plex_title="Brazil (1985) {edition-Director's Cut}",
+        )
+        fake.items["32"] = f"/lib/{better.file_path}"
+        assert plex_player._movie_rating_key(movie) == "32"
+
+
 def test_a_plex_on_another_mount_finds_the_file_by_its_folder(
     app, monkeypatch, server_config
 ):
     """The folder and the file identify a part when Plex has another root.
 
-    A comma in the name makes the filter of Plex match more items. Only
-    the item of the file plays."""
+    A comma in the name makes the filter of Plex match more items. Both
+    other items hold the word " PA (2006) - [DVD].mkv" of the filter.
+    Item 19 has the file name of the film in another folder. Only the
+    item of the file plays."""
 
     from tests.factories import make_movie_file
 
@@ -362,7 +382,8 @@ def test_a_plex_on_another_mount_finds_the_file_by_its_folder(
         file = make_movie_file(movie, "DVD")
         fake = FakePlex(
             items={
-                "20": "/data/Movies/Philadelphia (1993)/Philadelphia (1993) - [DVD].mkv",
+                "19": f"/data/Movies/Other/{file.file_path.rsplit('/', 1)[1]}",
+                "20": "/data/Movies/Hershey, PA (2006)/Hershey, PA (2006) - [DVD].mkv",
                 "21": f"/data/{file.file_path}",
             }
         )
@@ -379,7 +400,6 @@ def test_missing_movie_reports_without_touching_the_player(
 
     fake = FakePlex(
         items={"400": "/lib/Movies/Other Film (1999)/Other Film (1999) - [DVD].mkv"},
-        titles={"400": "Nowhere Film"},
     )
     plex_player = _wire(monkeypatch, fake)
 

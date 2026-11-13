@@ -35,7 +35,6 @@ import ipaddress
 import os
 import time
 import traceback
-import unicodedata
 from urllib.parse import urlsplit
 from xml.etree import ElementTree
 
@@ -379,7 +378,11 @@ def _rating_key_at(sections, path):
 
     from app.plex_library import _part_files, _sections_holding, _tail
 
-    path = unicodedata.normalize("NFC", os.path.abspath(path))
+    # The path needs no normalization. LIBRARY_DIR is absolute, and
+    # file_path holds no "..". The folder and the file name of a movie
+    # are ASCII, because the import passes them through unidecode
+    # (app.importing). Thus, the part file of Plex has the same text.
+
     tail = _tail(path, 2)
     for section in _sections_holding(sections, {path}):
         payload = _plex_get(
@@ -389,7 +392,6 @@ def _rating_key_at(sections, path):
         other_mount = None
         for item in payload.get("MediaContainer", {}).get("Metadata", []) or []:
             for part in _part_files(item):
-                part = unicodedata.normalize("NFC", part)
                 if part == path:
                     return item.get("ratingKey")
                 if other_mount is None and _tail(part, 2) == tail:
@@ -406,21 +408,26 @@ def _movie_rating_key(movie):
     Plex lists no main-feature file of the film. Thus, the message "Plex
     does not have this movie" is true. The lookup goes by the path of
     each main-feature file. The best copy by MOVIE_BEST_ORDER comes
-    first, over all editions. A file that Plex does not list, for
-    example a copy that is only in S3, gives way to the next copy. An
-    extra is never the film. The guid filter of Plex found no film on
-    this server, and a title search missed the films with another Plex
-    title.
+    first, over all editions. When the plain cut and a named edition
+    tie on each key of that order but the file id, the plain cut comes
+    first. A file that Plex
+    does not list, for example a copy that is only in S3, gives way to
+    the next copy. An extra is never the film. The guid filter of Plex
+    found no film on this server, and a title search missed the films
+    with another Plex title.
     """
 
+    # MOVIE_BEST_ORDER has no edition. The DVR and the frame game use it
+    # as it is. Thus, only this query puts the plain cut before the file
+    # id, its last key (#761).
+
+    *rank, file_id = MOVIE_BEST_ORDER
     files = (
         File.query.join(RefQuality, RefQuality.id == File.quality_id)
         .filter(File.movie_id == movie.id, File.feature_type_id.is_(None))
-        .order_by(*MOVIE_BEST_ORDER)
+        .order_by(*rank, File.edition.isnot(None).asc(), file_id)
         .all()
     )
-    if not files:
-        return None
     sections = [
         section
         for section in _plex_get("/library/sections")
