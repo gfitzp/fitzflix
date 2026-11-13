@@ -32,6 +32,19 @@
 	<span class="badge text-bg-secondary me-1 mb-1" title="Results appear after the first scheduled probe runs">External probes pending</span>
 	{% endif %}
 </div>
+{# The open problems that health_probe stored, 1 line each (#767). The
+   probe mails a problem when it appears and 1 time each day. This list
+   shows it between the mails. #}
+{% if health.open_issues %}
+<div class="alert alert-warning small py-2 mb-2">
+	<div class="fw-semibold">Open problems of the health probe</div>
+	<ul class="mb-0">
+		{% for message in health.open_issues %}
+		<li>{{ message }}</li>
+		{% endfor %}
+	</ul>
+</div>
+{% endif %}
 <div class="row my-2">
 	<div class="col-md-6">
 		<div class="table-responsive">

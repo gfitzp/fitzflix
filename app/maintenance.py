@@ -842,13 +842,32 @@ def probe_health(connection):
     return results
 
 
+def open_health_issues(connection):
+    """Return the messages of the open problems that health_probe stored (#767).
+
+    The messages come in the order of their conditions. A Redis fault
+    returns an empty list. Thus, the health card still renders."""
+
+    from redis.exceptions import RedisError
+
+    try:
+        stored = connection.hgetall(ISSUES_KEY)
+    except RedisError:
+        return []
+    return [
+        message.decode("utf-8", "replace")
+        for condition, message in sorted(stored.items())
+    ]
+
+
 def system_health(flask_app):
     """Collect the metrics that the system health card of the admin page shows.
 
     Everything here reads Redis or the local filesystem. The
     external-service results come from the Redis hash that the
     health_probe task maintains. Thus, the render of the card never makes
-    a network call.
+    a network call. The card lists the open problems of health_probe
+    (#767).
     """
 
     # Lazy import: app.missing_files imports missing_volumes from here
@@ -886,6 +905,7 @@ def system_health(flask_app):
         ),
         "scheduler": scheduler_health(flask_app.redis),
         "probes": probe_health(flask_app.redis),
+        "open_issues": open_health_issues(flask_app.redis),
         "missing_best": missing_best_summary(flask_app.redis),
         "manual_imports": pending_count(flask_app.redis),
         "held_imports": HeldImport.query.count(),
@@ -2236,8 +2256,8 @@ def health_probe():
         # The log gets a problem on the runs that email it: when it
         # appears, and once a day while it continues. The runs between
         # them log nothing. Thus, a problem that ended yesterday does not
-        # read as a live failure every 10 minutes. The System page shows
-        # the open problems.
+        # read as a live failure every 10 minutes. The System page lists
+        # the open problems (#767).
 
         for message in report.values():
             current_app.logger.warning(f"Health: {message}")

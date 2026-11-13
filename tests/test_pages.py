@@ -122,6 +122,59 @@ def test_system_metrics_shows_queue_backlog(app, admin_client):
     assert ">1<" in row.group(0)
 
 
+def test_system_metrics_lists_the_open_problems_of_the_health_probe(app, admin_client):
+    """Each stored problem of health_probe shows 1 time, escaped (#767)."""
+
+    from app.maintenance import ISSUES_KEY
+
+    app.redis.hset(
+        ISSUES_KEY,
+        mapping={
+            "log-digest": "The log digest is 50 hours old",
+            "plex-trash:Movies": "Plex keeps the trash of <Movies>",
+        },
+    )
+
+    body = admin_client.get("/system/metrics").get_data(as_text=True)
+
+    assert "Open problems of the health probe" in body
+    assert body.count("The log digest is 50 hours old") == 1
+    assert "Plex keeps the trash of &lt;Movies&gt;" in body
+    assert "<Movies>" not in body
+
+
+def test_system_metrics_with_no_open_problem_shows_no_list(app, admin_client):
+    """An empty store of health_probe shows no list (#767)."""
+
+    body = admin_client.get("/system/metrics").get_data(as_text=True)
+
+    assert "Open problems of the health probe" not in body
+
+
+def test_a_redis_fault_on_the_open_problems_keeps_the_system_page(
+    app, admin_client, monkeypatch
+):
+    """The fragment renders when the read of the stored problems fails (#767)."""
+
+    import redis
+
+    from app.maintenance import ISSUES_KEY
+
+    real_hgetall = app.redis.hgetall
+
+    def hgetall(key):
+        if key == ISSUES_KEY:
+            raise redis.exceptions.ConnectionError("drill")
+        return real_hgetall(key)
+
+    monkeypatch.setattr(app.redis, "hgetall", hgetall)
+
+    response = admin_client.get("/system/metrics")
+
+    assert response.status_code == 200
+    assert "Open problems of the health probe" not in response.get_data(as_text=True)
+
+
 def test_system_metrics_requires_admin(user_client):
     response = user_client.get("/system/metrics")
     assert response.status_code == 302
