@@ -113,6 +113,7 @@ from app.sdr_conversion import (
 )
 from app.file_ranking import find_better_files, find_worse_files, real_rips_blocking
 from app.tracks import (
+    LibraryFileChanged,
     _extract_media_details,
     _rescan_after_a_failed_edit,
     file_language_spelling,
@@ -120,7 +121,9 @@ from app.tracks import (
     replace_track_rows,
     get_audio_tracks_from_file,
     get_subtitle_tracks_from_file,
+    library_stamp,
     record_filesize,
+    refuse_changed_library_file,
     remove_empty_subtitle_tracks,
     stop_process,
     supplement_lossless_tracks,
@@ -890,6 +893,13 @@ def localization_task(
 
             file_details["untouched_basename"] = run.basename
 
+            # Radarr and Sonarr can put a second download at the path of
+            # a source in the library during the chain (#742). The stamp
+            # lets the later stages see that.
+
+            if _in_library(file_path):
+                file_details["source_stamp"] = library_stamp(file_path)
+
             staging = _stage_source(file_path, run)
             if staging is None:
                 return True
@@ -905,6 +915,12 @@ def localization_task(
             work_path, hidden_output_file = _localize(
                 file_path, work_path, file_details, staged, run.job, run.strays
             )
+
+            # The localization of an unstaged source can write the source
+            # itself. Then the stamp is the stamp after that work.
+
+            if not staged and file_details.get("source_stamp"):
+                file_details["source_stamp"] = library_stamp(file_path)
 
         except HandoffFailed:
             # The run could not book its own retry or take its title lock
@@ -2637,6 +2653,28 @@ def finalize_localization(
             file, worse_local_copies, worse_aws_keys, kept_archives, emails = records
             _commit_records(file, kept_archives, file_path)
 
+        except LibraryFileChanged:
+            # An other program put a new download at the path of the
+            # source during the chain (#742). The localized copy is of the
+            # old download. It goes, with its upload, and the record does
+            # not change. The new file is imported after this job.
+
+            db.session.rollback()
+            current_app.logger.warning(
+                f"'{file_path}' An other program changed this file during its "
+                f"import. The import starts again for the new file"
+            )
+            abandon_import(
+                file_path,
+                lock,
+                strays=(hidden_output_file, staged_output),
+                reservation=file_details.get("untouched_basename"),
+                keep_source=True,
+                pending_archive=pending_archive_of(file_details),
+            )
+            _import_changed_source(file_path)
+            return False
+
         except HandoffFailed:
             # A lock extension, a retry or the hand-off to the move could
             # not be booked (#437, #521, #568). The source is good. It stays
@@ -3292,6 +3330,13 @@ def _place_file(
         )
         return "handed_off"
 
+    # Invariant: the import places its result only over the file that it
+    # read (#742). A source in the library that an other program changed
+    # during the chain is a new download. It is not replaced.
+
+    if file_path == output_file:
+        refuse_changed_library_file(file_details.get("source_stamp"), file_path)
+
     replaced_existing = os.path.exists(output_file)
     try:
         _rename_with_retries(hidden_output_file, output_file)
@@ -3734,7 +3779,12 @@ def _after_commit(
     # Then it goes to rejects/unarchived, out of the import sweep. A
     # failed check or a failed move request does the same.
 
-    if file_path != output_file and not source_can_go:
+    # A source in the library that changed during the chain is a new
+    # download (#742). It stays, and its own import is queued.
+
+    if file_path != output_file and _source_changed(file_path, file_details):
+        step("changed source", _import_changed_source, file_path)
+    elif file_path != output_file and not source_can_go:
         step("source hold", move_to_rejects, file_path, "unarchived")
     elif file_path != output_file:
         step("source removal", _remove_source, file_path)
@@ -4046,6 +4096,60 @@ def _delete_replaced_archive(worse_key):
         only_if_unclaimed=True,
         description=f"Deleting '{worse_key}' from AWS",
     )
+
+
+def _in_library(path):
+    """Return True if path is inside the library directory."""
+
+    library = os.path.abspath(current_app.config["LIBRARY_DIR"])
+    return os.path.abspath(path).startswith(library + os.sep)
+
+
+def _source_changed(file_path, file_details):
+    """Return True if an other program changed a library source during its import (#742).
+
+    A source with no stamp is never "changed". A fault of the read is
+    not a change. Then the source gets the handling of before."""
+
+    try:
+        refuse_changed_library_file(file_details.get("source_stamp"), file_path)
+    except LibraryFileChanged:
+        return True
+    except OSError:
+        current_app.logger.warning(traceback.format_exc())
+    return False
+
+
+# The import of a changed source starts after this time. The job that
+# found the change is done by then. While that job is live, a new
+# localization of the same path is not queued (enqueue_localization).
+
+CHANGED_SOURCE_DELAY = timedelta(minutes=1)
+
+
+def _import_changed_source(file_path):
+    """Book the import of a library file that an other program changed during an import (#742).
+
+    A source that is gone gets no import. This is best effort. A fault
+    is a warning, and the weekly sync finds a file with no record."""
+
+    if not os.path.isfile(file_path):
+        return
+    try:
+        requeue(
+            "app.videos.localization_task",
+            key=file_path,
+            delay=CHANGED_SOURCE_DELAY,
+            reason="An other program changed the file during its import",
+            args=(file_path,),
+            description=f"'{os.path.basename(file_path)}'",
+            level="info",
+        )
+    except Exception:
+        current_app.logger.warning(
+            f"'{file_path}' The import of the changed file could not be booked: "
+            + traceback.format_exc()
+        )
 
 
 def _remove_source(file_path):

@@ -974,6 +974,8 @@ IMPORT_DETAIL_KEYS = frozenset(
         "feature_type_name",
         "tmdb_id",
         "replace_existing",
+        # The size and the time of a source in the library (#742).
+        "source_stamp",
     }
 )
 

@@ -6,6 +6,7 @@ commit. Each test here passed against the old function.
 """
 
 import os
+import shutil
 
 import pytest
 
@@ -805,3 +806,103 @@ def test_a_file_at_the_old_spelling_goes_to_the_rejects(app, monkeypatch, tmp_pa
         )
     assert removed == []
     assert rejected == [(str(other_extra), "other spelling")]
+
+
+def _chain_until_the_cataloging(app, source):
+    """Run the localization and the move of a source. Return the cataloging job."""
+
+    assert videos.localization_task(source) is True
+    (move,) = [
+        job
+        for job in app.handoff_queue.jobs
+        if job.func_name == "app.videos.move_localized_file"
+    ]
+    assert videos.move_localized_file(*move.args) is True
+    (finalize,) = [
+        job
+        for job in app.sql_queue.jobs
+        if job.func_name == "app.videos.finalize_localization"
+    ]
+    return finalize
+
+
+def test_a_second_download_during_an_in_place_import_is_not_replaced(app, sample_mkv):
+    """Radarr puts a second download at the path during the chain of the first (#742).
+
+    Its webhook queues no job, because the chain of the first names the
+    path. The cataloging must not put the localized copy of the first
+    download over the second. The record does not change, and the
+    import of the new file is booked."""
+
+    from rq.registry import ScheduledJobRegistry
+
+    directory = os.path.join(app.config["LIBRARY_DIR"], "Movies/Second Grab (2021)")
+    basename = "Second Grab (2021) - [DVD].mkv"
+    os.makedirs(directory, exist_ok=True)
+    source = os.path.join(directory, basename)
+    shutil.copy(sample_mkv, source)
+    with app.app_context():
+        finalize = _chain_until_the_cataloging(app, source)
+        assert finalize.args[1]["source_stamp"]["size"] == os.path.getsize(sample_mkv)
+
+        os.remove(source)
+        with open(source, "wb") as handle:
+            handle.write(b"the second download")
+
+        assert finalize_localization(*finalize.args, **finalize.kwargs) is False
+
+        with open(source, "rb") as handle:
+            assert handle.read() == b"the second download"
+        assert os.listdir(directory) == [basename]
+        assert File.query.filter_by(basename=basename).count() == 0
+        registry = ScheduledJobRegistry(queue=app.import_queue)
+        booked = [app.import_queue.fetch_job(i) for i in registry.get_job_ids()]
+        assert [
+            job.args
+            for job in booked
+            if job.func_name == "app.videos.localization_task"
+        ] == [(source,)]
+        for job in booked:
+            registry.remove(job, delete_job=True)
+    os.remove(source)
+
+
+def test_a_source_of_the_import_directory_gets_no_stamp(app, sample_mkv, incoming_dir):
+    """Only a source in the library can be a download of Radarr or Sonarr (#742)."""
+
+    basename = "Import Dir Stamp (2021) - [DVD].mkv"
+    source = os.path.join(incoming_dir, basename)
+    shutil.copy(sample_mkv, source)
+    with app.app_context():
+        finalize = _chain_until_the_cataloging(app, source)
+        assert "source_stamp" not in finalize.args[1]
+        finalize_localization(*finalize.args, **finalize.kwargs)
+        output = os.path.join(
+            app.config["LIBRARY_DIR"],
+            File.query.filter_by(basename=basename).one().file_path,
+        )
+    os.remove(output)
+
+
+def test_a_changed_source_of_a_conversion_is_not_removed(app, tmp_path, monkeypatch):
+    """A conversion has an other name than its source. The source goes at the end (#742).
+
+    A source that an other program changed during the chain is a new
+    download. It stays, and its import is booked."""
+
+    booked = []
+    monkeypatch.setattr(
+        importing, "requeue", lambda name, **kw: booked.append(kw["args"])
+    )
+    monkeypatch.setitem(app.config, "LIBRARY_DIR", str(tmp_path))
+    source = tmp_path / "Converted (2021) - [Remux-2160p].mkv"
+    source.write_bytes(b"first download")
+    with app.app_context():
+        details = {"source_stamp": importing.library_stamp(str(source))}
+        assert importing._source_changed(str(source), details) is False
+        source.write_bytes(b"the second download, of an other size")
+        assert importing._source_changed(str(source), details) is True
+        assert importing._source_changed(str(source), {}) is False
+        importing._import_changed_source(str(source))
+    assert booked == [(str(source),)]
+    assert source.exists()
