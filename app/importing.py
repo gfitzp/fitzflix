@@ -2818,7 +2818,26 @@ def _build_records(file_details, inspection, output_name, series_id=None):
     # Look for this File record in the database. If it does not exist,
     # make a new one. If it exists, update that record.
 
-    file = File.query.filter_by(file_path=file_details.get("file_path")).first()
+    file = _record_at_path(file_details.get("file_path"))
+
+    # Invariant: after the import, the record names the exact path of
+    # the new file (#739). The lookup ignores letter case and accents on
+    # MariaDB, and the library shares do not. A record with an other
+    # spelling takes the path of the new file. A second record is not
+    # possible, because the unique key of the path ignores them too. A
+    # file that is still at the old spelling is the replaced file. It
+    # goes with the worse copies after the commit.
+
+    respelled_from = None
+    if file and file.file_path != file_details.get("file_path"):
+        respelled_from = os.path.join(current_app.config["LIBRARY_DIR"], file.file_path)
+        current_app.logger.warning(
+            f"{file} The record has the path '{file.file_path}'. It takes the "
+            f"path of the new file, '{file_details.get('file_path')}'"
+        )
+        for column in ("file_path", "dirname", "basename", "plex_title", "edition"):
+            if column in file_details:
+                setattr(file, column, file_details[column])
 
     # A real rip that replaces a conversion keeps the original of the
     # conversion in S3, as an archive-only original (#292).
@@ -2957,7 +2976,19 @@ def _build_records(file_details, inspection, output_name, series_id=None):
     )
     if replaced_key:
         worse_aws_keys.insert(0, replaced_key)
+    if respelled_from:
+        worse_local_copies.append((respelled_from, None))
     return file, worse_local_copies, worse_aws_keys, kept_archives, pending_emails
+
+
+def _record_at_path(library_file_path):
+    """Return the File row that MariaDB finds for a library path, or None.
+
+    The path column ignores letter case, accents and spaces at the end.
+    Thus, the row can have an other spelling than the path (#739). The
+    test database compares the exact text."""
+
+    return File.query.filter_by(file_path=library_file_path).first()
 
 
 def _attach_movie(file, file_details):
@@ -3876,12 +3907,15 @@ def _delete_worse_copies(worse_local_copies, output_file):
     """Delete the library copies of the worse files and their triage snapshots.
 
     The new file never has the path of a worse file. The check is a
-    guard."""
+    guard. A path with an other spelling can name the new file itself on
+    a volume that ignores letter case (#739). Such a path is not
+    deleted. An entry with no id is the old spelling of the record of
+    the new file. Its triage snapshots stay with that record."""
 
     from app.triage import remove_triage_snapshots
 
     for worse_path, worse_id in worse_local_copies:
-        if worse_path == output_file:
+        if worse_path == output_file or _same_file(worse_path, output_file):
             continue
         try:
             os.remove(worse_path)
@@ -3894,13 +3928,23 @@ def _delete_worse_copies(worse_local_copies, output_file):
             current_app.logger.warning(
                 f"'{worse_path}' Couldn't delete the replaced file: {e}"
             )
-        remove_triage_snapshots(worse_id)
+        if worse_id is not None:
+            remove_triage_snapshots(worse_id)
 
         # The episode thumb of a deleted TV file has no video left (#469)
 
         tv_library = os.path.abspath(current_app.config["TV_LIBRARY"])
         if os.path.abspath(worse_path).startswith(tv_library + os.sep):
             remove_episode_thumb_of(worse_path)
+
+
+def _same_file(path, other):
+    """Return True if 2 paths name 1 file on the disk. A missing path gives False."""
+
+    try:
+        return os.path.samefile(path, other)
+    except OSError:
+        return False
 
 
 def _atmos_handoff(staged_output, output_file, audio_tracks):
