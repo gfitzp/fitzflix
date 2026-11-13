@@ -40,7 +40,7 @@ grep -rn 'app\.config\[[^]]*\] *=' tests/ | grep -v setitem
 
 ### Redis
 
-`clean_state` flushes Redis database 9 before each test, not after it. A test that fails leaves its keys for you to examine. A test must not trust that a key is absent at its end. A blank shelf or a blank Redis-backed page can be a key that a fixture left.
+`clean_state` flushes Redis database 9 before each test, not after it. A second test run at the same time names an other database (2 to 15) in `FITZFLIX_TEST_REDIS_URL`. A test that fails leaves its keys for you to examine. A test must not trust that a key is absent at its end. A blank shelf or a blank Redis-backed page can be a key that a fixture left.
 
 ### The shared directories and the sweep
 

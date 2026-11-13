@@ -18,6 +18,18 @@ from config import Config
 
 _TMP = tempfile.mkdtemp(prefix="fitzflix-tests-")
 
+# Database 9 of Redis is for the tests. Two test runs at the same time
+# must not share a database: each test empties it. A second run names an
+# other database in FITZFLIX_TEST_REDIS_URL. Databases 0 and 1 hold live
+# data, and a test run must never empty them.
+
+_TEST_REDIS_URL = os.environ.get("FITZFLIX_TEST_REDIS_URL", "redis://localhost:6379/9")
+if _TEST_REDIS_URL.rsplit("/", 1)[-1] not in {str(n) for n in range(2, 16)}:
+    raise RuntimeError(
+        f"FITZFLIX_TEST_REDIS_URL must end with a database number from 2 to 15, "
+        f"not {_TEST_REDIS_URL!r}. The tests empty their Redis database."
+    )
+
 ADMIN_EMAIL = "admin@example.test"
 ADMIN_PASSWORD = "test-password"
 ADMIN_API_KEY = "0123456789abcdef0123456789abcdef"
@@ -80,7 +92,7 @@ class TestConfig(Config):
     TRUSTED_PROXIES = frozenset()
 
     SQLALCHEMY_DATABASE_URI = f"sqlite:///{_TMP}/fitzflix-test.db"
-    REDIS_URL = "redis://localhost:6379/9"
+    REDIS_URL = _TEST_REDIS_URL
 
     MEDIA_LOCATION = os.path.join(_TMP, "media")
     IMPORT_DIR = os.path.join(MEDIA_LOCATION, "import")
@@ -245,7 +257,9 @@ def app():
     # Refuse to run against a store that is not isolated
 
     assert application.config["SQLALCHEMY_DATABASE_URI"].startswith("sqlite")
-    assert application.redis.connection_pool.connection_kwargs.get("db") == 9
+    assert application.redis.connection_pool.connection_kwargs.get("db") == int(
+        _TEST_REDIS_URL.rsplit("/", 1)[-1]
+    )
 
     # The first app created in the process becomes the singleton of
     # get_app(). app.atmos calls get_app() at import time. The other task
