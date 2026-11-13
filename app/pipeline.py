@@ -9,7 +9,8 @@ without the worker logs.
 The state updates come from JOB LIFECYCLE HOOKS, not from code in the
 task bodies. TrackedQueue records "queued" or "scheduled" when a job is
 enqueued. A deferred retry shows as "scheduled". PipelineWorker records
-"started", "done", or "failed" around the execution. The STAGES
+"started", "done", or "failed" around the execution. A job that did
+not do its work asks for "skipped" in place of "done" (#766). The STAGES
 registry derives the file of a job from the function name and the
 arguments of the job. Tasks that the registry does not know are not
 trails (SQL refreshes, maintenance sweeps). The in-task emitters are
@@ -505,7 +506,11 @@ def _apply_stage_event(trail, first_run, first_enqueued, event):
                 and enqueued_at is not None
                 and entry.get("at", "") < enqueued_at
             )
-            if not before_job and again and entry.get("status") in ("done", "deferred"):
+            if (
+                not before_job
+                and again
+                and entry.get("status") in ("done", "skipped", "deferred")
+            ):
                 del trail[_rerun_start(trail, position) :]
                 rerun = True
                 break
@@ -526,7 +531,11 @@ def _apply_stage_event(trail, first_run, first_enqueued, event):
             # stands for the stage. Thus, the stamp of the worker changes
             # nothing.
 
-            if entry.get("status") == "deferred" and status in ("done", "failed"):
+            if entry.get("status") == "deferred" and status in (
+                "done",
+                "skipped",
+                "failed",
+            ):
                 return trail, first_run, first_enqueued, False
 
             # A job can complete before its own enqueue-side stamp is
@@ -537,6 +546,7 @@ def _apply_stage_event(trail, first_run, first_enqueued, event):
             if status in ("queued", "scheduled") and entry.get("status") in (
                 "started",
                 "done",
+                "skipped",
                 "failed",
                 "deferred",
             ):
@@ -573,7 +583,7 @@ def _apply_stage_event(trail, first_run, first_enqueued, event):
         elif status in ("queued", "scheduled", "started") and not before_job:
             # A rebooked entry waits (#665). It is not settled.
             fresh_journey = not trail or all(
-                existing.get("status") in ("done", "deferred")
+                existing.get("status") in ("done", "skipped", "deferred")
                 and not existing.get("rebooked")
                 for existing in trail
             )
@@ -1000,17 +1010,40 @@ def _waiting_chip_fate(connection, job_id):
     return SETTLED_STATUS.get(status)
 
 
+def _job_meta(job):
+    """Return the meta of a job as the job saved it, or the loaded meta."""
+
+    try:
+        return job.get_meta(refresh=True)
+    except Exception:
+        return job.meta or {}
+
+
 def trail_continues(job):
     """Return True if a later job of the run closes the chips of this job.
 
     The first Atmos job returns when MediaConvert has the encode. The
     run is not done. Thus, the worker does not stamp its chip done."""
 
-    try:
-        meta = job.get_meta(refresh=True)
-    except Exception:
-        meta = job.meta or {}
-    return bool(meta.get("trail_continues"))
+    return bool(_job_meta(job).get("trail_continues"))
+
+
+@_best_effort()
+def mark_job_skipped():
+    """Make the worker stamp the chip of the current job "skipped" (#766).
+
+    A green chip means that the stage did its work. A task that returns
+    with no work done calls this. An example is an archive upload that a
+    pending restore refuses. The chip then reads "did not run". Outside
+    a worker, this does nothing."""
+
+    from rq import get_current_job
+
+    job = get_current_job()
+    if job is None:
+        return
+    job.meta["trail_skipped"] = True
+    job.save_meta()
 
 
 def first_run(connection, job):
@@ -1220,8 +1253,8 @@ def queue_rows(tasks, trails):
     _queue_rows.html renders the table from it, at the first paint and
     at each poll (#639). Each row is {"task": task or None, "trail": trail or None}. A job finds
     the trail of its file by the job id stamped on the trail entries. A
-    trail whose last stage is not done, and that no listed job owns,
-    comes after the jobs as a "no job in queue" row."""
+    trail whose last stage is not done or skipped, and that no listed job
+    owns, comes after the jobs as a "no job in queue" row."""
 
     trail_by_job = {}
     for trail in trails:
@@ -1244,7 +1277,7 @@ def queue_rows(tasks, trails):
         if any(trail is seen for seen in listed):
             continue
         last = trail["entries"][-1] if trail["entries"] else None
-        if last is None or last.get("status") == "done":
+        if last is None or last.get("status") in ("done", "skipped"):
             continue
         rows.append({"task": None, "trail": trail})
     return rows
@@ -1533,11 +1566,15 @@ class PipelineWorker(SimpleWorker):
         return True
 
     def handle_job_success(self, job, queue, started_job_registry):
-        """Run the success handling of rq. Then stamp the trail done."""
+        """Run the success handling of rq. Then stamp the trail done or skipped.
+
+        A job that called mark_job_skipped is "skipped" (#766)."""
 
         super().handle_job_success(job, queue, started_job_registry)
-        if not trail_continues(job):
-            record_job_event(self.connection, job, "done")
+        meta = _job_meta(job)
+        if not meta.get("trail_continues"):
+            status = "skipped" if meta.get("trail_skipped") else "done"
+            record_job_event(self.connection, job, status)
 
     def handle_job_failure(self, job, queue, started_job_registry=None, exc_string=""):
         """Run the failure handling of rq. Then stamp the trail failed."""

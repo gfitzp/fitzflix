@@ -182,3 +182,120 @@ def test_the_etag_uses_the_part_size_of_the_upload(app, monkeypatch, tmp_path):
     )
     with app.app_context():
         assert aws_storage.calculate_etag(str(path)) == expected
+
+
+def _worker_upload(app, file_id):
+    """Run upload_task in a PipelineWorker. Return the job and the chip statuses."""
+
+    from app.pipeline import PipelineWorker, pipeline_trails
+
+    with app.app_context():
+        job = app.file_queue.enqueue("app.videos.upload_task", file_id)
+    PipelineWorker([app.file_queue], connection=app.redis).work(burst=True)
+    (trail,) = pipeline_trails(app.redis)
+    return job, [(entry["stage"], entry["status"]) for entry in trail["entries"]]
+
+
+def _stale_file(title, **fields):
+    """Make a stale movie file with a modified/ archive. Return its id."""
+
+    from app import db
+    from tests.factories import make_movie, make_movie_file
+
+    file = make_movie_file(
+        make_movie(title, 2026),
+        "DVD",
+        aws_key=f"modified/{title} (2026) - [DVD].mkv",
+        aws_stale=True,
+        **fields,
+    )
+    db.session.commit()
+    return file.id
+
+
+def test_a_good_upload_in_the_worker_stamps_its_chip_done(app, monkeypatch):
+    """The green chip means that the archive is in S3 (#766)."""
+
+    from datetime import datetime, timezone
+
+    from rq.job import JobStatus
+
+    monkeypatch.setattr(
+        "app.aws_storage.aws_upload",
+        lambda *args, **kwargs: (
+            "modified/Chip Good (2026) - [DVD].mkv",
+            datetime.now(timezone.utc),
+            123,
+        ),
+    )
+    with app.app_context():
+        file_id = _stale_file("Chip Good")
+
+    job, chips = _worker_upload(app, file_id)
+
+    assert chips == [("Archiving to S3", "done")]
+    assert job.get_status(refresh=True) == JobStatus.FINISHED
+
+
+def test_an_upload_that_raises_fails_its_job_and_its_chip(app, monkeypatch):
+    """An upload that raised is a failed job with a red chip (#766)."""
+
+    from rq.registry import FailedJobRegistry
+
+    from app import db
+    from app.models import File
+
+    def failing_upload(*args, **kwargs):
+        raise OSError("drill")
+
+    monkeypatch.setattr("app.aws_storage.aws_upload", failing_upload)
+    with app.app_context():
+        file_id = _stale_file("Chip Raises")
+
+    job, chips = _worker_upload(app, file_id)
+
+    assert chips == [("Archiving to S3", "failed")]
+    assert job.id in FailedJobRegistry(queue=app.file_queue).get_job_ids()
+    with app.app_context():
+        assert db.session.get(File, file_id).aws_stale is True
+
+
+def test_a_refused_upload_does_not_show_done(app, monkeypatch):
+    """A pending restore refuses the upload. The chip reads did not run (#766).
+
+    The refusal is not a failure. The job does not fail, and nothing
+    logs at ERROR."""
+
+    import logging
+    from datetime import datetime
+
+    from rq.job import JobStatus
+
+    uploads = []
+    monkeypatch.setattr(
+        "app.aws_storage.aws_upload", lambda *args, **kwargs: uploads.append(args)
+    )
+    with app.app_context():
+        file_id = _stale_file("Chip Refused", restore_requested_at=datetime.utcnow())
+
+    records = []
+    handler = logging.Handler(level=logging.ERROR)
+    handler.emit = records.append
+    logging.getLogger("app").addHandler(handler)
+    try:
+        job, chips = _worker_upload(app, file_id)
+    finally:
+        logging.getLogger("app").removeHandler(handler)
+
+    assert uploads == []
+    assert chips == [("Archiving to S3", "skipped")]
+    assert job.get_status(refresh=True) == JobStatus.FINISHED
+    assert records == []
+
+    with app.app_context():
+        chip = app.jinja_env.get_template("_trail_chips.html").module.trail_chips(
+            [{"stage": "Archiving to S3", "status": "skipped", "at": "now"}]
+        )
+    assert "Archiving to S3 &middot; did not run" in str(chip)
+    assert "Archived to S3" not in str(chip)
+    assert "text-bg-success" not in str(chip)

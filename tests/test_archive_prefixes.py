@@ -350,7 +350,8 @@ def test_a_failed_upload_leaves_the_stale_flag_as_it_is(app, monkeypatch, stale)
         file_id = file.id
         identifier = file.file_identifier()
 
-    assert aws_storage.upload_task(file_id) is None
+    with pytest.raises(OSError, match="drill"):
+        aws_storage.upload_task(file_id)
     with app.app_context():
         assert db.session.get(File, file_id).aws_stale is stale
     lock = app.lock_manager.lock(identifier, 1000)

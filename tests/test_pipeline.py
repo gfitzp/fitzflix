@@ -107,6 +107,26 @@ def test_a_late_queued_stamp_never_unwinds_a_finished_chip(app):
     assert entries[0]["status"] == "done"
 
 
+def test_a_skipped_chip_is_settled_like_a_done_chip(app):
+    """A late stamp keeps a skipped chip. The trail is no orphan row (#766)."""
+
+    from app.pipeline import pipeline_trails, queue_rows, record_job_event
+
+    with app.app_context():
+        job = app.import_queue.enqueue(
+            "app.videos.localization_task",
+            args=("/import/Trail Skipped (2023) - [DVD].mkv",),
+        )
+
+    record_job_event(app.redis, job, "started")
+    record_job_event(app.redis, job, "skipped")
+    record_job_event(app.redis, job, "queued")
+
+    trails = pipeline_trails(app.redis)
+    assert [entry["status"] for entry in trails[0]["entries"]] == ["skipped"]
+    assert queue_rows([], trails) == []
+
+
 def test_lifecycle_updates_one_entry_in_place(app):
     """Keep 1 trail line for a job that moves from queued to started to done.
 

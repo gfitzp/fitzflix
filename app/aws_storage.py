@@ -1969,8 +1969,16 @@ def upload_task(file_id):
 
     The task holds the title lock of the file (#615). Thus, no writer
     changes the file during the upload, and the clear of the stale flag
-    is true. A failure leaves the flag as it is."""
+    is true. A failure leaves the flag as it is.
 
+    The invariant of the chip (#766): only an upload that stored its
+    archive ends "done". An upload that raises rolls back, releases the
+    lock and raises again. Thus, its job fails, and the worker reports it
+    (#759). A refused upload returns False with a "skipped" chip. A wait
+    for the title lock is a booked retry, and its retry chip stands for
+    the stage."""
+
+    from app.pipeline import mark_job_skipped
     from app.videos import acquire_lock_or_defer
 
     with app.app_context():
@@ -2003,6 +2011,7 @@ def upload_task(file_id):
             # in untouched/ is never overwritten.
 
             if archive_library_file(file, file_path) is None:
+                mark_job_skipped()
                 return False
             file.date_updated = (
                 file.aws_transcoded_date_uploaded
@@ -2012,9 +2021,10 @@ def upload_task(file_id):
             db.session.commit()
 
         except Exception:
-            current_app.logger.error(traceback.format_exc())
+            # The worker logs the traceback with the task name (#759).
+
             db.session.rollback()
-            return None
+            raise
 
         finally:
             current_app.lock_manager.unlock(lock)
