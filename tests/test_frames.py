@@ -1996,6 +1996,60 @@ def test_fuzzy_matching_folds_spelled_numbers_to_digits(app, admin_client, admin
     assert "Correct" in guess(apollo_token, "Apollo 13")
 
 
+def test_a_number_of_2_words_is_one_number(app):
+    """A tens word and a units word are 1 number, and 2 such numbers are a year (#771).
+
+    'twenty one' names 21, and 'nineteen eighty four' names 1984. A guess
+    with an other sequel number still fails (#491)."""
+
+    from app import db
+    from app.main.game import _fuzzy_match
+    from app.models import Movie
+
+    films = [
+        ("21", 2008),
+        ("Winchester '73", 1950),
+        ("Summer of '42", 1971),
+        ("Nineteen Eighty-Four", 1984),
+        ("1984", 1956),
+        ("Apollo 13", 1995),
+        ("Rocky", 1976),
+        ("Rocky II", 1979),
+        ("Toy Story 2", 1999),
+        ("Toy Story 3", 2010),
+    ]
+    with app.app_context():
+        ids = {}
+        for title, year in films:
+            movie = make_movie(title, year)
+            make_movie_file(movie, "Bluray-1080p")
+            ids[title] = movie.id
+        db.session.commit()
+
+        def grade(guess, title):
+            return _fuzzy_match(guess, db.session.get(Movie, ids[title]))
+
+        assert grade("winchester seventy three", "Winchester '73")
+        assert grade("winchester seventy-three", "Winchester '73")
+        assert grade("summer of forty two", "Summer of '42")
+        assert grade("twenty one", "21")
+        assert grade("twenty-one", "21")
+        assert grade("1984", "Nineteen Eighty-Four")
+        assert grade("nineteen eighty four", "1984")
+        assert grade("nineteen eighty-four", "Nineteen Eighty-Four")
+        assert grade("apollo thirteen", "Apollo 13")
+        assert grade("Apollo 13", "Apollo 13")
+        for title, _ in films:
+            assert grade(title, title), title
+
+        assert not grade("rocky two", "Rocky")
+        assert not grade("rocky", "Rocky II")
+        assert not grade("toy story 3", "Toy Story 2")
+        assert not grade("toy story three", "Toy Story 2")
+        assert not grade("twenty two", "21")
+        assert not grade("winchester seventy four", "Winchester '73")
+
+
 def test_extra_unrated_hit_earns_a_hidden_double_bonus(app, admin_client):
     """Double the points for an unrated film on Extra Difficult, in secret.
 

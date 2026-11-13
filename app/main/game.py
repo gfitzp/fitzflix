@@ -192,6 +192,56 @@ NUMBER_WORDS = {
 }
 
 
+TENS_WORDS = {
+    "twenty",
+    "thirty",
+    "forty",
+    "fifty",
+    "sixty",
+    "seventy",
+    "eighty",
+    "ninety",
+}
+UNITS_WORDS = {"one", "two", "three", "four", "five", "six", "seven", "eight", "nine"}
+
+# The first half of a year in words: 'eighteen', 'nineteen' or 'twenty'.
+# YEAR_RE accepts the same centuries.
+
+CENTURY_WORDS = {"eighteen", "nineteen", "twenty"}
+
+
+def _number_words(words):
+    """Fold the number words of a title to digits.
+
+    A tens word and the units word after it are 1 number. Thus,
+    'twenty one' is 21. A century word and a 2-digit number after it are
+    1 year. Thus, 'nineteen eighty four' is 1984. Both sides of a
+    comparison fold the same way. Thus, the sequel number of #491 is the
+    same value on both sides (#771). Digits that the text has already
+    are never joined."""
+
+    numbers = []
+    for word in words:
+        if numbers and numbers[-1][1] in TENS_WORDS and word in UNITS_WORDS:
+            tens = numbers.pop()[0]
+            numbers.append((str(int(tens) + int(NUMBER_WORDS[word])), "compound"))
+        else:
+            numbers.append((NUMBER_WORDS.get(word, word), word))
+    folded = []
+    for digits, word in numbers:
+        if (
+            folded
+            and folded[-1][1] in CENTURY_WORDS
+            and (word in NUMBER_WORDS or word == "compound")
+            and len(digits) == 2
+        ):
+            century = folded.pop()[0]
+            folded.append((century + digits, "year"))
+        else:
+            folded.append((digits, word))
+    return [digits for digits, _ in folded]
+
+
 def _normalize(text):
     """Fold a title for fuzzy comparison.
 
@@ -203,8 +253,7 @@ def _normalize(text):
     words = text.split()
     if words and words[0] in ("the", "a", "an"):
         words = words[1:]
-    words = [NUMBER_WORDS.get(word, word) for word in words]
-    return " ".join(words)
+    return " ".join(_number_words(words))
 
 
 # A sequel number decides the film. 'Iron Man 2' does not name Iron
