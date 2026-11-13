@@ -845,18 +845,16 @@ def probe_health(connection):
 def open_health_issues(connection):
     """Return the messages of the open problems that health_probe stored (#767).
 
-    The messages come in the order of their conditions. A Redis fault
-    returns an empty list. Thus, the health card still renders."""
+    The messages come in the order of their conditions. This has no guard
+    for a Redis fault. In a Redis outage, the ping of system_health fails
+    before this read. Thus, an empty list means that no problem is open.
 
-    from redis.exceptions import RedisError
+    The list is as old as the last run of health_probe that reached its
+    end. A run that raises at its mail keeps the list of the run before."""
 
-    try:
-        stored = connection.hgetall(ISSUES_KEY)
-    except RedisError:
-        return []
     return [
         message.decode("utf-8", "replace")
-        for condition, message in sorted(stored.items())
+        for condition, message in sorted(connection.hgetall(ISSUES_KEY).items())
     ]
 
 
