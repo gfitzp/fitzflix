@@ -374,11 +374,14 @@ def test_a_later_stage_rejects_a_source_that_no_sweep_finds(app, tmp_path, monke
     assert app.redis.get('{"title": "Outage Library"}') is None
 
 
-def _cataloging_over_the_source(app, tmp_path, monkeypatch, name, error, record):
+def _cataloging_over_the_source(
+    app, tmp_path, monkeypatch, name, error, record, upload=None
+):
     """Run a cataloging whose new file replaces its own source, and whose commit fails.
 
     The real _place_file renames the hidden copy over the library file
-    of the source. Return (source, rejected path, File id or None)."""
+    of the source. upload holds the archive columns of the import.
+    Return (source, rejected path, File id or None)."""
 
     import app.importing as importing
     import app.videos as videos
@@ -397,6 +400,7 @@ def _cataloging_over_the_source(app, tmp_path, monkeypatch, name, error, record)
         "dirname": dirname,
         "file_path": f"{dirname}/{name}",
         "media_library": "Movies",
+        **(upload or {}),
     }
     monkeypatch.setitem(app.config, "LIBRARY_DIR", str(tmp_path))
     monkeypatch.setitem(app.config, "IMPORT_DIR", str(tmp_path / "import"))
@@ -459,6 +463,181 @@ def test_a_file_that_its_record_points_to_stays_at_its_path(
     assert bool(errors) == isinstance(error, Exception)
 
 
+def _run_scoped_upload(name):
+    """Return the archive columns of an import whose upload went to a run-scoped key."""
+
+    from datetime import datetime, timezone
+
+    return {
+        "aws_key": f"pending-untouched/0123456789ab/{name}",
+        "aws_date_uploaded": datetime(2026, 11, 12, 9, 0, tzinfo=timezone.utc),
+        "aws_filesize_bytes": 6,
+        "untouched_basename": name,
+    }
+
+
+def _discards(monkeypatch):
+    """Record each run-scoped upload that the import deletes."""
+
+    import app.importing as importing
+
+    deleted = []
+    monkeypatch.setattr(importing, "discard_pending_archive", deleted.append)
+    return deleted
+
+
+def test_the_record_takes_the_original_of_a_file_that_replaced_its_source(
+    app, tmp_path, monkeypatch
+):
+    """The upload holds the only copy of the original of the new file (#727).
+
+    The import must not delete it. The record at the path claims it,
+    and its archive is current."""
+
+    import app.importing as importing
+    from app import db
+    from app.models import File
+
+    monkeypatch.setattr(importing, "_rescan_after_a_failed_edit", lambda *a: None)
+    deleted = _discards(monkeypatch)
+    name = "Over Record Upload (2023) - [DVD].mkv"
+    upload = _run_scoped_upload(name)
+    source, rejected, file_id = _cataloging_over_the_source(
+        app, tmp_path, monkeypatch, name, RuntimeError("commit"), True, upload
+    )
+    assert source.read_bytes() == b"library copy"
+    assert deleted == []
+    with app.app_context():
+        row = db.session.get(File, file_id)
+        assert row.aws_key == upload["aws_key"]
+        assert row.aws_filesize_bytes == 6
+        assert row.aws_date_uploaded is not None
+        assert row.untouched_basename == name
+        assert not row.aws_stale
+
+
+def test_a_conversion_does_not_take_the_original_of_the_new_file(
+    app, tmp_path, monkeypatch
+):
+    """The library file of a conversion has its archive in transcoded/ (#727).
+
+    The upload still stays, and the stale flag asks for the repair."""
+
+    import app.importing as importing
+    from app import db
+    from app.models import File
+
+    monkeypatch.setattr(importing, "_rescan_after_a_failed_edit", lambda *a: None)
+    deleted = _discards(monkeypatch)
+    real = importing._claim_at_path
+
+    def claim_of_a_conversion(library_file_path, output_file, upload=None):
+        File.query.filter_by(file_path=library_file_path).update(
+            {"converted_from_quality": "Remux-2160p"}
+        )
+        db.session.commit()
+        return real(library_file_path, output_file, upload)
+
+    monkeypatch.setattr(importing, "_claim_at_path", claim_of_a_conversion)
+    name = "Over Conversion (2023) - [DVD].mkv"
+    upload = _run_scoped_upload(name)
+    source, rejected, file_id = _cataloging_over_the_source(
+        app, tmp_path, monkeypatch, name, RuntimeError("commit"), True, upload
+    )
+    assert deleted == []
+    with app.app_context():
+        row = db.session.get(File, file_id)
+        assert row.aws_key != upload["aws_key"]
+        assert row.aws_stale
+
+
+def test_the_original_of_a_rejected_localized_file_stays_in_s3(
+    app, tmp_path, monkeypatch, caplog
+):
+    """No record points to the path. The file over the source goes to rejects.
+
+    That file is not the download. The upload is the only copy of the
+    original, and the import does not delete it (#727)."""
+
+    deleted = _discards(monkeypatch)
+    name = "Over Nothing Upload (2023) - [DVD].mkv"
+    upload = _run_scoped_upload(name)
+    source, rejected, _ = _cataloging_over_the_source(
+        app, tmp_path, monkeypatch, name, RuntimeError("commit"), False, upload
+    )
+    try:
+        assert os.path.exists(rejected)
+        assert deleted == []
+        assert any(upload["aws_key"] in r.getMessage() for r in caplog.records)
+    finally:
+        _remove(rejected)
+
+
+def test_a_failed_cataloging_deletes_the_upload_while_the_source_is_whole(
+    app, tmp_path, monkeypatch
+):
+    """The source keeps its original bytes. Then the upload is a copy, and it goes."""
+
+    import app.importing as importing
+    import app.videos as videos
+
+    deleted = _discards(monkeypatch)
+    name = "Whole Source (2022) - [DVD].mkv"
+    upload = _run_scoped_upload(name)
+    hidden = tmp_path / f".{name}"
+    hidden.write_bytes(b"library copy")
+    source = tmp_path / "downloads" / name
+    source.parent.mkdir()
+    source.write_bytes(b"source")
+    details = {
+        "basename": name,
+        "dirname": "Movies/Whole Source (2022)",
+        "file_path": f"Movies/Whole Source (2022)/{name}",
+        "media_library": "Movies",
+        **upload,
+    }
+    monkeypatch.setattr(importing, "_build_records", _raiser(RuntimeError("records")))
+    rejected = _rejected(app, name)
+    with app.app_context():
+        lock = app.lock_manager.lock('{"title": "Whole Source"}', 60000)
+        try:
+            videos.finalize_localization(str(source), details, lock, str(hidden), {})
+            assert os.path.exists(rejected)
+        finally:
+            _remove(rejected)
+    assert deleted == [upload["aws_key"]]
+
+
+@pytest.mark.parametrize("in_place", [True, False], ids=["in place", "staged"])
+def test_a_failed_localization_keeps_the_upload_of_a_source_that_it_rewrote(
+    app, sample_mkv, incoming_dir, monkeypatch, in_place
+):
+    """A source that is localized in place can change before the failure (#727).
+
+    Then the run-scoped upload has the only original, and it stays. The
+    source of a staged run does not change, and its upload goes."""
+
+    from app import importing
+
+    deleted = _discards(monkeypatch)
+    basename = f"Upload Kept {in_place} (2003) - [DVD].mkv"
+    upload = _run_scoped_upload(basename)
+    source = _source_in(incoming_dir, basename, sample_mkv)
+    monkeypatch.setattr(
+        importing, "_archive_original", lambda path, details: details.update(upload)
+    )
+    if in_place:
+        monkeypatch.setattr(importing, "_stage_source", lambda path, run: (path, False))
+    monkeypatch.setattr(importing, "_localize", _raiser(RuntimeError("localize")))
+    try:
+        with app.app_context():
+            importing.localization_task(source)
+        assert os.path.exists(_rejected(app, basename))
+        assert deleted == ([] if in_place else [upload["aws_key"]])
+    finally:
+        _remove(source, _rejected(app, basename))
+
+
 def test_a_fault_in_the_record_lookup_does_not_keep_the_title_lock(
     app, tmp_path, monkeypatch
 ):
@@ -466,7 +645,7 @@ def test_a_fault_in_the_record_lookup_does_not_keep_the_title_lock(
 
     import app.importing as importing
 
-    def broken(library_file_path, output_file):
+    def broken(library_file_path, output_file, upload=None):
         raise OSError("the repair failed")
 
     monkeypatch.setattr(importing, "_claim_at_path", broken)
@@ -549,9 +728,12 @@ def test_a_failed_record_lookup_books_the_repair_of_the_kept_file(
         "tests.test_database_outage._raiser", lambda error: lose_the_database
     )
     name = "Over Outage (2023) - [DVD].mkv"
+    upload = _run_scoped_upload(name)
+    deleted = _discards(monkeypatch)
     source, rejected, file_id = _cataloging_over_the_source(
-        app, tmp_path, monkeypatch, name, RuntimeError("unused"), record=True
+        app, tmp_path, monkeypatch, name, RuntimeError("unused"), True, upload
     )
+    assert deleted == []
     monkeypatch.setattr(importing, "File", real_file)
     assert source.read_bytes() == b"library copy"
     assert not os.path.exists(rejected)
@@ -574,16 +756,19 @@ def test_a_failed_record_lookup_books_the_repair_of_the_kept_file(
         job = booked[0]
         assert job.args[0] == f"Movies/{name[:-4]}/{name}"
         try:
-            # The row still has the size of the old file. The task repairs it.
+            # The row still has the size of the old file. The task repairs
+            # it, and the row takes the original of the new file (#727).
+            assert job.kwargs["upload"] == upload
             assert job.func(*job.args, **job.kwargs) is True
-            assert scans == [file_id] and stale == [file_id]
+            assert scans == [file_id] and stale == []
+            assert db.session.get(File, file_id).aws_key == upload["aws_key"]
 
             # A row that agrees with the file needs no repair.
             row = db.session.get(File, file_id)
             row.filesize_bytes = os.path.getsize(source)
             db.session.commit()
             assert job.func(*job.args, **job.kwargs) is False
-            assert scans == [file_id] and stale == [file_id]
+            assert scans == [file_id] and stale == []
         finally:
             registry.remove(job, delete_job=True)
 
@@ -597,7 +782,7 @@ def test_the_repair_of_a_kept_file_waits_for_the_database(app, tmp_path, monkeyp
     monkeypatch.setattr(
         importing,
         "_book_replaced_file_repair",
-        lambda path, output, tries: booked.append(tries),
+        lambda path, output, tries, upload=None: booked.append(tries),
     )
 
     class Unreadable:

@@ -930,8 +930,10 @@ def localization_task(
             # place, and the track statistics, the FLAC twins, or the MP4
             # metadata removal can rewrite it before a failure. The
             # untouched archive goes up first, so the original bytes stay
-            # in S3. A stop signal keeps the source (#497). An outage of
-            # the database keeps it too, and the job fails (#681).
+            # in S3. Thus, a run-scoped upload of such a run is not
+            # deleted here (#727). The sync prunes it after its grace. A
+            # stop signal keeps the source (#497). An outage of the
+            # database keeps it too, and the job fails (#681).
 
             abandon_failed_stage(
                 error,
@@ -939,7 +941,9 @@ def localization_task(
                 run.lock,
                 may_keep=not run.in_place,
                 strays=run.strays,
-                pending_archive=pending_archive_of(file_details),
+                pending_archive=(
+                    None if run.in_place else pending_archive_of(file_details)
+                ),
             )
 
         else:
@@ -1331,7 +1335,8 @@ def _archive_original(work_path, file_details):
     Then the upload goes to a run-scoped key below pending-untouched/
     (#430). The record of the import claims that key. After the commit,
     an archive move takes it to its final key. A failed import deletes
-    it. Thus, a failure never replaces the archive of a good rip."""
+    it while the source still has its original bytes (#727). Thus, a
+    failure never replaces the archive of a good rip."""
 
     if get_setting("ARCHIVE_ORIGINAL_MEDIA"):
         run_id = uuid.uuid4().hex[:12]
@@ -2667,14 +2672,31 @@ def finalize_localization(
             # release of the lock and the clean-up below. Then the file
             # stays, as for a lookup that failed.
 
+            # Invariant: the import never deletes an upload whose bytes
+            # exist nowhere else (#727). The file over the source is not
+            # the download. Then the run-scoped upload holds the only copy
+            # of the original, and it stays. A record at the path takes it
+            # as its archive. With no record, the sync prunes it after its
+            # grace, and a person can get it before that.
+
+            pending = pending_archive_of(file_details)
+            only_copy = _upload_columns(file_details) if overwritten else None
             claimed = False
             if placement == "replaced" or overwritten:
                 try:
-                    claimed = _claim_at_path(file_details.get("file_path"), output_file)
+                    claimed = _claim_at_path(
+                        file_details.get("file_path"), output_file, only_copy
+                    )
                 except Exception:
                     current_app.logger.warning(traceback.format_exc())
                     claimed = True
             _release_title_lock(lock)
+            if only_copy and not claimed:
+                current_app.logger.warning(
+                    f"'{output_file}' The file at this path was not the download, "
+                    f"and no record takes its original. The original stays in S3 "
+                    f"as '{pending}' until the weekly sync prunes it"
+                )
 
             # Invariant: a file that a record points to stays at its path
             # (#688). The repair of _claim_at_path covers it, for each failure.
@@ -2689,7 +2711,7 @@ def finalize_localization(
                 may_keep=not overwritten,
                 later_stage=True,
                 strays=(stray, staged_output),
-                pending_archive=pending_archive_of(file_details),
+                pending_archive=None if overwritten else pending,
                 keep_source=overwritten and claimed,
             )
             return None
@@ -3262,12 +3284,86 @@ def _place_file(
     return "replaced" if replaced_existing else "renamed"
 
 
-def _claim_at_path(library_file_path, output_file):
+def _upload_columns(file_details):
+    """Return the archive columns of the run-scoped upload of an import, or None (#727)."""
+
+    if not pending_archive_of(file_details):
+        return None
+    columns = ("aws_key", "aws_date_uploaded", "aws_filesize_bytes")
+    return {
+        **{column: file_details.get(column) for column in columns},
+        "untouched_basename": file_details.get("untouched_basename"),
+    }
+
+
+def _adopt_upload(row_id, upload, output_file):
+    """Give a record the run-scoped upload of a failed import as its archive (#727).
+
+    The localized file of the import replaced the file of the record,
+    and the commit of the import failed. The upload holds the original
+    of the file that is now at the path. Thus, the record claims it, as
+    the commit would have done, and the archive is current. The weekly
+    sync requests the move of the upload to its final key. A pending
+    move of the old archive does not apply to the new one.
+
+    A conversion keeps the library file in transcoded/. The upload is
+    not the archive of that file. Thus, a conversion does not adopt.
+    upload is the result of _upload_columns, or None. Return True if
+    the record claims the upload."""
+
+    if not upload:
+        return False
+    try:
+        file = db.session.get(File, row_id)
+        if file is None or file.converted_from_quality:
+            return False
+        file.aws_key = upload["aws_key"]
+        file.aws_date_uploaded = upload["aws_date_uploaded"]
+        file.aws_filesize_bytes = upload["aws_filesize_bytes"]
+        file.aws_stale = False
+        if upload["untouched_basename"]:
+            file.untouched_basename = upload["untouched_basename"]
+        if file.aws_key_target:
+            clear_archive_target(file)
+        db.session.commit()
+    except Exception:
+        try:
+            db.session.rollback()
+        except Exception:
+            pass
+        current_app.logger.warning(
+            f"'{output_file}' The record could not take the original of the "
+            f"failed import: " + traceback.format_exc()
+        )
+        return False
+    current_app.logger.warning(
+        f"'{output_file}' The commit of the import failed after the new file "
+        f"replaced the old file. The record takes '{upload['aws_key']}', the "
+        f"original of the new file, as its archive"
+    )
+    return True
+
+
+def _repair_replaced_record(row_id, output_file, upload):
+    """Repair the record of a file that a failed import replaced (#592, #727).
+
+    The track scan reads the rows and the size again from the new file.
+    The record takes the upload of the import as its archive. Without
+    an upload, the stale flag makes the sync upload the new file."""
+
+    _rescan_after_a_failed_edit(row_id, f"'{output_file}'")
+    if not _adopt_upload(row_id, upload, output_file):
+        mark_archive_stale(
+            row_id, reason="an import replaced the file and its commit failed"
+        )
+
+
+def _claim_at_path(library_file_path, output_file, upload=None):
     """Return True if a File row can point to a library path that a failed import wrote.
 
-    A found row gets the repair of #592. The row keeps the track rows,
-    the size and the archive of the old file. The rescan reads the rows
-    again, and the stale flag makes the repair upload the new file.
+    A found row gets the repair of _repair_replaced_record. upload is
+    the run-scoped upload of an import whose file replaced its own
+    source (_upload_columns), or None.
 
     A lookup that fails gives True with a warning. A row can exist, and
     the database did not say. A rejected file leaves its row with no
@@ -3295,14 +3391,11 @@ def _claim_at_path(library_file_path, output_file):
             f"'{output_file}' The lookup of its record failed. The file stays "
             f"at its path: " + traceback.format_exc()
         )
-        _book_replaced_file_repair(library_file_path, output_file, 1)
+        _book_replaced_file_repair(library_file_path, output_file, 1, upload)
         return True
     if row_id is None:
         return False
-    _rescan_after_a_failed_edit(row_id, f"'{output_file}'")
-    mark_archive_stale(
-        row_id, reason="an import replaced the file and its commit failed"
-    )
+    _repair_replaced_record(row_id, output_file, upload)
     return True
 
 
@@ -3314,11 +3407,12 @@ REPLACED_REPAIR_DELAY = timedelta(minutes=10)
 REPLACED_REPAIR_MAX_TRIES = 6
 
 
-def _book_replaced_file_repair(library_file_path, output_file, tries):
+def _book_replaced_file_repair(library_file_path, output_file, tries, upload=None):
     """Book repair_replaced_file_task for a later time. Redis holds the booking.
 
     The booking needs no database. A fault of the booking is a warning.
-    The failure handler of the cataloging calls this, and it must end."""
+    The failure handler of the cataloging calls this, and it must end.
+    upload goes to the task (#727)."""
 
     name = "app.importing.repair_replaced_file_task"
     try:
@@ -3332,6 +3426,7 @@ def _book_replaced_file_repair(library_file_path, output_file, tries):
             ),
             counters={"tries": tries},
             args=(library_file_path, output_file),
+            kwargs={"upload": upload},
             description=f"'{os.path.basename(output_file)}' Checking the record",
             level="info",
         )
@@ -3342,14 +3437,14 @@ def _book_replaced_file_repair(library_file_path, output_file, tries):
         )
 
 
-def repair_replaced_file_task(library_file_path, output_file, tries=1):
+def repair_replaced_file_task(library_file_path, output_file, tries=1, upload=None):
     """Repair the record of a file that a failed import left at its path (#688).
 
     This is a task. The cataloging wrote the new file over the file of
     a record, its commit failed, and the lookup of the record failed
     too. The task makes the lookup again. A row that does not agree
-    with the size of the file gets the repair of #592: a rescan and a
-    stale archive. A row that agrees needs nothing. A later import or a
+    with the size of the file gets the repair of
+    _repair_replaced_record. A row that agrees needs nothing. A later import or a
     rescan made it correct. With no row, the file has no record, and 1
     warning says so. The weekly sync imports such a file. While the
     database does not answer, the task books itself again. Return True
@@ -3376,7 +3471,9 @@ def repair_replaced_file_task(library_file_path, output_file, tries=1):
                     f"{tries} tries. The record of this file is not checked"
                 )
                 return False
-            _book_replaced_file_repair(library_file_path, output_file, tries + 1)
+            _book_replaced_file_repair(
+                library_file_path, output_file, tries + 1, upload
+            )
             return False
         if not os.path.exists(output_file):
             return False
@@ -3388,10 +3485,7 @@ def repair_replaced_file_task(library_file_path, output_file, tries=1):
             return False
         if row.filesize_bytes == os.path.getsize(output_file):
             return False
-        _rescan_after_a_failed_edit(row.id, f"'{output_file}'")
-        mark_archive_stale(
-            row.id, reason="an import replaced the file and its commit failed"
-        )
+        _repair_replaced_record(row.id, output_file, upload)
         return True
 
 
