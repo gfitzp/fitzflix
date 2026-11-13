@@ -2256,6 +2256,13 @@ def tv_delete(series_id):
         flash_form_errors(series_delete_form)
         return redirect(url_for("main.tv", series_id=tv.id))
 
+    refused = _delete_refused_for_volumes(
+        file.file_path for file in File.query.filter(File.series_id == series_id)
+    )
+    if refused:
+        flash(refused, "warning")
+        return redirect(url_for("main.tv", series_id=tv.id))
+
     # The delete holds the title lock of each episode. A task that holds
     # one of them refuses the delete (#718).
 
@@ -2838,12 +2845,37 @@ def _queue_archive_deletes(aws_keys):
         )
 
 
+def _delete_refused_for_volumes(file_paths):
+    """Return the text that refuses a delete while a library volume is away, or None (#752).
+
+    Invariant: a delete page changes nothing while a volume of its
+    library files is not mounted. A share that is not mounted leaves an
+    empty folder at its mount point. The removal of a file then answers
+    "no such file", and the file is still on the NAS. The records and
+    the archives went, and the weekly sync imported each file again."""
+
+    from app.videos import _dead_volumes
+
+    library = current_app.config["LIBRARY_DIR"]
+    dead = _dead_volumes([os.path.join(library, path) for path in file_paths])
+    if not dead:
+        return None
+    return (
+        f"The volume {', '.join(dead)} is not mounted. Nothing was deleted. "
+        f"Do the delete again when the volume is back."
+    )
+
+
 def _delete_file_post(file, form):
     """Delete the file and its record. Return the page to go to next.
 
     The delete holds the title lock of the file. A task that holds it
     refuses the delete (#718)."""
 
+    refused = _delete_refused_for_volumes([file.file_path])
+    if refused:
+        flash(refused, "warning")
+        return None
     locks = _delete_locks([file.file_identifier()])
     if locks is None:
         flash(DELETE_REFUSED, "warning")

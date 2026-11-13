@@ -1189,14 +1189,29 @@ class File(db.Model):
         (#513). Return True if no file is at the path afterwards. Return
         False if the share refused the removal. The caller tells the
         person, because the weekly sync imports a library file that has
-        no record (#745)."""
+        no record (#745).
+
+        "No such file" is not "gone" while the volume of the path is not
+        mounted (#752). The mount point is then an empty folder, and the
+        file is still on the NAS. The delete pages check the volumes
+        before they change a record. This check is for a share that
+        goes away after that."""
+
+        from app.videos import _dead_volumes
 
         file_to_delete = os.path.join(current_app.config["LIBRARY_DIR"], file_path)
         try:
             os.remove(file_to_delete)
 
         except FileNotFoundError:
-            pass
+            dead = _dead_volumes([file_to_delete])
+            if dead:
+                current_app.logger.warning(
+                    f"Could not delete the local file '{file_to_delete}': the "
+                    f"volume {', '.join(dead)} is not mounted"
+                )
+                _remove_triage_aids(file_id)
+                return False
 
         except OSError as error:
             # A wedged share answers EIO, ENXIO or EACCES. The rows are

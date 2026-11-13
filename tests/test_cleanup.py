@@ -372,6 +372,102 @@ def test_a_series_delete_names_the_files_that_stay(app, admin_client, monkeypatc
     os.remove(stays_path)
 
 
+def test_a_file_delete_is_refused_while_its_volume_is_not_mounted(
+    app, admin_client, monkeypatch
+):
+    """A share that is not mounted leaves an empty folder at its mount point (#752).
+
+    The removal then says "no such file", and the file is still on the
+    NAS. The page said "Deleted", the archive went, and the weekly sync
+    imported the file again. The delete must change nothing."""
+
+    from app import db
+    from app.main import library
+    from app.models import File
+    from tests.factories import make_movie, make_movie_file
+
+    with app.app_context():
+        file = make_movie_file(
+            make_movie("Share Away", 2001), "DVD", aws_key="untouched/share-away.mkv"
+        )
+        db.session.commit()
+        file_id = file.id
+
+    token = _admin_csrf_token(admin_client, f"/file/{file_id}")
+    deletes = []
+    monkeypatch.setattr(
+        library, "_queue_archive_deletes", lambda keys: deletes.append(keys)
+    )
+    monkeypatch.setattr("app.videos._dead_volumes", lambda paths: ["/Volumes/Movies"])
+    page = admin_client.post(
+        f"/file/{file_id}",
+        data={"csrf_token": token, "delete_submit": "Delete File"},
+        follow_redirects=True,
+    ).get_data(as_text=True)
+
+    assert "/Volumes/Movies" in page
+    assert "is not mounted" in page
+    assert deletes == []
+    with app.app_context():
+        assert db.session.get(File, file_id) is not None
+
+
+def test_a_series_delete_is_refused_while_its_volume_is_not_mounted(
+    app, admin_client, monkeypatch
+):
+    """Delete Series reads the volume of each file before it changes a record (#752)."""
+
+    from app import db
+    from app.main import library
+    from app.models import TVSeries
+    from tests.factories import make_tv_file, make_tv_series
+
+    with app.app_context():
+        series = make_tv_series("Share Away Show")
+        make_tv_file(series, 1, 1, "DVD")
+        db.session.commit()
+        series_id = series.id
+
+    token = _admin_csrf_token(admin_client, f"/tv/{series_id}")
+    deletes = []
+    monkeypatch.setattr(
+        library, "_queue_archive_deletes", lambda keys: deletes.append(keys)
+    )
+    monkeypatch.setattr("app.videos._dead_volumes", lambda paths: ["/Volumes/TV Shows"])
+    page = admin_client.post(
+        f"/tv/{series_id}/delete",
+        data={"csrf_token": token, "delete_submit": "Delete Series"},
+        follow_redirects=True,
+    ).get_data(as_text=True)
+
+    assert "/Volumes/TV Shows" in page
+    assert "is not mounted" in page
+    assert deletes == []
+    with app.app_context():
+        assert db.session.get(TVSeries, series_id) is not None
+
+
+def test_a_missing_file_on_a_volume_that_is_not_mounted_is_not_gone(app, monkeypatch):
+    """The share can go away between the check of the page and the removal (#752)."""
+
+    from app.models import File
+
+    seen = []
+
+    def dead(paths):
+        seen.extend(paths)
+        return ["/Volumes/Movies"]
+
+    monkeypatch.setattr("app.videos._dead_volumes", dead)
+    with app.app_context():
+        assert File.delete_library_copy("Movies/Away (2001)/Away.mkv", 0) is False
+        assert seen == [
+            os.path.join(app.config["LIBRARY_DIR"], "Movies/Away (2001)/Away.mkv")
+        ]
+        monkeypatch.setattr("app.videos._dead_volumes", lambda paths: [])
+        assert File.delete_library_copy("Movies/Away (2001)/Away.mkv", 0) is True
+
+
 def test_deleting_a_special_returns_to_season_0(app, admin_client):
     """Season 0 holds the specials. The delete returns to its season page."""
 
