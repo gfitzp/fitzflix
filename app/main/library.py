@@ -2953,8 +2953,8 @@ def file(file_id):
 
     Each form of the page has a handler. A valid post of a form runs its
     handler. Then the page shows again, unless the handler gives another
-    page. A post that does not validate gets a message (#763). A form
-    with needs_local_file refuses a file that is not in the local
+    page. A track form that does not validate gets a message, unless
+    only its csrf token failed (#763). A form with needs_local_file refuses a file that is not in the local
     library. Only a restore from AWS or a delete are useful then.
     The template disables the other forms."""
 
@@ -3030,24 +3030,24 @@ def file(file_id):
                 url_for("main.file", file_id=file.id)
             )
 
-    # Invariant: a post that does nothing says why (#763). A track form
-    # refuses a track that is not a track of the file now. That post
-    # came from a page that was loaded before a job or an arr changed
-    # the tracks. The choice error of WTForms does not say that. A csrf
-    # error stays quiet, as in flash_form_errors.
+    # Invariant: a track form that does not validate says why (#763).
+    # Each field of the 2 track forms is an Optional choice field. Thus,
+    # the only error other than csrf is a posted value that is not a
+    # track of the file now. That post came from a page that was loaded
+    # before a job or an arr changed the tracks. The choice error of
+    # WTForms does not say that. The 4 other forms have no field that can
+    # fail, except the csrf token. A csrf error stays quiet, as in
+    # flash_form_errors. The errors are empty unless the post validated
+    # the form above.
 
-    for form, submit, _, _ in handlers:
-        if not submit.data or not set(form.errors) - {"csrf_token"}:
-            continue
-        if form is mkvpropedit_form or form is mkvmerge_form:
+    for form in (mkvpropedit_form, mkvmerge_form):
+        if set(form.errors) - {"csrf_token"}:
             flash(
                 f"The tracks of '{file.basename}' changed after the page was "
                 f"loaded. Nothing was queued. The page shows the tracks as they "
                 f"are now.",
                 "warning",
             )
-        else:
-            flash_form_errors(form)
 
     # A track edit that stopped on a changed file left a note (#606).
     # The route said that the edit was queued. Thus, the page says that
