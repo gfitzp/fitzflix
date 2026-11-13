@@ -15,7 +15,7 @@
 	<td>{{ record.year if kind == 'movie' else '' }}</td>
 	{% set file_count = record.files.count() %}
 	<td{% if not file_count %} class="text-danger"{% endif %}>{{ file_count }}</td>
-	<td class="text-nowrap">{{ record.date_created.strftime("%b %-d, %Y") if record.date_created }}</td>
+	<td class="text-nowrap">{% if record.date_created %}{{ moment(record.date_created).format("ll") }}{% endif %}</td>
 	<td><a href="{{ url_for('main.search_tmdb', q=record.title) }}">Search TMDB</a></td>
 	<td class="text-nowrap">
 		{# One flex-wrap row with a gap. Thus, the controls keep a gap

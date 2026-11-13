@@ -433,13 +433,6 @@ def _with_unsent(user_id, events):
         return events, today
     unsent = json.loads(stored)
 
-    # A digest stored before the #631 deploy carries markers that the
-    # run did not plant. Delete these 2 lines after 2026-11-09, when
-    # every such digest has expired.
-
-    for key, ttl in (unsent.get("marks") or {}).get("sent", {}).items():
-        current_app.redis.set(key, "1", nx=True, ex=ttl)
-
     since = unsent.get("since") or today
     if date.fromisoformat(since) < date.today() - timedelta(seconds=UNSENT_SECONDS):
         current_app.logger.error(

@@ -60,6 +60,26 @@ def test_page_lists_only_unmatched_unflagged_records(app, admin_client):
     assert re.search(r'btn-warning" href="[^"]*/maintenance/tmdb"', mpage)
 
 
+def test_the_created_date_goes_to_the_browser_as_a_utc_time(app, admin_client):
+    """The page printed the UTC day of the record (#747).
+
+    A record that an import made at 20:30 in New York has a UTC time of
+    01:30 on the next day. The browser converts the time, as on each
+    other page. The server prints no day of its own."""
+
+    from datetime import datetime
+
+    with app.app_context():
+        movie = make_movie("Evening Import", 2019)
+        movie.date_created = datetime(2026, 11, 13, 1, 30)
+        make_movie_file(movie, "DVD")
+        db.session.commit()
+
+    page = admin_client.get("/maintenance/tmdb").get_data(as_text=True)
+    assert 'data-timestamp="2026-11-13T01:30:00Z"' in page
+    assert "Nov 13, 2026" not in page
+
+
 def test_empty_state_and_neutral_card(app, admin_client):
     with app.app_context():
         make_movie("Matched Film", 1981, tmdb_id=500)

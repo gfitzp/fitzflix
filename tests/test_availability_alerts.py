@@ -719,25 +719,17 @@ def test_an_unsent_digest_that_expires_is_an_error(app, monkeypatch, caplog):
     with app.app_context():
         user = User.query.filter_by(email=MEMBER_EMAIL).one()
         old = (date.today() - timedelta(days=8)).isoformat()
-        sent_key = f"fitzflix:test-sent:{user.id}:1"
         app.redis.set(
             UNSENT_KEY.format(user_id=user.id),
             json.dumps(
                 {
                     "since": old,
                     "events": {"streaming": [{"movie_id": 1}]},
-                    "marks": {
-                        "sent": {sent_key: 600},
-                        "recent": [[1, "Now on Netflix"], [2, "Not in the digest"]],
-                    },
                 }
             ),
         )
         events = {"local": [], "streaming": [], "rent": [], "leaving": []}
         merged, since = _with_unsent(user.id, events)
-        # A digest stored before #631 plants its old markers.
-        assert app.redis.exists(sent_key)
-        app.redis.delete(sent_key)
     assert merged == events
     assert since == date.today().isoformat()
     assert any(
