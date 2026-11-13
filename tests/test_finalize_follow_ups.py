@@ -921,6 +921,26 @@ def test_a_source_of_the_import_directory_gets_no_stamp(app, sample_mkv, incomin
     os.remove(output)
 
 
+def test_the_import_directory_is_not_a_library_folder(app, tmp_path, monkeypatch):
+    """On the server, the import directory is beside the libraries (#742).
+
+    LIBRARY_DIR is /Volumes there. It holds the 2 libraries and also
+    the folder with the import, held and rejects directories. Only a
+    source in the movie library or the TV library is a download of
+    Radarr or Sonarr."""
+
+    monkeypatch.setitem(app.config, "LIBRARY_DIR", str(tmp_path))
+    monkeypatch.setitem(app.config, "MOVIE_LIBRARY", str(tmp_path / "Movies"))
+    monkeypatch.setitem(app.config, "TV_LIBRARY", str(tmp_path / "TV Shows"))
+    monkeypatch.setitem(app.config, "IMPORT_DIR", str(tmp_path / "fitzflix/import"))
+    with app.app_context():
+        assert importing._in_library(str(tmp_path / "Movies/Film (2021)/Film.mkv"))
+        assert importing._in_library(str(tmp_path / "TV Shows/Show/Season 01/x.mkv"))
+        assert not importing._in_library(str(tmp_path / "fitzflix/import/Film.mkv"))
+        assert not importing._in_library(str(tmp_path / "fitzflix/held/Film.mkv"))
+        assert not importing._in_library(str(tmp_path / "Movies"))
+
+
 def test_a_changed_source_of_a_conversion_is_not_removed(app, tmp_path, monkeypatch):
     """A conversion has an other name than its source. The source goes at the end (#742).
 

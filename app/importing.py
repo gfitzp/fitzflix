@@ -4150,10 +4150,17 @@ def _delete_replaced_archive(worse_key):
 
 
 def _in_library(path):
-    """Return True if path is inside the library directory."""
+    """Return True if path is inside the movie library or the TV library.
 
-    library = os.path.abspath(current_app.config["LIBRARY_DIR"])
-    return os.path.abspath(path).startswith(library + os.sep)
+    These are the folders that Radarr and Sonarr write. LIBRARY_DIR is
+    their parent. On the server it also holds the import directory, the
+    held directory and the rejects, and they are not library folders."""
+
+    path = os.path.abspath(path)
+    return any(
+        path.startswith(os.path.abspath(current_app.config[root]) + os.sep)
+        for root in ("MOVIE_LIBRARY", "TV_LIBRARY")
+    )
 
 
 def _source_changed(file_path, file_details):
