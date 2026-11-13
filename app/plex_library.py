@@ -663,16 +663,18 @@ def enqueue_plex_analyze(file_path, delay=None):
         job_id = safe_job_id(f"plex_analyze:{basename}:{path_tag(file_path)}")
         queue = current_app.maintenance_queue
 
-        # A second edit while the first analyze is still queued needs no
-        # second job. The queued job reads the file when it runs. A job
-        # that already RUNS is not a duplicate. It may have read the file
-        # before this edit arrived. The new job gets an id of its own.
-        # Under the id of the job that runs, it would take the hash that
-        # the first job marks as finished at its end (#744).
+        # A second edit while the first analyze waits needs no second
+        # job. The first job waits in the queue, or it is booked ahead
+        # (#757). It reads the file when it runs. A job that already RUNS
+        # is not a duplicate. It may have read the file before this edit
+        # arrived. The new job gets an id of its own. Under the id of the
+        # job that runs, it would take the hash that the first job marks
+        # as finished at its end (#744).
 
         waiting = list(queue.job_ids) + ScheduledJobRegistry(queue=queue).get_job_ids()
-        if job_id in queue.job_ids or any(
-            waiting_id.startswith(f"{job_id}_") for waiting_id in waiting
+        if any(
+            waiting_id == job_id or waiting_id.startswith(f"{job_id}_")
+            for waiting_id in waiting
         ):
             return False
         running = queue.fetch_job(job_id)

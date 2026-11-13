@@ -467,3 +467,32 @@ def test_an_analyze_beside_a_running_one_gets_its_own_job_id(app, monkeypatch):
         assert enqueue_plex_analyze(path) is False
         for job_id in (first.id, booked):
             _delete_job_id(app, queue, job_id)
+
+
+def test_an_analyze_beside_a_booked_one_adds_no_job(app, monkeypatch):
+    """A booked analyze under the exact id is a job that waits (#757).
+
+    An import that replaces a file books the analyze ahead. A booked job
+    is not in the queue. A second analyze under its id took its hash."""
+
+    from datetime import timedelta
+
+    from rq.registry import ScheduledJobRegistry
+
+    from app.plex_library import enqueue_plex_analyze
+
+    monkeypatch.setitem(app.config, "PLEX_URL", "http://plex.test")
+    monkeypatch.setitem(app.config, "PLEX_TOKEN", "token")
+    queue = app.maintenance_queue
+    path = "/library/Movies/Booked (2021)/Booked (2021) - [DVD].mkv"
+    with app.app_context():
+        assert enqueue_plex_analyze(path, delay=timedelta(minutes=20)) is True
+        (booked,) = ScheduledJobRegistry(queue=queue).get_job_ids()
+        try:
+            assert enqueue_plex_analyze(path) is False
+            assert queue.job_ids == []
+            assert ScheduledJobRegistry(queue=queue).get_job_ids() == [booked]
+        finally:
+            for job in queue.jobs:
+                queue.remove(job)
+            _delete_job_id(app, queue, booked)
