@@ -209,6 +209,70 @@ def test_the_sync_row_has_no_run_now_button(app, admin_client):
         assert len(app.maintenance_queue) == 0
 
 
+CRITERION = "app.videos.refresh_criterion_collection_info"
+
+
+def test_run_now_queues_the_criterion_refresh_as_its_maintenance_button_does(
+    app, admin_client
+):
+    """The Criterion row has a Run now button. It is the Maintenance button.
+
+    The 2 buttons queue the same job behind the same checks. Thus, a
+    click on 1 of them keeps the other one out."""
+
+    from tests.conftest import csrf_token_from
+
+    with app.app_context():
+        register_cron_job(app, CRITERION, "0 4 1 * *")
+
+    body = admin_client.get("/system/metrics").get_data(as_text=True)
+    assert f'value="{CRITERION}"' in body
+
+    body = run_now(admin_client, CRITERION).get_data(as_text=True)
+    assert "Refreshing Criterion Collection information for all movies" in body
+    with app.app_context():
+        (job,) = app.maintenance_queue.jobs
+        assert job.func_name == CRITERION
+        assert job.id.startswith("bulk-criterion-refresh-")
+
+    body = run_now(admin_client, CRITERION).get_data(as_text=True)
+    assert "already queued or running" in body
+
+    page = admin_client.get("/maintenance").get_data(as_text=True)
+    body = admin_client.post(
+        "/maintenance",
+        data={"csrf_token": csrf_token_from(page), "criterion_refresh": "1"},
+        follow_redirects=True,
+    ).get_data(as_text=True)
+    assert "already queued or running" in body
+    with app.app_context():
+        assert len(app.maintenance_queue) == 1
+
+
+def test_run_now_of_the_criterion_refresh_takes_the_gate_of_the_maintenance_button(
+    app, admin_client
+):
+    """A post of each button at the same moment must not queue 2 refreshes.
+
+    The gate of the Maintenance button is held, as in the time between
+    its check and its enqueue."""
+
+    from app.main.admin import CRITERION_RUN
+    from app.tasks import finish_bulk_run, start_bulk_run
+
+    with app.app_context():
+        register_cron_job(app, CRITERION, "0 4 1 * *")
+        assert start_bulk_run(CRITERION_RUN, CRITERION) is True
+    try:
+        body = run_now(admin_client, CRITERION).get_data(as_text=True)
+        assert "already queued or running" in body
+        with app.app_context():
+            assert len(app.maintenance_queue) == 0
+    finally:
+        with app.app_context():
+            finish_bulk_run(CRITERION_RUN)
+
+
 def test_the_sync_button_sees_a_cron_sync(app, admin_client):
     """A sync that the scheduler queued keeps the Maintenance button out (#456)."""
 

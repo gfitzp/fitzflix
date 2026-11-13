@@ -141,17 +141,17 @@ from rq.job import Job
 from rq.results import Result
 from rq.registry import FailedJobRegistry
 
-# The scheduled tasks that the Run now button of the System page does
-# not queue (#456). Each has a Maintenance page button with a bulk gate.
-# The S3 sync also needs a proof of identity there: a passkey or the
-# password.
+# The scheduled task that the Run now button of the System page does
+# not queue (#456). The S3 sync needs a proof of identity on the
+# Maintenance page: a passkey or the password.
 
-MAINTENANCE_PAGE_TASKS = frozenset(
-    {
-        "app.videos.sync_aws_s3_storage_task",
-        "app.videos.refresh_criterion_collection_info",
-    }
-)
+MAINTENANCE_PAGE_TASKS = frozenset({"app.videos.sync_aws_s3_storage_task"})
+
+# The Criterion refresh has a button on the Maintenance page too. Run
+# now calls the handler of that button. Thus, the 2 buttons have 1 gate
+# and 1 check, and a click on each of them queues 1 refresh.
+
+CRITERION_REFRESH = "app.videos.refresh_criterion_collection_info"
 
 
 @bp.route("/system", methods=["GET", "POST"])
@@ -192,8 +192,8 @@ def system():
 
     # This form queues a scheduled task now. Only a task of the cron
     # table can be queued here. A task that waits or runs already is not
-    # queued a second time. The S3 sync and the Criterion refresh have
-    # their own buttons on the Maintenance page, with their own checks.
+    # queued a second time. The S3 sync has its own button on the
+    # Maintenance page, with a proof of identity.
 
     run_form = RunScheduledTaskForm()
     if run_form.run_submit.data and run_form.validate_on_submit():
@@ -203,6 +203,11 @@ def system():
             flash("That task is not a scheduled task.", "warning")
         elif func in MAINTENANCE_PAGE_TASKS:
             flash("Use the button of this task on the Maintenance page.", "warning")
+        elif func == CRITERION_REFRESH:
+            if _refresh_criterion_post(run_form):
+                current_app.logger.info(
+                    f"{current_user.email} queued the scheduled task {func} now"
+                )
         elif not start_task_run(func):
             flash(f"'{TASKS[func].description}' waits or runs already.", "warning")
         else:
@@ -758,27 +763,34 @@ def _refresh_criterion_post(form):
     This job goes on the maintenance queue with the timeout of the
     monthly cron row and the CLI (#343). A full Wikidata pass takes
     longer than the request queue allows, and it must not hold the
-    user-request worker."""
+    user-request worker.
 
-    name = "app.videos.refresh_criterion_collection_info"
+    The Run now button of the System page calls this too. Return True
+    if the refresh was queued."""
+
+    name = CRITERION_REFRESH
     if not start_bulk_run(CRITERION_RUN, name):
         flash(ALREADY_QUEUED, "info")
-        return
+        return False
     # The scheduler queues the monthly run with an id of its own (#456).
     if live_task_job(name) is not None:
         finish_bulk_run(CRITERION_RUN)
         flash(ALREADY_QUEUED, "info")
-        return
-    enqueue_task(
-        name,
-        description="Refreshing Criterion Collection information for all movies in library",
-        job_id=bulk_job_id(CRITERION_RUN),
-    )
-    finish_bulk_run(CRITERION_RUN)
+        return False
+    # An enqueue error must not leave the gate shut (#475)
+    try:
+        enqueue_task(
+            name,
+            description="Refreshing Criterion Collection information for all movies in library",
+            job_id=bulk_job_id(CRITERION_RUN),
+        )
+    finally:
+        finish_bulk_run(CRITERION_RUN)
     flash(
         "Refreshing Criterion Collection information for all movies in library",
         "info",
     )
+    return True
 
 
 def _refresh_tmdb_post(form):

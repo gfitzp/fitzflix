@@ -96,8 +96,8 @@
 			<td class="text-end">
 				{# The poll swaps this fragment in each 5 seconds. The post
 				   goes to the System page, like the failed-job buttons. The
-				   S3 sync and the Criterion refresh run from the Maintenance
-				   page only. #}
+				   S3 sync runs from the Maintenance page only, where it asks
+				   for a proof of identity. #}
 				{% if task.runnable %}
 				<form action="{{ url_for('main.system') }}" method="post" class="form-inline">
 					{{ run_form.csrf_token }}
