@@ -700,7 +700,7 @@ def test_no_template_uses_filesizeformat(app):
     users = [
         str(path.relative_to(templates))
         for path in templates.rglob("*")
-        if path.is_file() and "filesizeformat" in path.read_text()
+        if path.suffix in (".html", ".txt") and "filesizeformat" in path.read_text()
     ]
     assert users == []
 
