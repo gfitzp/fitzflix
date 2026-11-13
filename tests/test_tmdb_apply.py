@@ -696,6 +696,99 @@ def test_a_merge_stamps_the_survivor(app):
         assert db.session.get(Movie, older_id).date_updated is not None
 
 
+def _payload(tmdb_id, title, date):
+    import json
+    import zlib
+
+    return zlib.compress(
+        json.dumps({"id": tmdb_id, "title": title, "release_date": date}).encode()
+    )
+
+
+def test_a_queued_refresh_does_not_put_an_old_tmdb_id_back(app, monkeypatch):
+    """A bulk refresh carries the id that the record had when it was queued (#735).
+
+    A person gave the record an other id before the job ran. The older
+    job must not match the film back. Neither the fetch nor the apply
+    of the old id runs."""
+
+    from app.models import MOVIES
+    from app.tmdb_refresh import apply_tmdb_refresh, refresh_tmdb_info
+
+    fetched = []
+    monkeypatch.setattr(
+        Movie, "tmdb_movie_fetch", lambda self, tmdb_id=None: fetched.append(tmdb_id)
+    )
+    with app.app_context():
+        movie = make_movie("Rematched Film", 2016, tmdb_id=735002)
+        db.session.commit()
+        movie_id = movie.id
+
+    assert refresh_tmdb_info(MOVIES, movie_id, 735001) is False
+    assert fetched == []
+    assert (
+        apply_tmdb_refresh(
+            MOVIES,
+            movie_id,
+            tmdb_id=735001,
+            tmdb_payload=_payload(735001, "Wrong Film", "2016-03-03"),
+        )
+        is False
+    )
+    with app.app_context():
+        movie = db.session.get(Movie, movie_id)
+        assert movie.tmdb_id == 735002
+        assert movie.title == "Rematched Film"
+
+
+def test_an_id_that_a_person_typed_still_changes_the_record(app):
+    """A rematch is the 1 refresh that gives a record an other TMDB id (#735)."""
+
+    from app.models import MOVIES
+    from app.tmdb_refresh import apply_tmdb_refresh
+
+    with app.app_context():
+        movie = make_movie("Wrong Match Film", 2017, tmdb_id=735003)
+        db.session.commit()
+        movie_id = movie.id
+
+    assert (
+        apply_tmdb_refresh(
+            MOVIES,
+            movie_id,
+            tmdb_id=735004,
+            tmdb_payload=_payload(735004, "Right Match Film", "2017-04-04"),
+            rematch=True,
+        )
+        is True
+    )
+    with app.app_context():
+        assert db.session.get(Movie, movie_id).tmdb_id == 735004
+
+
+def test_a_queued_series_refresh_does_not_put_an_old_tmdb_id_back(app):
+    """The rule of #735 for a TV series."""
+
+    import json
+    import zlib
+
+    from app.models import TV_SHOWS
+    from app.tmdb_refresh import apply_tmdb_refresh
+
+    with app.app_context():
+        series = make_tv_series("Rematched Series", tmdb_id=735006)
+        db.session.commit()
+        series_id = series.id
+
+    payload = zlib.compress(json.dumps({"id": 735005, "name": "Wrong"}).encode())
+    assert (
+        apply_tmdb_refresh(TV_SHOWS, series_id, tmdb_id=735005, tmdb_payload=payload)
+        is False
+    )
+    with app.app_context():
+        assert db.session.get(TVSeries, series_id).tmdb_id == 735006
+
+
 def test_a_merge_keeps_the_values_that_a_person_set(app):
     """The record that goes has values that the owner typed (#719).
 

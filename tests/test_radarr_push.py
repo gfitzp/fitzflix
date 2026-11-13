@@ -295,7 +295,11 @@ def test_refresh_merge_withdraws_the_old_radarr_entry(app, monkeypatch):
         with open(old_path, "wb") as handle:
             handle.write(b"payload")
 
-        assert apply_tmdb_refresh("Movies", source_id, tmdb_id=4242) is True
+        # Only an id that a person typed moves a record to an other id
+        # (#735). The film page sends such an id with rematch.
+        assert (
+            apply_tmdb_refresh("Movies", source_id, tmdb_id=4242, rematch=True) is True
+        )
     assert run_radarr_pushes(app) == [True]
 
     assert [radarr_id for radarr_id, _ in fake.deleted] == [8]

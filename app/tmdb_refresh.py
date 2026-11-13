@@ -396,7 +396,30 @@ def tmdb_refresh_pending(library, id):
 TMDB_NO_MATCH = "no-match"
 
 
-def _refresh_target(library, id, ignored="skipping TMDB refresh", rematch=False):
+def _has_other_tmdb_id(record, queued_tmdb_id):
+    """Return True if a record got a different TMDB id after a refresh was queued (#735).
+
+    Invariant: a queued refresh never changes the TMDB id of a record.
+    Only an id that a person typed does. A bulk or nightly refresh
+    carries the id that the record had when the job was queued. A
+    person can give the record an other id before the job runs. The
+    older job must not put the old id back. A record with no id takes
+    the id of the job, as before."""
+
+    if queued_tmdb_id is None or record.tmdb_id is None:
+        return False
+    if record.tmdb_id == queued_tmdb_id:
+        return False
+    current_app.logger.info(
+        f"{record} has TMDB id {record.tmdb_id} now. The refresh that was "
+        f"queued for TMDB id {queued_tmdb_id} does not run"
+    )
+    return True
+
+
+def _refresh_target(
+    library, id, ignored="skipping TMDB refresh", rematch=False, queued_tmdb_id=None
+):
     """Return (record, description) of a TMDB refresh, or None.
 
     Both phases of a refresh find their record here. The result is None
@@ -406,7 +429,10 @@ def _refresh_target(library, id, ignored="skipping TMDB refresh", rematch=False)
     would search by title and attach a wrong id. ignored is the end of
     that log line. A series that shares its TMDB id with a canonical
     record refreshes that record. description names the job. rematch
-    accepts a detached record: an admin entered an id by hand (#514)."""
+    accepts a detached record: an admin entered an id by hand (#514).
+    queued_tmdb_id is the id of the arguments of a job that is no
+    rematch. The result is None when the record has an other id now
+    (_has_other_tmdb_id)."""
 
     if library == MOVIES:
         movie = Movie.query.filter_by(id=id).first()
@@ -419,6 +445,8 @@ def _refresh_target(library, id, ignored="skipping TMDB refresh", rematch=False)
             current_app.logger.info(
                 f"{movie} is marked as having no TMDB match, {ignored}"
             )
+            return None
+        if _has_other_tmdb_id(movie, queued_tmdb_id):
             return None
         return movie, f"Updating '{movie.title} ({movie.year})' with TMDB data"
 
@@ -433,6 +461,8 @@ def _refresh_target(library, id, ignored="skipping TMDB refresh", rematch=False)
             current_app.logger.info(
                 f"{tv_show} is marked as having no TMDB match, {ignored}"
             )
+            return None
+        if _has_other_tmdb_id(tv_show, queued_tmdb_id):
             return None
         if tv_show.tmdb_id != None:
             existing_series = TVSeries.query.filter_by(tmdb_id=tv_show.tmdb_id).first()
@@ -471,7 +501,12 @@ def refresh_tmdb_info(
     with app.app_context():
         try:
 
-            target = _refresh_target(library, id, rematch=rematch)
+            target = _refresh_target(
+                library,
+                id,
+                rematch=rematch,
+                queued_tmdb_id=None if rematch else tmdb_id,
+            )
             if target is None:
                 return False
             record, description = target
@@ -1136,6 +1171,7 @@ def apply_tmdb_refresh(
                 id,
                 ignored="discarding the fetched TMDB payload",
                 rematch=rematch and tmdb_info is not None,
+                queued_tmdb_id=None if rematch else tmdb_id,
             )
             if target is None:
                 return False
