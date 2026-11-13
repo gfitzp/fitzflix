@@ -3320,18 +3320,23 @@ def _dominant_roles(credit_ids):
     ):
         role_counts = counts.setdefault(credit_id, {})
         role_counts["Actor"] = role_counts.get("Actor", 0) + tally
-    for credit_id, job, tally in (
-        db.session.query(
-            TVCrew.credit_id, TVCrew.job, db.func.count(db.distinct(TVCrew.tv_id))
-        )
+
+    # Some roles have 2 job names, for example Screenplay and Writer. A
+    # work that credits a person with both jobs counts 1 time for the
+    # role (#768). Thus, the crew credits collect the works of each
+    # person and role label as a set. The ids of the series and of the
+    # films overlap. Thus, each id in the set carries its kind of work.
+
+    crew_works = {}
+    for credit_id, job, tv_id in (
+        db.session.query(TVCrew.credit_id, TVCrew.job, TVCrew.tv_id)
         .filter(TVCrew.credit_id.in_(credit_ids))
         .filter(TVCrew.tv_id.in_(owned_series_ids))
         .filter(TVCrew.job.in_(list(CREW_ROLE_LABELS)))
-        .group_by(TVCrew.credit_id, TVCrew.job)
+        .distinct()
     ):
-        label = CREW_ROLE_LABELS[job]
-        role_counts = counts.setdefault(credit_id, {})
-        role_counts[label] = role_counts.get(label, 0) + tally
+        key = (credit_id, CREW_ROLE_LABELS[job])
+        crew_works.setdefault(key, set()).add(("tv", tv_id))
     for credit_id, tally in (
         db.session.query(
             MovieCast.credit_id, db.func.count(db.distinct(MovieCast.movie_id))
@@ -3348,20 +3353,17 @@ def _dominant_roles(credit_ids):
     ):
         role_counts = counts.setdefault(credit_id, {})
         role_counts["Actor"] = role_counts.get("Actor", 0) + tally
-    for credit_id, job, tally in (
-        db.session.query(
-            MovieCrew.credit_id,
-            MovieCrew.job,
-            db.func.count(db.distinct(MovieCrew.movie_id)),
-        )
+    for credit_id, job, movie_id in (
+        db.session.query(MovieCrew.credit_id, MovieCrew.job, MovieCrew.movie_id)
         .filter(MovieCrew.credit_id.in_(credit_ids))
         .filter(MovieCrew.movie_id.in_(owned_movie_ids))
         .filter(MovieCrew.job.in_(list(CREW_ROLE_LABELS)))
-        .group_by(MovieCrew.credit_id, MovieCrew.job)
+        .distinct()
     ):
-        label = CREW_ROLE_LABELS[job]
-        role_counts = counts.setdefault(credit_id, {})
-        role_counts[label] = role_counts.get(label, 0) + tally
+        key = (credit_id, CREW_ROLE_LABELS[job])
+        crew_works.setdefault(key, set()).add(("movie", movie_id))
+    for (credit_id, label), works in crew_works.items():
+        counts.setdefault(credit_id, {})[label] = len(works)
     return {
         credit_id: max(
             role_counts,

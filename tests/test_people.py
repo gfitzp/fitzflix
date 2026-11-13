@@ -350,6 +350,37 @@ def test_search_finds_crew_people_with_roles(app, admin_client):
     assert people and people[0]["detail"] == "Cinematographer · 2 titles in library"
 
 
+def test_a_role_with_2_job_names_counts_each_work_1_time(app, admin_client):
+    """A work that credits both job names of a role counts 1 time (#768).
+
+    Each person directs 2 works and has Screenplay and Writer on the
+    same 2 works. The tie rule of ROLE_PRECEDENCE then gives Director,
+    for the films and for the series."""
+
+    from app.main.library import _dominant_roles
+    from app.models import TVCrew
+    from tests.factories import make_tv_file, make_tv_series
+
+    jobs = [("Directing", "Director"), ("Writing", "Screenplay"), ("Writing", "Writer")]
+    with app.app_context():
+        movies = [make_owned_movie(f"Twin Job Film {n}", 1990 + n) for n in range(2)]
+        make_crew_person(881, "Film Hyphenate", {movie: jobs for movie in movies})
+        db.session.add(TMDBCredit(id=882, name="Series Hyphenate"))
+        for n in range(2):
+            series = make_tv_series(f"Twin Job Series {n}")
+            make_tv_file(series, 1, 1, "WEBDL-1080p")
+            db.session.add_all(
+                TVCrew(tv_id=series.id, credit_id=882, department=department, job=job)
+                for department, job in jobs
+            )
+        db.session.commit()
+
+        assert _dominant_roles([881, 882]) == {881: "Director", 882: "Director"}
+
+    page = admin_client.get("/search?q=film+hyphenate").get_data(as_text=True)
+    assert "Director &middot; 2 titles" in page
+
+
 def test_people_nav_link_present(admin_client):
     body = admin_client.get("/").get_data(as_text=True)
     assert 'href="/people"' in body
