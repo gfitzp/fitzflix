@@ -52,6 +52,8 @@ def test_cleanup_deletes_only_old_hidden_partials(app, monkeypatch):
             os.path.join(movies, "Stranded (2020)", ".Stranded (2020) - [DVD].mkv"), 8
         ),
         plant(os.path.join(rejects, "exception", ".Bad (2020).mkv.partial"), 8),
+        # The copy of a hold that a kill stopped (#751).
+        plant(os.path.join(app.config["HELD_DIR"], ".Held (2020).mkv.partial"), 8),
     ]
     kept = [
         # This file is below the age gate. It can be a copy in progress.
@@ -60,6 +62,8 @@ def test_cleanup_deletes_only_old_hidden_partials(app, monkeypatch):
         plant(
             os.path.join(movies, "Stranded (2020)", "Stranded (2020) - [DVD].mkv"), 30
         ),
+        # A held file waits for a decision, at any age.
+        plant(os.path.join(app.config["HELD_DIR"], "Held (2020).mkv"), 30),
         # macOS metadata is not a pipeline leftover.
         plant(os.path.join(staging, ".DS_Store"), 30),
         plant(
@@ -76,7 +80,7 @@ def test_cleanup_deletes_only_old_hidden_partials(app, monkeypatch):
             assert os.path.exists(path), path
 
         assert len(sent) == 1
-        assert "4 orphaned partial file(s)" in sent[0]["body"]
+        assert "5 orphaned partial file(s)" in sent[0]["body"]
         assert "scratch database" not in sent[0]["body"]
     finally:
         for path in kept:

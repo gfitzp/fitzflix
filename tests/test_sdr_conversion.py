@@ -1978,3 +1978,97 @@ def test_a_held_row_from_before_the_stored_height_falls_back(
         for path in os.listdir(app.config["STAGING_DIR"]):
             os.remove(os.path.join(app.config["STAGING_DIR"], path))
         os.remove(held_path)
+
+
+def _hold_env(app, monkeypatch, tmp_path):
+    """Give the test a held folder and a rejects folder below tmp_path."""
+
+    import os
+
+    monkeypatch.setitem(app.config, "HELD_DIR", str(tmp_path / "held"))
+    monkeypatch.setitem(app.config, "REJECTS_DIR", str(tmp_path / "rejects"))
+    for name in ("app.sdr_conversion", "app.importing"):
+        monkeypatch.setattr(
+            f"{name}.makedirs_on_mounted_volume",
+            lambda path: os.makedirs(path, exist_ok=True),
+        )
+
+
+def test_a_broken_copy_to_the_held_folder_leaves_no_held_file(
+    app, monkeypatch, tmp_path
+):
+    """A download in the library is on an other device than the held folder (#751).
+
+    The move is then a copy. A copy that broke left a part of the file
+    under its final name with no record. Each later try then rejected
+    the good source as already held."""
+
+    import errno
+    import os
+    import shutil
+
+    from app import db, sdr_conversion
+    from app.models import HeldImport
+
+    _hold_env(app, monkeypatch, tmp_path)
+    source = tmp_path / "library" / "Far (2020) - [WEBDL-2160p].mkv"
+    source.parent.mkdir()
+    source.write_bytes(b"a complete film")
+    held_path = tmp_path / "held" / source.name
+    plan = {"max_height": 1080, "source_format": "HDR10"}
+
+    def other_device(*args, **kwargs):
+        raise OSError(errno.EXDEV, "Cross-device link")
+
+    real_copy = shutil.copyfile
+
+    def broken_copy(src, dst, **kwargs):
+        with open(dst, "wb") as partial:
+            partial.write(b"a comp")
+        raise OSError(errno.ENOSPC, "No space left on device")
+
+    monkeypatch.setattr(os, "rename", other_device)
+    monkeypatch.setattr(shutil, "copyfile", broken_copy)
+    with app.app_context():
+        with pytest.raises(OSError):
+            sdr_conversion.hold_import(str(source), {}, plan, [])
+        assert os.listdir(tmp_path / "held") == []
+        assert source.read_bytes() == b"a complete film"
+
+        monkeypatch.setattr(shutil, "copyfile", real_copy)
+        held = sdr_conversion.hold_import(str(source), {}, plan, [])
+        try:
+            assert held is not None
+            assert held_path.read_bytes() == b"a complete film"
+            assert not source.exists()
+        finally:
+            db.session.delete(db.session.get(HeldImport, held.id))
+            db.session.commit()
+
+
+def test_a_held_file_with_no_record_does_not_block_a_hold(app, monkeypatch, tmp_path):
+    """Only a held file with a record waits for a decision (#751, #435)."""
+
+    import os
+
+    from app import db, sdr_conversion
+    from app.models import HeldImport
+
+    _hold_env(app, monkeypatch, tmp_path)
+    source = tmp_path / "Stray (2020) - [WEBDL-2160p].mkv"
+    source.write_bytes(b"the good file")
+    held_path = tmp_path / "held" / source.name
+    held_path.parent.mkdir()
+    held_path.write_bytes(b"a part")
+    plan = {"max_height": 1080, "source_format": "HDR10"}
+    with app.app_context():
+        held = sdr_conversion.hold_import(str(source), {}, plan, [])
+        try:
+            assert held is not None
+            assert held_path.read_bytes() == b"the good file"
+            rejected = tmp_path / "rejects" / "held with no record" / source.name
+            assert rejected.read_bytes() == b"a part"
+            assert not os.path.exists(tmp_path / "rejects" / "already held")
+        finally:
+            db.session.delete(db.session.get(HeldImport, held.id))
+            db.session.commit()

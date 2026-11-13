@@ -51,7 +51,7 @@ from app.tasks import enqueue_task, report_progress
 from app.tracks import stop_process
 from app import db, get_app, makedirs_on_mounted_volume
 from app.models import MOVIES
-from app.naming import retag_quality
+from app.naming import hidden, retag_quality
 from app.email import notify_admin
 
 app = LocalProxy(get_app)
@@ -295,13 +295,47 @@ def held_max_height(held):
     return held.details().get(HELD_HEIGHT_FIELD)
 
 
+def _move_to_held(file_path, held_path):
+    """Move a source to its held name. The name shows only a complete file (#751).
+
+    A source of the import folder is on the volume of the held folder,
+    and the move is a rename. A download of Radarr or Sonarr is in the
+    library, on an other device. Its move is a copy of some minutes and
+    a delete. The copy goes to a hidden name and gets the held name when
+    it is complete. A failure of a step removes the copy, and the source
+    stays where it is."""
+
+    try:
+        os.rename(file_path, held_path)
+        return
+    except OSError:
+        pass
+    partial = hidden(held_path, ".partial")
+    try:
+        shutil.copy2(file_path, partial)
+        os.replace(partial, held_path)
+        os.remove(file_path)
+    except BaseException:
+        for stray in (partial, held_path):
+            try:
+                os.remove(stray)
+            except OSError:
+                pass
+        raise
+
+
 def hold_import(file_path, file_details, plan, blockers):
     """Move a conversion candidate to HELD_DIR and record it for a decision.
 
     Return the HeldImport row. A held file with the same name can wait
     already. Then the newcomer goes to rejects with the reason "already
     held", and the function returns None (#435). The held original, its
-    decision and its date stay."""
+    decision and its date stay.
+
+    Invariant: a file under a held name is complete and has a record
+    (#751). A file there with no record waits for no decision. It goes
+    to the rejects with the reason "held with no record", and the
+    newcomer takes the name."""
 
     from app.arr_client import carry_remembered_download
     from app.importing import move_to_rejects
@@ -317,13 +351,20 @@ def hold_import(file_path, file_details, plan, blockers):
     held_path = os.path.join(held_dir, basename)
     if os.path.abspath(file_path) != os.path.abspath(held_path):
         if os.path.lexists(held_path):
-            current_app.logger.warning(
-                f"'{basename}' A held file with this name waits for a decision "
-                f"already. The new file goes to rejects"
-            )
-            move_to_rejects(file_path, "already held")
-            return None
-        shutil.move(file_path, held_path)
+            waits = HeldImport.query.filter_by(held_path=held_path).first()
+            if waits is None and move_to_rejects(held_path, "held with no record"):
+                current_app.logger.warning(
+                    f"'{basename}' A file with this name was in the held folder "
+                    f"with no record. It went to the rejects"
+                )
+            else:
+                current_app.logger.warning(
+                    f"'{basename}' A held file with this name waits for a "
+                    f"decision already. The new file goes to rejects"
+                )
+                move_to_rejects(file_path, "already held")
+                return None
+        _move_to_held(file_path, held_path)
 
         # The release data of an arr download goes with the file. Thus,
         # an "Import" decision still gives it to the arr record (#671).
