@@ -2953,8 +2953,9 @@ def file(file_id):
 
     Each form of the page has a handler. A valid post of a form runs its
     handler. Then the page shows again, unless the handler gives another
-    page. A form with needs_local_file refuses a file that is not in the
-    local library. Only a restore from AWS or a delete are useful then.
+    page. A post that does not validate gets a message (#763). A form
+    with needs_local_file refuses a file that is not in the local
+    library. Only a restore from AWS or a delete are useful then.
     The template disables the other forms."""
 
     file = File.query.filter_by(id=file_id).first_or_404()
@@ -3029,6 +3030,25 @@ def file(file_id):
                 url_for("main.file", file_id=file.id)
             )
 
+    # Invariant: a post that does nothing says why (#763). A track form
+    # refuses a track that is not a track of the file now. That post
+    # came from a page that was loaded before a job or an arr changed
+    # the tracks. The choice error of WTForms does not say that. A csrf
+    # error stays quiet, as in flash_form_errors.
+
+    for form, submit, _, _ in handlers:
+        if not submit.data or not set(form.errors) - {"csrf_token"}:
+            continue
+        if form is mkvpropedit_form or form is mkvmerge_form:
+            flash(
+                f"The tracks of '{file.basename}' changed after the page was "
+                f"loaded. Nothing was queued. The page shows the tracks as they "
+                f"are now.",
+                "warning",
+            )
+        else:
+            flash_form_errors(form)
+
     # A track edit that stopped on a changed file left a note (#606).
     # The route said that the edit was queued. Thus, the page says that
     # it did not run.
@@ -3037,7 +3057,8 @@ def file(file_id):
     if stopped_edit:
         flash(f"'{file.basename}' {stopped_edit}", "warning")
 
-    # A form that was not posted shows its defaults.
+    # A form that was not posted or that was refused shows its defaults.
+    # The defaults come from the tracks of the file now.
 
     mkvpropedit_form.process()
     mkvmerge_form.process()

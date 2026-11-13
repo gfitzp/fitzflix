@@ -382,3 +382,54 @@ def test_rows_with_no_uid_post_none_to_the_task(
     assert name == task
     assert args[0] == file_id
     assert args[1 : len(expected) + 1] == expected
+
+
+STALE_TRACK_POSTS = [
+    {"default_audio": "9001", "default_subtitle": "9003", "mkvpropedit_submit": "Up"},
+    {"audio_tracks": "9001", "subtitle_tracks": "9003", "mkvmerge_submit": "Rx"},
+]
+
+STALE_TRACKS_MESSAGE = "changed after the page was loaded. Nothing was queued."
+
+
+@pytest.mark.parametrize("data", STALE_TRACK_POSTS)
+def test_a_track_post_from_an_old_page_says_that_the_tracks_changed(
+    app, admin_client, queued, data
+):
+    """A track form with a track that is gone gives a message and queues nothing (#763).
+
+    A job removed the subtitle track after the page was loaded. The page
+    comes back with the tracks as they are now."""
+
+    from app.models import FileSubtitleTrack
+
+    file_id = _file(app, title=f"Stale Tracks {sorted(data)[-1]}")
+    page = admin_client.get(f"/file/{file_id}").get_data(as_text=True)
+    assert STALE_TRACKS_MESSAGE not in page
+    assert 'name="subtitle_tracks" value="9003"' in page
+    with app.app_context():
+        FileSubtitleTrack.query.filter_by(file_id=file_id).delete()
+        db.session.commit()
+    response = admin_client.post(
+        f"/file/{file_id}", data={"csrf_token": csrf_token_from(page), **data}
+    )
+    page = response.get_data(as_text=True)
+    assert response.status_code == 200
+    assert queued == []
+    assert STALE_TRACKS_MESSAGE in page
+    assert "The page shows the tracks as they are now." in page
+    assert 'name="audio_tracks" value="9001" checked' in page
+    assert 'name="subtitle_tracks" value="9003"' not in page
+    assert "is not a valid choice" not in page
+
+
+def test_a_track_post_with_a_bad_csrf_token_stays_quiet(app, admin_client, queued):
+    """A csrf error gives no track message, as flash_form_errors does (#763)."""
+
+    file_id = _file(app, title="Quiet Csrf Film")
+    page = admin_client.post(
+        f"/file/{file_id}",
+        data={"csrf_token": "bad", **STALE_TRACK_POSTS[1]},
+    ).get_data(as_text=True)
+    assert queued == []
+    assert STALE_TRACKS_MESSAGE not in page
