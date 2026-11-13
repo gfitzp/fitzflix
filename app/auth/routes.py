@@ -38,6 +38,7 @@ from app.auth.forms import (
     ResetPasswordForm,
     ResetPasswordRequestForm,
 )
+from app.main.helpers import flash_form_errors
 from app.models import User, sign_in_password_matches
 from app.settings import get_setting
 
@@ -180,10 +181,7 @@ def register():
     # The page does not show the field errors. Thus, a refused field (for
     # example, an email address that is too long, #329) gets a message.
 
-    for field, messages in form.errors.items():
-        if field != "csrf_token":
-            flash(f"{getattr(form, field).label.text}: {messages[0]}", "danger")
-
+    flash_form_errors(form)
     return render_template("auth/register.html", title="Register", form=form)
 
 
@@ -209,6 +207,11 @@ def reset_password_request():
         flash("Check your email for instructions to reset your password")
         return redirect(url_for("auth.login"))
 
+    # Invariant: a refused form says why (#764). The page shows no field
+    # errors. A well-formed address always gets the message above. Thus,
+    # no message tells if an account exists.
+
+    flash_form_errors(form)
     return render_template(
         "auth/reset_password_request.html", title="Reset Password", form=form
     )
@@ -238,6 +241,9 @@ def reset_password(token):
         flash("Fitzflix reset your password.")
         return redirect(url_for("auth.login"))
 
+    # A refused form says why (#764). The page shows no field errors.
+
+    flash_form_errors(form)
     return render_template("auth/reset_password.html", form=form)
 
 

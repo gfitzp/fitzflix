@@ -4,10 +4,18 @@ from wtforms.validators import ValidationError, DataRequired, Email, EqualTo, Le
 from app.models import User
 
 
+def strip_text(value):
+    """Return the typed text with no space at the start or the end (#764).
+
+    A field that was not posted holds None. The filter keeps it."""
+
+    return value.strip() if isinstance(value, str) else value
+
+
 class LoginForm(FlaskForm):
     """Sign in a user."""
 
-    email = StringField("Email", validators=[DataRequired()])
+    email = StringField("Email", validators=[DataRequired()], filters=[strip_text])
     password = PasswordField("Password", validators=[DataRequired()])
     remember_me = BooleanField("Remember Me")
     submit = SubmitField("Sign In")
@@ -36,9 +44,14 @@ class RegistrationForm(FlaskForm):
 
 
 class ResetPasswordRequestForm(FlaskForm):
-    """Request a password-reset email."""
+    """Request a password-reset email.
 
-    email = StringField("Email", validators=[DataRequired(), Email()])
+    A space at the start or the end of the address is not an error. The
+    filter removes it before the Email check (#764)."""
+
+    email = StringField(
+        "Email", validators=[DataRequired(), Email()], filters=[strip_text]
+    )
     submit = SubmitField("Request Password Reset")
 
 

@@ -207,6 +207,64 @@ def test_reset_page_keeps_the_password_for_a_bad_token(app, client):
         assert member(app).check_password(MEMBER_PASSWORD)
 
 
+def test_reset_page_says_why_it_refuses_two_different_passwords(app, client):
+    """2 different passwords give a message and change no password (#764)."""
+
+    with app.app_context():
+        path = f"/auth/reset-password/{member(app).get_reset_password_token()}"
+
+    response = client.post(
+        path,
+        data={
+            "csrf_token": page_csrf_token(client, path),
+            "password": "a-new-password",
+            "password2": "an-other-password",
+        },
+    )
+    page = response.get_data(as_text=True)
+    assert response.status_code == 200
+    assert "Repeat Password: Field must be equal to password." in page
+
+    with app.app_context():
+        assert member(app).check_password(MEMBER_PASSWORD)
+
+
+def _request_reset(client, email):
+    """Post the reset request form with the address. Return the page after it."""
+
+    path = "/auth/reset-password-request"
+    return client.post(
+        path,
+        data={"csrf_token": page_csrf_token(client, path), "email": email},
+        follow_redirects=True,
+    ).get_data(as_text=True)
+
+
+def test_a_reset_request_strips_the_address(app, client, monkeypatch):
+    """A space at the start or the end of the address is not an error (#764).
+
+    The stub of the throttle records the address. Thus, the test does
+    not depend on how the database compares a trailing space."""
+
+    import app.auth.routes as routes
+
+    asked = []
+    monkeypatch.setattr(
+        routes, "allow_reset_request", lambda email: asked.append(email) and False
+    )
+    page = _request_reset(client, " reader@example.com ")
+    assert "Check your email" in page
+    assert asked == ["reader@example.com"]
+
+
+def test_a_reset_request_says_why_it_refuses_a_malformed_address(app, client):
+    """A malformed address gives a message and no "Check your email" (#764)."""
+
+    page = _request_reset(client, "name@gmail")
+    assert "Email: Invalid email address." in page
+    assert "Check your email" not in page
+
+
 def test_a_reset_token_works_one_time(app, client, restore_member_password):
     """A used token holds the fingerprint of the old password. It fails."""
 
