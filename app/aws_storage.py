@@ -1589,10 +1589,10 @@ def _download_task(
                 s3_client = aws_s3_client()
                 head = _head_or_none(s3_client, key)
                 if head is None:
-                    # A move never runs alongside a download of its source
-                    # (#621). The move waits for the download job. Thus, a
-                    # gone key is a refusal, and the person requests the
-                    # restore again.
+                    # A move waits for a download of its source, and it
+                    # does not delete a key that a download reads (#621,
+                    # #728). Thus, a gone key is a refusal, and the person
+                    # requests the restore again.
                     raise PlacementRefused(
                         f"'{basename}' The archive '{key}' is gone. The "
                         f"restore does not place the file"
@@ -2791,7 +2791,8 @@ def move_archive_object(file_id, sqs_receipt_handle=None):
       job waits 25 to 35 minutes. Return MOVE_WAITING.
     - The old object is readable: a server-side copy goes to the target.
       The size and the ETag of the copy are verified. Then the row names
-      the new key, and the old key is deleted. Return True.
+      the new key, and the old key is deleted. A download that started
+      during the copy keeps the old key (#728). Return True.
 
     aws_key names a real object during the whole move. sqs_receipt_handle
     is the restore notification that started the job. The job deletes it
@@ -3140,6 +3141,22 @@ def _move_archive(file, sqs_receipt_handle, message_key):
         f"'{file.basename}' Moved the archive '{source}' to '{target}'. "
         + ("The ETags are equal" if proven else "The sizes are equal")
     )
+
+    # Invariant: a move never deletes a key that a download reads (#728).
+    # The copy can take minutes, and a person can request a restore in
+    # that time. A readable object gets its download at once, and that
+    # job reads the old key. Thus, the move asks for the job again here.
+    # Then the old key stays, and the weekly sync prunes it after its
+    # grace. That download completes the restore, so no download of the
+    # new key starts.
+
+    if _download_job_for(source):
+        current_app.logger.info(
+            f"'{file.basename}' A download reads '{source}'. The key stays, "
+            f"and the weekly sync prunes it"
+        )
+        delete_download_message(sqs_receipt_handle, message_key, note="archive move")
+        return True
 
     # A plain delete keeps the old version for the noncurrent window of
     # 180 days. That window rescued a lost archive before. Only the own

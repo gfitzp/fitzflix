@@ -413,6 +413,52 @@ def test_a_move_waits_for_a_download_of_the_old_key(app, s3):
         assert fake.copies == []
 
 
+def test_a_download_that_starts_during_the_copy_keeps_the_old_key(app, s3):
+    """A person requests a restore during the copy of a move (#728).
+
+    The download of the old key starts at once. The move must not
+    delete the key that the download reads. That download completes the
+    restore. Thus, the move starts no download of the new key."""
+
+    from app import aws_storage, db
+    from app.models import File
+
+    with app.app_context():
+        file = archived_film("Late Reel", 1961, key_name="Late (1961).mkv")
+        file_id, old_key = file.id, file.aws_key
+        aws_storage.request_archive_move(file)
+        db.session.commit()
+        new_key = file.aws_key_target
+
+        def restore_click(source, target):
+            with db.engine.begin() as connection:
+                connection.execute(
+                    db.text(
+                        "UPDATE file SET restore_requested_at = :now WHERE id = :id"
+                    ),
+                    {"id": file_id, "now": datetime(2026, 11, 12, 16, 0)},
+                )
+            app.file_queue.enqueue(
+                "app.videos.download_task", args=(old_key, "Late (1961).mkv")
+            )
+
+        fake = s3({old_key: readable()}, on_copy=restore_click)
+
+        assert aws_storage.move_archive_object(file_id) is True
+        assert fake.deletes == []
+        assert old_key in fake.objects and new_key in fake.objects
+        db.session.expire_all()
+        moved = db.session.get(File, file_id)
+        assert moved.aws_key == new_key
+        assert moved.restore_requested_at is not None
+        downloads = [
+            job.args[0]
+            for job in app.file_queue.jobs
+            if job.func_name == "app.videos.download_task"
+        ]
+        assert downloads == [old_key]
+
+
 def test_a_move_that_waits_books_a_random_retry_delay(app, monkeypatch):
     """Test that the retry delay of a waiting move is not a fixed period (#404).
 
