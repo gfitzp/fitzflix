@@ -517,11 +517,12 @@ def test_the_record_takes_the_original_of_a_file_that_replaced_its_source(
 
 
 def test_a_conversion_does_not_take_the_original_of_the_new_file(
-    app, tmp_path, monkeypatch
+    app, tmp_path, monkeypatch, caplog
 ):
-    """The library file of a conversion has its archive in transcoded/ (#727).
+    """A record of a conversion has a second archive in transcoded/ (#727).
 
-    The upload still stays, and the stale flag asks for the repair."""
+    The repair does not rebuild it. The upload still stays, a warning
+    names it, and the stale flag asks for the repair."""
 
     import app.importing as importing
     from app import db
@@ -549,6 +550,35 @@ def test_a_conversion_does_not_take_the_original_of_the_new_file(
         row = db.session.get(File, file_id)
         assert row.aws_key != upload["aws_key"]
         assert row.aws_stale
+    assert any(upload["aws_key"] in r.getMessage() for r in caplog.records)
+
+
+def test_a_record_does_not_take_the_original_of_an_import_that_is_a_conversion(
+    app, tmp_path, monkeypatch, caplog
+):
+    """The upload of a conversion is the HDR original, not the library file (#727).
+
+    The commit of the import writes the columns of the conversion. The
+    repair does not. Thus, the record keeps its archive and gets the
+    stale flag, and a warning names the upload."""
+
+    import app.importing as importing
+    from app import db
+    from app.models import File
+
+    monkeypatch.setattr(importing, "_rescan_after_a_failed_edit", lambda *a: None)
+    deleted = _discards(monkeypatch)
+    name = "Converted Import (2023) - [DVD].mkv"
+    upload = {**_run_scoped_upload(name), "converted_from_quality": "Remux-2160p"}
+    source, rejected, file_id = _cataloging_over_the_source(
+        app, tmp_path, monkeypatch, name, RuntimeError("commit"), True, upload
+    )
+    assert deleted == []
+    with app.app_context():
+        row = db.session.get(File, file_id)
+        assert row.aws_key != upload["aws_key"]
+        assert row.aws_stale
+    assert any(upload["aws_key"] in r.getMessage() for r in caplog.records)
 
 
 def test_the_original_of_a_rejected_localized_file_stays_in_s3(
@@ -606,36 +636,6 @@ def test_a_failed_cataloging_deletes_the_upload_while_the_source_is_whole(
         finally:
             _remove(rejected)
     assert deleted == [upload["aws_key"]]
-
-
-@pytest.mark.parametrize("in_place", [True, False], ids=["in place", "staged"])
-def test_a_failed_localization_keeps_the_upload_of_a_source_that_it_rewrote(
-    app, sample_mkv, incoming_dir, monkeypatch, in_place
-):
-    """A source that is localized in place can change before the failure (#727).
-
-    Then the run-scoped upload has the only original, and it stays. The
-    source of a staged run does not change, and its upload goes."""
-
-    from app import importing
-
-    deleted = _discards(monkeypatch)
-    basename = f"Upload Kept {in_place} (2003) - [DVD].mkv"
-    upload = _run_scoped_upload(basename)
-    source = _source_in(incoming_dir, basename, sample_mkv)
-    monkeypatch.setattr(
-        importing, "_archive_original", lambda path, details: details.update(upload)
-    )
-    if in_place:
-        monkeypatch.setattr(importing, "_stage_source", lambda path, run: (path, False))
-    monkeypatch.setattr(importing, "_localize", _raiser(RuntimeError("localize")))
-    try:
-        with app.app_context():
-            importing.localization_task(source)
-        assert os.path.exists(_rejected(app, basename))
-        assert deleted == ([] if in_place else [upload["aws_key"]])
-    finally:
-        _remove(source, _rejected(app, basename))
 
 
 def test_a_fault_in_the_record_lookup_does_not_keep_the_title_lock(
@@ -758,7 +758,7 @@ def test_a_failed_record_lookup_books_the_repair_of_the_kept_file(
         try:
             # The row still has the size of the old file. The task repairs
             # it, and the row takes the original of the new file (#727).
-            assert job.kwargs["upload"] == upload
+            assert job.kwargs["upload"] == {**upload, "conversion": False}
             assert job.func(*job.args, **job.kwargs) is True
             assert scans == [file_id] and stale == []
             assert db.session.get(File, file_id).aws_key == upload["aws_key"]
@@ -771,6 +771,20 @@ def test_a_failed_record_lookup_books_the_repair_of_the_kept_file(
             assert scans == [file_id] and stale == []
         finally:
             registry.remove(job, delete_job=True)
+
+
+def test_the_repair_names_an_upload_that_no_record_took(app, tmp_path, caplog):
+    """The booked repair finds no record. Its warning names the kept upload (#727)."""
+
+    import app.importing as importing
+
+    name = "No Record Upload (2023) - [DVD].mkv"
+    output = tmp_path / name
+    output.write_bytes(b"library copy")
+    upload = {**_run_scoped_upload(name), "conversion": False}
+    path = f"Movies/{name[:-4]}/{name}"
+    assert importing.repair_replaced_file_task(path, str(output), 1, upload) is False
+    assert any(upload["aws_key"] in r.getMessage() for r in caplog.records)
 
 
 def test_the_repair_of_a_kept_file_waits_for_the_database(app, tmp_path, monkeypatch):

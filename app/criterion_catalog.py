@@ -328,6 +328,20 @@ def criterion_release_lookups(criterion_collection):
     return by_tmdb_id, by_title_year
 
 
+def stored_title_year_release(movie):
+    """Return the stored release that has the title and year of a movie, or None.
+
+    This is the fallback match of assign_criterion_release. It reads the
+    releases that Redis stores, and it never queries Wikidata. Without a
+    stored copy, the result is None."""
+
+    stored = cached_json(CRITERION_CACHE_KEY)
+    if stored is MISS or not (movie.title and movie.year):
+        return None
+    _, by_title_year = criterion_release_lookups(stored)
+    return by_title_year.get((movie.title.upper(), movie.year))
+
+
 def set_title_key(title):
     """Return the key under which the database compares 2 set titles (#697).
 

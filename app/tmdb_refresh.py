@@ -144,18 +144,23 @@ def carry_person_set_values(old_movie, new_movie):
     that goes with a different TMDB id has the spine of that other film.
     A record with no TMDB id gets an entry by its title and year, and an
     other film can have the same title and year. Only the catalog writes
-    the film id. Thus, the film id shows such a match. A record with no
-    TMDB id and no film id has only typed values, and they go."""
+    the film id. Thus, a film id shows such a match. Some releases of
+    the catalog have no film id. Then the spine of the record is the
+    spine that the stored catalog gives its title and year. Each other
+    record with no TMDB id has only typed values, and they go."""
 
+    from app.criterion_catalog import stored_title_year_release
+
+    spine = old_movie.criterion_spine_number
     if old_movie.tmdb_id == new_movie.tmdb_id:
         from_other_film = False
-    elif old_movie.tmdb_id is None:
-        from_other_film = old_movie.criterion_film_id is not None
+    elif old_movie.tmdb_id is not None:
+        from_other_film = old_movie.criterion_film_id is not None or spine is not None
+    elif old_movie.criterion_film_id is not None:
+        from_other_film = True
     else:
-        from_other_film = (
-            old_movie.criterion_film_id is not None
-            or old_movie.criterion_spine_number is not None
-        )
+        release = stored_title_year_release(old_movie) if spine is not None else None
+        from_other_film = release is not None and release["spine_number"] == spine
     for column in PERSON_SET_COLUMNS:
         if from_other_film and column in CATALOG_COLUMNS:
             continue

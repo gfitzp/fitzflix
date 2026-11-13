@@ -28,7 +28,7 @@ Import the task modules inside the test functions. Give each test the `app` fixt
 
 The app fixture is session-scoped. All test files share 1 SQLite database. The autouse `clean_state` fixture deletes the rows after each test. It keeps the quality tiers, the feature types, and the 2 users.
 
-The user rows survive from test to test. A test that changes a user column (`plex_username`, `letterboxd_username`, a notification flag) must set the value at its start. It must not trust the default. `reset_user_state` puts only `letterboxd_username` back after each test.
+The user rows survive from test to test. A test that changes a user column (`plex_username`, `letterboxd_username`, a notification flag) must set the value at its start. It must not trust the default. `reset_user_state` puts only `letterboxd_username` and `last_export_review_id` back after each test.
 
 ### The configuration
 
@@ -44,7 +44,7 @@ grep -rn 'app\.config\[[^]]*\] *=' tests/ | grep -v setitem
 
 ### The shared directories and the sweep
 
-The import, staging, rejects, held, artwork, and library directories live for the whole session. After each test, `clean_state` empties the 2 library roots, the held directory, and the artwork directory (`clear_artifacts`). It also removes the files in the rejects directory and the log archives. It does not empty the import and staging directories. A test that uses them cleans them itself. A test must not leave a file that another test can find.
+The import, staging, rejects, held, artwork, and library directories live for the whole session. After each test, `clean_state` empties the 2 library roots, the held directory, and the artwork directory (`clear_artifacts`). It also removes the files in the rejects directory and the log archives. It also removes the Atmos workspaces (`atmos-*`) of the staging directory. It does not empty the rest of the import and staging directories. A test that uses them cleans them itself. A test must not leave a file that another test can find.
 
 ### GROWTH_CHECK_SECONDS
 

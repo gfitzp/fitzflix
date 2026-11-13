@@ -7,10 +7,12 @@ restore-notification poller. The key functions (etags, key sanitizing,
 the untouched-key handoff guard) are here too.
 
 The rq job names are strings that live in Redis. Thus, app.videos
-exports each job name of this module again. The enqueue sites and the
-stored jobs continue to say "app.videos.upload_task", and they continue
-to resolve. Each other name is imported from this module. The names
-that still live in app.videos are imported lazily
+exports again each job of this module that the stored jobs name as
+app.videos.X. The enqueue sites and the stored jobs continue to say
+"app.videos.upload_task", and they continue to resolve. The later jobs
+of this module go to the queue under their app.aws_storage names. Each
+other name is imported from this module. The names that still live in
+app.videos are imported lazily
 inside functions, never at module level. Thus, the import direction
 stays videos to aws_storage.
 """
@@ -179,10 +181,12 @@ def delete_sqs_message(sqs_client, receipt_handle, note="message", key=None):
 # File.restore_requested_at. While it is set, the file page disables its
 # edit and download forms, and each caller of
 # refuse_while_restore_pending refuses. These are the track edits, the
-# Atmos job and the uploads of the library file. An archive move, a
-# rename and Delete File do not refuse. The end of the download and the
-# 14-day sweep clear the state. Thus, a request cannot lose its object to
-# an edit during the hours of a thaw.
+# forms of the triage pages and the removal of empty tracks by a scan.
+# The Atmos job, the uploads of the library file and the move of an
+# archive to modified/ refuse too. move_archive_object, a rename and
+# Delete File do not refuse. The end of the download and the 14-day sweep clear the state.
+# Thus, a request cannot lose its object to an edit during the hours of
+# a thaw.
 
 RESTORE_PENDING_MESSAGE = (
     "A restore of this file from AWS is pending. Fitzflix does not change "
@@ -954,9 +958,10 @@ def _claimed_keys():
 def _request_pending_moves():
     """Request the move of each live archive under pending-untouched/ that has no job (#690, #707).
 
-    Invariant: after each sync, a record whose archive is under
-    pending-untouched/ has a move job, unless the sync reported its key
-    as lost. An import requests the move after its
+    Invariant: after this step of a sync, a record whose archive is
+    under pending-untouched/ has a move job. A key in the record of the
+    lost uploads (mark_archive_lost) is the exception. An import
+    requests the move after its
     commit. The request can fail, and the job can fail after the record
     got its target. Each case leaves the row on a key that the lifecycle
     rule of the bucket expires after 60 days. Thus, a row with no target
@@ -1327,8 +1332,8 @@ def download_task(
     row again, and the placement goes to its fresh path (#563).
 
     The row of the key holds the pending restore (#610). While it is
-    set, the track edits, the Atmos job and the uploads of the library
-    file refuse (refuse_while_restore_pending). The title
+    set, each caller of refuse_while_restore_pending refuses. The
+    comment at that function has the list. The title
     lock covers only the final copy. A rename can still run during the
     download. The placement reads the path of the row under the lock.
     The end of the task clears the state by the row id, after the lock
@@ -1595,10 +1600,10 @@ def _download_task(
                 s3_client = aws_s3_client()
                 head = _head_or_none(s3_client, key)
                 if head is None:
-                    # A move waits for a download of its source, and it
-                    # does not delete a key that a download reads (#621,
-                    # #728). Thus, a gone key is a refusal, and the person
-                    # requests the restore again.
+                    # A move waits for a download of its source. It asks
+                    # before the copy and again before the row changes
+                    # (#621, #728). Thus, a gone key is a refusal, and the
+                    # person requests the restore again.
                     raise PlacementRefused(
                         f"'{basename}' The archive '{key}' is gone. The "
                         f"restore does not place the file"
@@ -2394,7 +2399,8 @@ def archive_library_file(file, path, delete_replaced=True):
 
     The caller holds the title lock. This function clears the stale
     flag (#615). The cataloging of an import and the move of an archive
-    to modified/ clear it too."""
+    to modified/ clear it too. So does a record that takes the upload of
+    a failed import (_adopt_upload)."""
 
     refused = refuse_while_restore_pending(file)
     if refused:
@@ -2799,8 +2805,9 @@ def move_archive_object(file_id, sqs_receipt_handle=None):
       job waits 25 to 35 minutes. Return MOVE_WAITING.
     - The old object is readable: a server-side copy goes to the target.
       The size and the ETag of the copy are verified. Then the row names
-      the new key, and the old key is deleted. A download that started
-      during the copy keeps the old key (#728). Return True.
+      the new key, and the old key is deleted. Return True.
+    - A download of the old key came during the copy: the copy is
+      deleted, and the job waits as above (#728).
 
     aws_key names a real object during the whole move. sqs_receipt_handle
     is the restore notification that started the job. The job deletes it
@@ -2965,7 +2972,8 @@ def _archive_lost_upload(file, source, column):
     import before its move. The untouched rip is then lost. The library
     file is the best copy that remains. It goes to modified/, and the
     record names that key. Return True after the try of that upload. A
-    pending restore refuses the upload, and the result is still True.
+    pending restore refuses the upload, and the result is still True. A
+    failed upload raises.
     Return LOST_UPLOAD_WAIT if the library volume does not respond. Then
     the move waits, because the file can come back (follow-up #455).
     Return False otherwise."""
@@ -3142,6 +3150,22 @@ def _move_archive(file, sqs_receipt_handle, message_key):
             s3_layout.delete(s3_client, bucket, target, copied.get("VersionId"))
         return False
 
+    # Invariant: a move never takes a key away from its download (#728).
+    # The copy can take minutes, and a person can request a restore in
+    # that time. A readable object gets its download at once. That job
+    # finds its record by the old key when it starts, and it reads the
+    # old key. Thus, the move asks for the job again here, before the row
+    # changes. Then the row and the old key stay, and the own copy goes.
+    # The move waits, as it does for a download that was there before the
+    # copy.
+
+    if _download_job_for(source):
+        if copied.get("VersionId") or not untouched_key_still_claimed(target):
+            s3_layout.delete(s3_client, bucket, target, copied.get("VersionId"))
+        return _wait_move(
+            file, source, sqs_receipt_handle, f"the download of '{source}'"
+        )
+
     proven = copied.get("ETag") == head.get("ETag")
     setattr(file, column, target)
     clear_archive_target(file)
@@ -3150,22 +3174,6 @@ def _move_archive(file, sqs_receipt_handle, message_key):
         f"'{file.basename}' Moved the archive '{source}' to '{target}'. "
         + ("The ETags are equal" if proven else "The sizes are equal")
     )
-
-    # Invariant: a move never deletes a key that a download reads (#728).
-    # The copy can take minutes, and a person can request a restore in
-    # that time. A readable object gets its download at once, and that
-    # job reads the old key. Thus, the move asks for the job again here.
-    # Then the old key stays, and the weekly sync prunes it after its
-    # grace. That download completes the restore, so no download of the
-    # new key starts.
-
-    if _download_job_for(source):
-        current_app.logger.info(
-            f"'{file.basename}' A download reads '{source}'. The key stays, "
-            f"and the weekly sync prunes it"
-        )
-        delete_download_message(sqs_receipt_handle, message_key, note="archive move")
-        return True
 
     # A plain delete keeps the old version for the noncurrent window of
     # 180 days. That window rescued a lost archive before. Only the own

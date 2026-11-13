@@ -421,9 +421,9 @@ def test_a_move_waits_for_a_download_of_the_old_key(app, s3):
 def test_a_download_that_starts_during_the_copy_keeps_the_old_key(app, s3):
     """A person requests a restore during the copy of a move (#728).
 
-    The download of the old key starts at once. The move must not
-    delete the key that the download reads. That download completes the
-    restore. Thus, the move starts no download of the new key."""
+    The download of the old key is queued at once. It finds its record
+    by the old key when it starts. Thus, the row and the old key stay,
+    the copy of the move goes, and the move waits for the download."""
 
     from app import aws_storage, db
     from app.models import File
@@ -449,19 +449,23 @@ def test_a_download_that_starts_during_the_copy_keeps_the_old_key(app, s3):
 
         fake = s3({old_key: readable()}, on_copy=restore_click)
 
-        assert aws_storage.move_archive_object(file_id) is True
-        assert fake.deletes == []
-        assert old_key in fake.objects and new_key in fake.objects
+        assert aws_storage.move_archive_object(file_id) == aws_storage.MOVE_WAITING
+        assert fake.deletes == [(new_key, "copy-1")]
+        assert old_key in fake.objects and new_key not in fake.objects
+
+        # The download that starts now still finds its record by the key.
         db.session.expire_all()
-        moved = db.session.get(File, file_id)
-        assert moved.aws_key == new_key
-        assert moved.restore_requested_at is not None
+        waiting = File.query.filter(File.aws_key == old_key).one()
+        assert waiting.id == file_id
+        assert waiting.aws_key_target == new_key
+        assert waiting.restore_requested_at is not None
         downloads = [
             job.args[0]
             for job in app.file_queue.jobs
             if job.func_name == "app.videos.download_task"
         ]
         assert downloads == [old_key]
+        assert len(_scheduled_moves(app)) == 1
 
 
 def test_a_move_that_waits_books_a_random_retry_delay(app, monkeypatch):

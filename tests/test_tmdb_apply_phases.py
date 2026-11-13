@@ -595,7 +595,9 @@ def test_a_movie_apply_probes_the_volume_once_before_any_stat(app, monkeypatch):
     assert len(probes) == 1
     assert renames == []
 
-    # The volume is dead. No stat of a library path may run (#731).
+    # The volume is dead. The apply itself makes no stat of a library
+    # path (#731). The rename is a fake here. The next test covers the
+    # stat of the rename.
     library = app.config["LIBRARY_DIR"]
     assert [path for path in stats if str(path).startswith(library)] == []
 

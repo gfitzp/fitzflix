@@ -863,12 +863,42 @@ def test_a_refresh_merge_leaves_a_title_and_year_match_of_the_catalog_behind(app
         assert survivor.criterion_disc_owned is True
 
 
+def _store_catalog(app, *releases):
+    """Put releases with no film id into the stored Criterion catalog."""
+
+    import json
+
+    from app.criterion_catalog import CRITERION_CACHE_KEY
+
+    app.redis.set(
+        CRITERION_CACHE_KEY,
+        json.dumps(
+            [
+                {
+                    "spine_number": spine,
+                    "tmdb_id": None,
+                    "title": title.upper(),
+                    "label": title,
+                    "year": year,
+                    "criterion_film_id": None,
+                    "set_title": None,
+                }
+                for title, year, spine in releases
+            ]
+        ),
+    )
+
+
 def test_a_merge_carries_a_typed_spine_of_a_record_with_no_tmdb_id(app):
-    """Only the catalog writes the film id. A spine with no film id was typed (#729)."""
+    """The stored catalog gives the title an other spine, or no spine (#729).
+
+    Then a person typed the spine of the record, and it goes to the
+    survivor."""
 
     from app.tmdb_refresh import move_movie_rows
 
     with app.app_context():
+        _store_catalog(app, ("Typed Spine", 2013, 55), ("An Other Film", 2013, 1200))
         old = make_movie("Typed Spine", 2013, criterion_spine_number=1200)
         new = make_movie("Typed Spine Again", 2013, tmdb_id=729002)
         db.session.commit()
@@ -878,6 +908,37 @@ def test_a_merge_carries_a_typed_spine_of_a_record_with_no_tmdb_id(app):
         db.session.commit()
 
         assert new.criterion_spine_number == 1200
+
+
+def test_a_merge_leaves_a_title_and_year_match_with_no_film_id_behind(app):
+    """Some releases of the catalog have no film id (#729).
+
+    A record with no TMDB id got its spine from such a release by its
+    title and year. The spine is the spine of the stored catalog. It
+    stays behind, as a match with a film id does. A typed set title of
+    the record stays behind with it, because it names that release."""
+
+    from app.tmdb_refresh import move_movie_rows
+
+    with app.app_context():
+        _store_catalog(app, ("Catalog Name", 2015, 640))
+        old = make_movie(
+            "Catalog Name",
+            2015,
+            criterion_spine_number=640,
+            criterion_in_print=True,
+            criterion_disc_owned=True,
+        )
+        new = make_movie("Film Of The Id", 2015, tmdb_id=729005)
+        db.session.commit()
+
+        move_movie_rows(old.id, new.id)
+        db.session.delete(old)
+        db.session.commit()
+
+        assert new.criterion_spine_number is None
+        assert new.criterion_in_print is None
+        assert new.criterion_disc_owned is True
 
 
 def test_a_merge_leaves_the_spine_of_an_other_tmdb_id_behind(app):

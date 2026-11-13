@@ -718,18 +718,13 @@ def test_a_replayed_cookie_does_not_repeat_a_confirmation(app, admin_passkey):
     assert calls == ["app.videos.sync_aws_s3_storage_task"]
 
 
-def test_a_confirmation_for_one_form_fails_on_another(app, admin_passkey, monkeypatch):
-    from app.main import admin
-
-    restores = []
-    monkeypatch.setattr(admin, "request_restore", lambda key, **k: restores.append(key))
+def test_a_confirmation_for_one_form_fails_on_another(app, admin_passkey):
     client, authenticator, calls = admin_passkey
     token = csrf_token_from(client.get("/maintenance").get_data(as_text=True))
     options = confirm_options(client, token, "/maintenance/held-imports")
     response = _sync_post(client, token, authenticator.sign(options))
     assert "The passkey request expired." in response.get_data(as_text=True)
     assert calls == []
-    assert restores == []
 
 
 def test_a_confirmation_needs_a_local_path(app, admin_passkey):

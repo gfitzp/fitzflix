@@ -576,7 +576,8 @@ def confirm_rewrite(file_id, file_path):
     a restore would bring back the older bytes. The flag is set only
     when Fitzflix archives the library files. The cataloging of an
     import, a good upload of the library file and the move of an archive
-    to modified/ clear it.
+    to modified/ clear it. So does a record that takes the upload of a
+    failed import.
 
     A failed read or a failed flag raises after the rollback (#561). The
     caller read the row before its slow work. Thus, a new transaction

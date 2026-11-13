@@ -9,9 +9,11 @@ between them (app.sdr_conversion). manual_import_task is the hourly
 sweep. The rejects door, the language functions, and the
 filename sanitizers are also here.
 
-app.videos re-exports the job names of this module. Thus, the stored rq
-job strings ("app.videos.localization_task") continue to resolve. Each
-other name is imported from this module. The shared lock, retry, and
+app.videos re-exports each job of this module that the stored rq job
+strings name as app.videos.X ("app.videos.localization_task"). Thus,
+those strings continue to resolve. A later job of this module goes to
+the queue under its app.importing name. Each other name is imported
+from this module. The shared lock, retry, and
 copy functions stay in app.videos. This module imports them lazily
 inside functions. This module imports the track and S3 layers at its
 top. They import this module only inside functions.
@@ -928,12 +930,13 @@ def localization_task(
             # Nothing has changed a staged source. A file too large for the
             # staging volume is the exception (#424). It is processed in
             # place, and the track statistics, the FLAC twins, or the MP4
-            # metadata removal can rewrite it before a failure. The
-            # untouched archive goes up first, so the original bytes stay
-            # in S3. Thus, a run-scoped upload of such a run is not
-            # deleted here (#727). The sync prunes it after its grace. A
-            # stop signal keeps the source (#497). An outage of the
-            # database keeps it too, and the job fails (#681).
+            # metadata removal can rewrite it before a failure. Such a
+            # rewrite removes no stream of the file. The untouched archive
+            # goes up first. An upload to the normal key stays in S3, and
+            # the next try can replace it. A run-scoped upload goes with
+            # the failed run, as for a staged source. A stop signal keeps
+            # the source (#497). An outage of the database keeps it too,
+            # and the job fails (#681).
 
             abandon_failed_stage(
                 error,
@@ -941,9 +944,7 @@ def localization_task(
                 run.lock,
                 may_keep=not run.in_place,
                 strays=run.strays,
-                pending_archive=(
-                    None if run.in_place else pending_archive_of(file_details)
-                ),
+                pending_archive=pending_archive_of(file_details),
             )
 
         else:
@@ -1335,7 +1336,7 @@ def _archive_original(work_path, file_details):
     Then the upload goes to a run-scoped key below pending-untouched/
     (#430). The record of the import claims that key. After the commit,
     an archive move takes it to its final key. A failed import deletes
-    it while the source still has its original bytes (#727). Thus, a
+    it, unless the localized file replaced the source (#727). Thus, a
     failure never replaces the archive of a good rip."""
 
     if get_setting("ARCHIVE_ORIGINAL_MEDIA"):
@@ -1816,9 +1817,10 @@ def abandon_failed_stage(
 
     A stop signal keeps the source (#497). The hourly sweep finds a
     source of the import directory. The hourly retry of the in-place
-    imports and the weekly sync find a download in the library. A signal
-    that stopped only the child tool is not raised again. Any other
-    error rejects the source. With may_keep False, a stop signal
+    imports finds a failed localization of a download in the library.
+    The weekly sync finds each other download there. A signal that
+    stopped only the child tool is not raised again. Any other error
+    rejects the source. With may_keep False, a stop signal
     rejects the source too, and an outage is a plain error that does
     not raise again. A caller that passes keep_source=True keeps the
     source for each error (#688). The cataloging does that for a file
@@ -2659,11 +2661,13 @@ def finalize_localization(
             except Exception:
                 current_app.logger.warning(traceback.format_exc())
 
-            # The source goes to rejects. The hidden library copy goes, and
-            # a renamed file goes. A file that replaced an other file stays
-            # at its path, also when no record points to it. The weekly
-            # sync imports a file with no record. A stop signal or an
-            # outage of the database keeps the source (#497, #681).
+            # The source goes to rejects, unless the new file is over it.
+            # The hidden library copy goes, and a renamed file goes. A
+            # file that replaced an other file stays at its path, also
+            # when no record points to it. The weekly sync imports a file
+            # with no record. A file over the source stays only when a
+            # record points to it. A stop signal or an outage of the
+            # database keeps the source (#497, #681).
 
             # The rename can have put the new file over the source (the
             # name that an arr gave is the library name). Then the file at
@@ -2679,11 +2683,12 @@ def finalize_localization(
             # release of the lock and the clean-up below. Then the file
             # stays, as for a lookup that failed.
 
-            # Invariant: the import never deletes an upload whose bytes
-            # exist nowhere else (#727). The file over the source is not
-            # the download. Then the run-scoped upload holds the only copy
-            # of the original, and it stays. A record at the path takes it
-            # as its archive. With no record, the sync prunes it after its
+            # Invariant: the import does not delete the upload of a
+            # download that its localized file replaced (#727). The file
+            # over the source lost the tracks that the localization
+            # removes. Then the run-scoped upload holds the only copy of
+            # the original, and it stays. A record at the path takes it as
+            # its archive. With no record, the sync prunes it after its
             # grace, and a person can get it before that.
 
             pending = pending_archive_of(file_details)
@@ -2700,9 +2705,9 @@ def finalize_localization(
             _release_title_lock(lock)
             if only_copy and not claimed:
                 current_app.logger.warning(
-                    f"'{output_file}' The file at this path was not the download, "
-                    f"and no record takes its original. The original stays in S3 "
-                    f"as '{pending}' until the weekly sync prunes it"
+                    f"'{output_file}' The file at this path was not the "
+                    f"download, and no record points to it"
+                    + _unclaimed_upload_text(only_copy)
                 )
 
             # Invariant: a file that a record points to stays at its path
@@ -3304,6 +3309,7 @@ def _upload_columns(file_details):
     return {
         **{column: file_details.get(column) for column in columns},
         "untouched_basename": file_details.get("untouched_basename"),
+        "conversion": bool(file_details.get("converted_from_quality")),
     }
 
 
@@ -3317,8 +3323,13 @@ def _adopt_upload(row_id, upload, output_file):
     sync requests the move of the upload to its final key. A pending
     move of the old archive does not apply to the new one.
 
-    A conversion keeps the library file in transcoded/. The upload is
-    not the archive of that file. Thus, a conversion does not adopt.
+    A conversion has a second archive in transcoded/ and columns of its
+    own. The commit of the import writes them, and this repair does
+    not. Thus, a record of a conversion does not adopt, and the upload
+    of an import that is a conversion is not adopted. A warning names
+    the upload. The sync prunes it after its grace, and the stale flag
+    of the caller makes the sync upload the library file.
+
     upload is the result of _upload_columns, or None. Return True if
     the record claims the upload."""
 
@@ -3326,7 +3337,14 @@ def _adopt_upload(row_id, upload, output_file):
         return False
     try:
         file = db.session.get(File, row_id)
-        if file is None or file.converted_from_quality:
+        if file is None:
+            return False
+        if file.converted_from_quality or upload.get("conversion"):
+            current_app.logger.warning(
+                f"'{output_file}' The record or the import is a conversion. "
+                f"The record does not take '{upload['aws_key']}', the original "
+                f"of the new file. It stays in S3 until the weekly sync prunes it"
+            )
             return False
         file.aws_key = upload["aws_key"]
         file.aws_date_uploaded = upload["aws_date_uploaded"]
@@ -3353,6 +3371,17 @@ def _adopt_upload(row_id, upload, output_file):
         f"original of the new file, as its archive"
     )
     return True
+
+
+def _unclaimed_upload_text(upload):
+    """Return a sentence that names an upload that no record took, or an empty text."""
+
+    if not upload:
+        return ""
+    return (
+        f". Its original stays in S3 as '{upload['aws_key']}' until the "
+        f"weekly sync prunes it"
+    )
 
 
 def _repair_replaced_record(row_id, output_file, upload):
@@ -3480,6 +3509,7 @@ def repair_replaced_file_task(library_file_path, output_file, tries=1, upload=No
                 current_app.logger.warning(
                     f"'{output_file}' The database did not answer in "
                     f"{tries} tries. The record of this file is not checked"
+                    + _unclaimed_upload_text(upload)
                 )
                 return False
             _book_replaced_file_repair(
@@ -3491,7 +3521,7 @@ def repair_replaced_file_task(library_file_path, output_file, tries=1, upload=No
         if row is None:
             current_app.logger.warning(
                 f"'{output_file}' A failed import left this file, and no "
-                f"record points to it"
+                f"record points to it" + _unclaimed_upload_text(upload)
             )
             return False
         if row.filesize_bytes == os.path.getsize(output_file):
@@ -3597,8 +3627,9 @@ def _after_commit(
 
     # Invariant: a record whose archive is under pending-untouched/ has a
     # pending move (#690). If the move request fails before its commit,
-    # the source goes to rejects/unarchived, and the replaced archives
-    # stay. The weekly S3 sync requests the move again. It does the same
+    # a source that is not the library file goes to rejects/unarchived,
+    # and the replaced archives stay. The weekly S3 sync requests the
+    # move again. It does the same
     # for a move whose job was not queued or did not run (#707). Then the
     # source is gone already.
 
