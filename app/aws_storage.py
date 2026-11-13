@@ -1348,13 +1348,12 @@ def _queue_changed_library_file(row, library_file):
     path.
 
     The import gate of enqueue_localization skips a file that an import
-    holds now. A record with the stale flag has a file that an edit of
-    Fitzflix wrote. Its edit runs now, or it died after it set the flag.
-    A scan stores its rows and its size (replaced_from_outside in
-    app/tracks.py has the rule). An edit that stops because an other
-    program changed the file puts the flag back to its value before the
-    edit (#762). Thus, a stale record holds a file from outside only
-    when it was stale before that change."""
+    holds now. The rule takes a record with the stale flag to have a file
+    that an edit of Fitzflix wrote. Its edit runs now, or it died after
+    it set the flag. A scan stores its rows and its size
+    (replaced_from_outside in app/tracks.py has the rule and its
+    exceptions). An edit that stops because an other program changed the
+    file puts the flag back to its value before the edit (#762)."""
 
     from app import tracks
     from app.importing import enqueue_localization

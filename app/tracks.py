@@ -620,10 +620,14 @@ def replaced_from_outside(filesize_bytes, stale, file_path):
     The rule takes a stale record to hold a file of Fitzflix. An edit
     that stops because Radarr or Sonarr changed the file
     (LibraryFileChanged) puts the flag back to its value before the
-    edit (#762). Thus, a stale record holds a file from outside only
-    when it was stale before that change, for example after an edit
-    that died. Then a scan stores the size of that file, and its import
-    skips it (already_cataloged).
+    edit (#762). A stale record can still hold a file from outside in 4
+    cases. It was stale before that change, for example after an edit
+    that died. The put-back failed, because it is best effort. An edit
+    started on a file that an other program put there before, and its
+    import did not run yet. The file changed between the track read
+    and confirm_rewrite of an in-place mkvpropedit, and the edit then
+    failed with an other error. Then a scan stores the size of that
+    file, and its import skips it (already_cataloged).
 
     A record with no size makes no claim. When Fitzflix does not
     archive, no flag is set, and an edit that died after its write looks
@@ -724,13 +728,15 @@ def put_stale_flag_back(file_id, stale_before, name):
 
     Invariant: a record that the edit found with no stale flag has no
     stale flag after LibraryFileChanged. The edit did not write the file
-    that is at the path now. An other program put it there, and its
-    archive is the job of its import. With the flag, the rule of #750
-    took that file to be a file of Fitzflix, and a scan stored it. A
-    record that was stale before the edit keeps its flag. stale_before
-    None changes nothing. This is best effort. A fault only logs."""
+    that is at the path now, or no file is at the path now. An other
+    program or an other task of Fitzflix changed the path. The archive
+    of a new file is the job of its import. With the flag, the rule of
+    #750 took that file to be a file of Fitzflix, and a scan stored it.
+    A record that was stale before the edit keeps its flag. stale_before
+    is the flag that the caller read before the edit. Each caller knows
+    it. This is best effort. A fault only logs."""
 
-    if stale_before is not False:
+    if stale_before:
         return
     try:
         db.session.rollback()
@@ -1207,8 +1213,8 @@ def _locked_edit(
     scan and raises again. A repeat of an edit reads the file again and
     rebuilds the rows (#611). A failure before the tool wrote costs 1
     scan that only reads the file. LibraryFileChanged queues no scan
-    (#741). The import of the changed file does that work. It puts the
-    stale flag back to its value before the edit (#762).
+    (#741). The import of the changed file does that work. The wrapper
+    then puts the stale flag back to its value before the edit (#762).
 
     retry(error, name) can book a retry of a transient fault. It returns
     True if it did. Then the task returns False with no scan, because
@@ -1224,6 +1230,14 @@ def _locked_edit(
             return True
         name = f"'{file.basename}'"
         seconds = current_app.config[timeout]
+
+        # The flag before the edit (#762). The lock below makes no commit,
+        # so the row keeps the values of the read above. Each writer that
+        # sets the flag holds the title lock, except the repair of a
+        # replaced file (repair_replaced_file_task). A flag from it is
+        # about bytes that an other program replaced already.
+
+        stale_before = bool(file.aws_stale)
 
         # Serialize with the other tasks that rewrite the files or the
         # track records of this title.
@@ -1243,13 +1257,7 @@ def _locked_edit(
         if not lock:
             return True
 
-        # Each writer that sets the stale flag holds the title lock. The
-        # row was read right before the lock. Thus, its flag is the flag
-        # before the edit (#762).
-
-        stale_before = None
         try:
-            stale_before = bool(file.aws_stale)
             refused = refuse_while_restore_pending(file)
             if refused:
                 current_app.logger.warning(f"{name} {refused} The {what} does not run")

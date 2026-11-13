@@ -715,6 +715,46 @@ def test_an_edit_that_stops_on_a_changed_file_puts_the_stale_flag_back(
         assert db.session.get(File, file_id).filesize_bytes == size_before
 
 
+def test_an_edit_that_fails_after_its_write_keeps_the_stale_flag(
+    app, monkeypatch, three_audio_mkv
+):
+    """The reorder remux fails with a plain OSError after mkvpropedit wrote (#762).
+
+    Only LibraryFileChanged puts the stale flag back. Here the file holds
+    the bytes of mkvpropedit, and the archive is behind. The flag must
+    stay, or the weekly sync never uploads the file again (#517, #615).
+    The edit queues 1 scan."""
+
+    from app import db
+    from app.models import File
+    import app.tracks as tracks
+
+    file_id, library_path = _propedit_fixture(
+        app,
+        monkeypatch,
+        three_audio_mkv,
+        "Remux Fails After Write",
+        app.config["MKVPROPEDIT_BIN"],
+    )
+    with app.app_context():
+        row = db.session.get(File, file_id)
+        row.filesize_bytes = os.path.getsize(library_path)
+        row.aws_stale = False
+        db.session.commit()
+        default = _uid(file_id, 2)
+
+    def broken(*args, **kwargs):
+        raise OSError("The remux failed")
+
+    monkeypatch.setattr(tracks, "_run_mkvmerge", broken)
+    with app.app_context():
+        with pytest.raises(OSError, match="The remux failed"):
+            tracks.mkvpropedit_task(file_id, default, None, None)
+        db.session.rollback()
+        assert db.session.get(File, file_id).aws_stale is True
+        assert len(_scheduled_scans(app, file_id)) == 1
+
+
 def test_a_record_check_does_not_need_the_archive_setting(app, three_audio_mkv):
     """The check of the record runs with ARCHIVE_ORIGINAL_MEDIA off too (#726)."""
 
