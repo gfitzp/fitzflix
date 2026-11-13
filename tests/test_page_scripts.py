@@ -466,3 +466,76 @@ refreshCards().then(() => refreshCards()).then(() => {
         ],
         "placed": ["cards 1"],
     }
+
+
+def _template_source(name):
+    """Return the source of a template. Its script functions hold no Jinja."""
+
+    import os
+
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    with open(os.path.join(root, "app", "templates", name)) as template:
+        return template.read()
+
+
+REPLACEMENT_FAKES = r"""
+const TILE_URL = "/recommendations/tile";
+const window = { matchMedia: () => ({ matches: true }), setTimeout };
+const shown = ["1", "2"];
+const urls = [];
+function shownIds() { return shown.slice(); }
+function hydrate() {}
+document.createElement = () => ({
+    set innerHTML(id) { this.firstElementChild = { id, classList: { add() {} } }; },
+});
+function tile() {
+    return {
+        isConnected: true,
+        classList: { add() {} },
+        remove() { this.isConnected = false; },
+        replaceWith(fresh) { this.isConnected = false; shown.push(fresh.id); },
+    };
+}
+const shelf = { getAttribute: () => "genre:1" };
+let replacements = Promise.resolve();
+// The server returns the best film that the request does not exclude.
+answer = (url) => {
+    urls.push(url);
+    const excluded = url.split("exclude=")[1].split(",");
+    const best = ["101", "102", "103"].find((id) => !excluded.includes(id));
+    return Promise.resolve({ status: 200, ok: true, text: () => Promise.resolve(best) });
+};
+"""
+
+
+def test_two_fast_replacements_do_not_bring_in_the_same_film(tmp_path):
+    """The second request left before the first film was in the page (#754).
+
+    Both requests then named the same films, and the server gave the
+    same best film to both."""
+
+    body = _template_source("recommendations.html")
+    test_code = REPLACEMENT_FAKES + r"""
+replaceCell(shelf, tile());
+replaceCell(shelf, tile()).then(() => { result = { shown, urls }; });
+"""
+    out = run_page_script(
+        body, ["fetchReplacement", "replaceCell"], test_code, tmp_path
+    )
+    assert out["result"]["shown"] == ["1", "2", "101", "102"]
+    assert out["result"]["urls"][1].endswith("exclude=1,2,101")
+
+
+def test_a_tile_that_left_the_page_gets_no_second_replacement(tmp_path):
+    """Two actions on 1 tile ask for 1 new film (#754)."""
+
+    body = _template_source("recommendations.html")
+    test_code = REPLACEMENT_FAKES + r"""
+const cell = tile();
+replaceCell(shelf, cell);
+replaceCell(shelf, cell).then(() => { result = { shown, fetches: urls.length }; });
+"""
+    out = run_page_script(
+        body, ["fetchReplacement", "replaceCell"], test_code, tmp_path
+    )
+    assert out["result"] == {"shown": ["1", "2", "101"], "fetches": 1}

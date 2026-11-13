@@ -109,10 +109,28 @@
 			if (id) window.fitzflixHydrate([id], []);
 		}
 
+		// Invariant: a film shows at most 1 time on the page (#754). The
+		// server returns the best film that the request does not name.
+		// Two requests that left together named the same films and got
+		// the same film. Thus, the requests go one after an other: a
+		// request leaves when the film of the request before it is in
+		// the page.
+
+		var replacements = Promise.resolve();
+
 		function replaceCell(shelf, cell) {
+			replacements = replacements.then(function() {
+				return fetchReplacement(shelf, cell);
+			});
+			return replacements;
+		}
+
+		function fetchReplacement(shelf, cell) {
+			// A second action on the same tile came after its replacement.
+			if (!cell.isConnected) return null;
 			var params = "criteria=" + encodeURIComponent(shelf.getAttribute("data-criteria"))
 				+ "&exclude=" + shownIds().join(",");
-			fetch(TILE_URL + "?" + params, {credentials: "same-origin"})
+			return fetch(TILE_URL + "?" + params, {credentials: "same-origin"})
 				.then(function(response) {
 					if (response.status === 204) return null;
 					if (!response.ok) throw new Error("tile fetch failed");
@@ -142,10 +160,15 @@
 					}
 					if (reduced) {
 						settle();
-					} else {
-						cell.classList.add("tile-fade-out");
-						window.setTimeout(settle, 250);
+						return null;
 					}
+					cell.classList.add("tile-fade-out");
+					return new Promise(function(resolve) {
+						window.setTimeout(function() {
+							settle();
+							resolve();
+						}, 250);
+					});
 				})
 				.catch(function() {});
 		}
