@@ -1997,14 +1997,22 @@ def test_fuzzy_matching_folds_spelled_numbers_to_digits(app, admin_client, admin
 
 
 def test_a_number_of_2_words_is_one_number(app):
-    """A tens word and a units word are 1 number, and 2 such numbers are a year (#771).
+    """A tens and a units word are 1 number, a century and 2 digits a year (#771).
 
-    'twenty one' names 21, and 'nineteen eighty four' names 1984. A guess
-    with an other sequel number still fails (#491)."""
+    'twenty one' names 21, and 'nineteen eighty four' names 1984. A
+    century word is 'eighteen', 'nineteen' or 'twenty'. Only a number in
+    words of 2 digits joins the century, and digits that the text has
+    already are never joined. A guess with an other sequel number still
+    fails (#491)."""
 
     from app import db
-    from app.main.game import _fuzzy_match
+    from app.main.game import _fuzzy_match, _normalize
     from app.models import Movie
+
+    assert _normalize("twenty ten") == "2010"
+    assert _normalize("eighteen twelve overture") == "1812 overture"
+    assert _normalize("nineteen five") == "19 5"
+    assert _normalize("nineteen 84") == "19 84"
 
     films = [
         ("21", 2008),
