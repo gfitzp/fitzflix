@@ -38,26 +38,58 @@ def register_cli(app):
         click.echo("Streaming rail recomputed")
 
     @recs.command()
-    def leaving():
-        """Fetch and store the leaving-Criterion film set now.
+    @click.option(
+        "--force",
+        is_flag=True,
+        help="Fetch the page also when the stored set is current. A cached "
+        "TMDB match of a film stays for 60 days. This option does not change it.",
+    )
+    def leaving(force):
+        """Run the daily refresh of the leaving-Criterion film set now.
 
-        Do not wait for the monthly run."""
+        While the stored set is current and complete, the command keeps
+        it and fetches nothing. Use --force to fetch the page of this
+        month again. A page with no films keeps the stored set. The
+        command says which of these occurred (#770)."""
 
         from app.leaving_criterion import refresh_leaving_criterion
 
-        refresh_leaving_criterion()
-        click.echo("Leaving-Criterion set refreshed")
+        result = refresh_leaving_criterion(force=force)
+        if result.outcome == "kept":
+            click.echo(
+                f"Kept the stored set of {result.films} film(s) that depart on "
+                f"{result.departs}. Nothing was fetched. Use --force to fetch "
+                f"the page again."
+            )
+        elif result.outcome == "no films":
+            click.echo(
+                f"Found no films on {result.source}. Kept the stored set. The "
+                f"daily run tries again."
+            )
+        else:
+            click.echo(
+                f"Stored {result.films} film(s) that depart on {result.departs} "
+                f"from {result.source}"
+            )
 
     @recs.command("newly-added")
     def newly_added():
         """Scrape and compare the newly-added feed of every provider now.
 
-        Do not wait for the nightly run."""
+        Do not wait for the daily run. The command prints the count of the
+        feeds that it read and of the feeds that failed. A failed feed
+        keeps its stored snapshot. When each feed failed, the command
+        exits with code 1 (#770)."""
 
         from app.newly_added import refresh_newly_added
 
-        refresh_newly_added()
-        click.echo("Newly-added feeds refreshed")
+        counts = refresh_newly_added()
+        click.echo(f"Read {counts.read} newly-added feed(s). {counts.failed} failed.")
+        if counts.failed and not counts.read:
+            raise click.ClickException(
+                "Each feed failed. The log has the warnings, and the stored "
+                "snapshots did not change."
+            )
 
     @recs.command("catalog")
     def provider_catalogs():

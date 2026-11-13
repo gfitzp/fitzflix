@@ -462,7 +462,7 @@ def test_refresh_task_scrapes_matches_and_stores(app, monkeypatch):
         make_movie_file(make_movie("The Searchers", 1956, tmdb_id=3110), "DVD")
         db.session.commit()
 
-    assert leaving_criterion.refresh_leaving_criterion() is True
+    assert leaving_criterion.refresh_leaving_criterion().outcome == "stored"
 
     stored = json.loads(app.redis.get(leaving_criterion.LEAVING_KEY))
     assert stored["departs"]
@@ -509,7 +509,7 @@ def test_refresh_task_noops_while_stored_set_is_current(app, monkeypatch):
 
     monkeypatch.setattr(leaving_criterion.requests, "get", unexpected_get)
 
-    assert leaving_criterion.refresh_leaving_criterion() is True
+    assert leaving_criterion.refresh_leaving_criterion().outcome == "kept"
     assert requests_made == []
     assert app.redis.get(leaving_criterion.LEAVING_KEY).decode() == planted
     assert dvr_rebuild_jobs(app) == []
@@ -533,7 +533,7 @@ def test_refresh_task_retries_once_stored_set_has_departed(app, monkeypatch):
 
     monkeypatch.setattr(leaving_criterion.requests, "get", fake_requests_get)
 
-    assert leaving_criterion.refresh_leaving_criterion() is True
+    assert leaving_criterion.refresh_leaving_criterion().outcome == "no films"
     assert calls  # the set departed, so the scrape ran
 
 
@@ -582,7 +582,7 @@ def test_refresh_task_retries_an_incomplete_set(app, monkeypatch):
 
     monkeypatch.setattr(leaving_criterion.requests, "get", fake_requests_get)
 
-    assert leaving_criterion.refresh_leaving_criterion() is True
+    assert leaving_criterion.refresh_leaving_criterion().outcome == "no films"
     assert calls
 
 
@@ -607,7 +607,7 @@ def test_an_empty_render_of_this_month_keeps_the_stored_set(app, monkeypatch, ca
     monkeypatch.setattr(leaving_criterion.requests, "get", fake_requests_get)
 
     with caplog.at_level("WARNING"):
-        assert leaving_criterion.refresh_leaving_criterion() is True
+        assert leaving_criterion.refresh_leaving_criterion().outcome == "no films"
     assert calls == [url]
     assert app.redis.get(leaving_criterion.LEAVING_KEY).decode() == planted
     assert f"no films found on '{url}'" in caplog.text
@@ -1105,7 +1105,7 @@ def test_a_film_that_tmdb_deleted_does_not_keep_the_set_incomplete(app, monkeypa
     monkeypatch.setattr(leaving_criterion, "match_tmdb_id", lambda *a, **k: 4040)
     app.redis.set(ENRICHED_KEY.format(tmdb_id=4040), json.dumps(None))
 
-    assert leaving_criterion.refresh_leaving_criterion() is True
+    assert leaving_criterion.refresh_leaving_criterion().outcome == "stored"
     stored = json.loads(app.redis.get(leaving_criterion.LEAVING_KEY))
     assert stored["incomplete"] is False
 
@@ -1299,7 +1299,7 @@ def test_a_failed_film_page_skips_the_match_and_retries_tomorrow(app, monkeypatc
     )
     try:
         with app.app_context():
-            assert leaving_criterion.refresh_leaving_criterion() is True
+            assert leaving_criterion.refresh_leaving_criterion().outcome == "stored"
             stored = json.loads(app.redis.get(leaving_criterion.LEAVING_KEY))
             assert matched == []
             assert stored["incomplete"] is True

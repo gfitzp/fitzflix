@@ -157,7 +157,7 @@ def test_refresh_plants_first_then_stamps_and_prunes(app, monkeypatch):
 
     # The first run only plants the films
 
-    assert refresh_newly_added() is True
+    assert refresh_newly_added() == (1, 0)
     stored = json.loads(app.redis.get(key))
     assert [item["first_seen"] for item in stored["items"]] == [None]
     assert stored["items"][0]["scraped_title"] == "The Searchers"
@@ -239,7 +239,7 @@ def test_a_match_without_a_payload_keeps_its_tmdb_id(app, monkeypatch):
     # The day is read before the run. A midnight during the test then
     # still matches 1 of the 2 days (#447).
     days = {date.today().isoformat()}
-    assert refresh_newly_added() is True
+    assert refresh_newly_added() == (1, 0)
     days.add(date.today().isoformat())
     (item,) = json.loads(app.redis.get(key))["items"]
     assert item["tmdb_id"] == 3110
@@ -250,7 +250,7 @@ def test_a_match_without_a_payload_keeps_its_tmdb_id(app, monkeypatch):
     assert len(dvr_rebuild_jobs(app)) == 1
 
     payloads[3110] = shelf_item(3110, "The Searchers")
-    assert refresh_newly_added() is True
+    assert refresh_newly_added() == (1, 0)
     (item,) = json.loads(app.redis.get(key))["items"]
     assert item["tmdb_id"] == 3110
     assert not item.get("payload_missing")
@@ -809,7 +809,7 @@ def test_a_film_that_tmdb_deleted_goes_back_to_unmatched(app, monkeypatch):
         ),
     )
 
-    assert refresh_newly_added() is True
+    assert refresh_newly_added() == (1, 0)
     items = json.loads(app.redis.get(key))["items"]
     assert [item["tmdb_id"] for item in items] == [None, None]
     assert not any(item.get("payload_missing") for item in items)

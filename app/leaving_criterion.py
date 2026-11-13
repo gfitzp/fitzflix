@@ -549,15 +549,26 @@ def match_tmdb_id(title, year, director=None, failures=None):
     return tmdb_id
 
 
-def refresh_leaving_criterion():
+# The result of refresh_leaving_criterion (#770). The outcome "kept"
+# means that the stored set is current and the task fetched nothing.
+# "no films" means that the page had no films and the stored set stays.
+# "stored" means that the task stored a new set. films is the count of
+# the films of the set. departs is the ISO date of the departure. The
+# value is truthy for each outcome.
+
+LeavingRefresh = namedtuple("LeavingRefresh", "outcome films departs source")
+
+
+def refresh_leaving_criterion(force=False):
     """Scrape the leaving collection and store the set with its departure
-    date.
+    date. Return a LeavingRefresh that says what the task did (#770).
 
     This is a daily task. It reads only the leaving page of this month
     (#646). It matches each film to TMDB. It embeds the enriched
     payloads. It does nothing while the departure of the stored set is
-    in the future, unless a TMDB failure left the set incomplete. A page
-    with no films keeps the stored set. The daily cadence exists to retry
+    in the future, unless a TMDB failure left the set incomplete. With
+    force, it fetches the page also then. A page with no films keeps
+    the stored set. The daily cadence exists to retry
     until Criterion publishes the page of the new month. That page
     appears at some time after the old set departs. The schedule is
     not known. The stored set has no TTL. The shelf hides after the
@@ -565,12 +576,17 @@ def refresh_leaving_criterion():
 
     with app.app_context():
         stored = current_app.redis.get(LEAVING_KEY)
-        if stored:
+        if stored and not force:
             stored = json.loads(stored)
             if date.fromisoformat(stored["departs"]) >= date.today() and not stored.get(
                 "incomplete"
             ):
-                return True
+                return LeavingRefresh(
+                    "kept",
+                    len(stored.get("items") or []),
+                    stored["departs"],
+                    stored.get("source"),
+                )
 
         departs, source, films = fetch_leaving_films()
         if not films:
@@ -578,7 +594,7 @@ def refresh_leaving_criterion():
                 f"Leaving-Criterion: no films found on '{source}'. Keeping the "
                 f"stored set"
             )
-            return True
+            return LeavingRefresh("no films", 0, departs.isoformat(), source)
 
         # Films that the TMDB matcher cannot resolve still go into the
         # stored set. They carry only the scraped facts (title, director,
@@ -641,7 +657,7 @@ def refresh_leaving_criterion():
         enqueue_lineup_rebuild(
             "new leaving-Criterion set", tmdb_ids=[item["tmdb_id"] for item in items]
         )
-        return True
+        return LeavingRefresh("stored", len(items), departs.isoformat(), source)
 
 
 def leaving_shelf(user):

@@ -33,6 +33,7 @@ of the next run.
 import json
 import traceback
 
+from collections import namedtuple
 from datetime import date, datetime, timedelta
 
 from flask import current_app, g
@@ -95,20 +96,35 @@ def _recent(item, today=None):
     return today - date.fromisoformat(first_seen) <= timedelta(days=RECENT_DAYS)
 
 
+# The result of refresh_newly_added: the count of the feeds that it read
+# and stored, and the count of the feeds that failed. The value is
+# truthy also when each feed failed (#770).
+
+FeedCounts = namedtuple("FeedCounts", "read failed")
+
+
 def refresh_newly_added():
     """Refresh the newly-added feed of each provider (daily task).
 
     This task scrapes the feed. It compares the feed with the stored
     snapshot to set the first-seen dates. Then it stores the set with the
-    embedded enriched payloads."""
+    embedded enriched payloads. A feed with no films or with an error
+    keeps its snapshot and counts as failed. The task returns the
+    FeedCounts (#770)."""
 
+    read = failed = 0
     with app.app_context():
         for provider_id, feed in FEEDS.items():
             try:
-                _refresh_feed(provider_id, feed)
+                stored = _refresh_feed(provider_id, feed)
             except Exception:
                 current_app.logger.warning(traceback.format_exc())
-        return True
+                stored = False
+            if stored:
+                read += 1
+            else:
+                failed += 1
+        return FeedCounts(read, failed)
 
 
 def _stored_entry(film, tmdb_id, payload, first_seen):
@@ -135,14 +151,16 @@ def _stored_entry(film, tmdb_id, payload, first_seen):
 
 
 def _refresh_feed(provider_id, feed):
-    """Scrape, diff, and store the feed of one provider."""
+    """Scrape, diff, and store the feed of one provider.
+
+    Return True when it stored the feed, False when the page had no films."""
 
     films = fetch_collection_films(feed["url"])
     if not films:
         # Keep the previous snapshot. A scrape outage must not empty the
         # store and make the whole page of tomorrow "new".
         current_app.logger.warning(f"Newly-added: no films found at {feed['url']}")
-        return
+        return False
 
     key = NEWLY_ADDED_KEY.format(provider_id=provider_id)
     raw = current_app.redis.get(key)
@@ -226,6 +244,7 @@ def _refresh_feed(provider_id, feed):
         enqueue_lineup_rebuild(
             f"{len(arrived)} newly-added Criterion films", tmdb_ids=arrived
         )
+    return True
 
 
 def newly_added_shelves(user):

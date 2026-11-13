@@ -617,11 +617,11 @@ Run these commands from the project root, with the venv active. Some commands pu
 | `flask refresh criterion` | Refreshes the Criterion Collection data from Wikidata. This also runs automatically on the 18th of each month, after the mid-month announcements of Criterion. |
 | `flask recs recompute` | Rebuilds the taste profile and the stored recommendations of each user now, and does not wait for the nightly run at 01:45 |
 | `flask recs streaming` | Rebuilds the streaming shelf now (otherwise each night at 02:15) |
-| `flask recs leaving` | Refreshes the leaving-Criterion set now (otherwise each day at 06:00, and again at 08:00 on the 1st of each month) |
+| `flask recs leaving` | Runs the refresh of the leaving-Criterion set now (otherwise each day at 06:00, and again at 08:00 on the 1st of each month). While the stored set is current and complete, it keeps the set and fetches nothing. `--force` fetches the page of this month again. It does not change a cached TMDB match, which stays for 60 days. A page with no films keeps the stored set. The command says which of these occurred. |
 | `flask recs awards` | Refreshes the Wikidata award records now, the film-item and the person-item craft awards together (otherwise each Monday) |
 | `flask recs copref <dataset-dir>` | Rebuilds the MovieLens co-preference table from an extracted ml-32m directory. This needs `numpy` and `scipy`. Do this only when you adopt a new snapshot. |
 | `flask recs evaluate` | Calculates the leave-one-out ranking metrics for the engine. This is the measure for each change to the scores. |
-| `flask recs newly-added` | Reads and compares the newly-added feed of each provider now (otherwise each night) |
+| `flask recs newly-added` | Reads and compares the newly-added feed of each provider now (otherwise each day at 05:00). It prints the count of the feeds that it read and of the feeds that failed. A failed feed keeps its stored snapshot. When each feed failed, it exits with code 1. |
 | `flask recs catalog` | Lists the catalogs of the subscribed providers and processes the pending discoveries now (otherwise each night) |
 | `flask alerts availability` | Compares the availability of the watchlist films with the stored snapshot and sends the digests now. The first run only writes the snapshots. |
 | `flask frames refresh` | Prunes and fills the Name That Frame pool now (otherwise each night) |
