@@ -7,9 +7,10 @@ restore-notification poller. The key functions (etags, key sanitizing,
 the untouched-key handoff guard) are here too.
 
 The rq job names are strings that live in Redis. Thus, app.videos
-EXPORTS each name here again. The enqueue sites and the stored jobs
-continue to say "app.videos.upload_task", and they continue to
-resolve. The names that still live in app.videos are imported lazily
+exports each job name of this module again. The enqueue sites and the
+stored jobs continue to say "app.videos.upload_task", and they continue
+to resolve. Each other name is imported from this module. The names
+that still live in app.videos are imported lazily
 inside functions, never at module level. Thus, the import direction
 stays videos to aws_storage.
 """
@@ -176,10 +177,12 @@ def delete_sqs_message(sqs_client, receipt_handle, note="message", key=None):
 
 # A pending restore is a state of the File row (#610). The request sets
 # File.restore_requested_at. While it is set, the file page disables its
-# edit and download forms, and each writer of the library file or of its
-# archive refuses. The end of the download and the 14-day sweep clear it.
-# Thus, a request cannot lose its object to an edit during the hours of
-# a thaw.
+# edit and download forms, and each caller of
+# refuse_while_restore_pending refuses. These are the track edits, the
+# Atmos job and the uploads of the library file. An archive move, a
+# rename and Delete File do not refuse. The end of the download and the
+# 14-day sweep clear the state. Thus, a request cannot lose its object to
+# an edit during the hours of a thaw.
 
 RESTORE_PENDING_MESSAGE = (
     "A restore of this file from AWS is pending. Fitzflix does not change "
@@ -951,8 +954,9 @@ def _claimed_keys():
 def _request_pending_moves():
     """Request the move of each live archive under pending-untouched/ that has no job (#690, #707).
 
-    Invariant: a record whose archive is under pending-untouched/ has a
-    move job that will run. An import requests the move after its
+    Invariant: after each sync, a record whose archive is under
+    pending-untouched/ has a move job, unless the sync reported its key
+    as lost. An import requests the move after its
     commit. The request can fail, and the job can fail after the record
     got its target. Each case leaves the row on a key that the lifecycle
     rule of the bucket expires after 60 days. Thus, a row with no target
@@ -1022,10 +1026,11 @@ def _report_dangling_claims(listing):
         if key not in s3_key_set
     )
 
-    # A lost pending upload (follow-up #455) is named 1 time, in a
-    # section of its own. It needs a re-rip, not a key repair. Later
-    # reports leave it out. A key that is no longer dangling leaves the
-    # record.
+    # A lost pending upload (follow-up #455) is named in a section of
+    # its own, 1 time after each record of its loss (mark_archive_lost).
+    # It needs a re-rip, not a key repair. Later reports leave it out. A
+    # move that runs again records the loss again. A key that is no
+    # longer dangling leaves the record.
 
     lost = {
         field.decode(): value.decode()
@@ -1322,7 +1327,8 @@ def download_task(
     row again, and the placement goes to its fresh path (#563).
 
     The row of the key holds the pending restore (#610). While it is
-    set, each writer of the file and of its archive refuses. The title
+    set, the track edits, the Atmos job and the uploads of the library
+    file refuse (refuse_while_restore_pending). The title
     lock covers only the final copy. A rename can still run during the
     download. The placement reads the path of the row under the lock.
     The end of the task clears the state by the row id, after the lock
@@ -2386,8 +2392,9 @@ def archive_library_file(file, path, delete_replaced=True):
     marks the archive stale before it writes (#615). Thus, the flag of a
     changed file stays for a later upload.
 
-    The caller holds the title lock. Only this function clears the
-    stale flag (#615)."""
+    The caller holds the title lock. This function clears the stale
+    flag (#615). The cataloging of an import and the move of an archive
+    to modified/ clear it too."""
 
     refused = refuse_while_restore_pending(file)
     if refused:
@@ -2647,8 +2654,8 @@ def untouched_key_still_claimed(key):
     """Return True if a surviving file record still claims this S3 key.
 
     This applies to the untouched key. Different records can share a
-    key. For example, a replaced file can get a new key after a rename,
-    or a second import can arrive on the same basename. A delete of a
+    key. For example, a second import can arrive on the same basename.
+    A delete of a
     claimed key would strand the archive of the survivor behind a
     delete marker (the Bambi II incident, 2026-08). The caller must
     check AFTER its own deletes commit. Thus, the purged rows no longer
@@ -2753,9 +2760,10 @@ def _download_after_move(file, source, target):
     The restore notification of the old key went to the move. A request
     for a download sets the pending restore of the row (#610). The row
     keeps it through the move. If the library file is still missing, the
-    download of the new key starts now. The copy is in STANDARD storage.
-    Thus, it needs no restore. A present file gets no download. Then the
-    pending restore ends here."""
+    download of the new key starts now. The copy is new, and a new object
+    is in STANDARD storage. Thus, it needs no restore now. A lifecycle
+    rule moves it to Deep Archive later. A present file gets no download.
+    Then the pending restore ends here."""
 
     if file.restore_requested_at is None:
         return
@@ -2956,9 +2964,10 @@ def _archive_lost_upload(file, source, column):
     A lifecycle expiry or a prune can remove the pending upload of an
     import before its move. The untouched rip is then lost. The library
     file is the best copy that remains. It goes to modified/, and the
-    record names that key. Return True if the upload occurred. Return
-    LOST_UPLOAD_WAIT if the library volume does not respond. Then the
-    move waits, because the file can come back (follow-up #455).
+    record names that key. Return True after the try of that upload. A
+    pending restore refuses the upload, and the result is still True.
+    Return LOST_UPLOAD_WAIT if the library volume does not respond. Then
+    the move waits, because the file can come back (follow-up #455).
     Return False otherwise."""
 
     from app.videos import _dead_volumes
@@ -4141,10 +4150,11 @@ def aws_restore(key, tier="Standard", record_request=True):
     """Request a restore of a file at AWS from Glacier status for a download.
 
     The request sets the pending restore of each File row that claims
-    the key (#610). Then each writer of the file refuses until the
-    download ends. An import that replaces the file ends the state, and
-    the download then drops (#620). A page sets the state before it queues
-    this (#613). The stamp here is for the requests no page asks for.
+    the key (#610). Then each caller of refuse_while_restore_pending
+    refuses until the download ends. An import that replaces the file
+    ends the state, and the download then drops (#620). A page sets the
+    state before it queues this (#613). The stamp here is for the
+    requests no page asks for.
     A second request during a thaw is a new request, with its own
     time. A request that cannot be made clears the state.
     record_request=False is a restore for an archive move or a request

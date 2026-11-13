@@ -42,9 +42,8 @@ PREFIXES = (
     # move_archive_to_modified_task deletes the
     # old untouched/ version permanently (by version id). The ETag-equal
     # bytes are in modified/, and a marker would keep a second copy for
-    # 180 days for no use. move_archive_object (#369) does the same after
-    # a copy with an equal ETag. A copy that only the size proves gets a
-    # plain delete.
+    # 180 days for no use. move_archive_object (#369) makes a plain
+    # delete of the old key. Thus, the old version stays for 180 days.
     Prefix(
         "untouched",
         config_key="AWS_UNTOUCHED_PREFIX",
@@ -97,8 +96,9 @@ PREFIXES = (
     ),
     # The run-scoped uploads of the imports (#430). A re-rip whose bytes
     # differ from a claimed untouched/ archive uploads here first. After
-    # the commit, an archive move copies it to untouched/ and deletes each
-    # version here. The prefix is outside untouched/. Thus, the Deep
+    # the commit, an archive move copies it to untouched/ and deletes the
+    # version that it copied. The lifecycle rules remove each other
+    # version. The prefix is outside untouched/. Thus, the Deep
     # Archive rule of untouched/ never moves an upload that waits for its
     # import. A move then never needs a restore. A failed run leaves its
     # upload. The sync prunes it after its grace, and the expiry removes

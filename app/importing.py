@@ -9,12 +9,12 @@ between them (app.sdr_conversion). manual_import_task is the hourly
 sweep. The rejects door, the language functions, and the
 filename sanitizers are also here.
 
-app.videos re-exports every name in this module. Thus, the stored rq
-job strings ("app.videos.localization_task") and the import sites
-continue to resolve. The shared lock, retry, and copy functions stay in
-app.videos. This module imports them lazily inside functions. Thus, the
-module import direction stays one-way. This module imports the track
-and S3 layers directly. They never import back.
+app.videos re-exports the job names of this module. Thus, the stored rq
+job strings ("app.videos.localization_task") continue to resolve. Each
+other name is imported from this module. The shared lock, retry, and
+copy functions stay in app.videos. This module imports them lazily
+inside functions. This module imports the track and S3 layers at its
+top. They import this module only inside functions.
 """
 
 import errno
@@ -1814,8 +1814,11 @@ def abandon_failed_stage(
 ):
     """Clean up a stage after error. Re-raise a stop signal, and an outage that keeps the source.
 
-    A stop signal keeps the source for the hourly sweep (#497). Any
-    other error rejects the source. With may_keep False, a stop signal
+    A stop signal keeps the source (#497). The hourly sweep finds a
+    source of the import directory. The hourly retry of the in-place
+    imports and the weekly sync find a download in the library. A signal
+    that stopped only the child tool is not raised again. Any other
+    error rejects the source. With may_keep False, a stop signal
     rejects the source too, and an outage is a plain error that does
     not raise again. A caller that passes keep_source=True keeps the
     source for each error (#688). The cataloging does that for a file
@@ -2378,9 +2381,11 @@ def move_localized_file(
             return False
 
         except BaseException as error:
-            # Remove both hidden copies. The original source is unchanged.
-            # Fitzflix rejects the source. A stop signal or an outage of the
-            # database keeps it (#497, #681).
+            # Remove both hidden copies. The source has its original
+            # bytes, unless the localization ran in place on a file that
+            # was too large for staging (#424). Fitzflix rejects the
+            # source. A stop signal or an outage of the database keeps it
+            # (#497, #681).
 
             abandon_failed_stage(
                 error,
@@ -2654,9 +2659,11 @@ def finalize_localization(
             except Exception:
                 current_app.logger.warning(traceback.format_exc())
 
-            # The source goes to rejects. Remove the hidden library copy,
-            # or the renamed file when no record keeps it. A stop signal or
-            # an outage of the database keeps the source (#497, #681).
+            # The source goes to rejects. The hidden library copy goes, and
+            # a renamed file goes. A file that replaced an other file stays
+            # at its path, also when no record points to it. The weekly
+            # sync imports a file with no record. A stop signal or an
+            # outage of the database keeps the source (#497, #681).
 
             # The rename can have put the new file over the source (the
             # name that an arr gave is the library name). Then the file at
@@ -3122,12 +3129,16 @@ def _dispose_of_worse_files(file, kept_archives, replace_existing=False):
                 archived_original_from_file(worse, "replaced by a real rip")
             )
 
-        # If the new file is from digital media, delete only the worse
-        # digital-media files. Fitzflix always keeps the best
-        # physical-media file.
+        # The library copy of each worse file goes after the commit.
         #
-        # If the new file is from physical media, delete all worse files.
-        # The media source is not important.
+        # If the new file is from digital media, the record and the
+        # archive of a worse physical-media file stay. Thus, the rip can
+        # come back from S3. The record and the archive of a worse
+        # digital-media file go.
+        #
+        # If the new file is from physical media, the record and the
+        # archive of each worse file go. The media source is not
+        # important.
 
         if (
             worse.quality.physical_media == file.quality.physical_media
@@ -3586,9 +3597,10 @@ def _after_commit(
 
     # Invariant: a record whose archive is under pending-untouched/ has a
     # pending move (#690). If the move request fails before its commit,
-    # the source and the replaced archives stay. The weekly S3 sync
-    # requests the move again. It does the same for a move whose job was
-    # not queued or did not run (#707). Then the source is gone already.
+    # the source goes to rejects/unarchived, and the replaced archives
+    # stay. The weekly S3 sync requests the move again. It does the same
+    # for a move whose job was not queued or did not run (#707). Then the
+    # source is gone already.
 
     source_can_go = (
         step("pending upload", _pending_upload_ready, file, file_path, output_file)
@@ -4601,8 +4613,8 @@ def _parse_movie(basename, tmdb_id, log):
     # A title of only periods leaves no name that the disk shows (#722).
 
     # The reason gives the file a rejects folder of its own and a true
-    # log line. A new name for the file does not help, because the
-    # title comes from the record of TMDB.
+    # log line. When the title comes from the record of TMDB, a new
+    # name for the file does not help.
 
     if not visible_name(title):
         return FilenameRejection("no visible title")

@@ -7,11 +7,11 @@ hold the locks. It has the subtitle inspection (possibly-forced flags,
 removal of empty tracks). It also has the planner and the remuxers for
 the lossless-audio supplements.
 
-app.videos exports each name here again. Thus, the stored rq job
-strings ("app.videos.mkvmerge_task") and the import sites continue to
-resolve. The shared lock, subprocess, and copy code stays in
-app.videos. The functions here import it lazily. Thus, the module
-import direction stays one-way.
+app.videos exports each job name of this module again. Thus, the
+stored rq job strings ("app.videos.mkvmerge_task") continue to
+resolve. Each other name is imported from this module. The shared
+lock, subprocess, and copy code stays in app.videos. The functions
+here import it lazily.
 """
 
 import errno
