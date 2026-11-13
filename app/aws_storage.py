@@ -2043,7 +2043,9 @@ def upload_task(file_id):
     a "skipped" chip. A job that meets the title lock books the lock
     wait, and the retry chip stands for the stage. That job also marks
     itself "skipped", because a wait that is booked already adds no new
-    chip. Only the lock wait job itself does not mark itself.
+    chip. The trail hides such a chip behind the chip of the wait. Only
+    the lock wait job itself does not mark itself. A job whose record is
+    gone marks itself too.
 
     The trail can heal a chip whose stamp was lost. It reads the mark in
     the job hash while that hash exists."""
@@ -2055,6 +2057,9 @@ def upload_task(file_id):
     with app.app_context():
         file = db.session.get(File, int(file_id))
         if file is None:
+            # The record went away while the job waited. No archive was
+            # stored, so the chip must not heal to "done".
+            mark_job_skipped()
             return False
         config = current_app.config
         description = f"'{file.basename}'"

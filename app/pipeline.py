@@ -561,6 +561,24 @@ def _apply_stage_event(trail, first_run, first_enqueued, event):
                     first_enqueued or event.anchor or event.utc_now,
                     False,
                 )
+
+            # A job did no work because an other job of its stage waits
+            # for the same file. That job is "deferred", as the first
+            # job that booked the wait is. The chip of the wait stands
+            # for the stage. A "skipped" chip here came after the chip
+            # of the wait. The card then ended "not done" after the wait
+            # stored the archive (review of #766).
+
+            if status == "skipped" and any(
+                other.get("stage") == entry.get("stage")
+                and other.get("job") != job_id
+                and (
+                    other.get("status") in ("queued", "scheduled")
+                    or other.get("rebooked")
+                )
+                for other in trail
+            ):
+                status = "deferred"
             entry["status"] = status
             entry["at"] = now
             append = False
@@ -1012,9 +1030,14 @@ def _waiting_chip_fate(connection, job_id):
     status = status.decode() if isinstance(status, bytes) else status
     fate = SETTLED_STATUS.get(status)
     if fate == "done":
-        meta = connection.hget(f"rq:job:{job_id}", "meta")
-        if meta and DefaultSerializer.loads(meta).get("trail_skipped"):
-            return "skipped"
+        # A meta field that does not load keeps the fate. The Dismiss
+        # button of the Queue page reads this too.
+        try:
+            meta = connection.hget(f"rq:job:{job_id}", "meta")
+            if meta and DefaultSerializer.loads(meta).get("trail_skipped"):
+                return "skipped"
+        except Exception:
+            _log_traceback()
     return fate
 
 

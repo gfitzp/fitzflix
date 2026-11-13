@@ -306,7 +306,7 @@ def test_a_second_upload_job_that_meets_the_lock_does_not_show_done(app, monkeyp
 
     A long job holds the title lock. The first upload job books the lock
     wait. A second upload job of the file meets the lock while that wait
-    is booked. Its chip must not read "Archived to S3". The wait itself
+    is booked. It gets no chip of its own, and no "Archived to S3". The wait itself
     meets the lock 1 more time. Then the lock is free, the wait uploads,
     and its chip is "done"."""
 
@@ -351,8 +351,14 @@ def test_a_second_upload_job_that_meets_the_lock_does_not_show_done(app, monkeyp
     with app.app_context():
         second = app.file_queue.enqueue("app.videos.upload_task", file_id)
     chips = run()
-    assert ("done", second.id) not in chips
-    assert ("skipped", second.id) in chips
+
+    # The second job did no work. The chip of the wait stands for the
+    # stage, as it does for the first job. A "not done" chip of the
+    # second job came after the chip of the wait, and the card then ended
+    # "not done" after the wait stored the archive.
+
+    assert second.id not in [job for _status, job in chips]
+    assert [job for _status, job in chips] == [wait_id]
 
     # The wait runs while the lock is still held, and it books itself
     # again under its own id. rq keeps the meta of that hash. A mark here
@@ -368,7 +374,7 @@ def test_a_second_upload_job_that_meets_the_lock_does_not_show_done(app, monkeyp
     chips = run()
 
     assert len(uploads) == 1
-    assert chips == [("done", wait_id), ("skipped", second.id)]
+    assert chips == [("done", wait_id)]
     with app.app_context():
         assert db.session.get(File, file_id).aws_stale is False
 

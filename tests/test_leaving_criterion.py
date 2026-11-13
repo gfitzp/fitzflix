@@ -8,6 +8,8 @@ import json
 
 from datetime import date, timedelta
 
+import pytest
+
 from tests.conftest import dvr_rebuild_jobs
 from tests.factories import make_movie, make_movie_file
 
@@ -667,6 +669,39 @@ def test_a_forced_store_of_the_same_set_builds_no_lineups(app, monkeypatch):
     films.append({"title": "Rio Bravo", "year": 1959, "director": "Howard Hawks"})
     assert leaving_criterion.refresh_leaving_criterion(force=True).outcome == "stored"
     assert len(dvr_rebuild_jobs(app)) == 1
+
+
+@pytest.mark.parametrize("stored", ['{"departs": "2026-1', "[1, 2]"])
+def test_a_forced_run_replaces_a_stored_value_that_it_cannot_read(
+    app, monkeypatch, stored
+):
+    """--force is the repair of a stored set that is cut off or has an other form.
+
+    The daily run fails on such a value each day. A forced run that read
+    the value first failed too, and the key then needed a hand delete."""
+
+    import app.leaving_criterion as leaving_criterion
+
+    departs = date.today()
+    monkeypatch.setattr(
+        "app.leaving_criterion.fetch_leaving_films",
+        lambda: (
+            departs,
+            "https://example.test/leaving",
+            [{"title": "The Searchers", "year": 1956, "director": "John Ford"}],
+        ),
+    )
+    monkeypatch.setattr(
+        "app.leaving_criterion.match_tmdb_id", lambda title, *args, **kwargs: None
+    )
+    app.redis.set(leaving_criterion.LEAVING_KEY, stored)
+
+    result = leaving_criterion.refresh_leaving_criterion(force=True)
+
+    assert result.outcome == "stored"
+    assert json.loads(app.redis.get(leaving_criterion.LEAVING_KEY))["departs"] == (
+        departs.isoformat()
+    )
 
 
 def test_a_set_with_another_departure_builds_the_lineups(app, monkeypatch):

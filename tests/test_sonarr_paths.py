@@ -497,6 +497,79 @@ def test_an_import_in_flight_is_not_a_stray_file(app, sonarr):
     assert not app.redis.exists(SONARR_CONFLICT_KEY.format(series_id=series_id))
 
 
+def test_a_download_event_queues_its_import_before_the_check(
+    app, client, sonarr, monkeypatch
+):
+    """The check of a Download event must find the import of the new file (#758).
+
+    The webhook queued the check first. An idle worker then ran it
+    before the import job was there. The new episode was a file with no
+    record, and the check refused the rename. The admin got a mail about
+    a file in a normal import. Here the check runs at the moment that
+    the webhook queues it."""
+
+    import app.series_rename as series_rename
+    from app.importing import series_import_in_flight
+
+    sent = admin_mails(monkeypatch)
+    series_id, _ids = two_batman_episodes(app)
+    place(app, MOVED)
+    place(app, SECOND)
+    sonarr(sonarr_series("Batman (1966)"))
+    extra = download_fields(app, "Batman (1966)")
+
+    seen = {}
+    real = series_rename.enqueue_task
+
+    def eager(name, *args, **kwargs):
+        job = real(name, *args, **kwargs)
+        if name == "app.series_rename.reconcile_sonarr_series":
+            seen["in_flight"] = series_import_in_flight({"Batman", "Batman (1966)"})
+            seen["summary"] = series_rename.reconcile_sonarr_series(*args)
+        return job
+
+    monkeypatch.setattr(series_rename, "enqueue_task", eager)
+    response = client.post(
+        "/api/sonarr/add",
+        json=event(app, "Download", "Batman (1966)", **extra),
+        headers=auth_header(),
+    )
+
+    assert response.status_code < 300
+    assert seen["in_flight"]
+    assert seen["summary"]["renamed"] == 1 and seen["summary"]["conflicts"] == 0
+    assert sent == []
+    with app.app_context():
+        marker = series_rename.SONARR_CONFLICT_KEY.format(series_id=series_id)
+        assert not app.redis.exists(marker)
+
+
+def test_the_mail_of_a_stopped_rename_quotes_the_title_for_the_shell(app, monkeypatch):
+    """A title with an apostrophe must give a command that the shell reads (#758)."""
+
+    import shlex
+
+    from app.series_rename import _tell_admin_of_stray_files
+    from tests.factories import make_tv_series
+
+    sent = admin_mails(monkeypatch)
+    with app.app_context():
+        series = make_tv_series("Bob's Burgers")
+        _tell_admin_of_stray_files(
+            series, "Bob's Burgers (2011)", {"TV Shows/x.mkv"}, resumed=True
+        )
+    ((_subject, text),) = sent
+    command = text[text.index("flask tv rename") : text.rindex(" again.")]
+    assert shlex.split(command) == [
+        "flask",
+        "tv",
+        "rename",
+        str(series.id),
+        "Bob's Burgers (2011)",
+    ]
+    assert "Some or all records have the new folder" in text
+
+
 def rename_retries(app):
     """Return the booked retries of the series rename."""
 
@@ -554,6 +627,15 @@ def test_a_resumed_rename_that_meets_a_stray_file_books_a_retry(
     for retry in rename_retries(app):
         retry.delete()
 
+    # A rename that waits marks the series. The records can name a folder
+    # that Sonarr moved away, and the marker holds the restores of the
+    # weekly sync in that time.
+    from app.series_rename import SONARR_CONFLICT_KEY
+
+    marker = SONARR_CONFLICT_KEY.format(series_id=series_id)
+    assert app.redis.exists(marker)
+    app.redis.delete(marker)
+
     place(app, new)
     caplog.clear()
     assert rename_tv_series_task(series_id, "Batman (1966)") is False
@@ -561,6 +643,7 @@ def test_a_resumed_rename_that_meets_a_stray_file_books_a_retry(
     assert "The rows that are renamed already stay renamed" in caplog.text
     (retry,) = rename_retries(app)
     assert retry.kwargs == {"stray_waits": 1}
+    assert app.redis.exists(marker)
     retry.delete()
     assert sent == []
 

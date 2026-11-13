@@ -65,9 +65,10 @@ def register_cli(app):
             )
         elif result.outcome == "no films":
             # Only an unforced run can say that the daily run tries again.
-            # It gets here only when the stored set is not current, and
-            # then the daily run fetches too. A forced run over a current
-            # set gets here too, and the daily run then keeps that set.
+            # It gets here only when no current and complete set is
+            # stored, and then the daily run fetches too. A forced run
+            # over a current set gets here too, and the daily run then
+            # keeps that set.
 
             click.echo(
                 f"Found no films on {result.source}. The stored set did not "

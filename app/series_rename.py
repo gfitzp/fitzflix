@@ -32,6 +32,7 @@ overlap the file pass of the sync.
 """
 
 import os
+import shlex
 import re
 import time
 import traceback
@@ -322,6 +323,12 @@ def _requeue_rename(series, new_title, reason, waits=None, counted=None):
             )
             return False
         waits[counted] = done + 1
+
+    # The records can name a folder that Sonarr moved away while the
+    # rename waits. The marker holds the restores of the weekly sync for
+    # the series in that time, as it does after a refusal (#758).
+
+    _mark_conflict(series)
     counters = {name: count for name, count in waits.items() if count}
     requeue(
         RENAME_TASK,
@@ -386,8 +393,8 @@ def _tell_admin_of_stray_files(series, new_title, stray, resumed=False):
         names = sorted(stray)[:5]
         intro = (
             f"The series '{series.title}' is only partly renamed to "
-            f"'{new_title}'. The records have the new folder, but the title "
-            f"did not change."
+            f"'{new_title}'. Some or all records have the new folder, but the "
+            f"title did not change."
             if resumed
             else f"The series '{series.title}' was not renamed to '{new_title}'."
         )
@@ -400,9 +407,10 @@ def _tell_admin_of_stray_files(series, new_title, stray, resumed=False):
             "of its record again."
         )
         then = (
-            f"Then run flask tv rename {series.id} '{new_title}' again."
+            f"Then run flask tv rename {series.id} {shlex.quote(new_title)} again."
             if resumed
-            else "Then the nightly Sonarr check renames the series."
+            else "After that, the nightly Sonarr check renames a series that "
+            "Sonarr moved."
         )
         listing = "\n".join(f"- {name}" for name in names)
         notify_admin_text(
@@ -666,7 +674,9 @@ def _move_series(series, new_title, waits=None):
             # on a case-insensitive volume is the same file. It goes on.
             if os.path.exists(dst) and not os.path.samefile(source, dst):
                 # A retry cannot clear this (#575). Notify 1 time and stop.
-                _refuse_duplicate_target(series, file.file_path, new_path)
+                _refuse_duplicate_target(
+                    series, os.path.relpath(source, library_dir), new_path
+                )
                 return False
             try:
                 makedirs_on_mounted_volume(os.path.dirname(dst))

@@ -579,7 +579,15 @@ def refresh_leaving_criterion(force=False):
 
     with app.app_context():
         raw = current_app.redis.get(LEAVING_KEY)
-        stored = json.loads(raw) if raw else None
+        try:
+            stored = json.loads(raw) if raw else None
+        except ValueError:
+            # A forced run replaces a stored value that does not parse.
+            if not force:
+                raise
+            stored = None
+        if force and not isinstance(stored, dict):
+            stored = None
         if stored and not force:
             if date.fromisoformat(stored["departs"]) >= date.today() and not stored.get(
                 "incomplete"

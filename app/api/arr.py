@@ -84,7 +84,9 @@ def import_event_webhook(service, observe=None):
             # Sonarr compares the series folder of an event here (#370).
             # The answer to an ignored event stays 202.
 
-            if observe is not None:
+            def check_event():
+                if observe is None:
+                    return
                 try:
                     observe(payload)
                 except Exception:
@@ -97,6 +99,7 @@ def import_event_webhook(service, observe=None):
             # use. Acknowledge and ignore all other events.
 
             if payload.get("eventType") != "Download":
+                check_event()
                 current_app.logger.info(
                     f"Ignoring {service} '{payload.get('eventType')}' event"
                 )
@@ -106,13 +109,24 @@ def import_event_webhook(service, observe=None):
 
             problem = download_payload_problem(service, payload)
             if problem:
+                check_event()
                 current_app.logger.warning(
                     f"{service} Download webhook refused: {problem}"
                 )
                 response.status_code = 400
                 return response
 
-            return handler(payload)
+            # The check of a Download event comes after the handler queued
+            # the import of the new file (#758). The check counts each
+            # media file of the series folder, and a file with no record
+            # stops a rename unless its import is in flight. With the
+            # check first, an idle worker ran it before the import job
+            # was there.
+
+            try:
+                return handler(payload)
+            finally:
+                check_event()
 
         return wrapper
 

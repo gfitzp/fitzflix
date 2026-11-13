@@ -76,8 +76,8 @@ def register_template_helpers(app):
 
     app.jinja_env.filters["language_key"] = language_key_filter
 
-    # Each page formats a size with this filter, not with filesizeformat
-    # of Jinja. That filter divides by 1000 (#772).
+    # No template uses filesizeformat of Jinja. That filter divides by
+    # 1000 (#772).
 
     app.jinja_env.filters["file_size"] = file_size
 
