@@ -127,13 +127,22 @@ def _refuse_changed_library_file(state, library_path):
     or Sonarr. They put an upgrade at the same path, and the import of
     that file waits for the lock. The staged copy is then the older
     release. A run that the older code started has no stamp in its
-    state. Its finish makes no check. A file that is not there raises
-    the OSError of the stat, and the finish tries again."""
+    state. Its finish makes no check. An upgrade with a new quality in
+    its name deletes the old file. Then the file is gone and its folder
+    is there, and that is a change too. With no folder, the volume is
+    away. That raises the OSError of the stat, and the finish tries
+    again."""
 
     stamp = state.get("library")
     if not stamp:
         return
-    if _library_stamp(library_path) != stamp:
+    try:
+        now = _library_stamp(library_path)
+    except FileNotFoundError:
+        if not os.path.isdir(os.path.dirname(library_path)):
+            raise
+        now = None
+    if now != stamp:
         raise LibraryFileChanged(
             f"The library file changed during the Atmos run. The run ends, "
             f"and '{library_path}' stays as it is"
@@ -1264,6 +1273,15 @@ def atmos_finish_task(state, lock, finish_retries=0):
             phases.fail()
             phases.close("failed")
             _close_run(state, lock, ended_early=False)
+
+            # A share can report a fault for a rename that it did. Then
+            # the retry of the finish finds its own result as "changed".
+            # A scan reads the track rows from the file that is there.
+
+            if finish_retries:
+                from app.tracks import _rescan_after_a_failed_edit
+
+                _rescan_after_a_failed_edit(state["file_id"], f"'{state['basename']}'")
             return False
         except FinishInterrupted as error:
             if finish_retries < MAX_FINISH_RETRIES and _book_finish_retry(
@@ -1557,8 +1575,8 @@ def _atmos_finish(state, phases):
                 # makes the weekly sync upload the file. A good archive
                 # below clears it.
 
-                confirm_rewrite(file_id, file_path)
                 _refuse_changed_library_file(state, file_path)
+                confirm_rewrite(file_id, file_path)
                 os.rename(hidden_output, file_path)
             except BaseException:
                 try:

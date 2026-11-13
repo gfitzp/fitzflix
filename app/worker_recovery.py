@@ -13,12 +13,13 @@ job. A worker hash of this host with no death and a dead process is a
 dead worker. Its current job fails through the failure path of the
 worker. Thus, the trail of an import stage is stamped as failed.
 abandon_dead_job knows the import stages, the manual import and the 3
-jobs of an Atmos run. For them it releases the title lock, and for an
-import stage the staging reservation too.
-A dead job of an other task keeps its lock until the lock expires. The
-source stays where it is. The hourly sweep finds a source of the import
-directory, and the weekly sync finds a download in the library. Then
-the hash gets its death.
+jobs of an Atmos run. It releases the title lock of an import stage and
+of an Atmos job, and the staging reservation of an import stage. A
+manual import holds neither. A dead job of an other task keeps its lock
+until the lock expires. The source stays where it is. The hourly sweep
+queues a source of the import directory again. The hourly retry of the
+in-place imports queues a download in the library again when its
+localization died. Then the hash gets its death.
 """
 
 import json

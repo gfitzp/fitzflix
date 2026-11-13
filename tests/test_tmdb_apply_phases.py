@@ -314,8 +314,11 @@ def test_a_series_refresh_works_on_the_record_that_owns_the_tmdb_id(app, monkeyp
         db.session.commit()
         canonical_id, duplicate_id = canonical.id, duplicate.id
 
-    assert refresh_tmdb_info("TV Shows", duplicate_id) is True
-    assert searched[0] == "Canonical Show"
+    # A job carries the id that its record has (#735). With an id, the
+    # fetch makes no search. The description names the record that the
+    # job works on.
+    assert refresh_tmdb_info("TV Shows", duplicate_id, 555) is True
+    assert searched == [None]
     jobs = [
         job
         for job in app.sql_queue.jobs
@@ -326,7 +329,10 @@ def test_a_series_refresh_works_on_the_record_that_owns_the_tmdb_id(app, monkeyp
     ]
 
     payload = _payload({"id": 555, "name": "Canonical Show (TMDB)"})
-    assert apply_tmdb_refresh("TV Shows", duplicate_id, tmdb_payload=payload) is True
+    assert (
+        apply_tmdb_refresh("TV Shows", duplicate_id, tmdb_id=555, tmdb_payload=payload)
+        is True
+    )
     with app.app_context():
         from app.models import TVSeries
 
@@ -938,8 +944,9 @@ def test_a_payload_apply_logs_refreshed_after_the_commit(app, caplog, monkeypatc
             return real_commit()
 
         monkeypatch.setattr(db.session, "commit", second_fails)
+        # The record has the id of the payload now. A job carries it (#735).
         with caplog.at_level(logging.INFO, logger="app"):
-            apply_tmdb_refresh("Movies", movie_id, tmdb_payload=payload)
+            apply_tmdb_refresh("Movies", movie_id, tmdb_id=9050, tmdb_payload=payload)
         monkeypatch.setattr(db.session, "commit", real_commit)
         assert len(calls) >= 2
         assert not [r for r in caplog.records if " names changed" in r.getMessage()]

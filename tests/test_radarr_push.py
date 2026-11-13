@@ -209,6 +209,18 @@ def test_request_refuses_owned_films_and_non_admins(
     assert user_client.post("/radarr", data={}).status_code == 302
 
 
+def rename_payload(tmdb_id, title, new_year):
+    """Return the TMDB payload of a job that gives a film a new year (#735).
+
+    A real job carries the id of its record and a payload."""
+
+    import json
+    import zlib
+
+    details = {"id": tmdb_id, "title": title, "release_date": f"{new_year}-01-01"}
+    return zlib.compress(json.dumps(details).encode("utf-8"))
+
+
 def refresh_rename_fixture(app, monkeypatch, title, year, tmdb_id, new_year):
     """Make a movie whose TMDB refresh moves its file to a new folder."""
 
@@ -245,7 +257,15 @@ def test_refresh_rename_points_radarr_at_the_new_folder(app, monkeypatch):
         movie_id = refresh_rename_fixture(
             app, monkeypatch, "Radarr Tune", 1943, 777, 1944
         )
-        assert apply_tmdb_refresh("Movies", movie_id) is True
+        assert (
+            apply_tmdb_refresh(
+                "Movies",
+                movie_id,
+                tmdb_id=777,
+                tmdb_payload=rename_payload(777, "Radarr Tune", 1944),
+            )
+            is True
+        )
 
     # The refresh did not call Radarr. It queued the push.
     assert fake.updated == []
@@ -366,7 +386,15 @@ def test_refresh_rename_skips_a_film_radarr_lacks(app, monkeypatch):
         movie_id = refresh_rename_fixture(
             app, monkeypatch, "Quiet Film", 1950, 888, 1951
         )
-        assert apply_tmdb_refresh("Movies", movie_id) is True
+        assert (
+            apply_tmdb_refresh(
+                "Movies",
+                movie_id,
+                tmdb_id=888,
+                tmdb_payload=rename_payload(888, "Quiet Film", 1951),
+            )
+            is True
+        )
 
     assert run_radarr_pushes(app) == [True]
     assert fake.updated == []
@@ -388,7 +416,15 @@ def test_refresh_rename_survives_a_radarr_outage(app, monkeypatch):
         movie_id = refresh_rename_fixture(
             app, monkeypatch, "Storm Film", 1960, 999, 1961
         )
-        assert apply_tmdb_refresh("Movies", movie_id) is True
+        assert (
+            apply_tmdb_refresh(
+                "Movies",
+                movie_id,
+                tmdb_id=999,
+                tmdb_payload=rename_payload(999, "Storm Film", 1961),
+            )
+            is True
+        )
 
     # The queued push meets the outage. It logs it and does not raise.
     assert run_radarr_pushes(app) == [True]

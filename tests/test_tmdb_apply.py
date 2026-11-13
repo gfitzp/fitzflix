@@ -741,6 +741,39 @@ def test_a_queued_refresh_does_not_put_an_old_tmdb_id_back(app, monkeypatch):
         assert movie.title == "Rematched Film"
 
 
+def test_a_queued_title_search_does_not_replace_an_id_that_came_later(app, monkeypatch):
+    """A job for a record with no id searches by the title (#735).
+
+    The record got an id from a person before the job ran. The search
+    must not put its first hit there."""
+
+    from app.models import MOVIES
+    from app.tmdb_refresh import apply_tmdb_refresh, refresh_tmdb_info
+
+    fetched = []
+    monkeypatch.setattr(
+        Movie, "tmdb_movie_fetch", lambda self, tmdb_id=None: fetched.append(tmdb_id)
+    )
+    with app.app_context():
+        movie = make_movie("Matched By Hand", 2018, tmdb_id=735007)
+        db.session.commit()
+        movie_id = movie.id
+
+    assert refresh_tmdb_info(MOVIES, movie_id, None) is False
+    assert fetched == []
+    assert (
+        apply_tmdb_refresh(
+            MOVIES,
+            movie_id,
+            tmdb_id=None,
+            tmdb_payload=_payload(735008, "First Hit", "2018-05-05"),
+        )
+        is False
+    )
+    with app.app_context():
+        assert db.session.get(Movie, movie_id).tmdb_id == 735007
+
+
 def test_an_id_that_a_person_typed_still_changes_the_record(app):
     """A rematch is the 1 refresh that gives a record an other TMDB id (#735)."""
 

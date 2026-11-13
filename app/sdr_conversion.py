@@ -567,7 +567,8 @@ def convert_localized_file(
 
     A failure releases the lock and the staging space, and it deletes a
     run-scoped upload. An upload at the normal key stays in S3. A stop
-    signal or a fault of Redis keeps the source. An outage of the
+    signal keeps the source. A fault of Redis in the check of the title
+    lock or in the hand-off to the move keeps it too. An outage of the
     database keeps a source of the import directory. Each other error
     moves the source to the rejects (abandon_failed_stage).
 

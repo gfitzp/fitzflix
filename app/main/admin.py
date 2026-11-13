@@ -1442,6 +1442,10 @@ def tmdb_triage():
             record.id,
             form.tmdb_id.data,
             apply_at_front=True,
+            # A person typed this id. A title search of a bulk refresh
+            # can give the record an id first. The typed id still
+            # applies (#735).
+            rematch=True,
             # The page waits for this refresh. Thus, it goes to the front
             # of the sql queue, not behind the bulk refreshes of the
             # request queue.

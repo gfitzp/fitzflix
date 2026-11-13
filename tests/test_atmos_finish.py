@@ -198,6 +198,31 @@ def test_a_library_file_that_changes_during_the_copy_back_stays(app, monkeypatch
         db.session.rollback()
 
 
+def test_a_library_file_that_an_arr_removed_is_not_put_back(app, monkeypatch):
+    """An upgrade to an other quality has a new name. The arr deletes the old file (#732).
+
+    The folder is there, so the volume is not away. The finish must not
+    put the old copy back at the deleted path, and it does not wait for
+    3 retries with the title lock."""
+
+    import app.atmos as atmos
+    from app import db
+
+    with app.app_context():
+        file, finish = _finish_job(app, monkeypatch, "Upgraded Away")
+        library = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
+        os.remove(library)
+
+        assert atmos.atmos_finish_task(*finish.args) is False
+
+        assert os.listdir(os.path.dirname(library)) == []
+        assert not os.path.exists(finish.args[0]["workspace"])
+        held = app.lock_manager.lock(file.file_identifier(), 1000)
+        assert held
+        app.lock_manager.unlock(held)
+        db.session.rollback()
+
+
 def test_a_run_of_the_older_code_has_no_stamp_and_still_finishes(app, monkeypatch):
     """A run that waits through the deploy has no stamp in its state (#732)."""
 

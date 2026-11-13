@@ -776,25 +776,32 @@ def test_a_record_with_an_other_letter_case_takes_the_path_of_the_new_file(
         assert worse == [(old_path, None)]
 
 
-def test_the_old_spelling_is_not_deleted_when_it_names_the_new_file(
-    app, monkeypatch, tmp_path
-):
-    """A volume that ignores letter case has 1 file for the 2 spellings (#739).
+def test_a_file_at_the_old_spelling_goes_to_the_rejects(app, monkeypatch, tmp_path):
+    """The file at the old spelling can be a different extra of the film (#739).
 
-    The delete of the "replaced file" would then delete the new file."""
+    "Trailer.mkv" and "trailer.mkv" are 2 files on the shares, and only
+    1 can have a record. Thus, the file is never deleted. It goes to
+    the rejects. A path that names the new file itself is not touched.
+    A volume that ignores letter case has 1 file for the 2 spellings."""
 
     from app import importing
 
-    removed = []
+    removed, rejected = [], []
     monkeypatch.setattr(importing.os, "remove", removed.append)
-    new_file = tmp_path / "MIXED CASE FILM (1962) - [DVD].mkv"
+    monkeypatch.setattr(
+        importing,
+        "move_to_rejects",
+        lambda path, reason: rejected.append((path, reason)),
+    )
+    new_file = tmp_path / "TRAILER.mkv"
     new_file.write_bytes(b"new")
     link = tmp_path / "an other name of the new file.mkv"
     os.link(new_file, link)
-    replaced = tmp_path / "A Replaced Film (1962) - [DVD].mkv"
-    replaced.write_bytes(b"old")
+    other_extra = tmp_path / "A Different Trailer.mkv"
+    other_extra.write_bytes(b"old")
     with app.app_context():
         importing._delete_worse_copies(
-            [(str(link), None), (str(replaced), None)], str(new_file)
+            [(str(link), None), (str(other_extra), None)], str(new_file)
         )
-    assert removed == [str(replaced)]
+    assert removed == []
+    assert rejected == [(str(other_extra), "other spelling")]

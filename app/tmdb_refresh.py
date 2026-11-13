@@ -1,7 +1,7 @@
 """Run the TMDB refresh pair (the strangler split from app.videos).
 
 refresh_tmdb_info fetches the canonical TMDB payload of a record on the
-network queue. apply_tmdb_refresh applies the payload on the
+request queue, the sql queue or the maintenance queue. apply_tmdb_refresh applies the payload on the
 single-worker sql queue. That step does the record updates, the file
 renames and the duplicate merges. It makes no request to S3 (#668).
 find_or_create_tmdb_movie is the shared record-creation door. Every
@@ -336,7 +336,7 @@ def _refresh_job_target(job):
     return None
 
 
-def tmdb_refresh_status(library, id):
+def tmdb_refresh_status(library, id, maintenance=True):
     """Return the state of a TMDB refresh of this record, or None.
 
     The refresh is 2 jobs. The fetch runs on the request queue, on the
@@ -344,7 +344,8 @@ def tmdb_refresh_status(library, id):
     discovery). It hands its payload to the apply on the sql queue. The
     apply takes the title lock. When the lock is busy, the apply puts a
     retry in the scheduled registry of the sql queue. This function
-    reads all of these places (#740).
+    reads all of these places (#740). With maintenance False, it leaves
+    out the maintenance queue.
 
     The result is a dict with a "state" key. The state is "deferred" when
     a retry waits for its time. Then "retry_at" gives that time as a
@@ -374,11 +375,9 @@ def tmdb_refresh_status(library, id):
         scheduled_entries(ScheduledJobRegistry(queue=current_app.sql_queue))
     )
     pending = False
-    queues = [
-        current_app.request_queue,
-        current_app.sql_queue,
-        current_app.maintenance_queue,
-    ]
+    queues = [current_app.request_queue, current_app.sql_queue]
+    if maintenance:
+        queues.append(current_app.maintenance_queue)
     for job in live_jobs(queues):
         if not _matches(job):
             continue
@@ -395,9 +394,14 @@ def tmdb_refresh_status(library, id):
 def tmdb_refresh_pending(library, id):
     """Return True while a TMDB refresh of this record is queued or running.
 
-    This covers a deferred retry too. See tmdb_refresh_status."""
+    This covers a deferred retry too. See tmdb_refresh_status. The
+    Atmos supplement waits while this is True, with its staged copy on
+    staging. The maintenance queue has 1 worker, and a fetch there can
+    wait behind the weekly sync for hours. Thus, this function does not
+    read that queue (#740). The apply of such a fetch finds the title
+    lock busy and tries again."""
 
-    return tmdb_refresh_status(library, id) is not None
+    return tmdb_refresh_status(library, id, maintenance=False) is not None
 
 
 # refresh_tmdb_info returns this when TMDB sent nothing for the id. The
@@ -406,29 +410,41 @@ def tmdb_refresh_pending(library, id):
 TMDB_NO_MATCH = "no-match"
 
 
+# The value of queued_tmdb_id for a rematch. A rematch has no check.
+
+ANY_TMDB_ID = object()
+
+
 def _has_other_tmdb_id(record, queued_tmdb_id):
     """Return True if a record got a different TMDB id after a refresh was queued (#735).
 
-    Invariant: a queued refresh never changes the TMDB id of a record.
-    Only an id that a person typed does. A bulk or nightly refresh
-    carries the id that the record had when the job was queued. A
-    person can give the record an other id before the job runs. The
-    older job must not put the old id back. A record with no id takes
-    the id of the job, as before."""
+    Invariant: a queued refresh never changes the TMDB id of a record
+    that has one. Only an id that a person typed does. A bulk or nightly
+    refresh carries the id that the record had when the job was queued.
+    A job for a record with no id carries None, and it searches by the
+    title. A person can give the record an id before the job runs. The
+    older job must not put the old id back, and the search must not put
+    its first hit there. A record with no id takes the id of the job,
+    or of the search, as before."""
 
-    if queued_tmdb_id is None or record.tmdb_id is None:
+    if queued_tmdb_id is ANY_TMDB_ID or record.tmdb_id is None:
         return False
     if record.tmdb_id == queued_tmdb_id:
         return False
+    queued = "no TMDB id" if queued_tmdb_id is None else f"TMDB id {queued_tmdb_id}"
     current_app.logger.info(
         f"{record} has TMDB id {record.tmdb_id} now. The refresh that was "
-        f"queued for TMDB id {queued_tmdb_id} does not run"
+        f"queued for {queued} does not run"
     )
     return True
 
 
 def _refresh_target(
-    library, id, ignored="skipping TMDB refresh", rematch=False, queued_tmdb_id=None
+    library,
+    id,
+    ignored="skipping TMDB refresh",
+    rematch=False,
+    queued_tmdb_id=ANY_TMDB_ID,
 ):
     """Return (record, description) of a TMDB refresh, or None.
 
@@ -441,8 +457,8 @@ def _refresh_target(
     record refreshes that record. description names the job. rematch
     accepts a detached record: an admin entered an id by hand (#514).
     queued_tmdb_id is the id of the arguments of a job that is no
-    rematch. The result is None when the record has an other id now
-    (_has_other_tmdb_id)."""
+    rematch, also when that id is None. The result is None when the
+    record has an other id now (_has_other_tmdb_id)."""
 
     if library == MOVIES:
         movie = Movie.query.filter_by(id=id).first()
@@ -516,7 +532,7 @@ def refresh_tmdb_info(
                 library,
                 id,
                 rematch=rematch,
-                queued_tmdb_id=None if rematch else tmdb_id,
+                queued_tmdb_id=ANY_TMDB_ID if rematch else tmdb_id,
             )
             if target is None:
                 return False
@@ -1107,9 +1123,12 @@ def _apply_movie_refresh(
         else:
             renamed = outcome or renamed
 
+    # The record has the id of the payload now. The retry carries that
+    # id. A job that searched by the title was queued with no id (#735).
+
     if volume_down:
         _requeue_for_the_volume(
-            updated_movie_id, tmdb_id, tmdb_payload, description, volume_waits
+            updated_movie_id, movie.tmdb_id, tmdb_payload, description, volume_waits
         )
 
     # The rename makes no request to S3 (#668). The archive keeps its
@@ -1161,8 +1180,9 @@ def apply_tmdb_refresh(
     queue. The imports, the web process and the series rename write the
     same tables from other processes. A movie refresh also holds the
     locks of the affected titles for its duration. Thus, it cannot
-    interleave with an import of a main feature of the same title that
-    has no edition (_movie_refresh_lock_resources). With notify_if_missing (used for new imports), Fitzflix
+    interleave with an import of a further copy of a file that the title
+    has. The same applies to a first main feature with no edition
+    (_movie_refresh_lock_resources). With notify_if_missing (used for new imports), Fitzflix
     sends an email if the movie still has no TMDB match after the
     payload is applied. A payload whose apply raises goes to a file
     (save_failed_payload). With rematch, a payload clears the
@@ -1184,7 +1204,7 @@ def apply_tmdb_refresh(
                 id,
                 ignored="discarding the fetched TMDB payload",
                 rematch=rematch and tmdb_info is not None,
-                queued_tmdb_id=None if rematch else tmdb_id,
+                queued_tmdb_id=ANY_TMDB_ID if rematch else tmdb_id,
             )
             if target is None:
                 return False

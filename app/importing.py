@@ -2825,8 +2825,10 @@ def _build_records(file_details, inspection, output_name, series_id=None):
     # MariaDB, and the library shares do not. A record with an other
     # spelling takes the path of the new file. A second record is not
     # possible, because the unique key of the path ignores them too. A
-    # file that is still at the old spelling is the replaced file. It
-    # goes with the worse copies after the commit.
+    # file that is still at the old spelling has no record then. It can
+    # be an older copy of this file, or a different extra of the film
+    # ("Trailer.mkv" and "trailer.mkv"). Thus, it goes to the rejects
+    # after the commit, and it is not deleted.
 
     respelled_from = None
     if file and file.file_path != file_details.get("file_path"):
@@ -3338,7 +3340,8 @@ def _upload_columns(file_details):
     key for different bytes. It is at the normal key when no record
     claims that key. That is the case for a record whose film was
     renamed, because its archive keeps the key of the old name (#734).
-    None means that the import uploaded nothing."""
+    The key can also be an older key that holds the same bytes
+    (upload_untouched). None means that the import has no archive."""
 
     if not (file_details or {}).get("aws_key"):
         return None
@@ -3381,7 +3384,8 @@ def _adopt_upload(row_id, upload, output_file):
             current_app.logger.warning(
                 f"'{output_file}' The record or the import is a conversion. "
                 f"The record does not take '{upload['aws_key']}', the original "
-                f"of the new file. It stays in S3 until the weekly sync prunes it"
+                f"of the new file. No record claims it, and the weekly sync "
+                f"can prune it"
             )
             return False
         replaced_key = None
@@ -3406,13 +3410,6 @@ def _adopt_upload(row_id, upload, output_file):
         if file.aws_key_target:
             clear_archive_target(file)
         db.session.commit()
-
-        # The archive of the old file has no record now. It goes, as
-        # after the commit of an import. Then a download of that key
-        # that waits in the queue finds no object, and it stops (#734).
-
-        if replaced_key:
-            _delete_replaced_archive(replaced_key)
     except Exception:
         try:
             db.session.rollback()
@@ -3423,6 +3420,17 @@ def _adopt_upload(row_id, upload, output_file):
             f"failed import: " + traceback.format_exc()
         )
         return False
+
+    # The archive of the old file has no record now. It goes, as after
+    # the commit of an import. Then a download of that key that waits in
+    # the queue finds no object, and it stops (#734). The adoption is
+    # done. A fault of this step must not report it as failed.
+
+    if replaced_key:
+        try:
+            _delete_replaced_archive(replaced_key)
+        except Exception:
+            current_app.logger.warning(traceback.format_exc())
     current_app.logger.warning(
         f"'{output_file}' The commit of the import failed after the new file "
         f"replaced the old file. The record takes '{upload['aws_key']}', the "
@@ -3437,8 +3445,8 @@ def _unclaimed_upload_text(upload):
     if not upload:
         return ""
     return (
-        f". Its original stays in S3 as '{upload['aws_key']}' until the "
-        f"weekly sync prunes it"
+        f". Its original is in S3 as '{upload['aws_key']}'. No record "
+        f"claims it, and the weekly sync can prune it"
     )
 
 
@@ -3454,6 +3462,22 @@ def _repair_replaced_record(row_id, output_file, upload):
         mark_archive_stale(
             row_id, reason="an import replaced the file and its commit failed"
         )
+
+
+def _record_id_at_exact_path(library_file_path):
+    """Return the id of the File row with exactly this library path, or None (#739).
+
+    The path column ignores letter case and accents. A row with an other
+    spelling is the record of an other file on the shares. The repair of
+    a failed import must not give that record the archive of this file."""
+
+    rows = (
+        db.session.query(File.id, File.file_path)
+        .filter(File.file_path == library_file_path)
+        .order_by(File.id)
+        .all()
+    )
+    return next((row_id for row_id, path in rows if path == library_file_path), None)
 
 
 def _claim_at_path(library_file_path, output_file, upload=None):
@@ -3473,13 +3497,7 @@ def _claim_at_path(library_file_path, output_file, upload=None):
     if not library_file_path:
         return False
     try:
-        row_id = (
-            db.session.query(File.id)
-            .filter(File.file_path == library_file_path)
-            .order_by(File.id)
-            .limit(1)
-            .scalar()
-        )
+        row_id = _record_id_at_exact_path(library_file_path)
     except Exception:
         try:
             db.session.rollback()
@@ -3552,11 +3570,17 @@ def repair_replaced_file_task(library_file_path, output_file, tries=1, upload=No
 
     with get_app().app_context():
         try:
-            row = (
-                db.session.query(File.id, File.filesize_bytes)
-                .filter(File.file_path == library_file_path)
-                .order_by(File.id)
-                .first()
+            row = next(
+                (
+                    found
+                    for found in db.session.query(
+                        File.id, File.filesize_bytes, File.file_path
+                    )
+                    .filter(File.file_path == library_file_path)
+                    .order_by(File.id)
+                    if found.file_path == library_file_path
+                ),
+                None,
             )
         except DBAPIError:
             try:
@@ -3909,13 +3933,18 @@ def _delete_worse_copies(worse_local_copies, output_file):
     The new file never has the path of a worse file. The check is a
     guard. A path with an other spelling can name the new file itself on
     a volume that ignores letter case (#739). Such a path is not
-    deleted. An entry with no id is the old spelling of the record of
-    the new file. Its triage snapshots stay with that record."""
+    touched. An entry with no id is the old spelling of the record of
+    the new file. A file there goes to the rejects. Its triage snapshots
+    and its thumb stay with the record."""
 
     from app.triage import remove_triage_snapshots
 
     for worse_path, worse_id in worse_local_copies:
         if worse_path == output_file or _same_file(worse_path, output_file):
+            continue
+        if worse_id is None:
+            if os.path.isfile(worse_path):
+                move_to_rejects(worse_path, "other spelling")
             continue
         try:
             os.remove(worse_path)
@@ -3928,8 +3957,7 @@ def _delete_worse_copies(worse_local_copies, output_file):
             current_app.logger.warning(
                 f"'{worse_path}' Couldn't delete the replaced file: {e}"
             )
-        if worse_id is not None:
-            remove_triage_snapshots(worse_id)
+        remove_triage_snapshots(worse_id)
 
         # The episode thumb of a deleted TV file has no video left (#469)
 
