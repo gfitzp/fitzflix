@@ -549,11 +549,12 @@ def test_the_record_that_takes_an_upload_takes_the_size_of_the_new_file(
         assert not replaced_from_outside(row.filesize_bytes, row.aws_stale, str(source))
 
 
-def test_an_adoption_with_no_size_keeps_the_stale_flag(app, tmp_path):
-    """The share did not give the size of the new file (#750).
+def test_an_adoption_with_no_size_sets_the_stale_flag(app, tmp_path):
+    """The share did not give the size of the new file (#750, #762).
 
     The record still takes the upload: it holds the only original. The
-    stale flag stays, and the scan of the repair stores the size."""
+    adoption sets the stale flag, and the scan of the repair stores the
+    size."""
 
     import app.importing as importing
     from app import db

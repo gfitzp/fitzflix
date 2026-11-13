@@ -658,6 +658,63 @@ def test_an_edit_does_not_replace_a_file_that_an_arr_upgraded(
     assert _hidden_files(library_path) == []
 
 
+@pytest.mark.parametrize(
+    "stale_before", [False, True], ids=["flag set by the edit", "stale before"]
+)
+def test_an_edit_that_stops_on_a_changed_file_puts_the_stale_flag_back(
+    app, monkeypatch, three_audio_mkv, stale_before
+):
+    """Radarr upgrades the film during the reorder of a track edit (#762).
+
+    The edit set the stale flag before mkvpropedit wrote. The remux then
+    stops with LibraryFileChanged. A flag that the edit set goes off
+    again. Then a scan sends the new file to the import and stores
+    nothing. A record that was stale before the edit keeps its flag."""
+
+    import app.importing as importing
+    from app import db
+    from app.models import File
+    import app.tracks as tracks
+
+    file_id, library_path = _propedit_fixture(
+        app,
+        monkeypatch,
+        three_audio_mkv,
+        f"Upgraded In Reorder {stale_before}",
+        app.config["MKVPROPEDIT_BIN"],
+    )
+    size_before = os.path.getsize(library_path)
+    with app.app_context():
+        row = db.session.get(File, file_id)
+        row.filesize_bytes = size_before
+        row.aws_stale = stale_before
+        db.session.commit()
+        default = _uid(file_id, 2)
+    _change_record_during_the_remux(
+        monkeypatch, tracks, lambda: _replace_like_an_arr(library_path)
+    )
+    with app.app_context():
+        with pytest.raises(tracks.LibraryFileChanged):
+            tracks.mkvpropedit_task(file_id, default, None, None)
+        db.session.rollback()
+        row = db.session.get(File, file_id)
+        assert row.aws_stale is stale_before
+        assert row.filesize_bytes == size_before
+        assert _scheduled_scans(app, file_id) == []
+    if stale_before:
+        return
+
+    queued, saves = [], []
+    monkeypatch.setattr(
+        importing, "enqueue_localization", lambda path: queued.append(path) or True
+    )
+    monkeypatch.setattr(tracks, "enqueue_task", lambda *a, **k: saves.append(a[0]))
+    assert tracks.track_metadata_scan_task(file_id) is True
+    assert saves == [] and queued == [library_path]
+    with app.app_context():
+        assert db.session.get(File, file_id).filesize_bytes == size_before
+
+
 def test_a_record_check_does_not_need_the_archive_setting(app, three_audio_mkv):
     """The check of the record runs with ARCHIVE_ORIGINAL_MEDIA off too (#726)."""
 

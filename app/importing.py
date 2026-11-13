@@ -3494,7 +3494,8 @@ def _adopt_upload(row_id, upload, output_file):
         # new file as a file from outside. Its import then deleted the
         # archive that the record takes here. If the share does not
         # give the size now, the record still takes the upload, and the
-        # flag stays. Then the scan of the repair stores the size.
+        # adoption sets the flag. Then the scan of the repair stores the
+        # size.
 
         try:
             record_filesize(file, os.path.getsize(output_file))

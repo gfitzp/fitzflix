@@ -254,6 +254,63 @@ def test_a_finish_retry_scans_only_its_own_result(app, monkeypatch, found, scans
         db.session.rollback()
 
 
+@pytest.mark.parametrize(
+    "stale_before, found, stale_after",
+    [
+        (False, b"the newer release of the film", False),
+        (False, b"1234567", True),
+        (True, b"the newer release of the film", True),
+    ],
+    ids=["other file", "own result", "stale before"],
+)
+def test_a_finish_retry_on_a_changed_file_puts_the_stale_flag_back(
+    app, monkeypatch, stale_before, found, stale_after
+):
+    """The first finish set the stale flag, and its rename failed (#762).
+
+    The retry finds a changed file. A file of an other program is not
+    the file of the record, so the flag that the run set goes off. The
+    own result of the run keeps the flag. So does a record that was
+    stale before the run."""
+
+    import app.atmos as atmos
+    from app import db
+    from app.models import File
+
+    monkeypatch.setitem(app.config, "ARCHIVE_ORIGINAL_MEDIA", True)
+    with app.app_context():
+        file, finish = _finish_job(
+            app, monkeypatch, f"Flag Back {len(found)} {stale_before}"
+        )
+        file_id = file.id
+        library = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
+        File.query.filter_by(id=file_id).update({"aws_stale": stale_before})
+        db.session.commit()
+
+        real_os = atmos.os
+
+        class _RenameFails:
+            def __getattr__(self, name):
+                return getattr(real_os, name)
+
+            def rename(self, src, dst):
+                raise OSError(6, "Device not configured")
+
+        monkeypatch.setattr(atmos, "os", _RenameFails())
+        assert atmos.atmos_finish_task(*finish.args) is False
+        monkeypatch.setattr(atmos, "os", real_os)
+        db.session.rollback()
+        assert db.session.get(File, file_id).aws_stale is True
+
+        (retry,) = _scheduled(app, "app.atmos.atmos_finish_task")
+        os.remove(library)
+        with open(library, "wb") as f:
+            f.write(found)
+        assert atmos.atmos_finish_task(*retry.args, **retry.kwargs) is False
+        db.session.rollback()
+        assert db.session.get(File, file_id).aws_stale is stale_after
+
+
 def test_a_run_of_the_older_code_has_no_stamp_and_still_finishes(app, monkeypatch):
     """A run that waits through the deploy has no stamp in its state (#732)."""
 

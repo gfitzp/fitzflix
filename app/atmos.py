@@ -1244,6 +1244,21 @@ def atmos_finish_task(state, lock, finish_retries=0):
             own_result = bool(finish_retries) and _same_size(
                 error.library_path, state.get("staging_source")
             )
+
+            # The first try can have set the stale flag before its rename
+            # failed. The file of an other program is not behind its
+            # archive. Thus, the flag goes back to its value before the
+            # finish, under the lock of the run (#762). The own result
+            # keeps the flag.
+
+            if not own_result:
+                from app.tracks import put_stale_flag_back
+
+                put_stale_flag_back(
+                    int(state["file_id"]),
+                    state.get("stale_before"),
+                    f"'{state['basename']}'",
+                )
             phases.fail()
             phases.close("failed")
             _close_run(state, lock, ended_early=False)
@@ -1473,6 +1488,9 @@ def _atmos_finish(state, phases):
     file = db.session.get(File, int(state["file_id"]))
     if file is None:
         return True
+    # The stale flag before the first finish. A retry keeps the value of
+    # the first try, whose flag can be on now (#762).
+    state.setdefault("stale_before", bool(file.aws_stale))
     basename = state["basename"]
     file_path = os.path.join(current_app.config["LIBRARY_DIR"], file.file_path)
     workspace = state["workspace"]

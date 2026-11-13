@@ -613,12 +613,17 @@ def replaced_from_outside(filesize_bytes, stale, file_path):
 
     One file of Fitzflix reads as a file from outside: the file of an
     edit that died after its write, when a later upload cleared the
-    flag. The upload does not store the size. A stale record can hold a
-    file from Radarr or Sonarr whose import waits. The size on the
-    record would hide that file from its import (already_cataloged).
-    The import of the file of a dead edit loses nothing: its archive in
-    modified/ has the same bytes, and the import stores the record
-    again.
+    flag. The upload does not store the size. The import of that file
+    loses nothing: its archive in modified/ has the same bytes, and the
+    import stores the record again.
+
+    The rule takes a stale record to hold a file of Fitzflix. An edit
+    that stops because Radarr or Sonarr changed the file
+    (LibraryFileChanged) puts the flag back to its value before the
+    edit (#762). Thus, a stale record holds a file from outside only
+    when it was stale before that change, for example after an edit
+    that died. Then a scan stores the size of that file, and its import
+    skips it (already_cataloged).
 
     A record with no size makes no claim. When Fitzflix does not
     archive, no flag is set, and an edit that died after its write looks
@@ -688,7 +693,8 @@ def confirm_rewrite(file_id, file_path):
     when Fitzflix archives the library files. The cataloging of an
     import, a good upload of the library file and the move of an archive
     to modified/ clear it. So does a record that takes the upload of a
-    failed import.
+    failed import. An edit that stops on a file that an other program
+    changed puts the flag back to its value before the edit (#762).
 
     A failed read or a failed flag raises after the rollback (#561). The
     caller read the row before its slow work. Thus, a new transaction
@@ -711,6 +717,31 @@ def confirm_rewrite(file_id, file_path):
     except Exception:
         db.session.rollback()
         raise
+
+
+def put_stale_flag_back(file_id, stale_before, name):
+    """Give a record the stale flag that it had before an edit stopped on a changed file (#762).
+
+    Invariant: a record that the edit found with no stale flag has no
+    stale flag after LibraryFileChanged. The edit did not write the file
+    that is at the path now. An other program put it there, and its
+    archive is the job of its import. With the flag, the rule of #750
+    took that file to be a file of Fitzflix, and a scan stored it. A
+    record that was stale before the edit keeps its flag. stale_before
+    None changes nothing. This is best effort. A fault only logs."""
+
+    if stale_before is not False:
+        return
+    try:
+        db.session.rollback()
+        File.query.filter_by(id=file_id).update({"aws_stale": False})
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        current_app.logger.warning(
+            f"{name} Cannot remove the stale flag after the file changed: "
+            + traceback.format_exc()
+        )
 
 
 def _rescan_after_a_failed_edit(file_id, name, reason="Track edit failed"):
@@ -1176,7 +1207,8 @@ def _locked_edit(
     scan and raises again. A repeat of an edit reads the file again and
     rebuilds the rows (#611). A failure before the tool wrote costs 1
     scan that only reads the file. LibraryFileChanged queues no scan
-    (#741). The import of the changed file does that work.
+    (#741). The import of the changed file does that work. It puts the
+    stale flag back to its value before the edit (#762).
 
     retry(error, name) can book a retry of a transient fault. It returns
     True if it did. Then the task returns False with no scan, because
@@ -1211,7 +1243,13 @@ def _locked_edit(
         if not lock:
             return True
 
+        # Each writer that sets the stale flag holds the title lock. The
+        # row was read right before the lock. Thus, its flag is the flag
+        # before the edit (#762).
+
+        stale_before = None
         try:
+            stale_before = bool(file.aws_stale)
             refused = refuse_while_restore_pending(file)
             if refused:
                 current_app.logger.warning(f"{name} {refused} The {what} does not run")
@@ -1230,9 +1268,12 @@ def _locked_edit(
             # An other program put a different file at the path (#741).
             # Its import waits for this lock. A scan now would store the
             # size of that file on the record, and the import would then
-            # take the file as cataloged already (already_cataloged).
+            # take the file as cataloged already (already_cataloged). The
+            # stale flag goes back to its value before the edit (#762).
 
-            if not isinstance(error, LibraryFileChanged):
+            if isinstance(error, LibraryFileChanged):
+                put_stale_flag_back(int(file_id), stale_before, name)
+            else:
                 _rescan_after_a_failed_edit(file_id, name)
             raise
         finally:
