@@ -82,7 +82,7 @@ from app.models import (
     TVSeries,
     title_sort,
 )
-from app.file_ranking import ranked_movie_files, ranked_tv_files
+from app.file_ranking import ranked_movie_files, tv_best_holder_ids
 from app.auth.passkeys import identity_confirmed
 from app.main import bp
 from app.main.helpers import (
@@ -2130,8 +2130,6 @@ def files():
 
     movie_rank = ranked_movie_files()
 
-    tv_rank = ranked_tv_files()
-
     files_with_lossless = (
         db.session.query(FileAudioTrack.file_id)
         .filter(FileAudioTrack.compression_mode == "Lossless")
@@ -2168,16 +2166,13 @@ def files():
             RefFeatureType,
             Movie,
             TVSeries,
-            db.case(
-                (movie_rank.c.rank == 1, 1), (tv_rank.c.rank == 1, 1), else_=0
-            ).label("rank"),
+            db.case((movie_rank.c.rank == 1, 1), else_=0).label("rank"),
         )
         .join(RefQuality, (RefQuality.id == File.quality_id))
         .outerjoin(RefFeatureType, (RefFeatureType.id == File.feature_type_id))
         .outerjoin(Movie, (Movie.id == File.movie_id))
         .outerjoin(TVSeries, (TVSeries.id == File.series_id))
         .outerjoin(movie_rank, (movie_rank.c.id == File.id))
-        .outerjoin(tv_rank, (tv_rank.c.id == File.id))
     )
 
     # The search text and the quality combine. Without either, the audio
@@ -2224,6 +2219,13 @@ def files():
         RefQuality.preference.asc(),
         File.basename.asc(),
     ).paginate(page=page, per_page=1000, error_out=False)
+
+    # The best copy of an episode comes from the rule of the S3 sync
+    # (#738), for the series of this page.
+
+    tv_best = tv_best_holder_ids(
+        {row[0].series_id for row in files.items if row[0].series_id}
+    )
 
     # The links keep each filter. The search text comes from the request.
 
@@ -2279,6 +2281,7 @@ def files():
         "files.html",
         title=title,
         files=files.items,
+        tv_best=tv_best,
         next_url=next_url,
         prev_url=prev_url,
         pages=files,

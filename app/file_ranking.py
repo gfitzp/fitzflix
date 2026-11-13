@@ -1,10 +1,15 @@
 """The quality ranking of the library files (#361).
 
-This module holds the one rule that selects the best copy of a film or
-of an episode. It also holds the one rule that tells if that copy is
-worth an upgrade. The reads of the quality tiers are here too. The ranked_files reporting view of MariaDB has the same rule. Its
-definition is RANKED_FILES_VIEW below, and a test compiles the Python
-rank and compares it with that definition."""
+This module holds the rule that selects the best copy of a film
+(movie_file_rank) and the rule for an episode (best_episode_holders).
+It also holds the one rule that tells if that copy is worth an upgrade.
+The reads of the quality tiers are here too. The ranked_files reporting
+view of MariaDB ranks a film by the same rule. It ranks an episode file
+among the files with the same first episode (tv_file_rank). Thus, it
+does not see an episode inside a file of 2 or more episodes. Each page
+and each job uses best_episode_holders for that (#738). The definition
+of the view is RANKED_FILES_VIEW below, and a test compiles the Python
+ranks and compares them with that definition."""
 
 from collections import namedtuple
 
@@ -96,13 +101,15 @@ def movie_file_rank():
 
 
 def tv_file_rank():
-    """Rank each episode file in its series/season/episode group.
+    """Rank each episode file among the files with the same first episode.
 
     The edition is not part of the group. That is intentional. For a TV
     file, it only carries the optional episode title. Thus, 2 copies of
     the same episode compete, with or without a title in their
-    filenames. The order is TV_BEST_ORDER. The ranked_files reporting
-    view uses the same rule (#273).
+    filenames. The order is TV_BEST_ORDER. Only the ranked_files
+    reporting view uses this rank (#273). It does not see a single
+    episode inside a file of 2 or more episodes. No page and no job
+    reads it for "the best copy" (#738). They use best_episode_holders.
     """
 
     return (
@@ -123,19 +130,6 @@ def ranked_movie_files():
     return (
         db.session.query(File.id, movie_file_rank())
         .join(Movie, (Movie.id == File.movie_id))
-        .join(RefQuality, (RefQuality.id == File.quality_id))
-        .subquery()
-    )
-
-
-def ranked_tv_files():
-    """Return a subquery of (id, rank) with the tv_file_rank of each episode file.
-
-    rank 1 is the best copy of its series, season, and episode."""
-
-    return (
-        db.session.query(File.id, tv_file_rank())
-        .join(TVSeries, (TVSeries.id == File.series_id))
         .join(RefQuality, (RefQuality.id == File.quality_id))
         .subquery()
     )

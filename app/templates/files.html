@@ -33,7 +33,7 @@
 					</td>
 					<td class="align-middle text-end">{% if feature.feature_type %}<span class="badge text-bg-info">{{ feature.feature_type }}</span>{% endif %}</td>
 					<td class="align-middle"><a href="{{ url_for('main.file', file_id=file.id) }}">{{ file.basename }}</a></td>
-					<td class="align-middle">{% if rank == 1 %}<span class="badge text-bg-success">{% elif file.quality.physical_media == 1 %}<span class="badge text-bg-warning">{% else %}<span class="badge text-bg-light">{% endif %}{{ quality.quality_title }}</span></td>
+					<td class="align-middle">{% if rank == 1 or file.id in tv_best %}<span class="badge text-bg-success">{% elif file.quality.physical_media == 1 %}<span class="badge text-bg-warning">{% else %}<span class="badge text-bg-light">{% endif %}{{ quality.quality_title }}</span></td>
 				</tr>
 				{% endfor %}
 			</tbody>

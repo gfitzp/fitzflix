@@ -96,7 +96,7 @@ from app.file_ranking import (
     quality_anchors,
     season_grades,
     ranked_movie_files,
-    ranked_tv_files,
+    tv_best_holder_ids,
 )
 from app.newly_added import poster_fold
 from app.infuse_player import infuse_only_formats
@@ -2478,28 +2478,27 @@ def season_restore(series_id, season):
     return redirect(back)
 
 
-def _best_file_row(file):
-    """Return the (File, 1) row of the file if it is the best copy of its group, or None.
+def _is_best_copy(file):
+    """Return True if the file is the best copy of its title, or of an episode.
 
-    The rank is movie_file_rank for a movie file and tv_file_rank for an
-    episode file. The template marks the best copy with it."""
+    Invariant: each page and each job gives the same answer (#738). A
+    movie file has movie_file_rank 1. An episode file is the best holder
+    of an episode number, by the rule of the S3 sync and the season
+    grades (tv_best_holder_ids). That rule counts each episode of a file
+    with 2 or more episodes. The file page offers the upload and the
+    restore of a best copy only."""
 
     if file.movie_id:
-        file_rank = ranked_movie_files()
-    elif file.series_id:
-        file_rank = ranked_tv_files()
-    else:
-        return None
-    return (
-        db.session.query(
-            File,
-            db.case((file_rank.c.rank == 1, 1), else_=0).label("rank"),
+        ranked = ranked_movie_files()
+        return (
+            db.session.query(ranked.c.id)
+            .filter(ranked.c.id == file.id, ranked.c.rank == 1)
+            .first()
+            is not None
         )
-        .join(file_rank, (file_rank.c.id == File.id))
-        .filter(File.id == file.id)
-        .filter(file_rank.c.rank == 1)
-        .first()
-    )
+    if file.series_id:
+        return file.id in tv_best_holder_ids([file.series_id], file.season)
+    return False
 
 
 def changed_track_languages(posted, audio_tracks, subtitle_tracks):
@@ -2915,7 +2914,7 @@ def file(file_id):
         if file.series_id and not file.movie_id
         else None
     )
-    best_file = _best_file_row(file)
+    best_file = _is_best_copy(file)
 
     audio_tracks = FileAudioTrack.query.filter_by(file_id=file.id).all()
     subtitle_tracks = FileSubtitleTrack.query.filter_by(file_id=file.id).all()

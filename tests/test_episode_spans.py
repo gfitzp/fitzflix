@@ -267,3 +267,32 @@ def test_a_worse_copy_delete_removes_its_episode_thumb(app):
         assert not os.path.exists(paths["movie"][0])
         assert os.path.exists(paths["movie"][1])
         os.remove(paths["movie"][1])
+
+
+def test_the_pages_use_the_best_copy_rule_of_the_sync(app, admin_client):
+    """A single inside a better file of 2 episodes is not a best copy (#738).
+
+    The file page and the Files page ranked by the first episode. Thus,
+    they called the single the best copy, and the S3 sync did not. The
+    file page then offered the restore of a copy that the sync never
+    restores."""
+
+    from app import db
+    from app.file_ranking import tv_best_holder_ids
+    from app.main.library import _is_best_copy
+    from tests.factories import make_tv_file, make_tv_series
+
+    with app.app_context():
+        series = make_tv_series("Span Page Show")
+        span = make_tv_file(series, 19, 6, "WEBDL-1080p", last_episode=7)
+        single = make_tv_file(series, 19, 7, "HDTV-720p")
+        db.session.commit()
+
+        assert tv_best_holder_ids([series.id]) == {span.id}
+        assert _is_best_copy(span) is True
+        assert _is_best_copy(single) is False
+
+    page = admin_client.get("/library/files?q=Span Page Show").get_data(as_text=True)
+    assert 'text-bg-success">WEBDL-1080p' in page
+    assert 'text-bg-light">HDTV-720p' in page
+    assert 'text-bg-success">HDTV-720p' not in page

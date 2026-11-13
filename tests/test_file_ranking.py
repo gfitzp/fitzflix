@@ -85,7 +85,7 @@ def test_every_episode_best_copy_reader_prefers_the_real_rip(app, monkeypatch):
 
     import app.dvr as dvr
     from app.main.library import _season_files
-    from app.file_ranking import ranked_tv_files
+    from app.file_ranking import tv_best_holder_ids
 
     with app.app_context():
         series, rip, conversion = _episode_pair()
@@ -100,9 +100,7 @@ def test_every_episode_best_copy_reader_prefers_the_real_rip(app, monkeypatch):
             (conversion.id, 2),
         ]
 
-        ranked = ranked_tv_files()
-        ranks = dict(db.session.query(ranked.c.id, ranked.c.rank))
-        assert ranks == {rip.id: 1, conversion.id: 2}
+        assert tv_best_holder_ids([series.id]) == {rip.id}
 
 
 def test_the_filmography_key_puts_widescreen_before_a_better_fullscreen(app):

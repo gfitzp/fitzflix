@@ -21,7 +21,7 @@ def test_title_sort_skips_the_article_and_prefers_the_tmdb_title(app):
 
 
 def test_ranked_files_mark_the_best_copy_as_rank_1(app):
-    from app.file_ranking import ranked_movie_files, ranked_tv_files
+    from app.file_ranking import ranked_movie_files, tv_best_holder_ids
     from tests.factories import (
         make_movie,
         make_movie_file,
@@ -38,7 +38,5 @@ def test_ranked_files_mark_the_best_copy_as_rank_1(app):
         db.session.commit()
         ranked = ranked_movie_files()
         ranks = dict(db.session.query(ranked.c.id, ranked.c.rank).all())
-        tv_ranked = ranked_tv_files()
-        tv_ranks = dict(db.session.query(tv_ranked.c.id, tv_ranked.c.rank).all())
         assert ranks == {bluray.id: 1, dvd.id: 2}
-        assert tv_ranks == {episode.id: 1}
+        assert tv_best_holder_ids([series.id]) == {episode.id}
