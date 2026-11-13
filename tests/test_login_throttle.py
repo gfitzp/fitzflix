@@ -141,6 +141,16 @@ def test_success_clears_the_failure_counts(app):
     assert app.redis.get(f"{throttle.KEY_PREFIX}fail:address:198.51.100.7") == b"5"
 
 
+def test_a_space_around_the_address_signs_in(app):
+    """The sign-in form strips the typed address before the lookup (#764).
+
+    MariaDB ignores a space at the end of the address, and SQLite does
+    not. The space at the start fails the lookup on both. Thus, only the
+    filter of the form lets this sign-in through on both databases."""
+
+    assert signed_in(sign_in(app, f" {ADMIN_EMAIL} ", ADMIN_PASSWORD))
+
+
 def test_redis_fault_lets_sign_in_through(app, monkeypatch):
     """Test that a Redis fault never locks everybody out."""
 

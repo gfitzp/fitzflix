@@ -207,7 +207,8 @@ def reset_password_request():
         flash("Check your email for instructions to reset your password")
         return redirect(url_for("auth.login"))
 
-    # Invariant: a refused form says why (#764). The page shows no field
+    # Invariant: a form with a refused field says why (#764). A csrf
+    # error stays quiet, as in flash_form_errors. The page shows no field
     # errors. A well-formed address always gets the message above. Thus,
     # no message tells if an account exists.
 
@@ -241,7 +242,8 @@ def reset_password(token):
         flash("Fitzflix reset your password.")
         return redirect(url_for("auth.login"))
 
-    # A refused form says why (#764). The page shows no field errors.
+    # A form with a refused field says why (#764). A csrf error stays
+    # quiet. The page shows no field errors.
 
     flash_form_errors(form)
     return render_template("auth/reset_password.html", form=form)
