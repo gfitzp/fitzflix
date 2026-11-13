@@ -558,7 +558,7 @@ python scheduler.py
 
 #### Workers
 
-Each worker runs `supervisor.py`, as the supervisor programs do. A plain `rq worker` does not monitor the import directory, and it does not reclaim the locks of a killed worker. It also does not write the running, done, and failed stages of the trails.
+Each worker runs `supervisor.py`, as the supervisor programs do. A plain `rq worker` does not monitor the import directory, and it does not reclaim the locks of a killed worker. It also does not write the running, done, and failed stages of the trails. It does not log a job that raises on the app logger either. Thus, the failure sends no mail and writes no line to the log file (#759).
 
 Run a maximum of one SQL worker, so the database operations occur in sequence.
 

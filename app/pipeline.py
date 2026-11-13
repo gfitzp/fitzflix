@@ -42,6 +42,7 @@ import hashlib
 import json
 import logging
 import os
+import threading
 import time
 import traceback
 
@@ -49,6 +50,7 @@ from collections import namedtuple
 from datetime import datetime, timezone
 
 from rq import Queue, SimpleWorker
+from rq.exceptions import DeserializationError, StopRequested
 from rq.timeouts import BaseTimeoutException
 
 FILE_KEY = "fitzflix:pipeline:file:{digest}"
@@ -1414,18 +1416,121 @@ def front_times(connection, job_ids):
     }
 
 
+class _ErrorCounter(logging.Handler):
+    """Count the records at ERROR or higher that reach the "app" logger (#759).
+
+    The failure report of PipelineWorker reads the count. A job that
+    logged its own error at ERROR sent its mail already. The count is
+    for each thread. Thus, an error of the import watcher thread does not
+    count for the job that the worker runs."""
+
+    def __init__(self):
+        super().__init__(level=logging.ERROR)
+        self.counts = {}
+
+    def emit(self, record):
+        """Count 1 record for the thread that logged it."""
+
+        self.counts[record.thread] = self.counts.get(record.thread, 0) + 1
+
+    @property
+    def count(self):
+        """Return the number of records that the current thread logged."""
+
+        return self.counts.get(threading.get_ident(), 0)
+
+
+def _app_error_counter():
+    """Return the error counter of the "app" logger. Attach it the first time."""
+
+    logger = logging.getLogger("app")
+    for handler in logger.handlers:
+        if isinstance(handler, _ErrorCounter):
+            return handler
+    counter = _ErrorCounter()
+    logger.addHandler(counter)
+    return counter
+
+
+def _task_name(job):
+    """Return the name of the task of a job, as the task registry gives it.
+
+    The scheduler puts the registry name in the meta of a job. The other
+    jobs carry it as their function name."""
+
+    try:
+        return (job.meta or {}).get("func") or job.func_name
+    except DeserializationError:
+        return "an unknown task"
+
+
 class PipelineWorker(SimpleWorker):
     """A SimpleWorker that stamps the trail around the execution.
 
     It stamps started when it picks up a job. It stamps done or failed
-    when the job completes."""
+    when the job completes. It reports each job that raises on the "app"
+    logger (#759)."""
+
+    def __init__(self, *args, **kwargs):
+        """Build the worker of rq. Then add the failure report to its exception handlers."""
+
+        super().__init__(*args, **kwargs)
+        self._error_counter = _app_error_counter()
+        self._errors_before_job = self._error_counter.count
+        self.push_exc_handler(self.report_job_exception)
 
     def execute_job(self, job, queue):
         """Stamp started and clear a front mark. Then run the job as SimpleWorker does."""
 
+        self._errors_before_job = self._error_counter.count
         record_job_event(self.connection, job, "started")
         self.connection.zrem(FRONT_KEY, job.id)
         return super().execute_job(job, queue)
+
+    def report_job_exception(self, job, exc_type, exc_value, tb):
+        """Log 1 record on the "app" logger for a job that raised (#759).
+
+        rq logs the exception of a job only on its own logger, to the
+        stderr file of the worker. The mail and the log file of Fitzflix
+        are on the "app" logger. The invariant: 1 failed job sends 1 mail.
+
+        - A stop of the worker is not a failure of the job. An exception
+          that is not an Exception, or StopRequested, logs a WARNING.
+        - A job that logged a record at ERROR sent its own mail. Then this
+          logs a WARNING with no traceback.
+        - Each other exception logs an ERROR with the traceback. A job
+          timeout is such a failure.
+
+        This never raises. It returns True. Thus, rq continues with its
+        own failure handling: the failed registry and the trail stamp."""
+
+        try:
+            name = _task_name(job)
+            message = str(exc_value)
+            text = f"{exc_type.__name__}: {message}" if message else exc_type.__name__
+            logger = logging.getLogger("app")
+            if not issubclass(exc_type, Exception) or issubclass(
+                exc_type, StopRequested
+            ):
+                logger.warning(
+                    "The worker stopped the task %s (job %s): %s", name, job.id, text
+                )
+            elif self._error_counter.count > self._errors_before_job:
+                logger.warning("The task %s failed (job %s): %s", name, job.id, text)
+            else:
+                logger.error(
+                    "The task %s failed (job %s): %s",
+                    name,
+                    job.id,
+                    text,
+                    exc_info=(exc_type, exc_value, tb),
+                )
+        except Exception:
+            try:
+                self.log.exception("The failure report of a job failed")
+            except Exception:
+                pass
+        return True
 
     def handle_job_success(self, job, queue, started_job_registry):
         """Run the success handling of rq. Then stamp the trail done."""

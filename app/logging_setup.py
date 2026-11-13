@@ -72,7 +72,8 @@ def configure_logging(app):
         if app.config["MAIL_SERVER"] and not any(
             isinstance(handler, SMTPHandler) for handler in app.logger.handlers
         ):
-            # Send an email for each exception.
+            # Send an email for each record at ERROR or higher. The
+            # worker logs 1 such record for a job that raises (#759).
 
             auth = None
             if app.config["MAIL_USERNAME"] or app.config["MAIL_PASSWORD"]:

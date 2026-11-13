@@ -2043,3 +2043,163 @@ def test_a_rebooked_entry_shows_as_a_booked_retry(app):
     finally:
         app.redis.delete(key)
         app.redis.zrem(ACTIVE_KEY, _digest(basename))
+
+
+# The jobs of the failure-report tests (#759). The worker imports them by
+# name, so they live at the top level of this module.
+
+
+def _log_and_raise():
+    """Log a traceback at ERROR on the "app" logger, then raise again."""
+
+    import logging
+
+    logging.getLogger("app").error("Traceback of the task itself")
+    raise RuntimeError("the task logged this failure")
+
+
+def _stop_the_worker():
+    """Raise the SystemExit of a cold stop inside the job."""
+
+    raise SystemExit()
+
+
+def _time_out():
+    """Raise the timeout of rq inside the job."""
+
+    from rq.timeouts import JobTimeoutException
+
+    raise JobTimeoutException("Task exceeded maximum timeout value (1 seconds)")
+
+
+class _Records:
+    """Collect the records of the "app" logger while the block runs."""
+
+    def __enter__(self):
+        import logging
+
+        self.records = []
+        self.handler = logging.Handler(level=logging.DEBUG)
+        self.handler.emit = self.records.append
+        logging.getLogger("app").addHandler(self.handler)
+        return self
+
+    def __exit__(self, *exc_info):
+        import logging
+
+        logging.getLogger("app").removeHandler(self.handler)
+
+    def at(self, level):
+        """Return the records of the level, with their full text."""
+
+        return [
+            self.handler.format(record)
+            for record in self.records
+            if record.levelno == level
+        ]
+
+
+def _run_one(app, func, *args):
+    """Run 1 job of func in a PipelineWorker. Return the job and the records."""
+
+    from app.pipeline import PipelineWorker
+
+    with app.app_context():
+        job = app.maintenance_queue.enqueue(func, *args)
+    with _Records() as records:
+        PipelineWorker([app.maintenance_queue], connection=app.redis).work(burst=True)
+    return job, records
+
+
+def test_a_job_that_raises_logs_one_error_on_the_app_logger(app):
+    """The mail and the log file of Fitzflix get each failed job (#759)."""
+
+    import logging
+
+    from rq.registry import FailedJobRegistry
+
+    job, records = _run_one(app, "os.listdir", "/no/such/folder/759")
+
+    (error,) = records.at(logging.ERROR)
+    assert "os.listdir" in error
+    assert job.id in error
+    assert "FileNotFoundError" in error
+    assert "Traceback" in error
+    assert job.id in FailedJobRegistry(queue=app.maintenance_queue).get_job_ids()
+
+
+def test_a_job_that_returns_logs_no_error(app):
+    """A good job writes no ERROR record on the "app" logger."""
+
+    import logging
+
+    _, records = _run_one(app, "os.getpid")
+
+    assert records.at(logging.ERROR) == []
+    assert records.at(logging.WARNING) == []
+
+
+def test_a_job_that_logged_its_own_error_sends_one_mail(app):
+    """The report of the worker is a WARNING when the job logged at ERROR."""
+
+    import logging
+
+    job, records = _run_one(app, "tests.test_pipeline._log_and_raise")
+
+    assert records.at(logging.ERROR) == ["Traceback of the task itself"]
+    (warning,) = records.at(logging.WARNING)
+    assert "tests.test_pipeline._log_and_raise" in warning
+    assert job.id in warning
+    assert "RuntimeError: the task logged this failure" in warning
+    assert "Traceback" not in warning
+
+
+def test_a_stop_of_the_worker_is_not_an_error(app):
+    """A cold stop inside a job logs a WARNING. A deploy sends no mail."""
+
+    import logging
+
+    job, records = _run_one(app, "tests.test_pipeline._stop_the_worker")
+
+    assert records.at(logging.ERROR) == []
+    (warning,) = records.at(logging.WARNING)
+    assert job.id in warning
+    assert "SystemExit" in warning
+
+
+def test_a_job_timeout_is_an_error(app):
+    """A job that runs past its timeout failed. Its report is an ERROR."""
+
+    import logging
+
+    job, records = _run_one(app, "tests.test_pipeline._time_out")
+
+    (error,) = records.at(logging.ERROR)
+    assert "tests.test_pipeline._time_out" in error
+    assert "JobTimeoutException" in error
+
+
+def test_a_fault_in_the_failure_report_does_not_stop_the_worker(app, monkeypatch):
+    """rq still fails the job and stamps its chip when the report fails."""
+
+    from rq.registry import FailedJobRegistry
+
+    from app.pipeline import pipeline_trails
+
+    def broken(job):
+        raise RuntimeError("broken report")
+
+    monkeypatch.setattr("app.pipeline._task_name", broken)
+    from app import db
+
+    with app.app_context():
+        movie = make_movie("Trail Broken Report", 2001)
+        file = make_movie_file(movie, "Bluray-1080p")
+        db.session.commit()
+        file_id = file.id
+    monkeypatch.setattr("app.videos.upload_task", lambda *args, **kwargs: 1 / 0)
+    job, _ = _run_one(app, "app.videos.upload_task", file_id)
+
+    assert job.id in FailedJobRegistry(queue=app.maintenance_queue).get_job_ids()
+    (trail,) = pipeline_trails(app.redis)
+    assert [entry["status"] for entry in trail["entries"]] == ["failed"]
