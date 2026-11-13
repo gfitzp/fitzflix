@@ -782,6 +782,39 @@ def archived_original_from_file(file, reason):
     return archived
 
 
+def _held_owner(held, details):
+    """Return (movie id, series id) of the title that a held file belongs to (#736).
+
+    A held file can wait for days, and a TMDB refresh can rename its
+    title in that time. The title and the year of the details are from
+    the time of the hold. Thus, the file that blocked the import names
+    the owner first. Then the TMDB id of the details does. The stored
+    title is the last source. An original with no owner is on no page,
+    and a delete of the title leaves it in S3."""
+
+    from app.models import File, Movie, TVSeries
+
+    blocker = (
+        db.session.get(File, held.existing_file_id) if held.existing_file_id else None
+    )
+    if blocker is not None and (blocker.movie_id or blocker.series_id):
+        return blocker.movie_id, blocker.series_id
+    model = Movie if details["media_library"] == MOVIES else TVSeries
+    owner = None
+    if details.get("tmdb_id"):
+        owner = (
+            model.query.filter_by(tmdb_id=details["tmdb_id"]).order_by(model.id).first()
+        )
+    if owner is None and model is Movie:
+        owner = Movie.query.filter_by(
+            title=details["title"], year=details.get("year")
+        ).first()
+    elif owner is None:
+        owner = TVSeries.query.filter_by(title=details["title"]).first()
+    owner_id = owner.id if owner else None
+    return (owner_id, None) if model is Movie else (None, owner_id)
+
+
 def archive_held_task(held_id):
     """Archive a held original to S3 and record it as an archive-only original.
 
@@ -790,7 +823,7 @@ def archive_held_task(held_id):
 
     from app.arr_client import take_remembered_download
     from app.aws_storage import upload_untouched
-    from app.models import ArchivedOriginal, HeldImport, Movie, TVSeries
+    from app.models import ArchivedOriginal, HeldImport
 
     with app.app_context():
         held = db.session.get(HeldImport, held_id)
@@ -814,15 +847,10 @@ def archive_held_task(held_id):
             if archived is None:
                 archived = ArchivedOriginal(aws_key=key)
             archived.media_library = details["media_library"]
+            archived.movie_id, archived.series_id = _held_owner(held, details)
             if details["media_library"] == MOVIES:
-                movie = Movie.query.filter_by(
-                    title=details["title"], year=details["year"]
-                ).first()
-                archived.movie_id = movie.id if movie else None
                 archived.edition = details.get("edition")
             else:
-                series = TVSeries.query.filter_by(title=details["title"]).first()
-                archived.series_id = series.id if series else None
                 archived.season = details.get("season")
                 archived.episode = details.get("episode")
             archived.plex_title = details.get("plex_title")

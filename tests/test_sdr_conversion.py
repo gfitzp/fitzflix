@@ -854,6 +854,62 @@ def test_a_real_rip_keeps_the_original_of_the_conversion(app, monkeypatch):
         os.remove(os.path.join(app.config["LIBRARY_DIR"], file.file_path))
 
 
+@pytest.mark.parametrize("by", ["blocker", "tmdb id"])
+def test_archive_only_finds_a_film_that_was_renamed_after_the_hold(
+    app, monkeypatch, by
+):
+    """A TMDB refresh can rename the film while the file is held (#736).
+
+    The details have the old title. The file that blocked the import,
+    or the TMDB id of the details, still names the film."""
+
+    import app.aws_storage as aws_storage
+    from app.sdr_conversion import archive_held_task
+    from tests.factories import make_movie_file
+
+    with app.app_context():
+        movie = make_movie("New Title Of The Film", 1999, tmdb_id=736001)
+        blocker = make_movie_file(movie, "Bluray-1080p")
+        db.session.commit()
+        held_path = os.path.join(
+            app.config["HELD_DIR"], "Old Title (1999) - [Bluray-2160p].mkv"
+        )
+        with open(held_path, "wb") as f:
+            f.write(b"4k original")
+        details = {
+            "media_library": "Movies",
+            "title": "Old Title",
+            "year": 1999,
+            "plex_title": "Old Title (1999)",
+            "edition": None,
+            "quality_title": "Bluray-1080p",
+            "converted_from_quality": "Bluray-2160p",
+        }
+        if by == "tmdb id":
+            details["tmdb_id"] = 736001
+        held = HeldImport(
+            held_path=held_path,
+            untouched_basename=os.path.basename(held_path),
+            file_details=json.dumps(details),
+            source_format="HDR10",
+            decision="archive",
+            existing_file_id=blocker.id if by == "blocker" else None,
+        )
+        db.session.add(held)
+        db.session.commit()
+        monkeypatch.setattr(
+            aws_storage,
+            "aws_upload",
+            lambda path, prefix="", **kw: (
+                f"{prefix}/{os.path.basename(path)}",
+                datetime.utcnow(),
+                os.path.getsize(path),
+            ),
+        )
+        assert archive_held_task(held.id) is True
+        assert ArchivedOriginal.query.one().movie_id == movie.id
+
+
 def test_archive_only_uploads_the_held_file(app, monkeypatch):
     import app.aws_storage as aws_storage
     from app.sdr_conversion import archive_held_task
