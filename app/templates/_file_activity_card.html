@@ -4,7 +4,9 @@
    trail_for lookup of the view). The chip slot is hidden when the file has no trail. The
    queue poll matches the cards of a new list to the cards on the page
    by data-card-key. It keeps a card whose data-card-version did not
-   change. #}
+   change. The file pages are admin tools. Thus, only an admin gets a
+   link to the File page. The TV poster of a member goes to the series
+   page (#765). #}
 {% from "_trail_chips.html" import trail_chips %}
 {% from "_movie_poster_small.html" import movie_poster_small %}
 {% from "_tv_poster_small.html" import tv_poster_small %}
@@ -17,14 +19,14 @@
 			{{ movie_poster_small(movie, file) }}
 		</a>
 		{% else %}
-		<a href="{{ url_for('main.file', file_id=file.id) }}">
+		<a href="{{ url_for('main.file', file_id=file.id) if current_user.admin else url_for('main.tv', series_id=file.series_id) }}">
 			{{ tv_poster_small(file.tv_series) }}
 		</a>
 		{% endif %}
 		<div class="flex-grow-1">
 			<div class="text-muted small font-italic">Added {{ moment(file.date_added).format("LLL") }}{% if file.date_updated %}, file details last updated {{ moment(file.date_updated).format("LLL") }}{% endif %}</div>
 			<h5 class="mt-0 mb-0">
-				<a href="{{ url_for('main.file', file_id=file.id) }}">{{ file.basename }}</a>
+				{% if current_user.admin %}<a href="{{ url_for('main.file', file_id=file.id) }}">{{ file.basename }}</a>{% else %}{{ file.basename }}{% endif %}
 			</h5>
 			{% if file.movie %}
 			<a href="{{ url_for('main.movie', movie_id=movie.id) }}">{{ movie|display_title }} ({{ movie|display_year }})</a><br/>

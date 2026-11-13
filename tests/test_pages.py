@@ -404,6 +404,38 @@ def test_file_activity_page_wires_the_live_dashboard(app, admin_client):
     assert "window.fileActivityCardsUrl = " not in deeper
 
 
+@pytest.mark.parametrize("path", ["/file-activity", "/file-activity/cards"])
+def test_file_activity_links_only_an_admin_to_the_file_page(
+    app, admin_client, user_client, path
+):
+    """A member gets no link to the File page, which is for admins (#765).
+
+    The file name is plain text for a member. The poster of a TV card
+    goes to the series page. The poll paints the card list from the same
+    template."""
+
+    from app import db
+    from tests.factories import make_movie, make_movie_file, make_tv_file
+    from tests.factories import make_tv_series
+
+    with app.app_context():
+        movie_file = make_movie_file(make_movie("Member Card Film", 2013), "DVD")
+        series = make_tv_series("Member Card Show")
+        tv_file = make_tv_file(series, 1, 1, "DVD")
+        db.session.commit()
+        movie_file_id, tv_file_id, series_id = movie_file.id, tv_file.id, series.id
+
+    member_page = user_client.get(path).get_data(as_text=True)
+    assert "Member Card Film" in member_page and "Member Card Show" in member_page
+    assert not re.search(r'href="/file/\d+"', member_page)
+    assert member_page.count(f'href="/tv/{series_id}"') == 2
+
+    admin_page = admin_client.get(path).get_data(as_text=True)
+    assert f'href="/file/{movie_file_id}"' in admin_page
+    assert admin_page.count(f'href="/file/{tv_file_id}"') == 2
+    assert admin_page.count(f'href="/tv/{series_id}"') == 1
+
+
 def test_file_activity_cards_answer_304_until_a_card_changes(app, admin_client):
     """Test that the card list answers 304 while no card changes.
 
