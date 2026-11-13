@@ -593,3 +593,89 @@ next();
         "The passkey was not accepted.",
         {"redirect": "/"},
     ]
+
+
+SUGGESTION_FAKES = r"""
+let wanted = null;
+let activeIndex = -1;
+const pending = {};
+const menu = {
+    innerHTML: "", children: [], shown: false,
+    classList: { add() { menu.shown = true; }, remove() { menu.shown = false; } },
+    appendChild(item) { menu.children.push(item.textContent); },
+};
+function hide() { wanted = null; menu.shown = false; menu.children = []; }
+// Each request waits until the test settles it.
+answer = (url) => new Promise((resolve) => {
+    const q = decodeURIComponent(url.split("q=")[1]);
+    pending[q] = () => resolve({
+        ok: true,
+        json: () => Promise.resolve({ results: [{ url: "/", title: q, detail: "film" }] }),
+    });
+});
+// The harness prints after 2 turns of the event loop. Thus, a wait
+// uses only the queue of the promises.
+const tick = async () => { for (let i = 0; i < 20; i += 1) await Promise.resolve(); };
+"""
+
+
+def test_an_old_search_answer_does_not_paint_the_menu(admin_client, tmp_path):
+    """An answer paints only for the text that the box holds (#756).
+
+    The person typed more, or cleared the box, while the request was on
+    its way. The old answer opened the menu under the new text."""
+
+    body = admin_client.get("/").get_data(as_text=True)
+    test_code = SUGGESTION_FAKES + r"""
+(async () => {
+    const seen = {};
+    // The box is cleared while the answer for "st" is on its way.
+    wanted = "st";
+    suggest("st");
+    hide();
+    pending["st"]();
+    await tick();
+    seen.cleared = { shown: menu.shown, items: menu.children.slice() };
+
+    // "st", then "sta". The answer for "sta" comes first.
+    wanted = "st";
+    suggest("st");
+    wanted = "sta";
+    suggest("sta");
+    pending["sta"]();
+    await tick();
+    pending["st"]();
+    await tick();
+    seen.overtaken = { shown: menu.shown, items: menu.children.slice() };
+    result = seen;
+})();
+"""
+    out = run_page_script(body, ["suggest"], test_code, tmp_path)
+    assert out["result"] == {
+        "cleared": {"shown": False, "items": []},
+        "overtaken": {"shown": True, "items": ["sta — film"]},
+    }
+
+
+def test_an_old_dvr_title_answer_does_not_paint_the_menu(tmp_path):
+    """The title box of a DVR channel page has the same rule (#756)."""
+
+    body = _template_source("dvr_channel.html")
+    test_code = SUGGESTION_FAKES + r"""
+const input = { dataset: { kind: "series" } };
+const painted = [];
+function render(results) { painted.push(results.map((item) => item.title)); }
+(async () => {
+    wanted = "do";
+    lookup("do");
+    wanted = "doc";
+    lookup("doc");
+    pending["doc"]();
+    await tick();
+    pending["do"]();
+    await tick();
+    result = painted;
+})();
+"""
+    out = run_page_script(body, ["lookup"], test_code, tmp_path)
+    assert out["result"] == [["doc"]]

@@ -230,11 +230,20 @@
 				var timer = null;
 				var activeIndex = -1;
 
+				// Invariant: the menu shows the suggestions for the text
+				// that is in the box now (#756). wanted is that text while
+				// the menu can open for it. An answer for an other text is
+				// old: the person typed more, cleared the box or closed the
+				// menu while the request was on its way.
+
+				var wanted = null;
+
 				function items() {
 					return menu.querySelectorAll(".dropdown-item");
 				}
 
 				function hide() {
+					wanted = null;
 					menu.classList.remove("show");
 					menu.innerHTML = "";
 					activeIndex = -1;
@@ -250,6 +259,31 @@
 					list[activeIndex].scrollIntoView({ block: "nearest" });
 				}
 
+				function suggest(q) {
+					return fetch("{{ url_for('main.search_json') }}?q=" + encodeURIComponent(q))
+						.then(function(r) { return r.json(); })
+						.then(function(data) {
+							if (wanted !== q) return;
+							menu.innerHTML = "";
+							activeIndex = -1;
+							(data.results || []).forEach(function(item) {
+								var a = document.createElement("a");
+								a.className = "dropdown-item small text-truncate";
+								a.href = item.url;
+								a.textContent = item.title + " — " + item.detail;
+								menu.appendChild(a);
+							});
+							if (menu.children.length) {
+								menu.classList.add("show");
+							} else {
+								hide();
+							}
+						})
+						.catch(function() {
+							if (wanted === q) hide();
+						});
+				}
+
 				input.addEventListener("input", function() {
 					clearTimeout(timer);
 					var q = input.value.trim();
@@ -257,27 +291,8 @@
 						hide();
 						return;
 					}
-					timer = setTimeout(function() {
-						fetch("{{ url_for('main.search_json') }}?q=" + encodeURIComponent(q))
-							.then(function(r) { return r.json(); })
-							.then(function(data) {
-								menu.innerHTML = "";
-								activeIndex = -1;
-								(data.results || []).forEach(function(item) {
-									var a = document.createElement("a");
-									a.className = "dropdown-item small text-truncate";
-									a.href = item.url;
-									a.textContent = item.title + " — " + item.detail;
-									menu.appendChild(a);
-								});
-								if (menu.children.length) {
-									menu.classList.add("show");
-								} else {
-									hide();
-								}
-							})
-							.catch(hide);
-					}, 250);
+					wanted = q;
+					timer = setTimeout(function() { suggest(q); }, 250);
 				});
 
 				input.addEventListener("keydown", function(e) {

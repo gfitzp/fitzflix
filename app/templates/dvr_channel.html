@@ -135,7 +135,12 @@ document.querySelectorAll(".dvr-title-lookahead").forEach(function (input) {
 	let timer = null;
 	let active = -1;
 
+	// The text that the menu can open for, as in base.html (#756). An
+	// answer for an other text is old.
+	let wanted = null;
+
 	function hide() {
+		wanted = null;
 		menu.classList.remove("show");
 		menu.innerHTML = "";
 		active = -1;
@@ -167,15 +172,22 @@ document.querySelectorAll(".dvr-title-lookahead").forEach(function (input) {
 			hide();
 			return;
 		}
-		timer = setTimeout(function () {
-			const url = "{{ url_for('main.dvr_title_search') }}?kind=" +
-				input.dataset.kind + "&q=" + encodeURIComponent(q);
-			fetch(url)
-				.then(function (response) { return response.ok ? response.json() : { results: [] }; })
-				.then(function (data) { render(data.results || []); })
-				.catch(hide);
-		}, 250);
+		wanted = q;
+		timer = setTimeout(function () { lookup(q); }, 250);
 	});
+
+	function lookup(q) {
+		const url = "{{ url_for('main.dvr_title_search') }}?kind=" +
+			input.dataset.kind + "&q=" + encodeURIComponent(q);
+		return fetch(url)
+			.then(function (response) { return response.ok ? response.json() : { results: [] }; })
+			.then(function (data) {
+				if (wanted === q) render(data.results || []);
+			})
+			.catch(function () {
+				if (wanted === q) hide();
+			});
+	}
 
 	input.addEventListener("keydown", function (event) {
 		const items = menu.querySelectorAll(".dropdown-item");
