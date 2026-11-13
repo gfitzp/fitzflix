@@ -829,6 +829,38 @@ def test_the_backfill_lists_the_drifted_rows_and_apply_requests_them(app):
         assert {job.args[0] for job in move_jobs(app)} == {ids[1], ids[2]}
 
 
+def test_the_dry_run_lists_every_row_that_lags(app):
+    """The dry run is the review step, so it prints each row that lags (#769).
+
+    A pending row keeps its mark. The dry run requests no move."""
+
+    from app import db
+    from app.models import File
+
+    with app.app_context():
+        files = [
+            archived_film(f"Lag {n}", 1970 + n, key_name=f"Old Lag {n}.mkv")
+            for n in range(6)
+        ]
+        files[5].aws_key_target = f"untouched/{files[5].untouched_basename}"
+        db.session.commit()
+        ids = [file.id for file in files]
+
+    output = _dry_run(app)
+    assert "6 archive key(s) differ" in output
+    rows = [line for line in output.splitlines() if " -> " in line]
+    assert len(rows) == 6
+    for n, file_id in enumerate(ids):
+        assert f"  [{file_id}] untouched/Old Lag {n}.mkv -> " in output
+    assert [row for row in rows if row.endswith("(pending)")] == [
+        row for row in rows if row.startswith(f"  [{ids[5]}]")
+    ]
+    assert "--apply requests 5 move(s)" in output
+    with app.app_context():
+        assert move_jobs(app) == []
+        assert [db.session.get(File, i).aws_key_target for i in ids[:5]] == [None] * 5
+
+
 def test_the_system_page_shows_the_pending_moves(app, admin_client):
     from app import aws_storage, db
 

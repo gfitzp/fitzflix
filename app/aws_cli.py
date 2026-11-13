@@ -140,7 +140,9 @@ def register_cli(app):
         if pending:
             click.echo(f"  {pending} of them are pending already")
         selected = waiting if limit is None else waiting[: max(limit, 0)]
-        shown = selected if apply_moves else drifted[:5]
+        # The dry run is the review step, so it prints each row that lags,
+        # the pending rows too (#769). --apply prints the rows it requests.
+        shown = selected if apply_moves else drifted
         for file, source, target, size in shown:
             mark = " (pending)" if file.aws_key_target == target else ""
             click.echo(f"  [{file.id}] {source} -> {target} ({size} bytes){mark}")
