@@ -225,7 +225,10 @@ def find_or_create_tmdb_movie(tmdb_id, film_title, year, details=None):
     uses a record with the same canonical title and year, if that
     record has no tmdb id. Only then does it create a review-only
     record. If a different film has the title and the year, it returns
-    (None, False). The movie can appear after the
+    (None, False). A record needs a year. Thus, a film with no year and
+    no record for the tmdb id also gives (None, False), and this function
+    inserts nothing (#760). Each caller skips the film for (None, False).
+    The movie can appear after the
     redirect check of the caller (an import or a concurrent log). The
     caller must commit the session. If the record is new, the caller
     must enqueue the standard TMDB refresh.
@@ -239,6 +242,15 @@ def find_or_create_tmdb_movie(tmdb_id, film_title, year, details=None):
 
     film_title = clip_movie_title(film_title)
     movie = Movie.query.filter_by(tmdb_id=tmdb_id).first()
+    if movie is None and year is None:
+        # The year column is NOT NULL. An announced film with no release
+        # date has no year. The database must not get an insert that it
+        # refuses (#760).
+        current_app.logger.info(
+            f"TMDB {tmdb_id} '{film_title}' has no year and no record. "
+            f"Fitzflix does not create a record for it."
+        )
+        return None, False
     if movie is None:
         movie = Movie.query.filter_by(title=film_title, year=year).first()
         if movie is not None and movie.tmdb_id is None:

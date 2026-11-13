@@ -340,6 +340,33 @@ def test_sync_creates_missing_movie_records(app, monkeypatch):
         assert len(refreshes) == 1
 
 
+def test_a_feed_entry_with_no_year_is_skipped(app, monkeypatch):
+    """A film with no year gets no record. The other entries are stored (#760)."""
+
+    with app.app_context():
+        user = User.query.first()
+        user.letterboxd_username = "test"
+        db.session.commit()
+
+        xml = build_feed(
+            feed_item("letterboxd-watch-31", 424243, title="No Year Yet", year=""),
+            feed_item("letterboxd-watch-32", 424244, title="Dated Short", year=2019),
+        )
+        run_sync(app, xml, monkeypatch)
+
+        assert Movie.query.filter_by(tmdb_id=424243).first() is None
+        assert (
+            UserMovieReview.query.filter_by(
+                letterboxd_guid="letterboxd-watch-31"
+            ).first()
+            is None
+        )
+        stored = UserMovieReview.query.filter_by(
+            letterboxd_guid="letterboxd-watch-32"
+        ).one()
+        assert stored.movie_id == Movie.query.filter_by(tmdb_id=424244).one().id
+
+
 def test_sync_corrects_drifted_dates_on_midnight_rows(app, monkeypatch):
     from app.diary import star_rating_fields
 

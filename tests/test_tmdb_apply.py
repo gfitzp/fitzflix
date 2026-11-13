@@ -271,6 +271,27 @@ def test_a_namesake_with_another_tmdb_id_is_not_adopted(app):
         assert movie.tmdb_id == 503
 
 
+def test_a_film_with_no_year_gets_no_record(app, caplog):
+    """A record needs a year. A film with no year and no record is refused (#760)."""
+
+    from app.tmdb_refresh import find_or_create_tmdb_movie
+
+    with app.app_context():
+        held = make_movie("Held Film", 2001, tmdb_id=601)
+        db.session.commit()
+
+        with caplog.at_level("INFO"):
+            assert find_or_create_tmdb_movie(602, "Announced Sequel", None) == (
+                None,
+                False,
+            )
+        assert Movie.query.filter_by(tmdb_id=602).first() is None
+        assert any("TMDB 602" in record.getMessage() for record in caplog.records)
+
+        # A film that has a record for the tmdb id needs no year.
+        assert find_or_create_tmdb_movie(601, "Held Film", None) == (held, False)
+
+
 def test_a_movie_delete_keeps_the_shared_tmdb_rows(app):
     """A delete removes only the link rows of the film, never a shared genre."""
 

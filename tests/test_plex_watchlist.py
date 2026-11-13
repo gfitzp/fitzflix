@@ -1000,3 +1000,28 @@ def test_a_total_size_under_the_first_page_skips_the_run(app, monkeypatch):
         assert plex_watchlist.sync_plex_watchlist() is True
         assert fitzflix_watchlist_tmdb_ids(user_id) == set(ids)
         assert json.loads(app.redis.get(plex_watchlist.SNAPSHOT_KEY)) == ids
+
+
+def test_a_plex_film_with_no_year_does_not_stop_the_sync(app, monkeypatch):
+    """An announced film with no year gets no record. The other films sync (#760).
+
+    The film stays out of the snapshot. Thus, a later run does not read
+    it as a removal on Plex."""
+    import app.plex_watchlist as plex_watchlist
+
+    with app.app_context():
+        user_id = setup_user(app)
+        fake = FakePlex({331: ("Announced Sequel", None), 332: ("Dated Film", 2001)})
+        wire(app, monkeypatch, fake)
+        assert plex_watchlist.sync_plex_watchlist() is True
+
+        assert fitzflix_watchlist_tmdb_ids(user_id) == {332}
+        assert Movie.query.filter_by(tmdb_id=331).first() is None
+        assert json.loads(app.redis.get(plex_watchlist.SNAPSHOT_KEY)) == [332]
+        assert fake.removes == []
+
+        # The next run tries the film again and removes nothing.
+        assert plex_watchlist.sync_plex_watchlist() is True
+        assert fitzflix_watchlist_tmdb_ids(user_id) == {332}
+        assert fake.films == {331, 332}
+        assert fake.removes == []
