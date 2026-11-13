@@ -542,6 +542,25 @@ def track_metadata_scan_task(file_id):
                 )
                 return True
 
+            # Invariant: a scan stores only the file of its record (#750).
+            # The import reads a record with the path and the size of a
+            # file as its own result (already_cataloged). A scan that
+            # stored the size of an upgrade from Radarr or Sonarr hid
+            # that file from its import for good.
+
+            if replaced_from_outside(file.filesize_bytes, file.aws_stale, file_path):
+                from app.importing import enqueue_localization
+
+                current_app.lock_manager.unlock(lock)
+                lock = None
+                current_app.logger.warning(
+                    f"'{file.basename}' The library file has an other size than "
+                    f"its record. Fitzflix did not write it. The scan stores "
+                    f"nothing, and the file goes to the import queue"
+                )
+                enqueue_localization(file_path)
+                return True
+
             details = extract_track_metadata(
                 file_path, file_id, rewrite=_may_rewrite(file)
             )
@@ -577,6 +596,26 @@ def track_metadata_scan_task(file_id):
             raise
 
         return True
+
+
+def replaced_from_outside(filesize_bytes, stale, file_path):
+    """Return True if the library file at file_path is not the file of its record (#750).
+
+    Each writer of Fitzflix stores the new size on the record. When
+    Fitzflix archives the library files, the writer sets the stale flag
+    before its write (confirm_rewrite). Thus, a file with an other size
+    than its record and with no stale flag came from Radarr, from Sonarr
+    or from a person. Its import did not run. Only an import makes the
+    record of such a file: new tracks, a new size and a new archive.
+
+    A record with no size makes no claim. When Fitzflix does not
+    archive, no flag is set, and an edit that died after its write looks
+    the same as an outside file. Its import then reads the file of the
+    edit and stores the same rows."""
+
+    if filesize_bytes is None or stale:
+        return False
+    return os.path.getsize(file_path) != filesize_bytes
 
 
 def record_filesize(file, size_bytes):
@@ -2170,7 +2209,7 @@ def ffmpeg_progress(line, duration, previous):
     return min(99, int(elapsed / duration * 100))
 
 
-def supplement_lossless_tracks(file_path, file_id=None):
+def supplement_lossless_tracks(file_path):
     """Give each lossless non-FLAC/PCM audio track a FLAC twin before it.
 
     The original stays. The twin plays natively on Apple TV clients.
@@ -2291,9 +2330,6 @@ def supplement_lossless_tracks(file_path, file_id=None):
             current_app.logger.info(f"'{basename}' Supplemented lossless tracks")
             current_app.logger.info(f"Moving '{temp_flac_file}' to '{file_path}'")
             shutil.move(temp_flac_file, file_path)
-
-            if file_id:
-                track_metadata_scan_task(file_id)
 
         except BaseException:
             current_app.logger.error(traceback.format_exc())

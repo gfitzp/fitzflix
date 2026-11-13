@@ -1222,7 +1222,7 @@ def _report_lagging_keys():
 
 
 def _import_uncataloged(roots):
-    """Queue the files of the library folders that have no record for an import.
+    """Queue the library files that have no record, or an other size than their record.
 
     Invariant: the walk never enters a hidden directory (#710). A
     download folder of Sonarr or Radarr in a library folder must be a
@@ -1254,13 +1254,62 @@ def _import_uncataloged(roots):
                     library.append((library_file, file_path))
 
     for library_file, file_path in library:
-        if not File.query.filter_by(file_path=file_path).first() and os.path.isfile(
-            library_file
+        row = (
+            db.session.query(
+                File.id, File.basename, File.filesize_bytes, File.aws_stale
+            )
+            .filter_by(file_path=file_path)
+            .first()
+        )
+        if row is not None:
+            _queue_changed_library_file(row, library_file)
+        elif os.path.isfile(library_file) and enqueue_localization(library_file):
+            current_app.logger.info(
+                f"'{library_file}' isn't in library; added to import queue"
+            )
+
+
+def _queue_changed_library_file(row, library_file):
+    """Queue the repair of a library file that has an other size than its record (#750).
+
+    Invariant: the library file at the path of a record is the file of
+    that record, or a job is queued that makes it so. Radarr and Sonarr
+    upgrade a file at the same path when the quality name does not
+    change. They send 1 event, and they do not send it again. The import
+    of such a file is lost when the web process does not answer the
+    event. It is also lost when a later stage of the import stops and
+    keeps its source. No other job finds the file: the record has its
+    path.
+
+    The import gate of enqueue_localization skips a file that an import
+    holds now. A record with the stale flag has a file that an edit of
+    Fitzflix wrote. Its edit runs now, or it died after its write. A
+    scan stores its rows and its size (replaced_from_outside in
+    app/tracks.py has the rule)."""
+
+    from app import tracks
+    from app.importing import enqueue_localization
+
+    try:
+        if row.filesize_bytes is None or (
+            os.path.getsize(library_file) == row.filesize_bytes
         ):
-            if enqueue_localization(library_file):
-                current_app.logger.info(
-                    f"'{library_file}' isn't in library; added to import queue"
-                )
+            return
+    except OSError:
+        return
+    if row.aws_stale:
+        current_app.logger.info(
+            f"'{library_file}' has an other size than its record after an edit; "
+            f"added to the track scans"
+        )
+        tracks._rescan_after_a_failed_edit(
+            row.id, f"'{row.basename}'", reason="The S3 sync found a changed file"
+        )
+    elif enqueue_localization(library_file):
+        current_app.logger.warning(
+            f"'{library_file}' has an other size than its record. Its import "
+            f"did not run; added to import queue"
+        )
 
 
 class PlacementDeferred(Exception):

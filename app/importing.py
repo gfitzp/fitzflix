@@ -1861,7 +1861,8 @@ def abandon_failed_stage(
     A stop signal keeps the source (#497). The hourly sweep finds a
     source of the import directory. The hourly retry of the in-place
     imports finds a failed localization of a download in the library.
-    The weekly sync finds each other download there. A signal that
+    The weekly sync finds each other download there: a file with no
+    record, and a file with an other size than its record (#750). A signal that
     stopped only the child tool is not raised again. Any other error
     rejects the source. With may_keep False, a stop signal
     rejects the source too, and an outage is a plain error that does

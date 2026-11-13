@@ -76,6 +76,81 @@ def test_a_handed_off_scan_keeps_the_lock_for_the_save(app, monkeypatch):
         os.remove(path)
 
 
+def _set_size(app, file_id, size, stale=False):
+    from app import db
+    from app.models import File
+
+    with app.app_context():
+        file = db.session.get(File, file_id)
+        file.filesize_bytes = size
+        file.aws_stale = stale
+        db.session.commit()
+
+
+def test_a_scan_does_not_store_a_file_that_is_not_the_file_of_its_record(
+    app, monkeypatch
+):
+    """Radarr upgraded the file at the same path, and its import waits (#750).
+
+    A scan stored the new size. The import then read the path and the
+    size as its own result and skipped the file. The scan now queues
+    the import and stores nothing."""
+
+    import app.importing as importing
+    import app.tracks as tracks
+
+    file_id, identifier, path = _library_row(app, "Scan An Upgrade")
+    _set_size(app, file_id, 999)
+    scanned, queued = [], []
+    monkeypatch.setattr(
+        tracks,
+        "extract_track_metadata",
+        lambda path, file_id, rewrite=True: scanned.append(path) or {"video": {}},
+    )
+    monkeypatch.setattr(tracks, "enqueue_task", lambda *a, **k: scanned.append(a))
+    monkeypatch.setattr(
+        importing, "enqueue_localization", lambda path: queued.append(path) or True
+    )
+    try:
+        assert tracks.track_metadata_scan_task(file_id) is True
+        assert scanned == []
+        assert queued == [path]
+        assert _lock_is_free(app, identifier)
+    finally:
+        os.remove(path)
+
+
+def test_a_scan_stores_the_file_of_an_edit_that_did_not_store_its_size(
+    app, monkeypatch
+):
+    """The stale flag says that Fitzflix wrote the file (#750, #583).
+
+    An edit that failed after its write queues a scan. That scan must
+    still read the file."""
+
+    import app.importing as importing
+    import app.tracks as tracks
+
+    file_id, identifier, path = _library_row(app, "Scan An Edit")
+    _set_size(app, file_id, 999, stale=True)
+    saves, queued = [], []
+    monkeypatch.setattr(
+        tracks,
+        "extract_track_metadata",
+        lambda path, file_id, rewrite=True: {"rewritten": False, "video": {}},
+    )
+    monkeypatch.setattr(tracks, "enqueue_task", lambda *a, **k: saves.append(a[0]))
+    monkeypatch.setattr(
+        importing, "enqueue_localization", lambda path: queued.append(path) or True
+    )
+    try:
+        assert tracks.track_metadata_scan_task(file_id) is True
+        assert saves == ["app.videos.save_track_metadata"]
+        assert queued == []
+    finally:
+        os.remove(path)
+
+
 @pytest.mark.parametrize("in_run", [True, False])
 def test_a_deferred_scan_of_a_library_run_keeps_the_run_prefix(
     app, monkeypatch, in_run

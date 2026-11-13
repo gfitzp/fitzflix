@@ -166,6 +166,79 @@ def test_the_uncataloged_import_walks_each_root_once(app, monkeypatch, tmp_path)
     ]
 
 
+def _row_with_library_file(app, tmp_path, title, size, data, **columns):
+    """Make a film row with a library file below tmp_path. Return (id, path)."""
+
+    from app import db
+    from tests.factories import make_movie, make_movie_file
+
+    with app.app_context():
+        file = make_movie_file(
+            make_movie(title, 2021), "Bluray-1080p", filesize_bytes=size, **columns
+        )
+        db.session.commit()
+        file_id, relative = file.id, file.file_path
+    path = tmp_path / relative
+    path.parent.mkdir(parents=True)
+    path.write_bytes(data)
+    return file_id, str(path)
+
+
+def test_the_walk_queues_a_library_file_that_is_not_the_file_of_its_record(
+    app, tmp_path, monkeypatch
+):
+    """Radarr upgraded a file at the same path, and its import was lost (#750).
+
+    The record has the path. Before, the walk asked only that. The file
+    with the size of its record is not queued."""
+
+    from app import aws_storage, importing, tracks
+
+    _, changed = _row_with_library_file(app, tmp_path, "Upgraded Here", 9, b"new file")
+    _, same = _row_with_library_file(app, tmp_path, "Same Here", 4, b"same")
+    queued, scans = [], []
+    monkeypatch.setattr(
+        importing, "enqueue_localization", lambda path: queued.append(path) or True
+    )
+    monkeypatch.setattr(
+        tracks, "_rescan_after_a_failed_edit", lambda *a, **k: scans.append(a)
+    )
+    monkeypatch.setitem(app.config, "LIBRARY_DIR", str(tmp_path))
+    with app.app_context():
+        aws_storage._import_uncataloged((str(tmp_path / "Movies"),))
+
+    assert queued == [changed]
+    assert scans == []
+
+
+def test_the_walk_scans_a_changed_file_that_an_edit_of_fitzflix_wrote(
+    app, tmp_path, monkeypatch
+):
+    """An edit that died after its write left the stale flag (#750).
+
+    That file is the file of its record. A scan stores its rows and its
+    size. An import would make it a new original."""
+
+    from app import aws_storage, importing, tracks
+
+    file_id, _ = _row_with_library_file(
+        app, tmp_path, "Edit Died", 9, b"edited", aws_stale=True
+    )
+    queued, scans = [], []
+    monkeypatch.setattr(
+        importing, "enqueue_localization", lambda path: queued.append(path) or True
+    )
+    monkeypatch.setattr(
+        tracks, "_rescan_after_a_failed_edit", lambda *a, **k: scans.append(a[0])
+    )
+    monkeypatch.setitem(app.config, "LIBRARY_DIR", str(tmp_path))
+    with app.app_context():
+        aws_storage._import_uncataloged((str(tmp_path / "Movies"),))
+
+    assert queued == []
+    assert scans == [file_id]
+
+
 def test_the_uncataloged_phase_never_enters_a_hidden_directory(
     app, tmp_path, monkeypatch
 ):
