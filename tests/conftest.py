@@ -369,6 +369,16 @@ def clear_artifacts(app):
 
     for key in ("MOVIE_LIBRARY", "TV_LIBRARY", "HELD_DIR", "CUSTOM_ARTWORK_DIR"):
         _empty_directory(app.config[key])
+
+    # The workspace of an Atmos run has the id of its file in its name.
+    # The ids start again with each test. Thus, a workspace that stays
+    # looks like a run of the new file with that id (#731).
+
+    staging = app.config["STAGING_DIR"]
+    if os.path.isdir(staging):
+        for name in os.listdir(staging):
+            if name.startswith("atmos-"):
+                shutil.rmtree(os.path.join(staging, name), ignore_errors=True)
     log_file = app.config["LOG_FILE"]
     log_dir = os.path.dirname(log_file)
     for name in os.listdir(log_dir):
@@ -384,13 +394,18 @@ def reset_user_state(app):
 
     The user table stays between tests. test_letterboxd.py sets
     letterboxd_username and does not reset it. Thus, a later test that
-    needs the field empty could fail, or pass for the wrong reason."""
+    needs the field empty could fail, or pass for the wrong reason. An
+    export test of test_reviews.py leaves last_export_review_id set
+    (#731). The review ids start again with each test. Thus, a later
+    export left out the reviews below the old id."""
 
     from app import db
     from app.models import User
 
     with app.app_context():
-        User.query.update({User.letterboxd_username: None})
+        User.query.update(
+            {User.letterboxd_username: None, User.last_export_review_id: None}
+        )
         db.session.commit()
 
 

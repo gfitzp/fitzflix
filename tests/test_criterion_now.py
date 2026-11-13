@@ -54,7 +54,20 @@ def whatson_html(title="Shock Corridor", minutes_left=83, guid="8rWb21ax"):
 """
 
 
-WHATSON_HTML = whatson_html()
+# The page holds times that count from now. A page that the import of
+# this file built is old when the test runs late in the suite (#731).
+# Thus, the fixture below builds it again for each test.
+
+WHATSON_HTML = None
+
+
+@pytest.fixture(autouse=True)
+def fresh_whatson_page():
+    """Build the now-playing page at the start of each test."""
+
+    global WHATSON_HTML
+    WHATSON_HTML = whatson_html()
+
 
 INFO_HTML = """
 <script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoObject","name":"Shock Corridor","director":[{"@type":"Person","name":"Samuel Fuller"}],"actor":[{"@type":"Person","name":"Peter Breck"},{"@type":"Person","name":"Constance Towers"},{"@type":"Person","name":"Gene Evans"}]}</script>

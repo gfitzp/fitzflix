@@ -2012,14 +2012,17 @@ def test_a_failure_after_the_commit_keeps_the_imported_file(
 ):
     """The record is committed. A follow-up failure must not reject the file."""
 
-    import app.atmos as atmos
+    failures = []
 
     def broken(*args, **kwargs):
+        failures.append(args)
         raise RuntimeError("Redis is not reachable")
 
-    # The first follow-up step after the commit. The source still exists.
+    # A follow-up step that each import reaches, before the source goes.
+    # staged_handoff is not one: a file with no Atmos track never calls
+    # it (#731).
 
-    monkeypatch.setattr(atmos, "staged_handoff", broken)
+    monkeypatch.setattr("app.importing._atmos_handoff", broken)
     basename = "Late Failure (2021) - [DVD].mkv"
     source = os.path.join(incoming_dir, basename)
     with open(sample_mkv, "rb") as f_in, open(source, "wb") as f_out:
@@ -2038,6 +2041,7 @@ def test_a_failure_after_the_commit_keeps_the_imported_file(
         record = File.query.filter_by(basename=basename).one()
         output = os.path.join(app.config["LIBRARY_DIR"], record.file_path)
 
+    assert len(failures) == 1
     assert os.path.exists(output)
     assert basename not in rejected_files(app)
     assert not os.path.exists(source)

@@ -960,12 +960,6 @@ def test_the_scan_does_not_rewrite_the_file_of_a_pending_restore(app, monkeypatc
         ),
     )
 
-    def save(file_id, details, lock=None, archive=False):
-        saved.append((file_id, archive))
-        app.lock_manager.unlock(lock)
-        return True
-
-    monkeypatch.setattr(tracks, "save_track_metadata", save)
     try:
         with app.app_context():
             assert tracks.track_metadata_scan_task(file_id) is True

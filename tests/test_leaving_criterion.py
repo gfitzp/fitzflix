@@ -456,7 +456,6 @@ def test_refresh_task_scrapes_matches_and_stores(app, monkeypatch):
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
     monkeypatch.setattr(leaving_criterion.requests, "get", fake_requests_get)
     monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
-    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
     from app import db
 
     with app.app_context():
@@ -499,12 +498,19 @@ def test_refresh_task_noops_while_stored_set_is_current(app, monkeypatch):
     planted = json.dumps({"departs": date.today().isoformat(), "items": []})
     app.redis.set(leaving_criterion.LEAVING_KEY, planted)
 
+    # fetch_collection_films catches each error of the request. Thus, the
+    # fake records its calls and raises nothing (#731).
+
+    requests_made = []
+
     def unexpected_get(*args, **kwargs):
-        raise AssertionError("a current stored set must not be re-scraped")
+        requests_made.append(args)
+        raise RuntimeError("a current stored set must not be re-scraped")
 
     monkeypatch.setattr(leaving_criterion.requests, "get", unexpected_get)
 
     assert leaving_criterion.refresh_leaving_criterion() is True
+    assert requests_made == []
     assert app.redis.get(leaving_criterion.LEAVING_KEY).decode() == planted
     assert dvr_rebuild_jobs(app) == []
 

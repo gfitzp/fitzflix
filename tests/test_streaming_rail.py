@@ -133,7 +133,6 @@ def install_rail_fakes(app, monkeypatch, discover_calls=None):
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
     monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
-    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
 
 
 def test_provider_pool_queries_and_caches(app, monkeypatch):

@@ -595,6 +595,10 @@ def test_a_movie_apply_probes_the_volume_once_before_any_stat(app, monkeypatch):
     assert len(probes) == 1
     assert renames == []
 
+    # The volume is dead. No stat of a library path may run (#731).
+    library = app.config["LIBRARY_DIR"]
+    assert [path for path in stats if str(path).startswith(library)] == []
+
 
 def test_a_dead_volume_skips_the_collision_stat_of_a_rename(app, monkeypatch):
     """The probe of _rename_movie_file comes before os.path.exists (#575)."""

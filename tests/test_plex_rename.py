@@ -229,15 +229,27 @@ def test_a_plex_fault_never_reaches_the_rename(app, plex, monkeypatch):
 
 
 def test_nothing_happens_without_a_plex_server(app, monkeypatch):
+    """With no Plex settings, the 2 functions make no call and record nothing.
+
+    remember_rename catches each error. Thus, the fake records its calls
+    and raises nothing (#731). The record of an earlier run stays, and
+    restore_add_dates does not read Plex for it."""
+
     import app.plex_rename as plex_rename
 
-    def refused(*args, **kwargs):
-        raise AssertionError("no Plex call expected")
-
-    monkeypatch.setattr(plex_rename, "plex_get", refused)
+    calls = []
+    monkeypatch.setattr(
+        plex_rename, "plex_get", lambda *args, **kwargs: calls.append(args)
+    )
+    _record(app, "/earlier.mkv", "9", 1000)
     with app.app_context():
+        assert not plex_rename.plex_configured()
         remember_rename("/a.mkv", "/b.mkv", "movie", tmdb_id=3)
         restore_add_dates()
+        assert calls == []
+        assert [field.decode() for field in app.redis.hkeys(PENDING_KEY)] == [
+            "/earlier.mkv"
+        ]
 
 
 def _record(app, new_path, rating_key, added, since=None, kind="movie"):

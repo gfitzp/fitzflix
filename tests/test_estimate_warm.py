@@ -92,7 +92,6 @@ def install_warm_fakes(app, monkeypatch, fetched):
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
     monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
-    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
 
 
 def plant_profile(app, user_id):

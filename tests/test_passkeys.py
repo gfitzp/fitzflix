@@ -729,6 +729,7 @@ def test_a_confirmation_for_one_form_fails_on_another(app, admin_passkey, monkey
     response = _sync_post(client, token, authenticator.sign(options))
     assert "The passkey request expired." in response.get_data(as_text=True)
     assert calls == []
+    assert restores == []
 
 
 def test_a_confirmation_needs_a_local_path(app, admin_passkey):

@@ -93,7 +93,11 @@ def test_a_conversion_whose_encoder_fails_still_rejects_the_source(
 def test_a_second_sigterm_during_the_library_copy_cleans_up_and_goes_up(
     app, tmp_path, monkeypatch
 ):
-    """SystemExit in the copy removes the copies, keeps the source, and re-raises."""
+    """SystemExit in the carry removes the copies, keeps the source, and re-raises.
+
+    The carry to the library is a rename on 1 volume and a copy between
+    2 volumes. The volumes of the test decide which one runs. Exactly 1
+    of them must run (#731)."""
 
     from app import videos
 
@@ -101,8 +105,10 @@ def test_a_second_sigterm_during_the_library_copy_cleans_up_and_goes_up(
     hidden.write_bytes(b"localized")
     source = tmp_path / "Copied (2001) - [DVD].mkv"
     source.write_bytes(b"source")
+    carries = []
 
     def stopped(*args, **kwargs):
+        carries.append(args)
         raise SystemExit(1)
 
     monkeypatch.setattr(videos, "_rename_with_retries", stopped)
@@ -120,6 +126,7 @@ def test_a_second_sigterm_during_the_library_copy_cleans_up_and_goes_up(
                 str(hidden),
             )
 
+    assert len(carries) == 1
     assert source.exists()
     assert not hidden.exists()
     assert app.redis.get('{"title": "Copied"}') is None
