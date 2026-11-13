@@ -790,8 +790,8 @@ def _channel_window(members, day, cap, cursors=None, starts=None):
 def _series_episodes(series_id):
     """Return the best copy on disk of each regular episode, in broadcast order.
 
-    The rule is best_episode_holders, the rule of the library pages and
-    of the S3 sync (_programs). Specials are excluded. Rows whose file
+    The rule is best_episode_holders (through _programs), the rule of
+    the library pages and of the S3 sync. Specials are excluded. Rows whose file
     is absent are left out before the ranking, in the same way as
     _best_files_by_movie skips them. Thus, an other copy of the episode
     on the disk airs. Each file gets airs_from, the broadcast position

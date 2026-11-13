@@ -57,6 +57,7 @@ import traceback
 from datetime import timedelta
 
 from flask import current_app
+from rq.registry import ScheduledJobRegistry
 from werkzeug.local import LocalProxy
 
 from app.tasks import enqueue_task, requeue
@@ -669,9 +670,9 @@ def enqueue_plex_analyze(file_path, delay=None):
         # Under the id of the job that runs, it would take the hash that
         # the first job marks as finished at its end (#744).
 
-        if any(
-            queued == job_id or queued.startswith(f"{job_id}_")
-            for queued in queue.job_ids
+        waiting = list(queue.job_ids) + ScheduledJobRegistry(queue=queue).get_job_ids()
+        if job_id in queue.job_ids or any(
+            waiting_id.startswith(f"{job_id}_") for waiting_id in waiting
         ):
             return False
         running = queue.fetch_job(job_id)

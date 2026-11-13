@@ -934,6 +934,12 @@ def test_a_changed_source_of_a_conversion_is_not_removed(app, tmp_path, monkeypa
     monkeypatch.setattr(
         importing, "_report_film_move", lambda *a: calls.append(("radarr", a[1]))
     )
+    uploads = []
+    monkeypatch.setattr(
+        importing,
+        "_pending_upload_ready",
+        lambda file, path, output: uploads.append(path) or True,
+    )
     booked = []
     monkeypatch.setattr(
         importing, "requeue", lambda name, **kw: booked.append(kw["args"])
@@ -970,11 +976,16 @@ def test_a_changed_source_of_a_conversion_is_not_removed(app, tmp_path, monkeypa
             ("arr record", str(source)),
         ]
         assert booked == []
+        assert uploads == [str(source)]
 
+        # The step of the pending upload can upload the source. A changed
+        # source is not the file of the record, so the step does not run.
         calls.clear()
+        uploads.clear()
         source.write_bytes(b"the second download, of an other size")
         after_commit(dict(details))
         assert calls == []
+        assert uploads == []
         assert booked == [(str(source),)]
         assert source.exists()
 

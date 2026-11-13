@@ -1219,7 +1219,7 @@ def _quality_and_space_gate(file_path, file_details, conversion, run):
         move_to_rejects(file_path, "other spelling")
         run.release_lock()
         notify_admin_text(
-            "Rejected a file whose name differs only by letter case",
+            "Rejected a file whose name differs only by letter case or accents",
             f"'{basename}' went to the rejects folder 'other spelling'. The "
             f"library has '{other_spelling}', and Fitzflix can hold only 1 of "
             f"the 2 names. Give 1 of the files an other name, or delete it.",
@@ -3809,7 +3809,13 @@ def _after_commit(
     # for a move whose job was not queued or did not run (#707). Then the
     # source is gone already.
 
-    source_can_go = (
+    # A source in the library that changed during the chain is a new
+    # download (#742). The check comes first. The step below can upload
+    # the source when the run-scoped upload is gone. A changed source is
+    # not the file of this record, and it must not go up as its archive.
+
+    changed = file_path != output_file and _source_changed(file_path, file_details)
+    source_can_go = not changed and (
         step("pending upload", _pending_upload_ready, file, file_path, output_file)
         is True
     )
@@ -3828,15 +3834,12 @@ def _after_commit(
     # Then it goes to rejects/unarchived, out of the import sweep. A
     # failed check or a failed move request does the same.
 
-    # A source in the library that changed during the chain is a new
-    # download (#742). It stays, and its own import is queued.
-
-    # The release data that Sonarr or Radarr gave for the path is the
-    # data of the new download then. It stays for the import of that
+    # A changed source stays, and its own import is queued (#742). The
+    # release data that Sonarr or Radarr gave for the path is the data
+    # of the new download then. It stays for the import of that
     # download, and Radarr keeps its folder. Thus, the 2 arr steps do
     # not run for a changed source.
 
-    changed = file_path != output_file and _source_changed(file_path, file_details)
     if changed:
         step("changed source", _import_changed_source, file_path)
     elif file_path != output_file and not source_can_go:
@@ -4181,10 +4184,16 @@ CHANGED_SOURCE_DELAY = timedelta(minutes=1)
 def _import_changed_source(file_path):
     """Book the import of a library file that an other program changed during an import (#742).
 
-    A source that is gone gets no import. This is best effort. A fault
-    is a warning, and the weekly sync finds a file with no record."""
+    A source that is gone gets no import, and a warning says so. This
+    is best effort. A fault is a warning, and the weekly sync finds a
+    file with no record."""
 
     if not os.path.isfile(file_path):
+        current_app.logger.warning(
+            f"'{file_path}' is not there now, or the share does not answer. "
+            f"No import is booked. If the file is there later, the weekly "
+            f"sync imports it"
+        )
         return
     try:
         requeue(

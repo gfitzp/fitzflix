@@ -367,7 +367,9 @@ def _submit(
         # is deleted here first. A job that waits or runs under the id
         # is not deleted, and the new job still goes under that id. A
         # caller that can queue beside such a job checks free_job_id
-        # itself, or it uses an id of its own.
+        # itself, or it uses an id of its own. A job that books itself
+        # under its own id has a result ttl longer than its delay
+        # (requeue, the Criterion poll).
         free_job_id(name, job_id, queue=target)
         options["job_id"] = job_id
     if meta is not None:

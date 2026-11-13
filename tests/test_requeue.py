@@ -451,5 +451,19 @@ def test_an_analyze_beside_a_running_one_gets_its_own_job_id(app, monkeypatch):
         (second,) = queue.jobs
         assert second.id != first.id
         assert second.id.startswith(first.id)
-        for job in (first, second):
-            _delete_job_id(app, queue, job.id)
+
+        # A third request adds nothing while the second job waits, in
+        # the queue or with a delay.
+        assert enqueue_plex_analyze(path) is False
+        queue.remove(second)
+        _delete_job_id(app, queue, second.id)
+        from datetime import timedelta
+
+        from rq.registry import ScheduledJobRegistry
+
+        assert enqueue_plex_analyze(path, delay=timedelta(minutes=20)) is True
+        (booked,) = ScheduledJobRegistry(queue=queue).get_job_ids()
+        assert booked.startswith(first.id + "_")
+        assert enqueue_plex_analyze(path) is False
+        for job_id in (first.id, booked):
+            _delete_job_id(app, queue, job_id)
