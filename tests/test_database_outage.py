@@ -549,6 +549,32 @@ def test_the_record_that_takes_an_upload_takes_the_size_of_the_new_file(
         assert not replaced_from_outside(row.filesize_bytes, row.aws_stale, str(source))
 
 
+def test_an_adoption_with_no_size_keeps_the_stale_flag(app, tmp_path):
+    """The share did not give the size of the new file (#750).
+
+    The record still takes the upload: it holds the only original. The
+    stale flag stays, and the scan of the repair stores the size."""
+
+    import app.importing as importing
+    from app import db
+    from app.models import File
+    from tests.factories import make_file
+
+    name = "Adopt No Size (2023) - [DVD].mkv"
+    upload = _run_scoped_upload(name)
+    with app.app_context():
+        file_id = make_file(
+            name, f"Movies/{name[:-4]}", name[:-4], "Movies", "DVD", filesize_bytes=5
+        ).id
+        db.session.commit()
+        gone = str(tmp_path / "share away" / name)
+        assert importing._adopt_upload(file_id, upload, gone) is True
+        row = db.session.get(File, file_id)
+        assert row.aws_key == upload["aws_key"]
+        assert row.aws_stale is True
+        assert row.filesize_bytes == 5
+
+
 def test_the_record_takes_an_upload_at_the_normal_key(app, tmp_path, monkeypatch):
     """No record claims the normal key of the name. The upload goes to it (#734).
 

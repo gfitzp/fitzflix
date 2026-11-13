@@ -1999,26 +1999,8 @@ def upload_task(file_id):
             # for a normal file, transcoded/ for a conversion (#299). A rip
             # in untouched/ is never overwritten.
 
-            # A stale record with an other size than its file: an edit
-            # died after its write and before its commit (#750). The
-            # upload clears the flag. Thus, it also stores the size, and
-            # a scan reads the track rows again. A record with no flag
-            # and an other size is a file from outside
-            # (replaced_from_outside in app/tracks.py).
-
-            died_edit_size = None
-            if file.aws_stale and file.filesize_bytes is not None:
-                try:
-                    size = os.path.getsize(file_path)
-                except OSError:
-                    size = file.filesize_bytes
-                if size != file.filesize_bytes:
-                    died_edit_size = size
-
             if archive_library_file(file, file_path) is None:
                 return False
-            if died_edit_size is not None:
-                file.filesize_bytes = died_edit_size
             file.date_updated = (
                 file.aws_transcoded_date_uploaded
                 if file.converted_from_quality
@@ -2034,17 +2016,6 @@ def upload_task(file_id):
         finally:
             current_app.lock_manager.unlock(lock)
 
-        if died_edit_size is not None:
-            from app import tracks
-
-            current_app.logger.warning(
-                f"'{file.basename}' An edit wrote the library file and did not "
-                f"store its result. The upload stored the size, and a scan "
-                f"reads the tracks again"
-            )
-            tracks._rescan_after_a_failed_edit(
-                file.id, f"'{file.basename}'", reason="An edit did not store its result"
-            )
         return True
 
 

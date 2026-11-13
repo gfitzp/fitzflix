@@ -71,68 +71,6 @@ def test_a_successful_upload_clears_the_stale_mark(app, monkeypatch):
         assert File.query.get(file_id).aws_stale is False
 
 
-def test_the_upload_of_a_stale_file_stores_the_size_of_an_edit_that_died(
-    app, tmp_path, monkeypatch
-):
-    """An edit that died after its write left the old size and the stale flag (#750).
-
-    The upload clears the flag. A record with no flag must have the
-    size of its file. If not, the weekly sync reads the file of the
-    edit as a file from outside and imports it. The track rows are old
-    too, and a scan reads them again."""
-
-    from datetime import datetime, timezone
-
-    from app import db
-    from app.models import File
-    from tests.factories import make_movie, make_movie_file
-
-    import app.aws_storage as aws_storage
-    import app.tracks as tracks
-
-    monkeypatch.setitem(app.config, "LIBRARY_DIR", str(tmp_path))
-    scans = []
-    monkeypatch.setattr(
-        tracks,
-        "_rescan_after_a_failed_edit",
-        lambda file_id, *a, **k: scans.append(file_id),
-    )
-    monkeypatch.setattr(
-        aws_storage,
-        "aws_upload",
-        lambda *args, **kwargs: ("modified/died.mkv", datetime.now(timezone.utc), 6),
-    )
-    with app.app_context():
-        died = make_movie_file(
-            make_movie("Edit Died Upload", 2021),
-            "Bluray-1080p",
-            aws_stale=True,
-            filesize_bytes=999,
-        )
-        whole = make_movie_file(
-            make_movie("Edit Whole Upload", 2021),
-            "Bluray-1080p",
-            aws_stale=True,
-            filesize_bytes=6,
-        )
-        db.session.commit()
-        ids = died.id, whole.id
-        for file in (died, whole):
-            path = tmp_path / file.file_path
-            path.parent.mkdir(parents=True)
-            path.write_bytes(b"edited")
-
-        for file_id in ids:
-            assert aws_storage.upload_task(file_id) is True
-
-        db.session.expire_all()
-        for file_id in ids:
-            row = db.session.get(File, file_id)
-            assert row.aws_stale is False
-            assert row.filesize_bytes == 6
-        assert scans == [ids[0]]
-
-
 def test_a_transient_mount_error_does_not_reject_the_file(app, tmp_path, monkeypatch):
     """Make sure a transient mount error does not reject the file.
 

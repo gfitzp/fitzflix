@@ -3487,15 +3487,20 @@ def _adopt_upload(row_id, upload, output_file):
         file.aws_key = upload["aws_key"]
         file.aws_date_uploaded = upload["aws_date_uploaded"]
         file.aws_filesize_bytes = upload["aws_filesize_bytes"]
-        file.aws_stale = False
 
         # A record with no stale flag has the size of its library file
         # (#750, replaced_from_outside in app/tracks.py). With the old
         # size, the scan of the repair and the weekly sync read the
         # new file as a file from outside. Its import then deleted the
-        # archive that the record takes here.
+        # archive that the record takes here. If the share does not
+        # give the size now, the record still takes the upload, and the
+        # flag stays. Then the scan of the repair stores the size.
 
-        record_filesize(file, os.path.getsize(output_file))
+        try:
+            record_filesize(file, os.path.getsize(output_file))
+            file.aws_stale = False
+        except OSError:
+            file.aws_stale = True
 
         # The commit of an import ends a pending restore of the record
         # (#620). The old archive must not come back over the new file.

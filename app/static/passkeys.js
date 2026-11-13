@@ -40,13 +40,14 @@
 	// are not: the sign-in page after a redirect when the session ended,
 	// the error page of a proxy during a restart, and an error page of
 	// the server. The script read each answer as JSON first, and the
-	// person saw the message of the parser of the browser (#755). Such
-	// an error is complete (whole): the password field does not help.
+	// person saw the message of the parser of the browser (#755). The
+	// text of an ended session is whole: no password helps then. The
+	// text of a server fault says "try again" itself (again).
 
 	function post(url, body) {
-		function whole(text) {
+		function marked(text, mark) {
 			var error = new Error(text);
-			error.whole = true;
+			error[mark] = true;
 			return error;
 		}
 		var NOT_DONE = "The server could not do this step. Try again in a moment.";
@@ -59,14 +60,14 @@
 		}).then(function(response) {
 			var type = response.headers.get("Content-Type") || "";
 			if (type.indexOf("application/json") === -1) {
-				throw whole(response.redirected ? SESSION_ENDED : NOT_DONE);
+				throw response.redirected ? marked(SESSION_ENDED, "whole") : marked(NOT_DONE, "again");
 			}
 			return response.json().then(function(data) {
 				if (!response.ok) throw new Error(data.error || "The request failed.");
 				return data;
 			});
 		}, function() {
-			throw whole(NOT_DONE);
+			throw marked(NOT_DONE, "again");
 		});
 	}
 
@@ -121,7 +122,9 @@
 	function failedProof(error, form) {
 		var text = message(error);
 		if (error && error.whole) return text;
-		if (showPassword(form, true)) text += " Try again, or type your password.";
+		if (showPassword(form, true)) {
+			text += error && error.again ? " Or type your password." : " Try again, or type your password.";
+		}
 		return text;
 	}
 

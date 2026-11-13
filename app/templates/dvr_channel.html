@@ -191,7 +191,7 @@ document.querySelectorAll(".dvr-title-lookahead").forEach(function (input) {
 			});
 	}
 
-	input.addEventListener("keydown", function (event) {
+	function pressed(event) {
 		// Escape also stops an answer that is on its way (#756).
 		if (event.key === "Escape") {
 			hide();
@@ -209,7 +209,9 @@ document.querySelectorAll(".dvr-title-lookahead").forEach(function (input) {
 			input.value = items[active].textContent;
 			hide();
 		}
-	});
+	}
+
+	input.addEventListener("keydown", pressed);
 
 	input.addEventListener("blur", function () { setTimeout(hide, 150); });
 });

@@ -673,18 +673,30 @@ answer = () => Promise.resolve({
 });
 post("/auth/passkey/confirm/options", {}).catch((ended) => {
     const refused = new Error("The passkey was not accepted.");
-    result = {
-        ended: failedProof(ended, "form 1"),
-        refused: failedProof(refused, "form 2"),
-        shownFor,
-    };
+    answer = () => Promise.resolve({
+        ok: false, status: 500, redirected: false,
+        headers: { get: () => "text/html" },
+    });
+    return post("/auth/passkey/confirm/options", {}).catch((fault) => {
+        result = {
+            ended: failedProof(ended, "form 1"),
+            refused: failedProof(refused, "form 2"),
+            fault: failedProof(fault, "form 3"),
+            shownFor,
+        };
+    });
 });
 """
     out = run_page_script(body, ["post", "message", "failedProof"], test_code, tmp_path)
+
+    # A fault of the server keeps the password as a way forward.
+
     assert out["result"] == {
         "ended": "Your session ended. Reload the page and sign in again.",
         "refused": "The passkey was not accepted. Try again, or type your password.",
-        "shownFor": ["form 2"],
+        "fault": "The server could not do this step. Try again in a moment. "
+        "Or type your password.",
+        "shownFor": ["form 2", "form 3"],
     }
 
 
@@ -797,3 +809,24 @@ function render(results) {
         "closed": {"shown": False, "items": []},
         "current": {"shown": True, "items": ["zz — film"]},
     }
+
+
+def test_escape_on_the_dvr_title_box_stops_an_answer_on_its_way(tmp_path):
+    """Escape with no menu yet did nothing, and the answer then opened it (#756)."""
+
+    body = _template_source("dvr_channel.html")
+    test_code = SUGGESTION_FAKES + r"""
+menu.querySelectorAll = () => [];
+function render(results) { menu.shown = results.length > 0; }
+(async () => {
+    type("do");
+    pressed({ key: "Escape", preventDefault() {} });
+    pending["do"]();
+    await tick();
+    result = { shown: menu.shown, wanted };
+})();
+"""
+    out = run_page_script(
+        body, ["hide", "lookup", "typed", "pressed"], test_code, tmp_path
+    )
+    assert out["result"] == {"shown": False, "wanted": None}
