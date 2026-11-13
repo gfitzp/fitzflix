@@ -539,3 +539,57 @@ replaceCell(shelf, cell).then(() => { result = { shown, fetches: urls.length }; 
         body, ["fetchReplacement", "replaceCell"], test_code, tmp_path
     )
     assert out["result"] == {"shown": ["1", "2", "101"], "fetches": 1}
+
+
+def test_a_passkey_step_names_an_answer_that_is_not_json(tmp_path):
+    """The sign-in page and the error page of a proxy are HTML (#755).
+
+    The script parsed each answer as JSON first. The person then read
+    the message of the parser of the browser."""
+
+    import os
+
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    with open(os.path.join(root, "app", "static", "passkeys.js")) as script:
+        body = script.read()
+    test_code = r"""
+function csrfToken() { return "token"; }
+function html(status, redirected) {
+    return {
+        ok: status < 400, status, redirected,
+        headers: { get: () => "text/html; charset=utf-8" },
+        json: () => Promise.reject(new SyntaxError("The string did not match the expected pattern.")),
+    };
+}
+function json(status, data) {
+    return {
+        ok: status < 400, status, redirected: false,
+        headers: { get: () => "application/json" },
+        json: () => Promise.resolve(data),
+    };
+}
+const answers = [
+    () => Promise.resolve(html(200, true)),
+    () => Promise.resolve(html(503, false)),
+    () => Promise.reject(new TypeError("Load failed")),
+    () => Promise.resolve(json(401, { error: "The passkey was not accepted." })),
+    () => Promise.resolve(json(200, { redirect: "/" })),
+];
+const seen = [];
+function next() {
+    if (!answers.length) { result = seen; return null; }
+    answer = answers.shift();
+    return post("/auth/passkey/confirm/options", {})
+        .then((data) => seen.push(data), (error) => seen.push(error.message))
+        .then(next);
+}
+next();
+"""
+    out = run_page_script(body, ["post"], test_code, tmp_path)
+    assert out["result"] == [
+        "Your session ended. Reload the page and sign in again.",
+        "The server did not answer. Try again in a moment.",
+        "The server did not answer. Try again in a moment.",
+        "The passkey was not accepted.",
+        {"redirect": "/"},
+    ]

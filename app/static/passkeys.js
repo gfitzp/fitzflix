@@ -36,17 +36,31 @@
 		return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 	}
 
+	// Each planned answer of the passkey routes is JSON. Three answers
+	// are not: the sign-in page after a redirect when the session ended,
+	// the error page of a proxy during a restart, and a server error
+	// page. The script read each answer as JSON first, and the person
+	// saw the message of the parser of the browser (#755).
+
 	function post(url, body) {
+		var NO_ANSWER = "The server did not answer. Try again in a moment.";
+		var SESSION_ENDED = "Your session ended. Reload the page and sign in again.";
 		return fetch(url, {
 			method: "POST",
 			credentials: "same-origin",
 			headers: {"Content-Type": "application/json", "X-CSRFToken": csrfToken()},
 			body: JSON.stringify(body || {})
 		}).then(function(response) {
+			var type = response.headers.get("Content-Type") || "";
+			if (type.indexOf("application/json") === -1) {
+				throw new Error(response.redirected ? SESSION_ENDED : NO_ANSWER);
+			}
 			return response.json().then(function(data) {
 				if (!response.ok) throw new Error(data.error || "The request failed.");
 				return data;
 			});
+		}, function() {
+			throw new Error(NO_ANSWER);
 		});
 	}
 
