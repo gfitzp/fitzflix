@@ -128,6 +128,94 @@ def test_a_copy_that_fails_once_books_the_finish_again(app, monkeypatch):
         db.session.rollback()
 
 
+def _replace_like_an_arr(library):
+    """Put an other release at the path of a library file, as Radarr does."""
+
+    os.remove(library)
+    with open(library, "wb") as f:
+        f.write(b"the newer release of the film")
+
+
+def _assert_run_ended_with_no_replacement(app, file, finish, library):
+    import app.atmos as atmos
+    from app.models import FileAudioTrack
+
+    assert open(library, "rb").read() == b"the newer release of the film"
+    assert [
+        name for name in os.listdir(os.path.dirname(library)) if name.startswith(".")
+    ] == []
+    assert not os.path.exists(finish.args[0]["workspace"])
+    assert not app.redis.exists(atmos.CHAIN_KEY.format(file_id=file.id))
+    held = app.lock_manager.lock(file.file_identifier(), 1000)
+    assert held
+    app.lock_manager.unlock(held)
+    codecs = [row.codec for row in FileAudioTrack.query.filter_by(file_id=file.id)]
+    assert codecs == [ATMOS]
+
+
+def test_a_library_file_that_an_arr_replaced_during_the_encode_stays(app, monkeypatch):
+    """Radarr upgrades the film at the same path during the encode (#732).
+
+    The title lock does not stop Radarr. The staged copy is the older
+    release. The finish must not put it over the newer file."""
+
+    import app.atmos as atmos
+    from app import db
+
+    with app.app_context():
+        file, finish = _finish_job(app, monkeypatch, "Upgraded Meanwhile")
+        library = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
+        _replace_like_an_arr(library)
+
+        assert atmos.atmos_finish_task(*finish.args) is False
+
+        _assert_run_ended_with_no_replacement(app, file, finish, library)
+        db.session.rollback()
+
+
+def test_a_library_file_that_changes_during_the_copy_back_stays(app, monkeypatch):
+    """The copy to the library takes minutes. The check runs again before the rename (#732)."""
+
+    import app.atmos as atmos
+    import app.videos as videos
+    from app import db
+
+    with app.app_context():
+        file, finish = _finish_job(app, monkeypatch, "Upgraded During Copy")
+        library = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
+        real_copy = videos.copy_with_progress
+
+        def copy_then_upgrade(src, dst, *args, **kwargs):
+            result = real_copy(src, dst, *args, **kwargs)
+            _replace_like_an_arr(library)
+            return result
+
+        monkeypatch.setattr(videos, "copy_with_progress", copy_then_upgrade)
+
+        assert atmos.atmos_finish_task(*finish.args) is False
+
+        _assert_run_ended_with_no_replacement(app, file, finish, library)
+        db.session.rollback()
+
+
+def test_a_run_of_the_older_code_has_no_stamp_and_still_finishes(app, monkeypatch):
+    """A run that waits through the deploy has no stamp in its state (#732)."""
+
+    import app.atmos as atmos
+    from app import db
+
+    with app.app_context():
+        file, finish = _finish_job(app, monkeypatch, "Older Run")
+        state = dict(finish.args[0])
+        assert state.pop("library")
+        library = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
+
+        assert atmos.atmos_finish_task(state, *finish.args[1:]) is True
+
+        assert open(library, "rb").read() == b"twinned"
+        db.session.rollback()
+
+
 def test_the_last_failed_retry_ends_the_run(app, monkeypatch):
     import app.atmos as atmos
     import app.videos as videos

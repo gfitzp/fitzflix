@@ -105,6 +105,39 @@ def staged_handoff(staged_path, library_path):
     }
 
 
+class LibraryFileChanged(RuntimeError):
+    """An other program changed the library file during the Atmos run (#732)."""
+
+
+def _library_stamp(library_path):
+    """Return the size and the modification time of a library file."""
+
+    library = os.stat(library_path)
+    return {"size": library.st_size, "mtime": library.st_mtime}
+
+
+def _refuse_changed_library_file(state, library_path):
+    """Raise LibraryFileChanged if the library file is not the file that the run copied.
+
+    Invariant: the Atmos finish never replaces a library file that
+    changed after the run copied it (#732). The title lock stops each
+    job of Fitzflix for the hours of the encode. It does not stop Radarr
+    or Sonarr. They put an upgrade at the same path, and the import of
+    that file waits for the lock. The staged copy is then the older
+    release. A run that the older code started has no stamp in its
+    state. Its finish makes no check. A file that is not there raises
+    the OSError of the stat, and the finish tries again."""
+
+    stamp = state.get("library")
+    if not stamp:
+        return
+    if _library_stamp(library_path) != stamp:
+        raise LibraryFileChanged(
+            f"The library file changed during the Atmos run. The run ends, "
+            f"and '{library_path}' stays as it is"
+        )
+
+
 def discard_staged_source(staged_source):
     """Remove a staged copy that the Atmos job does not use."""
 
@@ -718,7 +751,12 @@ def _atmos_prepare(file_id, phases, staged_source=None):
         )
         discard_staged_source(staged_source)
     copies = 1 if use_staged else 2
-    needed = copies * os.path.getsize(file_path) + WORKSPACE_HEADROOM_BYTES
+
+    # The stamp of the file that the run copies. The finish compares it
+    # (#732). A change during the copy gives a different stamp there.
+
+    library_stamp = _library_stamp(file_path)
+    needed = copies * library_stamp["size"] + WORKSPACE_HEADROOM_BYTES
     if staging_free < needed:
         current_app.logger.warning(
             f"'{basename}' Staging space is insufficient for the Atmos "
@@ -880,6 +918,7 @@ def _atmos_prepare(file_id, phases, staged_source=None):
         "trail_basename": file.untouched_basename or basename,
         "workspace": workspace,
         "staging_source": staging_source,
+        "library": library_stamp,
         "bucket": bucket,
         "prefix": prefix,
         "audio_tracks": audio_tracks,
@@ -1184,12 +1223,24 @@ def atmos_finish_task(state, lock, finish_retries=0):
     removes the workspace and the S3 scratch area. It closes the chips
     of the first job. A transient fault before the library file changes
     books the finish again (#502). The retry keeps the lock, the
-    workspace and the encode. finish_retries counts the retries."""
+    workspace and the encode. finish_retries counts the retries. A
+    library file that an other program changed during the run ends the
+    run with a warning, and the file stays (#732)."""
 
     with app.app_context():
         phases = _trail_phases(state, "Encoding E-AC-3 Atmos")
         try:
             result = _atmos_finish(state, phases)
+        except LibraryFileChanged as error:
+            # Radarr or Sonarr put an other file at the path (#732). The
+            # import of that file waits for the lock of this run. It
+            # catalogs the file and starts a run for it. Thus, this run
+            # queues no archive of the file.
+            current_app.logger.warning(f"'{state['basename']}' {error}")
+            phases.fail()
+            phases.close("failed")
+            _close_run(state, lock, ended_early=False)
+            return False
         except FinishInterrupted as error:
             if finish_retries < MAX_FINISH_RETRIES and _book_finish_retry(
                 state, lock, finish_retries + 1, error
@@ -1465,6 +1516,10 @@ def _atmos_finish(state, phases):
         file_id = file.id
         with _transient_step("library copy"):
             try:
+                # The check comes before the long copy, and again right
+                # before the rename (#732).
+
+                _refuse_changed_library_file(state, file_path)
                 copy_with_progress(
                     final_staging,
                     hidden_output,
@@ -1479,6 +1534,7 @@ def _atmos_finish(state, phases):
                 # below clears it.
 
                 confirm_rewrite(file_id, file_path)
+                _refuse_changed_library_file(state, file_path)
                 os.rename(hidden_output, file_path)
             except BaseException:
                 try:
@@ -1487,6 +1543,9 @@ def _atmos_finish(state, phases):
                     pass
                 raise
 
+    except LibraryFileChanged:
+        db.session.rollback()
+        raise
     except Exception:
         current_app.logger.error(traceback.format_exc())
         db.session.rollback()
