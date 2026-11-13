@@ -103,8 +103,10 @@ def remux_file(file_path, build_command, job, name, activity, before_replace=Non
     staging space, the remux also runs in place, as before.
 
     before_replace runs right before the rename over the file. A library
-    rewrite uses it to mark the archive stale before the bytes change
-    (#517)."""
+    rewrite passes confirm_rewrite. That call stops the rename when the
+    record went or moved during the remux (#726). It also marks the
+    archive stale before the bytes change (#517). A raise of
+    before_replace removes the result."""
 
     from app.importing import release_staging_reservation, reserve_staging
     from app.videos import copy_with_progress
@@ -363,8 +365,8 @@ def extract_track_metadata(file_path, file_id=None, rewrite=True):
     """Remove the empty subtitle tracks and return the media details of a library file.
 
     This is the file half of a track scan. The returned details go to
-    save_track_metadata on the sql queue. With file_id, the archive of
-    that row is marked stale before the remux replaces the file (#517).
+    save_track_metadata on the sql queue. With file_id, confirm_rewrite
+    runs before the remux replaces the file (#517, #726).
     With rewrite False, the file does not change. A scan during a
     pending restore only reads the file (#610).
     """
@@ -378,7 +380,7 @@ def extract_track_metadata(file_path, file_id=None, rewrite=True):
             rewritten = remove_empty_subtitle_tracks(
                 file_path,
                 before_replace=(
-                    (lambda: flag_archive_before_rewrite(file_id))
+                    (lambda: confirm_rewrite(file_id, file_path))
                     if file_id is not None
                     else None
                 ),
@@ -549,26 +551,50 @@ def _fresh_file(file_id):
     return db.session.get(File, file_id)
 
 
-def flag_archive_before_rewrite(file_id):
-    """Mark the archive stale right before a tool may write the library file (#517, #615).
+class RecordChanged(RuntimeError):
+    """The record of a library file went or moved during a rewrite of the file (#726)."""
 
-    Each writer of a library file calls this before its first byte. A
-    failure after the write and before the commit leaves the new bytes
-    on disk and the old row. Without the flag, the weekly sync never
-    uploads the file again, and a restore would bring back the older
-    bytes. Only archive_library_file under the title lock clears the
-    flag. The flag is set only when Fitzflix archives the library files.
 
-    A failed flag raises after the rollback (#561). Then the rewrite
-    does not start, and the library file stays as it was. The caller
-    read the row before its slow work. Thus, a new transaction makes
-    the change (MariaDB error 1020)."""
+def confirm_rewrite(file_id, file_path):
+    """Confirm the record and mark the archive stale before a tool writes the file.
 
-    if not get_setting("ARCHIVE_ORIGINAL_MEDIA"):
-        return
+    Each writer of a library file calls this before its first byte, or
+    before it puts its result at file_path (#517, #615).
+
+    Invariant: a rewrite writes only a path that the record names at
+    that moment (#726). A rewrite can take 30 minutes. In that time, an
+    import of a wider episode file can delete the record, and a rename
+    can move the file. The title lock of the rewrite stops neither. A
+    result that went to the old path would be a file with no record.
+    Thus, a record that is gone or that names an other path raises
+    RecordChanged. Then the rewrite does not start, or its result is
+    removed.
+
+    The stale flag is for a failure after the write and before the
+    commit. Such a failure leaves the new bytes on disk and the old row.
+    Without the flag, the weekly sync never uploads the file again, and
+    a restore would bring back the older bytes. The flag is set only
+    when Fitzflix archives the library files. The cataloging of an
+    import, a good upload of the library file and the move of an archive
+    to modified/ clear it.
+
+    A failed read or a failed flag raises after the rollback (#561). The
+    caller read the row before its slow work. Thus, a new transaction
+    makes the read and the change (MariaDB error 1020)."""
+
     try:
         db.session.rollback()
-        File.query.filter_by(id=file_id).update({"aws_stale": True})
+        named = db.session.query(File.file_path).filter_by(id=file_id).scalar()
+        library = current_app.config["LIBRARY_DIR"]
+        if named is None or os.path.abspath(
+            os.path.join(library, named)
+        ) != os.path.abspath(file_path):
+            raise RecordChanged(
+                f"'{file_path}' The record of the file is gone, or it names an "
+                f"other path. The rewrite stops"
+            )
+        if get_setting("ARCHIVE_ORIGINAL_MEDIA"):
+            File.query.filter_by(id=file_id).update({"aws_stale": True})
         db.session.commit()
     except Exception:
         db.session.rollback()
@@ -1343,11 +1369,12 @@ def mkvpropedit_unlocked(
             )
 
             if localization_arguments:
-                # mkvpropedit writes the file in place (#517). The flag goes
-                # on before the tool starts. A failed flag stops the edit
-                # before its first byte (#615).
+                # mkvpropedit writes the file in place (#517). The check of
+                # the record and the flag come before the tool starts. A
+                # failure of one of them stops the edit before its first
+                # byte (#615, #726).
 
-                flag_archive_before_rewrite(file_id)
+                confirm_rewrite(file_id, file_path)
                 mkvpropedit_task = subprocess.Popen(
                     [
                         current_app.config["MKVPROPEDIT_BIN"],
@@ -1400,14 +1427,14 @@ def mkvpropedit_unlocked(
                         job,
                         file.basename,
                         "Remuxing",
-                        before_replace=lambda: flag_archive_before_rewrite(file_id),
+                        before_replace=lambda: confirm_rewrite(file_id, file_path),
                     )
 
             # Remove the subtitle tracks that have zero elements. The
             # removal renumbers the subtitle tracks that stay (#582)
 
             remove_empty_subtitle_tracks(
-                file_path, before_replace=lambda: flag_archive_before_rewrite(file_id)
+                file_path, before_replace=lambda: confirm_rewrite(file_id, file_path)
             )
 
             # Build the audio and subtitle track info again after the changes
@@ -1571,13 +1598,13 @@ def mkvmerge_unlocked(file_id, audio_tracks, subtitle_tracks):
                 job,
                 file.basename,
                 "Remuxing",
-                before_replace=lambda: flag_archive_before_rewrite(file_id),
+                before_replace=lambda: confirm_rewrite(file_id, file_path),
             )
 
             # Remove the subtitle tracks that have zero elements
 
             remove_empty_subtitle_tracks(
-                file_path, before_replace=lambda: flag_archive_before_rewrite(file_id)
+                file_path, before_replace=lambda: confirm_rewrite(file_id, file_path)
             )
 
             # Build the audio and subtitle track info again after the changes
@@ -2410,7 +2437,7 @@ def _remux_audio_plan_unlocked(file_id, plan):
                     basename,
                     "Moving into the library",
                 )
-                flag_archive_before_rewrite(int(file_id))
+                confirm_rewrite(int(file_id), file_path)
                 os.replace(hidden_library, file_path)
             except BaseException:
                 if os.path.exists(hidden_library):

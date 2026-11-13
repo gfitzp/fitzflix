@@ -302,6 +302,7 @@ def test_the_scan_marks_the_archive_stale_before_its_remux(app, monkeypatch):
         file = make_movie_file(make_movie("Stale Scan", 2021), "Bluray-1080p")
         db.session.commit()
         file_id = file.id
+        library_path = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
 
     class Matroska:
         track_type, format = "General", "Matroska"
@@ -320,7 +321,7 @@ def test_the_scan_marks_the_archive_stale_before_its_remux(app, monkeypatch):
     monkeypatch.setattr(tracks, "_extract_media_details", unreadable)
     with app.app_context():
         with pytest.raises(OSError):
-            tracks.extract_track_metadata("/nowhere.mkv", file_id)
+            tracks.extract_track_metadata(library_path, file_id)
         assert db.session.get(File, file_id).aws_stale
 
 
@@ -362,10 +363,10 @@ def test_a_failed_flag_stops_mkvpropedit_before_it_starts(
         app, monkeypatch, three_audio_mkv, "Flag First", spy
     )
 
-    def blip(file_id):
+    def blip(file_id, file_path):
         raise sqlalchemy.exc.OperationalError("UPDATE", {}, Exception("gone away"))
 
-    monkeypatch.setattr(tracks, "flag_archive_before_rewrite", blip)
+    monkeypatch.setattr(tracks, "confirm_rewrite", blip)
     with open(library_path, "rb") as handle:
         before = handle.read()
     with app.app_context():
@@ -436,20 +437,24 @@ def test_a_failed_stale_flag_stops_the_remux_before_the_rename(
 
     import app.tracks as tracks
 
-    def lost(*args, **kwargs):
-        raise RuntimeError("Lost connection to MySQL server")
+    class LostConnection(Exception):
+        pass
 
-    library_path = tmp_path / "Flag Fault (2021) - [Bluray-1080p].mkv"
-    shutil.copy(three_audio_mkv, library_path)
-    before = library_path.read_bytes()
-    monkeypatch.setitem(app.config, "ARCHIVE_ORIGINAL_MEDIA", True)
+    def lost(*args, **kwargs):
+        raise LostConnection("Lost connection to MySQL server")
+
+    file_id, library_path = _propedit_fixture(
+        app, monkeypatch, three_audio_mkv, "Flag Fault", app.config["MKVPROPEDIT_BIN"]
+    )
+    with open(library_path, "rb") as handle:
+        before = handle.read()
     monkeypatch.setitem(app.config, "STAGING_DIR", str(tmp_path / "staging"))
     os.makedirs(app.config["STAGING_DIR"], exist_ok=True)
     with app.app_context():
         monkeypatch.setattr(tracks.db.session, "commit", lost)
-        with pytest.raises(RuntimeError):
+        with pytest.raises(LostConnection):
             tracks.remux_file(
-                str(library_path),
+                library_path,
                 lambda source, output: [
                     app.config["MKVMERGE_BIN"],
                     "-o",
@@ -457,12 +462,126 @@ def test_a_failed_stale_flag_stops_the_remux_before_the_rename(
                     source,
                 ],
                 None,
-                library_path.name,
+                os.path.basename(library_path),
                 "Remuxing",
-                before_replace=lambda: tracks.flag_archive_before_rewrite(1),
+                before_replace=lambda: tracks.confirm_rewrite(file_id, library_path),
             )
-    assert library_path.read_bytes() == before
-    assert [p.name for p in tmp_path.iterdir() if p.name.startswith(".")] == []
+    with open(library_path, "rb") as handle:
+        assert handle.read() == before
+    assert _hidden_files(library_path) == []
+
+
+def _hidden_files(library_path):
+    """Return the hidden names next to a library file."""
+
+    return [
+        name
+        for name in os.listdir(os.path.dirname(library_path))
+        if name.startswith(".")
+    ]
+
+
+def _change_record_during_the_remux(monkeypatch, tracks, change):
+    """Make the mkvmerge step call change() after the tool is done."""
+
+    real = tracks._run_mkvmerge
+
+    def run_then_change(*args, **kwargs):
+        real(*args, **kwargs)
+        change()
+
+    monkeypatch.setattr(tracks, "_run_mkvmerge", run_then_change)
+
+
+def test_an_edit_whose_record_is_deleted_puts_no_file_back(
+    app, monkeypatch, three_audio_mkv
+):
+    """An import of a wider episode file can delete the record during an edit (#726).
+
+    That import removes the library file too. The edit must not put its
+    result at the path. A file there would have no record."""
+
+    from app import db
+    from app.models import File
+    import app.tracks as tracks
+
+    file_id, library_path = _propedit_fixture(
+        app,
+        monkeypatch,
+        three_audio_mkv,
+        "Record Deleted",
+        app.config["MKVPROPEDIT_BIN"],
+    )
+    with app.app_context():
+        uids = _uids(file_id)
+
+    def delete_record_and_file():
+        db.session.delete(db.session.get(File, file_id))
+        db.session.commit()
+        os.remove(library_path)
+
+    _change_record_during_the_remux(monkeypatch, tracks, delete_record_and_file)
+    with app.app_context():
+        with pytest.raises(tracks.RecordChanged):
+            tracks.mkvmerge_unlocked(file_id, uids[:1], [])
+    assert not os.path.exists(library_path)
+    assert _hidden_files(library_path) == []
+
+
+def test_an_edit_whose_record_moved_leaves_the_old_path_empty(
+    app, monkeypatch, three_audio_mkv
+):
+    """A rename can move the file and its record during an edit (#726).
+
+    The edit must not write the old path. The renamed file keeps its
+    bytes, and the track scan after the failed edit reads it."""
+
+    from app import db
+    from app.models import File
+    import app.tracks as tracks
+
+    file_id, library_path = _propedit_fixture(
+        app, monkeypatch, three_audio_mkv, "Record Moved", app.config["MKVPROPEDIT_BIN"]
+    )
+    with app.app_context():
+        uids = _uids(file_id)
+    new_path = os.path.join(os.path.dirname(library_path), "Renamed.mkv")
+    with open(library_path, "rb") as handle:
+        before = handle.read()
+
+    def rename_record_and_file():
+        os.rename(library_path, new_path)
+        File.query.filter_by(id=file_id).update(
+            {"file_path": os.path.relpath(new_path, app.config["LIBRARY_DIR"])}
+        )
+        db.session.commit()
+
+    _change_record_during_the_remux(monkeypatch, tracks, rename_record_and_file)
+    with app.app_context():
+        with pytest.raises(tracks.RecordChanged):
+            tracks.mkvmerge_unlocked(file_id, uids[:1], [])
+    assert not os.path.exists(library_path)
+    with open(new_path, "rb") as handle:
+        assert handle.read() == before
+    assert _hidden_files(new_path) == []
+
+
+def test_a_record_check_does_not_need_the_archive_setting(app, three_audio_mkv):
+    """The check of the record runs with ARCHIVE_ORIGINAL_MEDIA off too (#726)."""
+
+    import app.tracks as tracks
+    from app import db
+    from tests.factories import make_movie, make_movie_file
+
+    with app.app_context():
+        file = make_movie_file(make_movie("No Archive", 2021), "Bluray-1080p")
+        db.session.commit()
+        library_path = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
+        assert not app.config["ARCHIVE_ORIGINAL_MEDIA"]
+        tracks.confirm_rewrite(file.id, library_path)
+        with pytest.raises(tracks.RecordChanged):
+            tracks.confirm_rewrite(file.id, library_path + ".other")
+        assert not file.aws_stale
 
 
 def _scheduled_scans(app, file_id):

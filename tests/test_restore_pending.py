@@ -764,7 +764,7 @@ def test_the_placement_after_a_writer_that_began_first_ends_consistent(
     import app.videos as videos
     from app import aws_storage, db
     from app.models import File
-    from app.tracks import flag_archive_before_rewrite
+    from app.tracks import confirm_rewrite
     from tests.test_scheduling import scheduled_jobs
 
     monkeypatch.setitem(app.config, "ARCHIVE_ORIGINAL_MEDIA", True)
@@ -782,7 +782,7 @@ def test_the_placement_after_a_writer_that_began_first_ends_consistent(
         with app.app_context():
             aws_storage.mark_restore_pending(key)
             assert videos.download_task(key, os.path.basename(key), "r1") is False
-            flag_archive_before_rewrite(file_id)
+            confirm_rewrite(file_id, path)
             with open(path, "wb") as handle:
                 handle.write(b"remuxed local")
             assert (

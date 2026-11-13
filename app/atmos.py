@@ -1387,7 +1387,7 @@ def _atmos_finish(state, phases):
     from app.aws_storage import archive_library_file
     from app.tracks import (
         _rescan_after_a_failed_edit,
-        flag_archive_before_rewrite,
+        confirm_rewrite,
         replace_track_rows,
     )
     from app.videos import copy_with_progress
@@ -1478,7 +1478,7 @@ def _atmos_finish(state, phases):
                 # makes the weekly sync upload the file. A good archive
                 # below clears it.
 
-                flag_archive_before_rewrite(file_id)
+                confirm_rewrite(file_id, file_path)
                 os.rename(hidden_output, file_path)
             except BaseException:
                 try:
