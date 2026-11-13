@@ -53,13 +53,28 @@ def test_an_audio_sample_serves_through_the_route(app, user_client):
         os.remove(path)
 
 
-def test_the_private_static_subtrees_refuse_an_anonymous_request(client, user_client):
-    path = "/static/custom/movie/1/poster.jpg"
-    assert client.get(path).status_code == 401
-    assert user_client.get(path).status_code != 401
+def test_the_private_static_subtrees_refuse_an_anonymous_request(
+    app, client, user_client, monkeypatch, tmp_path
+):
+    """An anonymous request for a file of a private subtree gets 401 (#468).
+
+    The folder app/static/custom is not in git. Thus, the test brings a
+    static folder of its own and does not touch the posters of a
+    checkout."""
 
     # The public assets of the site stay public
-    assert client.get("/static/site.webmanifest").status_code != 401
+    assert client.get("/static/site.webmanifest").status_code == 200
+
+    poster = tmp_path / "custom" / "movie" / "1" / "poster.jpg"
+    poster.parent.mkdir(parents=True)
+    poster.write_bytes(b"jpg")
+    monkeypatch.setattr(app, "static_folder", str(tmp_path))
+
+    path = "/static/custom/movie/1/poster.jpg"
+    assert client.get(path).status_code == 401
+    member = user_client.get(path)
+    assert member.status_code == 200
+    assert member.data == b"jpg"
 
 
 def test_no_other_spelling_of_a_private_path_serves_an_anonymous_request(
