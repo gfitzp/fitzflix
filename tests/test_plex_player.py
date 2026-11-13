@@ -1,7 +1,7 @@
 """Test remote playback on the device of each user (Plex Companion).
 
-These tests cover the ratingKey resolution by TMDB guid with a verified
-title-search fallback, and the empty-play-queue guard. They cover the
+These tests cover the ratingKey resolution by the path of the best
+main-feature file (#761), and the empty-play-queue guard. They cover the
 exact hand-off that was validated with the player, and the per-user
 targeting. They also cover the play route, the button on the popover
 card, and the probe-and-save device flow on the Profile page."""
@@ -61,29 +61,65 @@ HOME_USERS = {
 
 class FakePlex:
     """Provide the GET endpoints of the server and record the queue and
-    player requests."""
+    player requests.
 
-    def __init__(self, guid_hits=None, search_hits=None, queue_count=1):
-        self.guid_hits = guid_hits or []
-        self.search_hits = search_hits or []
+    items maps a ratingKey to the part file of a movie. titles gives the
+    Plex title of an item. The file filter of a section page is a text
+    match, and a comma splits its value into words, as on the live
+    server (#761). The guid filter finds nothing and the search matches
+    the Plex title, also as on the live server."""
+
+    def __init__(self, items=None, queue_count=1, titles=None):
+        self.items = items or {}
+        self.titles = titles or {}
         self.queue_count = queue_count
-        self.metadata = {}  # ratingKey -> [guid ids]
         self.queue_posts = []
         self.player_gets = []
+        self.file_filters = []
 
     def get(self, path, params=None):
+        params = params or {}
         if path == "/":
             return {"MediaContainer": {"machineIdentifier": "SERVER-ID"}}
         if path == "/library/all":
-            return {"MediaContainer": {"Metadata": self.guid_hits}}
+            return {"MediaContainer": {"Metadata": []}}
         if path == "/search":
-            return {"MediaContainer": {"Metadata": self.search_hits}}
-        if path.startswith("/library/metadata/"):
-            rating_key = path.rsplit("/", 1)[1]
+            query = params["query"].lower()
             return {
                 "MediaContainer": {
                     "Metadata": [
-                        {"Guid": [{"id": g} for g in self.metadata.get(rating_key, [])]}
+                        {"type": "movie", "ratingKey": key, "title": title}
+                        for key, title in self.titles.items()
+                        if query in title.lower()
+                    ]
+                }
+            }
+        if path == "/library/sections":
+            return {
+                "MediaContainer": {
+                    "Directory": [
+                        {
+                            "key": "5",
+                            "type": "movie",
+                            "Location": [{"path": "/lib/Movies"}],
+                        },
+                        {
+                            "key": "6",
+                            "type": "show",
+                            "Location": [{"path": "/lib/TV Shows"}],
+                        },
+                    ]
+                }
+            }
+        if path == "/library/sections/5/all":
+            words = [word.strip().lower() for word in params["file"].split(",")]
+            self.file_filters.append(params["file"])
+            return {
+                "MediaContainer": {
+                    "Metadata": [
+                        {"ratingKey": key, "Media": [{"Part": [{"file": file}]}]}
+                        for key, file in self.items.items()
+                        if any(word in file.lower() for word in words)
                     ]
                 }
             }
@@ -140,6 +176,20 @@ class FakeResponse:
 def server_config(app, monkeypatch):
     for key, value in SERVER_CONFIG.items():
         monkeypatch.setitem(app.config, key, value)
+    monkeypatch.setitem(app.config, "LIBRARY_DIR", "/lib")
+
+
+JAWS_PATH = "/lib/Movies/Jaws (1975)/Jaws (1975) - [Bluray-1080p].mkv"
+
+
+def jaws(**kwargs):
+    """Make the film Jaws with 1 main-feature file at JAWS_PATH."""
+
+    from tests.factories import make_movie_file
+
+    movie = make_movie("Jaws", 1975, tmdb_id=578, **kwargs)
+    make_movie_file(movie, "Bluray-1080p")
+    return movie
 
 
 @pytest.fixture
@@ -177,12 +227,12 @@ def _wire(monkeypatch, fake):
     return plex_player
 
 
-def test_plays_via_guid_lookup(app, monkeypatch, server_config):
-    fake = FakePlex(guid_hits=[{"ratingKey": "189344"}])
+def test_plays_the_item_at_the_path_of_the_file(app, monkeypatch, server_config):
+    fake = FakePlex(items={"189344": JAWS_PATH})
     plex_player = _wire(monkeypatch, fake)
 
     with app.app_context():
-        movie = make_movie("Jaws", 1975, tmdb_id=578)
+        movie = jaws()
         ok, message = plex_player.play_movie(movie, device_user())
 
     assert ok is True
@@ -208,11 +258,11 @@ def test_plays_via_guid_lookup(app, monkeypatch, server_config):
 
 
 def test_each_user_plays_on_their_own_device(app, monkeypatch, server_config):
-    fake = FakePlex(guid_hits=[{"ratingKey": "189344"}])
+    fake = FakePlex(items={"189344": JAWS_PATH})
     plex_player = _wire(monkeypatch, fake)
 
     with app.app_context():
-        movie = make_movie("Jaws", 1975, tmdb_id=578)
+        movie = jaws()
         plex_player.play_movie(movie, device_user("10.0.0.5:32500", "ATV-A"))
         plex_player.play_movie(movie, device_user("100.101.0.9:32500", "ATV-B"))
 
@@ -223,41 +273,126 @@ def test_each_user_plays_on_their_own_device(app, monkeypatch, server_config):
     assert second["headers"]["X-Plex-Target-Client-Identifier"] == "ATV-B"
 
 
-def test_falls_back_to_search_verified_by_tmdb_guid(app, monkeypatch, server_config):
-    """Test the title-search fallback when the guid filter finds nothing.
+def test_a_film_with_another_plex_title_plays_by_its_path(
+    app, monkeypatch, server_config
+):
+    """Plex can give a film the title of another country (#761)."""
 
-    The title search accepts only a candidate with metadata that carries
-    the TMDB guid of the movie."""
+    from tests.factories import make_movie_file
 
-    fake = FakePlex(
-        search_hits=[
-            {"type": "movie", "ratingKey": "111", "year": 1975},
-            {"type": "movie", "ratingKey": "222", "year": 1975},
-        ]
+    path = (
+        "/lib/Movies/Harry Potter and the Philosopher's Stone (2001)/"
+        "Harry Potter and the Philosopher's Stone (2001) - [Bluray-1080p].mkv"
     )
-    fake.metadata = {"111": ["tmdb://999"], "222": ["tmdb://578"]}
+    fake = FakePlex(
+        items={"300": path}, titles={"300": "Harry Potter and the Sorcerer's Stone"}
+    )
     plex_player = _wire(monkeypatch, fake)
 
     with app.app_context():
-        movie = make_movie("Jaws", 1975, tmdb_id=578)
+        movie = make_movie(
+            "Harry Potter and the Philosopher's Stone", 2001, tmdb_id=671
+        )
+        make_movie_file(movie, "Bluray-1080p")
         ok, _ = plex_player.play_movie(movie, device_user())
 
     assert ok is True
-    assert "metadata/222" in fake.queue_posts[0]["uri"]
+    assert fake.queue_posts[0]["uri"].endswith("/library/metadata/300")
+
+
+def test_a_film_with_no_tmdb_id_plays_by_its_path(app, monkeypatch, server_config):
+    """A home video or a concert has no TMDB id (#761)."""
+
+    from tests.factories import make_movie_file
+
+    path = (
+        "/lib/Movies/Apollo 50 - Go for the Moon (2019)/"
+        "Apollo 50 - Go for the Moon (2019) - [Bluray-1080p].mkv"
+    )
+    fake = FakePlex(items={"301": path}, titles={"301": "Apollo 50 Go for the Moon"})
+    plex_player = _wire(monkeypatch, fake)
+
+    with app.app_context():
+        movie = make_movie("Apollo 50 - Go for the Moon", 2019)
+        make_movie_file(movie, "Bluray-1080p")
+        ok, _ = plex_player.play_movie(movie, device_user())
+
+    assert ok is True
+    assert fake.queue_posts[0]["uri"].endswith("/library/metadata/301")
+
+
+def test_the_best_copy_that_plex_lists_plays(app, monkeypatch, server_config):
+    """The best main feature plays. A copy that Plex lacks gives way (#761).
+
+    A copy that is only in S3 has no library file, so Plex does not
+    list it. An extra is never the film."""
+
+    from tests.factories import make_movie_file
+
+    with app.app_context():
+        movie = make_movie("Jaws", 1975, tmdb_id=578)
+        dvd = make_movie_file(movie, "DVD")
+        best = make_movie_file(movie, "Bluray-1080p", edition="Special Edition")
+        trailer = make_movie_file(movie, "Bluray-1080p", feature_type_name="Trailers")
+        paths = {file.id: f"/lib/{file.file_path}" for file in (dvd, best, trailer)}
+
+        fake = FakePlex(items={"10": paths[dvd.id], "12": paths[trailer.id]})
+        plex_player = _wire(monkeypatch, fake)
+        assert plex_player._movie_rating_key(movie) == "10"
+
+        fake.items["11"] = paths[best.id]
+        assert plex_player._movie_rating_key(movie) == "11"
+
+        fake.items = {"12": paths[trailer.id]}
+        assert plex_player._movie_rating_key(movie) is None
+
+
+def test_a_plex_on_another_mount_finds_the_file_by_its_folder(
+    app, monkeypatch, server_config
+):
+    """The folder and the file identify a part when Plex has another root.
+
+    A comma in the name makes the filter of Plex match more items. Only
+    the item of the file plays."""
+
+    from tests.factories import make_movie_file
+
+    with app.app_context():
+        movie = make_movie("The Who at Wachovia Center, Philadelphia, PA", 2006)
+        file = make_movie_file(movie, "DVD")
+        fake = FakePlex(
+            items={
+                "20": "/data/Movies/Philadelphia (1993)/Philadelphia (1993) - [DVD].mkv",
+                "21": f"/data/{file.file_path}",
+            }
+        )
+        plex_player = _wire(monkeypatch, fake)
+        assert plex_player._movie_rating_key(movie) == "21"
+        fake.items["22"] = f"/lib/{file.file_path}"
+        assert plex_player._movie_rating_key(movie) == "22"
 
 
 def test_missing_movie_reports_without_touching_the_player(
     app, monkeypatch, server_config
 ):
-    fake = FakePlex()
+    """A film that Plex does not list gives the message of a missing film."""
+
+    fake = FakePlex(
+        items={"400": "/lib/Movies/Other Film (1999)/Other Film (1999) - [DVD].mkv"},
+        titles={"400": "Nowhere Film"},
+    )
     plex_player = _wire(monkeypatch, fake)
 
     with app.app_context():
-        movie = make_movie("Nowhere Film", 1999, tmdb_id=42)
+        from tests.factories import make_movie_file
+
+        movie = make_movie("Nowhere Film", 1999)
+        make_movie_file(movie, "DVD")
+        assert plex_player._movie_rating_key(movie) is None
         ok, message = plex_player.play_movie(movie, device_user())
 
     assert ok is False
-    assert "does not have" in message
+    assert message == "Plex does not have this movie, or Plex did not scan it yet."
     assert fake.queue_posts == []
     assert fake.player_gets == []
 
@@ -268,11 +403,11 @@ def test_empty_play_queue_is_refused(app, monkeypatch, server_config):
     Plex can create a queue with 0 items and still return a playQueueID.
     Fitzflix must never give such a queue to the player."""
 
-    fake = FakePlex(guid_hits=[{"ratingKey": "189344"}], queue_count=0)
+    fake = FakePlex(items={"189344": JAWS_PATH}, queue_count=0)
     plex_player = _wire(monkeypatch, fake)
 
     with app.app_context():
-        movie = make_movie("Jaws", 1975, tmdb_id=578)
+        movie = jaws()
         ok, message = plex_player.play_movie(movie, device_user())
 
     assert ok is False
@@ -283,7 +418,7 @@ def test_empty_play_queue_is_refused(app, monkeypatch, server_config):
 def test_unreachable_player_blames_the_closed_app(app, monkeypatch, server_config):
     import requests
 
-    fake = FakePlex(guid_hits=[{"ratingKey": "189344"}])
+    fake = FakePlex(items={"189344": JAWS_PATH})
     plex_player = _wire(monkeypatch, fake)
 
     def refuse(url, params=None, headers=None, timeout=None):
@@ -292,7 +427,7 @@ def test_unreachable_player_blames_the_closed_app(app, monkeypatch, server_confi
     monkeypatch.setattr(plex_player.requests, "get", refuse)
 
     with app.app_context():
-        movie = make_movie("Jaws", 1975, tmdb_id=578)
+        movie = jaws()
         ok, message = plex_player.play_movie(movie, device_user())
 
     assert ok is False
@@ -303,7 +438,7 @@ def test_unconfigured_server_short_circuits(app, monkeypatch):
     import app.plex_player as plex_player
 
     with app.app_context():
-        movie = make_movie("Jaws", 1975, tmdb_id=578)
+        movie = jaws()
         ok, message = plex_player.play_movie(movie, device_user())
 
     assert ok is False
@@ -313,7 +448,7 @@ def test_unconfigured_server_short_circuits(app, monkeypatch):
 def test_user_without_device_is_pointed_at_their_profile(
     app, monkeypatch, server_config
 ):
-    fake = FakePlex(guid_hits=[{"ratingKey": "189344"}])
+    fake = FakePlex(items={"189344": JAWS_PATH})
     plex_player = _wire(monkeypatch, fake)
 
     with app.app_context():
@@ -365,7 +500,7 @@ def _committed_movie(app, **kwargs):
     from app import db
 
     with app.app_context():
-        movie = make_movie("Jaws", 1975, tmdb_id=578, **kwargs)
+        movie = jaws(**kwargs)
         movie_id = movie.id
         db.session.commit()
     return movie_id
@@ -374,7 +509,7 @@ def _committed_movie(app, **kwargs):
 def test_play_route_uses_the_users_device(
     app, monkeypatch, user_client, server_config, member_device
 ):
-    fake = FakePlex(guid_hits=[{"ratingKey": "189344"}])
+    fake = FakePlex(items={"189344": JAWS_PATH})
     _wire(monkeypatch, fake)
     movie_id = _committed_movie(app)
 
@@ -572,7 +707,7 @@ def test_profile_rejects_a_malformed_address(
 def test_member_without_a_linked_home_user_never_sees_the_owner_token(
     app, monkeypatch, server_config
 ):
-    fake = FakePlex(guid_hits=[{"ratingKey": "1"}])
+    fake = FakePlex(items={"1": JAWS_PATH})
     plex_player = _wire(monkeypatch, fake)
     movie = SimpleNamespace(tmdb_id=578, title="Jaws", year=1975, tmdb_title=None)
     with app.app_context():
@@ -584,7 +719,7 @@ def test_member_without_a_linked_home_user_never_sees_the_owner_token(
 
 
 def test_protected_home_user_is_refused(app, monkeypatch, server_config):
-    fake = FakePlex(guid_hits=[{"ratingKey": "1"}])
+    fake = FakePlex(items={"1": JAWS_PATH})
     plex_player = _wire(monkeypatch, fake)
     movie = SimpleNamespace(tmdb_id=578, title="Jaws", year=1975, tmdb_title=None)
     with app.app_context():
@@ -663,7 +798,7 @@ def test_player_address_accepts_only_private_literals(text, expected):
 def test_play_refuses_a_stored_hostname(app, monkeypatch, server_config):
     # A row edited outside the Profile page still cannot send the
     # token to a hostname
-    fake = FakePlex(guid_hits=[{"ratingKey": "1"}])
+    fake = FakePlex(items={"1": JAWS_PATH})
     plex_player = _wire(monkeypatch, fake)
     movie = SimpleNamespace(tmdb_id=578, title="Jaws", year=1975, tmdb_title=None)
     with app.app_context():
@@ -694,7 +829,7 @@ def test_play_route_refuses_a_post_without_a_csrf_token(
     A cross-site form post is one example. It comes from a remembered
     user on a browser that does not default cookies to Lax."""
 
-    fake = FakePlex(guid_hits=[{"ratingKey": "189344"}])
+    fake = FakePlex(items={"189344": JAWS_PATH})
     _wire(monkeypatch, fake)
     movie_id = _committed_movie(app)
 
@@ -767,7 +902,7 @@ def test_owner_home_user_is_never_switched_to(app, monkeypatch, server_config):
     Fitzflix refuses the Home user that is flagged admin at the point
     where it mints the tokens."""
 
-    fake = FakePlex(guid_hits=[{"ratingKey": "1"}])
+    fake = FakePlex(items={"1": JAWS_PATH})
     plex_player = _wire(monkeypatch, fake)
     movie = SimpleNamespace(tmdb_id=578, title="Jaws", year=1975, tmdb_title=None)
     with app.app_context():

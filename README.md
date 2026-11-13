@@ -345,7 +345,7 @@ To remove the device and its play buttons, clear the field.
 
 **Remote households:** the server side already operates from all locations, because `PLEX_PLAYER_SERVER_URI` is a public HTTPS address. The only requirement is that the *Fitzflix server can reach port 32500 of the device*. A device in an other house usually does not permit this. A VPN solves this problem. Install a VPN such as [Tailscale](https://tailscale.com) on the device and on the Fitzflix server. Tailscale has a native Apple TV app. The user then enters the VPN address of the device as the playback device, and the function operates in the same way. Do not forward port 32500 to the internet. Companion has no authentication of its own.
 
-Fitzflix matches the films to the Plex library by the TMDB guid. If there is no match, it does a title search and verifies the guid. Thus, no other Plex configuration is necessary. Playback can fail with a message about an empty play queue, or about a container that cannot be retrieved. The usual cause is a `PLEX_PLAYER_SERVER_URI` that the device cannot reach. Test the address again from a device on the same network as the player.
+Fitzflix matches the films to the Plex library by the path of the best main-feature file. If Plex does not list that file, Fitzflix tries the next copy of the film. Thus, no other Plex configuration is necessary. Playback can fail with a message about an empty play queue, or about a container that cannot be retrieved. The usual cause is a `PLEX_PLAYER_SERVER_URI` that the device cannot reach. Test the address again from a device on the same network as the player.
 
 ## Plex plays the default tracks of the file
 

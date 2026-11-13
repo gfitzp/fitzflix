@@ -32,8 +32,10 @@ it). Thus, this module reports a connection failure at the player as
 """
 
 import ipaddress
+import os
 import time
 import traceback
+import unicodedata
 from urllib.parse import urlsplit
 from xml.etree import ElementTree
 
@@ -42,6 +44,8 @@ import requests
 from flask import current_app
 
 from app.cache import cached_fetch
+from app.file_ranking import MOVIE_BEST_ORDER
+from app.models import File, RefQuality
 from app.plex_api import plex_get as _plex_get
 
 # Stable controller identity. The Apple TV tracks controllers by this
@@ -359,39 +363,77 @@ def _server_machine_id():
     return payload.get("MediaContainer", {}).get("machineIdentifier")
 
 
+def _rating_key_at(sections, path):
+    """Return the ratingKey of the Plex movie with a part file at path, or None.
+
+    The file filter of a section page is a text match, not an exact
+    match. Plex reads a comma in the value as a list of words, and an
+    item matches any word. Thus, this function compares the part files
+    of each answer with path. It asks for the last 2 components of the path: the folder and
+    the file. When Plex reaches the library by another mount, those
+    components identify the file, as in find_plex_item of
+    app.plex_rename. The full path wins over such a match."""
+
+    # app.plex_library imports app.plex_selection, and that module
+    # imports this module. Thus, the import waits for the first call.
+
+    from app.plex_library import _part_files, _sections_holding, _tail
+
+    path = unicodedata.normalize("NFC", os.path.abspath(path))
+    tail = _tail(path, 2)
+    for section in _sections_holding(sections, {path}):
+        payload = _plex_get(
+            f"/library/sections/{section['key']}/all",
+            params={"type": 1, "file": tail},
+        )
+        other_mount = None
+        for item in payload.get("MediaContainer", {}).get("Metadata", []) or []:
+            for part in _part_files(item):
+                part = unicodedata.normalize("NFC", part)
+                if part == path:
+                    return item.get("ratingKey")
+                if other_mount is None and _tail(part, 2) == tail:
+                    other_mount = item.get("ratingKey")
+        if other_mount:
+            return other_mount
+    return None
+
+
 def _movie_rating_key(movie):
     """Return the ratingKey of the movie in the local Plex library, or None.
 
-    The guid filter is exact and cheap where the server supports it.
-    The fallback is a title search. This function verifies each
-    candidate. It uses the TMDB Guid when the movie has a TMDB id. It
-    uses the year in the other case. Thus, a remake or a short with the
-    same name cannot play by mistake.
+    Invariant (#761): a film that Plex has plays, and None means that
+    Plex lists no main-feature file of the film. Thus, the message "Plex
+    does not have this movie" is true. The lookup goes by the path of
+    each main-feature file. The best copy by MOVIE_BEST_ORDER comes
+    first, over all editions. A file that Plex does not list, for
+    example a copy that is only in S3, gives way to the next copy. An
+    extra is never the film. The guid filter of Plex found no film on
+    this server, and a title search missed the films with another Plex
+    title.
     """
 
-    if movie.tmdb_id:
-        payload = _plex_get(
-            "/library/all", params={"guid": f"tmdb://{movie.tmdb_id}", "type": 1}
-        )
-        for item in payload.get("MediaContainer", {}).get("Metadata", []) or []:
-            if item.get("ratingKey"):
-                return item["ratingKey"]
-
-    query = movie.tmdb_title or movie.title
-    payload = _plex_get("/search", params={"query": query})
-    for item in payload.get("MediaContainer", {}).get("Metadata", []) or []:
-        if item.get("type") != "movie" or not item.get("ratingKey"):
-            continue
-        if movie.tmdb_id:
-            meta = _plex_get(f"/library/metadata/{item['ratingKey']}")
-            entries = (meta.get("MediaContainer", {}).get("Metadata") or [{}])[0]
-            if any(
-                guid.get("id") == f"tmdb://{movie.tmdb_id}"
-                for guid in entries.get("Guid", []) or []
-            ):
-                return item["ratingKey"]
-        elif item.get("year") == movie.year:
-            return item["ratingKey"]
+    files = (
+        File.query.join(RefQuality, RefQuality.id == File.quality_id)
+        .filter(File.movie_id == movie.id, File.feature_type_id.is_(None))
+        .order_by(*MOVIE_BEST_ORDER)
+        .all()
+    )
+    if not files:
+        return None
+    sections = [
+        section
+        for section in _plex_get("/library/sections")
+        .get("MediaContainer", {})
+        .get("Directory", [])
+        or []
+        if section.get("type") == "movie"
+    ]
+    library = current_app.config["LIBRARY_DIR"]
+    for file in files:
+        rating_key = _rating_key_at(sections, os.path.join(library, file.file_path))
+        if rating_key:
+            return rating_key
     return None
 
 
