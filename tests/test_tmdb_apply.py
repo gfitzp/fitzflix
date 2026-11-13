@@ -787,7 +787,7 @@ def test_a_merge_after_a_new_tmdb_id_leaves_the_catalog_values_behind(app):
         new = make_movie("Right Film", 2005, tmdb_id=902)
         db.session.commit()
 
-        move_movie_rows(old.id, new.id, same_film=False)
+        move_movie_rows(old.id, new.id)
         db.session.delete(old)
         db.session.commit()
 
@@ -809,11 +809,92 @@ def test_a_merge_after_a_new_tmdb_id_keeps_a_typed_set_title(app):
         new = make_movie("Bonus Film Again", 2006, tmdb_id=903)
         db.session.commit()
 
-        move_movie_rows(old.id, new.id, same_film=False)
+        move_movie_rows(old.id, new.id)
         db.session.delete(old)
         db.session.commit()
 
         assert new.criterion_set_title == "A Typed Box Set"
+
+
+def test_a_refresh_merge_leaves_a_title_and_year_match_of_the_catalog_behind(app):
+    """A record with no TMDB id can have the catalog entry of an other film (#729).
+
+    The Wikidata task matches such a record by its title and year. The
+    title came from a file name, and a Criterion film has the same one.
+    Then a refresh finds the TMDB id, and an older record has that id.
+    The spine of the other film must not go to the survivor. This test
+    goes through the refresh, which decides what the merge may carry."""
+
+    import json
+    import zlib
+
+    from app.tmdb_refresh import apply_tmdb_refresh
+
+    with app.app_context():
+        older = make_movie("Film Of The Id", 2012, tmdb_id=729001)
+        newer = make_movie(
+            "Name Of A Criterion Film",
+            2012,
+            criterion_spine_number=729,
+            criterion_film_id="Q729",
+            criterion_set_title="A Set Of The Other Film",
+            criterion_in_print=True,
+            criterion_disc_owned=True,
+        )
+        db.session.commit()
+        older_id, newer_id = older.id, newer.id
+
+    payload = zlib.compress(
+        json.dumps(
+            {"id": 729001, "title": "Film Of The Id", "release_date": "2012-01-01"}
+        ).encode("utf-8")
+    )
+    assert (
+        apply_tmdb_refresh("Movies", newer_id, tmdb_id=729001, tmdb_payload=payload)
+        is True
+    )
+    with app.app_context():
+        assert db.session.get(Movie, newer_id) is None
+        survivor = db.session.get(Movie, older_id)
+        assert survivor.criterion_spine_number is None
+        assert survivor.criterion_film_id is None
+        assert survivor.criterion_set_title is None
+        assert survivor.criterion_in_print is None
+        assert survivor.criterion_disc_owned is True
+
+
+def test_a_merge_carries_a_typed_spine_of_a_record_with_no_tmdb_id(app):
+    """Only the catalog writes the film id. A spine with no film id was typed (#729)."""
+
+    from app.tmdb_refresh import move_movie_rows
+
+    with app.app_context():
+        old = make_movie("Typed Spine", 2013, criterion_spine_number=1200)
+        new = make_movie("Typed Spine Again", 2013, tmdb_id=729002)
+        db.session.commit()
+
+        move_movie_rows(old.id, new.id)
+        db.session.delete(old)
+        db.session.commit()
+
+        assert new.criterion_spine_number == 1200
+
+
+def test_a_merge_leaves_the_spine_of_an_other_tmdb_id_behind(app):
+    """The catalog entry of an other TMDB id can have no film id (#729)."""
+
+    from app.tmdb_refresh import move_movie_rows
+
+    with app.app_context():
+        old = make_movie("Other Id", 2014, tmdb_id=729003, criterion_spine_number=88)
+        new = make_movie("Right Id", 2014, tmdb_id=729004)
+        db.session.commit()
+
+        move_movie_rows(old.id, new.id)
+        db.session.delete(old)
+        db.session.commit()
+
+        assert new.criterion_spine_number is None
 
 
 def test_a_merge_keeps_a_false_that_a_person_set_on_the_survivor(app):

@@ -4415,7 +4415,7 @@ def _parse_tv(basename, log):
     # The show folder starts as the episode names do, with no period
     # (#722).
 
-    folder_title = visible_name(title, transliterate=False)
+    folder_title = visible_name(title, sanitized=False)
     if not folder_title:
         return FilenameRejection("no visible title")
     while folder_title.endswith(" ") or folder_title.endswith("."):

@@ -1224,7 +1224,7 @@ def test_a_show_named_with_characters_that_have_no_ascii_form_keeps_its_name(app
 
     from app.naming import library_name, visible_name
 
-    assert visible_name("\U0001f600", transliterate=False) == "\U0001f600"
+    assert visible_name("\U0001f600", sanitized=False) == "\U0001f600"
     assert visible_name("\U0001f600") == ""
     plex_title, _ = library_name(
         {
@@ -1237,6 +1237,34 @@ def test_a_show_named_with_characters_that_have_no_ascii_form_keeps_its_name(app
         }
     )
     assert plex_title.startswith("\U0001f600")
+
+
+@pytest.mark.parametrize(
+    "title, folder",
+    [
+        ("?...Zzq Show", "?...Zzq Show"),
+        ("...Zzq Dots", "Zzq Dots"),
+        ("???", "???"),
+    ],
+)
+def test_a_tv_name_loses_only_what_the_disk_hides(app, title, folder):
+    """A TV name goes to the disk with no sanitizer (#729).
+
+    The rule for films removes a character that the sanitizer removes.
+    For a TV name, that character is on the disk and stays. A name of
+    only such characters is visible, and it is not refused."""
+
+    from tests.factories import make_tv_series
+
+    tmdb_id = 729100 + len(title)
+    with app.app_context():
+        make_tv_series(title, tmdb_id=tmdb_id)
+        details = evaluate_filename(
+            f"Zzq {{tmdb-{tmdb_id}}} - S01E01 - [DVD].mkv", log=False
+        )
+    assert details, details.reason
+    assert details["file_path"].split("/")[1].startswith(folder)
+    assert details["file_path"].split("/")[-1].startswith(folder)
 
 
 def test_the_refresh_lock_of_a_film_is_the_lock_of_its_first_import(app):

@@ -153,8 +153,13 @@ def test_a_copy_that_differs_is_deleted_and_the_row_keeps_its_key(app, s3, caplo
 
         # The job fails loudly, for the FailedJobRegistry. Only the own
         # copy goes, by its version id.
-        with pytest.raises(RuntimeError, match="has the ETag"):
+        with pytest.raises(RuntimeError, match="has the ETag") as failure:
             aws_storage.move_archive_object(file_id)
+
+        # The System page shows 200 characters of the last line of the
+        # error. The repair must be in that part for each file name (#729).
+        shown = f"RuntimeError: {failure.value}"[:200]
+        assert "Requeue this task on the System page" in shown
         target = "untouched/Bad Copy (1951) - [Bluray-1080p].mkv"
         assert fake.deletes == [(target, "copy-1")]
         db.session.expire_all()
@@ -436,7 +441,7 @@ def test_a_download_that_starts_during_the_copy_keeps_the_old_key(app, s3):
                     db.text(
                         "UPDATE file SET restore_requested_at = :now WHERE id = :id"
                     ),
-                    {"id": file_id, "now": datetime(2026, 11, 12, 16, 0)},
+                    {"id": file_id, "now": "2026-11-12 16:00:00"},
                 )
             app.file_queue.enqueue(
                 "app.videos.download_task", args=(old_key, "Late (1961).mkv")
