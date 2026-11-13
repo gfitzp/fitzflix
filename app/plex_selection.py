@@ -33,6 +33,7 @@ Plex app does not outlive the night. The first track is the default
 for a reason. Infuse selects tracks by its own rules.
 """
 
+import time
 import traceback
 from datetime import timedelta
 
@@ -259,6 +260,12 @@ def enqueue_align(rating_key, delay_minutes=WEBHOOK_DELAY_MINUTES):
     job = current_app.maintenance_queue.fetch_job(job_id)
     if job is not None and job.get_status(refresh=False) in ("queued", "scheduled"):
         return False
+
+    # A job that runs marks its hash as finished at its end. A new job
+    # under the same id would lose its hash then (#744).
+
+    if job is not None and job.get_status(refresh=False) == "started":
+        job_id = f"{job_id}_{int(time.time())}"
     enqueue_task(
         "app.plex_selection.align_plex_items",
         [str(rating_key)],

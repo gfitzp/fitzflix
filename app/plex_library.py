@@ -52,6 +52,7 @@ change that.
 
 import os
 import subprocess
+import time
 import traceback
 from datetime import timedelta
 
@@ -664,10 +665,15 @@ def enqueue_plex_analyze(file_path, delay=None):
         # A second edit while the first analyze is still queued needs no
         # second job. The queued job reads the file when it runs. A job
         # that already RUNS is not a duplicate. It may have read the file
-        # before this edit arrived.
+        # before this edit arrived. The new job gets an id of its own.
+        # Under the id of the job that runs, it would take the hash that
+        # the first job marks as finished at its end (#744).
 
         if job_id in queue.job_ids:
             return False
+        running = queue.fetch_job(job_id)
+        if running is not None and running.get_status(refresh=False) == "started":
+            job_id = f"{job_id}_{int(time.time())}"
         enqueue_task(
             "app.plex_library.analyze_plex_media",
             [file_path],

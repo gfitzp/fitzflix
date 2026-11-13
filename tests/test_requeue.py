@@ -398,3 +398,58 @@ def test_a_job_that_books_itself_keeps_the_booking_after_it_ends(app):
         finally:
             FinishedJobRegistry(queue=queue).remove(job_id)
             _delete_job_id(app, queue, job_id)
+
+
+def test_a_fixed_job_id_does_not_take_the_expiry_of_a_finished_job(app):
+    """Each enqueue under a fixed id frees the id first (#744).
+
+    A finished job keeps its hash for 500 seconds. A new job under the
+    same id took that hash with its expiry. If no worker took the job in
+    that time, rq dropped it with no message."""
+
+    from app.tasks import enqueue_task
+
+    name = "app.plex_library.analyze_plex_media"
+    job_id = "plex_analyze_fixed-id-test"
+    queue = app.maintenance_queue
+    with app.app_context():
+        try:
+            old = enqueue_task(name, ["/x.mkv"], job_id=job_id)
+            queue.remove(old)
+            old.set_status("finished")
+            app.redis.expire(old.key, 120)
+
+            new = enqueue_task(name, ["/y.mkv"], job_id=job_id)
+            assert new.id == job_id
+            assert app.redis.ttl(new.key) == -1
+            assert queue.fetch_job(job_id).args == (["/y.mkv"],)
+        finally:
+            _delete_job_id(app, queue, job_id)
+
+
+def test_an_analyze_beside_a_running_one_gets_its_own_job_id(app, monkeypatch):
+    """A job that runs marks its hash as finished at its end (#744).
+
+    A second analyze under the same id would lose its hash then. It is
+    not a duplicate: the first job can have read the file before the
+    second edit."""
+
+    from app.plex_library import enqueue_plex_analyze
+
+    monkeypatch.setitem(app.config, "PLEX_URL", "http://plex.test")
+    monkeypatch.setitem(app.config, "PLEX_TOKEN", "token")
+    queue = app.maintenance_queue
+    path = "/library/Movies/Twice (2021)/Twice (2021) - [DVD].mkv"
+    with app.app_context():
+        assert enqueue_plex_analyze(path) is True
+        (first,) = queue.jobs
+        assert enqueue_plex_analyze(path) is False
+
+        queue.remove(first)
+        first.set_status("started")
+        assert enqueue_plex_analyze(path) is True
+        (second,) = queue.jobs
+        assert second.id != first.id
+        assert second.id.startswith(first.id)
+        for job in (first, second):
+            _delete_job_id(app, queue, job.id)

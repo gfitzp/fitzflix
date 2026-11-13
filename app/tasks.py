@@ -359,6 +359,13 @@ def _submit(
     if description is not None:
         options["description"] = description
     if job_id is not None:
+        # Invariant: a job never takes the hash of an older job (#371,
+        # #438, #744). A finished job keeps its hash for the result ttl
+        # of rq, 500 seconds. A new job under the same id took that hash
+        # with its expiry, and it could expire in the queue. Thus, each
+        # use of a fixed id frees it here first. A job that waits or
+        # runs under the id keeps it.
+        free_job_id(name, job_id, queue=target)
         options["job_id"] = job_id
     if meta is not None:
         options["meta"] = meta
@@ -666,7 +673,6 @@ def requeue(
         getattr(current_app.logger, level)(
             f"{label} {reason}, returning to queue after {_wait_text(delay)}"
         )
-    free_job_id(name, job_id, queue=queue)
     current = get_current_job()
     if current is not None and current.id == job_id:
         current.result_ttl = RETRY_RESULT_TTL
