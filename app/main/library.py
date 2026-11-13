@@ -2319,14 +2319,19 @@ def _delete_series(tv, series_id, title):
         return redirect(url_for("main.tv", series_id=series_id))
 
     # Delete the library files only after the commit (#513). A failed
-    # commit keeps every row. Thus, it must also keep every file. A
-    # stray file is what the weekly orphan sweep is for. A row with no
-    # file is a ghost.
+    # commit keeps every row. Thus, it must also keep every file. A row
+    # with no file is a ghost. A file that the share does not remove
+    # stays with no record. No sweep removes it, and the weekly sync
+    # imports it again (#745). Thus, the page names each such file.
 
-    for file_path, file_id in local_copies:
-        _after_commit(
+    left = [
+        file_path
+        for file_path, file_id in local_copies
+        if _after_commit(
             File.delete_library_copy, file_path, file_id, delete_directory_tree=True
         )
+        is not True
+    ]
 
     # Delete the AWS copies only after the database delete is committed.
     # Thus, a failed commit cannot leave database records whose backups
@@ -2350,6 +2355,9 @@ def _delete_series(tv, series_id, title):
     for file_id in file_ids:
         _after_commit(remove_custom_artwork, "file", file_id)
 
+    if left:
+        flash(_files_left_message(f"TV series '{title}'", left), "warning")
+        return redirect(url_for("main.tv_library"))
     flash(
         f"Deleted TV series '{title}', its records and its library files. "
         f"The delete of each archive in S3 that no other record claims is "
@@ -2780,15 +2788,32 @@ def _after_commit(step, *args, **kwargs):
     """Run 1 cleanup step of a committed delete. Log a failure and go on (follow-up #513).
 
     The rows are gone. A wedged share that raised in 1 step stopped the
-    loop, and the AWS deletes and the folder cleanup never ran."""
+    loop, and the AWS deletes and the folder cleanup never ran. Return
+    the result of the step, or None after a failure."""
 
     try:
-        step(*args, **kwargs)
+        return step(*args, **kwargs)
     except Exception:
         current_app.logger.warning(
             f"Delete cleanup step {getattr(step, '__name__', step)} failed: "
             + traceback.format_exc()
         )
+
+
+def _files_left_message(what, file_paths):
+    """Return the message of a delete whose library files did not all go (#745).
+
+    The records are gone. The weekly sync imports a library file that
+    has no record. Thus, the message names each file to remove by hand."""
+
+    library = current_app.config["LIBRARY_DIR"]
+    names = ", ".join(f"'{os.path.join(library, path)}'" for path in file_paths[:5])
+    more = f" and {len(file_paths) - 5} more" if len(file_paths) > 5 else ""
+    return (
+        f"Removed {what} from the database, but the share did not delete "
+        f"{names}{more}. Delete the files by hand. If they stay, the weekly "
+        f"S3 sync imports them again."
+    )
 
 
 def _queue_archive_deletes(aws_keys):
@@ -2848,7 +2873,7 @@ def _delete_file(file):
 
     # The library file goes only after the commit, as in tv_delete (#513).
 
-    _after_commit(
+    removed = _after_commit(
         File.delete_library_copy, file_path, file_id, delete_directory_tree=True
     )
 
@@ -2867,7 +2892,10 @@ def _delete_file(file):
     _after_commit(clear_leftover_directory, leftover_dir)
     _after_commit(remove_custom_artwork, "file", file_id)
 
-    flash(f"Deleted '{file.basename}' and removed from database.", "success")
+    if removed is True:
+        flash(f"Deleted '{file.basename}' and removed from database.", "success")
+    else:
+        flash(_files_left_message(f"'{file.basename}'", [file_path]), "warning")
 
     if file.movie_id:
         return redirect(url_for("main.movie_files", movie_id=file.movie_id))

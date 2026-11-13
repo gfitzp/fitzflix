@@ -282,6 +282,92 @@ def test_file_delete_clears_a_movie_poster_husk(app, admin_client):
     assert not os.path.exists(movie_dir)
 
 
+def _refuse_removal_of(monkeypatch, wedged_path):
+    """Make the share refuse the removal of 1 path, as a wedged NAS does."""
+
+    import errno
+
+    real_remove = os.remove
+
+    def remove(path, *args, **kwargs):
+        if os.fspath(path) == wedged_path:
+            raise OSError(errno.EIO, "Input/output error", path)
+        return real_remove(path, *args, **kwargs)
+
+    monkeypatch.setattr(os, "remove", remove)
+
+
+def test_a_file_delete_says_when_the_library_file_stays(app, admin_client, monkeypatch):
+    """The share refuses the removal. The record is gone, and the file stays (#745).
+
+    The page said "Deleted". The weekly sync imports a library file with
+    no record, so the delete came undone a week later. The page must
+    name the file that the person removes by hand."""
+
+    from app import db
+    from tests.factories import make_movie, make_movie_file
+
+    with app.app_context():
+        file = make_movie_file(make_movie("Wedged Delete", 2001), "DVD")
+        db.session.commit()
+        file_id, file_path = file.id, file.file_path
+    library_path = os.path.join(app.config["LIBRARY_DIR"], file_path)
+    plant(library_path)
+
+    token = _admin_csrf_token(admin_client, f"/file/{file_id}")
+    _refuse_removal_of(monkeypatch, library_path)
+    page = admin_client.post(
+        f"/file/{file_id}",
+        data={"csrf_token": token, "delete_submit": "Delete File"},
+        follow_redirects=True,
+    ).get_data(as_text=True)
+    monkeypatch.undo()
+
+    assert os.path.exists(library_path)
+    assert "the share did not delete" in page
+    assert "Wedged Delete (2001) - [DVD].mkv" in page
+    assert "and removed from database." not in page
+    with app.app_context():
+        from app.models import File
+
+        assert db.session.get(File, file_id) is None
+    os.remove(library_path)
+
+
+def test_a_series_delete_names_the_files_that_stay(app, admin_client, monkeypatch):
+    """A series delete with 1 file that the share does not remove (#745)."""
+
+    from app import db
+    from tests.factories import make_tv_file, make_tv_series
+
+    with app.app_context():
+        series = make_tv_series("Wedged Show")
+        gone = make_tv_file(series, 1, 1, "DVD")
+        stays = make_tv_file(series, 1, 2, "DVD")
+        db.session.commit()
+        series_id = series.id
+        gone_path = os.path.join(app.config["LIBRARY_DIR"], gone.file_path)
+        stays_path = os.path.join(app.config["LIBRARY_DIR"], stays.file_path)
+    plant(gone_path)
+    plant(stays_path)
+
+    token = _admin_csrf_token(admin_client, f"/tv/{series_id}")
+    _refuse_removal_of(monkeypatch, stays_path)
+    page = admin_client.post(
+        f"/tv/{series_id}/delete",
+        data={"csrf_token": token, "delete_submit": "Delete Series"},
+        follow_redirects=True,
+    ).get_data(as_text=True)
+    monkeypatch.undo()
+
+    assert not os.path.exists(gone_path)
+    assert os.path.exists(stays_path)
+    assert "the share did not delete" in page
+    assert "Wedged Show - S01E02 - [DVD].mkv" in page
+    assert "its records and its library files" not in page
+    os.remove(stays_path)
+
+
 def test_deleting_a_special_returns_to_season_0(app, admin_client):
     """Season 0 holds the specials. The delete returns to its season page."""
 

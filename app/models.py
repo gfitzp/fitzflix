@@ -1186,7 +1186,10 @@ class File(db.Model):
 
         A delete of a record calls this after its commit. Thus, the
         caller keeps only the path and the id, not the deleted row
-        (#513)."""
+        (#513). Return True if no file is at the path afterwards. Return
+        False if the share refused the removal. The caller tells the
+        person, because the weekly sync imports a library file that has
+        no record (#745)."""
 
         file_to_delete = os.path.join(current_app.config["LIBRARY_DIR"], file_path)
         try:
@@ -1209,7 +1212,7 @@ class File(db.Model):
             # sweep removes them later.
 
             _remove_triage_aids(file_id)
-            return
+            return False
 
         else:
             current_app.logger.info(f"Deleted local file '{file_to_delete}'")
@@ -1233,6 +1236,7 @@ class File(db.Model):
                 current_app.logger.info(
                     f"Deleted the directory tree '{os.path.dirname(file_to_delete)}'"
                 )
+        return True
 
     def file_identifier(self):
         """Return the JSON identity that is the cross-task lock key of this file.
