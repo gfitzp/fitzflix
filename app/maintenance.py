@@ -1631,8 +1631,9 @@ def cleanup_orphaned_files():
     a dot-prefixed name first. Examples are the localization staging
     file (and its .convert.mkv scratch file) and cross-volume library
     copies. Other examples are AWS downloads into the import directory,
-    reject moves and held moves (.partial), and SDR conversion outputs. The stage promotes
-    the file to the visible name only on success. Thus, a hidden file
+    reject moves and held moves (.partial), and SDR conversion outputs.
+    The stage promotes the file to the visible name only on success.
+    Thus, a hidden file
     that is 1 week old can only be the residue of a failed task. The
     deletions have an age condition. They are limited to those
     directories. The task sends a summary by email.

@@ -90,6 +90,7 @@ from app.main.helpers import (
     decimal_id,
     decimal_ids,
     rejected_files,
+    unchanged_poll_answer,
 )
 from app.main.library import (
     _flash_tmdb_refresh,
@@ -1985,14 +1986,13 @@ def queue_rows_fragment():
     """Render the rows of the Queue table for the poll of the Queue page.
 
     The poll sends the ETag of its rows. If the row data did not change,
-    the answer is 304 with no body. Then the Move to front and the
-    Dismiss forms stay in place."""
+    the answer has no body (unchanged_poll_answer). Then the Move to
+    front and the Dismiss forms stay in place."""
 
     rows, etag = _queue_rows()
-    if request.if_none_match.contains_weak(etag):
-        response = current_app.response_class(status=304)
-        response.set_etag(etag)
-        return response
+    unchanged = unchanged_poll_answer(etag)
+    if unchanged is not None:
+        return unchanged
     response = make_response(
         render_template("_queue_rows.html", rows=rows, admin=current_user.admin)
     )

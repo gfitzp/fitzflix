@@ -331,6 +331,33 @@ def test_an_unchanged_queue_answers_304_and_a_healed_chip_repaints(app, admin_cl
     assert healed.headers["ETag"] != etag
 
 
+@pytest.mark.parametrize("url", ["/queue/rows", "/file-activity/cards"])
+def test_a_poll_with_its_etag_in_the_query_string_gets_an_empty_answer(
+    app, admin_client, url
+):
+    """A proxy between the browser and the server drops If-None-Match (#753).
+
+    Then no poll got a 304, and each poll downloaded and painted the
+    same rows. The poll also sends its ETag as an argument. The answer
+    for a match is 204 with no body."""
+
+    from urllib.parse import quote
+
+    first = admin_client.get(url)
+    assert first.status_code == 200
+    etag = first.headers["ETag"]
+
+    same = admin_client.get(f"{url}?etag={quote(etag)}")
+    assert same.status_code == 204
+    assert same.get_data() == b""
+    assert same.headers["ETag"] == etag
+
+    for old in ('"an-old-etag"', ""):
+        other = admin_client.get(f"{url}?etag={quote(old)}")
+        assert other.status_code == 200
+        assert other.get_data() != b""
+
+
 def test_the_rows_hook_swaps_only_on_a_new_answer(admin_client, tmp_path):
     """A 304 keeps the rows. A 200 swaps them and localizes the tooltips (#639, #547)."""
 
@@ -347,20 +374,29 @@ document.querySelectorAll = () => { localized += 1; return []; };
 globalThis.moment = () => ({ format: () => "local" });
 function flask_moment_render(span) { rendered.push(span); }
 let status = 304;
+let text = "new rows";
+const urls = [];
 answer = (url, options) => {
+    urls.push(url);
     sent.push(options.headers["If-None-Match"] || null);
     return Promise.resolve({
         status,
         headers: { get: () => '"new"' },
-        text: () => Promise.resolve("new rows"),
+        text: () => Promise.resolve(text),
     });
 };
 refreshRows().then(() => {
     const kept = tbody.innerHTML;
-    status = 200;
+    status = 204;
     return refreshRows().then(() => {
+        const kept204 = tbody.innerHTML;
+        status = 200;
         return refreshRows().then(() => {
-            result = { kept, swapped: tbody.innerHTML, sent, rendered: rendered.length, localized };
+            const swapped = tbody.innerHTML;
+            text = "the same rows again";
+            return refreshRows().then(() => {
+                result = { kept, kept204, swapped, again: tbody.innerHTML, sent, urls, rendered: rendered.length, localized };
+            });
         });
     });
 });
@@ -371,10 +407,62 @@ refreshRows().then(() => {
         test_code,
         tmp_path,
     )
+
+    # The last answer is a 200 with the ETag that the page has (#753).
+    # The rows stay, and so do the forms in them.
+
     assert out["result"] == {
         "kept": "old rows",
+        "kept204": "old rows",
         "swapped": "new rows",
-        "sent": ['"seed"', '"seed"', '"new"'],
-        "rendered": 2,
-        "localized": 2,
+        "again": "new rows",
+        "sent": ['"seed"', '"seed"', '"seed"', '"new"'],
+        "urls": [
+            "/queue/rows?etag=%22seed%22",
+            "/queue/rows?etag=%22seed%22",
+            "/queue/rows?etag=%22seed%22",
+            "/queue/rows?etag=%22new%22",
+        ],
+        "rendered": 1,
+        "localized": 1,
+    }
+
+
+def test_the_cards_hook_keeps_the_cards_of_an_answer_with_its_etag(
+    admin_client, tmp_path
+):
+    """The File Activity poll sends its ETag as an argument too (#753)."""
+
+    body = admin_client.get("/file-activity").get_data(as_text=True)
+    test_code = r"""
+const window = { fileActivityCardsUrl: "/file-activity/cards" };
+let cardsEtag = null;
+const urls = [];
+const placed = [];
+document.getElementById = () => ({});
+function placeCards(holder, html) { placed.push(html); }
+let status = 200;
+answer = (url, options) => {
+    urls.push(url);
+    return Promise.resolve({
+        status,
+        headers: { get: () => '"cards"' },
+        text: () => Promise.resolve("cards " + urls.length),
+    });
+};
+refreshCards().then(() => refreshCards()).then(() => {
+    status = 204;
+    return refreshCards();
+}).then(() => { result = { urls, placed }; });
+"""
+    out = run_page_script(
+        body, ["fetchWithTimeout", "refreshCards"], test_code, tmp_path
+    )
+    assert out["result"] == {
+        "urls": [
+            "/file-activity/cards",
+            "/file-activity/cards?etag=%22cards%22",
+            "/file-activity/cards?etag=%22cards%22",
+        ],
+        "placed": ["cards 1"],
     }

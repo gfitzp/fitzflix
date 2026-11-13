@@ -21,6 +21,7 @@ from flask import (
 
 # Flask 2.4 removed flask.Markup. Import it from its real home.
 from flask_login import current_user
+from werkzeug.http import parse_etags
 
 from app.tasks import enqueue_task
 from app import db
@@ -52,6 +53,29 @@ from app.diary import clear_not_interested, clear_watchlist, star_rating_fields
 
 from collections import namedtuple
 from functools import wraps
+
+
+def unchanged_poll_answer(etag):
+    """Return the empty answer of a poll that has the data of etag already, or None.
+
+    A poll of a page sends the ETag of the data that it shows. It sends
+    it in the If-None-Match header and as the etag argument (#753). A
+    proxy between the browser and this server can drop the header. Then
+    no poll from outside got a 304: each poll downloaded the same data
+    and painted it again. The argument reaches the server through each
+    proxy. A match of the header answers 304. A match of the argument
+    answers 204, because a 304 is an answer only to a conditional
+    request."""
+
+    if request.if_none_match.contains_weak(etag):
+        status = 304
+    elif parse_etags(request.args.get("etag")).contains_weak(etag):
+        status = 204
+    else:
+        return None
+    response = current_app.response_class(status=status)
+    response.set_etag(etag)
+    return response
 
 
 def decimal_id(value):

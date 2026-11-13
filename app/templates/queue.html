@@ -74,14 +74,21 @@
 			document.querySelectorAll("#all-tasks [data-timestamp]").forEach(flask_moment_render);
 		}, 60000);
 
+		// The ETag goes in the header and in the address (#753). A
+		// proxy can drop the header. An answer with the ETag that the
+		// page has changes nothing, whatever its status is. Thus, the
+		// forms of the rows stay in place.
+
 		function refreshRows() {
 			var headers = rowsEtag ? { "If-None-Match": rowsEtag } : {};
-			return fetchWithTimeout(ROWS_URL, { credentials: "same-origin", cache: "no-store", headers: headers }, POLL_TIMEOUT_MS)
+			var url = rowsEtag ? ROWS_URL + "?etag=" + encodeURIComponent(rowsEtag) : ROWS_URL;
+			return fetchWithTimeout(url, { credentials: "same-origin", cache: "no-store", headers: headers }, POLL_TIMEOUT_MS)
 				.then(function(response) {
 					// A redirect is the sign-in page after the session
 					// ended. It must not land in the table.
 					if (response.status !== 200 || response.redirected) return;
 					var etag = response.headers.get("ETag");
+					if (etag && etag === rowsEtag) return;
 					return response.text().then(function(html) {
 						var tbody = document.getElementById("all-tasks");
 						if (!tbody) return;

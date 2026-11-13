@@ -25,7 +25,7 @@
 	(function() {
 		// The File Activity dashboard (window.fileActivityCardsUrl is
 		// set on page 1) fetches its card list again at each poll. The
-		// server answers 304 when no card changed (the ETag). A new
+		// server answers with no body when no card changed (the ETag). A new
 		// list keeps each card on the page whose data-card-version is
 		// the same. Thus, an open poster popover on a card stays
 		// open. The other cards come in, in the order of the list. A
@@ -66,11 +66,16 @@
 
 		function refreshCards() {
 			if (!window.fileActivityCardsUrl) return null;
+			// The ETag goes in the header and in the address (#753). A
+			// proxy can drop the header.
 			var headers = cardsEtag ? { "If-None-Match": cardsEtag } : {};
-			return fetchWithTimeout(window.fileActivityCardsUrl, { credentials: "same-origin", cache: "no-store", headers: headers }, POLL_TIMEOUT_MS)
+			var url = window.fileActivityCardsUrl;
+			if (cardsEtag) url += "?etag=" + encodeURIComponent(cardsEtag);
+			return fetchWithTimeout(url, { credentials: "same-origin", cache: "no-store", headers: headers }, POLL_TIMEOUT_MS)
 				.then(function(response) {
-					if (response.status !== 200) return;
+					if (response.status !== 200 || response.redirected) return;
 					var etag = response.headers.get("ETag");
+					if (etag && etag === cardsEtag) return;
 					return response.text().then(function(html) {
 						var holder = document.getElementById("file-activity-cards");
 						if (holder) placeCards(holder, html);

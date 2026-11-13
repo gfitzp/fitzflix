@@ -72,6 +72,7 @@ from app.main.helpers import (
     library_upgradable,
     series_upgradable,
     tv_meta_line,
+    unchanged_poll_answer,
     admin_required,
     rejected_files,
 )
@@ -968,9 +969,10 @@ def file_activity_cards():
     """Render the cards of page 1 of the File Activity dashboard.
 
     The queue poll of base.html fetches this list on page 1. It sends
-    the ETag of its last list. If no card changed, the answer is 304
-    with no body. Otherwise the poll keeps each card whose version did
-    not change, and it puts in the new cards in the order of this list.
+    the ETag of its last list. If no card changed, the answer has no
+    body (unchanged_poll_answer). Otherwise the poll keeps each card
+    whose version did not change. It puts in the new cards in the order
+    of this list.
     Thus, the chips stay live, and the card of a new file appears in its
     place. A file whose row is not committed yet is not in the list. It
     appears at a later poll. The import activity entry leads the list.
@@ -980,10 +982,9 @@ def file_activity_cards():
     trail_for = _trail_lookup()
     import_activity = _import_activity()
     card_version, etag = _card_versions(trail_for, import_activity)
-    if request.if_none_match.contains_weak(etag):
-        response = current_app.response_class(status=304)
-        response.set_etag(etag)
-        return response
+    unchanged = unchanged_poll_answer(etag)
+    if unchanged is not None:
+        return unchanged
 
     files = _recent_file_cards().limit(FILE_ACTIVITY_PER_PAGE).all()
     response = current_app.make_response(
