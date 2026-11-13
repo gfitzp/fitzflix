@@ -644,6 +644,11 @@ def atmos_supplement_task(file_id, staged_source=None):
             discard_staged_source(staged_source)
             return False
 
+        # A worker that dies takes the lock with it for 2 days. The note
+        # lets the reclaim of the dead job release it (#733).
+
+        _note_lock(lock)
+
         # Each step of the run shows as a chip on the trail of the file.
         # A failure turns the chip of its step red.
 
@@ -689,6 +694,22 @@ def atmos_supplement_task(file_id, staged_source=None):
             )
             return True
         return outcome
+
+
+def _note_lock(lock):
+    """Keep the title lock of the first job in Redis for the reclaim (#733).
+
+    This is best effort. A fault here must not stop the run."""
+
+    from app.worker_recovery import note_job_state
+
+    job = get_current_job()
+    if job is None:
+        return
+    try:
+        note_job_state(job.id, current_app.config["TRANSCODE_TASK_TIMEOUT"], lock=lock)
+    except Exception:
+        current_app.logger.warning(traceback.format_exc())
 
 
 def _atmos_prepare(file_id, phases, staged_source=None):

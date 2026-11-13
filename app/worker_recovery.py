@@ -11,10 +11,14 @@ hides the Import button.
 Each worker runs reclaim_dead_workers at its start, before it takes a
 job. A worker hash of this host with no death and a dead process is a
 dead worker. Its current job fails through the failure path of the
-worker. Thus, the trail of the file is stamped. The abandon handler of
-the stage releases the title lock and the staging reservation. The
-source stays in the import directory for the hourly sweep. Then the
-hash gets its death.
+worker. Thus, the trail of an import stage is stamped as failed.
+abandon_dead_job knows the import stages, the manual import and the 3
+jobs of an Atmos run. For them it releases the title lock, and for an
+import stage the staging reservation too.
+A dead job of an other task keeps its lock until the lock expires. The
+source stays where it is. The hourly sweep finds a source of the import
+directory, and the weekly sync finds a download in the library. Then
+the hash gets its death.
 """
 
 import json
@@ -46,6 +50,7 @@ JOB_LOCK_KEY = "fitzflix:worker-reclaim:lock:{job_id}"
 # The Atmos jobs after the first one carry (state, lock). The lock and
 # the chain key stay for the 2-day transcode timeout after a SIGKILL.
 
+ATMOS_START_TASK = "app.atmos.atmos_supplement_task"
 ATMOS_CHAIN_TASKS = {"app.atmos.atmos_check_task", "app.atmos.atmos_finish_task"}
 LATER_STAGE_LOCK_ARGUMENT = {
     "app.videos.convert_localized_file",
@@ -155,6 +160,9 @@ def abandon_dead_job(job):
 
     if job.func_name == MANUAL_IMPORT_TASK:
         return
+    if job.func_name == ATMOS_START_TASK:
+        _abandon_atmos_start(job)
+        return
     if job.func_name in ATMOS_CHAIN_TASKS:
         _abandon_atmos_job(job)
         return
@@ -211,6 +219,32 @@ def abandon_dead_job(job):
         keep_source=True,
         pending_archive=pending_archive_of(details),
     )
+
+
+def _abandon_atmos_start(job):
+    """Release the title lock of a dead first job of an Atmos run (#733).
+
+    The lock of this job lives for 2 days, and it blocks each import,
+    rename, edit and delete of the title. The job writes the lock in
+    its note. The job can die after it booked the first check. Then the
+    check has the lock, and nothing is released. The workspace stays,
+    as for the later jobs. The sweep of stale workspaces removes it."""
+
+    from app.queues import roster_queues
+    from app.tasks import live_jobs
+
+    file_id = job.args[0] if job.args else job.kwargs.get("file_id")
+    for other in live_jobs(roster_queues(current_app)):
+        if (
+            other.func_name in ATMOS_CHAIN_TASKS
+            and other.args
+            and isinstance(other.args[0], dict)
+            and str(other.args[0].get("file_id")) == str(file_id)
+        ):
+            return
+    lock = _job_lock(job)
+    if lock:
+        current_app.lock_manager.unlock(lock)
 
 
 def _abandon_atmos_job(job):

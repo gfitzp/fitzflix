@@ -158,6 +158,71 @@ def test_a_dead_atmos_finish_releases_its_lock_and_chain(app, tmp_path):
         assert (tmp_path / "atmos-77").exists()
 
 
+def test_the_first_atmos_job_notes_its_lock(app, monkeypatch):
+    """The reclaim reads the lock of a dead job from its note (#733)."""
+
+    import app.atmos as atmos
+    from app.worker_recovery import _job_lock
+    from tests.test_atmos_chain import _setup
+
+    seen = []
+
+    def prepare(file_id, phases, staged_source=None):
+        seen.append(_job_lock(atmos.get_current_job()))
+        return True
+
+    with app.app_context():
+        file, job, _ = _setup(app, monkeypatch, "Noted Twin")
+        monkeypatch.setattr(atmos, "_atmos_prepare", prepare)
+        atmos.atmos_supplement_task(file.id)
+        (noted,) = seen
+        assert noted is not None
+        assert noted.resource == file.file_identifier()
+
+
+def test_a_dead_first_atmos_job_releases_its_lock(app):
+    """The lock of the first Atmos job lives for 2 days (#733).
+
+    Without the release, the title is blocked for that time."""
+
+    from app.pipeline import PipelineWorker
+    from app.worker_recovery import note_job_state, reclaim_dead_workers
+
+    with app.app_context():
+        lock = app.lock_manager.lock('{"title": "Dead Start"}', 600000)
+        _, job = _plant_dead_worker(
+            app, app.import_queue, "app.atmos.atmos_supplement_task", (77,)
+        )
+        note_job_state(job.id, 600, lock=lock)
+        reclaim_dead_workers(app.redis, PipelineWorker)
+        assert app.redis.get('{"title": "Dead Start"}') is None
+
+
+def test_a_dead_first_atmos_job_that_booked_its_check_releases_nothing(app, tmp_path):
+    """The job died after the hand-off. The check has the lock now (#733)."""
+
+    from datetime import timedelta
+
+    from app.pipeline import PipelineWorker
+    from app.worker_recovery import note_job_state, reclaim_dead_workers
+
+    with app.app_context():
+        lock = app.lock_manager.lock('{"title": "Dead Start"}', 600000)
+        app.handoff_queue.enqueue_in(
+            timedelta(minutes=2),
+            "app.atmos.atmos_check_task",
+            _atmos_state(tmp_path),
+            lock,
+        )
+        _, job = _plant_dead_worker(
+            app, app.import_queue, "app.atmos.atmos_supplement_task", (77,)
+        )
+        note_job_state(job.id, 600, lock=lock)
+        reclaim_dead_workers(app.redis, PipelineWorker)
+        assert app.redis.get('{"title": "Dead Start"}') is not None
+        app.lock_manager.unlock(lock)
+
+
 def test_a_dead_atmos_check_with_a_booked_next_check_releases_nothing(app, tmp_path):
     from datetime import timedelta
 
