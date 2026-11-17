@@ -193,3 +193,118 @@ def test_no_refresh_is_booked_without_a_plex_server(app, monkeypatch, tmp_path):
     with app.app_context():
         assert plex_library.enqueue_plex_film_refresh(str(tmp_path)) is False
         assert ScheduledJobRegistry(queue=app.maintenance_queue).get_job_ids() == []
+
+
+def _booked_film_refreshes(app):
+    registry = ScheduledJobRegistry(queue=app.maintenance_queue)
+    return [
+        app.maintenance_queue.fetch_job(job_id).args[0]
+        for job_id in registry.get_job_ids()
+        if job_id.startswith("plex_film_refresh")
+    ]
+
+
+def _clear_film_refreshes(app):
+    registry = ScheduledJobRegistry(queue=app.maintenance_queue)
+    for job_id in registry.get_job_ids():
+        registry.remove(job_id, delete_job=True)
+
+
+def _delete(app, admin_client, file):
+    """Write the library copy of file, then delete it on its file page."""
+
+    from tests.conftest import csrf_token_from
+
+    path = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "wb") as f:
+        f.write(b"video")
+    page = admin_client.get(f"/file/{file.id}").get_data(as_text=True)
+    response = admin_client.post(
+        f"/file/{file.id}",
+        data={"csrf_token": csrf_token_from(page), "delete_submit": "Delete File"},
+    )
+    assert response.status_code == 302
+    assert not os.path.exists(path)
+
+
+def _library(app, monkeypatch, tmp_path):
+    monkeypatch.setitem(app.config, "LIBRARY_DIR", str(tmp_path / "library"))
+    monkeypatch.setitem(app.config, "PLEX_URL", "http://plex.test")
+    monkeypatch.setitem(app.config, "PLEX_TOKEN", "token")
+    _clear_film_refreshes(app)
+
+
+def test_the_delete_of_an_extra_books_a_refresh_of_its_film(
+    app, admin_client, monkeypatch, tmp_path
+):
+    from tests.factories import make_movie, make_movie_file
+
+    _library(app, monkeypatch, tmp_path)
+    try:
+        with app.app_context():
+            movie = make_movie("Extra Delete", 1938)
+            main = make_movie_file(movie, "Bluray-1080p")
+            keep = make_movie_file(
+                movie, "Bluray-1080p", "Featurettes", plex_title="George Cukor"
+            )
+            extra = make_movie_file(
+                movie, "Bluray-1080p", "Featurettes", plex_title="1930 Version"
+            )
+            for file in (main, keep):
+                path = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                open(path, "wb").close()
+
+            _delete(app, admin_client, extra)
+            film = os.path.join(app.config["LIBRARY_DIR"], main.dirname)
+            assert _booked_film_refreshes(app) == [film]
+    finally:
+        _clear_film_refreshes(app)
+
+
+def test_the_delete_of_a_main_film_books_no_refresh(
+    app, admin_client, monkeypatch, tmp_path
+):
+    from tests.factories import make_movie, make_movie_file
+
+    _library(app, monkeypatch, tmp_path)
+    try:
+        with app.app_context():
+            movie = make_movie("Main Delete", 1939)
+            main = make_movie_file(movie, "DVD")
+            other = make_movie_file(movie, "Bluray-1080p")
+            path = os.path.join(app.config["LIBRARY_DIR"], other.file_path)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            open(path, "wb").close()
+
+            _delete(app, admin_client, main)
+            assert _booked_film_refreshes(app) == []
+    finally:
+        _clear_film_refreshes(app)
+
+
+def test_the_delete_of_the_last_file_of_a_film_books_no_refresh(
+    app, admin_client, monkeypatch, tmp_path
+):
+    from tests.factories import make_movie, make_movie_file
+
+    _library(app, monkeypatch, tmp_path)
+    try:
+        with app.app_context():
+            movie = make_movie("Last Extra Delete", 1940)
+            extra = make_movie_file(
+                movie, "Bluray-1080p", "Interviews", plex_title="Only Interview"
+            )
+
+            # The film folder goes with its last file. The scan sees
+            # that, and a refresh would find no folder.
+
+            _delete(app, admin_client, extra)
+            film = os.path.join(
+                app.config["LIBRARY_DIR"], os.path.dirname(extra.dirname)
+            )
+            assert not os.path.exists(film)
+            assert _booked_film_refreshes(app) == []
+    finally:
+        _clear_film_refreshes(app)

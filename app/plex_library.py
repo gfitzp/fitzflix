@@ -761,8 +761,9 @@ def enqueue_plex_analyze(file_path, delay=None):
 def enqueue_plex_film_refresh(film_folder):
     """Book a Plex refresh of the film whose folder this is (#775).
 
-    The import calls this after the commit of an extra. The function
-    never raises and never blocks the caller."""
+    The import of an extra and the delete of an extra (#776) call this
+    after their commit. The function never raises and never blocks the
+    caller."""
 
     return _book_plex_job(
         "app.plex_library.refresh_plex_film",

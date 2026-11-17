@@ -2924,6 +2924,18 @@ def _delete_file(file):
     _after_commit(clear_leftover_directory, leftover_dir)
     _after_commit(remove_custom_artwork, "file", file_id)
 
+    # Invariant (#776): an extra that the delete removes also goes from
+    # Plex. The scan of Plex does not see a file that goes from an extras
+    # folder that stays. A refresh of the film does. A film folder that
+    # went with the delete needs no refresh.
+
+    if file.movie_id and file.feature_type_id:
+        film_folder = os.path.dirname(leftover_dir)
+        if os.path.isdir(film_folder):
+            from app.plex_library import enqueue_plex_film_refresh
+
+            enqueue_plex_film_refresh(film_folder)
+
     if removed is True:
         flash(f"Deleted '{file.basename}' and removed from database.", "success")
     else:
