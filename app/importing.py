@@ -2859,6 +2859,15 @@ def finalize_localization(
             from app.plex_library import REPLACEMENT_ANALYZE_DELAY, enqueue_plex_analyze
 
             enqueue_plex_analyze(output_file, delay=REPLACEMENT_ANALYZE_DELAY)
+
+        # The scan of Plex does not see an extra that lands in an extras
+        # folder that exists already. A refresh of its film does (#775).
+        # The extra is in <film folder>/<type>/. It never raises.
+
+        if file_details.get("feature_type_name"):
+            from app.plex_library import enqueue_plex_film_refresh
+
+            enqueue_plex_film_refresh(os.path.dirname(output_directory))
         return None
 
 

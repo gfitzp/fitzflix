@@ -518,6 +518,63 @@ def test_a_replacement_import_books_the_plex_analyze_after_the_scan(
                 os.remove(path)
 
 
+def _booked_film_refreshes(app):
+    """Return the film folder of each booked Plex film refresh."""
+
+    from rq.registry import ScheduledJobRegistry
+
+    registry = ScheduledJobRegistry(queue=app.maintenance_queue)
+    folders = []
+    for job_id in registry.get_job_ids():
+        job = app.maintenance_queue.fetch_job(job_id)
+        if job and job.func_name == "app.plex_library.refresh_plex_film":
+            folders.append(job.args[0])
+    return folders
+
+
+def test_an_extra_books_a_plex_refresh_of_its_film(
+    app, sample_mkv, incoming_dir, monkeypatch
+):
+    """The scan of Plex does not see an extra in an extras folder that
+    exists already. A refresh of its film does (#775). A main file
+    books no refresh. Its folder list changes, and the scan sees it."""
+
+    from rq.registry import ScheduledJobRegistry
+
+    monkeypatch.setitem(app.config, "PLEX_URL", "http://plex.test:32400")
+    monkeypatch.setitem(app.config, "PLEX_TOKEN", "test-token")
+    _capture_emails(monkeypatch)
+    film = os.path.join(app.config["LIBRARY_DIR"], "Movies/Plex Extra (2021)")
+    main = os.path.join(film, "Plex Extra (2021) - [DVD].mkv")
+    extras = [
+        os.path.join(film, "Featurettes", f"{name}.mkv")
+        for name in ("Making Of", "On the Set")
+    ]
+    registry = ScheduledJobRegistry(queue=app.maintenance_queue)
+    try:
+        with app.app_context():
+            _import(app, sample_mkv, incoming_dir, os.path.basename(main))
+            assert _booked_film_refreshes(app) == []
+
+            for extra in extras:
+                name = os.path.splitext(os.path.basename(extra))[0]
+                _import(
+                    app,
+                    sample_mkv,
+                    incoming_dir,
+                    f"Plex Extra (2021) - Featurettes - {name} [DVD].mkv",
+                )
+                assert os.path.exists(extra)
+
+            assert _booked_film_refreshes(app) == [film]
+    finally:
+        for job_id in registry.get_job_ids():
+            registry.remove(job_id, delete_job=True)
+        for path in [main, *extras]:
+            if os.path.exists(path):
+                os.remove(path)
+
+
 def test_a_failed_booking_of_the_plex_analyze_keeps_the_import(
     app, sample_mkv, incoming_dir, monkeypatch, caplog
 ):

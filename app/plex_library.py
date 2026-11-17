@@ -96,6 +96,16 @@ ANALYZE_MAX_RETRIES = 1
 
 REPLACEMENT_ANALYZE_DELAY = timedelta(minutes=ANALYZE_RETRY_MINUTES)
 
+# Invariant (#775): each extra that the import puts in the library shows
+# in Plex under its film. The scan of Plex reads a film folder again only
+# when the list of that folder changes. That list holds its files and the
+# names of its subfolders. An extra that lands in an extras folder that exists
+# already changes no such list. A refresh of the film item reads the
+# extras folders again. The delay lets the extras of 1 disc that come in
+# a row share 1 refresh.
+
+FILM_REFRESH_DELAY = timedelta(minutes=2)
+
 # Plex answers 400 to an analyze request on a clip, that is, on an extra.
 # Its scanner analyzes one by the id of the item (#651). The scanner runs
 # on the Plex host, as the Plex user. PLEX_SCANNER names it. The analyze
@@ -640,6 +650,90 @@ def analyze_plex_media(file_paths, retries=0):
         return True
 
 
+def refresh_plex_film(film_folder):
+    """Make Plex refresh each film item with a part in this folder (#775).
+
+    This is a queue task. The refresh reads the extras folders of the
+    film again, and Plex adds the extras that its scan did not see. A
+    folder that no film item holds needs nothing. Its main file is not
+    in Plex yet. When that file comes, the folder list changes, and the
+    scan reads the extras too. The task returns True in all cases. The
+    import before it has already succeeded.
+    """
+
+    with app.app_context():
+        if not (
+            current_app.config.get("PLEX_URL") and current_app.config.get("PLEX_TOKEN")
+        ):
+            return True
+
+        # A refresh against a dropped mount makes Plex drop the extras
+        # that it cannot read.
+
+        if not volume_alive(_probe_target(film_folder)) or not os.path.isdir(
+            film_folder
+        ):
+            current_app.logger.warning(
+                f"Plex film refresh: '{os.path.basename(film_folder)}' is not "
+                f"readable now — not refreshing it"
+            )
+            return True
+
+        try:
+            payload = plex_get("/library/sections")
+            sections = [
+                section
+                for section in payload.get("MediaContainer", {}).get("Directory", [])
+                or []
+                if section.get("type") == "movie"
+            ]
+            rating_keys = _film_items_in(sections, film_folder)
+            for rating_key in rating_keys:
+                plex_command("PUT", f"/library/metadata/{rating_key}/refresh")
+                current_app.logger.info(
+                    f"Plex film refresh: {rating_key} "
+                    f"'{os.path.basename(film_folder)}' refreshed for its extras"
+                )
+        except Exception:
+            current_app.logger.warning(traceback.format_exc())
+            return True
+
+        if not rating_keys:
+            current_app.logger.info(
+                f"Plex film refresh: no Plex film is in "
+                f"'{os.path.basename(film_folder)}' yet. The scan adds its "
+                f"extras with the film"
+            )
+        return True
+
+
+def _film_items_in(sections, film_folder):
+    """Return the rating keys of the movie items with a part in film_folder.
+
+    The file filter of a section page is a text match, and Plex reads a
+    comma in the value as a list of words. Thus, this function compares
+    the folder of each part with the name of film_folder. The name of a
+    film folder is unique in a library, also when Plex reaches the
+    library by another mount."""
+
+    name = os.path.basename(film_folder.rstrip(os.sep))
+    rating_keys = []
+    for section in _sections_holding(sections, {film_folder}):
+        payload = plex_get(
+            f"/library/sections/{section['key']}/all",
+            params={"type": SECTION_ITEM_TYPE["movie"], "file": name},
+        )
+        for item in payload.get("MediaContainer", {}).get("Metadata", []) or []:
+            if item.get("ratingKey") in rating_keys:
+                continue
+            if any(
+                os.path.basename(os.path.dirname(part)) == name
+                for part in _part_files(item)
+            ):
+                rating_keys.append(item.get("ratingKey"))
+    return rating_keys
+
+
 def enqueue_plex_analyze(file_path, delay=None):
     """Queue a new analyze for a library file that was rewritten in place.
 
@@ -653,23 +747,54 @@ def enqueue_plex_analyze(file_path, delay=None):
     for the next scan of Plex (#661).
     """
 
+    basename = os.path.basename(file_path)
+    # The path digest keeps apart 2 files with the same basename (#338)
+    return _book_plex_job(
+        "app.plex_library.analyze_plex_media",
+        [file_path],
+        f"plex_analyze:{basename}:{path_tag(file_path)}",
+        f"Re-analyzing '{basename}' in Plex",
+        delay,
+    )
+
+
+def enqueue_plex_film_refresh(film_folder):
+    """Book a Plex refresh of the film whose folder this is (#775).
+
+    The import calls this after the commit of an extra. The function
+    never raises and never blocks the caller."""
+
+    return _book_plex_job(
+        "app.plex_library.refresh_plex_film",
+        film_folder,
+        f"plex_film_refresh:{path_tag(film_folder)}",
+        f"Refreshing '{os.path.basename(film_folder)}' in Plex",
+        FILM_REFRESH_DELAY,
+    )
+
+
+def _book_plex_job(name, argument, job_id, description, delay):
+    """Book 1 Plex task that reads the library when it runs.
+
+    Return True if this call booked a job. A Plex task is best effort.
+    Thus, a server with no Plex, or a refused booking, gives False and a
+    warning, never an error."""
+
     try:
         if not (
             current_app.config.get("PLEX_URL") and current_app.config.get("PLEX_TOKEN")
         ):
             return False
-        basename = os.path.basename(file_path)
-        # The path digest keeps apart 2 files with the same basename (#338)
-        job_id = safe_job_id(f"plex_analyze:{basename}:{path_tag(file_path)}")
+        job_id = safe_job_id(job_id)
         queue = current_app.maintenance_queue
 
-        # A second edit while the first analyze waits needs no second
-        # job. The first job waits in the queue, or it is booked ahead
-        # (#757). It reads the file when it runs. A job that already RUNS
-        # is not a duplicate. It may have read the file before this edit
-        # arrived. The new job gets an id of its own. Under the id of the
-        # job that runs, it would take the hash that the first job marks
-        # as finished at its end (#744).
+        # A second change while the first job waits needs no second job.
+        # The first job waits in the queue, or it is booked ahead (#757).
+        # It reads the library when it runs. A job that already RUNS is
+        # not a duplicate. It may have read the library before this
+        # change arrived. The new job gets an id of its own. Under the id
+        # of the job that runs, it would take the hash that the first job
+        # marks as finished at its end (#744).
 
         waiting = list(queue.job_ids) + ScheduledJobRegistry(queue=queue).get_job_ids()
         if any(
@@ -681,11 +806,11 @@ def enqueue_plex_analyze(file_path, delay=None):
         if running is not None and running.get_status(refresh=False) == "started":
             job_id = f"{job_id}_{int(time.time())}"
         enqueue_task(
-            "app.plex_library.analyze_plex_media",
-            [file_path],
+            name,
+            argument,
             delay=delay,
             queue=queue,
-            description=f"Re-analyzing '{basename}' in Plex",
+            description=description,
             job_id=job_id,
         )
         return True
