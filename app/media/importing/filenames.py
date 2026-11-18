@@ -670,6 +670,77 @@ def _movie_layout(parts, version_text):
     return dirname, plex_title, basename, version or edition, feature_type, fullscreen
 
 
+def _file_name_forms(title, year):
+    """Return each (title, year) that the parser reads from a file of a film.
+
+    The name of a file loses some characters of a title, for example a
+    colon or a question mark. Thus, the title goes through the name
+    builder of the library, and the parser reads it back. The untouched
+    name keeps the accents, and the library name does not. Both forms
+    count."""
+
+    _, name = library_name(
+        {
+            "library": MOVIES,
+            "title": title,
+            "year": year,
+            "quality_title": "DVD",
+            "extension": "mkv",
+        }
+    )
+    forms = set()
+    for form in (name, unidecode(name)):
+        match = MOVIE_NAME_RE.match(" ".join(sanitize_filename(form).split()))
+        if match:
+            forms.add((match.group("title"), int(match.group("year"))))
+    return forms
+
+
+def _names_of_a_film(film):
+    """Return each (title, year) that names the files of a film record.
+
+    The library name has the title and the year of the record. The
+    untouched name has the TMDB title and the year of the release date."""
+
+    names = {(film.title, film.year)}
+    if film.tmdb_title:
+        tmdb_year = film.tmdb_release_date.year if film.tmdb_release_date else film.year
+        names.add((film.tmdb_title, tmdb_year))
+    return names
+
+
+def film_with_the_file_name(title, year, movie):
+    """Return another film whose files can have the name of this title and year, or None.
+
+    Invariant: a selected title never gives a file the name that a file
+    of another film has. A file with no id tag would have the same name
+    for the 2 films, and the film with the selection would get it
+    (_film_with_the_selected_name). The title page refuses such a
+    selection. Letter case does not make 2 names different. A record
+    with the TMDB id of movie is the same film, and a refresh merges
+    it."""
+
+    wanted = {
+        (name.casefold(), form_year)
+        for name, form_year in _file_name_forms(title, year)
+    }
+    films = Movie.query.filter(
+        Movie.id != movie.id,
+        db.or_(
+            Movie.year == year,
+            db.extract("year", Movie.tmdb_release_date) == year,
+        ),
+    ).order_by(Movie.date_created.asc())
+    for film in films:
+        if film.tmdb_id is not None and film.tmdb_id == movie.tmdb_id:
+            continue
+        for other_title, other_year in _names_of_a_film(film):
+            forms = _file_name_forms(other_title, other_year)
+            if wanted & {(name.casefold(), form_year) for name, form_year in forms}:
+                return film
+    return None
+
+
 def _film_with_the_selected_name(title, year):
     """Return the film whose selected title gives a file this title and year, or None.
 
@@ -678,13 +749,20 @@ def _film_with_the_selected_name(title, year):
     search finds a film by its main title first, and an other film of
     the year can have that name.
 
-    The name of a file loses some characters of a title, for example a
-    colon or a question mark. Thus, the title of each such film goes
-    through the name builder of the library, and the parser reads it
-    back. The untouched name keeps the accents, and the library name
-    does not. Both forms count. Only a small number of films have a
-    selection."""
+    The title of each such film is compared as a file shows it
+    (_file_name_forms). Only a small number of films have a selection.
 
+    A film with no selection that has exactly this title and year comes
+    first. The title page refuses a selection with the file name of a
+    film that the library has. Thus, such a film came into the library
+    after the selection. The file goes through the TMDB search then, as
+    a file of a film with no selection does."""
+
+    exact = Movie.query.filter(
+        Movie.title == title, Movie.year == year, Movie.chosen_title == None
+    ).first()
+    if exact is not None:
+        return None
     films = Movie.query.filter(
         Movie.chosen_title != None, Movie.tmdb_id != None
     ).order_by(Movie.date_created.asc())
@@ -693,23 +771,8 @@ def _film_with_the_selected_name(title, year):
         shown_year = film.year
         if film.tmdb_title and film.tmdb_release_date:
             shown_year = film.tmdb_release_date.year
-        _, name = library_name(
-            {
-                "library": MOVIES,
-                "title": shown,
-                "year": shown_year,
-                "quality_title": "DVD",
-                "extension": "mkv",
-            }
-        )
-        for form in (name, unidecode(name)):
-            match = MOVIE_NAME_RE.match(" ".join(sanitize_filename(form).split()))
-            if (
-                match
-                and match.group("title") == title
-                and int(match.group("year")) == year
-            ):
-                return film
+        if (title, year) in _file_name_forms(shown, shown_year):
+            return film
     return None
 
 

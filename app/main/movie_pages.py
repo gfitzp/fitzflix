@@ -79,6 +79,7 @@ from app.arr.radarr_push import radarr_configured, radarr_tmdb_ids
 from app.criterion.criterion_catalog import record_set_title
 from app.viewing.diary import clear_watchlist
 from app.main import people_pages
+from app.media.importing.filenames import film_with_the_file_name
 from app.media.naming import visible_name
 from app.metadata.tmdb_apply import (
     canonical_movie_name,
@@ -904,6 +905,20 @@ def movie_title(movie_id):
             flash(
                 f"'{holder.display_title}' has that title and year already. "
                 f"Two films cannot have the same title and year.",
+                "warning",
+            )
+            return redirect(page_url)
+
+        # A file with no id tag has only its name. With the same name
+        # for 2 films, the film with the selection would get the files
+        # of the other film.
+
+        twin = film_with_the_file_name(name, year, movie) if selected else None
+        if twin is not None:
+            flash(
+                f"'{twin.display_title}' gives its files the same name as "
+                f"the title '{name}'. Fitzflix could not tell the files of "
+                f"the 2 films apart. Select a different title.",
                 "warning",
             )
             return redirect(page_url)

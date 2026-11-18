@@ -1163,3 +1163,111 @@ def test_the_file_name_of_a_selection_has_the_year_of_tmdb(app, monkeypatch):
             f"{STREAMING} (2019) - [Bluray-1080p].mkv", log=False
         )
         assert details["tmdb_id"] == TMDB_ID
+
+
+# A selection whose file name is the file name of another film
+
+
+@pytest.mark.parametrize(
+    "other_title, selection",
+    [
+        ("Alpha Beta", "Alpha: Beta"),
+        ("Alpha: Beta", "Alpha Beta"),
+        ("What If", "What If?"),
+        ("Erase una vez", "Érase una vez"),
+        ("alpha beta", "Alpha: Beta"),
+    ],
+)
+def test_a_title_with_the_file_name_of_another_film_is_refused(
+    app, admin_client, titles, other_title, selection
+):
+    """A file with no id tag has the same name for the 2 films."""
+
+    from app.models import Movie
+
+    titles["payload"] = payload(alternatives=(selection,))
+    with app.app_context():
+        movie_id = film(title=MAIN, chosen=None).id
+        make_movie(other_title, 2019, tmdb_id=77)
+        db.session.commit()
+
+    response = select(admin_client, movie_id, selection, follow_redirects=True)
+    assert "gives its files the same name" in response.get_data(as_text=True)
+    with app.app_context():
+        assert db.session.get(Movie, movie_id).chosen_title is None
+        assert refresh_jobs(app) == []
+
+
+def test_the_tmdb_title_of_another_film_counts_for_the_file_name(
+    app, admin_client, titles
+):
+    """The untouched name of a file has the TMDB title and the TMDB year."""
+
+    from datetime import datetime
+
+    from app.models import Movie
+
+    titles["payload"] = payload(alternatives=("Alpha: Beta",))
+    with app.app_context():
+        movie_id = film(title=MAIN, chosen=None).id
+        other = make_movie("A Record Title", 2018, tmdb_id=77)
+        other.tmdb_title = "Alpha Beta"
+        other.tmdb_release_date = datetime(2019, 5, 5)
+        db.session.commit()
+
+    response = select(admin_client, movie_id, "Alpha: Beta", follow_redirects=True)
+    assert "gives its files the same name" in response.get_data(as_text=True)
+    with app.app_context():
+        assert db.session.get(Movie, movie_id).chosen_title is None
+
+
+def test_a_film_of_another_year_or_of_the_same_tmdb_id_does_not_refuse(
+    app, admin_client, titles
+):
+    """An other year gives an other name. A record of the same film is merged."""
+
+    from app.models import Movie
+
+    titles["payload"] = payload(alternatives=("Alpha: Beta",))
+    with app.app_context():
+        movie_id = film(title=MAIN, chosen=None).id
+        make_movie("Alpha Beta", 2018, tmdb_id=77)
+        make_movie("Alpha Beta", 2019, tmdb_id=TMDB_ID)
+        db.session.commit()
+
+    assert select(admin_client, movie_id, "Alpha: Beta").status_code == 302
+    with app.app_context():
+        assert db.session.get(Movie, movie_id).chosen_title == "Alpha: Beta"
+        assert len(refresh_jobs(app)) == 1
+
+
+def test_a_film_that_has_the_name_of_the_file_comes_before_a_selection(
+    app, monkeypatch
+):
+    """The other film came after the selection. Its record has the name of the file."""
+
+    from app.media.importing import filenames
+
+    asked = []
+
+    def fake_json(path, params=None, timeout=10):
+        asked.append(path)
+        return {
+            "results": [{"id": 77, "title": "Alpha Beta", "release_date": "2019-01-01"}]
+        }
+
+    monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
+    monkeypatch.setattr(filenames, "tmdb_json", fake_json)
+    with app.app_context():
+        film(title="Alpha: Beta", chosen="Alpha: Beta")
+        name = "Alpha Beta (2019) - [Bluray-1080p].mkv"
+        details = filenames.evaluate_filename(name, log=False)
+        assert details["tmdb_id"] == TMDB_ID
+        assert asked == []
+
+        make_movie("Alpha Beta", 2019, tmdb_id=77)
+        db.session.commit()
+        details = filenames.evaluate_filename(name, log=False)
+        assert details["title"] == "Alpha Beta"
+        assert details["tmdb_id"] != TMDB_ID
+        assert asked == ["/search/movie"]
