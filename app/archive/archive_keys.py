@@ -104,20 +104,26 @@ def archive_key_for(file, prefix, claims=None):
     untouched name. Its transcoded/ copy has the quality of its library
     file. Thus, the tag changes for each prefix but untouched/.
 
+    Invariant: the extension of a key tells the type of its object
+    (#778). An object in untouched/ is the file of the import, and it
+    keeps that name. An object in modified/ or transcoded/ is the
+    library file. The import changes an MP4 into a Matroska file. Thus,
+    such a key gets the extension of the library file.
+
     A key that the file holds already is its own. If another record
     claims the key, the record id goes into the name. claims is the
     result of key_claims, for a pass over many rows."""
 
     config = current_app.config
     name = aws_clients.sanitize_s3_key(file.untouched_basename or file.basename)
-    if (
-        file.converted_from_quality
-        and file.quality
-        and prefix != config["AWS_UNTOUCHED_PREFIX"]
-    ):
-        name = naming.retag_quality(
-            name, file.converted_from_quality, file.quality.quality_title
-        )
+    if prefix != config["AWS_UNTOUCHED_PREFIX"]:
+        if file.converted_from_quality and file.quality:
+            name = naming.retag_quality(
+                name, file.converted_from_quality, file.quality.quality_title
+            )
+        extension = os.path.splitext(file.basename or "")[1]
+        if extension:
+            name = naming.with_extension(name, extension)
     key = os.path.join(prefix, name)
     if key in (file.aws_key, file.aws_transcoded_key, file.aws_key_target):
         return key
