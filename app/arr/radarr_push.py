@@ -42,6 +42,10 @@ from app.arr.arr_client import (
 from app.arr.arr_client import rename_download_locally as _rename_locally
 from app.media.naming import plain_movie_folder
 from app.tasks import enqueue_task
+from app import get_app
+from app.models import File
+from app.models import Movie
+from app.metadata.tmdb_refresh import _movie_folder
 
 # This is the set of TMDB ids that Radarr manages, cached for 1 hour,
 # for the request badges. Fitzflix refreshes the set immediately after
@@ -217,8 +221,6 @@ def follow_rename_task(old_tmdb_id, new_tmdb_id, new_folder):
 
     import traceback
 
-    from app import get_app
-
     with get_app().app_context():
         if not radarr_configured():
             return False
@@ -254,8 +256,6 @@ def follow_import_move_task(source_folder, new_folder):
     already in place."""
 
     import traceback
-
-    from app import get_app
 
     with get_app().app_context():
         try:
@@ -317,10 +317,6 @@ def reconcile_radarr_paths():
     the plain folder, also when that folder does not exist (#670). An
     other film that Fitzflix holds no file for is not checked. Radarr
     can be downloading it."""
-
-    from app import get_app
-    from app.models import File, Movie
-    from app.metadata.tmdb_refresh import _movie_folder
 
     with get_app().app_context():
         if not radarr_configured():
@@ -409,8 +405,6 @@ def adopt_download_task(movie_id, movie_file_id, downloaded_path, new_path, qual
     queue after the rename. An import that stores the file under a
     different name queues restore_download_record_task (#671)."""
 
-    from app import get_app
-
     with get_app().app_context():
         return adopt_download(
             RADARR,
@@ -440,8 +434,6 @@ def restore_download_record_task(
     raise. The file is already in place."""
 
     import traceback
-
-    from app import get_app
 
     with get_app().app_context():
         folder = os.path.basename(os.path.dirname(library_path))

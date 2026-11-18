@@ -50,6 +50,7 @@ from app.availability.streaming import (
     user_provider_ids,
 )
 from app.metadata.tmdb_apply import tmdb_json, tmdb_json_or
+from app.metadata import tmdb_refresh
 
 # The app instance of this process. Fitzflix resolves it lazily. Thus,
 # the nightly task can run on a worker without a second application.
@@ -589,14 +590,14 @@ def ensure_rail_records(items):
     that, the resolver scores it on the first tile view, and the
     nightly recompute includes it."""
 
-    from app.metadata.tmdb_refresh import find_or_create_tmdb_movie
-
     to_refresh = {}
     for item in items:
         year = str(item.get("year") or "")
         if not item.get("title") or not year.isdigit():
             continue
-        movie, _ = find_or_create_tmdb_movie(item["tmdb_id"], item["title"], int(year))
+        movie, _ = tmdb_refresh.find_or_create_tmdb_movie(
+            item["tmdb_id"], item["title"], int(year)
+        )
         if movie is None:
             continue
         if movie.tmdb_data_as_of is None:

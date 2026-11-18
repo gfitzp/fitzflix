@@ -262,13 +262,12 @@ def app():
     )
 
     # The first app created in the process becomes the singleton of
-    # get_app(). app.media.atmos calls get_app() at import time. The other task
-    # modules (app.media.videos, app.media.triage, ...) get it later through a
-    # LocalProxy. A test module that imports app.media.atmos at TOP LEVEL runs
-    # that call during pytest collection, before this fixture. That creates a
-    # real-config app. It silently points each task function in the
-    # suite at production. Import the task modules inside the test
-    # functions instead.
+    # get_app(). The task modules (app.media.videos, app.media.atmos, ...)
+    # get it through a LocalProxy at the first use. A test module that
+    # makes or uses the app at TOP LEVEL does that during pytest
+    # collection, before this fixture. That creates a real-config app.
+    # It silently points each task function in the suite at production.
+    # Import the task modules inside the test functions instead.
 
     from app import get_app
 

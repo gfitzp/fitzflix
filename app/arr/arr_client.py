@@ -39,6 +39,13 @@ from flask import current_app
 
 from app.cache import cache_json
 from app.media import videos
+from app.tasks import TASKS
+from app.tasks import delete_job
+from app.tasks import free_job_id
+from app.tasks import requeue
+from app.tasks import requeue_job_id
+from app.tasks import resolve_queue
+from app.media.importing import chain
 
 # The connect and read timeouts of an arr call, in seconds. A host that
 # is down fails at the connect. Thus, it costs 5 seconds, not 30. The
@@ -422,15 +429,6 @@ def _book_restore_try(
 
     from rq.registry import ScheduledJobRegistry
 
-    from app.tasks import (
-        TASKS,
-        delete_job,
-        free_job_id,
-        requeue,
-        requeue_job_id,
-        resolve_queue,
-    )
-
     name = arr.restore_task
     queue = resolve_queue(TASKS[name].queue)
     for job_id in ScheduledJobRegistry(queue=queue).get_job_ids():
@@ -572,8 +570,6 @@ def adopt_download(
     cases the import goes on the queue after the rename. The release data
     that the webhook kept moves to the new path (#671)."""
 
-    from app.media.importing.chain import enqueue_localization
-
     try:
         path = rename_to_quality(arr, call, owner_id, file_id, quality, wait)
         if fenced_arr_path(arr.name, path) is None:
@@ -597,9 +593,9 @@ def adopt_download(
         )
     carry_remembered_download(downloaded_path, path)
     queued = (
-        enqueue_localization(path, at_front=True)
+        chain.enqueue_localization(path, at_front=True)
         if at_front
-        else enqueue_localization(path)
+        else chain.enqueue_localization(path)
     )
     if queued:
         current_app.logger.info(f"'{path}' Sent to Fitzflix")

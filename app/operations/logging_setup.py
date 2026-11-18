@@ -8,6 +8,7 @@ import logging
 import os
 
 from logging.handlers import SMTPHandler, WatchedFileHandler
+from app.operations.redaction import install as install_redaction
 
 
 class ErrorMailHandler(SMTPHandler):
@@ -57,8 +58,6 @@ def configure_logging(app):
     # Credentials never reach the log, with any handler that writes it.
     # See app.operations.redaction. Fitzflix installs this in every mode. Thus, the
     # tests cover it too.
-
-    from app.operations.redaction import install as install_redaction
 
     install_redaction(app.logger, app.config)
 

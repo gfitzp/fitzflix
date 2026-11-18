@@ -29,6 +29,7 @@ from werkzeug.local import LocalProxy
 from app.tasks import enqueue_task
 from app import db, get_app
 from app.models import Movie, User, UserWatchlist
+from app.metadata import tmdb_refresh
 
 app = LocalProxy(get_app)
 
@@ -464,13 +465,11 @@ def sync_plex_watchlist():
         # The Fitzflix side: add the films that Plex has. Remove the
         # films that Plex removed.
 
-        from app.metadata.tmdb_refresh import find_or_create_tmdb_movie
-
         for tmdb_id in sorted(target - fitz_ids):
             item = plex.get(tmdb_id) or {}
             movie = Movie.query.filter_by(tmdb_id=tmdb_id).first()
             if movie is None:
-                movie, created = find_or_create_tmdb_movie(
+                movie, created = tmdb_refresh.find_or_create_tmdb_movie(
                     tmdb_id, item.get("title") or f"TMDB {tmdb_id}", item.get("year")
                 )
                 if movie is None:

@@ -127,6 +127,13 @@ from app.availability.streaming_rail import ENRICHED_KEY, enriched_movie, stored
 from app.viewing.diary import clear_watchlist
 from app.metadata.tmdb_refresh import find_or_create_tmdb_movie
 from rq.registry import ScheduledJobRegistry
+from app.media.tracks.languages import language_key
+from app.operations.queue_page import scheduled_entries
+from app.pipeline import index_trails
+from app.pipeline import pipeline_trails
+from app.pipeline import trail_entries_for
+from app.redis_guard import REDIS_DOWN_ERRORS
+from app.redis_guard import warn_redis_down
 
 # The top watchlist shelf is bigger than the 12-card discovery shelves
 # (Glenn, 2026-08-30). It holds the films that the user already wants.
@@ -803,8 +810,6 @@ def _native_language_keys():
     The card compares the key of each track. Thus, "deu" and "ger" are
     the same language there, as in the import (#443)."""
 
-    from app.media.tracks.languages import language_key
-
     return [language_key(current_app.config["NATIVE_LANGUAGE"]), "und", "zxx"]
 
 
@@ -860,8 +865,6 @@ def _import_activity():
     of the import queue: a file that is still copying in, or a locked
     title. The rejects come from the rejects folder. The result is None
     when there is nothing to show."""
-
-    from app.operations.queue_page import scheduled_entries
 
     # Read the ids and their times in 1 call (#511)
 
@@ -956,8 +959,6 @@ def _trail_lookup(trails=None):
     each as it is and as its stem. The trail is keyed by the import
     name (#649). With trails=None, this reads the newest 100 trails
     from Redis."""
-
-    from app.pipeline import index_trails, pipeline_trails, trail_entries_for
 
     if trails is None:
         trails = pipeline_trails(current_app.redis, limit=100)
@@ -1378,8 +1379,6 @@ def movie_states():
 
     A Redis outage gives empty states, not a 500 (#476). The tiles then
     render blank, as they do before the hydration."""
-
-    from app.redis_guard import REDIS_DOWN_ERRORS, warn_redis_down
 
     try:
         return _movie_states()

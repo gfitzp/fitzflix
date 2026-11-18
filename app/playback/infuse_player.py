@@ -44,6 +44,7 @@ from app.tasks import enqueue_task
 from app import db
 from app.models import User
 from app.playback.plex_player import player_address
+from app import get_app
 
 # The default Companion knock of pyatv. Fitzflix appends it when the user
 # enters a bare address. The real port is per device (see the module
@@ -277,8 +278,6 @@ def pair_task(user_id, address, attempt):
     begin() puts the PIN on the TV screen. The web form puts the PIN
     into Redis. finish() trades the PIN for credentials. Fitzflix stores
     the credentials on the user row."""
-
-    from app import get_app
 
     app = get_app()
     with app.app_context():

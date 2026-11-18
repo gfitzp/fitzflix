@@ -7,6 +7,9 @@ from functools import lru_cache
 from flask import current_app
 from app import db
 from app.cache import cached_fetch
+from app.models import FileAudioTrack
+from app.models import FileSubtitleTrack
+from app.models import Movie
 
 # These are the languages that a track can have. Fitzflix reads them
 # from the table of mkvtoolnix. Thus, the file page can never offer a
@@ -268,8 +271,6 @@ def file_language_choices(stored_codes):
 
 def _stored_language_choices():
     """Return the (code, name) choices of the library, for cached_fetch."""
-
-    from app.models import FileAudioTrack, FileSubtitleTrack, Movie
 
     stored = set()
     for column in (

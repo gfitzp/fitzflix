@@ -94,6 +94,8 @@ from app.availability.streaming import (
     provider_registry,
 )
 from app.viewing.diary import parse_letterboxd_export
+from app.viewing.stats import diary_stats
+from app.viewing.stats import watched_years
 
 
 @bp.route("/review/<int:review_id>/edit", methods=["GET", "POST"])
@@ -1076,8 +1078,6 @@ def stats():
     The year parameter is a year or "all". Without it, the page shows the
     current year if it has viewings. Otherwise it shows the newest year
     with viewings."""
-
-    from app.viewing.stats import diary_stats, watched_years
 
     years = watched_years(int(current_user.id))
     requested = request.args.get("year")

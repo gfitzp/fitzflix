@@ -54,6 +54,11 @@ from app.discovery.recommendations import (
     tmdb_taste_score,
 )
 from app.availability.streaming_rail import enriched_movie, movie_gone
+from app.availability.availability_alerts import NEW_IN_LIBRARY_LABEL
+from app.availability.availability_alerts import recent_availability
+from app.criterion.leaving_criterion import leaving_departure
+from app.availability.streaming import user_provider_ids
+from app import dvr
 
 # The app instance of this process. Fitzflix resolves it lazily. Thus, the
 # nightly task can run on a worker without a second application.
@@ -242,10 +247,9 @@ def _refresh_feed(provider_id, feed):
     # warning, and the feed counts as read (#770). The nightly build of
     # the lineups catches up.
     if arrived and provider_id == CRITERION_PROVIDER_ID:
-        from app.dvr import enqueue_lineup_rebuild
 
         try:
-            enqueue_lineup_rebuild(
+            dvr.enqueue_lineup_rebuild(
                 f"{len(arrived)} newly-added Criterion films", tmdb_ids=arrived
             )
         except Exception:
@@ -516,15 +520,6 @@ def poster_fold(user, tmdb_id, movie_id=None):
     (Criterion subscribers only) outranks the green newly-added fold. The
     recently-available record of the alert diff keeps priority for the
     green label."""
-
-    # The import is here because streaming reaches this module lazily from
-    # streaming_matches. A top-level import would be circular.
-    from app.availability.availability_alerts import (
-        NEW_IN_LIBRARY_LABEL,
-        recent_availability,
-    )
-    from app.criterion.leaving_criterion import leaving_departure
-    from app.availability.streaming import user_provider_ids
 
     label = None
     if movie_id is not None:

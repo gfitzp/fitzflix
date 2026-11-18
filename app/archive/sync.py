@@ -21,6 +21,11 @@ from app.media.file_ranking import tv_best_holder_ids, ranked_movie_files
 from app.models import ArchivedOriginal, File, RefQuality
 from app.media import videos
 from app.archive import archive_keys, aws_clients, moves, restores
+from app.media.importing.chain import keys_held_by_pipeline
+from app.media.importing import chain
+from app.media.tracks import rewrite_guard
+from app.media.series_rename import series_in_sonarr_conflict
+from app.models import TVSeries
 
 app = LocalProxy(get_app)
 
@@ -477,7 +482,6 @@ class _HeldRestores:
     films are not touched."""
 
     def __init__(self, series_ids):
-        from app.media.series_rename import series_in_sonarr_conflict
 
         self.fault = None
         self.counts = {}
@@ -510,7 +514,6 @@ class _HeldRestores:
             return
         if not self.counts:
             return
-        from app.models import TVSeries
 
         titles = dict(
             db.session.query(TVSeries.id, TVSeries.title).filter(
@@ -791,8 +794,6 @@ def _prune_unclaimed(listing, job, unreferenced_files):
     archive_prefixes = listing.prefixes
     aws_keys = _claimed_keys()
 
-    from app.media.importing.chain import keys_held_by_pipeline
-
     waiting_keys = keys_held_by_pipeline()
 
     # A failed in-place import uploaded its rip to untouched/ directly
@@ -931,8 +932,6 @@ def _import_uncataloged(roots):
     naming format, and an import would move it to the rejects. The walk
     also stays out of the metadata directories of the NAS."""
 
-    from app.media.importing.chain import enqueue_localization
-
     library = []
     for root in roots:
         for path, subdirs, local_files in os.walk(root):
@@ -963,7 +962,7 @@ def _import_uncataloged(roots):
         )
         if row is not None:
             _queue_changed_library_file(row, library_file)
-        elif os.path.isfile(library_file) and enqueue_localization(library_file):
+        elif os.path.isfile(library_file) and chain.enqueue_localization(library_file):
             current_app.logger.info(
                 f"'{library_file}' isn't in library; added to import queue"
             )
@@ -988,9 +987,6 @@ def _queue_changed_library_file(row, library_file):
     (replaced_from_outside in app/media/tracks.py has the rule and its
     exceptions). An edit that stops because an other program changed the
     file puts the flag back to its value before the edit (#762)."""
-
-    from app.media.tracks import rewrite_guard
-    from app.media.importing.chain import enqueue_localization
 
     def differs(record):
         try:
@@ -1024,7 +1020,7 @@ def _queue_changed_library_file(row, library_file):
         rewrite_guard._rescan_after_a_failed_edit(
             row.id, f"'{row.basename}'", reason="The S3 sync found a changed file"
         )
-    elif enqueue_localization(library_file):
+    elif chain.enqueue_localization(library_file):
         current_app.logger.warning(
             f"'{library_file}' has an other size than its record. Its import "
             f"did not run; added to import queue"

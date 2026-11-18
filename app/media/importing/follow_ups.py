@@ -17,6 +17,15 @@ from app.email import notify_admin
 from app.media.tracks.remux import LibraryFileChanged, refuse_changed_library_file
 from app.media.tracks.languages import same_language
 from app.media.importing import cataloging, filenames, library_move
+from app.media.atmos import EAC3_ATMOS_CODEC
+from app.media.atmos import TRUEHD_ATMOS_CODEC
+from app.media.atmos import insertion_point
+from app.media import atmos
+from app.arr.arr_client import ARRS
+from app.arr.arr_client import take_remembered_download
+from app.media.triage import remove_triage_snapshots
+from app.media.triage import maybe_enqueue_triage_snapshots
+from app.media.triage import maybe_enqueue_audio_comparison
 
 
 def _follow_up(output_file, name, step, *args, **kwargs):
@@ -254,8 +263,6 @@ def _atmos_not_lead(audio_tracks):
     # This import is lazy. The atmos module resolves the worker app
     # singleton at module import time.
 
-    from app.media.atmos import EAC3_ATMOS_CODEC
-
     codecs = [track.get("codec") or "" for track in audio_tracks]
     if not codecs or codecs[0] == EAC3_ATMOS_CODEC:
         return False
@@ -272,8 +279,6 @@ def _is_placed_atmos_twin(audio_tracks, index):
     TrueHD Atmos track in the same language. The insertion point of that
     source must be the position of the track."""
 
-    from app.media.atmos import TRUEHD_ATMOS_CODEC, insertion_point
-
     language = audio_tracks[index].get("language")
     others = audio_tracks[:index] + audio_tracks[index + 1 :]
     return any(
@@ -287,11 +292,9 @@ def _is_placed_atmos_twin(audio_tracks, index):
 def _atmos_twin_will_lead(audio_tracks):
     """Return True if the Atmos job puts a new twin in the first audio position."""
 
-    from app.media.atmos import atmos_supplement_candidates, insertion_point
-
     return any(
         insertion_point(audio_tracks, source) == 0
-        for source in atmos_supplement_candidates(audio_tracks)
+        for source in atmos.atmos_supplement_candidates(audio_tracks)
     )
 
 
@@ -313,8 +316,6 @@ def _restore_arr_record(file_path, output_file):
     writes the release data onto the new record. The data leaves Redis
     in each case. It goes on in the arguments of the task, and each try
     that the task books again carries it (#680)."""
-
-    from app.arr.arr_client import ARRS, take_remembered_download
 
     remembered = take_remembered_download(file_path)
     if not remembered or os.path.realpath(file_path) == os.path.realpath(output_file):
@@ -346,8 +347,6 @@ def _delete_worse_copies(worse_local_copies, output_file):
 
     The new file never has the path of a worse file. The check is a
     guard."""
-
-    from app.media.triage import remove_triage_snapshots
 
     for worse_path, worse_id in worse_local_copies:
         if worse_path == output_file:
@@ -388,13 +387,11 @@ def _atmos_handoff(staged_output, output_file, audio_tracks):
     TrueHD Atmos track that wants a twin. Then this makes no space check
     and writes no log line about the Atmos job."""
 
-    from app.media.atmos import atmos_supplement_candidates, staged_handoff
-
     if not get_setting("CREATE_ATMOS_TWINS"):
         return None
-    if not atmos_supplement_candidates(audio_tracks):
+    if not atmos.atmos_supplement_candidates(audio_tracks):
         return None
-    return staged_handoff(staged_output, output_file)
+    return atmos.staged_handoff(staged_output, output_file)
 
 
 def _pending_upload_ready(file, file_path, output_file):
@@ -578,15 +575,13 @@ def _enqueue_atmos_twin(file, atmos_handoff, staged_output):
     new imports. CREATE_ATMOS_TWINS turns this step off for passthrough
     players."""
 
-    from app.media.atmos import maybe_enqueue_atmos_supplement
-
     if not get_setting("CREATE_ATMOS_TWINS"):
         current_app.logger.info(
             f"'{file.basename}' CREATE_ATMOS_TWINS is off. No E-AC-3 Atmos twins"
         )
         return False
     return bool(
-        maybe_enqueue_atmos_supplement(
+        atmos.maybe_enqueue_atmos_supplement(
             file.id, staged_source=atmos_handoff, queue=current_app.handoff_queue
         )
     )
@@ -602,8 +597,6 @@ def _enqueue_triage_snapshots(file):
     tracks of Baby Driver read [49, 3110, 4334] elements, and nothing was
     flagged."""
 
-    from app.media.triage import maybe_enqueue_triage_snapshots
-
     if maybe_enqueue_triage_snapshots(file.id):
         notify_admin(
             "Possibly forced subtitle track",
@@ -617,7 +610,5 @@ def _enqueue_audio_comparison(file):
 
     The candidates check inside maybe_enqueue prevents clips for the
     intentional E-AC-3 Atmos lead of the Atmos trio."""
-
-    from app.media.triage import maybe_enqueue_audio_comparison
 
     maybe_enqueue_audio_comparison(file.id)

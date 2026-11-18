@@ -62,6 +62,8 @@ from app.availability.streaming import (
     provider_registry,
     user_provider_ids,
 )
+from app.criterion.leaving_criterion import LEAVING_KEY
+from app.criterion.leaving_criterion import CRITERION_PROVIDER_ID
 
 # This is the app instance of this process. Fitzflix resolves it lazily.
 # Thus, the nightly task can run on a worker and not build a second
@@ -240,8 +242,6 @@ def _leaving_set():
 
     This applies to the leaving-Criterion set if its departure date has
     not passed. In all other cases, return (set(), None)."""
-
-    from app.criterion.leaving_criterion import LEAVING_KEY
 
     payload = current_app.redis.get(LEAVING_KEY)
     if not payload:
@@ -504,8 +504,6 @@ def notify_watchlist_availability():
         by_user = defaultdict(list)
         for entry in entries:
             by_user[entry.user_id].append(entry.movie)
-
-        from app.criterion.leaving_criterion import CRITERION_PROVIDER_ID
 
         digests = 0
         events_total = 0

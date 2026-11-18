@@ -40,6 +40,8 @@ from rq import get_current_job
 
 from app.archive import s3_layout
 from app.tasks import enqueue_task, free_job_id, live_job_ids, report_progress
+from werkzeug.local import LocalProxy
+
 from app import db, get_app, safe_job_id
 from app.models import File, FileAudioTrack
 from app.media.naming import hidden
@@ -53,8 +55,18 @@ from app.media.tracks.remux import (
 )
 from app.plex.plex_library import enqueue_plex_analyze
 from app.media import videos
+from app.archive.restores import refuse_while_restore_pending
+from app.metadata.tmdb_refresh import tmdb_refresh_pending
+from app.media.worker_recovery import note_job_state
+from app.media.tracks import scan
+from app.archive import aws_clients
+from app.media.tracks import remux
+from app.archive.uploads import archive_library_file
+from app.media.tracks import rewrite_guard
+from app.media.tracks.rewrite_guard import record_filesize
+from app.media.tracks.rewrite_guard import put_stale_flag_back
 
-app = get_app()
+app = LocalProxy(get_app)
 
 # The MediaInfo commercial names, as stored in file_audio_track.codec.
 
@@ -556,9 +568,6 @@ def atmos_supplement_task(file_id, staged_source=None):
     it. A wait for staging space does not, and the copy is removed. When
     the job ends, a staged copy that it did not use is removed."""
 
-    from app.archive.restores import refuse_while_restore_pending
-    from app.metadata.tmdb_refresh import tmdb_refresh_pending
-
     with app.app_context():
         file = db.session.get(File, int(file_id))
         if file is None:
@@ -674,8 +683,6 @@ def _note_lock(lock):
 
     This is best effort. A fault here must not stop the run."""
 
-    from app.media.worker_recovery import note_job_state
-
     job = get_current_job()
     if job is None:
         return
@@ -694,13 +701,6 @@ def _atmos_prepare(file_id, phases, staged_source=None):
     its staged copy. The DAMF masters are removed after their upload.
     Thus, the workspace holds only the staged source during the encode.
     """
-
-    from app.media.tracks.scan import replace_track_rows
-    from app.archive.aws_clients import aws_s3_client
-    from app.media.tracks.scan import (
-        get_audio_tracks_from_file,
-        get_subtitle_tracks_from_file,
-    )
 
     job = get_current_job()
     file = db.session.get(File, int(file_id))
@@ -761,7 +761,7 @@ def _atmos_prepare(file_id, phases, staged_source=None):
         return NO_STAGING_SPACE
 
     workspace = os.path.join(staging_dir, f"atmos-{file_id}")
-    s3_client = aws_s3_client()
+    s3_client = aws_clients.aws_s3_client()
     bucket = current_app.config["AWS_BUCKET"]
     prefix = f"{current_app.config['AWS_MEDIACONVERT_PREFIX']}/{file_id}"
     tracks = []
@@ -786,7 +786,7 @@ def _atmos_prepare(file_id, phases, staged_source=None):
                 file_path, staging_source, job, basename, "Copying to local staging"
             )
 
-        audio_tracks = get_audio_tracks_from_file(staging_source)
+        audio_tracks = scan.get_audio_tracks_from_file(staging_source)
         wanting = atmos_supplement_candidates(audio_tracks)
         if not wanting:
             # The stored rows said that a twin is missing, but the file
@@ -800,10 +800,10 @@ def _atmos_prepare(file_id, phases, staged_source=None):
             )
             # The copy took long inside the read snapshot of the row. A
             # new transaction avoids MariaDB error 1020.
-            subtitle_tracks = get_subtitle_tracks_from_file(staging_source)
+            subtitle_tracks = scan.get_subtitle_tracks_from_file(staging_source)
             db.session.rollback()
             file = db.session.get(File, int(file_id))
-            replace_track_rows(file, audio_tracks, subtitle_tracks)
+            scan.replace_track_rows(file, audio_tracks, subtitle_tracks)
             db.session.commit()
             shutil.rmtree(workspace, ignore_errors=True)
             return True
@@ -998,11 +998,11 @@ def _close_run(state, lock, ended_early=True):
     conversion (#505). The import left that upload to the run. The
     upload takes the title lock. Thus, it is queued after the release."""
 
-    from app.archive.aws_clients import aws_s3_client
-
     shutil.rmtree(state["workspace"], ignore_errors=True)
     try:
-        _cleanup_s3_prefix(aws_s3_client(), state["bucket"], state["prefix"])
+        _cleanup_s3_prefix(
+            aws_clients.aws_s3_client(), state["bucket"], state["prefix"]
+        )
     except Exception:
         current_app.logger.error(traceback.format_exc())
     current_app.redis.delete(CHAIN_KEY.format(file_id=state["file_id"]))
@@ -1254,7 +1254,6 @@ def atmos_finish_task(state, lock, finish_retries=0):
             # keeps the flag.
 
             if not own_result:
-                from app.media.tracks.rewrite_guard import put_stale_flag_back
 
                 put_stale_flag_back(
                     int(state["file_id"]),
@@ -1265,9 +1264,10 @@ def atmos_finish_task(state, lock, finish_retries=0):
             phases.close("failed")
             _close_run(state, lock, ended_early=False)
             if own_result:
-                from app.media.tracks.rewrite_guard import _rescan_after_a_failed_edit
 
-                _rescan_after_a_failed_edit(state["file_id"], f"'{state['basename']}'")
+                rewrite_guard._rescan_after_a_failed_edit(
+                    state["file_id"], f"'{state['basename']}'"
+                )
             return False
         except FinishInterrupted as error:
             if finish_retries < MAX_FINISH_RETRIES and _book_finish_retry(
@@ -1337,12 +1337,6 @@ def _remux_twins(state, phases, inserts, job):
     becomes True. A tool or I/O fault raises FinishInterrupted (#502). A
     failed verification raises RuntimeError."""
 
-    from app.media.tracks.scan import (
-        get_audio_tracks_from_file,
-        get_subtitle_tracks_from_file,
-    )
-    from app.media.tracks.remux import watch_mkvmerge_progress
-
     basename = state["basename"]
     workspace = state["workspace"]
     staging_source = state["staging_source"]
@@ -1402,7 +1396,7 @@ def _remux_twins(state, phases, inserts, job):
             universal_newlines=True,
             bufsize=1,
         )
-        watch_mkvmerge_progress(
+        remux.watch_mkvmerge_progress(
             mkvmerge_process, job, basename, "Muxing E-AC-3 Atmos twin"
         )
         videos.wait_for_subprocess(mkvmerge_process, ok_returncodes=(0, 1))
@@ -1435,8 +1429,8 @@ def _remux_twins(state, phases, inserts, job):
     # output must carry each expected twin and all of the original
     # lossless tracks.
 
-    new_audio_tracks = get_audio_tracks_from_file(staging_output)
-    new_subtitle_tracks = get_subtitle_tracks_from_file(staging_output)
+    new_audio_tracks = scan.get_audio_tracks_from_file(staging_output)
+    new_subtitle_tracks = scan.get_subtitle_tracks_from_file(staging_output)
     originals_before = sum(
         1 for track in audio_tracks if track.get("codec") == TRUEHD_ATMOS_CODEC
     )
@@ -1471,19 +1465,6 @@ def _atmos_finish(state, phases):
 
     The library share carries 1 write here: the verified result."""
 
-    from app.archive.uploads import archive_library_file
-    from app.media.tracks.rewrite_guard import (
-        _rescan_after_a_failed_edit,
-        confirm_rewrite,
-    )
-    from app.media.tracks.scan import replace_track_rows
-    from app.archive.aws_clients import aws_s3_client
-    from app.media.tracks.scan import (
-        get_audio_tracks_from_file,
-        get_subtitle_tracks_from_file,
-    )
-    from app.media.tracks.rewrite_guard import record_filesize
-
     job = get_current_job()
     file = db.session.get(File, int(state["file_id"]))
     if file is None:
@@ -1495,7 +1476,7 @@ def _atmos_finish(state, phases):
     file_path = os.path.join(current_app.config["LIBRARY_DIR"], file.file_path)
     workspace = state["workspace"]
     staging_source = state["staging_source"]
-    s3_client = aws_s3_client()
+    s3_client = aws_clients.aws_s3_client()
     bucket = state["bucket"]
     prefix = state["prefix"]
     inserts = []
@@ -1505,8 +1486,8 @@ def _atmos_finish(state, phases):
         if state.get("remuxed"):
             # A retry after the remux (#502). The staged copy is the
             # verified output already.
-            new_audio_tracks = get_audio_tracks_from_file(final_staging)
-            new_subtitle_tracks = get_subtitle_tracks_from_file(final_staging)
+            new_audio_tracks = scan.get_audio_tracks_from_file(final_staging)
+            new_subtitle_tracks = scan.get_subtitle_tracks_from_file(final_staging)
         for track in [] if state.get("remuxed") else state["tracks"]:
             streamorder = track["streamorder"]
             with _transient_step("download"):
@@ -1572,7 +1553,7 @@ def _atmos_finish(state, phases):
                 # below clears it.
 
                 refuse_changed_library_file(state.get("library"), file_path)
-                confirm_rewrite(file_id, file_path)
+                rewrite_guard.confirm_rewrite(file_id, file_path)
                 os.rename(hidden_output, file_path)
             except BaseException:
                 try:
@@ -1599,7 +1580,7 @@ def _atmos_finish(state, phases):
     try:
         db.session.rollback()
         file = db.session.get(File, file_id)
-        replace_track_rows(file, new_audio_tracks, new_subtitle_tracks)
+        scan.replace_track_rows(file, new_audio_tracks, new_subtitle_tracks)
         record_filesize(file, os.path.getsize(final_staging))
         file.date_updated = datetime.now(timezone.utc)
         db.session.commit()
@@ -1610,7 +1591,7 @@ def _atmos_finish(state, phases):
 
         current_app.logger.error(traceback.format_exc())
         db.session.rollback()
-        _rescan_after_a_failed_edit(file_id, f"'{basename}'")
+        rewrite_guard._rescan_after_a_failed_edit(file_id, f"'{basename}'")
         raise
 
     # The film gained a track under a path that Plex already knows. Thus,

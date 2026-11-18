@@ -19,6 +19,9 @@ from watchdog.events import (
 from watchdog.observers.polling import PollingObserver
 
 from app import enqueue_import_scan, importable_basename
+from app.media.importing import chain
+from app.operations.maintenance import OBSERVER_HEARTBEAT_SECONDS
+from app.operations.maintenance import OBSERVER_KEY_PREFIX
 
 
 class ImportEventHandler(FileSystemEventHandler):
@@ -40,8 +43,6 @@ class ImportEventHandler(FileSystemEventHandler):
         # file only if no localization of it waits or runs, and no space
         # wait holds it (#262 review, #287).
 
-        from app.media.importing.chain import enqueue_localization
-
         # A failed lock or enqueue must not keep the lock or stop the
         # dispatch thread of watchdog (#523, #568). The sweep of the
         # keeper finds the file again.
@@ -51,7 +52,7 @@ class ImportEventHandler(FileSystemEventHandler):
             lock = app.lock_manager.lock(os.path.basename(path), 30000)
             if lock:
                 with app.app_context():
-                    if enqueue_localization(path, quiet=True):
+                    if chain.enqueue_localization(path, quiet=True):
                         app.logger.info(
                             f"'{os.path.basename(path)}' Found in import directory"
                         )
@@ -128,11 +129,6 @@ def start_import_watch(app):
         # health card counts these keys to show how many processes
         # watch the import directory. A dead or wedged process stops
         # the refresh.
-
-        from app.operations.maintenance import (
-            OBSERVER_HEARTBEAT_SECONDS,
-            OBSERVER_KEY_PREFIX,
-        )
 
         try:
             app.redis.set(

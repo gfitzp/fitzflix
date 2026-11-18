@@ -20,6 +20,9 @@ from app.archive import s3_layout
 from app.models import File
 from app.media import videos
 from app.archive import archive_keys, aws_clients, restores, uploads
+from app.pipeline import retry_now
+from app.tasks import TASKS
+from app.tasks import resolve_queue
 
 app = LocalProxy(get_app)
 
@@ -133,9 +136,6 @@ def archive_moves_after_unlock():
 def _queue_held_moves(held):
     """Move each held booking into its queue now. A fault only logs."""
 
-    from app.pipeline import retry_now
-    from app.tasks import TASKS, resolve_queue
-
     queue = resolve_queue(TASKS["app.archive.moves.move_archive_object"].queue)
     for file_id, job in sorted(held.items()):
         if job is None:
@@ -166,8 +166,6 @@ def _enqueue_move_once(file_id, basename, delay=None):
     restore in progress or the move done, and it changes nothing.
 
     delay books the job ahead (#664)."""
-
-    from app.tasks import TASKS, resolve_queue
 
     name = "app.archive.moves.move_archive_object"
     prefix = f"archive-move-{int(file_id)}-"

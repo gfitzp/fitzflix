@@ -7,8 +7,7 @@ waited for the whole MediaConvert run, and so did the match from the
 review page. The supplement now defers itself while a refresh of its
 movie is queued, running, or scheduled.
 
-Each test imports inside the function. The task modules capture the
-singleton of get_app() at import time.
+Each test imports inside the function, like the rest of the suite.
 """
 
 from datetime import timedelta

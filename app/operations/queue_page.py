@@ -8,6 +8,10 @@ from datetime import datetime, timezone
 
 from flask import current_app
 from rq.registry import ScheduledJobRegistry, StartedJobRegistry
+from app.pipeline import STAGES
+from app.pipeline import first_enqueued
+from app.pipeline import first_run
+from app.pipeline import front_times
 
 
 def scheduled_entries(registry):
@@ -36,8 +40,6 @@ def listed_queues():
     refreshes) is not file work. Thus, only its pipeline stages list.
     Before, a file that was in cataloging had no job row. Its trail
     showed as a "no job in queue" row at the end of the table."""
-
-    from app.pipeline import STAGES
 
     return (
         (current_app.handoff_queue, None),
@@ -88,8 +90,6 @@ def queue_details():
     # table and the banners did not agree. The first_run anchor of
     # the pipeline trail survives the steps. A job without a trail
     # uses its own start.
-
-    from app.pipeline import first_enqueued, first_run, front_times
 
     def file_started(job):
         """Return the time that the FILE of the job first started to run.

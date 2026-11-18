@@ -16,6 +16,7 @@ from app.media import naming
 from app.models import ArchivedOriginal, File
 from app.media import videos
 from app.archive import aws_clients, cdn, restores
+from app.plex.plex_library import enqueue_plex_analyze
 
 app = LocalProxy(get_app)
 
@@ -586,8 +587,6 @@ def place_in_library(downloaded, library_path, expected_size, name):
     copy goes to a hidden name beside the library file. Then 1 rename
     puts it in place. The track rows and the triage verdicts of the
     record stay."""
-
-    from app.plex.plex_library import enqueue_plex_analyze
 
     size = os.path.getsize(downloaded)
     if expected_size is not None and size != expected_size:

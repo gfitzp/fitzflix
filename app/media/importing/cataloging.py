@@ -44,6 +44,11 @@ from app.media.tracks.rewrite_guard import _rescan_after_a_failed_edit, record_f
 from app.media.tracks.scan import replace_track_rows
 from app.media import videos
 from app.media.importing import chain, filenames, follow_ups, localization, space
+from app.media.triage import reset_triage_state
+from app.media.series_rename import series_for_import
+from app.plex.plex_library import REPLACEMENT_ANALYZE_DELAY
+from app.plex.plex_library import enqueue_plex_analyze
+from app.plex.plex_library import enqueue_plex_film_refresh
 
 app = LocalProxy(get_app)
 
@@ -425,10 +430,6 @@ def finalize_localization(
         # stream selection of each account (#661). It never raises.
 
         if placement == "replaced" or worse_local_copies:
-            from app.plex.plex_library import (
-                REPLACEMENT_ANALYZE_DELAY,
-                enqueue_plex_analyze,
-            )
 
             enqueue_plex_analyze(output_file, delay=REPLACEMENT_ANALYZE_DELAY)
 
@@ -437,7 +438,6 @@ def finalize_localization(
         # The extra is in <film folder>/<type>/. It never raises.
 
         if file_details.get("feature_type_name"):
-            from app.plex.plex_library import enqueue_plex_film_refresh
 
             enqueue_plex_film_refresh(os.path.dirname(output_directory))
         return None
@@ -564,8 +564,6 @@ def _build_records(file_details, inspection, output_name, series_id=None):
     # re-imported file first deletes an earlier reviewed verdict and the
     # stale aids. A replacement can have a forced track that the original
     # did not have.
-
-    from app.media.triage import reset_triage_state
 
     reset_triage_state(file)
     replace_track_rows(file, inspection["audio_tracks"], inspection["subtitle_tracks"])
@@ -757,8 +755,6 @@ def resolve_import_series(file_details):
     keeps in the show folder of the file. The verdict is "wait" when
     Sonarr did not answer and a Sonarr rename is possible. A new series
     then would split the show."""
-
-    from app.media.series_rename import series_for_import
 
     found = _existing_series(file_details)
     title = file_details.get("title")
@@ -1248,8 +1244,6 @@ def repair_replaced_file_task(library_file_path, output_file, tries=1, upload=No
     warning says so. The weekly sync imports such a file. While the
     database does not answer, the task books itself again. Return True
     if it queued a repair."""
-
-    from app import get_app
 
     with get_app().app_context():
         try:

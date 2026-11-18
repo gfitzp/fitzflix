@@ -25,6 +25,9 @@ from app.media.tracks.edits import remove_empty_subtitle_tracks
 from app.media.tracks.remux import stop_process
 from app.media import videos
 from app.media.importing import cataloging, chain, filenames, localization, space
+from app.operations.maintenance import clear_leftover_directory
+from app.arr.radarr_push import enqueue_radarr_push
+from app.arr.radarr_push import radarr_configured
 
 app = LocalProxy(get_app)
 
@@ -476,9 +479,6 @@ def _report_import_move_to_radarr(source_directory, output_directory):
     runs as its own job on the request queue. Thus, the sql queue never
     waits on Radarr (#268). A Radarr failure is logged. It does not
     fail the import. The file is already in place."""
-
-    from app.operations.maintenance import clear_leftover_directory
-    from app.arr.radarr_push import enqueue_radarr_push, radarr_configured
 
     source = os.path.realpath(source_directory)
     output = os.path.realpath(output_directory)

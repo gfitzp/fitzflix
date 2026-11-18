@@ -30,6 +30,7 @@ from app.main import bp
 from app.main.forms import DVRChannelActionForm, DVRChannelForm, DVRMemberForm
 from app.main.helpers import admin_required, flash_form_errors
 from app.models import DVRChannel, Movie, TMDBGenre, TVSeries
+from app import dvr
 
 
 def _enqueue_rebuild(reason):
@@ -39,9 +40,7 @@ def _enqueue_rebuild(reason):
     Return the job. Return None when a rebuild is already queued (that
     rebuild picks up the edit), or when the DVR is not configured."""
 
-    from app.dvr import enqueue_lineup_rebuild
-
-    return enqueue_lineup_rebuild(reason)
+    return dvr.enqueue_lineup_rebuild(reason)
 
 
 def _apply_form(channel, form):

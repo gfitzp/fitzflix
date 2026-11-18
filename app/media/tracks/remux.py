@@ -10,6 +10,7 @@ from flask import current_app
 from app.tasks import report_progress
 from app.media.naming import hidden
 from app.media import videos
+from app.media.importing import space
 
 # A staged remux holds the staged source and the output on the local
 # disk at the same time (#298).
@@ -121,8 +122,6 @@ def remux_file(file_path, build_command, job, name, activity, before_replace=Non
     That check comes before before_replace. Thus, a file that the remux
     does not replace gets no stale flag."""
 
-    from app.media.importing.space import release_staging_reservation, reserve_staging
-
     directory, basename = os.path.split(file_path)
     staging_dir = current_app.config["STAGING_DIR"]
     stamp = library_stamp(file_path)
@@ -139,7 +138,7 @@ def remux_file(file_path, build_command, job, name, activity, before_replace=Non
         # (#569). The reservation tries again. Each try waits for the
         # lock first.
         for _ in range(REMUX_RESERVATION_TRIES):
-            status = reserve_staging(
+            status = space.reserve_staging(
                 reservation,
                 int(os.path.getsize(file_path) * STAGED_REMUX_FACTOR),
                 [f"src-{staged_name}", f"remux-{staged_name}"],
@@ -226,7 +225,9 @@ def remux_file(file_path, build_command, job, name, activity, before_replace=Non
                 current_app.logger.warning(
                     f"'{name}' Cannot remove the staging copy {path}: {e}"
                 )
-        _release_reservation_quietly(release_staging_reservation, reservation, name)
+        _release_reservation_quietly(
+            space.release_staging_reservation, reservation, name
+        )
 
 
 def _release_reservation_quietly(release, reservation, name):

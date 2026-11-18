@@ -14,6 +14,7 @@ from app.archive.restores import refuse_while_restore_pending
 from app.models import File, FileAudioTrack, FileSubtitleTrack
 from app.settings import get_setting
 from app.media.tracks import edits, rewrite_guard
+from app.media.importing import chain
 
 app = LocalProxy(get_app)
 
@@ -237,7 +238,6 @@ def track_metadata_scan_task(file_id):
             if rewrite_guard.replaced_from_outside(
                 file.filesize_bytes, file.aws_stale, file_path
             ):
-                from app.media.importing.chain import enqueue_localization
 
                 current_app.lock_manager.unlock(lock)
                 lock = None
@@ -246,7 +246,7 @@ def track_metadata_scan_task(file_id):
                     f"its record. Fitzflix did not write it. The scan stores "
                     f"nothing, and the file goes to the import queue"
                 )
-                enqueue_localization(file_path)
+                chain.enqueue_localization(file_path)
                 return True
 
             details = extract_track_metadata(

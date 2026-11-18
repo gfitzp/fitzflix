@@ -43,6 +43,13 @@ from app.redis_guard import nothing_stored
 from app.criterion.leaving_criterion import CRITERION_PROVIDER_ID, match_tmdb_id
 from app.availability.streaming_rail import enriched_movie
 from app.media.title_keys import match_key, title_key
+from app.models import Movie
+from app.models import UserMovieStatus
+from app.models import UserWatchlist
+from app.discovery.recommendations import estimated_rating
+from app.discovery.recommendations import resolved_score
+from app.discovery.recommendations import resolved_tmdb_score
+from app.discovery.recommendations import stored_profile
 
 app = LocalProxy(get_app)
 
@@ -993,13 +1000,6 @@ def _ladder_state_for(user, tmdb_id, payload):
     # Routes imports this module at startup. Thus, its helpers load lazily.
 
     from app.main.helpers import _latest_review_row, ladder_payload, library_upgradable
-    from app.models import Movie, UserMovieStatus, UserWatchlist
-    from app.discovery.recommendations import (
-        estimated_rating,
-        resolved_score,
-        resolved_tmdb_score,
-        stored_profile,
-    )
 
     # The 2 extra keys of the card: movie_id, and the In-library badge
     # (#160). upgradable None = not owned. Otherwise it is the amber or

@@ -41,6 +41,7 @@ from app.models import (
 )
 from app.plex.plex_api import plex_get
 from app.metadata.tmdb_apply import tmdb_json
+from app.metadata import tmdb_refresh
 
 # The TMDB id of a Plex rating key, cached for 1 week. The rating keys
 # are stable.
@@ -513,8 +514,6 @@ def apply_letterboxd_import(user_id, films):
     pipeline enriches the movies that this creates.
     """
 
-    from app.metadata.tmdb_refresh import find_or_create_tmdb_movie
-
     with app.app_context():
         try:
             created_movie_ids = []
@@ -530,7 +529,7 @@ def apply_letterboxd_import(user_id, films):
                     # and the entry is skipped. The review must not go to
                     # the wrong film (#357).
 
-                    movie, created = find_or_create_tmdb_movie(
+                    movie, created = tmdb_refresh.find_or_create_tmdb_movie(
                         film["tmdb_id"],
                         film["canonical_title"],
                         film["canonical_year"],

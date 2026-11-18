@@ -13,6 +13,8 @@ from app.archive import s3_layout
 from app.models import File
 from app.media import videos
 from app.archive import archive_keys, aws_clients, moves, restores
+from app.pipeline import clear_job_skipped
+from app.pipeline import mark_job_skipped
 
 app = LocalProxy(get_app)
 
@@ -37,8 +39,6 @@ def upload_task(file_id):
 
     The trail can heal a chip whose stamp was lost. It reads the mark in
     the job hash while that hash exists."""
-
-    from app.pipeline import clear_job_skipped, mark_job_skipped
 
     clear_job_skipped()
     with app.app_context():
@@ -725,8 +725,6 @@ def mark_archive_stale(file_id, reason=""):
     is the date of the previous upload. Thus, nothing that inspects the
     row can tell that the archive is behind.
     """
-
-    from app.models import File
 
     try:
         file = File.query.filter_by(id=file_id).first()

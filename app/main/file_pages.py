@@ -35,6 +35,8 @@ from app.media.tracks.languages import (
 )
 from app.media import videos
 from app.main import tv_pages
+from app.operations.maintenance import clear_leftover_directory
+from app.plex.plex_library import enqueue_plex_film_refresh
 
 
 def _is_best_copy(file):
@@ -461,8 +463,6 @@ def _delete_file(file):
     # remain. A delete of the last file of a movie used to leave its
     # poster.jpg husk for the weekly sweep.
 
-    from app.operations.maintenance import clear_leftover_directory
-
     _after_commit(clear_leftover_directory, leftover_dir)
     _after_commit(remove_custom_artwork, "file", file_id)
 
@@ -474,7 +474,6 @@ def _delete_file(file):
     if file.movie_id and file.feature_type_id:
         film_folder = os.path.dirname(leftover_dir)
         if os.path.isdir(film_folder):
-            from app.plex.plex_library import enqueue_plex_film_refresh
 
             enqueue_plex_film_refresh(film_folder)
 

@@ -40,6 +40,8 @@ from app.availability.streaming import (
     streaming_matches,
     user_provider_ids,
 )
+from app.discovery.estimate_warm import person_movie_credits
+from app.discovery.estimate_warm import person_tv_credits
 
 # The crew jobs that count as key roles for search and filmographies.
 # They are the same roles that the taste engine scores, labeled as
@@ -278,7 +280,6 @@ def _filmography(credit, library_only=False):
 
     tmdb_credits = None
     if current_app.config["TMDB_API_KEY"]:
-        from app.discovery.estimate_warm import person_movie_credits
 
         tmdb_credits = person_movie_credits(credit)
 
@@ -397,7 +398,6 @@ def _filmography(credit, library_only=False):
     tv_rows = {}
     tv_credits = None
     if current_app.config["TMDB_API_KEY"]:
-        from app.discovery.estimate_warm import person_tv_credits
 
         tv_credits = person_tv_credits(int(credit))
 

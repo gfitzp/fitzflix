@@ -48,6 +48,7 @@ from werkzeug.local import LocalProxy
 from app.tasks import enqueue_task
 from app import db, get_app
 from app.models import File, FileAudioTrack, FileSubtitleTrack, Movie
+from app.media.atmos import EAC3_ATMOS_CODEC
 
 # This is the app instance of this process. Fitzflix resolves it lazily.
 # Thus, the generation task can run on a worker without a second
@@ -207,8 +208,6 @@ def lossy_audio_candidates(file_id=None):
     # This import is lazy, like the copy of this import in the report.
     # The atmos module resolves the worker app singleton at module import
     # time
-
-    from app.media.atmos import EAC3_ATMOS_CODEC
 
     first = db.aliased(FileAudioTrack)
     lossless = db.aliased(FileAudioTrack)

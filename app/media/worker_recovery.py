@@ -31,6 +31,14 @@ from flask import current_app
 from redlock import Lock
 from rq import Queue
 from rq.job import JobStatus
+from app.media.importing.chain import LATER_STAGES
+from app.media.importing.chain import pipeline_jobs
+from app.archive.archive_keys import pending_archive_of
+from app.media.importing.chain import _source_of
+from app.media.naming import hidden
+from app.queues import roster_queues
+from app.tasks import live_jobs
+from app.pipeline import close_trail
 
 # Only 1 starting worker reclaims a dead worker. The others skip it.
 
@@ -140,8 +148,6 @@ def _job_lock(job):
 def _next_stage_holds(job, source):
     """Return True if a different later-stage job holds the source."""
 
-    from app.media.importing.chain import LATER_STAGES, pipeline_jobs
-
     return any(
         other.id != job.id and held == source
         for other, held in pipeline_jobs(LATER_STAGES)
@@ -155,10 +161,7 @@ def abandon_dead_job(job):
     a conversion or a move goes. The cataloging keeps its files, because
     its commit can be done."""
 
-    from app.archive.archive_keys import pending_archive_of
-    from app.media.importing.chain import _source_of
     from app.media.importing.localization import abandon_import
-    from app.media.naming import hidden
 
     # A manual import holds no title lock, staging space or output. Its
     # dead job fails, and then the page shows the button again (#626).
@@ -238,9 +241,6 @@ def _abandon_atmos_start(job):
     check has the lock, and nothing is released. The workspace stays,
     as for the later jobs. The sweep of stale workspaces removes it."""
 
-    from app.queues import roster_queues
-    from app.tasks import live_jobs
-
     file_id = job.args[0] if job.args else job.kwargs.get("file_id")
     for other in live_jobs(roster_queues(current_app)):
         if (
@@ -263,9 +263,6 @@ def _abandon_atmos_job(job):
     sweep of stale workspaces removes it."""
 
     from app.media.atmos import CHAIN_KEY
-    from app.pipeline import close_trail
-    from app.queues import roster_queues
-    from app.tasks import live_jobs
 
     state = job.args[0] if job.args else None
     lock = job.args[1] if len(job.args) > 1 else None

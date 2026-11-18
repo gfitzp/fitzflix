@@ -35,6 +35,7 @@ from app.tasks import enqueue_task
 from app import db, get_app
 from app.media.file_ranking import MOVIE_BEST_ORDER
 from app.models import File, Movie, RefQuality
+from app.models import UserMovieReview
 
 app = LocalProxy(get_app)
 
@@ -294,8 +295,6 @@ def refresh_frame_pool_task():
     FRAME_POOL_MIN_RATED pooled frames from their own diary (limited by
     the number of their rated films). Thus, Easy mode never runs short
     (requested by Glenn, 2026-08-20)."""
-
-    from app.models import UserMovieReview
 
     with app.app_context():
         entries = pool_entries()

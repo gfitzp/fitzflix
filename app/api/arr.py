@@ -11,6 +11,17 @@ from flask import current_app, jsonify, request
 from markupsafe import escape
 
 from app.api.auth import authenticate_api_request
+from app.media.importing import localization
+from app import email
+from app.arr.arr_client import configured
+from app.arr.arr_client import rescan_command
+from app.arr.arr_client import carry_remembered_download
+from app.arr.arr_client import remember_download
+from app.arr.arr_client import rename_download_locally
+from app.media.importing import chain
+from app import settings
+from app.tasks import enqueue_task
+from app.models import RefQuality
 
 # The webhook writes at most this many characters of a payload to the log.
 # An event of Radarr or Sonarr is some kilobytes.
@@ -280,9 +291,7 @@ def import_source_incomplete(file_path):
     truncation verdict counts. A file that the probe cannot read continues
     normally. The retries of the import pipeline then deal with it."""
 
-    from app.media.importing.localization import probe_file_completeness
-
-    return probe_file_completeness(file_path) is False
+    return localization.probe_file_completeness(file_path) is False
 
 
 def mark_grab_failed(service, base_url, api_key, download_id):
@@ -354,8 +363,6 @@ def reject_incomplete_download(service, payload, file_path, refresh_command):
     the deletion. If the mark did not succeed, the file stays in place for
     manual handling. This function emails the admin in both cases."""
 
-    from app.email import notify_admin_text
-
     basename = os.path.basename(file_path)
     base_url = current_app.config.get(f"{service.upper()}_URL")
     api_key = current_app.config.get(f"{service.upper()}_API_KEY")
@@ -384,7 +391,7 @@ def reject_incomplete_download(service, payload, file_path, refresh_command):
         else "Marking the release failed did NOT succeed. The file stays "
         "in place for manual handling."
     )
-    notify_admin_text(
+    email.notify_admin_text(
         "Incomplete download rejected",
         f"'{basename}' arrived structurally incomplete and was not "
         f"imported.\n\n{outcome}",
@@ -405,16 +412,6 @@ def handle_import_event(arr, payload, priority=None):
     priority is a function of the new file name. It returns True when
     the import goes to the front of the queue. Only Sonarr gives it, for
     a recent episode."""
-
-    from app.arr.arr_client import configured, rescan_command
-    from app.arr.arr_client import (
-        carry_remembered_download,
-        remember_download,
-        rename_download_locally,
-    )
-    from app.media.importing.chain import enqueue_localization
-    from app.settings import get_setting
-    from app.tasks import enqueue_task
 
     response = jsonify(request.get_json())
     owner = payload.get(arr.owner_key) or {}
@@ -454,15 +451,13 @@ def handle_import_event(arr, payload, priority=None):
     new_quality = downgrade_quality_title(
         original_quality,
         score if isinstance(score, (int, float)) else 0,
-        get_setting(arr.min_score_setting),
+        settings.get_setting(arr.min_score_setting),
     )
 
     # The import parser rejects a quality that is not a RefQuality title.
     # A rename to such a title would make arr lose its file, and the
     # download would go to rejects. Thus, refuse it before any rename
     # (#506).
-
-    from app.models import RefQuality
 
     if not RefQuality.query.filter_by(quality_title=new_quality).first():
         current_app.logger.warning(
@@ -521,9 +516,9 @@ def handle_import_event(arr, payload, priority=None):
     )
     carry_remembered_download(downloaded_file_path, new_path)
     queued = (
-        enqueue_localization(new_path, at_front=True)
+        chain.enqueue_localization(new_path, at_front=True)
         if at_front
-        else enqueue_localization(new_path)
+        else chain.enqueue_localization(new_path)
     )
     if queued:
         current_app.logger.info(f"'{new_path}' Sent to Fitzflix")

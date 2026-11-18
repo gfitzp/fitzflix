@@ -24,6 +24,7 @@ import hashlib
 from datetime import timedelta
 
 from flask import current_app, request
+from app.models import User
 
 KEY_PREFIX = "fitzflix:auth:"
 
@@ -90,8 +91,6 @@ def _account_email(typed):
     """Return the stored email of the account that typed reaches, or None.
 
     The lookup uses the collation of the database, like the sign-in."""
-
-    from app.models import User
 
     user = User.query.filter_by(email=typed).first() if typed else None
     return user.email if user else None

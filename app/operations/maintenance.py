@@ -31,6 +31,15 @@ from app.email import task_send_email
 from app.archive import s3_layout
 from app.queues import QUEUE_NAMES, queue_names
 from app.settings import get_setting
+from app.media.worker_recovery import _pid_alive
+from app.models import HeldImport
+from app.archive.cdn import read_partial_sidecar
+from app.media.importing.chain import paths_held_by_later_stages
+from app.archive import aws_clients
+from app.criterion.criterion_catalog import criterion_releases_age_days
+from app.criterion.criterion_catalog import CRITERION_STALE_DAYS
+from app.operations.log_digest import digest_issues
+from app.operations.redaction import SecretRedactor
 
 # This is the app instance of this process. Fitzflix resolves it lazily.
 # Thus, an import of this module from a process that already has an
@@ -125,8 +134,6 @@ def _live_workers(connection):
     """
 
     import socket
-
-    from app.media.worker_recovery import _pid_alive
 
     hostname = socket.gethostname()
     workers = []
@@ -873,7 +880,6 @@ def system_health(flask_app):
     from app.archive.moves import pending_archive_moves
     from app.media.manual_imports import pending_count
     from app.media.missing_files import missing_best_summary
-    from app.models import HeldImport
 
     started = time.perf_counter()
     flask_app.redis.ping()
@@ -1082,11 +1088,9 @@ def backup_database():
         if current_app.config["AWS_BUCKET"]:
             # Import here, because app.media.videos imports this module.
 
-            from app.archive.aws_clients import aws_s3_client, get_matching_s3_objects
-
             backup_prefix = current_app.config["AWS_BACKUP_PREFIX"]
             uploaded_key = f"{backup_prefix}/{os.path.basename(backup_file)}"
-            client = aws_s3_client(with_retries=True)
+            client = aws_clients.aws_s3_client(with_retries=True)
             client.upload_file(
                 backup_file, current_app.config["AWS_BUCKET"], uploaded_key
             )
@@ -1153,7 +1157,7 @@ def backup_database():
             if os.path.isdir(posters_dir):
                 remote_posters = {
                     object["Key"]: object["Size"]
-                    for object in get_matching_s3_objects(
+                    for object in aws_clients.get_matching_s3_objects(
                         current_app.config["AWS_BUCKET"],
                         prefix=f"{posters_prefix}/",
                     )
@@ -1277,13 +1281,11 @@ def restore_drill():
 
         # Import here, because app.media.videos imports this module.
 
-        from app.archive.aws_clients import aws_s3_client, get_matching_s3_objects
-
         url = make_url(current_app.config["SQLALCHEMY_DATABASE_URI"])
         backup_prefix = current_app.config["AWS_BACKUP_PREFIX"]
 
         key = _newest_backup_key(
-            get_matching_s3_objects(
+            aws_clients.get_matching_s3_objects(
                 current_app.config["AWS_BUCKET"], prefix=f"{backup_prefix}/"
             ),
             url.database,
@@ -1298,7 +1300,7 @@ def restore_drill():
             current_app.config["DB_BACKUP_DIR"], ".restore-drill.sql.gz"
         )
         os.makedirs(current_app.config["DB_BACKUP_DIR"], exist_ok=True)
-        client = aws_s3_client(with_retries=True)
+        client = aws_clients.aws_s3_client(with_retries=True)
         client.download_file(current_app.config["AWS_BUCKET"], key, download_path)
 
         mysql_env = dict(os.environ)
@@ -1487,8 +1489,6 @@ def _kept_restore_copy(dirpath, name):
     whose sidecar is older than DIRECT_RESTORE_COPY_MAX_AGE_DAYS is a
     leftover too (#601)."""
 
-    from app.archive.cdn import read_partial_sidecar
-
     if not name.startswith(ORPHAN_KEPT_PREFIXES):
         return False
     if S3TRANSFER_TEMP_SUFFIX.search(name):
@@ -1656,8 +1656,6 @@ def cleanup_orphaned_files():
     deletions have an age condition. They are limited to those
     directories. The task sends a summary by email.
     """
-
-    from app.media.importing.chain import paths_held_by_later_stages
 
     with app.app_context():
         config = current_app.config
@@ -1919,9 +1917,9 @@ def _probe_http(url, **kwargs):
 def _probe_s3(config):
     """Ask S3 for the head of the archive bucket, with no retries."""
 
-    from app.archive.aws_clients import aws_s3_client
-
-    aws_s3_client(with_retries=False).head_bucket(Bucket=config["AWS_BUCKET"])
+    aws_clients.aws_s3_client(with_retries=False).head_bucket(
+        Bucket=config["AWS_BUCKET"]
+    )
 
 
 # The external services that health_probe checks: (service, configured,
@@ -1987,7 +1985,6 @@ def _run_probe(check, config):
         # TMDB key is a query parameter of that URL. The detail goes to
         # Redis, the System page and the health email. Thus, the key is
         # removed before the cut, so a partial key cannot stay (#529).
-        from app.operations.redaction import SecretRedactor
 
         detail = SecretRedactor(config).redact(f"{type(e).__name__}: {e}")
         ok, detail = False, detail[:200]
@@ -2099,8 +2096,6 @@ def _scheduler_issues(scheduler, config):
 def _criterion_age(config, redis, seen):
     """Return the age in days of the stored Criterion releases, or None."""
 
-    from app.criterion.criterion_catalog import criterion_releases_age_days
-
     return criterion_releases_age_days(redis)
 
 
@@ -2109,8 +2104,6 @@ def _criterion_issues(age, config):
 
     The weekly fetch failed 2 times or more (#283). The page still works
     from the old copy."""
-
-    from app.criterion.criterion_catalog import CRITERION_STALE_DAYS
 
     if age is not None and age > CRITERION_STALE_DAYS:
         yield "criterion-releases", (
@@ -2133,8 +2126,6 @@ def _digest(config, redis, seen):
     its own. Each flagged signature is 1 condition. Thus, it is
     announced once, reminded daily, and reported as recovered when a
     digest no longer has it."""
-
-    from app.operations.log_digest import digest_issues
 
     return digest_issues(
         redis,

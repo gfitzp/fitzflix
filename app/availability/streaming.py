@@ -29,6 +29,7 @@ from app.cache import cache_json, cached_fetch
 from app.models import Movie
 from app.redis_guard import nothing_stored
 from app.metadata.tmdb_apply import tmdb_json, tmdb_json_or
+from app.tasks import enqueue_task
 
 # The app instance of this process. Fitzflix resolves it lazily. Thus,
 # the warm task can run on a worker without a second application.
@@ -422,7 +423,6 @@ def request_warm(scope, deferred):
         WARM_KEY.format(scope=scope), "1", nx=True, ex=WARM_MARKER_SECONDS
     ):
         return False
-    from app.tasks import enqueue_task
 
     enqueue_task(
         "app.availability.streaming.warm_title_availability",

@@ -76,6 +76,8 @@ from app.arr.radarr_push import radarr_configured, radarr_tmdb_ids
 from app.criterion.criterion_catalog import record_set_title
 from app.viewing.diary import clear_watchlist
 from app.main import people_pages
+from app.metadata.tmdb_refresh import TMDB_NO_MATCH
+from app.metadata.tmdb_refresh import tmdb_refresh_status
 
 
 @bp.route("/library/movie", methods=["GET", "POST"])
@@ -226,8 +228,6 @@ def _flash_tmdb_refresh(result, title, reload_url):
     Thus, a fetched result does not say that the page has the new data.
     None is a job that still runs. False is a failed fetch (#514). Then
     nothing is queued, and a reload shows no change."""
-
-    from app.metadata.tmdb_refresh import TMDB_NO_MATCH
 
     if result == TMDB_NO_MATCH:
         flash(f"TMDB has no data for '{title}' with that ID.", "warning")
@@ -531,7 +531,6 @@ def movie(movie_id):
 
     tmdb_refresh_state = None
     if current_user.admin:
-        from app.metadata.tmdb_refresh import tmdb_refresh_status
 
         tmdb_refresh_state = tmdb_refresh_status("Movies", movie.id)
 

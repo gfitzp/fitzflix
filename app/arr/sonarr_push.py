@@ -27,6 +27,7 @@ from app.arr.arr_client import (
     restore_download_record,
 )
 from app.arr.arr_client import rename_download_locally as _rename_locally
+from app import get_app
 
 # The longest wait for the RenameFiles command of Sonarr, in seconds.
 
@@ -67,8 +68,6 @@ def adopt_episode_task(
     file as before. In both cases the import goes on the queue after the
     rename. A recent episode keeps its place at the front."""
 
-    from app import get_app
-
     with get_app().app_context():
         return adopt_download(
             SONARR,
@@ -99,8 +98,6 @@ def restore_download_record_task(
     import traceback
 
     from flask import current_app
-
-    from app import get_app
 
     with get_app().app_context():
         try:

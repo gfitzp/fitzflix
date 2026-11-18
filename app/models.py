@@ -111,7 +111,6 @@ from app.metadata.tmdb_apply import (  # noqa: E402
     TMDBMixin,
     _movie_certifications,
 )
-from app.media import videos
 
 
 @functools.lru_cache(maxsize=1)
@@ -1203,6 +1202,10 @@ class File(db.Model):
             os.remove(file_to_delete)
 
         except FileNotFoundError:
+            # The models are a base module. They load the file code only here.
+
+            from app.media import videos
+
             dead = videos._dead_volumes([file_to_delete])
             if dead:
                 current_app.logger.warning(

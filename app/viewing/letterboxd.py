@@ -29,6 +29,12 @@ from app.tasks import enqueue_task
 from app import db, get_app
 from app.models import Movie, User, UserMovieReview
 from app.viewing.richtext import strip_disallowed_tags
+from app.viewing.diary import star_rating_fields
+from app.viewing.diary import clear_not_interested
+from app.viewing.diary import clear_watchlist
+from app.metadata import tmdb_refresh
+from app.discovery.recommendations import RECOMPUTE_QUEUED_KEY
+from app.discovery.recommendations import RECOMPUTE_QUEUED_SECONDS
 
 app = LocalProxy(get_app)
 
@@ -246,8 +252,6 @@ def _apply_entry_fields(row, entry, owned=False):
     it is present. An owned row already belongs to this feed entry. A
     claim of a row by an unrated entry keeps the stars of the row."""
 
-    from app.viewing.diary import star_rating_fields
-
     changed = False
 
     # An unrated entry that claims a rated row keeps the stars of the row.
@@ -368,10 +372,6 @@ def sync_letterboxd_feeds():
                     f"{added} added, {completed} completed from bare watches, "
                     f"{updated} updated"
                 )
-                from app.discovery.recommendations import (
-                    RECOMPUTE_QUEUED_KEY,
-                    RECOMPUTE_QUEUED_SECONDS,
-                )
 
                 if current_app.redis.set(
                     RECOMPUTE_QUEUED_KEY.format(user_id=user.id),
@@ -392,9 +392,6 @@ def _ingest_entry(user_id, entry, created_movies):
     Skip a known guid that has not changed. Edit a known guid that
     changed. Complete a matching bare watch. Or add a new row. Return
     what occurred, for the sync log line."""
-
-    from app.viewing.diary import clear_not_interested, clear_watchlist
-    from app.metadata.tmdb_refresh import find_or_create_tmdb_movie
 
     existing = UserMovieReview.query.filter_by(
         user_id=user_id, letterboxd_guid=entry["guid"]
@@ -432,7 +429,7 @@ def _ingest_entry(user_id, entry, created_movies):
     movie = Movie.query.filter_by(tmdb_id=entry["tmdb_id"]).first()
     if movie is None:
         year = entry["film_year"]
-        movie, created = find_or_create_tmdb_movie(
+        movie, created = tmdb_refresh.find_or_create_tmdb_movie(
             entry["tmdb_id"],
             entry["film_title"],
             int(year) if year and str(year).strip().isdigit() else None,
@@ -459,7 +456,6 @@ def _ingest_entry(user_id, entry, created_movies):
             .first()
             is not None
         )
-    from app.viewing.diary import star_rating_fields
 
     row = UserMovieReview(
         user_id=user_id,

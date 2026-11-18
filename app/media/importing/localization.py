@@ -48,6 +48,7 @@ from app.media.importing import (
     library_move,
     space,
 )
+from app.media.worker_recovery import note_job_state
 
 app = LocalProxy(get_app)
 
@@ -177,8 +178,6 @@ class _LocalizationRun:
 
         A worker that dies takes them with it. The worker that reclaims
         the dead job reads them here. This is best effort."""
-
-        from app.media.worker_recovery import note_job_state
 
         job_id = getattr(self.job, "id", None)
         if job_id is None:

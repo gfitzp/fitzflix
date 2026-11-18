@@ -20,7 +20,7 @@ These rules come from real failures. Each one cost a debugging session.
 
 ### The singleton of get_app
 
-`app.media.atmos` calls `get_app()` when it loads. The other task modules (`app.media.videos`, `app.media.triage`, and others) get the app later, through a `LocalProxy`. The first app of the process becomes that singleton. A test module that imports `app.media.atmos` at the top runs that call during the collection. That is before the test app exists. Then each task function of the suite uses the production database, Redis, and S3.
+The task modules (`app.media.videos`, `app.media.atmos`, and others) get the app through a `LocalProxy`, at the first use. The first app of the process becomes that singleton. A test module that makes or uses the app during the collection does that before the test app exists. Then each task function of the suite uses the production database, Redis, and S3.
 
 Import the task modules inside the test functions. Give each test the `app` fixture, also a test of a pure function. The `app` fixture asserts that the singleton is the test app. Never weaken that assert.
 

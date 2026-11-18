@@ -137,6 +137,17 @@ from rq.exceptions import NoSuchJobError
 from rq.job import Job
 from rq.results import Result
 from rq.registry import FailedJobRegistry
+from app.arr.arr_client import take_remembered_download
+from app.media.importing import chain
+from app.media.sdr_conversion import clear_stuck_decisions
+from app.media.sdr_conversion import prune_held_imports
+from app.media.importing import filenames
+from app.pipeline import pipeline_trails
+from app.pipeline import queue_rows
+from app.pipeline import dismiss_trail
+from app.pipeline import move_to_front
+from app.pipeline import retry_now
+from app.media.atmos import EAC3_ATMOS_CODEC
 
 # The scheduled task that the Run now button of the System page does
 # not queue (#456). The S3 sync needs a proof of identity on the
@@ -1119,11 +1130,6 @@ def held_imports():
     originals in S3. A restore of one imports it again. If a real rip
     still exists, the import waits here again."""
 
-    from app.arr.arr_client import take_remembered_download
-    from app.media.importing.chain import enqueue_localization
-    from app.media.sdr_conversion import clear_stuck_decisions, prune_held_imports
-    from app.media.importing.filenames import move_to_rejects
-
     form = HeldImportForm()
     if (
         form.import_submit.data or form.archive_submit.data or form.discard_submit.data
@@ -1146,7 +1152,7 @@ def held_imports():
             # first. A later held file of the same name must not read it
             # (#687).
             take_remembered_download(held.held_path)
-            move_to_rejects(held.held_path, "discarded")
+            filenames.move_to_rejects(held.held_path, "discarded")
             db.session.delete(held)
             db.session.commit()
             current_app.logger.info(
@@ -1162,7 +1168,7 @@ def held_imports():
             # The import reads the decision. Thus, the decision commits
             # first. If no job is queued, the decision goes back. Then the
             # admin can choose again (#434).
-            if enqueue_localization(held.held_path, at_front=True) is None:
+            if chain.enqueue_localization(held.held_path, at_front=True) is None:
                 held.decision = None
                 held.date_decided = None
                 db.session.commit()
@@ -1952,8 +1958,6 @@ def _queue_rows():
     HTML. The forms carry a CSRF token, and Flask-WTF signs a new value
     each second. Thus, a digest of the HTML changes at each poll (#639)."""
 
-    from app.pipeline import pipeline_trails, queue_rows
-
     # A Redis outage gives an empty table, not a 500 (#476). The details
     # are {} then, and the trails are not read. pipeline_trails logs its
     # own traceback on a fault, and the once-a-minute warning of the
@@ -2019,8 +2023,6 @@ def queue_dismiss():
     The row is the pipeline trail of a file with no job left to list
     under. A trail with a live waiting job stays."""
 
-    from app.pipeline import dismiss_trail
-
     form = QueueDismissForm()
     if not form.validate_on_submit():
         flash("The form is not valid. Load the page again.", "danger")
@@ -2039,8 +2041,6 @@ def queue_front():
     Only a job that waits in a queue that the queue page lists can move.
     The move is atomic. A job that a worker took before the request
     arrived does not move."""
-
-    from app.pipeline import move_to_front
 
     form = QueueFrontForm()
     if not form.validate_on_submit():
@@ -2087,8 +2087,6 @@ def queue_retry():
     does not wait for the timer. The job goes to the front of its
     queue. The task runs its own checks again. If the cause holds, the
     task books a new retry."""
-
-    from app.pipeline import retry_now
 
     form = QueueRetryForm()
     if not form.validate_on_submit():
@@ -2165,8 +2163,6 @@ def files():
     # as wanted. Thus, they are not lossless-upgrade candidates (#212).
     # The atmos import is lazy, like in its other callers. It resolves
     # the worker app singleton at module import time
-
-    from app.media.atmos import EAC3_ATMOS_CODEC
 
     lossy_files = (
         db.session.query(FileAudioTrack.file_id)

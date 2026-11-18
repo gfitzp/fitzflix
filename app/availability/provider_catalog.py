@@ -54,6 +54,7 @@ from app.discovery.recommendations import (
 )
 from app.availability.streaming import batch_title_availability, streaming_matches
 from app.availability.streaming_rail import enriched_movie, movie_gone
+from app.metadata import tmdb_refresh
 
 # This is the app instance of this process. Fitzflix resolves it lazily.
 # Thus, the nightly task can run on a worker without a second application
@@ -202,8 +203,6 @@ def _process_pending(subscribed):
     # The TMDB record code is in app.metadata.tmdb_refresh. The import is lazy. Thus,
     # the module import direction stays one-way
 
-    from app.metadata.tmdb_refresh import find_or_create_tmdb_movie
-
     redis = current_app.redis
     ids = sorted(int(member) for member in redis.srandmember(PENDING_KEY, PROCESS_CAP))
     if not ids:
@@ -294,7 +293,7 @@ def _process_pending(subscribed):
         decided.add(tmdb_id)
         if best < MIN_ESTIMATE:
             continue
-        movie, was_created = find_or_create_tmdb_movie(
+        movie, was_created = tmdb_refresh.find_or_create_tmdb_movie(
             tmdb_id, payload["title"], int(payload["year"])
         )
         if movie is None:

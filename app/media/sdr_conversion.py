@@ -55,6 +55,26 @@ from app.models import MOVIES
 from app.media.naming import hidden, retag_quality
 from app.email import notify_admin
 from app.media import videos
+from app.media.tracks.scan import parse_dolby_vision_profile
+from app.models import RefQuality
+from app.models import HeldImport
+from app.arr.arr_client import carry_remembered_download
+from app.media.importing import filenames
+from app.pipeline import record_task_stage
+from app.media.importing import chain
+from app.media.importing.chain import defer_for_title_lock
+from app.media.importing.space import set_staging_reservation
+from app.archive.archive_keys import pending_archive_of
+from app.models import ArchivedOriginal
+from app.models import File
+from app.models import Movie
+from app.models import TVSeries
+from app.arr.arr_client import take_remembered_download
+from app.archive.uploads import upload_untouched
+from app.tasks import live_jobs
+from app.media.importing.chain import LATER_STAGES
+from app.tasks import TASKS
+from app.tasks import resolve_queue
 
 app = LocalProxy(get_app)
 
@@ -126,8 +146,6 @@ def needs_conversion(hdr_format, color_primaries, transfer_characteristics):
 
 def describe_color(hdr_format, color_primaries, transfer_characteristics):
     """Return a short name for the color format of a video, for example "HDR10"."""
-
-    from app.media.tracks.scan import parse_dolby_vision_profile
 
     profile = parse_dolby_vision_profile(hdr_format)
     if profile:
@@ -215,9 +233,6 @@ def plan_conversion(file_path, file_details, max_height):
     source, for the job timeout. Raise ValueError if the target quality
     does not exist."""
 
-    from app.models import RefQuality
-    from app.media.tracks.scan import parse_dolby_vision_profile
-
     video = probe_video(file_path)
     if not video or not needs_conversion(
         video["hdr_format"],
@@ -282,8 +297,6 @@ HELD_HEIGHT_FIELD = "conversion_max_height"
 def held_decision(file_path):
     """Return the HeldImport row of a held file that an admin chose to import, if any."""
 
-    from app.models import HeldImport
-
     return HeldImport.query.filter_by(held_path=file_path, decision="import").first()
 
 
@@ -339,11 +352,6 @@ def hold_import(file_path, file_details, plan, blockers):
     to the rejects with the reason "held with no record", and the
     newcomer takes the name."""
 
-    from app.arr.arr_client import carry_remembered_download
-    from app.media.importing.filenames import move_to_rejects
-    from app.models import HeldImport
-    from app.pipeline import record_task_stage
-
     # HELD_DIR is on the external SSD. If the SSD is not mounted, this
     # raises, and the file stays in place (#341)
 
@@ -354,7 +362,9 @@ def hold_import(file_path, file_details, plan, blockers):
     if os.path.abspath(file_path) != os.path.abspath(held_path):
         if os.path.lexists(held_path):
             waits = HeldImport.query.filter_by(held_path=held_path).first()
-            if waits is None and move_to_rejects(held_path, "held with no record"):
+            if waits is None and filenames.move_to_rejects(
+                held_path, "held with no record"
+            ):
                 current_app.logger.warning(
                     f"'{basename}' A file with this name was in the held folder "
                     f"with no record. It went to the rejects"
@@ -364,7 +374,7 @@ def hold_import(file_path, file_details, plan, blockers):
                     f"'{basename}' A held file with this name waits for a "
                     f"decision already. The new file goes to rejects"
                 )
-                move_to_rejects(file_path, "already held")
+                filenames.move_to_rejects(file_path, "already held")
                 return None
         _move_to_held(file_path, held_path)
 
@@ -565,7 +575,6 @@ def _watch_encode(process, job, basename, lock, total_seconds):
     """Read the progress of an encode, and keep the title lock alive."""
 
     from app.media.importing.localization import HandoffFailed
-    from app.media.importing.chain import _hold_title_lock
 
     last_refresh = time.monotonic()
     previous_percent = None
@@ -587,7 +596,7 @@ def _watch_encode(process, job, basename, lock, total_seconds):
             report_progress(job, basename, "Converting to SDR", percent)
         if time.monotonic() - last_refresh > LOCK_REFRESH_SECONDS:
             try:
-                held = _hold_title_lock(lock, basename)
+                held = chain._hold_title_lock(lock, basename)
             except Exception as e:
                 # A Redis fault is no fault of the source (#568).
                 raise HandoffFailed(f"{type(e).__name__}: {e}") from e
@@ -622,9 +631,6 @@ def convert_localized_file(
         abandon_failed_stage,
         abandon_handoff,
     )
-    from app.media.importing.chain import _hold_title_lock, defer_for_title_lock
-    from app.media.importing.space import set_staging_reservation
-    from app.archive.archive_keys import pending_archive_of
 
     with app.app_context():
         job = get_current_job()
@@ -650,7 +656,7 @@ def convert_localized_file(
             return False
 
         try:
-            if not _hold_title_lock(lock, basename):
+            if not chain._hold_title_lock(lock, basename):
                 return defer()
         except Exception:
             # A Redis fault of the lock extension or of the deferral
@@ -804,8 +810,6 @@ def archived_original_from_file(file, reason):
     The caller adds it to the session and commits. The row keeps the
     original in S3 after its library file goes away."""
 
-    from app.models import ArchivedOriginal
-
     existing = ArchivedOriginal.query.filter_by(aws_key=file.aws_key).first()
     archived = existing or ArchivedOriginal(aws_key=file.aws_key)
     archived.media_library = file.media_library
@@ -836,8 +840,6 @@ def _held_owner(held, details):
     title is the last source. An original with no owner is on no page,
     and a delete of the title leaves it in S3."""
 
-    from app.models import File, Movie, TVSeries
-
     blocker = (
         db.session.get(File, held.existing_file_id) if held.existing_file_id else None
     )
@@ -864,10 +866,6 @@ def archive_held_task(held_id):
 
     This is the "Archive only" choice. The library does not change. The
     held file is deleted after the upload."""
-
-    from app.arr.arr_client import take_remembered_download
-    from app.archive.uploads import upload_untouched
-    from app.models import ArchivedOriginal, HeldImport
 
     with app.app_context():
         held = db.session.get(HeldImport, held_id)
@@ -970,8 +968,6 @@ def _jobs_of(queues):
     from rq.job import Job
     from rq.registry import FailedJobRegistry
 
-    from app.tasks import live_jobs
-
     yield from live_jobs(queues)
     for queue in queues:
         failed = FailedJobRegistry(queue=queue).get_job_ids()
@@ -987,9 +983,6 @@ def held_decision_has_job(held):
     cataloging of the held path. An archive decision has an
     archive_held_task of the row. A failed job counts too. The admin can
     then requeue it on the System page."""
-
-    from app.media.importing.chain import LATER_STAGES
-    from app.tasks import TASKS, resolve_queue
 
     if held.decision == "archive":
         name = "app.media.sdr_conversion.archive_held_task"
@@ -1048,8 +1041,6 @@ def prune_held_imports():
     """Remove the HeldImport rows whose held file is gone, for example after a reject.
 
     It also clears each decision that no job carries any more (#525)."""
-
-    from app.models import HeldImport
 
     # A dropped volume makes each held file look gone. The prune then
     # deleted each row, and the files in held/ had no record when the

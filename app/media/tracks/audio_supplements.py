@@ -22,6 +22,8 @@ from app.settings import get_setting
 from app.plex.plex_library import enqueue_plex_analyze
 from app.media import videos
 from app.media.tracks import edits, remux, rewrite_guard, scan
+from app.media.importing import space
+from app.media.importing.space import set_staging_reservation
 
 app = LocalProxy(get_app)
 
@@ -350,12 +352,6 @@ def remux_audio_plan_task(file_id, plan):
 def _remux_audio_plan_unlocked(file_id, plan):
     """Run the remux pipeline. The caller must hold the lock of the title."""
 
-    from app.media.importing.space import (
-        release_staging_reservation,
-        reserve_staging,
-        set_staging_reservation,
-    )
-
     with app.app_context():
         job = get_current_job()
         file = db.session.get(File, int(file_id))
@@ -382,7 +378,7 @@ def _remux_audio_plan_unlocked(file_id, plan):
             source_bytes = os.path.getsize(file_path)
             needed = int(source_bytes * remux.STAGED_REMUX_FACTOR)
             for _ in range(remux.REMUX_RESERVATION_TRIES):
-                status = reserve_staging(
+                status = space.reserve_staging(
                     reservation,
                     needed,
                     [f"src-{staged_name}", staged_name],
@@ -559,5 +555,5 @@ def _remux_audio_plan_unlocked(file_id, plan):
                 except OSError:
                     pass
             remux._release_reservation_quietly(
-                release_staging_reservation, reservation, basename
+                space.release_staging_reservation, reservation, basename
             )

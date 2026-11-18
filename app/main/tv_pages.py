@@ -41,6 +41,8 @@ from app.main.helpers import (
 )
 from app.media.custom_artwork import remove_custom_artwork
 from app.main import file_pages, movie_pages
+from app.operations.maintenance import clear_leftover_directory
+from app.metadata.tmdb_refresh import tmdb_refresh_status
 
 
 @bp.route("/library/tv", methods=["GET", "POST"])
@@ -227,7 +229,6 @@ def tv(series_id):
 
     tmdb_refresh_state = None
     if current_user.admin:
-        from app.metadata.tmdb_refresh import tmdb_refresh_status
 
         tmdb_refresh_state = tmdb_refresh_status("TV Shows", tv.id)
 
@@ -512,8 +513,6 @@ def _delete_series(tv, series_id, title):
     # for movies, by Sonarr or by hand for TV). Thus, that art used to
     # leave husks for the weekly sweep. An explicit delete clears the
     # junk-only folders immediately.
-
-    from app.operations.maintenance import clear_leftover_directory
 
     for leftover_dir in sorted(leftover_dirs):
         file_pages._after_commit(clear_leftover_directory, leftover_dir)

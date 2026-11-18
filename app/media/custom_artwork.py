@@ -18,6 +18,10 @@ from sqlalchemy import event as sa_event
 from sqlalchemy.orm import Session as OrmSession
 
 from app.models import File
+from app import get_app
+from app.tasks import enqueue_task
+from app import db
+from app.models import Movie
 
 # The trees that this session removes after its commit.
 
@@ -138,8 +142,6 @@ def restore_folder_poster(dirname):
     file, and deleted the copy with it. dirname is the folder, relative
     to LIBRARY_DIR. Return True when a copy went in."""
 
-    from app import get_app
-
     with get_app().app_context():
         restored = _restore_folder(dirname)
         if restored:
@@ -156,8 +158,6 @@ def queue_folder_poster_restore(folder, reason=None):
     record, and queues nothing. The job waits POSTER_RESTORE_DELAY
     seconds. A repeat of the event adds a second job. The second job
     finds the copy in place and changes nothing."""
-
-    from app.tasks import enqueue_task
 
     if not folder:
         return None
@@ -186,9 +186,6 @@ def _poster_folders():
 
     from sqlalchemy import or_
 
-    from app import db
-    from app.models import Movie
-
     rows = (
         db.session.query(File.dirname)
         .join(Movie, Movie.id == File.movie_id)
@@ -207,8 +204,6 @@ def reconcile_library_posters():
     that it linked the copy to goes missing, after a rip upgrade. A
     folder that holds poster art changes nothing. A folder that is not
     on disk is skipped. Return a summary."""
-
-    from app import get_app
 
     with get_app().app_context():
         checked = restored = 0

@@ -54,6 +54,7 @@ from app.models import File, Movie, RefQuality
 from app.criterion.criterion_catalog import set_title_key, set_title_spellings
 from app.media.file_ranking import ranked_movie_files
 from app.plex.plex_api import plex_get, plex_write
+from app.playback import plex_player
 
 app = LocalProxy(get_app)
 
@@ -344,7 +345,6 @@ def sync_criterion_collection():
             return True
 
         try:
-            from app.playback.plex_player import _server_machine_id
 
             # The main collection: 1 group for each file. Each edition is
             # its own Plex item.
@@ -374,7 +374,7 @@ def sync_criterion_collection():
                 }
                 - set(qualifying)
             )
-            machine = _server_machine_id()
+            machine = plex_player._server_machine_id()
             sections = plex_get("/library/sections").get("MediaContainer", {})
         except Exception:
             current_app.logger.warning(traceback.format_exc())

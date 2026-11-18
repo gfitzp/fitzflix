@@ -16,6 +16,7 @@ from flask import current_app
 from werkzeug.local import LocalProxy
 from app.tasks import report_progress
 from app import get_app
+from app.media.importing.filenames import sanitize_string
 
 app = LocalProxy(get_app)
 
@@ -289,7 +290,6 @@ def sanitize_s3_key(key):
     See https://docs.aws.amazon.com/AmazonS3/latest/dev/UsingMetadata.html
     """
 
-    from app.media.importing.filenames import sanitize_string
 
     # fmt: off
     aws_bad_chars  = [   "&",  "$",   "@",  "=", ";", ":", "+", ",", "?", "\\", "{", "^", "}", "%", "`", '"', ">", "~", "<", "#", "|"]

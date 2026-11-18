@@ -73,6 +73,7 @@ from app.models import (
     tv_networks,
 )
 from app.availability.streaming import batch_title_availability, streaming_matches
+from app.operations import maintenance
 
 # The app instance of this process. Fitzflix resolves it lazily. Thus,
 # the nightly task can run on a worker without a second application.
@@ -1039,13 +1040,14 @@ def build_channel_lineups(day=None):
             # A folder that was never made is not a dead share (#501). A
             # new install has no library folders yet. An ERROR each night
             # would mail the admin.
-            from app.operations.maintenance import VOLUMES_ROOT
 
             missing = [
                 current_app.config[key]
                 for key in ("MOVIE_LIBRARY", "TV_LIBRARY")
                 if not os.path.exists(current_app.config[key])
-                and not current_app.config[key].startswith(VOLUMES_ROOT + os.sep)
+                and not current_app.config[key].startswith(
+                    maintenance.VOLUMES_ROOT + os.sep
+                )
             ]
             if missing:
                 current_app.logger.warning(

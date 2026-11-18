@@ -7,6 +7,8 @@ from flask import current_app
 from app.api import bp
 from app.api.arr import folder_under_roots, handle_import_event, import_event_webhook
 from app.arr.arr_client import SONARR
+from app.media.series_rename import SONARR_SERIES_EVENTS
+from app.media.series_rename import queue_series_reconcile
 
 # An episode that aired this many days ago or less goes to the front of
 # the import queue.
@@ -21,8 +23,6 @@ def check_series_folder(payload):
     Rename also carries the old and new path of each renamed episode
     file. The path must be below SONARR_ROOT_FOLDERS, as the path of a
     download must be. A path outside them is logged and ignored."""
-
-    from app.media.series_rename import SONARR_SERIES_EVENTS, queue_series_reconcile
 
     event = payload.get("eventType")
     if event not in SONARR_SERIES_EVENTS:

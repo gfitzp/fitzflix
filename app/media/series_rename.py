@@ -50,6 +50,25 @@ from app.plex.plex_rename import remember_rename
 from app import db, get_app, makedirs_on_mounted_volume, safe_job_id
 from app.models import TVSeries
 from app.media import videos
+from app.arr.arr_client import SONARR
+from app.arr.arr_client import rescan_command
+from app.arr import sonarr_push
+from app.media.importing import chain
+from app.models import TV_SHOWS
+from app.models import title_lock_key
+from app.tasks import requeue
+from app.metadata.tmdb_refresh import MAX_RENAME_VOLUME_WAITS
+from app import email
+from app.media.importing.filenames import reconstruct_filename
+from app.operations.maintenance import clear_leftover_directory
+from app.models import File
+from app.tasks import live_job_ids
+from app.tasks import TASKS
+from app.tasks import live_jobs
+from app.tasks import resolve_queue
+from app.tasks import requeue_job_id
+from app.media.importing import filenames
+from app import path_tag
 
 app = LocalProxy(get_app)
 
@@ -63,13 +82,12 @@ def _update_sonarr_path(series, old_folder, new_folder):
     RescanSeries command makes Sonarr see the renamed files at once.
     The call goes through the arr client (app.arr.arr_client)."""
 
-    from app.arr.arr_client import SONARR, rescan_command
-    from app.arr.sonarr_push import _sonarr, sonarr_configured
-
-    if not (sonarr_configured() and series.tvdb_id):
+    if not (sonarr_push.sonarr_configured() and series.tvdb_id):
         return False
 
-    listing = _sonarr("GET", f"/api/v3/series?tvdbId={int(series.tvdb_id)}") or []
+    listing = (
+        sonarr_push._sonarr("GET", f"/api/v3/series?tvdbId={int(series.tvdb_id)}") or []
+    )
     entry = next(
         (item for item in listing if item.get("tvdbId") == series.tvdb_id), None
     )
@@ -84,9 +102,9 @@ def _update_sonarr_path(series, old_folder, new_folder):
     # dirname (#554). normpath removes the slash first.
     new_path = os.path.join(os.path.dirname(os.path.normpath(old_path)), new_folder)
     entry["path"] = new_path
-    _sonarr("PUT", f"/api/v3/series/{entry['id']}", entry)
+    sonarr_push._sonarr("PUT", f"/api/v3/series/{entry['id']}", entry)
     current_app.logger.info(f"Series rename: Sonarr path {old_path!r} -> {new_path!r}")
-    _sonarr("POST", "/api/v3/command", rescan_command(SONARR, entry["id"]))
+    sonarr_push._sonarr("POST", "/api/v3/command", rescan_command(SONARR, entry["id"]))
     return True
 
 
@@ -256,11 +274,8 @@ def _take_series_locks(series, new_title, waits=None):
     Else the import attaches by the old title at its end and makes a
     second series (#370). waits holds the retry counts of the task."""
 
-    from app.media.importing.chain import series_import_in_flight
-    from app.models import TV_SHOWS, title_lock_key
-
     reason = None
-    source = series_import_in_flight({series.title, new_title})
+    source = chain.series_import_in_flight({series.title, new_title})
     if source:
         reason = f"waits for the import of '{os.path.basename(source)}'"
     locks = []
@@ -307,9 +322,6 @@ def _requeue_rename(series, new_title, reason, waits=None, counted=None):
     limit of its count, the rename stops with an ERROR, as the movie
     rename does. Each retry carries every count that is not 0 (#351)."""
 
-    from app.tasks import requeue
-    from app.metadata.tmdb_refresh import MAX_RENAME_VOLUME_WAITS
-
     waits = dict(waits or {})
     limits = {
         "volume_waits": MAX_RENAME_VOLUME_WAITS,
@@ -351,11 +363,9 @@ def _refuse_duplicate_target(series, src_relative, dst_relative):
 
     from markupsafe import escape
 
-    from app.email import notify_admin_text
-
     detail = f"'{dst_relative}' exists, and so does '{src_relative}'"
     current_app.logger.warning(f"Series rename: {detail}. Nothing replaced")
-    notify_admin_text(
+    email.notify_admin_text(
         "Rename collision needs triage",
         f"Renaming the series '{series.title}' was refused: {detail}.\n\n"
         f"Delete one of the copies, then rename the series again.",
@@ -377,8 +387,6 @@ def _tell_admin_of_stray_files(series, new_title, stray, resumed=False):
     function never raises."""
 
     from markupsafe import escape
-
-    from app.email import notify_admin_text
 
     try:
         if not resumed:
@@ -414,7 +422,7 @@ def _tell_admin_of_stray_files(series, new_title, stray, resumed=False):
             "Sonarr moved."
         )
         listing = "\n".join(f"- {name}" for name in names)
-        notify_admin_text(
+        email.notify_admin_text(
             "Series rename needs triage",
             f"{intro} {found}\n\n{listing}\n\n{action} {then}",
             f"<p>{escape(intro)} {escape(found)}</p><ul>"
@@ -551,9 +559,6 @@ def _move_series(series, new_title, waits=None):
     library_dir = current_app.config["LIBRARY_DIR"]
     old_prefix = f"{old_title} - "
     new_prefix = f"{new_title} - "
-
-    from app.media.importing.filenames import reconstruct_filename
-    from app.media.importing.chain import series_import_in_flight
 
     # Plan each file first. If 1 file does not carry the series title,
     # nothing changes. A partial rename gave the series a title and a
@@ -747,7 +752,7 @@ def _move_series(series, new_title, waits=None):
     # 1 commit and the leftover-folder pass. The nightly check reports
     # such a series as a conflict (review of 2026-10-26).
 
-    source = series_import_in_flight({old_title, new_title})
+    source = chain.series_import_in_flight({old_title, new_title})
     left = _rows_not_renamed(series, old_title, new_title)
     if source or left:
         reason = (
@@ -762,8 +767,6 @@ def _move_series(series, new_title, waits=None):
     # old series folder usually keeps a poster.png (from Sonarr or
     # placed by hand). Before, that file kept the empty folder alive
     # until the weekly sweep.
-
-    from app.operations.maintenance import clear_leftover_directory
 
     for old_dir in sorted(old_dirs, key=len, reverse=True):
         clear_leftover_directory(old_dir)
@@ -892,8 +895,6 @@ def fitzflix_folders(series):
     The show folder is the second part of the dirname, after the TV
     library part. A dirname outside the TV library gives None."""
 
-    from app.models import TV_SHOWS, File
-
     folders = set()
     rows = File.query.filter_by(series_id=series.id).with_entities(File.dirname)
     for (dirname,) in rows.distinct():
@@ -938,9 +939,7 @@ def _unaccounted_reason(targets, titles):
 def _import_in_flight(titles):
     """Return True if an import of a series with one of these titles is not done."""
 
-    from app.media.importing.chain import series_import_in_flight
-
-    return series_import_in_flight(titles) is not None
+    return chain.series_import_in_flight(titles) is not None
 
 
 def _rename_title(series, folder, sonarr_folder):
@@ -1114,8 +1113,6 @@ def _job_pending(queue, *job_ids):
 
     An id with a time tag (the id, "_", and digits) counts as the id."""
 
-    from app.tasks import live_job_ids
-
     return any(
         found == job_id or re.fullmatch(re.escape(job_id) + r"_\d+", found)
         for found in live_job_ids(queue)
@@ -1125,8 +1122,6 @@ def _job_pending(queue, *job_ids):
 
 def _series_of_pending_rename(title):
     """Return the series that a rename to this title waits for, or None (#372)."""
-
-    from app.tasks import TASKS, live_jobs
 
     for job in live_jobs([TASKS[RENAME_TASK].queue]):
         if job.func_name != RENAME_TASK or len(job.args) < 2:
@@ -1144,11 +1139,9 @@ def _sonarr_series_list():
     The cataloging reads it before its records (#372 follow-up). Thus,
     a slow Sonarr does not hold the open write transaction."""
 
-    from app.arr.sonarr_push import _sonarr
-
     if "sonarr_series" not in g:
         try:
-            g.sonarr_series = _sonarr("GET", "/api/v3/series") or []
+            g.sonarr_series = sonarr_push._sonarr("GET", "/api/v3/series") or []
         except Exception as e:
             current_app.logger.warning(
                 f"Sonarr path check: couldn't list the Sonarr series: {e}"
@@ -1163,9 +1156,7 @@ def _series_of_sonarr_folder(folder):
     The Sonarr series must match exactly 1 series by its ids. ok is
     False when Sonarr is configured but did not answer."""
 
-    from app.arr.sonarr_push import sonarr_configured
-
-    if not folder or not sonarr_configured():
+    if not folder or not sonarr_push.sonarr_configured():
         return None, True
     entries = _sonarr_series_list()
     if entries is None:
@@ -1211,8 +1202,6 @@ def _enqueue_once(name, job_id, *args, description, also=(), timeout=None):
     from rq.exceptions import NoSuchJobError
     from rq.job import Job
 
-    from app.tasks import TASKS, resolve_queue
-
     queue = resolve_queue(TASKS[name].queue)
     if _job_pending(queue, job_id, *also):
         return None
@@ -1251,8 +1240,6 @@ def _adopt_tvdb_id(series, entry):
 
 def _apply_branch(series, entry, branch, value):
     """Carry out a rename or a repoint. Return True if it was done or queued."""
-
-    from app.tasks import requeue_job_id
 
     sonarr_folder = sonarr_folder_of(entry)
     _adopt_tvdb_id(series, entry)
@@ -1303,15 +1290,13 @@ def reconcile_sonarr_paths():
     check writes a warning and changes nothing. A series that Sonarr
     does not manage is not checked. Return the summary counts."""
 
-    from app.arr.sonarr_push import _sonarr, sonarr_configured
-
     with app.app_context():
-        if not sonarr_configured():
+        if not sonarr_push.sonarr_configured():
             return _summary(error="Sonarr is not configured")
         if _tv_library_missing():
             return _summary(error="TV library not mounted")
         try:
-            entries = _sonarr("GET", "/api/v3/series") or []
+            entries = sonarr_push._sonarr("GET", "/api/v3/series") or []
         except Exception as e:
             current_app.logger.warning(f"Sonarr path check: couldn't list series: {e}")
             return _summary(error="Sonarr unreachable")
@@ -1356,22 +1341,22 @@ def reconcile_sonarr_paths():
 def _sonarr_entry(series):
     """Return the Sonarr series of a TV series, or None."""
 
-    from app.arr.sonarr_push import _sonarr
-
     path = "/api/v3/series"
     if series.tvdb_id:
         path += f"?tvdbId={int(series.tvdb_id)}"
     lookup = ({series.tvdb_id: series}, {series.tmdb_id: series})
     return next(
-        (item for item in _sonarr("GET", path) or [] if _match_series(item, lookup)),
+        (
+            item
+            for item in sonarr_push._sonarr("GET", path) or []
+            if _match_series(item, lookup)
+        ),
         None,
     )
 
 
 def _row_for_previous_path(series, previous_path):
     """Return the File row of a series at a library path, or None."""
-
-    from app.models import File
 
     if not previous_path:
         return None
@@ -1391,9 +1376,7 @@ def _adoption_details(series, file, path):
     The name must give the exact path. The version text can change. No
     other row can hold the path."""
 
-    from app.media.importing.filenames import evaluate_filename
     from app.media.manual_imports import fitzflix_basename
-    from app.models import File
 
     library = os.path.realpath(current_app.config["TV_LIBRARY"])
     real = os.path.realpath(path)
@@ -1406,7 +1389,7 @@ def _adoption_details(series, file, path):
     relative = os.path.relpath(
         real, os.path.realpath(current_app.config["LIBRARY_DIR"])
     )
-    details = evaluate_filename(real, log=False)
+    details = filenames.evaluate_filename(real, log=False)
     if not details or details["file_path"] != relative:
         return None, "its name does not give this path"
     wanted = {
@@ -1491,11 +1474,9 @@ def reconcile_sonarr_series(series_id, renamed_files=()):
     only when the 2 folders are equal. A folder change goes through the
     rename task, and the rows then hold the new folder."""
 
-    from app.arr.sonarr_push import sonarr_configured
-
     with app.app_context():
         series = db.session.get(TVSeries, series_id)
-        if series is None or not sonarr_configured():
+        if series is None or not sonarr_push.sonarr_configured():
             return _summary(error="no series or Sonarr is not configured")
         if _tv_library_missing():
             return _summary(error="TV library not mounted")
@@ -1537,8 +1518,6 @@ def queue_series_reconcile(event, sonarr_series, renamed_files=None):
     the queue when a renamed episode file was at the path of a record.
     The job id holds the series and the renamed files. Thus, a repeat of
     the event adds no second job. Return the job, or None."""
-
-    from app import path_tag
 
     series = find_series(sonarr_series)
     if series is None:

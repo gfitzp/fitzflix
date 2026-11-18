@@ -36,6 +36,11 @@ from app.api.arr import downgrade_quality_title
 from app.media import naming
 from app.models import MOVIES, TV_SHOWS
 from app.tasks import LIVE_JOB_STATES, TASKS, resolve_queue
+from app.media.importing.filenames import sanitize_string
+from app import settings
+from app.models import Movie
+from app.models import TVSeries
+from app import email
 
 # This is the app instance of this process. Fitzflix resolves it lazily.
 # Thus, the task can run on a worker without a second application
@@ -241,17 +246,13 @@ def proposed_name(entry, extension):
     web title of the import webhooks. The release name is the fallback
     when the app matched nothing."""
 
-    from app.media.importing.filenames import sanitize_string
-
-    from app.settings import get_setting
-
     quality = "WEBDL-1080p"
     if entry.get("quality"):
         service = "SONARR" if entry.get("service") == "Sonarr" else "RADARR"
         quality = downgrade_quality_title(
             entry["quality"],
             entry.get("score") or 0,
-            get_setting(f"{service}_WEBDL_MIN_SCORE"),
+            settings.get_setting(f"{service}_WEBDL_MIN_SCORE"),
         )
     extension = (extension or "mkv").lstrip(".")
     record = entry.get("record")
@@ -358,7 +359,6 @@ def record_url(record):
 
     if not record or not record.get("tmdb_id"):
         return None
-    from app.models import Movie, TVSeries
 
     if record["kind"] == "movie":
         movie = Movie.query.filter(Movie.tmdb_id == record["tmdb_id"]).first()
@@ -474,8 +474,6 @@ def email_manual_import_needed(service, title, reason):
 
     from markupsafe import escape
 
-    from app.email import notify_admin_text
-
     if not current_app.config.get("MAIL_SERVER"):
         return
     page = url_for("main.manual_imports", _external=True)
@@ -483,7 +481,7 @@ def email_manual_import_needed(service, title, reason):
     # The title and the reason come from the arr. The HTML part escapes
     # them (#450).
 
-    notify_admin_text(
+    email.notify_admin_text(
         f"{service} needs a manual import",
         f"{service} downloaded '{title}' but cannot import it.\n\n"
         f"Reason: {reason}\n\n"

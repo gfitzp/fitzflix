@@ -59,6 +59,13 @@ from app.media.naming import (
 )
 from app.media.title_keys import title_key
 from app.media import videos
+from app.criterion.criterion_catalog import stored_title_year_release
+from app.operations.queue_page import scheduled_entries
+from app.tasks import live_jobs
+from app.media.importing import filenames
+from app.operations.maintenance import clear_leftover_directory
+from app.media.importing.filenames import reconstruct_filename
+from app.plex import plex_rename
 
 
 def library_name_details(file, file_details):
@@ -149,8 +156,6 @@ def carry_person_set_values(old_movie, new_movie):
     the catalog have no film id. Then the spine of the record is the
     spine that the stored catalog gives its title and year. Each other
     record with no TMDB id has only typed values, and they go."""
-
-    from app.criterion.criterion_catalog import stored_title_year_release
 
     spine = old_movie.criterion_spine_number
     if old_movie.tmdb_id == new_movie.tmdb_id:
@@ -378,9 +383,6 @@ def tmdb_refresh_status(library, id, maintenance=True):
     def _matches(job):
         found = _refresh_job_target(job)
         return found is not None and (found[0], int(found[1])) == target
-
-    from app.operations.queue_page import scheduled_entries
-    from app.tasks import live_jobs
 
     # The ids and the times of the retries come from 1 read (#511)
     scheduled = dict(
@@ -693,8 +695,6 @@ def _rename_movie_file(f, tmdb_id, probe=True):
     # The filename plumbing lives in app.media.importing. The import is lazy.
     # Thus, the module import direction stays one-way.
 
-    from app.media.importing.filenames import evaluate_filename
-
     # The import lines of evaluate_filename (File, Movie, Existing movie)
     # do not belong to a rename. A bulk refresh wrote them for each file
     # (#590). The warning below names the reason for a reject.
@@ -707,11 +707,11 @@ def _rename_movie_file(f, tmdb_id, probe=True):
         )
         return False
     if tmdb_id != None:
-        file_details = evaluate_filename(
+        file_details = filenames.evaluate_filename(
             f.untouched_basename, tmdb_id=tmdb_id, log=False
         )
     else:
-        file_details = evaluate_filename(f.untouched_basename, log=False)
+        file_details = filenames.evaluate_filename(f.untouched_basename, log=False)
 
     if not file_details:
         # For example, an id tag in the untouched name no
@@ -810,9 +810,10 @@ def _rename_movie_file(f, tmdb_id, probe=True):
     # path only until the next scan.
 
     if f.feature_type_id is None and old_file != new_file and os.path.exists(old_file):
-        from app.plex.plex_rename import remember_rename
 
-        remember_rename(old_file, new_file, "movie", tmdb_id=tmdb_id or f.movie.tmdb_id)
+        plex_rename.remember_rename(
+            old_file, new_file, "movie", tmdb_id=tmdb_id or f.movie.tmdb_id
+        )
 
     # Database first, disk second. The path update flushes
     # inside a savepoint. Thus, a unique-index conflict
@@ -911,8 +912,6 @@ def _rename_movie_file(f, tmdb_id, probe=True):
     # image kept the empty shell alive for the weekly sweep
     # before.
 
-    from app.operations.maintenance import clear_leftover_directory
-
     clear_leftover_directory(old_directory)
     return renamed
 
@@ -967,8 +966,6 @@ def _apply_movie_refresh(
     False if the apply must stop. That is a busy lock (the apply is
     booked again) or a commit that failed (#380). Return True
     otherwise. The driver commits the rest."""
-
-    from app.media.importing.filenames import reconstruct_filename
 
     # Keep the original movie_id field, and the TMDB id
     # before the apply. Radarr keys its entries by TMDB id.

@@ -7,10 +7,9 @@ passes idempotent across S3 re-downloads. A file that already has its
 supplements plans nothing.
 
 Each test takes the `app` fixture and imports inside the function, like
-the rest of the suite. The task modules capture the singleton of
-get_app() at import time. An import before conftest builds the test app
-would silently point each task function at production. (That occurred.
-conftest now asserts against it.)"""
+the rest of the suite. An app that exists before conftest builds the
+test app would silently point each task function at production.
+conftest asserts against it."""
 
 
 def track(fmt, compression=None, language="en", channels="5.1"):
