@@ -1,6 +1,6 @@
 """Warm the estimates for the tmdb lane of the shared score source each night.
 
-Decision by Glenn (2026-08): the TMDB API costs only latency. Thus,
+Decision by Glenn: the TMDB API costs only latency. Thus,
 Fitzflix spends a nightly budget to warm the enriched payloads that
 the browsing of the next day will want. These are the filmographies
 of the people that his taste profile ranks highest, plus the popular

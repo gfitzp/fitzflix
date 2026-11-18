@@ -90,7 +90,7 @@ def _extract_media_details(file_path):
                 break
     video["dolby_vision_profile"] = parse_dolby_vision_profile(video["hdr_format"])
 
-    # The color tags tell an SDR file with BT.2020 colors (#292).
+    # The color tags tell an SDR file with BT.2020 colors.
 
     video["color_primaries"] = None
     video["transfer_characteristics"] = None
@@ -113,9 +113,9 @@ def extract_track_metadata(file_path, file_id=None, rewrite=True):
 
     This is the file half of a track scan. The returned details go to
     save_track_metadata on the sql queue. With file_id, confirm_rewrite
-    runs before the remux replaces the file (#517, #726).
+    runs before the remux replaces the file.
     With rewrite False, the file does not change. A scan during a
-    pending restore only reads the file (#610).
+    pending restore only reads the file.
     """
 
     media_info = MediaInfo.parse(file_path)
@@ -140,7 +140,7 @@ def extract_track_metadata(file_path, file_id=None, rewrite=True):
 
 
 # The job id prefix of the per-file jobs of a library scan. It starts
-# with the prefix of the scan run of the maintenance page (#439).
+# with the prefix of the scan run of the maintenance page.
 
 TRACK_SCAN_FILE_RUN = "bulk-track-scan-file-"
 
@@ -151,7 +151,7 @@ def track_metadata_scan_library():
     with app.app_context():
         try:
 
-            # The ids let the scan button see a run that waits (#439).
+            # The ids let the scan button see a run that waits.
 
             files = File.query.all()
             for file in files:
@@ -170,7 +170,7 @@ def track_metadata_scan_library():
 
 
 def _may_rewrite(file):
-    """Return False if a scan must not rewrite the file of a pending restore (#610).
+    """Return False if a scan must not rewrite the file of a pending restore.
 
     The caller holds the title lock. The scan still reads the file and
     saves the track rows."""
@@ -195,7 +195,7 @@ def track_metadata_scan_task(file_id):
 
     with app.app_context():
         # The save job releases the lock after it gets it. A failure
-        # before that hand-off releases the lock here (#585).
+        # before that hand-off releases the lock here.
 
         lock = None
         handed_off = False
@@ -214,7 +214,7 @@ def track_metadata_scan_task(file_id):
             )
             if not lock:
                 # A job of a library scan keeps the id prefix of the run.
-                # Thus, the scan button sees the deferred files (#585).
+                # Thus, the scan button sees the deferred files.
 
                 job = get_current_job()
                 in_run = job is not None and job.id.startswith(TRACK_SCAN_FILE_RUN)
@@ -229,7 +229,7 @@ def track_metadata_scan_task(file_id):
                 )
                 return True
 
-            # Invariant: a scan stores only the file of its record (#750).
+            # Invariant: a scan stores only the file of its record.
             # The import reads a record with the path and the size of a
             # file as its own result (already_cataloged). A scan that
             # stored the size of an upgrade from Radarr or Sonarr hid
@@ -254,10 +254,10 @@ def track_metadata_scan_task(file_id):
             )
 
             # The scan removed empty subtitle tracks. Thus, the library file
-            # changed, and its archive must follow (#299). The save queues
+            # changed, and its archive must follow. The save queues
             # the upload after its commit. Both write the same row. An
             # upload that starts first fails its commit with MariaDB error
-            # 1020 (Oktapodi, 2026-10-24).
+            # 1020.
 
             archive = bool(details.pop("rewritten", False)) and get_setting(
                 "ARCHIVE_ORIGINAL_MEDIA"
@@ -339,7 +339,7 @@ def save_track_metadata(file_id, details, lock=None, archive=False):
 
 
 def track_uid(data):
-    """Return the Matroska track UID of a MediaInfo track as text, or None (#611).
+    """Return the Matroska track UID of a MediaInfo track as text, or None.
 
     data is the to_data() dict of the track. MediaInfo gives the UID as
     unique_id. mkvmerge -J gives the same number as properties.uid. A

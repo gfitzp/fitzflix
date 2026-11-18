@@ -219,8 +219,8 @@ def _find_merge_target(user_id, movie_id, watched_date):
     if exact is not None:
         return exact
 
-    # The second tier follows the clock rule of the CSV twin finder
-    # (#381). A row on the next day counts only before noon. A row on
+    # The second tier follows the clock rule of the CSV twin finder.
+    # A row on the next day counts only before noon. A row on
     # the day before counts only at noon or later. A midnight stamp on
     # the next day is a CSV row with the UTC drift, and it counts. The
     # nearest row to the Letterboxd day wins.
@@ -255,7 +255,7 @@ def _apply_entry_fields(row, entry, owned=False):
     changed = False
 
     # An unrated entry that claims a rated row keeps the stars of the row.
-    # The other merge order keeps them too (#542). An owned row follows
+    # The other merge order keeps them too. An owned row follows
     # the feed, unrated included.
 
     fields = (
@@ -266,7 +266,7 @@ def _apply_entry_fields(row, entry, owned=False):
     fields["liked"] = entry["liked"]
     fields["review"] = entry["review"] or row.review or ""
 
-    # The spoiler flag goes with the text (#558). A row that keeps its
+    # The spoiler flag goes with the text. A row that keeps its
     # own text keeps its own flag.
 
     spoilers_follow = bool(entry["review"]) or not row.review
@@ -293,7 +293,7 @@ def _apply_entry_fields(row, entry, owned=False):
     # the day drift of the UTC era, or a date edited on Letterboxd. A
     # row with a real clock time (a Plex scrobble) keeps its timestamp
     # only when it is the same watch across midnight. For any other
-    # difference, the row follows the feed (#703). It takes midnight of
+    # difference, the row follows the feed. It takes midnight of
     # the feed date, because the feed has no clock time.
 
     if entry["watched_date"] is not None:

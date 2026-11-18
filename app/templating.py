@@ -6,13 +6,13 @@ configuration.
 
 
 def file_size(size):
-    """Return a byte count as the size text of the pages (#772).
+    """Return a byte count as the size text of the pages.
 
     Invariant: 1 file has 1 size on every page, and "GB" has 1 meaning.
     The pages divide by 1024. Below 1024 MB, the text is MB with 1
     decimal. Then it is GB with 1 decimal. The GB step tests the ROUNDED
     MB figure, as the dropped filesize_megabytes column did. Thus, a file
-    at 1023.95 MiB shows as "1.0 GB", not as "1024.0 MB" (#241). Below
+    at 1023.95 MiB shows as "1.0 GB", not as "1024.0 MB". Below
     1024 rounded KB, the text is whole KB. Thus, a sample or an .nfo on
     Rejects does not show as "0.0 MB". A file that is not empty shows at
     least "1 KB". Thus, "0 KB" is an empty file. None gives no text."""
@@ -63,7 +63,7 @@ def register_template_helpers(app):
     app.jinja_env.filters["display_title"] = display_title
     app.jinja_env.filters["display_year"] = display_year
 
-    # The bibliographic key of a language code (#443). "deu" and "ger"
+    # The bibliographic key of a language code. "deu" and "ger"
     # give the same key. The import is lazy. Thus, the app factory does
     # not load the track layer.
 
@@ -77,7 +77,7 @@ def register_template_helpers(app):
     app.jinja_env.filters["language_key"] = language_key_filter
 
     # No template uses filesizeformat of Jinja. That filter divides by
-    # 1000 (#772).
+    # 1000.
 
     app.jinja_env.filters["file_size"] = file_size
 

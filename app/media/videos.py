@@ -155,7 +155,7 @@ def acquire_lock_or_defer(
     return None
 
 
-# The tasks whose lock wait id holds a digest of the arguments (#595).
+# The tasks whose lock wait id holds a digest of the arguments.
 # Each is an edit of 1 file with arguments that differ per edit. Under a
 # fixed id, a second deferred edit of the file replaces the first.
 
@@ -165,7 +165,7 @@ ARGUMENT_TAGGED_RETRIES = frozenset(
 
 
 def arguments_tag(args):
-    """Return a short digest of the positional arguments of a task (#595).
+    """Return a short digest of the positional arguments of a task.
 
     The same arguments give the same digest. Thus, a repeat deferral of
     1 edit still replaces its own pending retry."""
@@ -179,7 +179,7 @@ def lock_wait_job_id(func, description, args=(), key=None):
     With a key, the id starts with the requeue prefix of the key, like
     every other retry. A repeat deferral of a task for 1 file replaces
     its pending retry. The track edits put a digest of their arguments
-    into the id (#595). Thus, 2 different edits of 1 file wait apart."""
+    into the id. Thus, 2 different edits of 1 file wait apart."""
 
     short_name = func.rsplit(".", 1)[-1]
     edit_tag = (
@@ -204,7 +204,7 @@ def schedule_retry(
     of a finished retry alive. Thus, a retry that it scheduled itself can
     still find that record. The function returns the delay in minutes.
 
-    key (for example, a file id) goes into the id with a digest (#338). The
+    key (for example, a file id) goes into the id with a digest. The
     description holds a basename, and 2 files can have the same basename.
     Without the key, the retry of 1 file replaces the retry of the other.
     """

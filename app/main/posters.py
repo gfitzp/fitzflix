@@ -1,4 +1,4 @@
-"""Poster management (split from routes.py).
+"""Poster management.
 
 This module has the per-movie and per-file picker pages, the custom
 artwork uploads, the TMDB gallery picks, and the library-folder copies
@@ -58,7 +58,7 @@ POSTERS_KEY = "fitzflix:tmdb:movie:{tmdb_id}:posters"
 POSTERS_SECONDS = 86400
 
 
-# The upload limits (#470). A poster above these pixel sizes is refused
+# The upload limits. A poster above these pixel sizes is refused
 # before the full decode. Each thumbnail comes from 1 reduced copy.
 
 MAX_POSTER_SIZE = (6000, 9000)
@@ -86,7 +86,7 @@ def save_custom_poster(uploaded_data, poster_filename, custom_poster_dir):
     """Validate an uploaded poster, then write the original and its thumbnails.
 
     Return the path of the saved original. Its name has the extension of
-    the real image format, not of the uploaded name (#470). If the
+    the real image format, not of the uploaded name. If the
     upload is not a usable poster image, raise ValueError with a message
     that is ready to flash.
     """
@@ -154,7 +154,7 @@ def replace_episode_thumb(library_directory, original_file, file):
 
     Plex reads "<video name without extension>.<ext>" as the thumb of 1
     episode. The name "poster.<ext>" in a season folder is the poster of
-    the season, not of an episode (#469)."""
+    the season, not of an episode."""
 
     video = os.path.join(library_directory, file.basename)
     remove_episode_thumb_of(video)
@@ -206,7 +206,7 @@ def _assign_movie_poster(movie, uploaded_data):
             sync_folder_poster(movie, dirname)
         db.session.commit()
 
-        # A custom poster is part of the Criterion rule (#281).
+        # A custom poster is part of the Criterion rule.
 
         if movie.criterion_spine_number:
             enqueue_criterion_sync()
@@ -392,7 +392,7 @@ def movie_poster(movie_id):
     """Show the poster picker: select from the TMDB gallery or upload an
     image.
 
-    This is an admin tool, and a library tool (#186 follow-up). A record
+    This is an admin tool, and a library tool. A record
     with no local files shows its TMDB poster. Thus, the picker declines
     it."""
 

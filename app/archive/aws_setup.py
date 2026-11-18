@@ -84,7 +84,7 @@ def _newest_snapshot_rule_count(config):
 
 
 # The fields of a lifecycle rule that Fitzflix manages. Provision compares
-# these fields on its own rules and replaces a rule that differs (#466)
+# these fields on its own rules and replaces a rule that differs
 
 MANAGED_RULE_FIELDS = (
     "Filter",
@@ -97,8 +97,8 @@ MANAGED_RULE_FIELDS = (
 )
 MANAGED_RULE_ID_START = "fitzflix-"
 
-# The age at which a noncurrent archive version moves to Deep Archive
-# (#667). The value 0 matches the transition of the current version.
+# The age at which a noncurrent archive version moves to Deep Archive.
+# The value 0 matches the transition of the current version.
 
 NONCURRENT_TRANSITION_DAYS = 0
 
@@ -219,7 +219,7 @@ def _ensure_archive_rules(rules, report, changes, prefix, rule_id, retention_day
     # The Transitions field moves only the current version of an object.
     # An archive that is replaced or moved before the daily lifecycle run
     # becomes a noncurrent version in STANDARD. No other field moves it.
-    # Thus, it would stay in STANDARD for the full retention (#667). This
+    # Thus, it would stay in STANDARD for the full retention. This
     # transition sends each noncurrent version to Deep Archive too.
 
     noncurrent_label = f"lifecycle: {prefix} noncurrent-version Deep Archive transition"
@@ -257,7 +257,7 @@ MANAGED_POLICY_SID = "fitzflix-allow-s3-restore-events"
 
 
 def _statement_allows_s3(statement, bucket_arn):
-    """Return True if a queue policy statement lets the bucket send messages (#534).
+    """Return True if a queue policy statement lets the bucket send messages.
 
     A valid statement can have a string Principal ("*"), a list of
     services, or a list of source ARNs. The old check called .get on
@@ -266,7 +266,7 @@ def _statement_allows_s3(statement, bucket_arn):
     if not isinstance(statement, dict):
         return False
     # A Deny statement with the same principal and source does not let
-    # the bucket send (#572).
+    # the bucket send.
     if statement.get("Effect") != "Allow":
         return False
     principal = statement.get("Principal")
@@ -368,8 +368,8 @@ def provision(config, s3, sqs, echo=print, force=False):
     )
 
     # 3b. Move the archives to Glacier Deep Archive on arrival, for each
-    # archive prefix: untouched/ (the rips), modified/, and transcoded/
-    # (#299). Fitzflix detects a rule by content, not by rule id. Thus,
+    # archive prefix: untouched/ (the rips), modified/, and transcoded/.
+    # Fitzflix detects a rule by content, not by rule id. Thus,
     # an existing hand-made rule counts
 
     changes = []
@@ -497,8 +497,7 @@ def provision(config, s3, sqs, echo=print, force=False):
     policy = json.loads(
         attributes.get("Policy") or '{"Version": "2012-10-17", "Statement": []}'
     )
-    # A single statement can be 1 object, not a list. IAM accepts both
-    # (#534).
+    # A single statement can be 1 object, not a list. IAM accepts both.
     statements = policy.get("Statement") or []
     if isinstance(statements, dict):
         statements = [statements]
@@ -517,7 +516,7 @@ def provision(config, s3, sqs, echo=print, force=False):
             "Resource": queue_arn,
             "Condition": {"ArnLike": {"aws:SourceArn": bucket_arn}},
         }
-        # SQS refuses 2 statements with 1 Sid (#572). A statement with the
+        # SQS refuses 2 statements with 1 Sid. A statement with the
         # managed Sid in a form that the check does not read is replaced
         # in place, as _ensure_rule replaces a managed rule.
         for index, statement in enumerate(statements):

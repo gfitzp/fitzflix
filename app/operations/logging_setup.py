@@ -12,7 +12,7 @@ from app.operations.redaction import install as install_redaction
 
 
 class ErrorMailHandler(SMTPHandler):
-    """The SMTP handler of the ERROR mails, with the TLS rule of Flask-Mail (#531).
+    """The SMTP handler of the ERROR mails, with the TLS rule of Flask-Mail.
 
     The stdlib handler starts TLS only when it has a username. With
     MAIL_USE_TLS and no MAIL_USERNAME, each ERROR mail went in clear, or
@@ -73,7 +73,7 @@ def configure_logging(app):
         ):
             # Send an email for each record at ERROR or higher. The
             # worker logs 1 such record for a failed job that logged no
-            # ERROR of its own (#759).
+            # ERROR of its own.
 
             auth = None
             if app.config["MAIL_USERNAME"] or app.config["MAIL_PASSWORD"]:

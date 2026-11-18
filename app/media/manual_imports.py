@@ -1,4 +1,4 @@
-"""Finish the downloads that Sonarr and Radarr cannot import (#276).
+"""Finish the downloads that Sonarr and Radarr cannot import.
 
 SABnzbd completes a download. Then Radarr or Sonarr refuses to import
 it. One cause is a release that matched the movie by id only. An other
@@ -298,7 +298,7 @@ def manual_import_job_id(download_id):
 
 
 def started(download_id):
-    """Return True if an import task of this download waits or runs (#626).
+    """Return True if an import task of this download waits or runs.
 
     The job under the fixed id is the record. free_job_id reads the same
     job. Thus, the page and the refusal of a second import agree with it."""
@@ -450,7 +450,7 @@ def still_blocked(service, download_id):
     """Return True if the download waits in the live queue of the app.
 
     The app can send the event after Fitzflix removed the queue item,
-    for example 3 seconds after the import of "M" (2026-10-13). Then
+    for example 3 seconds after the import of "M". Then
     the event is stale. If the app does not answer, the event counts.
     A lost notice is worse than a duplicate."""
 
@@ -479,7 +479,7 @@ def email_manual_import_needed(service, title, reason):
     page = url_for("main.manual_imports", _external=True)
 
     # The title and the reason come from the arr. The HTML part escapes
-    # them (#450).
+    # them.
 
     email.notify_admin_text(
         f"{service} needs a manual import",

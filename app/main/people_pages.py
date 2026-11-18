@@ -196,7 +196,7 @@ def _filmography(credit, library_only=False):
 
     The page shows the full career by default. With library_only, it
     keeps only the films with an owned file and the series with owned
-    episodes (requested by Glenn, 2026-10-29)."""
+    episodes."""
 
     ranked_files = ranked_movie_files()
 
@@ -358,7 +358,7 @@ def _filmography(credit, library_only=False):
     # Streaming badges on the films without a local file, filtered to
     # the services of this user. Fitzflix reads the availability from
     # the cache that the nightly refresh keeps full. It never fetches
-    # inline (2026-08). A career can span hundreds of films. Each
+    # inline. A career can span hundreds of films. Each
     # fetch shares the app-wide TMDB rate limiter. Thus, the page of
     # a prolific actor stalled 4 to 6 seconds behind 50 fetches. The
     # refresh cannot cover the films without a record. Those films
@@ -449,15 +449,15 @@ def people():
     register, but grips do not outrank directors. The default shows the
     people that appear in more than 1 film, because the long tail is
     one-appearance day players. A search by name widens the list to all
-    people. Uncredited-only roles never count toward the filter (spec by
-    Glenn, GitHub #13). Each person links to their filmography page.
+    people. Uncredited-only roles never count toward the filter (the
+    rule of Glenn). Each person links to their filmography page.
     """
 
     page = request.args.get("page", 1, type=int)
     query_text = (request.args.get("q") or "").strip()
     minimum_films = 1 if query_text else 2
 
-    # Cast by default (decided by Glenn, 2026-08). The acting long tail
+    # Cast by default. The acting long tail
     # is what a browse usually wants. Crew or all people are 1 click
     # away. The film counts follow the filter. The count of a director
     # under "cast" is their acting appearances.
@@ -554,7 +554,7 @@ def _ranked_people_query(role, query_text, minimum_films):
     if query_text:
         people_query = people_query.filter(TMDBCredit.name.ilike(f"%{query_text}%"))
     # The credit id is the unique tiebreak. 2 people with the same name
-    # and count keep 1 order across the pages (#459).
+    # and count keep 1 order across the pages.
 
     return people_query.having(film_count >= minimum_films).order_by(
         film_count.desc(),
@@ -619,7 +619,7 @@ class ListPagination(Pagination):
 
 
 def _owned_work_ids():
-    """Return the queries of the owned movie ids and the owned series ids (#656).
+    """Return the queries of the owned movie ids and the owned series ids.
 
     This is the one rule of "in the library" for the people surfaces. A
     movie is owned when a main feature file of it exists. A series is
@@ -642,7 +642,7 @@ def _credited_film_pairs(role="all"):
     column. Nothing joins these ids back to a table. They are only
     counted.
 
-    Only the owned works count (#656). A movie counts when a main
+    Only the owned works count. A movie counts when a main
     feature file of it exists. A series counts when a file of it
     exists. Fitzflix makes file-less records for the watchlist, the
     diary, the catalogs, and the TMDB review page. The user cannot see
@@ -709,7 +709,7 @@ def _dominant_roles(credit_ids):
 
     That is the key role that covers the most distinct library works
     (films and series both). ROLE_PRECEDENCE breaks ties. Only the owned
-    works count, with the rule of _credited_film_pairs (#692). The role
+    works count, with the rule of _credited_film_pairs. The role
     reads the cast and the crew credits together. The count of the page
     follows its cast or crew filter."""
 
@@ -734,7 +734,7 @@ def _dominant_roles(credit_ids):
 
     # Some roles have 2 job names, for example Screenplay and Writer. A
     # work that credits a person with both jobs counts 1 time for the
-    # role (#768). Thus, the crew credits collect the works of each
+    # role. Thus, the crew credits collect the works of each
     # person and role label as a set. The ids of the series and of the
     # films overlap. Thus, each id in the set carries its kind of work.
 

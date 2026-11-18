@@ -64,7 +64,7 @@ PAGE_TUNABLES = (
 )
 
 
-# The results of an import with HDR or BT.2020 colors (#657). The first
+# The results of an import with HDR or BT.2020 colors. The first
 # 2 make an SDR conversion of that maximum size. The last one imports the
 # file as it is. The first value is the default.
 
@@ -182,7 +182,7 @@ class Config(object):
     PREVENT_ACCOUNT_CREATION            = os.environ.get("PREVENT_ACCOUNT_CREATION") is not None
     REDIS_URL                           = os.environ.get("REDIS_URL") or "redis://"
     SECRET_KEY                          = os.environ.get("SECRET_KEY") or "fitzflix-secret"
-    # Fitzflix needs MariaDB or MySQL (#500). The migrations and some
+    # Fitzflix needs MariaDB or MySQL. The migrations and some
     # pages use SQL that SQLite does not have. check_database_uri refuses
     # any other database outside the tests.
     SQLALCHEMY_DATABASE_URI             = os.environ.get("SQLALCHEMY_DATABASE_URI") or ""
@@ -200,7 +200,7 @@ class Config(object):
     STAGING_DIR                         = os.environ.get("STAGING_DIR") or os.path.join(MEDIA_LOCATION, "staging")
 
     # A conversion candidate waits here for an admin decision when the
-    # library already has a real rip of the title (#292).
+    # library already has a real rip of the title.
     HELD_DIR                            = os.environ.get("HELD_DIR") or os.path.join(MEDIA_LOCATION, "held")
 
     LIBRARY_DIR                         = os.environ.get("LIBRARY_DIR") or os.path.join(MEDIA_LOCATION, "library")
@@ -222,7 +222,7 @@ class Config(object):
     FFPROBE_BIN                         = os.environ.get("FFPROBE_BIN") or "/opt/homebrew/bin/ffprobe"
 
     # An ffmpeg build with libplacebo. Only a Dolby Vision Profile 5
-    # conversion needs it (#292). Homebrew's core ffmpeg does not have
+    # conversion needs it. Homebrew's core ffmpeg does not have
     # libplacebo. Without this setting, Fitzflix rejects a Profile 5 file.
     FFMPEG_PLACEBO_BIN                  = os.environ.get("FFMPEG_PLACEBO_BIN") or None
     MKVEXTRACT_BIN                      = os.environ.get("MKVEXTRACT_BIN") or "/opt/homebrew/bin/mkvextract"
@@ -237,7 +237,7 @@ class Config(object):
     AWS_SECRET_KEY                      = os.environ.get("AWS_SECRET_KEY") or None
     AWS_UNTOUCHED_PREFIX                = os.environ.get("AWS_UNTOUCHED_PREFIX") or "untouched"
     # The archive of a library file after a change, and the 1080p copy of
-    # a conversion (#299). A restore from these goes straight to the library.
+    # a conversion. A restore from these goes straight to the library.
     AWS_MODIFIED_PREFIX                 = os.environ.get("AWS_MODIFIED_PREFIX") or "modified"
     AWS_TRANSCODED_PREFIX               = os.environ.get("AWS_TRANSCODED_PREFIX") or "transcoded"
     AWS_BACKUP_PREFIX                   = os.environ.get("AWS_BACKUP_PREFIX") or "backup"
@@ -264,7 +264,7 @@ class Config(object):
     CREATE_FLAC_TWINS                   = _on_by_default("CREATE_FLAC_TWINS")
     CREATE_ATMOS_TWINS                  = _on_by_default("CREATE_ATMOS_TWINS")
 
-    # What an import with HDR or BT.2020 colors becomes (#292, #657).
+    # What an import with HDR or BT.2020 colors becomes.
     # "sdr-1080p" and "sdr-2160p" archive the original to S3 untouched.
     # Then only an SDR conversion of that maximum size goes into the
     # library. "keep" puts the file into the library as it is. The
@@ -293,7 +293,7 @@ class Config(object):
     LOG_FILE                            = os.environ.get("LOG_FILE") or os.path.join(basedir, "logs", "fitzflix.log")
     LOG_RETENTION_DAYS                  = int(os.environ.get("LOG_RETENTION_DAYS") or 14)
 
-    # The nightly digest of repeated warnings (#265). A signature with at
+    # The nightly digest of repeated warnings. A signature with at
     # least this many entries in 24 hours is flagged. The ignore value is
     # 1 regex of expected noise. The default skips the health warnings,
     # which the health email already reports.
@@ -311,7 +311,7 @@ class Config(object):
 
     # Subtitle-triage inspection aids. They show frames and sound of library
     # films. Thus, they are outside the public static tree, and an
-    # authenticated route serves them (#468). They are outside the
+    # authenticated route serves them. They are outside the
     # custom-artwork tree. Thus, backups ignore them.
 
     TRIAGE_SNAPSHOT_DIR                 = os.environ.get("TRIAGE_SNAPSHOT_DIR") or os.path.join(basedir, "triage")
@@ -346,24 +346,24 @@ class Config(object):
     DISK_ALERT_FREE_GB                  = int(os.environ.get("DISK_ALERT_FREE_GB") or 100)
 
     # The Plex refresh does not empty the trash of a library that holds
-    # more items than this value (#280). A share that drops during a scan
+    # more items than this value. A share that drops during a scan
     # puts the whole share in the trash. An empty then deletes it.
     PLEX_TRASH_LIMIT                    = int(os.environ.get("PLEX_TRASH_LIMIT") or 25)
 
     # The webhooks label a download WEBRip, not WEBDL, when its custom-format
-    # score is below this value (#290). Radarr and Sonarr have 1 value each.
+    # score is below this value. Radarr and Sonarr have 1 value each.
     RADARR_WEBDL_MIN_SCORE              = int(os.environ.get("RADARR_WEBDL_MIN_SCORE") or 1600)
     SONARR_WEBDL_MIN_SCORE              = int(os.environ.get("SONARR_WEBDL_MIN_SCORE") or 1600)
 
     # The Plex collection that the Criterion sync keeps in each movie
-    # library (#281).
+    # library.
     PLEX_CRITERION_COLLECTION           = os.environ.get("PLEX_CRITERION_COLLECTION") or "Criterion Collection Films"
 
     # The proxies in front of gunicorn. CloudFront takes the request of
     # the viewer and adds the address of the viewer to X-Forwarded-For.
     # The reverse proxy of the home network takes the request of
     # CloudFront and adds the address of that CloudFront server. Thus,
-    # the chain has 2 entries from proxies (measured 2026-09-25, #263).
+    # the chain has 2 entries from proxies.
     # ProxyFix and the sign-in throttle read the client address from
     # this count.
     PROXY_HOPS                          = int(os.environ.get("PROXY_HOPS") or 2)
@@ -375,12 +375,12 @@ class Config(object):
     TRUSTED_PROXIES                     = _address_set(os.environ.get("TRUSTED_PROXIES"))
     SUPERVISORCTL_BIN                   = os.environ.get("SUPERVISORCTL_BIN") or "/opt/homebrew/bin/supervisorctl"
 
-    # Conversion configuration (#292)
+    # Conversion configuration
     # The preset file holds the custom presets, exported from HandBrake.
     # The default is handbrake_presets.json in this folder, if it exists.
     # CONVERSION_PRESET is the preset in the file that makes the SDR video
     # of a 1080p conversion. CONVERSION_PRESET_2160P is the preset of a
-    # 4K conversion (#657).
+    # 4K conversion.
     HANDBRAKE_PRESET_FILE               = os.environ.get("HANDBRAKE_PRESET_FILE") or _default_preset_file()
     CONVERSION_PRESET                   = os.environ.get("CONVERSION_PRESET") or "HDR to 1080p SDR"
     CONVERSION_PRESET_2160P             = os.environ.get("CONVERSION_PRESET_2160P") or "HDR to 2160p SDR"
@@ -397,11 +397,11 @@ class Config(object):
     PLEX_URL                            = os.environ.get("PLEX_URL") or None
     PLEX_TOKEN                          = os.environ.get("PLEX_TOKEN") or None
     # Plex refuses the analyze of an extra over its API. The scanner on
-    # the Plex host does it by the id of the item (#651).
+    # the Plex host does it by the id of the item.
     PLEX_SCANNER                        = os.environ.get("PLEX_SCANNER") or "/Applications/Plex Media Server.app/Contents/MacOS/Plex Media Scanner"
     PLEX_WEBHOOK_TOKEN                  = os.environ.get("PLEX_WEBHOOK_TOKEN") or None
 
-    # Virtual DVR channels (#182). The token gates the M3U/XMLTV/stream
+    # Virtual DVR channels. The token gates the M3U/XMLTV/stream
     # endpoints. If the token is not set, the feature is off and every route
     # returns 404. Plex tunes the playlist as an M3U tuner. The channel count
     # and the channel size limit the ffprobe work of the nightly lineup
@@ -476,7 +476,7 @@ class Config(object):
 
 
 def check_database_uri(config):
-    """Raise RuntimeError if the database is not MariaDB or MySQL (#500).
+    """Raise RuntimeError if the database is not MariaDB or MySQL.
 
     The test configuration (TESTING) uses its own SQLite file."""
 

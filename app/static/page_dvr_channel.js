@@ -12,7 +12,7 @@ document.querySelectorAll(".dvr-title-lookahead").forEach(function (input) {
 	let timer = null;
 	let active = -1;
 
-	// The text that the menu can open for, as in search.js (#756). An
+	// The text that the menu can open for, as in search.js. An
 	// answer for an other text is old.
 	let wanted = null;
 
@@ -69,7 +69,7 @@ document.querySelectorAll(".dvr-title-lookahead").forEach(function (input) {
 	}
 
 	function pressed(event) {
-		// Escape also stops an answer that is on its way (#756).
+		// Escape also stops an answer that is on its way.
 		if (event.key === "Escape") {
 			hide();
 			return;

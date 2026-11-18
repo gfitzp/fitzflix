@@ -1,4 +1,4 @@
-"""Name That Frame (GitHub #52): the pre-extracted frame pool.
+"""Name That Frame: the pre-extracted frame pool.
 
 The game never runs ffmpeg at play time. A nightly task keeps a pool
 of single frames, one per pooled movie. The task extracts each frame
@@ -50,7 +50,7 @@ OFFSET_LOW, OFFSET_HIGH = 0.05, 0.85
 # Decode this many seconds forward into the extraction point. Do not
 # trust the keyframe flags of the container. A VC-1 Blu-ray remux flags
 # non-keyframes as seekable. An input-side seek that arrives on one
-# decodes to a flat gray ghost frame (7 pooled frames, 2026-08-20).
+# decodes to a flat gray ghost frame (7 pooled frames).
 
 SEEK_LEAD = 30
 
@@ -77,7 +77,7 @@ FRAME_ATTEMPTS = 4
 # to deal a frame that the player never saw. After a difficulty has no
 # such frames, the game deals the least-recently-seen frame. The nightly
 # pass reads the record to retire spent frames first. Thus, the frames
-# that a player already saw are the first that rotation replaces (#200).
+# that a player already saw are the first that rotation replaces.
 
 DEALT_KEY = "fitzflix:frames:dealt:{user_id}"
 
@@ -124,9 +124,9 @@ def _forget_dropped_tokens(pooled):
 
 
 def playable_film_filters():
-    """Return the SQL conditions of a film that the game can deal (#704).
+    """Return the SQL conditions of a film that the game can deal.
 
-    The film has a main-feature file and a TMDB id (#205). The frame pool
+    The film has a main-feature file and a TMDB id. The frame pool
     takes its frames only from such films. Thus, each option of a round
     and each film that a guess can name obeys the same rule."""
 
@@ -150,7 +150,7 @@ def pool_entries():
     frame.
 
     A malformed entry is not in the answer. This function removes it
-    from the pool, with its image (#471). Thus, the prune never needs to
+    from the pool, with its image. Thus, the prune never needs to
     see it."""
 
     entries = {}
@@ -200,7 +200,7 @@ UNPOOLED_IMAGE_SECONDS = 3600
 
 
 def _remove_unpooled_images(entries):
-    """Remove each old image of the pool directory that no entry names (#720).
+    """Remove each old image of the pool directory that no entry names.
 
     The pool entries are only in Redis. After a Redis loss, the images
     of the lost entries stay on the disk, and no other code reads the
@@ -293,8 +293,8 @@ def refresh_frame_pool_task():
     entries. It prefers movies that are not yet pooled. Thus, the whole
     library cycles through. Each reviewer gets at least
     FRAME_POOL_MIN_RATED pooled frames from their own diary (limited by
-    the number of their rated films). Thus, Easy mode never runs short
-    (requested by Glenn, 2026-08-20)."""
+    the number of their rated films). Thus, Easy mode never runs short.
+    """
 
     with app.app_context():
         entries = pool_entries()
@@ -305,7 +305,7 @@ def refresh_frame_pool_task():
         playable = {
             movie_id
             # The game never deals a home movie or a different recording
-            # without a TMDB entry (#205). This also prunes the ones that
+            # without a TMDB entry. This also prunes the ones that
             # are already pooled.
             for (movie_id,) in db.session.query(Movie.id).filter(
                 *playable_film_filters()
@@ -333,7 +333,7 @@ def refresh_frame_pool_task():
         min_rated = current_app.config["FRAME_POOL_MIN_RATED"]
 
         # Rotation runs BEFORE the reviewer floors below. It retires spent
-        # frames before frames that are only old (#200). Both orders are
+        # frames before frames that are only old. Both orders are
         # important. If the floors were measured first, rotation removed
         # the rated frames that the floors had just guaranteed. Easy then
         # settled a quarter under its minimum. If rotation retired by age
@@ -400,8 +400,8 @@ def refresh_frame_pool_task():
                 # can run out of unpooled films. The floor outranks the
                 # retirement. The film comes back, on a new frame.
 
-                # Only the rated films of this reviewer fill the floor
-                # (#550). Else the slots went to films that the reviewer
+                # Only the rated films of this reviewer fill the floor.
+                # Else the slots went to films that the reviewer
                 # never rated, and the Easy floor undershot.
                 spare = [
                     movie_id
@@ -455,8 +455,7 @@ def refresh_frame_pool_task():
 
 
 def replace_frame_task(movie_id):
-    """Replace one pool entry immediately after a round ends (per-round
-    task, requested by Glenn, 2026-08-27).
+    """Replace one pool entry immediately after a round ends (per-round task).
 
     This task does not wait for the nightly pass. It extracts a frame from
     a playable film that the pool does not hold. If the whole library is
@@ -561,8 +560,8 @@ def extract_frame_task(movie_id):
                 return False
             if _frame_has_picture(out):
                 break
-            # A black rectangle is not a usable round (the Empire Strikes
-            # Back report of Glenn, 2026-08-27). Try a different moment.
+            # A black rectangle is not a usable round (the Empire Strikes Back report of Glenn).
+            # Try a different moment.
             try:
                 os.remove(out)
             except OSError:

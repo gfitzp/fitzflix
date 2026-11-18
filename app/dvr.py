@@ -1,4 +1,4 @@
-"""Virtual DVR channels (#182): lineups and schedule math.
+"""Virtual DVR channels: lineups and schedule math.
 
 The library becomes a small number of 24/7 "live" channels. Plex tunes
 them as an M3U tuner. A channel is a frozen, ordered program list and
@@ -15,8 +15,7 @@ guide by the accumulated error. Thus, the build probes each file 1
 time with ffprobe. It caches the result in Redis, keyed by file id. A
 file row can change in place: an import uses a record again, and a
 remux changes the size. Thus, each cached duration keeps the size and
-the localized date of its file, and a different file is probed again
-(#395).
+the localized date of its file, and a different file is probed again.
 
 The lineup build is the only expensive part. It runs as a nightly
 maintenance task. It rotates the lineups in the same way that the
@@ -121,7 +120,7 @@ MIN_SPECIAL_FILMS = 3
 TV_CHANNEL_NUMBER = 200
 TV_THEME_NUMBER = 240
 
-# The seeded genre channels must stay below the fixed channels (#397).
+# The seeded genre channels must stay below the fixed channels.
 # The movie genres start at 101 and the TV genres at 200. The settings
 # page has the same limits, but a value from .env can be larger.
 
@@ -207,7 +206,7 @@ def _duration_fingerprint(file):
     An import of the same name reuses the row, and the id stays the
     same. The import sets a new localized date. A rewrite in place
     records a new size. Thus, the size and the localized date change
-    when the media changes (#395)."""
+    when the media changes."""
 
     localized = file.date_localized.isoformat() if file.date_localized else ""
     return f"{file.filesize_bytes or 0}:{localized}"
@@ -246,7 +245,7 @@ def _prune_durations(redis_client):
     """Remove the cached durations of the File rows that no longer exist.
 
     The import deletes rows of worse copies and of recordings. Without
-    this, their fields stay in the hash without end (#413)."""
+    this, their fields stay in the hash without end."""
 
     live = {str(file_id) for (file_id,) in db.session.query(File.id)}
     dead = []
@@ -454,19 +453,19 @@ def _leaving_owned(best):
 def _programs(pairs):
     """Return (file, season, episode) for each TV file that airs, in broadcast order.
 
-    Invariant: one rule says which file is the best copy of an episode
-    (#738, #743). That rule is best_episode_holders. It counts each
-    episode of a file with 2 or more episodes. A file airs 1 time if it
-    is the best holder of 1 or more of its episodes. Before, a file was
-    left out when a better file had its FIRST episode. Then its later
-    episodes never aired. A file that airs for a later episode shows
-    its first episodes again. That is better than a lost episode.
+        Invariant: one rule says which file is the best copy of an episode.
+    That rule is best_episode_holders. It counts each
+        episode of a file with 2 or more episodes. A file airs 1 time if it
+        is the best holder of 1 or more of its episodes. Before, a file was
+        left out when a better file had its FIRST episode. Then its later
+        episodes never aired. A file that airs for a later episode shows
+        its first episodes again. That is better than a lost episode.
 
-    The pairs are (File, RefQuality) or 2 times a TVRankRow. The season
-    and the episode of a result are the first episode that the file is
-    the best holder of. That is the broadcast position of the file. It
-    is not always the first episode of the file. The positions of a
-    series are all different, and the list is in their order."""
+        The pairs are (File, RefQuality) or 2 times a TVRankRow. The season
+        and the episode of a result are the first episode that the file is
+        the best holder of. That is the broadcast position of the file. It
+        is not always the first episode of the file. The positions of a
+        series are all different, and the list is in their order."""
 
     holders = best_episode_holders(pairs)
     programs = []
@@ -488,8 +487,8 @@ def _series_catalog():
     queries."""
 
     # A file of 2 or more episodes counts 1 time. A single file of an
-    # episode that such a file holds better is not a program of its own
-    # (#428). The rule is the rule of _series_episodes (#743). The count
+    # episode that such a file holds better is not a program of its own.
+    # The rule is the rule of _series_episodes. The count
     # agrees with the programs that air when each file is on the disk.
 
     counts = {}
@@ -613,7 +612,7 @@ def _channel_members(channel, ctx):
 
 
 def _apportion(sizes, cap):
-    """Return the daily slots of each series. The slots add up to exactly the cap (#427).
+    """Return the daily slots of each series. The slots add up to exactly the cap.
 
     sizes is the episode count of each series. When all the episodes fit
     in the cap, each series airs all of them. Otherwise each series gets
@@ -659,7 +658,7 @@ def _episode_key(file):
     _series_episodes gives each file the first episode that it airs for
     (airs_from). 2 files of a list can have the same first episode. A
     cursor by the first episode would then go back to the first of them
-    at each build (#743). A file with no such value has the position of
+    at each build. A file with no such value has the position of
     its first episode."""
 
     return list(getattr(file, "airs_from", None) or (file.season, file.episode))
@@ -679,7 +678,7 @@ def _locate(episodes, key):
 
 
 def _stored_start(cursor, day, episodes):
-    """Return the start position of a series from its stored cursor, or None (#460).
+    """Return the start position of a series from its stored cursor, or None.
 
     A rebuild on the same day starts where the first build of the day
     started. A later day starts after the last episode that aired. A
@@ -702,7 +701,7 @@ def _advanced_cursor(day, episodes, start, advance):
     """Return the stored cursor of a series that moves advance positions from start.
 
     advance is the position after the last episode that aired, counted
-    from start (#474). It is not the count of the episodes that aired. A
+    from start. It is not the count of the episodes that aired. A
     dropped episode before the last aired one stays behind the cursor.
     Thus, no aired episode airs again the next day."""
 
@@ -716,20 +715,20 @@ def _advanced_cursor(day, episodes, start, advance):
 def _channel_window(members, day, cap, cursors=None, starts=None):
     """Return the program window of the day for a multi-series channel.
 
-    The window is a list of (series, file) pairs. Each series gets
-    slots proportional to its depth, and the slots fill the cap exactly
-    (#427). They air as short interleaved blocks, like syndication. The
-    cursor of each series moves each day by the slots that the series
-    aired. Thus, no episode is skipped. With more series than the cap,
-    the series take 1 slot each in turn.
+        The window is a list of (series, file) pairs. Each series gets
+        slots proportional to its depth, and the slots fill the cap exactly.
+    They air as short interleaved blocks, like syndication. The
+        cursor of each series moves each day by the slots that the series
+        aired. Thus, no episode is skipped. With more series than the cap,
+        the series take 1 slot each in turn.
 
-    cursors maps a series id to its stored cursor (#460). A series with
-    a cursor continues after the last episode that aired, also when the
-    series gained or lost an episode. A series with no cursor starts at
-    the position of the day formula. starts gets the episode list and
-    the start position of each series in the window. The caller moves a
-    cursor only by the episodes that really aired (follow-up #460).
-    A duration probe can drop an episode from the lineup."""
+        cursors maps a series id to its stored cursor. A series with
+        a cursor continues after the last episode that aired, also when the
+        series gained or lost an episode. A series with no cursor starts at
+        the position of the day formula. starts gets the episode list and
+        the start position of each series in the window. The caller moves a
+        cursor only by the episodes that really aired.
+        A duration probe can drop an episode from the lineup."""
 
     members = sorted(members, key=lambda m: (m["series"].title.lower(), m["series"].id))
     lists = [(m["series"], _series_episodes(m["series"].id)) for m in members]
@@ -985,7 +984,7 @@ def enqueue_lineup_rebuild(reason, tmdb_ids=None):
     the old inputs. Thus, a RUNNING rebuild does not count as queued.
     Each job gets its own id. An id is never used again. rq keeps the
     expiry of an old record under the same id. A queued job under that
-    id can then vanish before a worker reaches it (review, 2026-09-02).
+    id can then vanish before a worker reaches it.
     It does nothing when the given tmdb_ids include no owned film. The
     dial airs only owned copies. Thus, a Channel arrival that nobody
     owns cannot change a program. Return the job, or None when nothing
@@ -1037,7 +1036,7 @@ def build_channel_lineups(day=None):
         episode_cap = get_setting("DVR_CHANNEL_EPISODES")
 
         if not _library_online():
-            # A folder that was never made is not a dead share (#501). A
+            # A folder that was never made is not a dead share. A
             # new install has no library folders yet. An ERROR each night
             # would mail the admin.
 
@@ -1098,10 +1097,10 @@ def build_channel_lineups(day=None):
         def store(number, slug, name, programs, cursors):
             """Write the lineup of one channel and index it.
 
-            The record holds the series cursors of the channel (#460). A
+            The record holds the series cursors of the channel. A
             cursor holds the day of the last window, the first episode of
             that window, and the next episode to air. The lineup and its
-            cursors go into Redis in 1 SET (#627). Thus, a build that keeps
+            cursors go into Redis in 1 SET. Thus, a build that keeps
             the old lineup keeps the old cursors too. This function drops
             the empty channels."""
 
@@ -1161,7 +1160,7 @@ def build_channel_lineups(day=None):
                     program["overview"] = f"{note} {program['overview']}".strip()
                 movie_programs.append(program)
 
-            # The cursors of the series continue from the last build (#460).
+            # The cursors of the series continue from the last build.
 
             stored = channel_lineup(redis_client, channel.slug) or {}
             cursors = {
@@ -1173,7 +1172,7 @@ def build_channel_lineups(day=None):
             # The window gives the episodes of a series in order from its
             # start. offsets counts the position of each one in that
             # slice. advance keeps the position after the last episode
-            # that aired (#474).
+            # that aired.
 
             episode_programs = []
             offsets = {}

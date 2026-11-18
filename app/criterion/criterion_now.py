@@ -3,7 +3,7 @@
 The Watch Live page of the Channel is the now-playing page of its 24/7
 feed. whatsonnow.criterionchannel.com was that page until 2026-10-19.
 Now it redirects to the Watch Live page, and the poller reads that page
-directly (#291). It is a Next.js app. The title of the current film is
+directly. It is a Next.js app. The title of the current film is
 the page heading. If the heading is the name of the channel, the entry
 that plays now names the film. The page also embeds
 the schedule of the feed as data. Each entry has a start time and an
@@ -20,7 +20,7 @@ tries again in 30 minutes. A cron heartbeat runs every 30 minutes. It
 checks that the chain is alive. It polls ONLY if the chain is dead.
 While a poll is booked for the end of the current film, the heartbeat
 does nothing. Thus, Fitzflix never scans the film that is on again on
-the cron cadence (reported by Glenn, 2026-08). The card renders for
+the cron cadence. The card renders for
 Criterion subscribers. The card hides itself when the stored film is
 stale.
 """
@@ -56,7 +56,7 @@ app = LocalProxy(get_app)
 CHANNEL_ORIGIN = "https://www.criterionchannel.com"
 
 # The name of the feed. The Watch Live page shows it as its heading
-# between 2 films (#663).
+# between 2 films.
 
 CHANNEL_NAME = "Criterion 24/7"
 
@@ -66,7 +66,7 @@ CHANNEL_NAME = "Criterion 24/7"
 
 WATCH_LIVE_URL = "https://www.criterionchannel.com/live/1emmgvqX/criterion-24-7"
 
-# The page that the poller reads (#291). The old whatsonnow address
+# The page that the poller reads. The old whatsonnow address
 # redirects here.
 
 WHATSON_URL = WATCH_LIVE_URL
@@ -132,8 +132,8 @@ STALE_LIMIT = timedelta(hours=3)
 EARLY_START = timedelta(minutes=5)
 
 # The heading class has a hashed prefix that changes with each release of
-# the site, for example "epcjfa_title" (2026-10-19) after "Hero__title".
-# Thus, the pattern needs only "_title" (#291).
+# the site, for example "epcjfa_title" after "Hero__title".
+# Thus, the pattern needs only "_title".
 
 TITLE_RE = re.compile(r'<h1 class="[^"]*_title[^"]*"[^>]*>\s*(.*?)\s*</h1>', re.S)
 
@@ -141,8 +141,7 @@ TITLE_RE = re.compile(r'<h1 class="[^"]*_title[^"]*"[^>]*>\s*(.*?)\s*</h1>', re.
 # page sends that data as JavaScript string literals in
 # self.__next_f.push calls. The parser decodes each literal as a JSON
 # string and joins them. Then it reads the schedule array as JSON. A
-# regex over the escaped text misread entries that have no guid
-# (Point of Order!, 2026-09-24).
+# regex over the escaped text misread entries that have no guid.
 
 PUSH_RE = re.compile(r'self\.__next_f\.push\(\[1,\s*("(?:[^"\\]|\\.)*")\]\)', re.S)
 SCHEDULE_START_RE = re.compile(r'"schedule"\s*:\s*\[')
@@ -277,16 +276,16 @@ def _clock(moment):
 def parse_whatson_page(page_html, now=None):
     """Return the current film and the upcoming films of the now-playing page.
 
-    The result is a dict with title, more_url, starts_at, ends_at, and
-    upcoming, and stale. The times are aware datetimes, or None.
-    Upcoming is a list of dicts with title, more_url, starts_at, and
-    ends_at as UTC stamps. The result is None if the title is not
-    found. An end time that does not parse comes back as None. Then the
-    poller does a short retry. It does not trust a guess. Stale is True
-    when the heading names a film that just ended. A page can have no
-    heading, or the name of the channel as its heading. Then the
-    schedule entry that plays now names the film, and heading is False
-    (#291, #663). If no entry plays then, the page is stale."""
+        The result is a dict with title, more_url, starts_at, ends_at, and
+        upcoming, and stale. The times are aware datetimes, or None.
+        Upcoming is a list of dicts with title, more_url, starts_at, and
+        ends_at as UTC stamps. The result is None if the title is not
+        found. An end time that does not parse comes back as None. Then the
+        poller does a short retry. It does not trust a guess. Stale is True
+        when the heading names a film that just ended. A page can have no
+        heading, or the name of the channel as its heading. Then the
+        schedule entry that plays now names the film, and heading is False.
+    If no entry plays then, the page is stale."""
 
     now = now or datetime.now(timezone.utc)
     entries = _schedule_entries(page_html)
@@ -297,7 +296,7 @@ def parse_whatson_page(page_html, now=None):
         slot, stale_end = _current_slot(entries, title, now)
 
     # At a film boundary the heading holds the channel name "Criterion
-    # 24/7" for a short time (#663). That is not a title. Then the entry
+    # 24/7" for a short time. That is not a title. Then the entry
     # that plays now names the film. With no entry on now, the page is
     # stale until STALE_LIMIT after the last end. A page with no
     # schedule keeps its heading as the title. Each other heading is
@@ -377,7 +376,7 @@ def parse_watch_live_url(page_html):
 def _names(people):
     """Return the names of a schema.org person list, joined by commas.
 
-    A person can be an object with a name or a plain string (#541). A
+    A person can be an object with a name or a plain string. A
     string iterated as characters and gave None."""
 
     if isinstance(people, (dict, str)):
@@ -392,7 +391,7 @@ def _names(people):
 
 
 def _json_ld_objects(data):
-    """Yield each object of a JSON-LD block: a dict, a list, or a @graph (#541)."""
+    """Yield each object of a JSON-LD block: a dict, a list, or a @graph."""
 
     if isinstance(data, list):
         for item in data:
@@ -407,7 +406,7 @@ def _json_ld_objects(data):
 def film_blocks(page_html):
     """Return the schema.org Movie and VideoObject blocks of a film page.
 
-    An empty render or a challenge page has none (#557)."""
+    An empty render or a challenge page has none."""
 
     blocks = []
     for block in JSON_LD_RE.findall(page_html):
@@ -460,8 +459,8 @@ def _person_matches(scraped, credited_name):
 
     Both names become comparison keys from match_key first. That folds
     accents, case, and punctuation. Thus, the Channel's 'Luis Bunuel'
-    matches the TMDB credit 'Luis Buñuel' (reported by Glenn,
-    2026-10-29). The containment test must run in both directions. TMDB
+    matches the TMDB credit 'Luis Buñuel'.
+    The containment test must run in both directions. TMDB
     frequently carries a longer romanization ('Mabel Cheung Yuen-Ting')
     than the Channel ('Mabel Cheung'). Two shared name tokens also
     count. That covers a reversed name order and hyphen differences."""
@@ -542,7 +541,7 @@ def _film_info_from(more_url):
     """Return the parsed film info of a film page, or the empty info.
 
     A page that answers 404 gives the empty info with page_missing. The
-    page of a series episode does that (#666). Other failures give the
+    page of a series episode does that. Other failures give the
     empty info only. Thus, the next poll tries them again."""
 
     info = {"director": None, "year": None, "country": None, "starring": None}
@@ -563,7 +562,7 @@ def _film_info_from(more_url):
 
 # The fields that the enrichment of a film adds. A later poll reuses
 # them for the same film and does not fetch its film page again.
-# page_missing marks a film page that answered 404 (#666).
+# page_missing marks a film page that answered 404.
 
 ENRICHED_FIELDS = (
     "tmdb_id",
@@ -594,7 +593,7 @@ def _known_enrichments():
     An enrichment with no year, no director, and no TMDB id is not kept.
     The film page failed then. An enrichment marked retry is not kept.
     A TMDB call failed then. The next poll tries both again. A film page
-    that answered 404 is kept with its page_missing mark (#666)."""
+    that answered 404 is kept with its page_missing mark."""
 
     entries = []
     now_payload = current_app.redis.get(NOW_KEY)
@@ -626,7 +625,7 @@ def _enriched_entry(title, more_url, known=None):
     never shows a guess. A film in known reuses its stored enrichment
     and fetches nothing. The result goes into known. Thus, 1 poll
     fetches the page of a film 1 time, also when 2 entries share the
-    film id (#666)."""
+    film id."""
 
     key = _enrichment_key(title, more_url)
     cached = (known or {}).get(key)
@@ -653,7 +652,7 @@ def poll_criterion_now():
     This is a task. It schedules itself again for a time just after
     the current film ends. It books that poll as soon as it reads the
     page, before the film pages and TMDB. Thus, a run that times out
-    during the enrichment does not break the chain (#267). It enriches
+    during the enrichment does not break the chain. It enriches
     the current film and the upcoming films. A film that the last poll
     enriched reuses that result. A stale page changes nothing in Redis.
     Then the task tries again after STALE_RETRY, or after STALE_BACKOFF
@@ -784,9 +783,9 @@ def heartbeat_criterion_now():
     the job hash. The poll enqueues itself again under its own job id
     while that job runs. When that run completes, RQ writes "finished"
     over the hash. That overwrites the "scheduled" that the enqueue just
-    wrote. The entry in the scheduled registry is the truth (the live
+    wrote. The entry in the scheduled registry is the truth (a live
     drill found the hash with an incorrect "finished" on a healthy
-    chain, 2026-08)."""
+    chain)."""
 
     with app.app_context():
         queue = current_app.maintenance_queue
@@ -862,7 +861,7 @@ def _turned_over(stored, upcoming, now):
 def _film_link(entry, watch_url):
     """Return the film page link of an entry for the card.
 
-    A film page that answered 404 gives the Watch Live link (#666)."""
+    A film page that answered 404 gives the Watch Live link."""
 
     return watch_url if entry.get("page_missing") else entry.get("more_url")
 
@@ -1001,8 +1000,8 @@ def _ladder_state_for(user, tmdb_id, payload):
 
     from app.main.helpers import _latest_review_row, ladder_payload, library_upgradable
 
-    # The 2 extra keys of the card: movie_id, and the In-library badge
-    # (#160). upgradable None = not owned. Otherwise it is the amber or
+    # The 2 extra keys of the card: movie_id, and the In-library badge.
+    # upgradable None = not owned. Otherwise it is the amber or
     # green upgradable verdict that the movie page shows.
     row = None
     flagged = False

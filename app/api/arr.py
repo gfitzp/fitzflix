@@ -39,7 +39,7 @@ def import_event_webhook(service, observe=None):
     authenticated event except a test before the filter. A failure of
     observe is logged and does not change the answer.
 
-    The authentication runs before the wrapper reads the body (#398). A
+    The authentication runs before the wrapper reads the body. A
     caller without a valid key gets 401, and nothing of the body goes to
     the log. The log line holds only the first part of a large payload.
     """
@@ -52,8 +52,7 @@ def import_event_webhook(service, observe=None):
             # The password field must hold the API key of the user. The
             # user must be an ADMIN. The handlers rename, delete, and
             # import files at the paths that the payload names. Thus, the
-            # key of a member account must not open them (security review,
-            # 2026-09).
+            # key of a member account must not open them.
 
             user = authenticate_api_request()
             if user is None:
@@ -84,7 +83,7 @@ def import_event_webhook(service, observe=None):
                 return response
 
             # A download that the app cannot import waits for a person.
-            # Record it for the Manual imports page (#276).
+            # Record it for the Manual imports page.
 
             if payload.get("eventType") == "ManualInteractionRequired":
                 from app.media.manual_imports import record_manual_interaction
@@ -92,7 +91,7 @@ def import_event_webhook(service, observe=None):
                 record_manual_interaction(service, payload)
                 return response
 
-            # Sonarr compares the series folder of an event here (#370).
+            # Sonarr compares the series folder of an event here.
             # The answer to an ignored event stays 202.
 
             def check_event():
@@ -116,7 +115,7 @@ def import_event_webhook(service, observe=None):
                 )
                 return response
 
-            # A body without the file fields gets a 400, not a 500 (#448).
+            # A body without the file fields gets a 400, not a 500.
 
             problem = download_payload_problem(service, payload)
             if problem:
@@ -128,7 +127,7 @@ def import_event_webhook(service, observe=None):
                 return response
 
             # The check of a Download event comes after the handler queued
-            # the import of the new file (#758). The check counts each
+            # the import of the new file. The check counts each
             # media file of the series folder, and a file with no record
             # stops a rename unless its import is in flight. With the
             # check first, an idle worker ran it before the import job
@@ -151,18 +150,18 @@ def _is_int(value):
 
 
 def download_payload_problem(service, payload):
-    """Return the reason that a Download payload is not usable, or None (#448).
+    """Return the reason that a Download payload is not usable, or None.
 
     The file block must be a dict with a string quality and a string
     relativePath. A Sonarr payload also needs a list of episodes. The
     movie or series block and the custom format block must be objects
-    when they are present (#507)."""
+    when they are present."""
 
     file_key = "movieFile" if service == "Radarr" else "episodeFile"
     owner_key = "movie" if service == "Radarr" else "series"
     if not isinstance(payload.get(owner_key) or {}, dict):
         return f"the {owner_key} block is not an object"
-    # An id goes to int() and to the rescan command (#577). A text or a
+    # An id goes to int() and to the rescan command. A text or a
     # list id answered 500.
     owner_id = (payload.get(owner_key) or {}).get("id")
     if owner_id is not None and not _is_int(owner_id):
@@ -200,7 +199,7 @@ def folder_under_roots(service, folder):
     """Return the real path of a folder below a root folder, or None.
 
     This is the fence of downloaded_path for a folder that a payload
-    names, for example series.path (#370). The folder must be absolute.
+    names, for example series.path. The folder must be absolute.
     A root folder itself is not the folder of a series or a movie."""
 
     if not folder or not os.path.isabs(folder):
@@ -223,7 +222,7 @@ def downloaded_path(service, folder, relative):
     function does not trust the 2 halves of the payload to compose
     one path. It refuses an absolute relativePath. It refuses a
     relativePath that steps into a parent directory. It refuses a
-    folder outside every root (security review, 2026-09)."""
+    folder outside every root."""
 
     if not folder or not relative or os.path.isabs(relative):
         return None
@@ -240,7 +239,7 @@ def downloaded_path(service, folder, relative):
 # Radarr. Each value is a RefQuality title. A title that is not a key does
 # not change. An explicit map replaces the earlier chain of substring
 # replacements. That chain made titles such as "WEBDL-480p-R" from
-# "DVD-R" (#506).
+# "DVD-R".
 
 WEB_EQUIVALENT_QUALITY = {
     "DVD": "WEBDL-480p",
@@ -274,8 +273,7 @@ def downgrade_quality_title(original_quality, custom_format_score, min_score):
 
     WEB_EQUIVALENT_QUALITY holds the full map. A download with a
     custom-format score below min_score gets the label WEBRip instead of
-    WEBDL. The callers read min_score from the setting of their service
-    (#290).
+    WEBDL. The callers read min_score from the setting of their service.
     """
 
     new_quality = WEB_EQUIVALENT_QUALITY.get(original_quality, original_quality or "")
@@ -367,7 +365,7 @@ def reject_incomplete_download(service, payload, file_path, refresh_command):
     base_url = current_app.config.get(f"{service.upper()}_URL")
     api_key = current_app.config.get(f"{service.upper()}_API_KEY")
     # The notification below is the alert. An ERROR record would mail the
-    # admin a second time (#453).
+    # admin a second time.
     current_app.logger.warning(
         f"'{basename}' is structurally incomplete (truncated per its "
         f"container); refusing to import it"
@@ -407,7 +405,7 @@ def handle_import_event(arr, payload, priority=None):
     The steps are the same for the 2 apps. Take the path of the file,
     and refuse a path outside the root folders of arr. Reject a truncated
     download. Downgrade the quality title. If the name changes, a task
-    lets arr rename its own file (#288, #289), and the task queues the
+    lets arr rename its own file, and the task queues the
     import. Otherwise rename the file here and queue the import.
     priority is a function of the new file name. It returns True when
     the import goes to the front of the queue. Only Sonarr gives it, for
@@ -445,7 +443,7 @@ def handle_import_event(arr, payload, priority=None):
     # Find the name with the downgraded quality title.
 
     original_quality = media_file.get("quality")
-    # A null or text score counts as 0 (#507).
+    # A null or text score counts as 0.
 
     score = (payload.get("customFormatInfo") or {}).get("customFormatScore")
     new_quality = downgrade_quality_title(
@@ -456,8 +454,7 @@ def handle_import_event(arr, payload, priority=None):
 
     # The import parser rejects a quality that is not a RefQuality title.
     # A rename to such a title would make arr lose its file, and the
-    # download would go to rejects. Thus, refuse it before any rename
-    # (#506).
+    # download would go to rejects. Thus, refuse it before any rename.
 
     if not RefQuality.query.filter_by(quality_title=new_quality).first():
         current_app.logger.warning(
@@ -475,12 +472,12 @@ def handle_import_event(arr, payload, priority=None):
 
     # The import can store the file under a different name than arr gave
     # it. Then the import writes this release data back onto the new arr
-    # record (#671). An arr rename moves the data to the new path.
+    # record. An arr rename moves the data to the new path.
 
     remember_download(arr, downloaded_file_path, owner_id, media_file)
 
     # A rename in Fitzflix made arr lose its file, and arr downloaded it
-    # again (#288). Thus, arr changes the quality of its own record and
+    # again. Thus, arr changes the quality of its own record and
     # renames the file, in a task. The task then queues the import. This
     # keeps the webhook short.
 
@@ -505,7 +502,7 @@ def handle_import_event(arr, payload, priority=None):
     # file to the import directory. But if a second file arrived during
     # the copy, the first copy was abandoned. A later version made a hard
     # link in the import directory. But the NAS did not support hard
-    # links. A second webhook for the same file adds no second job (#287).
+    # links. A second webhook for the same file adds no second job.
 
     rename_download_locally(
         arr,

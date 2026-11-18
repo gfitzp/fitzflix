@@ -126,7 +126,7 @@ WATCHLIST_WEIGHT = 0.2
 # "Not interested" is the mirror of the watchlist. It is a mild
 # negative for a film that the user refused without a watch. It never
 # adds to a real diary verdict. The verdict already carries the
-# sentiment (#45b).
+# sentiment.
 
 NOT_INTERESTED_WEIGHT = -0.3
 
@@ -321,8 +321,8 @@ def latest_ratings(user_id):
     This is the rating of the most recent diary row. Reviews come
     before bare watches, newest first. The id breaks ties. This is the
     same row that the star widget of the movie page shows. Thus, a new
-    rating replaces the old verdict. It does not compete with it (the
-    rule of Glenn, 2026-08). A film whose latest row is unrated maps to
+    rating replaces the old verdict. It does not compete with it.
+    A film whose latest row is unrated maps to
     None."""
 
     rows = (
@@ -375,7 +375,7 @@ def user_movie_weights(user_id):
         rating = current.get(movie_id)
         if rating is None and liked:
             # A liked-only viewing counts as a 3-star verdict for the
-            # profile (the rule of Glenn, 2026-08). Letterboxd permits a
+            # profile. Letterboxd permits a
             # heart with no stars. The interface shows the viewing as
             # unrated. Thus, the user can supply real stars later.
             rating = 3.0
@@ -517,7 +517,7 @@ def award_label(wins, nominations):
 # weighted average of the own sentiment of the user over its K most
 # similar diary films ("people who loved what you loved also loved
 # this"). Thus, the term has the same range as the diary weights. A
-# leave-one-out comparison chose the weight (2026-08). The value 2.0
+# leave-one-out comparison chose the weight. The value 2.0
 # sits on a flat optimum. It cut the mean percentile from 0.324 to
 # 0.266. It more than doubled hit@10. The laurel person-prior
 # alternative measured flat. It was rejected.
@@ -609,7 +609,7 @@ def _copref_top_anchor(entries):
     return best
 
 
-# Estimated ratings (#45a): a quantile match of the engine score of a
+# Estimated ratings: a quantile match of the engine score of a
 # candidate onto the own star distribution of the user. The curve comes
 # from the leave-one-out scores of the rated films of the user. Each
 # film scores against a profile built without it. Thus, a film cannot
@@ -684,9 +684,9 @@ def estimated_rating(profile, score):
 
 
 def user_tmdb_weights(user_id):
-    """Return {tmdb_id: sentiment weight} of the weighted films of a user (#538).
+    """Return {tmdb_id: sentiment weight} of the weighted films of a user.
 
-    The result stays on flask.g for the app context (#637). Thus, a loop
+    The result stays on flask.g for the app context. Thus, a loop
     that scores many films reads the weights 1 time. Before, each film
     paid for user_movie_weights and a Movie query again. A request or a
     job that writes a rating after the first read sees the old weights
@@ -997,7 +997,7 @@ def watch_again_shelf(user_id, today=None):
 
     These are owned films that the user liked: the liked flag, or a
     rating above the mean. The mean is of the owned films that the user
-    rated, not of all rated films as in user_movie_weights (#538). The
+    rated, not of all rated films as in user_movie_weights. The
     last recorded watch, if there is one, is at least the staleness bar
     in the past. The most liked and longest unseen films come first."""
 
@@ -1098,7 +1098,7 @@ def shuffle_daily(items, seed):
     return shuffled
 
 
-# The frozen shelves of the day (#204). A shelf must show the same
+# The frozen shelves of the day. A shelf must show the same
 # films in the same slots all day. The pickers are deterministic for
 # each day. But their INPUTS move during the day. A logged film makes
 # the ranked list smaller and moves each tier boundary. That caused the
@@ -1157,7 +1157,7 @@ def _other_shelf_cards(redis_client, user_id, shelf, day):
 
 
 def _fresh_pick(redis_client, user_id, shelf, eligible_ids, pick, day=None, size=None):
-    """Return a fresh pick of 1 shelf that is not frozen. Redis is not reachable (#699)."""
+    """Return a fresh pick of 1 shelf that is not frozen. Redis is not reachable."""
 
     return pick(frozenset())
 
@@ -1169,7 +1169,7 @@ def frozen_shelf(redis_client, user_id, shelf, eligible_ids, pick, day=None, siz
     The first render of the day calls pick(excluded) for the baseline
     and stores a snapshot. excluded holds the cards that the other
     shelves of the day hold already. A shelf that first renders in the
-    middle of the day must not take them (#536). If it did, those shelves
+    middle of the day must not take them. If it did, those shelves
     would read the cards as not eligible and replace them. Later renders replay the snapshot in slot order.
     A card can stop being eligible (watched, refused, acquired). Then
     the first id from eligible_ids that does not show yet replaces it
@@ -1247,7 +1247,7 @@ def daily_shelf(
     freeze=True,
 ):
     """Return the cards of the day for 1 landing shelf from the shared
-    recipe (Glenn, 2026-08-30).
+    recipe.
 
     The watchlist has its own top shelf. Thus, each shelf below it is
     only a discovery surface. All of them pick in the same way. No shelf
@@ -1273,7 +1273,7 @@ def daily_shelf(
     frozen_shelf. An urgent row that appears later in the day
     still takes a leading slot. The ?minutes= view passes freeze=False. It picks live
     over the rows that fit. It is a transient planning view, not the
-    shelf (#204).
+    shelf.
     """
 
     day = day or date.today()
@@ -1281,8 +1281,8 @@ def daily_shelf(
     def pick(excluded=frozenset()):
         """Return the baseline card ids of the day for this shelf.
 
-        excluded holds the cards of the other frozen shelves of the day
-        (#536)."""
+        excluded holds the cards of the other frozen shelves of the day.
+        """
 
         taken = shown | set(excluded)
         lead = [row for row in urgent if key(row) not in taken][:count]
@@ -1416,7 +1416,7 @@ def tmdb_taste_score(user_id, tmdb_id, payload, profile):
 
 
 def record_lane_scores(redis, user_id, tmdb_ids, profile):
-    """Return {tmdb_id: score} of each film with a local record (#535).
+    """Return {tmdb_id: score} of each film with a local record.
 
     resolved_tmdb_score sends a film with a record through the movie-id
     lane, which adds the award prior. The tile shows that number. Thus,

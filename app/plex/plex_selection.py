@@ -1,4 +1,4 @@
-"""Make the selected streams of Plex match the default tracks of each file (#652).
+"""Make the selected streams of Plex match the default tracks of each file.
 
 Plex picks the audio and subtitle streams that it plays from its own
 selection, per account and per part. It does not read the flags of the
@@ -27,7 +27,7 @@ their account.
 
 Where it runs: after the Plex analyze of a rewritten file, and after
 the `library.new` webhook of a new import. An import that replaces a
-file of an item queues that analyze too (#661). A nightly sweep over both
+file of an item queues that analyze too. A nightly sweep over both
 libraries repeats it for each account. Thus, a switch to a commentary track in a
 Plex app does not outlive the night. The first track is the default
 for a reason. Infuse selects tracks by its own rules.
@@ -263,7 +263,7 @@ def enqueue_align(rating_key, delay_minutes=WEBHOOK_DELAY_MINUTES):
         return False
 
     # A job that runs marks its hash as finished at its end. A new job
-    # under the same id would lose its hash then (#744).
+    # under the same id would lose its hash then.
 
     if job is not None and job.get_status(refresh=False) == "started":
         queue = current_app.maintenance_queue

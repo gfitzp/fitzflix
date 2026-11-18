@@ -9,7 +9,7 @@
    app/pipeline.py). Thus, the table is in place at the first paint.
    The 5-second poll of queue_badge.js then calls refreshRows of page_queue.js through
    window.fitzflixQueueHooks. refreshRows fetches the same rows from
-   /queue/rows (#639). A trail with no job left to list under shows as
+   /queue/rows. A trail with no job left to list under shows as
    a trailing "no job in queue" row. #}
 <div class="table-responsive">
 {# On a phone, the 2 time columns do not show (the queue-table rules in

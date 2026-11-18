@@ -1,4 +1,4 @@
-"""Serve the discovery surfaces (the routes.py split).
+"""Serve the discovery surfaces.
 
 The surfaces are the landing rails, the Recommendations page, and the
 TMDB log page. They also include the poster popover cards (film and
@@ -135,8 +135,8 @@ from app.pipeline import trail_entries_for
 from app.redis_guard import REDIS_DOWN_ERRORS
 from app.redis_guard import warn_redis_down
 
-# The top watchlist shelf is bigger than the 12-card discovery shelves
-# (Glenn, 2026-08-30). It holds the films that the user already wants.
+# The top watchlist shelf is bigger than the 12-card discovery shelves.
+# It holds the films that the user already wants.
 # Thus, it gets 3 rows before the discovery shelves start.
 
 WATCHLIST_SHELF_SIZE = 18
@@ -155,7 +155,7 @@ def _request_compute(marker_key, name, description):
 
     marker_key is a key pattern with a user_id field. The marker stops a
     new enqueue on each page load. Return True if the task was queued.
-    During a Redis fault, nothing is queued (#699)."""
+    During a Redis fault, nothing is queued."""
 
     marker = marker_key.format(user_id=int(current_user.id))
     if not current_app.redis.set(marker, "1", nx=True, ex=REQUESTED_SECONDS):
@@ -327,29 +327,29 @@ def watchlist_shelf_rows(user):
 @bp.route("/index")
 @login_required
 def index():
-    """Render the landing page: what to watch tonight (GitHub #46/#61).
+    """Render the landing page: what to watch tonight.
 
-    Since 2026-08-30, the page opens with the watchlist shelf. That
-    shelf holds the films that the user already wants and can watch
-    tonight. The departures that leave soon lead it. Every shelf below
-    it is pure discovery. The watchlist is excluded at the source. The
-    discovery shelves are the library rail, the Criterion departures,
-    the newly-added feeds, the streaming rail, and the rewatch shelf.
-    The one shared daily_shelf recipe picks all of them with a
-    page-wide no-repeat set.
+        The page opens with the watchlist shelf. That
+        shelf holds the films that the user already wants and can watch
+        tonight. The departures that leave soon lead it. Every shelf below
+        it is pure discovery. The watchlist is excluded at the source. The
+        discovery shelves are the library rail, the Criterion departures,
+        the newly-added feeds, the streaming rail, and the rewatch shelf.
+        The one shared daily_shelf recipe picks all of them with a
+        page-wide no-repeat set.
 
-    ?minutes=N filters every shelf at view time to the films that fit
-    the evening. The computed recommendations never consider the
-    length. Films with unknown runtimes hide only from filtered views.
-    ?genre=ID filters every shelf the same way to the films of one TMDB
-    genre. The two filters can apply together.
+        ?minutes=N filters every shelf at view time to the films that fit
+        the evening. The computed recommendations never consider the
+        length. Films with unknown runtimes hide only from filtered views.
+        ?genre=ID filters every shelf the same way to the films of one TMDB
+        genre. The two filters can apply together.
 
-    The shelves of the default view are frozen for the calendar day
-    (#204). The first render makes a snapshot of the cards of each
-    rail. Later renders replay the snapshot. Only the slot of a film
-    that is no longer eligible is replaced. See frozen_shelf. The
-    ?minutes= view stays a live pick. It is a transient planning lens,
-    not the shelf. The ?genre= view is the same."""
+        The shelves of the default view are frozen for the calendar day.
+    The first render makes a snapshot of the cards of each
+        rail. Later renders replay the snapshot. Only the slot of a film
+        that is no longer eligible is replaced. See frozen_shelf. The
+        ?minutes= view stays a live pick. It is a transient planning lens,
+        not the shelf. The ?genre= view is the same."""
 
     minutes = request.args.get("minutes", type=int)
     if minutes is not None and minutes < 1:
@@ -370,8 +370,8 @@ def index():
             return False
         return not genre or movie.id in in_genre
 
-    # The watchlist is a SOURCE now, not a per-shelf sort key (Glenn,
-    # 2026-08-30). Its watchable films fill the top shelf. Every
+    # The watchlist is a SOURCE now, not a per-shelf sort key.
+    # Its watchable films fill the top shelf. Every
     # discovery shelf below excludes the watchlisted films at the
     # source. The page reads "what you already want", then "ways to
     # discover something else if none of that appeals".
@@ -398,8 +398,7 @@ def index():
     shown = set()
     wl_urgent, wl_rows = watchlist_shelf_rows(current_user)
     # The candidates that pass every other test. Thus, an empty rail can
-    # separate "nothing fits the filter" from "nothing left to recommend"
-    # (#198).
+    # separate "nothing fits the filter" from "nothing left to recommend".
     watchlist_eligible = len(wl_urgent) + len(wl_rows)
     if filtering:
         wl_genre = set()
@@ -533,7 +532,7 @@ def index():
     leaving_rows = shelf["items"] if shelf else []
     shelf_departs = shelf["departs"].strftime("%B %-d") if shelf else None
 
-    # The sources of the newly-added discovery shelves (#246): recent
+    # The sources of the newly-added discovery shelves: recent
     # arrivals on the own newly-added feed of a subscribed provider. The
     # code is generic over providers. Today, only the Criterion Channel
     # feeds a shelf. The availability-alert email already covers the
@@ -544,7 +543,7 @@ def index():
 
     # Every discovery shelf runs the one shared recipe (daily_shelf).
     # Taste-ranked rows walk the no-repeat quality tiers into day-stable
-    # random slots. The slots are frozen for the day (#204). A shelf
+    # random slots. The slots are frozen for the day. A shelf
     # never repeats a film that a different shelf already claimed. The
     # claim order shuffles daily. Thus, the candidates that the shelves
     # share spread around. They do not always go to the shelf that
@@ -626,7 +625,7 @@ def index():
     shelf_items = picked["leaving"]
 
     # A rail that the filters emptied says so. It does not disappear.
-    # Silence reads as "there is nothing here" (#198). Each flag means
+    # Silence reads as "there is nothing here". Each flag means
     # that the rail had films and the filters removed them all.
 
     def filtered_out(shown_cards, eligible):
@@ -720,14 +719,14 @@ def file_activity():
     """Render the File Activity dashboard.
 
     This page merges the old Recently Added page and the Pipeline
-    Activity trails (Glenn, 2026-08). A file that arrived renders as a
+    Activity trails. A file that arrived renders as a
     full card here, with the trail chips of the file. A file still in
     flight shows as chips on the job rows of the queue page. On page 1,
     the queue poll of queue_badge.js fetches /file-activity/cards. Thus, the
     chips stay live, and the card of a new file appears in its place."""
 
     # paginate() reads a page below 1 as page 1. The page-1 checks below
-    # must agree, or ?page=0 renders page 1 without its live parts (#312).
+    # must agree, or ?page=0 renders page 1 without its live parts.
 
     page = max(request.args.get("page", 1, type=int), 1)
 
@@ -795,7 +794,7 @@ def _recent_files(query):
     the same at each poll. This window once meant "still in S3 Standard,
     downloadable again without a Glacier thaw". But the live lifecycle
     rule has moved untouched/ to Deep Archive at 0 days for some time
-    (verified against the bucket, 2026-08). Thus, the files here are
+    (verified against the bucket). Thus, the files here are
     usually already frozen after their first day."""
 
     recency = db.func.coalesce(File.date_updated, File.date_added)
@@ -808,7 +807,7 @@ def _native_language_keys():
     """Return the language keys that a File Activity card does not flag as foreign.
 
     The card compares the key of each track. Thus, "deu" and "ger" are
-    the same language there, as in the import (#443)."""
+    the same language there, as in the import."""
 
     return [language_key(current_app.config["NATIVE_LANGUAGE"]), "und", "zxx"]
 
@@ -841,8 +840,8 @@ def _recent_file_cards():
     """Return the query of the File Activity cards.
 
     The cards read the tracks, film, and series of each file. The
-    selectin loads fetch those per page instead of per file (291 queries
-    for 100 cards before 2026-08)."""
+    selectin loads fetch those per page instead of per file (291 queries for 100 cards before).
+    """
 
     return _recent_files(
         File.query.outerjoin(FileAudioTrack, (FileAudioTrack.file_id == File.id))
@@ -866,7 +865,7 @@ def _import_activity():
     title. The rejects come from the rejects folder. The result is None
     when there is nothing to show."""
 
-    # Read the ids and their times in 1 call (#511)
+    # Read the ids and their times in 1 call
 
     deferred = []
     registry = ScheduledJobRegistry(queue=current_app.import_queue)
@@ -921,8 +920,8 @@ def _card_versions(trail_for, import_activity):
     their order. The version of the import activity entry comes first.
     The cards route serves it as the ETag. This reads only the ids,
     names, and times of the files. Thus, a poll that finds no change
-    does not render the cards (about 20 ms instead of 100 ms for 100
-    cards, measured 2026-10-14)."""
+    does not render the cards (about 20 ms instead of 100 ms for 100 cards).
+    """
 
     rows = (
         _recent_files(
@@ -957,7 +956,7 @@ def _trail_lookup(trails=None):
     The File Activity card template calls it for each card. The function
     tries the import filename of the row and then its library name,
     each as it is and as its stem. The trail is keyed by the import
-    name (#649). With trails=None, this reads the newest 100 trails
+    name. With trails=None, this reads the newest 100 trails
     from Redis."""
 
     if trails is None:
@@ -1013,19 +1012,18 @@ def file_activity_cards():
 @bp.route("/movie_card")
 @login_required
 def movie_card():
-    """Render the card fragment of the poster popover (#45c).
+    """Render the card fragment of the poster popover.
 
     The card shows the title, the credits, the meta line, the synopsis,
     the availability, and the at-a-glance badges of one film. The meta
     line has the runtime, the genres, and the US rating. Thus, the card
     says what sort of film it is. The key is movie_id for library
     records, or tmdb_id for films with no local row (the streaming rail
-    and the leaving shelf). The card is only informational since the
-    revision of Glenn in 2026-08. The star ladder and the watchlist
+    and the leaving shelf). The card is only informational. The star ladder and the watchlist
     toggle live on the gallery tiles. Thus, the card carries the
     In-library badge in its shopping colors (amber = worth an upgrade,
     green = settled) and the watchlist badge instead. ?context=criterion
-    (#77a) recolors that badge with the settled rule of the Criterion
+     recolors that badge with the settled rule of the Criterion
     page instead of the generic shopping answer. That rule is green only
     when the disc is owned AND the copy matches the format of the
     release. The browser fetches the card only when the user hovers or
@@ -1065,8 +1063,8 @@ def movie_card():
             is not None
         )
 
-        # The In-library badge shows the answer of the shopping list (the
-        # revision of Glenn in 2026-08). That revision replaced the
+        # The In-library badge shows the answer of the shopping list.
+        # That revision replaced the
         # quality-tier badge. The badge is amber when the copy is worth an
         # upgrade. It is green when the copy is settled. ?context=criterion
         # uses the rule of the Criterion catalog instead.
@@ -1362,7 +1360,7 @@ def tv_card():
 # guards against abuse.
 MOVIE_STATES_LIMIT = 300
 
-# How long one state batch can wait for TMDB, in seconds (#662). The
+# How long one state batch can wait for TMDB, in seconds. The
 # shared limiter passes TMDB_REQUESTS_PER_SECOND requests each second for
 # all processes. Thus, one request fetches at most that rate times
 # these seconds. The response names the other ids in "pending", and the
@@ -1377,7 +1375,7 @@ MOVIE_STATES_TMDB_SECONDS = 2
 def movie_states():
     """Return the ladder and watchlist state for a batch of poster tiles.
 
-    A Redis outage gives empty states, not a 500 (#476). The tiles then
+    A Redis outage gives empty states, not a 500. The tiles then
     render blank, as they do before the hydration."""
 
     try:
@@ -1390,7 +1388,7 @@ def movie_states():
 def _movie_states():
     """Build the response of movie_states.
 
-    This is #45c, 2026-08 revision. One fetch per gallery page hydrates
+    One fetch per gallery page hydrates
     the star row and the watchlist toggle of every tile. Thus, no
     gallery route has to compute the per-film verdicts itself.
     ?movie_ids= and ?tmdb_ids= are comma-separated. Fitzflix answers
@@ -1443,15 +1441,15 @@ def _movie_states():
         sets = user_film_sets_by_id(current_user.id, all_ids)
         flagged_ids, listed_ids = sets.refused, sets.watchlisted
 
-    # Poster folds (#197, plus the badge of #156/#230 and the feeds of
-    # #246): the per-user corner overlays that every gallery tile paints
+    # Poster folds, plus the watchlist badge and the newly-added
+    # feeds: the per-user corner overlays that every gallery tile paints
     # through this one batched fetch. The fold is green for a watchlist
     # film that recently became available (the record of the nightly
     # alert diff). It is also green for a film that recently arrived on
     # the newly-added feed of a subscribed provider. The fold is red for
     # a film in the leaving-Criterion set, for subscribers only. The
     # client paints at most one fold. Red outranks green. Ownership
-    # overrides it all (Glenn, 2026-08-27). The copy of an owned film
+    # overrides it all. The copy of an owned film
     # does not go anywhere. Thus, it never shows the red fold. Its only
     # green fold is the recent arrival of the local file itself.
     # Movie-keyed tiles need their tmdb ids for both lookups. One query
@@ -1652,7 +1650,7 @@ def leaving():
 @bp.route("/newly-added")
 @login_required
 def newly_added():
-    """Render the complete newly-added inventory (#246).
+    """Render the complete newly-added inventory.
 
     This is every recent arrival on the feed of every provider, with the
     owned and seen films included. It is the "See more…" destination of
@@ -1693,7 +1691,7 @@ def watchlist():
     This is the funnel stage before the shopping list. This page still
     warms the availability in a batch. Thus, the popover of each tile
     answers "how can I watch this" from a hot cache. The badges live in
-    the popover since the revision of Glenn in 2026-08."""
+    the popover."""
 
     # The availability filter: the default is ALL. The user can narrow
     # it to one exclusive bucket of the list. The removal redirect keeps
@@ -1703,7 +1701,7 @@ def watchlist():
     availability_filter = request.args.get("availability", "all")
     if availability_filter not in WATCHLIST_BUCKETS:
         availability_filter = "all"
-    # The service filter (requested by Glenn, 2026-09-15): one of the
+    # The service filter: one of the
     # subscribed services of the user. It narrows the ON MY SERVICES
     # bucket to the films that this one service carries. A chosen
     # service implies that bucket. Thus, the pills follow the dropdown.
@@ -1724,7 +1722,7 @@ def watchlist():
     minutes = request.args.get("minutes", type=int)
     if minutes is not None and minutes < 1:
         minutes = None
-    # The genre filter (requested by Glenn, 2026-10-01): one TMDB genre.
+    # The genre filter: one TMDB genre.
     # The check against the genres of the list comes after the query of
     # the entries. An unknown id falls back to all genres there.
     genre = request.args.get("genre", type=int)
@@ -1737,12 +1735,11 @@ def watchlist():
     ):
         removed = clear_watchlist(current_user.id, watchlist_form.movie_id.data)
         db.session.commit()
-        # A background post from the tile (#187) wants the JSON state,
+        # A background post from the tile wants the JSON state,
         # not a redirect. The client clears the tile itself.
         if _card_fetch():
             return jsonify({"on_watchlist": False})
         # A stale tab can remove a film that is no longer on the list
-        # (#512)
         if removed:
             flash("Removed from your watchlist", "success")
         else:
@@ -1841,7 +1838,7 @@ def watchlist():
             }
         )
 
-    # The filter semantics (the revision of Glenn in 2026-08): the 4
+    # The filter semantics: the 4
     # buckets are exclusive. Every film goes into exactly one bucket, by
     # the best way to watch it. LOCAL = owned library files, whatever
     # else carries the film. ON MY SERVICES = unowned, on a subscribed
@@ -1881,7 +1878,7 @@ def watchlist():
     # views. A film with no genre data hides from a genre view in the
     # same way.
 
-    # The title search is the one of the shopping list (#509, #645).
+    # The title search is the one of the shopping list.
 
     total = len(rows)
     if q:
@@ -2010,11 +2007,11 @@ def radarr_request():
 @bp.route("/recommendations")
 @login_required
 def recommendations():
-    """Render the Recommendations page (#235).
+    """Render the Recommendations page.
 
     The page shows shelves of unseen films keyed by shared criteria:
     genres, keywords, awards won, and people. Two films that the user
-    showed interest in anchor each shelf (or sometimes 1 film, #249).
+    showed interest in anchor each shelf (or sometimes 1 film).
     Every reload draws a new set of shelves. An action on a suggestion
     replaces only that film, through the tile endpoint below. This page
     replaced the old /rate drive."""
@@ -2031,7 +2028,7 @@ def recommendations():
     }
 
     # The genres that the anchors of a copref shelf share, named for its
-    # subtitle (Glenn, 2026-08-30). One query resolves them across all
+    # subtitle. One query resolves them across all
     # shelves.
 
     shared_ids = {
@@ -2139,7 +2136,7 @@ def _tmdb_record(tmdb_id, film_title, year, details):
     """Return (movie, created) for a post of the TMDB review page.
 
     2 first posts for a film with no record both insert it. The (title,
-    year) constraint refuses the second insert (#567). That post then
+    year) constraint refuses the second insert. That post then
     uses the record of the first post, and the repeat gate of the log
     sees the same movie id."""
 
@@ -2171,10 +2168,10 @@ def review_tmdb(tmdb_id):
         # first tap on the landing card creates the record). Fitzflix
         # forwards it with the method and body intact (307, not 302).
         # Thus, the full ladder handling of the movie route (re-rate,
-        # toggle-off, ✕) takes over. Poster-card watchlist toggles (#45c)
+        # toggle-off, ✕) takes over. Poster-card watchlist toggles
         # forward the same way. A plain review post or watchlist post also
         # forwards with 307. A 302 would make the browser GET the movie
-        # page, and the rating, the text and the date would be lost (#510).
+        # page, and the rating, the text and the date would be lost.
 
         if request.method == "POST":
             return redirect(url_for("main.movie", movie_id=movie.id), code=307)
@@ -2221,7 +2218,7 @@ def review_tmdb(tmdb_id):
         try:
             db.session.commit()
         except IntegrityError:
-            # A second add in flight inserted the row first (#516, #567).
+            # A second add in flight inserted the row first.
             # The film is on the list. Thus, the answer is the same.
             db.session.rollback()
         if created:
@@ -2254,7 +2251,7 @@ def review_tmdb(tmdb_id):
             return _namesake_refusal(film_title, year, tmdb_id)
 
         # The TMDB page never removes a rating and never undoes a ✕. Its
-        # ✕ never steers the drive. A poster-card rating (#45c) never
+        # ✕ never steers the drive. A poster-card rating never
         # moves the anchor of the drive either. A positive rating steers
         # the "since you liked…" strip of the movie page that the
         # redirect goes to. A new record has no features yet. Thus, its

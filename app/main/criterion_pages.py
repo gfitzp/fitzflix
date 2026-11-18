@@ -88,14 +88,14 @@ def catalog_rows_for(releases, consumed_tmdb, consumed_title_year, excluded_tmdb
     Terrible" between the actual Parts I–III). The hand-excluded ids
     (Wikidata junk, see CatalogExclusion) do not render. A row without a
     TMDB id does not render when a release with a TMDB id has its title
-    and year (#382). Wikidata can hold a film as a standalone release
+    and year. Wikidata can hold a film as a standalone release
     with a TMDB id and as a set member without one."""
 
     set_spines = {
         release["spine_number"] for release in releases if release.get("set_title")
     }
     # The first pass takes the title and year of each release with a
-    # TMDB id. Thus, the order of the cache does not matter (#382).
+    # TMDB id. Thus, the order of the cache does not matter.
     tmdb_title_years = {
         (release.get("title"), release.get("year"))
         for release in releases
@@ -142,7 +142,7 @@ def criterion_sort_key(row):
     The order is 1 spine order across owned and unowned rows. The set
     members sort at the spine of their set (year, then title inside the
     set). The local rows without a spine keep their old place at the
-    end. The spellings of 1 set title sort together (#697)."""
+    end. The spellings of 1 set title sort together."""
 
     spine = row.get("spine")
     title = sort_title(row.get("title"))
@@ -175,7 +175,7 @@ def criterion_collection():
     page = max(request.args.get("page", 1, type=int) or 1, 1)
 
     # The whole spine catalog from the stored Wikidata copy. The page never
-    # queries Wikidata (#283). Without a stored copy, the page shows the
+    # queries Wikidata. Without a stored copy, the page shows the
     # library rows only, and a refresh goes on the queue.
 
     try:
@@ -212,7 +212,7 @@ def criterion_collection():
         .all()
     )
 
-    # 1 row per film (#349). The editionless main feature stands for the
+    # 1 row per film. The editionless main feature stands for the
     # film. A film that has only edition-tagged main features (for
     # example, only a Director's Cut) is owned too. Then its best edition
     # stands for it. Before, an edition filter dropped such a film, and
@@ -333,8 +333,7 @@ def criterion_collection():
     bar = marker_bar(profile) if profile else None
 
     # The catalog scorer reads the genres of each record. This is 1 query
-    # for all of them, not a lazy load per film (956 queries per visit
-    # before 2026-08).
+    # for all of them, not a lazy load per film (956 queries per visit before).
 
     genre_ids_by_movie = {}
     if profile is not None and records:
@@ -372,15 +371,15 @@ def criterion_collection():
 
     merged = sorted(library_rows + catalog_rows, key=criterion_sort_key)
 
-    # The ON STREAMING filter (requested by Glenn, 2026-09-29). It keeps
+    # The ON STREAMING filter. It keeps
     # the films that stream now on a flat-rate service: the Criterion
     # Channel or a subscribed service of the user. The Criterion Channel
     # counts on this page, also for a user who does not subscribe. The
     # filter and its count must see the whole catalog before the
     # pagination. Thus, Fitzflix reads the availability of each row with
     # a TMDB id. That is 1 MGET from the cache that the nightly refresh
-    # keeps full. It never fetches inline (2026-08, a page of misses cost
-    # 4 seconds behind the rate limiter). The catalog films without a
+    # keeps full. It never fetches inline (a page of misses cost 4 seconds behind the rate limiter).
+    # The catalog films without a
     # cache entry warm in the background for the next visit.
 
     provider_ids = user_provider_ids(current_user) | {CRITERION_CHANNEL_PROVIDER_ID}

@@ -7,7 +7,7 @@ the list to the library. It marks the releases of owned films. It
 creates file-less catalog records for spines that the library does not
 have. It keeps the inventory of /library/criterion-collection current.
 
-The release list is the last good copy (#283). It has no expiry. A
+The release list is the last good copy. It has no expiry. A
 weekly task fetches it again. A failed fetch keeps the old copy. The
 page and the import never query Wikidata. They read the stored copy
 through stored_criterion_releases. If there is no copy, they get an
@@ -74,7 +74,7 @@ GROUP BY ?spine ?set ?setLabel ?film ?filmLabel ?tmdbId
 
 CRITERION_CACHE_KEY = "fitzflix:criterion:releases"
 
-# The time of the last good fetch, in seconds since the epoch (#283). The
+# The time of the last good fetch, in seconds since the epoch. The
 # health check reports a copy that is older than CRITERION_STALE_DAYS.
 
 CRITERION_FETCHED_KEY = "fitzflix:criterion:fetched-at"
@@ -143,7 +143,7 @@ def _parse_criterion_binding(binding):
     title = (binding.get("filmLabel", {}).get("value") or "").strip()
 
     # An item with no label in the language of the query gets its item
-    # id as the label ("Q1219923"). That is not a title (#473).
+    # id as the label ("Q1219923"). That is not a title.
 
     if WIKIDATA_ITEM_ID.fullmatch(title):
         title = ""
@@ -200,7 +200,7 @@ def get_criterion_collection_from_wikidata(force_refresh=False):
         release = _parse_criterion_binding(binding)
         if release:
             set_title = (binding.get("setLabel", {}).get("value") or "").strip()
-            # A set with no English label echoes its Q-id (#557). A stored
+            # A set with no English label echoes its Q-id. A stored
             # set title is never replaced. Thus, the Q-id would become the
             # permanent title and the name of a Plex collection.
             if WIKIDATA_ITEM_ID.fullmatch(set_title):
@@ -210,7 +210,7 @@ def get_criterion_collection_from_wikidata(force_refresh=False):
 
     # A glitch of the endpoint can return few rows or none. Such a list
     # must not replace the last good copy. Each query gets the rule on
-    # its own (#541). On the sum, a box-set query that answered with no
+    # its own. On the sum, a box-set query that answered with no
     # rows passed, and every set title went until the next weekly fetch.
 
     stored = cached_json(CRITERION_CACHE_KEY)
@@ -238,7 +238,7 @@ def get_criterion_collection_from_wikidata(force_refresh=False):
 
 
 def stored_criterion_releases():
-    """Return the stored releases. Never query Wikidata (#283).
+    """Return the stored releases. Never query Wikidata.
 
     If there is no stored copy, return an empty list and queue 1 refresh.
     The page and the import call this function. Then a slow Wikidata
@@ -271,7 +271,7 @@ def enqueue_criterion_releases_refresh():
 
 
 def refresh_criterion_releases():
-    """Fetch the releases again and store them (a queue task, #283).
+    """Fetch the releases again and store them (a queue task).
 
     A failed fetch keeps the last good copy. The task runs weekly, and
     when a reader finds no stored copy."""
@@ -303,7 +303,7 @@ def _index_release(index, key, release):
 
     A film can have its own release and also a set membership. The
     standalone release comes first and keeps its spine. A later set
-    release gives its set title to that entry (#472). The stored
+    release gives its set title to that entry. The stored
     release itself does not change."""
 
     first = index.get(key)
@@ -341,7 +341,7 @@ def stored_title_year_release(movie):
 
 
 def set_title_key(title):
-    """Return the key under which the database compares 2 set titles (#697).
+    """Return the key under which the database compares 2 set titles.
 
     The column collation of MariaDB (utf8mb4_general_ci) ignores letter
     case, accents and the spaces at the end. The test database does not.
@@ -360,7 +360,7 @@ def set_title_key(title):
 
 
 def set_title_spellings(exclude_movie_id=None):
-    """Return {set title key: 1 stored spelling} for each set title (#697).
+    """Return {set title key: 1 stored spelling} for each set title.
 
     The spelling of a key is the lowest of its stored spellings. Thus,
     the choice does not change from 1 call to the next. exclude_movie_id
@@ -379,7 +379,7 @@ def set_title_spellings(exclude_movie_id=None):
 
 
 def stored_set_title(title, movie_id=None):
-    """Return the set title to store for a movie, or None (#697).
+    """Return the set title to store for a movie, or None.
 
     The spaces around the title go. A set title of a different movie that
     the database compares as equal gives its spelling. Thus, a typing
@@ -392,7 +392,7 @@ def stored_set_title(title, movie_id=None):
 
 
 def record_set_title(movie, title):
-    """Store the set title that the admin typed for a movie (#697).
+    """Store the set title that the admin typed for a movie.
 
     A movie that joins a set takes the spelling of the set. A movie that
     has the set title already, and gets it in a different spelling,
@@ -449,9 +449,9 @@ def assign_criterion_release(movie, by_tmdb_id, by_title_year):
 def reassign_stored_criterion_releases():
     """Assign the stored releases to each movie again. Never query Wikidata.
 
-    This applies a change of the assignment rule to the existing records
-    (#472). It reads the releases that Redis stores. Return the number
-    of movies that got a set title, or None if no stored copy exists."""
+        This applies a change of the assignment rule to the existing records.
+    It reads the releases that Redis stores. Return the number
+        of movies that got a set title, or None if no stored copy exists."""
 
     criterion_collection = cached_json(CRITERION_CACHE_KEY)
     if criterion_collection is MISS:
@@ -474,8 +474,8 @@ def create_criterion_catalog_records(criterion_collection, by_tmdb_id, by_title_
 
     The prestige of Criterion makes every spine film worth a permanent
     record. A durable record keeps its poster, overview, genres, and
-    awards in the database instead of a cache of 1 week (decided by
-    Glenn, 2026-08). This function creates the records under the
+    awards in the database instead of a cache of 1 week.
+    This function creates the records under the
     Wikidata label. The enqueued TMDB refresh renames each record to the
     canonical title and year of TMDB. That is the standard behavior of
     tmdb_movie_apply. Thus, a later import of the film matches the
@@ -514,7 +514,7 @@ def create_criterion_catalog_records(criterion_collection, by_tmdb_id, by_title_
             continue
         title = release.get("label")
 
-        # A release with no title (an item id label, #473) waits for a
+        # A release with no title (an item id label) waits for a
         # Wikidata label. The title and year are the identity of a record.
 
         if not title:
@@ -564,7 +564,7 @@ def refresh_criterion_collection_info(movie_id=None):
             # Collection info for only that movie. If not, update all.
 
             # Fetch and check the releases before the first read of the
-            # movie table (#473). The fetch can take minutes, with a
+            # movie table. The fetch can take minutes, with a
             # throttle sleep. Under REPEATABLE READ, a snapshot that was
             # open for that time fails the UPDATE of a row that another
             # worker changed.

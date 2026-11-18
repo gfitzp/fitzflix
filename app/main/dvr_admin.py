@@ -1,4 +1,4 @@
-"""Edit the DVR channels (#182). Admins do CRUD on the dvr_channel table.
+"""Edit the DVR channels. Admins do CRUD on the dvr_channel table.
 
 The dial is data. Each row is a channel with rule columns: genres,
 keywords, network country, title pins, and the Criterion and leaving
@@ -231,8 +231,7 @@ def dvr_channels():
         return redirect(url_for("main.dvr_channels"))
     if form.save_submit.data:
         # The page renders again with the posted values. The template
-        # shows no field errors. Thus, each refused field gets a message
-        # (#546).
+        # shows no field errors. Thus, each refused field gets a message.
         flash_form_errors(form)
 
     if action_form.delete_submit.data and action_form.validate_on_submit():
@@ -256,7 +255,7 @@ def dvr_channels():
         return redirect(url_for("main.dvr_channels"))
     if action_form.delete_submit.data or action_form.rebuild_submit.data:
         # The creation form is bound to this post. A render would show
-        # Enabled unticked (#566). Thus, the refused action redirects.
+        # Enabled unticked. Thus, the refused action redirects.
         flash_form_errors(action_form)
         return redirect(url_for("main.dvr_channels"))
 
@@ -366,8 +365,8 @@ def dvr_channel_edit(channel_id):
         or member_form.remove_submit.data
     ):
         # The channel form is bound to this post too. Its absent boxes
-        # would render cleared, and the next save would store them
-        # (#566). Thus, the refused member post redirects, as the
+        # would render cleared, and the next save would store them.
+        # Thus, the refused member post redirects, as the
         # other branches do.
         flash_form_errors(member_form)
         return redirect(url_for("main.dvr_channel_edit", channel_id=channel.id))

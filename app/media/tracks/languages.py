@@ -59,7 +59,7 @@ def language_key(code):
 
     A terminological code ("deu", "fra") becomes its bibliographic code
     ("ger", "fre"). Any other value comes back in lower case. Thus, 2
-    spellings of the same language give the same key (#423)."""
+    spellings of the same language give the same key."""
 
     code = str(code or "").strip().lower()
     return ISO_639_2_TERMINOLOGIC.get(code, code)
@@ -248,7 +248,7 @@ def library_language_choices():
 
 
 def file_language_choices(stored_codes):
-    """Return the File page choices, with the languages of the file itself (#545).
+    """Return the File page choices, with the languages of the file itself.
 
     The cached choices can predate a language that is new to the
     library. Then the dropdown of such a track selected nothing, and the

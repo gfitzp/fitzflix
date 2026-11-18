@@ -31,7 +31,7 @@
 <p class="small text-muted">This page shows only {{ genre_name }} films.</p>
 {% endif %}
 {% endif %}
-{# The watchlist shelf (2026-08-30): the films that the user wants and
+{# The watchlist shelf: the films that the user wants and
    can watch TONIGHT. The user owns them, or they stream on a
    subscribed service. The films that leave soon hold the first slots,
    in urgency order. Each shelf below this one is discovery, and it
@@ -61,7 +61,7 @@
 <div class="row mt-3">
 	{% for rec in recs %}
 	<div class="col-6 col-sm-4 col-md-3 col-lg-2 mb-4 poster-cell">
-		{# data-card-url arms the poster popover (#45c). A hover shows
+		{# data-card-url arms the poster popover. A hover shows
 		   the card of the film. A click, or a tap on a phone, follows
 		   the link. The card shows the badges.
 		   The watchlist badge comes from the card route itself. The
@@ -79,7 +79,7 @@
 <p class="small text-muted">Fitzflix recommends these films from your library, from your ratings, likes, and watches. It calculates the list each night. The last run was {{ computed_at }}.</p>
 {% endif %}
 {% elif recs_filtered_out %}
-{# The rail is computed, but the filters emptied it (#198). Say so. Do
+{# The rail is computed, but the filters emptied it. Say so. Do
    not claim that the recommendations are not ready yet. #}
 <p class="lead">No recommended film {{ fit_phrase }}.</p>
 <p class="text-muted">{{ fit_hint }}, or <a href="{{ url_for('main.index') }}">clear the filter</a> to see the full list.{% if minutes %} While a limit is set, the films with an unknown runtime stay hidden.{% endif %}</p>
@@ -115,11 +115,11 @@
 {% if shelf_filtered_out %}
 {# The filters emptied the shelf. The shelf is not empty. The
    header stays. Thus, the departure date and the link to the full
-   inventory keep their place (#198). #}
+   inventory keep their place. #}
 <p class="text-muted mt-3">Nothing leaving {{ fit_phrase }}. See the full list, or <a href="{{ url_for('main.index') }}">clear the filter</a>.</p>
 {% else %}
 {# data-no-leaving-fold: each film on this shelf leaves, by
-   definition. Thus, the red corner fold (#197) would only repeat the
+   definition. Thus, the red corner fold would only repeat the
    header. The green newly-arrived fold still paints. #}
 <div class="row mt-3" data-no-leaving-fold>
 	{% for item in shelf %}
@@ -135,7 +135,7 @@
 <p class="small text-muted">These films leave <a href="https://www.criterionchannel.com" target="_blank" rel="noreferrer">criterionchannel.com</a> soon. Your taste profile ranks them. The films on your watchlist are at the front of your watchlist shelf above. Watch them before they leave, or buy the disc.</p>
 {% endif %}
 {% endif %}
-{# The newly-added discovery shelves (#246): one shelf per subscribed
+{# The newly-added discovery shelves: one shelf per subscribed
    provider that has a stored newly-added feed. The Criterion scrape
    is the only feed today. "See more…" opens the in-app arrival
    inventory. That is the complete set with the library, Seen, and

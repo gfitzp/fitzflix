@@ -22,7 +22,7 @@ def register(app):
     def criterion():
         """Refresh the Criterion Collection info from Wikidata."""
 
-        # The same queue and timeout as the monthly cron row (#343). The
+        # The same queue and timeout as the monthly cron row. The
         # task makes a Wikidata request for each movie. On the single sql
         # worker it blocked every database job, and 10 minutes was too
         # short for it.
@@ -44,7 +44,7 @@ def register(app):
         too, it refreshes only that title."""
 
         # An id of 0 must not read as "no id". That refreshed the whole
-        # library (#409).
+        # library.
 
         if tmdb_id is not None and tmdb_id < 1:
             raise click.ClickException(f"A TMDB id is 1 or more, not {tmdb_id}")
@@ -65,7 +65,7 @@ def register(app):
             tv_shows = query.order_by(TVSeries.title.asc()).all()
 
         # A TMDB id that matches nothing is a mistake of the user. Say so,
-        # and exit with an error (#344).
+        # and exit with an error.
 
         if tmdb_id is not None and not movies and not tv_shows:
             raise click.ClickException(f"No title in the library has TMDB id {tmdb_id}")
@@ -193,7 +193,7 @@ def register(app):
         """Rename a TV series on the disk and in the database.
 
         This is the Plex-disambiguation fix. The untouched names get the
-        new title (#362). The archive keys do not change (#668)."""
+        new title. The archive keys do not change."""
 
         from app import db
         from app.media.series_rename import rename_refusal, rename_timeout
@@ -257,7 +257,7 @@ def register(app):
         elif not CatalogExclusion.query.filter_by(tmdb_id=movie.tmdb_id).first():
             db.session.add(CatalogExclusion(tmdb_id=movie.tmdb_id, title=title))
 
-        # The archive-only originals of the film go with it (#464). The
+        # The archive-only originals of the film go with it. The
         # S3 objects go after the commit, unless a record still claims
         # the key.
 
@@ -265,7 +265,7 @@ def register(app):
         for original in ArchivedOriginal.query.filter_by(movie_id=movie.id).all():
             original_keys.append(original.aws_key)
             db.session.delete(original)
-        # The custom poster tree of the film goes after the commit (#463).
+        # The custom poster tree of the film goes after the commit.
 
         remove_custom_artwork_after_commit(db.session, "movie", movie.id)
         db.session.delete(movie)
@@ -293,7 +293,7 @@ def register(app):
 
         This reads the releases that Redis stores. It does not query
         Wikidata. It applies a change of the assignment rule to the
-        existing records (#472)."""
+        existing records."""
 
         from app.criterion.criterion_catalog import reassign_stored_criterion_releases
 

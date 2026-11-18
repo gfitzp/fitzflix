@@ -3,8 +3,8 @@
 {% from "_identity.html" import identity_fields with context %}
 
 {% block app_content %}
-{# A change of the ways in to the account needs a proof of identity
-   (#675): the email, the passkeys, and the password. The page has
+{# A change of the ways in to the account needs a proof of identity:
+the email, the passkeys, and the password. The page has
    many such forms. Thus, it counts the passkeys 1 time. #}
 {% set has_passkey = current_user.passkeys.count() > 0 %}
 {{ page_header('Profile') }}
@@ -197,7 +197,7 @@
 	{{ alerts_form.alerts_submit(class_="btn btn-sm btn-warning mt-2") }}
 </form>
 <hr>
-{# The review import and export forms moved here from History (#215).
+{# The review import and export forms moved here from History.
    They are account-level plumbing, not part of the diary reading #}
 <h4 class="mt-3 mb-2">Review Import &amp; Export</h4>
 {# g-3: the gutters keep a gap between the columns when a phone

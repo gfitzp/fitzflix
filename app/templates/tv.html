@@ -31,7 +31,7 @@
 			<p>{{ tv.tmdb_overview }}</p>
 			{% endif %}
 			{# The library badge says that the series is on the shelf, in
-			   the colors of the TV card (Glenn, 2026-09). There is no
+			   the colors of the TV card. There is no
 			   streaming strip: the availability lookup covers films only,
 			   and the TV card carries none either. #}
 			{% if in_library %}
@@ -42,7 +42,7 @@
 	</div>
 </div>
 {# The cast strip spans the page below the poster, between two
-   page-wide rules. This is the pattern of movie.html (Glenn, 2026-09). #}
+   page-wide rules. This is the pattern of movie.html. #}
 <hr>
 {{ cast_scroller(cast) }}
 <hr>
@@ -62,7 +62,7 @@
 	</div>
 	{# The series management tools are admin tools. These are restore,
 	   delete, and the TMDB forms below. They are like the Movie
-	   Data section of the movie page (#186 follow-up). Their forms post
+	   Data section of the movie page. Their forms post
 	   to admin-only routes. Thus, to hide the tools here is
 	   presentation, not the protection #}
 	{% if current_user.admin %}

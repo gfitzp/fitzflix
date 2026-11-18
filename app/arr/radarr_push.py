@@ -56,8 +56,7 @@ RADARR_IDS_TTL = 3600
 
 QUALITY_PROFILE_NAME = "Fitzflix"
 
-# The longest wait for the RenameFiles command of Radarr, in seconds
-# (#288).
+# The longest wait for the RenameFiles command of Radarr, in seconds.
 
 RADARR_RENAME_WAIT = 120
 
@@ -201,7 +200,7 @@ def follow_import_move(source_folder, new_folder):
 
 
 def enqueue_radarr_push(func, *args, description):
-    """Queue a Radarr push as its own job on the request queue (#268).
+    """Queue a Radarr push as its own job on the request queue.
 
     A TMDB refresh and an import run on the single sql worker. A push
     there made that queue wait while Radarr did not answer. Now the
@@ -272,7 +271,7 @@ def _set_entry_folder(entry, new_folder):
     """Rewrite the path of one Radarr movie. Radarr moves no file.
 
     Each path that Fitzflix writes to Radarr comes through here. Radarr
-    must never own a file that Fitzflix keeps as an edition (#670).
+    must never own a file that Fitzflix keeps as an edition.
     Radarr deletes its movie file on an upgrade. Thus, an edition folder
     becomes its plain folder here, also when the plain folder does not
     exist. Radarr then shows the film as missing."""
@@ -303,7 +302,7 @@ MAX_PATH_FIXES = 20
 
 
 def reconcile_radarr_paths():
-    """Point each Radarr movie at the folder that Fitzflix holds for it (#266).
+    """Point each Radarr movie at the folder that Fitzflix holds for it.
 
     This is a task. It runs nightly. A rename or an import reports the
     new folder to Radarr at once. If Radarr is down then, that push is
@@ -314,7 +313,7 @@ def reconcile_radarr_paths():
     The check repoints an entry when the Fitzflix folder exists and the
     Radarr folder does not. When both folders exist, it logs the case
     and changes nothing. An entry on an edition folder always moves to
-    the plain folder, also when that folder does not exist (#670). An
+    the plain folder, also when that folder does not exist. An
     other film that Fitzflix holds no file for is not checked. Radarr
     can be downloading it."""
 
@@ -399,11 +398,11 @@ def rename_download_locally(downloaded_path, new_path, movie_id):
 def adopt_download_task(movie_id, movie_file_id, downloaded_path, new_path, quality):
     """Give a Radarr download the quality of Fitzflix, then queue its import.
 
-    This is a task (#288). Radarr changes the quality of its file record
+    This is a task. Radarr changes the quality of its file record
     and renames the file. If Radarr cannot do it, Fitzflix renames the
     file as before. In both cases the import of the file goes on the
     queue after the rename. An import that stores the file under a
-    different name queues restore_download_record_task (#671)."""
+    different name queues restore_download_record_task."""
 
     with get_app().app_context():
         return adopt_download(
@@ -422,14 +421,14 @@ def adopt_download_task(movie_id, movie_file_id, downloaded_path, new_path, qual
 def restore_download_record_task(
     movie_id, library_path, scene_name, release_group, tries=1
 ):
-    """Write the release data of a Radarr download onto its new file record (#671).
+    """Write the release data of a Radarr download onto its new file record.
 
     This is a task. The import stored the file under a different name.
     Radarr then drops its record at the next scan, and it downloads the
     same release again. Each try first points the movie at the folder
     of the library file. Then the rescan finds the file. A file in an
-    edition folder is not a Radarr file (#670), and it gets nothing. A
-    try that writes nothing yet books the task again (#680). tries is
+    edition folder is not a Radarr file, and it gets nothing. A
+    try that writes nothing yet books the task again. tries is
     the number of this try. An unexpected failure is logged. It does not
     raise. The file is already in place."""
 

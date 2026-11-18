@@ -42,7 +42,7 @@ from app.plex.plex_library import enqueue_plex_film_refresh
 def _is_best_copy(file):
     """Return True if the file is the best copy of its title, or of an episode.
 
-    Invariant: each page and each job gives the same answer (#738). A
+    Invariant: each page and each job gives the same answer. A
     movie file has movie_file_rank 1. An episode file is the best holder
     of an episode number, by the rule of the S3 sync and the season
     grades (tv_best_holder_ids). That rule counts each episode of a file
@@ -67,7 +67,7 @@ def changed_track_languages(posted, audio_tracks, subtitle_tracks):
 
     posted maps a box name ("language_" and the track UID) to its value.
     changes maps a track UID to the new code of each track whose
-    language changed (#611). unresolved holds the values that are not a
+    language changed. unresolved holds the values that are not a
     language. A blank box is not a change. The comparison uses resolved
     codes. Thus, a box can still hold a stored ISO 639-2/T spelling
     ("deu"). That box does not read as a request to rewrite the track to
@@ -90,7 +90,7 @@ def changed_track_languages(posted, audio_tracks, subtitle_tracks):
 def _propedit_form(audio_tracks, subtitle_tracks):
     """Return the form of the track flag edits, with the choices of the file.
 
-    The values are the track UIDs (#611). They are strings, because
+    The values are the track UIDs. They are strings, because
     WTForms coerces the submitted values to strings. An int here would
     fail the "valid choice" validation."""
 
@@ -127,7 +127,7 @@ def _propedit_form(audio_tracks, subtitle_tracks):
 def _remux_form(audio_tracks, subtitle_tracks):
     """Return the form of a remux without some tracks. Each track starts kept.
 
-    The values are the track UIDs (#611)."""
+    The values are the track UIDs."""
 
     form = MKVMergeForm()
     form.audio_tracks.choices = [
@@ -142,7 +142,7 @@ def _remux_form(audio_tracks, subtitle_tracks):
 
 
 def _scan_file_post(file, form):
-    """Queue a scan of the track metadata of the file (#695).
+    """Queue a scan of the track metadata of the file.
 
     The scan can remux the file to remove empty subtitle tracks. No web
     request rewrites a library file. Thus, a worker does the scan. The
@@ -280,9 +280,9 @@ def _restore_post(estimate):
 
 
 def _claimed_archive_keys(file):
-    """Return each S3 key that the record of a file claims (#515).
+    """Return each S3 key that the record of a file claims.
 
-    The untouched key, a #292 conversion key and a pending #369 move
+    The untouched key, a conversion key and a pending move
     target count as claimed only while the row exists.
     A purge that deletes only the untouched key left the other 2 for
     the weekly prune."""
@@ -304,7 +304,7 @@ DELETE_REFUSED = (
 
 
 def _delete_locks(identifiers):
-    """Take the title lock of each file of a delete. Return the locks, or None (#718).
+    """Take the title lock of each file of a delete. Return the locks, or None.
 
     Invariant: a delete never runs while a task rewrites the file. A
     track edit holds the title lock of its file for its whole run. At
@@ -338,7 +338,7 @@ def _release_delete_locks(locks):
 
 
 def _after_commit(step, *args, **kwargs):
-    """Run 1 cleanup step of a committed delete. Log a failure and go on (follow-up #513).
+    """Run 1 cleanup step of a committed delete. Log a failure and go on.
 
     The rows are gone. A wedged share that raised in 1 step stopped the
     loop, and the AWS deletes and the folder cleanup never ran. Return
@@ -354,7 +354,7 @@ def _after_commit(step, *args, **kwargs):
 
 
 def _files_left_message(what, file_paths):
-    """Return the message of a delete whose library files did not all go (#745).
+    """Return the message of a delete whose library files did not all go.
 
     The records are gone. The weekly sync imports a library file that
     has no record. Thus, the message names each file to remove by hand."""
@@ -373,8 +373,8 @@ def _queue_archive_deletes(aws_keys):
     """Queue the S3 delete of each archive key that no surviving row claims.
 
     The delete reads the head first. A pending move target has no
-    object yet. A plain delete wrote a delete marker there (follow-up
-    #515). The task asks for the claim again when it runs (#686). The
+    object yet. A plain delete writes a delete marker there.
+    The task asks for the claim again when it runs. The
     check here only keeps useless jobs out of the queue."""
 
     for aws_key in dict.fromkeys(aws_keys):
@@ -392,7 +392,7 @@ def _queue_archive_deletes(aws_keys):
 
 
 def _delete_refused_for_volumes(file_paths):
-    """Return the text that refuses a delete while a library volume is away, or None (#752).
+    """Return the text that refuses a delete while a library volume is away, or None.
 
     Invariant: a delete page changes nothing while a volume of its
     library files is not mounted. A share that is not mounted leaves an
@@ -414,7 +414,7 @@ def _delete_file_post(file, form):
     """Delete the file and its record. Return the page to go to next.
 
     The delete holds the title lock of the file. A task that holds it
-    refuses the delete (#718)."""
+    refuses the delete."""
 
     refused = _delete_refused_for_volumes([file.file_path])
     if refused:
@@ -447,7 +447,7 @@ def _delete_file(file):
         flash(f"Unable to delete '{file.basename}'!", "danger")
         return None
 
-    # The library file goes only after the commit, as in tv_delete (#513).
+    # The library file goes only after the commit, as in tv_delete.
 
     removed = _after_commit(
         File.delete_library_copy, file_path, file_id, delete_directory_tree=True
@@ -466,7 +466,7 @@ def _delete_file(file):
     _after_commit(clear_leftover_directory, leftover_dir)
     _after_commit(remove_custom_artwork, "file", file_id)
 
-    # Invariant (#776): an extra that the delete removes also goes from
+    # Invariant: an extra that the delete removes also goes from
     # Plex. The scan of Plex does not see a file that goes from an extras
     # folder that stays. A refresh of the film does. A film folder that
     # went with the delete needs no refresh.
@@ -500,14 +500,14 @@ def _delete_file(file):
 def file(file_id):
     """Show the details for a particular video file.
 
-    This is an admin page (#186 follow-up). All on it (track edits,
+    This is an admin page. All on it (track edits,
     remux, upload/download, delete) is library management.
     Thus, the whole page is gated, and not each form.
 
     Each form of the page has a handler. A valid post of a form runs its
     handler. Then the page shows again, unless the handler gives another
     page. A track form that does not validate gets a message, unless
-    only its csrf token failed (#763). A form with needs_local_file refuses a file that is not in the local
+    only its csrf token failed. A form with needs_local_file refuses a file that is not in the local
     library. Only a restore from AWS or a delete are useful then.
     The template disables the other forms."""
 
@@ -564,7 +564,7 @@ def file(file_id):
         (delete_form, delete_form.delete_submit, _delete_file_post, False),
     )
     # A pending restore refuses each form that edits, uploads or restores
-    # the file (#610). Only the delete stays. The refusal comes before
+    # the file. Only the delete stays. The refusal comes before
     # the validation.
 
     restore_pending = refuse_while_restore_pending(file)
@@ -585,7 +585,7 @@ def file(file_id):
                 url_for("main.file", file_id=file.id)
             )
 
-    # Invariant: a track form that does not validate says why (#763).
+    # Invariant: a track form that does not validate says why.
     # Each field of the 2 track forms is an Optional choice field. Thus,
     # the only error other than csrf is a posted value that is not a
     # track of the file now. That post came from a page that was loaded
@@ -604,7 +604,7 @@ def file(file_id):
                 "warning",
             )
 
-    # A track edit that stopped on a changed file left a note (#606).
+    # A track edit that stopped on a changed file left a note.
     # The route said that the edit was queued. Thus, the page says that
     # it did not run.
 
@@ -654,7 +654,7 @@ def file(file_id):
         # language_names covers the stored spellings too. Thus, a track
         # recorded as "deu" still reads as German.
         # The dropdowns compare by the resolved code. The own languages
-        # of the file are always choices (#545).
+        # of the file are always choices.
         languages=(
             file_language_choices(
                 [track.language for track in list(audio_tracks) + list(subtitle_tracks)]

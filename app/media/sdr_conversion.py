@@ -1,4 +1,4 @@
-"""Convert HDR and wide-color imports to SDR (#292, #657).
+"""Convert HDR and wide-color imports to SDR.
 
 The Plex library holds only Rec.709 SDR files. These play on the least
 capable equipment of the Fitzflix users. An import with HDR10, HDR10+,
@@ -87,7 +87,7 @@ HDR_TRANSFERS = ("PQ", "HLG", "SMPTE ST 2084", "ARIB STD-B67")
 
 WIDE_PRIMARIES = ("BT.2020",)
 
-# The maximum height of the conversion of each HDR_IMPORT_MODE (#657).
+# The maximum height of the conversion of each HDR_IMPORT_MODE.
 # The mode "keep" has no entry, because it converts nothing.
 
 CONVERSION_HEIGHTS = {"sdr-1080p": 1080, "sdr-2160p": 2160}
@@ -101,7 +101,7 @@ CONVERSION_WIDTHS = {1080: 1920, 2160: 3840}
 CONVERSION_PRESETS = {1080: "CONVERSION_PRESET", 2160: "CONVERSION_PRESET_2160P"}
 
 # The lowest encode speed, in frames per second, that a conversion of a
-# maximum height can have on this server (#674). The job timeout of a
+# maximum height can have on this server. The job timeout of a
 # conversion gives the encode at least this speed. The benchmark of Nov 6
 # 2026 measured 1.6 frames per second for x265 medium. A height with no
 # entry keeps TRANSCODE_TASK_TIMEOUT.
@@ -195,7 +195,7 @@ def _frame_rate(value):
 
 
 def conversion_timeout(plan):
-    """Return the job timeout of a conversion, in seconds (#674).
+    """Return the job timeout of a conversion, in seconds.
 
     The time limit of a conversion job comes from the length of the
     film. The encode of each frame of the source at the floor speed of
@@ -289,7 +289,7 @@ def converted_file_details(file_details, plan):
 
 
 # The field of the stored file details of a held file that holds the
-# maximum height of its conversion (#677).
+# maximum height of its conversion.
 
 HELD_HEIGHT_FIELD = "conversion_max_height"
 
@@ -301,17 +301,17 @@ def held_decision(file_path):
 
 
 def held_max_height(held):
-    """Return the maximum height that a held file converts to, or None (#677).
+    """Return the maximum height that a held file converts to, or None.
 
     The hold stores the height of its plan. The page shows the quality
     of that plan. Thus, "Import" makes that conversion, whatever the
-    mode is now. A row from before #677 has no stored height."""
+    mode is now. An old row has no stored height."""
 
     return held.details().get(HELD_HEIGHT_FIELD)
 
 
 def _move_to_held(file_path, held_path):
-    """Move a source to its held name. The name shows only a complete file (#751).
+    """Move a source to its held name. The name shows only a complete file.
 
     A source of the import folder is on the volume of the held folder,
     and the move is a rename. A download of Radarr or Sonarr is in the
@@ -342,18 +342,18 @@ def _move_to_held(file_path, held_path):
 def hold_import(file_path, file_details, plan, blockers):
     """Move a conversion candidate to HELD_DIR and record it for a decision.
 
-    Return the HeldImport row. A held file with the same name can wait
-    already. Then the newcomer goes to rejects with the reason "already
-    held", and the function returns None (#435). The held original, its
-    decision and its date stay.
+        Return the HeldImport row. A held file with the same name can wait
+        already. Then the newcomer goes to rejects with the reason "already
+        held", and the function returns None. The held original, its
+        decision and its date stay.
 
-    Invariant: a file under a held name is complete and has a record
-    (#751). A file there with no record waits for no decision. It goes
-    to the rejects with the reason "held with no record", and the
-    newcomer takes the name."""
+        Invariant: a file under a held name is complete and has a record.
+    A file there with no record waits for no decision. It goes
+        to the rejects with the reason "held with no record", and the
+        newcomer takes the name."""
 
     # HELD_DIR is on the external SSD. If the SSD is not mounted, this
-    # raises, and the file stays in place (#341)
+    # raises, and the file stays in place
 
     held_dir = current_app.config["HELD_DIR"]
     makedirs_on_mounted_volume(held_dir)
@@ -379,7 +379,7 @@ def hold_import(file_path, file_details, plan, blockers):
         _move_to_held(file_path, held_path)
 
         # The release data of an arr download goes with the file. Thus,
-        # an "Import" decision still gives it to the arr record (#671).
+        # an "Import" decision still gives it to the arr record.
 
         carry_remembered_download(file_path, held_path)
 
@@ -524,7 +524,7 @@ def mux_command(video_file, localized_file, output_file, language=None):
 
 
 def warn_if_larger(basename, localized_file, converted_file):
-    """Warn if a conversion is larger than the localized file of its source (#657).
+    """Warn if a conversion is larger than the localized file of its source.
 
     The 2 files differ only in their video. A conversion that is larger
     than its source is a waste of library space. It still goes into the
@@ -543,7 +543,7 @@ def warn_if_larger(basename, localized_file, converted_file):
 
 
 class TitleLockLost(Exception):
-    """Another task took the title lock during a conversion (#339)."""
+    """Another task took the title lock during a conversion."""
 
 
 def _run_encode(command, job, basename, lock, total_seconds):
@@ -565,7 +565,7 @@ def _run_encode(command, job, basename, lock, total_seconds):
     except BaseException:
         # Any failure, not only a lost lock, stops the encoder. Without
         # this, a job timeout left HandBrakeCLI or ffmpeg encoding into
-        # an output that the cleanup unlinks (#424).
+        # an output that the cleanup unlinks.
         stop_process(process)
         raise
     videos.wait_for_subprocess(process)
@@ -598,7 +598,7 @@ def _watch_encode(process, job, basename, lock, total_seconds):
             try:
                 held = chain._hold_title_lock(lock, basename)
             except Exception as e:
-                # A Redis fault is no fault of the source (#568).
+                # A Redis fault is no fault of the source.
                 raise HandoffFailed(f"{type(e).__name__}: {e}") from e
             if not held:
                 raise TitleLockLost(basename)
@@ -624,7 +624,7 @@ def convert_localized_file(
     moves the source to the rejects (abandon_failed_stage).
 
     If another task holds the title lock, the conversion waits and tries
-    again later (#339). It does not convert without the lock."""
+    again later. It does not convert without the lock."""
 
     from app.media.importing.localization import (
         HandoffFailed,
@@ -659,8 +659,8 @@ def convert_localized_file(
             if not chain._hold_title_lock(lock, basename):
                 return defer()
         except Exception:
-            # A Redis fault of the lock extension or of the deferral
-            # (#568). The source stays for the hourly sweep.
+            # A Redis fault of the lock extension or of the deferral.
+            # The source stays for the hourly sweep.
             abandon_handoff(
                 source_path,
                 lock,
@@ -700,7 +700,7 @@ def convert_localized_file(
                     current_app.logger.debug(f"'{basename}' {line.rstrip()}")
             except BaseException:
                 # The mux must not keep writing into a file that the
-                # cleanup removes (#499).
+                # cleanup removes.
                 stop_process(mux_process)
                 raise
             videos.wait_for_subprocess(mux_process, ok_returncodes=(0, 1))
@@ -738,7 +738,7 @@ def convert_localized_file(
             os.replace(muxed, hidden_output_file)
             _remove_quietly(video_only)
 
-            # Only the converted file stays on staging now (#294).
+            # Only the converted file stays on staging now.
 
             set_staging_reservation(
                 source_name,
@@ -765,7 +765,7 @@ def convert_localized_file(
 
         except BaseException as error:
             # A stop signal keeps the source. An outage of the database
-            # keeps a source of the import directory (#497, #681).
+            # keeps a source of the import directory.
             abandon_failed_stage(
                 error,
                 source_path,
@@ -781,8 +781,8 @@ def convert_localized_file(
         current_app.logger.info(
             f"'{basename}' Converted to {result.get('width')}x{result.get('height')} SDR"
         )
-        # A failed enqueue must not keep the title lock for its full TTL
-        # (#340). The source stays in the import directory.
+        # A failed enqueue must not keep the title lock for its full TTL.
+        # The source stays in the import directory.
 
         try:
             enqueue_task(
@@ -831,7 +831,7 @@ def archived_original_from_file(file, reason):
 
 
 def _held_owner(held, details):
-    """Return (movie id, series id) of the title that a held file belongs to (#736).
+    """Return (movie id, series id) of the title that a held file belongs to.
 
     A held file can wait for days, and a TMDB refresh can rename its
     title in that time. The title and the year of the details are from
@@ -874,11 +874,11 @@ def archive_held_task(held_id):
         details = held.details()
         try:
             # The delete after the upload must remove the uploaded file
-            # only (#435). A different file at the path stays.
+            # only. A different file at the path stays.
             uploaded_stat = os.stat(held.held_path)
             # A held HDR rip can have the name of a real rip, because a
             # Fitzflix name has no HDR tag. Its upload never replaces the
-            # claimed archive of that rip (#430). It gets its own key.
+            # claimed archive of that rip. It gets its own key.
 
             def own_key(claimed):
                 stem, extension = os.path.splitext(claimed)
@@ -919,8 +919,8 @@ def archive_held_task(held_id):
                 db.session.commit()
             return False
 
-        # The held file leaves with no import. Its release data goes too
-        # (#687). A fault of Redis only logs: the archive is done.
+        # The held file leaves with no import. Its release data goes too.
+        # A fault of Redis only logs: the archive is done.
 
         try:
             take_remembered_download(held_path)
@@ -957,13 +957,13 @@ def _same_file(path, before):
 
 
 # A decision commits a moment before its job is queued. Thus, a decision
-# that is younger than this time never counts as stuck (#525).
+# that is younger than this time never counts as stuck.
 
 STUCK_DECISION_GRACE = timedelta(minutes=5)
 
 
 def _jobs_of(queues):
-    """Yield each live or failed job of the queues (#616)."""
+    """Yield each live or failed job of the queues."""
 
     from rq.job import Job
     from rq.registry import FailedJobRegistry
@@ -977,7 +977,7 @@ def _jobs_of(queues):
 
 
 def held_decision_has_job(held):
-    """Return True if a job still carries the decision of a held import (#525).
+    """Return True if a job still carries the decision of a held import.
 
     An import decision has a localization, a conversion, a move or a
     cataloging of the held path. An archive decision has an
@@ -1006,7 +1006,7 @@ def held_decision_has_job(held):
 
 
 def clear_stuck_decisions(rows):
-    """Clear each decision that no job carries any more. Return the count (#525).
+    """Clear each decision that no job carries any more. Return the count.
 
     A hard-killed worker, an expired job, or a failed job that the admin
     forgot leaves the decision with the file still held. The page then
@@ -1040,11 +1040,11 @@ def clear_stuck_decisions(rows):
 def prune_held_imports():
     """Remove the HeldImport rows whose held file is gone, for example after a reject.
 
-    It also clears each decision that no job carries any more (#525)."""
+    It also clears each decision that no job carries any more."""
 
     # A dropped volume makes each held file look gone. The prune then
     # deleted each row, and the files in held/ had no record when the
-    # volume came back (#319). Thus, a dead or missing held directory
+    # volume came back. Thus, a dead or missing held directory
     # prunes nothing. A row is gone only when its folder is there and
     # its file is not.
 

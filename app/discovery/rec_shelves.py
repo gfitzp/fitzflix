@@ -1,13 +1,13 @@
-"""Build the shelves of the Recommendations page (#235).
+"""Build the shelves of the Recommendations page.
 
 Each shelf has a key of 1 to 4 shared criteria. A criterion is a
 genre, a TMDB keyword, a decade, an award won, or a person in a role
 that the taste engine tracks. Two ANCHOR films front each shelf. The
 user rated or liked these films, and they have all the criteria.
 "Because you liked" must never name a film without a verdict from the
-user (Glenn, 2026-08-26). A watchlist add or an unrated watch still
+user. A watchlist add or an unrated watch still
 feeds the scores of the engine. But those films cannot front a shelf.
-Sometimes a shelf fronts a SINGLE anchor (#249). This occurs at most
+Sometimes a shelf fronts a SINGLE anchor. This occurs at most
 1 time per load, for both kinds together. It applies only where the
 pair rule blocks variety. The first case is a copref anchor whose
 neighborhood pairs with no other anchor. The second case is a
@@ -86,14 +86,14 @@ SHELF_SIZE = 5
 MIN_SHELF_FILMS = 4
 MAX_CRITERIA = 4
 
-# Copref-pair shelves (follow-up from Glenn, 2026-08-26): up to this
+# Copref-pair shelves: up to this
 # many shelves of a load come from the MovieLens co-preference, not from
 # shared features. They have 2 anchor films. The suggestions rank by
 # their similarity to BOTH anchors. The anchors and the valid pairs
-# draw uniformly at random (Glenn, 2026-08-28: the old top-weight pool
-# plus the quality-weighted draw showed the same few favorites with
-# dense neighborhoods on each reload). Since 2026-08-30, the pool is
-# the WHOLE rated-or-liked interest set of the user. The cap is a cost
+# draw uniformly at random. A top-weight pool with a quality-weighted
+# draw shows the same few favorites with dense neighborhoods on each
+# reload. The pool is the WHOLE rated-or-liked interest set of the
+# user. The cap is a cost
 # limit, not a taste filter. The full-library pair scan measured
 # approximately 26 ms at 302 anchors. Examine this again if the
 # interest set grows past the cap.
@@ -101,7 +101,7 @@ MAX_CRITERIA = 4
 COPREF_SHELF_COUNT = 3
 COPREF_ANCHOR_POOL = 10_000
 
-# Single-anchor shelves (#249): at most 1 per load across both kinds.
+# Single-anchor shelves: at most 1 per load across both kinds.
 # One film is weaker evidence than 2 films. Thus, these shelves stay
 # rare. A copref anchor without a pair competes in the pair draw with a
 # damped weight. Pairs must still lead most loads. A criteria seed with
@@ -140,12 +140,11 @@ AWARD_ID_PATTERN = re.compile(r"^[A-Za-z0-9]{1,32}$")
 
 # These are the technical bookkeeping keywords of TMDB. They are real
 # taste features for the engine. They make no sense as a shelf headline
-# ("Based on your interest in “duringcreditsstinger” films" was the
-# first live render, 2026-08)
+# ("Based on your interest in “duringcreditsstinger” films" was the first live render)
 
 KEYWORD_DENYLIST = {"aftercreditsstinger", "duringcreditsstinger"}
 
-# Keyword display casing (Glenn, 2026-08-26): TMDB stores the keywords
+# Keyword display casing: TMDB stores the keywords
 # in lowercase. But "new york city", "fbi", and "world war ii" are not
 # common nouns. The overview prose of the library knows the real
 # casing. Thus, a keyword for a shelf resolves against the mid-sentence
@@ -162,7 +161,7 @@ KEYWORD_CASE_SAMPLE = 400
 
 
 def _plain_keyword_name(name):
-    """Return the keyword with an uppercase first character (#699)."""
+    """Return the keyword with an uppercase first character."""
 
     return f"{name[:1].upper()}{name[1:]}"
 
@@ -285,7 +284,7 @@ def _rated_or_liked_ids(user_id):
     """Return the films with a real verdict from the user.
 
     A verdict is a star rating or a liked heart on some diary row. Only
-    these films can anchor a shelf (rule from Glenn, 2026-08-26). A
+    these films can anchor a shelf. A
     watchlist add or an unrated watch shows interest, and it still
     feeds the scores of the engine. But "Because you liked" must name a
     film that the user really rated or liked."""
@@ -331,9 +330,9 @@ def eligible_films(user):
 
     user_id = int(user.id)
     watchlisted = _watchlisted_ids(user_id)
-    # A film with no TMDB data carries only a decade feature. It landed
-    # in a decade shelf at a score of 0.0 (#537). The engine filters it
-    # since #414. The shelves filter it here.
+    # A film with no TMDB data carries only a decade feature. Without a
+    # filter, it lands in a decade shelf at a score of 0.0. The engine
+    # filters it. The shelves filter it here too.
     pool = [
         movie_id
         for movie_id in _with_tmdb_data(local_candidates(user_id))
@@ -412,7 +411,7 @@ def _copref_shelves(interest, pool, rng, count, shown):
     TMDB genre. Films with no genre data pass. The shelves of 1 load
     never repeat a common-ground genre. Each shelf has its shared genre
     ids for the subtitle of the page. An anchor that qualifies for NO
-    pair can front a single-anchor shelf (#249). Its key is
+    pair can front a single-anchor shelf. Its key is
     `copref:{tmdbA}`. The rank is the similarity to that anchor alone.
     Its weight is damped in the draw, and MAX_SINGLE_ANCHOR_SHELVES
     caps it. This function changes `shown` in the same way as the
@@ -444,10 +443,10 @@ def _copref_shelves(interest, pool, rng, count, shown):
         for movie_id in anchors
     }
 
-    # The anchors must share a genre (Glenn, 2026-08-29). Two popular
+    # The anchors must share a genre. Two popular
     # films whose 100-neighbor lists overlap only by chance must not
     # front a shelf together. Films with no genre data on one side are
-    # not blocked. After #251, that is a small set. The shared set also
+    # not blocked. That is a small set. The shared set also
     # feeds the subtitle of the shelf ("Their common ground: …") and the
     # per-load genre check below.
 
@@ -492,8 +491,8 @@ def _copref_shelves(interest, pool, rng, count, shown):
             continue
 
         # The copref shelves of 1 load never repeat a common-ground
-        # genre (Glenn, 2026-08-30: 2 "Their common ground: Drama"
-        # shelves on 1 page). If the shared genres of a candidate
+        # genre (2 "Their common ground: Drama" shelves on 1 page).
+        # If the shared genres of a candidate
         # overlap the genres of an earlier shelf, the candidate waits
         # for a different load
 
@@ -542,7 +541,7 @@ def build_shelves(user, count=SHELF_COUNT, rng=None):
 
     Each shelf dict has its kind ("criteria" or "copref"), its criteria
     [(key, label), ...], its anchor movie ids, and its suggested movie
-    ids. There are 2 anchors, or sometimes 1 (#249). The anchors come
+    ids. There are 2 anchors, or sometimes 1. The anchors come
     only from the films that the user rated or liked. The copref
     shelves draw first (COPREF_SHELF_COUNT caps them). The criteria
     shelves fill the rest. A seed is a single feature that at least 2
@@ -594,7 +593,7 @@ def build_shelves(user, count=SHELF_COUNT, rng=None):
     for key, holder_ids in holders.items():
         if len(carriers.get(key, ())) < MIN_SHELF_FILMS:
             continue
-        # A seed with 1 holder keys a single-anchor shelf (#249). This
+        # A seed with 1 holder keys a single-anchor shelf. This
         # is real evidence only for the specific classes. One loved film
         # says little about a genre or a decade. SEED_SHRINKAGE already
         # keeps these weak seeds in the draw
@@ -664,7 +663,7 @@ def build_shelves(user, count=SHELF_COUNT, rng=None):
 
     # The build order is not the page order. The copref shelves draw
     # first only to claim their films. If they were pinned to the top,
-    # each load would open in the same way (Glenn, 2026-08-26). Instead,
+    # each load would open in the same way. Instead,
     # the kinds mix randomly down the page
 
     rng.shuffle(shelves)

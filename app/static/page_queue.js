@@ -11,10 +11,10 @@
 
 	// The server rows carry the raw UTC stamp in each tooltip. Thus,
 	// the tooltips get the local time from the stamp of the
-	// flask-moment span (#547). moment.js loads in the scripts block,
+	// flask-moment span. moment.js loads in the scripts block,
 	// after this content. Thus, the first pass waits for
 	// DOMContentLoaded. A direct call threw a ReferenceError and
-	// stopped this whole script (follow-up #547).
+	// stopped this whole script.
 
 	function localizeFirstPaintTitles() {
 		if (typeof moment === "undefined") return;
@@ -44,7 +44,7 @@
 		document.querySelectorAll("#all-tasks [data-timestamp]").forEach(flask_moment_render);
 	}, 60000);
 
-	// The ETag goes in the header and in the address (#753). A
+	// The ETag goes in the header and in the address. A
 	// proxy can drop the header. An answer with the ETag that the
 	// page has changes nothing, whatever its status is. Thus, the
 	// forms of the rows stay in place.

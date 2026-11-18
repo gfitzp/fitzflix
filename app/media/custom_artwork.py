@@ -1,12 +1,12 @@
-"""The custom poster trees of the movie and file records on disk (#463).
+"""The custom poster trees of the movie and file records on disk.
 
 An upload goes to CUSTOM_ARTWORK_DIR/<scope>/<record id>. The scope is
 "movie" or "file". A merge or a delete of a record must not leave its
 tree behind. A tree goes only after the commit that removes its record.
 Thus, a failed commit keeps the poster of a record that stays.
-sync_folder_poster decides the poster copy in a library folder (#633).
+sync_folder_poster decides the poster copy in a library folder.
 restore_folder_poster and reconcile_library_posters put a lost copy
-back (#654).
+back.
 """
 
 import os
@@ -57,7 +57,7 @@ def replace_library_poster(library_directory, original_file, poster_filename):
 
 
 def sync_folder_poster(movie, dirname, lost=None):
-    """Make the poster art of 1 library folder of a movie obey the precedence rule (#633).
+    """Make the poster art of 1 library folder of a movie obey the precedence rule.
 
     Plex reads 1 poster in a folder. The winner is the first main feature
     of the folder, in id order, with a file-scoped original on disk.
@@ -135,7 +135,7 @@ def _restore_folder(dirname):
 
 
 def restore_folder_poster(dirname):
-    """Put the custom poster back into 1 library folder (#654).
+    """Put the custom poster back into 1 library folder.
 
     This is a task. The Radarr webhook queues it after Radarr deletes a
     movie file. Radarr linked the poster copy of the folder to that
@@ -197,7 +197,7 @@ def _poster_folders():
 
 
 def reconcile_library_posters():
-    """Restore the custom poster copy of each main-feature folder that lost it (#654).
+    """Restore the custom poster copy of each main-feature folder that lost it.
 
     This is a task. It runs nightly, as the backstop of the Radarr
     webhook. Radarr deletes the copy of a folder when the movie file
@@ -223,7 +223,7 @@ def reconcile_library_posters():
 
 
 # The extensions of an episode thumb, "<video name without extension>.<ext>"
-# beside the episode file (#469).
+# beside the episode file.
 
 EPISODE_THUMB_EXTENSIONS = (".jpg", ".jpeg", ".png", ".tbn")
 
@@ -283,7 +283,7 @@ def remove_custom_artwork_after_commit(session, scope, record_id):
 
 
 def move_movie_poster(session, old_movie, new_movie):
-    """Give the custom poster of a merged movie to the survivor (#463).
+    """Give the custom poster of a merged movie to the survivor.
 
     If the survivor has no custom poster, the tree of the old record is
     copied to the survivor, and the survivor takes the file name. The

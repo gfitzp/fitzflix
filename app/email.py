@@ -11,7 +11,7 @@ from app import mail
 def send_async_email(app, msg):
     """Send an email asynchronously in an application thread.
 
-    An error in the thread goes to the app logger (#451). Without this,
+    An error in the thread goes to the app logger. Without this,
     it went only to the standard error of the process."""
 
     with app.app_context():
@@ -39,7 +39,7 @@ def build_message(subject, sender, recipients, text_body, html_body, attachments
 def send_email(subject, sender, recipients, text_body, html_body, attachments=None):
     """Send an email. In a request, do not wait for the mail server.
 
-    Outside a request, the email goes synchronously (#451). The workers
+    Outside a request, the email goes synchronously. The workers
     do not fork. Thus, the caller gets the error and logs it. A thread
     would hide the error from the task."""
 

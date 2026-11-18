@@ -33,8 +33,8 @@ def _follow_up(output_file, name, step, *args, **kwargs):
 
     The import itself succeeded. A failed step is logged, and the
     session rolls back. The file stays, and the next step runs. The
-    time limit of rq and an interrupt are not caught (#376). The caller
-    lets them pass too (#689)."""
+    time limit of rq and an interrupt are not caught. The caller
+    lets them pass too."""
 
     try:
         return step(*args, **kwargs)
@@ -75,7 +75,7 @@ def _after_commit(
 
     step("worse copies", _delete_worse_copies, worse_local_copies, output_file)
 
-    # The record took the spelling of the new file (#739). The thumb of
+    # The record took the spelling of the new file. The thumb of
     # an episode has the name of its video. It moves, as in a rename.
 
     if file_details.get("respelled_from"):
@@ -100,29 +100,28 @@ def _after_commit(
     # The commit succeeded. Thus, delete the AWS archives of the replaced
     # files. Do it from the handoff queue. Then the sql worker does not
     # wait on the network. The delete is the last step of a file in the
-    # pipeline. Thus, it does not wait in line behind long file work
-    # (Glenn, 2026-10-15).
+    # pipeline. Thus, it does not wait in line behind long file work.
 
-    # A run-scoped upload (#430) moves to its final key now. The target
+    # A run-scoped upload moves to its final key now. The target
     # claims that key first. Thus, the delete of a replaced archive with
     # the same key below skips it.
 
     # The move runs later, and the source is removed now. Thus, the
-    # pending object must exist first (#494). A missing object gets a new
+    # pending object must exist first. A missing object gets a new
     # upload of the source. The check is its own step, and it makes the
-    # first read of the row after the commit (#689). The source goes only
+    # first read of the row after the commit. The source goes only
     # if that step returned True.
 
     # Invariant: a record whose archive is under pending-untouched/ has a
-    # pending move (#690). If the move request fails before its commit,
+    # pending move. If the move request fails before its commit,
     # a source that is not the library file goes to rejects/unarchived,
     # and the replaced archives stay. The weekly S3 sync requests the
     # move again. It does the same
-    # for a move whose job was not queued or did not run (#707). Then the
+    # for a move whose job was not queued or did not run. Then the
     # source is gone already.
 
     # A source in the library that changed during the chain is a new
-    # download (#742). The check comes first. The step below can upload
+    # download. The check comes first. The step below can upload
     # the source when the run-scoped upload is gone. A changed source is
     # not the file of this record, and it must not go up as its archive.
 
@@ -142,11 +141,11 @@ def _after_commit(
     # Fitzflix must not remove the file that it just made.
 
     # The archive move runs later. If the pending upload is gone and the
-    # new upload failed, the source is the only copy of the rip (#494).
+    # new upload failed, the source is the only copy of the rip.
     # Then it goes to rejects/unarchived, out of the import sweep. A
     # failed check or a failed move request does the same.
 
-    # A changed source stays, and its own import is queued (#742). The
+    # A changed source stays, and its own import is queued. The
     # release data that Sonarr or Radarr gave for the path is the data
     # of the new download then. It stays for the import of that
     # download, and Radarr keeps its folder. Thus, the 2 arr steps do
@@ -171,7 +170,7 @@ def _after_commit(
     if not atmos_queued:
         cataloging._remove_staged_output(staged_output)
 
-    # A conversion archives its SDR library file in transcoded/ (#299).
+    # A conversion archives its SDR library file in transcoded/.
     # An Atmos job archives it when it finishes. Thus, the upload waits
     # for that job.
 
@@ -256,7 +255,7 @@ def _atmos_not_lead(audio_tracks):
     also puts its twin before the lossless pair.
 
     A track in the position that the Atmos pipeline gives a twin is
-    there on purpose (Glenn, 2026-08-24). That position is directly
+    there on purpose. That position is directly
     before its TrueHD Atmos source, or before the FLAC twin of the
     source. Thus, such a track does not count."""
 
@@ -308,14 +307,14 @@ def _report_film_move(file, file_path, output_directory):
 
 
 def _restore_arr_record(file_path, output_file):
-    """Queue the arr record update of a download stored under a new name (#671).
+    """Queue the arr record update of a download stored under a new name.
 
     The webhook kept the release data of an arr download for its path.
     When the library file has a different path, arr drops its record at
     the next scan, and it downloads the same release again. Thus, a task
     writes the release data onto the new record. The data leaves Redis
     in each case. It goes on in the arguments of the task, and each try
-    that the task books again carries it (#680)."""
+    that the task books again carries it."""
 
     remembered = take_remembered_download(file_path)
     if not remembered or os.path.realpath(file_path) == os.path.realpath(output_file):
@@ -364,7 +363,7 @@ def _delete_worse_copies(worse_local_copies, output_file):
             )
         remove_triage_snapshots(worse_id)
 
-        # The episode thumb of a deleted TV file has no video left (#469)
+        # The episode thumb of a deleted TV file has no video left
 
         tv_library = os.path.abspath(current_app.config["TV_LIBRARY"])
         if os.path.abspath(worse_path).startswith(tv_library + os.sep):
@@ -395,12 +394,12 @@ def _atmos_handoff(staged_output, output_file, audio_tracks):
 
 
 def _pending_upload_ready(file, file_path, output_file):
-    """Return True if the archive of a committed import does not need its source (#494).
+    """Return True if the archive of a committed import does not need its source.
 
-    Only a run-scoped upload (#430) can need it. Its object must exist
+    Only a run-scoped upload can need it. Its object must exist
     before the source goes. A read of the row that fails raises. Then
     the caller keeps the source, because the state of the archive is
-    not known (#689)."""
+    not known."""
 
     if file_path == output_file:
         return True
@@ -410,7 +409,7 @@ def _pending_upload_ready(file, file_path, output_file):
 
 
 def _request_final_archive_key(file):
-    """Request the archive move of a run-scoped upload to its final key (#430).
+    """Request the archive move of a run-scoped upload to its final key.
 
     The records are committed. Thus, a replaced record no longer claims
     the key, and the move can take it. A record that still claims the
@@ -429,9 +428,9 @@ def _delete_replaced_archive(worse_key):
     The new file can claim the same key that its predecessor held (a
     repointed key, or a re-import on the same basename). The claim can
     also be the pending target of the new file. Then the archive move of
-    that file puts the new rip at the key (#709). Never delete a key
+    that file puts the new rip at the key. Never delete a key
     that a surviving row claims. The task asks for the claim again when
-    it runs (#686)."""
+    it runs."""
 
     if untouched_key_still_claimed(worse_key):
         current_app.logger.info(
@@ -440,7 +439,7 @@ def _delete_replaced_archive(worse_key):
         )
         return
     # The replaced row can name a key with no object. A plain delete
-    # then writes a marker at a key that never existed (#588).
+    # then writes a marker at a key that never existed.
 
     enqueue_task(
         "app.archive.moves.aws_delete",
@@ -466,7 +465,7 @@ def _in_library(path):
 
 
 def _source_changed(file_path, file_details):
-    """Return True if an other program changed a library source during its import (#742).
+    """Return True if an other program changed a library source during its import.
 
     A source with no stamp is never "changed". A fault of the read
     counts as a change. The state of the file is not known then, and a
@@ -491,7 +490,7 @@ CHANGED_SOURCE_DELAY = timedelta(minutes=1)
 
 
 def _import_changed_source(file_path):
-    """Book the import of a library file that an other program changed during an import (#742).
+    """Book the import of a library file that an other program changed during an import.
 
     A source that is gone gets no import, and a warning says so. This
     is best effort. A fault is a warning, and the weekly sync finds a
@@ -542,7 +541,7 @@ def _enqueue_tmdb_enrichment(file, file_details):
     if the movie still has no match. The fetch runs on the request
     queue. It gives its payload to the sql queue for the database writes.
     A filename id tag goes with the task. Then the enrichment fetches
-    that exact title. It does not search by name (#155)."""
+    that exact title. It does not search by name."""
 
     movie = file.movie
     tv_series = file.tv_series
@@ -569,7 +568,7 @@ def _enqueue_atmos_twin(file, atmos_handoff, staged_output):
     """Queue the E-AC-3 Atmos twin of a TrueHD Atmos track. Return True if a job is queued.
 
     A TrueHD Atmos track without its E-AC-3 Atmos twin gets the
-    MediaConvert supplement (#55b). The job comes after the commit. Then
+    MediaConvert supplement. The job comes after the commit. Then
     it sees the complete records. It goes on the handoff queue. The file
     is already in the pipeline. Thus, its twin does not wait behind the
     new imports. CREATE_ATMOS_TWINS turns this step off for passthrough

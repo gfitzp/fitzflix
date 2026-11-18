@@ -3,7 +3,7 @@
 library_name is the one builder of a library file name. The 2 name
 parsers of app.media.importing, reconstruct_filename, the manual-import
 proposal and the TMDB rename use it. retag_quality changes the quality
-tag of a name. A conversion (#292) uses it, because its library file has
+tag of a name. A conversion uses it, because its library file has
 a different quality than its original. hidden gives the dot-prefixed
 name of a work file next to its final file.
 
@@ -40,7 +40,7 @@ def episode_code(season, episode, last_episode=None):
 
 
 def visible_name(name, sanitized=True):
-    """Return a name that the disk does not hide (#717, #722).
+    """Return a name that the disk does not hide.
 
     Invariant: a library name never starts with a period. A name that
     starts with a period is hidden. Plex does not scan it, and each walk
@@ -54,7 +54,7 @@ def visible_name(name, sanitized=True):
     sanitizer removes a quotation mark, and then the periods after the
     mark are at the start. Thus, the first character goes while the
     name on the disk starts with a period. A TV name goes to the disk as
-    it is (sanitized is False, #729). Thus, only a period at its start
+    it is (sanitized is False). Thus, only a period at its start
     goes. A space at the start goes for each name. The result is empty
     when no name is left. The name parsers refuse such a file."""
 

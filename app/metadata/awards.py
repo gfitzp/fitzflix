@@ -133,7 +133,7 @@ def _award_rows(bindings, movie_ids_by_ext):
 
 
 def _fold_undated(entries):
-    """Return the award entries of 1 film without the redundant undated rows (#540).
+    """Return the award entries of 1 film without the redundant undated rows.
 
     A statement with and without its date qualifier gave a dated row and
     an undated row. The set kept both, because the years differ. Thus,

@@ -1,4 +1,4 @@
-"""The quality ranking of the library files (#361).
+"""The quality ranking of the library files.
 
 This module holds the rule that selects the best copy of a film
 (movie_file_rank) and the rule for an episode (best_episode_holders).
@@ -8,7 +8,7 @@ view of MariaDB ranks a film by the same rule. It ranks an episode file
 among the files with the same first episode (tv_file_rank). Thus, it
 does not see an episode inside a file of 2 or more episodes. Each page,
 the S3 sync, the inventory, the season grades and the DVR lineup use
-best_episode_holders for that (#738, #743). The definition
+best_episode_holders for that. The definition
 of the view is RANKED_FILES_VIEW below, and a test compiles the Python
 ranks and compares them with that definition."""
 
@@ -23,7 +23,7 @@ from app.models import MOVIES, TV_SHOWS, File, Movie, RefQuality, TVSeries
 # The order of the copies in a movie group, best first. Never select a
 # fullscreen copy while a widescreen copy exists. Then select the best
 # quality. At the same quality, a real rip ranks above an SDR
-# conversion (#292). A tie goes to the lowest file id. Thus, the winner
+# conversion. A tie goes to the lowest file id. Thus, the winner
 # is always the same.
 
 MOVIE_BEST_ORDER = (
@@ -45,7 +45,7 @@ TV_BEST_ORDER = (
     File.id.asc(),
 )
 
-# The ranked_files reporting view (#273). The window clauses are the
+# The ranked_files reporting view. The window clauses are the
 # order of MOVIE_BEST_ORDER and TV_BEST_ORDER. Migration d4e2a9c71b38
 # created this definition. A change to a rank needs a new migration
 # that runs this string.
@@ -84,7 +84,7 @@ def movie_file_rank():
     """Rank each movie file in its title/feature/edition group by quality.
 
     The order is MOVIE_BEST_ORDER. The ranked_files reporting view uses
-    the same rule (#273)."""
+    the same rule."""
 
     return (
         db.func.row_number()
@@ -108,9 +108,9 @@ def tv_file_rank():
     file, it only carries the optional episode title. Thus, 2 copies of
     the same episode compete, with or without a title in their
     filenames. The order is TV_BEST_ORDER. Only the ranked_files
-    reporting view uses this rank (#273). It does not see a single
+    reporting view uses this rank. It does not see a single
     episode inside a file of 2 or more episodes. No page and no job
-    reads it for "the best copy" (#738). They use best_episode_holders.
+    reads it for "the best copy". They use best_episode_holders.
     """
 
     return (
@@ -192,7 +192,7 @@ def best_episode_holders(pairs):
     """Return {(series id, season, number): (File, RefQuality)} for the best holders.
 
     pairs holds (File, RefQuality) pairs of TV files. Each episode number
-    of a span counts (#479). Thus, a later single file and a span that
+    of a span counts. Thus, a later single file and a span that
     holds the same episode compete, whatever their first episodes are.
     tv_file_rank groups by the first episode only. It cannot see that."""
 
@@ -210,7 +210,7 @@ def best_episode_holders(pairs):
 def episode_rankings(pairs):
     """Return {(series id, season, number): [(File, RefQuality), ...]}, best first.
 
-    Each episode number of a span is its own group (#479). The order in
+    Each episode number of a span is its own group. The order in
     a group is TV_BEST_ORDER."""
 
     groups = {}
@@ -277,7 +277,7 @@ SeasonGrade = namedtuple(
 
 
 def season_grades(series_ids=None):
-    """Return {(series id, season): SeasonGrade} for the TV library (#479).
+    """Return {(series id, season): SeasonGrade} for the TV library.
 
     This is the one season grade of the TV library page, the In-library
     badge, and the TV shopping list. Each episode number gets its best
@@ -342,7 +342,7 @@ QualityTier = namedtuple("QualityTier", "id preference physical_media")
 
 
 def criterion_settled(file, quality, criterion_pref, threshold, disc_owned):
-    """Return True if a library copy of a Criterion film needs nothing more (#77a).
+    """Return True if a library copy of a Criterion film needs nothing more.
 
     The disc must be owned AND the copy must satisfy the format of the
     release, capped at the threshold. Decided by Glenn: an owned disc
@@ -418,7 +418,7 @@ def upgrade_threshold():
 
 
 def find_better_files(details):
-    # A message to the future Glenn (written by Glenn, 2020-08-02):
+    # A message to the future Glenn:
     #
     # This place is a message, and part of a system of messages. Give
     # it your attention.
@@ -454,7 +454,7 @@ def find_better_files(details):
     # - If the existing file is a full screen version, always replace
     #   it with a non-full screen version. Do this even if the quality
     #   is lower. The removal covers only the full screen files inside
-    #   the episode span of the new file (#575). A full screen file
+    # the episode span of the new file. A full screen file
     #   with a wider span stays, because no other copy has its other
     #   episodes.
     #
@@ -554,16 +554,16 @@ def find_better_files(details):
         #
         # If the new file is a full screen version, these existing
         # files prevent the import of this file:
-        # - same TV episode range, also full screen, in a better quality
-        #   (#737). A copy of the same quality does not block. The new
+        # - same TV episode range, also full screen, in a better quality.
+        # A copy of the same quality does not block. The new
         #   file replaces it, as for a film and for a widescreen episode.
         # - wider TV episode range, also full screen, in the same or
         #   better quality
         # - same or wider TV episode range, NOT full screen, in any
-        #   quality (#553)
+        # quality
 
         # The span of an existing file is the same, or it holds the span
-        # of the new file and more (#479). A span "S19E06-E07" holds a
+        # of the new file and more. A span "S19E06-E07" holds a
         # single "S19E07". The first episodes differ.
 
         episode = details["episode"]
@@ -597,7 +597,7 @@ def find_better_files(details):
                         ).self_group(),
                         # Any non-full screen copy of the same or a wider
                         # span blocks a full screen file, as in the movie
-                        # branch (#553). Before, a full screen Bluray went
+                        # branch. Before, a full screen Bluray went
                         # in beside a widescreen DVD.
                         db.and_(
                             db.or_(same_span, wider_span),
@@ -639,7 +639,7 @@ def find_better_files(details):
                 .all()
             )
 
-    # A conversion to SDR (#292) has 2 more rules. An admin who
+    # A conversion to SDR has 2 more rules. An admin who
     # chose "Import" for a held conversion replaces the existing file,
     # whatever its quality. A file with HDR or BT.2020 colors never
     # blocks a conversion. The conversion replaces it.
@@ -655,7 +655,7 @@ def find_better_files(details):
 def _inside_span(file):
     """Return the filters of the TV files whose span is inside the span of file.
 
-    A single "S19E07" is inside a span "S19E06-E07" (#479). The first
+    A single "S19E07" is inside a span "S19E06-E07". The first
     episodes differ. Thus, the filter compares the 2 ends of the span."""
 
     last_episode = file.last_episode if file.last_episode is not None else file.episode
@@ -718,7 +718,7 @@ def find_worse_files(file, replace_existing=False):
     These are the candidates for removal after an upgrade. file is the
     File row of the import. replace_existing is the "Import" choice of
     an admin for a held conversion. A
-    conversion to SDR (#292) also outranks the files with HDR
+    conversion to SDR also outranks the files with HDR
     or BT.2020 colors, in any quality. After an admin chose "Import"
     for a held conversion, it outranks every file of its title.
     """
@@ -739,7 +739,7 @@ def find_worse_files(file, replace_existing=False):
                 or f.quality.preference < file.quality.preference
                 or (file.media_library == TV_SHOWS and _narrower_span(f, file))
                 # A widescreen file replaces a full screen copy at any
-                # quality (#553). A conversion is no exception (#575).
+                # quality. A conversion is no exception.
                 or (f.fullscreen and not file.fullscreen)
             ]
         worse_files += [
@@ -756,7 +756,7 @@ def _worse_quality_rule(file):
     A copy of the same screen format is worse at the same or a lower
     quality. A full screen copy is also worse than a full screen file at
     the same or a lower quality. A non-full screen file replaces each
-    full screen copy, at any quality (#553). That is the rule of the
+    full screen copy, at any quality. That is the rule of the
     header of find_better_files. The preference test kept a full screen
     Bluray beside the new widescreen DVD."""
 

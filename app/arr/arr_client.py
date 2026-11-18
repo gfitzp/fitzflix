@@ -14,13 +14,9 @@ Only Radarr has the request, the withdraw and the badge cache. Each app
 has its own nightly path check (app.arr.radarr_push, app.media.series_rename).
 Radarr finds a film by tmdbId. Sonarr finds a series by tvdbId.
 
-The HTTP library (decided 2026-10-25): the API calls use requests. An
-old note said that requests crashed this machine with a segmentation
-fault on arr calls. But _radarr has used requests for every Radarr
-push since 2026-08-19, and _sonarr since #289. supervisord.log shows no
-SIGSEGV of a worker in that time. Thus, the note was stale. The
-command and history helpers of app.api.arr still use urllib3. They
-work, and a change gives nothing.
+The HTTP library: the API calls use requests. The command and history
+helpers of app.api.arr use urllib3. Both work, and a change gives
+nothing.
 """
 
 import json
@@ -49,7 +45,7 @@ from app.media.importing import chain
 
 # The connect and read timeouts of an arr call, in seconds. A host that
 # is down fails at the connect. Thus, it costs 5 seconds, not 30. The
-# read stays long for the full movie list (#268).
+# read stays long for the full movie list.
 
 ARR_TIMEOUT = (5, 30)
 
@@ -199,9 +195,9 @@ def rename_to_quality(arr, call, owner_id, file_id, quality_name, wait):
 
     Return the new absolute path from the record. The naming format of
     arr holds the quality title. Thus, the name of arr has the quality
-    of Fitzflix (#288, #289). The import can still store the file under
+    of Fitzflix. The import can still store the file under
     a different name. Then restore_download_record writes the release
-    data onto the new record of arr (#671). wait is the longest wait for
+    data onto the new record of arr. wait is the longest wait for
     the RenameFiles command, in seconds."""
 
     record_path = f"/api/v3/{arr.record}/{int(file_id)}"
@@ -222,14 +218,14 @@ def rename_to_quality(arr, call, owner_id, file_id, quality_name, wait):
     return call("GET", record_path)["path"]
 
 
-# The release data of an arr download, for the import of its path (#671).
+# The release data of an arr download, for the import of its path.
 # The import can store the file under a different name. Then arr drops
 # its record at the next disk scan, and the new record has no scene name
 # and no release group. arr then downloads the same release again. The
 # key expires by itself when no import reads it.
 
-# Invariant: the data lives as long as the import of its file can take
-# (#687). Only the end of the import reads it. The waits before that
+# Invariant: the data lives as long as the import of its file can take.
+# Only the end of the import reads it. The waits before that
 # end can take more than 7 days: the space waits have no limit, and the
 # transcode queue can be long. A held import waits for the admin. Thus,
 # the key lives 30 days, and each move to a new path gives it 30 days
@@ -286,13 +282,13 @@ def take_remembered_download(path):
 
     Return None when nothing was kept. A held file that leaves with no
     import calls this too. Then a later held file of the same name with
-    no release data cannot read the data of this file (#687)."""
+    no release data cannot read the data of this file."""
 
     raw = current_app.redis.getdel(DOWNLOAD_RECORD_KEY.format(path=path))
     return json.loads(raw) if raw else None
 
 
-# A run of the record update makes 1 rescan (#680). The rescan can fail
+# A run of the record update makes 1 rescan. The rescan can fail
 # or not end in time, or the record is not at the path yet. Then the run
 # books the task again after RESTORE_RETRY_DELAY. The last try is
 # RESTORE_MAX_TRIES, about 1 hour after the import. A season batch makes
@@ -315,22 +311,22 @@ def restore_download_record(
 ):
     """Write the release data of a download onto the arr record of its library file.
 
-    The import stored the file under a different name than arr gave it
-    (#671). arr rescans, and it then has a new record at library_path
-    with no scene name and no release group. This function finds that
-    record and PUTs it back whole with the 2 values. arr keeps a scene
-    name only when it is a scene title. It keeps a release group always.
-    Return True if a record was written.
+        The import stored the file under a different name than arr gave it.
+    arr rescans, and it then has a new record at library_path
+        with no scene name and no release group. This function finds that
+        record and PUTs it back whole with the 2 values. arr keeps a scene
+        name only when it is a scene title. It keeps a release group always.
+        Return True if a record was written.
 
-    A run makes 1 rescan (#680). The rescan can fail or not end in time.
-    arr can also give back an older rescan that runs already, or be
-    down. Then no record is written yet, and the task books itself again
-    with the same data and tries 1 higher. The last try writes 1
-    warning, and the release data is lost. A record outside the root
-    folders, or a library file that is gone, stops the tries. A library
-    volume that does not answer is not a missing file. Then the task
-    books itself again. prepare runs first in each try. tries is the
-    number of this try."""
+        A run makes 1 rescan. The rescan can fail or not end in time.
+        arr can also give back an older rescan that runs already, or be
+        down. Then no record is written yet, and the task books itself again
+        with the same data and tries 1 higher. The last try writes 1
+        warning, and the release data is lost. A record outside the root
+        folders, or a library file that is gone, stops the tries. A library
+        volume that does not answer is not a missing file. Then the task
+        books itself again. prepare runs first in each try. tries is the
+        number of this try."""
 
     if not os.path.exists(library_path):
         if not videos._dead_volumes([library_path]):
@@ -423,7 +419,7 @@ def _book_restore_try(
     The job id holds the path and the try. Thus, it differs from the id
     of the running job. A booking of the same path that waits goes
     first. Thus, 1 path has at most 1 booking. requeue deletes a finished
-    job under the new id (#371, #700). The check of the id here stays. A
+    job under the new id. The check of the id here stays. A
     job of the same path and try can wait in the queue or run. A second
     booking would then run that try 2 times."""
 
@@ -461,13 +457,12 @@ def _book_restore_try(
 def rename_download_locally(arr, downloaded_path, new_path, owner_id, title=None):
     """Rename a download in Fitzflix, then ask arr to rescan.
 
-    This was the only way before #288 and #289. It stays as the fallback
-    when arr cannot rename its own file. Then arr can lose the file. arr
+    This is the fallback when arr cannot rename its own file. Then arr can lose the file. arr
     can send a webhook when Fitzflix has no address for it. The rename
     is done in that case too. Thus, the caller still gets to the
     localization.
 
-    A call that renames nothing sends no command to arr (#672). A rescan
+    A call that renames nothing sends no command to arr. A rescan
     then changed nothing on disk. It made Sonarr drop the records of the
     episodes that the import had stored under the Fitzflix name."""
 
@@ -492,7 +487,7 @@ def fenced_arr_path(service, path):
 
     The webhook payload goes through the root-folder fence of
     downloaded_path. The path of an arr file record must go through the
-    same fence (#399). A misconfigured arr must not point an import at a
+    same fence. A misconfigured arr must not point an import at a
     file outside the root folders. A refusal is logged."""
 
     from app.api.arr import folder_under_roots
@@ -510,7 +505,7 @@ def fallback_rename(downloaded_path, new_path, arr_path, rename_locally, service
     """Rename a download in Fitzflix after the arr rename failed, and return
     the path to import.
 
-    The arr can complete its rename after Fitzflix stops the wait (#325).
+    The arr can complete its rename after Fitzflix stops the wait.
     For example, the RenameFiles command waits behind a long refresh. Then
     the download is not at its old path. Fitzflix asks the arr for the path
     of its record, then looks for the new name. A failure is logged, and
@@ -568,7 +563,7 @@ def adopt_download(
     Thus, the name of arr has the quality of Fitzflix. If arr cannot do
     it, Fitzflix renames the file as before (rename_locally). In both
     cases the import goes on the queue after the rename. The release data
-    that the webhook kept moves to the new path (#671)."""
+    that the webhook kept moves to the new path."""
 
     try:
         path = rename_to_quality(arr, call, owner_id, file_id, quality, wait)

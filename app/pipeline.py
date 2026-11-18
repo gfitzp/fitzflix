@@ -10,7 +10,7 @@ The state updates come from JOB LIFECYCLE HOOKS, not from code in the
 task bodies. TrackedQueue records "queued" or "scheduled" when a job is
 enqueued. A deferred retry shows as "scheduled". PipelineWorker records
 "started", "done", or "failed" around the execution. A job that did
-not do its work asks for "skipped" in place of "done" (#766). The STAGES
+not do its work asks for "skipped" in place of "done". The STAGES
 registry derives the file of a job from the function name and the
 arguments of the job. Tasks that the registry does not know are not
 trails (SQL refreshes, maintenance sweeps). The in-task emitters are
@@ -31,7 +31,7 @@ name). That name carries the title of the film or the episode. Thus, it
 is unique per file. The library name is not. Every movie trailer lands
 in the library as "Trailer.mkv". Two films can each have an interview
 named "James B. Harris.mkv". Trails keyed by the library name merged
-the chips of 4 trailers of different films into 1 trail (#649). The
+the chips of 4 trailers of different films into 1 trail. The
 parse can rename a file while an import is in progress. The import name
 does not change. Thus, 1 file stays 1 trail through the import. A
 series rename changes the import name. Then migrate_renamed_file moves
@@ -69,8 +69,8 @@ ACTIVE_KEY = "fitzflix:pipeline:active"
 TRAIL_TTL_SECONDS = 7 * 86400
 ACTIVE_LIMIT = 100
 
-# The waiting jobs that an admin moved to the front of their queue
-# (#236). The score is the time of the move. The queue page lists these
+# The waiting jobs that an admin moved to the front of their queue.
+# The score is the time of the move. The queue page lists these
 # jobs first, the newest move at the top. A worker removes the entry
 # when it starts the job.
 
@@ -97,7 +97,7 @@ return index
 """
 
 
-# The on-demand retry (Glenn, 2026-10-30). The job must leave the
+# The on-demand retry. The job must leave the
 # ScheduledJobRegistry before it goes into the queue. The scheduler
 # reads the due ids, enqueues them, then removes them, in 3 steps. A
 # retry that is due already belongs to it. Thus, the script claims only
@@ -120,7 +120,7 @@ def _basename_from_path(args, kwargs):
     """Return the basename of the file from a leading path argument.
 
     A retry passes the path as the keyword file_path. Without it, a
-    waiting retry left no chip on the trail (#262 review)."""
+    waiting retry left no chip on the trail."""
 
     path = args[0] if args else (kwargs or {}).get("file_path")
     return os.path.basename(path) if path else None
@@ -237,8 +237,8 @@ STAGES = {
 def _basename_from_state(args, kwargs):
     """Return the trail name in the state dict of an Atmos continuation job.
 
-    A state from before #649 has no trail_basename. Its basename is the
-    library name, which keyed the trail then."""
+    An old state has no trail_basename. Its basename is the library
+    name, which is the key of its trail."""
 
     state = args[0]
     return state.get("trail_basename") or state["basename"]
@@ -253,8 +253,8 @@ CONTINUATIONS = {
 # The own chips of jobs that record all of their work as TaskPhases
 # chips. While the job waits or runs, its own chip shows that more work
 # comes. When the job is done, its phase chips tell the full story.
-# Thus, pipeline_trails hides the own chip when it is done (Incredibles
-# 2, 2026-10-15). A failed own chip stays red.
+# Thus, pipeline_trails hides the own chip when it is done.
+# A failed own chip stays red.
 
 PHASED_STAGES = frozenset({"Adding Atmos twin"})
 
@@ -483,7 +483,7 @@ def _apply_stage_event(trail, first_run, first_enqueued, event):
         entry = trail[position]
         if entry.get("job") == job_id and entry.get("stage") == stage:
             # A running job that books itself again under its own id waits
-            # for a lock a second time (#665). The id of the first wait is
+            # for a lock a second time. The id of the first wait is
             # fixed. The entry is "deferred", as the first wait is under a
             # different id. Thus, the stamp of the worker that returns now
             # changes nothing. The mark "rebooked" keeps the entry in the
@@ -533,7 +533,7 @@ def _apply_stage_event(trail, first_run, first_enqueued, event):
                 break
 
             # The Requeue of a failed job on the System page pushes the
-            # same job id again (#548). That is a retry after a failure.
+            # same job id again. That is a retry after a failure.
             # It continues the same journey. Thus, the failed entry takes
             # the new status in place, and the anchors hold.
 
@@ -582,7 +582,7 @@ def _apply_stage_event(trail, first_run, first_enqueued, event):
             # job that booked the wait is. The chip of the wait stands
             # for the stage. A "skipped" chip here came after the chip
             # of the wait. The card then ended "not done" after the wait
-            # stored the archive (review of #766).
+            # stored the archive.
 
             if status == "skipped" and any(
                 other.get("stage") == entry.get("stage")
@@ -605,7 +605,7 @@ def _apply_stage_event(trail, first_run, first_enqueued, event):
         # goes BEFORE the own entry of the job. Then the chips read in
         # pipeline order, not in the order of the first stamp. The
         # job-level entry always wins that order, because it exists from
-        # the enqueue time (Glenn, 2026-08).
+        # the enqueue time.
 
         # A waiting stamp can arrive on an empty or fully settled trail.
         # Then it opens a NEW journey through the pipeline (a re-import, or
@@ -616,7 +616,7 @@ def _apply_stage_event(trail, first_run, first_enqueued, event):
         if rerun:
             fresh_journey = True
         elif status in ("queued", "scheduled", "started") and not before_job:
-            # A rebooked entry waits (#665). It is not settled.
+            # A rebooked entry waits. It is not settled.
             fresh_journey = not trail or all(
                 existing.get("status") in ("done", "skipped", "deferred")
                 and not existing.get("rebooked")
@@ -628,7 +628,7 @@ def _apply_stage_event(trail, first_run, first_enqueued, event):
         # copying in, a title lock that another task holds, and a transient
         # copy error. The running job then returns without error, and its
         # worker stamped it done. A "Localized" chip showed before
-        # "Localizing · waiting to retry" (NOVA, 2026-10-15). Now the
+        # "Localizing · waiting to retry". Now the
         # running entry is "deferred". The trail does not show it. The
         # retry chip stands for the stage.
 
@@ -660,15 +660,15 @@ def _apply_stage_event(trail, first_run, first_enqueued, event):
 
         # The first entry of a new journey carries a mark. The Queue table
         # shows the trail from the last mark only. The File Activity page
-        # shows the full history (#297).
+        # shows the full history.
 
         if fresh_journey:
             new_entry["journey"] = True
         trail.insert(index, new_entry)
 
     # A sub-stage event can change the own entry of its job in the same
-    # atomic write. Thus, only 1 chip reads "running" at a time (Glenn,
-    # 2026-08-20). The job chip goes to "queued" while its sub-stage runs.
+    # atomic write. Thus, only 1 chip reads "running" at a time.
+    # The job chip goes to "queued" while its sub-stage runs.
     # It returns to "started" after. This is an update only. This never
     # creates a sibling.
 
@@ -685,7 +685,7 @@ def _apply_stage_event(trail, first_run, first_enqueued, event):
     # banners (the original banner-ordering request of Glenn). It does not
     # move while the journey continues. Thus, a file that steps between
     # queues keeps its place. A new journey (a re-import) sets it again.
-    # The anchor is UTC with an explicit offset (#405). A local wall-clock
+    # The anchor is UTC with an explicit offset. A local wall-clock
     # time is ambiguous in the repeated hour of the fall-back night. The
     # offset also tells a new anchor from a local one of an older trail.
 
@@ -713,7 +713,7 @@ def _log_traceback():
 
     The trail is advisory. A failure here must never fail the task or the
     page that wrote or read it. Outside an app context, the warning goes
-    to the "app" logger. Its records pass the secret redactor (#453)."""
+    to the "app" logger. Its records pass the secret redactor."""
 
     message = traceback.format_exc()
     try:
@@ -729,7 +729,7 @@ def _best_effort(fallback=None):
 
     On an exception, the function returns fallback(*args, **kwargs), or
     None with no fallback. The timeout of rq and an interrupt are not
-    caught (#376). The worker raises the timeout in the task process.
+    caught. The worker raises the timeout in the task process.
     If a trail call catches it, the job runs on with no time limit."""
 
     def decorate(function):
@@ -752,11 +752,11 @@ def _best_effort(fallback=None):
 def migrate_trail(connection, old_basename, new_basename):
     """Merge the trail of a file under its new import name.
 
-    A series rename gives each episode a new import name. Without this,
-    the card of the new name has no chips for the life of the trail
-    (#375). An alias redirects the writes that arrive under the old name
-    AFTER the rename onto the merged trail. This is advisory, like each
-    hook. It logs and catches failures. The retries are limited."""
+        A series rename gives each episode a new import name. Without this,
+        the card of the new name has no chips for the life of the trail.
+    An alias redirects the writes that arrive under the old name
+        AFTER the rename onto the merged trail. This is advisory, like each
+        hook. It logs and catches failures. The retries are limited."""
 
     if not old_basename or not new_basename or old_basename == new_basename:
         return
@@ -784,7 +784,7 @@ def migrate_trail(connection, old_basename, new_basename):
                     pipe.multi()
                     pipe.set(alias_key, new_basename, ex=TRAIL_TTL_SECONDS)
                     # A rename back to an earlier name left a 2-cycle of
-                    # aliases (#550). _resolve_basename then returned its
+                    # aliases. _resolve_basename then returned its
                     # start, and later stamps split the file into 2 cards.
                     pipe.delete(ALIAS_KEY.format(digest=new_digest))
                     pipe.execute()
@@ -827,10 +827,10 @@ def migrate_trail(connection, old_basename, new_basename):
 
 @_best_effort()
 def migrate_renamed_file(connection, old_names, new_names):
-    """Move the trail of a renamed File row under its new import name (#375).
+    """Move the trail of a renamed File row under its new import name.
 
     old_names and new_names are (basename, untouched_basename) pairs.
-    The trail is keyed by the untouched name (#649). A row with no
+    The trail is keyed by the untouched name. A row with no
     untouched name is keyed by its library name. A Sonarr adoption
     changes only the library name. Then the trail stays where it is."""
 
@@ -1035,7 +1035,7 @@ def _waiting_chip_fate(connection, job_id):
     ended and its own stamp was lost. On 2026-10-22, 6 track jobs failed
     before the failure stamp could find their file. Their chips stayed
     "queued" for 7 days. A finished job with the mark of
-    mark_job_skipped settles to "skipped" (#766 review)."""
+    mark_job_skipped settles to "skipped"."""
 
     if connection.exists(CONTINUES_KEY.format(job_id=job_id)):
         return None
@@ -1067,7 +1067,7 @@ def _job_meta(job):
 
 @_best_effort()
 def mark_job_skipped():
-    """Make the worker stamp the chip of the current job "skipped" (#766).
+    """Make the worker stamp the chip of the current job "skipped".
 
     A green chip means that the stage did its work. A task that returns
     before its stage completed its work calls this. An example is an
@@ -1085,7 +1085,7 @@ def mark_job_skipped():
 
 @_best_effort()
 def clear_job_skipped():
-    """Remove a "skipped" mark from the meta of the current job (#766 review).
+    """Remove a "skipped" mark from the meta of the current job.
 
     A lock wait books a fixed id. It can book that id while the job under
     the id runs. Then rq keeps the meta field of the hash for the
@@ -1304,7 +1304,7 @@ def queue_rows(tasks, trails):
     """Return the rows of the queue page: the jobs, then the orphan trails.
 
     _queue_rows.html renders the table from it, at the first paint and
-    at each poll (#639). Each row is {"task": task or None, "trail": trail or None}. A job finds
+    at each poll. Each row is {"task": task or None, "trail": trail or None}. A job finds
     the trail of its file by the job id stamped on the trail entries. A
     trail whose last stage is not done or skipped, and that no listed job
     owns, comes after the jobs as a "no job in queue" row."""
@@ -1337,7 +1337,7 @@ def queue_rows(tasks, trails):
 
 
 def current_journey(entries):
-    """Return the entries of the newest journey of a trail (#297).
+    """Return the entries of the newest journey of a trail.
 
     A journey starts at the last entry with the journey mark. The
     sub-stages of that job sit directly before it. Thus, they belong to
@@ -1382,7 +1382,7 @@ def pipeline_trails(connection, limit=25, journey_only=False):
             if journey_only:
                 raw_entries = current_journey(raw_entries)
             # A deferred attempt does not show. Its retry chip stands for
-            # the stage. A rebooked entry is its own retry chip (#665). The
+            # the stage. A rebooked entry is its own retry chip. The
             # done own chip of a phased job does not show when the job has
             # phase chips. A job with no phase chips keeps it, because it
             # is the only record of the job.
@@ -1447,7 +1447,7 @@ class TrackedQueue(Queue):
 
 
 def move_to_front(queue, job_id):
-    """Move a waiting job to the front of its queue (#236).
+    """Move a waiting job to the front of its queue.
 
     The return value is the old index of the job in the queue. It is
     None when the job does not wait in the queue. A worker possibly
@@ -1473,7 +1473,7 @@ def retry_now(queue, job_id, front=True):
     not booked on this queue. "due" is a job whose time came already.
     The scheduler moves that job within seconds, so this leaves it. A
     moved job gets the front mark of move_to_front. front=False puts it
-    at the end of the queue with no mark (#664). The claim and the
+    at the end of the queue with no mark. The claim and the
     enqueue are 2 steps. A crash between them loses the job."""
 
     from rq.registry import ScheduledJobRegistry
@@ -1503,7 +1503,7 @@ def front_times(connection, job_ids):
 
 
 class _ErrorCounter(logging.Handler):
-    """Count the records at ERROR or higher that reach the "app" logger (#759).
+    """Count the records at ERROR or higher that reach the "app" logger.
 
     The failure report of PipelineWorker reads the count. A job that
     logged its own error at ERROR sent its mail already. The count is
@@ -1554,8 +1554,8 @@ class PipelineWorker(SimpleWorker):
     """A SimpleWorker that stamps the trail around the execution.
 
     It stamps started when it picks up a job. It stamps done or failed
-    when the job completes. It reports a failed job on the "app" logger
-    (#759)."""
+    when the job completes. It reports a failed job on the "app" logger.
+    """
 
     def __init__(self, *args, **kwargs):
         """Build the worker of rq. Then add the failure report to its exception handlers."""
@@ -1570,7 +1570,7 @@ class PipelineWorker(SimpleWorker):
         """Stamp started and clear a front mark. Then run the job as SimpleWorker does.
 
         The worker takes the error count of its thread before the job.
-        The failure report compares the count only for this job (#759)."""
+        The failure report compares the count only for this job."""
 
         self._errors_before_job = self._error_counter.count
         self._running_job_id = job.id
@@ -1582,7 +1582,7 @@ class PipelineWorker(SimpleWorker):
             self._running_job_id = None
 
     def report_job_exception(self, job, exc_type, exc_value, tb):
-        """Log 1 record on the "app" logger for a failed job (#759).
+        """Log 1 record on the "app" logger for a failed job.
 
         rq logs the exception of a job only on its own logger, to the
         stderr file of the worker. The mail and the log file of Fitzflix
@@ -1647,7 +1647,7 @@ class PipelineWorker(SimpleWorker):
     def handle_job_success(self, job, queue, started_job_registry):
         """Run the success handling of rq. Then stamp the trail done or skipped.
 
-        A job that called mark_job_skipped is "skipped" (#766). The first
+        A job that called mark_job_skipped is "skipped". The first
         Atmos job sets trail_continues in its meta. Its run is not done,
         so the worker leaves its chip open."""
 

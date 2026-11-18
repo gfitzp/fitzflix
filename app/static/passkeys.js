@@ -1,4 +1,4 @@
-// Passkeys (#669). A page gives the browser the options of a ceremony,
+// Passkeys. A page gives the browser the options of a ceremony,
 // the authenticator answers, and the page posts the answer. Each post
 // carries the csrf token of the page in a header. The buttons appear
 // only when the browser supports WebAuthn. The addresses of the routes
@@ -40,7 +40,7 @@
 	// are not: the sign-in page after a redirect when the session ended,
 	// the error page of a proxy during a restart, and an error page of
 	// the server. The script read each answer as JSON first, and the
-	// person saw the message of the parser of the browser (#755). The
+	// person saw the message of the parser of the browser. The
 	// text of an ended session is whole: no password helps then. The
 	// text of a server fault says "try again" itself (again).
 
@@ -152,7 +152,7 @@
 	}
 
 	// Add a passkey to the signed-in account (Profile page). The add
-	// form has the identity fields (#675). The server checks the proof
+	// form has the identity fields. The server checks the proof
 	// before it gives the options. The proof is a passkey confirmation
 	// when the form has the hidden field and no typed password.
 
@@ -214,7 +214,7 @@
 	var sentButtons = [];
 
 	// The path that the form posts to. The server binds the passkey
-	// answer to this path (#676). An empty action is the page itself.
+	// answer to this path. An empty action is the page itself.
 
 	function formPath(form) {
 		return new URL(form.getAttribute("action") || "", window.location.href).pathname;

@@ -19,7 +19,7 @@ app = LocalProxy(get_app)
 # A second receive of a message gives it a new receipt handle. SQS can
 # ignore a delete with an older handle. A restore message is about 1 S3
 # object. Thus, the poll records the newest handle under the S3 key, on
-# every receive (#617). Only the poll writes it. Whoever deletes the
+# every receive. Only the poll writes it. Whoever deletes the
 # message deletes the entry.
 
 SQS_HANDLE_KEY = "fitzflix:sqs:handle:{key}"
@@ -27,7 +27,7 @@ SQS_HANDLE_SECONDS = 14 * 86400
 
 
 def record_receipt_handle(key, receipt_handle):
-    """Record the newest receipt handle of the restore message of key (#617)."""
+    """Record the newest receipt handle of the restore message of key."""
 
     current_app.redis.set(
         SQS_HANDLE_KEY.format(key=key), receipt_handle, ex=SQS_HANDLE_SECONDS
@@ -46,7 +46,7 @@ def _latest_receipt_handle(receipt_handle, key=None):
 
 
 def _message_comes_back(receipt_handle, key):
-    """Return True if a restore message of key exists that SQS delivers again (#658).
+    """Return True if a restore message of key exists that SQS delivers again.
 
     A download that a page queued for a readable object has no message.
     A Redis fault counts as a message. Then the 14-day sweep ends the
@@ -59,7 +59,7 @@ def _message_comes_back(receipt_handle, key):
 
 
 def delete_download_message(receipt_handle, key, note="message", sqs_client=None):
-    """Delete the restore message of key, if there is one (#572, #617).
+    """Delete the restore message of key, if there is one.
 
     A job that started with no handle can get one later through the
     record of the poll. Thus, the newest handle decides. Return True if
@@ -99,7 +99,7 @@ def delete_sqs_message(sqs_client, receipt_handle, note="message", key=None):
     return True
 
 
-# A pending restore is a state of the File row (#610). The request sets
+# A pending restore is a state of the File row. The request sets
 # File.restore_requested_at. While it is set, the file page disables its
 # edit and download forms, and each caller of
 # refuse_while_restore_pending refuses. These are the track edits, the
@@ -117,7 +117,7 @@ RESTORE_PENDING_MESSAGE = (
 
 
 def mark_restore_pending(key):
-    """Record a restore request of key on each File row that claims it (#610).
+    """Record a restore request of key on each File row that claims it.
 
     The archive or the transcoded/ copy of a row can be key. Each
     request records its own time. A key with no File row (an
@@ -134,10 +134,10 @@ def mark_restore_pending(key):
 
 
 def end_restore_request(file_id):
-    """Clear the pending restore of the File row file_id (#610).
+    """Clear the pending restore of the File row file_id.
 
     download_task calls this when the download ends with no retry, no
-    new restore and no SQS message that comes back (#658). Thus, a form
+    new restore and no SQS message that comes back. Thus, a form
     never stays off for a restore that does not come. The row id holds
     when an archive move changes the key during the download. A fault of the clear goes to the log. The 14-day sweep
     then clears the row. This commits."""
@@ -159,7 +159,7 @@ def end_restore_request(file_id):
 
 
 def end_restore_requests_of_key(key):
-    """Clear the pending restore of each row that claims key (#613).
+    """Clear the pending restore of each row that claims key.
 
     aws_restore calls this when a request that a page recorded cannot
     be made: the key is gone from S3, or S3 refuses it. Thus, a form
@@ -180,7 +180,7 @@ def end_restore_requests_of_key(key):
 
 
 def request_restore(key, tier="Standard", description=None):
-    """Record a restore request of key on its rows, then queue the request (#613).
+    """Record a restore request of key on its rows, then queue the request.
 
     A page calls this. The record comes before the queue. Thus, the
     page that the request redirects to shows the forms disabled at
@@ -197,7 +197,7 @@ def request_restore(key, tier="Standard", description=None):
 
 
 def refuse_while_restore_pending(file):
-    """Return RESTORE_PENDING_MESSAGE if a restore of the file is pending, else None (#610).
+    """Return RESTORE_PENDING_MESSAGE if a restore of the file is pending, else None.
 
     Each writer calls this after it takes the title lock. A refusal
     changes nothing. The value comes from the database, not from the
@@ -213,7 +213,7 @@ def refuse_while_restore_pending(file):
 
 
 def expire_restore_requests(max_age_days):
-    """Clear each pending restore that is older than max_age_days (#610).
+    """Clear each pending restore that is older than max_age_days.
 
     A chain of a download waits for a volume for 1 day at most. A request
     that is older than the cap has no download any more. Return the
@@ -240,11 +240,11 @@ def sqs_retrieve_task():
         s3_client = aws_clients.aws_s3_client(with_retries=True)
 
         # Extend the timeout and the restore period of a message whose
-        # download or archive move (#369) runs or waits in the file queue.
+        # download or archive move runs or waits in the file queue.
 
         # The download job of each key that waits, runs, or waits for a
         # retry. A message that comes back for such a key gets no second
-        # download. Its new receipt handle goes under the key (#617). The
+        # download. Its new receipt handle goes under the key. The
         # move jobs are keyed the same way, by the key that they move.
 
         downloads_by_key = {}
@@ -283,7 +283,7 @@ def sqs_retrieve_task():
                     )
                     # S3 counts the days of a new request from now. They
                     # do not add to the old expiry. "Days": 1 cut the
-                    # 2-day copy of aws_restore to 1 day (#320).
+                    # 2-day copy of aws_restore to 1 day.
 
                     s3_client.restore_object(
                         Bucket=current_app.config["AWS_BUCKET"],
@@ -362,7 +362,7 @@ def _file_claiming(key):
     """Return the File row whose archive or transcoded/ copy is key, or None.
 
     2 rows can share a key. A row with a pending move of the key comes
-    first (#385). Else the restore of the move goes to a download."""
+    first. Else the restore of the move goes to a download."""
 
     claimants = File.query.filter(
         db.or_(File.aws_key == key, File.aws_transcoded_key == key)
@@ -380,14 +380,14 @@ def _file_claiming(key):
 def _route_restore(sqs_client, key, receipt_handle, downloads_by_key, moves_by_key):
     """Queue the job of a completed restore of key.
 
-    A row with a pending move of key gets the move (#369). The copy then
+    A row with a pending move of key gets the move. The copy then
     happens while the restored copy is readable. A key that no record
     claims gets nothing. A moved archive leaves such a key, and a
     download of it would import an old file under its key name. The
     message is deleted. Each other key gets a download.
 
     2 rows can share a key. A user can request the download of the key
-    while a move of it waits (#385 follow-up). Then the key gets both
+    while a move of it waits. Then the key gets both
     jobs. The download goes first and has no receipt handle. The move
     waits for the download, and then it deletes the message."""
 
@@ -436,7 +436,7 @@ def _route_restore(sqs_client, key, receipt_handle, downloads_by_key, moves_by_k
 
 
 def restore_would_replace_newer(file, key=None):
-    """Return True if a direct restore would replace a newer library file (#496).
+    """Return True if a direct restore would replace a newer library file.
 
     A stale row has a library file that changed after its archive. A
     modified/ or transcoded/ restore over it would bring back the older
@@ -453,7 +453,7 @@ def restore_would_replace_newer(file, key=None):
 
 
 def restores_directly(key):
-    """Return True if a restore of this key goes straight into the library (#299).
+    """Return True if a restore of this key goes straight into the library.
 
     A modified/ or transcoded/ object is a library file. An untouched/
     object is a rip, and it goes through the import."""
@@ -481,10 +481,10 @@ def aws_restore(key, tier="Standard", record_request=True):
     """Request a restore of a file at AWS from Glacier status for a download.
 
     The request sets the pending restore of each File row that claims
-    the key (#610). Then each caller of refuse_while_restore_pending
+    the key. Then each caller of refuse_while_restore_pending
     refuses until the download ends. An import that replaces the file
-    ends the state, and the download then drops (#620). A page sets the
-    state before it queues this (#613). The stamp here is for the
+    ends the state, and the download then drops. A page sets the
+    state before it queues this. The stamp here is for the
     requests no page asks for.
     A second request during a thaw is a new request, with its own
     time. A request that cannot be made clears the state.
@@ -497,7 +497,7 @@ def aws_restore(key, tier="Standard", record_request=True):
             s3_client = aws_clients.aws_s3_client(with_retries=True)
 
             # Make sure that the key exists in the AWS bucket. A HEAD of
-            # the key, not a listing of the prefix (#572). For a missing
+            # the key, not a listing of the prefix. For a missing
             # key, a listing of 1 key answered a longer sibling such as
             # "stem.mkv.etag". The restore then asked for a key that does
             # not exist.
@@ -564,7 +564,7 @@ def aws_restore(key, tier="Standard", record_request=True):
                 # An archive move can have asked for this restore with no
                 # record. A restore that a person asks for needs the
                 # record, or the notification queues only the move, and
-                # the download never occurs (#532).
+                # the download never occurs.
 
                 if record_request:
                     mark_restore_pending(key)

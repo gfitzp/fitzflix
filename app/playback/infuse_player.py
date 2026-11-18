@@ -1,4 +1,4 @@
-"""Play films remotely in Infuse on the Apple TV of each user (#192).
+"""Play films remotely in Infuse on the Apple TV of each user.
 
 Infuse never implemented Plex Companion. It has no :32500 and no
 playMedia. Thus, the app.playback.plex_player path cannot target it. Infuse does
@@ -204,8 +204,7 @@ def start_pairing(user_id, address):
     The TV shows its PIN some seconds after the task starts. If an
     attempt already waits for its PIN, this function returns False and
     does not enqueue. A second begin() makes the Apple TV drop the first
-    session. That session then dies with "not connected" (live incident,
-    2026-08-26).
+    session. That session then dies with "not connected" (live incident).
 
     Each attempt carries a token. The task writes state, consumes the
     PIN, or stores credentials only while its token is the current one.

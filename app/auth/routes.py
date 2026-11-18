@@ -63,7 +63,7 @@ def login():
     if form.validate_on_submit():
 
         # A locked account or address gets no password check. Thus, a
-        # guess during the lock tells the attacker nothing (#263).
+        # guess during the lock tells the attacker nothing.
 
         locked = login_lock_seconds(form.email.data)
         if locked:
@@ -87,7 +87,7 @@ def login():
             record_login_failure(form.email.data)
             flash("Invalid username or password")
 
-            # The next page stays for the second try (#422). Only a local
+            # The next page stays for the second try. Only a local
             # path goes into the redirect.
 
             next_page = request.args.get("next")
@@ -117,7 +117,7 @@ def login():
 def logout():
     """Log a user out.
 
-    A logout is a POST with the csrf token (#401). A prefetch, a link
+    A logout is a POST with the csrf token. A prefetch, a link
     preview, or an image tag makes a GET. That GET must not end the
     session. The route reads no FlaskForm. Thus, it checks the token by
     hand."""
@@ -171,7 +171,7 @@ def register():
             db.session.commit()
         except IntegrityError:
             # A concurrent post with the same email passed the form check
-            # first. The unique index refuses the second row (#507).
+            # first. The unique index refuses the second row.
             db.session.rollback()
             flash("Email: Please use a different email address.", "danger")
             return render_template("auth/register.html", title="Register", form=form)
@@ -179,7 +179,7 @@ def register():
         return redirect(url_for("auth.login"))
 
     # The page does not show the field errors. Thus, a refused field (for
-    # example, an email address that is too long, #329) gets a message.
+    # example, an email address that is too long) gets a message.
 
     flash_form_errors(form)
     return render_template("auth/register.html", title="Register", form=form)
@@ -197,7 +197,7 @@ def reset_password_request():
     form = ResetPasswordRequestForm()
     if form.validate_on_submit():
         # Over the limit, the page shows the same message but sends no
-        # email. Thus, the form cannot flood an inbox (#263).
+        # email. Thus, the form cannot flood an inbox.
 
         if allow_reset_request(form.email.data):
             user = User.query.filter_by(email=form.email.data).first()
@@ -207,7 +207,7 @@ def reset_password_request():
         flash("Check your email for instructions to reset your password")
         return redirect(url_for("auth.login"))
 
-    # Invariant: a form with a refused field says why (#764). A csrf
+    # Invariant: a form with a refused field says why. A csrf
     # error stays quiet, as in flash_form_errors. The page shows no field
     # errors. A well-formed address always gets the message above. Thus,
     # no message tells if an account exists.
@@ -225,8 +225,8 @@ def reset_password(token):
     An email with a time-limited token sends the user to this page.
     """
 
-    # A passkey-only account asks for this link from the Profile page
-    # (#669). Thus, a signed-in user can follow a link for their own
+    # A passkey-only account asks for this link from the Profile page.
+    # Thus, a signed-in user can follow a link for their own
     # account. A link for another account goes to the home page.
 
     user = User.verify_reset_password_token(token)
@@ -242,14 +242,14 @@ def reset_password(token):
         flash("Fitzflix reset your password.")
         return redirect(url_for("auth.login"))
 
-    # A form with a refused field says why (#764). A csrf error stays
+    # A form with a refused field says why. A csrf error stays
     # quiet. The page shows no field errors.
 
     flash_form_errors(form)
     return render_template("auth/reset_password.html", form=form)
 
 
-# The passkey ceremonies (#669). Each route is a JSON post from
+# The passkey ceremonies. Each route is a JSON post from
 # passkeys.js. The post carries the csrf token of the page in the
 # X-CSRFToken header. The routes read no FlaskForm. Thus, they check
 # the token by hand, as the logout does.
@@ -293,7 +293,7 @@ def passkey_register_options():
     """Give the browser the options to make a passkey for the signed-in user.
 
     A new passkey is a new way into the account. Thus, the body must
-    carry a proof of identity, as the Profile forms do (#675). It is
+    carry a proof of identity, as the Profile forms do. It is
     the password, or a passkey confirmation that the Profile page asked
     for."""
 
@@ -346,7 +346,7 @@ def passkey_login():
     """Sign the owner of the passkey in. Answer with the address of the next page.
 
     The passkey names its account. Thus, the sign-in has no email
-    address and no password, and the throttle of #263 does not apply."""
+    address and no password, and the sign-in throttle does not apply."""
 
     if not _csrf_header_valid():
         return _json_error(STALE_PAGE, 400)
@@ -371,7 +371,7 @@ def passkey_confirm_options():
     """Give the browser the options for a confirmation by the signed-in user.
 
     The body names the path that the form posts to. The answer is good
-    only on that path (#676)."""
+    only on that path."""
 
     if not _csrf_header_valid():
         return _json_error(STALE_PAGE, 400)

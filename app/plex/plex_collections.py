@@ -4,31 +4,31 @@ Plex collections belong to one library. They do not sync between
 libraries. Thus, this module puts the same collections in every Plex
 movie library from rules in the database.
 
-The main collection (#281) uses the rule of the criterion_collection
+The main collection uses the rule of the criterion_collection
 reporting view. A main-feature file belongs in it when it is the best
 copy of its title group. Its quality must be physical media. Its movie
 must have a custom poster and a Criterion spine number that no other
 movie with a main feature on physical media shares. Box sets that share
 1 spine are not included.
 Only a movie with a main feature on physical media counts, because
-only such a movie can be in a box-set collection (#696). A catalog
+only such a movie can be in a box-set collection. A catalog
 record with no files does not count. There is no extras rule, because
 some box-set films have no extras of their own.
 
-Each Criterion box set gets its own collection (#282), named for the
+Each Criterion box set gets its own collection, named for the
 set. A film belongs in it when its movie has the set title and at least
 1 main-feature file on physical media. That file does not have to be
 the best copy. A set needs 2 films or more. The box-set collections sort
 by release date.
 
 The main collection also sorts by release date. It sorted by spine
-number for a time (#285), but a film was hard to find in that order.
+number for a time, but a film was hard to find in that order.
 
-Each film is 1 item in the main collection (#284). Plex makes 1 item
+Each film is 1 item in the main collection. Plex makes 1 item
 for each edition of a film. The main collection uses the version with
 no edition. A film with editions only uses the first edition by name.
 The box-set collections show each edition as its own item, because the
-discs of a set hold each version (#286).
+discs of a set hold each version.
 
 Each collection is a mirror. The task adds the films that the rule
 selects, and it removes the films that it no longer selects. The match
@@ -85,7 +85,7 @@ def _normal(path):
 
 
 def _one_version(rows):
-    """Return {movie id: paths} with 1 version of each film (#284).
+    """Return {movie id: paths} with 1 version of each film.
 
     The rows are (movie id, edition, path). The version with no edition
     has priority. A film with editions only keeps the first edition by
@@ -124,9 +124,9 @@ def criterion_paths():
 
     A film stays out when another film shares its spine and each of the
     2 has a main feature on physical media. Only such films make a box
-    set (#696). A catalog record with no files does not, and a film with
+    set. A catalog record with no files does not, and a film with
     a digital copy or with extras only does not. A set title alone does
-    not keep a film out (#472)."""
+    not keep a film out."""
 
     shared = (
         db.session.query(Movie.criterion_spine_number)
@@ -161,10 +161,10 @@ def box_set_groups():
 
     A film is in its set when it has at least 1 main-feature file on
     physical media. Each film gives all of its main-feature paths, of
-    every edition (#286). Then each edition is an item of the set, and a
+    every edition. Then each edition is an item of the set, and a
     film matches through the file that Plex has, also a digital copy.
     The set titles that the database compares as equal are 1 set, under
-    the spelling of set_title_spellings (#697).
+    the spelling of set_title_spellings.
     """
 
     rows = (
@@ -191,8 +191,8 @@ def box_set_groups():
 
 
 # The box sets that the sync made or filled. Only such a set empties
-# its Plex collection when it shrinks (#558) or when no record names its
-# title any more (#702). A hand-made collection was never in the record.
+# its Plex collection when it shrinks or when no record names its
+# title any more. A hand-made collection was never in the record.
 # Thus, the sync never empties it. The key has no TTL.
 
 SYNCED_SETS_KEY = "fitzflix:plex:synced-box-sets"
@@ -335,8 +335,8 @@ def _sync_collection(section, collections, by_path, groups, name, machine, sort=
 def sync_criterion_collection():
     """Mirror the Criterion collections into each Plex movie library (a queue task).
 
-    These are the main collection (#281) and 1 collection for each box
-    set (#282)."""
+    These are the main collection and 1 collection for each box
+    set."""
 
     with app.app_context():
         if not (
@@ -363,9 +363,9 @@ def sync_criterion_collection():
             if qualifying:
                 redis.sadd(SYNCED_SETS_KEY, *qualifying)
             # A set that the sync filled, and that has no plan now, is
-            # retired. It shrank under BOX_SET_MIN_FILMS (#544), or no
-            # record names its title any more, after a corrected spelling
-            # (#702). It gets an empty plan for 1 run. An empty plan
+            # retired. It shrank under BOX_SET_MIN_FILMS, or no
+            # record names its title any more, after a corrected spelling.
+            # It gets an empty plan for 1 run. An empty plan
             # empties a collection that exists. It makes no new one.
             retired = sorted(
                 {

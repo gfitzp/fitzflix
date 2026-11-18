@@ -33,11 +33,11 @@ return 0
 
 # The tasks of the import pipeline, with the queue of each. Each one
 # names the file of the import as its source. The source stays in the
-# import directory until the cataloging removes it. A conversion (#292)
+# import directory until the cataloging removes it. A conversion
 # keeps it there for hours. The Sonarr adopt task comes before the
-# localization (#289). It waits for the Sonarr rename of the file and
+# localization. It waits for the Sonarr rename of the file and
 # then queues the localization. Its third argument is the path of the
-# download (#373).
+# download.
 
 ADOPT_EPISODE_TASK = "app.arr.sonarr_push.adopt_episode_task"
 
@@ -67,7 +67,7 @@ def _source_of(job):
 
 
 def pipeline_jobs(names=PIPELINE_TASKS):
-    """Yield (job, source path) for each live job of the import pipeline (#616).
+    """Yield (job, source path) for each live job of the import pipeline.
 
     names holds the tasks that count. A job counts when tasks.live_jobs
     yields it. The match is by the source argument, not by the shape of
@@ -87,7 +87,7 @@ def _same_path(first, second):
 
 
 def localization_pending(path):
-    """Return True if a localization of this file waits or runs (#287, #616)."""
+    """Return True if a localization of this file waits or runs."""
 
     return any(
         _same_path(source, path)
@@ -98,13 +98,13 @@ def localization_pending(path):
 
 
 def later_stage_holds(path):
-    """Return True if a conversion, move, or cataloging job still holds this source (#296)."""
+    """Return True if a conversion, move, or cataloging job still holds this source."""
 
     return any(_same_path(source, path) for _, source in pipeline_jobs(LATER_STAGES))
 
 
 def paths_held_by_later_stages():
-    """Return each path argument of the conversion, move and cataloging jobs (#436).
+    """Return each path argument of the conversion, move and cataloging jobs.
 
     The weekly orphan sweep must not delete the input of such a job. A
     conversion can wait in the transcode queue for more than 7 days."""
@@ -118,14 +118,14 @@ def paths_held_by_later_stages():
 
 
 def keys_held_by_pipeline():
-    """Return each archive key that a live import pipeline job can upload or hold (#493, #619).
+    """Return each archive key that a live import pipeline job can upload or hold.
 
     The import gives its key to its File row only at the cataloging. A
     wait for space has no limit, and a retry can wait for more than 8
     days. The weekly prune must not delete such an upload. A job holds
     the untouched/ key of the name of its source, and the aws_key of
     its file_details argument. The latter is a run-scoped key below
-    pending-untouched/ for a same-name re-rip (#430)."""
+    pending-untouched/ for a same-name re-rip."""
 
     held = set()
     for job, source in pipeline_jobs():
@@ -147,7 +147,7 @@ def _series_title_of_name(basename):
 
     This is the title rule of the parse, with no TMDB call. An id tag is
     removed. A series record that owns the id of the tag gives its title,
-    as in _parse_tv (#523). Thus, "Doctor Who {tmdb-57243}" gives "Doctor
+    as in _parse_tv. Thus, "Doctor Who {tmdb-57243}" gives "Doctor
     Who (2005)". A name that is not an episode name gives None."""
 
     if not filenames.TV_NAME_SEARCH_RE.search(basename):
@@ -174,8 +174,8 @@ def series_import_in_flight(titles):
     """Return the source path of an import of a series that is not done, or None.
 
     titles holds the series titles that count. Each live pipeline job
-    counts, from the Sonarr adopt task to the cataloging (#373). A
-    series rename waits for such an import (#370). The import attaches
+    counts, from the Sonarr adopt task to the cataloging. A
+    series rename waits for such an import. The import attaches
     the episode to the series by its title at the end."""
 
     for _, source in pipeline_jobs():
@@ -188,13 +188,13 @@ def series_import_in_flight(titles):
 
 
 def enqueue_localization(path, at_front=False, quiet=False):
-    """Queue the localization of a file once. Return the job, or None (#287).
+    """Queue the localization of a file once. Return the job, or None.
 
     The function does nothing if a live pipeline job names the file as
-    its source. A wait for space is such a job (#619). Otherwise it
+    its source. A wait for space is such a job. Otherwise it
     deletes the finished job of the fixed job id. A removal from its
     registry is not enough. The job hash keeps its expiry, and the new
-    job under the id takes it and can expire in the queue (#371). A
+    job under the id takes it and can expire in the queue. A
     failed job stays in the failed jobs for the sweep. A live job of a
     file of the same name at another path keeps the id too. Then the new
     job gets the id with a time tag.
@@ -217,7 +217,7 @@ def enqueue_localization(path, at_front=False, quiet=False):
         FinishedJobRegistry(queue=queue).remove(job_id)
     elif old.is_failed or old.get_status(refresh=False) in LIVE_JOB_STATES:
         # A live job under the id imports a file of the same name at a
-        # different path (#616).
+        # different path.
         job_id = f"{job_id}_{int(time.time())}"
     else:
         delete_job(old)
@@ -231,7 +231,7 @@ def enqueue_localization(path, at_front=False, quiet=False):
 
 
 def already_cataloged(file_path):
-    """Return True if this file is already the library file at its path (#287).
+    """Return True if this file is already the library file at its path.
 
     An in-place import (Radarr, Sonarr) reads the file at its library
     path. A File row at the same path with the same size is that file
@@ -270,7 +270,7 @@ def _hold_title_lock(lock, basename):
     this, the lock expired, and a second import of the same title could
     start and write to the same staging file.
 
-    Return False if another task holds the lock (#339). The caller must
+    Return False if another task holds the lock. The caller must
     then stop and try again later. It must not write the files or the
     records of the title. Return True if this task holds the lock, or if
     the task has no lock."""
@@ -292,13 +292,13 @@ def _hold_title_lock(lock, basename):
     return True
 
 
-# The time that a stage waits when another task holds its title lock (#339)
+# The time that a stage waits when another task holds its title lock
 
 TITLE_LOCK_WAIT = timedelta(minutes=30)
 
 
 def defer_for_title_lock(func, args, counters, source_path, basename, timeout=None):
-    """Run a stage again after TITLE_LOCK_WAIT, with the same lock (#339).
+    """Run a stage again after TITLE_LOCK_WAIT, with the same lock.
 
     The lock of the stage expired, and another task took it. The retry
     keeps the old lock token. When the other task releases the lock, the

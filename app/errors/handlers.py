@@ -16,7 +16,7 @@ def internal_error(error):
 
     The full page extends base.html, which reads the user (the database)
     and the queue count (Redis). Many 500s come from an outage of one of
-    the two. Then the full page fails too (#346). Thus, a failure gives
+    the two. Then the full page fails too. Thus, a failure gives
     the plain page, which needs neither."""
 
     try:

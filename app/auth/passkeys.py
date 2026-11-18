@@ -1,4 +1,4 @@
-"""Sign in with a passkey (#669).
+"""Sign in with a passkey.
 
 A passkey is a WebAuthn credential. The authenticator of the browser
 holds the private key. Fitzflix holds the public key in the passkey
@@ -8,7 +8,7 @@ the authenticator against that challenge. The challenge waits in
 Redis, and the session holds only its random id. It serves 1 time, for
 1 kind of ceremony, and for 5 minutes at most. A second answer to the
 same challenge finds nothing, also with an older copy of the session
-cookie (#676).
+cookie.
 
 There are 3 kinds of ceremony. A "register" makes a new passkey for
 the signed-in user. A "login" takes any passkey of this site, with no
@@ -89,7 +89,7 @@ def relying_party_id():
 def expected_origin():
     """Return the origin that the browser signs into the client data.
 
-    gunicorn sees plain http from the proxy (#454). The browser is on
+    gunicorn sees plain http from the proxy. The browser is on
     the scheme of PREFERRED_URL_SCHEME."""
 
     scheme = current_app.config.get("PREFERRED_URL_SCHEME") or "http"
@@ -280,7 +280,7 @@ def check_identity(password, assertion, path):
     The proof is the password of the account, or a passkey assertion
     that a confirmation on path asked for. The restore forms, the S3
     sync form, the Profile forms and the passkey registration share
-    this check (#675)."""
+    this check."""
 
     if assertion:
         finish_authentication(assertion, kind="confirm", user=current_user, path=path)
@@ -303,7 +303,7 @@ def identity_confirmed(form):
     A restore costs real money, and a change of the sign-in methods
     can take the account. Thus, these forms ask for proof. The proof is
     the password of the form, or the passkey assertion that the page
-    put in the form. A failure flashes its message here (#669)."""
+    put in the form. A failure flashes its message here."""
 
     try:
         check_identity(

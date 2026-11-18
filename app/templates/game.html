@@ -3,8 +3,8 @@
 {% from "_poster_tile.html" import poster_image, movie_poster_src, tile_actions %}
 
 {% block app_content %}
-{# These are the display names for the difficulty slugs (renamed per
-   #203). The score rows and the URLs store the slugs themselves.
+{# These are the display names for the difficulty slugs.
+   The score rows and the URLs store the slugs themselves.
    Thus, the slugs do not change. #}
 {% set difficulty_labels = {"easy": "Easy", "difficult": "Hard", "siracusa": "Difficult", "extra": "Extra Difficult"} %}
 {{ page_header('Name That Frame', hr=false) }}
@@ -60,7 +60,7 @@
    with the poster tile of the answer. The frame never moves. #}
 {% if not result %}
 {% if difficulty == "extra" %}
-{# Extra Difficult (#202): the prompt shows the stage. It says how
+{# Extra Difficult: the prompt shows the stage. It says how
    much of the frame is visible and how many points a hit is worth
    now. After a miss in the middle of a round, it also says what the
    frame is not. #}
@@ -80,12 +80,12 @@
 <div class="alert alert-danger" role="alert">{% if result.guess %}Not <em>{{ result.guess }}</em>. {% endif %}It is <a href="{{ url_for('main.movie', movie_id=result.movie_id) }}" class="alert-link">{{ result.answer }}</a>.</div>
 {% endif %}
 {% if result and result.correct and result.brag %}
-{# Bragging rights (requested by Glenn, 2026-08-27): a zoomed win
+{# Bragging rights: a zoomed win
    stored its crop at grading time. Thus, the crop survives the
    replacement of the played frame. Share gives the image and the
    message to the native share sheet. That is the only one-tap path
    that puts both into a message. Copy image takes only the crop.
-   There is no message-copy button (Glenn, 2026-08-27). A clipboard
+   There is no message-copy button. A clipboard
    paste only gives one representation. Thus, the words go with the
    share sheet instead. #}
 <div class="d-flex align-items-center flex-wrap gap-3 mb-3" id="brag-box"

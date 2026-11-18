@@ -1,6 +1,6 @@
-"""Let Sonarr rename its own episode file for the quality downgrade (#289).
+"""Let Sonarr rename its own episode file for the quality downgrade.
 
-This is the Sonarr twin of the adopt task in app.arr.radarr_push (#288).
+This is the Sonarr twin of the adopt task in app.arr.radarr_push.
 Fitzflix gives each download a web quality title, because it keeps the
 physical-media titles for its own disc rips. A rename in Fitzflix made
 Radarr lose its file and download the film again. Thus, Sonarr changes
@@ -12,8 +12,8 @@ The import can still store the episode under a different name, for
 example without the year of the series. Then Sonarr drops its record at
 the next scan, and the new record has no release data. Thus, the import
 queues restore_download_record_task, which writes the scene name and
-the release group onto the new record (#671). A try that writes nothing
-yet books the task again, for about 1 hour (#680).
+the release group onto the new record. A try that writes nothing
+yet books the task again, for about 1 hour.
 """
 
 import time
@@ -86,12 +86,12 @@ def adopt_episode_task(
 def restore_download_record_task(
     series_id, library_path, scene_name, release_group, tries=1
 ):
-    """Write the release data of a Sonarr download onto its new file record (#671).
+    """Write the release data of a Sonarr download onto its new file record.
 
     This is a task. The import stored the episode under a different
     name. Sonarr then drops its record at the next scan, and it
     downloads the same release again. A try that writes nothing yet
-    books the task again (#680). tries is the number of this try. An
+    books the task again. tries is the number of this try. An
     unexpected failure is logged. It does not raise. The file is already
     in place."""
 

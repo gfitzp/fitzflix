@@ -54,7 +54,7 @@ function paintLadder(row, state) {
 		// The user cannot dismiss a seen film. The hydration
 		// hides the ✕ when a diary row exists (the client-side
 		// mirror of allow_not_interested). The live posts carry
-		// the flag too (#335)
+		// the flag too
 		if (typeof state.has_review !== "undefined") {
 			x.classList.toggle("d-none", !!state.has_review);
 		}
@@ -66,8 +66,8 @@ function paintLadder(row, state) {
 
 // The own Remove of the watchlist page clears its tile in place
 // and settles the filter counts. It uses the bucket that the
-// cell rendered with (#187). A rating or a ✕ on the tile also
-// removes the film from the watchlist (#336). A cell counts
+// cell rendered with. A rating or a ✕ on the tile also
+// removes the film from the watchlist. A cell counts
 // down 1 time only, whichever post removes it first
 
 function removeWatchlistCell(cell) {
@@ -91,7 +91,7 @@ function removeWatchlistCell(cell) {
 	cell.remove();
 
 	// The film left the watchlist. When the grid is empty, the
-	// page shows the empty state that applies (#407). The filter
+	// page shows the empty state that applies. The filter
 	// state applies while other films stay on the watchlist
 	var filtered = document.querySelector('[data-watchlist-empty="filter"]');
 	var left = 0;
@@ -122,7 +122,7 @@ function removeWatchlistCell(cell) {
 // changed tile verdict listen for the fitzflix:tile-state event.
 // The Recommendations page swaps the acted-on tile for a new
 // suggestion. On the watchlist page, a film that left the
-// watchlist leaves the grid (#336)
+// watchlist leaves the grid
 
 function afterTileState(form, state) {
 	var scope = form.closest(".poster-actions, [data-watchlist-scope]");
@@ -234,7 +234,7 @@ window.fitzflixHydrate = function(movieIds, tmdbIds) {
 		.catch(function() {});
 };
 
-// Gallery hydration (#45c, revision of 2026-08): the tiles
+// Gallery hydration: the tiles
 // render their star row blank and their toggle Add-first.
 // Batched /movie_states fetches paint the real verdicts,
 // estimates, and watchlist faces. Duplicate tiles for the same
@@ -248,7 +248,7 @@ window.fitzflixHydrate = function(movieIds, tmdbIds) {
 
 (function() {
 	var tiles = document.querySelectorAll("[data-state-movie], [data-state-tmdb]");
-	// Poster folds (#197): every popover-armed movie tile also
+	// Poster folds: every popover-armed movie tile also
 	// hydrates its corner fold from the same batched fetch. This
 	// parses the id of the film off its own card URL. Thus, no
 	// template carries fold-specific markup. At most 1 fold
@@ -364,7 +364,7 @@ window.fitzflixHydrate = function(movieIds, tmdbIds) {
 		});
 	}
 	// A career page can hold more record-less films than the
-	// TMDB fetch cap of 1 request (#662). The answer paints at
+	// TMDB fetch cap of 1 request. The answer paints at
 	// once and names the ids that still need TMDB in "pending".
 	// The next pass asks for those ids only. The passes stop
 	// when none are left, or when a pass warms nothing (TMDB is

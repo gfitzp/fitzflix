@@ -1,4 +1,4 @@
-"""Local search, from the routes.py split.
+"""Local search.
 
 This module holds the library search page, the type-ahead JSON of the
 navbar, and the TMDB lookup page."""
@@ -47,7 +47,7 @@ from app.availability.streaming import (
 
 
 def _parse_query(q):
-    """Split the modifier tokens out of a search query (#185).
+    """Split the modifier tokens out of a search query.
 
     'jaws y:1975' becomes ('jaws', (1975, 1975)). 'y:1980-1989' gives a
     range. 'year:' is the long form. An unknown or malformed token
@@ -114,7 +114,7 @@ def _movie_search_results(wildcard, limit=PAGE_RESULTS, years=None):
         )
     ).filter(Movie.files.any(File.feature_type_id.is_(None)))
 
-    # A y: modifier (#185) matches each of the 2 years of a film. These
+    # A y: modifier matches each of the 2 years of a film. These
     # are the library identity year and the TMDB release year. The 2
     # years frequently differ by 1 for festival releases.
 
@@ -190,7 +190,7 @@ def _tv_search_results(wildcard, limit=PAGE_RESULTS, years=None):
         )
     )
 
-    # A y: modifier (#185) means the year of the series premiere. A
+    # A y: modifier means the year of the series premiere. A
     # series with no TMDB first-air date drops out while the filter is
     # active.
 
@@ -207,8 +207,8 @@ def _tv_search_results(wildcard, limit=PAGE_RESULTS, years=None):
     upgrade_threshold = _upgrade_threshold()
     series_ids = [series.id for series in series_list]
 
-    # The grade of each season is the shared grade of the TV library page
-    # (#479, #694). Each episode number gets its best holder, and the
+    # The grade of each season is the shared grade of the TV library page.
+    # Each episode number gets its best holder, and the
     # season gets its worst episode.
 
     seasons_by_series = {}
@@ -250,7 +250,7 @@ def _people_search_results(wildcard, limit=12):
     Each person comes with a count of the owned films and series and a
     dominant role. The rules are the same as the People page. Cast and
     key crew roles count. Uncredited-only roles never count. A record
-    without a file never counts (#656). The matches sort by the count,
+    without a file never counts. The matches sort by the count,
     and the surname breaks ties.
     """
 
@@ -275,7 +275,7 @@ def _people_search_results(wildcard, limit=12):
             film_count.desc(),
             db.func.substring_index(TMDBCredit.name, " ", -1).asc(),
             TMDBCredit.name.asc(),
-            # The unique tiebreak (#459).
+            # The unique tiebreak.
             TMDBCredit.id.asc(),
         )
         .limit(limit)
@@ -315,7 +315,7 @@ def search():
 
         wildcard = text.replace(" ", "%")
 
-        # A person reads a list as complete (#715). Thus, each query
+        # A person reads a list as complete. Thus, each query
         # asks for 1 row more than the page shows. The extra row says
         # that the list is cut, and the page says so.
 
@@ -447,7 +447,7 @@ def search_tmdb():
     q = (request.args.get("q") or "").strip()
 
     # scope=movies skips the TV search completely. The "Log a film" box of
-    # the History page arrives this way (#215). The diary logs only
+    # the History page arrives this way. The diary logs only
     # movies.
 
     movies_only = request.args.get("scope") == "movies"
@@ -467,7 +467,7 @@ def search_tmdb():
         error = "Add a title to the year filter. TMDB cannot be searched by year alone."
 
     elif q:
-        # A single-year y: modifier (#185) goes with the year parameter of
+        # A single-year y: modifier goes with the year parameter of
         # the API. That also improves the TMDB ranking. The search
         # endpoints cannot express a range. The release-date filter below
         # enforces the range in each case.
@@ -520,7 +520,7 @@ def search_tmdb():
         # review-only record (a logged unowned film) does not count. Each
         # owned match also carries the verdict of the shopping list. Thus,
         # the badge here shows the same amber or green as all other
-        # surfaces (#191), not a colorless "In library".
+        # surfaces, not a colorless "In library".
 
         if movie_matches:
             owned = {
@@ -613,7 +613,7 @@ def search_tmdb():
         # Streaming and rent/buy badges on unowned movie matches. Both use
         # only the services of this user. The flag turns on the mandatory
         # JustWatch credit. The availability is cache-only, the same as on
-        # the other list surfaces (#366). A film without a cache entry
+        # the other list surfaces. A film without a cache entry
         # warms in the background for the next search.
 
         provider_ids = user_provider_ids(current_user)

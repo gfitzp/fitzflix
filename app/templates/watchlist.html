@@ -33,9 +33,9 @@
 		{# The availability filter: all films by default, or one
 		   exclusive bucket (owned, streaming, rent-only, or nowhere).
 		   This is the radio grammar of the criterion page, with
-		   counts. Title and runtime (#216/#195) and genre share the
+		   counts. Title and runtime and genre share the
 		   form. Thus, one Filter applies all 4. The counts show
-		   data-watchlist-count. Thus, a live tile removal (#187)
+		   data-watchlist-count. Thus, a live tile removal
 		   keeps them correct without a reload. #}
 		{# The row aligns on the text baseline, not the center. The
 		   services pill is a 2-line block (pill, then dropdown). The
@@ -49,7 +49,7 @@
 			<input type="number" min="1" name="minutes" value="{{ minutes or '' }}" class="form-control form-control-sm" style="width: 6rem;" placeholder="minutes" aria-label="Maximum runtime in minutes">
 			{# The genre menu holds only the genres of the films on
 			   the list. It has no counts. Thus, a live tile removal
-			   (#187) has nothing to keep correct here. #}
+			    has nothing to keep correct here. #}
 			{% if genres %}
 			<select name="genre" class="watchlist-genre form-select form-select-sm w-auto" aria-label="Genre">
 				<option value="">All genres</option>
@@ -60,13 +60,13 @@
 			{% endif %}
 			<div class="watchlist-pills">
 			{% for value, label in [("all", "All"), ("local", "In library"), ("services", "On my services"), ("rent", "For rent"), ("unavailable", "Unavailable")] %}
-			{# The service dropdown (requested by Glenn, 2026-09-15)
+			{# The service dropdown
 			   sits under the services pill, as one block. Thus, it
 			   stays next to its pill wherever a phone wraps the row.
 			   It narrows On my services to one subscribed service.
 			   The count of each option is also in its
 			   data-watchlist-service-count. Thus, a live tile removal
-			   (#187) keeps the options correct too. A chosen service
+			    keeps the options correct too. A chosen service
 			   checks the services pill. A different pill resets the
 			   dropdown. The route applies the same rule. On a phone,
 			   the block is one row: the pill, then the dropdown. #}
@@ -106,9 +106,9 @@
 <p class="small text-muted">{{ pending }} film{{ "s" if pending != 1 }} {{ "is" if pending == 1 else "are" }} not on this page yet, because Fitzflix continues to get the streaming availability. Come back in some minutes.</p>
 {% endif %}
 {% if rows %}
-{# The watchlist as a poster gallery (#45d): the popover shows the
+{# The watchlist as a poster gallery: the popover shows the
    synopsis, the credits, the availability, and the badges of each
-   film. The revision by Glenn (2026-08) moved the library and
+   film. The revision by Glenn moved the library and
    provider badges there. The tile keeps the actions: the star ladder
    and the Remove button of this page. Remove clears the tile in
    place. Thus, the page skips the standard toggle. #}
@@ -116,10 +116,10 @@
 	{% for row in rows %}
 	{% set movie = row.movie %}
 	{# data-bucket feeds the count bookkeeping of the live removal
-	   (#187) #}
+	    #}
 	<div class="col-6 col-sm-4 col-md-3 col-lg-2 mb-3 poster-cell" data-bucket="{{ row.bucket or '' }}" data-services="{{ row.streaming_ids|join(',') }}">
 		<a href="{{ url_for('main.movie', movie_id=movie.id) }}" class="text-decoration-none text-body" data-card-url="{{ url_for('main.movie_card', movie_id=movie.id) }}">
-			{# The corner folds (#197, and the badge of #156/#230)
+			{# The corner folds (and the watchlist badge)
 			   paint here through the same batched /movie_states
 			   hydration as the star ladders. Nothing on this page is
 			   tile-specific. #}
@@ -151,7 +151,7 @@
 				{# d-flex on the form removes its line-box strut.
 				   Without this, the strut stretches the adjacent Find
 				   group 2 pixels past the Remove button.
-				   data-card-watchlist posts in the background (#187).
+				   data-card-watchlist posts in the background.
 				   data-watchlist-remove-cell clears the tile in
 				   place. A fetch failure falls back to the full post. #}
 				<form action="" method="post" class="d-flex" data-card-watchlist data-watchlist-remove-cell>
@@ -166,7 +166,7 @@
 	{% endfor %}
 </div>
 {% endif %}
-{# Both empty states render, hidden while the grid has tiles (#407).
+{# Both empty states render, hidden while the grid has tiles.
    The live removal of the last tile shows the correct one. The filter
    state applies while other films stay on the watchlist. #}
 {% if total %}

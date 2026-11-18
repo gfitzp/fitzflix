@@ -1,4 +1,4 @@
-"""Send the watchlist availability alerts (#156, #230).
+"""Send the watchlist availability alerts.
 
 A watchlist entry means "tell me when I can watch this film". Thus, a
 nightly task compares the availability of each watchlisted film with a
@@ -13,13 +13,13 @@ triggers:
   A free-with-ads service counts too. This matches streaming_matches
   in all other places. The comparison is per film against the nightly
   availability cache. Thus, this extends the Criterion-only "newly
-  added" signal of issue #156 to each service on the profile of the
+  added" signal to each service on the profile of the
   user.
 - The film becomes rentable on one of the services of the user. This
   is a second per-user opt-in. A rental is an extra fee. Thus, it only
   counts as "available" if the user says so.
 
-There is also the leaving-Criterion urgency case from #156. A
+There is also the leaving-Criterion urgency case. A
 watchlisted film that the user does not own can be in the stored
 leaving set. Then Fitzflix warns the Criterion subscribers when it
 first stores the set, and again inside the final week.
@@ -84,8 +84,8 @@ RECENT_KEY = "fitzflix:availability:recent:{user_id}"
 SENT_SECONDS = 180 * 86400
 LEAVING_SENT_SECONDS = 60 * 86400
 
-# A digest that the mail server refused waits here for the next run
-# (#377). The snapshots moved on already, so the next diff does not find
+# A digest that the mail server refused waits here for the next run.
+# The snapshots moved on already, so the next diff does not find
 # the events again. The events of the next run join it. A digest older
 # than UNSENT_SECONDS is dropped with an error. The key lives 2 days
 # longer. Thus, the next run sees the age and logs the loss.
@@ -105,14 +105,14 @@ RECENT_KEY_SECONDS = 45 * 86400
 LEAVING_SOON_DAYS = 7
 
 # This is the badge label for a local arrival. It is shared because
-# ownership gates the poster folds (requested by Glenn, 2026-08-27).
+# ownership gates the poster folds.
 # This is the only green fold of an owned film. A service arrival or a
 # feed arrival never folds a film that is already on the shelf.
 
 NEW_IN_LIBRARY_LABEL = "New in library"
 
 # The number of empty availability payloads in a row that make the empty
-# state of a film real (#326). A smaller number of empty runs is a gap in
+# state of a film real. A smaller number of empty runs is a gap in
 # the TMDB data. Thus, the snapshot keeps the providers of the film.
 
 EMPTY_RUNS_TO_ACCEPT = 3
@@ -172,8 +172,7 @@ def snapshot_provider_diff(tmdb_ids):
                     names[provider["provider_id"]] = provider["provider_name"]
         current[tmdb_id] = {"streaming": sorted(streaming), "rent": sorted(rent)}
 
-        # TMDB can serve an empty payload for one night (#326, the same
-        # glitch as #251). An empty payload after a non-empty entry is a
+        # TMDB can serve an empty payload for one night. An empty payload after a non-empty entry is a
         # gap. The previous entry stays, and the film makes no diff. After
         # EMPTY_RUNS_TO_ACCEPT empty runs in a row, the empty state is
         # real, and the film left every service.
@@ -319,7 +318,7 @@ def _provider_labels(provider_ids, names):
     )
 
 
-# The Content-ID of an inline custom poster in the digest (#468).
+# The Content-ID of an inline custom poster in the digest.
 
 POSTER_CID = "poster-{movie_id}@fitzflix"
 
@@ -339,7 +338,7 @@ def _poster_url(movie):
     """Return the artwork URL for the digest email, or None.
 
     A mail client fetches an image with no session. The custom posters
-    of this site need a signed-in user (#468). Thus, the TMDB rendition
+    of this site need a signed-in user. Thus, the TMDB rendition
     comes first. A film with only a custom poster gets a cid: URL. The
     digest attaches that poster inline. Return None if there is no
     artwork. Then the template drops the image cell and does not send a
@@ -483,7 +482,7 @@ def notify_watchlist_availability():
     watchlisted film with the stored snapshots. It stamps the per-user
     badge records. It sends each opted-in user a maximum of 1 digest
     email. The mails go out after the events of all the users are
-    recorded. A mail that fails stops no other mail (#377). Its events
+    recorded. A mail that fails stops no other mail. Its events
     wait for the next run."""
 
     with app.app_context():
@@ -549,7 +548,7 @@ def notify_watchlist_availability():
                         )
                         _record_recent(user.id, movie.id, "New to rent")
 
-            # This is the leaving-Criterion warning (#156). It occurs 1
+            # This is the leaving-Criterion warning. It occurs 1
             # time when the set first arrives, and 1 more time inside
             # the final week. There is no badge. A departure is not
             # availability. The leaving badge already shows in each

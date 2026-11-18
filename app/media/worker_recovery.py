@@ -1,4 +1,4 @@
-"""Reclaim the work of a pipeline worker that died without cleanup (#498).
+"""Reclaim the work of a pipeline worker that died without cleanup.
 
 A SIGKILL (the end of the supervisor stop wait, a reboot, an OOM kill)
 ends a worker before its job can clean up. rq keeps the worker hash,
@@ -164,7 +164,7 @@ def abandon_dead_job(job):
     from app.media.importing.localization import abandon_import
 
     # A manual import holds no title lock, staging space or output. Its
-    # dead job fails, and then the page shows the button again (#626).
+    # dead job fails, and then the page shows the button again.
 
     if job.func_name == MANUAL_IMPORT_TASK:
         return
@@ -233,7 +233,7 @@ def abandon_dead_job(job):
 
 
 def _abandon_atmos_start(job):
-    """Release the title lock of a dead first job of an Atmos run (#733).
+    """Release the title lock of a dead first job of an Atmos run.
 
     The lock of this job lives for 2 days, and it blocks each import,
     rename, edit and delete of the title. The job writes the lock in

@@ -1,9 +1,9 @@
 // The scripts that each page runs, for a visitor who is signed in or not.
 // base.html loads this file.
 
-// Fitzflix has no service worker (#648). The earlier worker kept the
+// Fitzflix has no service worker. The earlier worker kept the
 // first page of each shopping list for offline use, and it froze
-// every page of the site in Safari when Safari suspended it (#647).
+// every page of the site in Safari when Safari suspended it.
 // A browser can still hold that worker and its caches. Each page
 // removes them. Service workers exist only in secure contexts.
 // Thus, this does nothing over plain http
@@ -23,7 +23,7 @@ if ("serviceWorker" in navigator && window.isSecureContext) {
 	}
 }
 
-// Navigation feedback (2026-08), signed in or not. When a same-tab
+// Navigation feedback, signed in or not. When a same-tab
 // link or form commits to leave the page, the top hairline starts
 // to grow. This listens on window, in the bubbling phase. Thus,
 // it runs after every handler that can cancel the navigation.

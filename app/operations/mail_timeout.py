@@ -1,4 +1,4 @@
-"""A Flask-Mail extension whose SMTP connection has a socket timeout (#452).
+"""A Flask-Mail extension whose SMTP connection has a socket timeout.
 
 Flask-Mail opens smtplib.SMTP with no timeout. A mail server that drops
 the packets, and does not refuse them, then holds the sender until the

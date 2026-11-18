@@ -1,4 +1,4 @@
-"""Discover films for the recommendation universe from the provider catalogs (#250).
+"""Discover films for the recommendation universe from the provider catalogs.
 
 The engine can recommend only the films that have records. The
 subscribed streaming services are a discovery source that the engine
@@ -12,7 +12,7 @@ popularity boundary cannot flag a film a second time. The first run
 only plants the set. The task queues the ids that are really new for
 processing.
 
-Flat-rate streaming only, no rentals (Glenn, 2026-08-27): the task
+Flat-rate streaming only, no rentals: the task
 never enumerates the rental and purchase storefronts on the
 subscription list. Those rows exist to show the rent badges. The
 discover queries ask only for flatrate monetization. The per-title
@@ -69,7 +69,7 @@ PENDING_KEY = "fitzflix:catalog:pending"
 # storefront. The popular slice of that storefront is sufficient. The
 # vote floor removes the low-quality films and keeps the page counts
 # correct. A niche new film below the floor reaches the engine when a
-# user logs it or puts it on a watchlist. The Criterion scrape (#246)
+# user logs it or puts it on a watchlist. The Criterion scrape
 # stays the fresh path for that shelf
 
 PAGE_CAP = 200
@@ -80,7 +80,7 @@ VOTE_FLOOR = 20
 # are Apple TV, Google Play, Fandango at Home, Amazon Video, Microsoft
 # Store, and YouTube. A subscription row for one of them exists to show
 # the rent badges. Thus, this task never enumerates their catalogs
-# (Glenn, 2026-08-27: flat-rate services only, no rentals). The
+# (flat-rate services only, no rentals). The
 # per-title verification would reject their films in all cases. But to
 # skip them saves the enumeration and the churn of the pending queue
 
@@ -210,8 +210,8 @@ def _process_pending(subscribed):
 
     # The seen set already holds each pending id. Thus, an id that
     # leaves the pending set is never discovered again. Only the SREM
-    # after the commit removes an id, and only an id with a verdict
-    # (#304, #537, #636). An unknown answer (a TMDB failure, no profile
+    # after the commit removes an id, and only an id with a verdict.
+    # An unknown answer (a TMDB failure, no profile
     # yet, no calibration curve yet) leaves the id for the next run.
 
     if not subscribed:
@@ -288,7 +288,7 @@ def _process_pending(subscribed):
                 best = estimate
         if best is None:
             # No profile has a calibration curve or a score yet. That is
-            # not a verdict on the film (#537).
+            # not a verdict on the film.
             continue
         decided.add(tmdb_id)
         if best < MIN_ESTIMATE:

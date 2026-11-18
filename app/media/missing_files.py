@@ -1,4 +1,4 @@
-"""Find the best-quality files that have no local copy (#274).
+"""Find the best-quality files that have no local copy.
 
 A library file is the best copy of its title when it has rank 1 in the
 quality ranking of the application. The ranking is movie_file_rank()
@@ -18,8 +18,8 @@ the scan again on demand.
 
 A missing mount makes every file look absent. The scan refuses to run
 while a monitored volume does not respond. The stored result of the
-previous run stays in place. A volume can also drop during the scan
-(#396). Thus, the scan checks the volumes again at the first absent
+previous run stays in place. A volume can also drop during the scan.
+Thus, the scan checks the volumes again at the first absent
 file and after the last stat. It also compares the device id of each
 library root before and after the stats. A remount gives the root a
 new device id. A changed id or a dead volume abandons the result.
@@ -71,7 +71,7 @@ def ranked_file_rows():
         for file_id, movie_id, feature, plex_title, edition, rank in movie_rows
     ]
 
-    # Each episode number of a TV span is its own group (#479). A span
+    # Each episode number of a TV span is its own group. A span
     # competes with the singles of each episode that it holds. A file
     # can thus be in more than 1 group.
 

@@ -10,7 +10,7 @@ from app.settings import get_setting
 
 
 def replaced_from_outside(filesize_bytes, stale, file_path):
-    """Return True if the library file at file_path is not the file of its record (#750).
+    """Return True if the library file at file_path is not the file of its record.
 
     Each writer of Fitzflix stores the new size on the record. When
     Fitzflix archives the library files, the writer sets the stale flag
@@ -31,7 +31,7 @@ def replaced_from_outside(filesize_bytes, stale, file_path):
     The rule takes a stale record to hold a file of Fitzflix. An edit
     that stops because Radarr or Sonarr changed the file
     (LibraryFileChanged) puts the flag back to its value before the
-    edit (#762). A stale record can still hold a file from outside in 4
+    edit. A stale record can still hold a file from outside in 4
     cases. It was stale before that change, for example after an edit
     that died. The put-back failed, because it is best effort. An edit
     started on a file that an other program put there before, and its
@@ -83,17 +83,17 @@ def _fresh_file(file_id):
 
 
 class RecordChanged(RuntimeError):
-    """The record of a library file went or moved during a rewrite of the file (#726)."""
+    """The record of a library file went or moved during a rewrite of the file."""
 
 
 def confirm_rewrite(file_id, file_path):
     """Confirm the record and mark the archive stale before a tool writes the file.
 
     Each writer of a library file calls this before its first byte, or
-    before it puts its result at file_path (#517, #615).
+    before it puts its result at file_path.
 
     Invariant: a rewrite writes only a path that the record names at
-    that moment (#726). A rewrite can take 30 minutes. In that time, an
+    that moment. A rewrite can take 30 minutes. In that time, an
     import of a wider episode file can delete the record, and a rename
     can move the file. The title lock of the rewrite stops neither. A
     result that went to the old path would be a file with no record.
@@ -109,9 +109,9 @@ def confirm_rewrite(file_id, file_path):
     import, a good upload of the library file and the move of an archive
     to modified/ clear it. So does a record that takes the upload of a
     failed import. An edit that stops on a file that an other program
-    changed puts the flag back to its value before the edit (#762).
+    changed puts the flag back to its value before the edit.
 
-    A failed read or a failed flag raises after the rollback (#561). The
+    A failed read or a failed flag raises after the rollback. The
     caller read the row before its slow work. Thus, a new transaction
     makes the read and the change (MariaDB error 1020)."""
 
@@ -135,14 +135,14 @@ def confirm_rewrite(file_id, file_path):
 
 
 def put_stale_flag_back(file_id, stale_before, name):
-    """Give a record the stale flag that it had before an edit stopped on a changed file (#762).
+    """Give a record the stale flag that it had before an edit stopped on a changed file.
 
     Invariant: a record that the edit found with no stale flag has no
     stale flag after LibraryFileChanged. The edit did not write the file
     that is at the path now, or no file is at the path now. An other
     program or an other task of Fitzflix changed the path. The archive
-    of a new file is the job of its import. With the flag, the rule of
-    #750 took that file to be a file of Fitzflix, and a scan stored it.
+    of a new file is the job of its import. With the flag, the next
+    scan takes that file to be a file of Fitzflix and stores it.
     A record that was stale before the edit keeps its flag. stale_before
     is the flag that the caller read before the edit. Each caller knows
     it. This is best effort. A fault only logs."""
@@ -162,7 +162,7 @@ def put_stale_flag_back(file_id, stale_before, name):
 
 
 def _rescan_after_a_failed_edit(file_id, name, reason="Track edit failed"):
-    """Queue a track scan of a file whose edit failed (#583, #614).
+    """Queue a track scan of a file whose edit failed.
 
     The file can have the new layout, but the track rows and the size
     keep the old layout. No periodic scan repairs them. The scan reads
@@ -171,7 +171,7 @@ def _rescan_after_a_failed_edit(file_id, name, reason="Track edit failed"):
     is best effort. The caller raises the original error.
 
     An edit that finds a posted track UID missing from the file also
-    calls this (#611). Then the rows are older than the file."""
+    calls this. Then the rows are older than the file."""
 
     try:
         requeue(
@@ -187,7 +187,7 @@ def _rescan_after_a_failed_edit(file_id, name, reason="Track edit failed"):
 
 
 # A track edit that stops on a changed file leaves a note for the file
-# page (#606). The route already said that the edit was queued. The
+# page. The route already said that the edit was queued. The
 # next render of the file page shows the note once.
 
 STOPPED_EDIT_KEY = "fitzflix:track-edit:stopped:{file_id}"
@@ -200,7 +200,7 @@ STOPPED_EDIT_MESSAGE = (
 
 
 def note_stopped_edit(file_id):
-    """Record for the file page that an edit of file_id stopped (#606).
+    """Record for the file page that an edit of file_id stopped.
 
     This is best effort. A fault only logs."""
 
@@ -215,7 +215,7 @@ def note_stopped_edit(file_id):
 
 
 def pop_stopped_edit(file_id):
-    """Return and delete the note of a stopped edit of file_id, or None (#606)."""
+    """Return and delete the note of a stopped edit of file_id, or None."""
 
     try:
         note = current_app.redis.getdel(STOPPED_EDIT_KEY.format(file_id=int(file_id)))
@@ -226,10 +226,10 @@ def pop_stopped_edit(file_id):
 
 
 def _stop_on_changed_file(file_id, name, missing, edit):
-    """Stop an edit whose posted track UIDs are gone from the file (#611).
+    """Stop an edit whose posted track UIDs are gone from the file.
 
     The file changed after the page was loaded. The edit writes nothing.
-    A scan reads the rows again, and the file page shows a note (#606).
+    A scan reads the rows again, and the file page shows a note.
     edit names the edit for the log. Return False."""
 
     current_app.logger.warning(

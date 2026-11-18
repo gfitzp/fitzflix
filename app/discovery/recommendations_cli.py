@@ -52,7 +52,7 @@ def register_cli(app):
         While the stored set is current and complete, the command keeps
         it and fetches nothing. Use --force to fetch the page of this
         month again. A page with no films keeps the stored set. The
-        command says which of these occurred (#770)."""
+        command says which of these occurred."""
 
         from app.criterion.leaving_criterion import refresh_leaving_criterion
 
@@ -87,7 +87,7 @@ def register_cli(app):
         Do not wait for the daily run. The command prints the count of the
         feeds that it read and of the feeds that failed. A failed feed
         keeps its stored snapshot. When each feed failed, the command
-        exits with code 1 (#770)."""
+        exits with code 1."""
 
         from app.availability.newly_added import refresh_newly_added
 

@@ -42,9 +42,9 @@ class ResetFrameScoresForm(FlaskForm):
 
 
 class EditProfileForm(FlaskForm):
-    """Change the account email after a proof of identity (Profile page, #675)."""
+    """Change the account email after a proof of identity (Profile page)."""
 
-    # The lengths match the VARCHAR columns of the user table (#329)
+    # The lengths match the VARCHAR columns of the user table
 
     email = StringField(
         "New Email Address", validators=[DataRequired(), Email(), Length(max=120)]
@@ -92,7 +92,7 @@ class LetterboxdUsernameForm(FlaskForm):
 
     A blank value disables the sync. A Letterboxd username has only
     letters, digits, and underscores. The feed URL contains the name.
-    Thus, a slash or a question mark would fetch a different page (#400)."""
+    Thus, a slash or a question mark would fetch a different page."""
 
     letterboxd_username = StringField(
         "Letterboxd Username",
@@ -150,7 +150,7 @@ class DefaultPlayerForm(FlaskForm):
 
     The submit label must not put 2 SQL keywords next to each other. The
     SQLi_BODY rule of the CloudFront WAF blocked "Set Default Player"
-    live with a bare 403 (2026-08-26). A test against the same WAF
+    live with a bare 403. A test against the same WAF
     showed that "Update Default Player" is also blocked (UPDATE and
     DEFAULT are both keywords). "Update Playback Device" and "Save
     Default Player" pass. One keyword is fine. An adjacent pair reads as
@@ -189,7 +189,7 @@ class MovieReviewForm(FlaskForm):
         """Reject watch dates in the future."""
 
         # A value that does not parse leaves no data. The field already
-        # has its "Not a valid date value" error (#308).
+        # has its "Not a valid date value" error.
 
         if date_watched.data is None:
             return
@@ -203,7 +203,7 @@ class TMDBLookupForm(FlaskForm):
     A blank id means "search TMDB by title". This is useful for a record
     that was never matched. It is destructive for a record that was
     matched. Thus, the routes refuse a blank submit when an id is
-    already stored (#207).
+    already stored.
     """
 
     tmdb_id = IntegerField("TMDB ID", validators=[Optional()])
@@ -221,7 +221,7 @@ class TMDBRemoveForm(FlaskForm):
 
 
 class RuntimeMismatchForm(FlaskForm):
-    """Accept the length of one flagged file as known-benign (#234).
+    """Accept the length of one flagged file as known-benign.
 
     This is on the runtime triage page. The file then stops appearing
     there."""
@@ -231,7 +231,7 @@ class RuntimeMismatchForm(FlaskForm):
 
 
 class TMDBTriageForm(FlaskForm):
-    """Flag an unmatched record as unmatchable, or match it to an id (#226).
+    """Flag an unmatched record as unmatchable, or match it to an id.
 
     This is on the TMDB triage page. The flag uses the path of the
     Remove button. Then no refresh guesses an id from the title. The
@@ -267,7 +267,7 @@ class CriterionForm(FlaskForm):
         """Reject a spine number that is not positive."""
 
         # A value that does not parse leaves no data. The field already
-        # has its "Not a valid integer value" error (#308).
+        # has its "Not a valid integer value" error.
 
         if spine_number.data is None:
             return
@@ -342,7 +342,7 @@ class StreamingProvidersForm(FlaskForm):
 
 
 class AvailabilityAlertsForm(FlaskForm):
-    """Set the opt-ins for the watchlist availability digest (#156/#230).
+    """Set the opt-ins for the watchlist availability digest.
 
     This is on the Profile page. The digest is the nightly email that
     reports a watchlisted film that arrived in the library or on a
@@ -519,7 +519,7 @@ class RunScheduledTaskForm(FlaskForm):
 
 
 class QueueFrontForm(FlaskForm):
-    """Move a waiting job to the front of its queue (Queue page, #236)."""
+    """Move a waiting job to the front of its queue (Queue page)."""
 
     job_id = HiddenField(validators=[DataRequired()])
 
@@ -617,12 +617,12 @@ class SubtitleTriageForm(FlaskForm):
 
 
 class LossyAudioTriageForm(FlaskForm):
-    """Apply per-file actions on the lossy-audio triage page (#212).
+    """Apply per-file actions on the lossy-audio triage page.
 
     The lossless track to promote travels as a plain lossless_track
     radio. The form carries the file and the 3 actions: remux with that
     track in the lead, keep the file as it is, or build the
-    listening-clip comparison (#223).
+    listening-clip comparison.
     """
 
     file_id = IntegerField(validators=[Optional()], widget=HiddenInput())
@@ -649,16 +649,16 @@ class GuessFrameForm(FlaskForm):
     choice = StringField(validators=[Optional()])
     guess = StringField("Your guess", validators=[Optional()])
     guess_submit = SubmitField("Guess")
-    # Extra Difficult (#202): trade this look at the frame for a wider
+    # Extra Difficult: trade this look at the frame for a wider
     # look, instead of a guess.
     zoom_out = SubmitField("Zoom Out")
     # Extra Difficult again: give up a round that is past its first
-    # zoom-out. The round ends as a miss (requested by Glenn, 2026-08-27).
+    # zoom-out. The round ends as a miss.
     give_up = SubmitField("I give up")
 
 
 class DVRChannelForm(FlaskForm):
-    """Create or edit the definition of one DVR channel (#182).
+    """Create or edit the definition of one DVR channel.
 
     This is the DVR channel editor. The rule fields are comma-separated
     term lists. Fitzflix derives the slug from the name at creation.
@@ -717,7 +717,7 @@ class ManualImportForm(FlaskForm):
 
 
 class HeldImportForm(FlaskForm):
-    """Decide a held conversion: import it, archive it only, or discard it (#292)."""
+    """Decide a held conversion: import it, archive it only, or discard it."""
 
     held_id = HiddenField(validators=[DataRequired()])
     import_submit = SubmitField("Import")
@@ -726,7 +726,7 @@ class HeldImportForm(FlaskForm):
 
 
 class ArchivedRestoreForm(FlaskForm):
-    """Request a restore of an archive-only original after a proof of identity (#292)."""
+    """Request a restore of an archive-only original after a proof of identity."""
 
     archived_id = HiddenField(validators=[DataRequired()])
     password = PasswordField("Password", validators=[Optional()])
@@ -740,7 +740,7 @@ class MissingScanForm(FlaskForm):
 
 
 class PasskeyAddForm(FlaskForm):
-    """Hold the proof of identity for a new passkey (Profile page, #675).
+    """Hold the proof of identity for a new passkey (Profile page).
 
     passkeys.js posts the proof as JSON. The page renders only the
     password field of this form."""
@@ -749,7 +749,7 @@ class PasskeyAddForm(FlaskForm):
 
 
 class PasskeyDeleteForm(FlaskForm):
-    """Remove 1 passkey of the user after a proof of identity (Profile page, #669)."""
+    """Remove 1 passkey of the user after a proof of identity (Profile page)."""
 
     passkey_id = HiddenField(validators=[DataRequired()])
     password = PasswordField("Password:", validators=[Optional()])
@@ -757,14 +757,14 @@ class PasskeyDeleteForm(FlaskForm):
 
 
 class RemovePasswordForm(FlaskForm):
-    """Remove the password after a proof of identity (Profile page, #669)."""
+    """Remove the password after a proof of identity (Profile page)."""
 
     password = PasswordField("Password:", validators=[Optional()])
     remove_password_submit = SubmitField("Remove my password")
 
 
 class SetPasswordEmailForm(FlaskForm):
-    """Mail the link that sets a password on a passkey-only account (Profile page, #669)."""
+    """Mail the link that sets a password on a passkey-only account (Profile page)."""
 
     set_password_email_submit = SubmitField("Email me a link to set a password")
 

@@ -10,7 +10,7 @@ from flask import current_app
 from app.media.naming import hidden
 
 # An import waits for free space on the library volume. It is never
-# rejected for space (#262). The check asks for the size of the source
+# rejected for space. The check asks for the size of the source
 # times SPACE_FACTOR, plus SPACE_RESERVE. The output can be larger than
 # the source, because lossless tracks get FLAC twins. The final copy
 # asks for the size of the output plus SPACE_RESERVE. A waiting file
@@ -66,7 +66,7 @@ def library_space_shortfall(directory, needed_bytes):
     return max(0, needed_bytes - free)
 
 
-# Staging reservations (#294). Up to 5 workers localize at the same
+# Staging reservations. Up to 5 workers localize at the same
 # time. Each staged import records its peak need on staging and the
 # name stems of its staging files. A new import counts what the others
 # still need: their reservation minus the bytes that their files already
@@ -144,7 +144,7 @@ def staging_outstanding(staging_dir, exclude=None):
 
 
 def set_staging_reservation(basename, needed_bytes, names):
-    """Record or change the staging reservation of an import (#294)."""
+    """Record or change the staging reservation of an import."""
 
     current_app.redis.hset(
         STAGING_RESERVED_KEY,
@@ -202,7 +202,7 @@ def reserve_staging(basename, needed_bytes, names, staging_dir):
         time.sleep(0.5)
 
     # Without the lock, the check and the reservation are not 1 step.
-    # Then 2 imports can take the same space (#478). The import tries
+    # Then 2 imports can take the same space. The import tries
     # again soon. It is not a wait for space.
 
     if not lock:

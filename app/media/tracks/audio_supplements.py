@@ -166,7 +166,7 @@ FFMPEG_TIME_RE = re.compile(
 def ffmpeg_progress(line, duration, previous):
     """Return the percent of an ffmpeg progress line, or previous.
 
-    The percent stops at 99 (#388). A stream can run past the duration
+    The percent stops at 99. A stream can run past the duration
     in the container header. The SDR conversion stops at 99 the same
     way. A line with no time stamp, or no duration, gives previous."""
 
@@ -335,7 +335,7 @@ def remux_audio_plan_task(file_id, plan):
     in. The remux and the verification run on the local disk. The
     verified result replaces the library copy. The track rows are
     built again. The rebuilt file goes to modified/, or to transcoded/
-    for a conversion (#299). The rip in untouched/ never changes.
+    for a conversion. The rip in untouched/ never changes.
     """
 
     return edits._locked_edit(
@@ -364,7 +364,7 @@ def _remux_audio_plan_unlocked(file_id, plan):
         plan = [(action, int(index)) for action, index in plan]
         staging_dir = current_app.config["STAGING_DIR"]
         # The staging names hold a digest of the library path, as in
-        # remux_file (#519). 2 extras named "Trailer.mkv" can run at the
+        # remux_file. 2 extras named "Trailer.mkv" can run at the
         # same time on the transcode queue.
         staged_name = f"{hashlib.sha1(file_path.encode()).hexdigest()[:8]}-{basename}"
         staging_source = os.path.join(staging_dir, f".src-{staged_name}")
@@ -372,7 +372,7 @@ def _remux_audio_plan_unlocked(file_id, plan):
         reservation = f"audio-plan:{staged_name}"
         try:
             # The reservation sees the space that the imports reserved, and
-            # the imports see this one (#585). A busy reservation lock
+            # the imports see this one. A busy reservation lock
             # falls back to the plain check of the free space.
 
             source_bytes = os.path.getsize(file_path)
@@ -484,13 +484,13 @@ def _remux_audio_plan_unlocked(file_id, plan):
 
             # The S3 key comes from the row (archive_key_for), not from
             # the staging name. Thus, the digest prefix of the staging
-            # name does not reach the key (#519). The first run took the
+            # name does not reach the key. The first run took the
             # key from the name. It uploaded 40 GB under 'untouched/src-…'
             # (the Fellowship incident).
 
             os.remove(staging_source)
             # The source copy is gone. The reservation shrinks to the
-            # output, which waits for the upload (#585 follow-up).
+            # output, which waits for the upload.
             set_staging_reservation(reservation, needed - source_bytes, [staged_name])
             final_staging = staging_output
 
@@ -518,7 +518,7 @@ def _remux_audio_plan_unlocked(file_id, plan):
             # Build the track records again because the file changed. A new
             # transaction avoids MariaDB error 1020 after the long remux.
             # The file has the new layout now. A failed commit raises, and
-            # the task wrapper queues a scan (#583, #614).
+            # the task wrapper queues a scan.
 
             try:
                 file = rewrite_guard._fresh_file(file.id)
@@ -536,9 +536,9 @@ def _remux_audio_plan_unlocked(file_id, plan):
             enqueue_plex_analyze(file_path)
 
             # The rebuilt library file goes to modified/, or to transcoded/
-            # for a conversion (#299). The upload reads the staging copy.
+            # for a conversion. The upload reads the staging copy.
             # A failure leaves the stale flag of the write in place. Then
-            # the S3 sync uploads it again (#615).
+            # the S3 sync uploads it again.
 
             if get_setting("ARCHIVE_ORIGINAL_MEDIA"):
                 try:

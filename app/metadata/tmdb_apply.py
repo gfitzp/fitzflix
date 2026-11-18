@@ -27,7 +27,7 @@ def _clear_links(links):
 
     This goes through the links of the record only. The old clear-outs
     loaded every row of the table and asked about each row with 1
-    query. That was approximately 23,700 queries for each film (#295)."""
+    query. That was approximately 23,700 queries for each film."""
 
     for linked in links.all():
         links.remove(linked)
@@ -42,7 +42,7 @@ PEOPLE_RANKING_SECONDS = 7 * 86400
 
 
 def invalidate_people_ranking():
-    """Delete the cached rankings of the /people page (2026-08).
+    """Delete the cached rankings of the /people page.
 
     The ranked list of every credited person is a full aggregation over
     the cast and crew tables. Thus, Redis holds the list, and Fitzflix
@@ -56,7 +56,7 @@ def invalidate_people_ranking():
 
 
 # The session.info flag of a flush that added or deleted a file row.
-# The ranking counts only the owned works (#656). Thus, a file write
+# The ranking counts only the owned works. Thus, a file write
 # moves the counts in the same way as a credit write.
 
 _FILE_CHANGE = "fitzflix.people_ranking.file_change"
@@ -180,7 +180,7 @@ def _tmdb_date(value):
 
 
 def canonical_movie_name(tmdb_info, year):
-    """Return the (title, year) that tmdb_movie_apply gives a movie for a payload (#603).
+    """Return the (title, year) that tmdb_movie_apply gives a movie for a payload.
 
     The title is the TMDB title, shortened to the column of Movie.title.
     The year is the year of the release date of the payload, or year
@@ -204,7 +204,7 @@ def pick_rating(entries, field, preferred=None):
 
     The entries that preferred accepts come first, in their order. The
     movie certifications prefer the theatrical release (type 3). The
-    premiere (type 1) usually has a blank certification (#303). The TV
+    premiere (type 1) usually has a blank certification. The TV
     content ratings use the US entry."""
 
     entries = [entry for entry in entries or [] if isinstance(entry, dict)]
@@ -255,7 +255,7 @@ class TMDBAssociation:
         for part in self.path:
             value = (value or {}).get(part) if isinstance(value, dict) else None
         # belongs_to_collection is one object, not a list. An empty object
-        # at a list path is a glitch of the #251 class. It must read as
+        # at a list path is a glitch of TMDB. It must read as
         # "nothing", or the guard below would let it clear the links.
         if isinstance(value, dict):
             return [value] if value else []
@@ -271,14 +271,14 @@ class TMDBAssociation:
 
 
 # The 6 marks of the MPA rating system. The certification chip of a
-# film shows only these (Glenn, 2026-09-17). The live TMDB paths (the
+# film shows only these. The live TMDB paths (the
 # review page and the card of a bare TMDB id) filter through this set.
 # Thus, an NR or an Unrated film shows no chip there.
 
 MPAA_RATINGS = frozenset({"G", "PG", "PG-13", "R", "NC-17", "X"})
 
 # The TMDB statuses of a TV series whose run is over. Its season and
-# episode counts are final (#482).
+# episode counts are final.
 
 FINISHED_TV_STATUSES = ("Ended", "Canceled")
 
@@ -286,7 +286,7 @@ FINISHED_TV_STATUSES = ("Ended", "Canceled")
 def release_certification(country_release):
     """Return the rating of 1 country entry of the TMDB release dates, or None.
 
-    The theatrical release (type 3) comes first (pick_rating, #303).
+    The theatrical release (type 3) comes first (pick_rating).
     This is the 1 rule of the cataloger and of the live TMDB pages."""
 
     return pick_rating(
@@ -297,7 +297,7 @@ def release_certification(country_release):
 
 
 def us_certification_from(details):
-    """Return the US rating of a TMDB movie payload, or None (#365).
+    """Return the US rating of a TMDB movie payload, or None.
 
     The theatrical release comes first, as in release_certification,
     the rule that the cataloger stores. The result is the first value
@@ -369,11 +369,11 @@ def _tmdb_credit(person):
 
 
 class TMDBUnavailable(Exception):
-    """TMDB answered a details request with an error that is not a 404 (#342)."""
+    """TMDB answered a details request with an error that is not a 404."""
 
 
 def _raise_unless_not_found(record, tmdb_id, error):
-    """Raise TMDBUnavailable for a TMDB error that is not a 404 (#342).
+    """Raise TMDBUnavailable for a TMDB error that is not a 404.
 
     Only a 404 says that the id does not exist. A 429 or a 5xx is an
     outage. It must not send the "TMDB ID not found" email for each record
@@ -402,7 +402,7 @@ class TMDBMixin(object):
     TMDB_LINK_COLUMNS = ("tmdb_homepage", "tmdb_backdrop_path", "tmdb_poster_path")
 
     def _fit_tmdb_strings(self):
-        """Make each TMDB string value fit its VARCHAR column (#328).
+        """Make each TMDB string value fit its VARCHAR column.
 
         MariaDB runs with STRICT_TRANS_TABLES. A value that is too long
         stops the commit of the full refresh with error 1406. Thus, one
@@ -437,13 +437,13 @@ class TMDBMixin(object):
         while the rest is intact. The bulk refreshes of 2026-08-07 to
         2026-08-13 got empty genre lists for approximately 16% of the
         requests. An unconditional delete then erased the genres of 943
-        films (#251). Thus, an empty incoming list never deletes the
+        films. Thus, an empty incoming list never deletes the
         links that the record has. Fitzflix keeps them and logs the
         anomaly. A spec with no_guard skips this check. Each clear-out
-        goes through the links of this record only (#295)."""
+        goes through the links of this record only."""
 
         # A bare value in the list is skipped and logged, as for the
-        # credits (#554). Before, 1 bare entry raised, and the whole
+        # credits. Before, 1 bare entry raised, and the whole
         # apply was lost until the next run.
         entries = list(tmdb_objects(spec.entries(tmdb_info), self, spec.label))
         links = getattr(self, spec.rel)
@@ -478,7 +478,7 @@ class TMDBMixin(object):
     def _apply_scalars(self, tmdb_info):
         """Copy the external ids, the scalars and the dates of the payload.
 
-        A scalar keeps its stored value if the KEY is absent (#252). A
+        A scalar keeps its stored value if the KEY is absent. A
         full details payload always carries every key, with null where
         TMDB has nothing. Thus, a missing key means a partial payload. It
         must not set a populated column to null. A key that is present
@@ -529,7 +529,7 @@ class TMDBMixin(object):
 
         requested_info = "credits,external_ids,keywords,release_dates"
         # A bulk refresh fetches hundreds of movies a night. The apply
-        # writes the 1 INFO line of each movie (#590, #605).
+        # writes the 1 INFO line of each movie.
         current_app.logger.debug(f"{self} Getting TMDB data")
         if tmdb_id == None:
             search = tmdb_json(
@@ -589,8 +589,8 @@ class TMDBMixin(object):
         # Movie.title is narrower than tmdb_title. The title goes into
         # the library names, which have a byte limit. Thus, the record
         # title is shortened to its column, as _fit_tmdb_strings does for
-        # the TMDB columns (#383). canonical_movie_name shortens it. The
-        # title locks of a refresh use the same rule (#603).
+        # the TMDB columns. canonical_movie_name shortens it. The
+        # title locks of a refresh use the same rule.
 
         title_length = Movie.__table__.c.title.type.length
         if len(tmdb_info.get("title") or "") > title_length:
@@ -623,18 +623,17 @@ class TMDBMixin(object):
             self.year = canonical_year
         if tmdb_info.get("id"):
             self.tmdb_data_as_of = datetime.now(timezone.utc)
-            # The record page shows "last updated" from this column (#465).
+            # The record page shows "last updated" from this column.
             self.date_updated = self.tmdb_data_as_of
 
         for spec in self.TMDB_ASSOCIATIONS:
             self._apply_association(spec, tmdb_info)
 
         # Cast and crew get the same empty-payload guard as the association
-        # groups (#252). Before, the bulk delete ran before any payload
-        # check. Thus, a bad payload with an empty or missing credits
-        # section deleted the cast of a film permanently. This is the #251
-        # failure shape. It hits the /people rankings, the cast criteria
-        # shelves, and the Name That Frame distractors.
+        # groups. Without the guard, a bad payload with an empty or missing
+        # credits section deletes the cast of a film permanently. That
+        # hits the /people rankings, the cast criteria shelves, and the
+        # Name That Frame distractors.
 
         incoming_credits = tmdb_info.get("credits") or {}
         for model, section in ((MovieCast, "cast"), (MovieCrew, "crew")):
@@ -772,9 +771,9 @@ class TMDBMixin(object):
             return self
 
         self._apply_scalars(tmdb_info)
-        # A finished run has final counts. TMDB marks it Ended or Canceled
-        # (#482). A running series keeps no counts. A series that runs
-        # again loses its old final counts (#554). A payload with no
+        # A finished run has final counts. TMDB marks it Ended or Canceled.
+        # A running series keeps no counts. A series that runs
+        # again loses its old final counts. A payload with no
         # status (a glitch) changes nothing.
 
         status = tmdb_info.get("status")
@@ -787,7 +786,7 @@ class TMDBMixin(object):
 
         # The US content rating is in the appended content_ratings block.
         # A payload with no US entry keeps the stored rating, the same as
-        # the empty-list guards of the associations (#251).
+        # the empty-list guards of the associations.
 
         rating = pick_rating(
             [
@@ -803,7 +802,7 @@ class TMDBMixin(object):
         self._fit_tmdb_strings()
         if tmdb_info.get("id"):
             self.tmdb_data_as_of = datetime.now(timezone.utc)
-            # The record page shows "last updated" from this column (#465).
+            # The record page shows "last updated" from this column.
             self.date_updated = self.tmdb_data_as_of
 
         for spec in self.TMDB_ASSOCIATIONS:
@@ -827,7 +826,7 @@ class TMDBMixin(object):
         if tmdb_info.get("aggregate_credits"):
             aggregate = tmdb_info.get("aggregate_credits")
 
-            # This is the same guard as the movie side (#252). A section
+            # This is the same guard as the movie side. A section
             # that is present with an empty cast or crew list keeps the
             # stored rows.
 

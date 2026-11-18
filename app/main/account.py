@@ -1,4 +1,4 @@
-"""Serve the own pages of the user (split from routes.py).
+"""Serve the own pages of the user.
 
 These are the viewing history with its per-row editors, the review
 editor, and the profile."""
@@ -127,8 +127,8 @@ def review_edit(review_id):
     # guid rows fully. It does not accept changes that revert.
 
     if user_review.letterboxd_guid:
-        # A ladder fetch from a stale tab wants JSON, not a redirect
-        # (#512). The page then falls back to a normal submission.
+        # A ladder fetch from a stale tab wants JSON, not a redirect.
+        # The page then falls back to a normal submission.
         if _ladder_fetch():
             return jsonify({"error": "syncs from Letterboxd"}), 409
         flash(
@@ -214,8 +214,7 @@ def _review_export_response(review_export_form):
     """Handle the review-export POST.
 
     This builds the CSV in the Letterboxd format and emails it to the
-    user. The form lives on the Profile page since #215. History held
-    the form before that. This returns a response after the form is
+    user. The form is on the Profile page. This returns a response after the form is
     submitted, or None."""
 
     if not (
@@ -329,7 +328,7 @@ def _review_export_response(review_export_form):
         filename = "reviews.csv"
 
     # Invariant: an entry leaves the "new" set only after its mail went
-    # out (#746). The send runs in the request, and a fault raises. A
+    # out. The send runs in the request, and a fault raises. A
     # send in a thread only logged its fault. Then the entries were
     # marked as exported, and the next export left them out.
 
@@ -391,8 +390,8 @@ def _review_upload_response(review_upload_form):
     """Handle the review-import POST.
 
     The upload is a Letterboxd account export zip, or the legacy
-    JSON-lines ratings file. The form lives on the Profile page since
-    #215, like the export. This returns a response after the form is
+    JSON-lines ratings file. The form is on the Profile page,
+    like the export. This returns a response after the form is
     submitted, or None."""
 
     if not (
@@ -434,7 +433,7 @@ def _review_upload_response(review_upload_form):
         # The legacy JSON-lines ratings file, with 1 film for each line.
         # Read each line before the first enqueue. A bad line then stops
         # the import with a message. Before, it gave a 500 after the good
-        # lines were already queued (#311).
+        # lines were already queued.
 
         ratings = []
         try:
@@ -478,7 +477,7 @@ def history():
     # viewing. Those rows still drive the recommendations and the stats
     # below. The user can edit them from the page of their film.
 
-    # The order is day, then time of day, then title (#196). A midnight
+    # The order is day, then time of day, then title. A midnight
     # date_watched means "no time recorded", not "watched at 00:00".
     # Only a watch logged on the day of the watch keeps a clock time.
     # See _watched_timestamp. Thus, a sort on the raw timestamp put
@@ -505,7 +504,7 @@ def history():
             UserMovieReview.date_reviewed.desc(),
             Movie.title.asc(),
             # The unique tiebreak. A same-second bulk import of 1 film
-            # keeps 1 order across the pages (#459).
+            # keeps 1 order across the pages.
             UserMovieReview.id.desc(),
         )
         .paginate(page=page, per_page=50, error_out=False)
@@ -625,10 +624,10 @@ def _player_from_address(value, default_port=None):
 
 
 def _save_email(form):
-    """Update the email address of the user after a proof of identity (#675).
+    """Update the email address of the user after a proof of identity.
 
     The reset email goes to this address. Thus, a new address is a way
-    into the account, and each other session of the account ends (#673)."""
+    into the account, and each other session of the account ends."""
 
     if not identity_confirmed(form):
         return
@@ -638,7 +637,7 @@ def _save_email(form):
         _end_other_sessions(user)
     except IntegrityError:
         # A concurrent post took the address after the form check. The
-        # unique index refuses this one (#577), as on the register page.
+        # unique index refuses this one, as on the register page.
         db.session.rollback()
         flash("Please use a different email address.", "danger")
         return
@@ -656,7 +655,7 @@ def _regenerate_api_key(form):
 def _reset_frame_scores(form):
     """Delete the Name That Frame standings of the user.
 
-    This deletes the score rows (requested by Glenn, 2026-08-27). It
+    This deletes the score rows. It
     keeps the record of the dealt frames. Thus, a new game does not show
     the frames that the user saw recently."""
 
@@ -746,7 +745,7 @@ def _save_plex_player(form):
 
 
 def _save_infuse_player(form):
-    """Save the Infuse target of the user, and start its PIN pairing (#192).
+    """Save the Infuse target of the user, and start its PIN pairing.
 
     This is the same Apple TV, driven with the Companion protocol of
     Apple instead of Plex Companion. The pairing must live in 1 process
@@ -839,7 +838,7 @@ def _streaming_saver(registry, subscribed):
 
 
 def _save_alerts(form):
-    """Save the opt-ins for the watchlist availability digest (#156/#230).
+    """Save the opt-ins for the watchlist availability digest.
 
     The nightly email is off unless the user asks for it. Rentals are a
     second opt-in on top of it."""
@@ -851,12 +850,12 @@ def _save_alerts(form):
 
 
 def _delete_passkey(form):
-    """Remove 1 passkey of the user (#669).
+    """Remove 1 passkey of the user.
 
     An account always has a password or a passkey. This handler and
     _remove_password are the 2 places that keep that true. The last
     passkey of an account with no password stays. The post needs a
-    proof of identity (#675)."""
+    proof of identity."""
 
     if not identity_confirmed(form):
         return
@@ -882,7 +881,7 @@ def _delete_passkey(form):
 
 
 def _end_other_sessions(user):
-    """Commit a change of the sign-in methods, and keep only this session (#673).
+    """Commit a change of the sign-in methods, and keep only this session.
 
     The session id holds the password fingerprint, and a new session
     epoch changes it. Thus, each other session and each remember cookie
@@ -896,11 +895,11 @@ def _end_other_sessions(user):
 
 
 def _remove_password(form):
-    """Remove the password. The account then signs in with a passkey only (#669).
+    """Remove the password. The account then signs in with a passkey only.
 
     Every other session of the account ends, also a session from an
-    earlier passkey-only period (#673). This session stays signed in.
-    The post needs a proof of identity (#675)."""
+    earlier passkey-only period. This session stays signed in.
+    The post needs a proof of identity."""
 
     if not identity_confirmed(form):
         return
@@ -915,9 +914,9 @@ def _remove_password(form):
 
 
 def _send_set_password_email(form):
-    """Mail the link that sets a password on a passkey-only account (#669).
+    """Mail the link that sets a password on a passkey-only account.
 
-    This is the reset link of the Sign In page. The limit of #263
+    This is the reset link of the Sign In page. The limit on reset requests
     applies. Over the limit, the page shows the same message but sends
     no email."""
 
@@ -1024,8 +1023,8 @@ def profile():
         alerts_form.notify_availability.data = current_user.notify_availability
         alerts_form.notify_rentals.data = current_user.notify_rentals
 
-    # The review import and export forms, moved here from History
-    # (#215). They are account-level functions. They are not something
+    # The review import and export forms, moved here from History.
+    # They are account-level functions. They are not something
     # to pass on the way to the diary.
 
     review_export_form = ReviewExportForm()
@@ -1038,7 +1037,7 @@ def profile():
         return upload_response
 
     # The page does not show the field errors. Thus, a refused field (for
-    # example, a username longer than its column, #329) gets a message.
+    # example, a username longer than its column) gets a message.
 
     for form, _, _ in handlers:
         flash_form_errors(form)
@@ -1073,7 +1072,7 @@ def profile():
 @bp.route("/stats")
 @login_required
 def stats():
-    """Show the viewing statistics of the user for 1 year or for all time (#264).
+    """Show the viewing statistics of the user for 1 year or for all time.
 
     The year parameter is a year or "all". Without it, the page shows the
     current year if it has viewings. Otherwise it shows the newest year

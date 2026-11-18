@@ -58,7 +58,7 @@ app = LocalProxy(get_app)
 
 MAX_VANISHED_RETRIES = 2
 
-# The wait of a cataloging for Sonarr, and the limit of the waits (#372).
+# The wait of a cataloging for Sonarr, and the limit of the waits.
 # 12 waits of 5 minutes are 1 hour.
 
 SONARR_WAIT = timedelta(minutes=5)
@@ -114,24 +114,23 @@ def finalize_localization(
     staged_output is the same file on staging, when the library copy
     crossed volumes. The Movies NFS mount can drop at the end of a large
     write. Then macOS remounts it, and the just-written hidden copy is
-    gone (Fort Apache, 2026-10-15). If the rename finds no hidden copy,
+    gone. If the rename finds no hidden copy,
     the task gives the copy back to move_localized_file, which copies
     again from staged_output. MAX_VANISHED_RETRIES limits the returns.
     The task removes staged_output after the rename and the commit.
 
-    An episode finds its series first, before any record (#372). When
+    An episode finds its series first, before any record. When
     Sonarr does not answer and a Sonarr rename can explain a new title,
     the task waits SONARR_WAIT, up to MAX_SONARR_WAITS times. Then it
     makes the new series.
 
-    Each run first extends its title lock, as the move does (#520). If
+    Each run first extends its title lock, as the move does. If
     another task took the lock meanwhile, the task waits for it. It
     writes no row and moves no file of the title until then.
     """
 
     # The archive move of the import takes the title lock. Thus, it goes
-    # to the queue after the release of the lock, as the upload does
-    # (#664).
+    # to the queue after the release of the lock, as the upload does.
 
     with app.app_context(), archive_moves_after_unlock():
         # The queue page lists this job with a banner and a row. Name the
@@ -150,19 +149,19 @@ def finalize_localization(
         }
 
         # A failure before the commit must not leave the new file in the
-        # library with no record (#316). The handler needs to know if the
+        # library with no record. The handler needs to know if the
         # rename happened, and if it replaced a file at that path. None
         # means that the rename did not happen. Each booking goes through
         # handoff. Thus, the 1 HandoffFailed handler below cleans up after
-        # each of them (#623).
+        # each of them.
 
         placement = None
         try:
             # A dead volume, or a Sonarr wait, can requeue this task for
             # longer than the lock TTL. Then a new import of the same title
             # can take the lock. This check comes first. Thus, each retry
-            # extends the lock, or waits for the other task (#520). A Redis
-            # fault of the extension is a failed hand-off too (#568).
+            # extends the lock, or waits for the other task. A Redis
+            # fault of the extension is a failed hand-off too.
 
             if not localization.handoff(chain._hold_title_lock, lock, basename):
                 localization.handoff(
@@ -195,7 +194,7 @@ def finalize_localization(
                     delay=timedelta(minutes=5),
                     reason=f"Volumes unavailable ({', '.join(dead)}) for the cataloging",
                     # The Sonarr wait count goes with the retry. Otherwise each
-                    # volume drop starts the limit of the waits again (#402).
+                    # volume drop starts the limit of the waits again.
                     counters=counters,
                     args=(file_path, file_details, lock, hidden_output_file),
                     kwargs={"inspection": inspection, "staged_output": staged_output},
@@ -257,7 +256,7 @@ def finalize_localization(
 
         except LibraryFileChanged:
             # An other program put a new download at the path of the
-            # source during the chain (#742). The localized copy is of the
+            # source during the chain. The localized copy is of the
             # old download. It goes, with its upload, and the record does
             # not change. The new file is imported after this job.
 
@@ -279,7 +278,7 @@ def finalize_localization(
 
         except localization.HandoffFailed:
             # A lock extension, a retry or the hand-off to the move could
-            # not be booked (#437, #521, #568). The source is good. It stays
+            # not be booked. The source is good. It stays
             # for the hourly sweep, and the lock and the copies go.
 
             db.session.rollback()
@@ -294,7 +293,7 @@ def finalize_localization(
 
         except BaseException as error:
             # After an outage of the database, the rollback can fail too.
-            # The lock and the source must not depend on it (#681).
+            # The lock and the source must not depend on it.
 
             try:
                 db.session.rollback()
@@ -307,7 +306,7 @@ def finalize_localization(
             # when no record points to it. The weekly sync imports a file
             # with no record. A file over the source stays only when a
             # record points to it. A stop signal or an outage of the
-            # database keeps the source (#497, #681).
+            # database keeps the source.
 
             # The rename can have put the new file over the source (the
             # name that an arr gave is the library name). Then the file at
@@ -324,7 +323,7 @@ def finalize_localization(
             # stays, as for a lookup that failed.
 
             # Invariant: the import does not delete the upload of a
-            # download that its localized file replaced (#727). The file
+            # download that its localized file replaced. The file
             # over the source lost the tracks that the localization
             # removes. Then the run-scoped upload holds the only copy of
             # the original, and it stays. A record at the path takes it as
@@ -350,11 +349,11 @@ def finalize_localization(
                     + _unclaimed_upload_text(only_copy)
                 )
 
-            # Invariant: a file that a record points to stays at its path
-            # (#688). The repair of _claim_at_path covers it, for each failure.
+            # Invariant: a file that a record points to stays at its path.
+            # The repair of _claim_at_path covers it, for each failure.
             # A file over the source with no record is a localized copy. A
             # kept file would import again as an original. Thus, it goes
-            # to rejects (#424, #681).
+            # to rejects.
 
             localization.abandon_failed_stage(
                 error,
@@ -370,7 +369,7 @@ def finalize_localization(
 
         # Each follow-up guards itself. This guard is for the code between
         # them. Nothing after the commit moves the file. The time limit of
-        # rq ends the job, as in _follow_up (#376, #689).
+        # rq ends the job, as in _follow_up.
 
         archive_due = False
         try:
@@ -400,7 +399,7 @@ def finalize_localization(
             _release_title_lock(lock)
 
             # The import is done. Its staging reservation goes now, not
-            # at the grace sweep of a later reservation (#461).
+            # at the grace sweep of a later reservation.
 
             try:
                 space.release_staging_reservation(os.path.basename(file_path))
@@ -408,10 +407,10 @@ def finalize_localization(
                 current_app.logger.warning(traceback.format_exc())
 
         # The upload takes the title lock. Thus, it is queued after the
-        # release. Otherwise it waits for this task (#615 follow-up).
+        # release. Otherwise it waits for this task.
 
         # The id and the name are reads of the row. Thus, they are in the
-        # step too (#689).
+        # step too.
 
         if archive_due:
             follow_ups._follow_up(
@@ -427,14 +426,14 @@ def finalize_localization(
         # A file that replaced a library file of the same film or episode
         # is a new part of an item that Plex has. Plex sends no webhook
         # for it. The analyze after the next scan of Plex aligns the
-        # stream selection of each account (#661). It never raises.
+        # stream selection of each account. It never raises.
 
         if placement == "replaced" or worse_local_copies:
 
             enqueue_plex_analyze(output_file, delay=REPLACEMENT_ANALYZE_DELAY)
 
         # The scan of Plex does not see an extra that lands in an extras
-        # folder that exists already. A refresh of its film does (#775).
+        # folder that exists already. A refresh of its film does.
         # The extra is in <film folder>/<type>/. It never raises.
 
         if file_details.get("feature_type_name"):
@@ -468,12 +467,12 @@ def _build_records(file_details, inspection, output_name, series_id=None):
     file = _record_at_path(file_details.get("file_path"))
 
     # Invariant: after the import, the record names the exact path of
-    # the new file (#739). The lookup ignores letter case and accents on
+    # the new file. The lookup ignores letter case and accents on
     # MariaDB, and the library shares do not. A record with an other
     # spelling takes the path of the new file. A second record is not
     # possible, because the unique key of the path ignores them too. The
     # gate of the localization rejects the new file while a file is at
-    # the old spelling (#749). Thus, no file is there now: Radarr or
+    # the old spelling. Thus, no file is there now: Radarr or
     # Sonarr replaced it. The old path goes to the follow-up work, which
     # moves the thumb of an episode.
 
@@ -490,7 +489,7 @@ def _build_records(file_details, inspection, output_name, series_id=None):
                 setattr(file, column, file_details[column])
 
     # A real rip that replaces a conversion keeps the original of the
-    # conversion in S3, as an archive-only original (#292).
+    # conversion in S3, as an archive-only original.
 
     kept_archives = []
     if not file:
@@ -514,7 +513,7 @@ def _build_records(file_details, inspection, output_name, series_id=None):
         # The track rows of the existing record go in the
         # replace_track_rows call below. The new file replaces the old
         # one. A retry of an edit of the old file then finds none of its
-        # track UIDs, and it stops (#611).
+        # track UIDs, and it stops.
 
         file.date_updated = datetime.now(timezone.utc)
 
@@ -531,14 +530,14 @@ def _build_records(file_details, inspection, output_name, series_id=None):
     file.quality = quality
     current_app.logger.info(f"{file} Setting file_quality {quality}")
 
-    # The conversion fields (#292). A real rip clears them on a reused
+    # The conversion fields. A real rip clears them on a reused
     # record.
 
     file.converted_from_quality = file_details.get("converted_from_quality")
     file.converted_from_format = file_details.get("converted_from_format")
 
     # A file that is not a conversion has no transcoded/ copy. The weekly
-    # S3 sync prunes the copy of a reused record (#299).
+    # S3 sync prunes the copy of a reused record.
 
     if not file.converted_from_quality:
         file.aws_transcoded_key = None
@@ -547,7 +546,7 @@ def _build_records(file_details, inspection, output_name, series_id=None):
 
     # A reused record gets the untouched name of the new source. A
     # conversion that reuses the record of a real rip must not keep the
-    # name of the rip (#292).
+    # name of the rip.
 
     if file_details.get("untouched_basename"):
         file.untouched_basename = file_details["untouched_basename"]
@@ -569,7 +568,7 @@ def _build_records(file_details, inspection, output_name, series_id=None):
     replace_track_rows(file, inspection["audio_tracks"], inspection["subtitle_tracks"])
 
     # Set the localized date. A new localization ends any pending restore
-    # of the row (#620). The download of that restore then drops, and it
+    # of the row. The download of that restore then drops, and it
     # never puts the old archive over the new file.
 
     file.date_localized = datetime.now(timezone.utc)
@@ -578,8 +577,8 @@ def _build_records(file_details, inspection, output_name, series_id=None):
     # Set the AWS archived fields if the task uploaded the file to AWS S3
     # storage. A reused record can have the archive of its old file under
     # a different key. No record claims that key after the commit. A later
-    # restore of that key would import the old file under the old name
-    # (Sapphire, 2026-10-20). Thus, the key goes with the archives of the
+    # restore of that key would import the old file under the old name.
+    # Thus, the key goes with the archives of the
     # worse files.
 
     replaced_key = None
@@ -597,16 +596,16 @@ def _build_records(file_details, inspection, output_name, series_id=None):
     # The new library file is a fresh localization of this archive. Thus,
     # the archive is current. A stale mark from a refused archive of the
     # old file must go. Otherwise the next sync uploads the new file to
-    # modified/ and deletes the restored rip in untouched/ (#610).
+    # modified/ and deletes the restored rip in untouched/.
 
     file.aws_stale = False
 
-    # A pending move of the old archive does not apply to the new one
-    # (#369). A reused conversion can keep a transcoded/ copy under the
+    # A pending move of the old archive does not apply to the new one.
+    # A reused conversion can keep a transcoded/ copy under the
     # old name. Only the move of that copy is requested here. The key of
-    # the original can lag its name (#678). Only a converge run moves it
-    # (#683). The move goes to the queue after the release of the title
-    # lock (#664).
+    # the original can lag its name. Only a converge run moves it.
+    # The move goes to the queue after the release of the title
+    # lock.
 
     if file.aws_key_target:
         clear_archive_target(file)
@@ -648,7 +647,7 @@ def _record_at_path(library_file_path):
     """Return the File row that MariaDB finds for a library path, or None.
 
     The path column ignores letter case, accents and spaces at the end.
-    Thus, the row can have an other spelling than the path (#739). The
+    Thus, the row can have an other spelling than the path. The
     test database compares the exact text."""
 
     return File.query.filter_by(file_path=library_file_path).first()
@@ -669,7 +668,7 @@ def _attach_movie(file, file_details):
         current_app.logger.info(f"{file} Creating {movie}")
 
         # Check the new movie against the stored Criterion list. The
-        # import never queries Wikidata (#283). The monthly refresh
+        # import never queries Wikidata. The monthly refresh
         # updates the movie later.
 
         try:
@@ -702,7 +701,7 @@ def _existing_series(file_details):
 
     The TMDB id of an id tag comes first. Then the parsed title. Then
     the title of the record that the parsed title names now. A series
-    rename can change the title after the parse (#370)."""
+    rename can change the title after the parse."""
 
     title = file_details.get("title")
     if file_details.get("tmdb_id"):
@@ -745,7 +744,7 @@ def _rename_plausible(title, folder):
 
 
 def resolve_import_series(file_details):
-    """Return (verdict, series id) for the series of an episode import (#372).
+    """Return (verdict, series id) for the series of an episode import.
 
     The cataloging calls this function before it writes any record.
     Thus, the Sonarr call does not hold the write transaction. The
@@ -779,7 +778,7 @@ def _attach_tv_series(file, file_details, series_id=None):
     series_id is the series that resolve_import_series found before the
     records. Else the details name the series (_existing_series). Only
     after that does the import make a new series. Else a Sonarr rename
-    that adds a year splits the show (#372)."""
+    that adds a year splits the show."""
 
     title = file_details.get("title")
     current_app.logger.info(f"{file} Searching in TVSeries table using title='{title}")
@@ -849,7 +848,7 @@ def _dispose_of_worse_files(file, kept_archives, replace_existing=False):
 
             db.session.delete(worse)
 
-        # The disc of a converted original stays on the shelf (#292).
+        # The disc of a converted original stays on the shelf.
         # Thus, Fitzflix sends no disposal email when a conversion
         # replaces a file or a file replaces a conversion.
 
@@ -936,7 +935,7 @@ def _place_file(
 
         # The caller keeps the lock only after the enqueue returns. If
         # the enqueue fails, the caller releases the lock and keeps the
-        # source (#340, #521).
+        # source.
 
         localization.handoff(
             enqueue_task,
@@ -950,7 +949,7 @@ def _place_file(
         return "handed_off"
 
     # Invariant: the import places its result only over the file that it
-    # read (#742). A source in the library that an other program changed
+    # read. A source in the library that an other program changed
     # during the chain is a new download. It is not replaced.
 
     if file_path == output_file:
@@ -998,12 +997,12 @@ def _place_file(
 
 
 def _upload_columns(file_details):
-    """Return the archive columns of the upload of an import, or None (#727).
+    """Return the archive columns of the upload of an import, or None.
 
     The upload is at a run-scoped key when a record claims the normal
     key for different bytes. It is at the normal key when no record
     claims that key. That is the case for a record whose film was
-    renamed, because its archive keeps the key of the old name (#734).
+    renamed, because its archive keeps the key of the old name.
     The key can also be an older key that holds the same bytes
     (upload_untouched). None means that the import has no archive."""
 
@@ -1018,7 +1017,7 @@ def _upload_columns(file_details):
 
 
 def _adopt_upload(row_id, upload, output_file):
-    """Give a record the upload of a failed import as its archive (#727, #734).
+    """Give a record the upload of a failed import as its archive.
 
     The localized file of the import replaced the file of the record,
     and the commit of the import failed. The upload holds the original
@@ -1064,7 +1063,7 @@ def _adopt_upload(row_id, upload, output_file):
         file.aws_filesize_bytes = upload["aws_filesize_bytes"]
 
         # A record with no stale flag has the size of its library file
-        # (#750, replaced_from_outside in app/media/tracks.py). With the old
+        # (replaced_from_outside in app/media/tracks.py). With the old
         # size, the scan of the repair and the weekly sync read the
         # new file as a file from outside. Its import then deleted the
         # archive that the record takes here. If the share does not
@@ -1078,9 +1077,9 @@ def _adopt_upload(row_id, upload, output_file):
         except OSError:
             file.aws_stale = True
 
-        # The commit of an import ends a pending restore of the record
-        # (#620). The old archive must not come back over the new file.
-        # The adoption does the same (#734).
+        # The commit of an import ends a pending restore of the record.
+        # The old archive must not come back over the new file.
+        # The adoption does the same.
 
         file.restore_requested_at = None
         if upload["untouched_basename"]:
@@ -1101,7 +1100,7 @@ def _adopt_upload(row_id, upload, output_file):
 
     # The archive of the old file has no record now. It goes, as after
     # the commit of an import. Then a download of that key that waits in
-    # the queue finds no object, and it stops (#734). The adoption is
+    # the queue finds no object, and it stops. The adoption is
     # done. A fault of this step must not report it as failed.
 
     if replaced_key:
@@ -1129,7 +1128,7 @@ def _unclaimed_upload_text(upload):
 
 
 def _repair_replaced_record(row_id, output_file, upload):
-    """Repair the record of a file that a failed import replaced (#592, #727).
+    """Repair the record of a file that a failed import replaced.
 
     The track scan reads the rows again from the new file. The record
     takes the upload of the import as its archive, and the size of the
@@ -1144,7 +1143,7 @@ def _repair_replaced_record(row_id, output_file, upload):
 
 
 def _record_id_at_exact_path(library_file_path):
-    """Return the id of the File row with exactly this library path, or None (#739).
+    """Return the id of the File row with exactly this library path, or None.
 
     The path column ignores letter case and accents. A row with an other
     spelling is the record of an other file on the shares. The repair of
@@ -1168,7 +1167,7 @@ def _claim_at_path(library_file_path, output_file, upload=None):
 
     A lookup that fails gives True with a warning. A row can exist, and
     the database did not say. A rejected file leaves its row with no
-    file (#688). The file stays, and repair_replaced_file_task is booked.
+    file. The file stays, and repair_replaced_file_task is booked.
     That task makes the lookup again when the database answers. Without
     it, a row keeps the size, the tracks and the archive of the old
     file, and nothing finds that later."""
@@ -1195,7 +1194,7 @@ def _claim_at_path(library_file_path, output_file, upload=None):
 
 
 # The repair of a file that stayed at its path after a record lookup
-# failed (#688). The task waits this long for the database, this many
+# failed. The task waits this long for the database, this many
 # times.
 
 REPLACED_REPAIR_DELAY = timedelta(minutes=10)
@@ -1207,7 +1206,7 @@ def _book_replaced_file_repair(library_file_path, output_file, tries, upload=Non
 
     The booking needs no database. A fault of the booking is a warning.
     The failure handler of the cataloging calls this, and it must end.
-    upload goes to the task (#727)."""
+    upload goes to the task."""
 
     name = "app.media.importing.cataloging.repair_replaced_file_task"
     try:
@@ -1233,7 +1232,7 @@ def _book_replaced_file_repair(library_file_path, output_file, tries, upload=Non
 
 
 def repair_replaced_file_task(library_file_path, output_file, tries=1, upload=None):
-    """Repair the record of a file that a failed import left at its path (#688).
+    """Repair the record of a file that a failed import left at its path.
 
     This is a task. The cataloging wrote the new file over the file of
     a record, its commit failed, and the lookup of the record failed

@@ -101,7 +101,7 @@ def movie_library():
     genre = request.args.get("genre", None, type=int)
     quality = request.args.get("quality", "0", type=str)
 
-    # A stale or mistyped bookmark must not crash the page (#306).
+    # A stale or mistyped bookmark must not crash the page.
 
     if not quality.isdecimal():
         quality = "0"
@@ -226,7 +226,7 @@ def _flash_tmdb_refresh(result, title, reload_url):
 
     The refresh job only fetches. The apply runs next on the sql queue.
     Thus, a fetched result does not say that the page has the new data.
-    None is a job that still runs. False is a failed fetch (#514). Then
+    None is a job that still runs. False is a failed fetch. Then
     nothing is queued, and a reload shows no change."""
 
     if result == TMDB_NO_MATCH:
@@ -365,7 +365,7 @@ def movie(movie_id):
                     return redirect(url_for("main.movie", movie_id=movie.id))
             _hold_verdict_lock(f"movie:{target.id}")
 
-        # A poster-card post (#45c) and a tap on a suggestion card never
+        # A poster-card post and a tap on a suggestion card never
         # steer the drive. Only the own page of a film (and the featured
         # card) moves the last-response state.
 
@@ -414,7 +414,7 @@ def movie(movie_id):
             try:
                 db.session.commit()
             except IntegrityError:
-                # A second post in flight added the row first (#516). The
+                # A second post in flight added the row first. The
                 # film is on the list. Thus, the answer is the same.
                 db.session.rollback()
         if _card_fetch():
@@ -433,8 +433,7 @@ def movie(movie_id):
         flash(f"Removed '{title}' from your watchlist", "success")
         return redirect(url_for("main.movie", movie_id=movie.id))
 
-    # The not-interested state (#45b). The standalone buttons are gone
-    # per #184. The ✕ toggle of the ladder is the only writer now. The
+    # The not-interested state. The ✕ toggle of the ladder is the only writer. The
     # quick-rating branch handles it. Fitzflix reads the state for the
     # flag of the ladder and for the note.
 
@@ -445,7 +444,7 @@ def movie(movie_id):
         is not None
     )
 
-    # The Movie Data forms are admin tools (#186 follow-up). The section
+    # The Movie Data forms are admin tools. The section
     # renders only for admins. The forms post to movie_tmdb and
     # movie_criterion, which only admins can reach.
 
@@ -475,7 +474,7 @@ def movie(movie_id):
     # The "since you liked…" strip renders when the last positive rating
     # of the session was for THIS film. That is directly after the
     # redirect of the log arrives back here (review_tmdb logs arrive
-    # here too). The page of another film computes nothing (#705).
+    # here too). The page of another film computes nothing.
 
     suggested_ids = suggestions_after_rating(current_user.id, movie.id)
     suggestions = []
@@ -497,7 +496,7 @@ def movie(movie_id):
     # through the coarse scorer against the profile-relative bar, like
     # the TMDB search results.
 
-    # The estimated rating (#45a) comes from the shared score source.
+    # The estimated rating comes from the shared score source.
     # That is the stored map. It live-scores a missing film with the
     # same recipe and writes the result back. Thus, each surface shows
     # 1 number (requested by Glenn: a low guess warns against a
@@ -603,7 +602,7 @@ def _criterion_form(movie):
     """Return the Criterion form of a film, with its quality choices and default.
 
     The first choice is "Unknown". It carries the empty value, and the
-    save stores no format for it (#685). Thus, a film with no recorded
+    save stores no format for it. Thus, a film with no recorded
     format keeps none after a save. The other choices are the physical
     DVD, 1080p, and 2160p tiers, worst first. The list validates a
     posted value against these choices."""
@@ -636,7 +635,7 @@ def _wait_for_refresh(refresh_job):
     while True:
         status = refresh_job.get_status(refresh=True)
         # A job that raised has no return value. It is a failure, not a
-        # refresh that still runs (#514).
+        # refresh that still runs.
         if status in (JobStatus.FAILED, JobStatus.STOPPED, JobStatus.CANCELED):
             return False
         result = refresh_job.return_value(refresh=True)
@@ -657,7 +656,7 @@ def movie_tmdb(movie_id):
     films, features = _films_and_features(movie.id)
 
     # The form to detach a movie from TMDB completely, for a film that
-    # TMDB has no entry for (#207). A record with no local files can
+    # TMDB has no entry for. A record with no local files can
     # never be such a film. Fitzflix created it FROM a TMDB id, and it
     # mirrors that entry. Thus, a detach would leave a husk that nothing
     # can enrich again.
@@ -741,7 +740,7 @@ def movie_tmdb(movie_id):
     # previous removal. Only an actual id clears the flag. A blank submit
     # cannot get here on a detached record, because of the guard. The
     # apply clears the flag when TMDB sends data for the id. A wrong id
-    # leaves the record detached (#514).
+    # leaves the record detached.
 
     # Add a task to the fitzflix-sql queue to check TMDB and update the
     # database. Add it to the front of the queue, because the user added
@@ -815,7 +814,7 @@ def movie_play(movie_id):
 
     The device comes from the Profile-page settings. It is the Plex app
     through Plex Companion, or Infuse through an Apple-Companion deep
-    link (#192). The buttons of the movie page name their app in the
+    link. The buttons of the movie page name their app in the
     "player" field. A plain post (the poster popovers) uses the default
     of the user. It falls back to the other app when the default cannot
     play this movie. A Plex play of a film whose formats only Infuse
@@ -826,8 +825,7 @@ def movie_play(movie_id):
 
     # The play forms carry the csrf token. Each other mutating route
     # checks the token through its FlaskForm. This route reads the form
-    # by hand. Thus, it validates the token by hand (security review,
-    # 2026-09).
+    # by hand. Thus, it validates the token by hand.
     try:
         validate_csrf(request.form.get("csrf_token"))
     except ValidationError:
@@ -881,7 +879,7 @@ def movie_play(movie_id):
 def movie_files(movie_id):
     """Show all files for a particular movie, regardless of ranking.
 
-    This is an admin page (#186 follow-up). Each row links into the
+    This is an admin page. Each row links into the
     file management pages. Those pages are admin tools."""
 
     movie = Movie.query.filter_by(id=movie_id).first_or_404()

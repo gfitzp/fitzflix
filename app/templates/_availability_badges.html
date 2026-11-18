@@ -5,7 +5,7 @@
    providers in the same way. A match flagged "leaving" (a month-end
    departure from the Criterion Channel, from the leaving set) shows
    red with the date. Watch the film before it goes. The library badge
-   always shows the answer of the shopping list (#191, a tightening of
+   always shows the answer of the shopping list (a tightening of
    the revision by Glenn, 2026-08). It is amber when the copy is worth
    an upgrade. It is green when the copy is settled. It is never a
    colorless badge. Thus, every surface reads the same way. The caller
@@ -21,7 +21,7 @@
 {%- if provider.leaving -%}
 <span class="badge text-bg-danger align-middle me-1 mb-1" title="Leaving {{ provider.provider_name }} {{ provider.leaving }}">{% if provider.logo_path %}<img src="{{ config['TMDB_IMAGE_URL'] }}/w45{{ provider.logo_path }}" alt="" style="height: 1.4em;" class="rounded me-1">{% endif %}{{ provider.provider_name }}{{ suffix }} &middot; leaving {{ provider.leaving }}</span>
 {%- elif provider.new_since -%}
-{# A recent arrival from the newly-added feed of the provider (#246).
+{# A recent arrival from the newly-added feed of the provider.
    It is green like the newly-arrived corner fold. Thus, "new" reads
    the same color everywhere #}
 <span class="badge text-bg-success align-middle me-1 mb-1" title="Added to {{ provider.provider_name }} {{ provider.new_since }}">{% if provider.logo_path %}<img src="{{ config['TMDB_IMAGE_URL'] }}/w45{{ provider.logo_path }}" alt="" style="height: 1.4em;" class="rounded me-1">{% endif %}{{ provider.provider_name }}{{ suffix }} &middot; added {{ provider.new_since }}</span>

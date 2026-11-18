@@ -22,11 +22,11 @@ app = LocalProxy(get_app)
 
 
 class PlacementDeferred(Exception):
-    """A volume of a direct restore is not available at the placement (#533).
+    """A volume of a direct restore is not available at the placement.
 
     The first argument is the list of the dead volumes. reason replaces
-    the volume text of the log line for a transient fault of a check
-    (#598)."""
+    the volume text of the log line for a transient fault of a check.
+    """
 
     def __init__(self, dead, reason=None):
         super().__init__(dead)
@@ -34,12 +34,12 @@ class PlacementDeferred(Exception):
 
 
 def _transient_placement_fault(error):
-    """Return True if a fault of a placement check can clear by itself (#598).
+    """Return True if a fault of a placement check can clear by itself.
 
     These are a throttle or a server error of S3, a lost connection to
     AWS, and a lost connection to the database. A lost connection to
-    Redis and a Redis timeout at the title lock are transient too (#598
-    follow-up, #610). A missing object and an access fault are not
+    Redis and a Redis timeout at the title lock are transient too.
+    A missing object and an access fault are not
     transient."""
 
     import redis.exceptions
@@ -66,7 +66,7 @@ def _transient_placement_fault(error):
 
 
 class PlacementRefused(Exception):
-    """A direct restore must not replace the library file any more (#533)."""
+    """A direct restore must not replace the library file any more."""
 
 
 # A direct restore waits for a dead volume at most this many times, 5
@@ -87,11 +87,11 @@ def download_task(
     A direct restore writes into the library. A dropped share leaves its
     mountpoint as a plain directory on the boot disk, and a write there
     succeeds with no error. Thus, the task waits while a volume is dead,
-    before the download and again before the placement (#533). The
+    before the download and again before the placement. The
     newer-file guards also run again before the placement. They read the
-    row again, and the placement goes to its fresh path (#563).
+    row again, and the placement goes to its fresh path.
 
-    The row of the key holds the pending restore (#610). While it is
+    The row of the key holds the pending restore. While it is
     set, each caller of refuse_while_restore_pending refuses. The
     comment at that function has the list. The title
     lock covers only the final copy. A rename can still run during the
@@ -99,15 +99,15 @@ def download_task(
     The end of the task clears the state by the row id, after the lock
     is released. A writer that comes first sees the state and refuses.
     A booked retry and a new restore of the object keep the state. A
-    give-up that leaves the SQS message keeps the state too (#658). The
+    give-up that leaves the SQS message keeps the state too. The
     next delivery of the message then downloads again.
 
-    The newest receipt handle of the message is under the key (#617)."""
+    The newest receipt handle of the message is under the key."""
 
-    # A modified/ or transcoded/ object is a library file (#299). It goes
+    # A modified/ or transcoded/ object is a library file. It goes
     # straight to the library path of its record, with no import. The id
     # stays readable after a rollback. The rollback expires the row, and
-    # a deleted row then raises (#588).
+    # a deleted row then raises.
 
     with app.app_context():
         file = File.query.filter(File.aws_key == key).first()
@@ -160,7 +160,7 @@ def _download_task(
 
     file_id is the row of the key, or None. A booked retry appends True
     to booked. A give-up that leaves the SQS message returns
-    DOWNLOAD_GAVE_UP (#658)."""
+    DOWNLOAD_GAVE_UP."""
 
     with app.app_context():
         job = get_current_job()
@@ -172,14 +172,14 @@ def _download_task(
         elif file:
             basename = file.untouched_basename
         else:
-            # An archive-only original (#292) keeps its untouched name. The
+            # An archive-only original keeps its untouched name. The
             # key is sanitized. Thus, it can differ from the name.
             archived = ArchivedOriginal.query.filter_by(aws_key=key).first()
             if archived:
                 basename = archived.untouched_basename
 
         def discard_kept_download():
-            """Remove a finished download that an earlier round kept (#588).
+            """Remove a finished download that an earlier round kept.
 
             A PlacementDeferred round keeps the copy and its sidecar. The
             orphan sweep keeps a complete copy. Thus, a round that stops
@@ -199,7 +199,7 @@ def _download_task(
                 sqs_receipt_handle, key, note="stale restore"
             )
 
-        # The pending restore of the row ended (#620). An import replaced
+        # The pending restore of the row ended. An import replaced
         # the file, or the 14-day sweep cleared the state. The download
         # would replace the new file with the old one. Thus, drop the
         # message and download nothing. A key with no File row (an
@@ -224,7 +224,7 @@ def _download_task(
             """Book the download again after 5 minutes, or give up.
 
             reason replaces the volume text for a transient fault of a
-            placement check (#598)."""
+            placement check."""
 
             reason = (
                 reason or f"Volumes unavailable ({', '.join(dead)}) for the restore"
@@ -257,7 +257,7 @@ def _download_task(
         if dead:
             return wait_for_volumes(dead)
 
-        # The title lock of the placement (#610). before_place takes it,
+        # The title lock of the placement. before_place takes it,
         # and the finally block below releases it.
 
         held = []
@@ -278,11 +278,11 @@ def _download_task(
                     )
 
         def before_place(etag=None):
-            """Take the title lock and run the placement checks. Defer on a transient fault (#598).
+            """Take the title lock and run the placement checks. Defer on a transient fault.
 
             A throttle of an S3 HEAD or a restart of the database is not a
             reason to discard a finished download. A busy title lock is
-            not a reason either (#610). A PlacementDeferred keeps the copy
+            not a reason either. A PlacementDeferred keeps the copy
             and its sidecar."""
 
             try:
@@ -313,10 +313,10 @@ def _download_task(
             return fresh
 
         def check_placement(etag=None):
-            """Take the title lock, and check the volumes and the newer-file guards again (#533).
+            """Take the title lock, and check the volumes and the newer-file guards again.
 
             Return the path. A rename during the download moves the file
-            of the row (#563). Thus, the placement goes to the path of
+            of the row. Thus, the placement goes to the path of
             the row under the lock, and the volume probe checks that
             folder. etag is the ETag of the object at the start of the
             download."""
@@ -356,8 +356,8 @@ def _download_task(
                 head = aws_clients._head_or_none(s3_client, key)
                 if head is None:
                     # A move waits for a download of its source. It asks
-                    # before the copy and again before the row changes
-                    # (#621, #728). Thus, a gone key is a refusal, and the
+                    # before the copy and again before the row changes.
+                    # Thus, a gone key is a refusal, and the
                     # person requests the restore again.
                     raise PlacementRefused(
                         f"'{basename}' The archive '{key}' is gone. The "
@@ -467,7 +467,7 @@ DOWNLOAD_ACCESS_DENIED = "access-denied"
 DOWNLOAD_RESTORE_PENDING = "restore-pending"
 # The download gave up and left the SQS message in the queue. SQS
 # delivers it again after its visibility timeout, and that delivery
-# tries again. Thus, the pending restore of the row stays (#658). This
+# tries again. Thus, the pending restore of the row stays. This
 # status is a failure. download_task returns False for it.
 DOWNLOAD_GAVE_UP = "gave-up"
 
@@ -555,7 +555,7 @@ def _defer_to_restore(sqs_client, key, basename, sqs_receipt_handle, head_respon
     back in cold storage, and this SQS message is stale. Request a new
     restore, unless one is already in progress. Its completion
     notification triggers the download again. The request again is for
-    the same rows. Thus, their pending restore stays (#610). Return
+    the same rows. Thus, their pending restore stays. Return
     DOWNLOAD_RESTORE_PENDING, also if the message delete failed. The
     restore is on its way in both cases. The failed delete has its own
     warning, and the message comes back to this function."""
@@ -580,7 +580,7 @@ def _defer_to_restore(sqs_client, key, basename, sqs_receipt_handle, head_respon
 
 
 def place_in_library(downloaded, library_path, expected_size, name):
-    """Move a restored library file from the import directory into the library (#299).
+    """Move a restored library file from the import directory into the library.
 
     The download is a modified/ or transcoded/ object: the library file
     itself. It needs no import. Its size must match the S3 object. The
@@ -612,7 +612,7 @@ def place_in_library(downloaded, library_path, expected_size, name):
 
 
 # A restored rip waits this long when a file with its untouched name
-# waits in the import directory (#433). It tries again up to
+# waits in the import directory. It tries again up to
 # MAX_RESTORED_IMPORT_WAITS times.
 
 RESTORED_IMPORT_WAIT = timedelta(minutes=10)
@@ -622,7 +622,7 @@ MAX_RESTORED_IMPORT_WAITS = 36
 def brace_edition_tags(basename):
     """Rewrite each "(edition-foo bar)" of a name as "{edition-foo bar}".
 
-    The match stops at the first closing parenthesis (#534). The greedy
+    The match stops at the first closing parenthesis. The greedy
     form ran to the last one. Thus, "(edition-X) - Scenes - Apostrophe(')
     Ad" became "{edition-X) - Scenes - Apostrophe('} Ad"."""
 
@@ -655,7 +655,7 @@ def place_restored_import(staged, basename):
     """Give a restored rip its untouched name in the import directory. Return False if the name is taken.
 
     Another restore with the same untouched name can wait there for its
-    import (#433). That file stays. The caller tries again later."""
+    import. That file stays. The caller tries again later."""
 
     target = os.path.join(current_app.config["IMPORT_DIR"], basename)
     if _rename_without_replace(staged, target):
@@ -668,7 +668,7 @@ def place_restored_import(staged, basename):
 
 
 def place_restored_import_task(staged, basename, waits=0):
-    """Try again to give a restored rip its untouched name (#433)."""
+    """Try again to give a restored rip its untouched name."""
 
     with app.app_context():
         if not os.path.exists(staged):
@@ -700,7 +700,7 @@ def restore_staging_path(key):
     A library basename is not unique: many films have a "Restoration
     Demonstration.mkv". The untouched name is not sufficient either. The
     2 archives of a conversion share it, and 2 keys can share 1
-    untouched name (#433). Thus, the staging name is the downloaded key,
+    untouched name. Thus, the staging name is the downloaded key,
     with its prefix: 1 file for each object."""
 
     return os.path.join(
@@ -727,20 +727,19 @@ def aws_download(
     used up or the CloudFront settings have a problem. Then the message
     stays for a later delivery. Return False if the SQS message could not
     be deleted. download_task ends the pending restore of the row after
-    each status but DOWNLOAD_RESTORE_PENDING and DOWNLOAD_GAVE_UP (#610,
-    #658).
+    each status but DOWNLOAD_RESTORE_PENDING and DOWNLOAD_GAVE_UP.
 
     When AWS_DOWNLOAD_VIA_CDN is set, the bytes come through CloudFront
     with a signed URL. The object size check and the restore-state
     checks still use the S3 API. A stale CloudFront copy changes the
-    rest of the attempts to the S3 transfer (#607).
+    rest of the attempts to the S3 transfer.
 
     before_place runs after the download and before a direct placement.
     It gets the ETag of the object at the start of the download. A
     PlacementDeferred keeps the finished download and its sidecar for
-    the next try (#533). Any other error deletes the download and
+    the next try. Any other error deletes the download and
     propagates. The caller decides about the SQS message. If it returns
-    a path, the placement goes there, not to place_at (#563).
+    a path, the placement goes there, not to place_at.
     """
 
     retry = MAX_DOWNLOAD_RETRIES
@@ -785,7 +784,7 @@ def aws_download(
             )
             if place_at and cdn._finished_download(destination, progress):
                 # A placement that waited for a volume kept its finished
-                # download (follow-up #533). Each wait downloaded the
+                # download. Each wait downloaded the
                 # whole object again.
                 current_app.logger.info(
                     f"'{basename}' The finished download waits in staging. "
@@ -901,7 +900,7 @@ def aws_download(
             # The signature is not part of the cache key. Each new signed
             # URL reaches the same cached copy. Thus, the rest of the
             # chain uses the S3 transfer, and spends no retry on the
-            # cache (#607). The warning makes the egress cost visible.
+            # cache. The warning makes the egress cost visible.
 
             current_app.logger.warning(
                 f"'{basename}' {error}. The download changes to the S3 "
@@ -942,7 +941,7 @@ def aws_download(
                 # The download is complete. The sidecar marks it for the
                 # next run and for the orphan sweep. A PlacementDeferred
                 # or a transient fault of the placement then does not
-                # download the object again (#588).
+                # download the object again.
 
                 cdn._write_partial_etag(destination, progress.etag, progress.size)
                 if before_place:

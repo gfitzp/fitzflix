@@ -24,7 +24,7 @@ from flask_moment import Moment
 
 
 class FitzflixFlask(Flask):
-    """The Flask app class. Each external URL uses PREFERRED_URL_SCHEME (#454).
+    """The Flask app class. Each external URL uses PREFERRED_URL_SCHEME.
 
     Inside a request, Flask builds an external URL with the scheme of the
     request. gunicorn sees plain http from the proxy. Thus, a mailed
@@ -79,7 +79,7 @@ def safe_job_id(value):
 
 
 def path_tag(value):
-    """Return a short digest that makes a job id unique to 1 file (#338).
+    """Return a short digest that makes a job id unique to 1 file.
 
     The retry ids use basenames, and a basename is not unique. 2 films can
     each have an extra named "Theatrical Trailer.mkv". A retry with the
@@ -93,9 +93,9 @@ def importable_basename(basename):
     """Return True if an import-directory name is a finished file worth a sweep.
 
     Hidden names and the intermediate artifacts of transfer tools must
-    never become localization jobs (#244: a sweep put a transient
-    `.mkv.staged` copy into a job of its own, and the restart that
-    killed the job left a phantom File Activity row). When the transfer
+    never become localization jobs. Otherwise, a sweep puts a transient
+    `.mkv.staged` copy into a job of its own. A restart that kills the
+    job then leaves a phantom File Activity row. When the transfer
     completes, the promotion of the artifact to its real name causes its
     own filesystem event.
     """
@@ -177,7 +177,7 @@ def cron_table(config):
         # Rotate the application log daily at midnight.
         ("0 0 * * *", "app.operations.maintenance.rotate_logs"),
         # Digest the repeated warnings of the last 24 hours, after the
-        # rotation (#265). The System page and the health probe read it.
+        # rotation. The System page and the health probe read it.
         ("15 0 * * *", "app.operations.log_digest.log_digest_task"),
         # Back up the database nightly. The media files are archived at
         # AWS. But the database itself exists only on this machine. Thus,
@@ -194,12 +194,12 @@ def cron_table(config):
             "0 3 18 * *",
             "app.criterion.criterion_catalog.refresh_criterion_collection_info",
         ),
-        # Fetch the Criterion releases from Wikidata each Thursday (#283). The
+        # Fetch the Criterion releases from Wikidata each Thursday. The
         # page and the import read only this stored copy.
         ("20 4 * * 4", "app.criterion.criterion_catalog.refresh_criterion_releases"),
         # Sweep orphaned partial files weekly, after the backup window.
         ("0 1 * * 0", "app.operations.maintenance.cleanup_orphaned_files"),
-        # Sync the library with the S3 archive weekly (#158). The task
+        # Sync the library with the S3 archive weekly. The task
         # uploads the missing archives, restores the missing best files,
         # reports the claims with no object, and prunes the objects that
         # no record claims. It waits until every queue is idle. It was out
@@ -209,14 +209,14 @@ def cron_table(config):
         # Sync the Letterboxd diaries from the RSS feed of each user. The
         # task does nothing for the users without a configured username.
         ("20,50 * * * *", "app.viewing.letterboxd.sync_letterboxd_feeds"),
-        # Discover provider-catalog films for the recommendation universe
-        # (#250). The task lists the catalogs of the subscribed providers.
+        # Discover provider-catalog films for the recommendation universe.
+        # The task lists the catalogs of the subscribed providers.
         # It compares them with the ever-seen sets. It turns a bounded
         # batch of verified, well-scoring arrivals into file-less
         # records. It runs at 00:45. Thus, the TMDB refreshes of the
         # records complete before the 01:45 recompute scores them.
         ("45 0 * * *", "app.availability.provider_catalog.refresh_provider_catalogs"),
-        # Find the best-quality files that have no local copy (#274). The
+        # Find the best-quality files that have no local copy. The
         # scan stats every best file over the NFS mount. Thus, it runs
         # nightly, after the backup window, and the pages read its stored
         # result.
@@ -238,8 +238,8 @@ def cron_table(config):
         # night before 2026-09-01. Thus, a single attempt in the small
         # hours of the 1st would empty the shelf for the whole month.
         ("0 6 * * *", "app.criterion.leaving_criterion.refresh_leaving_criterion"),
-        # Scrape and compare the newly-added feed of each provider daily
-        # (#246). The snapshot comparison stamps the first-seen dates
+        # Scrape and compare the newly-added feed of each provider daily.
+        # The snapshot comparison stamps the first-seen dates
         # that the discovery shelves and the "added" badges read. Thus,
         # the daily cadence is what gives "newly added" a meaning. It
         # runs next to the 04:30 refresh. Thus, the TMDB-heavy window
@@ -298,8 +298,8 @@ def cron_table(config):
         # inline. Thus, the cache must be full before the day starts.
         ("30 4 * * *", "app.availability.streaming.refresh_availability"),
         # Compare the availability of the watchlisted films with the
-        # snapshot of the previous night. Then alert the watchers (#156
-        # and #230). The task writes badge records for everyone and 1
+        # snapshot of the previous night. Then alert the watchers.
+        # The task writes badge records for everyone and 1
         # digest email per opted-in user. It runs after the 04:30
         # refresh. Thus, the comparison reads the cache of tonight, not
         # of yesterday.
@@ -338,7 +338,7 @@ def cron_table(config):
         )
 
         # Mirror the Criterion selections into the collections of each Plex
-        # movie library (#281, #282). It runs after the TMDB renames and the
+        # movie library. It runs after the TMDB renames and the
         # Radarr path check. Then the file paths match the paths of Plex.
 
         table.append(
@@ -346,8 +346,8 @@ def cron_table(config):
         )
 
         # Make the selected audio and subtitle streams of Plex match the
-        # default tracks of each file, for the owner and each Home user
-        # (#652). It runs after the episode titles, before the Plex
+        # default tracks of each file, for the owner and each Home user.
+        # It runs after the episode titles, before the Plex
         # maintenance window ends.
 
         table.append(
@@ -360,14 +360,14 @@ def cron_table(config):
     if config.get("PLEX_TOKEN"):
         table.append(("10,40 * * * *", "app.plex.plex_watchlist.sync_plex_watchlist"))
 
-    # Check the Radarr movie paths nightly (#266). A rename or an import
+    # Check the Radarr movie paths nightly. A rename or an import
     # reports its new folder to Radarr at once. A push that fails while
     # Radarr is down is repaired here.
 
     if config.get("RADARR_URL") and config.get("RADARR_API_KEY"):
         table.append(("40 5 * * *", "app.arr.radarr_push.reconcile_radarr_paths"))
 
-    # Check the Sonarr series paths nightly (#370), 5 minutes after the
+    # Check the Sonarr series paths nightly, 5 minutes after the
     # Radarr check. Sonarr sends no event for a folder move. Thus, a
     # series that Sonarr moved gets its new title here.
 
@@ -375,14 +375,14 @@ def cron_table(config):
         table.append(("45 5 * * *", "app.media.series_rename.reconcile_sonarr_paths"))
 
     # Restore the custom poster copy of every main-feature folder that
-    # lost it (#654). Radarr deletes the copy with the movie file that
+    # lost it. Radarr deletes the copy with the movie file that
     # it linked the copy to, after a rip upgrade. The Radarr webhook
     # restores a copy at once. This task is the backstop. It runs after
     # the 05:40 Radarr path check and the 05:45 Sonarr check.
 
     table.append(("55 5 * * *", "app.media.custom_artwork.reconcile_library_posters"))
 
-    # Rebuild the virtual DVR channel lineups nightly (#182). The task
+    # Rebuild the virtual DVR channel lineups nightly. The task
     # rotates them the same way as the landing-page shelves rotate. The
     # per-file duration cache makes every build after the first
     # appearance of a file almost free. The task runs after the 04:30
@@ -431,12 +431,12 @@ def get_app(watch_import_dir=False):
 
 
 def makedirs_on_mounted_volume(path):
-    """Create a directory tree, but never on an unmounted volume (#341).
+    """Create a directory tree, but never on an unmounted volume.
 
-    A path under /Volumes must be on a mounted volume. Without the volume,
-    makedirs creates the tree on the boot disk. Then the volume mounts
-    under a new name, and every config path points at the boot disk
-    (#227). Thus, this raises OSError (ENODEV) in place of the makedirs."""
+        A path under /Volumes must be on a mounted volume. Without the volume,
+        makedirs creates the tree on the boot disk. Then the volume mounts
+        under a new name, and every config path points at the boot disk.
+    Thus, this raises OSError (ENODEV) in place of the makedirs."""
 
     if path.startswith("/Volumes/"):
         mountpoint = "/".join(path.split("/")[:3])
@@ -451,7 +451,7 @@ def create_work_directory(app, key):
     A missing directory must not stop the app. Localization processes
     the files in place when the staging volume is absent. Thus, a
     failure only writes a warning. makedirs_on_mounted_volume refuses a
-    directory on an unmounted volume (#630).
+    directory on an unmounted volume.
     """
 
     path = app.config[key]
@@ -471,7 +471,7 @@ def check_config(app):
     library.
     """
 
-    # Each setting whose name ends in _BIN is the path of a tool (#713).
+    # Each setting whose name ends in _BIN is the path of a tool.
     # Thus, a new tool setting gets its check with no edit here. An
     # optional tool with no value is not in use.
 
@@ -535,8 +535,8 @@ def check_config(app):
         # The Settings page can turn archival on. Thus, read the setting
         # through get_setting. The read occurs only if a value is missing.
 
-        # Before the first migration, the settings table does not exist
-        # (#501). Then the .env value is the only value.
+        # Before the first migration, the settings table does not exist.
+        # Then the.env value is the only value.
 
         from sqlalchemy import inspect
 
@@ -657,7 +657,7 @@ def create_app(config_class=Config, watch_import_dir=False):
     # the pipeline: the library copy after the localization, and the S3
     # delete of the archive of a replaced file. Each of
     # the 5 pipeline workers takes from it first. Thus, a file that
-    # started finishes before a new file starts (Glenn, 2026-10-14).
+    # started finishes before a new file starts.
     # Bulk work (the S3 sync uploads, the track scans) stays on the
     # file-operation queue. Thus, it never blocks new imports.
 
@@ -684,13 +684,13 @@ def create_app(config_class=Config, watch_import_dir=False):
     # CloudFront added is the client. A value that the client sends
     # comes before it. Thus, x_for=PROXY_HOPS gives remote_addr the
     # real address, and the client cannot forge it through CloudFront.
-    # The sign-in throttle needs that address (#263). TrustedProxyFix
+    # The sign-in throttle needs that address. TrustedProxyFix
     # reads the header only from a peer of TRUSTED_PROXIES. A different
     # host of the network that connects to gunicorn cannot forge it.
     # The proto, host, and prefix options stay off. Inside a request,
     # an external URL takes the scheme of the request, not
     # PREFERRED_URL_SCHEME. FitzflixFlask.url_for sets the scheme of
-    # each external URL (#454). Only the mails build external URLs.
+    # each external URL. Only the mails build external URLs.
 
     app.wsgi_app = TrustedProxyFix(app, app.wsgi_app, app.config["PROXY_HOPS"])
 

@@ -21,7 +21,7 @@ from app.models import (
 )
 from app.metadata.tmdb_apply import tmdb_json
 
-# Plex external-id tags (#155). A movie name or a show-folder name can
+# Plex external-id tags. A movie name or a show-folder name can
 # have {tmdb-NNN}, {imdb-ttNNN}, or {tvdb-NNN} after the year, in either
 # order with {edition-...}. The id names the exact title. Thus, if the id
 # is present, it selects the metadata source. Fitzflix then does not
@@ -125,7 +125,7 @@ class FilenameRejection:
 
 
 # The name formats. A movie name can have Plex id and edition tags between
-# the year and the dash (#155). The yearless Plex form "Title {tmdb-NNN}"
+# the year and the dash. The yearless Plex form "Title {tmdb-NNN}"
 # is also accepted, but only with an id tag. Thus, "Title -
 # [Quality].ext" stays rejected.
 
@@ -249,7 +249,7 @@ def _parse_tv(basename, log):
     media_library = "TV Shows"
     title = tv.group("title")
 
-    # A Plex id tag is on the show-folder part of the name (#155). Remove
+    # A Plex id tag is on the show-folder part of the name. Remove
     # it from the series title, but keep it. The show folder keeps the
     # tag, because Plex reads it there.
 
@@ -297,7 +297,7 @@ def _parse_tv(basename, log):
     episode = int(tv.group("episode"))
     last_episode = int(tv.group("last_episode") or tv.group("episode"))
 
-    # A reversed span ("S01E05-E03") is a bad name (#482). The row, the
+    # A reversed span ("S01E05-E03") is a bad name. The row, the
     # lock key, and the worse-file rule would all see a bad span.
 
     if last_episode < episode:
@@ -320,8 +320,7 @@ def _parse_tv(basename, log):
     # does:
     # https://github.com/Sonarr/Sonarr/blob/phantom-develop/src/NzbDrone.Core/Organizer/FileNameBuilder.cs#L353
 
-    # The show folder starts as the episode names do, with no period
-    # (#722).
+    # The show folder starts as the episode names do, with no period.
 
     folder_title = visible_name(title, sanitized=False)
     if not folder_title:
@@ -443,7 +442,7 @@ def _canonical_series_title(title):
     year-suffixed record only if exactly 1 such record exists.
 
     The result is always the title of the record, not the spelling of
-    the file (#480). MariaDB compares titles with no case, no accents,
+    the file. MariaDB compares titles with no case, no accents,
     and no trailing spaces. Thus, "MONK" finds the record "Monk". The
     dirname, the basename, and the lock key must use "Monk"."""
 
@@ -506,7 +505,7 @@ def _parse_movie(basename, tmdb_id, log):
         return identity
     title, year, tmdb_id = identity
 
-    # A title of only periods leaves no name that the disk shows (#722).
+    # A title of only periods leaves no name that the disk shows.
 
     # The reason gives the file a rejects folder of its own and a true
     # log line. When the title comes from the record of TMDB, a new
@@ -568,7 +567,7 @@ def _movie_layout(parts, version_text):
     basename is not sanitized yet. A special feature type in the version
     text puts the file in the folder of that type, with only its own
     name. "Full Screen" goes at the end of the version. A feature type
-    with no name after it is a FilenameRejection (#522). It parsed as an
+    with no name after it is a FilenameRejection. It parsed as an
     extra with the edition of its type and the name of the film."""
 
     edition = parts["edition"]
@@ -670,7 +669,7 @@ def _resolve_movie_identity(basename, title, year, id_tag, tmdb_id, log):
     """Return the (title, year, tmdb_id) of a film, or a FilenameRejection.
 
     This is the only network part of the parse, and the only part that
-    knows TMDB_UNREACHABLE. An id tag selects the metadata source (#155).
+    knows TMDB_UNREACHABLE. An id tag selects the metadata source.
     A tmdb tag is the id itself. An imdb/tvdb tag resolves through the
     library first (a matched movie stores its imdb id), then through the
     TMDB /find endpoint. An id that TMDB definitely does not know is a
@@ -909,7 +908,7 @@ def move_to_rejects(file_path, reason=""):
 
     try:
         # The rejects directory is on the external SSD. The SSD can drop
-        # during a long task. Then the file stays in place (#341)
+        # during a long task. Then the file stays in place
 
         makedirs_on_mounted_volume(reject_directory)
         try:
@@ -990,8 +989,7 @@ def sanitize_string(
     string = string.strip()
 
     # A name must not start with a period. Then the file is not
-    # invisible. Each period at the start goes, as in the library names
-    # (#717).
+    # invisible. Each period at the start goes, as in the library names.
 
     string = string.lstrip(". ")
 
@@ -1013,7 +1011,7 @@ def reconstruct_filename(file_id, series_title=None):
     A film gets the current title and year of its movie record. An
     episode gets the current title of its series, or series_title (a
     series rename passes the new title before it commits it). The other
-    parts of an episode name stay as the untouched name has them (#362)."""
+    parts of an episode name stay as the untouched name has them."""
 
     f = File.query.filter_by(id=file_id).first()
     if not f:
@@ -1039,7 +1037,7 @@ def reconstruct_filename(file_id, series_title=None):
 
     # TMDB can send a title with an empty release date. Then the year of
     # the record stands in. The untouched file of a conversion is its
-    # original (#292). Its name keeps the quality of the original, not
+    # original. Its name keeps the quality of the original, not
     # the quality of the library file. Else a converge run moves
     # the archive to the wrong key.
 
@@ -1056,7 +1054,7 @@ def reconstruct_filename(file_id, series_title=None):
         parts["title"] = m.tmdb_title
         parts["year"] = m.tmdb_release_date.year if m.tmdb_release_date else m.year
 
-    # Tag in, tag out (#155). An untouched name that had a Plex id tag
+    # Tag in, tag out. An untouched name that had a Plex id tag
     # keeps one. If the current tmdb id of the record is known, the tag
     # uses it.
 

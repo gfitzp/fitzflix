@@ -1,4 +1,4 @@
-"""Show the shopping lists. This module is the split from routes.py.
+"""Show the shopping lists.
 
 The lists show the movies and the TV seasons that are worth an upgrade,
 with exclusions and store links."""
@@ -55,7 +55,7 @@ from app.media.file_ranking import (
     ranked_movie_files,
 )
 
-# This is the scarcity order of the watchlist view (#247, the ranking
+# This is the scarcity order of the watchlist view (the ranking
 # of Glenn). A film that no service of a watcher has can only be
 # watched after a purchase. Thus, it outranks a rentable film. A
 # rentable film outranks a film that is already streaming. The group
@@ -116,7 +116,7 @@ def quality_range(min_arg, max_arg, min_fallback, max_fallback, collapse):
 
     A bound is a quality id from the query string. A value that is not a
     number, or the id of no quality, takes the quality title of its
-    fallback (#306). If the minimum outranks the maximum, the range
+    fallback. If the minimum outranks the maximum, the range
     collapses to 1 quality. collapse "min" keeps the minimum (the movie
     list). collapse "max" keeps the maximum (the TV list). The test
     compares preferences, because the quality ids do not always follow
@@ -194,7 +194,7 @@ def _watcher_name(user):
 
 
 def watchlist_shopping_groups():
-    """Return the watchlist view of the shopping list (#247).
+    """Return the watchlist view of the shopping list.
 
     This includes each film on the watchlist of ANY user with no local
     copy and no shopping-list exclusion. The groups show the hardest
@@ -291,7 +291,7 @@ def watchlist_search_matcher(q):
 
     "tmdb:<id>" matches the TMDB id. Any other search works as the
     watchlist page: it ignores accents and case, and a space matches any
-    run of characters. Thus, "amelie" finds "Amélie" (#509)."""
+    run of characters. Thus, "amelie" finds "Amélie"."""
 
     tmdb_match = re.match(r"tmdb:(?P<tmdb_id>\d+)", q)
     if tmdb_match:
@@ -681,16 +681,16 @@ def movie_shopping():
 
     watchlist_groups = None
 
-    # The watchlist view keeps its own rows when a search is given (#509).
-    # The search narrows the selected view, as #458 asks.
+    # The watchlist view keeps its own rows when a search is given.
+    # The search narrows the selected view.
 
     def search_rows(match):
         """Return the page of the rows of the selected view that match.
 
-        The search narrows the selected view (#458). The Criterion view
+        The search narrows the selected view. The Criterion view
         keeps its filter. The digital view keeps only the owned films
         with no physical copy, as when it has no search. A tmdb: search
-        is the same search with another match (#576)."""
+        is the same search with another match."""
 
         owned_matches = criterion_only(shopping_rows().filter(match))
         liked_matches = criterion_only(liked_unowned_query().filter(match))
@@ -735,7 +735,7 @@ def movie_shopping():
             )
 
     elif library == "watchlist":
-        # This is the watchlist view (#247). It is cross-user and ranked
+        # This is the watchlist view. It is cross-user and ranked
         # by availability. Thus, Python builds it from the availability
         # cache, not the quality-driven SQL below. It has no pagination
         # on purpose, as the watchlist page itself. The group structure
@@ -797,7 +797,7 @@ def movie_shopping():
     )
 
     def posted_movie():
-        """Return the film of the add or exclude form, or None (#310).
+        """Return the film of the add or exclude form, or None.
 
         The id is a hidden field. A post without it, or with an unknown
         id, flashes a message. It does not give a 500."""
@@ -913,7 +913,7 @@ def tv_shopping():
 
     library_search_form = LibrarySearchForm()
     if filter_form.validate_on_submit():
-        # The hand-set minimum stays, as on the search redirect (#576).
+        # The hand-set minimum stays, as on the search redirect.
         return redirect(
             url_for(
                 "main.tv_shopping",
@@ -948,7 +948,7 @@ def tv_shopping():
     bluray_quality = lowest_physical_preference("Bluray-1080")
 
     # Grade each season by its episodes, with the shared season grade of
-    # the TV library page (#479). The quality of an episode is the
+    # the TV library page. The quality of an episode is the
     # quality of its best holder, a multi-episode file included. The
     # grade of the season is the worst episode quality. An old copy next
     # to a better one does not lower the grade. A Bluray "S13E01" does
@@ -964,7 +964,7 @@ def tv_shopping():
 
     def instruction_for(preference, quality_title):
         # A season on a Blu-ray disc tier (Bluray-480p, Bluray-720p) is
-        # final, as on the TV library page (#481). A DVD season still
+        # final, as on the TV library page. A DVD season still
         # gets the Blu-ray advice.
         tier = anchors.get(quality_title)
         if (

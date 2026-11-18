@@ -22,14 +22,14 @@ app = LocalProxy(get_app)
 def upload_task(file_id):
     """Upload the library file of a record to its AWS S3 archive.
 
-    The task holds the title lock of the file (#615). Thus, no writer
+    The task holds the title lock of the file. Thus, no writer
     changes the file during the upload, and the clear of the stale flag
     is true. A failure leaves the flag as it is.
 
-    The invariant of the chip (#766): only an upload that stored its
+    The invariant of the chip: only an upload that stored its
     archive ends "done" in the stamp of the worker. An upload that raises
     rolls back, releases the lock and raises again. Thus, its job fails,
-    and the worker reports it (#759). A refused upload returns False with
+    and the worker reports it. A refused upload returns False with
     a "skipped" chip. A job that meets the title lock books the lock
     wait, and the retry chip stands for the stage. That job also marks
     itself "skipped", because a wait that is booked already adds no new
@@ -64,7 +64,7 @@ def upload_task(file_id):
         if not lock:
             # A second upload job of the file can meet the lock while the
             # wait is booked. Then no new chip takes the place of its chip,
-            # and that chip must not end "done" (#766 review). The wait
+            # and that chip must not end "done". The wait
             # job books itself under its own id, and rq keeps the meta of
             # that hash for the booking. Thus, the wait job does not mark
             # itself.
@@ -87,7 +87,7 @@ def upload_task(file_id):
             file_path = os.path.join(config["LIBRARY_DIR"], file.file_path)
 
             # The library file goes to the archive of the record: modified/
-            # for a normal file, transcoded/ for a conversion (#299). A rip
+            # for a normal file, transcoded/ for a conversion. A rip
             # in untouched/ is never overwritten.
 
             if archive_library_file(file, file_path) is None:
@@ -101,7 +101,7 @@ def upload_task(file_id):
             db.session.commit()
 
         except Exception:
-            # The worker reports the failure with the task name (#759). It
+            # The worker reports the failure with the task name. It
             # adds the traceback when aws_upload logged no error of its
             # own.
 
@@ -115,7 +115,7 @@ def upload_task(file_id):
 
 
 def archive_library_file(file, path, delete_replaced=True):
-    """Archive the current library file of a record, and commit (#299).
+    """Archive the current library file of a record, and commit.
 
     path holds the bytes of the library file: the library file itself,
     or the same file on staging. A conversion uploads to transcoded/. Its
@@ -124,19 +124,19 @@ def archive_library_file(file, path, delete_replaced=True):
     commit. Versioning keeps it for 180 days. Later changes overwrite the
     modified/ object. Return the new key.
 
-    A pending move of the same archive (#369) ends here. The upload goes
+    A pending move of the same archive ends here. The upload goes
     to the key of the new name, the old key is deleted, and the target
     is cleared. Thus, an edit completes the move. A pending rip of an
     import first goes to its untouched/ key. A failed copy returns None
-    and changes no row (#659).
+    and changes no row.
 
-    A pending restore of the file refuses the upload (#610). The upload
+    A pending restore of the file refuses the upload. The upload
     can delete the key under restore. The refusal returns None. A writer
-    marks the archive stale before it writes (#615). Thus, the flag of a
+    marks the archive stale before it writes. Thus, the flag of a
     changed file stays for a later upload.
 
     The caller holds the title lock. This function clears the stale
-    flag (#615). The cataloging of an import and the move of an archive
+    flag. The cataloging of an import and the move of an archive
     to modified/ clear it too. So does a record that takes the upload of
     a failed import (_adopt_upload)."""
 
@@ -180,7 +180,7 @@ def archive_library_file(file, path, delete_replaced=True):
     db.session.commit()
 
     # The row gives up a pending key only after the rip has its untouched/
-    # key (#659). A delete of the pending key removes each version, and
+    # key. A delete of the pending key removes each version, and
     # the prune deletes a pending key that no row claims. Thus, the copy
     # comes before the commit that changes the key. A failed copy changes
     # no row. The stale flag stays, and a later upload tries again.
@@ -188,7 +188,7 @@ def archive_library_file(file, path, delete_replaced=True):
     rip = None
     replaced = getattr(file, column)
     if replaced and delete_replaced and archive_keys.is_pending_archive(replaced):
-        # The archive move of the import did not run yet (#495). The rip
+        # The archive move of the import did not run yet. The rip
         # goes to its untouched/ key, as the move would do. Then the
         # delete of that key below leaves the noncurrent version for the
         # lifecycle window, as for the rip of any edited file.
@@ -233,7 +233,7 @@ def archive_library_file(file, path, delete_replaced=True):
     doomed = [rip, replaced] if rip else [replaced] if replaced else []
     # A row that the sync uploads because it has no upload date can name
     # a key with no object. A plain delete then writes a marker at a key
-    # that never existed (#588).
+    # that never existed.
 
     for doomed_key in doomed:
         if delete_replaced and not archive_keys.untouched_key_still_claimed(doomed_key):
@@ -248,11 +248,11 @@ def archive_library_file(file, path, delete_replaced=True):
 
 
 def _keep_pending_rip(file, pending):
-    """Copy a pending upload to its untouched/ key. Return that key, or None (#495).
+    """Copy a pending upload to its untouched/ key. Return that key, or None.
 
     The pending prefix is STANDARD. Thus, the copy needs no restore. A
     failed copy returns None. Then the caller keeps the pending key on
-    the row (#659)."""
+    the row."""
 
     target = archive_keys.archive_key_for(
         file, current_app.config["AWS_UNTOUCHED_PREFIX"]
@@ -286,9 +286,9 @@ def _keep_pending_rip(file, pending):
 
 
 def move_archive_to_modified_task(file_id):
-    """Move the replaced untouched/ archive of a normal file to modified/ (#299 backfill).
+    """Move the replaced archive of a normal file from untouched/ to the modified prefix.
 
-    Before #299, a change of the library file uploaded it over the rip in
+    An older version uploaded a changed library file over the rip in
     untouched/. Fitzflix selects these files by date and size. But a TMDb
     rename before 2026 also reset the upload date of a rip. Thus, the task
     deletes the old object only when the S3 objects prove that it is a
@@ -438,7 +438,7 @@ def aws_upload(
     # key names, not their data.
 
     if not force_upload and not current_app.config["FORCE_UPLOAD"]:
-        # A HEAD of this exact key (#572). A listing of the prefix with
+        # A HEAD of this exact key. A listing of the prefix with
         # MaxKeys=1 answered a longer sibling for a missing key. Then
         # the upload compared the file with the wrong object.
 
@@ -518,7 +518,7 @@ def aws_upload(
                 raise
 
         # A failed upload never moves the file. Many callers pass the
-        # library file itself (an archive of a changed file, the #299
+        # library file itself (an archive of a changed file, the
         # backfill). A network fault, an S3 error, or a job timeout would
         # move a film out of the library. The import catches the error
         # and rejects its own source. The archive callers mark the archive
@@ -551,7 +551,7 @@ def aws_upload(
 
 
 def upload_untouched(file_path, other_key):
-    """Upload an untouched rip to untouched/. Never replace a claimed archive (#430).
+    """Upload an untouched rip to untouched/. Never replace a claimed archive.
 
     Return (key, date_uploaded, filesize_bytes). The normal key is the
     prefix and the sanitized basename. A surviving record can claim that
@@ -563,7 +563,7 @@ def upload_untouched(file_path, other_key):
 
     When no record claims the normal key, a renamed record can hold
     these bytes under its older key. The function returns that key, and
-    it uploads nothing (#678)."""
+    it uploads nothing."""
 
     config = current_app.config
     prefix = config["AWS_UNTOUCHED_PREFIX"]
@@ -574,7 +574,7 @@ def upload_untouched(file_path, other_key):
         return _lagging_archive_of(file_path, key) or aws_upload(file_path, prefix)
 
     # The claim can be a key that differs only by letter case. The key
-    # columns fold case, and S3 does not (#612). Then the normal key has
+    # columns fold case, and S3 does not. Then the normal key has
     # no object, and the record holds the bytes under its own spelling.
 
     head = aws_clients._head_or_none(aws_clients.aws_s3_client(with_retries=True), key)
@@ -613,10 +613,10 @@ def _holds_bytes_of(head, file_path, etags):
 
 
 def _lagging_archive_of(file_path, key):
-    """Return the archive of these bytes under an older untouched/ key, or None (#678).
+    """Return the archive of these bytes under an older untouched/ key, or None.
 
     A key moves to the key of its name only in a converge run that a
-    person starts (#668). Thus, a renamed row keeps its old key. A
+    person starts. Thus, a renamed row keeps its old key. A
     restore puts its rip in the import directory under the new name.
     The import then takes the old key of that row. It uploads nothing,
     and it replaces nothing.
@@ -629,7 +629,7 @@ def _lagging_archive_of(file_path, key):
         return None
     prefix = current_app.config["AWS_UNTOUCHED_PREFIX"]
     # The key columns fold case. Thus, the exact compare with key is in
-    # Python. A key that differs only by case is an older key too (#612).
+    # Python. A key that differs only by case is an older key too.
 
     rows = File.query.filter(
         File.untouched_basename == os.path.basename(file_path),
@@ -658,7 +658,7 @@ def _lagging_archive_of(file_path, key):
 
 
 def ensure_pending_upload(file, source_path):
-    """Make sure that the run-scoped upload of an import exists (#494).
+    """Make sure that the run-scoped upload of an import exists.
 
     Return True if the source can go. The object can be gone after a
     long wait (the 60-day expiry, or a prune). Then the source goes up

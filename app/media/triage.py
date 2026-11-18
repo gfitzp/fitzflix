@@ -17,12 +17,12 @@ them. Fitzflix deletes them when they are no longer useful. That is
 when the file is triaged, or when its local copy is deleted. By
 design, there is no orphan sweep.
 
-The runtime-mismatch triage (#234) is also here. It has no aids to
+The runtime-mismatch triage is also here. It has no aids to
 make. It has only the candidates query over the stored data.
 
-The lossy-audio triage (#212) is also here. Its candidates are the
+The lossy-audio triage is also here. Its candidates are the
 files whose first audio track is lossy while a lossless track is
-behind it. Its inspection aids (#223) are a loudness-envelope
+behind it. Its inspection aids are a loudness-envelope
 correlation of the ENTIRE tracks, plus listening clips at sampled
 points. Programme audio correlates near 1.0 with itself across the
 codecs. A commentary does not correlate with the programme. With the
@@ -127,7 +127,7 @@ def forced_subtitle_candidates(file_id=None):
     return list(grouped.values())
 
 
-# The runtime triage (#234). A file whose estimated duration differs
+# The runtime triage. A file whose estimated duration differs
 # much from the TMDb runtime of its movie is usually a title collision
 # at capture time. That is a recording with the wrong label, matched
 # correctly. Or it is a truncated download. The estimate needs no
@@ -197,7 +197,7 @@ def runtime_mismatch_candidates():
 
 
 def lossy_audio_candidates(file_id=None):
-    """Return the files whose first audio track is lossy with a lossless track behind it (#212).
+    """Return the files whose first audio track is lossy with a lossless track behind it.
 
     This excludes the 3-track set that the Atmos pipeline makes by
     design. An E-AC-3 Atmos lead is exactly what is wanted. It also
@@ -278,7 +278,7 @@ def reset_triage_state(file):
     have. This was the A Fish Called Wanda case. A dismissal on
     2026-08-12 silently blocked the file imported again on 2026-08-18.
     The length of a replacement is a new length. Thus, the runtime
-    acknowledgement (#234) also resets."""
+    acknowledgement also resets."""
 
     file.subtitle_triage_reviewed = None
     file.runtime_mismatch_reviewed = None
@@ -669,7 +669,7 @@ def triage_presentation(file_id, track_number):
     }
 
 
-# The lossy-audio comparison (#223). The verdict correlates the ENTIRE
+# The lossy-audio comparison. The verdict correlates the ENTIRE
 # tracks. One ffmpeg pass decodes each track of interest to 8 kHz mono.
 # An audio-only decode runs at approximately 450 times realtime from
 # the SSD. Thus, this costs nothing inside an import. The envelopes are
@@ -839,7 +839,7 @@ def _envelope_correlation(a, b, max_lag=ENVELOPE_MAX_LAG):
 
 
 def generate_audio_comparison(file_id):
-    """Correlate the full lossy and lossless tracks of 1 candidate file (#223).
+    """Correlate the full lossy and lossless tracks of 1 candidate file.
 
     This task also cuts the listening clips. It does not change a file
     whose comparison already exists. Thus, a second run costs nothing."""
@@ -951,7 +951,7 @@ def generate_audio_comparison(file_id):
 
 
 def maybe_enqueue_audio_comparison(file_id):
-    """Queue the clip generation if the file is on the lossy-audio worklist (#212).
+    """Queue the clip generation if the file is on the lossy-audio worklist.
 
     The caller calls this after the track scan of an import. The job
     goes on the transcode queue."""

@@ -5,8 +5,8 @@
 {% from "_movie_poster_small.html" import movie_poster_small %}
 
 {% block app_content %}
-{# The header carries only the title since #215. The Log a film box sits
-   just above the diary rows. The import and export forms moved to the
+{# The header carries only the title. The Log a film box sits
+   just above the diary rows. The import and export forms are on the
    Profile page with the rest of the account plumbing. #}
 {{ page_header('My History') }}
 {% if rated_count %}
@@ -39,7 +39,7 @@
 	</div>
 </div>
 {% endif %}
-{# Log a film, just above the diary that it goes into (#215). The hidden
+{# Log a film, just above the diary that it goes into. The hidden
    scope keeps the TMDB results page to movies, because the diary never
    logs TV. The results rows carry the live star ladder. Thus, the user
    can log a film directly from the search results. #}
@@ -101,7 +101,7 @@
 		   film, where the diary entry lives. #}
 		<div class="mt-1 small text-muted">Synced from Letterboxd.{% if review.movie.tmdb_id %} <a href="https://letterboxd.com/tmdb/{{ review.movie.tmdb_id }}/" target="_blank" rel="noreferrer">Edit it there</a>.{% endif %}</div>
 		{% else %}
-		{# Freeform text lives in its own per-row form (#58c), separate
+		{# Freeform text lives in its own per-row form, separate
 		   from the star form. Thus, a star tap can never silently save
 		   half-edited text. Dates still edit on the full review page. #}
 		<details class="mt-1">

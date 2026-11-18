@@ -45,8 +45,8 @@
 			{% elif movie.criterion_set_title %}
 				<p>Part of the Criterion Collection's {{ movie.criterion_set_title }} collector's set.</p>
 			{% endif %}
-			{# The control row: the stars, Play, and the watchlist toggle
-			   (Glenn, 2026-09). The star row is the rating control of
+			{# The control row: the stars, Play, and the watchlist toggle.
+The star row is the rating control of
 			   the page. It shows the verdict. Until there is a verdict,
 			   it shows the estimate of the engine in paler gold. A tap
 			   posts in the background. A tap creates a verdict row with
@@ -65,18 +65,18 @@
 				   in the funnel stage before the shopping list. An owned
 				   film tracks which of the many library films this user
 				   specifically means to watch. Both faces render, and
-				   data-card-watchlist swaps them in the background (#187).
+				   data-card-watchlist swaps them in the background.
 				   The card branch of the route answers JSON. Any fetch
 				   failure falls back to the full post. #}
 				{# Filled: a standalone page shows the toggle once. #}
 				{{ watchlist_toggle(on_watchlist=on_watchlist, outline=false, compact=false, nowrap=true, form=watchlist_form) }}
-			{# Play comes last (Glenn, 2026-09): not every film has a local
+			{# Play comes last: not every film has a local
 			   copy. Thus, the stars and the toggle keep their places on
 			   every page. Remote playback hand-off (owned film and a
 			   configured player). The background post uses the shared data-plex-play handler of
 			   plex_play.js. It starts the film on the Apple TV through the Plex app
-			   (Plex Companion) or through Infuse (Apple Companion deep link,
-			   #192). Failures go into the small status line under the button.
+			   (Plex Companion) or through Infuse (Apple Companion deep link).
+			   Failures go into the small status line under the button.
 			   When both apps are configured, the default player of the user
 			   leads. Films with formats that only Infuse plays correctly carry a
 			   recommendation note. #}
@@ -86,7 +86,7 @@
 			{% if infuse_playable %}{% set _ = targets.append(("infuse", "Play (Infuse)" if both_playable else "Play in Infuse")) %}{% endif %}
 			{% if default_player == "infuse" %}{% set targets = targets|reverse|list %}{% endif %}
 			{% if targets|length > 1 %}
-			{# One Play control (Glenn, 2026-08-31): the default player IS the
+			{# One Play control: the default player IS the
 			   button. The other player waits under the split dropdown, like the
 			   Find menu. Both forms post through the shared data-plex-play
 			   handler. The status line of the secondary form cannot live inside
@@ -130,7 +130,7 @@
 				</form>
 			</div>
 			{% endif %}
-				{# Not interested (#45b, buttons removed per #184): the
+				{# Not interested: the
 				   &#10005; toggle of the ladder is the one way to declare
 				   disinterest. The note only shows the standing verdict. #}
 				{% if refused %}
@@ -164,7 +164,7 @@
 		</div>
 	</div>
 </div>
-{# The cast strip spans the page below the poster (Glenn, 2026-09).
+{# The cast strip spans the page below the poster.
    Thus, the wide scroller has the full width, and the right column holds
    only the facts and the controls. A page-wide rule stands on each side
    of the strip. #}
@@ -175,11 +175,11 @@
    reviews belong on Letterboxd. The feed syncs them back on its own.
    The local log form is the demoted fallback for what the feed cannot
    carry (outages, and entries older than its window of approximately
-   50 items). The logging sits below the cast (Glenn, 2026-09). Thus,
+   50 items). The logging sits below the cast. Thus,
    the facts of the film come first. #}
 {% set letterboxd_logging = current_user.letterboxd_username and movie.tmdb_id %}
 {# The toggle sits to the right of the button. The form opens below the
-   row, left-aligned under the button (Glenn, 2026-09). A Bootstrap
+   row, left-aligned under the button. A Bootstrap
    collapse does that. A details element cannot: its form stays inside
    it, under its own summary. #}
 <div class="d-flex flex-wrap align-items-baseline gap-2 mb-2">
@@ -228,7 +228,7 @@
 {# g-3: the gutters keep a gap between the columns when a phone
    stacks them. Thus, the buttons never touch. #}
 <div class="row g-3">
-	{# The file pages are admin tools (#186 follow-up). Thus, only admins
+	{# The file pages are admin tools. Thus, only admins
 	   get the door to them, and only when the film has files (Glenn,
 	   2026-09). #}
 	{% if current_user.admin and (films or features) %}
@@ -267,7 +267,7 @@
 	<span class="badge text-bg-info" title="Radarr is monitoring this film">Requested through Radarr</span>
 </div>
 {% endif %}
-{# Movie Data is an admin section (#186 follow-up). Its forms post to
+{# Movie Data is an admin section. Its forms post to
    admin-only routes. Thus, to hide it here is presentation, not the
    protection. #}
 {% if current_user.admin %}

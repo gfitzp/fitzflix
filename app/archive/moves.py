@@ -33,7 +33,7 @@ app = LocalProxy(get_app)
 _MOVES_AFTER_COMMIT = "fitzflix_archive_moves"
 
 # The session info key of the moves that a holder of a title lock
-# requested (#664). The move job takes the title lock. Thus, a move that
+# requested. The move job takes the title lock. Thus, a move that
 # starts before the unlock finds the lock and waits 5 to 15 minutes.
 
 _MOVES_HELD = "fitzflix_archive_moves_held"
@@ -53,7 +53,7 @@ def clear_archive_target(file):
 
 
 def _set_archive_target(file, target):
-    """Set the pending target of a file. The first request keeps its time (#618)."""
+    """Set the pending target of a file. The first request keeps its time."""
 
     file.aws_key_target = target
     if file.archive_move_requested_at is None:
@@ -61,14 +61,14 @@ def _set_archive_target(file, target):
 
 
 def request_archive_move(file, claims=None, column=None):
-    """Request the move of the archive of a file to the key of its untouched name (#369).
+    """Request the move of the archive of a file to the key of its untouched name.
 
     Set aws_key_target, and queue move_archive_object after the next
     commit of the session. The caller commits. A pending target is
     replaced. The job reads the current target when it runs. A file
     whose archives have their keys loses its pending target. A name
     that differs from the key only by letter case keeps the key, and a
-    pending target goes (#612). column limits the request to the
+    pending target goes. column limits the request to the
     archive of that key column (archive_drift). Return True if a move
     is pending."""
 
@@ -83,7 +83,7 @@ def request_archive_move(file, claims=None, column=None):
             f"'{file.basename}' The archive '{source}' moves to '{target}'"
         )
     _set_archive_target(file, target)
-    # The target is a claim for each later file of the same run (#706).
+    # The target is a claim for each later file of the same run.
     # A replaced or cleared target stays in claims. That stale claim can
     # only add an id to the key of a later file. It never gives 2 files
     # the same target.
@@ -114,7 +114,7 @@ def _enqueue_requested_moves(session):
 
 @contextmanager
 def archive_moves_after_unlock():
-    """Hold back the archive moves that the session commits in the block (#664).
+    """Hold back the archive moves that the session commits in the block.
 
     The code in the block holds a title lock, and it releases the lock
     in the block. A move that a commit requests is booked
@@ -150,7 +150,7 @@ def _queue_held_moves(held):
 
 
 def _enqueue_move_once(file_id, basename, delay=None):
-    """Queue the move job of a file, unless a move of the file waits in the queue (#384).
+    """Queue the move job of a file, unless a move of the file waits in the queue.
 
     The id is "archive-move-", the file id, and a random tag. A queued
     move reads the target of the file when it runs. Thus, a second
@@ -158,14 +158,14 @@ def _enqueue_move_once(file_id, basename, delay=None):
     older target. Each id is new, so no job takes the expiry of an old
     finished job.
 
-    A known and accepted gap stays (review of 2026-10-26). A move that
+    A known and accepted gap stays. A move that
     waits as a scheduled retry, or a move that a restore notification
     queued with its receipt handle, does not count. A new request (a
     converge-keys run with --again) can add 1 more job for such a
     file. That job finds the
     restore in progress or the move done, and it changes nothing.
 
-    delay books the job ahead (#664)."""
+    delay books the job ahead."""
 
     name = "app.archive.moves.move_archive_object"
     prefix = f"archive-move-{int(file_id)}-"
@@ -189,7 +189,7 @@ def _forget_requested_moves(session):
 
 
 def pending_archive_moves():
-    """Return the count of the pending archive moves and the oldest request time (#618)."""
+    """Return the count of the pending archive moves and the oldest request time."""
 
     count, oldest = (
         db.session.query(
@@ -206,7 +206,7 @@ def archive_drifts(claims=None):
 
     This is the census of the backfill (flask aws converge-keys). Each
     target of the census is a claim for the later files, as in
-    request_archive_move (#706). Thus, the list that the admin reads
+    request_archive_move. Thus, the list that the admin reads
     shows the targets that the moves get."""
 
     claims = claims if claims is not None else archive_keys.key_claims()
@@ -314,7 +314,7 @@ def _download_after_move(file, source, target):
     """Download the moved archive if a restore for a download preceded the move.
 
     The restore notification of the old key went to the move. A request
-    for a download sets the pending restore of the row (#610). The row
+    for a download sets the pending restore of the row. The row
     keeps it through the move. If the library file is still missing, the
     download of the new key starts now. The copy is new, and a new object
     is in STANDARD storage. Thus, it needs no restore now. A lifecycle
@@ -339,7 +339,7 @@ def _download_after_move(file, source, target):
 
 
 def move_archive_object(file_id, sqs_receipt_handle=None):
-    """Move the archive of a file to its pending target key (#369).
+    """Move the archive of a file to its pending target key.
 
     The job holds the lock of the title. It reads the row and computes
     the key again. A rename after the request changes the wanted key.
@@ -357,7 +357,7 @@ def move_archive_object(file_id, sqs_receipt_handle=None):
       The size and the ETag of the copy are verified. Then the row names
       the new key, and the old key is deleted. Return True.
     - A download of the old key came during the copy: the copy is
-      deleted, and the job waits as above (#728).
+      deleted, and the job waits as above.
 
     aws_key names a real object during the whole move. sqs_receipt_handle
     is the restore notification that started the job. The job deletes it
@@ -367,8 +367,8 @@ def move_archive_object(file_id, sqs_receipt_handle=None):
         config = current_app.config
 
         # The message is about the source key of the move. The poll gives
-        # it to the job, or the job reads it from the row (#617). The early
-        # returns below delete that message too (#587).
+        # it to the job, or the job reads it from the row. The early
+        # returns below delete that message too.
 
         job = get_current_job()
         message_key = (job.meta or {}).get("archive_key") if job else None
@@ -384,7 +384,7 @@ def move_archive_object(file_id, sqs_receipt_handle=None):
         message_key = message_key or archive_keys.move_source(file) or file.aws_key
         # A row with no target has no move to do. A key that lags its
         # name is not a reason to move. Only a converge run moves such a
-        # key (#668).
+        # key.
 
         if not file.aws_key_target:
             current_app.logger.info(
@@ -435,8 +435,8 @@ def _sync_is_running():
 # A move that waits books its retry at a random time in this range, in
 # minutes. The sync books its own retry 5 minutes after it sees a move.
 # With 2 fixed periods, the 2 retries can fall due in the same tick of
-# the scheduler again and again. Then each sees the other and waits
-# (#404). The random delay breaks that alignment.
+# the scheduler again and again. Then each sees the other and waits.
+# The random delay breaks that alignment.
 
 MOVE_RETRY_MINUTES = (25, 35)
 
@@ -486,8 +486,7 @@ def _wait_move(file, source, sqs_receipt_handle, waits_for):
 LOST_UPLOAD_WAIT = "wait"
 
 # The keys of the records whose rip archive is lost. Each needs a
-# re-rip. The dangling-claims mail names them in a section of their own
-# (follow-up #455).
+# re-rip. The dangling-claims mail names them in a section of their own.
 
 ARCHIVE_LOST_KEY = "fitzflix:archive:lost"
 
@@ -506,7 +505,7 @@ def mark_archive_lost(file, source):
 
 
 def _archive_lost_upload(file, source, column):
-    """Archive the library file of a record whose run-scoped upload is gone (#455).
+    """Archive the library file of a record whose run-scoped upload is gone.
 
     A lifecycle expiry or a prune can remove the pending upload of an
     import before its move. The untouched rip is then lost. The library
@@ -515,7 +514,7 @@ def _archive_lost_upload(file, source, column):
     pending restore refuses the upload, and the result is still True. A
     failed upload raises.
     Return LOST_UPLOAD_WAIT if the library volume does not respond. Then
-    the move waits, because the file can come back (follow-up #455).
+    the move waits, because the file can come back.
     Return False otherwise."""
 
     if column != "aws_key" or not archive_keys.is_pending_archive(source):
@@ -543,13 +542,13 @@ def _move_archive(file, sqs_receipt_handle, message_key):
     """Do the work of move_archive_object under the lock of the title.
 
     message_key is the key of the restore message of the job. Each drop
-    uses it, also after the switch of the row to the new key (#617)."""
+    uses it, also after the switch of the row to the new key."""
 
     config = current_app.config
     db.session.refresh(file)
 
     # The job moves only the archive of the column of its target. A
-    # lagging key in the other column waits for a converge run (#683).
+    # lagging key in the other column waits for a converge run.
     # A target that went during the wait leaves nothing to move.
 
     column = archive_keys._target_column(file) if file.aws_key_target else None
@@ -661,11 +660,10 @@ def _move_archive(file, sqs_receipt_handle, message_key):
         # System page show it, with a Requeue button. The target stays.
         # Thus, the same job makes the move again. The System page shows
         # the first 200 characters of the last line, so the repair is the
-        # first sentence (#729). After Forget, only flask aws
+        # first sentence. After Forget, only flask aws
         # converge-keys --apply --again requests the move. With no
         # --limit, that command requests each move of its list. The
-        # weekly sync requests again only a move from pending-untouched/
-        # (#707).
+        # weekly sync requests again only a move from pending-untouched/.
         s3_layout.delete(s3_client, bucket, target, copied.get("VersionId"))
         raise RuntimeError(
             f"The copy of an archive failed. Requeue this task on the System "
@@ -692,7 +690,7 @@ def _move_archive(file, sqs_receipt_handle, message_key):
             s3_layout.delete(s3_client, bucket, target, copied.get("VersionId"))
         return False
 
-    # Invariant: a move never takes a key away from its download (#728).
+    # Invariant: a move never takes a key away from its download.
     # The copy can take minutes, and a person can request a restore in
     # that time. A readable object gets its download at once. That job
     # finds its record by the old key when it starts, and it reads the
@@ -724,7 +722,7 @@ def _move_archive(file, sqs_receipt_handle, message_key):
     # failed copy of a move goes by its version id.
 
     if not archive_keys.untouched_key_still_claimed(source):
-        # The run-scoped upload of an import (#430) was never an archive
+        # The run-scoped upload of an import was never an archive
         # of its own. Its version goes permanently.
         s3_layout.delete(
             s3_client,
@@ -739,7 +737,7 @@ def _move_archive(file, sqs_receipt_handle, message_key):
 
     # A conversion has a second archive. After the move of the original,
     # the move of the transcoded/ copy comes next. The move of a
-    # transcoded/ copy never requests the move of the original (#683).
+    # transcoded/ copy never requests the move of the original.
 
     if column == "aws_key" and request_archive_move(file, column="aws_transcoded_key"):
         db.session.commit()
@@ -750,12 +748,12 @@ def aws_delete(key, only_if_present=False, only_if_unclaimed=False):
     """Delete an object from AWS S3 storage.
 
     only_if_present reads the head first. A key with no object is left
-    alone (follow-up #515). The purge of a pending move named its target.
+    alone. The purge of a pending move named its target.
     On the versioned bucket, a plain delete wrote a delete marker at a
     key that did not exist yet.
 
     only_if_unclaimed asks untouched_key_still_claimed immediately before
-    the delete. A key that a record claims now is left alone (#686). A
+    the delete. A key that a record claims now is left alone. A
     queued delete can wait for hours, and an import can claim the key
     in that time. A job that the older code queued has no such argument.
     It deletes as before."""

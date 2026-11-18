@@ -132,7 +132,7 @@ def _item(rating_key, section_key):
     """Return the item of a rating key: its add date, guid, edition, and external ids.
 
     Plex gives an edition item the guid of the film. Only its
-    editionTitle tells it apart from the theatrical item (#679)."""
+    editionTitle tells it apart from the theatrical item."""
 
     payload = plex_get(f"/library/metadata/{rating_key}")
     meta = (payload.get("MediaContainer", {}).get("Metadata") or [{}])[0]
@@ -189,7 +189,7 @@ def pin_plex_match(item, kind, source):
     label = f"Plex item {item['rating_key']}"
     if item["edition"]:
         # Fitzflix does not pin an edition item, because the effect of a
-        # new match on its edition is not proven (#679).
+        # new match on its edition is not proven.
         current_app.logger.info(
             f"{label} is the edition '{item['edition']}'. Its match stays"
         )

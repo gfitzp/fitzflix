@@ -59,8 +59,8 @@ LATEST_KEY = "fitzflix:cron:latest"
 TICK_SECONDS = 15
 
 # Only 1 process can run the cron table. 2 processes enqueue each job 2
-# times. The duplicate check of rq cannot fire inside its pipeline
-# (#323). Thus, this process holds its own lock. It refreshes the lock on
+# times. The duplicate check of rq cannot fire inside its pipeline.
+# Thus, this process holds its own lock. It refreshes the lock on
 # each tick, so a killed process frees it in INSTANCE_TTL seconds.
 
 INSTANCE_KEY = "fitzflix:scheduler:instance"
@@ -129,7 +129,7 @@ for entry in cron_table(app.config):
             "func": entry["func"],
         },
         result_ttl=86400,
-        # A failure and its result stream expire (#478)
+        # A failure and its result stream expire
         failure_ttl=FAILURE_TTL,
     )
     # Change the class for local-time evaluation. Then compute the first
@@ -174,7 +174,7 @@ mover = RQScheduler(
 
 # This process holds the instance lock. Thus, a mover lock that exists
 # now belongs to a dead process. While it lived (up to 75 seconds), the
-# fallback period of rq kept the new mover idle for 2 minutes (#321).
+# fallback period of rq kept the new mover idle for 2 minutes.
 
 app.redis.delete(*[mover.get_locking_key(name) for name in QUEUE_NAMES])
 mover.register_birth()
@@ -190,7 +190,7 @@ try:
             keys=[INSTANCE_KEY], args=[instance_token, INSTANCE_TTL]
         ):
             # A stall longer than INSTANCE_TTL (a sleep and wake of the
-            # Mac) lets the key expire with no other holder (#531). Then
+            # Mac) lets the key expire with no other holder. Then
             # this process takes the lock again. Only a key that another
             # process holds stops it.
             if app.redis.set(INSTANCE_KEY, instance_token, nx=True, ex=INSTANCE_TTL):
@@ -205,7 +205,7 @@ try:
                 break
 
         # The same stall can expire the hash and the registry entry of
-        # the cron scheduler (#562). Register again before the next save.
+        # the cron scheduler. Register again before the next save.
 
         if keep_cron_registered(cron):
             app.logger.warning(
@@ -224,7 +224,7 @@ try:
 
         # Sleep in short steps. A stop request then ends the loop in 1
         # second. Supervisor waits 10 seconds before SIGKILL, and a kill
-        # skips the cleanup below (#322).
+        # skips the cleanup below.
 
         wake = time.monotonic() + TICK_SECONDS
         while not stop_requested and time.monotonic() < wake:
@@ -233,7 +233,7 @@ finally:
     cron.register_death()
 
     # stop() releases the mover locks. register_death() alone kept them
-    # for up to 75 seconds (#321).
+    # for up to 75 seconds.
 
     mover.stop()
     release_instance(keys=[INSTANCE_KEY], args=[instance_token])

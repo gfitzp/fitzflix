@@ -169,12 +169,12 @@ class _LocalizationRun:
         self.lock = None
         self.strays = _NotedStrays(self)
         self.pending = None
-        # An in-place import rewrites the source itself (#424). A stop
+        # An in-place import rewrites the source itself. A stop
         # signal during that rewrite must not leave it for a re-import.
         self.in_place = False
 
     def note(self):
-        """Keep the lock, the pending upload and the strays in Redis (#498).
+        """Keep the lock, the pending upload and the strays in Redis.
 
         A worker that dies takes them with it. The worker that reclaims
         the dead job reads them here. This is best effort."""
@@ -197,7 +197,7 @@ class _LocalizationRun:
         """Book the task again after delay. Every retry carries all 4 counters.
 
         Each retry changes only its own counter. Return "retry". A
-        requeue that fails raises HandoffFailed (#559). The handler of
+        requeue that fails raises HandoffFailed. The handler of
         localization_task then keeps the source."""
 
         handoff(
@@ -283,7 +283,7 @@ def localization_task(
             file_details["untouched_basename"] = run.basename
 
             # Radarr and Sonarr can put a second download at the path of
-            # a source in the library during the chain (#742). The stamp
+            # a source in the library during the chain. The stamp
             # lets the later stages see that.
 
             if follow_ups._in_library(file_path):
@@ -299,7 +299,7 @@ def localization_task(
             run.note()
 
             # The untouched upload does not change the source. Only the
-            # localization of an in-place import rewrites it (#497).
+            # localization of an in-place import rewrites it.
             run.in_place = not staged
             work_path, hidden_output_file = _localize(
                 file_path, work_path, file_details, staged, run.job, run.strays
@@ -312,8 +312,8 @@ def localization_task(
                 file_details["source_stamp"] = library_stamp(file_path)
 
         except HandoffFailed:
-            # The run could not book its own retry or take its title lock
-            # (#559). Only Redis failed. The retries all come before the
+            # The run could not book its own retry or take its title lock.
+            # Only Redis failed. The retries all come before the
             # localization, so nothing has changed the source. It stays
             # for the hourly sweep.
 
@@ -333,15 +333,15 @@ def localization_task(
         except BaseException as error:
             # Remove the staged copies. Fitzflix rejects the original source.
             # Nothing has changed a staged source. A file too large for the
-            # staging volume is the exception (#424). It is processed in
+            # staging volume is the exception. It is processed in
             # place, and the track statistics, the FLAC twins, or the MP4
             # metadata removal can rewrite it before a failure. Such a
             # rewrite removes no stream of the file. The untouched archive
             # goes up first. An upload to the normal key stays in S3, and
             # the next try can replace it. A run-scoped upload goes with
             # the failed run, as for a staged source. A stop signal keeps
-            # the source (#497). An outage of the database keeps it too,
-            # and the job fails (#681).
+            # the source. An outage of the database keeps it too,
+            # and the job fails.
 
             abandon_failed_stage(
                 error,
@@ -393,7 +393,7 @@ def _admission_gate(file_path, run):
         return "stop"
 
     # A duplicate job or a late retry can reach a file that an earlier
-    # job already imported in place (#287).
+    # job already imported in place.
 
     if chain.already_cataloged(file_path):
         current_app.logger.info(
@@ -423,7 +423,7 @@ def _admission_gate(file_path, run):
 
     size_before = os.path.getsize(file_path)
 
-    # Invariant: an empty file is never imported (#777). The Finder
+    # Invariant: an empty file is never imported. The Finder
     # copies files one at a time, and it makes an empty file for each
     # one that waits. Such a file passed each check below: its size
     # does not grow, MediaInfo cannot read it, and nothing writes to
@@ -509,14 +509,14 @@ def _identify(file_path, run):
         filenames.move_to_rejects(file_path, reason or "incorrect filename")
         return "stop"
 
-    # An HDR or BT.2020 import becomes an SDR conversion (#292). The
+    # An HDR or BT.2020 import becomes an SDR conversion. The
     # HDR_IMPORT_MODE setting gives its maximum height, or no height for
-    # the mode that keeps HDR (#657). The plan renames the import to the
+    # the mode that keeps HDR. The plan renames the import to the
     # quality of the conversion now. Thus, the quality checks compare
     # the conversion, not the original.
 
     # The decision on a held file does not depend on a setting that
-    # changed while the file waited (#677). The file converts to the
+    # changed while the file waited. The file converts to the
     # height that its hold stored, and the mode is not read for it.
 
     conversion = None
@@ -525,7 +525,7 @@ def _identify(file_path, run):
     if max_height is None:
         max_height = CONVERSION_HEIGHTS.get(get_setting("HDR_IMPORT_MODE"))
         if held is not None:
-            # A hold from before #677 stored no height. An admin chose
+            # An old hold stored no height. An admin chose
             # to import a conversion. Thus, the mode "keep" gives 1080.
             max_height = max_height or 1080
     if max_height:
@@ -557,11 +557,11 @@ def _take_title_lock(file_details, run):
     file_identifier = chain.lock_key_for_details(file_details)
     current_app.logger.debug(f"'{run.basename}' Lock identifier: {file_identifier}")
 
-    # The note of the lock follows the take in the same call (#498). A
+    # The note of the lock follows the take in the same call. A
     # worker that dies after this still leaves its lock token behind.
 
-    # A Redis fault of the lock or of the deferral raises HandoffFailed
-    # (#559). The source is good, so the handler keeps it.
+    # A Redis fault of the lock or of the deferral raises HandoffFailed.
+    # The source is good, so the handler keeps it.
 
     lock = handoff(
         videos.acquire_lock_or_defer,
@@ -606,7 +606,7 @@ def _quality_and_space_gate(file_path, file_details, conversion, run):
                 return "hold" if held is not None else "reject"
 
     # A record has this path in an other letter case, and its file is
-    # still on the disk (#749). The 2 files can be different works, for
+    # still on the disk. The 2 files can be different works, for
     # example 2 extras of a film. Only 1 can have a record. A person
     # decides. The record, its file and its archive stay as they are.
 
@@ -654,7 +654,7 @@ def _quality_and_space_gate(file_path, file_details, conversion, run):
 
     # Wait for free space on the library volume before the heavy work.
     # Without the space, the final copy would fail and discard the work.
-    # The wait releases the title lock (#262).
+    # The wait releases the title lock.
 
     output_directory = os.path.join(
         current_app.config["LIBRARY_DIR"], file_details.get("dirname")
@@ -682,15 +682,15 @@ def _quality_and_space_gate(file_path, file_details, conversion, run):
 def _stage_source(file_path, run):
     """Copy the source to local staging. Return (work_path, staged), or None.
 
-    The archive upload and the localization tools then do their heavy
-    I/O on the local disk. A network failure costs a retry, not a
-    stranded partial file. None means that the task is booked again.
-    The staged copy goes in run.strays.
+        The archive upload and the localization tools then do their heavy
+        I/O on the local disk. A network failure costs a retry, not a
+        stranded partial file. None means that the task is booked again.
+        The staged copy goes in run.strays.
 
-    The space check counts what the other imports on staging still need
-    (#294). Without enough space, the import waits and releases the
-    title lock. Only a file that cannot fit on the staging volume at all
-    is processed on its source volume. Then staged is False."""
+        The space check counts what the other imports on staging still need.
+    Without enough space, the import waits and releases the
+        title lock. Only a file that cannot fit on the staging volume at all
+        is processed on its source volume. Then staged is False."""
 
     basename = run.basename
     space_waits = run.counters["space_waits"]
@@ -700,7 +700,7 @@ def _stage_source(file_path, run):
     staging = space.reserve_staging(basename, staging_needed, [basename], staging_dir)
     if staging == "lock":
         # The space was not checked. Thus, this is no space wait, and the
-        # space-wait counter stays as it is (#478).
+        # space-wait counter stays as it is.
         current_app.logger.info(
             f"'{basename}' The staging lock is busy. Trying again in "
             f"{int(space.STAGING_LOCK_RETRY.total_seconds() // 60)} minute"
@@ -772,12 +772,12 @@ def _stage_source(file_path, run):
 def _archive_original(work_path, file_details):
     """Upload the untouched file to AWS S3 storage as a backup, if the setting is on.
 
-    A surviving record can claim the untouched key for different bytes.
-    Then the upload goes to a run-scoped key below pending-untouched/
-    (#430). The record of the import claims that key. After the commit,
-    an archive move takes it to its final key. A failed import deletes
-    it, unless the localized file replaced the source (#727). Thus, a
-    failure never replaces the archive of a good rip."""
+        A surviving record can claim the untouched key for different bytes.
+        Then the upload goes to a run-scoped key below pending-untouched/.
+    The record of the import claims that key. After the commit,
+        an archive move takes it to its final key. A failed import deletes
+        it, unless the localized file replaced the source. Thus, a
+        failure never replaces the archive of a good rip."""
 
     if get_setting("ARCHIVE_ORIGINAL_MEDIA"):
         run_id = uuid.uuid4().hex[:12]
@@ -855,8 +855,8 @@ def _localize(source_path, work_path, file_details, staged, job, strays):
     # extra is only the extra, for example "Trailer.mkv". The extras of 2
     # films would then write the same staging file.
 
-    # The partial output of a failed step is a stray in both places
-    # (#389). Without staging, it is a hidden file in the library folder.
+    # The partial output of a failed step is a stray in both places.
+    # Without staging, it is a hidden file in the library folder.
 
     if staged:
         hidden_output_file = space.staged_output_path(
@@ -939,7 +939,7 @@ def _localize_matroska(work_path, hidden_output_file, output_directory, basename
     # terminological code for each file with a LanguageIETF element,
     # whatever wrote it ("deu" for a track written as "ger"). Thus, the
     # comparisons use same_language, and the mkvmerge filters use the
-    # spelling of the file (#423).
+    # spelling of the file.
 
     native_language = file_language_spelling(
         current_app.config["NATIVE_LANGUAGE"], audio_tracks
@@ -1110,7 +1110,7 @@ def _copy_as_is(
                 )
         except BaseException:
             # AtomicParsley rewrites the work file in place. It must stop
-            # before the cleanup (#499).
+            # before the cleanup.
             stop_process(atomicparsley_process)
             raise
 
@@ -1145,10 +1145,10 @@ def _hand_off(run, work_path, file_details, hidden_output_file, staged, conversi
 
     # The localized file stays on staging until its move, and a
     # conversion writes more next to it. Shrink the reservation to what
-    # remains (#294).
+    # remains.
 
     # A failure here (Redis away at the enqueue) must not keep the title
-    # lock for its full TTL (#340). The source stays in the import
+    # lock for its full TTL. The source stays in the import
     # directory for the hourly sweep.
 
     try:
@@ -1162,7 +1162,7 @@ def _hand_off(run, work_path, file_details, hidden_output_file, staged, conversi
 
         # A conversion first goes to the transcode queue. That task gives
         # the file to move_localized_file after the encode. Its timeout
-        # comes from the length of the film (#674).
+        # comes from the length of the film.
 
         if conversion:
             enqueue_task(
@@ -1196,13 +1196,13 @@ def _hand_off(run, work_path, file_details, hidden_output_file, staged, conversi
 
 
 # A supervisor stop, a restart, or a shutdown sends these signals. The
-# file is good. Thus, a stage that they stop keeps its source (#497).
+# file is good. Thus, a stage that they stop keeps its source.
 
 INTERRUPT_SIGNALS = frozenset({signal.SIGTERM, signal.SIGINT, signal.SIGHUP})
 
 
 def interrupted(error):
-    """Return True if a stop signal ended the task or its child process (#497).
+    """Return True if a stop signal ended the task or its child process.
 
     A child that a signal stops has a negative return code. A second
     SIGTERM to an rq worker raises SystemExit inside the job."""
@@ -1217,15 +1217,15 @@ def interrupted(error):
     )
 
 
-# The pymysql error codes of a lost or refused connection to MariaDB
-# (#681): cannot connect through the socket or to the host, the server
+# The pymysql error codes of a lost or refused connection to MariaDB:
+# cannot connect through the socket or to the host, the server
 # went away, and a connection lost during a query.
 
 DATABASE_OUTAGE_CODES = frozenset({2002, 2003, 2006, 2013})
 
 
 def database_outage(error):
-    """Return True if a lost or refused connection to MariaDB ended the stage (#681).
+    """Return True if a lost or refused connection to MariaDB ended the stage.
 
     The file is good. The database did not answer. A constraint error, a
     deadlock (1213), a lock wait timeout (1205), or a changed record
@@ -1251,20 +1251,20 @@ def abandon_failed_stage(
 ):
     """Clean up a stage after error. Re-raise a stop signal, and an outage that keeps the source.
 
-    A stop signal keeps the source (#497). The hourly sweep finds a
+    A stop signal keeps the source. The hourly sweep finds a
     source of the import directory. The hourly retry of the in-place
     imports finds a failed localization of a download in the library.
     The weekly sync finds each other download there: a file with no
-    record, and a file with an other size than its record (#750). A signal that
+    record, and a file with an other size than its record. A signal that
     stopped only the child tool is not raised again. Any other error
     rejects the source. With may_keep False, a stop signal
     rejects the source too, and an outage is a plain error that does
     not raise again. A caller that passes keep_source=True keeps the
-    source for each error (#688). The cataloging does that for a file
+    source for each error. The cataloging does that for a file
     that a record points to.
 
     An outage of the database keeps the source only when a sweep finds
-    it again (#681). The hourly sweep of the import directory queues
+    it again. The hourly sweep of the import directory queues
     each file there. The hourly retry of the in-place imports reads
     only the failed localization jobs. Thus, the localization keeps
     each source for an outage, and its job fails. A later stage
@@ -1318,11 +1318,11 @@ def abandon_import(
     staging reservation, and move the source to rejects with reason.
     With keep_source, the source stays in the import directory. A failed
     step must not stop the next step. A lock that stays held blocks the
-    title until the TTL of the lock expires. The lock goes first (#497).
+    title until the TTL of the lock expires. The lock goes first.
     The S3 and file steps can take longer than the stop wait of
     supervisor. reservation is the name of the reservation. The default
     is the basename of the source. pending_archive is the run-scoped S3
-    upload of the import (#430). It is deleted."""
+    upload of the import. It is deleted."""
 
     if lock:
         try:
@@ -1357,7 +1357,7 @@ def abandon_import(
 
 
 class HandoffFailed(Exception):
-    """A stage could not queue its retry or its next stage (#521).
+    """A stage could not queue its retry or its next stage.
 
     The source is good. Only Redis failed. Thus, the handler of the
     stage keeps the source for the hourly sweep through abandon_handoff.
@@ -1365,7 +1365,7 @@ class HandoffFailed(Exception):
 
 
 def handoff(submit, *args, **kwargs):
-    """Call an enqueue or a requeue. Raise HandoffFailed if it fails (#521)."""
+    """Call an enqueue or a requeue. Raise HandoffFailed if it fails."""
 
     try:
         return submit(*args, **kwargs)
@@ -1374,12 +1374,12 @@ def handoff(submit, *args, **kwargs):
 
 
 def abandon_handoff(source_path, lock, staged_output, pending_archive=None):
-    """Clean up after a stage could not queue the next stage (#340).
+    """Clean up after a stage could not queue the next stage.
 
     Remove the localized output, release the staging reservation and the
     title lock, and leave the source in place. The hourly sweep of the
     import directory queues the source again. Without staging, the
-    output is a hidden file in the library folder (#389). It goes too."""
+    output is a hidden file in the library folder. It goes too."""
 
     current_app.logger.error(
         f"'{os.path.basename(source_path)}' The next stage could not be "

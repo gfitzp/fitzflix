@@ -1,11 +1,11 @@
-{# Shared poster-gallery grammar (#45d): every gallery surface draws its
+{# Shared poster-gallery grammar: every gallery surface draws its
    posters through these macros. They use w342 artwork, or a 2/3
    placeholder when there is none. Captions stay in the template of each
    page. Tiles arm their anchor with data-card-url. Thus, the poster
-   popover (#45c) goes with them. Row-style lists never do this. The
+   popover goes with them. Row-style lists never do this. The
    card shows on hover only. A tap on a phone follows the link of the
    poster. tile_actions puts the star ladder and the watchlist toggle
-   under the poster (revision by Glenn, 2026-08). The popover is
+   under the poster. The popover is
    informational only. The widgets render blank. One batched /movie_states
    fetch per page paints them. Thus, gallery routes never compute per-film
    state. #}
@@ -69,10 +69,10 @@
 {%- endmacro %}
 
 {# The watchlist toggle: two faces, Add and Remove, and the script of
-   tiles.js swaps them after a background post (#187). on_watchlist
+   tiles.js swaps them after a background post. on_watchlist
    none renders Add first and lets the hydration paint the real face.
    outline is for the surfaces that repeat the toggle: a gallery of
-   solid buttons shouts (Glenn, 2026-08-31). Standalone pages pass
+   solid buttons shouts. Standalone pages pass
    outline=false and stay filled. compact is the short button of a tile
    or a row. nowrap keeps the label on one line inside a wrapping row.
    form is a bound WTForms object, whose hidden_tag carries the csrf
@@ -134,8 +134,8 @@
 	{{ rating_ladder(compact=true, live=true) }}
 	{% endcall %}
 	{% if watchlist %}
-	{# Outline: a gallery repeats this toggle under every poster
-	   (Glenn, 2026-08-31). #}
+	{# Outline: a gallery repeats this toggle under every poster.
+#}
 	{{ watchlist_toggle(action, outline=true, compact=true) }}
 	{% endif %}
 </div>

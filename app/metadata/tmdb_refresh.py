@@ -3,7 +3,7 @@
 refresh_tmdb_info fetches the canonical TMDB payload of a record on the
 request queue, the sql queue or the maintenance queue. apply_tmdb_refresh applies the payload on the
 single-worker sql queue. That step does the record updates, the file
-renames and the duplicate merges. It makes no request to S3 (#668).
+renames and the duplicate merges. It makes no request to S3.
 find_or_create_tmdb_movie is the shared record-creation door. Every
 review and watchlist surface goes through it.
 
@@ -73,7 +73,7 @@ def library_name_details(file, file_details):
 
     The rename after a TMDB refresh evaluates the untouched name. That
     is the name of the original. The library file can have a different
-    name. A conversion (#292) has the quality of its SDR library file,
+    name. A conversion has the quality of its SDR library file,
     not the quality of its original. A remux to Matroska has the "mkv"
     extension, not the extension of the original. The library name
     keeps both."""
@@ -95,7 +95,7 @@ def library_name_details(file, file_details):
 
 
 # The columns of a Movie record that a person sets, or that the Wikidata
-# task sets for a person to correct. A merge carries them (#719). TMDB
+# task sets for a person to correct. A merge carries them. TMDB
 # writes each other tmdb_ column again.
 
 PERSON_SET_COLUMNS = (
@@ -137,7 +137,7 @@ NOT_CARRIED = (
 
 
 def carry_person_set_values(old_movie, new_movie):
-    """Give the survivor of a merge each person-set value that it lacks (#719).
+    """Give the survivor of a merge each person-set value that it lacks.
 
     Invariant: a merge loses no value that a person set. The survivor is
     the oldest record with the TMDB id. Frequently it is a record of the
@@ -147,7 +147,7 @@ def carry_person_set_values(old_movie, new_movie):
     False is the exception, because the Wikidata task writes it for a
     disc that nobody marked.
 
-    The catalog values of an other film stay behind (#729). The Wikidata
+    The catalog values of an other film stay behind. The Wikidata
     task gives a record the catalog entry of its TMDB id. Thus, a record
     that goes with a different TMDB id has the spine of that other film.
     A record with no TMDB id gets an entry by its title and year, and an
@@ -185,7 +185,7 @@ def move_movie_rows(old_movie_id, new_movie_id):
     custom poster. A row that the
     survivor already has stays behind. The delete of the
     old record removes it. Thus, no unique key fails. The values that a
-    person set on the old record go to the survivor too (#719). The old
+    person set on the old record go to the survivor too. The old
     record must still have its own TMDB id (carry_person_set_values)."""
 
     keys = (
@@ -217,7 +217,7 @@ def move_movie_rows(old_movie_id, new_movie_id):
             if channel.movies.filter(Movie.id == new_movie_id).first() is None:
                 channel.movies.append(new_movie)
 
-        # The custom poster goes to the survivor if it has none (#463).
+        # The custom poster goes to the survivor if it has none.
 
         move_movie_poster(db.session, old_movie, new_movie)
         carry_person_set_values(old_movie, new_movie)
@@ -232,7 +232,7 @@ def find_or_create_tmdb_movie(tmdb_id, film_title, year, details=None):
     record. If a different film has the title and the year, it returns
     (None, False). A record needs a year. Thus, a film with no year and
     no record for the tmdb id also gives (None, False), and this function
-    inserts nothing (#760). Each caller skips the film for (None, False).
+    inserts nothing. Each caller skips the film for (None, False).
     The movie can appear after the
     redirect check of the caller (an import or a concurrent log). The
     caller must commit the session. If the record is new, the caller
@@ -250,7 +250,7 @@ def find_or_create_tmdb_movie(tmdb_id, film_title, year, details=None):
     if movie is None and year is None:
         # The year column is NOT NULL. An announced film with no release
         # date has no year. The database must not get an insert that it
-        # refuses (#760).
+        # refuses.
         current_app.logger.info(
             f"TMDB {tmdb_id} '{film_title}' has no year and no record. "
             f"Fitzflix does not create a record for it."
@@ -298,7 +298,7 @@ def _movie_base_lock(title, year):
     """Return the base main-feature lock resource of a movie title and year.
 
     The import builds its key from the library name. Thus, the Plex
-    title comes from library_name here too (#722). The 2 keys differ
+    title comes from library_name here too. The 2 keys differ
     only for a title that starts with a period."""
 
     plex_title, _ = library_name({"library": MOVIES, "title": title, "year": year})
@@ -316,7 +316,7 @@ def _movie_refresh_lock_resources(*movies, names=()):
     key. names holds more (title, year) pairs. The caller gives
     the canonical name of the payload. An import of a file with the new
     name builds its key from the new name, and the renames run in its
-    folder (#603). The list is sorted. Thus, 2 refreshes that take locks
+    folder. The list is sorted. Thus, 2 refreshes that take locks
     for overlapping movies cannot deadlock each other.
     """
 
@@ -361,7 +361,7 @@ def tmdb_refresh_status(library, id, maintenance=True):
     discovery). It hands its payload to the apply on the sql queue. The
     apply takes the title lock. When the lock is busy, the apply puts a
     retry in the scheduled registry of the sql queue. This function
-    reads all of these places (#740). With maintenance False, it leaves
+    reads all of these places. With maintenance False, it leaves
     out the maintenance queue.
 
     The result is a dict with a "state" key. The state is "deferred" when
@@ -384,7 +384,7 @@ def tmdb_refresh_status(library, id, maintenance=True):
         found = _refresh_job_target(job)
         return found is not None and (found[0], int(found[1])) == target
 
-    # The ids and the times of the retries come from 1 read (#511)
+    # The ids and the times of the retries come from 1 read
     scheduled = dict(
         scheduled_entries(ScheduledJobRegistry(queue=current_app.sql_queue))
     )
@@ -412,7 +412,7 @@ def tmdb_refresh_pending(library, id):
     Atmos supplement waits while this is True, with its staged copy on
     staging. The maintenance queue has 1 worker, and a fetch there can
     wait behind the weekly sync for hours. Thus, this function does not
-    read that queue (#740). The apply of such a fetch finds the title
+    read that queue. The apply of such a fetch finds the title
     lock busy and tries again."""
 
     return tmdb_refresh_status(library, id, maintenance=False) is not None
@@ -430,7 +430,7 @@ ANY_TMDB_ID = object()
 
 
 def _has_other_tmdb_id(record, queued_tmdb_id):
-    """Return True if a record got a different TMDB id after a refresh was queued (#735).
+    """Return True if a record got a different TMDB id after a refresh was queued.
 
     Invariant: a queued refresh never changes the TMDB id of a record
     that has one. Only an id that a person typed does. A bulk or nightly
@@ -469,7 +469,7 @@ def _refresh_target(
     would search by title and attach a wrong id. ignored is the end of
     that log line. A series that shares its TMDB id with a canonical
     record refreshes that record. description names the job. rematch
-    accepts a detached record: an admin entered an id by hand (#514).
+    accepts a detached record: an admin entered an id by hand.
     queued_tmdb_id is the id of the arguments of a job that is no
     rematch, also when that id is None. The result is None when the
     record has an other id now (_has_other_tmdb_id)."""
@@ -536,7 +536,7 @@ def refresh_tmdb_info(
     and False on a failure. A page that waits for the refresh puts the
     apply at the front of the sql queue (apply_at_front). rematch is an
     id that an admin entered by hand. It fetches a detached record. The
-    apply clears the detachment only when a payload applies (#514).
+    apply clears the detachment only when a payload applies.
     """
 
     with app.app_context():
@@ -627,7 +627,7 @@ def _movie_folder(files):
 
     A dirname is "Movies/<folder>" or "Movies/<folder>/<feature type>".
     Thus, the second component is the folder. Radarr must never own a
-    file that Fitzflix keeps as an edition (#670). Thus, an edition
+    file that Fitzflix keeps as an edition. Thus, an edition
     folder gives its plain name, also when the plain folder does not
     exist. The folder of a main feature wins over a folder that holds
     only special features. The rows come in a stable order, so the
@@ -648,7 +648,7 @@ def _follow_rename_in_radarr(old_tmdb_id, new_tmdb_id, new_folder):
     """Queue the report of a movie rename to Radarr.
 
     The report runs as its own job on the request queue. Thus, the
-    refresh on the sql queue never waits on Radarr (#268). The job
+    refresh on the sql queue never waits on Radarr. The job
     withdraws the entry of an old TMDB id and points the entry of the
     new id at the new folder."""
 
@@ -666,7 +666,7 @@ def _follow_rename_in_radarr(old_tmdb_id, new_tmdb_id, new_folder):
 
 
 # _rename_movie_file gives this when the library volume does not answer.
-# The apply then books itself again (follow-up #551). Before, the folder
+# The apply then books itself again. Before, the folder
 # kept the old title until TMDB changed the film again.
 
 VOLUME_DOWN = "volume-down"
@@ -689,15 +689,15 @@ def _rename_movie_file(f, tmdb_id, probe=True):
     if the new path is claimed, or if the move fails. The poster assets
     of a main feature go with it. Return True if the file moved on
     disk. The row commits right after the move. If that commit fails,
-    the file goes back to its old path (#380). With probe False, the
-    caller probed the volumes already (#575)."""
+    the file goes back to its old path. With probe False, the
+    caller probed the volumes already."""
 
     # The filename plumbing lives in app.media.importing. The import is lazy.
     # Thus, the module import direction stays one-way.
 
     # The import lines of evaluate_filename (File, Movie, Existing movie)
-    # do not belong to a rename. A bulk refresh wrote them for each file
-    # (#590). The warning below names the reason for a reject.
+    # do not belong to a rename. A bulk refresh wrote them for each file.
+    # The warning below names the reason for a reject.
 
     renamed = False
     if not f.untouched_basename:
@@ -732,9 +732,9 @@ def _rename_movie_file(f, tmdb_id, probe=True):
     new_directory = os.path.dirname(new_file)
 
     # A dropped share leaves its mountpoint as a plain folder on the boot
-    # disk. Then neither path exists, and the row would move with no file
-    # (#551). Thus, the rename waits for the volume. The probe comes
-    # before the collision check (#575). A hung share blocks the stat of
+    # disk. Then neither path exists, and the row would move with no file.
+    # Thus, the rename waits for the volume. The probe comes
+    # before the collision check. A hung share blocks the stat of
     # that check. A row with no local copy on a live volume still gets
     # its new name.
 
@@ -761,7 +761,7 @@ def _rename_movie_file(f, tmdb_id, probe=True):
         .first()
     )
     # A case-only rename on a share that folds case finds both paths. They
-    # are the same file, and that is not a collision (#604).
+    # are the same file, and that is not a collision.
 
     collision = sibling is not None or (
         new_file != old_file
@@ -776,7 +776,7 @@ def _rename_movie_file(f, tmdb_id, probe=True):
             else "a file already exists at that path"
         )
         # The notification is the alert. An ERROR record would mail the
-        # admin a second time (#453).
+        # admin a second time.
         current_app.logger.warning(
             f"'{f.basename}' (file #{f.id}) not renamed to "
             f"'{new_relative}': {detail}. Delete one copy, "
@@ -857,7 +857,7 @@ def _rename_movie_file(f, tmdb_id, probe=True):
         return False
 
     # Move or delete the old local assets. The poster art of a folder
-    # that already holds poster art stays (#475). A merge must not put
+    # that already holds poster art stays. A merge must not put
     # the poster of the merged record over the poster of the survivor.
     new_directory = os.path.join(
         current_app.config["LIBRARY_DIR"],
@@ -898,7 +898,7 @@ def _rename_movie_file(f, tmdb_id, probe=True):
         pass
 
     # The custom posters decide the library copy of the folder that a
-    # main feature moved into (#633).
+    # main feature moved into.
 
     if f.feature_type_id is None and new_directory != old_directory:
         try:
@@ -960,11 +960,11 @@ def _apply_movie_refresh(
 ):
     """Apply a movie payload: merge, rename the files, and move the rows.
 
-    The lock-busy retry carries rematch and volume_waits (#560). Without
+    The lock-busy retry carries rematch and volume_waits. Without
     rematch, the retry discards the payload of a detached record.
     locks collects the title locks that the driver releases. Return
     False if the apply must stop. That is a busy lock (the apply is
-    booked again) or a commit that failed (#380). Return True
+    booked again) or a commit that failed. Return True
     otherwise. The driver commits the rest."""
 
     # Keep the original movie_id field, and the TMDB id
@@ -993,7 +993,7 @@ def _apply_movie_refresh(
     # lock is busy, retry later.
 
     # The apply renames the record to the canonical name of the payload.
-    # Its lock goes in the list too (#603).
+    # Its lock goes in the list too.
 
     renamed_to = existing_movie or movie
     names = [canonical_movie_name(tmdb_info, renamed_to.year)] if tmdb_info else []
@@ -1062,7 +1062,7 @@ def _apply_movie_refresh(
     # Reconstruct the untouched filenames with the new movie details.
     # A bulk refresh applies hundreds of movies a night. Most names do
     # not change. Thus, a name gets a log line only when it changes, and
-    # each apply writes 1 summary line (#590).
+    # each apply writes 1 summary line.
 
     files = File.query.filter_by(movie_id=updated_movie_id).all()
     changed = 0
@@ -1071,7 +1071,7 @@ def _apply_movie_refresh(
         untouched_basename = reconstruct_filename(f.id)
         if not untouched_basename:
             # The row has no quality, or its quality row is gone. A False
-            # name failed the rename of the whole apply (#604). Thus, the
+            # name failed the rename of the whole apply. Thus, the
             # file keeps its name.
             current_app.logger.warning(
                 f"'{f.basename}' (file #{f.id}) has no name to rebuild. "
@@ -1097,7 +1097,7 @@ def _apply_movie_refresh(
         return False
 
     # The summary comes after the commit. Thus, it never reports a
-    # rollback as done (#605). With no payload, nothing came from TMDB.
+    # rollback as done. With no payload, nothing came from TMDB.
 
     outcome = "refreshed" if tmdb_info else "has no TMDB data to apply"
     current_app.logger.info(
@@ -1110,7 +1110,7 @@ def _apply_movie_refresh(
     renamed = False
 
     # 1 volume probe for the apply, not 1 for each file while the title
-    # locks are held (#575). The files of a movie share the library mount.
+    # locks are held. The files of a movie share the library mount.
 
     volume_down = bool(files) and bool(
         videos._dead_volumes(
@@ -1129,14 +1129,14 @@ def _apply_movie_refresh(
             renamed = outcome or renamed
 
     # The record has the id of the payload now. The retry carries that
-    # id. A job that searched by the title was queued with no id (#735).
+    # id. A job that searched by the title was queued with no id.
 
     if volume_down:
         _requeue_for_the_volume(
             updated_movie_id, movie.tmdb_id, tmdb_payload, description, volume_waits
         )
 
-    # The rename makes no request to S3 (#668). The archive keeps its
+    # The rename makes no request to S3. The archive keeps its
     # key. flask aws converge-keys moves the keys that lag their names.
 
     # Radarr shares the library root. Thus, it must learn the
@@ -1152,7 +1152,7 @@ def _apply_movie_refresh(
         # would delete them with it.
 
         # The old record still has its own TMDB id here. The merge reads
-        # it to know the catalog values of an other film (#729).
+        # it to know the catalog values of an other film.
 
         move_movie_rows(original_movie_id, movie.id)
         movie.date_updated = datetime.now(timezone.utc)
@@ -1191,8 +1191,7 @@ def apply_tmdb_refresh(
     sends an email if the movie still has no TMDB match after the
     payload is applied. A payload whose apply raises goes to a file
     (save_failed_payload). With rematch, a payload clears the
-    detachment of the record. No payload leaves the record detached
-    (#514).
+    detachment of the record. No payload leaves the record detached.
     """
 
     with app.app_context():

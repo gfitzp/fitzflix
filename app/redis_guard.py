@@ -1,10 +1,10 @@
-"""Let a page degrade quietly while Redis is down (#476).
+"""Let a page degrade quietly while Redis is down.
 
 The queue badge, the running-task banners and the tile hydration read
 Redis on each page. A Redis restart or a short outage must not make
 each page fail. The callers catch REDIS_DOWN_ERRORS, call
 warn_redis_down, and return an empty result. A reader that the
-discovery pages share has the nothing_stored decorator (#699)."""
+discovery pages share has the nothing_stored decorator."""
 
 import copy
 import functools
@@ -36,7 +36,7 @@ def warn_redis_down(where, error):
 
 
 def nothing_stored(where, default=None):
-    """Return a decorator that reads a Redis fault in a reader as "nothing stored" (#699).
+    """Return a decorator that reads a Redis fault in a reader as "nothing stored".
 
     The reader then calls warn_redis_down and returns a copy of default.
     A callable default gets the arguments of the reader and gives the

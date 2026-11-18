@@ -8,14 +8,14 @@
 {{ page_header('Leaving the Criterion Channel ' ~ inventory.departs.strftime("%B %-d"), hr=false) }}
 <p class="small text-muted">This is the full set of films that leave. Your taste profile ranks them. The films on your watchlist come first. The films that you own come last, because they stay in your library. Source: <a href="{{ inventory.url }}" target="_blank" rel="noreferrer">criterionchannel.com</a>.</p>
 <hr>
-{# The departure set as a poster gallery (#45d), in the grammar of
+{# The departure set as a poster gallery, in the grammar of
    the index shelf. The popover carries the synopsis and badges of
    each film (ownership, watchlist, the taste reasons through
    data-card-reasons). The actions sit under the poster. Owned tiles
    open their movie page. The rest open the log page, which redirects
    when a record already exists #}
 {# data-no-leaving-fold: the whole page is the leaving set. Thus, the
-   red corner fold (#197) would repeat on every tile. The green
+   red corner fold would repeat on every tile. The green
    newly-arrived fold still paints #}
 <div class="row mb-2" data-no-leaving-fold>
 	{% for item in inventory["items"] %}

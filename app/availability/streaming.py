@@ -163,7 +163,7 @@ def batch_title_availability(
     rate limiter of tmdb_get. Thus, fetch_limit bounds the time that a
     render can stall behind the limiter. The ids that are left come
     back to the caller. The caller can warm them in the background.
-    The page renders pass fetch_limit=0 (2026-08). They answer from the
+    The page renders pass fetch_limit=0. They answer from the
     cache that the nightly refresh keeps full. They never fetch inline.
     refresh=True fetches each id again, cached or not."""
 
@@ -220,7 +220,7 @@ def warm_title_availability(tmdb_ids):
 def refresh_availability():
     """Fetch the availability again for each film with a TMDB id (nightly task).
 
-    Added 2026-08. The pages that read the availability (the watchlist,
+    The pages that read the availability (the watchlist,
     the Criterion catalog, the filmographies) then always answer from a
     full cache. They never block on TMDB. The whole-library cost is
     some thousand requests. They take minutes under the rate limiter.
@@ -293,10 +293,10 @@ def streaming_matches(availability, provider_ids, tmdb_id=None):
     the film. Then a Criterion Channel match also learns if the film is
     on the leaving set of the month. Its "leaving" key holds the departure
     date ("August 31"). Thus, the badge can light up wherever it
-    renders (requested by Glenn, 2026-08, to watch it before it goes).
+    renders (to watch it before it goes).
 
     A film in the scraped newly-added store or leaving store gets a
-    synthesized Criterion match (decided by Glenn, 2026-09-01). Those
+    synthesized Criterion match. Those
     stores are the catalog pages of the Channel itself. They are the
     first-party word that the film streams there. The JustWatch-fed
     payload of TMDB is days behind them around the month turnover.
@@ -335,7 +335,7 @@ def streaming_matches(availability, provider_ids, tmdb_id=None):
                 departs = leaving_departure(tmdb_id)
                 if departs:
                     match["leaving"] = departs
-            # The newly-added feeds (#246) mark a recent arrival on
+            # The newly-added feeds mark a recent arrival on
             # the badge of any provider. Departure urgency outranks it
             # on the rare film that is somehow both.
             if "leaving" not in match:
@@ -380,7 +380,7 @@ def user_streaming(tmdb_id, user, negative=False, local=False, upgradable=None):
     local=True marks an owned film. The strip then starts with "In your
     library". Thus, a streaming badge never outranks the copy on the
     shelf. The payload survives an empty match list to say so.
-    upgradable colors that library badge (revision by Glenn, 2026-08).
+    upgradable colors that library badge.
     True paints it amber, because the copy is worth an upgrade. False
     paints it green. None leaves it neutral for the surfaces that never
     looked."""
@@ -390,7 +390,7 @@ def user_streaming(tmdb_id, user, negative=False, local=False, upgradable=None):
         return None
     availability = title_availability(tmdb_id)
     # The strip of an owned film never warns of a departure or announces
-    # an arrival (decided by Glenn, 2026-08-27). The copy on the shelf
+    # an arrival. The copy on the shelf
     # stays. Thus, Fitzflix skips the annotation lookups completely.
     matches = streaming_matches(
         availability, provider_ids, tmdb_id=None if local else tmdb_id

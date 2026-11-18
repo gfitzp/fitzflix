@@ -20,7 +20,7 @@
    into the log page on a match. Otherwise it links out to
    criterionchannel.com #}
 <h4>On Criterion 24/7 now</h4>
-{# Two halves of equal width (Glenn, 2026-09-24): the film that is on,
+{# Two halves of equal width: the film that is on,
    and the Up next row. Each half has a basis wider than a phone. Thus,
    on a phone the halves stack, and on a desktop they share the full
    row. The divider of the Up next half is in the stylesheet. It goes
@@ -39,8 +39,8 @@
 	</div>
 	<div style="flex: 1 1 12rem; min-width: 0;">
 		<h5 class="mb-1"><a href="{{ card_href }}" class="text-decoration-none text-body">{{ now_playing.title }}{% if now_playing.year %} ({{ now_playing.year }}){% endif %}</a></h5>
-		{# "You own this" (#160): the standard In-library badge, in its
-		   universal amber/green upgradable colours (#191) #}
+		{# "You own this": the standard In-library badge, in its
+		   universal amber/green upgradable colours #}
 		{% if now_playing.ladder.upgradable is not none %}
 		<div class="mb-1">{{ library_badge(now_playing.ladder.upgradable) }}</div>
 		{% endif %}
@@ -75,7 +75,7 @@
 		   toggle #}
 		{% set now_action = url_for('main.movie', movie_id=now_playing.ladder.movie_id) if now_playing.ladder.movie_id else url_for('main.review_tmdb', tmdb_id=now_playing.tmdb_id) %}
 		{% endif %}
-		{# One control row, as on the movie page (Glenn, 2026-09): the
+		{# One control row, as on the movie page: the
 		   stars, the watchlist toggle, Watch live, and More, centered on
 		   each other. The buttons are the short buttons of the tiles. #}
 		{% call control_row(spacing="mb-1") %}
@@ -85,22 +85,22 @@
 			{% endcall %}
 			{{ watchlist_toggle(now_action, on_watchlist=now_playing.ladder.on_watchlist, outline=true, compact=true, nowrap=true) }}
 			{% endif %}
-			{# Green, like every other play control (Glenn, 2026-08-31) #}
+			{# Green, like every other play control #}
 			<a href="{{ now_playing.watch_url }}" target="_blank" rel="noreferrer" class="btn btn-sm btn-success py-0 text-nowrap">&#9654;&nbsp;Watch live</a>
-			{# A missing film page gives the Watch Live link (#666). One button is sufficient then. #}
+			{# A missing film page gives the Watch Live link. One button is sufficient then. #}
 			{% if now_playing.more_url and now_playing.more_url != now_playing.watch_url %}
 			<a href="{{ now_playing.more_url }}" target="_blank" rel="noreferrer" class="btn btn-sm btn-secondary py-0">More</a>
 			{% endif %}
 		{% endcall %}
-		{# The status line and the source credit share one paragraph
-		   (Glenn, 2026-09-09). On a desktop the time, the next film, and
+		{# The status line and the source credit share one paragraph.
+On a desktop the time, the next film, and
 		   the credit fit on one line. On a phone the nowrap credit drops
 		   to its own line. The poller repaints this whole paragraph, so
 		   the credit lives inside it and survives each refresh #}
 		<p class="mb-0 small text-muted" data-now-status>{% if now_playing.minutes_in is not none %}{% if now_playing.minutes_in < 2 %}Just started{% else %}About {{ now_playing.minutes_in }} minutes in{% endif %}{% endif %}{% if now_playing.minutes_in is not none and now_playing.next_at %} &middot; {% endif %}{% if now_playing.next_at %}Next film around {{ now_playing.next_at }}{% endif %}{% if now_playing.minutes_in is not none or now_playing.next_at %} &middot; {% endif %}<span class="text-nowrap">From <a href="https://whatsonnow.criterionchannel.com" target="_blank" rel="noreferrer" class="text-muted" title="whatsonnow.criterionchannel.com">Criterion 24/7</a></span></p>
 	</div>
 	</div>
-	{# The previews of the next films of the feed (Glenn, 2026-09-24): a
+	{# The previews of the next films of the feed: a
 	   row of posters with their start times. The title is in the
 	   tooltip of each poster. It sits to the right of the card on a
 	   desktop. On a phone it wraps below, and the row scrolls

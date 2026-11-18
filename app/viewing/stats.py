@@ -1,4 +1,4 @@
-"""Compute the viewing statistics of 1 user from the diary (#264).
+"""Compute the viewing statistics of 1 user from the diary.
 
 The source is the diary rows with a watch date, as on the History page.
 A rating row with no date is not a viewing. The statistics use only

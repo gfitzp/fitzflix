@@ -41,10 +41,10 @@ class ImportEventHandler(FileSystemEventHandler):
 
         # The job id is the file basename. enqueue_localization adds the
         # file only if no localization of it waits or runs, and no space
-        # wait holds it (#262 review, #287).
+        # wait holds it.
 
         # A failed lock or enqueue must not keep the lock or stop the
-        # dispatch thread of watchdog (#523, #568). The sweep of the
+        # dispatch thread of watchdog. The sweep of the
         # keeper finds the file again.
 
         lock = None
@@ -118,7 +118,7 @@ def start_import_watch(app):
         return observer
 
     def enqueue_import_sweep():
-        # The keeper thread has no app context of its own (#394). The
+        # The keeper thread has no app context of its own. The
         # enqueue reads the task spec, and a timeout can be the name of
         # a config setting.
         with app.app_context():
@@ -192,7 +192,7 @@ def start_import_watch(app):
         observer = PollingObserver()
 
     # A process whose observer did not start is blind. The health card
-    # must not count it (#523).
+    # must not count it.
 
     if observer_healthy(observer):
         write_observer_heartbeat()

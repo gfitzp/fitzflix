@@ -107,17 +107,17 @@ def register_cli(app):
         ),
     )
     def converge_keys(apply_moves, limit, again):
-        """List the archives whose key differs from the key of their untouched name (#369).
+        """List the archives whose key differs from the key of their untouched name.
 
-        The key of an archive is its prefix and its sanitized untouched
-        name. A rename keeps the old key (#668). Run this command 2 times
-        a year, and read the list before --apply. With --apply, the
-        command requests a move for each listed archive. The move jobs
-        copy the objects on the server side. A Deep Archive object first
-        gets a Bulk restore. Without --apply, nothing changes. A move
-        that is pending already is listed, but not requested again
-        (#384). Thus, --limit takes the next batch on each run. With
-        --again, the pending moves are requested again too."""
+                The key of an archive is its prefix and its sanitized untouched
+                name. A rename keeps the old key. Run this command 2 times
+                a year, and read the list before --apply. With --apply, the
+                command requests a move for each listed archive. The move jobs
+                copy the objects on the server side. A Deep Archive object first
+                gets a Bulk restore. Without --apply, nothing changes. A move
+                that is pending already is listed, but not requested again.
+        Thus, --limit takes the next batch on each run. With
+                --again, the pending moves are requested again too."""
 
         from app import db
         from app.archive.moves import archive_drifts, request_archive_move
@@ -142,7 +142,7 @@ def register_cli(app):
             click.echo(f"  {pending} of them are pending already")
         selected = waiting if limit is None else waiting[: max(limit, 0)]
         # The dry run is the review step, so it prints each row that lags,
-        # the pending rows too (#769). --apply prints the rows it requests.
+        # the pending rows too. --apply prints the rows it requests.
         shown = selected if apply_moves else drifted
         for file, source, target, size in shown:
             mark = " (pending)" if file.aws_key_target == target else ""

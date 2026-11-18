@@ -25,22 +25,22 @@ app = LocalProxy(get_app)
 def _locked_edit(
     task, file_id, args, queue, timeout, what, run, retry=None, kwargs=None
 ):
-    """Run 1 track edit of file_id under the title lock of the file (#614).
+    """Run 1 track edit of file_id under the title lock of the file.
 
-    This is the 1 wrapper of the 3 edit tasks. It takes the title lock,
-    or books a lock wait and returns True. A pending restore refuses the
-    edit (#610). run() is the edit. Any raise of run() queues 1 track
-    scan and raises again. A repeat of an edit reads the file again and
-    rebuilds the rows (#611). A failure before the tool wrote costs 1
-    scan that only reads the file. LibraryFileChanged queues no scan
-    (#741). The import of the changed file does that work. The wrapper
-    then puts the stale flag back to its value before the edit (#762).
+        This is the 1 wrapper of the 3 edit tasks. It takes the title lock,
+        or books a lock wait and returns True. A pending restore refuses the
+        edit. run() is the edit. Any raise of run() queues 1 track
+        scan and raises again. A repeat of an edit reads the file again and
+        rebuilds the rows. A failure before the tool wrote costs 1
+        scan that only reads the file. LibraryFileChanged queues no scan.
+    The import of the changed file does that work. The wrapper
+        then puts the stale flag back to its value before the edit.
 
-    retry(error, name) can book a retry of a transient fault. It returns
-    True if it did. Then the task returns False with no scan, because
-    the retry rebuilds the rows. queue is a roster key. timeout names
-    the config setting of the lock TTL and of the job. kwargs go to the
-    lock wait."""
+        retry(error, name) can book a retry of a transient fault. It returns
+        True if it did. Then the task returns False with no scan, because
+        the retry rebuilds the rows. queue is a roster key. timeout names
+        the config setting of the lock TTL and of the job. kwargs go to the
+        lock wait."""
 
     with app.app_context():
         file = db.session.get(File, int(file_id))
@@ -49,7 +49,7 @@ def _locked_edit(
         name = f"'{file.basename}'"
         seconds = current_app.config[timeout]
 
-        # The flag before the edit (#762). The lock below makes no commit,
+        # The flag before the edit. The lock below makes no commit,
         # so the row keeps the values of the read above. Each writer that
         # sets the flag holds the title lock, except the repair of a
         # replaced file (repair_replaced_file_task). A flag from it is
@@ -91,11 +91,11 @@ def _locked_edit(
                 return False
             current_app.logger.error(traceback.format_exc())
 
-            # An other program put a different file at the path (#741).
+            # An other program put a different file at the path.
             # Its import waits for this lock. A scan now would store the
             # size of that file on the record, and the import would then
             # take the file as cataloged already (already_cataloged). The
-            # stale flag goes back to its value before the edit (#762).
+            # stale flag goes back to its value before the edit.
 
             if isinstance(error, remux.LibraryFileChanged):
                 rewrite_guard.put_stale_flag_back(int(file_id), stale_before, name)
@@ -116,7 +116,7 @@ def mkvpropedit_task(
 ):
     """Update the MKV properties of a file.
 
-    The tracks are Matroska track UIDs as text (#611). A remux keeps
+    The tracks are Matroska track UIDs as text. A remux keeps
     the UID of a track and changes its position. Thus, an edit that
     waits for the lock or for a retry still finds its track.
     default_subtitle_track "0" sets no default subtitle track.
@@ -141,7 +141,7 @@ def mkvpropedit_task(
         The tracks are UIDs, so the same arguments are still valid. The
         retry takes the lock again, like a new run. The digest of the
         arguments keeps the retries of 2 different edits of this file
-        apart (#595)."""
+        apart."""
 
         if not (
             isinstance(error, OSError)
@@ -225,7 +225,7 @@ def build_propedit_args(
     """Return the mkvpropedit arguments that set the flags and the languages.
 
     The tracks are the track dicts of a new read of the file. The
-    selections are track UIDs as text (#611). "--edit track:=UID"
+    selections are track UIDs as text. "--edit track:=UID"
     selects a track by its UID, not by its position. Each audio track
     gets its default flag. The subtitle tracks get their default and
     forced flags only when the caller selected a default or a forced
@@ -265,7 +265,7 @@ def missing_track_uids(
     forced_subtitle_tracks,
     track_languages=None,
 ):
-    """Return the selected track UIDs that the file does not have (#611).
+    """Return the selected track UIDs that the file does not have.
 
     The tracks are the track dicts of a new read of the file. A UID
     that is not there means that the file changed after the page was
@@ -295,7 +295,7 @@ def mkvpropedit_unlocked(
 ):
     """Update the MKV properties of a file. The caller must hold the lock of the title.
 
-    A raise leaves the rescan to the caller (#614)."""
+    A raise leaves the rescan to the caller."""
 
     with app.app_context():
         name = f"File {file_id}"
@@ -322,7 +322,7 @@ def mkvpropedit_unlocked(
 
             # A UID that the file does not have means that the file changed
             # after the page was loaded. The edit stops before it writes,
-            # and a scan reads the rows again (#611).
+            # and a scan reads the rows again.
 
             missing = missing_track_uids(
                 audio_tracks,
@@ -351,10 +351,10 @@ def mkvpropedit_unlocked(
             )
 
             if localization_arguments:
-                # mkvpropedit writes the file in place (#517). The check of
+                # mkvpropedit writes the file in place. The check of
                 # the record and the flag come before the tool starts. A
                 # failure of one of them stops the edit before its first
-                # byte (#615, #726).
+                # byte.
 
                 rewrite_guard.confirm_rewrite(file_id, file_path)
                 mkvpropedit_task = subprocess.Popen(
@@ -373,7 +373,7 @@ def mkvpropedit_unlocked(
                         line = line.replace("\n", "")
                         current_app.logger.info(f"'{file.basename}' {line}")
                 except BaseException:
-                    # The child must not keep writing after a fault (#499).
+                    # The child must not keep writing after a fault.
                     remux.stop_process(mkvpropedit_task)
                     raise
 
@@ -394,7 +394,7 @@ def mkvpropedit_unlocked(
                     )
 
                     # The remux runs on staging and replaces the file at
-                    # the end (#298).
+                    # the end.
 
                     remux.remux_file(
                         file_path,
@@ -415,7 +415,7 @@ def mkvpropedit_unlocked(
                     )
 
             # Remove the subtitle tracks that have zero elements. The
-            # removal renumbers the subtitle tracks that stay (#582)
+            # removal renumbers the subtitle tracks that stay
 
             remove_empty_subtitle_tracks(
                 file_path,
@@ -455,9 +455,9 @@ def mkvpropedit_unlocked(
             enqueue_plex_analyze(file_path)
 
         # The edited library file goes to modified/, or to transcoded/
-        # for a conversion (#299). The rip in untouched/ never changes. A
+        # for a conversion. The rip in untouched/ never changes. A
         # failed upload leaves the stale flag of the write in place. The
-        # repair queue then uploads the file (#615).
+        # repair queue then uploads the file.
 
         if get_setting("ARCHIVE_ORIGINAL_MEDIA"):
             try:
@@ -486,7 +486,7 @@ def mkvmerge_identify(file_path):
 
 
 def mkvmerge_track_ids(file_path):
-    """Return the mkvmerge track ids of a file by track UID (#611).
+    """Return the mkvmerge track ids of a file by track UID.
 
     The result maps "audio" and "subtitles" to a dict of UID (text) to
     track id. mkvmerge -a and -s take these ids, not UIDs."""
@@ -502,7 +502,7 @@ def mkvmerge_track_ids(file_path):
 def mkvmerge_task(file_id, audio_tracks, subtitle_tracks):
     """Remux an MKV file with only the given tracks.
 
-    The tracks are the Matroska track UIDs to keep, as text (#611). The
+    The tracks are the Matroska track UIDs to keep, as text. The
     remux maps them to the track ids of the file after it takes the
     lock."""
 
@@ -520,7 +520,7 @@ def mkvmerge_task(file_id, audio_tracks, subtitle_tracks):
 def mkvmerge_unlocked(file_id, audio_tracks, subtitle_tracks):
     """Remux an MKV file. The caller must hold the lock of the title.
 
-    A raise leaves the rescan to the caller (#614)."""
+    A raise leaves the rescan to the caller."""
 
     with app.app_context():
         name = f"File {file_id}"
@@ -532,7 +532,7 @@ def mkvmerge_unlocked(file_id, audio_tracks, subtitle_tracks):
             file_path = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
             name = f"'{file.basename}'"
 
-            # The form gives the UID of each kept track (#611). mkvmerge
+            # The form gives the UID of each kept track. mkvmerge
             # selects the tracks by their ids in the file. A new read of
             # the file maps each UID to its id now, under the lock.
 
@@ -566,8 +566,7 @@ def mkvmerge_unlocked(file_id, audio_tracks, subtitle_tracks):
             else:
                 track_args.append("--no-subtitles")
 
-            # The remux runs on staging and replaces the file at the end
-            # (#298).
+            # The remux runs on staging and replaces the file at the end.
 
             remux.remux_file(
                 file_path,
@@ -682,7 +681,7 @@ def remove_empty_subtitle_tracks(file_path, before_replace=None):
     )
 
     # A library file is remuxed on staging. A file that is already on
-    # staging (the import) is remuxed in place (#298).
+    # staging (the import) is remuxed in place.
 
     remux.remux_file(
         file_path,

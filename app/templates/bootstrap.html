@@ -46,14 +46,14 @@
 
 		/* Badges are STATUS. Buttons are ACTIONS. Badges shared the
 		   saturated text-bg-* fills of the buttons at sizes near the
-		   button size. Thus, the two were hard to tell apart at a glance
-		   (requested by Glenn, 2026-08-31). Two redundant channels now
+		   button size. Thus, the two were hard to tell apart at a glance.
+Two redundant channels now
 		   separate them. Badges are PILLS in the SUBTLE tint of their
 		   hue. They use the *-bg-subtle and *-text-emphasis tokens of
 		   Bootstrap 5.3, which follow data-bs-theme into dark mode. Only
 		   pressable controls keep a saturated fill and the squarer
 		   button radius. The hues do not change. Thus, the amber/green
-		   shopping semantics (#191) read the same, only quieter.
+		   shopping semantics read the same, only quieter.
 		   !important matches the !important that Bootstrap sets on
 		   .text-bg-*. */
 		.badge { border-radius: 50rem; }
@@ -182,7 +182,7 @@
 		   (or when the passes finish). Thus, the shimmer IS the
 		   "estimating…" spinner */
 		.state-loading .star-btn { animation: state-pulse 1.2s ease-in-out infinite; }
-		/* The navigation bar (2026-08): a hairline across the top of the
+		/* The navigation bar: a hairline across the top of the
 		   viewport. It starts to grow the moment a link or form commits
 		   to a new page. Thus, a tap reads as registered while the server
 		   renders. Safari paints nothing of its own until the first
@@ -229,7 +229,7 @@
 		@media (hover: hover) {
 			.star-row .x-btn:hover { color: #dc3545; }
 		}
-		/* The card of the poster popover (#45c). It is roomier than the
+		/* The card of the poster popover. It is roomier than the
 		   276px default of Bootstrap. Thus, the credits and badges have
 		   space. It is never wider than the screen. The synopsis clamps
 		   to 4 lines, like the Criterion card. --bs-popover-max-width
@@ -259,10 +259,10 @@
 		   width. The 2 time columns do not show. The queue-times line
 		   below the chips shows the same times. Before, the 4 columns
 		   made the File column narrow, and each row was very tall
-		   (Glenn, 2026-10-15) */
+		    */
 		.queue-times { margin-top: .5rem; }
-		/* The button that moves a waiting job to the front of its queue
-		   (#236). It sits to the right of the position number (Glenn,
+		/* The button that moves a waiting job to the front of its queue.
+It sits to the right of the position number (Glenn,
 		   2026-10-20). On a phone, the position column is too narrow.
 		   Thus, the button wraps below the number. The gaps set the space
 		   in each case */
@@ -285,15 +285,15 @@
 		   row already stretches the cells in a row to equal height.
 		   Thus, every ladder and watchlist button goes onto one shared
 		   baseline, while the captions wrap freely between the poster
-		   and the actions. The tile text centers under the poster
-		   (#77c). The pin uses margin-top: auto. This is why
+		   and the actions. The tile text centers under the poster.
+The pin uses margin-top: auto. This is why
 		   tile_actions uses pt-1 spacing, never mt-*. Bootstrap margins
 		   are !important and would defeat the auto margin. The
 		   watchlist page pins its whole button cluster through
 		   .poster-bottom instead. */
 		.poster-cell { display: flex; flex-direction: column; text-align: center; }
 		.poster-cell > .poster-actions, .poster-cell > .poster-bottom { margin-top: auto; }
-		/* Poster corner folds (#197 + #156/#230): the Plex-style
+		/* Poster corner folds: the Plex-style
 		   status fold. The /movie_states hydration paints it onto
 		   every popover-armed movie tile. Green upper-left with a
 		   plus = the film recently became available (the watchlist
@@ -359,7 +359,7 @@
 		.poster-fold-leaving { right: 0; background: var(--bs-danger); clip-path: polygon(0 0, 100% 0, 100% 100%); }
 		.poster-fold svg { position: absolute; top: 3px; right: 3px; width: 11px; height: 11px; color: #fff; }
 		.poster-actions { display: flex; flex-direction: column; align-items: center; }
-		/* The anchor slot of Recommendations (#235 follow-up, the
+		/* The anchor slot of Recommendations (the
 		   fanned-pair pick by Glenn): the first cell of each shelf
 		   shows the two anchor films as small overlapped posters on a
 		   dashed-border ground. It is the evidence for the shelf. It
@@ -375,7 +375,7 @@
 		.anchor-fan a.anchor-fan-front { bottom: 0; right: 0; transform: rotate(3deg); }
 		.anchor-fan a.anchor-fan-solo { top: 50%; left: 50%; transform: translate(-50%, -50%) rotate(-2deg); }
 		.anchor-fan img, .anchor-fan .anchor-fan-blank { width: 100%; height: 100%; object-fit: cover; border: 1px solid var(--bs-border-color); border-radius: .375rem; background: var(--bs-body-bg); }
-		/* Phone shelves (Glenn, 2026-08-26): 2 slots per row. The
+		/* Phone shelves: 2 slots per row. The
 		   anchor slot stays in place on the left. The films column
 		   beside it becomes a native scroll-snap strip. It shows one
 		   card at a time, with the edge of the next card visible as
@@ -389,7 +389,7 @@
 			.shelf-films > * { flex: 0 0 92%; width: auto; max-width: 92%; scroll-snap-align: start; }
 		}
 		/* The refill swap: the tile that the user acted on fades out.
-		   Its replacement fades into place (Glenn, 2026-08-26). The
+		   Its replacement fades into place. The
 		   fade-out goes with a transition. The script of the page
 		   triggers it when it adds .tile-fade-out. The fade-in is a
 		   one-shot animation on the newly inserted cell. Reduced-motion

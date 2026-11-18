@@ -12,7 +12,7 @@
 // good answer, and returns false to stop the poll for good. With
 // stopOnFailure, the end of the session (an expired session
 // answers 401 or redirects to the login page) also stops it.
-// Another failure is one bad tick (#650): a 503 from CloudFront
+// Another failure is one bad tick: a 503 from CloudFront
 // while the web process restarts, a network failure, or a
 // request that the timeout below aborted. The next poll goes out
 // on the normal cadence. after runs after each poll.
@@ -21,7 +21,7 @@ var POLL_TIMEOUT_MS = 20000;
 
 // A request that does not settle in ms is aborted. Then the chain
 // of the poll continues. Without this, a connection that Safari
-// let hang held the poll until Safari dropped it (#650)
+// let hang held the poll until Safari dropped it
 
 function fetchWithTimeout(url, fetchOptions, ms) {
 	var options = Object.assign({}, fetchOptions || {});
@@ -105,14 +105,14 @@ function postForState(url, kind, data, requireOk) {
 	});
 }
 
-// A live form has no second post in flight (#337). Two quick taps
+// A live form has no second post in flight. Two quick taps
 // could land out of order and paint the older state. A double tap
 // on 1 star could write 2 rows. A tap during a post does nothing.
 // onState paints the answer. On any failure, the form falls back
 // to a normal submission. The tapped button is only on the
 // FormData. form.submit() sends no submitter. Thus, the fallback
 // first adds the name and the value of the button as a hidden
-// input (#406). requestSubmit is not used, because it would start
+// input. requestSubmit is not used, because it would start
 // the submit handler of the form again.
 
 function backgroundPost(form, url, kind, data, onState, submitter) {

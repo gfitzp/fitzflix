@@ -3,7 +3,7 @@
 This is the fix for Plex disambiguation (Batman becomes Batman (1966)).
 
 Fitzflix keeps its own TV naming. A series folder carries a year only
-when Glenn added one. Sonarr is where a series gets renamed (#370). A
+when Glenn added one. Sonarr is where a series gets renamed. A
 rename in Sonarr carries over to Fitzflix: the title, the folder, the
 file rows, and the untouched names. The Sonarr path check
 (reconcile_sonarr_paths) does this nightly. The Sonarr webhook queues
@@ -11,18 +11,18 @@ the check of one series when its folder differs. A Rename event of
 episode files in the same folder moves no video file. It changes the
 rows, and the episode thumbs and the trails follow. Sonarr sends a
 Rename event only when its On Rename trigger is on, and the set-up of
-the README does not turn it on (#773). A series that Sonarr does not
+the README does not turn it on. A series that Sonarr does not
 manage is not changed. Nothing
 adds a year to a series on its own.
 
 A rename rewrites the untouched name of each file. It makes no request
-to S3 (#668). Each archive keeps its key, and the record keeps that key.
+to S3. Each archive keeps its key, and the record keeps that key.
 flask aws converge-keys moves the keys that lag their names. Glenn
 runs it 2 times a year.
 
 The task is resumable. Each file commits after its own disk move. A
 file that is already at its target counts as moved. A row that already
-has its new folder and name counts as done (#374). Thus, a retry after
+has its new folder and name counts as done. Thus, a retry after
 a stop in the loop completes the series. A record whose
 local file was deleted intentionally (archived-only physical media)
 gets new rows with no disk operation. The weekly sync does not start
@@ -99,7 +99,7 @@ def _update_sonarr_path(series, old_folder, new_folder):
 
     old_path = entry.get("path") or ""
     # A path with a slash at the end gave the old folder itself as its
-    # dirname (#554). normpath removes the slash first.
+    # dirname. normpath removes the slash first.
     new_path = os.path.join(os.path.dirname(os.path.normpath(old_path)), new_folder)
     entry["path"] = new_path
     sonarr_push._sonarr("PUT", f"/api/v3/series/{entry['id']}", entry)
@@ -124,10 +124,10 @@ def _filesystem_safe(title):
     A title with characters that a filesystem refuses is not safe. The
     rename task refuses it. Accented letters are safe. The TV import
     keeps them in the show folder and the episode names, for example
-    "Les Misérables (2018)" (#408). The test reads the folder that the
-    task writes (_folder_title), with no period at the end (#552). Thus,
+    "Les Misérables (2018)". The test reads the folder that the
+    task writes (_folder_title), with no period at the end. Thus,
     "The Venture Bros." is safe. A folder that starts with a period is
-    hidden, and it is not safe (#717)."""
+    hidden, and it is not safe."""
 
     folder = _folder_title(title)
     return (
@@ -155,9 +155,9 @@ def _planned_target(file, old_title, new_title):
     """Return the show folder, dirname and basename of a file after a rename.
 
     Return None if the file does not carry the series title in its show
-    folder and in its name. The rename task changes nothing then (#317).
+    folder and in its name. The rename task changes nothing then.
     A row that already carries the new title in both places is done. An
-    earlier run of the task stopped after it (#374). Its target is its
+    earlier run of the task stopped after it. Its target is its
     own dirname and basename."""
 
     old_folder = _folder_title(old_title)
@@ -204,12 +204,12 @@ def rename_tv_series_task(series_id, new_title, volume_waits=0, stray_waits=0):
 
     This is a task. After the rename, it updates the Sonarr path and
     queues a Plex rescan. volume_waits counts the retries for the TV
-    library volume (#575). It stops at MAX_RENAME_VOLUME_WAITS.
+    library volume. It stops at MAX_RENAME_VOLUME_WAITS.
     stray_waits counts the retries of a resumed rename that finds a media
-    file with no record (review of #758). It stops at
+    file with no record. It stops at
     MAX_RENAME_STRAY_WAITS. Each retry carries both counts.
 
-    The rename makes no request to S3 (#668). An archive keeps its key.
+    The rename makes no request to S3. An archive keeps its key.
     flask aws converge-keys moves the keys that lag their names."""
 
     with app.app_context():
@@ -241,14 +241,14 @@ RENAME_WAIT_MINUTES = (5, 15)
 
 RENAME_TASK = "app.media.series_rename.rename_tv_series_task"
 
-# The time limit of a rename grows with the number of files (#374). A
+# The time limit of a rename grows with the number of files. A
 # move on NFS can take 25 seconds with its retries. The episode locks
 # have the same time limit as the job.
 
 RENAME_SECONDS_PER_FILE = 30
 
 # A resumed rename that finds a media file with no record waits this
-# many times for the import of the file (review of #758). With the waits
+# many times for the import of the file. With the waits
 # of RENAME_WAIT_MINUTES, that is about 2 hours. Then the rename stops,
 # and the admin gets a mail.
 
@@ -272,7 +272,7 @@ def _take_series_locks(series, new_title, waits=None):
     the lock of its episode. A new episode has no lock yet, so the
     rename also waits for each import of the series that is not done.
     Else the import attaches by the old title at its end and makes a
-    second series (#370). waits holds the retry counts of the task."""
+    second series. waits holds the retry counts of the task."""
 
     reason = None
     source = chain.series_import_in_flight({series.title, new_title})
@@ -299,10 +299,10 @@ def _take_series_locks(series, new_title, waits=None):
 def _lock_seconds(series):
     """Return the TTL of the episode locks of a rename, in seconds.
 
-    Under rq, it is the timeout of the running job. The job got that
-    timeout from the file count when it was queued. A file that left
-    the series since then must not make the locks shorter than the job
-    (#374 follow-up). Outside rq, it is rename_timeout(series)."""
+        Under rq, it is the timeout of the running job. The job got that
+        timeout from the file count when it was queued. A file that left
+        the series since then must not make the locks shorter than the job.
+    Outside rq, it is rename_timeout(series)."""
 
     from rq import get_current_job
 
@@ -317,10 +317,10 @@ def _requeue_rename(series, new_title, reason, waits=None, counted=None):
 
     Return False when the rename stops at its limit, else True. waits
     holds the retry counts of the task. counted names the count that
-    this wait adds 1 to. A wait for the volume counts (#575), and so
-    does a wait for the record of a media file (review of #758). At the
+    this wait adds 1 to. A wait for the volume counts, and so
+    does a wait for the record of a media file. At the
     limit of its count, the rename stops with an ERROR, as the movie
-    rename does. Each retry carries every count that is not 0 (#351)."""
+    rename does. Each retry carries every count that is not 0."""
 
     waits = dict(waits or {})
     limits = {
@@ -339,7 +339,7 @@ def _requeue_rename(series, new_title, reason, waits=None, counted=None):
 
     # The records can name a folder that Sonarr moved away while the
     # rename waits. The marker holds the restores of the weekly sync for
-    # the series in that time, as it does after a refusal (#758).
+    # the series in that time, as it does after a refusal.
 
     _mark_conflict(series)
     counters = {name: count for name, count in waits.items() if count}
@@ -356,7 +356,7 @@ def _requeue_rename(series, new_title, reason, waits=None, counted=None):
 
 
 def _refuse_duplicate_target(series, src_relative, dst_relative):
-    """Stop a series rename whose target file exists already, and tell the admin (#575).
+    """Stop a series rename whose target file exists already, and tell the admin.
 
     A retry cannot clear this. Only the admin can, by deleting 1 copy.
     The movie rename refuses the same shape in the same way."""
@@ -376,7 +376,7 @@ def _refuse_duplicate_target(series, src_relative, dst_relative):
 
 
 def _tell_admin_of_stray_files(series, new_title, stray, resumed=False):
-    """Mail the admin about the media files that stop a series rename (review of #758).
+    """Mail the admin about the media files that stop a series rename.
 
     stray holds the paths, relative to LIBRARY_DIR, of the media files
     that belong to no record. A refusal mails 1 time for each life of
@@ -458,7 +458,7 @@ def _raise(error):
 
 
 def _account_for_files(targets):
-    """Return the claimed and the unclaimed media files of the new show folders (#758).
+    """Return the claimed and the unclaimed media files of the new show folders.
 
     targets holds (file, (folder, new_dirname, new_basename)) for each
     record of the series. Invariant: each media file in the new show
@@ -469,7 +469,7 @@ def _account_for_files(targets):
     old path of a case-only rename is the same file. The size of the
     file must be the size of the record, when the record has one. Thus,
     an S3-only record of an other quality does not claim a file that
-    Sonarr gave its name (review of #758). Sonarr moves a series folder and keeps the name of a file
+    Sonarr gave its name. Sonarr moves a series folder and keeps the name of a file
     that it does not track. The old path of each file is then gone.
     Thus, a record can be an archived-only record only when no file of
     the new folders is left unclaimed.
@@ -524,7 +524,7 @@ def _account_for_files(targets):
 
 
 def _tv_library_down():
-    """Return True if the TV library is not there or does not answer (#551).
+    """Return True if the TV library is not there or does not answer.
 
     A dropped share hides each file of each series. Then a file with
     neither its old nor its new path reads as an archive-only record."""
@@ -537,13 +537,13 @@ def _move_series(series, new_title, waits=None):
     """Move the files and rewrite the rows of a series. The caller holds the locks.
 
     An unmounted TV library defers the rename. It must not rewrite the
-    rows of files that it cannot see (#551). A media file in the new
+    rows of files that it cannot see. A media file in the new
     folder that no record accounts for stops the rename before a row
-    changes (#758). A record whose file has its old basename in the new
+    changes. A record whose file has its old basename in the new
     folder gets the file renamed to the planned name. A resumed rename
     whose rows changed already waits for the record of such a file. It
     must not stop for good: the nightly check finds the new folder in
-    the rows and does not queue the rename again (review of #758)."""
+    the rows and does not queue the rename again."""
 
     if _tv_library_down():
         _requeue_rename(
@@ -562,7 +562,7 @@ def _move_series(series, new_title, waits=None):
 
     # Plan each file first. If 1 file does not carry the series title,
     # nothing changes. A partial rename gave the series a title and a
-    # Sonarr path for a folder that did not exist (#317).
+    # Sonarr path for a folder that did not exist.
 
     plan = []
     targets = []
@@ -585,7 +585,7 @@ def _move_series(series, new_title, waits=None):
 
     # The nightly check counted the files of the new folder. Sonarr can
     # write there after the check, so the task counts them again before
-    # it changes a row (#758).
+    # it changes a row.
 
     try:
         _claimed, unclaimed = _account_for_files(targets)
@@ -661,23 +661,23 @@ def _move_series(series, new_title, waits=None):
         src = os.path.join(library_dir, file.file_path)
         dst = os.path.join(library_dir, new_path)
         # Sonarr moved the folder and kept the name of a file that it
-        # does not track (#758). The file is in the new folder under its
+        # does not track. The file is in the new folder under its
         # old basename.
         kept_name = os.path.join(library_dir, new_dirname, file.basename)
         source = src if os.path.isfile(src) else kept_name
 
         if new_path == file.file_path:
-            # An earlier run renamed this row (#374).
+            # An earlier run renamed this row.
             if os.path.isfile(dst):
                 moved += 1
             else:
                 db_only += 1
         elif os.path.isfile(src) or os.path.isfile(kept_name):
             # os.rename replaces a file at the target without a word. The
-            # movie rename refuses this shape (#554). A case-only rename
+            # movie rename refuses this shape. A case-only rename
             # on a case-insensitive volume is the same file. It goes on.
             if os.path.exists(dst) and not os.path.samefile(source, dst):
-                # A retry cannot clear this (#575). Notify 1 time and stop.
+                # A retry cannot clear this. Notify 1 time and stop.
                 _refuse_duplicate_target(
                     series, os.path.relpath(source, library_dir), new_path
                 )
@@ -686,7 +686,7 @@ def _move_series(series, new_title, waits=None):
                 makedirs_on_mounted_volume(os.path.dirname(dst))
                 videos._rename_with_retries(source, dst)
             except OSError as error:
-                # The share dropped inside the loop (follow-up #551). The
+                # The share dropped inside the loop. The
                 # rows renamed so far are committed. The retry resumes.
                 current_app.logger.warning(
                     f"Series rename: {file.file_path!r} not moved: "
@@ -700,7 +700,7 @@ def _move_series(series, new_title, waits=None):
                     counted="volume_waits",
                 )
                 return False
-            # The episode thumb goes with its video (#469). The old
+            # The episode thumb goes with its video. The old
             # folder of a file that Sonarr moved is gone already, and
             # clear_leftover_directory returns at once for it.
             move_episode_thumb(source, dst)
@@ -723,7 +723,7 @@ def _move_series(series, new_title, waits=None):
         else:
             # No file is at the old path, at the planned name or under the
             # old basename. The count found a record for each media file
-            # of the new show folders (#758). Thus, this record counts as
+            # of the new show folders. Thus, this record counts as
             # an archived-only record. The count does not read a folder
             # outside the new show folders. The rows get the new name. The
             # archive keeps its key.
@@ -737,7 +737,7 @@ def _move_series(series, new_title, waits=None):
             file.plex_title = new_prefix + file.plex_title[len(old_prefix) :]
         # The File Activity trail is keyed by the import name or by the
         # library name. Thus, the trail follows the new names, or the
-        # card loses its chips for the life of the trail (#375).
+        # card loses its chips for the life of the trail.
         file.untouched_basename = reconstruct_filename(file.id, series_title=new_title)
         migrate_renamed_file(
             current_app.redis, old_names, (file.basename, file.untouched_basename)
@@ -745,12 +745,12 @@ def _move_series(series, new_title, waits=None):
         db.session.commit()
 
     # An import can start during the loop. It can attach a file under the
-    # old title at its end (#373). Then the title stays, and the rename
+    # old title at its end. Then the title stays, and the rename
     # goes back on its queue. The retry counts the renamed rows as done.
     # A known and accepted gap stays: an import that starts after this
     # check and before the title commit below. The window is the time of
     # 1 commit and the leftover-folder pass. The nightly check reports
-    # such a series as a conflict (review of 2026-10-26).
+    # such a series as a conflict.
 
     source = chain.series_import_in_flight({old_title, new_title})
     left = _rows_not_renamed(series, old_title, new_title)
@@ -793,7 +793,7 @@ def _move_series(series, new_title, waits=None):
     return True
 
 
-# The Sonarr path check (#370). Sonarr is where a series gets renamed.
+# The Sonarr path check. Sonarr is where a series gets renamed.
 # Fitzflix keeps its own TV naming, so a folder carries a year only when
 # Glenn added one. The check finds the series whose Sonarr folder is not
 # the Fitzflix folder and carries the change over in one direction.
@@ -813,7 +813,7 @@ SONARR_SERIES_EVENTS = ("Rename", "Download", "SeriesAdd")
 # a Download event of the series queues no check. A Rename and a
 # SeriesAdd still do. Thus, a series that stays in conflict does not
 # write a warning for each episode. The weekly S3 sync requests no
-# restore of a file of a series with the marker (review of #758).
+# restore of a file of a series with the marker.
 # The nightly check sets the marker again each night at 05:45. A life
 # of 1 day ended at the next check, with no margin. A life of 2 days
 # keeps the marker through 1 night with no check. Then the marker of
@@ -823,7 +823,7 @@ SONARR_CONFLICT_KEY = "fitzflix:sonarr:conflict:{series_id}"
 SONARR_CONFLICT_TTL = 2 * 86400
 
 # A refusal for media files with no record mails the admin 1 time for
-# each life of this marker (review of #758). It has the life of the
+# each life of this marker. It has the life of the
 # conflict marker.
 
 SONARR_STRAY_MAIL_KEY = "fitzflix:sonarr:stray-mail:{series_id}"
@@ -907,14 +907,14 @@ def _unaccounted_reason(targets, titles):
     """Return the reason that the Sonarr folder stops a rename, and the stray files.
 
     targets holds (file, planned target) for each record. Each media file
-    of the Sonarr folder must belong to a record (#758). At least 1 file
+    of the Sonarr folder must belong to a record. At least 1 file
     must be there. Otherwise the task moves nothing, and the records
     point at a folder with no files. The reason is None when the rename
     can go on. The stray files are the paths with no record when they
     are the reason, else an empty set.
 
-    An import of the series that is not done is not a stray file (review
-    of #758). Its record does not exist yet. titles holds the old and
+    An import of the series that is not done is not a stray file.
+    Its record does not exist yet. titles holds the old and
     the new title. When an import of either title is in flight and at
     least 1 file is claimed, the rename goes on. The task waits for that
     import in _take_series_locks and counts the files again under the
@@ -948,7 +948,7 @@ def _rename_title(series, folder, sonarr_folder):
     The title goes through the checks of the rename task. The title must
     be safe and free. The folder that the task makes from it must be the
     Sonarr folder. Each media file of the Sonarr folder must belong to a
-    record of the series, and at least 1 file must be there (#758). A
+    record of the series, and at least 1 file must be there. A
     file of an import that is not done does not count. A refusal writes
     one warning. A refusal for media files with no record also mails the
     admin, 1 time for each life of SONARR_STRAY_MAIL_KEY."""
@@ -1017,8 +1017,8 @@ def _conflict(series):
 def series_in_sonarr_conflict(series_ids):
     """Return the ids of the series that have the Sonarr conflict marker.
 
-    The weekly S3 sync calls this 1 time for its file pass (review of
-    #758). 1 MGET reads the markers of all the series. A Redis fault
+    The weekly S3 sync calls this 1 time for its file pass.
+    1 MGET reads the markers of all the series. A Redis fault
     raises, and the caller decides the safe side."""
 
     ids = sorted(series_ids)
@@ -1045,7 +1045,7 @@ def _sonarr_branch(series, entry):
         return "no files", None
 
     # An import can attach an episode in the Sonarr folder before the
-    # rename (#372). Then the series has the Sonarr folder and 1 other
+    # rename. Then the series has the Sonarr folder and 1 other
     # folder. Only the rename branch can join them.
 
     split = len(folders) == 2 and sonarr_folder in folders and None not in folders
@@ -1121,7 +1121,7 @@ def _job_pending(queue, *job_ids):
 
 
 def _series_of_pending_rename(title):
-    """Return the series that a rename to this title waits for, or None (#372)."""
+    """Return the series that a rename to this title waits for, or None."""
 
     for job in live_jobs([TASKS[RENAME_TASK].queue]):
         if job.func_name != RENAME_TASK or len(job.args) < 2:
@@ -1136,7 +1136,7 @@ def _series_of_pending_rename(title):
 def _sonarr_series_list():
     """Return the Sonarr series list, or None after a fault. Read it 1 time per app context.
 
-    The cataloging reads it before its records (#372 follow-up). Thus,
+    The cataloging reads it before its records. Thus,
     a slow Sonarr does not hold the open write transaction."""
 
     if "sonarr_series" not in g:
@@ -1173,7 +1173,7 @@ def _series_of_sonarr_folder(folder):
 
 
 def series_for_import(title, folder):
-    """Return (series, ok) for the series that a new episode title belongs to (#372).
+    """Return (series, ok) for the series that a new episode title belongs to.
 
     The import calls this function before it makes a new series. A
     rename to the title can wait for the import. Then the episode goes
@@ -1277,7 +1277,7 @@ def _apply_branch(series, entry, branch, value):
 
 
 def reconcile_sonarr_paths():
-    """Carry each Sonarr series folder over to Fitzflix or back (#370).
+    """Carry each Sonarr series folder over to Fitzflix or back.
 
     This is a task. It runs nightly. Sonarr sends no event for a folder
     move. A push to Sonarr after a Fitzflix rename is lost when Sonarr
@@ -1447,11 +1447,11 @@ def _adopt_episode_paths(series, renamed_files):
                 setattr(file, key, details[key])
             db.session.commit()
             # The card of the new name keeps the chips of the file, as in
-            # the rename task (#375, #554). The untouched name stays.
+            # the rename task. The untouched name stays.
             migrate_renamed_file(
                 current_app.redis, old_names, (file.basename, file.untouched_basename)
             )
-            # Sonarr moved the video. The episode thumb follows (#469).
+            # Sonarr moved the video. The episode thumb follows.
             move_episode_thumb(
                 old_video,
                 os.path.join(current_app.config["LIBRARY_DIR"], file.file_path),
@@ -1466,7 +1466,7 @@ def _adopt_episode_paths(series, renamed_files):
 
 
 def reconcile_sonarr_series(series_id, renamed_files=()):
-    """Run the Sonarr path check for one series, after a Sonarr event (#370).
+    """Run the Sonarr path check for one series, after a Sonarr event.
 
     This is a task. The webhook queues it. renamed_files holds the
     previousPath and path of each episode file of a Sonarr rename. The

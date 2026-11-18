@@ -3,7 +3,7 @@
 The bucket keeps versions. Thus, a delete without a version id only
 adds a delete marker, and the old version stays and costs storage. Each
 prefix must free that storage in 1 of 2 ways. A lifecycle rule expires
-its noncurrent versions, or the code deletes by version id (#318). The
+its noncurrent versions, or the code deletes by version id. The
 table records which way applies, the lifecycle rule ids that aws_setup
 provisions, and if a restore of the prefix sends a notification.
 
@@ -42,7 +42,7 @@ PREFIXES = (
     # move_archive_to_modified_task deletes the
     # old untouched/ version permanently (by version id). The ETag-equal
     # bytes are in modified/, and a marker would keep a second copy for
-    # 180 days for no use. move_archive_object (#369) makes a plain
+    # 180 days for no use. move_archive_object makes a plain
     # delete of the old key. Thus, the old version stays for 180 days.
     Prefix(
         "untouched",
@@ -52,8 +52,8 @@ PREFIXES = (
         noncurrent_days=180,
         restore_notification=True,
     ),
-    # The archives of the changed library files and of the conversions
-    # (#299). The rule id carries the prefix.
+    # The archives of the changed library files and of the conversions.
+    # The rule id carries the prefix.
     Prefix(
         "modified",
         config_key="AWS_MODIFIED_PREFIX",
@@ -94,7 +94,7 @@ PREFIXES = (
         noncurrent_days=1,
         delete="versions",
     ),
-    # The run-scoped uploads of the imports (#430). A re-rip whose bytes
+    # The run-scoped uploads of the imports. A re-rip whose bytes
     # differ from a claimed untouched/ archive uploads here first. After
     # the commit, an archive move copies it to untouched/ and deletes the
     # version that it copied. The lifecycle rules remove each other
@@ -104,7 +104,7 @@ PREFIXES = (
     # upload. The sync prunes it after its grace, and the expiry removes
     # what stays after 60 days. An import that waits for library space
     # keeps its upload. The lifecycle rule cannot see that wait. Thus,
-    # the expiry is long (#455). A move that finds no upload archives
+    # the expiry is long. A move that finds no upload archives
     # the library file instead.
     Prefix(
         "pending-untouched",
@@ -120,7 +120,7 @@ PREFIXES = (
         synced=True,
     ),
     # The nightly database dumps. The backup task deletes the old versions
-    # by version id (#318).
+    # by version id.
     Prefix("backup", config_key="AWS_BACKUP_PREFIX", delete="versions"),
     # The weekly CSV of the best files for an S3 Batch restore. Each upload
     # replaces the 1 object. The sync removes its old versions.

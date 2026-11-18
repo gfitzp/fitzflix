@@ -1,4 +1,4 @@
-"""Serve the virtual DVR channel endpoints (#182).
+"""Serve the virtual DVR channel endpoints.
 
 The endpoints are an HDHomeRun-type virtual tuner, the M3U playlist,
 the XMLTV guide, and the live MPEG-TS streams.
@@ -164,7 +164,7 @@ def dvr_lineup(token):
 
 
 def _m3u_text(value, attribute=False):
-    """Return a channel name that is safe in an EXTINF line (#327).
+    """Return a channel name that is safe in an EXTINF line.
 
     A line break ends the line. In an attribute, a double quote ends the
     value. Thus, a line break becomes a space, and a double quote in an
@@ -285,7 +285,7 @@ def _ffmpeg_command(config, path, offset, audio_channels, subtitle_stream=None):
     A track with fewer than 6 channels keeps its own layout. Without a
     layout, "-ac 4" and "-ac 5" give the 4.0 and 5.0 layouts of ffmpeg.
     Those have no LFE, and the subwoofer of a 3.1 or 4.1 track was mixed
-    out (#429). The AC-3 encoder takes 3.1 and 4.1 as they are. A track
+    out. The AC-3 encoder takes 3.1 and 4.1 as they are. A track
     with 6 channels or more gets "-ac 6", the 5.1 layout. A stored count
     of 6 can also be a 7.1 track that the lineup capped.
     """

@@ -68,8 +68,8 @@ def manual_import_task():
 
 # The retries of the failed in-place localization of 1 path: at most 3
 # in each window of 7 days. The window starts at the first retry, and
-# the later retries do not move it (follow-up #437). When the counter
-# key expires, a path that fails again gets 3 more retries (#693).
+# the later retries do not move it. When the counter
+# key expires, a path that fails again gets 3 more retries.
 
 IN_PLACE_RETRIES_KEY = "fitzflix:in-place-import-retries:{}"
 IN_PLACE_RETRY_WINDOW = 7 * 86400
@@ -77,7 +77,7 @@ MAX_IN_PLACE_RETRIES = 3
 
 
 def _retry_failed_in_place_imports():
-    """Queue again the failed localizations of the files outside the import directory (#437).
+    """Queue again the failed localizations of the files outside the import directory.
 
     A Sonarr or Radarr import reads the file at its library path. A kill
     or a timeout of its localization leaves the file in the library with
@@ -89,7 +89,7 @@ def _retry_failed_in_place_imports():
     FAILURE_TTL, and each failed retry adds a failed job. Thus, a path
     that fails each time gets 3 retries each week while it fails. This
     is on purpose: a file that met an outage of the database comes this
-    way (#681), and a later week can import it (#693)."""
+    way, and a later week can import it."""
 
     from rq.registry import FailedJobRegistry
 

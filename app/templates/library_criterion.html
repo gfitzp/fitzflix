@@ -21,10 +21,10 @@
 {% endif %}
 {% if rows %}
 {% if page_numbers|length > 1 %}{{ pagination(none, 'main.criterion_collection', {'filter': filter_status}, prev_url, next_url, numbers=page_numbers, current=current_page) }}{% endif %}
-{# The catalog as a poster wall (#45d). This is how Criterion itself
+{# The catalog as a poster wall. This is how Criterion itself
    shows spines. The popover shows the synopsis and the badges of each
    film. The card URL passes context=criterion. Thus, the SETTLED rule
-   recolors the quality badge (#77a: green only when the user owns the
+   recolors the quality badge (green only when the user owns the
    disc and the copy matches the format of the release). The tiles
    keep only the spine caption, the collector's-set line, and the
    actions. The set line renders BEFORE the actions. Thus, the bottom

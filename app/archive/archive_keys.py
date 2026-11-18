@@ -20,7 +20,7 @@ def _in_prefix(key, prefix):
 def _archive_prefix_of(key):
     """Return the archive prefix (untouched, modified, transcoded) that holds key, or None.
 
-    A run-scoped upload of an import (#430) belongs to untouched/. Its
+    A run-scoped upload of an import belongs to untouched/. Its
     archive move goes there."""
 
     if is_pending_archive(key):
@@ -32,9 +32,9 @@ def _archive_prefix_of(key):
 
 
 def _claim_key(key):
-    """Return the key of the claims map for an archive key (#706).
+    """Return the key of the claims map for an archive key.
 
-    The map folds letter case, as the key columns do on MariaDB (#612).
+    The map folds letter case, as the key columns do on MariaDB.
     Each writer and each reader of the map goes through this function."""
 
     return key.casefold()
@@ -46,7 +46,7 @@ def key_claims():
     A File row claims its aws_key, its aws_transcoded_key and its pending
     aws_key_target. An archive-only original claims its key with the id
     None. The backfill reads this 1 time for all rows. The dict keys fold
-    case, as the key columns do on MariaDB (#612). Thus, the batch path
+    case, as the key columns do on MariaDB. Thus, the batch path
     finds the claims that the SQL path finds."""
 
     claims = {}
@@ -95,7 +95,7 @@ def _claimed_by_another(file, key, claims=None):
 
 
 def archive_key_for(file, prefix, claims=None):
-    """Return the archive key of a file under prefix (#369).
+    """Return the archive key of a file under prefix.
 
     The key is the prefix and the sanitized untouched name of the file.
     The untouched name holds the title of the film or the series. The
@@ -128,7 +128,7 @@ def archive_key_for(file, prefix, claims=None):
 
 
 def same_archive_key(key, rule_key):
-    """Return True if 2 archive keys are equal when letter case is ignored (#612).
+    """Return True if 2 archive keys are equal when letter case is ignored.
 
     A key holds the year and the untouched rip name. Thus, the keys of 2
     different files never differ only by case. A case-only difference
@@ -154,7 +154,7 @@ def archive_drift(file, claims=None, column=None):
     column limits the check to 1 key column, "aws_key" or
     "aws_transcoded_key". A move that is not a converge run moves only
     the archive that it asks for. A lagging key in the other column
-    stays for the converge run (#683)."""
+    stays for the converge run."""
 
     config = current_app.config
     if column in (None, "aws_key") and file.aws_key and file.aws_date_uploaded:
@@ -199,21 +199,21 @@ def untouched_key_still_claimed(key):
     key. For example, a second import can arrive on the same basename.
     A delete of a
     claimed key would strand the archive of the survivor behind a
-    delete marker (the Bambi II incident, 2026-08). The caller must
+    delete marker. The caller must
     check AFTER its own deletes commit. Thus, the purged rows no longer
-    count. An archive-only original (#292) claims its key too. So does
-    the target of a pending move (#369).
+    count. An archive-only original claims its key too. So does
+    the target of a pending move.
 
     The key columns fold case on MariaDB. A case-only rename keeps its
-    key (#612). Thus, a claim can differ from key only by letter case.
-    upload_untouched reads the object of the exact key for that case
-    (#678)."""
+    key. Thus, a claim can differ from key only by letter case.
+    upload_untouched reads the object of the exact key for that case.
+    """
 
     return _key_claimed(key)
 
 
 # A same-name import whose bytes differ from a claimed untouched/ object
-# uploads below this prefix first (#430). The final key changes only
+# uploads below this prefix first. The final key changes only
 # after the records commit. The prefix is outside untouched/. Thus, the
 # day-0 Deep Archive rule of untouched/ never applies to it.
 
@@ -221,20 +221,20 @@ PENDING_ARCHIVE_PREFIX = s3_layout.PREFIX_BY_NAME["pending-untouched"].fixed
 
 
 def is_pending_archive(key):
-    """Return True if key is a run-scoped upload of an import (#430)."""
+    """Return True if key is a run-scoped upload of an import."""
 
     return _in_prefix(key, PENDING_ARCHIVE_PREFIX)
 
 
 def pending_archive_of(file_details):
-    """Return the run-scoped upload key of an import, or None (#430)."""
+    """Return the run-scoped upload key of an import, or None."""
 
     key = (file_details or {}).get("aws_key")
     return key if key and is_pending_archive(key) else None
 
 
 def pending_archive_key(key, run_id):
-    """Return the run-scoped key of an import upload for the normal key (#430)."""
+    """Return the run-scoped key of an import upload for the normal key."""
 
     prefix = current_app.config["AWS_UNTOUCHED_PREFIX"]
     return os.path.join(PENDING_ARCHIVE_PREFIX, run_id, os.path.relpath(key, prefix))

@@ -2,7 +2,7 @@
 
 The strip appears after a positive rating. This module is the part of
 the old /rate elicitation drive that remains. The Recommendations page
-replaced the drive (#235). The module keeps the last-response marker of
+replaced the drive. The module keeps the last-response marker of
 the session. A positive rating unlocks the enjoyment picks on the movie
 page of the rated film. The picks are unseen candidates that share
 features with the anchor film. Fitzflix ranks them by the score of the
@@ -123,7 +123,7 @@ def suggestions_after_rating(user_id, movie_id, exclude=(), count=SUGGESTION_COU
     """Return the suggested movie ids of the page of movie_id after a positive rating.
 
     Return [] with no query of the candidates unless the last positive
-    rating of the user is for movie_id (#705). These are enjoyment
+    rating of the user is for movie_id. These are enjoyment
     picks, not elicitation picks. They are unseen candidates that share
     features with the rated film. Fitzflix ranks them by the score of the
     taste profile plus the adjacency bonus. The signal of the new rating

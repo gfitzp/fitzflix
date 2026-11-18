@@ -42,7 +42,7 @@ ARTWORK_SUFFIXES = ("jpg", "jpeg", "png", "tbn")
 
 
 # A library volume that drops during the file pass books the sync again
-# after this wait, up to MAX_SYNC_VOLUME_DROPS times (follow-up #431).
+# after this wait, up to MAX_SYNC_VOLUME_DROPS times.
 
 SYNC_VOLUME_DROP_WAIT = timedelta(minutes=30)
 MAX_SYNC_VOLUME_DROPS = 6
@@ -51,7 +51,7 @@ MAX_SYNC_VOLUME_DROPS = 6
 def sync_aws_s3_storage_task(volume_drops=0):
     """Add the files to AWS, and remove the files that are not in the library.
 
-    The sync runs in phases (#358). Each phase has its own error
+    The sync runs in phases. Each phase has its own error
     handling. A failed phase is logged. The best-effort phases (the
     inventory, the pending moves, the reports, the mails, the import of
     the uncataloged files) still run. The prune deletes objects. Thus, it runs only
@@ -124,27 +124,27 @@ def _sync_deferred(job, volume_drops=0):
     import, in an upload, or in a wait for database writes. Then it can
     exist at AWS without its final database record. The prune would see
     it as an extra file and delete it. Each live job of tasks.live_jobs
-    counts, on every queue of the roster (#616).
+    counts, on every queue of the roster.
     The maintenance queue runs the hourly import sweep. That sweep can
     feed new files into the import pipeline during the sync.
 
-    An archive move that waits for a retry counts too (#369). It changes
+    An archive move that waits for a retry counts too. It changes
     a key between the listing and the pass over the rows. Other
     scheduled retries do not count. A space wait has no limit, and it
     would hold the sync off for days (Oct 24 2026).
 
     The check reads the queue registries, never the status in the job
-    hash (#655). The Criterion poll books its next run under its own id
+    hash. The Criterion poll books its next run under its own id
     while it runs. When that run ends, RQ writes "finished" over the
     hash of the booked run. A status check then counts the booked run
     as a live job, and the sync waits forever.
 
-    The retry keeps volume_drops (#457). Without it, a defer reset the
+    The retry keeps volume_drops. Without it, a defer reset the
     count, and MAX_SYNC_VOLUME_DROPS never stopped the sync."""
 
     drops = {"volume_drops": volume_drops} if volume_drops else None
 
-    # This task itself is in the started registry of maintenance (#314).
+    # This task itself is in the started registry of maintenance.
     # Each producer and each retry uses that queue.
 
     own_id = job.id if job else None
@@ -198,7 +198,7 @@ def _sync_deferred(job, volume_drops=0):
 def _list_archives():
     """List the archive prefixes of the bucket. Return a Listing.
 
-    The archives live in 3 prefixes (#299): untouched/ (the rips),
+    The archives live in 3 prefixes: untouched/ (the rips),
     modified/ (library files after a change), and transcoded/ (the SDR
     copies of the conversions). The sizes map each key to its object
     size. Thus, the file records can get the exact size that AWS bills
@@ -222,13 +222,13 @@ def _list_archives():
 
 
 class LibraryVolumeDropped(RuntimeError):
-    """A library volume dropped or was mounted again during the file pass (#431)."""
+    """A library volume dropped or was mounted again during the file pass."""
 
 
 def _retry_after_volume_drop(error, volume_drops):
     """Book the sync again after a volume drop in its file pass. Return True.
 
-    A short NFS drop must not cost the weekly sync (follow-up #431). The
+    A short NFS drop must not cost the weekly sync. The
     retry comes after SYNC_VOLUME_DROP_WAIT. After MAX_SYNC_VOLUME_DROPS
     drops, the sync fails loudly."""
 
@@ -289,13 +289,13 @@ def _reconcile_files(listing, job):
     The inventory lists the best files for a bulk restore.
 
     The pass requests no restore of a TV file whose series has the
-    Sonarr conflict marker (review of #758). After a refused Sonarr
+    Sonarr conflict marker. After a refused Sonarr
     rename, the records name the folder that Sonarr moved away. Then
     each best copy of the series looks absent, and the files are in the
     Sonarr folder. The markers are read 1 time for the pass. A Redis
     fault there holds the restore of each TV file for this run.
 
-    A library volume can drop during the pass (#431). Then each later
+    A library volume can drop during the pass. Then each later
     file looks absent, and the pass would request a paid restore of
     each. Thus, the pass checks the volumes and the device ids of the
     library roots at each absent file and after the last file. A drop
@@ -309,7 +309,7 @@ def _reconcile_files(listing, job):
     movie_rank = ranked_movie_files()
 
     # A TV file is a best copy when it is the best holder of at least 1
-    # episode number (#479). A single that a better span holds is not.
+    # episode number. A single that a better span holds is not.
     # The sync never pays to restore it.
 
     tv_best = tv_best_holder_ids()
@@ -343,7 +343,7 @@ def _reconcile_files(listing, job):
 
         file_path = os.path.join(current_app.config["LIBRARY_DIR"], file.file_path)
 
-        # The transcoded/ copy of a conversion (#299). Upload it when
+        # The transcoded/ copy of a conversion. Upload it when
         # it is missing. When the library file is missing, restore
         # this copy, not the original. It goes straight into the
         # library, with its track edits and no new conversion.
@@ -388,9 +388,9 @@ def _reconcile_files(listing, job):
         # The next branches test the state of the archive of the file.
 
         # The archive is not in S3, but the library file exists. The
-        # archive of a conversion is its original (#292). The library
+        # archive of a conversion is its original. The library
         # file cannot take its place. For a normal file, the upload
-        # puts the library file in modified/ (#299).
+        # puts the library file in modified/.
         if (
             (file.aws_key not in s3_keys or file.aws_date_uploaded == None)
             and os.path.isfile(file_path)
@@ -474,7 +474,7 @@ def _reconcile_files(listing, job):
 
 
 class _HeldRestores:
-    """Hold the sync restores of the TV series with a Sonarr conflict (review of #758).
+    """Hold the sync restores of the TV series with a Sonarr conflict.
 
     The markers of all series are read 1 time, with 1 MGET. A Redis
     fault does not stop the sync. The safe side is no restore of a TV
@@ -529,7 +529,7 @@ class _HeldRestores:
 
 
 def _sync_restore(key):
-    """Request a Bulk restore of a missing best copy from the S3 sync (#610).
+    """Request a Bulk restore of a missing best copy from the S3 sync.
 
     The request writes the pending restore of the row in its own session.
     The sync session read that row earlier. A later write of the row from
@@ -549,7 +549,7 @@ def _sync_restore(key):
 
 
 def _replaced_after_upload(file, remote_size, modified):
-    """Return True, and warn, if the claimed object of a file changed after its upload (#430).
+    """Return True, and warn, if the claimed object of a file changed after its upload.
 
     Each upload of Fitzflix records its date and size. An object with a
     new size and a later date than the record holds bytes that the
@@ -578,7 +578,7 @@ def _replaced_after_upload(file, remote_size, modified):
 def _appeared_after_listing(key, uploaded):
     """Return True if an archived key that the listing did not show exists now.
 
-    An archive move (#369) can change the key of a row after the
+    An archive move can change the key of a row after the
     listing. Then an upload would replace the moved rip with the library
     file. A HEAD tells. A key with no upload date has no object to find."""
 
@@ -621,7 +621,7 @@ def _put_inventory(inventory_export):
         )
 
         # Each upload replaces the 1 object. Remove the old
-        # versions (#318). A failure here is not a sync failure.
+        # versions. A failure here is not a sync failure.
 
         try:
             s3_layout.prune_noncurrent(
@@ -636,8 +636,8 @@ def _put_inventory(inventory_export):
 def _claimed_keys():
     """Return the archive keys that a record claims.
 
-    The archive-only originals (#292) have no File row. Their keys are
-    claimed too. So is the target of a pending move (#369). The copy is
+    The archive-only originals have no File row. Their keys are
+    claimed too. So is the target of a pending move. The copy is
     at the target before the row names it."""
 
     return (
@@ -659,7 +659,7 @@ def _claimed_keys():
 
 
 def _request_pending_moves():
-    """Request the move of each live archive under pending-untouched/ that has no job (#690, #707).
+    """Request the move of each live archive under pending-untouched/ that has no job.
 
     Invariant: after this step of a sync, a record whose archive is
     under pending-untouched/ has a move job. A key in the record of the
@@ -721,7 +721,7 @@ def _report_dangling_claims(listing):
     dangling_claims = sorted(
         key
         for (key,) in db.session.query(File.aws_key).filter(File.aws_key.isnot(None))
-        # A row whose first upload never ran claims no object yet (#534).
+        # A row whose first upload never ran claims no object yet.
         # The transcoded union has the same rule.
         .filter(File.aws_date_uploaded.isnot(None))
         .union(db.session.query(ArchivedOriginal.aws_key))
@@ -734,7 +734,7 @@ def _report_dangling_claims(listing):
         if key not in s3_key_set
     )
 
-    # A lost pending upload (follow-up #455) is named in a section of
+    # A lost pending upload is named in a section of
     # its own, 1 time after each record of its loss (mark_archive_lost).
     # It needs a re-rip, not a key repair. Later reports leave it out. A
     # move that runs again records the loss again. A key that is no
@@ -786,8 +786,8 @@ def _prune_unclaimed(listing, job, unreferenced_files):
     The caller owns the list. Thus, the report names the deleted keys
     also after a failure in the middle of the prune. An import that
     waits for library space has no File row yet. Its wait has no limit.
-    Its live job names its source and its upload key (#619). A same-name
-    re-rip uploads to a run-scoped key below pending-untouched/ (#430)."""
+    Its live job names its source and its upload key. A same-name
+    re-rip uploads to a run-scoped key below pending-untouched/."""
 
     s3_keys = listing.keys
     s3_modified = listing.modified
@@ -796,8 +796,8 @@ def _prune_unclaimed(listing, job, unreferenced_files):
 
     waiting_keys = keys_held_by_pipeline()
 
-    # A failed in-place import uploaded its rip to untouched/ directly
-    # (#496). Its source went to rejects. That upload is the only copy of
+    # A failed in-place import uploaded its rip to untouched/ directly.
+    # Its source went to rejects. That upload is the only copy of
     # the untouched bytes. A rejects directory that cannot be read keeps
     # every untouched/ key this time.
 
@@ -832,7 +832,7 @@ def _prune_unclaimed(listing, job, unreferenced_files):
 
         # The claim set above is exact in letter case, as S3 is. The
         # check of aws_delete folds case, and it would keep an orphan
-        # whose key differs from a claimed key only by case (#686).
+        # whose key differs from a claimed key only by case.
 
         if remote_key not in aws_keys and remote_key not in archive_prefixes:
             moves.aws_delete(remote_key)
@@ -842,7 +842,7 @@ def _prune_unclaimed(listing, job, unreferenced_files):
 def _rejected_untouched_keys():
     """Return the untouched/ key of each file in the rejects directory, or None.
 
-    None means that the directory could not be read (#496)."""
+    None means that the directory could not be read."""
 
     rejects = current_app.config["REJECTS_DIR"]
     prefix = current_app.config["AWS_UNTOUCHED_PREFIX"]
@@ -889,7 +889,7 @@ def _mail_reports(unreferenced_files, orphaned_files):
 
 
 def _report_lagging_keys():
-    """Mail the admin 1 line about the archive keys that lag their names (#668).
+    """Mail the admin 1 line about the archive keys that lag their names.
 
     A rename keeps the key. flask aws converge-keys moves the keys that
     lag. The mail comes only when at least 1 key lags. A fault only
@@ -925,7 +925,7 @@ def _report_lagging_keys():
 def _import_uncataloged(roots):
     """Queue the library files that have no record, or an other size than their record.
 
-    Invariant: the walk never enters a hidden directory (#710). A
+    Invariant: the walk never enters a hidden directory. A
     download folder of Sonarr or Radarr in a library folder must be a
     hidden directory, for example .sabnzbd. A download there belongs
     to those apps and to the Manual imports page. Its name matches no
@@ -969,7 +969,7 @@ def _import_uncataloged(roots):
 
 
 def _queue_changed_library_file(row, library_file):
-    """Queue the repair of a library file that has an other size than its record (#750).
+    """Queue the repair of a library file that has an other size than its record.
 
     Invariant: the library file at the path of a record is the file of
     that record, or a job is queued that makes it so. Radarr and Sonarr
@@ -986,7 +986,7 @@ def _queue_changed_library_file(row, library_file):
     it set the flag. A scan stores its rows and its size
     (replaced_from_outside in app/media/tracks.py has the rule and its
     exceptions). An edit that stops because an other program changed the
-    file puts the flag back to its value before the edit (#762)."""
+    file puts the flag back to its value before the edit."""
 
     def differs(record):
         try:

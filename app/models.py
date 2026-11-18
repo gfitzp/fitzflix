@@ -104,7 +104,7 @@ TV_SHOWS = "TV Shows"
 
 # The TMDB fetch and apply half of the models lives in app.metadata.tmdb_apply.
 # The models below use these 3 names. Import the other names of that
-# module from app.metadata.tmdb_apply (#644).
+# module from app.metadata.tmdb_apply.
 
 from app.metadata.tmdb_apply import (  # noqa: E402
     TMDBAssociation,
@@ -137,7 +137,7 @@ def sign_in_password_matches(user, password):
 
 
 def new_session_epoch():
-    """Return a fresh random session epoch: 32 hex characters (#673)."""
+    """Return a fresh random session epoch: 32 hex characters."""
 
     return secrets.token_hex(16)
 
@@ -149,8 +149,8 @@ class User(UserMixin, db.Model):
     email = db.Column(db.String(120), index=True, unique=True)
     password_hash = db.Column(db.String(256))
 
-    # A random value that changes at each change of the sign-in methods
-    # (#673). The session id, the remember cookie and the reset token
+    # A random value that changes at each change of the sign-in methods.
+    # The session id, the remember cookie and the reset token
     # carry a fingerprint of it. Thus, a change ends each older session.
     # A new row gets a value at its insert.
 
@@ -196,7 +196,7 @@ class User(UserMixin, db.Model):
 
     # The Infuse target of this user. This is the Companion-protocol
     # address of the Apple TV (ip:port) and the pyatv credentials from the
-    # one-time PIN pairing on the Profile page (#192). These fields are
+    # one-time PIN pairing on the Profile page. These fields are
     # separate from the Plex player fields. Fitzflix drives Infuse over
     # the Apple Companion protocol, not Plex Companion. A user can enable
     # one app or both apps.
@@ -239,7 +239,7 @@ class User(UserMixin, db.Model):
             return players[0]
         return self.default_player if self.default_player in players else "plex"
 
-    # Watchlist availability alerts (#156/#230). The nightly digest email
+    # Watchlist availability alerts. The nightly digest email
     # is strictly opt-in. It is the only per-user mail other than the
     # password resets. Rentals are a second opt-in on top. A rental costs
     # an extra fee. Thus, it must not read as "available" unless the user
@@ -272,7 +272,7 @@ class User(UserMixin, db.Model):
         cascade="all,delete,delete-orphan",
     )
 
-    # The passkeys of this user (#669). An account with a passkey can
+    # The passkeys of this user. An account with a passkey can
     # drop its password. Then the passkeys are the only way in. The
     # Profile handlers keep at least 1 way in.
 
@@ -294,7 +294,7 @@ class User(UserMixin, db.Model):
         self.rotate_session_epoch()
 
     def rotate_session_epoch(self):
-        """Give the account a new session epoch (#673).
+        """Give the account a new session epoch.
 
         Each session id, remember cookie and reset token from before
         stops loading. The 4 changes of the sign-in methods call this:
@@ -313,7 +313,7 @@ class User(UserMixin, db.Model):
     def check_password(self, password):
         """Return True if the password matches the stored hash.
 
-        An account with no password matches nothing (#669). Thus, a
+        An account with no password matches nothing. Thus, a
         password post on a passkey-only account is a plain failure. It
         does not tell that the account has no password."""
 
@@ -338,7 +338,7 @@ class User(UserMixin, db.Model):
         """Return a keyed fingerprint of the password hash and the session epoch.
 
         A change of the sign-in methods gives a new epoch, and thus a
-        new fingerprint (#673). The reset token and the login session
+        new fingerprint. The reset token and the login session
         carry it. Thus, each older token and session is not valid. An
         account with no password also gets a new fingerprint."""
 
@@ -393,7 +393,7 @@ class User(UserMixin, db.Model):
         """Return the running and queued background jobs for the queue page.
 
         The navbar badge, the running banners and the Queue page read
-        one copy for each request (#640). The badge shows its count key."""
+        one copy for each request. The badge shows its count key."""
 
         from flask import g
 
@@ -401,7 +401,7 @@ class User(UserMixin, db.Model):
         from app.redis_guard import REDIS_DOWN_ERRORS, warn_redis_down
 
         # Each page renders this. A Redis outage gives an empty result,
-        # not a failed page (#476).
+        # not a failed page.
 
         if "queue_details" not in g:
             try:
@@ -739,7 +739,7 @@ class Movie(db.Model, TMDBMixin):
 
     @property
     def us_certification(self):
-        """Return the stored US rating of the film, or None (#365).
+        """Return the stored US rating of the film, or None.
 
         The cataloger stores 1 rating per country (release_certification).
         The movie page and the poster card of a record show this value."""
@@ -758,7 +758,7 @@ class Movie(db.Model, TMDBMixin):
 
 
 def clip_movie_title(title):
-    """Return a TMDB title shortened to fit Movie.title (#383, #462).
+    """Return a TMDB title shortened to fit Movie.title.
 
     MariaDB runs with STRICT_TRANS_TABLES. A longer title stops the
     INSERT with error 1406, and the whole batch of the caller fails. A
@@ -961,9 +961,9 @@ def title_lock_key(
 
 # The keys of the parsed details of an import that are not File columns.
 # The title and the year belong to the Movie or the TVSeries row, the
-# quality title to the RefQuality row. tmdb_id routes the metadata fetch
-# (#155). replace_existing is the "Import" choice of a held conversion
-# (#292). Any other key outside the columns is a mistake.
+# quality title to the RefQuality row. tmdb_id routes the metadata fetch.
+# replace_existing is the "Import" choice of a held conversion.
+# Any other key outside the columns is a mistake.
 
 IMPORT_DETAIL_KEYS = frozenset(
     {
@@ -974,10 +974,10 @@ IMPORT_DETAIL_KEYS = frozenset(
         "feature_type_name",
         "tmdb_id",
         "replace_existing",
-        # The size and the time of a source in the library (#742).
+        # The size and the time of a source in the library.
         "source_stamp",
         # The old path of a record that took the spelling of the new
-        # file (#739, #749).
+        # file.
         "respelled_from",
     }
 )
@@ -1026,13 +1026,13 @@ class File(db.Model):
     dolby_vision_profile = db.Column(db.String(8))
 
     # The color tags of the video track, from MediaInfo. An SDR file can
-    # have BT.2020 colors. hdr_format does not show that (#292). None
+    # have BT.2020 colors. hdr_format does not show that. None
     # when the file has no tag.
 
     color_primaries = db.Column(db.String(64))
     transfer_characteristics = db.Column(db.String(64))
 
-    # Set when this file is an SDR conversion (#292). It is the
+    # Set when this file is an SDR conversion. It is the
     # quality of the original, for example "Bluray-2160p". The import
     # archived that original untouched in S3. Thus, the archive is NOT
     # a copy of this file. converted_from_format names the color of the
@@ -1042,7 +1042,7 @@ class File(db.Model):
     converted_from_format = db.Column(db.String(255))
 
     # The second archive of a conversion: its current SDR library file,
-    # in transcoded/ (#299). aws_key keeps the original. A restore of a
+    # in transcoded/. aws_key keeps the original. A restore of a
     # missing conversion uses this copy first, straight into the library
     # path.
 
@@ -1063,7 +1063,7 @@ class File(db.Model):
 
     subtitle_triage_reviewed = db.Column(db.DateTime)
 
-    # The time that the runtime triage (#234) accepted the length of this
+    # The time that the runtime triage accepted the length of this
     # file as known and harmless. Examples are a full-disc rip, or a short
     # recorded into a longer broadcast slot. Then the file no longer
     # appears on the candidates list. A new import resets it. The length
@@ -1071,21 +1071,21 @@ class File(db.Model):
 
     runtime_mismatch_reviewed = db.Column(db.DateTime)
 
-    # The time that the lossy-audio triage (#212) accepted the track
+    # The time that the lossy-audio triage accepted the track
     # layout of this file as it is. The lossless sibling is a commentary
     # or different content. Then the file no longer appears on the
     # worklist. A new import resets it, the same as the other verdicts.
 
     lossy_audio_reviewed = db.Column(db.DateTime)
 
-    # The archive of the file (#299). The key is in untouched/ (the rip,
+    # The archive of the file. The key is in untouched/ (the rip,
     # as it arrived) until the first change of the library file. Then it
     # is in modified/ (the current library file). A conversion keeps its
     # original here and its library file in aws_transcoded_key.
 
     aws_key = db.Column(db.String(255), index=True)
 
-    # The key that the archive moves to after a rename (#369). The move
+    # The key that the archive moves to after a rename. The move
     # job copies the object, verifies the copy, and only then writes the
     # key to aws_key. Thus, aws_key names a real object during the whole
     # move. A target in transcoded/ is the move of aws_transcoded_key.
@@ -1093,7 +1093,7 @@ class File(db.Model):
 
     aws_key_target = db.Column(db.String(255), index=True)
 
-    # The time of the first request of the pending move (#618). It is set
+    # The time of the first request of the pending move. It is set
     # and cleared with aws_key_target. The System page shows the oldest.
 
     archive_move_requested_at = db.Column(db.DateTime)
@@ -1107,7 +1107,7 @@ class File(db.Model):
 
     aws_stale = db.Column(db.Boolean, nullable=False, server_default="0", default=False)
 
-    # The UTC time of a restore request of the archive (#610). A writer
+    # The UTC time of a restore request of the archive. A writer
     # of the library file or of its archive refuses while it is set. The
     # placement of the restored copy, a terminal fault of the download
     # and the 14-day sweep clear it.
@@ -1127,7 +1127,7 @@ class File(db.Model):
 
     @property
     def needs_sdr_conversion(self):
-        """Return True if this file has HDR or BT.2020 colors (#292)."""
+        """Return True if this file has HDR or BT.2020 colors."""
 
         from app.media.sdr_conversion import needs_conversion
 
@@ -1137,7 +1137,7 @@ class File(db.Model):
 
     @property
     def restore_key(self):
-        """Return the S3 key that restores the library file of this record (#299).
+        """Return the S3 key that restores the library file of this record.
 
         A conversion with an uploaded transcoded/ copy restores that copy.
         Each other record restores its archive: untouched/ (the rip) or
@@ -1155,9 +1155,9 @@ class File(db.Model):
     def archive_is_library_copy(self):
         """Return True if the S3 archive of this file can follow its library copy.
 
-        Fitzflix replaces the archive with the library file after a remux
-        or an Atmos twin. The archive of a conversion is the original
-        (#292). The library file must never replace it."""
+                Fitzflix replaces the archive with the library file after a remux
+                or an Atmos twin. The archive of a conversion is the original.
+        The library file must never replace it."""
 
         return not self.converted_from_quality
 
@@ -1184,18 +1184,18 @@ class File(db.Model):
     def delete_library_copy(file_path, file_id, delete_directory_tree=False):
         """Delete the library copy at file_path, for the row file_id.
 
-        A delete of a record calls this after its commit. Thus, the
-        caller keeps only the path and the id, not the deleted row
-        (#513). Return True if no file is at the path afterwards. Return
-        False if the share refused the removal. The caller tells the
-        person, because the weekly sync imports a library file that has
-        no record (#745).
+                A delete of a record calls this after its commit. Thus, the
+                caller keeps only the path and the id, not the deleted row.
+        Return True if no file is at the path afterwards. Return
+                False if the share refused the removal. The caller tells the
+                person, because the weekly sync imports a library file that has
+                no record.
 
-        "No such file" is not "gone" while the volume of the path is not
-        mounted (#752). The mount point is then an empty folder, and the
-        file is still on the NAS. The delete pages check the volumes
-        before they change a record. This check is for a share that
-        goes away after that."""
+                "No such file" is not "gone" while the volume of the path is not
+                mounted. The mount point is then an empty folder, and the
+                file is still on the NAS. The delete pages check the volumes
+                before they change a record. This check is for a share that
+                goes away after that."""
 
         file_to_delete = os.path.join(current_app.config["LIBRARY_DIR"], file_path)
         try:
@@ -1218,14 +1218,14 @@ class File(db.Model):
         except OSError as error:
             # A wedged share answers EIO, ENXIO or EACCES. The rows are
             # committed already. Thus, the caller must go on with its
-            # AWS deletes and its folder cleanup (follow-up #513). The
+            # AWS deletes and its folder cleanup. The
             # warning names the file that stays on the disk.
             current_app.logger.warning(
                 f"Could not delete the local file '{file_to_delete}': "
                 f"{type(error).__name__}: {error}"
             )
 
-            # The aids belong to a row that no longer exists (#579). No
+            # The aids belong to a row that no longer exists. No
             # sweep removes them later.
 
             _remove_triage_aids(file_id)
@@ -1294,7 +1294,7 @@ class File(db.Model):
 
 
 class ArchivedOriginal(db.Model):
-    """An original in S3 with no library file of its own (#292).
+    """An original in S3 with no library file of its own.
 
     Fitzflix makes one in 2 cases. An admin chose "Archive only" for a
     held conversion. Or a real rip replaced a conversion, and the
@@ -1330,13 +1330,13 @@ class ArchivedOriginal(db.Model):
 
 
 class HeldImport(db.Model):
-    """A conversion candidate that waits for an admin decision (#292).
+    """A conversion candidate that waits for an admin decision.
 
     The library already has a real rip of the title. The original file
     waits in HELD_DIR. The admin chooses "Import", "Archive only", or
     "Discard" on the Held imports page. file_details is the JSON of the
     parsed filename, with the conversion fields and the maximum height
-    of the conversion (#677)."""
+    of the conversion."""
 
     id = db.Column(db.Integer, primary_key=True)
     held_path = db.Column(db.String(512), nullable=False, unique=True)
@@ -1384,7 +1384,7 @@ class FileAudioTrack(db.Model):
     language_name = db.Column(db.String(64), nullable=False)
     compression_mode = db.Column(db.String(64))
 
-    # The Matroska track UID (#611). The edits address a track by it,
+    # The Matroska track UID. The edits address a track by it,
     # because a remux keeps it and changes the positions. It is an
     # unsigned 64-bit number, which is too large for a signed BIGINT.
     # Thus, it is text. Other containers have none.
@@ -1397,9 +1397,9 @@ class FileAudioTrack(db.Model):
     def quality_label(self):
         """Return the quality of the track as text, or None if it is unknown.
 
-        A lossless track with a known depth and rate reads "24-bit 48 kHz".
-        The rate comes from the Hz value, so 44,100 Hz reads "44.1 kHz"
-        (#725). Another track with a known bitrate reads "640 kbps"."""
+                A lossless track with a known depth and rate reads "24-bit 48 kHz".
+                The rate comes from the Hz value, so 44,100 Hz reads "44.1 kHz".
+        Another track with a known bitrate reads "640 kbps"."""
 
         if (
             self.compression_mode == "Lossless"
@@ -1437,7 +1437,7 @@ class FileSubtitleTrack(db.Model):
     streamorder = db.Column(db.Integer)
     language_name = db.Column(db.String(64), nullable=False)
 
-    # The Matroska track UID (#611), as on FileAudioTrack.
+    # The Matroska track UID, as on FileAudioTrack.
 
     uid = db.Column(db.String(20))
 
@@ -1458,7 +1458,7 @@ class RefFeatureType(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     feature_type = db.Column(db.String(32), nullable=False, unique=True)
-    # No delete cascade (#508). The delete of a lookup row deleted each
+    # No delete cascade. The delete of a lookup row deleted each
     # file of its type. passive_deletes="all" also keeps the ORM from a
     # silent null of the foreign keys. Thus, the foreign key refuses the
     # delete while a file uses the row.
@@ -1481,7 +1481,7 @@ class RefQuality(db.Model):
     preference = db.Column(db.Integer, nullable=False)
     physical_media = db.Column(db.Boolean, nullable=False, default=False)
     date_updated = db.Column(db.DateTime)
-    # No delete cascade (#508). The delete of a tier deleted each file of
+    # No delete cascade. The delete of a tier deleted each file of
     # the tier and each movie with that Criterion format, with their
     # files. The foreign keys refuse the delete instead.
     files = db.relationship(
@@ -1708,10 +1708,10 @@ class UserFrameScore(db.Model):
     difficulty = db.Column(db.String(16), nullable=False)
     current_streak = db.Column(db.Integer, nullable=False, default=0)
     best_streak = db.Column(db.Integer, nullable=False, default=0)
-    # The running total of Extra Difficult (#202): 3, 2, or 1 points by
+    # The running total of Extra Difficult: 3, 2, or 1 points by
     # how early in the zoom-out the guess arrived.
     points = db.Column(db.Integer, nullable=False, default=0, server_default="0")
-    # The win rate (requested by Glenn, 2026-08-27). Every dealt frame
+    # The win rate. Every dealt frame
     # counts as seen. That includes skipped and abandoned rounds. Only a
     # correct guess counts as won.
     rounds_seen = db.Column(db.Integer, nullable=False, default=0, server_default="0")
@@ -1829,7 +1829,7 @@ class TMDBSpokenLanguage(db.Model, TMDBMixin):
 
 
 class Passkey(db.Model):
-    """A WebAuthn credential of a user (#669).
+    """A WebAuthn credential of a user.
 
     A user adds a passkey on the Profile page. The authenticator of the
     browser makes the key pair and keeps the private key. Fitzflix keeps
@@ -1879,7 +1879,7 @@ def load_user(id):
     """Load a user for flask-login.
 
     The session id holds the password fingerprint. A session from before
-    a change of the sign-in methods does not load (#673). A session id
+    a change of the sign-in methods does not load. A session id
     with no fingerprint (from before the fingerprint) does not load
     either."""
 
@@ -1910,7 +1910,7 @@ dvr_channel_series = db.Table(
 
 
 class DVRChannel(db.Model):
-    """A virtual DVR channel that an admin defines (#182).
+    """A virtual DVR channel that an admin defines.
 
     The members of a channel are its explicit picks (the movie and
     series relationships) plus all titles that match its rule columns.

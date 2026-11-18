@@ -9,7 +9,7 @@ from app.media.custom_artwork import queue_folder_poster_restore
 
 
 def check_movie_file_delete(payload):
-    """Queue the poster restore of a folder after Radarr deletes a movie file (#654).
+    """Queue the poster restore of a folder after Radarr deletes a movie file.
 
     Radarr links the poster copy of a folder to the movie file of the
     folder, and deletes the copy with the file. A rip upgrade in

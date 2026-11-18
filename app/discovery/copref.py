@@ -11,8 +11,8 @@ and has no external ids. The GroupLens ML-32M dataset has a research
 license and maps directly to TMDB ids through its links.csv.
 
 The build covers the WHOLE MovieLens universe above a ratings floor. It
-does not cover only the films that Fitzflix knows now (decided by
-Glenn, 2026-08). Each film keeps its strongest neighbors. Thus, each
+does not cover only the films that Fitzflix knows now.
+Each film keeps its strongest neighbors. Thus, each
 film that the library adds later finds its similarities already
 stored. The dataset itself is not necessary after the build. The build
 is offline and rare. It runs again only when Fitzflix adopts a new

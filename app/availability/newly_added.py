@@ -1,11 +1,11 @@
-"""Per-provider "newly added" feeds and their landing shelves (#246).
+"""Per-provider "newly added" feeds and their landing shelves.
 
 The purpose is catalog discovery. This module shows films that the
 database does not know and that recently arrived on a service that the
 user pays for. A watchlisted film that becomes available is the job of
 the availability-alert email (app.availability.availability_alerts). It is not the
 job of this shelf. The TMDb watch-provider payload has no availability
-dates in either direction (verified 2026-08). Each entry has only a
+dates in either direction. Each entry has only a
 provider id, name, logo, and priority. Thus, "newly added" can only
 come from the feed of the provider, compared with a snapshot.
 
@@ -16,7 +16,7 @@ subscribed provider with a stored feed. There is an "added <date>"
 availability badge. But only one feed exists today: the newly-added
 collection of the Criterion Channel. Fitzflix scrapes it through the
 same collection reader as the leaving page. The listing of full
-provider catalogs from TMDb /discover is the job of #250. It writes
+provider catalogs from TMDb /discover is the job of provider_catalog. It writes
 this same store shape. Its target is the recommendation universe, not
 a shelf.
 
@@ -103,7 +103,7 @@ def _recent(item, today=None):
 
 # The result of refresh_newly_added: the count of the feeds that it read
 # and stored, and the count of the feeds that failed. The value is
-# truthy also when each feed failed (#770).
+# truthy also when each feed failed.
 
 FeedCounts = namedtuple("FeedCounts", "read failed")
 
@@ -115,7 +115,7 @@ def refresh_newly_added():
     snapshot to set the first-seen dates. Then it stores the set with the
     embedded enriched payloads. A feed with no films or with an error
     keeps its snapshot and counts as failed. The task returns the
-    FeedCounts (#770)."""
+    FeedCounts."""
 
     read = failed = 0
     with app.app_context():
@@ -135,11 +135,11 @@ def refresh_newly_added():
 def _stored_entry(film, tmdb_id, payload, first_seen):
     """Return the stored entry of one scraped film.
 
-    A matched film keeps its TMDB id when its payload is not available
-    (#386). A TMDB timeout or a cached 404 gives no payload. The fold,
-    the DVR and the shelves read the id. The entry then has the scraped
-    fields and the payload_missing flag. The next run tries the payload
-    again."""
+        A matched film keeps its TMDB id when its payload is not available.
+    A TMDB timeout or a cached 404 gives no payload. The fold,
+        the DVR and the shelves read the id. The entry then has the scraped
+        fields and the payload_missing flag. The next run tries the payload
+        again."""
 
     if payload:
         base = {**payload, "tmdb_id": tmdb_id}
@@ -187,9 +187,9 @@ def _refresh_feed(provider_id, feed):
             # Only a film that is new to the page costs a lookup. A film
             # that is still unmatched also costs a lookup, but the 60-day
             # match cache absorbs the retry. A matched film with no
-            # payload yet tries the payload again (#386).
+            # payload yet tries the payload again.
             # A film that TMDB deleted (a cached 404) never gets its
-            # payload. Thus, it goes back to unmatched (#419).
+            # payload. Thus, it goes back to unmatched.
             if prior.get("payload_missing"):
                 payload = enriched_movie(prior["tmdb_id"])
                 if payload:
@@ -208,7 +208,7 @@ def _refresh_feed(provider_id, feed):
                 fresh += 1
         # A film whose film page did not answer has no director. The
         # match then takes the first search hit. Thus, the film stays
-        # unmatched today, and the next run tries again (#539).
+        # unmatched today, and the next run tries again.
         if film.get("director_failed"):
             items.append(_stored_entry(film, None, None, first_seen))
             continue
@@ -244,7 +244,7 @@ def _refresh_feed(provider_id, feed):
     # An owned day-one arrival joins the Criterion channel of the DVR
     # through the synthesized match. Thus, the dial catches up the same
     # day. The feed is stored before this step. Thus, a fault here gives a
-    # warning, and the feed counts as read (#770). The nightly build of
+    # warning, and the feed counts as read. The nightly build of
     # the lineups catches up.
     if arrived and provider_id == CRITERION_PROVIDER_ID:
 
@@ -280,8 +280,8 @@ def newly_added_shelves(user):
             continue
         stored = json.loads(raw)
         # A film without its payload has no poster and no features. It
-        # would score on its decade only and show as a placeholder card
-        # (#419). It joins the shelf when its payload arrives.
+        # would score on its decade only and show as a placeholder card.
+        # It joins the shelf when its payload arrives.
 
         recent = [
             item
@@ -303,8 +303,8 @@ def newly_added_shelves(user):
             if item["tmdb_id"] not in owned | refused | logged | watchlisted
         ]
 
-        # A film with a record ranks by the number of its tile (#535).
-        # Only the films that the shelf shows get the number (#580). A
+        # A film with a record ranks by the number of its tile.
+        # Only the films that the shelf shows get the number. A
         # logged film has no stored score and cost a live score each day.
 
         recorded = record_lane_scores(
@@ -414,7 +414,7 @@ def newly_added_inventory(user):
         films = []
 
         # A film with a record ranks by the number of its tile, as on the
-        # shelf (#535, #580).
+        # shelf.
 
         recorded = record_lane_scores(current_app.redis, user.id, tmdb_ids, profile)
         for item in matched:
@@ -527,7 +527,7 @@ def poster_fold(user, tmdb_id, movie_id=None):
         if entry:
             label = entry.get("label")
 
-    # Ownership gates the folds (requested by Glenn, 2026-08-27). The copy
+    # Ownership gates the folds. The copy
     # of an owned film stays. Thus, the film never warns of a departure.
     # Its only green fold is the recent arrival of the local file.
 
@@ -552,7 +552,7 @@ def poster_fold(user, tmdb_id, movie_id=None):
 
 @nothing_stored("The newly added shelves")
 def _stored_feed(provider_id):
-    """Return the raw stored newly-added feed of the provider, or None (#699)."""
+    """Return the raw stored newly-added feed of the provider, or None."""
 
     return current_app.redis.get(NEWLY_ADDED_KEY.format(provider_id=provider_id))
 

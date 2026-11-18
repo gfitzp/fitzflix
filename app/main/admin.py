@@ -1,4 +1,4 @@
-"""Serve the operations pages (the split from routes.py).
+"""Serve the operations pages.
 
 The pages are the system health, the scheduled tasks, the library
 maintenance, the triage pages, the queue, and the pipeline trails."""
@@ -150,7 +150,7 @@ from app.pipeline import retry_now
 from app.media.atmos import EAC3_ATMOS_CODEC
 
 # The scheduled task that the Run now button of the System page does
-# not queue (#456). The S3 sync needs a proof of identity on the
+# not queue. The S3 sync needs a proof of identity on the
 # Maintenance page: a passkey or the password.
 
 MAINTENANCE_PAGE_TASKS = frozenset({"app.archive.sync.sync_aws_s3_storage_task"})
@@ -187,7 +187,7 @@ def system():
             else:
                 try:
                     job = Job.fetch(job_id, connection=current_app.redis)
-                    # The result stream goes with the job (#478)
+                    # The result stream goes with the job
                     Result.delete_all(job)
                     registry.remove(job, delete_job=True)
                 except NoSuchJobError:
@@ -219,7 +219,7 @@ def system():
         elif not start_task_run(func):
             flash(f"'{TASKS[func].description}' waits or runs already.", "warning")
         else:
-            # An enqueue error must not leave the gate shut (#475)
+            # An enqueue error must not leave the gate shut
             try:
                 enqueue_task(func)
             finally:
@@ -295,7 +295,7 @@ def _scheduled_tasks():
     try:
         schedulers = CronScheduler.all(current_app.redis)
     except KeyError:
-        # A stall can leave a hash with only the cron_jobs field (#562).
+        # A stall can leave a hash with only the cron_jobs field.
         # The scheduler registers again on its next tick.
         schedulers = []
     for scheduler in schedulers:
@@ -624,7 +624,7 @@ def _in_page_range(name, value):
     """Return the value of a setting inside the limits of its page field.
 
     A limit can become smaller after a value was stored. For example,
-    the DVR genre channels allowed 50 before #397. The page validates
+    an older version allowed 50 DVR genre channels. The page validates
     each field on a save. Thus, a stored value outside the limits would
     block the save of every other setting. The field shows the nearest
     limit, and the next save stores it. The stored value stays until
@@ -655,7 +655,7 @@ def settings():
     A saved value gets to each web and worker process in some seconds,
     without a restart. The page stores only the values that change. The
     page reads the table, not the cache of this process. Thus, the page
-    after a save shows the saved values (#625)."""
+    after a save shows the saved values."""
 
     clear_cache()
     locked_names = [name for name in SETTINGS if locked(name)]
@@ -753,7 +753,7 @@ def settings():
     )
 
 
-# The job id prefixes of the bulk maintenance runs (#439). A post
+# The job id prefixes of the bulk maintenance runs. A post
 # queues nothing while a job of its run waits or runs.
 
 CRITERION_RUN = "bulk-criterion-refresh-"
@@ -768,7 +768,7 @@ def _refresh_criterion_post(form):
     """Queue the Criterion Collection refresh of the whole movie library.
 
     This job goes on the maintenance queue with the timeout of the
-    monthly cron row and the CLI (#343). A full Wikidata pass takes
+    monthly cron row and the CLI. A full Wikidata pass takes
     longer than the request queue allows, and it must not hold the
     user-request worker.
 
@@ -779,12 +779,12 @@ def _refresh_criterion_post(form):
     if not start_bulk_run(CRITERION_RUN, name):
         flash(ALREADY_QUEUED, "info")
         return False
-    # The scheduler queues the monthly run with an id of its own (#456).
+    # The scheduler queues the monthly run with an id of its own.
     if live_task_job(name) is not None:
         finish_bulk_run(CRITERION_RUN)
         flash(ALREADY_QUEUED, "info")
         return False
-    # An enqueue error must not leave the gate shut (#475)
+    # An enqueue error must not leave the gate shut
     try:
         enqueue_task(
             name,
@@ -803,7 +803,7 @@ def _refresh_criterion_post(form):
 def _refresh_tmdb_post(form):
     """Queue a TMDB refresh of each movie and each TV show of the library.
 
-    This excludes the records detached from TMDB (#207).
+    This excludes the records detached from TMDB.
     refresh_tmdb_info would refuse them in any case. The detachment
     exists to prevent a title search. These jobs go on the user-request
     queue. Each job is a TMDB API call plus artwork downloads. Thousands
@@ -850,7 +850,7 @@ def _sync_storage_post(form):
 
     The sync runs for hours. The maintenance queue holds it, as in the
     cron table. On the single sql worker it blocked the cataloging of
-    each import (#314)."""
+    each import."""
 
     if not identity_confirmed(form):
         return
@@ -859,7 +859,7 @@ def _sync_storage_post(form):
     if not start_bulk_run((SYNC_RUN, requeue_job_id(name)), name):
         flash(ALREADY_QUEUED, "info")
         return
-    # The scheduler queues the weekly sync with an id of its own (#456).
+    # The scheduler queues the weekly sync with an id of its own.
     if live_task_job(name) is not None:
         finish_bulk_run(SYNC_RUN)
         flash(ALREADY_QUEUED, "info")
@@ -1019,7 +1019,7 @@ def maintenance():
 @login_required
 @admin_required
 def missing_files():
-    """List the best-quality files that have no local copy (#274).
+    """List the best-quality files that have no local copy.
 
     The page reads the stored result of the nightly scan. Scan now runs
     the scan again on the maintenance queue. The restore form requests
@@ -1036,8 +1036,8 @@ def missing_files():
         if not start_bulk_run(MISSING_SCAN_RUN, name):
             flash(ALREADY_QUEUED, "info")
             return redirect(url_for("main.missing_files"))
-        # The nightly cron queues the scan with an id of its own (#527),
-        # as for the Criterion and S3 runs (#456)
+        # The nightly cron queues the scan with an id of its own,
+        # as for the Criterion and S3 runs
         if live_task_job(name) is not None:
             finish_bulk_run(MISSING_SCAN_RUN)
             flash(ALREADY_QUEUED, "info")
@@ -1083,7 +1083,7 @@ def missing_files():
                 f"that {'are' if len(present) != 1 else 'is'} in the library again.",
                 "info",
             )
-        # No 2 result messages contradict (#691). The skip message
+        # No 2 result messages contradict. The skip message
         # covers a selection that is in the library again.
 
         if not files:
@@ -1121,7 +1121,7 @@ def missing_files():
 @login_required
 @admin_required
 def held_imports():
-    """Decide the conversions that wait because a real rip exists (#292).
+    """Decide the conversions that wait because a real rip exists.
 
     Import sends the original back through the import. Its conversion
     then replaces the library file. Archive only uploads the original
@@ -1139,7 +1139,7 @@ def held_imports():
         if held is None or not os.path.exists(held.held_path):
             flash("That file no longer waits for a decision.", "warning")
             return redirect(url_for("main.held_imports"))
-        # A decision that no job carries any more does not block (#525).
+        # A decision that no job carries any more does not block.
 
         clear_stuck_decisions([held])
         if held.decision:
@@ -1149,8 +1149,7 @@ def held_imports():
         name = held.untouched_basename
         if form.discard_submit.data:
             # The held file leaves with no import. Its release data goes
-            # first. A later held file of the same name must not read it
-            # (#687).
+            # first. A later held file of the same name must not read it.
             take_remembered_download(held.held_path)
             filenames.move_to_rejects(held.held_path, "discarded")
             db.session.delete(held)
@@ -1167,7 +1166,7 @@ def held_imports():
         if held.decision == "import":
             # The import reads the decision. Thus, the decision commits
             # first. If no job is queued, the decision goes back. Then the
-            # admin can choose again (#434).
+            # admin can choose again.
             if chain.enqueue_localization(held.held_path, at_front=True) is None:
                 held.decision = None
                 held.date_decided = None
@@ -1235,7 +1234,7 @@ def held_imports():
 @login_required
 @admin_required
 def manual_imports():
-    """Finish the downloads that Sonarr and Radarr cannot import (#276).
+    """Finish the downloads that Sonarr and Radarr cannot import.
 
     The page reads the live queues of both apps. Import copies the
     chosen video file to the import directory under the given name.
@@ -1308,7 +1307,7 @@ def manual_imports():
 
         # A failed import keeps its job under the fixed id. Delete that
         # job first. Otherwise the retry stays in the failed jobs, and
-        # "Forget" on the System page deletes the live retry (#438).
+        # "Forget" on the System page deletes the live retry.
 
         job_id = manual_import_job_id(download_id)
         if not free_job_id("app.media.manual_imports.manual_import_task", job_id):
@@ -1344,7 +1343,7 @@ def manual_imports():
 @login_required
 @admin_required
 def runtime_triage():
-    """Triage the files whose estimated length differs from the TMDb runtime (#234).
+    """Triage the files whose estimated length differs from the TMDb runtime.
 
     This is the shape of a title collision at capture time, or of a
     truncated download. The page lists the inputs of the estimate.
@@ -1379,7 +1378,7 @@ def runtime_triage():
 def _tmdb_unmatched():
     """Return the records that still have a NULL tmdb_id and no ignored flag.
 
-    These are the rows that the TMDB triage page (#226) exists to
+    These are the rows that the TMDB triage page exists to
     remove. Without the triage, the bulk refresh of the maintenance
     page would answer them with a blind title search."""
 
@@ -1402,7 +1401,7 @@ def _tmdb_unmatched():
 @login_required
 @admin_required
 def tmdb_triage():
-    """Triage the records with no TMDB match (#226).
+    """Triage the records with no TMDB match.
 
     The page lists each movie and series that still has a NULL tmdb_id
     and no ignored flag. Each row has 2 actions. The first flags the
@@ -1457,7 +1456,7 @@ def tmdb_triage():
         # the merge path of the refresh merges this record into it. A
         # series has no merge path. Then 2 series records have the same
         # id. Each later refresh of one of them goes to the first record
-        # with that id that the query returns (#163)
+        # with that id that the query returns
 
         refresh_job = enqueue_task(
             "app.metadata.tmdb_refresh.refresh_tmdb_info",
@@ -1467,7 +1466,7 @@ def tmdb_triage():
             apply_at_front=True,
             # A person typed this id. A title search of a bulk refresh
             # can give the record an id first. The typed id still
-            # applies (#735).
+            # applies.
             rematch=True,
             # The page waits for this refresh. Thus, it goes to the front
             # of the sql queue, not behind the bulk refreshes of the
@@ -1545,7 +1544,7 @@ def subtitle_triage(file_id):
             flash(f"'{file.basename}' {refused}", "warning")
             return stay()
 
-        # The checkboxes post the track UIDs (#611). A remux between the
+        # The checkboxes post the track UIDs. A remux between the
         # page load and the post keeps them.
 
         track_uids = request.form.getlist("track_uids")
@@ -1654,7 +1653,7 @@ def subtitle_triage(file_id):
 @login_required
 @admin_required
 def lossy_audio_triage(file_id):
-    """Triage the files whose first audio track is lossy with a lossless track behind it (#212).
+    """Triage the files whose first audio track is lossy with a lossless track behind it.
 
     The promotion of a lossless track enqueues the same mkvpropedit
     task that the default-audio radio of the file page uses. A default
@@ -1662,7 +1661,7 @@ def lossy_audio_triage(file_id):
     lead. The task keeps the subtitle defaults and the forced flags of
     the file. "Keep as-is" records that the pair is not redundant (for
     example, a commentary). Then the file no longer appears. The
-    listening-clip comparison (#223) is the evidence for that
+    listening-clip comparison is the evidence for that
     decision. Fitzflix makes it in advance on import, and on demand
     here.
 
@@ -1693,7 +1692,7 @@ def lossy_audio_triage(file_id):
             flash(f"'{file.basename}' {refused}", "warning")
             return stay()
 
-        # The radio posts the track UID (#611).
+        # The radio posts the track UID.
 
         chosen = request.form.get("lossless_track", "")
         track = FileAudioTrack.query.filter_by(
@@ -1835,7 +1834,7 @@ def _duplicate_movie_groups():
 
 
 def _claim_import_name(staged, destination):
-    """Give a staged reject its import name. Never replace a file there (#527).
+    """Give a staged reject its import name. Never replace a file there.
 
     A link refuses an existing name (EEXIST). The rename replaced a
     same-named file that landed in the import directory after the check
@@ -1902,7 +1901,7 @@ def rejects():
                 return redirect(url_for("main.rejects"))
             # The move goes to a hidden name first. Across volumes it is a
             # copy, and the import watcher must not see a growing file
-            # under an importable name (#441).
+            # under an importable name.
             staged = hidden(destination)
             try:
                 shutil.move(requested, staged)
@@ -1914,7 +1913,7 @@ def rejects():
                 _claim_import_name(staged, destination)
             except OSError:
                 # The file is under its hidden name, and nothing imports
-                # it. It goes back to rejects (follow-up #441).
+                # it. It goes back to rejects.
                 current_app.logger.error(
                     f"'{basename}' Could not take its import name. It goes back "
                     f"to rejects: " + traceback.format_exc()
@@ -1956,9 +1955,9 @@ def _queue_rows():
 
     The ETag is a digest of the row data and the admin flag, not of the
     HTML. The forms carry a CSRF token, and Flask-WTF signs a new value
-    each second. Thus, a digest of the HTML changes at each poll (#639)."""
+    each second. Thus, a digest of the HTML changes at each poll."""
 
-    # A Redis outage gives an empty table, not a 500 (#476). The details
+    # A Redis outage gives an empty table, not a 500. The details
     # are {} then, and the trails are not read. pipeline_trails logs its
     # own traceback on a fault, and the once-a-minute warning of the
     # details read is the one record of the outage.
@@ -2036,7 +2035,7 @@ def queue_dismiss():
 @login_required
 @admin_required
 def queue_front():
-    """Move a waiting job to the front of its queue (#236).
+    """Move a waiting job to the front of its queue.
 
     Only a job that waits in a queue that the queue page lists can move.
     The move is atomic. A job that a worker took before the request
@@ -2135,14 +2134,14 @@ def queue_retry():
 def files():
     """Show a list of all the files in the library.
 
-    This is an admin page (follow-up to #186). It is a file inventory
+    This is an admin page. It is a file inventory
     of the whole library. Each row links to the file management pages."""
 
     page = request.args.get("page", 1, type=int)
     q = request.args.get("q", None, type=str)
     quality = request.args.get("quality", "0", type=str)
 
-    # A stale or mistyped bookmark must not crash the page (#306).
+    # A stale or mistyped bookmark must not crash the page.
 
     if not quality.isdecimal():
         quality = "0"
@@ -2157,10 +2156,10 @@ def files():
     )
 
     # A lossy FIRST track flags a file. The exception is the E-AC-3 Atmos
-    # twin that leads the 3-track set of the Atmos pipeline (#55b). That
+    # twin that leads the 3-track set of the Atmos pipeline. That
     # is by design. DD+ Atmos is first for Apple TV passthrough, and the
     # lossless original is behind it. Those files are configured exactly
-    # as wanted. Thus, they are not lossless-upgrade candidates (#212).
+    # as wanted. Thus, they are not lossless-upgrade candidates.
     # The atmos import is lazy, like in its other callers. It resolves
     # the worker app singleton at module import time
 
@@ -2238,8 +2237,8 @@ def files():
         File.basename.asc(),
     ).paginate(page=page, per_page=1000, error_out=False)
 
-    # The best copy of an episode comes from the rule of the S3 sync
-    # (#738), for the series of this page.
+    # The best copy of an episode comes from the rule of the S3 sync,
+    # for the series of this page.
 
     tv_best = tv_best_holder_ids(
         {row[0].series_id for row in files.items if row[0].series_id}

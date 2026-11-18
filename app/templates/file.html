@@ -34,7 +34,7 @@
 		<br>Bitrate: {{ file.video_bitrate_kbps }} kbps
 	{% endif %}
 	{% if file.filesize_bytes %}
-		{# The file_size filter keeps the rounded-MB step to GB (#241, #772) #}
+		{# The file_size filter keeps the rounded-MB step to GB #}
 		<br>Size: {{ file.filesize_bytes|file_size }}
 	{% endif %}
 </p>
@@ -44,7 +44,7 @@
 </div>
 {% endif %}
 {# A pending restore turns off each form that edits, uploads or
-   restores the file (#610). The placement or the end of the download
+   restores the file. The placement or the end of the download
    turns them on again. #}
 {% if file.restore_requested_at %}
 <div class="alert alert-info" role="alert">
@@ -64,7 +64,7 @@
 		</form>
 	</div>
 </div>
-{# The controls of a file with a pending restore are disabled (#610). #}
+{# The controls of a file with a pending restore are disabled. #}
 {% set track_edits_off = not file_exists_locally or file.restore_requested_at %}
 <div class="table-responsive mt-3">
 	<table class="table align-middle">
@@ -90,7 +90,7 @@
 					{% if languages %}
 					<select class="form-select form-select-sm" style="min-width: 11rem" form="mkvpropedit-form" id="language_a{{ audio.track }}" name="language_{{ audio.uid }}" aria-label="Language of audio track {{ audio.track }}"{% if track_edits_off %} disabled{% endif %}>
 						{# A stored value that is no language posts blank, which is no
-						   change (#570). The raw value posted refused every edit. #}
+						   change. The raw value posted refused every edit. #}
 						{% set current = language_code(audio.language) %}
 						{% if not current %}<option value="" selected>{{ audio.language if audio.language is not none else "Not set" }}</option>{% endif %}
 						{% for code, name in languages %}<option value="{{ code }}"{% if code == current %} selected{% endif %}>{{ name }}</option>{% endfor %}
@@ -191,7 +191,7 @@
 	<div class="col-sm-6">
 		{# The upload archives the library file: in modified/, or in
 		   transcoded/ for a conversion. The rip in untouched/ never
-		   changes (#299). #}
+		   changes. #}
 		<form action="" method="post">
 			<fieldset {% if not file_exists_locally or not best_file or file.restore_requested_at %}disabled{% endif %}>
 				{{ upload_form.hidden_tag() }}

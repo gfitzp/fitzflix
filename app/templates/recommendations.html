@@ -10,8 +10,8 @@
 <div data-shelf data-criteria="{{ shelf.criteria_param }}">
 	{% if not loop.first %}<hr>{% endif %}
 	{% if shelf.kind == "copref" %}
-	{# The shared-genre clause names the common ground of the anchors
-	   (Glenn, 2026-08-30). A solo shelf shows the genres of its one
+	{# The shared-genre clause names the common ground of the anchors.
+A solo shelf shows the genres of its one
 	   film. A pair shows the intersection. Films with no genre data
 	   show the plain line. #}
 	{% set common = shelf.shared_genres | join(' · ') %}
@@ -37,7 +37,7 @@
 		   replaces them. The slot replaces the old caption clause
 		   that named the anchors in prose. On phones, it holds the
 		   left half of the row. The films beside it become a one-card
-		   swipe strip (Glenn, 2026-08-26). #}
+		   swipe strip. #}
 		<div class="col-6 col-sm-4 col-md-3 col-lg-2 mb-4">
 			<div class="anchor-slot">
 				<div class="anchor-slot-eyebrow">Because you liked</div>
@@ -48,7 +48,7 @@
 				<div class="anchor-fan">
 					{% for anchor in shelf.anchors %}
 					{% set src = movie_poster_src(anchor) | trim %}
-					{# A single-anchor shelf (#249) centers its one
+					{# A single-anchor shelf centers its one
 					   card #}
 					{% set fan_class = 'anchor-fan-solo' if shelf.anchors | length == 1 else ('anchor-fan-front' if loop.last else 'anchor-fan-back') %}
 					<a href="{{ url_for('main.movie', movie_id=anchor.id) }}" class="{{ fan_class }}" title="{{ anchor.title }} ({{ anchor.year }})">

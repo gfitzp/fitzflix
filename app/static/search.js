@@ -20,7 +20,7 @@
 		var activeIndex = -1;
 
 		// Invariant: the menu shows the suggestions for the text
-		// that is in the box now (#756). wanted is that text while
+		// that is in the box now. wanted is that text while
 		// the menu can open for it. An answer for an other text is
 		// old: the person typed more, cleared the box or closed the
 		// menu while the request was on its way.

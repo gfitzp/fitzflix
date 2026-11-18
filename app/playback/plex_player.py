@@ -77,8 +77,8 @@ PLAYER_NETWORKS = [
 ]
 
 # The tokens of one Home user, by the uuid of that user. The play
-# command of a non-admin carries the token of THEIR Plex Home user
-# (#653). The stream selection sync (#652) acts for every Home user.
+# command of a non-admin carries the token of THEIR Plex Home user.
+# The stream selection sync acts for every Home user.
 # Each Home user has a cache of their own. Thus, a member who changes
 # their Plex username on the Profile page gets the token of the newly
 # linked user at the next play. Nothing needs to forget. plex.tv limits the
@@ -137,15 +137,15 @@ def player_token(user):
     token. Each other user gets the token with which THEIR Plex Home
     user reaches the local server. Fitzflix matches the Home user to
     User.plex_username by username or by title. The token comes from
-    the same per-Home-user cache as the stream selection sync (#652).
+    the same per-Home-user cache as the stream selection sync.
     The server refuses the account token of the home switch itself
-    with a 401 (#653). The result is None when no Home user matches,
+    with a 401. The result is None when no Home user matches,
     or when that user is PIN-protected. A user links a Home user with
     the Plex username field on their own Profile page. The owner token
     never travels to a device that a non-admin chose. The probe of the
     Profile page only proves that something answered at the address.
-    It does not prove that a Plex player answered (security review,
-    2026-09)."""
+    It does not prove that a Plex player answered.
+    """
 
     if user.admin:
         return current_app.config["PLEX_TOKEN"]
@@ -301,7 +301,7 @@ def home_user_tokens():
 
     The token is the one that reaches the local server as that user.
     The owner and the PIN-protected users are not in the list. The
-    stream selection sync (#652) acts for each of these accounts in
+    stream selection sync acts for each of these accounts in
     turn. A user whose switch plex.tv refused is not in the list for
     this run.
     """
@@ -404,7 +404,7 @@ def _rating_key_at(sections, path):
 def _movie_rating_key(movie):
     """Return the ratingKey of the movie in the local Plex library, or None.
 
-    Invariant (#761): a film that Plex has plays, and None means that
+    Invariant: a film that Plex has plays, and None means that
     Plex lists no main-feature file of the film. Thus, the message "Plex
     does not have this movie" is true. The lookup goes by the path of
     each main-feature file. The best copy by MOVIE_BEST_ORDER comes
@@ -419,7 +419,7 @@ def _movie_rating_key(movie):
 
     # MOVIE_BEST_ORDER has no edition. The DVR and the frame game use it
     # as it is. Thus, only this query puts the plain cut before the file
-    # id, its last key (#761).
+    # id, its last key.
 
     *rank, file_id = MOVIE_BEST_ORDER
     files = (

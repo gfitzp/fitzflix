@@ -92,7 +92,7 @@ ISSUES_KEY = "fitzflix:health:issues"
 ALERTED_KEY_PREFIX = "fitzflix:health:alerted:"
 
 # The Plex libraries whose trash the refresh keeps because it holds too
-# many items (#280). The field is the library title. The value is the
+# many items. The field is the library title. The value is the
 # health message. The refresh removes the field when it empties the trash.
 
 PLEX_TRASH_HELD_KEY = "fitzflix:plex:trash-held"
@@ -121,16 +121,16 @@ def _human_size(size):
 def _live_workers(connection):
     """Find the workers from their heartbeat keys, not from the registry set of rq.
 
-    A worker that misses 1 heartbeat deadline, for example under heavy
-    load, can be removed from the rq:workers set by the registry cleanup
-    of rq. The worker never adds itself again. But it continues to work
-    and to refresh its own key. Thus, the per-worker keys with a TTL are
-    the true source for liveness.
+        A worker that misses 1 heartbeat deadline, for example under heavy
+        load, can be removed from the rq:workers set by the registry cleanup
+        of rq. The worker never adds itself again. But it continues to work
+        and to refresh its own key. Thus, the per-worker keys with a TTL are
+        the true source for liveness.
 
-    A worker that a SIGKILL stopped leaves a hash with no death field.
-    Its key lives for the full job timeout, 48 hours on the transcode
-    queue. Thus, a worker of this host whose process is gone is not live
-    (#530). Then the self-heal starts the stopped process again.
+        A worker that a SIGKILL stopped leaves a hash with no death field.
+        Its key lives for the full job timeout, 48 hours on the transcode
+        queue. Thus, a worker of this host whose process is gone is not live.
+    Then the self-heal starts the stopped process again.
     """
 
     import socket
@@ -161,7 +161,7 @@ def _live_workers(connection):
 
 
 # The worker roster of the last supervisor status that answered. A
-# timeout of supervisorctl keeps it (#571). The key has no TTL.
+# timeout of supervisorctl keeps it. The key has no TTL.
 
 EXPECTED_WORKERS_KEY = "fitzflix:health:expected-workers"
 
@@ -172,12 +172,12 @@ READ_STATUS = object()
 
 
 def expected_workers(config, connection=None, status=READ_STATUS):
-    """Return the expected worker count of each queue (#501).
+    """Return the expected worker count of each queue.
 
     Under supervisor, the roster of fitzflix_supervisor.ini applies. A
     manual layout runs as many workers as the admin wants. Then only a
     queue with no worker is a problem. A supervisorctl that timed out is
-    not a manual layout (#571). With connection, the roster of the last
+    not a manual layout. With connection, the roster of the last
     answer then stays, as for the watchers. status is a supervisor
     status that the caller already read."""
 
@@ -261,7 +261,7 @@ VOLUMES_ROOT = "/Volumes"
 
 
 def mountpoint_ok(path):
-    """Return True if a path meets the mountpoint requirement (#227).
+    """Return True if a path meets the mountpoint requirement.
 
     A path under VOLUMES_ROOT must BE a mountpoint. When a share drops,
     macOS leaves the mountpoint behind as a normal directory on the boot
@@ -285,7 +285,7 @@ def volume_alive(path, timeout=10):
     A dead SMB mount can hang stat calls instead of failing them. Thus,
     the probe runs in a daemon thread. A hang counts as dead.
 
-    A path under VOLUMES_ROOT must also BE a mountpoint (#227). statvfs
+    A path under VOLUMES_ROOT must also BE a mountpoint. statvfs
     answers for the filesystem that is behind the path at that moment.
     When a share drops, macOS leaves the mountpoint behind as a normal
     directory on the boot disk. Then statvfs succeeds immediately,
@@ -409,7 +409,7 @@ def backup_health(config):
 
 
 # The watcher count of the last supervisor status that answered. A
-# timeout of supervisorctl keeps it (follow-up #531).
+# timeout of supervisorctl keeps it.
 
 EXPECTED_WATCHERS_KEY = "fitzflix:health:expected-watchers"
 
@@ -417,12 +417,12 @@ EXPECTED_WATCHERS_KEY = "fitzflix:health:expected-watchers"
 def expected_watchers(connection, config, status=READ_STATUS):
     """Return the number of import-directory watchers that should be alive.
 
-    Under supervisor, it is the numprocs of the import program. A manual
-    layout runs plain rq workers with no observer (#531). Then it is 0.
-    A supervisorctl that timed out or answered nothing is not a manual
-    layout. Then the count of the last answer stays, with a warning
-    (follow-up #531). Before, a supervisor fault hid a blind pipeline.
-    status is a supervisor status that the caller already read."""
+        Under supervisor, it is the numprocs of the import program. A manual
+        layout runs plain rq workers with no observer. Then it is 0.
+        A supervisorctl that timed out or answered nothing is not a manual
+        layout. Then the count of the last answer stays, with a warning.
+    Before, a supervisor fault hid a blind pipeline.
+        status is a supervisor status that the caller already read."""
 
     if status is READ_STATUS:
         status = _supervisor_status(config)
@@ -472,7 +472,7 @@ def scheduler_health(connection):
 
 
 def keep_cron_registered(cron):
-    """Register the cron scheduler again if a stall lost its registration (#562).
+    """Register the cron scheduler again if a stall lost its registration.
 
     The hash of the scheduler has a TTL of 120 seconds, and the registry
     sweep drops an entry after 120 seconds with no heartbeat. A longer
@@ -672,7 +672,7 @@ def share_mounted_elsewhere(share, mount, table=None):
     dead directory on the boot disk.
 
     A remount cannot free that path while the share is still mounted in
-    a different location. Thus, the duplicate must go first (#233). Seen
+    a different location. Thus, the duplicate must go first. Seen
     live on 2026-08-25: TV Shows and Transcoded both ran at -1 paths for
     approximately 25 minutes. The recovery needed the -1 mount unmounted
     before the remount would go where it was asked to.
@@ -681,7 +681,7 @@ def share_mounted_elsewhere(share, mount, table=None):
     appears in the output of `mount` is not ours to unmount. An SMB
     device reads `//user@host/Share`, with the share name URL-encoded.
     An NFS device reads `host:/export/Share`, with the share name
-    literal (#239). The session collapse that caused this function
+    literal. The session collapse that caused this function
     occurred during an NFS test. The SMB-only match could not see the
     NFS duplicates. table is the output of mount_table, if the caller
     has it already.
@@ -729,7 +729,7 @@ def heal_mounts(dead_mounts, connection, config):
         # AutoMounter brings a dropped share back in approximately 2
         # seconds. The probe can see the drop before that. A force-unmount
         # of the healthy share then breaks the Plex streams and the
-        # library copies on it (#487).
+        # library copies on it.
 
         # The share is healthy. It must not hold the cooldown. A real
         # death some minutes later still gets its heal.
@@ -747,7 +747,7 @@ def heal_mounts(dead_mounts, connection, config):
                 f"remount {mount}"
             )
             continue
-        # The mount table tells if the path is a mountpoint (#487). A dead
+        # The mount table tells if the path is a mountpoint. A dead
         # NFS mount answers ENXIO or ETIMEDOUT to lstat, and ismount
         # reads that as "not a mountpoint". ismount is the fallback when
         # the table cannot be read.
@@ -759,7 +759,7 @@ def heal_mounts(dead_mounts, connection, config):
             mounted = any(path == mount for _, path in table)
         if mounted:
             # The volume is still mounted but dead. Unmount it before the
-            # remount. The condition is a mountpoint, not isdir (#227).
+            # remount. The condition is a mountpoint, not isdir.
             # The leftover-directory case now reaches here. There is
             # nothing to unmount then. A force-unmount of a path that is
             # not a mountpoint is a hazard. Do not make it possible.
@@ -812,8 +812,8 @@ def heal_mounts(dead_mounts, connection, config):
             )
         except (OSError, subprocess.TimeoutExpired) as e:
             # The text of the error holds the command and the URL. A URL
-            # with userinfo would reach the log and the health mail
-            # (#531). Thus, only the type of the error goes.
+            # with userinfo would reach the log and the health mail.
+            # Thus, only the type of the error goes.
             actions.append(f"failed to remount {mount}: {type(e).__name__}")
             continue
 
@@ -850,7 +850,7 @@ def probe_health(connection):
 
 
 def open_health_issues(connection):
-    """Return the messages of the open problems that health_probe stored (#767).
+    """Return the messages of the open problems that health_probe stored.
 
     The messages come in the order of their conditions. This has no guard
     for a Redis fault. In a Redis outage, the ping of system_health fails
@@ -871,8 +871,7 @@ def system_health(flask_app):
     Everything here reads Redis or the local filesystem. The
     external-service results come from the Redis hash that the
     health_probe task maintains. Thus, the render of the card never makes
-    a network call. The card lists the open problems of health_probe
-    (#767).
+    a network call. The card lists the open problems of health_probe.
     """
 
     # Lazy import: app.media.missing_files imports missing_volumes from here
@@ -889,7 +888,7 @@ def system_health(flask_app):
     db.session.execute(text("SELECT 1"))
     db_ms = round((time.perf_counter() - started) * 1000, 1)
 
-    # 1 supervisorctl run for each render (#571). The 5 second poll of
+    # 1 supervisorctl run for each render. The 5 second poll of
     # /system/metrics renders this too.
 
     status = _supervisor_status(flask_app.config)
@@ -1046,7 +1045,7 @@ def backup_database():
         if url.password:
             env["MYSQL_PWD"] = url.password
 
-        # stderr goes to a temporary file, not a pipe (#531). The pipe was
+        # stderr goes to a temporary file, not a pipe. The pipe was
         # read only after stdout ended. Warnings that fill the pipe
         # buffer then stopped mysqldump, and the backup never ended.
 
@@ -1191,8 +1190,8 @@ def backup_database():
 
             # Delete the remote backups older than the retention window.
             # The bucket keeps versions. A delete without a version id
-            # only adds a delete marker, and the dump stays in S3 Standard
-            # (#318). Thus, this deletes each old version. Then it deletes
+            # only adds a delete marker, and the dump stays in S3 Standard.
+            # Thus, this deletes each old version. Then it deletes
             # each delete marker that has no version left behind it. That
             # also removes the versions that the earlier runs left.
 
@@ -1203,7 +1202,7 @@ def backup_database():
                     f"{backup_prefix}/",
                     datetime.now(timezone.utc) - timedelta(days=retention_days),
                     # The env backup of this run stays too, whatever the
-                    # clocks say (#432).
+                    # clocks say.
                     keep={uploaded_key, env_key, f"{backup_prefix}/"} - {None},
                 )
             )
@@ -1239,7 +1238,7 @@ RESTORE_CHECK_TOLERANCE = 0.9
 
 # The time limits of the mysql program in the drill, in seconds. The
 # whole drill of Nov 1 2026 took 35 seconds. A limit stops a wait before
-# the time limit of the job, and the job then reports it (#684).
+# the time limit of the job, and the job then reports it.
 
 RESTORE_MYSQL_TIMEOUT = 15 * 60
 DROP_MYSQL_TIMEOUT = 2 * 60
@@ -1390,7 +1389,7 @@ def restore_drill():
             # The reads above keep a transaction open. It holds a lock on
             # each scratch table that it read, and the DROP on the other
             # connection waits for these locks. Thus, the drill ends it
-            # first (#684).
+            # first.
 
             try:
                 db.session.rollback()
@@ -1429,9 +1428,9 @@ ORPHAN_IGNORED_NAMES = {".DS_Store", ".localized"}
 ORPHAN_IGNORED_PREFIXES = ("._",)
 
 # A restored copy whose import name stayed taken waits under its staging
-# name for the admin (#433). The age of the file does not make it a
+# name for the admin. The age of the file does not make it a
 # leftover. Thus, the file pass keeps it. An unfinished download under
-# the same prefix is a leftover (#457). A CloudFront partial has an
+# the same prefix is a leftover. A CloudFront partial has an
 # ETag sidecar until it is complete. An S3 partial has the temporary
 # suffix of s3transfer, a dot and 8 hex digits.
 
@@ -1444,8 +1443,8 @@ S3TRANSFER_TEMP_SUFFIX = re.compile(r"\.[0-9a-fA-F]{8}$")
 # the library. Its chain or the next SQS delivery of its message places
 # it. Each round of a chain writes the sidecar again. A chain waits for
 # a volume for 1 day at most. A copy whose sidecar is older than this
-# has no owner any more, and the sweep removes it (#601). A pending
-# restore on a File row that is older than this ends too (#610).
+# has no owner any more, and the sweep removes it. A pending
+# restore on a File row that is older than this ends too.
 
 DIRECT_RESTORE_COPY_MAX_AGE_DAYS = 14
 
@@ -1463,7 +1462,7 @@ def _direct_restore_name(name):
 
 
 def _ownerless_direct_restore(dirpath, copy):
-    """Return True if a complete direct-restore copy is too old to have an owner (#601).
+    """Return True if a complete direct-restore copy is too old to have an owner.
 
     The age comes from the sidecar, which each round of a chain writes
     again. A copy with no sidecar uses its own modification time."""
@@ -1481,13 +1480,13 @@ def _ownerless_direct_restore(dirpath, copy):
 
 
 def _kept_restore_copy(dirpath, name):
-    """Return True if a .restore- file is a complete restored copy (#457).
+    """Return True if a.restore- file is a complete restored copy.
 
     A complete copy stays for its placement or for the admin. A partial
     download and its ETag sidecar are leftovers like the other hidden
     partial files. A complete copy of a modified/ or transcoded/ key
     whose sidecar is older than DIRECT_RESTORE_COPY_MAX_AGE_DAYS is a
-    leftover too (#601)."""
+    leftover too."""
 
     if not name.startswith(ORPHAN_KEPT_PREFIXES):
         return False
@@ -1511,7 +1510,7 @@ def _complete_copy(dirpath, name, read_partial_sidecar):
     """Return True if a copy has the object size that its sidecar records.
 
     The removal of a sidecar can fail after a complete download. The
-    size then shows that the copy is complete (follow-up #457)."""
+    size then shows that the copy is complete."""
 
     path = os.path.join(dirpath, name)
     _, size = read_partial_sidecar(path)
@@ -1663,7 +1662,7 @@ def cleanup_orphaned_files():
         removed = []
 
         # A conversion or a move can wait for more than 7 days. Its hidden
-        # input is not residue (#436). If the queues cannot be read, no
+        # input is not residue. If the queues cannot be read, no
         # hidden file is deleted.
 
         try:
@@ -1728,7 +1727,7 @@ def cleanup_orphaned_files():
                         )
                     removed.append(f"{path} ({_human_size(stats.st_size)})")
 
-        # A restore request with no result after the cap ends here (#610).
+        # A restore request with no result after the cap ends here.
         # The forms of its file then work again.
 
         from app.archive.restores import expire_restore_requests
@@ -1794,7 +1793,7 @@ def cleanup_orphaned_files():
         dropped_scratch_db = _drop_leftover_restore_database()
 
         # An Atmos run that broke left its workspace with a full staged
-        # copy (#505). Each worker start sweeps them too.
+        # copy. Each worker start sweeps them too.
 
         from app.media.atmos import sweep_stale_atmos_workspaces
 
@@ -1814,7 +1813,7 @@ def cleanup_orphaned_files():
             return
 
         # A site without a mail server or an admin address gets no report.
-        # The deletes are done. The task must not fail after them (#453).
+        # The deletes are done. The task must not fail after them.
 
         if not (config["MAIL_SERVER"] and config["ADMIN_EMAIL"]):
             current_app.logger.info(
@@ -1952,7 +1951,7 @@ HEALTH_PROBES = (
         ),
     ),
     # Plex answers /identity with no token. The library list needs the
-    # token. Thus, the probe also finds a token that Plex refuses (#660).
+    # token. Thus, the probe also finds a token that Plex refuses.
     (
         "Plex",
         lambda config: bool(config["PLEX_URL"] and config["PLEX_TOKEN"]),
@@ -1984,7 +1983,7 @@ def _run_probe(check, config):
         # requests puts the full URL into the message of a fault. The
         # TMDB key is a query parameter of that URL. The detail goes to
         # Redis, the System page and the health email. Thus, the key is
-        # removed before the cut, so a partial key cannot stay (#529).
+        # removed before the cut, so a partial key cannot stay.
 
         detail = SecretRedactor(config).redact(f"{type(e).__name__}: {e}")
         ok, detail = False, detail[:200]
@@ -2102,7 +2101,7 @@ def _criterion_age(config, redis, seen):
 def _criterion_issues(age, config):
     """Yield the condition and the message of old Criterion releases.
 
-    The weekly fetch failed 2 times or more (#283). The page still works
+    The weekly fetch failed 2 times or more. The page still works
     from the old copy."""
 
     if age is not None and age > CRITERION_STALE_DAYS:
@@ -2113,14 +2112,14 @@ def _criterion_issues(age, config):
 
 
 def _plex_trash_issues(held, config):
-    """Yield (condition, message) for each Plex library that keeps its trash (#280)."""
+    """Yield (condition, message) for each Plex library that keeps its trash."""
 
     for title, message in held.items():
         yield f"plex-trash:{title.decode()}", message.decode()
 
 
 def _digest(config, redis, seen):
-    """Return the conditions of the repeated warnings of the nightly digest (#265).
+    """Return the conditions of the repeated warnings of the nightly digest.
 
     A warning that repeats all day is a problem that sends no email of
     its own. Each flagged signature is 1 condition. Thus, it is
@@ -2207,7 +2206,7 @@ def health_probe():
 
         # Collect every current problem as condition -> message.
 
-        # A collector that raises is a problem of its own (#391). The
+        # A collector that raises is a problem of its own. The
         # run goes on, so the other problems, the recoveries and the
         # mail are still recorded.
 
@@ -2246,7 +2245,7 @@ def health_probe():
         # appears, and once a day while it continues. The runs between
         # them log nothing. Thus, a problem that ended yesterday does not
         # read as a live failure every 10 minutes. The System page lists
-        # the open problems (#767).
+        # the open problems.
 
         for message in report.values():
             current_app.logger.warning(f"Health: {message}")
@@ -2282,7 +2281,7 @@ def health_probe():
                 html_body=None,
             )
 
-        # The reminder keys hold with or without mail (#531). An install
+        # The reminder keys hold with or without mail. An install
         # with no MAIL_SERVER or ADMIN_EMAIL logged each open problem at
         # WARNING every 10 minutes.
 

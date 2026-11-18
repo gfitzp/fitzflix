@@ -13,7 +13,7 @@ from app.media import videos
 from app.media.importing import space
 
 # A staged remux holds the staged source and the output on the local
-# disk at the same time (#298).
+# disk at the same time.
 
 STAGED_REMUX_FACTOR = 2.2
 
@@ -47,7 +47,7 @@ def _run_mkvmerge(command, job, name, activity):
 
 
 class LibraryFileChanged(RuntimeError):
-    """An other program changed a library file during a rewrite of it (#732, #741)."""
+    """An other program changed a library file during a rewrite of it."""
 
     def __init__(self, library_path):
         super().__init__(
@@ -68,7 +68,7 @@ def refuse_changed_library_file(stamp, library_path):
     """Raise LibraryFileChanged if a library file is not the file of the stamp.
 
     Invariant: a rewrite never replaces a library file that changed
-    after the rewrite read it (#732, #741). The title lock stops each
+    after the rewrite read it. The title lock stops each
     job of Fitzflix for the minutes or hours of a rewrite. It does not
     stop Radarr or Sonarr. They put an upgrade at the same path, and
     the import of that file waits for the lock. The copy that the
@@ -99,7 +99,7 @@ REMUX_RESERVATION_TRIES = 3
 
 
 def remux_file(file_path, build_command, job, name, activity, before_replace=None):
-    """Remux a Matroska file and replace it with the result (#298).
+    """Remux a Matroska file and replace it with the result.
 
     build_command(source, output) returns the mkvmerge command. A file on
     another volume (a library file on the NAS) is copied to staging. The
@@ -113,12 +113,12 @@ def remux_file(file_path, build_command, job, name, activity, before_replace=Non
 
     before_replace runs right before the rename over the file. A library
     rewrite passes confirm_rewrite. That call stops the rename when the
-    record went or moved during the remux (#726). It also marks the
-    archive stale before the bytes change (#517). A raise of
+    record went or moved during the remux. It also marks the
+    archive stale before the bytes change. A raise of
     before_replace removes the result.
 
     The remux takes the stamp of the file before it reads it. A file
-    that an other program changed since then is not replaced (#741).
+    that an other program changed since then is not replaced.
     That check comes before before_replace. Thus, a file that the remux
     does not replace gets no stale flag."""
 
@@ -134,8 +134,8 @@ def remux_file(file_path, build_command, job, name, activity, before_replace=Non
     reservation = f"remux:{staged_name}"
     staged = not _on_volume_of(file_path, staging_dir)
     if staged:
-        # A busy reservation lock (an import burst) is no lack of space
-        # (#569). The reservation tries again. Each try waits for the
+        # A busy reservation lock (an import burst) is no lack of space.
+        # The reservation tries again. Each try waits for the
         # lock first.
         for _ in range(REMUX_RESERVATION_TRIES):
             status = space.reserve_staging(
@@ -148,7 +148,7 @@ def remux_file(file_path, build_command, job, name, activity, before_replace=Non
                 break
         if status == "lock":
             # The scan, the audio plan and the post-reorder step have no
-            # retry for this fault (#569 follow-up). Thus, the remux runs
+            # retry for this fault. Thus, the remux runs
             # in place after the tries, as it does for a lack of space.
             current_app.logger.warning(
                 f"'{name}' The staging reservation lock stays busy. "
@@ -164,8 +164,8 @@ def remux_file(file_path, build_command, job, name, activity, before_replace=Non
     if not staged:
         # The in-place remux writes a second copy next to the file. Check
         # the space first. A remux that fails with a full disk fills the
-        # shared SSD to 0 bytes for a moment, and the other imports fail
-        # (#262). A caller that waits for space retries.
+        # shared SSD to 0 bytes for a moment, and the other imports fail.
+        # A caller that waits for space retries.
 
         needed = os.path.getsize(file_path) + IN_PLACE_REMUX_MARGIN
         free = shutil.disk_usage(directory).free
@@ -198,7 +198,7 @@ def remux_file(file_path, build_command, job, name, activity, before_replace=Non
         os.remove(staged_source)
 
         # The check comes before the long copy back, and again right
-        # before the rename (#741).
+        # before the rename.
 
         refuse_changed_library_file(stamp, file_path)
         videos.copy_with_progress(
@@ -215,7 +215,7 @@ def remux_file(file_path, build_command, job, name, activity, before_replace=Non
     finally:
         # The rename can be done when this cleanup runs. A fault here must
         # not hide that fact from the caller. Thus, a stray that stays
-        # only logs a warning (#582)
+        # only logs a warning
 
         for path in (staged_source, staged_output):
             try:
@@ -231,7 +231,7 @@ def remux_file(file_path, build_command, job, name, activity, before_replace=Non
 
 
 def _release_reservation_quietly(release, reservation, name):
-    """Release a staging reservation. A fault only logs a warning (#596).
+    """Release a staging reservation. A fault only logs a warning.
 
     The release runs in a finally after the rename into the library. A
     Redis fault there hid from the caller that the file changed. Then no
@@ -254,7 +254,7 @@ def stop_process(process):
 
     A task can fail during the read loop of a child. Examples are a job
     timeout and a Redis fault in report_progress. The child must not
-    then write into an output that the cleanup deletes (#424)."""
+    then write into an output that the cleanup deletes."""
 
     if process is not None and process.poll() is None:
         process.kill()

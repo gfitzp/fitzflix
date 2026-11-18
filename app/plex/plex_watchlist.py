@@ -53,7 +53,7 @@ PAGE_SIZE = 100
 # the snapshot holds more than ANOMALY_FLOOR films (_is_short). A real
 # mass removal gives the same short listing on the next run. Thus, the
 # sync accepts a short listing when SHRINK_KEY holds the same listing
-# from the run before. An EMPTY short listing never applies (#701).
+# from the run before. An EMPTY short listing never applies.
 # Each glitch gives the same empty listing, so a repeat proves nothing.
 #
 # The rule has 2 limits. A snapshot of ANOMALY_FLOOR films or fewer has
@@ -222,7 +222,7 @@ def _read_listing(fitzflix_ids, snapshot):
     back. Thus, an offset walk across the change can skip an item. An
     empty page before the walk reaches the totalSize of page 1 raises
     ListingAnomaly. A first page with items and no totalSize also
-    raises it, as does a totalSize under the items of page 1 (#544)."""
+    raises it, as does a totalSize under the items of page 1."""
 
     films = {}
     start = 0
@@ -245,7 +245,7 @@ def _read_listing(fitzflix_ids, snapshot):
                     raise ListingAnomaly("page 1 has items but no totalSize")
                 return films
             total = int(size)
-            # A count under the items of page 1 is wrong (#544). Then a
+            # A count under the items of page 1 is wrong. Then a
             # short page passed as complete, and its missing films became
             # removals.
             if len(page) > total:
@@ -336,7 +336,7 @@ def _short_listing(plex, snapshot):
 
     The run after the first short listing accepts the same listing.
     That is a real mass removal on Plex. An empty short listing stops
-    each run and is never stored as a listing to accept (#701). All
+    each run and is never stored as a listing to accept. All
     empty answers are the same, so a repeat does not prove a removal."""
 
     redis = current_app.redis
@@ -600,7 +600,7 @@ def sync_plex_watchlist():
             # A short or empty answer is an anomaly, as on the first
             # read. The reference is the films that the run expects on
             # Plex now. A short answer must not mark the pushes as
-            # phantoms (#701).
+            # phantoms.
 
             if landed is not None and _is_short(landed, synced):
                 current_app.logger.warning(

@@ -50,14 +50,14 @@ from app.metadata.tmdb_refresh import tmdb_refresh_status
 def tv_library():
     """Show the worst quality in each season for each TV show in the library.
 
-    ?q= narrows the listing inside the TV library only (#210). The
+    ?q= narrows the listing inside the TV library only. The
     list holds only the series whose title or TMDB name matches. The
     search does not read the titles of episodes. An episode title must
     never pull its series into the list (Glenn: a search for "venture"
     must not show Bob's Burgers)."""
 
     # The grade of each season is its worst episode. Each episode number
-    # of a multi-episode file counts (#479). The In-library badge and the
+    # of a multi-episode file counts. The In-library badge and the
     # TV shopping list read the same grade.
 
     upgrade_threshold = _upgrade_threshold()
@@ -154,7 +154,7 @@ def restore_cost_estimate(files, bulk=False):
             current_app.config["AWS_RESTORE_PER_1K_REQUEST_COST"] / 1000
         )
         restore_per_gb_cost = current_app.config["AWS_RESTORE_PER_GB_COST"]
-    # A conversion restores its smaller transcoded/ copy (#299).
+    # A conversion restores its smaller transcoded/ copy.
 
     def restore_bytes(file):
         transcoded_key = getattr(file, "aws_transcoded_key", None)
@@ -183,13 +183,13 @@ def tv(series_id):
     for file in tv.files:
         seasons.append(file.season)
 
-    # A set has no order. Thus, the sort comes after the dedup (#313).
+    # A set has no order. Thus, the sort comes after the dedup.
 
     seasons = sorted(set(seasons))
 
     # The series management forms (restore, delete, TMDB) are admin
-    # tools, like the Movie Data section of the movie page (#186
-    # follow-up). The template hides them. They post to tv_restore,
+    # tools, like the Movie Data section of the movie page.
+    # The template hides them. They post to tv_restore,
     # tv_delete, and tv_tmdb, which only admins can reach.
 
     # A restore costs real money. Thus, the page shows an estimate.
@@ -238,8 +238,8 @@ def tv(series_id):
         tv=tv,
         tmdb_refresh_state=tmdb_refresh_state,
         seasons=seasons,
-        # The In-library badge of the page, in the colors of the TV card
-        # (#191): amber when a season is worth an upgrade, green when
+        # The In-library badge of the page, in the colors of the TV card:
+        # amber when a season is worth an upgrade, green when
         # every season is settled. A series with no files shows none.
         in_library=bool(seasons),
         upgradable=series_upgradable([tv.id]).get(tv.id, False),
@@ -279,7 +279,7 @@ def season(series_id, season):
     files = _season_files(series_id, season)
 
     # The restore of the best archived files of this season is an admin
-    # tool, like on the series page (#186 follow-up). The season page
+    # tool, like on the series page. The season page
     # itself stays open to all users for its episode listing. A restore
     # costs real money. Thus, the page shows an estimate.
 
@@ -304,7 +304,7 @@ def _archived_best_holders(pairs):
     """Return the archived files that are the best holder of an episode number.
 
     pairs holds (File, RefQuality) pairs. A span that is the only holder
-    of E02 to E06 beside a better E01 single is restored too (#479)."""
+    of E02 to E06 beside a better E01 single is restored too."""
 
     holders = {file.id: file for file, _ in best_episode_holders(pairs).values()}
     return sorted(
@@ -328,7 +328,7 @@ def _season_files(series_id, season):
     """Return (File, TVSeries, RefQuality, rank) for each file of a season.
 
     rank is 1 for a file that is the best holder of at least 1 episode
-    number (#479). A span competes with the singles of each episode that
+    number. A span competes with the singles of each episode that
     it holds. The other files get rank 2 or more, in TV_BEST_ORDER."""
 
     rows = (
@@ -378,7 +378,7 @@ def tv_restore(series_id):
     """Request a restore of each archived episode of a series, for an admin.
 
     A restore costs real money. Thus, the form needs a proof of identity,
-    the password or a passkey (#669)."""
+    the password or a passkey."""
 
     tv = TVSeries.query.filter_by(id=series_id).first_or_404()
     series_restore_form = SeriesRestoreForm()
@@ -426,7 +426,7 @@ def tv_delete(series_id):
         return redirect(url_for("main.tv", series_id=tv.id))
 
     # The delete holds the title lock of each episode. A task that holds
-    # one of them refuses the delete (#718).
+    # one of them refuses the delete.
 
     episodes = sorted(
         {
@@ -471,7 +471,7 @@ def _delete_series(tv, series_id, title):
             local_copies.append((file.file_path, file.id))
             db.session.delete(file)
 
-        # The archive-only originals of the series go with it (#464). With
+        # The archive-only originals of the series go with it. With
         # ON DELETE SET NULL, they stayed with no owner and kept claiming
         # their keys. Their S3 objects go after the commit, as above.
 
@@ -487,11 +487,11 @@ def _delete_series(tv, series_id, title):
         flash(f"Unable to delete TV series '{title}'!", "danger")
         return redirect(url_for("main.tv", series_id=series_id))
 
-    # Delete the library files only after the commit (#513). A failed
+    # Delete the library files only after the commit. A failed
     # commit keeps every row. Thus, it must also keep every file. A row
     # with no file is a ghost. A file that the share does not remove
     # stays with no record. No sweep removes it, and the weekly sync
-    # imports it again (#745). Thus, the page names each such file.
+    # imports it again. Thus, the page names each such file.
 
     left = [
         file_path
@@ -517,7 +517,7 @@ def _delete_series(tv, series_id, title):
     for leftover_dir in sorted(leftover_dirs):
         file_pages._after_commit(clear_leftover_directory, leftover_dir)
 
-    # The custom poster tree of each deleted file goes too (#463).
+    # The custom poster tree of each deleted file goes too.
 
     for file_id in file_ids:
         file_pages._after_commit(remove_custom_artwork, "file", file_id)
@@ -542,7 +542,7 @@ def tv_tmdb(series_id):
 
     tv = TVSeries.query.filter_by(id=series_id).first_or_404()
 
-    # The form to detach a series from TMDB completely (#207). It is for a
+    # The form to detach a series from TMDB completely. It is for a
     # series that TMDB has no entry for, or an id that TMDB deleted later.
 
     tmdb_remove_form = TMDBRemoveForm()
@@ -567,7 +567,7 @@ def tv_tmdb(series_id):
 
     # A blank id asks TMDB to search by title, and takes the first hit. On
     # a series that is already matched, this silently points the series at
-    # a different show. That is the merge reported in #207. A detached
+    # a different show, and the 2 series merge. A detached
     # series is guarded too. A blank refresh must not silently undo the
     # detachment with a title search.
 
@@ -585,7 +585,7 @@ def tv_tmdb(series_id):
     # previous removal. Only an actual id clears the flag. A blank submit
     # cannot get here on a detached record, because of the guard. The
     # apply clears the flag when TMDB sends data for the id. A wrong id
-    # leaves the record detached (#514).
+    # leaves the record detached.
 
     # Add a task to the fitzflix-sql queue to check TMDB and update the
     # database. Add it to the front of the queue, because the user added

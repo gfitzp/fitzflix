@@ -96,7 +96,7 @@
 	}
 
 	// The poll stops for good when the answer is not queue data
-	// (#348). An expired session answers 401 or redirects to the
+	//. An expired session answers 401 or redirects to the
 	// login page. The next page load starts the poll again. A
 	// network failure is not a stop. The poll tries again
 

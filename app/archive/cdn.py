@@ -143,8 +143,8 @@ def cdn_download(key, destination, progress, expected_size=0, etag=None):
     errors escape as they are.
 
     A resume sends If-Range with the ETag. A response whose ETag is not
-    etag removes the partial and raises CdnStaleObject (#599). The
-    caller then changes to the S3 transfer (#607).
+    etag removes the partial and raises CdnStaleObject. The
+    caller then changes to the S3 transfer.
     """
 
     url = cdn_signed_url(key)
@@ -153,7 +153,7 @@ def cdn_download(key, destination, progress, expected_size=0, etag=None):
     same_object = bool(etag) and _partial_etag(destination) == etag
     if have and expected_size and have < expected_size and same_object:
         # If-Range makes CloudFront send the whole object (200) when its
-        # copy is not the version of the partial (#599).
+        # copy is not the version of the partial.
         headers["Range"] = f"bytes={have}-"
         headers["If-Range"] = f'"{_bare_etag(etag)}"'
     else:
@@ -169,7 +169,7 @@ def cdn_download(key, destination, progress, expected_size=0, etag=None):
     ) as response:
         # CloudFront can serve a cached copy of an older version of the
         # key with the same length. The S3 HEAD names the version to
-        # place. A different ETag refuses the body (#599).
+        # place. A different ETag refuses the body.
         served = _bare_etag(response.headers.get("ETag"))
         if (
             response.status_code in (200, 206)
@@ -186,7 +186,7 @@ def cdn_download(key, destination, progress, expected_size=0, etag=None):
             mode, written = "ab", have
             progress(have)
             # The orphan sweep reads the age of the sidecar. A resumed
-            # chain keeps it fresh (follow-up #457).
+            # chain keeps it fresh.
             _touch_partial_etag(destination)
         elif response.status_code == 200:
             mode, written, have = "wb", 0, 0
@@ -217,10 +217,10 @@ def cdn_download(key, destination, progress, expected_size=0, etag=None):
 
 
 class CdnStaleObject(RuntimeError):
-    """CloudFront sent a version of the key that is not the version of the S3 HEAD (#599).
+    """CloudFront sent a version of the key that is not the version of the S3 HEAD.
 
     The partial download is gone. aws_download continues with the S3
-    transfer (#607)."""
+    transfer."""
 
 
 def _bare_etag(etag):
@@ -245,8 +245,8 @@ def read_partial_sidecar(destination):
     """Return (etag, object size) from the sidecar of a download.
 
     Each value is None when it is not known. The first line is the ETag.
-    The second line is the object size, if the download knew it. A
-    sidecar from before #610 can have a third line. It has no use now."""
+    The second line is the object size, if the download knew it. An
+    old sidecar can have a third line. It has no use now."""
 
     try:
         with open(f"{destination}.etag") as sidecar:
@@ -271,7 +271,7 @@ def _write_partial_etag(destination, etag, size=None):
     """Record the ETag and the size of the object that a download writes to destination.
 
     The orphan sweep compares the size with the file. A complete copy
-    whose sidecar stayed is then not a partial (follow-up #457)."""
+    whose sidecar stayed is then not a partial."""
 
     if not etag:
         _remove_partial_etag(destination)

@@ -1,4 +1,4 @@
-"""Add an E-AC-3 Atmos twin to each TrueHD Atmos track (#55b).
+"""Add an E-AC-3 Atmos twin to each TrueHD Atmos track.
 
 Apple TV clients cannot pass through lossless TrueHD. Thus, the Atmos
 mix of a disc plays without its spatial layer. Thus, each TrueHD Atmos
@@ -262,7 +262,7 @@ def build_remux_command(
     the default-track convention. dropped_text_orders are the subtitle
     tracks with zero elements. The command leaves them out. Before, a
     second in-place remux removed them and needed a third copy of
-    space (#518).
+    space.
     """
 
     source_file_index = len(inserts)
@@ -377,7 +377,7 @@ def _run_step(command, job, basename, description, ok_returncodes=(0,)):
                     job.save_meta()
     except BaseException:
         # The child must not keep writing into a workspace that the
-        # cleanup removes (#499).
+        # cleanup removes.
         stop_process(process)
         raise
     videos.wait_for_subprocess(process, ok_returncodes=ok_returncodes)
@@ -408,7 +408,7 @@ def _cleanup_s3_prefix(s3_client, bucket, prefix):
 
 
 class FinishInterrupted(Exception):
-    """A transient fault stopped the finish before the library file changed (#502).
+    """A transient fault stopped the finish before the library file changed.
 
     The download, the remux and the library copy can fail for a short
     time (a dead remount, a network fault). A later try can succeed.
@@ -428,8 +428,8 @@ def _transient_step(step):
 
     A tool that exits with an error (corrupt input) gives the same error
     again. Thus, its error is final. Only a tool that a stop signal ended
-    can try again (#502). A lost database connection at the stale flag
-    of the library copy is transient as well (#561 follow-up)."""
+    can try again. A lost database connection at the stale flag
+    of the library copy is transient as well."""
 
     import botocore.exceptions
     from sqlalchemy.exc import OperationalError
@@ -494,13 +494,13 @@ def maybe_enqueue_atmos_supplement(file_id, staged_source=None, queue=None):
     first job of the supplement on queue. The default is the import
     queue, for the library sweep of "flask audio atmos". The import
     gives the handoff queue. The file is already in the pipeline. Thus,
-    its twin does not wait behind the new imports (Glenn, 2026-10-17).
+    its twin does not wait behind the new imports.
     The run is 3 jobs.
     atmos_supplement_task decodes the track and submits it to
     MediaConvert. atmos_check_task asks MediaConvert about the encode
     every 2 minutes. atmos_finish_task muxes the twin in and moves the
     file into the library. Thus, no worker waits on MediaConvert, and
-    more than 1 film can encode at a time (Glenn, 2026-10-15).
+    more than 1 film can encode at a time.
 
     staged_source is the staged copy of a new import (staged_handoff).
     The job starts from it and does not read the library file back.
@@ -527,7 +527,7 @@ def maybe_enqueue_atmos_supplement(file_id, staged_source=None, queue=None):
             return False
 
     # A finished job under the fixed id gives its expiry to a new job
-    # under the same id (#504). The queued job then expires before a
+    # under the same id. The queued job then expires before a
     # worker takes it. A live job keeps the id.
 
     if not free_job_id("app.media.atmos.atmos_supplement_task", job_id):
@@ -615,7 +615,7 @@ def atmos_supplement_task(file_id, staged_source=None):
         if not lock:
             return True
 
-        # A pending restore of the file refuses the supplement (#610).
+        # A pending restore of the file refuses the supplement.
 
         refused = refuse_while_restore_pending(file)
         if refused:
@@ -627,7 +627,7 @@ def atmos_supplement_task(file_id, staged_source=None):
             return False
 
         # A worker that dies takes the lock with it for 2 days. The note
-        # lets the reclaim of the dead job release it (#733).
+        # lets the reclaim of the dead job release it.
 
         _note_lock(lock)
 
@@ -679,7 +679,7 @@ def atmos_supplement_task(file_id, staged_source=None):
 
 
 def _note_lock(lock):
-    """Keep the title lock of the first job in Redis for the reclaim (#733).
+    """Keep the title lock of the first job in Redis for the reclaim.
 
     This is best effort. A fault here must not stop the run."""
 
@@ -748,8 +748,8 @@ def _atmos_prepare(file_id, phases, staged_source=None):
         discard_staged_source(staged_source)
     copies = 1 if use_staged else 2
 
-    # The stamp of the file that the run copies. The finish compares it
-    # (#732). A change during the copy gives a different stamp there.
+    # The stamp of the file that the run copies. The finish compares it.
+    # A change during the copy gives a different stamp there.
 
     stamp = library_stamp(file_path)
     needed = copies * stamp["size"] + WORKSPACE_HEADROOM_BYTES
@@ -791,7 +791,7 @@ def _atmos_prepare(file_id, phases, staged_source=None):
         if not wanting:
             # The stored rows said that a twin is missing, but the file
             # has its twins. A finish that failed after its rename leaves
-            # this state (#503). The rows follow the staged copy now.
+            # this state. The rows follow the staged copy now.
             # Without this, each sweep copied the whole file again.
 
             current_app.logger.info(
@@ -818,7 +818,7 @@ def _atmos_prepare(file_id, phases, staged_source=None):
             thd_path = os.path.join(workspace, f"track{streamorder}.thd")
             phases.enter("Decoding TrueHD")
             # mkvextract exits 1 after a warning when the extraction
-            # continued, as the other mkvtoolnix calls accept (#518)
+            # continued, as the other mkvtoolnix calls accept
             _run_step(
                 [
                     current_app.config["MKVEXTRACT_BIN"],
@@ -881,7 +881,7 @@ def _atmos_prepare(file_id, phases, staged_source=None):
             )
             mc_job_id = mc_job["Job"]["Id"]
 
-            # Record the job before the removes (#504). A fault in a
+            # Record the job before the removes. A fault in a
             # remove must still cancel the encode. Else it bills to the
             # end and writes into a prefix that the cleanup emptied.
 
@@ -910,7 +910,7 @@ def _atmos_prepare(file_id, phases, staged_source=None):
     return {
         "file_id": file.id,
         "basename": basename,
-        # The trail of the file is keyed by its import name (#649).
+        # The trail of the file is keyed by its import name.
         "trail_basename": file.untouched_basename or basename,
         "workspace": workspace,
         "staging_source": staging_source,
@@ -952,7 +952,7 @@ def _start_checks(state, lock):
         )
         _book_check(state, lock, 0, None)
     except Exception:
-        # No check job owns the run (#518). The encodes billed on, the
+        # No check job owns the run. The encodes billed on, the
         # masters and the workspace stayed, and the chain key refused a
         # new run and the workspace sweep for 2 days. The caller releases
         # the lock and queues the early-end archive.
@@ -995,7 +995,7 @@ def _close_run(state, lock, ended_early=True):
     """Release the title lock and remove the workspace and the S3 scratch area.
 
     A run that ended before its archive step queues the archive of a
-    conversion (#505). The import left that upload to the run. The
+    conversion. The import left that upload to the run. The
     upload takes the title lock. Thus, it is queued after the release."""
 
     shutil.rmtree(state["workspace"], ignore_errors=True)
@@ -1014,7 +1014,7 @@ def _close_run(state, lock, ended_early=True):
 
 
 def archive_after_early_end(file_id):
-    """Queue the transcoded/ archive of a conversion whose Atmos run ended early (#505).
+    """Queue the transcoded/ archive of a conversion whose Atmos run ended early.
 
     The import skips that upload while an Atmos job is queued. The run
     archives the file at its end. Some runs end before that point: no
@@ -1052,7 +1052,7 @@ STALE_WORKSPACE_SECONDS = 24 * 3600
 
 
 def sweep_stale_atmos_workspaces():
-    """Remove each staging/atmos-<id> workspace that no run owns (#505). Return the paths.
+    """Remove each staging/atmos-<id> workspace that no run owns. Return the paths.
 
     A run owns its workspace while its chain key exists. It also owns it
     while the title lock of its file is held (the decode before the
@@ -1114,7 +1114,7 @@ def atmos_check_task(state, lock, checks=0):
     queues atmos_finish_task. A network error only books the next
     check. An encode that fails, or a run longer than
     MEDIACONVERT_CHECK_LIMIT checks, ends the run. Any other fault
-    books the next check too (#505). Without it, the chain had no owner:
+    books the next check too. Without it, the chain had no owner:
     the lock, the encodes and the workspace stayed for days."""
 
     with app.app_context():
@@ -1220,17 +1220,17 @@ def atmos_finish_task(state, lock, finish_retries=0):
     This is the last of the 3 jobs. It releases the title lock and
     removes the workspace and the S3 scratch area. It closes the chips
     of the first job. A transient fault before the library file changes
-    books the finish again (#502). The retry keeps the lock, the
+    books the finish again. The retry keeps the lock, the
     workspace and the encode. finish_retries counts the retries. A
     library file that an other program changed during the run ends the
-    run with a warning, and the file stays (#732)."""
+    run with a warning, and the file stays."""
 
     with app.app_context():
         phases = _trail_phases(state, "Encoding E-AC-3 Atmos")
         try:
             result = _atmos_finish(state, phases)
         except LibraryFileChanged as error:
-            # Radarr or Sonarr put an other file at the path (#732). The
+            # Radarr or Sonarr put an other file at the path. The
             # import of that file waits for the lock of this run. It
             # catalogs the file and starts a run for it. Thus, this run
             # queues no archive of the file.
@@ -1250,7 +1250,7 @@ def atmos_finish_task(state, lock, finish_retries=0):
             # The first try can have set the stale flag before its rename
             # failed. The file of an other program is not behind its
             # archive. Thus, the flag goes back to its value before the
-            # finish, under the lock of the run (#762). The own result
+            # finish, under the lock of the run. The own result
             # keeps the flag.
 
             if not own_result:
@@ -1334,7 +1334,7 @@ def _remux_twins(state, phases, inserts, job):
 
     Return (audio tracks, subtitle tracks) of the output. The verified
     output takes the name of the staged copy, and state["remuxed"]
-    becomes True. A tool or I/O fault raises FinishInterrupted (#502). A
+    becomes True. A tool or I/O fault raises FinishInterrupted. A
     failed verification raises RuntimeError."""
 
     basename = state["basename"]
@@ -1368,7 +1368,7 @@ def _remux_twins(state, phases, inserts, job):
             else:
                 text_orders.append(int(track_order))
 
-    # The mux leaves out each zero-element subtitle track (#518). A
+    # The mux leaves out each zero-element subtitle track. A
     # subtitle track with an unknown id makes the selection unsafe, as
     # in remove_empty_subtitle_tracks. Then every track stays.
 
@@ -1453,7 +1453,7 @@ def _remux_twins(state, phases, inserts, job):
     with _transient_step("remux"):
         os.replace(staging_output, staging_source)
 
-    # A retry of the finish starts after this point (#502). The staged
+    # A retry of the finish starts after this point. The staged
     # copy is the verified output now.
 
     state["remuxed"] = True
@@ -1470,7 +1470,7 @@ def _atmos_finish(state, phases):
     if file is None:
         return True
     # The stale flag before the first finish. A retry keeps the value of
-    # the first try, whose flag can be on now (#762).
+    # the first try, whose flag can be on now.
     state.setdefault("stale_before", bool(file.aws_stale))
     basename = state["basename"]
     file_path = os.path.join(current_app.config["LIBRARY_DIR"], file.file_path)
@@ -1484,7 +1484,7 @@ def _atmos_finish(state, phases):
     final_staging = staging_source
     try:
         if state.get("remuxed"):
-            # A retry after the remux (#502). The staged copy is the
+            # A retry after the remux. The staged copy is the
             # verified output already.
             new_audio_tracks = scan.get_audio_tracks_from_file(final_staging)
             new_subtitle_tracks = scan.get_subtitle_tracks_from_file(final_staging)
@@ -1536,7 +1536,7 @@ def _atmos_finish(state, phases):
         with _transient_step("library copy"):
             try:
                 # The check comes before the long copy, and again right
-                # before the rename (#732).
+                # before the rename.
 
                 refuse_changed_library_file(state.get("library"), file_path)
                 videos.copy_with_progress(
@@ -1548,7 +1548,7 @@ def _atmos_finish(state, phases):
                 )
 
                 # A stop between the rename and the commit leaves the
-                # twin in the library and the old rows (#561). The flag
+                # twin in the library and the old rows. The flag
                 # makes the weekly sync upload the file. A good archive
                 # below clears it.
 
@@ -1586,8 +1586,8 @@ def _atmos_finish(state, phases):
         db.session.commit()
     except Exception:
         # The library file has the twins, and the rows keep the old
-        # layout. A scan reads the rows from the file (#592). The flag
-        # before the rename marked the archive stale (#503, #615).
+        # layout. A scan reads the rows from the file. The flag
+        # before the rename marked the archive stale.
 
         current_app.logger.error(traceback.format_exc())
         db.session.rollback()
@@ -1596,17 +1596,17 @@ def _atmos_finish(state, phases):
 
     # The film gained a track under a path that Plex already knows. Thus,
     # nothing tells Plex to look again until its next scan. Ask for the
-    # analysis now instead (#194).
+    # analysis now instead.
 
     enqueue_plex_analyze(file_path)
 
     # The supplemented library file goes to modified/, or to transcoded/
-    # for a conversion (#299). The rip in untouched/ never changes. A
+    # for a conversion. The rip in untouched/ never changes. A
     # restore from modified/ goes straight into the library. Thus, it never
     # pays for a second MediaConvert run (Glenn). The upload reads the
     # staging copy, not the library share. The library replacement above
     # is already committed. Thus, an upload failure fails the job. The
-    # flag before the rename stays, and the sync uploads the file (#615).
+    # flag before the rename stays, and the sync uploads the file.
 
     if get_setting("ARCHIVE_ORIGINAL_MEDIA"):
         phases.enter("Archiving to S3")

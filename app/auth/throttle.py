@@ -1,4 +1,4 @@
-"""Throttle failed sign-ins and password-reset requests (#263).
+"""Throttle failed sign-ins and password-reset requests.
 
 The counters live in Redis. There are 2 kinds of sign-in lock:
 

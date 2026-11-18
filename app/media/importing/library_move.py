@@ -33,7 +33,7 @@ app = LocalProxy(get_app)
 
 
 def _plan_conversion_or_reject(file_path, file_details, max_height):
-    """Return the conversion plan of an import, None, or False after a reject (#292).
+    """Return the conversion plan of an import, None, or False after a reject.
 
     A conversion needs ARCHIVE_ORIGINAL_MEDIA. The library gets only the
     conversion. Thus, without the archive, Fitzflix would lose the only
@@ -60,7 +60,7 @@ def _plan_conversion_or_reject(file_path, file_details, max_height):
             return plan
 
     # The notification is the alert. An ERROR record would mail the admin
-    # a second time (#453).
+    # a second time.
     current_app.logger.warning(f"'{basename}' rejected: {reason}")
     filenames.move_to_rejects(file_path, "conversion not possible")
     notify_admin(
@@ -136,8 +136,7 @@ def inspect_localized_file(file_path, container, job=None):
 
             videos.wait_for_subprocess(mkvpropedit_process, ok_returncodes=(0, 1))
 
-        # The 2 spellings of a dual-code language are the same language
-        # (#423).
+        # The 2 spellings of a dual-code language are the same language.
 
         native_language = current_app.config["NATIVE_LANGUAGE"]
 
@@ -202,7 +201,7 @@ def move_localized_file(
     through to finalize.
 
     A library volume without space for the copy makes the task wait. The
-    output stays on staging, and the task keeps the title lock (#262).
+    output stays on staging, and the task keeps the title lock.
 
     After a copy to another volume, the output stays on staging until
     finalize_localization renames the copy into place. An unstable NFS
@@ -210,7 +209,7 @@ def move_localized_file(
     Then finalize gives the copy back to this task. vanished_retries
     counts those returns.
 
-    If another task holds the title lock, the copy waits (#339). Then
+    If another task holds the title lock, the copy waits. Then
     neither this task nor finalize writes the files of the title.
     """
 
@@ -220,7 +219,7 @@ def move_localized_file(
             current_app.config["LIBRARY_DIR"], file_details.get("dirname")
         )
 
-        # Every retry of the copy carries all 4 counters (#351). Each
+        # Every retry of the copy carries all 4 counters. Each
         # retry changes only its own counter.
 
         move_args = (source_path, file_details, lock, hidden_output_file)
@@ -262,7 +261,7 @@ def move_localized_file(
             """Book the copy again after SPACE_WAIT. Keep the title lock.
 
             If another task holds the title lock, the copy waits for the
-            lock instead (#353)."""
+            lock instead."""
 
             if not localization.handoff(chain._hold_title_lock, lock, basename):
                 return defer()
@@ -271,7 +270,7 @@ def move_localized_file(
             )
 
             # The waiting retry names the localized file. Thus, the weekly
-            # orphan sweep keeps it (#436).
+            # orphan sweep keeps it.
 
             return retry(
                 space.SPACE_WAIT,
@@ -282,8 +281,7 @@ def move_localized_file(
 
         # Each booking goes through handoff: the lock extension, the lock
         # defer, the volume retry, the space wait and the next stage. Thus,
-        # the 1 HandoffFailed handler below cleans up after each of them
-        # (follow-up #521, #623).
+        # the 1 HandoffFailed handler below cleans up after each of them.
 
         staged_output = None
         try:
@@ -337,8 +335,8 @@ def move_localized_file(
 
             # The removal of an empty subtitle track remuxes the output in
             # place. That needs a second copy on staging, outside the
-            # reservation. An import must never go to rejects for space
-            # (#262). Thus, a failure with too little free space for that
+            # reservation. An import must never go to rejects for space.
+            # Thus, a failure with too little free space for that
             # copy waits like a copy into a full library. The failed remux
             # removes its partial file before this check.
 
@@ -421,8 +419,7 @@ def move_localized_file(
                 )
 
             # The next stage gets the title lock. A failed enqueue must not
-            # keep the lock for its full TTL, or leave the copies behind
-            # (#437).
+            # keep the lock for its full TTL, or leave the copies behind.
 
             localization.handoff(
                 enqueue_task,
@@ -438,7 +435,7 @@ def move_localized_file(
             )
 
         except localization.HandoffFailed:
-            # A booking failed (#521). Only Redis failed. The source is
+            # A booking failed. Only Redis failed. The source is
             # good. It stays for the hourly sweep, and the lock and the
             # copies go.
 
@@ -454,9 +451,8 @@ def move_localized_file(
         except BaseException as error:
             # Remove both hidden copies. The source has its original
             # bytes, unless the localization ran in place on a file that
-            # was too large for staging (#424). Fitzflix rejects the
-            # source. A stop signal or an outage of the database keeps it
-            # (#497, #681).
+            # was too large for staging. Fitzflix rejects the
+            # source. A stop signal or an outage of the database keeps it.
 
             localization.abandon_failed_stage(
                 error,
@@ -477,7 +473,7 @@ def _report_import_move_to_radarr(source_directory, output_directory):
     be a different folder. Then Radarr gets the new path and a rescan,
     and the empty folder of the download goes away. The Radarr update
     runs as its own job on the request queue. Thus, the sql queue never
-    waits on Radarr (#268). A Radarr failure is logged. It does not
+    waits on Radarr. A Radarr failure is logged. It does not
     fail the import. The file is already in place."""
 
     source = os.path.realpath(source_directory)

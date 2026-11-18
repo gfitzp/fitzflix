@@ -103,7 +103,7 @@ def _discover(params):
     """Return the results of 1 discover page, or None when TMDB gave no answer.
 
     An answer with no results is []. One failed page makes the rail less
-    deep. A run in which no page answered keeps the stored rail (#698)."""
+    deep. A run in which no page answered keeps the stored rail."""
 
     body = tmdb_json_or("/discover/movie", params, None)
     return None if body is None else body.get("results") or []
@@ -144,7 +144,7 @@ def provider_pool(provider_id, provider_name):
     The pool holds the popular, acclaimed, and newly streaming pages.
     Fitzflix caches it for 1 day. Thus, an on-demand rail compute does
     not fetch again what the nightly run already pulled. The result is
-    None when TMDB gave no answer to any page (#698)."""
+    None when TMDB gave no answer to any page."""
 
     def fetch():
         pool = {}
@@ -428,7 +428,7 @@ def compute_user_rail(user):
 
     The result is also None when a step got no answer: each call of the
     discovery, of the verification or of the enrichment failed. The task
-    then keeps the stored rail of the last good run (#698). An empty
+    then keeps the stored rail of the last good run. An empty
     answer is an answer, and a cached answer of an earlier run is an
     answer too. A step in which some calls answered gives a less deep
     rail.
@@ -523,7 +523,7 @@ def compute_user_rail(user):
         return _no_answer(user, "enrichment")
 
     # A film with a record shows the movie-id lane number on its tile.
-    # Thus, the rail ranks it by that number (#535).
+    # Thus, the rail ranks it by that number.
 
     recorded = record_lane_scores(
         current_app.redis,
@@ -539,7 +539,7 @@ def compute_user_rail(user):
             continue
         # The rail orders by the TMDB-lane number, the same as the other
         # discovery shelves. Taste alone disagreed with the estimates on
-        # the tiles, which add the co-preference (#420).
+        # the tiles, which add the co-preference.
 
         score, contributions = tmdb_taste_score(user.id, tmdb_id, payload, profile)
         score = recorded.get(tmdb_id, score)
@@ -568,7 +568,7 @@ def _no_answer(user, step):
     """Log that TMDB gave no answer to a step of the rail of user. Return None.
 
     The task writes nothing for None. Thus, the rail of the last good
-    run stays (#698)."""
+    run stays."""
 
     current_app.logger.warning(
         f"Streaming rail: TMDB gave no answer to the {step} for user "

@@ -16,7 +16,7 @@ from werkzeug.security import safe_join
 from app.main import bp
 
 # The static subtrees that hold library material. The triage aids moved
-# out of the static tree (#468). The custom posters stay static, but only
+# out of the static tree. The custom posters stay static, but only
 # a signed-in user gets them. The gate answers 401, not a redirect. A
 # redirect to the sign-in page would reach the browser cache as the
 # image.
@@ -79,7 +79,7 @@ def gate_private_static():
 @bp.route("/triage/<int:file_id>/<path:name>")
 @login_required
 def triage_aid(file_id, name):
-    """Serve 1 subtitle-triage snapshot or audio sample of a file (#468).
+    """Serve 1 subtitle-triage snapshot or audio sample of a file.
 
     The aids show frames and sound of library films. Thus, this route
     needs authentication, as the frames of the game do. A shared cache

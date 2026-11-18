@@ -47,7 +47,7 @@ window.fileActivityCardsUrl = document.currentScript.getAttribute("data-cards-ur
 
 	function refreshCards() {
 		if (!window.fileActivityCardsUrl) return null;
-		// The ETag goes in the header and in the address (#753). A
+		// The ETag goes in the header and in the address. A
 		// proxy can drop the header.
 		var headers = cardsEtag ? { "If-None-Match": cardsEtag } : {};
 		var url = window.fileActivityCardsUrl;

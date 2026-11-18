@@ -17,7 +17,7 @@ from app.pipeline import front_times
 def scheduled_entries(registry):
     """Return (job id, aware UTC time) for each job of a scheduled registry.
 
-    One zrange reads the ids and the times together (#511). The
+    One zrange reads the ids and the times together. The
     scheduler can remove a due job between 2 reads. Then rq's
     get_scheduled_time raised NoSuchJobError, and a page answered 500."""
 
@@ -63,7 +63,7 @@ def listed_jobs():
             (running, StartedJobRegistry(queue=queue).get_job_ids()),
             (queued, queue.job_ids),
         ):
-            # 1 pipeline per list, not 1 round trip per job (#526). A
+            # 1 pipeline per list, not 1 round trip per job. A
             # missing hash gives None. Unlike fetch_job, this is no write
             # from a page view.
             for job in queue.job_class.fetch_many(job_ids, connection=queue.connection):
@@ -94,7 +94,7 @@ def queue_details():
     def file_started(job):
         """Return the time that the FILE of the job first started to run.
 
-        The anchor of the trail is UTC with an offset (#405). The
+        The anchor of the trail is UTC with an offset. The
         value is aware UTC, the same as the own started_at of rq.
         flask-moment reads each time as UTC."""
 
@@ -119,13 +119,13 @@ def queue_details():
     def banner_worthy(job):
         """Return True if a running job gets an alert at the top of the page.
 
-        Frame pool work never gets one (Glenn, 2026-08-27). A
+        Frame pool work never gets one. A
         replacement banner per round disrupts the game. It also shows
         that the pool changed. Even the 'Extracting a frame from X'
         banner of the nightly batch names films that will become
         answers. All these jobs still list on the queue page.
 
-        The SQL worker never gets one either (Glenn, 2026-10-14). Its
+        The SQL worker never gets one either. Its
         cataloging jobs list as rows only. Thus, the banners stay at
         1 for each of the 5 pipeline workers."""
 
@@ -137,7 +137,7 @@ def queue_details():
         """Return the queue-page fields of 1 job."""
 
         # fetch_many already read the status. A second read would fail
-        # for a hash that a Forget or a flush deleted meanwhile (#565).
+        # for a hash that a Forget or a flush deleted meanwhile.
 
         return {
             "id": job.id,
@@ -175,7 +175,7 @@ def queue_details():
     details["count"] = len(running_jobs) + len(queued_jobs)
     details["running"] = [item for job, item in running if banner_worthy(job)]
 
-    # A job that an admin moved to the front of its queue (#236) lists
+    # A job that an admin moved to the front of its queue lists
     # before the other waiting jobs. The newest move is at the top,
     # because each move pushes the job onto the head of its queue.
 
@@ -214,7 +214,7 @@ def queue_details():
     # in the queue itself. Before, these retries were not visible
     # here. They showed only as amber chips on the in-flight list of
     # the File Activity page. The trail chips moved onto the queue
-    # rows (Glenn, 2026-08). Now the queue page is the one place that
+    # rows. Now the queue page is the one place that
     # shows all the work in flight. Thus, the retries list too. They
     # come after the live queue, with no position, because they are
     # not in line yet.
@@ -224,7 +224,7 @@ def queue_details():
         registry = ScheduledJobRegistry(queue=queue)
         entries = scheduled_entries(registry)
 
-        # 1 pipeline, as listed_jobs does (#565). fetch_job removes a
+        # 1 pipeline, as listed_jobs does. fetch_job removes a
         # missing id from the queue list. That is a write from a page view.
 
         jobs = queue.job_class.fetch_many(

@@ -12,7 +12,7 @@ from app.tasks import enqueue_task
 
 
 def _has_subtitle_aids(snapshot_dir):
-    """Return True if the triage directory of a file holds subtitle aids (#550).
+    """Return True if the triage directory of a file holds subtitle aids.
 
     The lossy-audio comparison is the "audio" child of the same
     directory. A file with only that child has no subtitle aids yet."""
@@ -20,7 +20,7 @@ def _has_subtitle_aids(snapshot_dir):
     try:
         return any(name != "audio" for name in os.listdir(snapshot_dir))
     except OSError:
-        # A missing directory, or one that cannot be read (#568). The
+        # A missing directory, or one that cannot be read. The
         # backfill then queues the aids again.
         return False
 
@@ -62,8 +62,8 @@ def register_cli(app):
 
     @triage.command()
     def backfill_audio():
-        """Queue lossy-audio comparison clips (#223) for every existing
-        candidate file (#212) that has none yet.
+        """Queue lossy-audio comparison clips for every existing
+        candidate file that has none yet.
 
         This has the same serial-queue throttle as the subtitle
         backfill."""

@@ -79,7 +79,7 @@ MEDIA_ID_RE = re.compile(r"/films/([^/?#]+)")
 
 
 def leaving_page(today):
-    """Return the (url, departure date) of the leaving page of this month (#646)."""
+    """Return the (url, departure date) of the leaving page of this month."""
 
     last_day = calendar.monthrange(today.year, today.month)[1]
     month_name = calendar.month_name[today.month].lower()
@@ -130,7 +130,7 @@ def parse_collection_page(page_html):
 
 
 # film_page_director returns this when the film page did not answer. A
-# None director means that the page names no director (#539).
+# None director means that the page names no director.
 
 DIRECTOR_FETCH_FAILED = object()
 
@@ -143,7 +143,7 @@ def film_page_director(url):
     only the pages of the films that are new to a collection. A page
     that does not answer is not cached. Then the function returns
     DIRECTOR_FETCH_FAILED, not None. A missing director disables the
-    director test of the TMDB match (#539)."""
+    director test of the TMDB match."""
 
     media = MEDIA_ID_RE.search(url or "")
     if not media:
@@ -165,7 +165,7 @@ def film_page_director(url):
         return DIRECTOR_FETCH_FAILED
 
     # A page with no film block (an empty render, a challenge page) is a
-    # failed fetch, not a film with no director (#557). Else the
+    # failed fetch, not a film with no director. Else the
     # director-less match is cached for 2 months.
 
     if not film_blocks(r.text):
@@ -184,9 +184,9 @@ def fetch_collection_films(url):
     The page carries its complete playlist. It returns [] if the page
     does not answer. The director of each film comes from its film
     page. This is the generic half of the scraper. The leaving page and
-    the newly-added feed (#246, app.availability.newly_added) both read through
+    the newly-added feed (app.availability.newly_added) both read through
     it. A film whose film page did not answer gets "director_failed".
-    The callers do not match it that day (#539)."""
+    The callers do not match it that day."""
 
     try:
         r = requests.get(url, timeout=15)
@@ -517,8 +517,8 @@ def match_tmdb_id(title, year, director=None, failures=None):
     wrong film. A candidate with no credited director passes on an
     exact title-and-year match. Shorts frequently have no crew on TMDB.
     Without a scraped director, the exact-title candidate wins. If
-    there is none, the first result wins (the behaviour before
-    2026-08). The cache key carries the director. Thus, a
+    there is none, the first result wins (the behaviour before).
+    The cache key carries the director. Thus, a
     director-aware lookup never reads an entry that the older
     title-only matcher wrote. If a TMDB call fails and nothing matches,
     the miss is not cached, and "tmdb" goes into failures, if given.
@@ -549,7 +549,7 @@ def match_tmdb_id(title, year, director=None, failures=None):
     return tmdb_id
 
 
-# The result of refresh_leaving_criterion (#770). The outcome "kept"
+# The result of refresh_leaving_criterion. The outcome "kept"
 # means that the stored set is current and the task fetched nothing.
 # "no films" means that the fetch gave no films (an empty page, or a page
 # that did not answer) and the stored set did not change.
@@ -562,20 +562,20 @@ LeavingRefresh = namedtuple("LeavingRefresh", "outcome films departs source")
 
 def refresh_leaving_criterion(force=False):
     """Scrape the leaving collection and store the set with its departure
-    date. Return a LeavingRefresh that says what the task did (#770).
+        date. Return a LeavingRefresh that says what the task did.
 
-    This is a daily task. It reads only the leaving page of this month
-    (#646). It matches each film to TMDB. It embeds the enriched
-    payloads. It does nothing while the departure of the stored set is
-    in the future, unless a TMDB failure left the set incomplete. With
-    force, it fetches the page also then. A page with no films keeps
-    the stored set. A new set with the matched films and the departure
-    of the stored set queues no build of the DVR lineups. The daily
-    cadence exists to retry until Criterion publishes the page of the
-    new month. That page
-    appears at some time after the old set departs. The schedule is
-    not known. The stored set has no TTL. The shelf hides after the
-    departure date passes."""
+        This is a daily task. It reads only the leaving page of this month.
+    It matches each film to TMDB. It embeds the enriched
+        payloads. It does nothing while the departure of the stored set is
+        in the future, unless a TMDB failure left the set incomplete. With
+        force, it fetches the page also then. A page with no films keeps
+        the stored set. A new set with the matched films and the departure
+        of the stored set queues no build of the DVR lineups. The daily
+        cadence exists to retry until Criterion publishes the page of the
+        new month. That page
+        appears at some time after the old set departs. The schedule is
+        not known. The stored set has no TTL. The shelf hides after the
+        departure date passes."""
 
     with app.app_context():
         raw = current_app.redis.get(LEAVING_KEY)
@@ -622,7 +622,7 @@ def refresh_leaving_criterion(force=False):
         for film in films:
             # Without the director, the matcher takes the first search
             # hit. A generic title then becomes a different film for 2
-            # months. Thus, the film waits for the next run (#539).
+            # months. Thus, the film waits for the next run.
             if film.get("director_failed"):
                 failures.append("film page")
                 items.append({**film, "tmdb_id": None})
@@ -664,7 +664,7 @@ def refresh_leaving_criterion(force=False):
         # publishes the page of the new month on its own clock. On
         # 2026-09-01, that was after the nightly build.
         # Invariant: a set with the same matched films and the same
-        # departure as the stored set queues no rebuild (#770). A
+        # departure as the stored set queues no rebuild. A
         # rebuild gives each channel a new start and reloads the Plex
         # guide. A forced run can store the same set again.
         if stored is None or _set_identity(stored) != _set_identity(
@@ -683,7 +683,7 @@ def _set_identity(leaving_set):
     """Return the departure date and the sorted matched TMDB ids of a set.
 
     The dial reads only these 2 facts of the set (_leaving_set). Thus, 2
-    sets with the same value give the dial the same input (#770)."""
+    sets with the same value give the dial the same input."""
 
     items = leaving_set.get("items") or []
     ids = sorted({item["tmdb_id"] for item in items if item.get("tmdb_id")})
@@ -695,7 +695,7 @@ def leaving_shelf(user):
 
     This renders only for Criterion subscribers with a stored set that
     has not departed yet. Owned, diary, and watchlisted films all drop
-    out. This is a discovery shelf since 2026-08-30. A watchlisted
+    out. This is a discovery shelf. A watchlisted
     departure is the watch-it-now-or-buy-it case. It leads the
     watchlist shelf of the landing page. It is not pinned here.
     """
@@ -727,8 +727,8 @@ def leaving_shelf(user):
     if not shown:
         return {"departs": departs, "url": stored["source"], "items": []}
 
-    # A film with a record ranks by the number of its tile (#535). Only
-    # the films that the shelf shows get the number (#580).
+    # A film with a record ranks by the number of its tile. Only
+    # the films that the shelf shows get the number.
 
     recorded = record_lane_scores(
         current_app.redis,
@@ -764,7 +764,7 @@ def leaving_shelf(user):
 
 @nothing_stored("The Criterion departures")
 def _stored_leaving_set():
-    """Return the raw stored leaving set, or None (#699)."""
+    """Return the raw stored leaving set, or None."""
 
     return current_app.redis.get(LEAVING_KEY)
 
@@ -774,7 +774,7 @@ def leaving_departure(tmdb_id):
 
     This returns the date if the film is in the stored leaving set and
     the date has not passed. Each Criterion Channel availability badge
-    asks this (the popover of #45c, the movie page, search results,
+    asks this (the poster popover, the movie page, search results,
     filmography rows, the watchlist). Thus, this parses the set 1 time
     for each app context and keeps it on flask.g. That is 1 Redis read
     for each page, not 1 for each film."""
@@ -836,7 +836,7 @@ def leaving_inventory(user):
         _, seen, watchlisted, _ = user_film_sets(user, tmdb_ids)
 
     # A film with a record ranks by the number of its popover, as on
-    # the home shelf (#535, #557).
+    # the home shelf.
 
     recorded = record_lane_scores(current_app.redis, user.id, tmdb_ids, profile)
 

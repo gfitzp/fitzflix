@@ -1,8 +1,8 @@
-"""Find the warnings that repeat in the application log (#265).
+"""Find the warnings that repeat in the application log.
 
 A failure sends an email. But a warning that repeats all day sends
-nothing. The Plex watchlist loop of #257 wrote the same warning about
-95 times a day for 6 days before anyone saw it.
+nothing. For example, a loop of the Plex watchlist sync wrote the same warning
+about 95 times a day for 6 days before anyone saw it.
 
 A nightly task reads the last 24 hours of the log. It reduces each
 WARNING, ERROR, and CRITICAL entry to a signature. The signature is the
@@ -53,7 +53,7 @@ ENTRY_RE = re.compile(
 SITE_RE = re.compile(r" \[in (?:.*/)?([^/\]]+?):\d+\]$")
 # A single quote is a delimiter only when it is not between 2 letters.
 # Thus, the apostrophe in "Couldn't" or "Schindler's" stays inside the
-# quoted name or the plain text (#265 review).
+# quoted name or the plain text.
 
 LETTER = r"[^\W\d_]"
 QUOTED_RE = re.compile(

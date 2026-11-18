@@ -222,7 +222,7 @@ TASKS = {
     "app.frames.replace_frame_task": TaskSpec("transcode", 600),
     # The file operations.
     "app.archive.uploads.upload_task": TaskSpec("file", "UPLOAD_TASK_TIMEOUT"),
-    # A move is 1 server-side copy (#369). For 100 GiB, s3transfer sends
+    # A move is 1 server-side copy. For 100 GiB, s3transfer sends
     # 6,400 UploadPartCopy requests of 16 MiB, 10 at a time. The estimate
     # at 50 MB/s for each request is 4 minutes. FILE_TASK_TIMEOUT
     # (10 minutes) leaves too small a margin for a slow region. Thus, the
@@ -387,8 +387,8 @@ def _submit(
     if description is not None:
         options["description"] = description
     if job_id is not None:
-        # Invariant: a job never takes the hash of a job that is done
-        # (#371, #438, #744). A finished job keeps its hash for the
+        # Invariant: a job never takes the hash of a job that is done.
+        # A finished job keeps its hash for the
         # result ttl of rq, 500 seconds. A new job under the same id took
         # that hash with its expiry, and it could expire in the queue.
         # Thus, a finished, failed, stopped or canceled job under the id
@@ -405,7 +405,7 @@ def _submit(
     if result_ttl is not None:
         options["result_ttl"] = result_ttl
     # rq keeps the result stream of a failure with no expiry unless the
-    # job has a failure_ttl (#478)
+    # job has a failure_ttl
     options["failure_ttl"] = FAILURE_TTL
     if at_front:
         options["at_front"] = True
@@ -416,14 +416,14 @@ def _submit(
     return target.enqueue_in(delay, name, **options)
 
 
-# A failed job and its result stream expire after 30 days (#478). Without
+# A failed job and its result stream expire after 30 days. Without
 # a failure_ttl, rq 2 keeps the stream of each failure forever.
 
 FAILURE_TTL = 30 * 86400
 
 
 def delete_job(job):
-    """Delete an rq job together with its result stream (#478).
+    """Delete an rq job together with its result stream.
 
     Job.delete removes the job hash, but not the rq:results stream of
     the job. A stream with no job grows the database forever."""
@@ -440,13 +440,13 @@ LIVE_JOB_STATES = ("queued", "started", "scheduled", "deferred")
 
 
 def live_job_ids(queue):
-    """Return the ids of the jobs of a queue that wait or run (#616).
+    """Return the ids of the jobs of a queue that wait or run.
 
-    This is the one definition of a live job. A live job is in the queue
-    list, the started jobs or the scheduled jobs. It can also be in the
-    intermediate queue of rq, the gap between the list and the worker
-    (#523). A retry or a defer waits in the scheduled jobs. queue is a
-    roster key or a queue object."""
+        This is the one definition of a live job. A live job is in the queue
+        list, the started jobs or the scheduled jobs. It can also be in the
+        intermediate queue of rq, the gap between the list and the worker.
+    A retry or a defer waits in the scheduled jobs. queue is a
+        roster key or a queue object."""
 
     from rq.registry import ScheduledJobRegistry, StartedJobRegistry
 
@@ -459,7 +459,7 @@ def live_job_ids(queue):
 
 
 def live_jobs(queues):
-    """Yield each job of the queues that waits or runs (#616).
+    """Yield each job of the queues that waits or runs.
 
     A job is live if and only if this yields it. The ids come from
     live_job_ids. The job hashes of each queue come in 1 round trip."""
@@ -491,7 +491,7 @@ def live_task_job(name):
 
 
 def start_task_run(name):
-    """Return True if a Run now of the task called name can queue it (#456).
+    """Return True if a Run now of the task called name can queue it.
 
     A short gate in Redis covers the time between the check and the
     enqueue. Thus, 2 posts at the same time to 2 web workers cannot both
@@ -518,12 +518,12 @@ def free_job_id(name, job_id, queue=None):
     A finished, failed, stopped or canceled job under the id is deleted,
     with its registry entry. A new job under the same id must not stay
     in the FailedJobRegistry, and must not take the expiry of the old
-    hash (#371, #438). A job that waits or runs keeps the id. queue
+    hash. A job that waits or runs keeps the id. queue
     replaces the queue of the task, as in enqueue_task.
 
     A booking in the scheduled jobs is live, whatever its hash says. A
     job that booked itself under its own id wrote "finished" over the
-    hash of that booking when it ended (#700)."""
+    hash of that booking when it ended."""
 
     from rq.exceptions import NoSuchJobError
     from rq.job import Job
@@ -543,7 +543,7 @@ def free_job_id(name, job_id, queue=None):
 
 
 # A bulk post of a maintenance page takes this gate for a short time.
-# Thus, a double click cannot pass the queue check two times (#439).
+# Thus, a double click cannot pass the queue check two times.
 
 BULK_GATE_KEY = "fitzflix:bulk-gate:{}"
 BULK_GATE_SECONDS = 60
@@ -568,7 +568,7 @@ def bulk_run_pending(prefix, *names):
 
 
 def start_bulk_run(prefix, *names):
-    """Return True if a new bulk run can start. Return False if one waits or runs (#439).
+    """Return True if a new bulk run can start. Return False if one waits or runs.
 
     A run is pending while a job of it waits or runs. The gate covers
     the time that a post takes to queue its jobs."""
@@ -583,7 +583,7 @@ def start_bulk_run(prefix, *names):
 
 
 def finish_bulk_run(prefix):
-    """Release the gate of a bulk post after it queued its jobs (follow-up #439).
+    """Release the gate of a bulk post after it queued its jobs.
 
     The queued jobs now keep a second post out. A run that fails at once
     can then start again at once, not after BULK_GATE_SECONDS."""
@@ -603,10 +603,10 @@ def requeue_job_id(name, key=None, counters=None, tag=None):
     The id is "retry", the short task name, a digest of key, and each
     counter as name=value in name order. Each attempt of a chain thus
     gets an id of its own. The digest keeps apart 2 files with the same
-    basename (#338). A retry with no key and no
+    basename. A retry with no key and no
     counters has a fixed id, and a repeat defer replaces it. tag goes
     after the key digest. A track edit gives the digest of its arguments
-    there. Then 2 edits of 1 file retry apart (#595)."""
+    there. Then 2 edits of 1 file retry apart."""
 
     parts = ["retry", name.rsplit(".", 1)[-1]]
     if key is not None:
@@ -655,7 +655,7 @@ def requeue(
     This is the 1 retry path of the tasks. delay is a timedelta or a
     (low, high) range of minutes for a random delay. counters holds
     every attempt counter of the task. They go into the task kwargs and
-    into the job id. Thus, a retry cannot drop a counter (#351). The
+    into the job id. Thus, a retry cannot drop a counter. The
     queue, the timeout and the description come from TASKS unless the
     caller gives them. job_id replaces the id from requeue_job_id. The
     result ttl of 1 day keeps the record of a finished retry alive. The
@@ -665,7 +665,7 @@ def requeue(
     A new chain of a key gets the id of the first job of the last chain.
     Thus, requeue first deletes a finished, failed, stopped or canceled
     job under the id. Else the new hash keeps the expiry of the old hash
-    and can go before the booked time (#700). A job that waits or runs
+    and can go before the booked time. A job that waits or runs
     under the id stays. A booking over a job that waits replaces it.
 
     A task can book itself under its own id while it runs. The S3 sync

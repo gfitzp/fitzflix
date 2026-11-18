@@ -1,6 +1,6 @@
 // The card that shows when the pointer is on a poster.
 
-// The poster popover (#45c): the anchors marked data-card-url
+// The poster popover: the anchors marked data-card-url
 // fetch the card fragment of their film 1 time and show it in a
 // Bootstrap popover. Only hover-capable pointers get the card.
 // They preview on hover, with a grace period to move into the

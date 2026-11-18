@@ -39,7 +39,7 @@ db.configure_mappers()
 w = PipelineWorker(qs, connection=Redis.from_url(Config.REDIS_URL))
 
 # A worker of this host that died with no cleanup (a SIGKILL) left its
-# job, its title lock and its staging reservation behind (#498). Reclaim
+# job, its title lock and its staging reservation behind. Reclaim
 # them before this worker takes a job. A failure here must not stop the
 # worker.
 
@@ -49,7 +49,7 @@ with flask_app.app_context():
     except Exception:
         flask_app.logger.error(traceback.format_exc())
 
-    # An Atmos run that broke left its workspace on staging (#505).
+    # An Atmos run that broke left its workspace on staging.
 
     try:
         from app.media.atmos import sweep_stale_atmos_workspaces

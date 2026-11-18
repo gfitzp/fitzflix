@@ -17,7 +17,7 @@ RECENT_EPISODE_DAYS = 14
 
 
 def check_series_folder(payload):
-    """Queue the Sonarr path check of a series if its folder differs (#370).
+    """Queue the Sonarr path check of a series if its folder differs.
 
     A Rename, a Download and a SeriesAdd event carry series.path. A
     Rename also carries the old and new path of each renamed episode
@@ -50,7 +50,7 @@ def sonarr_add(payload):
         if not airdate:
             return False
         # A malformed airDate is not a recent episode. It does not stop
-        # the import (#507).
+        # the import.
         try:
             aired = datetime.strptime(str(airdate), "%Y-%m-%d").date()
         except ValueError:

@@ -5,7 +5,7 @@ from app.models import User
 
 
 def strip_text(value):
-    """Return the typed text with no space at the start or the end (#764).
+    """Return the typed text with no space at the start or the end.
 
     A field that was not posted holds None. The filter keeps it."""
 
@@ -26,7 +26,7 @@ class RegistrationForm(FlaskForm):
 
     This form is open only until registration is disabled."""
 
-    # The user.email column is VARCHAR(120) (#329)
+    # The user.email column is VARCHAR(120)
 
     email = StringField("Email", validators=[DataRequired(), Email(), Length(max=120)])
     password = PasswordField("Password", validators=[DataRequired()])
@@ -47,7 +47,7 @@ class ResetPasswordRequestForm(FlaskForm):
     """Request a password-reset email.
 
     A space at the start or the end of the address is not an error. The
-    filter removes it before the Email check (#764)."""
+    filter removes it before the Email check."""
 
     email = StringField(
         "Email", validators=[DataRequired(), Email()], filters=[strip_text]

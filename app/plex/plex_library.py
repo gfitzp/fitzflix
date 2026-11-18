@@ -20,7 +20,7 @@ treats a hung SMB stat as dead. It does not hang the worker.
 The mount check cannot see a share that drops DURING the scan. The scan
 is asynchronous. Thus, the empty of the trash acts on the result of the
 previous scan. On 2026-10-15 the Movies share dropped for 1 second during
-a scan. Plex put 3,356 movies in the trash and deleted them (#280). Thus,
+a scan. Plex put 3,356 movies in the trash and deleted them. Thus,
 the refresh keeps the trash in 2 cases. A mount of the section has a new
 device number since the previous run, which shows a remount. Or the trash
 holds more items than PLEX_TRASH_LIMIT. The second case also makes a
@@ -32,12 +32,12 @@ a library file IN PLACE calls enqueue_plex_analyze. Then Plex reads the
 file again immediately. It does not wait for its own scan and its
 overnight analysis pass. The manual analyze of Plex reads the streams
 again and regenerates the chapter thumbs. This takes approximately 2
-seconds on a 45 GB film (#194).
+seconds on a 45 GB film.
 
 An extra, for example a featurette under the folder of its film, is
 not in the item list of a section. Plex lists it only with its holder:
 the film, the season, or the show. Thus, the analyze asks the holder
-for its extras when no listed item holds the file (#651).
+for its extras when no listed item holds the file.
 
 This module does NOT touch the Media-level audioCodec and audioChannels
 summary. Plex shows that summary as the audio of an item. A measurement
@@ -71,7 +71,7 @@ app = LocalProxy(get_app)
 
 PAGE_SIZE = 1000
 
-# The device number of each mount that the previous refresh saw (#280).
+# The device number of each mount that the previous refresh saw.
 # Each new mount gets a new number. Thus, a changed number shows that the
 # share dropped and came back.
 
@@ -92,11 +92,11 @@ ANALYZE_MAX_RETRIES = 1
 # An import that replaces the file of an item that Plex has gives Plex a
 # new part. Plex sends no `library.new` for it. The analyze then finds
 # the item by its path after the next scan, and it aligns the stream
-# selection of each account (#661).
+# selection of each account.
 
 REPLACEMENT_ANALYZE_DELAY = timedelta(minutes=ANALYZE_RETRY_MINUTES)
 
-# Invariant (#775): each extra that the import puts in the library shows
+# Invariant: each extra that the import puts in the library shows
 # in Plex under its film. The scan of Plex reads a film folder again only
 # when the list of that folder changes. That list holds its files and the
 # names of its subfolders. An extra that lands in an extras folder that exists
@@ -107,7 +107,7 @@ REPLACEMENT_ANALYZE_DELAY = timedelta(minutes=ANALYZE_RETRY_MINUTES)
 FILM_REFRESH_DELAY = timedelta(minutes=2)
 
 # Plex answers 400 to an analyze request on a clip, that is, on an extra.
-# Its scanner analyzes one by the id of the item (#651). The scanner runs
+# Its scanner analyzes one by the id of the item. The scanner runs
 # on the Plex host, as the Plex user. PLEX_SCANNER names it. The analyze
 # of a 5 GB featurette takes some seconds.
 
@@ -182,7 +182,7 @@ def refresh_plex_libraries():
     This is a queue task. It works per section. It touches a section only
     when every location that the section declares is mounted and
     present. It keeps the trash after a remount, and when the trash holds
-    more items than PLEX_TRASH_LIMIT (#280)."""
+    more items than PLEX_TRASH_LIMIT."""
 
     with app.app_context():
         if not (
@@ -252,7 +252,7 @@ def refresh_plex_libraries():
             )
 
             # The new device number of a mount is stored only after a scan
-            # request succeeded (#378). Else the next run sees no remount
+            # request succeeded. Else the next run sees no remount
             # and empties the trash of the scan during the drop.
 
             try:
@@ -394,7 +394,7 @@ def _analyze_clip(rating_key):
     """Run the Plex scanner for the analyze of one clip.
 
     Plex refuses the analyze of a clip over its API with a 400. The
-    scanner does it by the id of the item (#651). A failure raises."""
+    scanner does it by the id of the item. A failure raises."""
 
     subprocess.run(
         [current_app.config["PLEX_SCANNER"], "--analyze", "--item", str(rating_key)],
@@ -408,7 +408,7 @@ def _analyze_extras(section, targets, folders, analyzed):
     """Analyze the target files that are extras of the items in a section.
 
     An extra never appears in a section page. It appears only in the
-    `Extras` of its holder (#651). This function asks each possible
+    `Extras` of its holder. This function asks each possible
     holder for its extras, once, and runs the scanner for the extra
     whose part file matches a target. A match is the full path, or the last three
     components: the folder of the title, the folder of the extra type,
@@ -605,8 +605,8 @@ def analyze_plex_media(file_paths, retries=0):
                 break
 
         # The analyzed items keep the selection rows of each account, but
-        # a new import has none yet. Make the selection match the file
-        # (#652). The alignment runs in this task, on the same worker.
+        # a new import has none yet. Make the selection match the file.
+        # The alignment runs in this task, on the same worker.
 
         items = sorted({key for key in analyzed.values() if key})
         if items:
@@ -628,7 +628,7 @@ def analyze_plex_media(file_paths, retries=0):
         # forever.
 
         if retries < ANALYZE_MAX_RETRIES:
-            # The key is the whole batch, not its first basename (#242).
+            # The key is the whole batch, not its first basename.
             # Two different batches with the same first file must not
             # collapse into one retry.
 
@@ -651,7 +651,7 @@ def analyze_plex_media(file_paths, retries=0):
 
 
 def refresh_plex_film(film_folder):
-    """Make Plex refresh each film item with a part in this folder (#775).
+    """Make Plex refresh each film item with a part in this folder.
 
     This is a queue task. The refresh reads the extras folders of the
     film again, and Plex adds the extras that its scan did not see. A
@@ -744,11 +744,11 @@ def enqueue_plex_analyze(file_path, delay=None):
     rewrite.
 
     delay books the analyze ahead. An import that replaces a file waits
-    for the next scan of Plex (#661).
+    for the next scan of Plex.
     """
 
     basename = os.path.basename(file_path)
-    # The path digest keeps apart 2 files with the same basename (#338)
+    # The path digest keeps apart 2 files with the same basename
     return _book_plex_job(
         "app.plex.plex_library.analyze_plex_media",
         [file_path],
@@ -759,9 +759,9 @@ def enqueue_plex_analyze(file_path, delay=None):
 
 
 def enqueue_plex_film_refresh(film_folder):
-    """Book a Plex refresh of the film whose folder this is (#775).
+    """Book a Plex refresh of the film whose folder this is.
 
-    The import of an extra and the delete of an extra (#776) call this
+    The import of an extra and the delete of an extra call this
     after their commit. The function never raises and never blocks the
     caller."""
 
@@ -790,12 +790,12 @@ def _book_plex_job(name, argument, job_id, description, delay):
         queue = current_app.maintenance_queue
 
         # A second change while the first job waits needs no second job.
-        # The first job waits in the queue, or it is booked ahead (#757).
+        # The first job waits in the queue, or it is booked ahead.
         # It reads the library when it runs. A job that already RUNS is
         # not a duplicate. It may have read the library before this
         # change arrived. The new job gets an id of its own. Under the id
         # of the job that runs, it would take the hash that the first job
-        # marks as finished at its end (#744).
+        # marks as finished at its end.
 
         waiting = list(queue.job_ids) + ScheduledJobRegistry(queue=queue).get_job_ids()
         if any(

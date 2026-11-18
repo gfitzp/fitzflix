@@ -1,6 +1,6 @@
 """Shared helpers for the route modules of the main blueprint.
 
-This is slice f of the routes.py split. It holds the verdict and ladder
+This module holds the verdict and ladder
 plumbing that every rating surface uses, the admin gate, and the read of
 the quality threshold. It also reads the rejects folder."""
 
@@ -59,7 +59,7 @@ def unchanged_poll_answer(etag):
     """Return the empty answer of a poll that has the data of etag already, or None.
 
     A poll of a page sends the ETag of the data that it shows. It sends
-    it in the If-None-Match header and as the etag argument (#753). A
+    it in the If-None-Match header and as the etag argument. A
     proxy between the browser and this server can drop the header. Then
     no poll from outside got a 304: each poll downloaded the same data
     and painted it again. The argument reaches the server through each
@@ -83,7 +83,7 @@ def decimal_id(value):
 
     This is the one parser for an id or a count that comes from a form
     field, a query string or an API payload. The test is isdecimal, not
-    isdigit: "²" passes isdigit(), and int() refuses it (#307). None, a
+    isdigit: "²" passes isdigit(), and int() refuses it. None, a
     blank value and a value with other characters give None."""
 
     text = str(value if value is not None else "").strip()
@@ -193,7 +193,7 @@ def _ladder_fetch():
 
 
 def _card_fetch():
-    """Return True if the post came from the card of the poster popover (#45c).
+    """Return True if the post came from the card of the poster popover.
 
     The watchlist toggle of the card wants compact JSON state back, never
     a redirect. A flash message would wait unseen."""
@@ -220,7 +220,7 @@ def _same_day_rerate(user_id, movie_id, rating):
 
     A second star tap on the same calendar day does not log a rewatch.
     It writes the new stars and derives liked again. Only a new day
-    makes the next tap a new diary entry (rule from Glenn, 2026-08).
+    makes the next tap a new diary entry.
     The edit stamps date_updated for the export. This function returns
     the edited row. It returns None if today has
     no review to edit."""
@@ -276,14 +276,14 @@ def _letterboxd_locked(user_id, movie_id, rating, removes, corrects):
 
 VERDICT_LOCK_SECONDS = 10
 VERDICT_LOCK_KEY = "fitzflix:verdict-lock:{user_id}:{name}"
-# A form log with the same fields in this time is the same submission
-# (#516): a double click, or 2 tabs.
+# A form log with the same fields in this time is the same submission:
+# a double click, or 2 tabs.
 REPEAT_LOG_SECONDS = 10
 REPEAT_LOG_KEY = "fitzflix:verdict-log:{user_id}:{movie_id}:{digest}"
 
 
 def _hold_verdict_lock(name):
-    """Make the star-row posts of 1 user and 1 film run 1 at a time (#337).
+    """Make the star-row posts of 1 user and 1 film run 1 at a time.
 
     2 posts that run at the same time both read the latest review row
     before either commits. Thus, a double tap could write 2 rows for 1
@@ -320,7 +320,7 @@ def ladder_payload(row, flagged, estimated, on_watchlist, **extra):
 
     row is the diary row that the row shows, or None. The rating is the
     float of its stars, or None for a bare watch. The ✕ hides when the
-    film has a diary row, so has_review follows the row (#335). The
+    film has a diary row, so has_review follows the row. The
     extra keys (folds, upgradable, movie_id) belong to one surface each
     and come after the shared keys."""
 
@@ -332,7 +332,7 @@ def ladder_payload(row, flagged, estimated, on_watchlist, **extra):
         "flagged": bool(flagged),
         "estimated": estimated,
         # A rating or a ✕ removes the watchlist entry of the film. Thus,
-        # the popover card (#45c) syncs its toggle from the same payload.
+        # the popover card syncs its toggle from the same payload.
         "on_watchlist": bool(on_watchlist),
         **extra,
     }
@@ -566,8 +566,7 @@ def apply_verdict(post, target, policy):
     try:
         db.session.commit()
     except BaseException:
-        # No row is written. A resubmit must log, not read as a repeat
-        # (follow-up #516).
+        # No row is written. A resubmit must log, not read as a repeat.
         db.session.rollback()
         _release_log_gate(gate)
         raise
@@ -577,7 +576,7 @@ def apply_verdict(post, target, policy):
 
 
 def _repeat_log_key(user_id, movie_id, post):
-    """Return the Redis key of the gate of 1 form log of a film (#516).
+    """Return the Redis key of the gate of 1 form log of a film.
 
     2 Log Watch posts in flight (a double click without the script, 2
     tabs) wrote 2 diary rows. The second row had the rewatch flag. The
@@ -605,7 +604,7 @@ def _claim_log_gate(key):
 
 
 def _release_log_gate(key):
-    """Remove the gate of a form log whose row did not commit (follow-up #516)."""
+    """Remove the gate of a form log whose row did not commit."""
 
     if key is None:
         return
@@ -668,7 +667,7 @@ VERDICT_MESSAGES = {
     "reviewed": ("Logged review for '{name}'", "success"),
     "watched": ("Logged '{name}' in your history", "success"),
     # A second identical Log Watch in REPEAT_LOG_SECONDS is the same
-    # submission. It writes nothing (#516).
+    # submission. It writes nothing.
     "repeated": (
         "You logged '{name}' some seconds ago. Fitzflix did not log it again.",
         "info",
@@ -699,7 +698,7 @@ def verdict_response(outcome, target, name, fallback_url, messages=None):
 
             # A bare watch without a date is a preference signal. The
             # History page lists dated rows only. Thus, the message must
-            # not say "in your history" (#421).
+            # not say "in your history".
 
             if not (request.form.get("date_watched") or "").strip():
                 key = "watched_undated"
@@ -787,7 +786,7 @@ def apply_row_edit(row, quick_rating, review_text, watched_date, posted):
     if quick_rating is not None and _is_latest_viewing(row):
         clear_not_interested(row.user_id, row.movie_id)
         if row.date_watched is not None:
-            # A row at midnight has a date and no time (#444). An entry
+            # A row at midnight has a date and no time. An entry
             # from the same day can come before or after the viewing.
             # Thus, the whole day counts as before it.
             watched = row.date_watched
@@ -885,7 +884,7 @@ def library_upgradable(movie, criterion=False):
 
     The generic rule: a full-screen copy, or a copy below the app-wide
     threshold, is upgradable unless the shopping list excludes the film.
-    criterion=True uses the settled rule of the Criterion catalog (#77a,
+    criterion=True uses the settled rule of the Criterion catalog (
     the same as criterion_collection). The disc must be owned AND the
     copy must satisfy the format of the release, capped at the threshold.
     An owned disc with a Bluray-1080p file is settled even if Criterion
@@ -923,7 +922,7 @@ def library_upgradable(movie, criterion=False):
 def series_upgradable(series_ids):
     """Return, for each TV series, if its library copy is worth an upgrade.
 
-    This is the series-shaped answer behind the In-library badge (#191).
+    This is the series-shaped answer behind the In-library badge.
     The badge is amber if a season still has an episode worth an upgrade.
     It is green when every season is settled.
 
@@ -940,10 +939,10 @@ def series_upgradable(series_ids):
     if not series_ids:
         return {}
 
-    # The shared season grade (#479) gives the worst episode of each
+    # The shared season grade gives the worst episode of each
     # season. Each episode number of a multi-episode file counts. The
     # preference and the physical flag come from the same tier row. They
-    # are not resolved back from a min(preference) by value (#238).
+    # are not resolved back from a min(preference) by value.
 
     worst = {
         key: (grade.preference, grade.physical_media)
@@ -994,7 +993,7 @@ MAX_EPISODE_SPAN = 500
 
 
 def season_episode_counts(series_ids=None):
-    """Return {(series_id, season): number of owned episodes} (#330).
+    """Return {(series_id, season): number of owned episodes}.
 
     The count is the number of distinct episode numbers that the files of
     the season hold. A multi-episode file (S04E17-E22) counts each episode
@@ -1026,8 +1025,8 @@ def rejected_files():
     """Return each real file under the rejects directory, newest first.
 
     The Rejects page, the Library Maintenance count and the File Activity
-    card read the rejects folder through this function (#642). A file
-    that moves away before its stat does not list (#511)."""
+    card read the rejects folder through this function. A file
+    that moves away before its stat does not list."""
 
     rejects_dir = os.path.realpath(current_app.config["REJECTS_DIR"])
     entries = []

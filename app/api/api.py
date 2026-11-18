@@ -28,7 +28,7 @@ def queue_details():
     if current_user.is_authenticated:
         details = current_user.get_queue_details()
 
-        # A Redis outage gives an empty queue, not a 500 (#476). The
+        # A Redis outage gives an empty queue, not a 500. The
         # poll continues, and the badge fills again when Redis is back.
 
         if not details:
@@ -68,7 +68,7 @@ def plex_webhook(token):
     except Exception:
         payload = {}
 
-    # A list, a string, or a number is not a Plex event (#449).
+    # A list, a string, or a number is not a Plex event.
 
     if not isinstance(payload, dict):
         payload = {}
@@ -76,7 +76,7 @@ def plex_webhook(token):
     if not isinstance(metadata, dict):
         metadata = {}
     # A new item is a chance to make the selected streams of Plex match
-    # the file before anyone plays it (#652). Plex posts the event for a
+    # the file before anyone plays it. Plex posts the event for a
     # movie, an episode, a season, or a show. The task expands the
     # last two to their episodes. The webhook never waits on Redis.
 
@@ -93,7 +93,7 @@ def plex_webhook(token):
         return "", 204
 
     # Live TV airings also have the type "movie". Plex scrobbles them
-    # again and again while a channel plays. A virtual-channel surf (#182)
+    # again and again while a channel plays. A virtual-channel surf
     # must never write a diary watch. The match that Plex made for the
     # airing is not important.
 
@@ -120,7 +120,7 @@ def plex_webhook(token):
         )
         return "", 204
 
-    # The Account block can be a list or a string in a shaped body (#507).
+    # The Account block can be a list or a string in a shaped body.
 
     account = payload.get("Account")
     username = account.get("title") if isinstance(account, dict) else None

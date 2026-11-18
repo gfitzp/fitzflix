@@ -52,15 +52,14 @@ PLEX_TMDB_SECONDS = 604800
 # The marker of 1 recorded Plex watch per user, film and day. The
 # webhook and the history poll both record a watch. The marker keeps
 # the second from adding a row. A poll cursor held before a failed
-# lookup reads later watches again (#379). The cached account names
-# give such a watch the same key. The 30-day life outlasts the hold
-# (#635).
+# lookup reads later watches again. The cached account names
+# give such a watch the same key. The 30-day life outlasts the hold.
 
 PLEX_WATCH_KEY = "fitzflix:plex:watch:{username}:{tmdb_id}:{day}"
 PLEX_WATCH_SECONDS = 30 * 86400
 
 # The history entries at the second of the poll cursor that a poll has
-# handled (#425).
+# handled.
 
 PLEX_CURSOR_SEEN_KEY = "fitzflix:plex:history-cursor-seen"
 
@@ -73,7 +72,7 @@ PLEX_ACCOUNTS_KEY = "fitzflix:plex:accounts"
 # The polls in which a history ratingKey answered HTTP 404. A restored
 # Plex library can bring a missing item back with the same ratingKey
 # (the Oct 16 restore). Thus, the poll holds its cursor for a 404 until
-# PLEX_MISSING_POLLS polls in a row saw it (#379 follow-up). Then the
+# PLEX_MISSING_POLLS polls in a row saw it. Then the
 # entry counts as "no TMDB id" for PLEX_MISSING_CACHE_SECONDS.
 
 PLEX_MISSING_KEY = "fitzflix:plex:missing:{rating_key}"
@@ -91,7 +90,7 @@ def clear_watchlist(user_id, movie_id):
 
     A watch of the film completes the watchlist entry. The source of the
     watch is not important. The caller must commit the session. Return
-    the number of rows that the call removed (#512)."""
+    the number of rows that the call removed."""
 
     return UserWatchlist.query.filter_by(
         user_id=int(user_id), movie_id=int(movie_id)
@@ -443,12 +442,12 @@ def _feed_claimed_twin(
 
     The feed sync gives a Plex scrobble near midnight to the Letterboxd
     entry of the next or previous date. The row keeps its clock time,
-    for example 00:10 on 10-07 for the entry of 10-06 (#381). A twin is
+    for example 00:10 on 10-07 for the entry of 10-06. A twin is
     a row with a guid on the next day before noon, or on the day before
     at noon or later. Thus, a twin is next to 1 date only. A day that
     has its own entry in the import is not a twin. The exception is an
     entry date with no row at the start of the import (orphan_days). The
-    feed gave the scrobble to that date (#544). claimed holds the ids
+    feed gave the scrobble to that date. claimed holds the ids
     of the rows that this import gave to an entry already. Such a row
     is not a twin again. The function adds the id of the twin."""
 
@@ -475,7 +474,7 @@ def _feed_claimed_twin(
 
 
 def _same_day_row(user_id, movie_id, date_watched, orphan_days, claimed):
-    """Return the row of a film on the day of a Letterboxd entry, or None (#544).
+    """Return the row of a film on the day of a Letterboxd entry, or None.
 
     A row without a guid comes first. A row that this import gave to an
     entry already is skipped. So is a guid scrobble that the clock rule
@@ -527,7 +526,7 @@ def apply_letterboxd_import(user_id, films):
                     # The canonical name can belong to a record of another
                     # film. find_or_create_tmdb_movie then returns None,
                     # and the entry is skipped. The review must not go to
-                    # the wrong film (#357).
+                    # the wrong film.
 
                     movie, created = tmdb_refresh.find_or_create_tmdb_movie(
                         film["tmdb_id"],
@@ -550,7 +549,7 @@ def apply_letterboxd_import(user_id, films):
                 # An import day with no row of its own at the start is an
                 # orphan. The clock rule can give it a guid scrobble on the
                 # day next to it. That scrobble is its feed twin, also on a
-                # day with its own entry (#544).
+                # day with its own entry.
                 stored_days = {
                     stamp.date()
                     for (stamp,) in db.session.query(
@@ -583,7 +582,7 @@ def apply_letterboxd_import(user_id, films):
                     # a time of day. A second import of the same Letterboxd
                     # date must update that row, not add a row next to it.
                     # Then the scrobble that the feed gave to this date
-                    # from the day next to it (#381).
+                    # from the day next to it.
 
                     if date_watched is not None:
                         review = _same_day_row(
@@ -744,9 +743,9 @@ def apply_plex_watch(tmdb_id, plex_username, viewed_at, source):
 
                 # A film that runs past midnight is logged on Letterboxd
                 # for the day before. The feed row of that day has a
-                # midnight stamp. A watch before noon is the same viewing
-                # (the mirror of #381). Without this, the diary got 2
-                # rows (#425).
+                # midnight stamp. A watch before noon is the same viewing.
+                # Without this, the diary got 2
+                # rows.
 
                 if existing is None and watched_at.hour < 12:
                     existing = UserMovieReview.query.filter(
@@ -817,7 +816,7 @@ def _plex_tmdb_id(entry, failures=None, poll=None):
     keeps the history of a deleted item. Its lookup gives HTTP 404. A
     404 is a failure until PLEX_MISSING_POLLS different polls saw it.
     poll names the current poll. Then the entry has no TMDB id for
-    PLEX_MISSING_CACHE_SECONDS, and the cursor can pass it (#379)."""
+    PLEX_MISSING_CACHE_SECONDS, and the cursor can pass it."""
 
     rating_key = entry.get("ratingKey")
     if not rating_key:
@@ -907,7 +906,7 @@ def plex_history_poll():
 
         # A second watch can share the second of the cursor, and Plex can
         # list it only on the next poll. A read after the cursor second
-        # lost it (#425). Thus, the poll reads the cursor second again.
+        # lost it. Thus, the poll reads the cursor second again.
         # It skips the entries of that second that it handled already.
 
         seen_at_cursor = {
@@ -928,7 +927,7 @@ def plex_history_poll():
             entries = (body.get("MediaContainer") or {}).get("Metadata") or []
         except Exception as e:
             # The health probe of Plex sends the outage mail. Thus, a
-            # failed poll logs 1 line and keeps the cursor (#660).
+            # failed poll logs 1 line and keeps the cursor.
             current_app.logger.warning(
                 f"Plex history poll: could not read the history: "
                 f"{type(e).__name__}: {e}"
@@ -971,7 +970,7 @@ def plex_history_poll():
             if viewed_at == cursor and _history_identity(entry) in seen_at_cursor:
                 continue
 
-            # A live TV airing also has the type movie (#182). A
+            # A live TV airing also has the type movie. A
             # virtual-channel play is never a diary watch.
 
             if entry.get("live"):
@@ -1114,7 +1113,7 @@ def review_task(user_id, title, rating):
 
             if movie and round(rating * 2) / 2 == 0:
                 # 0 stars is the ✕ of the ladder: the not-interested flag,
-                # never a review (#426). A film with a diary row is seen.
+                # never a review. A film with a diary row is seen.
                 # Thus, it gets no flag.
 
                 seen = (
@@ -1142,7 +1141,7 @@ def review_task(user_id, title, rating):
             elif movie:
                 # The import is a rating without a date. A second upload
                 # of the same file updates the undated row. It does not
-                # add a second row (#426).
+                # add a second row.
 
                 review = UserMovieReview.query.filter_by(
                     user_id=user_id, movie_id=movie.id, date_watched=None
@@ -1150,7 +1149,7 @@ def review_task(user_id, title, rating):
                 stars = star_rating_fields(rating)
                 # The liked flag follows the stars only when the stars
                 # change. An unchanged rating keeps a liked flag from
-                # Letterboxd (follow-up #442).
+                # Letterboxd.
                 if review is None:
                     review = UserMovieReview(
                         user_id=user_id,
@@ -1163,7 +1162,7 @@ def review_task(user_id, title, rating):
                     db.session.add(review)
                 elif _stars_changed(review, stars):
                     # A changed rating must reach the incremental
-                    # Letterboxd export, which reads date_updated (#442).
+                    # Letterboxd export, which reads date_updated.
                     # This agrees with apply_row_edit.
                     review.date_updated = datetime.now()
                     if review.date_reviewed is None:

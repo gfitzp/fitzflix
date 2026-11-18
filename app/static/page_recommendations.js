@@ -1,7 +1,7 @@
 // The script of the Recommendations page. recommendations.html loads this
 // file and gives the address of the tile fetch on the script tag.
 
-// The refill loop (#235): an action on a suggestion (a rating, a
+// The refill loop: an action on a suggestion (a rating, a
 // watchlist add, a ✕) replaces only that tile with the next film that
 // matches the criteria of the shelf. The live posts of the tile already
 // repaint the widgets. tiles.js announces each success with a
@@ -27,7 +27,7 @@
 		if (id) window.fitzflixHydrate([id], []);
 	}
 
-	// Invariant: a film shows at most 1 time on the page (#754). The
+	// Invariant: a film shows at most 1 time on the page. The
 	// server returns the best film that the request does not name.
 	// Two requests that left together named the same films and got
 	// the same film. Thus, the requests go one after an other: a
@@ -49,7 +49,7 @@
 		var params = "criteria=" + encodeURIComponent(shelf.getAttribute("data-criteria"))
 			+ "&exclude=" + shownIds().join(",");
 		// A request with no answer must not hold the requests after
-		// it. live.js has the fetch with a time limit (#650).
+		// it. live.js has the fetch with a time limit.
 		return fetchWithTimeout(TILE_URL + "?" + params, {credentials: "same-origin"}, POLL_TIMEOUT_MS)
 			.then(function(response) {
 				if (response.status === 204) return null;

@@ -27,7 +27,7 @@ def _params(params, token=None):
     """Return the query parameters with the Plex token added.
 
     The token of PLEX_TOKEN is the owner. A call for another account,
-    for example the stream selection of a Home user (#652), passes the
+    for example the stream selection of a Home user, passes the
     token of that account."""
 
     return {
