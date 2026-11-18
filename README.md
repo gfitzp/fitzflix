@@ -782,6 +782,14 @@ The **Library Maintenance → Lossy Files** report lists the files whose audio c
 
 Two more review queues are available. A **TMDB triage** page lists the records whose metadata match needs a second look. A report lists the files whose measured duration does not agree with the TMDB runtime of the film. The causes are a wrong match, a partial rip, or an alternative cut with the wrong label.
 
+### Film titles
+
+A film has the title that TMDB gives it. A nightly task reads the list of the films that changed on TMDB. A changed title renames the record, the folder and the files. People on TMDB do not always agree about a title, and each edit renames the film again.
+
+An admin can select a different title. The Movie Data section of a movie page has the link **Select the title**. Its page shows the titles that TMDB lists for the film. These are the TMDB title, the original title, and the alternative titles of each country. Select a title with one click. Fitzflix then renames the record, the folder and the files, and it tells Radarr the new folder. The pages show the selected title.
+
+The film keeps the selected title while TMDB lists it in one of these fields. A difference of letter case, accents or spaces does not count. The year always comes from TMDB. If TMDB removes the title, the next refresh gives the film the TMDB title again and writes a warning to the log. Select the TMDB title on the same page to follow TMDB again. Two films cannot have the same title and year. Thus, Fitzflix refuses a title that another film of the same year has. Fitzflix stores only the selected title, not the list of titles.
+
 ### Custom posters
 
 Each movie or file can have custom artwork. The poster picker on a movie page shows the full TMDB poster gallery, in groups by language, with the TMDB default highlighted. Select a poster with one click, or upload a poster. Fitzflix keeps the custom posters under `app/static/custom/`. The nightly backup mirrors them to the S3 bucket. You can remove a custom poster with one click. Fitzflix then uses the precedence rules of the library.

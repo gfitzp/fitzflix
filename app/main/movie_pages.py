@@ -23,6 +23,7 @@ from app.main.forms import (
     LibrarySearchForm,
     MovieReviewForm,
     MovieShoppingExcludeForm,
+    MovieTitleForm,
     RadarrForm,
     QualityFilterForm,
     TMDBLookupForm,
@@ -41,6 +42,7 @@ from app.models import (
     TMDBGenre,
     UserMovieStatus,
     UserWatchlist,
+    clip_movie_title,
     movie_genres,
     title_sort,
 )
@@ -76,6 +78,13 @@ from app.arr.radarr_push import radarr_configured, radarr_tmdb_ids
 from app.criterion.criterion_catalog import record_set_title
 from app.viewing.diary import clear_watchlist
 from app.main import people_pages
+from app.metadata.tmdb_apply import (
+    canonical_movie_name,
+    listed_tmdb_title,
+    same_tmdb_title,
+    tmdb_json_or,
+    tmdb_title_choices,
+)
 from app.metadata.tmdb_refresh import TMDB_NO_MATCH
 from app.metadata.tmdb_refresh import tmdb_refresh_status
 
@@ -778,6 +787,125 @@ def movie_tmdb(movie_id):
         url_for("main.movie", movie_id=target_id),
     )
     return redirect(url_for("main.movie", movie_id=target_id))
+
+
+def _tmdb_title_payload(tmdb_id):
+    """Return the TMDB details of a film with its alternative titles, or None."""
+
+    return tmdb_json_or(
+        f"/movie/{int(tmdb_id)}",
+        {"append_to_response": "alternative_titles"},
+        None,
+        timeout=30,
+    )
+
+
+@bp.route("/movie/<int:movie_id>/title", methods=["GET", "POST"])
+@login_required
+@admin_required
+def movie_title(movie_id):
+    """Show the titles that TMDB lists for a film, and let an admin select one.
+
+    A selection only records the title on the film. Then the TMDB refresh
+    of the film runs. That refresh renames the record, the folder and
+    the files, and it tells Radarr. The page reads the titles from TMDB
+    each time. Fitzflix does not store them.
+
+    The main title ends a selection. A title that another film of the
+    same year has is refused, because the title and the year of a film
+    are unique."""
+
+    movie = Movie.query.filter_by(id=movie_id).first_or_404()
+    title = movie.display_title
+    film_url = url_for("main.movie", movie_id=movie.id)
+    page_url = url_for("main.movie_title", movie_id=movie.id)
+    if not movie.tmdb_id:
+        flash(
+            f"'{title}' is not matched to TMDB. It has no TMDB titles to select",
+            "warning",
+        )
+        return redirect(film_url)
+
+    payload = _tmdb_title_payload(movie.tmdb_id)
+    choices = tmdb_title_choices(payload) if payload else None
+    title_form = MovieTitleForm()
+
+    if title_form.title_submit.data and title_form.validate_on_submit():
+        if choices is None:
+            flash(
+                "Fitzflix could not get the titles from TMDB. Try again later.",
+                "danger",
+            )
+            return redirect(page_url)
+        listed = listed_tmdb_title(title_form.title.data, payload)
+        if listed is None:
+            flash(
+                f"TMDB does not list the title '{title_form.title.data}' for "
+                f"this film.",
+                "warning",
+            )
+            return redirect(page_url)
+        main_title, year = canonical_movie_name(payload, movie.year)
+        selected = (
+            None if same_tmdb_title(listed, main_title) else clip_movie_title(listed)
+        )
+        name = selected or main_title
+        holder = Movie.query.filter(
+            Movie.title == name, Movie.year == year, Movie.id != movie.id
+        ).first()
+        if holder is not None:
+            flash(
+                f"'{holder.display_title}' has that title and year already. "
+                f"Two films cannot have the same title and year.",
+                "warning",
+            )
+            return redirect(page_url)
+
+        movie.chosen_title = selected
+        db.session.commit()
+        flash(f"Selected the title '{name}' for this film.", "success")
+
+        # The refresh gives the record, the folder and the files the
+        # title. The page waits for it, so it goes to the front of the
+        # sql queue.
+
+        refresh_job = enqueue_task(
+            "app.metadata.tmdb_refresh.refresh_tmdb_info",
+            "Movies",
+            movie.id,
+            movie.tmdb_id,
+            apply_at_front=True,
+            queue="sql",
+            description=f"Refreshing TMDB data for '{movie.title} ({movie.year})'",
+            at_front=True,
+        )
+        _flash_tmdb_refresh(
+            _wait_for_refresh(refresh_job), f"{name} ({year})", film_url
+        )
+        return redirect(film_url)
+
+    if request.method == "POST":
+        flash_form_errors(title_form)
+        return redirect(page_url)
+
+    current = movie.chosen_title or movie.tmdb_title or movie.title
+    return render_template(
+        "movie_title.html",
+        title=f'Title of "{title}"',
+        movie=movie,
+        back_url=film_url,
+        back_label=title,
+        choices=choices,
+        current=next(
+            (
+                choice["title"]
+                for choice in choices or []
+                if same_tmdb_title(choice["title"], current)
+            ),
+            None,
+        ),
+        title_form=title_form,
+    )
 
 
 @bp.route("/movie/<int:movie_id>/criterion", methods=["POST"])

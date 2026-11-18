@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% from "_page_header.html" import breadcrumb %}
+
+{% block app_content %}
+{{ breadcrumb([(back_label, back_url), ('Title', none)]) }}
+<h3>{{ back_label }}</h3>
+<p class="text-muted">Select the title of this film from the titles that TMDB lists for it. Fitzflix then renames the record, the folder and the files. The film keeps the title while TMDB lists it. If TMDB removes the title, the film gets the TMDB title again. The year always comes from TMDB.</p>
+{% if movie.chosen_title %}
+<p class="small text-muted">An admin selected the title of this film. Select the TMDB title to follow TMDB again.</p>
+{% endif %}
+{% if choices is none %}
+<p class="small text-muted">Fitzflix could not get the titles from TMDB. Try again later.</p>
+{% else %}
+{# One form for each title, as on the poster page. The hidden field
+   holds the title. The route reads the titles from TMDB again and
+   refuses a title that TMDB does not list. #}
+<div class="table-responsive">
+<table class="table table-sm align-middle">
+	<thead>
+		<tr>
+			<th scope="col">Title</th>
+			<th scope="col">Where TMDB has it</th>
+			<th scope="col"></th>
+		</tr>
+	</thead>
+	<tbody>
+		{% for choice in choices %}
+		<tr>
+			<td>{{ choice.title }}{% if choice.title == current %} <span class="badge text-bg-primary">Current</span>{% endif %}</td>
+			<td class="small text-muted">{{ choice.sources | join(", ") }}</td>
+			<td class="text-end">
+				{% if choice.title != current %}
+				<form method="post">
+					{{ title_form.csrf_token }}
+					{{ title_form.title(value=choice.title) }}
+					{{ title_form.title_submit(class_="btn btn-sm btn-primary") }}
+				</form>
+				{% endif %}
+			</td>
+		</tr>
+		{% endfor %}
+	</tbody>
+</table>
+</div>
+{% endif %}
+{% endblock %}

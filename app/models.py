@@ -552,6 +552,13 @@ class Movie(db.Model, TMDBMixin):
         db.Boolean, nullable=False, default=False, server_default="0"
     )
 
+    # The title that an admin selected from the titles that TMDB lists
+    # for the film. While TMDB lists it, title and tmdb_title hold it.
+    # A refresh then does not give the film the main title of TMDB.
+    # NULL means that the film follows the main title.
+
+    chosen_title = db.Column(db.String(220))
+
     criterion_spine_number = db.Column(db.Integer)
     criterion_film_id = db.Column(db.String(255))
     criterion_set_title = db.Column(db.String(512))
@@ -674,7 +681,7 @@ class Movie(db.Model, TMDBMixin):
         ("tmdb_vote_count", "vote_count"),
     )
     DATE_FIELDS = (("tmdb_release_date", "release_date"),)
-    CLEARED_FIELDS = ("tmdb_data_as_of",)
+    CLEARED_FIELDS = ("tmdb_data_as_of", "chosen_title")
     TMDB_ASSOCIATIONS = (
         TMDBAssociation(
             "collections",

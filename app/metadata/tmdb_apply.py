@@ -179,21 +179,111 @@ def _tmdb_date(value):
     return datetime.strptime(value, "%Y-%m-%d") if value else None
 
 
-def canonical_movie_name(tmdb_info, year):
+def _same_title_key(title):
+    """Return the key that says if 2 titles of TMDB are the same title.
+
+    The key folds the accents and the letter case (title_key), and each
+    run of white space is 1 space. An ellipsis character and 3 periods
+    get the same key. The names on the disk fold these differences too.
+    A long title is compared as the record holds it."""
+
+    from app.models import clip_movie_title
+
+    return " ".join(title_key(clip_movie_title(title)).split())
+
+
+def same_tmdb_title(first, second):
+    """Return True if 2 titles are the same title (_same_title_key)."""
+
+    key = _same_title_key(first or "")
+    return bool(key) and key == _same_title_key(second or "")
+
+
+def tmdb_title_choices(tmdb_info):
+    """Return the titles that TMDB lists for a film payload, or None.
+
+    Each entry is {"title", "sources"}. The sources say where TMDB has
+    the title: the main title, the original title, or an alternative
+    title with its country and its type. Two titles with the same key
+    (_same_title_key) are 1 entry, with the first spelling. The main
+    title comes first.
+
+    None means that the payload has no block of alternative titles.
+    Then the list is not complete. An empty block is complete: the film
+    has no alternative titles."""
+
+    block = tmdb_info.get("alternative_titles")
+    if not isinstance(block, dict) or not isinstance(block.get("titles"), list):
+        return None
+    listed = [
+        (tmdb_info.get("title"), "TMDB title"),
+        (tmdb_info.get("original_title"), "Original title"),
+    ]
+    for entry in block["titles"]:
+        country = entry.get("iso_3166_1") or ""
+        kind = entry.get("type") or ""
+        source = ": ".join(part for part in (country, kind) if part)
+        listed.append((entry.get("title"), source or "Alternative title"))
+    choices = {}
+    for title, source in listed:
+        if not isinstance(title, str) or not title.strip():
+            continue
+        choice = choices.setdefault(
+            _same_title_key(title), {"title": title.strip(), "sources": []}
+        )
+        if source not in choice["sources"]:
+            choice["sources"].append(source)
+    return list(choices.values())
+
+
+def tmdb_titles(tmdb_info):
+    """Return each title that TMDB lists for a film payload, or None (tmdb_title_choices)."""
+
+    choices = tmdb_title_choices(tmdb_info)
+    return None if choices is None else [choice["title"] for choice in choices]
+
+
+def listed_tmdb_title(title, tmdb_info):
+    """Return the spelling of TMDB for a title that the payload lists, or None."""
+
+    for listed in tmdb_titles(tmdb_info) or []:
+        if same_tmdb_title(listed, title):
+            return listed
+    return None
+
+
+def selected_title_stands(selected, tmdb_info):
+    """Return True if a payload still lists the title that an admin selected.
+
+    Invariant: a film keeps a selected title only while TMDB lists it.
+    The main title, the original title and the alternative titles count.
+    Return False when the payload has the complete list and the title
+    is not in it. Return None when the payload has no block of
+    alternative titles. Then the payload cannot tell, and the selection
+    stays. A payload that waited in a queue or in a retry can be such a
+    payload."""
+
+    if tmdb_titles(tmdb_info) is None:
+        return None
+    return listed_tmdb_title(selected, tmdb_info) is not None
+
+
+def canonical_movie_name(tmdb_info, year, selected_title=None):
     """Return the (title, year) that tmdb_movie_apply gives a movie for a payload.
 
     The title is the TMDB title, shortened to the column of Movie.title.
-    The year is the year of the release date of the payload, or year
-    when the payload has no release date. The title is None when the
-    payload has no title. tmdb_movie_apply can still keep the old name
-    when another record holds the new one."""
+    A title that an admin selected comes first while the payload lists
+    it (selected_title_stands). The year is the year of the release date
+    of the payload, or year when the payload has no release date. The
+    title is None when the payload has no title and the film has no
+    selection. tmdb_movie_apply can still keep the old name when another
+    record holds the new one."""
 
-    from app.models import Movie
+    from app.models import clip_movie_title
 
-    title = tmdb_info.get("title")
-    title_length = Movie.__table__.c.title.type.length
-    if title and len(title) > title_length:
-        title = title[:title_length].rstrip()
+    title = clip_movie_title(tmdb_info.get("title"))
+    if selected_title and selected_title_stands(selected_title, tmdb_info) is not False:
+        title = selected_title
     if tmdb_info.get("release_date"):
         year = _tmdb_date(tmdb_info["release_date"]).year
     return title, year
@@ -527,7 +617,11 @@ class TMDBMixin(object):
 
         # Request only the appended blocks that tmdb_movie_apply reads.
 
-        requested_info = "credits,external_ids,keywords,release_dates"
+        # The alternative titles say if a selected title still stands.
+
+        requested_info = (
+            "alternative_titles,credits,external_ids,keywords,release_dates"
+        )
         # A bulk refresh fetches hundreds of movies a night. The apply
         # writes the 1 INFO line of each movie.
         current_app.logger.debug(f"{self} Getting TMDB data")
@@ -576,7 +670,28 @@ class TMDBMixin(object):
             return self
 
         self._apply_scalars(tmdb_info)
-        canonical_title, canonical_year = canonical_movie_name(tmdb_info, self.year)
+
+        # A title that an admin selected stays while TMDB lists it. A
+        # title that TMDB removed gives way to the main title.
+
+        if (
+            self.chosen_title
+            and selected_title_stands(self.chosen_title, tmdb_info) is False
+        ):
+            current_app.logger.warning(
+                f"{self} TMDB no longer lists the selected title "
+                f"'{self.chosen_title}'. The film gets the TMDB title again"
+            )
+            self.chosen_title = None
+        canonical_title, canonical_year = canonical_movie_name(
+            tmdb_info, self.year, self.chosen_title
+        )
+
+        # The pages and the untouched names read tmdb_title. Thus, the
+        # selected title goes there too, in place of the main title.
+
+        if self.chosen_title:
+            self.tmdb_title = self.chosen_title
         self._fit_tmdb_strings()
 
         # Rename this movie to the canonical TMDB title and year, unless a

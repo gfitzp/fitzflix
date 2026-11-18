@@ -508,6 +508,13 @@ class TMDBPosterSelectForm(FlaskForm):
     poster_select_submit = SubmitField("Use this poster")
 
 
+class MovieTitleForm(FlaskForm):
+    """Show one "use this title" button per title on the title page of a film."""
+
+    title = HiddenField(validators=[DataRequired()])
+    title_submit = SubmitField("Use this title")
+
+
 class CustomPosterRemoveForm(FlaskForm):
     """Delete the custom poster (poster picker)."""
 

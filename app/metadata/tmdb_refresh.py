@@ -108,6 +108,7 @@ PERSON_SET_COLUMNS = (
     "shopping_list_exclude",
     "shopping_cart_add_date",
     "shopping_cart_priority",
+    "chosen_title",
 )
 
 # The Wikidata task writes these columns from the catalog entry of the
@@ -988,7 +989,11 @@ def _apply_movie_refresh(
     # Its lock goes in the list too.
 
     renamed_to = existing_movie or movie
-    names = [canonical_movie_name(tmdb_info, renamed_to.year)] if tmdb_info else []
+    names = (
+        [canonical_movie_name(tmdb_info, renamed_to.year, renamed_to.chosen_title)]
+        if tmdb_info
+        else []
+    )
     for resource in _movie_refresh_lock_resources(movie, existing_movie, names=names):
         lock = current_app.lock_manager.lock(
             resource, current_app.config["SQL_TASK_TIMEOUT"] * 1000

@@ -303,6 +303,10 @@ The star row is the rating control of
 		</form>
 		{% endif %}
 		{% endif %}
+		{# The title page lists the titles that TMDB has for the film. #}
+		{% if movie.tmdb_id %}
+		<p class="small mt-2 mb-1"><a href="{{ url_for('main.movie_title', movie_id=movie.id) }}">Select the title</a>{% if movie.chosen_title %} <span class="text-muted">An admin selected the title of this film.</span>{% endif %}</p>
+		{% endif %}
 		{# tmdb_data_as_of lags tmdb_id on a just-created record. The page
 		   renders immediately after a watchlist add or a log, while the
 		   enrichment refresh is still in the queue. #}
