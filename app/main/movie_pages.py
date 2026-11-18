@@ -807,11 +807,12 @@ def _name_holder(movie, name, year):
     ).first()
 
 
-def _refresh_for_the_title(movie, name, year):
+def _refresh_for_the_title(movie, kept, name, year):
     """Queue the TMDB refresh that gives a film its title, and flash its state.
 
     The refresh renames the record, the folder and the files. The page
-    waits for it, so it goes to the front of the sql queue."""
+    waits for it, so it goes to the front of the sql queue. kept is the
+    record that the film has after the refresh."""
 
     refresh_job = enqueue_task(
         "app.metadata.tmdb_refresh.refresh_tmdb_info",
@@ -826,7 +827,7 @@ def _refresh_for_the_title(movie, name, year):
     _flash_tmdb_refresh(
         _wait_for_refresh(refresh_job),
         f"{name} ({year})",
-        url_for("main.movie", movie_id=movie.id),
+        url_for("main.movie", movie_id=kept.id),
     )
 
 
@@ -863,6 +864,10 @@ def movie_title(movie_id):
     follow_form = MovieTitleFollowForm()
     selects = title_form.title_submit.data and title_form.validate_on_submit()
     follows = follow_form.follow_submit.data and follow_form.validate_on_submit()
+
+    if follows and not selects and movie.chosen_title is None:
+        flash("This film follows the TMDB title already.", "info")
+        return redirect(page_url)
 
     if (selects or follows) and choices is None:
         flash("TMDB did not answer. The title did not change.", "danger")
@@ -909,17 +914,27 @@ def movie_title(movie_id):
             flash(f"Selected the title '{name}' for this film.", "success")
         else:
             flash("This film follows the TMDB title again.", "success")
-        _refresh_for_the_title(movie, name, year)
-        return redirect(film_url)
+        # The oldest record with the TMDB id is the film after the
+        # refresh. The refresh merges a younger record into it, and the
+        # page of the younger record is then gone.
+
+        kept = (
+            Movie.query.filter_by(tmdb_id=movie.tmdb_id)
+            .order_by(Movie.date_created.asc())
+            .first()
+        )
+        _refresh_for_the_title(movie, kept, name, year)
+        return redirect(url_for("main.movie", movie_id=kept.id))
 
     if request.method == "POST":
         flash_form_errors(title_form)
         return redirect(page_url)
 
-    # The title that the film has now. A selection that the refresh did
-    # not apply yet keeps its button.
+    # The title that the record has now. tmdb_title has a selection
+    # before the record can take the name. Thus, a selection that the
+    # refresh did not apply keeps its button.
 
-    current = movie.tmdb_title or movie.title
+    current = movie.title
     return render_template(
         "movie_title.html",
         title=f'Title of "{title}"',
@@ -931,7 +946,7 @@ def movie_title(movie_id):
             (
                 choice["title"]
                 for choice in choices or []
-                if same_spelling(choice["title"], current)
+                if same_spelling(clip_movie_title(choice["title"]), current)
             ),
             None,
         ),

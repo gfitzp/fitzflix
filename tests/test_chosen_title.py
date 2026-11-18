@@ -471,6 +471,39 @@ def test_a_survivor_keeps_its_own_selection(app):
         kept = db.session.get(Movie, survivor_id)
         assert (kept.title, kept.chosen_title) == (STREAMING, STREAMING)
 
+        # The survivor has the name already. Thus, no second refresh.
+        assert [
+            job
+            for job in app.request_queue.jobs
+            if job.func_name == "app.metadata.tmdb_refresh.refresh_tmdb_info"
+        ] == []
+
+
+def test_a_new_tmdb_id_locks_the_name_of_the_new_film(app, held_lock):
+    """The selection of the old film is not the name that the apply gives."""
+
+    from app.metadata.tmdb_refresh import _movie_base_lock, apply_tmdb_refresh
+    from app.models import Movie
+
+    with app.app_context():
+        movie = make_movie("Gamma Alt", 2019, tmdb_id=77, chosen_title="Gamma Alt")
+        db.session.commit()
+        movie_id = movie.id
+        held_lock(_movie_base_lock(MAIN, 2019))
+        assert (
+            apply_tmdb_refresh(
+                "Movies",
+                movie_id,
+                tmdb_id=TMDB_ID,
+                tmdb_payload=packed(payload(alternatives=())),
+                rematch=True,
+            )
+            is False
+        )
+        db.session.expire_all()
+        row = db.session.get(Movie, movie_id)
+        assert (row.title, row.chosen_title) == ("Gamma Alt", "Gamma Alt")
+
 
 def test_a_merge_with_no_selection_queues_no_second_refresh(app):
     from datetime import datetime
@@ -536,6 +569,92 @@ def test_a_file_with_the_selected_title_goes_to_the_film_with_the_selection(
         db.session.commit()
         filenames.evaluate_filename("Plain Title (2001) - [DVD].mkv", log=False)
         assert asked == ["/search/movie"]
+
+
+@pytest.mark.parametrize(
+    "selection, file_title",
+    [
+        ("Alpha: Beta", "Alpha Beta"),
+        ("What If?", "What If"),
+        ("...And Justice", "And Justice"),
+        ("Érase una vez", "Érase una vez"),
+        ("Érase una vez", "Erase una vez"),
+    ],
+)
+def test_the_name_of_a_file_loses_characters_of_the_selected_title(
+    app, monkeypatch, selection, file_title
+):
+    """The untouched name and the library name of the film both find it."""
+
+    from app.media.importing import filenames
+
+    asked = []
+    monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
+    monkeypatch.setattr(
+        filenames,
+        "tmdb_json",
+        lambda path, params=None, timeout=10: asked.append(path) or {"results": []},
+    )
+    with app.app_context():
+        film(title=selection, chosen=selection)
+        details = filenames.evaluate_filename(
+            f"{file_title} (2019) - [Bluray-1080p].mkv", log=False
+        )
+        assert (details["title"], details["tmdb_id"]) == (selection, TMDB_ID)
+        assert asked == []
+
+        # An other year is an other film. It goes through the search.
+        filenames.evaluate_filename(
+            f"{file_title} (2018) - [Bluray-1080p].mkv", log=False
+        )
+        assert asked == ["/search/movie"]
+
+
+def test_the_rename_of_an_other_film_does_not_use_the_selection(app, monkeypatch):
+    """A film with no TMDB id gets the main title that an other film selected.
+
+    Its record cannot take the name. Its file must stay in its folder,
+    and not go into the folder of the film with the selection."""
+
+    from app.media.importing import filenames
+    from app.metadata import tmdb_apply
+    from app.metadata.tmdb_refresh import apply_tmdb_refresh
+    from app.models import File
+
+    def fake_json(path, params=None, timeout=10):
+        """Answer the title search of the rename with the film of the record."""
+
+        return {
+            "results": [{"id": 77, "title": STREAMING, "release_date": "2019-03-01"}]
+        }
+
+    monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
+    monkeypatch.setattr(filenames, "tmdb_json", fake_json)
+    monkeypatch.setattr(tmdb_apply, "notify_admin", lambda *args, **kwargs: None)
+    with app.app_context():
+        film()
+        other = make_movie("Parsed Name", 2019)
+        db.session.commit()
+        file = make_movie_file(other, "Bluray-1080p")
+        path = on_disk(app, file)
+        other_id, file_id, before = other.id, file.id, file.file_path
+        details = {
+            "id": 77,
+            "title": STREAMING,
+            "original_title": STREAMING,
+            "release_date": "2019-03-01",
+            "alternative_titles": {"titles": []},
+        }
+        assert (
+            apply_tmdb_refresh(
+                "Movies", other_id, tmdb_id=None, tmdb_payload=packed(details)
+            )
+            is True
+        )
+        db.session.expire_all()
+        row = db.session.get(File, file_id)
+        assert (row.movie_id, row.file_path) == (other_id, before)
+        assert os.path.exists(path)
 
 
 def test_a_rating_import_finds_the_film_with_a_selection_by_its_tmdb_id(
@@ -905,3 +1024,97 @@ def test_a_long_selection_is_stored_as_the_record_holds_a_title(
         stored = db.session.get(Movie, movie_id).chosen_title
         assert stored == clip_movie_title(long_title)
         assert len(stored) <= Movie.__table__.c.title.type.length
+
+
+def test_a_selection_that_the_record_does_not_have_keeps_its_button(
+    app, admin_client, titles
+):
+    """An other record held the name, so the record did not take the selection."""
+
+    with app.app_context():
+        movie = film(title=MAIN, chosen=STREAMING)
+        movie.tmdb_title = STREAMING
+        db.session.commit()
+        movie_id = movie.id
+
+    page = admin_client.get(f"/movie/{movie_id}/title").get_data(as_text=True)
+    assert f'value="{STREAMING}"' in page
+    assert f'value="{MAIN}"' not in page
+
+
+def follow(client, movie_id, **kwargs):
+    return client.post(
+        f"/movie/{movie_id}/title",
+        data={
+            "csrf_token": page_csrf_token(client),
+            "follow_submit": "Follow the TMDB title",
+        },
+        **kwargs,
+    )
+
+
+def test_the_button_changes_nothing_with_no_answer_from_tmdb(app, admin_client, titles):
+    from app.models import Movie
+
+    with app.app_context():
+        movie_id = film().id
+    titles["payload"] = None
+
+    response = follow(admin_client, movie_id, follow_redirects=True)
+    assert "TMDB did not answer" in response.get_data(as_text=True)
+    with app.app_context():
+        assert db.session.get(Movie, movie_id).chosen_title == STREAMING
+        assert refresh_jobs(app) == []
+
+
+def test_the_button_is_refused_when_another_film_has_the_tmdb_title(
+    app, admin_client, titles
+):
+    from app.models import Movie
+
+    with app.app_context():
+        movie_id = film().id
+        make_movie(MAIN, 2019)
+        db.session.commit()
+
+    response = follow(admin_client, movie_id, follow_redirects=True)
+    assert "has that title and year already" in response.get_data(as_text=True)
+    with app.app_context():
+        assert db.session.get(Movie, movie_id).chosen_title == STREAMING
+        assert refresh_jobs(app) == []
+
+
+def test_the_button_does_nothing_for_a_film_with_no_selection(
+    app, admin_client, titles
+):
+    with app.app_context():
+        movie_id = film(title=MAIN, chosen=None).id
+
+    response = follow(admin_client, movie_id, follow_redirects=True)
+    assert "follows the TMDB title already" in response.get_data(as_text=True)
+    with app.app_context():
+        assert refresh_jobs(app) == []
+
+
+def test_a_selection_on_a_younger_record_goes_to_the_page_of_the_oldest(
+    app, admin_client, titles
+):
+    """The refresh merges the younger record into the oldest one."""
+
+    from datetime import datetime
+
+    with app.app_context():
+        oldest = make_movie("Oldest Record", 2019, tmdb_id=TMDB_ID)
+        oldest.date_created = datetime(2020, 1, 1)
+        younger = film(title=MAIN, chosen=None)
+        younger.date_created = datetime(2024, 1, 1)
+        db.session.commit()
+        oldest_id, younger_id = oldest.id, younger.id
+
+    response = select(admin_client, younger_id, STREAMING)
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith(f"/movie/{oldest_id}")
+    with app.app_context():
+        assert [job.args for job in refresh_jobs(app)] == [
+            ("Movies", younger_id, TMDB_ID)
+        ]

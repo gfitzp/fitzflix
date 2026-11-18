@@ -153,13 +153,16 @@ TV_NAME_RE = re.compile(
 )
 
 
-def evaluate_filename(file_path, tmdb_id=None, log=True):
+def evaluate_filename(file_path, tmdb_id=None, log=True, selections=True):
     """Examine a file name and return the details of its movie or TV show.
 
     Return a FilenameRejection for a name that Fitzflix cannot import.
     Pass log=False for a preview of a filename (for example, the admin
     filename tester). Then the dry run does not fill the log as a real
-    import does.
+    import does. Pass selections=False for a file whose record is
+    known, as the rename of a TMDB refresh does. Then the name of a
+    film with a selected title does not give the file to that film
+    (_film_with_the_selected_name).
     """
 
     basename = os.path.basename(file_path)
@@ -171,7 +174,7 @@ def evaluate_filename(file_path, tmdb_id=None, log=True):
     if TV_NAME_SEARCH_RE.search(basename):
         return _parse_tv(basename, log)
     if MOVIE_NAME_RE.match(basename) or YEARLESS_MOVIE_NAME_RE.match(basename):
-        return _parse_movie(basename, tmdb_id, log)
+        return _parse_movie(basename, tmdb_id, log, selections)
     return FilenameRejection(None, "no name format matches")
 
 
@@ -472,7 +475,7 @@ def _canonical_series_title(title):
     return title
 
 
-def _parse_movie(basename, tmdb_id, log):
+def _parse_movie(basename, tmdb_id, log, selections=True):
     """Return the details of a film name, or a FilenameRejection.
 
     An explicit tmdb_id (the TMDB-refresh rename path) outranks an id
@@ -500,7 +503,9 @@ def _parse_movie(basename, tmdb_id, log):
     if not _known_quality(quality_title):
         return FilenameRejection(None, "unknown quality")
 
-    identity = _resolve_movie_identity(basename, title, year, id_tag, tmdb_id, log)
+    identity = _resolve_movie_identity(
+        basename, title, year, id_tag, tmdb_id, log, selections
+    )
     if isinstance(identity, FilenameRejection):
         return identity
     title, year, tmdb_id = identity
@@ -665,7 +670,52 @@ def _movie_layout(parts, version_text):
     return dirname, plex_title, basename, version or edition, feature_type, fullscreen
 
 
-def _resolve_movie_identity(basename, title, year, id_tag, tmdb_id, log):
+def _film_with_the_selected_name(title, year):
+    """Return the film whose selected title gives a file this title and year, or None.
+
+    Invariant: a new file with the name of a film that has a selected
+    title belongs to that film. A restored rip has this name. The TMDB
+    search finds a film by its main title first, and an other film of
+    the year can have that name.
+
+    The name of a file loses some characters of a title, for example a
+    colon or a question mark. Thus, the title of each such film goes
+    through the name builder of the library, and the parser reads it
+    back. The untouched name keeps the accents, and the library name
+    does not. Both forms count. Only a small number of films have a
+    selection."""
+
+    films = Movie.query.filter(
+        Movie.chosen_title != None, Movie.tmdb_id != None
+    ).order_by(Movie.date_created.asc())
+    for film in films:
+        shown = film.tmdb_title or film.title
+        shown_year = film.year
+        if film.tmdb_title and film.tmdb_release_date:
+            shown_year = film.tmdb_release_date.year
+        _, name = library_name(
+            {
+                "library": MOVIES,
+                "title": shown,
+                "year": shown_year,
+                "quality_title": "DVD",
+                "extension": "mkv",
+            }
+        )
+        for form in (name, unidecode(name)):
+            match = MOVIE_NAME_RE.match(" ".join(sanitize_filename(form).split()))
+            if (
+                match
+                and match.group("title") == title
+                and int(match.group("year")) == year
+            ):
+                return film
+    return None
+
+
+def _resolve_movie_identity(
+    basename, title, year, id_tag, tmdb_id, log, selections=True
+):
     """Return the (title, year, tmdb_id) of a film, or a FilenameRejection.
 
     This is the only network part of the parse, and the only part that
@@ -714,23 +764,11 @@ def _resolve_movie_identity(basename, title, year, id_tag, tmdb_id, log):
 
     tmdb_result = None
     m = None
-    if not tmdb_id and id_tag is None and year:
-        # Invariant: a file with the title that an admin selected for a
-        # film belongs to that film. A restored rip has this name. The
-        # TMDB search finds a film by its main title first, and an other
-        # film of the year can have that name. Thus, the record with the
-        # selection gives the id, with no search.
+    if selections and not tmdb_id and id_tag is None and year:
+        # The record with the selection gives the id, with no search
+        # (_film_with_the_selected_name).
 
-        selected = (
-            Movie.query.filter(
-                Movie.title == title,
-                Movie.year == year,
-                Movie.chosen_title != None,
-                Movie.tmdb_id != None,
-            )
-            .order_by(Movie.date_created.asc())
-            .first()
-        )
+        selected = _film_with_the_selected_name(title, year)
         if selected is not None:
             tmdb_id = selected.tmdb_id
 

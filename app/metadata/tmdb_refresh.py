@@ -706,7 +706,12 @@ def _rename_movie_file(f, tmdb_id, probe=True):
             f.untouched_basename, tmdb_id=tmdb_id, log=False
         )
     else:
-        file_details = filenames.evaluate_filename(f.untouched_basename, log=False)
+        # The file has its record. The name of a film with a selected
+        # title must not give it to that other film.
+
+        file_details = filenames.evaluate_filename(
+            f.untouched_basename, log=False, selections=False
+        )
 
     if not file_details:
         # For example, an id tag in the untouched name no
