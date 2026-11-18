@@ -78,7 +78,11 @@ A script that is only for 1 page is a file whose name starts with `page_`. The r
 | Route module | Pages |
 | --- | --- |
 | `app/main/discover.py` | The landing page, Recommendations, Watchlist, Newly added, Leaving, File Activity |
-| `app/main/library.py` | The movie and TV libraries, the film page, the series page, the file page, People, the Criterion Collection |
+| `app/main/movie_pages.py` | The movie library and the pages of 1 film |
+| `app/main/tv_pages.py` | The TV library and the pages of 1 series |
+| `app/main/file_pages.py` | The page of 1 file: its tracks, its archive, and its delete |
+| `app/main/people_pages.py` | The People page and the page of 1 person |
+| `app/main/criterion_pages.py` | The page of the Criterion Collection |
 | `app/main/shopping.py` | The 2 shopping lists |
 | `app/main/search.py` | The search of the library and of TMDB |
 | `app/main/account.py` | Profile, History, Stats, and the review editor |
@@ -147,7 +151,11 @@ Two subjects have only 1 file each, and that file is in `app/` itself. The file 
 | `import_watch.py` | The watcher of the import directory |
 | `manual_imports.py` | The downloads that Sonarr and Radarr cannot import |
 | `sdr_conversion.py` | The conversion of HDR files to SDR |
-| `tracks.py` | The audio and subtitle tracks of a file: the scan, the flags, the remux |
+| `tracks/scan.py` | The scan of the tracks of a file with MediaInfo, and the track records |
+| `tracks/languages.py` | The language codes and the language names of the tracks |
+| `tracks/edits.py` | The edits of the tracks: flags, languages, order, and removal |
+| `tracks/remux.py` and `tracks/rewrite_guard.py` | The remux of a library file, and the checks around a rewrite |
+| `tracks/audio_supplements.py` | The second audio tracks for players that cannot decode a lossless track |
 | `atmos.py` | The second Atmos track that more players can decode |
 | `videos.py` | The code that all file tasks share: the copy with progress, the title lock, and the control of the command-line tools |
 | `file_ranking.py` | The rule that selects the best copy of a title |
@@ -210,11 +218,10 @@ Two subjects have only 1 file each, and that file is in `app/` itself. The file 
 ## Things that can surprise you
 
 - **A job starts through its name, not through a call**. A job name is a text string, for example `"app.media.importing.localization.localization_task"`. The name gives the module and the function. An editor cannot follow such a string, so search for the text to find each place that starts the job.
-- **Many imports are inside functions**. This prevents import loops between the modules. It is normal in this code.
-- **A function of another file of the same folder has the file name before it**. For example, `filenames.evaluate_filename(...)` in `localization.py` calls the function `evaluate_filename` of `filenames.py`. The import folder and the archive folder use this form.
+- **Some imports are inside functions**. Most imports are at the top of their module. An import inside a function has 1 of 2 causes. The app factory, the command files, and the base files must not load the subject folders when they load. Or the import at the top would make a loop between 2 modules.
+- **A function of another file of the same folder has the file name before it**. For example, `filenames.evaluate_filename(...)` in `localization.py` calls the function `evaluate_filename` of `filenames.py`. The import folder, the track folder, the archive folder, and the page modules use this form.
 - **A task that changes a title takes the lock of that title**. If another task has the lock, the task books itself for a later time. The function is `acquire_lock_or_defer` in `app/media/videos.py`.
 - **There are 2 sources of settings**. The `.env` file gives the settings through `config.py`. The Admin Settings page changes some of them through `app/settings.py`. A value in `.env` has priority.
-- **A number with a hash sign in a comment is a GitHub issue**. The issue tells you why the code has that rule.
 - **The web process reads a template when a page first needs it**. After you change a template, deploy, or the processes show different versions.
 - **The tests share 1 application object**. Read the section "The traps" of `tests/README.md` before you write a test.
 
