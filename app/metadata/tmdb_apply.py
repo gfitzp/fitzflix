@@ -201,7 +201,7 @@ def _same_title_key(title):
     return " ".join(title_key(clip_movie_title(title or "")).split())
 
 
-def same_tmdb_title(first, second):
+def same_spelling(first, second):
     """Return True if 2 titles have the same spelling (_spelling_key)."""
 
     key = _spelling_key(first)
@@ -265,7 +265,7 @@ def listed_tmdb_title(title, tmdb_info):
     """Return the title of the payload that has the spelling of title, or None."""
 
     for listed in tmdb_titles(tmdb_info) or []:
-        if same_tmdb_title(listed, title):
+        if same_spelling(listed, title):
             return listed
     return None
 
@@ -686,6 +686,25 @@ class TMDBMixin(object):
 
         return tmdb_info or None
 
+    def drop_the_selection_of_an_other_film(self, tmdb_info):
+        """End the selection of a title when the payload is of a different TMDB id.
+
+        Invariant: a selected title belongs to the TMDB id that it was
+        selected for. An admin can match the record to a different id.
+        The title of the old film must not stay, and the payload of the
+        new film cannot always tell (selected_title_stands). The apply
+        calls this before it reads the selection, and so does the code
+        that takes the title locks of the apply."""
+
+        new_id = tmdb_info.get("id") if tmdb_info else None
+        if self.chosen_title and new_id and new_id != self.tmdb_id:
+            current_app.logger.info(
+                f"{self} The selected title '{self.chosen_title}' was of "
+                f"TMDB id {self.tmdb_id}. The film gets the title of TMDB id "
+                f"{new_id}"
+            )
+            self.chosen_title = None
+
     def tmdb_movie_apply(self, tmdb_info):
         """Do the database half of a TMDB movie refresh.
 
@@ -699,6 +718,7 @@ class TMDBMixin(object):
         if not tmdb_info:
             return self
 
+        self.drop_the_selection_of_an_other_film(tmdb_info)
         self._apply_scalars(tmdb_info)
 
         # A title that an admin selected stays while TMDB lists it. A
@@ -738,7 +758,7 @@ class TMDBMixin(object):
         # title locks of a refresh use the same rule.
 
         title_length = Movie.__table__.c.title.type.length
-        if len(tmdb_info.get("title") or "") > title_length:
+        if not self.chosen_title and len(tmdb_info.get("title") or "") > title_length:
             current_app.logger.warning(
                 f"{self} TMDB title has {len(tmdb_info['title'])} characters, "
                 f"more than {title_length}. The record title is shortened"

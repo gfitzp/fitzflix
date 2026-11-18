@@ -6,7 +6,13 @@
 <h3>{{ back_label }}</h3>
 <p class="text-muted">Select the title of this film from the titles that TMDB lists for it. Fitzflix then renames the record, the folder and the files. The film keeps the title while TMDB lists it. If TMDB removes the title, the film gets the TMDB title again. The year always comes from TMDB.</p>
 {% if movie.chosen_title %}
-<p class="small text-muted">An admin selected the title of this film. Select the TMDB title to follow TMDB again.</p>
+{# The button ends the selection. The row of the TMDB title has no
+   button when TMDB made the selected title its main title. #}
+<form method="post" class="mb-3">
+	{{ follow_form.csrf_token }}
+	<span class="small text-muted">An admin selected the title of this film.</span>
+	{{ follow_form.follow_submit(class_="btn btn-sm btn-outline-secondary ms-2") }}
+</form>
 {% endif %}
 {% if choices is none %}
 <p class="small text-muted">Fitzflix could not get the titles from TMDB. Try again later.</p>

@@ -23,6 +23,7 @@ from app.main.forms import (
     LibrarySearchForm,
     MovieReviewForm,
     MovieShoppingExcludeForm,
+    MovieTitleFollowForm,
     MovieTitleForm,
     RadarrForm,
     QualityFilterForm,
@@ -82,7 +83,7 @@ from app.media.naming import visible_name
 from app.metadata.tmdb_apply import (
     canonical_movie_name,
     listed_tmdb_title,
-    same_tmdb_title,
+    same_spelling,
     tmdb_json_or,
     tmdb_title_choices,
 )
@@ -798,6 +799,37 @@ def _tmdb_title_payload(tmdb_id):
     )
 
 
+def _name_holder(movie, name, year):
+    """Return another film that has this title and year, or None."""
+
+    return Movie.query.filter(
+        Movie.title == name, Movie.year == year, Movie.id != movie.id
+    ).first()
+
+
+def _refresh_for_the_title(movie, name, year):
+    """Queue the TMDB refresh that gives a film its title, and flash its state.
+
+    The refresh renames the record, the folder and the files. The page
+    waits for it, so it goes to the front of the sql queue."""
+
+    refresh_job = enqueue_task(
+        "app.metadata.tmdb_refresh.refresh_tmdb_info",
+        "Movies",
+        movie.id,
+        movie.tmdb_id,
+        apply_at_front=True,
+        queue="sql",
+        description=f"Refreshing TMDB data for '{movie.title} ({movie.year})'",
+        at_front=True,
+    )
+    _flash_tmdb_refresh(
+        _wait_for_refresh(refresh_job),
+        f"{name} ({year})",
+        url_for("main.movie", movie_id=movie.id),
+    )
+
+
 @bp.route("/movie/<int:movie_id>/title", methods=["GET", "POST"])
 @login_required
 @admin_required
@@ -809,9 +841,10 @@ def movie_title(movie_id):
     the files, and it tells Radarr. The page reads the titles from TMDB
     each time. Fitzflix does not store them.
 
-    The main title ends a selection. A title that another film of the
-    same year has is refused, because the title and the year of a film
-    are unique."""
+    The main title ends a selection, and so does the button of the
+    page. The button is necessary when TMDB made the selected title its
+    main title. A title that another film of the same year has is
+    refused, because the title and the year of a film are unique."""
 
     movie = Movie.query.filter_by(id=movie_id).first_or_404()
     title = movie.display_title
@@ -827,26 +860,28 @@ def movie_title(movie_id):
     payload = _tmdb_title_payload(movie.tmdb_id)
     choices = tmdb_title_choices(payload) if payload else None
     title_form = MovieTitleForm()
+    follow_form = MovieTitleFollowForm()
+    selects = title_form.title_submit.data and title_form.validate_on_submit()
+    follows = follow_form.follow_submit.data and follow_form.validate_on_submit()
 
-    if title_form.title_submit.data and title_form.validate_on_submit():
-        if choices is None:
-            flash(
-                "Fitzflix could not get the titles from TMDB. Try again later.",
-                "danger",
-            )
-            return redirect(page_url)
-        listed = listed_tmdb_title(title_form.title.data, payload)
-        if listed is None:
-            flash(
-                f"TMDB does not list the title '{title_form.title.data}' for "
-                f"this film.",
-                "warning",
-            )
-            return redirect(page_url)
+    if (selects or follows) and choices is None:
+        flash("TMDB did not answer. The title did not change.", "danger")
+        return redirect(page_url)
+
+    if selects or follows:
         main_title, year = canonical_movie_name(payload, movie.year)
-        selected = (
-            None if same_tmdb_title(listed, main_title) else clip_movie_title(listed)
-        )
+        selected = None
+        if selects:
+            listed = listed_tmdb_title(title_form.title.data, payload)
+            if listed is None:
+                flash(
+                    f"TMDB does not list the title '{title_form.title.data}' for "
+                    f"this film.",
+                    "warning",
+                )
+                return redirect(page_url)
+            if not same_spelling(listed, main_title):
+                selected = clip_movie_title(listed)
         name = selected or main_title
 
         # A title of only periods or question marks leaves no name that
@@ -854,14 +889,12 @@ def movie_title(movie_id):
 
         if not name or not visible_name(name):
             flash(
-                f"The title '{listed}' leaves no name for the folder of the "
+                f"The title '{name}' leaves no name for the folder of the "
                 f"film. Select a different title.",
                 "warning",
             )
             return redirect(page_url)
-        holder = Movie.query.filter(
-            Movie.title == name, Movie.year == year, Movie.id != movie.id
-        ).first()
+        holder = _name_holder(movie, name, year)
         if holder is not None:
             flash(
                 f"'{holder.display_title}' has that title and year already. "
@@ -872,25 +905,11 @@ def movie_title(movie_id):
 
         movie.chosen_title = selected
         db.session.commit()
-        flash(f"Selected the title '{name}' for this film.", "success")
-
-        # The refresh gives the record, the folder and the files the
-        # title. The page waits for it, so it goes to the front of the
-        # sql queue.
-
-        refresh_job = enqueue_task(
-            "app.metadata.tmdb_refresh.refresh_tmdb_info",
-            "Movies",
-            movie.id,
-            movie.tmdb_id,
-            apply_at_front=True,
-            queue="sql",
-            description=f"Refreshing TMDB data for '{movie.title} ({movie.year})'",
-            at_front=True,
-        )
-        _flash_tmdb_refresh(
-            _wait_for_refresh(refresh_job), f"{name} ({year})", film_url
-        )
+        if selected:
+            flash(f"Selected the title '{name}' for this film.", "success")
+        else:
+            flash("This film follows the TMDB title again.", "success")
+        _refresh_for_the_title(movie, name, year)
         return redirect(film_url)
 
     if request.method == "POST":
@@ -912,11 +931,12 @@ def movie_title(movie_id):
             (
                 choice["title"]
                 for choice in choices or []
-                if same_tmdb_title(choice["title"], current)
+                if same_spelling(choice["title"], current)
             ),
             None,
         ),
         title_form=title_form,
+        follow_form=follow_form,
     )
 
 

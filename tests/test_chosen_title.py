@@ -191,6 +191,37 @@ def test_2_scripts_are_2_choices_and_white_space_is_1_space(app):
         assert tmdb_titles(details) == ["Stalker", "Сталкер", "Stalker II"]
 
 
+@pytest.mark.parametrize("field", ["title", "original_title"])
+def test_a_selection_stands_by_the_main_title_and_by_the_original_title(app, field):
+    """The alternative titles are not the only field that counts."""
+
+    details = payload(title="Other Main", alternatives=("Another Name",))
+    details["original_title"] = "Other Original"
+    details[field] = "Once Upon a Time in Hollywóod"
+    with app.app_context():
+        movie = film()
+        movie.tmdb_movie_apply(details)
+        db.session.commit()
+        assert (movie.title, movie.chosen_title) == (STREAMING, STREAMING)
+
+
+def test_a_long_selection_stands_as_the_record_holds_it(app, caplog):
+    from app.models import clip_movie_title
+
+    long_title = "Night of the Day of the Dawn " * 8 + "Part 5"
+    with app.app_context():
+        movie = film(title=clip_movie_title(long_title), chosen=None)
+        movie.chosen_title = clip_movie_title(long_title)
+        with caplog.at_level(logging.WARNING, logger="app"):
+            movie.tmdb_movie_apply(
+                payload(title=long_title + " Main", alternatives=(long_title,))
+            )
+        db.session.commit()
+        assert movie.chosen_title == clip_movie_title(long_title)
+        assert movie.title == clip_movie_title(long_title)
+    assert not [m for m in caplog.messages if "is shortened" in m]
+
+
 def test_a_film_with_no_selection_follows_the_main_title(app):
     """An old title that TMDB lists as an alternative does not stay by itself."""
 
@@ -377,7 +408,7 @@ def test_a_rematch_does_not_carry_the_selection_of_an_other_film(app):
                 "Movies",
                 other_id,
                 tmdb_id=TMDB_ID,
-                tmdb_payload=packed(payload()),
+                tmdb_payload=packed(payload(alternatives=())),
                 rematch=True,
             )
             is True
@@ -386,6 +417,87 @@ def test_a_rematch_does_not_carry_the_selection_of_an_other_film(app):
         assert db.session.get(Movie, other_id) is None
         kept = db.session.get(Movie, target_id)
         assert (kept.title, kept.chosen_title) == (MAIN, None)
+
+
+@pytest.mark.parametrize("alternatives", [(), None, ("Gamma Alt",)])
+def test_a_new_tmdb_id_ends_the_selection_of_the_old_film(app, caplog, alternatives):
+    """The payload of the new film cannot always tell, and it can list the same title."""
+
+    from app.metadata.tmdb_refresh import apply_tmdb_refresh
+    from app.models import Movie
+
+    with app.app_context():
+        movie = make_movie("Gamma Alt", 2019, tmdb_id=77, chosen_title="Gamma Alt")
+        movie.tmdb_title = "Gamma Alt"
+        db.session.commit()
+        movie_id = movie.id
+        with caplog.at_level(logging.INFO, logger="app"):
+            assert (
+                apply_tmdb_refresh(
+                    "Movies",
+                    movie_id,
+                    tmdb_id=TMDB_ID,
+                    tmdb_payload=packed(payload(alternatives=alternatives)),
+                    rematch=True,
+                )
+                is True
+            )
+        db.session.expire_all()
+        row = db.session.get(Movie, movie_id)
+        assert (row.tmdb_id, row.title, row.chosen_title) == (TMDB_ID, MAIN, None)
+    assert [m for m in caplog.messages if "was of TMDB id 77" in m]
+
+
+def test_a_survivor_keeps_its_own_selection(app):
+    from datetime import datetime
+
+    from app.metadata.tmdb_refresh import apply_tmdb_refresh
+    from app.models import Movie
+
+    with app.app_context():
+        survivor = film()
+        survivor.date_created = datetime(2020, 1, 1)
+        newer = make_movie("Newer Record", 2019, tmdb_id=TMDB_ID)
+        newer.date_created = datetime(2024, 1, 1)
+        db.session.commit()
+        survivor_id, newer_id = survivor.id, newer.id
+        assert (
+            apply_tmdb_refresh(
+                "Movies", newer_id, tmdb_id=TMDB_ID, tmdb_payload=packed(payload())
+            )
+            is True
+        )
+        db.session.expire_all()
+        kept = db.session.get(Movie, survivor_id)
+        assert (kept.title, kept.chosen_title) == (STREAMING, STREAMING)
+
+
+def test_a_merge_with_no_selection_queues_no_second_refresh(app):
+    from datetime import datetime
+
+    from app.metadata.tmdb_refresh import apply_tmdb_refresh
+    from app.models import Movie
+
+    with app.app_context():
+        survivor = make_movie("Older Record", 2019, tmdb_id=TMDB_ID)
+        survivor.date_created = datetime(2020, 1, 1)
+        newer = make_movie("Newer Record", 2019, tmdb_id=TMDB_ID)
+        newer.date_created = datetime(2024, 1, 1)
+        db.session.commit()
+        newer_id = newer.id
+        assert (
+            apply_tmdb_refresh(
+                "Movies", newer_id, tmdb_id=TMDB_ID, tmdb_payload=packed(payload())
+            )
+            is True
+        )
+        db.session.expire_all()
+        assert db.session.get(Movie, newer_id) is None
+        assert [
+            job
+            for job in app.request_queue.jobs
+            if job.func_name == "app.metadata.tmdb_refresh.refresh_tmdb_info"
+        ] == []
 
 
 def test_a_file_with_the_selected_title_goes_to_the_film_with_the_selection(
@@ -410,6 +522,13 @@ def test_a_file_with_the_selected_title_goes_to_the_film_with_the_selection(
         name = f"{STREAMING} (2019) - [Bluray-1080p].mkv"
         details = filenames.evaluate_filename(name, log=False)
         assert (details["title"], details["tmdb_id"]) == (STREAMING, TMDB_ID)
+        assert asked == []
+
+        # An id tag names the film. The selection does not replace it.
+        make_movie("Tagged Film", 2019, tmdb_id=77)
+        db.session.commit()
+        tagged = f"{STREAMING} (2019) {{tmdb-77}} - [Bluray-1080p].mkv"
+        assert filenames.evaluate_filename(tagged, log=False)["title"] == "Tagged Film"
         assert asked == []
 
         # A film with no selection still goes through the TMDB search.
@@ -508,16 +627,41 @@ def refresh_jobs(app):
 
 
 def test_the_title_page_lists_the_titles_of_tmdb(app, admin_client, titles):
+    """Each title that the film does not have gets a form. The page posts it."""
+
+    import html
+    import re
+
+    from app.models import Movie
+    from tests.conftest import csrf_token_from
+
     with app.app_context():
         movie_id = film(title=MAIN, chosen=None).id
 
     response = admin_client.get(f"/movie/{movie_id}/title")
     assert response.status_code == 200
     page = response.get_data(as_text=True)
-    assert STREAMING in page
-    assert "Érase una vez" in page
+    assert "TMDB title, Original title" in page
     assert "US: streaming title" in page
-    assert "TMDB title" in page
+    assert page.count("Current</span>") == 1
+    assert "Follow the TMDB title" not in page
+    offered = [
+        html.unescape(value)
+        for value in re.findall(r'name="title"[^>]*value="([^"]*)"', page)
+    ]
+    assert offered == [STREAMING, "Érase una vez"]
+
+    response = admin_client.post(
+        f"/movie/{movie_id}/title",
+        data={
+            "csrf_token": csrf_token_from(page),
+            "title": offered[0],
+            "title_submit": "Use this title",
+        },
+    )
+    assert response.status_code == 302
+    with app.app_context():
+        assert db.session.get(Movie, movie_id).chosen_title == STREAMING
 
 
 def test_an_admin_selects_an_alternative_title(app, admin_client, titles):
@@ -533,6 +677,7 @@ def test_an_admin_selects_an_alternative_title(app, admin_client, titles):
         assert db.session.get(Movie, movie_id).chosen_title == STREAMING
         jobs = refresh_jobs(app)
         assert [job.args for job in jobs] == [("Movies", movie_id, TMDB_ID)]
+        assert jobs[0].kwargs == {"apply_at_front": True}
 
 
 def test_the_main_title_ends_a_selection(app, admin_client, titles):
@@ -620,7 +765,7 @@ def test_no_answer_from_tmdb_changes_nothing(app, admin_client, titles):
 
     assert admin_client.get(f"/movie/{movie_id}/title").status_code == 200
     response = select(admin_client, movie_id, MAIN, follow_redirects=True)
-    assert "could not get the titles" in response.get_data(as_text=True)
+    assert "TMDB did not answer" in response.get_data(as_text=True)
     with app.app_context():
         assert db.session.get(Movie, movie_id).chosen_title == STREAMING
         assert refresh_jobs(app) == []
@@ -640,18 +785,21 @@ def test_a_film_with_no_tmdb_id_has_no_title_page(app, admin_client, titles):
 
 
 def test_the_title_page_is_only_for_an_admin(app, user_client, client, titles):
+    """The post of a member has the token of the session. Only the role refuses it."""
+
     from app.models import Movie
 
     with app.app_context():
         movie_id = film(title=MAIN, chosen=None).id
 
-    for visitor in (user_client, client):
-        assert visitor.get(f"/movie/{movie_id}/title").status_code in (302, 403)
-        response = visitor.post(
-            f"/movie/{movie_id}/title",
-            data={"title": STREAMING, "title_submit": "Use this title"},
-        )
-        assert response.status_code in (302, 403)
+    assert user_client.get(f"/movie/{movie_id}/title").status_code in (302, 403)
+    assert select(user_client, movie_id, STREAMING).status_code in (302, 403)
+    assert client.get(f"/movie/{movie_id}/title").status_code in (302, 401, 403)
+    response = client.post(
+        f"/movie/{movie_id}/title",
+        data={"title": STREAMING, "title_submit": "Use this title"},
+    )
+    assert response.status_code in (302, 401, 403)
     with app.app_context():
         assert db.session.get(Movie, movie_id).chosen_title is None
         assert refresh_jobs(app) == []
@@ -663,3 +811,97 @@ def test_the_film_page_links_to_the_title_page_for_an_admin(app, admin_client):
 
     page = admin_client.get(f"/movie/{movie_id}").get_data(as_text=True)
     assert f"/movie/{movie_id}/title" in page
+
+
+def test_the_title_page_asks_tmdb_for_the_alternative_titles(app, monkeypatch):
+    from app.main import movie_pages
+    from app.metadata import tmdb_apply
+
+    asked = []
+
+    def fake_json(path, params=None, timeout=10):
+        asked.append((path, params))
+        return payload()
+
+    monkeypatch.setattr(tmdb_apply, "tmdb_json", fake_json)
+    with app.app_context():
+        assert movie_pages._tmdb_title_payload(TMDB_ID) == payload()
+    assert asked == [
+        (f"/movie/{TMDB_ID}", {"append_to_response": "alternative_titles"})
+    ]
+
+
+def test_the_button_of_the_page_ends_a_selection_that_is_the_main_title_now(
+    app, admin_client, titles
+):
+    """The row of the TMDB title has no button then."""
+
+    from app.models import Movie
+
+    titles["payload"] = payload(title=STREAMING, alternatives=(MAIN,))
+    with app.app_context():
+        movie_id = film().id
+
+    page = admin_client.get(f"/movie/{movie_id}/title").get_data(as_text=True)
+    assert "Follow the TMDB title" in page
+    assert f'value="{STREAMING}"' not in page
+    response = admin_client.post(
+        f"/movie/{movie_id}/title",
+        data={
+            "csrf_token": page_csrf_token(admin_client),
+            "follow_submit": "Follow the TMDB title",
+        },
+        follow_redirects=True,
+    )
+    assert "follows the TMDB title again" in response.get_data(as_text=True)
+    with app.app_context():
+        assert db.session.get(Movie, movie_id).chosen_title is None
+        assert len(refresh_jobs(app)) == 1
+
+
+def test_the_holder_check_uses_the_year_of_tmdb(app, admin_client, titles):
+    """The refresh gives the film the year of TMDB with the title."""
+
+    from app.models import Movie
+
+    titles["payload"] = payload(release_date="2020-02-02")
+    with app.app_context():
+        movie_id = film(title=MAIN, chosen=None).id
+        make_movie(STREAMING, 2020)
+        db.session.commit()
+
+    response = select(admin_client, movie_id, STREAMING, follow_redirects=True)
+    assert "has that title and year already" in response.get_data(as_text=True)
+    with app.app_context():
+        assert db.session.get(Movie, movie_id).chosen_title is None
+
+
+def test_a_film_can_select_the_title_that_its_record_has(app, admin_client, titles):
+    """The film itself is not an other film with the title."""
+
+    from app.models import Movie
+
+    with app.app_context():
+        movie_id = film(chosen=None).id
+
+    assert select(admin_client, movie_id, STREAMING).status_code == 302
+    with app.app_context():
+        assert db.session.get(Movie, movie_id).chosen_title == STREAMING
+        assert len(refresh_jobs(app)) == 1
+
+
+def test_a_long_selection_is_stored_as_the_record_holds_a_title(
+    app, admin_client, titles
+):
+    from app.models import Movie, clip_movie_title
+
+    long_title = "Night of the Day of the Dawn " * 8 + "Part 5"
+    titles["payload"] = payload(alternatives=(long_title,))
+    with app.app_context():
+        movie_id = film(title=MAIN, chosen=None).id
+
+    assert select(admin_client, movie_id, long_title).status_code == 302
+    with app.app_context():
+        stored = db.session.get(Movie, movie_id).chosen_title
+        assert stored == clip_movie_title(long_title)
+        assert len(stored) <= Movie.__table__.c.title.type.length

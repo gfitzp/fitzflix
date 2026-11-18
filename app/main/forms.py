@@ -515,6 +515,12 @@ class MovieTitleForm(FlaskForm):
     title_submit = SubmitField("Use this title")
 
 
+class MovieTitleFollowForm(FlaskForm):
+    """End the selection of a title, so the film follows the TMDB title again."""
+
+    follow_submit = SubmitField("Follow the TMDB title")
+
+
 class CustomPosterRemoveForm(FlaskForm):
     """Delete the custom poster (poster picker)."""
 

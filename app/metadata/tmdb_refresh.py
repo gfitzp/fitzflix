@@ -1004,6 +1004,7 @@ def _apply_movie_refresh(
         and movie.tmdb_id == existing_movie.tmdb_id
     ):
         existing_movie.chosen_title = movie.chosen_title
+    renamed_to.drop_the_selection_of_an_other_film(tmdb_info)
     names = (
         [canonical_movie_name(tmdb_info, renamed_to.year, renamed_to.chosen_title)]
         if tmdb_info
