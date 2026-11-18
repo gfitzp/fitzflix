@@ -79,7 +79,7 @@ def test_the_refuse_helper_reads_the_database_not_the_loaded_row(app):
     from datetime import datetime
 
     from app import db
-    from app.archive.aws_storage import (
+    from app.archive.restores import (
         RESTORE_PENDING_MESSAGE,
         refuse_while_restore_pending,
     )
@@ -121,7 +121,8 @@ def _fieldset_of(page, field):
 def test_a_restore_request_sets_the_state_and_turns_off_the_forms(
     app, admin_client, monkeypatch
 ):
-    from app.archive import aws_storage
+    from app.archive import aws_clients
+    from app.archive import restores as archive_restores
 
     class FrozenS3:
         def head_object(self, **kwargs):
@@ -130,7 +131,7 @@ def test_a_restore_request_sets_the_state_and_turns_off_the_forms(
         def restore_object(self, **kwargs):
             return {}
 
-    monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kwargs: FrozenS3())
+    monkeypatch.setattr(aws_clients, "aws_s3_client", lambda **kwargs: FrozenS3())
     with app.app_context():
         file_id, key, path = _pending_file(app, "Forms Off", requested=False)
     try:
@@ -139,7 +140,7 @@ def test_a_restore_request_sets_the_state_and_turns_off_the_forms(
         assert "disabled" not in _fieldset_of(page, "s3_download_submit")
 
         with app.app_context():
-            aws_storage.aws_restore(key)
+            archive_restores.aws_restore(key)
             assert _pending(file_id) is not None
 
         page = admin_client.get(f"/file/{file_id}").get_data(as_text=True)
@@ -243,10 +244,10 @@ def _run_writer(app, writer, file_id, path):
 
         return atmos_supplement_task(file_id)
     if writer == "move_archive_to_modified_task":
-        from app.archive.aws_storage import move_archive_to_modified_task
+        from app.archive.uploads import move_archive_to_modified_task
 
         return move_archive_to_modified_task(file_id)
-    from app.archive.aws_storage import archive_library_file
+    from app.archive.uploads import archive_library_file
 
     with app.app_context():
         return archive_library_file(db.session.get(File, file_id), path)
@@ -269,15 +270,16 @@ def test_each_writer_refuses_while_a_restore_is_pending(
     """A refusal changes nothing, and it releases the title lock."""
 
     from app import db
-    from app.archive import aws_storage
-    from app.archive.aws_storage import RESTORE_PENDING_MESSAGE
+    from app.archive import aws_clients
+    from app.archive import uploads
+    from app.archive.restores import RESTORE_PENDING_MESSAGE
     from app.models import File
 
     def no_upload(*args, **kwargs):
         raise AssertionError("a refused writer must not upload")
 
-    monkeypatch.setattr(aws_storage, "aws_upload", no_upload)
-    monkeypatch.setattr(aws_storage, "aws_s3_client", no_upload)
+    monkeypatch.setattr(uploads, "aws_upload", no_upload)
+    monkeypatch.setattr(aws_clients, "aws_s3_client", no_upload)
     with app.app_context():
         file_id, key, path = _pending_file(app, f"Writer {writer}")
         before = os.stat(path)
@@ -318,11 +320,12 @@ def _direct_row(app, title, requested=True):
 
 def _wire(monkeypatch, s3, sqs=None):
     import app.media.videos as videos
-    from app.archive import aws_storage
+    from app.archive import aws_clients
+    from app.archive import downloads
 
-    monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kwargs: s3)
-    monkeypatch.setattr(aws_storage, "aws_sqs_client", lambda: sqs)
-    monkeypatch.setattr(aws_storage, "DOWNLOAD_RETRY_SLEEP", lambda seconds: None)
+    monkeypatch.setattr(aws_clients, "aws_s3_client", lambda **kwargs: s3)
+    monkeypatch.setattr(aws_clients, "aws_sqs_client", lambda: sqs)
+    monkeypatch.setattr(downloads, "DOWNLOAD_RETRY_SLEEP", lambda seconds: None)
     monkeypatch.setattr(videos, "_dead_volumes", lambda paths: [])
 
 
@@ -330,12 +333,12 @@ def test_the_placement_copies_under_the_title_lock_and_then_clears_the_state(
     app, monkeypatch
 ):
     from app import db
-    from app.archive import aws_storage
+    from app.archive import downloads
     from app.models import File
 
     file_id, key, path = _direct_row(app, "Placed Clears")
     seen = []
-    real_place = aws_storage.place_in_library
+    real_place = downloads.place_in_library
 
     def place(downloaded, library_path, expected_size, name):
         # The copy runs under the title lock, and the state is still set.
@@ -344,11 +347,11 @@ def test_the_placement_copies_under_the_title_lock_and_then_clears_the_state(
         seen.append((app.lock_manager.lock(resource, 1000), _pending(file_id)))
         real_place(downloaded, library_path, expected_size, name)
 
-    monkeypatch.setattr(aws_storage, "place_in_library", place)
+    monkeypatch.setattr(downloads, "place_in_library", place)
     _wire(monkeypatch, S3())
     try:
         with app.app_context():
-            assert aws_storage.download_task(key, os.path.basename(key)) is True
+            assert downloads.download_task(key, os.path.basename(key)) is True
             assert _pending(file_id) is None
         ((lock, pending),) = seen
         assert lock is False and pending is not None
@@ -366,7 +369,7 @@ def test_the_placement_copies_under_the_title_lock_and_then_clears_the_state(
 def test_a_busy_title_lock_defers_the_placement_and_keeps_the_copy(
     app, monkeypatch, held_lock
 ):
-    from app.archive import aws_storage
+    from app.archive import downloads
     from app import db
     from app.models import File
     from tests.test_scheduling import scheduled_jobs
@@ -378,13 +381,13 @@ def test_a_busy_title_lock_defers_the_placement_and_keeps_the_copy(
     _wire(monkeypatch, S3())
     try:
         with app.app_context():
-            assert aws_storage.download_task(key, os.path.basename(key)) is False
+            assert downloads.download_task(key, os.path.basename(key)) is False
             assert _pending(file_id) is not None
         assert os.path.exists(staged) and not os.path.exists(path)
         (retry,) = [
             job
             for job in scheduled_jobs(app.file_queue)
-            if job.func_name == "app.archive.aws_storage.download_task"
+            if job.func_name == "app.archive.downloads.download_task"
         ]
         assert retry.kwargs == {"transient_retries": 0, "volume_waits": 1}
         retry.delete()
@@ -406,38 +409,37 @@ def _denied():
 
 @pytest.mark.parametrize("outcome", ["object missing", "access denied"])
 def test_each_terminal_download_outcome_clears_the_state(app, monkeypatch, outcome):
-    from app.archive import aws_storage
+    from app.archive import cdn
+    from app.archive import downloads
 
     file_id, key, path = _direct_row(app, f"Terminal {outcome}")
     sqs = SQS()
     if outcome == "object missing":
-        s3, expected = S3(errors=_missing()), aws_storage.DOWNLOAD_OBJECT_MISSING
+        s3, expected = S3(errors=_missing()), downloads.DOWNLOAD_OBJECT_MISSING
     else:
         from tests.test_cdn_download import _FakeResponse
 
         s3 = S3(head={"ContentLength": 3, "ETag": '"v1"'})
-        expected = aws_storage.DOWNLOAD_ACCESS_DENIED
+        expected = downloads.DOWNLOAD_ACCESS_DENIED
         monkeypatch.setitem(app.config, "AWS_DOWNLOAD_VIA_CDN", True)
         monkeypatch.setitem(app.config, "CDN_DOMAIN", "d1.cloudfront.net")
         monkeypatch.setitem(app.config, "CDN_KEY_PAIR_ID", "KTEST")
-        monkeypatch.setattr(aws_storage, "cdn_settings_problem", lambda: None)
+        monkeypatch.setattr(cdn, "cdn_settings_problem", lambda: None)
         monkeypatch.setattr(
-            aws_storage, "cdn_signed_url", lambda key, expires_in=None: "https://x"
+            cdn, "cdn_signed_url", lambda key, expires_in=None: "https://x"
         )
-        monkeypatch.setattr(
-            aws_storage, "CDN_HTTP_GET", lambda *a, **k: _FakeResponse(403)
-        )
+        monkeypatch.setattr(cdn, "CDN_HTTP_GET", lambda *a, **k: _FakeResponse(403))
     _wire(monkeypatch, s3, sqs)
     statuses = []
-    real_download = aws_storage.aws_download
+    real_download = downloads.aws_download
 
     def download(*args, **kwargs):
         statuses.append(real_download(*args, **kwargs))
         return statuses[-1]
 
-    monkeypatch.setattr(aws_storage, "aws_download", download)
+    monkeypatch.setattr(downloads, "aws_download", download)
     with app.app_context():
-        assert aws_storage.download_task(key, os.path.basename(key), "r1") is bool(
+        assert downloads.download_task(key, os.path.basename(key), "r1") is bool(
             expected
         )
         assert _pending(file_id) is None
@@ -452,7 +454,8 @@ def test_a_pending_restore_again_keeps_the_state(app, monkeypatch, deleted):
     A failed delete of the stale message does not end the state. The
     restore is on its way."""
 
-    from app.archive import aws_storage
+    from app.archive import downloads
+    from app.archive import restores as archive_restores
     from tests.test_aws_download import _client_error
 
     file_id, key, path = _direct_row(app, f"Restore Again {deleted}")
@@ -462,21 +465,21 @@ def test_a_pending_restore_again_keeps_the_state(app, monkeypatch, deleted):
     )
     restored = []
     monkeypatch.setattr(
-        aws_storage,
+        archive_restores,
         "aws_restore",
         lambda key, **kwargs: restored.append((key, kwargs)),
     )
     _wire(monkeypatch, s3, SQS())
     if not deleted:
         monkeypatch.setattr(
-            aws_storage, "delete_download_message", lambda *args, **kwargs: False
+            archive_restores, "delete_download_message", lambda *args, **kwargs: False
         )
     with app.app_context():
         assert (
-            aws_storage.aws_download(key, os.path.basename(key), "r1", place_at=path)
-            == aws_storage.DOWNLOAD_RESTORE_PENDING
+            downloads.aws_download(key, os.path.basename(key), "r1", place_at=path)
+            == downloads.DOWNLOAD_RESTORE_PENDING
         )
-        assert aws_storage.download_task(key, os.path.basename(key), "r1") is True
+        assert downloads.download_task(key, os.path.basename(key), "r1") is True
         assert _pending(file_id) is not None
     assert restored == [(key, {"record_request": False})] * 2
 
@@ -484,17 +487,17 @@ def test_a_pending_restore_again_keeps_the_state(app, monkeypatch, deleted):
 def test_a_refused_placement_clears_the_state(app, monkeypatch):
     """A refusal deletes the SQS message. Thus, the state ends."""
 
-    from app.archive import aws_storage
+    from app.archive import downloads
 
     file_id, key, path = _direct_row(app, "Task Exit refused")
     _wire(monkeypatch, S3(), SQS())
 
     def refuse(*args, **kwargs):
-        raise aws_storage.PlacementRefused("simulated refusal")
+        raise downloads.PlacementRefused("simulated refusal")
 
-    monkeypatch.setattr(aws_storage, "aws_download", refuse)
+    monkeypatch.setattr(downloads, "aws_download", refuse)
     with app.app_context():
-        aws_storage.download_task(key, os.path.basename(key), "r1")
+        downloads.download_task(key, os.path.basename(key), "r1")
         assert _pending(file_id) is None
 
 
@@ -505,13 +508,13 @@ def test_a_give_up_with_no_message_ends_the_state(app, monkeypatch, admin_client
     already. Its give-up clears the state, and the restore form works
     again."""
 
-    from app.archive import aws_storage
+    from app.archive import downloads
 
     file_id, key, _path = _direct_row(app, "No Message Give Up")
     sqs = SQS()
     _wire(monkeypatch, S3(errors=RuntimeError("flaky")), sqs)
     with app.app_context():
-        assert aws_storage.download_task(key, os.path.basename(key)) is False
+        assert downloads.download_task(key, os.path.basename(key)) is False
         assert _pending(file_id) is None
     assert sqs.deleted == []
     page = admin_client.get(f"/file/{file_id}").get_data(as_text=True)
@@ -537,7 +540,8 @@ def test_a_give_up_keeps_the_state_for_the_next_delivery(app, monkeypatch, give_
     the next delivery was dropped as an ended restore."""
 
     import app.media.videos as videos
-    from app.archive import aws_storage
+    from app.archive import cdn
+    from app.archive import downloads
 
     file_id, key, path = _direct_row(app, f"Give Up {give_up}")
     sqs = SQS()
@@ -550,40 +554,36 @@ def test_a_give_up_keeps_the_state_for_the_next_delivery(app, monkeypatch, give_
             _wire(fault, S3(errors=RuntimeError("flaky")), sqs)
         elif give_up == "CloudFront settings":
             fault.setitem(app.config, "AWS_DOWNLOAD_VIA_CDN", True)
-            fault.setattr(aws_storage, "cdn_settings_problem", lambda: "no key")
+            fault.setattr(cdn, "cdn_settings_problem", lambda: "no key")
         elif give_up == "volume give-up":
             fault.setattr(videos, "_dead_volumes", lambda paths: ["/Volumes/Movies"])
-            kwargs["volume_waits"] = aws_storage.MAX_VOLUME_WAITS
+            kwargs["volume_waits"] = downloads.MAX_VOLUME_WAITS
         elif give_up == "error":
 
             def broken(*args, **kwargs):
                 raise RuntimeError("simulated fault")
 
-            fault.setattr(aws_storage, "aws_download", broken)
+            fault.setattr(downloads, "aws_download", broken)
         else:
 
             def lost(*args, **kwargs):
                 raise RuntimeError("simulated fault outside the task body")
 
-            fault.setattr(aws_storage, "_download_task", lost)
+            fault.setattr(downloads, "_download_task", lost)
         with app.app_context():
             if give_up == "escaped fault":
                 with pytest.raises(RuntimeError):
-                    aws_storage.download_task(
-                        key, os.path.basename(key), "r1", **kwargs
-                    )
+                    downloads.download_task(key, os.path.basename(key), "r1", **kwargs)
             else:
                 assert (
-                    aws_storage.download_task(
-                        key, os.path.basename(key), "r1", **kwargs
-                    )
+                    downloads.download_task(key, os.path.basename(key), "r1", **kwargs)
                     is False
                 )
             assert _pending(file_id) is not None
         assert sqs.deleted == []
     try:
         with app.app_context():
-            assert aws_storage.download_task(key, os.path.basename(key), "r2") is True
+            assert downloads.download_task(key, os.path.basename(key), "r2") is True
             assert _pending(file_id) is None
         with open(path, "rb") as handle:
             assert handle.read() == b"s3!"
@@ -618,7 +618,9 @@ def test_the_s3_sync_requests_a_restore_and_keeps_its_key(app, monkeypatch):
 
     from datetime import datetime, timedelta, timezone
 
-    from app.archive import aws_storage
+    from app.archive import aws_clients
+    from app.archive import moves
+    from app.archive import sync
 
     with app.app_context():
         file_id, key, path = _pending_file(
@@ -627,14 +629,12 @@ def test_the_s3_sync_requests_a_restore_and_keeps_its_key(app, monkeypatch):
     old = datetime.now(timezone.utc) - timedelta(days=30)
     objects = {"untouched/": [{"Key": key, "Size": 5, "LastModified": old}]}
     monkeypatch.setattr(
-        aws_storage,
+        aws_clients,
         "get_matching_s3_objects",
         lambda bucket, prefix="": objects.get(prefix, []),
     )
     deletes = []
-    monkeypatch.setattr(
-        aws_storage, "aws_delete", lambda key, **kw: deletes.append(key)
-    )
+    monkeypatch.setattr(moves, "aws_delete", lambda key, **kw: deletes.append(key))
     monkeypatch.setattr("app.email.send_email", lambda *a, **k: None)
 
     class SyncS3:
@@ -649,8 +649,8 @@ def test_the_s3_sync_requests_a_restore_and_keeps_its_key(app, monkeypatch):
         def put_object(self, **kwargs):
             pass
 
-    monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kw: SyncS3())
-    aws_storage.sync_aws_s3_storage_task()
+    monkeypatch.setattr(aws_clients, "aws_s3_client", lambda **kw: SyncS3())
+    sync.sync_aws_s3_storage_task()
     assert SyncS3.restores == [key]
     assert deletes == []
     with app.app_context():
@@ -660,7 +660,7 @@ def test_the_s3_sync_requests_a_restore_and_keeps_its_key(app, monkeypatch):
 def test_an_old_sidecar_with_a_stat_line_still_resumes(app, monkeypatch):
     """A sidecar from before #610 has a third line. The ETag and the size still count."""
 
-    from app.archive import aws_storage
+    from app.archive import downloads
 
     file_id, key, path = _direct_row(app, "Old Sidecar")
     staged = os.path.join(app.config["IMPORT_DIR"], f".restore-{key.replace('/', '-')}")
@@ -674,10 +674,8 @@ def test_an_old_sidecar_with_a_stat_line_still_resumes(app, monkeypatch):
     try:
         with app.app_context():
             assert (
-                aws_storage.aws_download(
-                    key, os.path.basename(key), "r1", place_at=path
-                )
-                == aws_storage.DOWNLOAD_COMPLETE
+                downloads.aws_download(key, os.path.basename(key), "r1", place_at=path)
+                == downloads.DOWNLOAD_COMPLETE
             )
         assert s3.downloads == []
         with open(path, "rb") as handle:
@@ -695,7 +693,7 @@ def test_a_move_during_the_download_still_ends_the_pending_restore(app, monkeypa
 
     import botocore.exceptions
 
-    from app.archive import aws_storage
+    from app.archive import downloads
     from app import db
     from app.models import File
 
@@ -718,7 +716,7 @@ def test_a_move_during_the_download_still_ends_the_pending_restore(app, monkeypa
     _wire(monkeypatch, S3(head=head))
     try:
         with app.app_context():
-            assert aws_storage.download_task(key, os.path.basename(key)) is True
+            assert downloads.download_task(key, os.path.basename(key)) is True
             assert _pending(file_id) is None
             assert db.session.get(File, file_id).aws_key == moved_key
         assert not os.path.exists(path)
@@ -729,7 +727,7 @@ def test_a_move_during_the_download_still_ends_the_pending_restore(app, monkeypa
 def test_the_retry_after_a_busy_lock_places_the_kept_copy(app, monkeypatch, held_lock):
     """The retry places the kept download with no second download, then clears."""
 
-    from app.archive import aws_storage
+    from app.archive import downloads
     from app import db
     from app.models import File
     from tests.test_scheduling import scheduled_jobs
@@ -742,16 +740,16 @@ def test_the_retry_after_a_busy_lock_places_the_kept_copy(app, monkeypatch, held
     _wire(monkeypatch, s3, SQS())
     try:
         with app.app_context():
-            assert aws_storage.download_task(key, os.path.basename(key), "r1") is False
+            assert downloads.download_task(key, os.path.basename(key), "r1") is False
             assert _pending(file_id) is not None
         app.lock_manager.unlock(lock)
         (retry,) = [
             job
             for job in scheduled_jobs(app.file_queue)
-            if job.func_name == "app.archive.aws_storage.download_task"
+            if job.func_name == "app.archive.downloads.download_task"
         ]
         with app.app_context():
-            assert aws_storage.download_task(*retry.args, **retry.kwargs) is True
+            assert downloads.download_task(*retry.args, **retry.kwargs) is True
             assert _pending(file_id) is None
         assert s3.downloads == [key]
         with open(path, "rb") as handle:
@@ -770,7 +768,9 @@ def test_the_placement_after_a_writer_that_began_first_ends_consistent(
     for the sync (#615)."""
 
     from app import db
-    from app.archive import aws_storage
+    from app.archive import downloads
+    from app.archive import restores as archive_restores
+    from app.archive import uploads
     from app.models import File
     from app.media.tracks import confirm_rewrite
     from tests.test_scheduling import scheduled_jobs
@@ -788,23 +788,23 @@ def test_the_placement_after_a_writer_that_began_first_ends_consistent(
     staged = os.path.join(app.config["IMPORT_DIR"], f".restore-{key.replace('/', '-')}")
     try:
         with app.app_context():
-            aws_storage.mark_restore_pending(key)
-            assert aws_storage.download_task(key, os.path.basename(key), "r1") is False
+            archive_restores.mark_restore_pending(key)
+            assert downloads.download_task(key, os.path.basename(key), "r1") is False
             confirm_rewrite(file_id, path)
             with open(path, "wb") as handle:
                 handle.write(b"remuxed local")
             assert (
-                aws_storage.archive_library_file(db.session.get(File, file_id), path)
+                uploads.archive_library_file(db.session.get(File, file_id), path)
                 is None
             )
         app.lock_manager.unlock(writer_lock)
         (retry,) = [
             job
             for job in scheduled_jobs(app.file_queue)
-            if job.func_name == "app.archive.aws_storage.download_task"
+            if job.func_name == "app.archive.downloads.download_task"
         ]
         with app.app_context():
-            aws_storage.download_task(*retry.args, **retry.kwargs)
+            downloads.download_task(*retry.args, **retry.kwargs)
             assert _pending(file_id) is None
             assert db.session.get(File, file_id).aws_stale is True
         with open(path, "rb") as handle:
@@ -825,8 +825,9 @@ def test_the_import_of_the_restored_rip_clears_the_stale_mark(app):
     from datetime import datetime
 
     from app import db
-    from app.archive import aws_storage
-    from app.media import importing
+    from app.archive import restores as archive_restores
+    from app.archive import uploads
+    from app.media.importing import cataloging
     from app.models import File
 
     with app.app_context():
@@ -835,9 +836,9 @@ def test_the_import_of_the_restored_rip_clears_the_stale_mark(app):
         file.untouched_basename = file.basename
         file.aws_stale = True
         db.session.commit()
-        assert aws_storage.archive_library_file(file, path) is None
+        assert uploads.archive_library_file(file, path) is None
         assert db.session.get(File, file_id).aws_stale is True
-        aws_storage.end_restore_request(file_id)
+        archive_restores.end_restore_request(file_id)
         file = db.session.get(File, file_id)
         details = {
             "file_path": file.file_path,
@@ -858,7 +859,7 @@ def test_the_import_of_the_restored_rip_clears_the_stale_mark(app):
             "filesize_bytes": 5,
         }
         try:
-            importing._build_records(details, inspection, file.basename)
+            cataloging._build_records(details, inspection, file.basename)
             db.session.commit()
             db.session.expire_all()
             row = db.session.get(File, file_id)
@@ -877,9 +878,9 @@ def test_a_new_localization_ends_the_pending_restore(app, monkeypatch, stage):
 
     from datetime import datetime
 
-    from app.archive import aws_storage
+    from app.archive import downloads
     from app import db
-    from app.media import importing
+    from app.media.importing import cataloging
     from app.models import File
 
     file_id, key, path = _direct_row(app, f"Replaced {stage}")
@@ -914,7 +915,7 @@ def test_a_new_localization_ends_the_pending_restore(app, monkeypatch, stage):
             "subtitle_tracks": [],
             "filesize_bytes": 5,
         }
-        importing._build_records(details, inspection, file.basename)
+        cataloging._build_records(details, inspection, file.basename)
         db.session.commit()
 
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -925,7 +926,7 @@ def test_a_new_localization_ends_the_pending_restore(app, monkeypatch, stage):
             if stage == "start":
                 import_now()
                 assert _pending(file_id) is None
-            assert aws_storage.download_task(key, os.path.basename(key), "r1") is True
+            assert downloads.download_task(key, os.path.basename(key), "r1") is True
             assert _pending(file_id) is None
         with open(path, "rb") as handle:
             assert handle.read() == b"new import"
@@ -988,7 +989,7 @@ def test_the_sweep_reads_a_naive_stamp_as_utc(app):
     from datetime import datetime, timedelta, timezone
 
     from app import db
-    from app.archive.aws_storage import expire_restore_requests
+    from app.archive.restores import expire_restore_requests
     from app.models import File
 
     with app.app_context():
@@ -1005,7 +1006,7 @@ def test_a_fault_at_the_lock_release_still_ends_a_placed_restore(app, monkeypatc
 
     The copy is in place, and the state ends. The lock expires by itself."""
 
-    from app.archive import aws_storage
+    from app.archive import downloads
 
     file_id, key, path = _direct_row(app, "Unlock Fault")
     _wire(monkeypatch, S3(), SQS())
@@ -1021,7 +1022,7 @@ def test_a_fault_at_the_lock_release_still_ends_a_placed_restore(app, monkeypatc
     monkeypatch.setattr(app.lock_manager, "unlock", unlock)
     try:
         with app.app_context():
-            assert aws_storage.download_task(key, os.path.basename(key), "r1") is True
+            assert downloads.download_task(key, os.path.basename(key), "r1") is True
             assert _pending(file_id) is None
         assert len(faults) == 1
         with open(path, "rb") as handle:
@@ -1033,12 +1034,30 @@ def test_a_fault_at_the_lock_release_still_ends_a_placed_restore(app, monkeypatc
 def test_the_page_stamps_the_row_before_the_redirect(app, admin_client, monkeypatch):
     """The forms are disabled on the page the restore request redirects to (#613)."""
 
-    from app.archive import aws_storage
+    from app.archive import downloads
+    from app.archive import moves
+    from app.archive import restores as archive_restores
+    from app.archive import sync
+    from app.archive import uploads
     from tests.conftest import ADMIN_PASSWORD, csrf_token_from
 
     queued = []
     monkeypatch.setattr(
-        aws_storage, "enqueue_task", lambda name, *args, **kwargs: queued.append(name)
+        archive_restores,
+        "enqueue_task",
+        lambda name, *args, **kwargs: queued.append(name),
+    )
+    monkeypatch.setattr(
+        sync, "enqueue_task", lambda name, *args, **kwargs: queued.append(name)
+    )
+    monkeypatch.setattr(
+        downloads, "enqueue_task", lambda name, *args, **kwargs: queued.append(name)
+    )
+    monkeypatch.setattr(
+        uploads, "enqueue_task", lambda name, *args, **kwargs: queued.append(name)
+    )
+    monkeypatch.setattr(
+        moves, "enqueue_task", lambda name, *args, **kwargs: queued.append(name)
     )
     with app.app_context():
         file_id, _, path = _pending_file(app, "Stamped At The Click", requested=False)
@@ -1060,7 +1079,7 @@ def test_the_page_stamps_the_row_before_the_redirect(app, admin_client, monkeypa
         for field in ("s3_upload_submit", "s3_download_submit"):
             assert "disabled" in _fieldset_of(page, field)
         # The worker has not run. The page stamped the row itself.
-        assert queued == ["app.archive.aws_storage.aws_restore"]
+        assert queued == ["app.archive.restores.aws_restore"]
         with app.app_context():
             assert _pending(file_id) is not None
     finally:
@@ -1097,19 +1116,20 @@ class _RefusingS3:
 def test_a_request_that_cannot_be_made_clears_the_state(app, monkeypatch, fault):
     """A stamp from the page ends when S3 cannot take the request (#613)."""
 
-    from app.archive import aws_storage
+    from app.archive import aws_clients
+    from app.archive import restores as archive_restores
 
     monkeypatch.setattr(
-        aws_storage, "aws_s3_client", lambda **kwargs: _RefusingS3(fault)
+        aws_clients, "aws_s3_client", lambda **kwargs: _RefusingS3(fault)
     )
     with app.app_context():
         file_id, key, path = _pending_file(app, f"Refused Request {fault}", local=False)
         try:
             if fault in ("refused", "unreachable"):
                 with pytest.raises(Exception):
-                    aws_storage.aws_restore(key)
+                    archive_restores.aws_restore(key)
             else:
-                aws_storage.aws_restore(key)
+                archive_restores.aws_restore(key)
             # A request that is already in progress keeps the stamp.
             expected_pending = fault == "in-progress"
             assert (_pending(file_id) is not None) is expected_pending
@@ -1120,15 +1140,16 @@ def test_a_request_that_cannot_be_made_clears_the_state(app, monkeypatch, fault)
 def test_a_move_request_that_cannot_be_made_keeps_the_rows(app, monkeypatch):
     """record_request=False never touches the state (#613)."""
 
-    from app.archive import aws_storage
+    from app.archive import aws_clients
+    from app.archive import restores as archive_restores
 
     monkeypatch.setattr(
-        aws_storage, "aws_s3_client", lambda **kwargs: _RefusingS3("missing")
+        aws_clients, "aws_s3_client", lambda **kwargs: _RefusingS3("missing")
     )
     with app.app_context():
         file_id, key, path = _pending_file(app, "Move Request Missing", local=False)
         try:
-            aws_storage.aws_restore(key, record_request=False)
+            archive_restores.aws_restore(key, record_request=False)
             assert _pending(file_id) is not None
         finally:
             _remove(path)

@@ -869,7 +869,10 @@ def _import_activity():
     registry = ScheduledJobRegistry(queue=current_app.import_queue)
     for job_id, next_run in scheduled_entries(registry):
         job = current_app.import_queue.fetch_job(job_id)
-        if job is not None and job.func_name == "app.media.importing.localization_task":
+        if (
+            job is not None
+            and job.func_name == "app.media.importing.localization.localization_task"
+        ):
             deferred.append(
                 {"description": job.description or job.id, "next_run": next_run}
             )

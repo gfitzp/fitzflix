@@ -340,7 +340,7 @@ def hold_import(file_path, file_details, plan, blockers):
     newcomer takes the name."""
 
     from app.arr.arr_client import carry_remembered_download
-    from app.media.importing import move_to_rejects
+    from app.media.importing.filenames import move_to_rejects
     from app.models import HeldImport
     from app.pipeline import record_task_stage
 
@@ -564,7 +564,8 @@ def _run_encode(command, job, basename, lock, total_seconds):
 def _watch_encode(process, job, basename, lock, total_seconds):
     """Read the progress of an encode, and keep the title lock alive."""
 
-    from app.media.importing import HandoffFailed, _hold_title_lock
+    from app.media.importing.localization import HandoffFailed
+    from app.media.importing.chain import _hold_title_lock
 
     last_refresh = time.monotonic()
     previous_percent = None
@@ -616,15 +617,14 @@ def convert_localized_file(
     If another task holds the title lock, the conversion waits and tries
     again later (#339). It does not convert without the lock."""
 
-    from app.media.importing import (
+    from app.media.importing.localization import (
         HandoffFailed,
-        _hold_title_lock,
         abandon_failed_stage,
         abandon_handoff,
-        defer_for_title_lock,
-        set_staging_reservation,
     )
-    from app.archive.aws_storage import pending_archive_of
+    from app.media.importing.chain import _hold_title_lock, defer_for_title_lock
+    from app.media.importing.space import set_staging_reservation
+    from app.archive.archive_keys import pending_archive_of
 
     with app.app_context():
         job = get_current_job()
@@ -780,7 +780,7 @@ def convert_localized_file(
 
         try:
             enqueue_task(
-                "app.media.importing.move_localized_file",
+                "app.media.importing.library_move.move_localized_file",
                 source_path,
                 file_details,
                 lock,
@@ -866,7 +866,7 @@ def archive_held_task(held_id):
     held file is deleted after the upload."""
 
     from app.arr.arr_client import take_remembered_download
-    from app.archive.aws_storage import upload_untouched
+    from app.archive.uploads import upload_untouched
     from app.models import ArchivedOriginal, HeldImport
 
     with app.app_context():
@@ -988,7 +988,7 @@ def held_decision_has_job(held):
     archive_held_task of the row. A failed job counts too. The admin can
     then requeue it on the System page."""
 
-    from app.media.importing import LATER_STAGES
+    from app.media.importing.chain import LATER_STAGES
     from app.tasks import TASKS, resolve_queue
 
     if held.decision == "archive":

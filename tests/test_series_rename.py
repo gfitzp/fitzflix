@@ -265,7 +265,7 @@ def test_rename_gives_the_untouched_names_the_new_title(app):
     The stored key stays. It names the real archived object. The other
     parts of an untouched name stay. A series id tag gets the TMDB id."""
 
-    from app.archive.aws_storage import sanitize_s3_key
+    from app.archive.aws_clients import sanitize_s3_key
 
     old_key = "untouched/Batman - S01E01 - Fullscreen [Bluray-1080p].mkv"
     with app.app_context():
@@ -324,7 +324,8 @@ def test_rename_moves_the_trail_to_the_new_untouched_name(app):
         db.session.commit()
         _materialize(app, episode)
         job = app.import_queue.enqueue(
-            "app.media.importing.localization_task", args=(f"/import/{old}",)
+            "app.media.importing.localization.localization_task",
+            args=(f"/import/{old}",),
         )
         record_job_event(app.redis, job, "started")
         # The import is done. A rename waits for an import of the series
@@ -410,7 +411,7 @@ def test_the_rename_time_limit_grows_with_the_files(app, monkeypatch):
 
         # A retry of the rename keeps the long limit.
         app.import_queue.enqueue(
-            "app.media.importing.localization_task",
+            "app.media.importing.localization.localization_task",
             args=("/import/Batman - S01E41 - [WEBDL-1080p].mkv",),
         )
         assert rename_tv_series_task(series.id, "Batman (1966)") is False
@@ -436,11 +437,12 @@ def _imported(app, source, library_name):
     from app.pipeline import record_job_event
 
     job = app.import_queue.enqueue(
-        "app.media.importing.localization_task", args=(f"/import/{source}",)
+        "app.media.importing.localization.localization_task",
+        args=(f"/import/{source}",),
     )
     record_job_event(app.redis, job, "started")
     app.file_queue.enqueue(
-        "app.media.importing.move_localized_file",
+        "app.media.importing.library_move.move_localized_file",
         args=(
             f"/staging/.{library_name}",
             {"basename": library_name, "untouched_basename": source},
@@ -591,7 +593,7 @@ def test_a_tagged_episode_name_names_the_series_that_owns_the_id(app):
     Before, the helper gave "Doctor Who". That matched neither record.
     Thus, a rename of the 2005 series ran beside its import."""
 
-    from app.media.importing import _series_title_of_name, series_import_in_flight
+    from app.media.importing.chain import _series_title_of_name, series_import_in_flight
 
     name = "Doctor Who {tmdb-57243} - S01E01 - [WEBDL-1080p].mkv"
     with app.app_context():
@@ -604,7 +606,9 @@ def test_a_tagged_episode_name_names_the_series_that_owns_the_id(app):
             == "Doctor Who"
         )
         path = os.path.join(app.config["IMPORT_DIR"], name)
-        app.import_queue.enqueue("app.media.importing.localization_task", path)
+        app.import_queue.enqueue(
+            "app.media.importing.localization.localization_task", path
+        )
         assert series_import_in_flight({"Doctor Who (2005)"}) == path
         assert series_import_in_flight({"Doctor Who (1963)"}) is None
 

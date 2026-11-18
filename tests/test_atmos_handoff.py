@@ -54,7 +54,7 @@ def _no_network(monkeypatch):
     monkeypatch.setattr(atmos, "WORKSPACE_HEADROOM_BYTES", 0)
     monkeypatch.setattr(atmos, "_cleanup_s3_prefix", lambda *args: None)
     monkeypatch.setattr(
-        "app.archive.aws_storage.aws_s3_client", lambda *args, **kwargs: None
+        "app.archive.aws_clients.aws_s3_client", lambda *args, **kwargs: None
     )
 
     # The staged file has no Atmos track. Thus, the job ends right after
@@ -71,7 +71,7 @@ def test_the_import_keeps_the_staged_copy_only_for_an_atmos_candidate(app, monke
     library. A PCM mono film with no job to come logged it too."""
 
     import app.media.atmos as atmos
-    from app.media import importing
+    from app.media.importing import follow_ups
 
     checked = []
     monkeypatch.setattr(
@@ -85,10 +85,10 @@ def test_the_import_keeps_the_staged_copy_only_for_an_atmos_candidate(app, monke
     ]
     wanting = [{"codec": atmos.TRUEHD_ATMOS_CODEC, "language": "eng"}]
     with app.app_context():
-        assert importing._atmos_handoff("staged", "library", pcm) is None
-        assert importing._atmos_handoff("staged", "library", twinned) is None
+        assert follow_ups._atmos_handoff("staged", "library", pcm) is None
+        assert follow_ups._atmos_handoff("staged", "library", twinned) is None
         assert checked == []
-        importing._atmos_handoff("staged", "library", wanting)
+        follow_ups._atmos_handoff("staged", "library", wanting)
         assert checked == ["staged"]
 
 

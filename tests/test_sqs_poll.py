@@ -4,7 +4,8 @@ import json
 
 import botocore.exceptions
 
-import app.archive.aws_storage as aws_storage
+from app.archive import aws_clients
+from app.archive import restores
 
 
 class FakeSQS:
@@ -68,7 +69,7 @@ def downloads(app):
     return [
         job.args[0]
         for job in app.file_queue.jobs
-        if job.func_name == "app.archive.aws_storage.download_task"
+        if job.func_name == "app.archive.downloads.download_task"
     ]
 
 
@@ -81,13 +82,13 @@ def test_a_test_event_is_deleted_and_the_restores_behind_it_run(app, monkeypatch
             restore_event("untouched/Some+Film+%282001%29+-+%5BDVD%5D.mkv"),
         ]
     )
-    monkeypatch.setattr(aws_storage, "aws_sqs_client", lambda: sqs)
-    monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kw: FakeS3())
+    monkeypatch.setattr(aws_clients, "aws_sqs_client", lambda: sqs)
+    monkeypatch.setattr(aws_clients, "aws_s3_client", lambda **kw: FakeS3())
     claim(app, "untouched/Some Film (2001) - [DVD].mkv")
 
-    assert aws_storage.sqs_retrieve_task() is True
+    assert restores.sqs_retrieve_task() is True
     assert sqs.deleted == ["r0"]
-    assert sqs.received_with == aws_storage.SQS_VISIBILITY_SECONDS
+    assert sqs.received_with == restores.SQS_VISIBILITY_SECONDS
     with app.app_context():
         assert downloads(app) == ["untouched/Some Film (2001) - [DVD].mkv"]
 
@@ -97,18 +98,18 @@ def test_a_failed_extension_does_not_stop_the_poll(app, monkeypatch):
 
     sqs = FakeSQS([restore_event("untouched/New Film (2002) - [DVD].mkv")])
     sqs.fail_visibility = True
-    monkeypatch.setattr(aws_storage, "aws_sqs_client", lambda: sqs)
-    monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kw: FakeS3())
+    monkeypatch.setattr(aws_clients, "aws_sqs_client", lambda: sqs)
+    monkeypatch.setattr(aws_clients, "aws_s3_client", lambda **kw: FakeS3())
     claim(app, "untouched/New Film (2002) - [DVD].mkv")
 
     with app.app_context():
         app.file_queue.enqueue(
-            "app.archive.aws_storage.download_task",
+            "app.archive.downloads.download_task",
             args=("untouched/Old Film (2000) - [DVD].mkv", "Old Film.mkv", "old"),
             meta={"sqs_receipt_handle": "old"},
         )
 
-    assert aws_storage.sqs_retrieve_task() is True
+    assert restores.sqs_retrieve_task() is True
     with app.app_context():
         assert "untouched/New Film (2002) - [DVD].mkv" in downloads(app)
 
@@ -118,20 +119,20 @@ def test_a_message_that_comes_back_gets_no_second_download(app, monkeypatch):
 
     key = "untouched/Busy Film (2003) - [DVD].mkv"
     sqs = FakeSQS([restore_event(key)])
-    monkeypatch.setattr(aws_storage, "aws_sqs_client", lambda: sqs)
-    monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kw: FakeS3())
+    monkeypatch.setattr(aws_clients, "aws_sqs_client", lambda: sqs)
+    monkeypatch.setattr(aws_clients, "aws_s3_client", lambda **kw: FakeS3())
 
     with app.app_context():
         job = app.file_queue.enqueue(
-            "app.archive.aws_storage.download_task",
+            "app.archive.downloads.download_task",
             args=(key, "Busy Film (2003) - [DVD].mkv", "old-handle"),
             meta={"sqs_receipt_handle": "old-handle"},
         )
 
-    assert aws_storage.sqs_retrieve_task() is True
+    assert restores.sqs_retrieve_task() is True
     with app.app_context():
         assert downloads(app) == [key]
-        assert aws_storage._latest_receipt_handle("old-handle", key) == "r0"
+        assert restores._latest_receipt_handle("old-handle", key) == "r0"
         assert job.id in app.file_queue.job_ids
 
 
@@ -155,8 +156,8 @@ def test_an_expired_restore_is_requested_again_not_downloaded(app, monkeypatch):
         def restore_object(self, **kwargs):
             restored.append(kwargs["Key"])
 
-    monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kw: ColdS3())
-    aws_storage.aws_restore(key)
+    monkeypatch.setattr(aws_clients, "aws_s3_client", lambda **kw: ColdS3())
+    restores.aws_restore(key)
 
     assert restored == [key]
     with app.app_context():
@@ -173,19 +174,19 @@ def test_the_poll_renews_a_restore_for_the_full_days(app, monkeypatch):
             requests.append(kwargs["RestoreRequest"]["Days"])
 
     sqs = FakeSQS([])
-    monkeypatch.setattr(aws_storage, "aws_sqs_client", lambda: sqs)
-    monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kw: RecordingS3())
+    monkeypatch.setattr(aws_clients, "aws_sqs_client", lambda: sqs)
+    monkeypatch.setattr(aws_clients, "aws_s3_client", lambda **kw: RecordingS3())
 
     with app.app_context():
         app.file_queue.enqueue(
-            "app.archive.aws_storage.download_task",
+            "app.archive.downloads.download_task",
             args=("untouched/Pending (2003) - [DVD].mkv", "Pending.mkv", "r9"),
             meta={"sqs_receipt_handle": "r9"},
         )
 
-    assert aws_storage.sqs_retrieve_task() is True
-    assert requests == [aws_storage.RESTORE_DAYS]
-    assert aws_storage.RESTORE_DAYS >= 2
+    assert restores.sqs_retrieve_task() is True
+    assert requests == [restores.RESTORE_DAYS]
+    assert restores.RESTORE_DAYS >= 2
 
 
 def test_a_new_chain_of_a_key_reads_the_handle_of_its_own_message(app, monkeypatch):
@@ -197,16 +198,16 @@ def test_a_new_chain_of_a_key_reads_the_handle_of_its_own_message(app, monkeypat
 
     key = "untouched/Second Chain (2004) - [DVD].mkv"
     sqs = FakeSQS([restore_event(key)])
-    monkeypatch.setattr(aws_storage, "aws_sqs_client", lambda: sqs)
-    monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kw: FakeS3())
+    monkeypatch.setattr(aws_clients, "aws_sqs_client", lambda: sqs)
+    monkeypatch.setattr(aws_clients, "aws_s3_client", lambda **kw: FakeS3())
     claim(app, key)
     with app.app_context():
-        aws_storage.record_receipt_handle(key, "handle-of-the-old-chain")
+        restores.record_receipt_handle(key, "handle-of-the-old-chain")
 
-    assert aws_storage.sqs_retrieve_task() is True
+    assert restores.sqs_retrieve_task() is True
     with app.app_context():
         assert downloads(app) == [key]
-        assert aws_storage._latest_receipt_handle(None, key) == "r0"
-        assert aws_storage.delete_download_message(None, key, sqs_client=sqs)
+        assert restores._latest_receipt_handle(None, key) == "r0"
+        assert restores.delete_download_message(None, key, sqs_client=sqs)
     assert sqs.deleted == ["r0"]
-    assert app.redis.get(aws_storage.SQS_HANDLE_KEY.format(key=key)) is None
+    assert app.redis.get(restores.SQS_HANDLE_KEY.format(key=key)) is None

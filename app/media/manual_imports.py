@@ -241,7 +241,7 @@ def proposed_name(entry, extension):
     web title of the import webhooks. The release name is the fallback
     when the app matched nothing."""
 
-    from app.media.importing import sanitize_string
+    from app.media.importing.filenames import sanitize_string
 
     from app.settings import get_setting
 

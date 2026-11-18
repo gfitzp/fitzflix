@@ -62,7 +62,7 @@ def test_the_keeper_sweep_works_without_an_app_context(app, monkeypatch):
         def start(self):
             pass
 
-    name = "app.media.importing.manual_import_task"
+    name = "app.media.importing.sweep.manual_import_task"
     monkeypatch.setitem(TASKS, name, TaskSpec("maintenance", "SQL_TASK_TIMEOUT"))
     monkeypatch.setattr(import_watch, "PollingObserver", Observer)
     monkeypatch.setattr(threading, "Thread", Thread)
@@ -109,13 +109,13 @@ def test_a_failed_enqueue_releases_the_basename_lock(app, incoming_dir, monkeypa
 
     The exception killed the dispatch thread of watchdog."""
 
-    import app.media.importing as importing
+    from app.media.importing import chain
     from app.media.import_watch import ImportEventHandler
 
     def broken(path, **kwargs):
         raise ConnectionError("Redis went away")
 
-    monkeypatch.setattr(importing, "enqueue_localization", broken)
+    monkeypatch.setattr(chain, "enqueue_localization", broken)
     path = os.path.join(incoming_dir, "Broken Enqueue (2021) - [DVD].mkv")
     ImportEventHandler(app).process_new_file(path)
     lock = app.lock_manager.lock(os.path.basename(path), 1000)

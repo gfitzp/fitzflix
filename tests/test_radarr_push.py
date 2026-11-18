@@ -499,7 +499,7 @@ def test_import_move_points_radarr_at_the_fitzflix_folder(app, monkeypatch, tmp_
 
     import os
 
-    from app.media.importing import _report_import_move_to_radarr
+    from app.media.importing.library_move import _report_import_move_to_radarr
 
     fake = wire(app, monkeypatch)
     source, output = import_move_fixture(
@@ -531,7 +531,7 @@ def test_import_into_an_edition_folder_keeps_radarr_on_the_plain_folder(
 
     import os
 
-    from app.media.importing import _report_import_move_to_radarr
+    from app.media.importing.library_move import _report_import_move_to_radarr
 
     fake = wire(app, monkeypatch)
     source, output = import_move_fixture(
@@ -549,7 +549,7 @@ def test_import_into_an_edition_folder_keeps_radarr_on_the_plain_folder(
 
 
 def test_import_in_place_leaves_radarr_alone(app, monkeypatch, tmp_path):
-    from app.media.importing import _report_import_move_to_radarr
+    from app.media.importing.library_move import _report_import_move_to_radarr
 
     fake = wire(app, monkeypatch)
     source, output = import_move_fixture(app, tmp_path, "Heat (1995)", "Heat (1995)")
@@ -567,7 +567,7 @@ def test_import_from_outside_radarr_roots_leaves_radarr_alone(
 ):
     """A file from the import directory was never a Radarr download."""
 
-    from app.media.importing import _report_import_move_to_radarr
+    from app.media.importing.library_move import _report_import_move_to_radarr
 
     fake = wire(app, monkeypatch)
     _, output = import_move_fixture(app, tmp_path, "Unused (2000)", "Heat (1995)")
@@ -581,7 +581,7 @@ def test_import_from_outside_radarr_roots_leaves_radarr_alone(
 
 def test_import_move_survives_a_radarr_outage(app, monkeypatch, tmp_path):
     import app.arr.radarr_push as radarr_push
-    from app.media.importing import _report_import_move_to_radarr
+    from app.media.importing.library_move import _report_import_move_to_radarr
 
     def down(*args, **kwargs):
         raise ConnectionError("radarr is down")

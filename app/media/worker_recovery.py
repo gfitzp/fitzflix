@@ -58,8 +58,8 @@ ATMOS_CHAIN_TASKS = {
 }
 LATER_STAGE_LOCK_ARGUMENT = {
     "app.media.sdr_conversion.convert_localized_file",
-    "app.media.importing.move_localized_file",
-    "app.media.importing.finalize_localization",
+    "app.media.importing.library_move.move_localized_file",
+    "app.media.importing.cataloging.finalize_localization",
 }
 MANUAL_IMPORT_TASK = "app.media.manual_imports.manual_import_task"
 
@@ -140,7 +140,7 @@ def _job_lock(job):
 def _next_stage_holds(job, source):
     """Return True if a different later-stage job holds the source."""
 
-    from app.media.importing import LATER_STAGES, pipeline_jobs
+    from app.media.importing.chain import LATER_STAGES, pipeline_jobs
 
     return any(
         other.id != job.id and held == source
@@ -155,8 +155,9 @@ def abandon_dead_job(job):
     a conversion or a move goes. The cataloging keeps its files, because
     its commit can be done."""
 
-    from app.archive.aws_storage import pending_archive_of
-    from app.media.importing import _source_of, abandon_import
+    from app.archive.archive_keys import pending_archive_of
+    from app.media.importing.chain import _source_of
+    from app.media.importing.localization import abandon_import
     from app.media.naming import hidden
 
     # A manual import holds no title lock, staging space or output. Its
@@ -179,7 +180,7 @@ def abandon_dead_job(job):
 
     if source and _next_stage_holds(job, source):
         return
-    if job.func_name == "app.media.importing.localization_task" and source:
+    if job.func_name == "app.media.importing.localization.localization_task" and source:
         note = _job_note(job)
         abandon_import(
             source,
@@ -194,7 +195,7 @@ def abandon_dead_job(job):
 
     details = job.args[1] if len(job.args) > 1 else {}
     reservation = details.get("untouched_basename") or os.path.basename(source)
-    if job.func_name == "app.media.importing.finalize_localization":
+    if job.func_name == "app.media.importing.cataloging.finalize_localization":
         current_app.logger.warning(
             f"'{os.path.basename(source)}' The cataloging died. Its files stay. "
             f"Check the record before the next sweep imports the source again"
@@ -205,8 +206,9 @@ def abandon_dead_job(job):
     strays = [job.args[3]] if len(job.args) > 3 else []
     if job.func_name == "app.media.sdr_conversion.convert_localized_file" and strays:
         strays += [f"{strays[0]}.sdr-video.mkv", f"{strays[0]}.sdr.mkv"]
-    if job.func_name == "app.media.importing.move_localized_file" and details.get(
-        "dirname"
+    if (
+        job.func_name == "app.media.importing.library_move.move_localized_file"
+        and details.get("dirname")
     ):
         strays.append(
             hidden(

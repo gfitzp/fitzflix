@@ -430,9 +430,9 @@ def no_growth_wait(app, monkeypatch):
     The wait is 5 seconds in production. Each localization test paid for
     it. A test of a growing file sets its own short wait."""
 
-    from app.media import importing
+    from app.media.importing import localization
 
-    monkeypatch.setattr(importing, "GROWTH_CHECK_SECONDS", 0)
+    monkeypatch.setattr(localization, "GROWTH_CHECK_SECONDS", 0)
 
 
 @pytest.fixture
@@ -586,6 +586,35 @@ def page_with_scripts(client, path):
         body += "\n" + response.get_data(as_text=True)
         response.close()
     return body
+
+
+def package_source(package):
+    """Return the source of a package and of each module in it, as 1 text.
+
+    A test that pins "no site in the import code does X" reads all the
+    parts of the import with this function."""
+
+    import importlib
+    import inspect
+    import pkgutil
+
+    sources = [inspect.getsource(package)]
+    for info in pkgutil.iter_modules(package.__path__):
+        module = importlib.import_module(f"{package.__name__}.{info.name}")
+        sources.append(inspect.getsource(module))
+    return "\n".join(sources)
+
+
+def package_modules(package):
+    """Return each module of a package."""
+
+    import importlib
+    import pkgutil
+
+    return [
+        importlib.import_module(f"{package.__name__}.{info.name}")
+        for info in pkgutil.iter_modules(package.__path__)
+    ]
 
 
 def csrf_token_from(page_html):

@@ -5,7 +5,13 @@ from datetime import datetime
 
 import pytest
 
-import app.archive.aws_storage as aws_storage
+from app.archive import archive_keys
+from app.archive import aws_clients
+from app.archive import downloads
+from app.archive import moves
+from app.archive import restores as archive_restores
+from app.archive import sync
+from app.archive import uploads as archive_uploads
 from app import db
 from app.models import File
 
@@ -22,7 +28,7 @@ def uploads(monkeypatch):
         calls.append((path, key_prefix, key_name))
         return os.path.join(key_prefix, key_name), datetime.utcnow(), 7
 
-    monkeypatch.setattr(aws_storage, "aws_upload", fake_upload)
+    monkeypatch.setattr(archive_uploads, "aws_upload", fake_upload)
     return calls
 
 
@@ -30,7 +36,7 @@ def _deletes(app):
     return [
         job.args[0]
         for job in app.handoff_queue.jobs
-        if job.func_name == "app.archive.aws_storage.aws_delete"
+        if job.func_name == "app.archive.moves.aws_delete"
     ]
 
 
@@ -43,13 +49,13 @@ def test_the_first_change_moves_the_archive_to_modified(app, uploads):
         )
         db.session.commit()
 
-        aws_storage.archive_library_file(file, "/library/file.mkv")
+        archive_uploads.archive_library_file(file, "/library/file.mkv")
         assert file.aws_key == ("modified/Moved Archive (1999) - [Bluray-1080p].mkv")
         assert _deletes(app) == ["untouched/Moved Archive (1999) - [Bluray-1080p].mkv"]
 
         # A later change overwrites the modified/ object. Nothing is deleted.
 
-        aws_storage.archive_library_file(file, "/library/file.mkv")
+        archive_uploads.archive_library_file(file, "/library/file.mkv")
         assert uploads[-1][1:] == (
             "modified",
             "Moved Archive (1999) - [Bluray-1080p].mkv",
@@ -82,8 +88,8 @@ def test_an_extra_keeps_the_title_of_its_film_in_modified(app, uploads):
         db.session.commit()
         assert first.basename == second.basename == "Trailer.mkv"
 
-        aws_storage.archive_library_file(first, "/library/first.mkv")
-        aws_storage.archive_library_file(second, "/library/second.mkv")
+        archive_uploads.archive_library_file(first, "/library/first.mkv")
+        archive_uploads.archive_library_file(second, "/library/second.mkv")
         assert first.aws_key == (
             "modified/Extra Archive (1955) - Trailers - Trailer [Bluray-1080p].mkv"
         )
@@ -106,7 +112,7 @@ def test_a_claimed_modified_key_gets_the_record_id(app, uploads):
         )
         db.session.commit()
 
-        aws_storage.archive_library_file(other, "/library/other.mkv", False)
+        archive_uploads.archive_library_file(other, "/library/other.mkv", False)
         assert (
             other.aws_key == f"modified/Shared Archive (1957) - [DVD] ({other.id}).mkv"
         )
@@ -122,7 +128,7 @@ def test_a_change_of_a_conversion_goes_to_transcoded(app, uploads):
         )
         db.session.commit()
 
-        aws_storage.archive_library_file(file, "/library/file.mkv")
+        archive_uploads.archive_library_file(file, "/library/file.mkv")
         assert file.aws_key == (
             "untouched/Converted Archive (2001) - [Bluray-2160p].mkv"
         )
@@ -143,7 +149,7 @@ def test_a_restore_from_modified_goes_straight_into_the_library(app, tmp_path):
         downloaded = tmp_path / ".Placed (2002) - [DVD].mkv"
         downloaded.write_bytes(b"restored file")
 
-        aws_storage.place_in_library(str(downloaded), target, 13, "Placed")
+        downloads.place_in_library(str(downloaded), target, 13, "Placed")
         assert open(target, "rb").read() == b"restored file"
         assert not downloaded.exists()
         assert os.listdir(library) == ["Placed (2002) - [DVD].mkv"]
@@ -152,7 +158,7 @@ def test_a_restore_from_modified_goes_straight_into_the_library(app, tmp_path):
 
         downloaded.write_bytes(b"short")
         with pytest.raises(OSError):
-            aws_storage.place_in_library(str(downloaded), target, 13, "Placed")
+            downloads.place_in_library(str(downloaded), target, 13, "Placed")
         assert open(target, "rb").read() == b"restored file"
         os.remove(target)
 
@@ -167,12 +173,12 @@ def test_a_restore_from_modified_goes_straight_into_the_library(app, tmp_path):
 def test_download_task_routes_by_prefix(app, monkeypatch, key, direct):
     calls = []
     monkeypatch.setattr(
-        aws_storage,
+        downloads,
         "aws_download",
         lambda key, basename, receipt=None, place_at=None, **kwargs: calls.append(
             place_at
         )
-        or aws_storage.DOWNLOAD_COMPLETE,
+        or downloads.DOWNLOAD_COMPLETE,
     )
     # A download follows a restore request. The request sets the pending
     # restore of the row (#610, #620).
@@ -187,7 +193,7 @@ def test_download_task_routes_by_prefix(app, monkeypatch, key, direct):
         db.session.commit()
         expected = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
 
-    assert aws_storage.download_task(key, os.path.basename(key)) is True
+    assert downloads.download_task(key, os.path.basename(key)) is True
     assert calls == [expected if direct else None]
 
 
@@ -209,24 +215,22 @@ def test_the_sync_restores_the_transcoded_copy_and_prunes_all_prefixes(
         ],
     }
     monkeypatch.setattr(
-        aws_storage,
+        aws_clients,
         "get_matching_s3_objects",
         lambda bucket, prefix="": objects.get(prefix, []),
     )
     restores, deletes = [], []
     monkeypatch.setattr(
-        aws_storage, "aws_restore", lambda key, **kw: restores.append(key)
+        archive_restores, "aws_restore", lambda key, **kw: restores.append(key)
     )
-    monkeypatch.setattr(
-        aws_storage, "aws_delete", lambda key, **kw: deletes.append(key)
-    )
+    monkeypatch.setattr(moves, "aws_delete", lambda key, **kw: deletes.append(key))
     monkeypatch.setattr("app.email.send_email", lambda *a, **k: None)
 
     class FakeClient:
         def put_object(self, **kwargs):
             pass
 
-    monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kw: FakeClient())
+    monkeypatch.setattr(aws_clients, "aws_s3_client", lambda **kw: FakeClient())
 
     with app.app_context():
         make_movie_file(
@@ -240,7 +244,7 @@ def test_the_sync_restores_the_transcoded_copy_and_prunes_all_prefixes(
         )
         db.session.commit()
 
-    aws_storage.sync_aws_s3_storage_task()
+    sync.sync_aws_s3_storage_task()
 
     assert restores == ["transcoded/Synced (2004) - [Bluray-1080p].mkv"]
     assert sorted(deletes) == [
@@ -264,22 +268,22 @@ def test_the_sync_uploads_the_stale_transcoded_copy_again(app, monkeypatch):
         ],
     }
     monkeypatch.setattr(
-        aws_storage,
+        aws_clients,
         "get_matching_s3_objects",
         lambda bucket, prefix="": objects.get(prefix, []),
     )
     restores = []
     monkeypatch.setattr(
-        aws_storage, "aws_restore", lambda key, **kw: restores.append(key)
+        archive_restores, "aws_restore", lambda key, **kw: restores.append(key)
     )
-    monkeypatch.setattr(aws_storage, "aws_delete", lambda key, **kw: None)
+    monkeypatch.setattr(moves, "aws_delete", lambda key, **kw: None)
     monkeypatch.setattr("app.email.send_email", lambda *a, **k: None)
 
     class FakeClient:
         def put_object(self, **kwargs):
             pass
 
-    monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kw: FakeClient())
+    monkeypatch.setattr(aws_clients, "aws_s3_client", lambda **kw: FakeClient())
 
     with app.app_context():
         file = make_movie_file(
@@ -299,7 +303,7 @@ def test_the_sync_uploads_the_stale_transcoded_copy_again(app, monkeypatch):
     open(path, "wb").close()
 
     try:
-        aws_storage.sync_aws_s3_storage_task()
+        sync.sync_aws_s3_storage_task()
     finally:
         os.remove(path)
 
@@ -308,7 +312,7 @@ def test_the_sync_uploads_the_stale_transcoded_copy_again(app, monkeypatch):
         uploads = [
             job.args
             for job in app.file_queue.jobs
-            if job.func_name == "app.archive.aws_storage.upload_task"
+            if job.func_name == "app.archive.uploads.upload_task"
         ]
         assert uploads == [(file_id,)]
 
@@ -324,7 +328,7 @@ def test_the_archive_of_a_conversion_clears_the_stale_flag(app, uploads):
             aws_stale=True,
         )
         db.session.commit()
-        aws_storage.archive_library_file(file, "/tmp/staged.mkv")
+        archive_uploads.archive_library_file(file, "/tmp/staged.mkv")
         db.session.refresh(file)
         assert file.aws_stale is False
         assert file.aws_key == "untouched/Cleared (2007) - [Bluray-2160p].mkv"
@@ -337,7 +341,7 @@ def test_a_failed_upload_leaves_the_stale_flag_as_it_is(app, monkeypatch, stale)
     def failing_upload(*args, **kwargs):
         raise OSError("drill")
 
-    monkeypatch.setattr(aws_storage, "aws_upload", failing_upload)
+    monkeypatch.setattr(archive_uploads, "aws_upload", failing_upload)
     with app.app_context():
         file = make_movie_file(
             make_movie(f"Failed Upload {stale}", 2008),
@@ -351,7 +355,7 @@ def test_a_failed_upload_leaves_the_stale_flag_as_it_is(app, monkeypatch, stale)
         identifier = file.file_identifier()
 
     with pytest.raises(OSError, match="drill"):
-        aws_storage.upload_task(file_id)
+        archive_uploads.upload_task(file_id)
     with app.app_context():
         assert db.session.get(File, file_id).aws_stale is stale
     lock = app.lock_manager.lock(identifier, 1000)
@@ -368,7 +372,7 @@ def test_the_upload_waits_for_the_title_lock(app, monkeypatch, held_lock):
 
     uploads = []
     monkeypatch.setattr(
-        aws_storage, "aws_upload", lambda *args, **kwargs: uploads.append(args)
+        archive_uploads, "aws_upload", lambda *args, **kwargs: uploads.append(args)
     )
     with app.app_context():
         file = make_movie_file(make_movie("Locked Upload", 2008), "DVD", aws_stale=True)
@@ -376,14 +380,14 @@ def test_the_upload_waits_for_the_title_lock(app, monkeypatch, held_lock):
         file_id = file.id
         held_lock(file.file_identifier())
 
-    assert aws_storage.upload_task(file_id) is False
+    assert archive_uploads.upload_task(file_id) is False
     assert uploads == []
     with app.app_context():
         assert db.session.get(File, file_id).aws_stale is True
     (retry,) = [
         job
         for job in scheduled_jobs(app.file_queue)
-        if job.func_name == "app.archive.aws_storage.upload_task"
+        if job.func_name == "app.archive.uploads.upload_task"
     ]
     assert retry.args == (file_id,)
 
@@ -438,8 +442,8 @@ def backfill_file(app, monkeypatch):
 
 
 def _run_backfill(app, monkeypatch, file_id, fake):
-    monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kw: fake)
-    result = aws_storage.move_archive_to_modified_task(file_id)
+    monkeypatch.setattr(aws_clients, "aws_s3_client", lambda **kw: fake)
+    result = archive_uploads.move_archive_to_modified_task(file_id)
     with app.app_context():
         return result, db.session.get(File, file_id).aws_key
 
@@ -455,7 +459,7 @@ def test_the_backfill_moves_a_copy_of_the_library_file(
     assert fake.deleted == [("untouched/Backfilled (2005) - [DVD].mkv", "v-old")]
     assert _deletes(app) == []
     # A second run finds the archive already in modified/.
-    assert aws_storage.move_archive_to_modified_task(backfill_file) is True
+    assert archive_uploads.move_archive_to_modified_task(backfill_file) is True
     assert len(uploads) == 1
 
 
@@ -522,7 +526,7 @@ def test_a_scan_that_rewrites_the_file_queues_its_archive(app, monkeypatch):
         return [
             job.args
             for job in app.file_queue.jobs
-            if job.func_name == "app.archive.aws_storage.upload_task"
+            if job.func_name == "app.archive.uploads.upload_task"
         ]
 
     # The upload waits for the save. Both write the same row. An upload
@@ -572,7 +576,7 @@ def test_the_save_queues_the_upload_after_it_releases_the_title_lock(app, monkey
             "filesize_bytes": 1,
         }
         assert tracks.save_track_metadata(file.id, details, lock, True) is True
-    assert held_at_enqueue == [("app.archive.aws_storage.upload_task", False)]
+    assert held_at_enqueue == [("app.archive.uploads.upload_task", False)]
 
 
 def test_the_prune_keeps_a_recent_unclaimed_upload(app, monkeypatch):
@@ -596,24 +600,22 @@ def test_the_prune_keeps_a_recent_unclaimed_upload(app, monkeypatch):
         ],
     }
     monkeypatch.setattr(
-        aws_storage,
+        aws_clients,
         "get_matching_s3_objects",
         lambda bucket, prefix="": objects.get(prefix, []),
     )
     deletes = []
-    monkeypatch.setattr(
-        aws_storage, "aws_delete", lambda key, **kw: deletes.append(key)
-    )
-    monkeypatch.setattr(aws_storage, "aws_restore", lambda key, **kw: None)
+    monkeypatch.setattr(moves, "aws_delete", lambda key, **kw: deletes.append(key))
+    monkeypatch.setattr(archive_restores, "aws_restore", lambda key, **kw: None)
     monkeypatch.setattr("app.email.send_email", lambda *a, **k: None)
 
     class FakeClient:
         def put_object(self, **kwargs):
             pass
 
-    monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kw: FakeClient())
+    monkeypatch.setattr(aws_clients, "aws_s3_client", lambda **kw: FakeClient())
 
-    aws_storage.sync_aws_s3_storage_task()
+    sync.sync_aws_s3_storage_task()
 
     assert deletes == ["untouched/Old Stray (2020) - [DVD].mkv"]
 
@@ -626,12 +628,12 @@ def test_the_sync_waits_while_a_library_volume_is_dead(app, monkeypatch):
     monkeypatch.setattr(videos, "_dead_volumes", lambda paths: ["/Volumes/Movies"])
     listed = []
     monkeypatch.setattr(
-        aws_storage,
+        aws_clients,
         "get_matching_s3_objects",
         lambda bucket, prefix="": listed.append(prefix) or [],
     )
 
-    assert aws_storage.sync_aws_s3_storage_task() is True
+    assert sync.sync_aws_s3_storage_task() is True
     assert listed == []
     with app.app_context():
         from tests.test_scheduling import scheduled_jobs
@@ -639,7 +641,7 @@ def test_the_sync_waits_while_a_library_volume_is_dead(app, monkeypatch):
         assert [
             job.id
             for job in scheduled_jobs(app.maintenance_queue)
-            if job.func_name == "app.archive.aws_storage.sync_aws_s3_storage_task"
+            if job.func_name == "app.archive.sync.sync_aws_s3_storage_task"
         ]
 
 
@@ -666,30 +668,28 @@ def test_the_prune_keeps_the_upload_of_an_import_that_waits_for_space(app, monke
         ],
     }
     monkeypatch.setattr(
-        aws_storage,
+        aws_clients,
         "get_matching_s3_objects",
         lambda bucket, prefix="": objects.get(prefix, []),
     )
     deletes = []
-    monkeypatch.setattr(
-        aws_storage, "aws_delete", lambda key, **kw: deletes.append(key)
-    )
-    monkeypatch.setattr(aws_storage, "aws_restore", lambda key, **kw: None)
+    monkeypatch.setattr(moves, "aws_delete", lambda key, **kw: deletes.append(key))
+    monkeypatch.setattr(archive_restores, "aws_restore", lambda key, **kw: None)
     monkeypatch.setattr("app.email.send_email", lambda *a, **k: None)
 
     class FakeClient:
         def put_object(self, **kwargs):
             pass
 
-    monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kw: FakeClient())
+    monkeypatch.setattr(aws_clients, "aws_s3_client", lambda **kw: FakeClient())
     source = os.path.join(app.config["IMPORT_DIR"], "Long Wait (2024) - [DVD].mkv")
     retry = app.import_queue.enqueue_in(
         timedelta(minutes=30),
-        "app.media.importing.localization_task",
+        "app.media.importing.localization.localization_task",
         kwargs={"file_path": source, "space_waits": 4},
     )
     try:
-        aws_storage.sync_aws_s3_storage_task()
+        sync.sync_aws_s3_storage_task()
     finally:
         ScheduledJobRegistry(queue=app.import_queue).remove(retry, delete_job=True)
 
@@ -713,7 +713,7 @@ def test_a_re_archive_before_the_move_keeps_the_pending_rip(app, uploads, monkey
             }
         }
     )
-    monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kwargs: fake)
+    monkeypatch.setattr(aws_clients, "aws_s3_client", lambda **kwargs: fake)
     monkeypatch.setitem(app.config, "AWS_BUCKET", "test-bucket")
     with app.app_context():
         file = make_movie_file(
@@ -725,7 +725,7 @@ def test_a_re_archive_before_the_move_keeps_the_pending_rip(app, uploads, monkey
         )
         db.session.commit()
 
-        aws_storage.archive_library_file(file, "/library/file.mkv")
+        archive_uploads.archive_library_file(file, "/library/file.mkv")
 
         assert file.aws_key == f"modified/{name}"
         assert fake.objects[f"untouched/{name}"]["ETag"] == '"rip"'
@@ -745,7 +745,7 @@ def test_a_failed_copy_of_the_pending_rip_keeps_the_claim(app, uploads, monkeypa
     name = "Lost Copy (2024) - [DVD].mkv"
     pending = f"pending-untouched/run8/{name}"
     fake = ArchiveS3({})
-    monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kwargs: fake)
+    monkeypatch.setattr(aws_clients, "aws_s3_client", lambda **kwargs: fake)
     monkeypatch.setitem(app.config, "AWS_BUCKET", "test-bucket")
     with app.app_context():
         file = make_movie_file(
@@ -759,7 +759,7 @@ def test_a_failed_copy_of_the_pending_rip_keeps_the_claim(app, uploads, monkeypa
         db.session.commit()
         file_id = file.id
 
-        assert aws_storage.archive_library_file(file, "/library/file.mkv") is None
+        assert archive_uploads.archive_library_file(file, "/library/file.mkv") is None
         assert _deletes(app) == []
         assert app.file_queue.jobs == []
 
@@ -768,7 +768,7 @@ def test_a_failed_copy_of_the_pending_rip_keeps_the_claim(app, uploads, monkeypa
         assert row.aws_key == pending
         assert row.aws_key_target == f"untouched/{name}"
         assert row.aws_stale is True
-        assert pending.casefold() in aws_storage.key_claims()
+        assert pending.casefold() in archive_keys.key_claims()
 
         fake.objects[pending] = {
             "ContentLength": 50,
@@ -776,7 +776,7 @@ def test_a_failed_copy_of_the_pending_rip_keeps_the_claim(app, uploads, monkeypa
             "StorageClass": "STANDARD",
             "VersionId": "v1",
         }
-        assert aws_storage.archive_library_file(row, "/library/file.mkv") == (
+        assert archive_uploads.archive_library_file(row, "/library/file.mkv") == (
             f"modified/{name}"
         )
         assert row.aws_key == f"modified/{name}"
@@ -819,7 +819,7 @@ def test_the_row_keeps_the_pending_key_until_the_rip_is_copied(
         },
         on_copy=on_copy,
     )
-    monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kwargs: fake)
+    monkeypatch.setattr(aws_clients, "aws_s3_client", lambda **kwargs: fake)
     monkeypatch.setitem(app.config, "AWS_BUCKET", "test-bucket")
     with app.app_context():
         file = make_movie_file(
@@ -832,7 +832,7 @@ def test_the_row_keeps_the_pending_key_until_the_rip_is_copied(
         db.session.commit()
         file_id = file.id
 
-        aws_storage.archive_library_file(file, "/library/file.mkv")
+        archive_uploads.archive_library_file(file, "/library/file.mkv")
 
         assert seen == [(pending, f"untouched/{name}")]
         assert file.aws_key == f"modified/{name}"
@@ -843,7 +843,7 @@ def test_the_replaced_key_is_deleted_only_if_present(app, uploads):
 
     A plain delete wrote a delete marker at a key that never existed."""
 
-    from app.media.importing import _delete_replaced_archive
+    from app.media.importing.follow_ups import _delete_replaced_archive
 
     with app.app_context():
         file = make_movie_file(
@@ -852,12 +852,12 @@ def test_the_replaced_key_is_deleted_only_if_present(app, uploads):
             aws_key="untouched/Marker Archive (1998) - [DVD].mkv",
         )
         db.session.commit()
-        aws_storage.archive_library_file(file, "/library/file.mkv")
+        archive_uploads.archive_library_file(file, "/library/file.mkv")
         _delete_replaced_archive("untouched/Worse Copy (1998) - [DVD].mkv")
     deletes = [
         job
         for job in app.handoff_queue.jobs
-        if job.func_name == "app.archive.aws_storage.aws_delete"
+        if job.func_name == "app.archive.moves.aws_delete"
     ]
     assert [job.args[0] for job in deletes] == [
         "untouched/Marker Archive (1998) - [DVD].mkv",
@@ -898,7 +898,7 @@ def test_an_archive_that_changes_during_the_copy_stays_on_the_row(
         },
         on_copy=on_copy,
     )
-    monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kwargs: fake)
+    monkeypatch.setattr(aws_clients, "aws_s3_client", lambda **kwargs: fake)
     monkeypatch.setitem(app.config, "AWS_BUCKET", "test-bucket")
     with app.app_context():
         file = make_movie_file(
@@ -912,7 +912,7 @@ def test_an_archive_that_changes_during_the_copy_stays_on_the_row(
         db.session.commit()
         file_id = file.id
 
-        assert aws_storage.archive_library_file(file, "/library/file.mkv") is None
+        assert archive_uploads.archive_library_file(file, "/library/file.mkv") is None
         assert _deletes(app) == []
 
     with app.app_context():

@@ -256,7 +256,7 @@ def _take_series_locks(series, new_title, waits=None):
     Else the import attaches by the old title at its end and makes a
     second series (#370). waits holds the retry counts of the task."""
 
-    from app.media.importing import series_import_in_flight
+    from app.media.importing.chain import series_import_in_flight
     from app.models import TV_SHOWS, title_lock_key
 
     reason = None
@@ -552,7 +552,8 @@ def _move_series(series, new_title, waits=None):
     old_prefix = f"{old_title} - "
     new_prefix = f"{new_title} - "
 
-    from app.media.importing import reconstruct_filename, series_import_in_flight
+    from app.media.importing.filenames import reconstruct_filename
+    from app.media.importing.chain import series_import_in_flight
 
     # Plan each file first. If 1 file does not carry the series title,
     # nothing changes. A partial rename gave the series a title and a
@@ -937,7 +938,7 @@ def _unaccounted_reason(targets, titles):
 def _import_in_flight(titles):
     """Return True if an import of a series with one of these titles is not done."""
 
-    from app.media.importing import series_import_in_flight
+    from app.media.importing.chain import series_import_in_flight
 
     return series_import_in_flight(titles) is not None
 
@@ -1390,7 +1391,7 @@ def _adoption_details(series, file, path):
     The name must give the exact path. The version text can change. No
     other row can hold the path."""
 
-    from app.media.importing import evaluate_filename
+    from app.media.importing.filenames import evaluate_filename
     from app.media.manual_imports import fitzflix_basename
     from app.models import File
 

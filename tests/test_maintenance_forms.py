@@ -119,7 +119,7 @@ def _queued_names(app):
             "app.criterion.criterion_catalog.refresh_criterion_collection_info",
         ),
         ({"tmdb_refresh": "1"}, "app.metadata.tmdb_refresh.refresh_tmdb_info"),
-        ({"sync_submit": "1"}, "app.archive.aws_storage.sync_aws_s3_storage_task"),
+        ({"sync_submit": "1"}, "app.archive.sync.sync_aws_s3_storage_task"),
         ({"scan_submit": "1"}, "app.media.tracks.track_metadata_scan_library"),
     ],
 )

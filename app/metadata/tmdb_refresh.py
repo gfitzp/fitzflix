@@ -693,7 +693,7 @@ def _rename_movie_file(f, tmdb_id, probe=True):
     # The filename plumbing lives in app.media.importing. The import is lazy.
     # Thus, the module import direction stays one-way.
 
-    from app.media.importing import evaluate_filename
+    from app.media.importing.filenames import evaluate_filename
 
     # The import lines of evaluate_filename (File, Movie, Existing movie)
     # do not belong to a rename. A bulk refresh wrote them for each file
@@ -968,7 +968,7 @@ def _apply_movie_refresh(
     booked again) or a commit that failed (#380). Return True
     otherwise. The driver commits the rest."""
 
-    from app.media.importing import reconstruct_filename
+    from app.media.importing.filenames import reconstruct_filename
 
     # Keep the original movie_id field, and the TMDB id
     # before the apply. Radarr keys its entries by TMDB id.

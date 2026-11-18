@@ -33,7 +33,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.tasks import enqueue_task, free_job_id, requeue_job_id
 from app import db
-from app.archive.aws_storage import (
+from app.archive.restores import (
     refuse_while_restore_pending,
     request_restore,
     restore_would_replace_newer,
@@ -157,7 +157,7 @@ from app.media.triage import (
 )
 from app.media.tracks import pop_stopped_edit
 from app.criterion.criterion_catalog import record_set_title, set_title_key
-from app.archive.aws_storage import untouched_key_still_claimed
+from app.archive.archive_keys import untouched_key_still_claimed
 from app.criterion.criterion_catalog import (
     criterion_release_lookups,
     stored_criterion_releases,
@@ -2710,7 +2710,7 @@ def _upload_post(file, form):
     """Queue an upload of the file to AWS S3 storage."""
 
     enqueue_task(
-        "app.archive.aws_storage.upload_task",
+        "app.archive.uploads.upload_task",
         file.id,
         description=f"'{file.basename}'",
         at_front=True,
@@ -2847,7 +2847,7 @@ def _queue_archive_deletes(aws_keys):
         if untouched_key_still_claimed(aws_key):
             continue
         enqueue_task(
-            "app.archive.aws_storage.aws_delete",
+            "app.archive.moves.aws_delete",
             aws_key,
             only_if_present=True,
             only_if_unclaimed=True,

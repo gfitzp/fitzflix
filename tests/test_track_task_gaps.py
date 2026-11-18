@@ -96,7 +96,7 @@ def test_a_scan_does_not_store_a_file_that_is_not_the_file_of_its_record(
     size as its own result and skipped the file. The scan now queues
     the import and stores nothing."""
 
-    import app.media.importing as importing
+    from app.media.importing import chain
     import app.media.tracks as tracks
 
     file_id, identifier, path = _library_row(app, "Scan An Upgrade")
@@ -109,7 +109,7 @@ def test_a_scan_does_not_store_a_file_that_is_not_the_file_of_its_record(
     )
     monkeypatch.setattr(tracks, "enqueue_task", lambda *a, **k: scanned.append(a))
     monkeypatch.setattr(
-        importing, "enqueue_localization", lambda path: queued.append(path) or True
+        chain, "enqueue_localization", lambda path: queued.append(path) or True
     )
     try:
         assert tracks.track_metadata_scan_task(file_id) is True
@@ -128,7 +128,7 @@ def test_a_scan_stores_the_file_of_an_edit_that_did_not_store_its_size(
     An edit that failed after its write queues a scan. That scan must
     still read the file."""
 
-    import app.media.importing as importing
+    from app.media.importing import chain
     import app.media.tracks as tracks
 
     file_id, identifier, path = _library_row(app, "Scan An Edit")
@@ -141,7 +141,7 @@ def test_a_scan_stores_the_file_of_an_edit_that_did_not_store_its_size(
     )
     monkeypatch.setattr(tracks, "enqueue_task", lambda *a, **k: saves.append(a[0]))
     monkeypatch.setattr(
-        importing, "enqueue_localization", lambda path: queued.append(path) or True
+        chain, "enqueue_localization", lambda path: queued.append(path) or True
     )
     try:
         assert tracks.track_metadata_scan_task(file_id) is True
@@ -280,7 +280,7 @@ def test_the_audio_plan_reserves_its_staging_space(app, monkeypatch):
     import shutil
 
     import app.media.videos as videos
-    from app.media.importing import STAGING_RESERVED_KEY
+    from app.media.importing.space import STAGING_RESERVED_KEY
     from app.media.tracks import _remux_audio_plan_unlocked
 
     file_id, identifier, path = _library_row(app, "Plan Reservation")
@@ -379,7 +379,7 @@ def test_a_failed_audio_plan_commit_after_the_replace_queues_a_scan(app, monkeyp
 def test_a_failed_reservation_release_does_not_fail_a_committed_plan(app, monkeypatch):
     """A Redis fault in the release of the finally failed a done plan (#596)."""
 
-    import app.media.importing as importing
+    from app.media.importing import space
     from app.media import tracks
 
     file_id, identifier, path = _library_row(app, "Plan Release Fails")
@@ -388,7 +388,7 @@ def test_a_failed_reservation_release_does_not_fail_a_committed_plan(app, monkey
     def lost(reservation):
         raise ConnectionError("Redis went away")
 
-    monkeypatch.setattr(importing, "release_staging_reservation", lost)
+    monkeypatch.setattr(space, "release_staging_reservation", lost)
     try:
         assert tracks._remux_audio_plan_unlocked(file_id, [("copy", 0)]) is True
     finally:
@@ -396,13 +396,13 @@ def test_a_failed_reservation_release_does_not_fail_a_committed_plan(app, monkey
 
 
 def test_an_audio_plan_with_no_reserved_space_stops_before_the_copy(app, monkeypatch):
-    import app.media.importing as importing
+    from app.media.importing import space
     import app.media.videos as videos
     from app.media.tracks import _remux_audio_plan_unlocked
 
     file_id, identifier, path = _library_row(app, "Plan No Space")
     copies = []
-    monkeypatch.setattr(importing, "reserve_staging", lambda *args: "wait")
+    monkeypatch.setattr(space, "reserve_staging", lambda *args: "wait")
     monkeypatch.setattr(videos, "copy_with_progress", lambda *a, **k: copies.append(a))
     try:
         with pytest.raises(RuntimeError, match="staging space"):
@@ -421,7 +421,7 @@ def test_a_failed_reimport_commit_over_a_replaced_file_queues_a_scan(
     scan was queued, and the archive was not flagged stale."""
 
     from app import db
-    from app.media import importing
+    from app.media.importing import cataloging
     from app.models import File
     from tests.factories import make_movie, make_movie_file
     from tests.localization_helpers import run_full_chain
@@ -446,7 +446,7 @@ def test_a_failed_reimport_commit_over_a_replaced_file_queues_a_scan(
     source = os.path.join(incoming_dir, "Replaced Commit Scan (2021) - [DVD].mkv")
     with open(sample_mkv, "rb") as f_in, open(source, "wb") as f_out:
         f_out.write(f_in.read())
-    monkeypatch.setattr(importing, "HeldImport", Failing)
+    monkeypatch.setattr(cataloging, "HeldImport", Failing)
     try:
         with app.app_context():
             run_full_chain(app, source)

@@ -422,7 +422,7 @@ def _transient_step(step):
     import botocore.exceptions
     from sqlalchemy.exc import OperationalError
 
-    from app.media.importing import INTERRUPT_SIGNALS
+    from app.media.importing.localization import INTERRUPT_SIGNALS
 
     try:
         yield
@@ -556,7 +556,7 @@ def atmos_supplement_task(file_id, staged_source=None):
     it. A wait for staging space does not, and the copy is removed. When
     the job ends, a staged copy that it did not use is removed."""
 
-    from app.archive.aws_storage import refuse_while_restore_pending
+    from app.archive.restores import refuse_while_restore_pending
     from app.metadata.tmdb_refresh import tmdb_refresh_pending
 
     with app.app_context():
@@ -696,7 +696,7 @@ def _atmos_prepare(file_id, phases, staged_source=None):
     """
 
     from app.media.tracks import replace_track_rows
-    from app.archive.aws_storage import aws_s3_client
+    from app.archive.aws_clients import aws_s3_client
     from app.media.tracks import (
         get_audio_tracks_from_file,
         get_subtitle_tracks_from_file,
@@ -998,7 +998,7 @@ def _close_run(state, lock, ended_early=True):
     conversion (#505). The import left that upload to the run. The
     upload takes the title lock. Thus, it is queued after the release."""
 
-    from app.archive.aws_storage import aws_s3_client
+    from app.archive.aws_clients import aws_s3_client
 
     shutil.rmtree(state["workspace"], ignore_errors=True)
     try:
@@ -1038,7 +1038,7 @@ def archive_after_early_end(file_id):
             and get_setting("ARCHIVE_ORIGINAL_MEDIA")
         ):
             enqueue_task(
-                "app.archive.aws_storage.upload_task",
+                "app.archive.uploads.upload_task",
                 file.id,
                 description=f"'{file.basename}'",
             )
@@ -1471,13 +1471,13 @@ def _atmos_finish(state, phases):
 
     The library share carries 1 write here: the verified result."""
 
-    from app.archive.aws_storage import archive_library_file
+    from app.archive.uploads import archive_library_file
     from app.media.tracks import (
         _rescan_after_a_failed_edit,
         confirm_rewrite,
         replace_track_rows,
     )
-    from app.archive.aws_storage import aws_s3_client
+    from app.archive.aws_clients import aws_s3_client
     from app.media.tracks import (
         get_audio_tracks_from_file,
         get_subtitle_tracks_from_file,

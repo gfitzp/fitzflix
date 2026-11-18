@@ -40,7 +40,7 @@ class ImportEventHandler(FileSystemEventHandler):
         # file only if no localization of it waits or runs, and no space
         # wait holds it (#262 review, #287).
 
-        from app.media.importing import enqueue_localization
+        from app.media.importing.chain import enqueue_localization
 
         # A failed lock or enqueue must not keep the lock or stop the
         # dispatch thread of watchdog (#523, #568). The sweep of the

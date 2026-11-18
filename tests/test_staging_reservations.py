@@ -6,8 +6,10 @@ import time
 
 import pytest
 
-from app.media import importing
-from app.media.importing import (
+from app.media.importing import chain
+from app.media.importing import localization
+from app.media.importing import space
+from app.media.importing.space import (
     STAGING_MARGIN,
     STAGING_RESERVED_KEY,
     release_staging_reservation,
@@ -40,7 +42,7 @@ def volume(monkeypatch):
 
     sizes = {"total": 1000 * GB, "free": 500 * GB}
     monkeypatch.setattr(
-        importing, "_staging_usage", lambda path: (sizes["total"], sizes["free"])
+        space, "_staging_usage", lambda path: (sizes["total"], sizes["free"])
     )
     return sizes
 
@@ -166,12 +168,12 @@ def test_localization_waits_for_staging_space(
                 15 * GB,
                 ["Other (2021) - [Bluray-2160p].mkv"],
             )
-            assert importing.localization_task(source) is True
+            assert localization.localization_task(source) is True
 
             waits = [job.id for job in scheduled_jobs(app.import_queue)]
             assert (
                 tasks.requeue_job_id(
-                    "app.media.importing.localization_task",
+                    "app.media.importing.localization.localization_task",
                     source,
                     {
                         "transient_retries": 0,
@@ -190,11 +192,12 @@ def test_localization_waits_for_staging_space(
 
             # The other import finished. Its reservation goes away.
             release_staging_reservation("Other (2021) - [Bluray-2160p].mkv")
-            assert importing.localization_task(source, space_waits=1) is True
+            assert localization.localization_task(source, space_waits=1) is True
             (move_job,) = [
                 job
                 for job in app.handoff_queue.jobs
-                if job.func_name == "app.media.importing.move_localized_file"
+                if job.func_name
+                == "app.media.importing.library_move.move_localized_file"
             ]
             hidden = move_job.args[3]
             assert hidden.startswith(staging)
@@ -212,10 +215,10 @@ def test_localization_waits_for_staging_space(
 def test_the_extras_of_2_films_get_their_own_staged_output():
     """The library name of an extra is only the extra, for example "Trailer.mkv"."""
 
-    first = importing.staged_output_path(
+    first = space.staged_output_path(
         "/staging", "First Film (2001) - Trailer - Trailer [DVD].mkv", "Trailer.mkv"
     )
-    second = importing.staged_output_path(
+    second = space.staged_output_path(
         "/staging", "Second Film (2002) - Trailer - Trailer [DVD].mp4", "Trailer.mkv"
     )
     assert first != second
@@ -228,9 +231,9 @@ def test_the_extras_of_2_films_get_their_own_staged_output():
 def test_no_reservation_without_the_lock(app, staging, volume, monkeypatch):
     """A held lock makes the import wait. It does not reserve unlocked (#478)."""
 
-    monkeypatch.setattr(importing.time, "sleep", lambda seconds: None)
+    monkeypatch.setattr(chain.time, "sleep", lambda seconds: None)
     with app.app_context():
-        held = app.lock_manager.lock(importing.STAGING_RESERVE_LOCK, 30000)
+        held = app.lock_manager.lock(space.STAGING_RESERVE_LOCK, 30000)
         assert held
         try:
             name = "Locked (2020) - [Bluray-2160p].mkv"
@@ -249,7 +252,7 @@ def test_a_busy_staging_lock_is_not_a_space_wait(
 
     from app import tasks
 
-    monkeypatch.setattr(importing, "reserve_staging", lambda *args: "lock")
+    monkeypatch.setattr(space, "reserve_staging", lambda *args: "lock")
     basename = "Lock Wait (2021) - [DVD].mkv"
     source = os.path.join(incoming_dir, basename)
     os.makedirs(incoming_dir, exist_ok=True)
@@ -259,11 +262,11 @@ def test_a_busy_staging_lock_is_not_a_space_wait(
     os.utime(source, (stamp, stamp))
     try:
         with app.app_context(), caplog.at_level(logging.INFO):
-            assert importing.localization_task(source) is True
+            assert localization.localization_task(source) is True
             waits = [job.id for job in scheduled_jobs(app.import_queue)]
             assert (
                 tasks.requeue_job_id(
-                    "app.media.importing.localization_task",
+                    "app.media.importing.localization.localization_task",
                     source,
                     {
                         "transient_retries": 0,

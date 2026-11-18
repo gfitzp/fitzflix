@@ -183,8 +183,11 @@ def _basename_from_file_id(args, kwargs):
 # task that is not listed leaves no trail.
 
 STAGES = {
-    "app.media.importing.localization_task": ("Localizing", _basename_from_path),
-    "app.media.importing.move_localized_file": (
+    "app.media.importing.localization.localization_task": (
+        "Localizing",
+        _basename_from_path,
+    ),
+    "app.media.importing.library_move.move_localized_file": (
         "Moving into the library",
         _basename_from_details,
     ),
@@ -192,9 +195,12 @@ STAGES = {
         "Converting to SDR",
         _basename_from_details,
     ),
-    "app.media.importing.finalize_localization": ("Cataloging", _basename_from_details),
-    "app.archive.aws_storage.upload_task": ("Archiving to S3", _basename_from_file_id),
-    "app.archive.aws_storage.move_archive_object": (
+    "app.media.importing.cataloging.finalize_localization": (
+        "Cataloging",
+        _basename_from_details,
+    ),
+    "app.archive.uploads.upload_task": ("Archiving to S3", _basename_from_file_id),
+    "app.archive.moves.move_archive_object": (
         "Moving the S3 archive",
         _basename_from_file_id,
     ),
@@ -211,7 +217,7 @@ STAGES = {
         "Rebuilding audio",
         _basename_from_file_id,
     ),
-    "app.archive.aws_storage.download_task": (
+    "app.archive.downloads.download_task": (
         "Restoring from S3",
         _basename_from_second_arg,
     ),

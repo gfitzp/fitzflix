@@ -216,7 +216,7 @@ def test_backup_database_uploads_to_s3_and_prunes_remote(
             deleted.extend((o["Key"], o["VersionId"]) for o in Delete["Objects"])
 
     monkeypatch.setattr(
-        "app.archive.aws_storage.aws_s3_client",
+        "app.archive.aws_clients.aws_s3_client",
         lambda with_retries=False: FakeS3Client(),
     )
 
@@ -225,7 +225,7 @@ def test_backup_database_uploads_to_s3_and_prunes_remote(
     # earlier posters test makes. An empty listing keeps it quiet
 
     monkeypatch.setattr(
-        "app.archive.aws_storage.get_matching_s3_objects", lambda *args, **kwargs: []
+        "app.archive.aws_clients.get_matching_s3_objects", lambda *args, **kwargs: []
     )
 
     with app.app_context():
@@ -253,7 +253,7 @@ def test_backup_database_skips_s3_when_unconfigured(app, mysqldump_stub, monkeyp
     def explode(*args, **kwargs):
         raise AssertionError("S3 client should not be built")
 
-    monkeypatch.setattr("app.archive.aws_storage.aws_s3_client", explode)
+    monkeypatch.setattr("app.archive.aws_clients.aws_s3_client", explode)
 
     with app.app_context():
         backup_database()
@@ -293,10 +293,10 @@ def test_backup_uploads_encrypted_env(app, mysqldump_stub, monkeypatch, tmp_path
             pass
 
     monkeypatch.setattr(
-        "app.archive.aws_storage.aws_s3_client", lambda **kwargs: FakeS3Client()
+        "app.archive.aws_clients.aws_s3_client", lambda **kwargs: FakeS3Client()
     )
     monkeypatch.setattr(
-        "app.archive.aws_storage.get_matching_s3_objects",
+        "app.archive.aws_clients.get_matching_s3_objects",
         lambda bucket, prefix="", suffix="": iter([]),
     )
 
@@ -419,9 +419,9 @@ def test_backup_syncs_custom_posters(app, mysqldump_stub, monkeypatch):
             deletes.extend(o["Key"] for o in Delete["Objects"])
 
     monkeypatch.setattr(
-        "app.archive.aws_storage.aws_s3_client", lambda **kwargs: FakeS3Client()
+        "app.archive.aws_clients.aws_s3_client", lambda **kwargs: FakeS3Client()
     )
-    monkeypatch.setattr("app.archive.aws_storage.get_matching_s3_objects", fake_objects)
+    monkeypatch.setattr("app.archive.aws_clients.get_matching_s3_objects", fake_objects)
 
     try:
         with app.app_context():
@@ -491,7 +491,7 @@ def drill(app, monkeypatch, tmp_path):
 
     key = "backup/fitzflix-2026-11-01.sql.gz"
     monkeypatch.setattr(
-        "app.archive.aws_storage.get_matching_s3_objects",
+        "app.archive.aws_clients.get_matching_s3_objects",
         lambda bucket, prefix=None: [],
     )
     monkeypatch.setattr(
@@ -508,7 +508,7 @@ def drill(app, monkeypatch, tmp_path):
                 f.write(b"-- dump\n")
 
     monkeypatch.setattr(
-        "app.archive.aws_storage.aws_s3_client", lambda **kwargs: Client()
+        "app.archive.aws_clients.aws_s3_client", lambda **kwargs: Client()
     )
     state = {"on_drop": None, "calls": []}
 

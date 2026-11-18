@@ -94,13 +94,12 @@ def test_admin_email_renders_now_and_sends_later(app, monkeypatch):
 
 
 def test_importing_has_no_inline_admin_lookup():
-    """Pin the consolidation: no site in importing.py looks up the admin itself."""
-
-    import inspect
+    """Pin the consolidation: no site in the import code looks up the admin itself."""
 
     import app.media.importing as importing
+    from tests.conftest import package_source
 
-    source = inspect.getsource(importing)
+    source = package_source(importing)
     assert "User.admin" not in source
     assert "recipients=[admin_user" not in source
 
@@ -164,15 +163,15 @@ def test_aws_reports_without_an_admin_still_return(app, no_admin):
     from types import SimpleNamespace
 
     from app import db
-    from app.archive import aws_storage
+    from app.archive import sync
     from tests.factories import make_movie, make_movie_file
 
     with app.app_context():
         file = make_movie_file(make_movie("Claimed Film", 1999), "DVD")
         file.aws_key = "untouched/Claimed Film (1999) - [DVD].mkv"
         db.session.commit()
-        assert aws_storage._report_dangling_claims(SimpleNamespace(keys=set())) is None
-        assert aws_storage._mail_reports(["untouched/stray.mkv"], [(1, "x")]) is None
+        assert sync._report_dangling_claims(SimpleNamespace(keys=set())) is None
+        assert sync._mail_reports(["untouched/stray.mkv"], [(1, "x")]) is None
     assert no_admin == []
 
 

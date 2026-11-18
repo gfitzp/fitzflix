@@ -41,7 +41,7 @@ def frozen(**extra):
 def s3(app, monkeypatch):
     """Install an ArchiveS3 and an SQS fake. Return a function that sets the objects."""
 
-    from app.archive import aws_storage
+    from app.archive import aws_clients
 
     holder = {}
 
@@ -51,8 +51,8 @@ def s3(app, monkeypatch):
 
     install()
     holder["sqs"] = SQS()
-    monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kw: holder["s3"])
-    monkeypatch.setattr(aws_storage, "aws_sqs_client", lambda: holder["sqs"])
+    monkeypatch.setattr(aws_clients, "aws_s3_client", lambda **kw: holder["s3"])
+    monkeypatch.setattr(aws_clients, "aws_sqs_client", lambda: holder["sqs"])
     install.sqs = holder["sqs"]
     return install
 
@@ -76,7 +76,7 @@ def move_jobs(app):
     return [
         job
         for job in app.file_queue.jobs
-        if job.func_name == "app.archive.aws_storage.move_archive_object"
+        if job.func_name == "app.archive.moves.move_archive_object"
     ]
 
 
@@ -95,7 +95,7 @@ def test_a_readable_archive_moves_and_the_row_changes_last(app, s3):
     """Copy, verify, row update, then the delete of the old key."""
 
     from app import db
-    from app.archive import aws_storage
+    from app.archive import moves as archive_moves
     from app.models import File
 
     with app.app_context():
@@ -112,13 +112,13 @@ def test_a_readable_archive_moves_and_the_row_changes_last(app, s3):
             on_delete=lambda key: at_delete.append((key, committed_key(app, file_id))),
         )
 
-        assert aws_storage.request_archive_move(file) is True
+        assert archive_moves.request_archive_move(file) is True
         assert file.aws_key_target == new_key
         assert move_jobs(app) == []
         db.session.commit()
         assert [job.args for job in move_jobs(app)] == [(file_id,)]
 
-        assert aws_storage.move_archive_object(file_id) is True
+        assert archive_moves.move_archive_object(file_id) is True
 
         # During the copy, the row still names the old object.
         assert seen == [old_key]
@@ -142,7 +142,7 @@ def test_a_readable_archive_moves_and_the_row_changes_last(app, s3):
 
 def test_a_copy_that_differs_is_deleted_and_the_row_keeps_its_key(app, s3, caplog):
     from app import db
-    from app.archive import aws_storage
+    from app.archive import moves as archive_moves
     from app.models import File
 
     with app.app_context():
@@ -150,13 +150,13 @@ def test_a_copy_that_differs_is_deleted_and_the_row_keeps_its_key(app, s3, caplo
         file_id = file.id
         old_key = file.aws_key
         fake = s3({old_key: readable()}, copy_etag='"ffff-3"')
-        aws_storage.request_archive_move(file)
+        archive_moves.request_archive_move(file)
         db.session.commit()
 
         # The job fails loudly, for the FailedJobRegistry. Only the own
         # copy goes, by its version id.
         with pytest.raises(RuntimeError, match="has the ETag") as failure:
-            aws_storage.move_archive_object(file_id)
+            archive_moves.move_archive_object(file_id)
 
         # The System page shows 200 characters of the last line of the
         # error. The repair must be in that part for each file name (#729).
@@ -187,7 +187,7 @@ def test_a_copy_that_differs_is_deleted_and_the_row_keeps_its_key(app, s3, caplo
 
 def test_a_deep_archive_object_gets_a_bulk_restore_and_the_row_stays(app, s3):
     from app import db
-    from app.archive import aws_storage
+    from app.archive import moves as archive_moves
     from app.models import File
 
     with app.app_context():
@@ -195,10 +195,10 @@ def test_a_deep_archive_object_gets_a_bulk_restore_and_the_row_stays(app, s3):
         file_id = file.id
         old_key = file.aws_key
         fake = s3({old_key: frozen()})
-        aws_storage.request_archive_move(file)
+        archive_moves.request_archive_move(file)
         db.session.commit()
 
-        assert aws_storage.move_archive_object(file_id) == aws_storage.MOVE_WAITING
+        assert archive_moves.move_archive_object(file_id) == archive_moves.MOVE_WAITING
         assert fake.restores == [(old_key, "Bulk")]
         assert fake.copies == [] and fake.deletes == []
 
@@ -213,18 +213,18 @@ def test_a_deep_archive_object_gets_a_bulk_restore_and_the_row_stays(app, s3):
 
 def test_an_expired_restore_is_requested_again(app, s3):
     from app import db
-    from app.archive import aws_storage
+    from app.archive import moves as archive_moves
 
     expired = 'ongoing-request="false", expiry-date="Fri, 01 Jan 2021 00:00:00 GMT"'
     with app.app_context():
         file = archived_film("Thawed Once", 1953, key_name="Thawed (1953).mkv")
         old_key = file.aws_key
         fake = s3({old_key: frozen(Restore=expired)})
-        aws_storage.request_archive_move(file)
+        archive_moves.request_archive_move(file)
         db.session.commit()
 
-        result = aws_storage.move_archive_object(file.id, sqs_receipt_handle="stale")
-        assert result == aws_storage.MOVE_WAITING
+        result = archive_moves.move_archive_object(file.id, sqs_receipt_handle="stale")
+        assert result == archive_moves.MOVE_WAITING
         assert fake.restores == [(old_key, "Bulk")]
         assert fake.copies == []
         assert s3.sqs.deleted == ["stale"]
@@ -232,18 +232,18 @@ def test_an_expired_restore_is_requested_again(app, s3):
 
 def test_a_missing_object_clears_the_target_with_a_warning(app, s3, caplog):
     from app import db
-    from app.archive import aws_storage
+    from app.archive import moves as archive_moves
     from app.models import File
 
     with app.app_context():
         file = archived_film("Lost Reel", 1954, key_name="Lost (1954).mkv")
         file_id = file.id
         s3({})
-        aws_storage.request_archive_move(file)
+        archive_moves.request_archive_move(file)
         db.session.commit()
 
         with caplog.at_level(logging.WARNING):
-            assert aws_storage.move_archive_object(file_id) is False
+            assert archive_moves.move_archive_object(file_id) is False
         assert "is not in S3" in caplog.text
         db.session.expire_all()
         row = db.session.get(File, file_id)
@@ -253,7 +253,7 @@ def test_a_missing_object_clears_the_target_with_a_warning(app, s3, caplog):
 
 def test_a_second_rename_overwrites_the_target_and_the_job_takes_the_newest(app, s3):
     from app import db
-    from app.archive import aws_storage
+    from app.archive import moves as archive_moves
     from app.models import File
 
     with app.app_context():
@@ -263,14 +263,14 @@ def test_a_second_rename_overwrites_the_target_and_the_job_takes_the_newest(app,
         fake = s3({old_key: readable()})
 
         file.untouched_basename = "Second Title (1955) - [Bluray-1080p].mkv"
-        aws_storage.request_archive_move(file)
+        archive_moves.request_archive_move(file)
         db.session.commit()
         assert (
             file.aws_key_target == "untouched/Second Title (1955) - [Bluray-1080p].mkv"
         )
 
         file.untouched_basename = "Third Title (1955) - [Bluray-1080p].mkv"
-        aws_storage.request_archive_move(file)
+        archive_moves.request_archive_move(file)
         db.session.commit()
         newest = "untouched/Third Title (1955) - [Bluray-1080p].mkv"
         assert file.aws_key_target == newest
@@ -280,7 +280,7 @@ def test_a_second_rename_overwrites_the_target_and_the_job_takes_the_newest(app,
         file.untouched_basename = "Fourth Title (1955) - [Bluray-1080p].mkv"
         db.session.commit()
 
-        assert aws_storage.move_archive_object(file_id) is True
+        assert archive_moves.move_archive_object(file_id) is True
         fourth = "untouched/Fourth Title (1955) - [Bluray-1080p].mkv"
         assert fake.copies == [(old_key, fourth)]
         db.session.expire_all()
@@ -288,15 +288,15 @@ def test_a_second_rename_overwrites_the_target_and_the_job_takes_the_newest(app,
 
 
 def test_a_rename_back_clears_the_target(app, s3):
-    from app.archive import aws_storage
+    from app.archive import moves as archive_moves
 
     with app.app_context():
         file = archived_film("Round Trip", 1956)
         original = file.untouched_basename
         file.untouched_basename = "Away (1956) - [Bluray-1080p].mkv"
-        assert aws_storage.request_archive_move(file) is True
+        assert archive_moves.request_archive_move(file) is True
         file.untouched_basename = original
-        assert aws_storage.request_archive_move(file) is False
+        assert archive_moves.request_archive_move(file) is False
         assert file.aws_key_target is None
 
 
@@ -306,7 +306,9 @@ def test_the_poll_routes_a_restored_key_with_a_target_to_the_move(app, s3, monke
     import json
 
     from app import db
-    from app.archive import aws_storage
+    from app.archive import aws_clients
+    from app.archive import moves as archive_moves
+    from app.archive import restores
 
     class Poll:
         def __init__(self, keys):
@@ -332,20 +334,20 @@ def test_the_poll_routes_a_restored_key_with_a_target_to_the_move(app, s3, monke
         file = archived_film("Restored Move", 1957, key_name="Restored (1957).mkv")
         file_id = file.id
         old_key = file.aws_key
-        aws_storage.request_archive_move(file)
+        archive_moves.request_archive_move(file)
         db.session.commit()
         for job in move_jobs(app):
             job.delete()
 
     poll = Poll([old_key, "untouched/Nobody Claims (1900).mkv"])
-    monkeypatch.setattr(aws_storage, "aws_sqs_client", lambda: poll)
-    assert aws_storage.sqs_retrieve_task() is True
+    monkeypatch.setattr(aws_clients, "aws_sqs_client", lambda: poll)
+    assert restores.sqs_retrieve_task() is True
 
     with app.app_context():
         downloads = [
             job
             for job in app.file_queue.jobs
-            if job.func_name == "app.archive.aws_storage.download_task"
+            if job.func_name == "app.archive.downloads.download_task"
         ]
         assert downloads == []
         (job,) = move_jobs(app)
@@ -365,7 +367,7 @@ def test_the_poll_routes_a_restored_key_with_a_target_to_the_move(app, s3, monke
                 )
             }
         )
-        assert aws_storage.move_archive_object(file_id, "handle-0") is True
+        assert archive_moves.move_archive_object(file_id, "handle-0") is True
         assert fake.copies == [
             (old_key, "untouched/Restored Move (1957) - [Bluray-1080p].mkv")
         ]
@@ -374,7 +376,9 @@ def test_the_poll_routes_a_restored_key_with_a_target_to_the_move(app, s3, monke
 
 def test_the_poll_extends_the_restore_of_a_queued_move(app, s3, monkeypatch):
     from app import db
-    from app.archive import aws_storage
+    from app.archive import aws_clients
+    from app.archive import moves as archive_moves
+    from app.archive import restores
 
     class Poll:
         def __init__(self):
@@ -388,43 +392,43 @@ def test_the_poll_extends_the_restore_of_a_queued_move(app, s3, monkeypatch):
 
     with app.app_context():
         file = archived_film("Waiting Move", 1958, key_name="Waiting (1958).mkv")
-        aws_storage.request_archive_move(file)
+        archive_moves.request_archive_move(file)
         db.session.commit()
         for job in move_jobs(app):
             job.delete()
         app.file_queue.enqueue(
-            "app.archive.aws_storage.move_archive_object",
+            "app.archive.moves.move_archive_object",
             args=(file.id,),
             kwargs={"sqs_receipt_handle": "held"},
         )
         old_key = file.aws_key
 
         # The poll recorded the handle under the key at the receive (#617).
-        aws_storage.record_receipt_handle(old_key, "held")
+        restores.record_receipt_handle(old_key, "held")
 
     poll = Poll()
     fake = s3({old_key: frozen()})
-    monkeypatch.setattr(aws_storage, "aws_sqs_client", lambda: poll)
-    assert aws_storage.sqs_retrieve_task() is True
+    monkeypatch.setattr(aws_clients, "aws_sqs_client", lambda: poll)
+    assert restores.sqs_retrieve_task() is True
     assert poll.visibility == ["held"]
     assert fake.restores == [(old_key, "Standard")]
 
 
 def test_a_move_waits_for_a_download_of_the_old_key(app, s3):
     from app import db
-    from app.archive import aws_storage
+    from app.archive import moves as archive_moves
 
     with app.app_context():
         file = archived_film("Busy Reel", 1959, key_name="Busy (1959).mkv")
-        aws_storage.request_archive_move(file)
+        archive_moves.request_archive_move(file)
         db.session.commit()
         app.file_queue.enqueue(
-            "app.archive.aws_storage.download_task",
+            "app.archive.downloads.download_task",
             args=(file.aws_key, "Busy (1959).mkv"),
         )
         fake = s3({file.aws_key: readable()})
 
-        assert aws_storage.move_archive_object(file.id) == aws_storage.MOVE_WAITING
+        assert archive_moves.move_archive_object(file.id) == archive_moves.MOVE_WAITING
         assert fake.copies == []
 
 
@@ -436,13 +440,13 @@ def test_a_download_that_starts_during_the_copy_keeps_the_old_key(app, s3):
     the copy of the move goes, and the move waits for the download."""
 
     from app import db
-    from app.archive import aws_storage
+    from app.archive import moves as archive_moves
     from app.models import File
 
     with app.app_context():
         file = archived_film("Late Reel", 1961, key_name="Late (1961).mkv")
         file_id, old_key = file.id, file.aws_key
-        aws_storage.request_archive_move(file)
+        archive_moves.request_archive_move(file)
         db.session.commit()
         new_key = file.aws_key_target
 
@@ -455,13 +459,13 @@ def test_a_download_that_starts_during_the_copy_keeps_the_old_key(app, s3):
                     {"id": file_id, "now": "2026-11-12 16:00:00"},
                 )
             app.file_queue.enqueue(
-                "app.archive.aws_storage.download_task",
+                "app.archive.downloads.download_task",
                 args=(old_key, "Late (1961).mkv"),
             )
 
         fake = s3({old_key: readable()}, on_copy=restore_click)
 
-        assert aws_storage.move_archive_object(file_id) == aws_storage.MOVE_WAITING
+        assert archive_moves.move_archive_object(file_id) == archive_moves.MOVE_WAITING
         assert fake.deletes == [(new_key, "copy-1")]
         assert old_key in fake.objects and new_key not in fake.objects
 
@@ -474,7 +478,7 @@ def test_a_download_that_starts_during_the_copy_keeps_the_old_key(app, s3):
         downloads = [
             job.args[0]
             for job in app.file_queue.jobs
-            if job.func_name == "app.archive.aws_storage.download_task"
+            if job.func_name == "app.archive.downloads.download_task"
         ]
         assert downloads == [old_key]
         assert len(_scheduled_moves(app)) == 1
@@ -488,18 +492,28 @@ def test_a_move_that_waits_books_a_random_retry_delay(app, monkeypatch):
     from datetime import timedelta
 
     from app import db
-    from app.archive import aws_storage
+    from app.archive import downloads as archive_downloads
+    from app.archive import moves as archive_moves
+    from app.archive import sync as archive_sync
 
     delays = []
     monkeypatch.setattr(
-        aws_storage, "requeue", lambda *args, **kwargs: delays.append(kwargs["delay"])
+        archive_sync, "requeue", lambda *args, **kwargs: delays.append(kwargs["delay"])
+    )
+    monkeypatch.setattr(
+        archive_downloads,
+        "requeue",
+        lambda *args, **kwargs: delays.append(kwargs["delay"]),
+    )
+    monkeypatch.setattr(
+        archive_moves, "requeue", lambda *args, **kwargs: delays.append(kwargs["delay"])
     )
     with app.app_context():
         file = archived_film("Random Reel", 1960, key_name="Random (1960).mkv")
         db.session.commit()
         for _ in range(20):
-            result = aws_storage._wait_move(file, file.aws_key, None, "the S3 sync")
-            assert result == aws_storage.MOVE_WAITING
+            result = archive_moves._wait_move(file, file.aws_key, None, "the S3 sync")
+            assert result == archive_moves.MOVE_WAITING
 
     assert all(timedelta(minutes=25) <= d <= timedelta(minutes=35) for d in delays)
     assert len(set(delays)) > 1
@@ -509,29 +523,31 @@ def test_a_move_goes_on_when_the_sync_stops_after_the_pause(app, s3, monkeypatch
     """Test that a sync that stops at once does not hold the move (#404)."""
 
     from app import db
-    from app.archive import aws_storage
+    from app.archive import downloads as archive_downloads
+    from app.archive import moves as archive_moves
 
     answers = iter([True, False])
     pauses = []
-    monkeypatch.setattr(aws_storage, "_sync_is_running", lambda: next(answers))
-    monkeypatch.setattr(aws_storage.time, "sleep", pauses.append)
+    monkeypatch.setattr(archive_moves, "_sync_is_running", lambda: next(answers))
+    monkeypatch.setattr(archive_downloads.time, "sleep", pauses.append)
     with app.app_context():
         file = archived_film("Quick Sync", 1961, key_name="Quick (1961).mkv")
-        aws_storage.request_archive_move(file)
+        archive_moves.request_archive_move(file)
         db.session.commit()
         fake = s3({file.aws_key: readable()})
 
-        assert aws_storage.move_archive_object(file.id) != aws_storage.MOVE_WAITING
+        assert archive_moves.move_archive_object(file.id) != archive_moves.MOVE_WAITING
         assert fake.copies
 
-    assert pauses == [aws_storage.SYNC_RECHECK_SECONDS]
+    assert pauses == [archive_moves.SYNC_RECHECK_SECONDS]
 
 
 def test_a_move_waits_while_the_sync_still_runs_after_the_pause(app, s3, monkeypatch):
     """The move pauses and checks again before it books its wait (#404)."""
 
     from app import db
-    from app.archive import aws_storage
+    from app.archive import downloads as archive_downloads
+    from app.archive import moves as archive_moves
 
     events = []
 
@@ -539,29 +555,31 @@ def test_a_move_waits_while_the_sync_still_runs_after_the_pause(app, s3, monkeyp
         events.append("check")
         return True
 
-    monkeypatch.setattr(aws_storage, "_sync_is_running", sync_runs)
+    monkeypatch.setattr(archive_moves, "_sync_is_running", sync_runs)
     monkeypatch.setattr(
-        aws_storage.time, "sleep", lambda seconds: events.append(("sleep", seconds))
+        archive_downloads.time,
+        "sleep",
+        lambda seconds: events.append(("sleep", seconds)),
     )
-    real_wait = aws_storage._wait_move
+    real_wait = archive_moves._wait_move
 
     def recorded_wait(*args, **kwargs):
         events.append("wait")
         return real_wait(*args, **kwargs)
 
-    monkeypatch.setattr(aws_storage, "_wait_move", recorded_wait)
+    monkeypatch.setattr(archive_moves, "_wait_move", recorded_wait)
     with app.app_context():
         file = archived_film("Slow Sync", 1962, key_name="Slow (1962).mkv")
-        aws_storage.request_archive_move(file)
+        archive_moves.request_archive_move(file)
         db.session.commit()
         fake = s3({file.aws_key: readable()})
 
-        assert aws_storage.move_archive_object(file.id) == aws_storage.MOVE_WAITING
+        assert archive_moves.move_archive_object(file.id) == archive_moves.MOVE_WAITING
         assert fake.copies == []
 
     assert events == [
         "check",
-        ("sleep", aws_storage.SYNC_RECHECK_SECONDS),
+        ("sleep", archive_moves.SYNC_RECHECK_SECONDS),
         "check",
         "wait",
     ]
@@ -571,7 +589,8 @@ def test_an_edit_during_an_untouched_move_goes_to_modified_under_the_new_name(
     app, monkeypatch
 ):
     from app import db
-    from app.archive import aws_storage
+    from app.archive import moves as archive_moves
+    from app.archive import uploads as archive_uploads
 
     uploads = []
 
@@ -579,27 +598,28 @@ def test_an_edit_during_an_untouched_move_goes_to_modified_under_the_new_name(
         uploads.append((key_prefix, key_name))
         return os.path.join(key_prefix, key_name), datetime.utcnow(), 7
 
-    monkeypatch.setattr(aws_storage, "aws_upload", fake_upload)
+    monkeypatch.setattr(archive_uploads, "aws_upload", fake_upload)
     with app.app_context():
         file = archived_film("Edited Rip", 1960, key_name="Edited (1960).mkv")
         old_key = file.aws_key
-        aws_storage.request_archive_move(file)
+        archive_moves.request_archive_move(file)
         db.session.commit()
 
-        aws_storage.archive_library_file(file, "/library/file.mkv")
+        archive_uploads.archive_library_file(file, "/library/file.mkv")
         assert uploads == [("modified", "Edited Rip (1960) - [Bluray-1080p].mkv")]
         assert file.aws_key == "modified/Edited Rip (1960) - [Bluray-1080p].mkv"
         assert file.aws_key_target is None
         assert [
             job.args[0]
             for job in app.handoff_queue.jobs
-            if job.func_name == "app.archive.aws_storage.aws_delete"
+            if job.func_name == "app.archive.moves.aws_delete"
         ] == [old_key]
 
 
 def test_an_edit_during_a_modified_move_uploads_under_the_target(app, monkeypatch):
     from app import db
-    from app.archive import aws_storage
+    from app.archive import moves as archive_moves
+    from app.archive import uploads as archive_uploads
 
     uploads = []
 
@@ -607,44 +627,46 @@ def test_an_edit_during_a_modified_move_uploads_under_the_target(app, monkeypatc
         uploads.append((key_prefix, key_name))
         return os.path.join(key_prefix, key_name), datetime.utcnow(), 7
 
-    monkeypatch.setattr(aws_storage, "aws_upload", fake_upload)
+    monkeypatch.setattr(archive_uploads, "aws_upload", fake_upload)
     with app.app_context():
         file = archived_film("Edited Twice", 1961)
         file.aws_key = "modified/Old Edited Name (1961).mkv"
         db.session.commit()
-        aws_storage.request_archive_move(file)
+        archive_moves.request_archive_move(file)
         db.session.commit()
         target = "modified/Edited Twice (1961) - [Bluray-1080p].mkv"
         assert file.aws_key_target == target
 
-        aws_storage.archive_library_file(file, "/library/file.mkv")
+        archive_uploads.archive_library_file(file, "/library/file.mkv")
         assert uploads == [("modified", os.path.basename(target))]
         assert file.aws_key == target
         assert file.aws_key_target is None
         assert [
             job.args[0]
             for job in app.handoff_queue.jobs
-            if job.func_name == "app.archive.aws_storage.aws_delete"
+            if job.func_name == "app.archive.moves.aws_delete"
         ] == ["modified/Old Edited Name (1961).mkv"]
 
         # Without a pending move, a later edit overwrites the same key.
-        aws_storage.archive_library_file(file, "/library/file.mkv")
+        archive_uploads.archive_library_file(file, "/library/file.mkv")
         assert uploads[-1] == ("modified", os.path.basename(target))
 
 
 def test_the_claims_include_the_pending_targets(app):
     from app import db
-    from app.archive import aws_storage
+    from app.archive import archive_keys
+    from app.archive import moves as archive_moves
+    from app.archive import sync as archive_sync
 
     with app.app_context():
         file = archived_film("Claimed Target", 1962, key_name="Claimed (1962).mkv")
-        aws_storage.request_archive_move(file)
+        archive_moves.request_archive_move(file)
         db.session.commit()
         target = file.aws_key_target
 
-        assert target in aws_storage._claimed_keys()
-        assert aws_storage.untouched_key_still_claimed(target) is True
-        assert aws_storage.untouched_key_still_claimed("untouched/Nobody.mkv") is False
+        assert target in archive_sync._claimed_keys()
+        assert archive_keys.untouched_key_still_claimed(target) is True
+        assert archive_keys.untouched_key_still_claimed("untouched/Nobody.mkv") is False
 
         # The rule gives another record with the same name the record id.
         other = make_movie_file(
@@ -653,7 +675,7 @@ def test_the_claims_include_the_pending_targets(app):
             untouched_basename=file.untouched_basename,
         )
         db.session.commit()
-        assert aws_storage.archive_key_for(other, "untouched") == (
+        assert archive_keys.archive_key_for(other, "untouched") == (
             f"untouched/Claimed Target (1962) - [Bluray-1080p] ({other.id}).mkv"
         )
 
@@ -734,7 +756,8 @@ def test_the_series_rename_guard_requests_no_move(app, monkeypatch):
 
 def test_a_conversion_rename_moves_the_original_and_then_the_transcoded_copy(app, s3):
     from app import db
-    from app.archive import aws_storage
+    from app.archive import archive_keys
+    from app.archive import moves as archive_moves
     from app.models import File
 
     with app.app_context():
@@ -752,11 +775,11 @@ def test_a_conversion_rename_moves_the_original_and_then_the_transcoded_copy(app
         file.aws_transcoded_date_uploaded = datetime(2026, 1, 2)
         db.session.commit()
         file_id = file.id
-        assert aws_storage.archive_drift(file) is None
+        assert archive_keys.archive_drift(file) is None
 
         # The rename changes the untouched name. The original moves first.
         file.untouched_basename = "Converted Film (2001) - [Bluray-2160p].mkv"
-        aws_storage.request_archive_move(file)
+        archive_moves.request_archive_move(file)
         db.session.commit()
         assert (
             file.aws_key_target
@@ -769,7 +792,7 @@ def test_a_conversion_rename_moves_the_original_and_then_the_transcoded_copy(app
                 file.aws_transcoded_key: readable(VersionId="transcoded-version"),
             }
         )
-        assert aws_storage.move_archive_object(file_id) is True
+        assert archive_moves.move_archive_object(file_id) is True
         db.session.expire_all()
         row = db.session.get(File, file_id)
         assert row.aws_key == "untouched/Converted Film (2001) - [Bluray-2160p].mkv"
@@ -778,7 +801,7 @@ def test_a_conversion_rename_moves_the_original_and_then_the_transcoded_copy(app
         retagged = "transcoded/Converted Film (2001) - [Bluray-1080p].mkv"
         assert row.aws_key_target == retagged
         assert [job.args for job in move_jobs(app)][-1] == (file_id,)
-        assert aws_storage.move_archive_object(file_id) is True
+        assert archive_moves.move_archive_object(file_id) is True
         db.session.expire_all()
         row = db.session.get(File, file_id)
         assert row.aws_transcoded_key == retagged
@@ -882,15 +905,15 @@ def test_the_dry_run_lists_every_row_that_lags(app):
 
 def test_the_system_page_shows_the_pending_moves(app, admin_client):
     from app import db
-    from app.archive import aws_storage
+    from app.archive import moves as archive_moves
 
     with app.app_context():
         file = archived_film("Pending Page", 1966, key_name="Pending (1966).mkv")
-        aws_storage.request_archive_move(file)
+        archive_moves.request_archive_move(file)
         db.session.commit()
         file.archive_move_requested_at = datetime.now(timezone.utc) - timedelta(hours=3)
         db.session.commit()
-        assert aws_storage.pending_archive_moves()["count"] == 1
+        assert archive_moves.pending_archive_moves()["count"] == 1
 
     page = admin_client.get("/system").get_data(as_text=True)
     assert "Archive moves pending: 1, oldest 3 hours ago" in page
@@ -902,7 +925,10 @@ def test_each_producer_leaves_the_key_of_the_untouched_name(
     """Import, edit, conversion and rename each leave the key of the rule."""
 
     from app import db
-    from app.archive import aws_storage
+    from app.archive import archive_keys
+    from app.archive import aws_clients
+    from app.archive import moves as archive_moves
+    from app.archive import uploads as archive_uploads
     from app.models import File
     from app.media.series_rename import rename_tv_series_task
 
@@ -915,7 +941,7 @@ def test_each_producer_leaves_the_key_of_the_untouched_name(
         def upload_file(self, *args, **kwargs):
             return None
 
-    monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kw: UploadS3())
+    monkeypatch.setattr(aws_clients, "aws_s3_client", lambda **kw: UploadS3())
     monkeypatch.setitem(app.config, "AWS_BUCKET", "test-bucket")
     staging = str(tmp_path)
 
@@ -926,7 +952,7 @@ def test_each_producer_leaves_the_key_of_the_untouched_name(
         with open(path, "wb") as handle:
             handle.write(b"rip")
         file.aws_key, file.aws_date_uploaded, file.aws_filesize_bytes = (
-            aws_storage.aws_upload(path, app.config["AWS_UNTOUCHED_PREFIX"])
+            archive_uploads.aws_upload(path, app.config["AWS_UNTOUCHED_PREFIX"])
         )
         db.session.commit()
         os.remove(path)
@@ -937,14 +963,14 @@ def test_each_producer_leaves_the_key_of_the_untouched_name(
         film = make_movie_file(make_movie("Rock & Roll: Live", 1968), "DVD")
         film.untouched_basename = "Rock & Roll: Live (1968) - [DVD].mkv"
         upload_rip(film)
-        assert film.aws_key == aws_storage.archive_key_for(film, "untouched")
+        assert film.aws_key == archive_keys.archive_key_for(film, "untouched")
 
         # Edit: the first change goes to modified/.
         library = os.path.join(staging, "library.mkv")
         with open(library, "wb") as handle:
             handle.write(b"edit")
-        aws_storage.archive_library_file(film, library)
-        assert film.aws_key == aws_storage.archive_key_for(film, "modified")
+        archive_uploads.archive_library_file(film, library)
+        assert film.aws_key == archive_keys.archive_key_for(film, "modified")
 
         # Conversion: the original in untouched/, the copy in transcoded/.
         converted = make_movie_file(
@@ -954,9 +980,9 @@ def test_each_producer_leaves_the_key_of_the_untouched_name(
         )
         converted.untouched_basename = "Converted Producer (1969) - [Bluray-2160p].mkv"
         upload_rip(converted)
-        aws_storage.archive_library_file(converted, library)
-        assert converted.aws_key == aws_storage.archive_key_for(converted, "untouched")
-        assert converted.aws_transcoded_key == aws_storage.archive_key_for(
+        archive_uploads.archive_library_file(converted, library)
+        assert converted.aws_key == archive_keys.archive_key_for(converted, "untouched")
+        assert converted.aws_transcoded_key == archive_keys.archive_key_for(
             converted, "transcoded"
         )
         assert "[Bluray-1080p]" in converted.aws_transcoded_key
@@ -976,24 +1002,25 @@ def test_each_producer_leaves_the_key_of_the_untouched_name(
     with app.app_context():
         row = db.session.get(File, episode_id)
         assert (row.aws_key, row.aws_key_target) == (old_key, None)
-        assert aws_storage.request_archive_move(row)
+        assert archive_moves.request_archive_move(row)
         db.session.commit()
     fake = s3({old_key: readable()})
-    monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kw: fake)
-    assert aws_storage.move_archive_object(episode_id) is True
+    monkeypatch.setattr(aws_clients, "aws_s3_client", lambda **kw: fake)
+    assert archive_moves.move_archive_object(episode_id) is True
     with app.app_context():
         row = db.session.get(File, episode_id)
-        assert row.aws_key == aws_storage.archive_key_for(row, "untouched")
+        assert row.aws_key == archive_keys.archive_key_for(row, "untouched")
         assert "Producer Show (2020)" in row.aws_key
         for file_id in others:
-            assert aws_storage.archive_drift(db.session.get(File, file_id)) is None
+            assert archive_keys.archive_drift(db.session.get(File, file_id)) is None
 
 
 def test_a_second_rename_during_an_upload_keeps_the_newest_target(app, s3, monkeypatch):
     """An upload takes no title lock. A rename during it must survive its commit."""
 
     from app import db
-    from app.archive import aws_storage
+    from app.archive import moves as archive_moves
+    from app.archive import uploads as archive_uploads
     from app.models import File
 
     with app.app_context():
@@ -1001,7 +1028,7 @@ def test_a_second_rename_during_an_upload_keeps_the_newest_target(app, s3, monke
         file_id = file.id
         file.aws_key = "modified/Upload Race Old (1970).mkv"
         file.untouched_basename = "Upload Race One (1970) - [Bluray-1080p].mkv"
-        aws_storage.request_archive_move(file)
+        archive_moves.request_archive_move(file)
         db.session.commit()
         first = "modified/Upload Race One (1970) - [Bluray-1080p].mkv"
         second = "modified/Upload Race Two (1970) - [Bluray-1080p].mkv"
@@ -1023,17 +1050,17 @@ def test_a_second_rename_during_an_upload_keeps_the_newest_target(app, s3, monke
                 )
             return os.path.join(key_prefix, key_name), datetime.utcnow(), 7
 
-        monkeypatch.setattr(aws_storage, "aws_upload", slow_upload)
+        monkeypatch.setattr(archive_uploads, "aws_upload", slow_upload)
         for job in move_jobs(app):
             job.delete()
-        aws_storage.archive_library_file(file, "/library/file.mkv")
+        archive_uploads.archive_library_file(file, "/library/file.mkv")
 
         assert file.aws_key == first
         assert file.aws_key_target == second
         assert [job.args for job in move_jobs(app)] == [(file_id,)]
 
     s3({first: readable()})
-    assert aws_storage.move_archive_object(file_id) is True
+    assert archive_moves.move_archive_object(file_id) is True
     with app.app_context():
         row = db.session.get(File, file_id)
         assert (row.aws_key, row.aws_key_target) == (second, None)
@@ -1046,7 +1073,8 @@ def test_a_move_job_with_no_target_moves_nothing(app, s3):
     job whose row has no target stops and copies nothing."""
 
     from app import db
-    from app.archive import aws_storage
+    from app.archive import archive_keys
+    from app.archive import moves as archive_moves
     from app.models import File
 
     with app.app_context():
@@ -1054,10 +1082,10 @@ def test_a_move_job_with_no_target_moves_nothing(app, s3):
         file_id = file.id
         old_key = file.aws_key
         assert file.aws_key_target is None
-        assert aws_storage.archive_drift(file) is not None
+        assert archive_keys.archive_drift(file) is not None
         fake = s3({old_key: readable()})
 
-        assert aws_storage.move_archive_object(file_id) is True
+        assert archive_moves.move_archive_object(file_id) is True
         assert fake.copies == []
         db.session.expire_all()
         row = db.session.get(File, file_id)
@@ -1065,28 +1093,28 @@ def test_a_move_job_with_no_target_moves_nothing(app, s3):
 
 
 def test_the_sync_waits_for_a_scheduled_move(app):
-    from app.archive import aws_storage
+    from app.archive import sync as archive_sync
 
     with app.app_context():
-        assert aws_storage._sync_deferred(None) is False
+        assert archive_sync._sync_deferred(None) is False
         app.file_queue.enqueue_in(
-            timedelta(minutes=10), "app.archive.aws_storage.move_archive_object", 1
+            timedelta(minutes=10), "app.archive.moves.move_archive_object", 1
         )
-        assert aws_storage._sync_deferred(None) is True
+        assert archive_sync._sync_deferred(None) is True
 
 
 def test_the_sync_counts_live_jobs_but_not_other_scheduled_retries(app):
     """A queued job holds the sync. A scheduled job that is not a move does not (#616)."""
 
-    from app.archive import aws_storage
+    from app.archive import sync as archive_sync
 
     with app.app_context():
         app.file_queue.enqueue_in(
-            timedelta(minutes=10), "app.archive.aws_storage.upload_task", 1
+            timedelta(minutes=10), "app.archive.uploads.upload_task", 1
         )
-        assert aws_storage._sync_deferred(None) is False
-        app.file_queue.enqueue("app.archive.aws_storage.upload_task", 2)
-        assert aws_storage._sync_deferred(None) is True
+        assert archive_sync._sync_deferred(None) is False
+        app.file_queue.enqueue("app.archive.uploads.upload_task", 2)
+        assert archive_sync._sync_deferred(None) is True
 
 
 def test_the_sync_ignores_a_booked_job_whose_hash_says_finished(app):
@@ -1097,7 +1125,7 @@ def test_the_sync_ignores_a_booked_job_whose_hash_says_finished(app):
 
     from rq.job import JobStatus
 
-    from app.archive import aws_storage
+    from app.archive import sync as archive_sync
 
     with app.app_context():
         job = app.maintenance_queue.enqueue_in(
@@ -1107,7 +1135,7 @@ def test_the_sync_ignores_a_booked_job_whose_hash_says_finished(app):
         )
         job.set_status(JobStatus.FINISHED)
         try:
-            assert aws_storage._sync_deferred(None) is False
+            assert archive_sync._sync_deferred(None) is False
         finally:
             job.delete()
 
@@ -1116,11 +1144,12 @@ def test_the_sync_does_not_upload_over_a_key_that_moved_after_the_listing(
     app, s3, monkeypatch
 ):
     from app import db
-    from app.archive import aws_storage
+    from app.archive import aws_clients
+    from app.archive import sync as archive_sync
 
     moved = "untouched/Moved Late (1972) - [DVD].mkv"
     monkeypatch.setattr(
-        aws_storage, "get_matching_s3_objects", lambda bucket, prefix="": []
+        aws_clients, "get_matching_s3_objects", lambda bucket, prefix="": []
     )
     monkeypatch.setitem(app.config, "AWS_BUCKET", "test-bucket")
     s3({moved: readable()})
@@ -1132,12 +1161,12 @@ def test_the_sync_does_not_upload_over_a_key_that_moved_after_the_listing(
         os.makedirs(os.path.dirname(path), exist_ok=True)
         open(path, "wb").close()
 
-        listing = aws_storage._list_archives()
-        aws_storage._reconcile_files(listing, None)
+        listing = archive_sync._list_archives()
+        archive_sync._reconcile_files(listing, None)
         uploads = [
             job
             for job in app.file_queue.jobs
-            if job.func_name == "app.archive.aws_storage.upload_task"
+            if job.func_name == "app.archive.uploads.upload_task"
         ]
         os.remove(path)
         assert uploads == []
@@ -1147,25 +1176,25 @@ def test_a_download_wait_keeps_the_receipt_handle(app, s3):
     from rq.registry import ScheduledJobRegistry
 
     from app import db
-    from app.archive import aws_storage
+    from app.archive import moves as archive_moves
 
     with app.app_context():
         file = archived_film("Handle Kept", 1973, key_name="Handle Kept Old.mkv")
-        aws_storage.request_archive_move(file)
+        archive_moves.request_archive_move(file)
         db.session.commit()
         app.file_queue.enqueue(
-            "app.archive.aws_storage.download_task",
+            "app.archive.downloads.download_task",
             args=(file.aws_key, "Handle Kept Old.mkv"),
         )
         s3({file.aws_key: readable()})
 
-        result = aws_storage.move_archive_object(file.id, sqs_receipt_handle="kept")
-        assert result == aws_storage.MOVE_WAITING
+        result = archive_moves.move_archive_object(file.id, sqs_receipt_handle="kept")
+        assert result == archive_moves.MOVE_WAITING
         (retry,) = [
             app.file_queue.fetch_job(job_id)
             for job_id in ScheduledJobRegistry(queue=app.file_queue).get_job_ids()
         ]
-        assert retry.func_name == "app.archive.aws_storage.move_archive_object"
+        assert retry.func_name == "app.archive.moves.move_archive_object"
         assert retry.kwargs == {"sqs_receipt_handle": "kept"}
         assert retry.meta["archive_key"] == file.aws_key
         assert s3.sqs.deleted == []
@@ -1177,31 +1206,31 @@ def test_the_request_time_is_set_and_cleared_with_the_target(app):
     The first request keeps its time. A purged row counts no more."""
 
     from app import db
-    from app.archive import aws_storage
+    from app.archive import moves as archive_moves
     from app.models import File
 
     with app.app_context():
         file = archived_film("Timed Move", 1975, key_name="Timed Old.mkv")
-        assert aws_storage.pending_archive_moves() == {"count": 0, "oldest": None}
-        aws_storage.request_archive_move(file)
+        assert archive_moves.pending_archive_moves() == {"count": 0, "oldest": None}
+        archive_moves.request_archive_move(file)
         db.session.commit()
         first = file.archive_move_requested_at
         assert first is not None
-        aws_storage.request_archive_move(file)
+        archive_moves.request_archive_move(file)
         db.session.commit()
         assert file.archive_move_requested_at == first
-        assert aws_storage.pending_archive_moves() == {"count": 1, "oldest": first}
+        assert archive_moves.pending_archive_moves() == {"count": 1, "oldest": first}
         assert not app.redis.keys("fitzflix:archive-move:*")
 
-        aws_storage.clear_archive_target(file)
+        archive_moves.clear_archive_target(file)
         db.session.commit()
         assert file.archive_move_requested_at is None
 
-        aws_storage.request_archive_move(file)
+        archive_moves.request_archive_move(file)
         db.session.commit()
         db.session.delete(file)
         db.session.commit()
-        assert aws_storage.pending_archive_moves() == {"count": 0, "oldest": None}
+        assert archive_moves.pending_archive_moves() == {"count": 0, "oldest": None}
         assert (
             File.query.filter(File.archive_move_requested_at.isnot(None)).count() == 0
         )
@@ -1230,10 +1259,7 @@ def test_the_migration_adds_the_move_request_time():
 def test_the_move_has_a_trail_stage(app):
     from app.pipeline import STAGES
 
-    assert (
-        STAGES["app.archive.aws_storage.move_archive_object"][0]
-        == "Moving the S3 archive"
-    )
+    assert STAGES["app.archive.moves.move_archive_object"][0] == "Moving the S3 archive"
 
 
 def test_a_move_waits_while_the_s3_sync_runs(app, s3, monkeypatch):
@@ -1248,19 +1274,20 @@ def test_a_move_waits_while_the_s3_sync_runs(app, s3, monkeypatch):
     from rq.registry import ScheduledJobRegistry, StartedJobRegistry
 
     from app import db
-    from app.archive import aws_storage
+    from app.archive import downloads as archive_downloads
+    from app.archive import moves as archive_moves
     from app.models import File
 
     pauses = []
-    monkeypatch.setattr(aws_storage.time, "sleep", pauses.append)
+    monkeypatch.setattr(archive_downloads.time, "sleep", pauses.append)
     with app.app_context():
         file = archived_film("Sync Wait", 1974, key_name="Sync Wait Old.mkv")
-        aws_storage.request_archive_move(file)
+        archive_moves.request_archive_move(file)
         db.session.commit()
         old_key, target = file.aws_key, file.aws_key_target
         fake = s3({file.aws_key: readable()})
         sync = app.maintenance_queue.enqueue(
-            "app.archive.aws_storage.sync_aws_s3_storage_task",
+            "app.archive.sync.sync_aws_s3_storage_task",
             description="Syncing files with AWS S3 storage",
         )
         # StartedJobRegistry.add raises NotImplementedError in rq 2. Thus,
@@ -1268,9 +1295,9 @@ def test_a_move_waits_while_the_s3_sync_runs(app, s3, monkeypatch):
         registry = StartedJobRegistry(queue=app.maintenance_queue)
         app.redis.zadd(registry.key, {sync.id: int(time.time()) + 300})
 
-        result = aws_storage.move_archive_object(file.id, sqs_receipt_handle="held")
-        assert result == aws_storage.MOVE_WAITING
-        assert pauses == [aws_storage.SYNC_RECHECK_SECONDS]
+        result = archive_moves.move_archive_object(file.id, sqs_receipt_handle="held")
+        assert result == archive_moves.MOVE_WAITING
+        assert pauses == [archive_moves.SYNC_RECHECK_SECONDS]
         assert fake.copies == []
         db.session.expire_all()
         file = db.session.get(File, file.id)
@@ -1279,7 +1306,7 @@ def test_a_move_waits_while_the_s3_sync_runs(app, s3, monkeypatch):
             app.file_queue.fetch_job(job_id)
             for job_id in ScheduledJobRegistry(queue=app.file_queue).get_job_ids()
         ]
-        assert retry.func_name == "app.archive.aws_storage.move_archive_object"
+        assert retry.func_name == "app.archive.moves.move_archive_object"
         assert retry.kwargs == {"sqs_receipt_handle": "held"}
         assert retry.meta["archive_key"] == old_key
         assert s3.sqs.deleted == []
@@ -1289,20 +1316,20 @@ def test_a_second_request_of_a_waiting_move_adds_no_job(app):
     """A queued move reads the target when it runs (#384)."""
 
     from app import db
-    from app.archive import aws_storage
+    from app.archive import moves as archive_moves
 
     with app.app_context():
         file = archived_film("Twice Asked", 1967, key_name="Twice (1967).mkv")
-        assert aws_storage.request_archive_move(file)
+        assert archive_moves.request_archive_move(file)
         db.session.commit()
-        assert aws_storage.request_archive_move(file)
+        assert archive_moves.request_archive_move(file)
         db.session.commit()
         (job,) = move_jobs(app)
         assert job.id.startswith(f"archive-move-{file.id}-")
 
         # A running move does not count. It can hold an older target.
         app.file_queue.remove(job)
-        assert aws_storage.request_archive_move(file)
+        assert archive_moves.request_archive_move(file)
         db.session.commit()
         assert len(move_jobs(app)) == 1
 
@@ -1311,26 +1338,27 @@ def test_a_restore_of_a_shared_key_goes_to_the_row_that_moves_it(app, s3):
     """Rows A and B share key K. Only B has a pending move of K (#385)."""
 
     from app import db
-    from app.archive import aws_storage
+    from app.archive import moves as archive_moves
+    from app.archive import restores
 
     with app.app_context():
         first = archived_film("Shared Stay", 1958, key_name="Shared (1958).mkv")
         mover = archived_film("Shared Move", 1959, key_name="Shared (1958).mkv")
         key = first.aws_key
         assert mover.aws_key == key and first.id < mover.id
-        assert aws_storage.request_archive_move(mover)
+        assert archive_moves.request_archive_move(mover)
         db.session.commit()
         for job in move_jobs(app):
             job.delete()
 
         downloads, moves = {}, {}
-        aws_storage._route_restore(s3.sqs, key, "handle-9", downloads, moves)
+        restores._route_restore(s3.sqs, key, "handle-9", downloads, moves)
         assert downloads == {}
         assert moves[key].args == (mover.id,)
         assert [
             job
             for job in app.file_queue.jobs
-            if job.func_name == "app.archive.aws_storage.download_task"
+            if job.func_name == "app.archive.downloads.download_task"
         ] == []
 
 
@@ -1338,33 +1366,34 @@ def test_a_requested_download_of_a_shared_key_runs_beside_the_move(app, s3):
     """A user asked for the download of key K, and a move of K waits (#385 follow-up)."""
 
     from app import db
-    from app.archive import aws_storage
+    from app.archive import moves as archive_moves
+    from app.archive import restores
 
     with app.app_context():
         first = archived_film("Shared Ask", 1960, key_name="Asked (1960).mkv")
         mover = archived_film("Shared Moving", 1961, key_name="Asked (1960).mkv")
         key = first.aws_key
-        assert aws_storage.request_archive_move(mover)
+        assert archive_moves.request_archive_move(mover)
         db.session.commit()
         for job in move_jobs(app):
             job.delete()
-        aws_storage.mark_restore_pending(key)
+        restores.mark_restore_pending(key)
 
         downloads, moves = {}, {}
-        aws_storage._route_restore(s3.sqs, key, "handle-7", downloads, moves)
+        restores._route_restore(s3.sqs, key, "handle-7", downloads, moves)
         assert moves[key].args == (mover.id,)
         assert moves[key].kwargs == {"sqs_receipt_handle": "handle-7"}
         (download,) = [
             job
             for job in app.file_queue.jobs
-            if job.func_name == "app.archive.aws_storage.download_task"
+            if job.func_name == "app.archive.downloads.download_task"
         ]
         assert download.args == (key, os.path.basename(key), None)
         assert downloads[key].id == download.id
 
         # The move waits while the download is in the queue.
-        assert aws_storage.move_archive_object(mover.id, "handle-7") == (
-            aws_storage.MOVE_WAITING
+        assert archive_moves.move_archive_object(mover.id, "handle-7") == (
+            archive_moves.MOVE_WAITING
         )
 
 
@@ -1379,17 +1408,42 @@ def test_an_early_stop_deletes_a_message_that_arrived_late(app, monkeypatch, del
     from types import SimpleNamespace
 
     from app import db
-    from app.archive import aws_storage
+    from app.archive import aws_clients
+    from app.archive import downloads as archive_downloads
+    from app.archive import moves as archive_moves
+    from app.archive import restores
+    from app.archive import sync as archive_sync
+    from app.archive import uploads as archive_uploads
 
     key = "untouched/Late Handle Move (1960) - [DVD].mkv"
     sqs = SQS()
-    monkeypatch.setattr(aws_storage, "aws_sqs_client", lambda: sqs)
+    monkeypatch.setattr(aws_clients, "aws_sqs_client", lambda: sqs)
     monkeypatch.setattr(
-        aws_storage,
+        aws_clients,
         "get_current_job",
         lambda: SimpleNamespace(id="late-move", meta={"archive_key": key}),
     )
-    app.redis.set(aws_storage.SQS_HANDLE_KEY.format(key=key), "late")
+    monkeypatch.setattr(
+        archive_sync,
+        "get_current_job",
+        lambda: SimpleNamespace(id="late-move", meta={"archive_key": key}),
+    )
+    monkeypatch.setattr(
+        archive_downloads,
+        "get_current_job",
+        lambda: SimpleNamespace(id="late-move", meta={"archive_key": key}),
+    )
+    monkeypatch.setattr(
+        archive_uploads,
+        "get_current_job",
+        lambda: SimpleNamespace(id="late-move", meta={"archive_key": key}),
+    )
+    monkeypatch.setattr(
+        archive_moves,
+        "get_current_job",
+        lambda: SimpleNamespace(id="late-move", meta={"archive_key": key}),
+    )
+    app.redis.set(restores.SQS_HANDLE_KEY.format(key=key), "late")
     with app.app_context():
         file = make_movie_file(make_movie("Late Handle Move", 1960), "DVD")
         db.session.commit()
@@ -1397,10 +1451,10 @@ def test_an_early_stop_deletes_a_message_that_arrived_late(app, monkeypatch, del
         if deleted:
             db.session.delete(file)
             db.session.commit()
-        result = aws_storage.move_archive_object(file_id)
+        result = archive_moves.move_archive_object(file_id)
     assert result is (not deleted)
     assert sqs.deleted == ["late"]
-    assert app.redis.get(aws_storage.SQS_HANDLE_KEY.format(key=key)) is None
+    assert app.redis.get(restores.SQS_HANDLE_KEY.format(key=key)) is None
 
 
 def _case_renamed_archive(library, key_name):
@@ -1440,7 +1494,8 @@ def test_a_case_only_rename_keeps_the_archive_key(app, library):
     converge-keys uses the same rule and lists no drift."""
 
     from app import db
-    from app.archive import aws_storage
+    from app.archive import archive_keys
+    from app.archive import moves as archive_moves
 
     with app.app_context():
         file = _case_renamed_archive(library, str.swapcase)
@@ -1450,8 +1505,8 @@ def test_a_case_only_rename_keeps_the_archive_key(app, library):
         file.aws_key_target = rule_key
         db.session.commit()
 
-        assert aws_storage.archive_drift(file) is None
-        assert aws_storage.request_archive_move(file) is False
+        assert archive_keys.archive_drift(file) is None
+        assert archive_moves.request_archive_move(file) is False
         db.session.commit()
         assert committed_key(app, file_id) == old_key
         assert committed_key(app, file_id, "aws_key_target") is None
@@ -1464,14 +1519,14 @@ def test_a_real_rename_still_gets_a_move_on_request(app, library):
     """A converge request moves a key that differs by more than letter case (#369)."""
 
     from app import db
-    from app.archive import aws_storage
+    from app.archive import moves as archive_moves
 
     with app.app_context():
         file = _case_renamed_archive(library, lambda name: f"Old {name}")
         file_id, old_key = file.id, file.aws_key
         rule_key = f"untouched/{file.untouched_basename}"
 
-        assert aws_storage.request_archive_move(file) is True
+        assert archive_moves.request_archive_move(file) is True
         db.session.commit()
         assert committed_key(app, file_id) == old_key
         assert committed_key(app, file_id, "aws_key_target") == rule_key
@@ -1490,8 +1545,7 @@ def _scheduled_moves(app):
             app.file_queue.fetch_job(job_id)
             for job_id in ScheduledJobRegistry(queue=app.file_queue).get_job_ids()
         )
-        if job is not None
-        and job.func_name == "app.archive.aws_storage.move_archive_object"
+        if job is not None and job.func_name == "app.archive.moves.move_archive_object"
     ]
 
 
@@ -1503,31 +1557,34 @@ def test_a_move_wait_keeps_the_handle_record_of_its_key(app, s3, monkeypatch, wa
     removes it."""
 
     from app import db
-    from app.archive import aws_storage
+    from app.archive import moves as archive_moves
+    from app.archive import restores
 
     with app.app_context():
         file = archived_film(f"Wait Handle {wait}", 1974, key_name=f"Wait {wait}.mkv")
-        aws_storage.request_archive_move(file)
+        archive_moves.request_archive_move(file)
         db.session.commit()
         old_key = file.aws_key
         if wait == "download":
             app.file_queue.enqueue(
-                "app.archive.aws_storage.download_task",
+                "app.archive.downloads.download_task",
                 args=(old_key, "Wait Handle Old.mkv"),
             )
         s3({old_key: readable()})
-        aws_storage.record_receipt_handle(old_key, "handle-2")
+        restores.record_receipt_handle(old_key, "handle-2")
         held = (
             app.lock_manager.lock(file.file_identifier(), 60000)
             if wait == "lock"
             else None
         )
         try:
-            result = aws_storage.move_archive_object(file.id, sqs_receipt_handle="h1")
-            assert result == (aws_storage.MOVE_WAITING if wait == "download" else False)
+            result = archive_moves.move_archive_object(file.id, sqs_receipt_handle="h1")
+            assert result == (
+                archive_moves.MOVE_WAITING if wait == "download" else False
+            )
             (retry,) = _scheduled_moves(app)
             assert retry.kwargs == {"sqs_receipt_handle": "h1"}
-            assert app.redis.get(aws_storage.SQS_HANDLE_KEY.format(key=old_key)) == (
+            assert app.redis.get(restores.SQS_HANDLE_KEY.format(key=old_key)) == (
                 b"handle-2"
             )
         finally:
@@ -1547,7 +1604,7 @@ def _moves_enter_queue_unlocked(app, monkeypatch, lock_keys):
     real_enqueue = TrackedQueue.enqueue_job
 
     def enqueue_job(self, job, *args, **kwargs):
-        if job.func_name == "app.archive.aws_storage.move_archive_object":
+        if job.func_name == "app.archive.moves.move_archive_object":
             lock = app.lock_manager.lock(lock_keys[int(job.args[0])], 1000)
             if lock:
                 app.lock_manager.unlock(lock)
@@ -1567,14 +1624,14 @@ def test_a_held_move_is_booked_and_then_queued_at_the_end_of_the_hold(app):
     from rq.registry import ScheduledJobRegistry
 
     from app import db
-    from app.archive import aws_storage
+    from app.archive import moves as archive_moves
     from app.pipeline import front_times
 
     registry = ScheduledJobRegistry(queue=app.file_queue)
     with app.app_context():
         file = archived_film("Held Move", 1968, key_name="Held (1968).mkv")
-        with aws_storage.archive_moves_after_unlock():
-            assert aws_storage.request_archive_move(file)
+        with archive_moves.archive_moves_after_unlock():
+            assert archive_moves.request_archive_move(file)
             db.session.commit()
             assert move_jobs(app) == []
             (booked,) = [
@@ -1585,7 +1642,7 @@ def test_a_held_move_is_booked_and_then_queued_at_the_end_of_the_hold(app):
             due = registry.get_scheduled_time(booked).replace(tzinfo=timezone.utc)
             assert due > datetime.now(timezone.utc) + timedelta(minutes=14)
             # A second request in the block adds nothing.
-            assert aws_storage.request_archive_move(file)
+            assert archive_moves.request_archive_move(file)
             db.session.commit()
         (job,) = move_jobs(app)
         assert job.id == booked
@@ -1597,17 +1654,17 @@ def test_a_held_move_is_booked_and_then_queued_at_the_end_of_the_hold(app):
 def test_the_sync_report_names_the_keys_that_lag(app, monkeypatch):
     """The weekly S3 sync mails 1 line with the count, the size and the command (#668)."""
 
-    from app.archive import aws_storage
+    from app.archive import sync as archive_sync
 
     sent = []
     monkeypatch.setattr(
-        aws_storage, "notify_admin_text", lambda *args: sent.append(args)
+        archive_sync, "notify_admin_text", lambda *args: sent.append(args)
     )
     with app.app_context():
         archived_film("Lag One", 1972, key_name="Lag One Old.mkv")
         archived_film("Lag Two", 1973, key_name="Lag Two Old.mkv")
         archived_film("No Lag", 1974)
-        aws_storage._mail_reports([], [])
+        archive_sync._mail_reports([], [])
 
     ((subject, text, html),) = sent
     assert subject == "Archive keys that lag their names"
@@ -1620,33 +1677,34 @@ def test_the_sync_report_names_the_keys_that_lag(app, monkeypatch):
 
 
 def test_the_sync_report_sends_no_line_when_no_key_lags(app, monkeypatch):
-    from app.archive import aws_storage
+    from app.archive import sync as archive_sync
 
     sent = []
     monkeypatch.setattr(
-        aws_storage, "notify_admin_text", lambda *args: sent.append(args)
+        archive_sync, "notify_admin_text", lambda *args: sent.append(args)
     )
     with app.app_context():
         archived_film("In Step", 1975)
-        aws_storage._mail_reports([], [])
+        archive_sync._mail_reports([], [])
     assert sent == []
 
 
 def test_a_fault_in_the_lag_count_does_not_fail_the_sync_reports(
     app, monkeypatch, caplog
 ):
-    from app.archive import aws_storage
+    from app.archive import moves as archive_moves
+    from app.archive import sync as archive_sync
 
     def broken(claims=None):
         raise RuntimeError("database gone")
 
     sent = []
-    monkeypatch.setattr(aws_storage, "archive_drifts", broken)
+    monkeypatch.setattr(archive_moves, "archive_drifts", broken)
     monkeypatch.setattr(
-        aws_storage, "notify_admin_text", lambda *args: sent.append(args)
+        archive_sync, "notify_admin_text", lambda *args: sent.append(args)
     )
     with app.app_context():
-        assert aws_storage._mail_reports([], []) is None
+        assert archive_sync._mail_reports([], []) is None
     assert sent == []
     assert "could not count the archive keys that lag" in caplog.text
 
@@ -1659,7 +1717,7 @@ def _reimported_conversion(app, title, lagging_original):
     Return the file id, the old original key and the old transcoded key."""
 
     from app import db
-    from app.media import importing
+    from app.media.importing import cataloging
     from app.models import File
 
     old = f"Old {title} (2001)"
@@ -1698,7 +1756,7 @@ def _reimported_conversion(app, title, lagging_original):
         "subtitle_tracks": [],
         "filesize_bytes": SIZE,
     }
-    importing._build_records(details, inspection, file.basename)
+    cataloging._build_records(details, inspection, file.basename)
     db.session.commit()
     db.session.expire_all()
     assert db.session.get(File, file_id).aws_key == original
@@ -1712,7 +1770,7 @@ def test_a_reimported_conversion_moves_only_its_transcoded_copy(app, s3):
     lists that key."""
 
     from app import db
-    from app.archive import aws_storage
+    from app.archive import moves as archive_moves
     from app.models import File
 
     with app.app_context():
@@ -1729,7 +1787,7 @@ def test_a_reimported_conversion_moves_only_its_transcoded_copy(app, s3):
                 transcoded: readable(VersionId="transcoded-version"),
             }
         )
-        assert aws_storage.move_archive_object(file_id) is True
+        assert archive_moves.move_archive_object(file_id) is True
         db.session.expire_all()
         row = db.session.get(File, file_id)
         assert row.aws_transcoded_key == retagged
@@ -1741,7 +1799,7 @@ def test_a_reimported_conversion_moves_only_its_transcoded_copy(app, s3):
         # The census of converge-keys still lists the lagging original.
         drifts = [
             (file.id, source, target)
-            for file, source, target, _ in aws_storage.archive_drifts()
+            for file, source, target, _ in archive_moves.archive_drifts()
             if file.id == file_id
         ]
         assert drifts == [
@@ -1757,7 +1815,7 @@ def test_a_reimported_conversion_with_a_current_original_moves_its_copy(app, s3)
     """The original has the key of its name. The transcoded/ copy moves as before."""
 
     from app import db
-    from app.archive import aws_storage
+    from app.archive import moves as archive_moves
     from app.models import File
 
     with app.app_context():
@@ -1768,7 +1826,7 @@ def test_a_reimported_conversion_with_a_current_original_moves_its_copy(app, s3)
         assert db.session.get(File, file_id).aws_key_target == retagged
         assert [job.args for job in move_jobs(app)][-1] == (file_id,)
         fake = s3({original: readable(), transcoded: readable()})
-        assert aws_storage.move_archive_object(file_id) is True
+        assert archive_moves.move_archive_object(file_id) is True
         db.session.expire_all()
         row = db.session.get(File, file_id)
         assert row.aws_transcoded_key == retagged
@@ -1784,7 +1842,7 @@ def test_the_sync_requests_the_move_of_each_pending_key(app, s3):
     a row with a target. A row on its final key gets no request."""
 
     from app import db
-    from app.archive import aws_storage
+    from app.archive import sync as archive_sync
     from app.models import File
 
     with app.app_context():
@@ -1798,7 +1856,7 @@ def test_the_sync_requests_the_move_of_each_pending_key(app, s3):
         ids = (stuck.id, jobless.id, settled.id)
         assert move_jobs(app) == []
 
-        assert aws_storage._request_pending_moves() == 2
+        assert archive_sync._request_pending_moves() == 2
 
         rows = {row.id: row for row in File.query.filter(File.id.in_(ids))}
         assert rows[ids[0]].aws_key_target == f"untouched/{rows[ids[0]].basename}"
@@ -1814,7 +1872,8 @@ def test_the_sync_leaves_a_pending_key_whose_move_waits(app, s3, caplog):
     and a live job. The sync requests nothing and writes no warning."""
 
     from app import db
-    from app.archive import aws_storage
+    from app.archive import moves as archive_moves
+    from app.archive import sync as archive_sync
     from app.tasks import live_jobs
 
     with app.app_context():
@@ -1822,12 +1881,12 @@ def test_the_sync_leaves_a_pending_key_whose_move_waits(app, s3, caplog):
         booked.aws_key = f"pending-untouched/run6/{booked.basename}"
         booked.aws_key_target = f"untouched/{booked.basename}"
         db.session.commit()
-        aws_storage._wait_move(booked, booked.aws_key, None, "the S3 sync")
+        archive_moves._wait_move(booked, booked.aws_key, None, "the S3 sync")
         before = [job.id for job in live_jobs(["file"])]
         assert len(before) == 1
 
         caplog.clear()
-        assert aws_storage._request_pending_moves() == 0
+        assert archive_sync._request_pending_moves() == 0
 
         assert [job.id for job in live_jobs(["file"])] == before
         assert "had no job" not in caplog.text
@@ -1836,18 +1895,18 @@ def test_the_sync_leaves_a_pending_key_whose_move_waits(app, s3, caplog):
 def test_the_weekly_sync_runs_the_pending_moves_phase(app, monkeypatch):
     """The phase runs in the sync, also after a failed listing (#690)."""
 
-    from app.archive import aws_storage
+    from app.archive import sync as archive_sync
 
     ran = []
-    monkeypatch.setattr(aws_storage, "_sync_deferred", lambda job, drops=0: False)
+    monkeypatch.setattr(archive_sync, "_sync_deferred", lambda job, drops=0: False)
     monkeypatch.setattr(
-        aws_storage, "_list_archives", lambda: (_ for _ in ()).throw(OSError("S3"))
+        archive_sync, "_list_archives", lambda: (_ for _ in ()).throw(OSError("S3"))
     )
-    monkeypatch.setattr(aws_storage, "_mail_reports", lambda *a: None)
-    monkeypatch.setattr(aws_storage, "_import_uncataloged", lambda roots: None)
-    monkeypatch.setattr(aws_storage, "_request_pending_moves", lambda: ran.append(1))
+    monkeypatch.setattr(archive_sync, "_mail_reports", lambda *a: None)
+    monkeypatch.setattr(archive_sync, "_import_uncataloged", lambda roots: None)
+    monkeypatch.setattr(archive_sync, "_request_pending_moves", lambda: ran.append(1))
     with pytest.raises(RuntimeError, match="listing"):
-        aws_storage.sync_aws_s3_storage_task()
+        archive_sync.sync_aws_s3_storage_task()
     assert ran == [1]
 
 
@@ -1858,20 +1917,21 @@ def test_the_sync_requests_no_move_of_a_pending_archive_that_is_lost(app, s3):
     and 2 warnings."""
 
     from app import db
-    from app.archive import aws_storage
+    from app.archive import moves as archive_moves
+    from app.archive import sync as archive_sync
 
     with app.app_context():
         lost = archived_film("Pending Lost", 1964)
         lost.aws_key = f"pending-untouched/run5/{lost.basename}"
         db.session.commit()
-        app.redis.hset(aws_storage.ARCHIVE_LOST_KEY, lost.aws_key, lost.basename)
+        app.redis.hset(archive_moves.ARCHIVE_LOST_KEY, lost.aws_key, lost.basename)
         try:
-            assert aws_storage._request_pending_moves() == 0
+            assert archive_sync._request_pending_moves() == 0
             db.session.refresh(lost)
             assert lost.aws_key_target is None
             assert move_jobs(app) == []
         finally:
-            app.redis.hdel(aws_storage.ARCHIVE_LOST_KEY, lost.aws_key)
+            app.redis.hdel(archive_moves.ARCHIVE_LOST_KEY, lost.aws_key)
 
 
 @pytest.mark.parametrize(
@@ -1885,7 +1945,8 @@ def test_a_target_of_a_converge_run_is_a_claim_for_the_later_files(app, second_n
     the same claim."""
 
     from app import db
-    from app.archive import aws_storage
+    from app.archive import archive_keys
+    from app.archive import moves as archive_moves
 
     with app.app_context():
         first = archived_film("Twin First", 1970, key_name="Twin Old A (1970).mkv")
@@ -1894,16 +1955,17 @@ def test_a_target_of_a_converge_run_is_a_claim_for_the_later_files(app, second_n
         second.untouched_basename = second_name
         db.session.commit()
 
-        claims = aws_storage.key_claims()
+        claims = archive_keys.key_claims()
 
         # The census is the list that the admin reads before --apply. It
         # shows the targets that the moves get.
 
         census = {
-            file.id: target for file, _, target, _ in aws_storage.archive_drifts(claims)
+            file.id: target
+            for file, _, target, _ in archive_moves.archive_drifts(claims)
         }
-        assert aws_storage.request_archive_move(first, claims)
-        assert aws_storage.request_archive_move(second, claims)
+        assert archive_moves.request_archive_move(first, claims)
+        assert archive_moves.request_archive_move(second, claims)
         stem, extension = os.path.splitext(second_name)
         assert first.aws_key_target == "untouched/Twin Name (1970).mkv"
         assert second.aws_key_target == f"untouched/{stem} ({second.id}){extension}"

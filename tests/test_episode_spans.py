@@ -167,16 +167,16 @@ def test_the_missing_best_scan_groups_by_episode_number(app):
 def test_the_sync_restores_no_single_that_a_span_outranks(app, monkeypatch):
     """The paid Bulk restore takes only the best holders (follow-up #479)."""
 
-    from app.archive import aws_storage
+    from app.archive import aws_clients
+    from app.archive import restores
+    from app.archive import sync
 
     restored = []
-    monkeypatch.setattr(
-        aws_storage, "aws_restore", lambda key, **kw: restored.append(key)
-    )
+    monkeypatch.setattr(restores, "aws_restore", lambda key, **kw: restored.append(key))
     monkeypatch.setitem(app.config, "AWS_BUCKET", "test-bucket")
     keys = ["untouched/span.mkv", "untouched/e07.mkv", "untouched/e05.mkv"]
     monkeypatch.setattr(
-        aws_storage,
+        aws_clients,
         "get_matching_s3_objects",
         lambda bucket, prefix="": (
             [{"Key": key, "Size": 10} for key in keys] if prefix == "untouched/" else []
@@ -189,8 +189,8 @@ def test_the_sync_restores_no_single_that_a_span_outranks(app, monkeypatch):
         for file in File.query.filter(File.aws_key.in_(keys)):
             file.aws_date_uploaded = file.date_added
         db.session.commit()
-        listing = aws_storage._list_archives()
-        aws_storage._reconcile_files(listing, None)
+        listing = sync._list_archives()
+        sync._reconcile_files(listing, None)
     assert sorted(restored) == ["untouched/e05.mkv", "untouched/span.mkv"]
 
 
@@ -241,7 +241,7 @@ def test_a_worse_copy_delete_removes_its_episode_thumb(app):
 
     import os
 
-    from app.media.importing import _delete_worse_copies
+    from app.media.importing.follow_ups import _delete_worse_copies
 
     with app.app_context():
         tv_dir = os.path.join(app.config["TV_LIBRARY"], "Thumb Delete", "Season 01")

@@ -119,8 +119,9 @@ def test_a_poll_with_a_stale_handle_records_the_new_one(app, monkeypatch):
     The extension with the old handle fails as in SQS. The poll goes on,
     and the job gets the new handle of the message."""
 
-    import app.archive.aws_storage as aws_storage
-    from app.archive.aws_storage import SQS_HANDLE_KEY
+    from app.archive import aws_clients
+    from app.archive import restores
+    from app.archive.restores import SQS_HANDLE_KEY
 
     key = "untouched/Stale Handle (1999) - [DVD].mkv"
     body = json.dumps(
@@ -139,10 +140,10 @@ def test_a_poll_with_a_stale_handle_records_the_new_one(app, monkeypatch):
         def restore_object(self, **kwargs):
             pass
 
-    monkeypatch.setattr(aws_storage, "aws_sqs_client", lambda: sqs)
-    monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kwargs: FakeS3())
+    monkeypatch.setattr(aws_clients, "aws_sqs_client", lambda: sqs)
+    monkeypatch.setattr(aws_clients, "aws_s3_client", lambda **kwargs: FakeS3())
     job = app.file_queue.enqueue(
-        "app.archive.aws_storage.download_task",
+        "app.archive.downloads.download_task",
         key,
         "Stale Handle (1999) - [DVD].mkv",
         stale,
@@ -150,7 +151,7 @@ def test_a_poll_with_a_stale_handle_records_the_new_one(app, monkeypatch):
     )
 
     with app.app_context():
-        assert aws_storage.sqs_retrieve_task() is True
+        assert restores.sqs_retrieve_task() is True
 
     assert sqs.visibility == []
     recorded = app.redis.get(SQS_HANDLE_KEY.format(key=key)).decode()

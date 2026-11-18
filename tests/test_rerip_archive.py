@@ -16,7 +16,7 @@ def _claimed_rip(app, monkeypatch, title="Rerip Guard"):
     """Make a record that claims KEY, and a fake S3 that holds its old object."""
 
     from app import db
-    from app.archive import aws_storage
+    from app.archive import aws_clients
     from tests.factories import make_movie, make_movie_file
     from tests.fakes import ArchiveS3
 
@@ -30,7 +30,7 @@ def _claimed_rip(app, monkeypatch, title="Rerip Guard"):
             }
         }
     )
-    monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kwargs: fake)
+    monkeypatch.setattr(aws_clients, "aws_s3_client", lambda **kwargs: fake)
     monkeypatch.setitem(app.config, "AWS_BUCKET", "test-bucket")
     monkeypatch.setitem(app.config, "ARCHIVE_ORIGINAL_MEDIA", True)
     with app.app_context():
@@ -64,7 +64,7 @@ def test_a_failed_rerip_leaves_the_claimed_archive_current(
     """The localization fails after the upload. The old rip stays the current object."""
 
     from app import db
-    from app.media import importing
+    from app.media.importing import localization
     from app.models import File
 
     fake, row_id = _claimed_rip(app, monkeypatch)
@@ -73,10 +73,10 @@ def test_a_failed_rerip_leaves_the_claimed_archive_current(
     def broken_localize(*args, **kwargs):
         raise RuntimeError("mkvmerge failed")
 
-    monkeypatch.setattr(importing, "_localize", broken_localize)
+    monkeypatch.setattr(localization, "_localize", broken_localize)
 
     with app.app_context():
-        assert importing.localization_task(source) is True
+        assert localization.localization_task(source) is True
 
         assert fake.objects[KEY]["ETag"] == '"old-rip"'
         assert fake.objects[KEY]["VersionId"] == "v-old"
@@ -97,7 +97,7 @@ def test_a_finished_rerip_moves_its_upload_to_the_final_key(
     """The records commit with the run-scoped key. Then the move takes the final key."""
 
     from app import db
-    from app.archive import aws_storage
+    from app.archive import moves
     from app.models import File
     from tests.localization_helpers import run_full_chain
 
@@ -118,14 +118,13 @@ def test_a_finished_rerip_moves_its_upload_to_the_final_key(
         assert not [
             job
             for job in app.handoff_queue.jobs
-            if job.func_name == "app.archive.aws_storage.aws_delete"
-            and job.args == (KEY,)
+            if job.func_name == "app.archive.moves.aws_delete" and job.args == (KEY,)
         ]
 
         # The upload stays in S3 Standard. The move needs no restore.
         assert fake.objects[pending[0]]["StorageClass"] == "STANDARD"
         new_etag = fake.objects[pending[0]]["ETag"]
-        assert aws_storage.move_archive_object(row_id) is True
+        assert moves.move_archive_object(row_id) is True
         assert fake.restores == []
 
         db.session.expire_all()
@@ -144,18 +143,19 @@ def test_an_unclaimed_key_with_other_bytes_is_replaced_in_place(
 ):
     """No record claims the key. Then the upload goes to the normal key, as before."""
 
-    from app.archive import aws_storage
+    from app.archive import aws_clients
+    from app.archive import uploads
     from tests.fakes import ArchiveS3
 
     fake = ArchiveS3(
         {KEY: {"ContentLength": 3, "ETag": '"stale"', "VersionId": "v-stale"}}
     )
-    monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kwargs: fake)
+    monkeypatch.setattr(aws_clients, "aws_s3_client", lambda **kwargs: fake)
     monkeypatch.setitem(app.config, "AWS_BUCKET", "test-bucket")
     path = tmp_path / BASENAME
     path.write_bytes(b"new rip")
     with app.app_context():
-        key, _, size = aws_storage.upload_untouched(
+        key, _, size = uploads.upload_untouched(
             str(path), lambda claimed: "unused/" + claimed
         )
     assert key == KEY and size == 7
@@ -204,7 +204,7 @@ def test_a_held_archive_never_replaces_a_claimed_rip(app, monkeypatch, tmp_path)
 def test_the_sync_warns_when_a_claimed_object_changed_after_its_upload(app, caplog):
     """A new size with a later object date keeps the recorded size and warns."""
 
-    from app.archive.aws_storage import _replaced_after_upload
+    from app.archive.sync import _replaced_after_upload
 
     class Row:
         aws_key = KEY
@@ -226,40 +226,43 @@ def test_the_pending_uploads_live_outside_untouched(app, monkeypatch):
     The weekly sync lists the prefix. Thus, it prunes a leftover upload
     with every version, and a claim on it does not read as dangling."""
 
-    from app.archive import aws_storage, s3_layout
+    from app.archive import s3_layout
+    from app.archive import archive_keys
+    from app.archive import aws_clients
+    from app.archive import sync
 
     with app.app_context():
-        key = aws_storage.pending_archive_key(KEY, "run1")
+        key = archive_keys.pending_archive_key(KEY, "run1")
         assert key == f"pending-untouched/run1/{BASENAME}"
         assert not key.startswith("untouched/")
         entry = s3_layout.prefix_of(key)
         assert entry.name == "pending-untouched"
         assert entry.lifecycle == "scratch" and entry.delete == "versions"
         assert entry.current_days == 60
-        assert aws_storage._archive_prefix_of(key) == "untouched"
+        assert archive_keys._archive_prefix_of(key) == "untouched"
 
         listed = []
         monkeypatch.setattr(
-            aws_storage,
+            aws_clients,
             "get_matching_s3_objects",
             lambda bucket, prefix="": listed.append(prefix) or [],
         )
-        aws_storage._list_archives()
+        sync._list_archives()
         assert "pending-untouched/" in listed
 
 
 def _drop_pending_before_the_follow_up(monkeypatch, fake):
     """Delete the run-scoped upload just before the pending upload check."""
 
-    from app.media import importing
+    from app.media.importing import follow_ups
 
-    real = importing.ensure_pending_upload
+    real = follow_ups.ensure_pending_upload
 
     def dropped(file, source_path):
         fake.objects.pop(file.aws_key, None)
         return real(file, source_path)
 
-    monkeypatch.setattr(importing, "ensure_pending_upload", dropped)
+    monkeypatch.setattr(follow_ups, "ensure_pending_upload", dropped)
 
 
 def test_a_missing_pending_upload_goes_up_again_before_the_source_goes(
@@ -318,17 +321,17 @@ def test_a_failed_move_request_after_a_failed_new_upload_keeps_the_source(
 ):
     """The move request raises after the check said False. The rip stays (#494)."""
 
-    from app.media import importing
+    from app.media.importing import follow_ups
     from tests.localization_helpers import run_full_chain
 
     _claimed_rip(app, monkeypatch)
     source = _incoming(sample_mkv, incoming_dir)
-    monkeypatch.setattr(importing, "ensure_pending_upload", lambda file, path: False)
+    monkeypatch.setattr(follow_ups, "ensure_pending_upload", lambda file, path: False)
 
     def broken(file):
         raise RuntimeError("(1020, 'Record has changed since last read')")
 
-    monkeypatch.setattr(importing, "_request_final_archive_key", broken)
+    monkeypatch.setattr(follow_ups, "_request_final_archive_key", broken)
 
     with app.app_context():
         run_full_chain(app, source)
@@ -340,7 +343,7 @@ def test_a_failed_move_request_after_a_failed_new_upload_keeps_the_source(
 def test_a_raising_pending_check_keeps_the_source(
     app, sample_mkv, incoming_dir, monkeypatch
 ):
-    from app.media import importing
+    from app.media.importing import follow_ups
     from tests.localization_helpers import run_full_chain
 
     _claimed_rip(app, monkeypatch)
@@ -349,7 +352,7 @@ def test_a_raising_pending_check_keeps_the_source(
     def broken(file, path):
         raise ConnectionError("redis down")
 
-    monkeypatch.setattr(importing, "ensure_pending_upload", broken)
+    monkeypatch.setattr(follow_ups, "ensure_pending_upload", broken)
 
     with app.app_context():
         run_full_chain(app, source)
@@ -384,7 +387,7 @@ def test_the_move_of_a_rerip_is_queued_after_the_title_lock(
         (job,) = [
             job
             for job in app.file_queue.jobs
-            if job.func_name == "app.archive.aws_storage.move_archive_object"
+            if job.func_name == "app.archive.moves.move_archive_object"
         ]
         assert job.args[0] == row_id
     assert seen == [(row_id, True)]
@@ -407,7 +410,7 @@ def _lagging_row(app, monkeypatch, sample_mkv, etag=None, present=True):
     import hashlib
 
     from app import db
-    from app.archive import aws_storage
+    from app.archive import aws_clients
     from tests.factories import make_movie, make_movie_file
     from tests.fakes import ArchiveS3
 
@@ -420,7 +423,7 @@ def _lagging_row(app, monkeypatch, sample_mkv, etag=None, present=True):
         "VersionId": "v-lag",
     }
     fake = ArchiveS3({LAG_KEY: head} if present else {})
-    monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kwargs: fake)
+    monkeypatch.setattr(aws_clients, "aws_s3_client", lambda **kwargs: fake)
     monkeypatch.setitem(app.config, "AWS_BUCKET", "test-bucket")
     monkeypatch.setitem(app.config, "ARCHIVE_ORIGINAL_MEDIA", True)
     with app.app_context():
@@ -448,7 +451,7 @@ def _deletes_queued(app, key):
     return [
         job
         for job in app.handoff_queue.jobs
-        if job.func_name == "app.archive.aws_storage.aws_delete" and job.args == (key,)
+        if job.func_name == "app.archive.moves.aws_delete" and job.args == (key,)
     ]
 
 
@@ -520,16 +523,17 @@ def test_a_missing_lagging_object_uploads_as_before(
 def test_a_new_rip_with_no_record_uploads_as_before(app, monkeypatch, tmp_path):
     """No record has the untouched name. The rip uploads to the key of its name."""
 
-    from app.archive import aws_storage
+    from app.archive import aws_clients
+    from app.archive import uploads
     from tests.fakes import ArchiveS3
 
     fake = ArchiveS3()
-    monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kwargs: fake)
+    monkeypatch.setattr(aws_clients, "aws_s3_client", lambda **kwargs: fake)
     monkeypatch.setitem(app.config, "AWS_BUCKET", "test-bucket")
     path = tmp_path / "Brand New (2022) - [DVD].mkv"
     path.write_bytes(b"new rip")
     with app.app_context():
-        key, _, size = aws_storage.upload_untouched(
+        key, _, size = uploads.upload_untouched(
             str(path), lambda claimed: "unused/" + claimed
         )
     assert key == "untouched/Brand New (2022) - [DVD].mkv" and size == 7
@@ -539,7 +543,7 @@ def test_a_new_rip_with_no_record_uploads_as_before(app, monkeypatch, tmp_path):
 def test_force_upload_never_takes_a_lagging_key(app, monkeypatch, sample_mkv, tmp_path):
     """FORCE_UPLOAD skips each comparison of bytes. Thus, it takes no other key."""
 
-    from app.archive import aws_storage
+    from app.archive import uploads
 
     fake, _ = _lagging_row(app, monkeypatch, sample_mkv)
     monkeypatch.setitem(app.config, "FORCE_UPLOAD", True)
@@ -547,7 +551,7 @@ def test_force_upload_never_takes_a_lagging_key(app, monkeypatch, sample_mkv, tm
     with open(sample_mkv, "rb") as handle:
         path.write_bytes(handle.read())
     with app.app_context():
-        key, _, _ = aws_storage.upload_untouched(str(path), lambda claimed: claimed)
+        key, _, _ = uploads.upload_untouched(str(path), lambda claimed: claimed)
     assert key == LAG_NEW_KEY
     assert fake.uploads == [LAG_NEW_KEY]
 
@@ -561,7 +565,8 @@ def test_a_restore_of_a_case_only_lag_keeps_its_key(
     That key has no object. The import keeps the key of the record."""
 
     from app import db
-    from app.archive import aws_storage
+    from app.archive import archive_keys
+    from app.archive import uploads
     from app.models import File
 
     fake, row_id = _lagging_row(app, monkeypatch, sample_mkv)
@@ -576,7 +581,7 @@ def test_a_restore_of_a_case_only_lag_keeps_its_key(
 
     # The claim check of MariaDB folds case.
     monkeypatch.setattr(
-        aws_storage,
+        archive_keys,
         "untouched_key_still_claimed",
         lambda key: key.casefold() == old_key.casefold(),
     )
@@ -584,7 +589,7 @@ def test_a_restore_of_a_case_only_lag_keeps_its_key(
     with open(sample_mkv, "rb") as handle:
         path.write_bytes(handle.read())
     with app.app_context():
-        key, _, size = aws_storage.upload_untouched(str(path), lambda claimed: claimed)
+        key, _, size = uploads.upload_untouched(str(path), lambda claimed: claimed)
     assert key == old_key
     assert size == os.path.getsize(path)
     assert fake.uploads == []

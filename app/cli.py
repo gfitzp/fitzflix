@@ -120,7 +120,7 @@ def register(app):
         """Sync the library with the AWS storage."""
 
         enqueue_task(
-            "app.archive.aws_storage.sync_aws_s3_storage_task",
+            "app.archive.sync.sync_aws_s3_storage_task",
             description="Syncing files with AWS S3 storage",
         )
         app.logger.info("Queueing the AWS S3 storage sync")
@@ -137,7 +137,7 @@ def register(app):
         """Check for restored files at AWS S3."""
 
         enqueue_task(
-            "app.archive.aws_storage.sqs_retrieve_task",
+            "app.archive.restores.sqs_retrieve_task",
             # The command asks for a poll now. Thus, it does not wait behind
             # the maintenance work of the hourly cron.
             queue="request",
@@ -229,7 +229,7 @@ def register(app):
         Those are real library data, not catalog junk."""
 
         from app import db
-        from app.archive.aws_storage import untouched_key_still_claimed
+        from app.archive.archive_keys import untouched_key_still_claimed
         from app.media.custom_artwork import remove_custom_artwork_after_commit
         from app.models import (
             ArchivedOriginal,
@@ -273,7 +273,7 @@ def register(app):
         for aws_key in original_keys:
             if not untouched_key_still_claimed(aws_key):
                 enqueue_task(
-                    "app.archive.aws_storage.aws_delete",
+                    "app.archive.moves.aws_delete",
                     aws_key,
                     only_if_unclaimed=True,
                     description=f"Deleting '{aws_key}' from AWS",

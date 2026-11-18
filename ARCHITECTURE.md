@@ -93,16 +93,16 @@ A script that is only for 1 page is a file whose name starts with `page_`. The r
 
 ## The path of a new file
 
-This is the most important sequence of the application. Almost all of it is in `app/media/importing.py`.
+This is the most important sequence of the application. Almost all of it is in the folder `app/media/importing/`. The file names below are in that folder.
 
-1. A file arrives through 1 of 3 doors. The doors are the watcher of the import directory (`app/media/import_watch.py`), a Sonarr or Radarr webhook (`app/api/arr.py`), and the hourly sweep (`manual_import_task`). Each door calls `enqueue_localization`.
-2. `localization_task` runs on the import queue. It reads the name of the file with `evaluate_filename`, and it takes the lock of the title. It checks the quality and the free space, then copies the file to the staging area. It uploads the untouched file to S3. Then it removes the audio and subtitle tracks that are not in your language.
+1. A file arrives through 1 of 3 doors. The doors are the watcher of the import directory (`app/media/import_watch.py`), a Sonarr or Radarr webhook (`app/api/arr.py`), and the hourly sweep (`manual_import_task` in `sweep.py`). Each door calls `enqueue_localization` in `chain.py`.
+2. `localization_task` in `localization.py` runs on the import queue. It reads the name of the file with `evaluate_filename` of `filenames.py`, and it takes the lock of the title. It checks the quality and the free space, then copies the file to the staging area. It uploads the untouched file to S3. Then it removes the audio and subtitle tracks that are not in your language.
 3. `convert_localized_file` runs on the transcode queue, only for an HDR file. It is in `app/media/sdr_conversion.py`.
-4. `move_localized_file` runs on the handoff queue. It copies the result into the library under a hidden name, and it reads the details of the media.
-5. `finalize_localization` runs on the sql queue. It writes the records, gives the hidden copy its final name, and commits. It also deletes the worse copies of the same title.
-6. The follow-up jobs start after the commit. Examples are the TMDB refresh, the Atmos audio twin, and the upload of a changed file to the archive.
+4. `move_localized_file` in `library_move.py` runs on the handoff queue. It copies the result into the library under a hidden name, and it reads the details of the media.
+5. `finalize_localization` in `cataloging.py` runs on the sql queue. It writes the records, gives the hidden copy its final name, and commits. It also deletes the worse copies of the same title.
+6. The follow-up jobs start after the commit, from `follow_ups.py`. Examples are the TMDB refresh, the Atmos audio twin, and the upload of a changed file to the archive.
 
-A file that fails goes to the rejects directory (`move_to_rejects`). The Rejects page lists these files. Each stage writes its status to the trail of the file. The Queue page shows the trail.
+A file that fails goes to the rejects directory (`move_to_rejects` in `filenames.py`). The Rejects page lists these files. Each stage writes its status to the trail of the file. The Queue page shows the trail.
 
 Each step is a separate job. A job gives the file to the next job with `enqueue_task`. To follow the sequence in the code, search for the name of the next job.
 
@@ -136,7 +136,14 @@ Two subjects have only 1 file each, and that file is in `app/` itself. The file 
 
 | Module | Subject |
 | --- | --- |
-| `importing.py` | The import sequence above, and the rules for filenames |
+| `importing/filenames.py` | The rules for filenames: parse a name, build a name, and reject a file |
+| `importing/chain.py` | The jobs of the import that wait or run, and the lock of a title |
+| `importing/space.py` | The free space of the library volume and of the staging area |
+| `importing/localization.py` | The first job of an import |
+| `importing/library_move.py` | The second job: the copy into the library |
+| `importing/cataloging.py` | The third job: the records and the final name |
+| `importing/follow_ups.py` | The work after the commit of an import |
+| `importing/sweep.py` | The hourly sweep of the import directory |
 | `import_watch.py` | The watcher of the import directory |
 | `manual_imports.py` | The downloads that Sonarr and Radarr cannot import |
 | `sdr_conversion.py` | The conversion of HDR files to SDR |
@@ -155,7 +162,13 @@ Two subjects have only 1 file each, and that file is in `app/` itself. The file 
 
 | Module | Subject |
 | --- | --- |
-| `aws_storage.py` | Each S3 and SQS operation: uploads, restores, downloads, deletes, and the weekly audit |
+| `aws_clients.py` | The S3 and SQS clients, and the small functions that all the archive code uses |
+| `archive_keys.py` | The key of an archive, and the records that claim a key |
+| `uploads.py` | The upload of a file to its archive |
+| `restores.py` | The restore of an archive from cold storage, and the SQS poll |
+| `downloads.py` and `cdn.py` | The download of an archive into the library, direct or through CloudFront |
+| `moves.py` | The move and the delete of an archive object |
+| `sync.py` | The weekly audit of the bucket against the library |
 | `s3_layout.py` | The folders of the bucket |
 | `aws_setup.py` | The setup of the AWS components |
 
@@ -196,8 +209,9 @@ Two subjects have only 1 file each, and that file is in `app/` itself. The file 
 
 ## Things that can surprise you
 
-- **A job starts through its name, not through a call**. A job name is a text string, for example `"app.media.importing.localization_task"`. The name gives the module and the function. An editor cannot follow such a string, so search for the text to find each place that starts the job.
+- **A job starts through its name, not through a call**. A job name is a text string, for example `"app.media.importing.localization.localization_task"`. The name gives the module and the function. An editor cannot follow such a string, so search for the text to find each place that starts the job.
 - **Many imports are inside functions**. This prevents import loops between the modules. It is normal in this code.
+- **A function of another file of the same folder has the file name before it**. For example, `filenames.evaluate_filename(...)` in `localization.py` calls the function `evaluate_filename` of `filenames.py`. The import folder and the archive folder use this form.
 - **A task that changes a title takes the lock of that title**. If another task has the lock, the task books itself for a later time. The function is `acquire_lock_or_defer` in `app/media/videos.py`.
 - **There are 2 sources of settings**. The `.env` file gives the settings through `config.py`. The Admin Settings page changes some of them through `app/settings.py`. A value in `.env` has priority.
 - **A number with a hash sign in a comment is a GitHub issue**. The issue tells you why the code has that rule.

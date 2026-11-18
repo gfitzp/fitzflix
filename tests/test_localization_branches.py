@@ -14,7 +14,8 @@ from tests.test_scheduling import scheduled_jobs
 
 
 from app.models import File
-from app.media.importing import finalize_localization, localization_task
+from app.media.importing.cataloging import finalize_localization
+from app.media.importing.localization import localization_task
 
 from tests.localization_helpers import rejected_files, settle
 
@@ -69,7 +70,11 @@ def test_an_inferior_file_goes_to_rejects_and_frees_the_lock(
 ):
     """A better copy in the library rejects the import and emails the admin."""
 
-    from app.media import importing
+    from app.media.importing import chain
+    from app.media.importing import filenames
+    from app.media.importing import follow_ups
+    from app.media.importing import library_move
+    from app.media.importing import localization
 
     basename = "Inferior Copy (2021) - [DVD].mkv"
     source = os.path.join(incoming_dir, basename)
@@ -77,17 +82,27 @@ def test_an_inferior_file_goes_to_rejects_and_frees_the_lock(
         f_out.write(f_in.read())
 
     better = File(basename="Inferior Copy (2021) - [Bluray-1080p].mkv")
-    monkeypatch.setattr(importing, "find_better_files", lambda details: [better])
+    monkeypatch.setattr(localization, "find_better_files", lambda details: [better])
     sent = []
     monkeypatch.setattr(
-        importing, "notify_admin", lambda *args, **kwargs: sent.append((args, kwargs))
+        localization,
+        "notify_admin",
+        lambda *args, **kwargs: sent.append((args, kwargs)),
+    )
+    monkeypatch.setattr(
+        library_move,
+        "notify_admin",
+        lambda *args, **kwargs: sent.append((args, kwargs)),
+    )
+    monkeypatch.setattr(
+        follow_ups, "notify_admin", lambda *args, **kwargs: sent.append((args, kwargs))
     )
     with app.app_context():
         assert localization_task(source) is False
-        details = importing.evaluate_filename(
+        details = filenames.evaluate_filename(
             os.path.join(app.config["REJECTS_DIR"], "inferior quality", basename)
         )
-        lock = app.lock_manager.lock(importing.lock_key_for_details(details), 1000)
+        lock = app.lock_manager.lock(chain.lock_key_for_details(details), 1000)
         assert lock
         app.lock_manager.unlock(lock)
     rejected = os.path.join(app.config["REJECTS_DIR"], "inferior quality", basename)
@@ -106,9 +121,10 @@ def test_a_file_too_big_for_staging_is_localized_beside_the_library(
     The hidden output goes straight to its library directory. The move
     finds it at its destination name already."""
 
-    from app.media import importing
+    from app.media.importing import library_move
+    from app.media.importing import space
 
-    monkeypatch.setattr(importing, "reserve_staging", lambda *args: "too big")
+    monkeypatch.setattr(space, "reserve_staging", lambda *args: "too big")
     basename = "Too Big (2021) - [DVD].mkv"
     source = os.path.join(incoming_dir, basename)
     with open(sample_mkv, "rb") as f_in, open(source, "wb") as f_out:
@@ -119,17 +135,17 @@ def test_a_file_too_big_for_staging_is_localized_beside_the_library(
         (move,) = [
             job
             for job in app.handoff_queue.jobs
-            if job.func_name == "app.media.importing.move_localized_file"
+            if job.func_name == "app.media.importing.library_move.move_localized_file"
         ]
         hidden = move.args[3]
         directory = os.path.join(app.config["LIBRARY_DIR"], "Movies/Too Big (2021)")
         assert hidden == os.path.join(directory, f".{basename}")
         assert os.listdir(app.config["STAGING_DIR"]) == []
-        assert importing.move_localized_file(*move.args) is True
+        assert library_move.move_localized_file(*move.args) is True
         (finalize,) = [
             job
             for job in app.sql_queue.jobs
-            if job.func_name == "app.media.importing.finalize_localization"
+            if job.func_name == "app.media.importing.cataloging.finalize_localization"
         ]
         assert finalize.args[3] == hidden
         assert finalize.kwargs["staged_output"] is None
@@ -147,9 +163,10 @@ def test_an_unstaged_localization_that_fails_removes_its_partial_output(
 ):
     """Without staging, the partial output is a hidden library file (#389)."""
 
-    from app.media import importing
+    from app.media.importing import localization
+    from app.media.importing import space
 
-    monkeypatch.setattr(importing, "reserve_staging", lambda *args: "too big")
+    monkeypatch.setattr(space, "reserve_staging", lambda *args: "too big")
     basename = "Half Written (2021) - [DVD].mkv"
     source = os.path.join(incoming_dir, basename)
     with open(sample_mkv, "rb") as f_in, open(source, "wb") as f_out:
@@ -163,7 +180,7 @@ def test_an_unstaged_localization_that_fails_removes_its_partial_output(
             handle.write(b"partial")
         raise subprocess.CalledProcessError(2, "mkvmerge")
 
-    monkeypatch.setattr(importing, "_localize_matroska", half_written)
+    monkeypatch.setattr(localization, "_localize_matroska", half_written)
     with app.app_context():
         assert localization_task(source) is True
     assert not os.path.exists(hidden)
@@ -235,15 +252,20 @@ def test_the_mkvmerge_command_of_each_track_layout(
 ):
     """Pin the mkvmerge arguments that the localization builds for each layout."""
 
-    from app.media import importing
+    from app.media.importing import library_move
+    from app.media.importing import localization
 
     monkeypatch.setitem(app.config, "NATIVE_LANGUAGE", native)
-    monkeypatch.setattr(importing, "get_audio_tracks_from_file", lambda path: audio)
+    monkeypatch.setattr(localization, "get_audio_tracks_from_file", lambda path: audio)
+    monkeypatch.setattr(library_move, "get_audio_tracks_from_file", lambda path: audio)
     monkeypatch.setattr(
-        importing, "get_subtitle_tracks_from_file", lambda path: subtitles
+        localization, "get_subtitle_tracks_from_file", lambda path: subtitles
+    )
+    monkeypatch.setattr(
+        library_move, "get_subtitle_tracks_from_file", lambda path: subtitles
     )
     if native == "fre" and audio[0]["language"] == "fra":
-        real_parse = importing.MediaInfo.parse
+        real_parse = localization.MediaInfo.parse
 
         class MakeMKVMediaInfo:
             @staticmethod
@@ -254,7 +276,7 @@ def test_the_mkvmerge_command_of_each_track_layout(
                         track.writing_application = "MakeMKV v1.17.4"
                 return info
 
-        monkeypatch.setattr(importing, "MediaInfo", MakeMKVMediaInfo)
+        monkeypatch.setattr(localization, "MediaInfo", MakeMKVMediaInfo)
 
     commands = []
     real_popen = subprocess.Popen
@@ -265,7 +287,7 @@ def test_the_mkvmerge_command_of_each_track_layout(
             argv = [argv[0], "-o", argv[2], argv[-1]]
         return real_popen(argv, **kwargs)
 
-    monkeypatch.setattr(importing.subprocess, "Popen", record)
+    monkeypatch.setattr(localization.subprocess, "Popen", record)
     basename = "Track Layout (2021) - [DVD].mkv"
     source = os.path.join(incoming_dir, basename)
     with open(sample_mkv, "rb") as f_in, open(source, "wb") as f_out:
@@ -276,7 +298,8 @@ def test_the_mkvmerge_command_of_each_track_layout(
             (move,) = [
                 job
                 for job in app.handoff_queue.jobs
-                if job.func_name == "app.media.importing.move_localized_file"
+                if job.func_name
+                == "app.media.importing.library_move.move_localized_file"
             ]
             hidden = move.args[3]
         (command,) = commands
@@ -298,15 +321,19 @@ def test_an_mp4_that_mkvmerge_cannot_carry_loses_its_metadata(
     Then the task copies it to its hidden output as it is. The job shows
     each step on the queue page."""
 
-    from app.media import importing
+    from app.media.importing import cataloging
+    from app.media.importing import library_move
+    from app.media.importing import localization
 
-    monkeypatch.setattr(importing, "convert_to_matroska", lambda *args: False)
+    monkeypatch.setattr(localization, "convert_to_matroska", lambda *args: False)
     monkeypatch.setitem(app.config, "ATOMICPARSLEY_BIN", "/bin/echo")
 
     from tests.fakes import Job
 
     job = Job()
-    monkeypatch.setattr(importing, "get_current_job", lambda: job)
+    monkeypatch.setattr(localization, "get_current_job", lambda: job)
+    monkeypatch.setattr(library_move, "get_current_job", lambda: job)
+    monkeypatch.setattr(cataloging, "get_current_job", lambda: job)
     basename = "Plain Mp4 (2021) - [DVD].mp4"
     source = os.path.join(incoming_dir, basename)
     with open(sample_mp4, "rb") as f_in, open(source, "wb") as f_out:
@@ -317,7 +344,8 @@ def test_an_mp4_that_mkvmerge_cannot_carry_loses_its_metadata(
             (move,) = [
                 job
                 for job in app.handoff_queue.jobs
-                if job.func_name == "app.media.importing.move_localized_file"
+                if job.func_name
+                == "app.media.importing.library_move.move_localized_file"
             ]
             hidden = move.args[3]
         assert hidden.endswith(".mp4")
@@ -363,7 +391,7 @@ def test_an_mp4_that_mkvmerge_cannot_carry_loses_its_metadata(
 def test_build_localize_command(app, subtitles, foreign, expected):
     """The command builder is pure. It needs no file and no app context."""
 
-    from app.media.importing import build_localize_command
+    from app.media.importing.localization import build_localize_command
 
     command = build_localize_command(
         "mkvmerge", "/in.mkv", "/out.mkv", "fre,eng", "eng", subtitles, foreign

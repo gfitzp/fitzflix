@@ -100,7 +100,7 @@ def test_a_second_sigterm_during_the_library_copy_cleans_up_and_goes_up(
     of them must run (#731)."""
 
     from app.media import videos
-    from app.media import importing
+    from app.media.importing import library_move
 
     hidden = tmp_path / ".Copied (2001) - [DVD].mkv"
     hidden.write_bytes(b"localized")
@@ -117,7 +117,7 @@ def test_a_second_sigterm_during_the_library_copy_cleans_up_and_goes_up(
     with app.app_context():
         lock = app.lock_manager.lock('{"title": "Copied"}', 60000)
         with pytest.raises(SystemExit):
-            importing.move_localized_file(
+            library_move.move_localized_file(
                 str(source),
                 {
                     "basename": "Copied (2001) - [DVD].mkv",
@@ -134,7 +134,7 @@ def test_a_second_sigterm_during_the_library_copy_cleans_up_and_goes_up(
 
 
 def test_interrupted_knows_the_stop_signals(app):
-    from app.media.importing import interrupted
+    from app.media.importing.localization import interrupted
 
     assert interrupted(subprocess.CalledProcessError(-signal.SIGTERM, ["x"]))
     assert interrupted(SystemExit(1))
@@ -144,7 +144,8 @@ def test_interrupted_knows_the_stop_signals(app):
 
 
 def test_abandon_import_releases_the_lock_before_the_slow_steps(app, monkeypatch):
-    from app.media import importing
+    from app.media.importing import filenames
+    from app.media.importing import localization
 
     events = []
     with app.app_context():
@@ -152,16 +153,16 @@ def test_abandon_import_releases_the_lock_before_the_slow_steps(app, monkeypatch
             app.lock_manager, "unlock", lambda lock: events.append("unlock")
         )
         monkeypatch.setattr(
-            importing,
+            localization,
             "discard_pending_archive",
             lambda key: events.append("discard"),
         )
         monkeypatch.setattr(
-            importing,
+            filenames,
             "move_to_rejects",
             lambda path, reason: events.append("reject"),
         )
-        importing.abandon_import(
+        localization.abandon_import(
             "/import/Slow (2001).mkv",
             ("lock",),
             pending_archive="pending-untouched/run/Slow (2001).mkv",
@@ -218,7 +219,8 @@ def test_a_fault_in_the_atmos_step_loop_stops_the_child(app, monkeypatch):
 def test_a_fault_in_the_atomicparsley_loop_stops_the_child(app, monkeypatch):
     """AtomicParsley rewrites the file in place. A fault stops it (#499)."""
 
-    from app.media import importing
+    from app.media.importing import cataloging
+    from app.media.importing import localization
 
     children = []
 
@@ -229,10 +231,11 @@ def test_a_fault_in_the_atomicparsley_loop_stops_the_child(app, monkeypatch):
     def broken(*args, **kwargs):
         raise ConnectionError("redis down")
 
-    monkeypatch.setattr(importing.subprocess, "Popen", popen)
-    monkeypatch.setattr(importing, "report_progress", broken)
+    monkeypatch.setattr(localization.subprocess, "Popen", popen)
+    monkeypatch.setattr(localization, "report_progress", broken)
+    monkeypatch.setattr(cataloging, "report_progress", broken)
     with app.app_context(), pytest.raises(ConnectionError):
-        importing._copy_as_is(
+        localization._copy_as_is(
             "/nowhere/Film.mp4",
             "/nowhere/.Film.mp4",
             "/nowhere",
@@ -246,7 +249,7 @@ def test_a_fault_in_the_atomicparsley_loop_stops_the_child(app, monkeypatch):
 def _in_place_run(app, sample_mkv, incoming_dir, monkeypatch, failing_phase):
     """Run an in-place import whose failing_phase raises SystemExit."""
 
-    from app.media import importing
+    from app.media.importing import localization
 
     basename = "In Place Stop (2003) - [DVD].mkv"
     os.makedirs(incoming_dir, exist_ok=True)
@@ -257,10 +260,10 @@ def _in_place_run(app, sample_mkv, incoming_dir, monkeypatch, failing_phase):
     def stopped(*args, **kwargs):
         raise SystemExit(1)
 
-    monkeypatch.setattr(importing, "_stage_source", lambda path, run: (path, False))
-    monkeypatch.setattr(importing, failing_phase, stopped)
+    monkeypatch.setattr(localization, "_stage_source", lambda path, run: (path, False))
+    monkeypatch.setattr(localization, failing_phase, stopped)
     with app.app_context(), pytest.raises(SystemExit):
-        importing.localization_task(source)
+        localization.localization_task(source)
     rejected = os.path.join(app.config["REJECTS_DIR"], "exception", basename)
     return source, rejected
 

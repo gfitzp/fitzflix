@@ -30,7 +30,7 @@ def _deletes(app):
         job.args[0]
         for queue in (app.request_queue, app.handoff_queue, app.file_queue)
         for job in queue.jobs
-        if job.func_name == "app.archive.aws_storage.aws_delete"
+        if job.func_name == "app.archive.moves.aws_delete"
     ]
 
 
@@ -194,16 +194,17 @@ def test_a_wedged_share_at_the_unlink_still_queues_the_archive_deletes(
 def test_the_purge_delete_skips_a_key_with_no_object(app, monkeypatch):
     """A pending move target has no object. No delete marker goes there (follow-up #515)."""
 
-    from app.archive import aws_storage
+    from app.archive import aws_clients
+    from app.archive import moves
     from tests.fakes import ArchiveS3
 
     s3 = ArchiveS3(objects={"untouched/Here.mkv": {"ContentLength": 1}})
-    monkeypatch.setattr(aws_storage, "aws_s3_client", lambda *a, **k: s3)
+    monkeypatch.setattr(aws_clients, "aws_s3_client", lambda *a, **k: s3)
     monkeypatch.setitem(app.config, "AWS_BUCKET", "test-bucket")
-    aws_storage.aws_delete("untouched/Not Yet.mkv", only_if_present=True)
+    moves.aws_delete("untouched/Not Yet.mkv", only_if_present=True)
     assert s3.deletes == []
     assert "untouched/Not Yet.mkv" not in s3.markers
-    aws_storage.aws_delete("untouched/Here.mkv", only_if_present=True)
+    moves.aws_delete("untouched/Here.mkv", only_if_present=True)
     assert [key for key, _ in s3.deletes] == ["untouched/Here.mkv"]
 
 
@@ -217,20 +218,21 @@ def test_a_queued_delete_keeps_a_key_that_a_record_claims_before_it_runs(
 
     import logging
 
-    from app.archive import aws_storage
+    from app.archive import aws_clients
+    from app.archive import moves
     from app.main.library import _queue_archive_deletes
     from tests.fakes import ArchiveS3
 
     key = "untouched/Claimed Later (1997) - [Bluray-1080p].mkv"
     s3 = ArchiveS3(objects={key: {"ContentLength": 1}})
-    monkeypatch.setattr(aws_storage, "aws_s3_client", lambda *a, **k: s3)
+    monkeypatch.setattr(aws_clients, "aws_s3_client", lambda *a, **k: s3)
     monkeypatch.setitem(app.config, "AWS_BUCKET", "test-bucket")
     with app.app_context():
         _queue_archive_deletes([key])
     jobs = [
         job
         for job in app.request_queue.jobs
-        if job.func_name == "app.archive.aws_storage.aws_delete" and job.args == (key,)
+        if job.func_name == "app.archive.moves.aws_delete" and job.args == (key,)
     ]
     assert len(jobs) == 1
 
@@ -242,7 +244,7 @@ def test_a_queued_delete_keeps_a_key_that_a_record_claims_before_it_runs(
         db.session.commit()
 
     with caplog.at_level(logging.INFO):
-        aws_storage.aws_delete(*jobs[0].args, **jobs[0].kwargs)
+        moves.aws_delete(*jobs[0].args, **jobs[0].kwargs)
     assert s3.deletes == []
     assert key in s3.objects
     kept = [r for r in caplog.records if "claims it now" in r.message]
@@ -252,18 +254,19 @@ def test_a_queued_delete_keeps_a_key_that_a_record_claims_before_it_runs(
 def test_a_delete_for_an_unclaimed_key_still_deletes(app, monkeypatch):
     """With no claim, the option deletes as before. only_if_present still works."""
 
-    from app.archive import aws_storage
+    from app.archive import aws_clients
+    from app.archive import moves
     from tests.fakes import ArchiveS3
 
     s3 = ArchiveS3(objects={"untouched/Nobody (1990).mkv": {"ContentLength": 1}})
-    monkeypatch.setattr(aws_storage, "aws_s3_client", lambda *a, **k: s3)
+    monkeypatch.setattr(aws_clients, "aws_s3_client", lambda *a, **k: s3)
     monkeypatch.setitem(app.config, "AWS_BUCKET", "test-bucket")
-    aws_storage.aws_delete(
+    moves.aws_delete(
         "untouched/Not There (1990).mkv", only_if_present=True, only_if_unclaimed=True
     )
     assert s3.deletes == []
     assert "untouched/Not There (1990).mkv" not in s3.markers
-    aws_storage.aws_delete(
+    moves.aws_delete(
         "untouched/Nobody (1990).mkv", only_if_present=True, only_if_unclaimed=True
     )
     assert [key for key, _ in s3.deletes] == ["untouched/Nobody (1990).mkv"]
@@ -272,24 +275,26 @@ def test_a_delete_for_an_unclaimed_key_still_deletes(app, monkeypatch):
 def test_a_delete_with_no_option_deletes_a_claimed_key_as_before(app, monkeypatch):
     """A job that the older code queued has no option. It deletes as before."""
 
-    from app.archive import aws_storage
+    from app.archive import aws_clients
+    from app.archive import moves
     from tests.fakes import ArchiveS3
 
     key = "untouched/Old Job (1991) - [DVD].mkv"
     s3 = ArchiveS3(objects={key: {"ContentLength": 1}})
-    monkeypatch.setattr(aws_storage, "aws_s3_client", lambda *a, **k: s3)
+    monkeypatch.setattr(aws_clients, "aws_s3_client", lambda *a, **k: s3)
     monkeypatch.setitem(app.config, "AWS_BUCKET", "test-bucket")
     with app.app_context():
         make_movie_file(make_movie("Old Job", 1991), "DVD", aws_key=key)
         db.session.commit()
-    aws_storage.aws_delete(key, only_if_present=True)
+    moves.aws_delete(key, only_if_present=True)
     assert [deleted for deleted, _ in s3.deletes] == [key]
 
 
 def test_a_delete_keeps_a_key_that_an_archived_original_claims(app, monkeypatch):
     """The task uses the same claim rule as the pages. An original counts."""
 
-    from app.archive import aws_storage
+    from app.archive import aws_clients
+    from app.archive import moves
     from tests.fakes import ArchiveS3
 
     with app.app_context():
@@ -297,9 +302,9 @@ def test_a_delete_keeps_a_key_that_an_archived_original_claims(app, monkeypatch)
         key = _original(movie_id=movie.id)
         db.session.commit()
     s3 = ArchiveS3(objects={key: {"ContentLength": 1}})
-    monkeypatch.setattr(aws_storage, "aws_s3_client", lambda *a, **k: s3)
+    monkeypatch.setattr(aws_clients, "aws_s3_client", lambda *a, **k: s3)
     monkeypatch.setitem(app.config, "AWS_BUCKET", "test-bucket")
-    aws_storage.aws_delete(key, only_if_present=True, only_if_unclaimed=True)
+    moves.aws_delete(key, only_if_present=True, only_if_unclaimed=True)
     assert s3.deletes == []
 
 

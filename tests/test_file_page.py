@@ -85,10 +85,10 @@ def queued(monkeypatch):
     """Record each task that the page queues."""
 
     import app.main.library as library
-    from app.archive import aws_storage
+    from app.archive import downloads, moves, restores, sync, uploads
 
     calls = []
-    for module in (library, aws_storage):
+    for module in (library, restores, sync, downloads, uploads, moves):
         monkeypatch.setattr(
             module, "enqueue_task", lambda name, *args, **kwargs: calls.append(name)
         )
@@ -177,7 +177,7 @@ def test_the_remux_form_refuses_a_file_that_is_not_matroska(app, admin_client, q
 def test_the_upload_form_queues_the_upload(app, admin_client, queued):
     file_id = _file(app)
     page = _post(admin_client, file_id, {"s3_upload_submit": "Upload"})
-    assert queued == ["app.archive.aws_storage.upload_task"]
+    assert queued == ["app.archive.uploads.upload_task"]
     assert "to AWS S3 storage" in page
 
 
@@ -207,7 +207,7 @@ def test_the_restore_form_checks_the_password_and_the_archive(
         archived_id,
         {"password": ADMIN_PASSWORD, "s3_download_submit": "Restore"},
     )
-    assert queued == ["app.archive.aws_storage.aws_restore"]
+    assert queued == ["app.archive.restores.aws_restore"]
     assert "to be restored from AWS" in page
 
 

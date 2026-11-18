@@ -327,7 +327,7 @@ def test_the_rename_task_completes_a_series_that_sonarr_moved(app, sonarr):
     moves = [
         job.args[0]
         for job in app.file_queue.jobs
-        if job.func_name == "app.archive.aws_storage.move_archive_object"
+        if job.func_name == "app.archive.moves.move_archive_object"
     ]
     assert moves == []
     with app.app_context():
@@ -509,7 +509,7 @@ def test_a_download_event_queues_its_import_before_the_check(
     the webhook queues it."""
 
     import app.media.series_rename as series_rename
-    from app.media.importing import series_import_in_flight
+    from app.media.importing.chain import series_import_in_flight
 
     sent = admin_mails(monkeypatch)
     series_id, _ids = two_batman_episodes(app)
@@ -592,7 +592,7 @@ def test_a_resumed_rename_that_meets_a_stray_file_books_a_retry(
     so the nightly check never queues the rename again. The retries have
     a limit, and the last one tells the admin."""
 
-    import app.media.importing as importing
+    from app.media.importing import chain
     from app import db
     from app.models import File, TVSeries
     from app.media.series_rename import (
@@ -610,7 +610,7 @@ def test_a_resumed_rename_that_meets_a_stray_file_books_a_retry(
     (job,) = rename_jobs(app)
 
     # The import is in flight only at the end of the loop of run 1.
-    real_flight = importing.series_import_in_flight
+    real_flight = chain.series_import_in_flight
     calls = []
     new = f"{NEW_FOLDER}/Batman (1966) - S01E03 - [WEBDL-1080p].mkv"
 
@@ -618,9 +618,9 @@ def test_a_resumed_rename_that_meets_a_stray_file_books_a_retry(
         calls.append(titles)
         return new if len(calls) == 2 else real_flight(titles)
 
-    monkeypatch.setattr(importing, "series_import_in_flight", flight)
+    monkeypatch.setattr(chain, "series_import_in_flight", flight)
     assert job.func(*job.args) is False
-    monkeypatch.setattr(importing, "series_import_in_flight", real_flight)
+    monkeypatch.setattr(chain, "series_import_in_flight", real_flight)
     with app.app_context():
         assert db.session.get(TVSeries, series_id).title == "Batman"
         assert [db.session.get(File, i).file_path for i in ids] == [MOVED, SECOND]
@@ -1047,7 +1047,8 @@ def localizing(app, basename):
     """Queue a localization of an episode name. No worker runs it."""
 
     return app.import_queue.enqueue(
-        "app.media.importing.localization_task", args=(f"/import/{basename}",)
+        "app.media.importing.localization.localization_task",
+        args=(f"/import/{basename}",),
     )
 
 
@@ -1100,7 +1101,7 @@ def test_an_import_after_a_rename_attaches_to_the_renamed_series(app):
     """The parse saw "Batman". The series is "Batman (1966)" at the attach."""
 
     from app import db
-    from app.media.importing import _attach_tv_series
+    from app.media.importing.cataloging import _attach_tv_series
     from app.models import File, TVSeries
 
     with app.app_context():
@@ -1289,7 +1290,7 @@ def test_an_import_in_the_sonarr_folder_attaches_to_its_series(app, sonarr, firs
     """The TMDB year cannot fold "Batman (1966)". The Sonarr folder can."""
 
     from app import db
-    from app.media.importing import _attach_tv_series, resolve_import_series
+    from app.media.importing.cataloging import _attach_tv_series, resolve_import_series
     from app.models import File, TVSeries
 
     with app.app_context():
@@ -1310,7 +1311,7 @@ def test_an_import_attaches_to_the_series_of_a_waiting_rename(app, sonarr):
     """Sonarr is down. The rename that waits for the import names the series."""
 
     from app import db
-    from app.media.importing import _attach_tv_series, resolve_import_series
+    from app.media.importing.cataloging import _attach_tv_series, resolve_import_series
     from app.models import File
     from app.tasks import enqueue_task
 
@@ -1435,7 +1436,7 @@ def test_a_cataloging_waits_for_sonarr_before_it_splits_a_series(
 
     from app.models import TVSeries
     from app.tasks import requeue_job_id
-    from app.media.importing import finalize_localization
+    from app.media.importing.cataloging import finalize_localization
 
     monkeypatch.setattr("app.media.videos._dead_volumes", lambda paths: [])
     sonarr(down=True)
@@ -1452,7 +1453,7 @@ def test_a_cataloging_waits_for_sonarr_before_it_splits_a_series(
 
     assert finalize_localization(source, details, None, "/hidden", {}) is False
     retry = requeue_job_id(
-        "app.media.importing.finalize_localization",
+        "app.media.importing.cataloging.finalize_localization",
         source,
         {"vanished_retries": 0, "sonarr_waits": 1, "lock_waits": 0},
     )
@@ -1460,7 +1461,7 @@ def test_a_cataloging_waits_for_sonarr_before_it_splits_a_series(
     with app.app_context():
         assert TVSeries.query.count() == 1
         # A known series needs no Sonarr answer.
-        from app.media.importing import resolve_import_series
+        from app.media.importing.cataloging import resolve_import_series
 
         bare = {**details, "title": "Batman", "dirname": "TV Shows/Batman/Season 01"}
         assert resolve_import_series(bare)[0] == "ok"
@@ -1474,7 +1475,7 @@ def test_a_dead_volume_retry_keeps_the_sonarr_wait_count(app, monkeypatch):
     from rq.registry import ScheduledJobRegistry
 
     from app.tasks import requeue_job_id
-    from app.media.importing import finalize_localization
+    from app.media.importing.cataloging import finalize_localization
 
     monkeypatch.setattr("app.media.videos._dead_volumes", lambda paths: ["/Volumes/TV"])
     source = "/import/Batman (1966) - S01E06 - [WEBDL-1080p].mkv"
@@ -1491,7 +1492,7 @@ def test_a_dead_volume_retry_keeps_the_sonarr_wait_count(app, monkeypatch):
         is False
     )
     retry = requeue_job_id(
-        "app.media.importing.finalize_localization",
+        "app.media.importing.cataloging.finalize_localization",
         source,
         {"vanished_retries": 0, "sonarr_waits": 7, "lock_waits": 0},
     )
@@ -1601,7 +1602,8 @@ def test_an_adopted_rename_takes_the_trail_of_the_file(app, sonarr):
         old_basename = row.basename
         old_path = os.path.join(app.config["LIBRARY_DIR"], row.file_path)
         job = app.import_queue.enqueue(
-            "app.media.importing.localization_task", args=(f"/import/{old_basename}",)
+            "app.media.importing.localization.localization_task",
+            args=(f"/import/{old_basename}",),
         )
         record_job_event(app.redis, job, "done")
         job.delete()

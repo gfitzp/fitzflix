@@ -79,8 +79,13 @@ def test_no_site_writes_the_track_rows_by_hand():
     import app.media.importing as importing
     import app.media.tracks as tracks
 
+    from tests.conftest import package_source
+
     for module in (atmos, importing, tracks):
-        source = inspect.getsource(module)
+        if module is importing:
+            source = package_source(module)
+        else:
+            source = inspect.getsource(module)
         assert source.count(
             "FileAudioTrack.query.filter_by(file_id=file.id).delete()"
         ) == (1 if module is tracks else 0)

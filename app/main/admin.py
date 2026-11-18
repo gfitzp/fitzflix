@@ -39,7 +39,7 @@ from app.tasks import (
     start_task_run,
 )
 from app import cron_table, db, enqueue_import_scan, local_path
-from app.archive.aws_storage import refuse_while_restore_pending, request_restore
+from app.archive.restores import refuse_while_restore_pending, request_restore
 from app.media.naming import hidden
 from app.main.forms import (
     ArchivedRestoreForm,
@@ -134,7 +134,7 @@ from app.media.triage import (
     runtime_mismatch_candidates,
     triage_presentation,
 )
-from app.media.importing import evaluate_filename
+from app.media.importing.filenames import evaluate_filename
 from rq.cron import CronScheduler
 from rq.exceptions import NoSuchJobError
 from rq.job import Job
@@ -145,7 +145,7 @@ from rq.registry import FailedJobRegistry
 # not queue (#456). The S3 sync needs a proof of identity on the
 # Maintenance page: a passkey or the password.
 
-MAINTENANCE_PAGE_TASKS = frozenset({"app.archive.aws_storage.sync_aws_s3_storage_task"})
+MAINTENANCE_PAGE_TASKS = frozenset({"app.archive.sync.sync_aws_s3_storage_task"})
 
 # The Criterion refresh has a button on the Maintenance page too. Run
 # now calls the handler of that button. Thus, the 2 buttons have 1 gate
@@ -846,7 +846,7 @@ def _sync_storage_post(form):
 
     if not identity_confirmed(form):
         return
-    name = "app.archive.aws_storage.sync_aws_s3_storage_task"
+    name = "app.archive.sync.sync_aws_s3_storage_task"
     # A sync that waits for idle queues books its retry under this id.
     if not start_bulk_run((SYNC_RUN, requeue_job_id(name)), name):
         flash(ALREADY_QUEUED, "info")
@@ -1123,9 +1123,9 @@ def held_imports():
     still exists, the import waits here again."""
 
     from app.arr.arr_client import take_remembered_download
-    from app.media.importing import enqueue_localization
+    from app.media.importing.chain import enqueue_localization
     from app.media.sdr_conversion import clear_stuck_decisions, prune_held_imports
-    from app.media.importing import move_to_rejects
+    from app.media.importing.filenames import move_to_rejects
 
     form = HeldImportForm()
     if (

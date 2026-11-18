@@ -20,7 +20,9 @@ def test_a_copy_that_waits_for_space_holds_its_pending_upload(
 ):
     """The waiting retry of the library copy holds the run-scoped key (#619)."""
 
-    from app.media import importing
+    from app.media.importing import chain
+    from app.media.importing import library_move
+    from app.media.importing import space
 
     source = os.path.join(incoming_dir, BASENAME)
     with open(source, "wb") as f:
@@ -35,13 +37,13 @@ def test_a_copy_that_waits_for_space_holds_its_pending_upload(
         "container": "Matroska",
         "aws_key": PENDING,
     }
-    monkeypatch.setattr(importing, "_crosses_volumes", lambda *args: True)
-    monkeypatch.setattr(importing, "_free_bytes", lambda path: 0)
+    monkeypatch.setattr(space, "_crosses_volumes", lambda *args: True)
+    monkeypatch.setattr(space, "_free_bytes", lambda path: 0)
     try:
         with app.app_context():
             lock = app.lock_manager.lock("long-rerip-title", 60000)
-            importing.move_localized_file(source, details, lock, hidden)
-            held = importing.keys_held_by_pipeline()
+            library_move.move_localized_file(source, details, lock, hidden)
+            held = chain.keys_held_by_pipeline()
             assert PENDING in held
             assert f"untouched/{BASENAME}" in held
     finally:
@@ -54,7 +56,10 @@ def test_the_prune_keeps_the_pending_upload_of_a_waiting_import(app, monkeypatch
 
     from rq.registry import ScheduledJobRegistry
 
-    from app.archive import aws_storage
+    from app.archive import aws_clients
+    from app.archive import moves
+    from app.archive import restores
+    from app.archive import sync
 
     old = datetime.now(timezone.utc) - timedelta(days=30)
     stray = "pending-untouched/run2/Old Stray (2020) - [DVD].mkv"
@@ -65,26 +70,24 @@ def test_the_prune_keeps_the_pending_upload_of_a_waiting_import(app, monkeypatch
         ],
     }
     monkeypatch.setattr(
-        aws_storage,
+        aws_clients,
         "get_matching_s3_objects",
         lambda bucket, prefix="": objects.get(prefix, []),
     )
     deletes = []
-    monkeypatch.setattr(
-        aws_storage, "aws_delete", lambda key, **kw: deletes.append(key)
-    )
-    monkeypatch.setattr(aws_storage, "aws_restore", lambda key, **kw: None)
+    monkeypatch.setattr(moves, "aws_delete", lambda key, **kw: deletes.append(key))
+    monkeypatch.setattr(restores, "aws_restore", lambda key, **kw: None)
     monkeypatch.setattr("app.email.send_email", lambda *a, **k: None)
 
     class FakeClient:
         def put_object(self, **kwargs):
             pass
 
-    monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kw: FakeClient())
+    monkeypatch.setattr(aws_clients, "aws_s3_client", lambda **kw: FakeClient())
     source = os.path.join(app.config["IMPORT_DIR"], BASENAME)
     retry = app.handoff_queue.enqueue_in(
         timedelta(minutes=30),
-        "app.media.importing.move_localized_file",
+        "app.media.importing.library_move.move_localized_file",
         source,
         {"basename": BASENAME, "aws_key": PENDING},
         None,
@@ -92,7 +95,7 @@ def test_the_prune_keeps_the_pending_upload_of_a_waiting_import(app, monkeypatch
         space_waits=3,
     )
     try:
-        aws_storage.sync_aws_s3_storage_task()
+        sync.sync_aws_s3_storage_task()
     finally:
         ScheduledJobRegistry(queue=app.handoff_queue).remove(retry, delete_job=True)
 
@@ -105,11 +108,12 @@ def test_a_move_whose_pending_upload_is_gone_archives_the_library_file(
     """The upload expired. The library file goes to modified/, and the row names it."""
 
     from app import db
-    from app.archive import aws_storage
+    from app.archive import aws_clients
+    from app.archive import moves
     from app.models import File
 
     fake = ArchiveS3({})
-    monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kw: fake)
+    monkeypatch.setattr(aws_clients, "aws_s3_client", lambda **kw: fake)
     monkeypatch.setitem(app.config, "AWS_BUCKET", "test-bucket")
     monkeypatch.setitem(app.config, "LIBRARY_DIR", str(tmp_path))
     with app.app_context():
@@ -125,7 +129,7 @@ def test_a_move_whose_pending_upload_is_gone_archives_the_library_file(
         with open(path, "wb") as f:
             f.write(b"library bytes")
 
-        assert aws_storage.move_archive_object(file_id) is True
+        assert moves.move_archive_object(file_id) is True
 
         db.session.expire_all()
         row = db.session.get(File, file_id)
@@ -140,11 +144,12 @@ def test_a_missing_pending_upload_with_no_library_file_stops_the_move(
     """Without a library file, the move stops as before, and the sync reports the key."""
 
     from app import db
-    from app.archive import aws_storage
+    from app.archive import aws_clients
+    from app.archive import moves
     from app.models import File
 
     fake = ArchiveS3({})
-    monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kw: fake)
+    monkeypatch.setattr(aws_clients, "aws_s3_client", lambda **kw: fake)
     monkeypatch.setitem(app.config, "AWS_BUCKET", "test-bucket")
     monkeypatch.setitem(app.config, "LIBRARY_DIR", str(tmp_path))
     with app.app_context():
@@ -156,7 +161,7 @@ def test_a_missing_pending_upload_with_no_library_file_stops_the_move(
         db.session.commit()
         file_id = file.id
 
-        assert aws_storage.move_archive_object(file_id) is False
+        assert moves.move_archive_object(file_id) is False
 
         db.session.expire_all()
         row = db.session.get(File, file_id)
@@ -168,7 +173,10 @@ def test_a_missing_pending_upload_with_no_library_file_stops_the_move(
 def test_the_prune_keeps_the_upload_of_a_scheduled_conversion_retry(app, monkeypatch):
     """A conversion retry has no marker. Its file_details key is safe (#493)."""
 
-    from app.archive import aws_storage
+    from app.archive import aws_clients
+    from app.archive import moves
+    from app.archive import restores
+    from app.archive import sync
 
     old = datetime.now(timezone.utc) - timedelta(days=30)
     parked = "pending-untouched/run3/Parked Rerip (2024) - [UHD].mkv"
@@ -180,22 +188,20 @@ def test_the_prune_keeps_the_upload_of_a_scheduled_conversion_retry(app, monkeyp
         ],
     }
     monkeypatch.setattr(
-        aws_storage,
+        aws_clients,
         "get_matching_s3_objects",
         lambda bucket, prefix="": objects.get(prefix, []),
     )
     deletes = []
-    monkeypatch.setattr(
-        aws_storage, "aws_delete", lambda key, **kw: deletes.append(key)
-    )
-    monkeypatch.setattr(aws_storage, "aws_restore", lambda key, **kw: None)
+    monkeypatch.setattr(moves, "aws_delete", lambda key, **kw: deletes.append(key))
+    monkeypatch.setattr(restores, "aws_restore", lambda key, **kw: None)
     monkeypatch.setattr("app.email.send_email", lambda *a, **k: None)
 
     class FakeClient:
         def put_object(self, **kwargs):
             pass
 
-    monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kw: FakeClient())
+    monkeypatch.setattr(aws_clients, "aws_s3_client", lambda **kw: FakeClient())
     with app.app_context():
         app.transcode_queue.enqueue_in(
             timedelta(minutes=30),
@@ -206,7 +212,7 @@ def test_the_prune_keeps_the_upload_of_a_scheduled_conversion_retry(app, monkeyp
             "/staging/.Parked Rerip (2024) - [UHD].mkv",
             {},
         )
-    aws_storage.sync_aws_s3_storage_task()
+    sync.sync_aws_s3_storage_task()
 
     assert deletes == [stray]
 
@@ -214,7 +220,10 @@ def test_the_prune_keeps_the_upload_of_a_scheduled_conversion_retry(app, monkeyp
 def test_the_prune_keeps_the_untouched_upload_of_a_rejected_import(app, monkeypatch):
     """A failed in-place import keeps its direct untouched/ upload (#496)."""
 
-    from app.archive import aws_storage
+    from app.archive import aws_clients
+    from app.archive import moves
+    from app.archive import restores
+    from app.archive import sync
 
     old = datetime.now(timezone.utc) - timedelta(days=30)
     name = "Rejected In Place (2024) - [UHD].mkv"
@@ -227,27 +236,25 @@ def test_the_prune_keeps_the_untouched_upload_of_a_rejected_import(app, monkeypa
         ],
     }
     monkeypatch.setattr(
-        aws_storage,
+        aws_clients,
         "get_matching_s3_objects",
         lambda bucket, prefix="": objects.get(prefix, []),
     )
     deletes = []
-    monkeypatch.setattr(
-        aws_storage, "aws_delete", lambda key, **kw: deletes.append(key)
-    )
-    monkeypatch.setattr(aws_storage, "aws_restore", lambda key, **kw: None)
+    monkeypatch.setattr(moves, "aws_delete", lambda key, **kw: deletes.append(key))
+    monkeypatch.setattr(restores, "aws_restore", lambda key, **kw: None)
     monkeypatch.setattr("app.email.send_email", lambda *a, **k: None)
 
     class FakeClient:
         def put_object(self, **kwargs):
             pass
 
-    monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kw: FakeClient())
+    monkeypatch.setattr(aws_clients, "aws_s3_client", lambda **kw: FakeClient())
     rejected = os.path.join(app.config["REJECTS_DIR"], "exception")
     os.makedirs(rejected, exist_ok=True)
     with open(os.path.join(rejected, name), "wb") as f:
         f.write(b"rewritten source")
-    aws_storage.sync_aws_s3_storage_task()
+    sync.sync_aws_s3_storage_task()
 
     assert deletes == [stray]
 
@@ -256,7 +263,7 @@ def test_a_direct_restore_never_replaces_a_newer_library_file(app, monkeypatch):
     """A stale row keeps its library file. The restore stops (#496)."""
 
     from app import db
-    from app.archive import aws_storage
+    from app.archive import downloads
 
     with app.app_context():
         file = make_movie_file(
@@ -275,6 +282,6 @@ def test_a_direct_restore_never_replaces_a_newer_library_file(app, monkeypatch):
         def no_download(*args, **kwargs):
             raise AssertionError("the stale restore downloaded")
 
-        monkeypatch.setattr(aws_storage, "aws_download", no_download)
-        assert aws_storage.download_task(file.aws_key, file.basename) is True
+        monkeypatch.setattr(downloads, "aws_download", no_download)
+        assert downloads.download_task(file.aws_key, file.basename) is True
         assert open(path, "rb").read() == b"newer bytes"

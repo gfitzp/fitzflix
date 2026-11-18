@@ -7,8 +7,10 @@ import os
 
 
 def test_a_finished_import_leaves_no_staging_reservation(app, sample_mkv, incoming_dir):
-    from app.media import importing
-    from app.media.importing import STAGING_RESERVED_KEY
+    from app.media.importing import cataloging
+    from app.media.importing import library_move
+    from app.media.importing import localization
+    from app.media.importing.space import STAGING_RESERVED_KEY
 
     basename = "Released Stage (2021) - [DVD].mkv"
     source = os.path.join(incoming_dir, basename)
@@ -16,20 +18,20 @@ def test_a_finished_import_leaves_no_staging_reservation(app, sample_mkv, incomi
         f_out.write(f_in.read())
 
     with app.app_context():
-        assert importing.localization_task(source) is True
+        assert localization.localization_task(source) is True
         assert app.redis.hexists(STAGING_RESERVED_KEY, basename)
         (move_job,) = [
             job
             for job in app.handoff_queue.jobs
-            if job.func_name == "app.media.importing.move_localized_file"
+            if job.func_name == "app.media.importing.library_move.move_localized_file"
         ]
-        assert importing.move_localized_file(*move_job.args) is True
+        assert library_move.move_localized_file(*move_job.args) is True
         (finalize_job,) = [
             job
             for job in app.sql_queue.jobs
-            if job.func_name == "app.media.importing.finalize_localization"
+            if job.func_name == "app.media.importing.cataloging.finalize_localization"
         ]
-        importing.finalize_localization(*finalize_job.args)
+        cataloging.finalize_localization(*finalize_job.args)
 
         from app.models import File
 

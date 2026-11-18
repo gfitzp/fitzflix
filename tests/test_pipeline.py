@@ -22,7 +22,7 @@ def test_enqueue_leaves_a_queued_trail_entry(app):
 
     with app.app_context():
         app.import_queue.enqueue(
-            "app.media.importing.localization_task",
+            "app.media.importing.localization.localization_task",
             args=("/import/Trail Film (2020) - [DVD].mkv",),
             description="'Trail Film (2020) - [DVD].mkv'",
         )
@@ -45,7 +45,7 @@ def test_deferred_retry_records_a_scheduled_entry(app):
     with app.app_context():
         app.import_queue.enqueue_in(
             timedelta(minutes=5),
-            "app.media.importing.localization_task",
+            "app.media.importing.localization.localization_task",
             args=("/import/Trail Deferred (2021) - [DVD].mkv",),
         )
 
@@ -70,7 +70,7 @@ def test_file_id_stages_look_the_basename_up(app):
         file_id, basename = file.id, file.basename
 
         app.file_queue.enqueue(
-            "app.archive.aws_storage.upload_task",
+            "app.archive.uploads.upload_task",
             args=(file_id,),
             description=f"'{basename}'",
         )
@@ -91,7 +91,7 @@ def test_a_late_queued_stamp_never_unwinds_a_finished_chip(app):
 
     with app.app_context():
         job = app.import_queue.enqueue(
-            "app.media.importing.localization_task",
+            "app.media.importing.localization.localization_task",
             args=("/import/Trail Late Stamp (2023) - [DVD].mkv",),
         )
 
@@ -115,7 +115,7 @@ def test_a_skipped_chip_is_settled_like_a_done_chip(app):
 
     with app.app_context():
         job = app.import_queue.enqueue(
-            "app.media.importing.localization_task",
+            "app.media.importing.localization.localization_task",
             args=("/import/Trail Skipped (2023) - [DVD].mkv",),
         )
 
@@ -132,7 +132,7 @@ def test_a_skipped_chip_is_settled_like_a_done_chip(app):
 
     with app.app_context():
         later = app.import_queue.enqueue(
-            "app.media.importing.localization_task",
+            "app.media.importing.localization.localization_task",
             args=("/import/Trail Skipped (2023) - [DVD].mkv",),
         )
     (trail,) = pipeline_trails(app.redis)
@@ -184,7 +184,7 @@ def test_lifecycle_updates_one_entry_in_place(app):
 
     with app.app_context():
         job = app.import_queue.enqueue(
-            "app.media.importing.localization_task",
+            "app.media.importing.localization.localization_task",
             args=("/import/Trail Lifecycle (2022) - [DVD].mkv",),
         )
 
@@ -206,14 +206,14 @@ def test_a_retry_after_failure_appends_a_fresh_entry(app):
 
     with app.app_context():
         first = app.import_queue.enqueue(
-            "app.media.importing.localization_task",
+            "app.media.importing.localization.localization_task",
             args=("/import/Trail Retry (2023) - [DVD].mkv",),
         )
         record_job_event(app.redis, first, "started")
         record_job_event(app.redis, first, "failed")
         app.import_queue.enqueue_in(
             timedelta(minutes=10),
-            "app.media.importing.localization_task",
+            "app.media.importing.localization.localization_task",
             args=("/import/Trail Retry (2023) - [DVD].mkv",),
         )
 
@@ -237,11 +237,11 @@ def test_concurrent_stage_writes_do_not_erase_each_other(app, monkeypatch):
     basename = "Trail Race (2026) - [DVD].mkv"
     with app.app_context():
         localize = app.import_queue.enqueue(
-            "app.media.importing.localization_task",
+            "app.media.importing.localization.localization_task",
             args=(f"/import/{basename}",),
         )
         move = app.file_queue.enqueue(
-            "app.media.importing.move_localized_file",
+            "app.media.importing.library_move.move_localized_file",
             args=(f"/staging/.{basename}", {"basename": basename}, None, None),
         )
     record_job_event(app.redis, localize, "started")
@@ -286,7 +286,7 @@ def test_task_sub_stage_rides_the_jobs_trail(app, monkeypatch):
 
     with app.app_context():
         job = app.import_queue.enqueue(
-            "app.media.importing.localization_task",
+            "app.media.importing.localization.localization_task",
             args=("/import/Trail Staging (2026) - [DVD].mkv",),
         )
     record_job_event(app.redis, job, "started")
@@ -400,12 +400,13 @@ def test_an_import_that_renames_its_file_keeps_the_trail_under_the_import_name(a
 
     with app.app_context():
         localize = app.import_queue.enqueue(
-            "app.media.importing.localization_task", args=(f"/import/{old}",)
+            "app.media.importing.localization.localization_task",
+            args=(f"/import/{old}",),
         )
         record_job_event(app.redis, localize, "started")
 
         app.file_queue.enqueue(
-            "app.media.importing.move_localized_file",
+            "app.media.importing.library_move.move_localized_file",
             args=(
                 f"/staging/.{new}",
                 {"basename": new, "untouched_basename": old},
@@ -443,11 +444,12 @@ def test_same_named_extras_of_two_films_keep_their_own_trails(app):
     with app.app_context():
         for name in names:
             localize = app.import_queue.enqueue(
-                "app.media.importing.localization_task", args=(f"/import/{name}",)
+                "app.media.importing.localization.localization_task",
+                args=(f"/import/{name}",),
             )
             record_job_event(app.redis, localize, "started")
             app.file_queue.enqueue(
-                "app.media.importing.move_localized_file",
+                "app.media.importing.library_move.move_localized_file",
                 args=(
                     "/staging/.Trailer.mkv",
                     {"basename": "Trailer.mkv", "untouched_basename": name},
@@ -482,7 +484,8 @@ def test_a_rename_with_no_prior_trail_just_redirects(app):
 
     with app.app_context():
         app.import_queue.enqueue(
-            "app.media.importing.localization_task", args=(f"/import/{old}",)
+            "app.media.importing.localization.localization_task",
+            args=(f"/import/{old}",),
         )
 
     trails = pipeline_trails(app.redis)
@@ -511,7 +514,7 @@ def test_non_pipeline_tasks_leave_no_trail(app):
 
     with app.app_context():
         app.sql_queue.enqueue(
-            "app.archive.aws_storage.sync_aws_s3_storage_task",
+            "app.archive.sync.sync_aws_s3_storage_task",
             description="Syncing files with AWS S3 storage",
         )
 
@@ -523,7 +526,7 @@ def test_the_queue_rows_route_paints_the_trails(app, admin_client):
 
     with app.app_context():
         app.import_queue.enqueue(
-            "app.media.importing.localization_task",
+            "app.media.importing.localization.localization_task",
             args=("/import/Trail Payload (2024) - [DVD].mkv",),
             description="'Trail Payload (2024) - [DVD].mkv'",
         )
@@ -542,7 +545,7 @@ def test_trail_entries_carry_their_job_ids(app, admin_client):
 
     with app.app_context():
         job = app.import_queue.enqueue(
-            "app.media.importing.localization_task",
+            "app.media.importing.localization.localization_task",
             args=("/import/Trail Job Id (2024) - [DVD].mkv",),
         )
 
@@ -564,12 +567,12 @@ def test_deferred_retries_list_on_the_queue_page(app, admin_client):
 
     with app.app_context():
         live = app.import_queue.enqueue(
-            "app.media.importing.localization_task",
+            "app.media.importing.localization.localization_task",
             args=("/import/Trail Live (2024) - [DVD].mkv",),
         )
         deferred = app.import_queue.enqueue_in(
             timedelta(minutes=10),
-            "app.media.importing.localization_task",
+            "app.media.importing.localization.localization_task",
             args=("/import/Trail Deferred (2024) - [DVD].mkv",),
             description="Localizing Trail Deferred (2024) - [DVD].mkv",
         )
@@ -644,7 +647,7 @@ def test_running_banners_hold_first_run_order(app, admin_client):
         )
 
         job_a = Job.create(
-            "app.media.importing.move_localized_file",
+            "app.media.importing.library_move.move_localized_file",
             args=(
                 "/staging/.Order A (2020) - [DVD].mkv",
                 {"basename": "Order A (2020) - [DVD].mkv"},
@@ -663,7 +666,7 @@ def test_running_banners_hold_first_run_order(app, admin_client):
         )
 
         job_b = Job.create(
-            "app.media.importing.localization_task",
+            "app.media.importing.localization.localization_task",
             args=("/import/Order B (2021) - [DVD].mkv",),
             id="order-b-localize",
             origin="fitzflix-import",
@@ -709,13 +712,13 @@ def test_the_queue_table_and_the_banners_share_one_order(app, admin_client):
         for job_id, func, args, queue in (
             (
                 "table-b-localize",
-                "app.media.importing.localization_task",
+                "app.media.importing.localization.localization_task",
                 ("/import/Table B (2021) - [DVD].mkv",),
                 "fitzflix-import",
             ),
             (
                 "table-a-move",
-                "app.media.importing.move_localized_file",
+                "app.media.importing.library_move.move_localized_file",
                 (
                     "/staging/.Table A (2020) - [DVD].mkv",
                     {"basename": "Table A (2020) - [DVD].mkv"},
@@ -758,7 +761,7 @@ def test_a_cataloging_job_lists_on_the_queue_page(app, admin_client):
     basename = "Trail Catalog (2026) - [DVD].mkv"
     with app.app_context():
         catalog = app.sql_queue.enqueue(
-            "app.media.importing.finalize_localization",
+            "app.media.importing.cataloging.finalize_localization",
             args=(f"/staging/{basename}", {"basename": basename}),
             description=f"'{basename}'",
         )
@@ -801,7 +804,7 @@ def test_a_cancelled_jobs_stranded_chip_heals_away(app):
 
     with app.app_context():
         job = app.import_queue.enqueue(
-            "app.media.importing.localization_task",
+            "app.media.importing.localization.localization_task",
             args=("/import/Trail Orphan (2025) - [DVD].mkv",),
         )
 
@@ -824,7 +827,7 @@ def test_a_cancelled_deferred_retrys_chip_heals_away(app):
     with app.app_context():
         job = app.import_queue.enqueue_in(
             timedelta(minutes=10),
-            "app.media.importing.localization_task",
+            "app.media.importing.localization.localization_task",
             args=("/import/Trail Orphan Retry (2025) - [DVD].mkv",),
         )
 
@@ -844,13 +847,13 @@ def test_healing_keeps_terminal_history(app):
 
     with app.app_context():
         finished = app.import_queue.enqueue(
-            "app.media.importing.localization_task",
+            "app.media.importing.localization.localization_task",
             args=("/import/Trail Mixed (2025) - [DVD].mkv",),
         )
         record_job_event(app.redis, finished, "started")
         record_job_event(app.redis, finished, "done")
         followup = app.import_queue.enqueue(
-            "app.media.importing.localization_task",
+            "app.media.importing.localization.localization_task",
             args=("/import/Trail Mixed (2025) - [DVD].mkv",),
         )
 
@@ -880,7 +883,7 @@ def test_an_ended_jobs_waiting_chip_settles(app, rq_status, chip):
 
     with app.app_context():
         job = app.import_queue.enqueue(
-            "app.media.importing.localization_task",
+            "app.media.importing.localization.localization_task",
             args=("/import/Trail Ended (2025) - [DVD].mkv",),
         )
     app.redis.hset(f"rq:job:{job.id}", "status", rq_status)
@@ -896,7 +899,7 @@ def test_a_lost_stamp_of_a_skipped_job_heals_to_skipped(app):
 
     with app.app_context():
         job = app.import_queue.enqueue(
-            "app.media.importing.localization_task",
+            "app.media.importing.localization.localization_task",
             args=("/import/Trail Lost Skip (2025) - [DVD].mkv",),
         )
     job.meta["trail_skipped"] = True
@@ -914,7 +917,7 @@ def test_a_continued_jobs_chip_does_not_settle(app):
 
     with app.app_context():
         job = app.import_queue.enqueue(
-            "app.media.importing.localization_task",
+            "app.media.importing.localization.localization_task",
             args=("/import/Trail Continued (2025) - [DVD].mkv",),
         )
     app.redis.hset(f"rq:job:{job.id}", "status", "finished")
@@ -934,7 +937,7 @@ def test_a_live_waiting_chip_never_heals(app):
 
     with app.app_context():
         job = app.import_queue.enqueue(
-            "app.media.importing.localization_task",
+            "app.media.importing.localization.localization_task",
             args=("/import/Trail Waiting (2025) - [DVD].mkv",),
         )
 
@@ -954,11 +957,12 @@ def test_the_enqueued_time_holds_still_across_queue_hops(app, admin_client):
     basename = "Trail Anchor (2026) - [DVD].mkv"
     with app.app_context():
         localize = app.import_queue.enqueue(
-            "app.media.importing.localization_task", args=(f"/import/{basename}",)
+            "app.media.importing.localization.localization_task",
+            args=(f"/import/{basename}",),
         )
         record_job_event(app.redis, localize, "started")
         move = app.file_queue.enqueue(
-            "app.media.importing.move_localized_file",
+            "app.media.importing.library_move.move_localized_file",
             args=(f"/staging/{basename}", {"basename": basename}),
             description=f"Moving {basename}",
         )
@@ -987,12 +991,13 @@ def test_a_waiting_stamp_never_moves_a_journeys_anchor(app):
     key = FILE_KEY.format(digest=_digest(basename))
     with app.app_context():
         localize = app.import_queue.enqueue(
-            "app.media.importing.localization_task", args=(f"/import/{basename}",)
+            "app.media.importing.localization.localization_task",
+            args=(f"/import/{basename}",),
         )
         record_job_event(app.redis, localize, "started")
         app.redis.hset(key, "first_enqueued", "2026-01-02 03:04:05")
         app.file_queue.enqueue(
-            "app.media.importing.move_localized_file",
+            "app.media.importing.library_move.move_localized_file",
             args=(f"/staging/{basename}", {"basename": basename}),
         )
     assert app.redis.hget(key, "first_enqueued") == b"2026-01-02 03:04:05"
@@ -1001,7 +1006,7 @@ def test_a_waiting_stamp_never_moves_a_journeys_anchor(app):
         record_job_event(app.redis, localize, "failed")
         app.import_queue.enqueue_in(
             timedelta(minutes=10),
-            "app.media.importing.localization_task",
+            "app.media.importing.localization.localization_task",
             args=(f"/import/{basename}",),
         )
     assert app.redis.hget(key, "first_enqueued") == b"2026-01-02 03:04:05"
@@ -1020,7 +1025,8 @@ def test_a_fresh_journey_restarts_the_enqueue_anchor(app):
     key = FILE_KEY.format(digest=_digest(basename))
     with app.app_context():
         localize = app.import_queue.enqueue(
-            "app.media.importing.localization_task", args=(f"/import/{basename}",)
+            "app.media.importing.localization.localization_task",
+            args=(f"/import/{basename}",),
         )
         record_job_event(app.redis, localize, "started")
         record_job_event(app.redis, localize, "done")
@@ -1029,7 +1035,8 @@ def test_a_fresh_journey_restarts_the_enqueue_anchor(app):
 
     with app.app_context():
         app.import_queue.enqueue(
-            "app.media.importing.localization_task", args=(f"/import/{basename}",)
+            "app.media.importing.localization.localization_task",
+            args=(f"/import/{basename}",),
         )
     assert app.redis.hget(key, "first_enqueued") != b"2026-01-02 03:04:05"
 
@@ -1048,7 +1055,7 @@ def _arrive(app, basename, job_id, monkeypatch):
 
     with app.app_context():
         localize = app.import_queue.enqueue(
-            "app.media.importing.localization_task",
+            "app.media.importing.localization.localization_task",
             args=(f"/import/{basename}",),
             job_id=job_id,
         )
@@ -1057,14 +1064,14 @@ def _arrive(app, basename, job_id, monkeypatch):
         record_task_stage("Copying to staging", "started")
         record_task_stage("Copying to staging", "done")
         move = app.file_queue.enqueue(
-            "app.media.importing.move_localized_file",
+            "app.media.importing.library_move.move_localized_file",
             args=(f"/staging/.{basename}", {"basename": basename}, None, None),
         )
         record_job_event(app.redis, localize, "done")
         record_job_event(app.redis, move, "started")
         record_job_event(app.redis, move, "done")
         catalog = app.import_queue.enqueue(
-            "app.media.importing.finalize_localization",
+            "app.media.importing.cataloging.finalize_localization",
             args=(None, {"basename": basename}),
         )
         record_job_event(app.redis, catalog, "started")
@@ -1103,7 +1110,7 @@ def test_a_reimport_under_the_same_job_id_clears_the_earlier_chips(app, monkeypa
 
     with app.app_context():
         again = app.import_queue.enqueue(
-            "app.media.importing.localization_task",
+            "app.media.importing.localization.localization_task",
             args=(f"/import/{basename}",),
             job_id="trail-reimport",
         )
@@ -1160,7 +1167,8 @@ def test_a_mid_flight_rename_carries_the_enqueue_anchor(app):
     new = "Trail Anchor New (2026) - [DVD].mkv"
     with app.app_context():
         app.import_queue.enqueue(
-            "app.media.importing.localization_task", args=(f"/import/{old}",)
+            "app.media.importing.localization.localization_task",
+            args=(f"/import/{old}",),
         )
 
     old_key = FILE_KEY.format(digest=_digest(old))
@@ -1181,7 +1189,7 @@ def test_queue_page_renders_its_rows_on_the_server(app, admin_client):
 
     with app.app_context():
         app.import_queue.enqueue(
-            "app.media.importing.localization_task",
+            "app.media.importing.localization.localization_task",
             args=("/import/Server Row Film (2020) - [DVD].mkv",),
             description="'Server Row Film (2020) - [DVD].mkv'",
         )
@@ -1242,7 +1250,7 @@ def test_file_activity_cards_arrive_with_their_chips_painted(app, admin_client):
     with app.app_context():
         # The trail is keyed by the import name with the converted extension
         app.import_queue.enqueue(
-            "app.media.importing.localization_task",
+            "app.media.importing.localization.localization_task",
             args=("/import/Painted.Film.2014.mkv",),
             description="'Painted.Film.2014.mkv'",
         )
@@ -1293,7 +1301,7 @@ def test_the_started_column_shows_the_first_start_of_the_file(app, admin_client)
             "2026-01-01 10:00:00",
         )
         job = Job.create(
-            "app.media.importing.localization_task",
+            "app.media.importing.localization.localization_task",
             args=(f"/import/{basename}",),
             id="started-column",
             origin="fitzflix-import",
@@ -1326,7 +1334,7 @@ def test_a_jobs_phases_read_in_order_before_its_own_chip(app, monkeypatch):
 
     with app.app_context():
         job = app.import_queue.enqueue(
-            "app.media.importing.localization_task",
+            "app.media.importing.localization.localization_task",
             args=("/import/Trail Phases (2026) - [DVD].mkv",),
         )
     record_job_event(app.redis, job, "started")
@@ -1432,7 +1440,7 @@ def test_queue_rows_carry_the_phone_layout_markup(app, admin_client):
 
     with app.app_context():
         app.import_queue.enqueue(
-            "app.media.importing.localization_task",
+            "app.media.importing.localization.localization_task",
             args=("/import/Phone Row (2026) - [DVD].mkv",),
             description="'Phone Row (2026) - [DVD].mkv'",
         )
@@ -1470,7 +1478,8 @@ def test_a_job_that_starts_before_its_queued_stamp_keeps_its_enqueue_time(app):
 
         plain = Queue(app.import_queue.name, connection=app.redis)
         localize = plain.enqueue(
-            "app.media.importing.localization_task", args=(f"/import/{basename}",)
+            "app.media.importing.localization.localization_task",
+            args=(f"/import/{basename}",),
         )
         expected = localize.enqueued_at.astimezone(timezone.utc).strftime(
             "%Y-%m-%d %H:%M:%S"
@@ -1482,7 +1491,7 @@ def test_a_job_that_starts_before_its_queued_stamp_keeps_its_enqueue_time(app):
 
         app.redis.hset(key, "first_enqueued", "2026-01-02 03:04:05")
         app.handoff_queue.enqueue(
-            "app.media.importing.move_localized_file",
+            "app.media.importing.library_move.move_localized_file",
             args=(f"/staging/.{basename}", {"basename": basename}, None, None),
         )
         assert app.redis.hget(key, "first_enqueued") == b"2026-01-02 03:04:05"
@@ -1494,7 +1503,8 @@ def test_a_job_that_starts_before_its_queued_stamp_keeps_its_enqueue_time(app):
     other_key = FILE_KEY.format(digest=_digest(other))
     with app.app_context():
         job = plain.enqueue(
-            "app.media.importing.localization_task", args=(f"/import/{other}",)
+            "app.media.importing.localization.localization_task",
+            args=(f"/import/{other}",),
         )
         record_job_event(app.redis, job, "started")
         assert app.redis.hget(other_key, "first_enqueued") == (
@@ -1517,11 +1527,13 @@ def test_a_job_that_books_its_own_retry_shows_only_the_retry(app):
     path = "/import/Trail Deferral (2026) - [DVD].mkv"
     with app.app_context():
         first = app.import_queue.enqueue(
-            "app.media.importing.localization_task", args=(path,)
+            "app.media.importing.localization.localization_task", args=(path,)
         )
         record_job_event(app.redis, first, "started")
         app.import_queue.enqueue_in(
-            timedelta(minutes=2), "app.media.importing.localization_task", args=(path,)
+            timedelta(minutes=2),
+            "app.media.importing.localization.localization_task",
+            args=(path,),
         )
         record_job_event(app.redis, first, "done")
 
@@ -1547,18 +1559,19 @@ def test_a_library_copy_that_books_a_retry_shows_only_the_retry(app):
     basename = "Trail Copy Retry (2026) - [DVD].mkv"
     with app.app_context():
         localize = app.import_queue.enqueue(
-            "app.media.importing.localization_task", args=(f"/import/{basename}",)
+            "app.media.importing.localization.localization_task",
+            args=(f"/import/{basename}",),
         )
         record_job_event(app.redis, localize, "started")
         move = app.handoff_queue.enqueue(
-            "app.media.importing.move_localized_file",
+            "app.media.importing.library_move.move_localized_file",
             args=(f"/staging/.{basename}", {"basename": basename}, None, None),
         )
         record_job_event(app.redis, localize, "done")
         record_job_event(app.redis, move, "started")
         app.handoff_queue.enqueue_in(
             timedelta(minutes=5),
-            "app.media.importing.move_localized_file",
+            "app.media.importing.library_move.move_localized_file",
             f"/staging/.{basename}",
             {"basename": basename},
             None,
@@ -1591,7 +1604,7 @@ def test_the_queue_shows_only_the_newest_journey_of_a_file(app):
         db.session.commit()
         assert file.basename == basename
         archive = app.file_queue.enqueue(
-            "app.archive.aws_storage.upload_task", args=(file.id,)
+            "app.archive.uploads.upload_task", args=(file.id,)
         )
         record_job_event(app.redis, archive, "started")
         record_job_event(app.redis, archive, "done")
@@ -1892,7 +1905,7 @@ def test_a_fall_back_hour_anchor_reads_as_the_right_utc_instant(app, admin_clien
             "2026-11-01 06:20:00+00:00",
         )
         job = Job.create(
-            "app.media.importing.localization_task",
+            "app.media.importing.localization.localization_task",
             args=(f"/import/{basename}",),
             id="fall-back-localize",
             origin="fitzflix-import",
@@ -1949,7 +1962,7 @@ def test_a_legacy_local_anchor_still_reads_as_local_time(app, admin_client):
     with app.app_context():
         app.redis.hset(FILE_KEY.format(digest=_digest(basename)), "first_run", local)
         job = Job.create(
-            "app.media.importing.localization_task",
+            "app.media.importing.localization.localization_task",
             args=(f"/import/{basename}",),
             id="legacy-anchor-localize",
             origin="fitzflix-import",
@@ -2045,9 +2058,7 @@ def test_cards_of_same_named_extras_find_their_own_trails(app, admin_client):
         db.session.commit()
         assert [row.basename for row in rows] == ["Trailer.mkv", "Trailer.mkv"]
         jobs = [
-            app.file_queue.enqueue(
-                "app.archive.aws_storage.upload_task", args=(row.id,)
-            )
+            app.file_queue.enqueue("app.archive.uploads.upload_task", args=(row.id,))
             for row in rows
         ]
 
@@ -2466,9 +2477,9 @@ def test_a_fault_in_the_failure_report_does_not_stop_the_worker(app, monkeypatch
         db.session.commit()
         file_id = file.id
     monkeypatch.setattr(
-        "app.archive.aws_storage.upload_task", lambda *args, **kwargs: 1 / 0
+        "app.archive.uploads.upload_task", lambda *args, **kwargs: 1 / 0
     )
-    job, _ = _run_one(app, "app.archive.aws_storage.upload_task", file_id)
+    job, _ = _run_one(app, "app.archive.uploads.upload_task", file_id)
 
     assert job.id in FailedJobRegistry(queue=app.maintenance_queue).get_job_ids()
     (trail,) = pipeline_trails(app.redis)

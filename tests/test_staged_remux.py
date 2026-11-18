@@ -6,9 +6,9 @@ import subprocess
 
 import pytest
 
-import app.media.importing as importing
+from app.media.importing import space
 import app.media.tracks as tracks
-from app.media.importing import STAGING_RESERVED_KEY
+from app.media.importing.space import STAGING_RESERVED_KEY
 
 from tests.conftest import _TMP
 from tests.media import make_sample_mkv
@@ -125,7 +125,7 @@ def test_without_staging_space_the_remux_runs_in_place(
     app, library_file, staging, monkeypatch
 ):
     monkeypatch.setattr(tracks, "_on_volume_of", lambda path, directory: False)
-    monkeypatch.setattr(importing, "reserve_staging", lambda *a, **k: "wait")
+    monkeypatch.setattr(space, "reserve_staging", lambda *a, **k: "wait")
     seen = []
     with app.app_context():
         tracks.remux_file(
@@ -219,7 +219,7 @@ def test_a_busy_reservation_lock_tries_again_and_then_remuxes_in_place(
     monkeypatch.setattr(tracks, "_on_volume_of", lambda path, directory: False)
     answers = []
     monkeypatch.setattr(
-        importing,
+        space,
         "reserve_staging",
         lambda *args: answers.append("lock") or "lock",
     )
@@ -239,10 +239,10 @@ def test_a_reservation_lock_that_frees_up_remuxes_on_staging(
     app, library_file, staging, monkeypatch
 ):
     monkeypatch.setattr(tracks, "_on_volume_of", lambda path, directory: False)
-    real = importing.reserve_staging
+    real = space.reserve_staging
     answers = ["lock"]
     monkeypatch.setattr(
-        importing,
+        space,
         "reserve_staging",
         lambda *args: answers.pop(0) if answers else real(*args),
     )
@@ -301,7 +301,7 @@ def test_a_failed_reservation_release_after_the_rename_does_not_fail_the_remux(
     def lost(reservation):
         raise ConnectionError("Redis went away")
 
-    monkeypatch.setattr(importing, "release_staging_reservation", lost)
+    monkeypatch.setattr(space, "release_staging_reservation", lost)
     seen = []
     with app.app_context():
         tracks.remux_file(

@@ -12,7 +12,7 @@ import json
 
 import pytest
 
-from app.media.importing import evaluate_filename
+from app.media.importing.filenames import evaluate_filename
 
 from tests.factories import make_movie, make_movie_file, make_tv_file, make_tv_series
 
@@ -20,7 +20,7 @@ from tests.factories import make_movie, make_movie_file, make_tv_file, make_tv_s
 def localization_identifier(details):
     """Return the lock key that localization_task builds from the details."""
 
-    from app.media.importing import lock_key_for_details
+    from app.media.importing.chain import lock_key_for_details
 
     return lock_key_for_details(details)
 

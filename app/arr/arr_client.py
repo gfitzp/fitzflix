@@ -572,7 +572,7 @@ def adopt_download(
     cases the import goes on the queue after the rename. The release data
     that the webhook kept moves to the new path (#671)."""
 
-    from app.media.importing import enqueue_localization
+    from app.media.importing.chain import enqueue_localization
 
     try:
         path = rename_to_quality(arr, call, owner_id, file_id, quality, wait)

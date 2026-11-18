@@ -11,10 +11,15 @@ import shutil
 import pytest
 
 
-from app.media import importing
+from app.media.importing import cataloging
+from app.media.importing import chain
+from app.media.importing import follow_ups
+from app.media.importing import library_move
+from app.media.importing import localization
 
 from app.models import File
-from app.media.importing import finalize_localization, localization_task
+from app.media.importing.cataloging import finalize_localization
+from app.media.importing.localization import localization_task
 
 from tests.localization_helpers import run_full_chain, separate_library_volume
 
@@ -46,11 +51,24 @@ def _roster_jobs(app, func_name):
 def _capture_emails(monkeypatch):
     """Record each admin email and each direct email of the importing module."""
 
-    from app.media import importing
+    from app.media.importing import cataloging
+    from app.media.importing import follow_ups
+    from app.media.importing import library_move
+    from app.media.importing import localization
 
     sent = []
     monkeypatch.setattr(
-        importing,
+        localization,
+        "notify_admin",
+        lambda subject, template, **kwargs: sent.append(("notify", template)),
+    )
+    monkeypatch.setattr(
+        library_move,
+        "notify_admin",
+        lambda subject, template, **kwargs: sent.append(("notify", template)),
+    )
+    monkeypatch.setattr(
+        follow_ups,
         "notify_admin",
         lambda subject, template, **kwargs: sent.append(("notify", template)),
     )
@@ -58,9 +76,9 @@ def _capture_emails(monkeypatch):
     def admin_email(subject, template, **kwargs):
         return lambda: sent.append(("admin", template))
 
-    monkeypatch.setattr(importing, "admin_email", admin_email)
+    monkeypatch.setattr(cataloging, "admin_email", admin_email)
     monkeypatch.setattr(
-        importing,
+        cataloging,
         "send_email",
         lambda subject, **kwargs: sent.append(("todo", subject)),
     )
@@ -152,11 +170,11 @@ def test_finalize_gives_back_an_output_that_is_on_another_volume(
         (move,) = [
             job
             for job in app.handoff_queue.jobs
-            if job.func_name == "app.media.importing.move_localized_file"
+            if job.func_name == "app.media.importing.library_move.move_localized_file"
         ]
         move.delete()
         source_path, details, lock, hidden = move.args
-        inspection = importing.inspect_localized_file(hidden, "Matroska")
+        inspection = library_move.inspect_localized_file(hidden, "Matroska")
         separate_library_volume(app, monkeypatch)
         assert (
             finalize_localization(source_path, details, lock, hidden, inspection)
@@ -165,7 +183,7 @@ def test_finalize_gives_back_an_output_that_is_on_another_volume(
         (again,) = [
             job
             for job in app.handoff_queue.jobs
-            if job.func_name == "app.media.importing.move_localized_file"
+            if job.func_name == "app.media.importing.library_move.move_localized_file"
         ]
         assert again.args[0] == source
         assert again.args[3] == hidden
@@ -192,7 +210,7 @@ def test_foreign_and_lossy_audio_send_their_emails(
     with app.app_context():
         assert localization_task(source) is True
         (move,) = list(app.handoff_queue.jobs)
-        assert importing.move_localized_file(*move.args) is True
+        assert library_move.move_localized_file(*move.args) is True
         (finalize,) = list(app.sql_queue.jobs)
         args = list(finalize.args)
         inspection = copy.deepcopy(args[4])
@@ -233,12 +251,12 @@ def test_a_failed_follow_up_does_not_skip_the_next_ones(
     Before the phase split, the first failure skipped every later step:
     here the source removal and the TMDB refresh."""
 
-    from app.media import importing
+    from app.media.importing import follow_ups
 
     def broken(*args, **kwargs):
         raise RuntimeError("Redis is not reachable")
 
-    monkeypatch.setattr(importing, "_delete_worse_copies", broken)
+    monkeypatch.setattr(follow_ups, "_delete_worse_copies", broken)
     basename = "Later Steps (2021) - [DVD].mkv"
     with app.app_context():
         source = _import(app, sample_mkv, incoming_dir, basename)
@@ -282,7 +300,7 @@ def test_a_failed_follow_up_does_not_skip_the_next_ones(
 def test_audio_alerts(app, tracks, expected):
     """The foreign-audio, lossy-lead and Atmos-order flags of the import emails are pure."""
 
-    from app.media.importing import _audio_alerts
+    from app.media.importing.follow_ups import _audio_alerts
 
     assert _audio_alerts(tracks, "eng") == expected
 
@@ -331,7 +349,7 @@ def test_atmos_not_lead(app, codecs, expected):
 
     The position that the Atmos pipeline gives a twin is not flagged."""
 
-    from app.media.importing import _audio_alerts
+    from app.media.importing.follow_ups import _audio_alerts
 
     tracks = [
         _audio(*codec) if isinstance(codec, tuple) else _audio(codec)
@@ -350,7 +368,7 @@ def _finalize_with_audio(app, sample_mkv, incoming_dir, basename, tracks):
         f_out.write(f_in.read())
     assert localization_task(source) is True
     (move,) = list(app.handoff_queue.jobs)
-    assert importing.move_localized_file(*move.args) is True
+    assert library_move.move_localized_file(*move.args) is True
     (finalize,) = list(app.sql_queue.jobs)
     args = list(finalize.args)
     inspection = copy.deepcopy(args[4])
@@ -371,11 +389,23 @@ def test_an_atmos_track_behind_the_lead_sends_its_email(
 
     from flask import render_template
 
-    from app.media import importing
+    from app.media.importing import follow_ups
+    from app.media.importing import library_move
+    from app.media.importing import localization
 
     sent = []
     monkeypatch.setattr(
-        importing,
+        localization,
+        "notify_admin",
+        lambda subject, template, **context: sent.append((template, context)),
+    )
+    monkeypatch.setattr(
+        library_move,
+        "notify_admin",
+        lambda subject, template, **context: sent.append((template, context)),
+    )
+    monkeypatch.setattr(
+        follow_ups,
         "notify_admin",
         lambda subject, template, **context: sent.append((template, context)),
     )
@@ -411,11 +441,11 @@ def test_a_coming_atmos_lead_sends_no_atmos_order_email(
 ):
     """The queued Atmos job puts its twin first. Without the job, the email goes out."""
 
-    from app.media import importing
+    from app.media.importing import follow_ups
 
     sent = _capture_emails(monkeypatch)
-    monkeypatch.setattr(importing, "_atmos_handoff", lambda *args: None)
-    monkeypatch.setattr(importing, "_enqueue_atmos_twin", lambda *args: queued)
+    monkeypatch.setattr(follow_ups, "_atmos_handoff", lambda *args: None)
+    monkeypatch.setattr(follow_ups, "_enqueue_atmos_twin", lambda *args: queued)
     basename = f"Atmos Coming {int(queued)} (2021) - [Bluray-1080p].mkv"
     tracks = [_audio(FLAC), _audio(TRUEHD_ATMOS), _audio(DDP_ATMOS, "fre")]
     with app.app_context():
@@ -427,7 +457,7 @@ def test_a_coming_atmos_lead_sends_no_atmos_order_email(
 def test_an_atmos_twin_behind_another_track_does_not_lead(app):
     """A twin leads only if the insertion point of a source that wants it is 0."""
 
-    from app.media.importing import _atmos_twin_will_lead
+    from app.media.importing.follow_ups import _atmos_twin_will_lead
 
     assert _atmos_twin_will_lead([_audio(FLAC), _audio(TRUEHD_ATMOS)])
     assert _atmos_twin_will_lead([_audio(TRUEHD_ATMOS), _audio(AC3)])
@@ -442,12 +472,12 @@ def test_a_failed_radarr_report_does_not_skip_the_tmdb_refresh(
 ):
     """The movie_id read of the Radarr report runs inside its own guarded step."""
 
-    from app.media import importing
+    from app.media.importing import library_move
 
     def broken(*args, **kwargs):
         raise RuntimeError("Radarr is away")
 
-    monkeypatch.setattr(importing, "_report_import_move_to_radarr", broken)
+    monkeypatch.setattr(library_move, "_report_import_move_to_radarr", broken)
     basename = "Radarr Away (2021) - [DVD].mkv"
     with app.app_context():
         _import(app, sample_mkv, incoming_dir, basename)
@@ -639,19 +669,20 @@ class _Row:
 def _record_steps(monkeypatch):
     """Record the source steps and the arr record step of _after_commit."""
 
-    from app.media import importing
+    from app.media.importing import filenames
+    from app.media.importing import follow_ups
 
     calls = []
     monkeypatch.setattr(
-        importing, "_remove_source", lambda path: calls.append(("removal", path))
+        follow_ups, "_remove_source", lambda path: calls.append(("removal", path))
     )
     monkeypatch.setattr(
-        importing,
+        filenames,
         "move_to_rejects",
         lambda path, reason="": calls.append(("hold", path, reason)),
     )
     monkeypatch.setattr(
-        importing,
+        follow_ups,
         "_restore_arr_record",
         lambda path, output: calls.append(("arr record", path)),
     )
@@ -666,14 +697,14 @@ def test_a_failed_first_read_after_the_commit_stops_no_later_follow_up(
     The state of the archive is not known. Thus, the source goes to
     rejects/unarchived, as a missing pending upload does."""
 
-    from app.media import importing
+    from app.media.importing import follow_ups
 
     calls = _record_steps(monkeypatch)
     source = str(tmp_path / "import" / "Follow Up.mkv")
     output = str(tmp_path / "Movies" / "Follow Up (2021) - [DVD].mkv")
     with app.app_context():
         assert (
-            importing._after_commit(
+            follow_ups._after_commit(
                 _Row(failing={"aws_key"}),
                 source,
                 {"media_library": "Movies"},
@@ -697,7 +728,8 @@ def test_the_time_limit_of_rq_in_a_follow_up_ends_the_cataloging(
 
     from rq.timeouts import JobTimeoutException
 
-    from app.media import importing
+    from app.media.importing import cataloging
+    from app.media.importing import follow_ups
 
     def hang(path, output):
         raise JobTimeoutException("Task exceeded maximum timeout value")
@@ -711,20 +743,20 @@ def test_the_time_limit_of_rq_in_a_follow_up_ends_the_cataloging(
     }
     monkeypatch.setitem(app.config, "LIBRARY_DIR", str(tmp_path))
     monkeypatch.setattr(
-        importing, "_build_records", lambda *a, **k: (_Row(), [], [], [], [])
+        cataloging, "_build_records", lambda *a, **k: (_Row(), [], [], [], [])
     )
-    monkeypatch.setattr(importing, "_place_file", lambda *a, **k: "renamed")
-    monkeypatch.setattr(importing, "_commit_records", lambda *a, **k: None)
-    monkeypatch.setattr(importing, "_remove_source", lambda path: None)
-    monkeypatch.setattr(importing, "_restore_arr_record", hang)
+    monkeypatch.setattr(cataloging, "_place_file", lambda *a, **k: "renamed")
+    monkeypatch.setattr(cataloging, "_commit_records", lambda *a, **k: None)
+    monkeypatch.setattr(follow_ups, "_remove_source", lambda path: None)
+    monkeypatch.setattr(follow_ups, "_restore_arr_record", hang)
     removed = []
     monkeypatch.setattr(
-        importing, "_enqueue_tmdb_enrichment", lambda *a: removed.append("tmdb")
+        follow_ups, "_enqueue_tmdb_enrichment", lambda *a: removed.append("tmdb")
     )
     with app.app_context():
         lock = app.lock_manager.lock('{"title": "Time Limit"}', 60000)
         with pytest.raises(JobTimeoutException):
-            importing.finalize_localization(
+            cataloging.finalize_localization(
                 str(tmp_path / "import" / name),
                 details,
                 lock,
@@ -740,17 +772,17 @@ def test_a_failed_move_request_keeps_the_source_and_the_replaced_archive(
 ):
     """The row stays on its pending key. Nothing that it needs goes (#690)."""
 
-    from app.media import importing
+    from app.media.importing import follow_ups
 
     calls = _record_steps(monkeypatch)
-    monkeypatch.setattr(importing, "ensure_pending_upload", lambda file, path: True)
+    monkeypatch.setattr(follow_ups, "ensure_pending_upload", lambda file, path: True)
 
     def refuse(file):
         raise RuntimeError("simulated commit fault")
 
-    monkeypatch.setattr(importing, "_request_final_archive_key", refuse)
+    monkeypatch.setattr(follow_ups, "_request_final_archive_key", refuse)
     monkeypatch.setattr(
-        importing,
+        follow_ups,
         "_delete_replaced_archive",
         lambda key: calls.append(("archive delete", key)),
     )
@@ -758,7 +790,7 @@ def test_a_failed_move_request_keeps_the_source_and_the_replaced_archive(
     output = str(tmp_path / "Movies" / "Follow Up (2021) - [DVD].mkv")
     row = _Row(aws_key="pending-untouched/run2/Follow Up.mkv")
     with app.app_context():
-        importing._after_commit(
+        follow_ups._after_commit(
             row,
             source,
             {"media_library": "Movies"},
@@ -781,7 +813,7 @@ def _record_with_other_spelling(app, monkeypatch, title):
     Return (file id, old path, library path of the name in title case)."""
 
     from app import db
-    from app.media import importing
+    from app.media.importing import cataloging
     from tests.factories import make_movie, make_movie_file
 
     file = make_movie_file(make_movie(title, 1962), "DVD")
@@ -791,7 +823,7 @@ def _record_with_other_spelling(app, monkeypatch, title):
     db.session.commit()
     file_id = file.id
     monkeypatch.setattr(
-        importing, "_record_at_path", lambda path: db.session.get(File, file_id)
+        cataloging, "_record_at_path", lambda path: db.session.get(File, file_id)
     )
     library = app.config["LIBRARY_DIR"]
     return (
@@ -812,11 +844,11 @@ def test_a_record_with_an_other_letter_case_takes_the_path_of_the_new_file(
     the file. The thumb of an episode moves with it, as in a rename."""
 
     from app import db
-    from app.media import importing
+    from app.media.importing import follow_ups
 
     thumbs = []
     monkeypatch.setattr(
-        importing, "move_episode_thumb", lambda old, new: thumbs.append((old, new))
+        follow_ups, "move_episode_thumb", lambda old, new: thumbs.append((old, new))
     )
     with app.app_context():
         file_id, old_path, new_path = _record_with_other_spelling(
@@ -849,16 +881,20 @@ def test_a_file_at_the_other_spelling_makes_the_new_file_a_reject(
     from types import SimpleNamespace
 
     from app import db
-    from app.media import importing
+    from app.media.importing import cataloging
+    from app.media.importing import filenames
+    from app.media.importing import localization
 
     rejected, released, mails = [], [], []
     monkeypatch.setattr(
-        importing,
+        filenames,
         "move_to_rejects",
         lambda path, reason: rejected.append((path, reason)),
     )
     monkeypatch.setattr(
-        importing, "notify_admin_text", lambda subject, text, html: mails.append(text)
+        localization,
+        "notify_admin_text",
+        lambda subject, text, html: mails.append(text),
     )
     source = tmp_path / "Other Spelling Film (1962) - [DVD].mkv"
     source.write_bytes(b"the new file")
@@ -886,9 +922,9 @@ def test_a_file_at_the_other_spelling_makes_the_new_file_a_reject(
         )
         before = db.session.get(File, file_id).file_path
 
-        assert importing._file_at_other_spelling(str(source), details) == old_path
+        assert cataloging._file_at_other_spelling(str(source), details) == old_path
         assert (
-            importing._quality_and_space_gate(str(source), details, None, run)
+            localization._quality_and_space_gate(str(source), details, None, run)
             == "reject"
         )
         assert rejected == [(str(source), "other spelling")]
@@ -900,25 +936,25 @@ def test_a_file_at_the_other_spelling_makes_the_new_file_a_reject(
 
         # A path that names the source itself is no other file. A volume
         # that ignores letter case has 1 file for the 2 spellings.
-        assert importing._file_at_other_spelling(old_path, details) is None
+        assert cataloging._file_at_other_spelling(old_path, details) is None
         os.remove(old_path)
-        assert importing._file_at_other_spelling(str(source), details) is None
+        assert cataloging._file_at_other_spelling(str(source), details) is None
 
 
 def _chain_until_the_cataloging(app, source):
     """Run the localization and the move of a source. Return the cataloging job."""
 
-    assert importing.localization_task(source) is True
+    assert localization.localization_task(source) is True
     (move,) = [
         job
         for job in app.handoff_queue.jobs
-        if job.func_name == "app.media.importing.move_localized_file"
+        if job.func_name == "app.media.importing.library_move.move_localized_file"
     ]
-    assert importing.move_localized_file(*move.args) is True
+    assert library_move.move_localized_file(*move.args) is True
     (finalize,) = [
         job
         for job in app.sql_queue.jobs
-        if job.func_name == "app.media.importing.finalize_localization"
+        if job.func_name == "app.media.importing.cataloging.finalize_localization"
     ]
     return finalize
 
@@ -957,7 +993,7 @@ def test_a_second_download_during_an_in_place_import_is_not_replaced(app, sample
         assert [
             job.args
             for job in booked
-            if job.func_name == "app.media.importing.localization_task"
+            if job.func_name == "app.media.importing.localization.localization_task"
         ] == [(source,)]
         for job in booked:
             registry.remove(job, delete_job=True)
@@ -994,11 +1030,11 @@ def test_the_import_directory_is_not_a_library_folder(app, tmp_path, monkeypatch
     monkeypatch.setitem(app.config, "TV_LIBRARY", str(tmp_path / "TV Shows"))
     monkeypatch.setitem(app.config, "IMPORT_DIR", str(tmp_path / "fitzflix/import"))
     with app.app_context():
-        assert importing._in_library(str(tmp_path / "Movies/Film (2021)/Film.mkv"))
-        assert importing._in_library(str(tmp_path / "TV Shows/Show/Season 01/x.mkv"))
-        assert not importing._in_library(str(tmp_path / "fitzflix/import/Film.mkv"))
-        assert not importing._in_library(str(tmp_path / "fitzflix/held/Film.mkv"))
-        assert not importing._in_library(str(tmp_path / "Movies"))
+        assert follow_ups._in_library(str(tmp_path / "Movies/Film (2021)/Film.mkv"))
+        assert follow_ups._in_library(str(tmp_path / "TV Shows/Show/Season 01/x.mkv"))
+        assert not follow_ups._in_library(str(tmp_path / "fitzflix/import/Film.mkv"))
+        assert not follow_ups._in_library(str(tmp_path / "fitzflix/held/Film.mkv"))
+        assert not follow_ups._in_library(str(tmp_path / "Movies"))
 
 
 def test_a_changed_source_of_a_conversion_is_not_removed(app, tmp_path, monkeypatch):
@@ -1012,17 +1048,27 @@ def test_a_changed_source_of_a_conversion_is_not_removed(app, tmp_path, monkeypa
 
     calls = _record_steps(monkeypatch)
     monkeypatch.setattr(
-        importing, "_report_film_move", lambda *a: calls.append(("radarr", a[1]))
+        follow_ups, "_report_film_move", lambda *a: calls.append(("radarr", a[1]))
     )
     uploads = []
     monkeypatch.setattr(
-        importing,
+        follow_ups,
         "_pending_upload_ready",
         lambda file, path, output: uploads.append(path) or True,
     )
     booked = []
+    monkeypatch.setattr(chain, "requeue", lambda name, **kw: booked.append(kw["args"]))
     monkeypatch.setattr(
-        importing, "requeue", lambda name, **kw: booked.append(kw["args"])
+        localization, "requeue", lambda name, **kw: booked.append(kw["args"])
+    )
+    monkeypatch.setattr(
+        library_move, "requeue", lambda name, **kw: booked.append(kw["args"])
+    )
+    monkeypatch.setattr(
+        cataloging, "requeue", lambda name, **kw: booked.append(kw["args"])
+    )
+    monkeypatch.setattr(
+        follow_ups, "requeue", lambda name, **kw: booked.append(kw["args"])
     )
     monkeypatch.setitem(app.config, "LIBRARY_DIR", str(tmp_path))
     source = tmp_path / "Movies" / "Converted (2021) - [Remux-2160p].mkv"
@@ -1031,7 +1077,7 @@ def test_a_changed_source_of_a_conversion_is_not_removed(app, tmp_path, monkeypa
     output = str(tmp_path / "Movies" / "Converted (2021) - [Bluray-1080p].mkv")
 
     def after_commit(details):
-        return importing._after_commit(
+        return follow_ups._after_commit(
             _Row(),
             str(source),
             details,
@@ -1047,7 +1093,7 @@ def test_a_changed_source_of_a_conversion_is_not_removed(app, tmp_path, monkeypa
     with app.app_context():
         details = {
             "media_library": "Movies",
-            "source_stamp": importing.library_stamp(str(source)),
+            "source_stamp": localization.library_stamp(str(source)),
         }
         after_commit(dict(details))
         assert calls == [

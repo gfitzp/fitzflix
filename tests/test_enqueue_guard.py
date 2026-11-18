@@ -21,7 +21,7 @@ NAME = "Heat (1995) - [WEBDL-1080p].mkv"
 
 
 def test_enqueue_skips_a_file_that_already_waits(app, tmp_path):
-    from app.media.importing import enqueue_localization
+    from app.media.importing.chain import enqueue_localization
 
     path = str(tmp_path / NAME)
     with app.app_context():
@@ -35,12 +35,12 @@ def test_enqueue_skips_a_file_with_a_scheduled_retry(app, tmp_path):
 
     The match is by the source argument, not by the id (#616)."""
 
-    from app.media.importing import enqueue_localization
+    from app.media.importing.chain import enqueue_localization
 
     with app.app_context():
         retry = app.import_queue.enqueue_in(
             timedelta(minutes=5),
-            "app.media.importing.localization_task",
+            "app.media.importing.localization.localization_task",
             args=(str(tmp_path / NAME),),
             job_id="any-retry-id",
         )
@@ -52,7 +52,7 @@ def test_enqueue_skips_a_file_with_a_scheduled_retry(app, tmp_path):
 def test_enqueue_removes_a_stale_finished_entry(app, tmp_path):
     """The expiry of an old finished entry must not delete the new job."""
 
-    from app.media.importing import enqueue_localization
+    from app.media.importing.chain import enqueue_localization
 
     job_id = safe_job_id(NAME)
     with app.app_context():
@@ -69,7 +69,7 @@ def test_enqueue_removes_a_stale_finished_entry(app, tmp_path):
 
 
 def test_already_cataloged_needs_the_same_path_and_size(app, monkeypatch, tmp_path):
-    from app.media.importing import already_cataloged
+    from app.media.importing.chain import already_cataloged
 
     monkeypatch.setitem(app.config, "LIBRARY_DIR", str(tmp_path))
     folder = tmp_path / "Movies" / "Heat (1995)"
@@ -97,16 +97,17 @@ def test_already_cataloged_needs_the_same_path_and_size(app, monkeypatch, tmp_pa
 def test_localization_skips_a_cataloged_file(app, monkeypatch, tmp_path, caplog):
     """A late run returns at once and changes nothing."""
 
-    import app.media.importing as importing
+    from app.media.importing import chain
+    from app.media.importing import localization
 
     monkeypatch.setitem(app.config, "LIBRARY_DIR", str(tmp_path))
-    monkeypatch.setattr(importing, "already_cataloged", lambda path: True)
+    monkeypatch.setattr(chain, "already_cataloged", lambda path: True)
     monkeypatch.setattr("app.media.videos._dead_volumes", lambda paths: [])
     path = tmp_path / NAME
     path.write_bytes(b"movie")
 
     with caplog.at_level("INFO"):
-        assert importing.localization_task(str(path)) is False
+        assert localization.localization_task(str(path)) is False
     assert "Is already in the library; nothing to import" in caplog.text
     assert path.exists()
 
@@ -118,7 +119,7 @@ def test_enqueue_skips_a_source_that_a_later_stage_holds(app, tmp_path):
     conversion keeps it there for hours. The hourly sweep must not queue
     it again."""
 
-    from app.media.importing import enqueue_localization
+    from app.media.importing.chain import enqueue_localization
 
     path = str(tmp_path / NAME)
     other = str(tmp_path / "Ronin (1998) - [WEBDL-1080p].mkv")
@@ -126,8 +127,8 @@ def test_enqueue_skips_a_source_that_a_later_stage_holds(app, tmp_path):
     with app.app_context():
         for queue, func in (
             (app.transcode_queue, "app.media.sdr_conversion.convert_localized_file"),
-            (app.handoff_queue, "app.media.importing.move_localized_file"),
-            (app.sql_queue, "app.media.importing.finalize_localization"),
+            (app.handoff_queue, "app.media.importing.library_move.move_localized_file"),
+            (app.sql_queue, "app.media.importing.cataloging.finalize_localization"),
         ):
             job = queue.enqueue(func, args=(path, details, None, "/staging/x"))
             assert enqueue_localization(path) is None
@@ -137,7 +138,7 @@ def test_enqueue_skips_a_source_that_a_later_stage_holds(app, tmp_path):
         # A retry that waits in the scheduled registry holds the source too.
         retry = app.handoff_queue.enqueue_in(
             timedelta(minutes=5),
-            "app.media.importing.move_localized_file",
+            "app.media.importing.library_move.move_localized_file",
             path,
             details,
             None,
@@ -157,7 +158,7 @@ def test_enqueue_skips_a_source_that_a_later_stage_holds(app, tmp_path):
 def test_a_quick_reimport_gets_a_job_that_does_not_expire(app, tmp_path):
     """The finished hash of the id keeps its expiry. It must go first (#371)."""
 
-    from app.media.importing import enqueue_localization
+    from app.media.importing.chain import enqueue_localization
 
     path = str(tmp_path / NAME)
     job_id = safe_job_id(NAME)
@@ -179,7 +180,7 @@ def test_a_failed_first_run_stays_for_the_sweep(app, tmp_path):
 
     from rq.registry import FailedJobRegistry
 
-    from app.media.importing import enqueue_localization
+    from app.media.importing.chain import enqueue_localization
 
     path = str(tmp_path / NAME)
     job_id = safe_job_id(NAME)
@@ -201,12 +202,12 @@ def test_a_later_stage_in_the_dequeue_gap_holds_its_source(app, tmp_path):
 
     A worker moves the id there between the pop and the start."""
 
-    from app.media.importing import later_stage_holds, paths_held_by_later_stages
+    from app.media.importing.chain import later_stage_holds, paths_held_by_later_stages
 
     path = str(tmp_path / NAME)
     with app.app_context():
         job = app.handoff_queue.enqueue(
-            "app.media.importing.move_localized_file",
+            "app.media.importing.library_move.move_localized_file",
             args=(path, {"basename": NAME}, None, "/staging/x"),
         )
         app.redis.lrem(app.handoff_queue.key, 0, job.id)
@@ -224,7 +225,7 @@ def test_a_live_job_of_a_same_name_file_keeps_its_id(app, tmp_path, dequeued):
     in the queue list or in the dequeue gap. The second path gets the
     id with a time tag."""
 
-    from app.media.importing import enqueue_localization, localization_pending
+    from app.media.importing.chain import enqueue_localization, localization_pending
 
     first = str(tmp_path / NAME)
     second = str(tmp_path / "sub" / NAME)

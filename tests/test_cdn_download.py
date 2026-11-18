@@ -54,7 +54,8 @@ def cdn(app, monkeypatch):
     Return a record of the signed keys and the queued responses. Each
     download attempt pops the next response."""
 
-    from app.archive import aws_storage
+    from app.archive import cdn as archive_cdn
+    from app.archive import downloads
 
     # A restored rip never replaces a file of its name in the import
     # directory (#433). An earlier test can leave x.mkv there.
@@ -66,7 +67,7 @@ def cdn(app, monkeypatch):
     monkeypatch.setitem(app.config, "CDN_DOMAIN", "d1.cloudfront.net")
     monkeypatch.setitem(app.config, "CDN_KEY_PAIR_ID", "KTEST")
     monkeypatch.setitem(app.config, "CDN_PRIVATE_KEY", "/nonexistent.pem")
-    monkeypatch.setattr(aws_storage, "DOWNLOAD_RETRY_SLEEP", lambda seconds: None)
+    monkeypatch.setattr(downloads, "DOWNLOAD_RETRY_SLEEP", lambda seconds: None)
 
     record = {"signed": [], "responses": [], "requested": []}
 
@@ -79,18 +80,18 @@ def cdn(app, monkeypatch):
         record.setdefault("headers", []).append(headers or {})
         return record["responses"].pop(0)
 
-    monkeypatch.setattr(aws_storage, "cdn_signed_url", fake_sign)
-    monkeypatch.setattr(aws_storage, "CDN_HTTP_GET", fake_get)
+    monkeypatch.setattr(archive_cdn, "cdn_signed_url", fake_sign)
+    monkeypatch.setattr(archive_cdn, "CDN_HTTP_GET", fake_get)
     # The signer is stubbed, so the key file is not read here
-    monkeypatch.setattr(aws_storage, "cdn_settings_problem", lambda: None)
+    monkeypatch.setattr(archive_cdn, "cdn_settings_problem", lambda: None)
     return record
 
 
 def _wire(monkeypatch, s3, sqs):
-    from app.archive import aws_storage
+    from app.archive import aws_clients
 
-    monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kwargs: s3)
-    monkeypatch.setattr(aws_storage, "aws_sqs_client", lambda: sqs)
+    monkeypatch.setattr(aws_clients, "aws_s3_client", lambda **kwargs: s3)
+    monkeypatch.setattr(aws_clients, "aws_sqs_client", lambda: sqs)
 
 
 def test_flag_off_keeps_the_s3_transport(app, monkeypatch):
@@ -99,20 +100,21 @@ def test_flag_off_keeps_the_s3_transport(app, monkeypatch):
     Without AWS_DOWNLOAD_VIA_CDN, download_file runs and no HTTP request
     goes out, even when the CDN settings are present."""
 
-    from app.archive import aws_storage
+    from app.archive import cdn as archive_cdn
+    from app.archive import downloads
 
     monkeypatch.setitem(app.config, "CDN_DOMAIN", "d1.cloudfront.net")
     requested = []
     monkeypatch.setattr(
-        aws_storage, "CDN_HTTP_GET", lambda *a, **k: requested.append(a)
+        archive_cdn, "CDN_HTTP_GET", lambda *a, **k: requested.append(a)
     )
     s3 = S3()
     _wire(monkeypatch, s3, SQS())
 
     with app.app_context():
         assert (
-            aws_storage.aws_download("untouched/x.mkv", "x.mkv")
-            == aws_storage.DOWNLOAD_COMPLETE
+            downloads.aws_download("untouched/x.mkv", "x.mkv")
+            == downloads.DOWNLOAD_COMPLETE
         )
         assert os.path.exists(os.path.join(app.config["IMPORT_DIR"], "x.mkv"))
 
@@ -127,7 +129,7 @@ def test_flag_on_without_settings_gives_up(app, monkeypatch):
     False without a transfer, and the SQS message stays for a later
     delivery."""
 
-    from app.archive import aws_storage
+    from app.archive import downloads
 
     monkeypatch.setitem(app.config, "AWS_DOWNLOAD_VIA_CDN", True)
     monkeypatch.setitem(app.config, "CDN_DOMAIN", "d1.cloudfront.net")
@@ -137,8 +139,8 @@ def test_flag_on_without_settings_gives_up(app, monkeypatch):
 
     with app.app_context():
         assert (
-            aws_storage.aws_download("untouched/x.mkv", "x.mkv", "r1")
-            == aws_storage.DOWNLOAD_GAVE_UP
+            downloads.aws_download("untouched/x.mkv", "x.mkv", "r1")
+            == downloads.DOWNLOAD_GAVE_UP
         )
 
     assert s3.downloads == []
@@ -151,7 +153,7 @@ def test_cdn_download_lands_the_file(app, monkeypatch, cdn):
     The bytes land in the import directory under the final name, the
     SQS message goes away, and download_file never runs."""
 
-    from app.archive import aws_storage
+    from app.archive import downloads
 
     cdn["responses"] = [_FakeResponse(200, b"cdn")]
     s3 = S3()
@@ -160,8 +162,8 @@ def test_cdn_download_lands_the_file(app, monkeypatch, cdn):
 
     with app.app_context():
         assert (
-            aws_storage.aws_download("untouched/x.mkv", "x.mkv", "r1")
-            == aws_storage.DOWNLOAD_COMPLETE
+            downloads.aws_download("untouched/x.mkv", "x.mkv", "r1")
+            == downloads.DOWNLOAD_COMPLETE
         )
         final = os.path.join(app.config["IMPORT_DIR"], "x.mkv")
         assert open(final, "rb").read() == b"cdn"
@@ -178,15 +180,15 @@ def test_cdn_retry_signs_a_new_url(app, monkeypatch, cdn):
     A 503 spends one retry. The second attempt must not reuse the first
     URL, because a short expiry can pass during the backoff."""
 
-    from app.archive import aws_storage
+    from app.archive import downloads
 
     cdn["responses"] = [_FakeResponse(503), _FakeResponse(200, b"cdn")]
     _wire(monkeypatch, S3(), SQS())
 
     with app.app_context():
         assert (
-            aws_storage.aws_download("untouched/x.mkv", "x.mkv")
-            == aws_storage.DOWNLOAD_COMPLETE
+            downloads.aws_download("untouched/x.mkv", "x.mkv")
+            == downloads.DOWNLOAD_COMPLETE
         )
 
     assert len(cdn["signed"]) == 2
@@ -196,7 +198,7 @@ def test_cdn_retry_signs_a_new_url(app, monkeypatch, cdn):
 def test_cdn_short_body_is_retried(app, monkeypatch, cdn):
     """Test that a body shorter than Content-Length spends a retry."""
 
-    from app.archive import aws_storage
+    from app.archive import downloads
 
     short = _FakeResponse(200, b"cd")
     short.headers["Content-Length"] = "3"
@@ -205,8 +207,8 @@ def test_cdn_short_body_is_retried(app, monkeypatch, cdn):
 
     with app.app_context():
         assert (
-            aws_storage.aws_download("untouched/x.mkv", "x.mkv")
-            == aws_storage.DOWNLOAD_COMPLETE
+            downloads.aws_download("untouched/x.mkv", "x.mkv")
+            == downloads.DOWNLOAD_COMPLETE
         )
         final = os.path.join(app.config["IMPORT_DIR"], "x.mkv")
         assert open(final, "rb").read() == b"cdn"
@@ -221,7 +223,7 @@ def test_cdn_short_body_without_content_length_is_retried(app, monkeypatch, cdn)
     the size that the S3 HEAD reported. A short body spends a retry and
     never becomes a visible import."""
 
-    from app.archive import aws_storage
+    from app.archive import downloads
 
     short = _FakeResponse(200, b"cd")
     del short.headers["Content-Length"]
@@ -230,8 +232,8 @@ def test_cdn_short_body_without_content_length_is_retried(app, monkeypatch, cdn)
 
     with app.app_context():
         assert (
-            aws_storage.aws_download("untouched/x.mkv", "x.mkv")
-            == aws_storage.DOWNLOAD_COMPLETE
+            downloads.aws_download("untouched/x.mkv", "x.mkv")
+            == downloads.DOWNLOAD_COMPLETE
         )
         final = os.path.join(app.config["IMPORT_DIR"], "x.mkv")
         assert open(final, "rb").read() == b"cdn"
@@ -245,7 +247,7 @@ def test_cdn_404_is_a_missing_object(app, monkeypatch, cdn):
     There is no retry. The SQS message goes away, and no partial file
     remains."""
 
-    from app.archive import aws_storage
+    from app.archive import downloads
 
     cdn["responses"] = [_FakeResponse(404)]
     sqs = SQS()
@@ -253,8 +255,8 @@ def test_cdn_404_is_a_missing_object(app, monkeypatch, cdn):
 
     with app.app_context():
         assert (
-            aws_storage.aws_download("untouched/x.mkv", "x.mkv", "r404")
-            == aws_storage.DOWNLOAD_OBJECT_MISSING
+            downloads.aws_download("untouched/x.mkv", "x.mkv", "r404")
+            == downloads.DOWNLOAD_OBJECT_MISSING
         )
         assert not os.path.exists(os.path.join(app.config["IMPORT_DIR"], ".x.mkv"))
 
@@ -269,7 +271,8 @@ def test_cdn_403_on_a_cold_object_requests_a_restore(app, monkeypatch, cdn):
     Restore header and a cold storage class. Thus, the function requests
     a new restore and drops the stale SQS message."""
 
-    from app.archive import aws_storage
+    from app.archive import downloads
+    from app.archive import restores
 
     cdn["responses"] = [_FakeResponse(403)]
     s3 = S3(head={"ContentLength": 3, "StorageClass": "DEEP_ARCHIVE"})
@@ -277,13 +280,13 @@ def test_cdn_403_on_a_cold_object_requests_a_restore(app, monkeypatch, cdn):
     restored = []
     _wire(monkeypatch, s3, sqs)
     monkeypatch.setattr(
-        aws_storage, "aws_restore", lambda key, **kwargs: restored.append(key)
+        restores, "aws_restore", lambda key, **kwargs: restored.append(key)
     )
 
     with app.app_context():
         assert (
-            aws_storage.aws_download("untouched/x.mkv", "x.mkv", "rstale")
-            == aws_storage.DOWNLOAD_RESTORE_PENDING
+            downloads.aws_download("untouched/x.mkv", "x.mkv", "rstale")
+            == downloads.DOWNLOAD_RESTORE_PENDING
         )
 
     assert restored == ["untouched/x.mkv"]
@@ -296,7 +299,8 @@ def test_cdn_403_during_a_restore_waits(app, monkeypatch, cdn):
     The HEAD shows an ongoing restore. The function requests no new
     restore. It drops the stale message and waits for the notification."""
 
-    from app.archive import aws_storage
+    from app.archive import downloads
+    from app.archive import restores
 
     cdn["responses"] = [_FakeResponse(403)]
     s3 = S3(
@@ -310,13 +314,13 @@ def test_cdn_403_during_a_restore_waits(app, monkeypatch, cdn):
     restored = []
     _wire(monkeypatch, s3, sqs)
     monkeypatch.setattr(
-        aws_storage, "aws_restore", lambda key, **kwargs: restored.append(key)
+        restores, "aws_restore", lambda key, **kwargs: restored.append(key)
     )
 
     with app.app_context():
         assert (
-            aws_storage.aws_download("untouched/x.mkv", "x.mkv", "rwait")
-            == aws_storage.DOWNLOAD_RESTORE_PENDING
+            downloads.aws_download("untouched/x.mkv", "x.mkv", "rwait")
+            == downloads.DOWNLOAD_RESTORE_PENDING
         )
 
     assert restored == []
@@ -332,7 +336,8 @@ def test_cdn_403_on_an_expired_restore_requests_a_restore(app, monkeypatch, cdn)
     Without this, the message would come back each visibility timeout
     forever."""
 
-    from app.archive import aws_storage
+    from app.archive import downloads
+    from app.archive import restores
 
     cdn["responses"] = [_FakeResponse(403)]
     s3 = S3(
@@ -346,13 +351,13 @@ def test_cdn_403_on_an_expired_restore_requests_a_restore(app, monkeypatch, cdn)
     restored = []
     _wire(monkeypatch, s3, sqs)
     monkeypatch.setattr(
-        aws_storage, "aws_restore", lambda key, **kwargs: restored.append(key)
+        restores, "aws_restore", lambda key, **kwargs: restored.append(key)
     )
 
     with app.app_context():
         assert (
-            aws_storage.aws_download("untouched/x.mkv", "x.mkv", "rexpired")
-            == aws_storage.DOWNLOAD_RESTORE_PENDING
+            downloads.aws_download("untouched/x.mkv", "x.mkv", "rexpired")
+            == downloads.DOWNLOAD_RESTORE_PENDING
         )
 
     assert restored == ["untouched/x.mkv"]
@@ -367,7 +372,8 @@ def test_cdn_403_on_a_readable_object_gives_up(app, monkeypatch, cdn):
     The function gives up, drops the SQS message, and removes the
     partial file."""
 
-    from app.archive import aws_storage
+    from app.archive import downloads
+    from app.archive import restores
 
     cdn["responses"] = [_FakeResponse(403)]
     s3 = S3(
@@ -381,13 +387,13 @@ def test_cdn_403_on_a_readable_object_gives_up(app, monkeypatch, cdn):
     restored = []
     _wire(monkeypatch, s3, sqs)
     monkeypatch.setattr(
-        aws_storage, "aws_restore", lambda key, **kwargs: restored.append(key)
+        restores, "aws_restore", lambda key, **kwargs: restored.append(key)
     )
 
     with app.app_context():
         assert (
-            aws_storage.aws_download("untouched/x.mkv", "x.mkv", "r403")
-            == aws_storage.DOWNLOAD_ACCESS_DENIED
+            downloads.aws_download("untouched/x.mkv", "x.mkv", "r403")
+            == downloads.DOWNLOAD_ACCESS_DENIED
         )
         assert not os.path.exists(os.path.join(app.config["IMPORT_DIR"], ".x.mkv"))
 
@@ -402,15 +408,15 @@ def test_cdn_403_on_a_readable_object_gives_up(app, monkeypatch, cdn):
 def test_cdn_400_gives_up_without_retry(app, monkeypatch, cdn):
     """Test that a client error other than 403 and 404 is terminal."""
 
-    from app.archive import aws_storage
+    from app.archive import downloads
 
     cdn["responses"] = [_FakeResponse(400)]
     _wire(monkeypatch, S3(), SQS())
 
     with app.app_context():
         assert (
-            aws_storage.aws_download("untouched/x.mkv", "x.mkv")
-            == aws_storage.DOWNLOAD_GAVE_UP
+            downloads.aws_download("untouched/x.mkv", "x.mkv")
+            == downloads.DOWNLOAD_GAVE_UP
         )
 
     assert len(cdn["signed"]) == 1
@@ -429,7 +435,8 @@ def test_cdn_transport_error_spends_a_retry(app, monkeypatch, cdn, caplog):
 
     from urllib3.exceptions import MaxRetryError
 
-    from app.archive import aws_storage
+    from app.archive import cdn as archive_cdn
+    from app.archive import downloads
     from app.operations.redaction import REDACTED
 
     calls = []
@@ -442,14 +449,14 @@ def test_cdn_transport_error_spends_a_retry(app, monkeypatch, cdn, caplog):
             )
         return _FakeResponse(200, b"cdn")
 
-    monkeypatch.setattr(aws_storage, "CDN_HTTP_GET", flaky_get)
+    monkeypatch.setattr(archive_cdn, "CDN_HTTP_GET", flaky_get)
     _wire(monkeypatch, S3(), SQS())
 
     with app.app_context():
         with caplog.at_level(logging.WARNING):
             assert (
-                aws_storage.aws_download("untouched/x.mkv", "x.mkv")
-                == aws_storage.DOWNLOAD_COMPLETE
+                downloads.aws_download("untouched/x.mkv", "x.mkv")
+                == downloads.DOWNLOAD_COMPLETE
             )
 
     assert len(calls) == 2
@@ -461,7 +468,7 @@ def test_cdn_transport_error_spends_a_retry(app, monkeypatch, cdn, caplog):
 def test_object_is_readable():
     """Test the readable check for each restore state."""
 
-    from app.archive.aws_storage import _object_is_readable
+    from app.archive.aws_clients import _object_is_readable
 
     assert _object_is_readable({})
     assert _object_is_readable({"StorageClass": "STANDARD"})
@@ -508,7 +515,7 @@ def test_cdn_signed_url_verifies_with_the_public_key(app, monkeypatch, tmp_path)
     from cryptography.hazmat.primitives import hashes, serialization
     from cryptography.hazmat.primitives.asymmetric import padding, rsa
 
-    from app.archive import aws_storage
+    from app.archive import cdn as archive_cdn
 
     private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     pem = tmp_path / "cf.pem"
@@ -525,7 +532,7 @@ def test_cdn_signed_url_verifies_with_the_public_key(app, monkeypatch, tmp_path)
     monkeypatch.setitem(app.config, "CDN_URL_EXPIRY", 60)
 
     with app.app_context():
-        url = aws_storage.cdn_signed_url("untouched/Thing (2021) - [DVD].mkv")
+        url = archive_cdn.cdn_signed_url("untouched/Thing (2021) - [DVD].mkv")
 
     parts = urllib.parse.urlsplit(url)
     assert parts.scheme == "https" and parts.netloc == "d1.cloudfront.net"
@@ -563,7 +570,7 @@ def test_cdn_403_on_a_missing_object_is_a_missing_object(app, monkeypatch, cdn):
     The bucket policy grants no list right. Thus, S3 says 403 for a
     missing key, and CloudFront forwards it. The HEAD says 404."""
 
-    from app.archive import aws_storage
+    from app.archive import downloads
 
     cdn["responses"] = [_FakeResponse(403)]
     sqs = SQS()
@@ -581,8 +588,8 @@ def test_cdn_403_on_a_missing_object_is_a_missing_object(app, monkeypatch, cdn):
 
     with app.app_context():
         assert (
-            aws_storage.aws_download("untouched/x.mkv", "x.mkv", "r403")
-            == aws_storage.DOWNLOAD_OBJECT_MISSING
+            downloads.aws_download("untouched/x.mkv", "x.mkv", "r403")
+            == downloads.DOWNLOAD_OBJECT_MISSING
         )
         assert not os.path.exists(os.path.join(app.config["IMPORT_DIR"], ".x.mkv"))
 
@@ -596,7 +603,7 @@ def test_early_return_removes_the_partial_file(app, monkeypatch, cdn):
     The first attempt drops mid-body and leaves bytes on disk. The second
     gets a 404. The partial dotfile must go with the message."""
 
-    from app.archive import aws_storage
+    from app.archive import downloads
 
     cdn["responses"] = [_FakeResponse(200, b"cdn", fail_after=2), _FakeResponse(404)]
     _wire(monkeypatch, S3(), SQS())
@@ -604,8 +611,8 @@ def test_early_return_removes_the_partial_file(app, monkeypatch, cdn):
     with app.app_context():
         partial = os.path.join(app.config["IMPORT_DIR"], ".x.mkv")
         assert (
-            aws_storage.aws_download("untouched/x.mkv", "x.mkv", "r")
-            == aws_storage.DOWNLOAD_OBJECT_MISSING
+            downloads.aws_download("untouched/x.mkv", "x.mkv", "r")
+            == downloads.DOWNLOAD_OBJECT_MISSING
         )
         assert not os.path.exists(partial)
 
@@ -616,7 +623,7 @@ def test_cdn_resumes_a_dropped_download_with_a_range(app, monkeypatch, cdn):
     The first attempt drops after 2 of 3 bytes. The second sends a Range
     header and gets a 206 with the last byte. The file is complete."""
 
-    from app.archive import aws_storage
+    from app.archive import downloads
 
     rest = _FakeResponse(206, b"n")
     cdn["responses"] = [_FakeResponse(200, b"cdn", fail_after=2), rest]
@@ -624,8 +631,8 @@ def test_cdn_resumes_a_dropped_download_with_a_range(app, monkeypatch, cdn):
 
     with app.app_context():
         assert (
-            aws_storage.aws_download("untouched/x.mkv", "x.mkv")
-            == aws_storage.DOWNLOAD_COMPLETE
+            downloads.aws_download("untouched/x.mkv", "x.mkv")
+            == downloads.DOWNLOAD_COMPLETE
         )
         landed = os.path.join(app.config["IMPORT_DIR"], "x.mkv")
         assert open(landed, "rb").read() == b"cdn"
@@ -641,7 +648,7 @@ def test_a_partial_of_an_older_version_starts_again(app, monkeypatch, cdn):
     A Range request would append the tail of version 2 to the head of
     version 1, at exactly the right size. The sidecar ETag stops it."""
 
-    from app.archive import aws_storage
+    from app.archive import downloads
 
     s3 = S3({"ContentLength": 3, "ETag": '"v1"'})
     cdn["responses"] = [
@@ -659,8 +666,8 @@ def test_a_partial_of_an_older_version_starts_again(app, monkeypatch, cdn):
 
     with app.app_context():
         assert (
-            aws_storage.aws_download("untouched/x.mkv", "x.mkv")
-            == aws_storage.DOWNLOAD_COMPLETE
+            downloads.aws_download("untouched/x.mkv", "x.mkv")
+            == downloads.DOWNLOAD_COMPLETE
         )
         landed = os.path.join(app.config["IMPORT_DIR"], "x.mkv")
         assert open(landed, "rb").read() == b"new"
@@ -676,17 +683,18 @@ def test_a_direct_restore_stages_under_its_key(app, monkeypatch, cdn):
     archives of a conversion, which share an untouched name, also get 2
     files."""
 
-    from app.archive import aws_storage
+    from app.archive import cdn as archive_cdn
+    from app.archive import downloads
 
     staged = []
-    real_cdn_download = aws_storage.cdn_download
+    real_cdn_download = archive_cdn.cdn_download
 
     def recording(key, destination, *args, **kwargs):
         staged.append(os.path.basename(destination))
         return real_cdn_download(key, destination, *args, **kwargs)
 
-    monkeypatch.setattr(aws_storage, "cdn_download", recording)
-    monkeypatch.setattr(aws_storage, "place_in_library", lambda *a, **k: None)
+    monkeypatch.setattr(archive_cdn, "cdn_download", recording)
+    monkeypatch.setattr(downloads, "place_in_library", lambda *a, **k: None)
     cdn["responses"] = [_FakeResponse(200, b"cdn"), _FakeResponse(200, b"cdn")]
     _wire(monkeypatch, S3(), SQS())
 
@@ -695,7 +703,7 @@ def test_a_direct_restore_stages_under_its_key(app, monkeypatch, cdn):
             "modified/Shadows (1958) - Restoration Demonstration.mkv",
             "modified/Cherbourg (1964) - Restoration Demonstration.mkv",
         ):
-            aws_storage.aws_download(
+            downloads.aws_download(
                 key, "Restoration Demonstration.mkv", place_at="/library/x.mkv"
             )
 
@@ -716,10 +724,10 @@ def test_cdn_body_with_no_known_size_is_not_trusted(app, monkeypatch, cdn):
     Neither guard can run. Thus, the attempt fails rather than rename
     an unchecked body into a visible import."""
 
-    from app.archive import aws_storage
+    from app.archive import downloads
 
     responses = []
-    for _ in range(aws_storage.MAX_DOWNLOAD_RETRIES):
+    for _ in range(downloads.MAX_DOWNLOAD_RETRIES):
         response = _FakeResponse(200, b"cd")
         response.headers = {}
         responses.append(response)
@@ -731,8 +739,8 @@ def test_cdn_body_with_no_known_size_is_not_trusted(app, monkeypatch, cdn):
         if os.path.exists(landed):  # left by an earlier test in this session
             os.remove(landed)
         assert (
-            aws_storage.aws_download("untouched/x.mkv", "x.mkv")
-            == aws_storage.DOWNLOAD_GAVE_UP
+            downloads.aws_download("untouched/x.mkv", "x.mkv")
+            == downloads.DOWNLOAD_GAVE_UP
         )
         assert not os.path.exists(os.path.join(app.config["IMPORT_DIR"], "x.mkv"))
         assert not os.path.exists(os.path.join(app.config["IMPORT_DIR"], ".x.mkv"))
@@ -743,7 +751,8 @@ def test_unreadable_private_key_fails_fast(app, monkeypatch, tmp_path):
 
     No HTTP request goes out, and the message names the setting."""
 
-    from app.archive import aws_storage
+    from app.archive import cdn as archive_cdn
+    from app.archive import downloads
 
     monkeypatch.setitem(app.config, "AWS_DOWNLOAD_VIA_CDN", True)
     monkeypatch.setitem(app.config, "CDN_DOMAIN", "d1.cloudfront.net")
@@ -751,21 +760,21 @@ def test_unreadable_private_key_fails_fast(app, monkeypatch, tmp_path):
     monkeypatch.setitem(app.config, "CDN_PRIVATE_KEY", str(tmp_path / "missing.pem"))
     requested = []
     monkeypatch.setattr(
-        aws_storage, "CDN_HTTP_GET", lambda *a, **k: requested.append(a)
+        archive_cdn, "CDN_HTTP_GET", lambda *a, **k: requested.append(a)
     )
     _wire(monkeypatch, S3(), SQS())
 
     with app.app_context():
-        assert "CDN_PRIVATE_KEY cannot be read" in aws_storage.cdn_settings_problem()
+        assert "CDN_PRIVATE_KEY cannot be read" in archive_cdn.cdn_settings_problem()
         assert (
-            aws_storage.aws_download("untouched/x.mkv", "x.mkv")
-            == aws_storage.DOWNLOAD_GAVE_UP
+            downloads.aws_download("untouched/x.mkv", "x.mkv")
+            == downloads.DOWNLOAD_GAVE_UP
         )
     assert requested == []
 
     (tmp_path / "missing.pem").write_text("not a key")
     with app.app_context():
-        assert "does not parse" in aws_storage.cdn_settings_problem()
+        assert "does not parse" in archive_cdn.cdn_settings_problem()
 
 
 def test_archive_rename_defers_on_an_expired_restore(app):
@@ -773,7 +782,7 @@ def test_archive_rename_defers_on_an_expired_restore(app):
 
     A restored copy whose expiry date has passed is not copyable."""
 
-    from app.archive.aws_storage import _object_is_readable
+    from app.archive.aws_clients import _object_is_readable
 
     head = {
         "StorageClass": "DEEP_ARCHIVE",
@@ -790,7 +799,7 @@ def test_a_retried_fault_writes_no_error_record(app, monkeypatch, cdn, caplog):
 
     import logging
 
-    from app.archive import aws_storage
+    from app.archive import downloads
 
     cdn["responses"] = [
         _FakeResponse(503),
@@ -801,8 +810,8 @@ def test_a_retried_fault_writes_no_error_record(app, monkeypatch, cdn, caplog):
 
     with caplog.at_level(logging.INFO), app.app_context():
         assert (
-            aws_storage.aws_download("untouched/x.mkv", "x.mkv")
-            == aws_storage.DOWNLOAD_COMPLETE
+            downloads.aws_download("untouched/x.mkv", "x.mkv")
+            == downloads.DOWNLOAD_COMPLETE
         )
 
     assert [r for r in caplog.records if r.levelno >= logging.ERROR] == []
@@ -816,17 +825,17 @@ def test_the_give_up_writes_one_error_record(app, monkeypatch, cdn, caplog):
 
     import logging
 
-    from app.archive import aws_storage
+    from app.archive import downloads
 
     cdn["responses"] = [
-        _FakeResponse(503) for _ in range(aws_storage.MAX_DOWNLOAD_RETRIES)
+        _FakeResponse(503) for _ in range(downloads.MAX_DOWNLOAD_RETRIES)
     ]
     _wire(monkeypatch, S3(), SQS())
 
     with caplog.at_level(logging.INFO), app.app_context():
         assert (
-            aws_storage.aws_download("untouched/x.mkv", "x.mkv")
-            == aws_storage.DOWNLOAD_GAVE_UP
+            downloads.aws_download("untouched/x.mkv", "x.mkv")
+            == downloads.DOWNLOAD_GAVE_UP
         )
 
     errors = [r.getMessage() for r in caplog.records if r.levelno >= logging.ERROR]
@@ -851,7 +860,7 @@ def test_a_cached_older_version_of_the_same_length_is_refused(
     refused. A new signed URL reaches the same cached copy. Thus, the
     rest of the chain uses the S3 transfer (#607)."""
 
-    from app.archive import aws_storage
+    from app.archive import downloads
 
     stale = _FakeResponse(200, b"old")
     stale.headers["ETag"] = served
@@ -861,8 +870,8 @@ def test_a_cached_older_version_of_the_same_length_is_refused(
 
     with app.app_context():
         assert (
-            aws_storage.aws_download("untouched/x.mkv", "x.mkv")
-            == aws_storage.DOWNLOAD_COMPLETE
+            downloads.aws_download("untouched/x.mkv", "x.mkv")
+            == downloads.DOWNLOAD_COMPLETE
         )
         landed = os.path.join(app.config["IMPORT_DIR"], "x.mkv")
         assert open(landed, "rb").read() == b"new"
@@ -877,7 +886,7 @@ def test_a_stale_copy_spends_no_retry_of_the_chain(app, monkeypatch, cdn, caplog
 
     import botocore.exceptions
 
-    from app.archive import aws_storage
+    from app.archive import downloads
 
     stale = _FakeResponse(200, b"old")
     stale.headers["ETag"] = '"v0"'
@@ -885,16 +894,16 @@ def test_a_stale_copy_spends_no_retry_of_the_chain(app, monkeypatch, cdn, caplog
     throttle = botocore.exceptions.ClientError(
         {"Error": {"Code": "SlowDown"}}, "GetObject"
     )
-    errors = [throttle] * (aws_storage.MAX_DOWNLOAD_RETRIES - 1)
+    errors = [throttle] * (downloads.MAX_DOWNLOAD_RETRIES - 1)
     s3 = S3({"ContentLength": 3, "ETag": '"v1"'}, errors=errors)
     _wire(monkeypatch, s3, SQS())
 
     with caplog.at_level(logging.WARNING), app.app_context():
         assert (
-            aws_storage.aws_download("untouched/x.mkv", "x.mkv")
-            == aws_storage.DOWNLOAD_COMPLETE
+            downloads.aws_download("untouched/x.mkv", "x.mkv")
+            == downloads.DOWNLOAD_COMPLETE
         )
-    assert s3.attempts == aws_storage.MAX_DOWNLOAD_RETRIES
+    assert s3.attempts == downloads.MAX_DOWNLOAD_RETRIES
     fallbacks = [r for r in caplog.records if "costs S3 egress" in r.getMessage()]
     assert len(fallbacks) == 1
 
@@ -902,7 +911,7 @@ def test_a_stale_copy_spends_no_retry_of_the_chain(app, monkeypatch, cdn, caplog
 def test_a_stale_resume_body_drops_the_partial(app, monkeypatch, cdn):
     """A 206 from a refreshed cache joined bytes of 2 versions (#599)."""
 
-    from app.archive import aws_storage
+    from app.archive import downloads
 
     first = _FakeResponse(200, b"cdn", fail_after=2)
     first.headers["ETag"] = '"v1"'
@@ -914,8 +923,8 @@ def test_a_stale_resume_body_drops_the_partial(app, monkeypatch, cdn):
 
     with app.app_context():
         assert (
-            aws_storage.aws_download("untouched/x.mkv", "x.mkv")
-            == aws_storage.DOWNLOAD_COMPLETE
+            downloads.aws_download("untouched/x.mkv", "x.mkv")
+            == downloads.DOWNLOAD_COMPLETE
         )
         landed = os.path.join(app.config["IMPORT_DIR"], "x.mkv")
         assert open(landed, "rb").read() == b"cdn"

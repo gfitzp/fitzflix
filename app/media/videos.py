@@ -6,7 +6,7 @@ lock. It also has the control of the command-line tools and the probe
 for a dead volume.
 
 No task lives here. The name of a job is the module that defines its
-function, for example "app.media.importing.localization_task".
+function, for example "app.media.importing.localization.localization_task".
 """
 
 import errno

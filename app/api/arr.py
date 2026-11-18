@@ -280,7 +280,7 @@ def import_source_incomplete(file_path):
     truncation verdict counts. A file that the probe cannot read continues
     normally. The retries of the import pipeline then deal with it."""
 
-    from app.media.importing import probe_file_completeness
+    from app.media.importing.localization import probe_file_completeness
 
     return probe_file_completeness(file_path) is False
 
@@ -412,7 +412,7 @@ def handle_import_event(arr, payload, priority=None):
         remember_download,
         rename_download_locally,
     )
-    from app.media.importing import enqueue_localization
+    from app.media.importing.chain import enqueue_localization
     from app.settings import get_setting
     from app.tasks import enqueue_task
 

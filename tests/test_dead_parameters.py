@@ -16,13 +16,19 @@ def _params(function):
 
 
 def test_the_task_signatures_carry_only_live_parameters():
-    from app.archive import aws_storage
-    from app.media import importing
+    from app import archive
+    from tests.conftest import package_modules
+    from app.archive import restores
+    from app.archive import uploads
+    from app.media.importing import localization
 
-    assert _params(aws_storage.upload_task) == ["file_id"]
-    assert _params(aws_storage.aws_restore) == ["key", "tier", "record_request"]
-    assert not hasattr(aws_storage, "rename_untouched_object")
-    assert _params(importing.localization_task) == [
+    assert _params(uploads.upload_task) == ["file_id"]
+    assert _params(restores.aws_restore) == ["key", "tier", "record_request"]
+    assert not any(
+        hasattr(module, "rename_untouched_object")
+        for module in package_modules(archive)
+    )
+    assert _params(localization.localization_task) == [
         "file_path",
         "transient_retries",
         "completeness_retries",
@@ -51,7 +57,7 @@ def test_every_upload_task_producer_passes_the_file_id_only():
                 and getattr(node.func, "id", None) == "enqueue_task"
                 and node.args
                 and getattr(node.args[0], "value", None)
-                == "app.archive.aws_storage.upload_task"
+                == "app.archive.uploads.upload_task"
             ):
                 continue
             producers += 1
@@ -62,7 +68,8 @@ def test_every_upload_task_producer_passes_the_file_id_only():
 
 def test_the_import_requeues_carry_no_dead_flags():
     from app.media import importing
+    from tests.conftest import package_source
 
-    source = inspect.getsource(importing)
+    source = package_source(importing)
     assert "force_upload" not in source
     assert "ignore_etag" not in source

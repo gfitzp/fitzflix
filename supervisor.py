@@ -7,9 +7,10 @@ from redis import Redis
 # error stops the worker at its start, not in the middle of a job.
 
 from app import db, get_app
-from app.archive import aws_storage
+from app.archive import downloads, moves, restores, sync, uploads
 from app.criterion import criterion_catalog
-from app.media import importing, sdr_conversion, tracks, videos
+from app.media import sdr_conversion, tracks, videos
+from app.media.importing import cataloging, library_move, localization, sweep
 from app.metadata import tmdb_refresh
 from app.viewing import diary
 from app.pipeline import PipelineWorker

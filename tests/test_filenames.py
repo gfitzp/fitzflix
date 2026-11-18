@@ -11,7 +11,7 @@ import logging
 
 import pytest
 
-from app.media.importing import evaluate_filename
+from app.media.importing.filenames import evaluate_filename
 
 # The README examples: (filename, expected library file path)
 
@@ -203,7 +203,7 @@ def test_rejected_filenames(app, filename, detail):
     A reason of None keeps the generic reject: the "incorrect filename"
     folder, the log line, and the text of the filename tester."""
 
-    from app.media.importing import FilenameRejection
+    from app.media.importing.filenames import FilenameRejection
 
     with app.app_context():
         result = evaluate_filename(filename, log=False)
@@ -495,7 +495,7 @@ def test_reconstruct_filename_carries_id_tag(app):
     Fitzflix reconstructs it. The tag is upgraded to the current tmdb id
     of the record (#155)."""
 
-    from app.media.importing import reconstruct_filename
+    from app.media.importing.filenames import reconstruct_filename
     from tests.factories import make_movie, make_movie_file
 
     with app.app_context():
@@ -622,7 +622,7 @@ def test_an_extra_of_an_edition_keeps_the_edition(app):
     """The Redux trailer must not replace the theatrical trailer, or leave its folder."""
 
     from app import db
-    from app.media.importing import reconstruct_filename
+    from app.media.importing.filenames import reconstruct_filename
     from tests.factories import feature_type, make_file, make_movie
 
     name = (
@@ -675,7 +675,7 @@ def test_reconstruct_filename_of_a_film_with_no_tmdb_date(app):
     """TMDB can send a title with no release date. The refresh must not crash."""
 
     from app import db
-    from app.media.importing import reconstruct_filename
+    from app.media.importing.filenames import reconstruct_filename
     from tests.factories import make_movie, make_movie_file
 
     with app.app_context():
@@ -693,7 +693,7 @@ def test_a_yearless_tagged_name_waits_out_a_tmdb_outage(app, monkeypatch):
 
     import requests
 
-    import app.media.importing as importing
+    from app.media.importing import filenames
 
     def unreachable(*args, **kwargs):
         raise requests.ConnectionError("TMDB is down")
@@ -703,7 +703,7 @@ def test_a_yearless_tagged_name_waits_out_a_tmdb_outage(app, monkeypatch):
     with app.app_context():
         details = evaluate_filename("Unseen Film {tmdb-999123} - [DVD].mkv", log=False)
         assert not details
-        assert details.reason == importing.TMDB_UNREACHABLE
+        assert details.reason == filenames.TMDB_UNREACHABLE
 
 
 # The pins of the evaluate_filename branches that the split moves
@@ -959,7 +959,7 @@ def _library_name_parts(filename, details):
     They do not come from the plex title or the basename that the test
     compares."""
 
-    from app.media.importing import (
+    from app.media.importing.filenames import (
         MOVIE_NAME_RE,
         TV_NAME_RE,
         YEARLESS_MOVIE_NAME_RE,
@@ -1035,7 +1035,7 @@ def test_reconstruct_filename_of_each_film_shape(app):
     quality of its original (#292)."""
 
     from app import db
-    from app.media.importing import reconstruct_filename
+    from app.media.importing.filenames import reconstruct_filename
     from tests.factories import feature_type, make_file, make_movie, make_movie_file
 
     with app.app_context():
@@ -1082,7 +1082,7 @@ def test_reconstruct_filename_of_an_episode_takes_the_series_title(app):
 
     A name that does not parse stays as it is."""
 
-    from app.media.importing import reconstruct_filename
+    from app.media.importing.filenames import reconstruct_filename
     from tests.factories import make_tv_file, make_tv_series
 
     with app.app_context():
@@ -1287,7 +1287,7 @@ def test_the_refresh_lock_of_a_film_is_the_lock_of_its_first_import(app):
 def test_an_s3_key_part_never_starts_with_a_period(app):
     """The key of an archive uses the same rule as the library name (#717)."""
 
-    from app.media.importing import sanitize_string
+    from app.media.importing.filenames import sanitize_string
 
     with app.app_context():
         assert sanitize_string("...And Justice for All") == "And Justice for All"

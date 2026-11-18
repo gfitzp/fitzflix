@@ -41,7 +41,7 @@ def test_a_dead_conversion_is_failed_and_its_lock_and_reservation_go(app, tmp_pa
     from rq.job import JobStatus
     from rq.registry import FailedJobRegistry, StartedJobRegistry
 
-    from app.media.importing import STAGING_RESERVED_KEY
+    from app.media.importing.space import STAGING_RESERVED_KEY
     from app.pipeline import PipelineWorker
     from app.media.worker_recovery import reclaim_dead_workers
 
@@ -95,7 +95,7 @@ def test_a_dead_localization_releases_its_lock_and_its_work_files(app, tmp_path)
         _, job = _plant_dead_worker(
             app,
             app.import_queue,
-            "app.media.importing.localization_task",
+            "app.media.importing.localization.localization_task",
             (str(source),),
         )
         note_job_state(job.id, 600, lock=lock, strays=[str(staged)])
@@ -110,13 +110,13 @@ def test_the_localization_notes_its_lock_when_it_takes_it(app, monkeypatch):
     import json
     from types import SimpleNamespace
 
-    from app.media import importing
+    from app.media.importing import localization
     from app.media.worker_recovery import JOB_LOCK_KEY
 
     with app.app_context():
-        run = importing._LocalizationRun("/import/Noted (2001) - [DVD].mkv", {})
+        run = localization._LocalizationRun("/import/Noted (2001) - [DVD].mkv", {})
         run.job = SimpleNamespace(id="noted-job")
-        lock = importing._take_title_lock(
+        lock = localization._take_title_lock(
             {"media_library": "Movies", "title": "Noted", "year": 2001}, run
         )
         note = json.loads(app.redis.get(JOB_LOCK_KEY.format(job_id=run.job.id)))

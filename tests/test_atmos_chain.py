@@ -88,7 +88,7 @@ def _setup(app, monkeypatch, title):
     monkeypatch.setattr(atmos, "_run_step", _fake_run_step)
     monkeypatch.setattr(atmos, "mediaconvert_client", lambda: mediaconvert)
     monkeypatch.setattr(
-        "app.archive.aws_storage.aws_s3_client", lambda *a, **k: _FakeS3()
+        "app.archive.aws_clients.aws_s3_client", lambda *a, **k: _FakeS3()
     )
     monkeypatch.setattr(
         "app.media.tracks.get_audio_tracks_from_file",
@@ -475,7 +475,7 @@ def test_a_stop_after_the_atmos_rename_leaves_the_archive_stale(
             pass
 
     monkeypatch.setitem(app.config, "ARCHIVE_ORIGINAL_MEDIA", True)
-    monkeypatch.setattr("app.archive.aws_storage.aws_s3_client", lambda: None)
+    monkeypatch.setattr("app.archive.aws_clients.aws_s3_client", lambda: None)
     monkeypatch.setattr("app.media.tracks.get_audio_tracks_from_file", lambda path: [])
     monkeypatch.setattr(
         "app.media.tracks.get_subtitle_tracks_from_file", lambda path: []

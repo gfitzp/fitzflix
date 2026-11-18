@@ -44,7 +44,7 @@ with app.app_context():
 
     # enqueue_task returns None when a copy of the poll already waits.
 
-    jobs.append(("sqs poll", enqueue_task("app.archive.aws_storage.sqs_retrieve_task")))
+    jobs.append(("sqs poll", enqueue_task("app.archive.restores.sqs_retrieve_task")))
 
     deadline = time.time() + WAIT_SECONDS
     while time.time() < deadline:

@@ -1,7 +1,7 @@
 """Hold the registry of the rq tasks that Fitzflix enqueues by name.
 
 rq stores the job name of each queued job in Redis as a string, for
-example "app.media.importing.localization_task". The key of TASKS is that
+example "app.media.importing.localization.localization_task". The key of TASKS is that
 string. Its TaskSpec gives the default queue, timeout and description
 of the task. enqueue_task fills each one from the spec. Thus, a task
 gets the same queue and the same timeout from every producer. An
@@ -43,7 +43,7 @@ TASKS = {
     "app.operations.maintenance.backup_database": TaskSpec(
         "maintenance", 3600, "Backing up the database"
     ),
-    "app.media.importing.manual_import_task": TaskSpec(
+    "app.media.importing.sweep.manual_import_task": TaskSpec(
         "maintenance",
         3600,
         "Scanning import directory for files",
@@ -66,7 +66,7 @@ TASKS = {
     "app.operations.maintenance.cleanup_orphaned_files": TaskSpec(
         "maintenance", 3600, "Cleaning up orphaned partial files"
     ),
-    "app.archive.aws_storage.sync_aws_s3_storage_task": TaskSpec(
+    "app.archive.sync.sync_aws_s3_storage_task": TaskSpec(
         "maintenance",
         86400,
         "Syncing files with AWS S3 storage",
@@ -146,7 +146,7 @@ TASKS = {
         "Checking watchlisted films for new availability",
         command="flask alerts availability",
     ),
-    "app.archive.aws_storage.sqs_retrieve_task": TaskSpec(
+    "app.archive.restores.sqs_retrieve_task": TaskSpec(
         "maintenance",
         7200,
         "Polling AWS SQS for files to download",
@@ -195,15 +195,17 @@ TASKS = {
     ),
     "app.plex.plex_selection.align_plex_items": TaskSpec("maintenance", 1800),
     # The import pipeline.
-    "app.media.importing.localization_task": TaskSpec(
+    "app.media.importing.localization.localization_task": TaskSpec(
         "import", "LOCALIZATION_TASK_TIMEOUT"
     ),
     "app.media.tracks.mkvmerge_task": TaskSpec("import", "LOCALIZATION_TASK_TIMEOUT"),
     "app.media.atmos.atmos_supplement_task": TaskSpec(
         "import", "TRANSCODE_TASK_TIMEOUT"
     ),
-    "app.media.importing.move_localized_file": TaskSpec("handoff", "MOVE_TASK_TIMEOUT"),
-    "app.archive.aws_storage.aws_delete": TaskSpec("handoff", "FILE_TASK_TIMEOUT"),
+    "app.media.importing.library_move.move_localized_file": TaskSpec(
+        "handoff", "MOVE_TASK_TIMEOUT"
+    ),
+    "app.archive.moves.aws_delete": TaskSpec("handoff", "FILE_TASK_TIMEOUT"),
     "app.media.atmos.atmos_check_task": TaskSpec("handoff", 600),
     "app.media.atmos.atmos_finish_task": TaskSpec("handoff", "TRANSCODE_TASK_TIMEOUT"),
     "app.media.sdr_conversion.convert_localized_file": TaskSpec(
@@ -217,23 +219,23 @@ TASKS = {
     "app.frames.extract_frame_task": TaskSpec("transcode", 600),
     "app.frames.replace_frame_task": TaskSpec("transcode", 600),
     # The file operations.
-    "app.archive.aws_storage.upload_task": TaskSpec("file", "UPLOAD_TASK_TIMEOUT"),
+    "app.archive.uploads.upload_task": TaskSpec("file", "UPLOAD_TASK_TIMEOUT"),
     # A move is 1 server-side copy (#369). For 100 GiB, s3transfer sends
     # 6,400 UploadPartCopy requests of 16 MiB, 10 at a time. The estimate
     # at 50 MB/s for each request is 4 minutes. FILE_TASK_TIMEOUT
     # (10 minutes) leaves too small a margin for a slow region. Thus, the
     # move has the budget of an upload.
-    "app.archive.aws_storage.move_archive_object": TaskSpec(
+    "app.archive.moves.move_archive_object": TaskSpec(
         "file", "UPLOAD_TASK_TIMEOUT", "Moving an archive to its new key"
     ),
     "app.media.sdr_conversion.archive_held_task": TaskSpec(
         "file", "UPLOAD_TASK_TIMEOUT"
     ),
-    "app.archive.aws_storage.move_archive_to_modified_task": TaskSpec(
+    "app.archive.uploads.move_archive_to_modified_task": TaskSpec(
         "file", "UPLOAD_TASK_TIMEOUT"
     ),
-    "app.archive.aws_storage.download_task": TaskSpec("file", "TRANSCODE_TASK_TIMEOUT"),
-    "app.archive.aws_storage.place_restored_import_task": TaskSpec(
+    "app.archive.downloads.download_task": TaskSpec("file", "TRANSCODE_TASK_TIMEOUT"),
+    "app.archive.downloads.place_restored_import_task": TaskSpec(
         "file", "FILE_TASK_TIMEOUT"
     ),
     "app.media.tracks.mkvpropedit_task": TaskSpec("file", "MKVPROPEDIT_TASK_TIMEOUT"),
@@ -247,21 +249,23 @@ TASKS = {
         "file", "LOCALIZATION_TASK_TIMEOUT"
     ),
     # The database writes.
-    "app.media.importing.finalize_localization": TaskSpec("sql", "SQL_TASK_TIMEOUT"),
+    "app.media.importing.cataloging.finalize_localization": TaskSpec(
+        "sql", "SQL_TASK_TIMEOUT"
+    ),
     "app.metadata.tmdb_refresh.apply_tmdb_refresh": TaskSpec("sql", "SQL_TASK_TIMEOUT"),
     "app.viewing.diary.apply_plex_watch": TaskSpec("sql", "SQL_TASK_TIMEOUT"),
     "app.viewing.diary.apply_letterboxd_import": TaskSpec("sql", "SQL_TASK_TIMEOUT"),
     "app.media.tracks.save_track_metadata": TaskSpec("sql", "SQL_TASK_TIMEOUT"),
     "app.media.tracks.track_metadata_scan_library": TaskSpec("sql", "SQL_TASK_TIMEOUT"),
     "app.viewing.diary.review_task": TaskSpec("sql", "SQL_TASK_TIMEOUT"),
-    "app.media.importing.repair_replaced_file_task": TaskSpec(
+    "app.media.importing.cataloging.repair_replaced_file_task": TaskSpec(
         "sql", "SQL_TASK_TIMEOUT"
     ),
     # The work that a user or an outside service asks for.
     "app.metadata.tmdb_refresh.refresh_tmdb_info": TaskSpec(
         "request", "SQL_TASK_TIMEOUT"
     ),
-    "app.archive.aws_storage.aws_restore": TaskSpec("request", "SQL_TASK_TIMEOUT"),
+    "app.archive.restores.aws_restore": TaskSpec("request", "SQL_TASK_TIMEOUT"),
     "app.viewing.diary.letterboxd_import_task": TaskSpec(
         "request", "LOCALIZATION_TASK_TIMEOUT"
     ),

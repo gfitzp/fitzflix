@@ -492,7 +492,7 @@ def test_provision_reads_every_valid_queue_policy_shape(tmp_path):
 def test_the_edition_rewrite_stops_at_its_own_parenthesis(app):
     """A later parenthesis in the name is not part of the edition (#534)."""
 
-    from app.archive.aws_storage import brace_edition_tags
+    from app.archive.downloads import brace_edition_tags
 
     name = (
         "Zappa (2020) (edition-Official Movie Backer Edition) - Scenes - "

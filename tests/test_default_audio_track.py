@@ -94,7 +94,7 @@ def test_import_makes_the_first_audio_track_the_only_default(
     The flag on the disc is not important. The file that reaches the
     library has its first track as the default."""
 
-    from app.media.importing import inspect_localized_file
+    from app.media.importing.library_move import inspect_localized_file
 
     staged = str(tmp_path / "Flag Test (2021) - [Bluray-1080p].mkv")
     shutil.copy(three_audio_mkv, staged)
@@ -671,7 +671,7 @@ def test_an_edit_that_stops_on_a_changed_file_puts_the_stale_flag_back(
     again. Then a scan sends the new file to the import and stores
     nothing. A record that was stale before the edit keeps its flag."""
 
-    import app.media.importing as importing
+    from app.media.importing import chain
     from app import db
     from app.models import File
     import app.media.tracks as tracks
@@ -706,7 +706,7 @@ def test_an_edit_that_stops_on_a_changed_file_puts_the_stale_flag_back(
 
     queued, saves = [], []
     monkeypatch.setattr(
-        importing, "enqueue_localization", lambda path: queued.append(path) or True
+        chain, "enqueue_localization", lambda path: queued.append(path) or True
     )
     monkeypatch.setattr(tracks, "enqueue_task", lambda *a, **k: saves.append(a[0]))
     assert tracks.track_metadata_scan_task(file_id) is True

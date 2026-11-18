@@ -724,7 +724,7 @@ def test_health_probe_reports_a_stale_backup_and_probes_s3(
             probed.append(Bucket)
 
     monkeypatch.setattr(
-        "app.archive.aws_storage.aws_s3_client", lambda with_retries: FakeS3()
+        "app.archive.aws_clients.aws_s3_client", lambda with_retries: FakeS3()
     )
     monkeypatch.setitem(app.config, "AWS_BUCKET", "bucket-test")
     monkeypatch.setitem(app.config, "AWS_ACCESS_KEY", "key-test")

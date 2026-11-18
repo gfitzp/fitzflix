@@ -118,7 +118,7 @@ def enqueue_import_scan(queue, description=None, at_front=False):
     from app.tasks import enqueue_task
 
     enqueue_task(
-        "app.media.importing.manual_import_task",
+        "app.media.importing.sweep.manual_import_task",
         queue=queue,
         description=description,
         at_front=at_front,
@@ -185,7 +185,7 @@ def cron_table(config):
         ("30 0 * * *", "app.operations.maintenance.backup_database"),
         # Sweep the import directory hourly as a safety net. The
         # filesystem observer can miss an arrival.
-        ("0 * * * *", "app.media.importing.manual_import_task"),
+        ("0 * * * *", "app.media.importing.sweep.manual_import_task"),
         # Monthly restore drill: prove that the newest offsite dump restores.
         ("0 4 1 * *", "app.operations.maintenance.restore_drill"),
         # Refresh the Criterion spine numbers from Wikidata monthly. The
@@ -204,7 +204,7 @@ def cron_table(config):
         # reports the claims with no object, and prunes the objects that
         # no record claims. It waits until every queue is idle. It was out
         # of the table during the WEBDL rebuild.
-        ("0 2 * * 0", "app.archive.aws_storage.sync_aws_s3_storage_task"),
+        ("0 2 * * 0", "app.archive.sync.sync_aws_s3_storage_task"),
         ("*/10 * * * *", "app.operations.maintenance.health_probe"),
         # Sync the Letterboxd diaries from the RSS feed of each user. The
         # task does nothing for the users without a configured username.
@@ -314,7 +314,7 @@ def cron_table(config):
     # both at one time.
 
     if config.get("AWS_SQS_URL"):
-        table.append(("30 * * * *", "app.archive.aws_storage.sqs_retrieve_task"))
+        table.append(("30 * * * *", "app.archive.restores.sqs_retrieve_task"))
 
     # Poll the Plex watch history every 15 minutes as the self-healing
     # backstop to the real-time webhook.

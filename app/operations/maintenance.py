@@ -870,7 +870,7 @@ def system_health(flask_app):
 
     # Lazy import: app.media.missing_files imports missing_volumes from here
 
-    from app.archive.aws_storage import pending_archive_moves
+    from app.archive.moves import pending_archive_moves
     from app.media.manual_imports import pending_count
     from app.media.missing_files import missing_best_summary
     from app.models import HeldImport
@@ -1082,7 +1082,7 @@ def backup_database():
         if current_app.config["AWS_BUCKET"]:
             # Import here, because app.media.videos imports this module.
 
-            from app.archive.aws_storage import aws_s3_client, get_matching_s3_objects
+            from app.archive.aws_clients import aws_s3_client, get_matching_s3_objects
 
             backup_prefix = current_app.config["AWS_BACKUP_PREFIX"]
             uploaded_key = f"{backup_prefix}/{os.path.basename(backup_file)}"
@@ -1277,7 +1277,7 @@ def restore_drill():
 
         # Import here, because app.media.videos imports this module.
 
-        from app.archive.aws_storage import aws_s3_client, get_matching_s3_objects
+        from app.archive.aws_clients import aws_s3_client, get_matching_s3_objects
 
         url = make_url(current_app.config["SQLALCHEMY_DATABASE_URI"])
         backup_prefix = current_app.config["AWS_BACKUP_PREFIX"]
@@ -1487,7 +1487,7 @@ def _kept_restore_copy(dirpath, name):
     whose sidecar is older than DIRECT_RESTORE_COPY_MAX_AGE_DAYS is a
     leftover too (#601)."""
 
-    from app.archive.aws_storage import read_partial_sidecar
+    from app.archive.cdn import read_partial_sidecar
 
     if not name.startswith(ORPHAN_KEPT_PREFIXES):
         return False
@@ -1657,7 +1657,7 @@ def cleanup_orphaned_files():
     directories. The task sends a summary by email.
     """
 
-    from app.media.importing import paths_held_by_later_stages
+    from app.media.importing.chain import paths_held_by_later_stages
 
     with app.app_context():
         config = current_app.config
@@ -1733,7 +1733,7 @@ def cleanup_orphaned_files():
         # A restore request with no result after the cap ends here (#610).
         # The forms of its file then work again.
 
-        from app.archive.aws_storage import expire_restore_requests
+        from app.archive.restores import expire_restore_requests
 
         try:
             expire_restore_requests(DIRECT_RESTORE_COPY_MAX_AGE_DAYS)
@@ -1919,7 +1919,7 @@ def _probe_http(url, **kwargs):
 def _probe_s3(config):
     """Ask S3 for the head of the archive bucket, with no retries."""
 
-    from app.archive.aws_storage import aws_s3_client
+    from app.archive.aws_clients import aws_s3_client
 
     aws_s3_client(with_retries=False).head_bucket(Bucket=config["AWS_BUCKET"])
 

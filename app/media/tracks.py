@@ -39,7 +39,8 @@ from app.tasks import (
     requeue_job_id,
 )
 from app import db, get_app
-from app.archive.aws_storage import archive_library_file, refuse_while_restore_pending
+from app.archive.uploads import archive_library_file
+from app.archive.restores import refuse_while_restore_pending
 from app.models import File, FileAudioTrack, FileSubtitleTrack
 from app.media.naming import hidden
 from app.cache import cached_fetch
@@ -157,7 +158,7 @@ def remux_file(file_path, build_command, job, name, activity, before_replace=Non
     That check comes before before_replace. Thus, a file that the remux
     does not replace gets no stale flag."""
 
-    from app.media.importing import release_staging_reservation, reserve_staging
+    from app.media.importing.space import release_staging_reservation, reserve_staging
 
     directory, basename = os.path.split(file_path)
     staging_dir = current_app.config["STAGING_DIR"]
@@ -545,7 +546,7 @@ def track_metadata_scan_task(file_id):
             # that file from its import for good.
 
             if replaced_from_outside(file.filesize_bytes, file.aws_stale, file_path):
-                from app.media.importing import enqueue_localization
+                from app.media.importing.chain import enqueue_localization
 
                 current_app.lock_manager.unlock(lock)
                 lock = None
@@ -873,7 +874,7 @@ def save_track_metadata(file_id, details, lock=None, archive=False):
 
         if archive:
             enqueue_task(
-                "app.archive.aws_storage.upload_task",
+                "app.archive.uploads.upload_task",
                 file_id,
                 description=f"'{basename}'",
             )
@@ -2430,7 +2431,7 @@ def remux_audio_plan_task(file_id, plan):
 def _remux_audio_plan_unlocked(file_id, plan):
     """Run the remux pipeline. The caller must hold the lock of the title."""
 
-    from app.media.importing import (
+    from app.media.importing.space import (
         release_staging_reservation,
         reserve_staging,
         set_staging_reservation,

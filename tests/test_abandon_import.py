@@ -11,7 +11,7 @@ import os
 
 
 def _reserved(app, basename):
-    from app.media.importing import STAGING_RESERVED_KEY
+    from app.media.importing.space import STAGING_RESERVED_KEY
 
     return app.redis.hexists(STAGING_RESERVED_KEY, basename)
 
@@ -19,7 +19,8 @@ def _reserved(app, basename):
 def test_a_failed_move_releases_the_staging_reservation(app, incoming_dir, monkeypatch):
     """A move that fails rejects the source and frees its staging space."""
 
-    from app.media import importing
+    from app.media.importing import library_move
+    from app.media.importing import space
     from tests.test_localization import rejected_files, space_move_fixture
 
     basename = "Failed Move Space (2021) - [DVD].mkv"
@@ -28,11 +29,11 @@ def test_a_failed_move_releases_the_staging_reservation(app, incoming_dir, monke
     def broken(*args, **kwargs):
         raise RuntimeError("simulated inspection failure")
 
-    monkeypatch.setattr(importing, "inspect_localized_file", broken)
+    monkeypatch.setattr(library_move, "inspect_localized_file", broken)
     with app.app_context():
-        importing.set_staging_reservation(basename, 1000, [basename])
+        space.set_staging_reservation(basename, 1000, [basename])
         assert _reserved(app, basename)
-        importing.move_localized_file(source, details, None, hidden)
+        library_move.move_localized_file(source, details, None, hidden)
 
         assert not _reserved(app, basename)
         assert not os.path.exists(hidden)
@@ -46,7 +47,9 @@ def test_a_failed_reject_still_releases_the_lock(app, incoming_dir, monkeypatch)
 
     A lock that stays held blocks the title for the whole lock TTL."""
 
-    from app.media import importing
+    from app.media.importing import filenames
+    from app.media.importing import localization
+    from app.media.importing import space
 
     source = os.path.join(incoming_dir, "Reject Fails (2021) - [DVD].mkv")
     stray = os.path.join(app.config["STAGING_DIR"], "Reject Fails stray.mkv")
@@ -56,12 +59,12 @@ def test_a_failed_reject_still_releases_the_lock(app, incoming_dir, monkeypatch)
     def refuse(path, reason):
         raise OSError("rejects volume away")
 
-    monkeypatch.setattr(importing, "move_to_rejects", refuse)
+    monkeypatch.setattr(filenames, "move_to_rejects", refuse)
     with app.app_context():
         lock = app.lock_manager.lock("abandon-import-test", 60000)
         assert lock
-        importing.set_staging_reservation(os.path.basename(source), 10, ["x"])
-        importing.abandon_import(source, lock, strays=(stray, None))
+        space.set_staging_reservation(os.path.basename(source), 10, ["x"])
+        localization.abandon_import(source, lock, strays=(stray, None))
 
         assert not os.path.exists(stray)
         assert not _reserved(app, os.path.basename(source))
@@ -71,14 +74,14 @@ def test_a_failed_reject_still_releases_the_lock(app, incoming_dir, monkeypatch)
 def test_keep_source_leaves_the_source_for_the_next_sweep(app, incoming_dir):
     """A failed handoff keeps the source in the import directory (#340)."""
 
-    from app.media import importing
+    from app.media.importing import localization
 
     source = os.path.join(incoming_dir, "Kept Source (2021) - [DVD].mkv")
     with open(source, "wb") as f:
         f.write(b"source")
     try:
         with app.app_context():
-            importing.abandon_import(source, None, keep_source=True)
+            localization.abandon_import(source, None, keep_source=True)
         assert os.path.exists(source)
     finally:
         os.remove(source)

@@ -61,7 +61,7 @@ def _remove(*paths):
 
 
 def test_database_outage_knows_the_connection_faults(app):
-    from app.media.importing import database_outage
+    from app.media.importing.localization import database_outage
 
     for code in (2002, 2003, 2006, 2013):
         assert database_outage(outage(code, "gone"))
@@ -91,25 +91,27 @@ def test_an_outage_at_the_first_read_keeps_the_import_and_the_sweep_queues_it(
     """The source stays in the import directory. The hourly sweep takes it again."""
 
     from app import safe_job_id
-    from app.media import importing
+    from app.media.importing import chain
+    from app.media.importing import localization
+    from app.media.importing import sweep
 
     basename = "Outage Read (2001) - [DVD].mkv"
     source = _source_in(app.config["IMPORT_DIR"], basename, sample_mkv)
-    real_cataloged = importing.already_cataloged
-    monkeypatch.setattr(importing, "already_cataloged", _raiser(outage(2003)))
+    real_cataloged = chain.already_cataloged
+    monkeypatch.setattr(chain, "already_cataloged", _raiser(outage(2003)))
     caplog.set_level(logging.INFO)
     try:
         with app.app_context(), pytest.raises(sa_exc.OperationalError):
-            importing.localization_task(source)
+            localization.localization_task(source)
         assert os.path.exists(source)
         assert not os.path.exists(_rejected(app, basename))
         warnings = [r for r in _app_records(caplog, logging.WARNING)]
         assert [OUTAGE in r.getMessage() for r in warnings] == [True]
         assert _app_records(caplog, logging.ERROR) == []
 
-        monkeypatch.setattr(importing, "already_cataloged", real_cataloged)
+        monkeypatch.setattr(chain, "already_cataloged", real_cataloged)
         with app.app_context():
-            importing.manual_import_task()
+            sweep.manual_import_task()
         assert safe_job_id(basename) in app.import_queue.job_ids
     finally:
         job = app.import_queue.fetch_job(safe_job_id(basename))
@@ -121,7 +123,8 @@ def test_an_outage_at_the_first_read_keeps_the_import_and_the_sweep_queues_it(
 def test_an_outage_after_the_title_lock_releases_the_lock(
     app, sample_mkv, monkeypatch, caplog
 ):
-    from app.media import importing
+    from app.media.importing import chain
+    from app.media.importing import localization
 
     basename = "Outage Lock (2001) - [DVD].mkv"
     source = _source_in(app.config["IMPORT_DIR"], basename, sample_mkv)
@@ -131,16 +134,18 @@ def test_an_outage_after_the_title_lock_releases_the_lock(
         "year": 2001,
         "basename": basename,
     }
-    monkeypatch.setattr(importing, "_identify", lambda path, run: (details, None))
+    monkeypatch.setattr(localization, "_identify", lambda path, run: (details, None))
     monkeypatch.setattr(
-        importing, "_quality_and_space_gate", _raiser(outage(2013, "Lost connection"))
+        localization,
+        "_quality_and_space_gate",
+        _raiser(outage(2013, "Lost connection")),
     )
     caplog.set_level(logging.INFO)
     try:
         with app.app_context():
-            lock_key = importing.lock_key_for_details(details)
+            lock_key = chain.lock_key_for_details(details)
             with pytest.raises(sa_exc.OperationalError):
-                importing.localization_task(source)
+                localization.localization_task(source)
             assert app.redis.get(lock_key) is None
         assert os.path.exists(source)
         assert not os.path.exists(_rejected(app, basename))
@@ -163,14 +168,15 @@ def test_an_outage_after_the_title_lock_releases_the_lock(
 def test_a_database_error_that_is_no_outage_still_rejects(
     app, sample_mkv, monkeypatch, error
 ):
-    from app.media import importing
+    from app.media.importing import chain
+    from app.media.importing import localization
 
     basename = f"No Outage {type(error).__name__} (2001) - [DVD].mkv"
     source = _source_in(app.config["IMPORT_DIR"], basename, sample_mkv)
-    monkeypatch.setattr(importing, "already_cataloged", _raiser(error))
+    monkeypatch.setattr(chain, "already_cataloged", _raiser(error))
     try:
         with app.app_context():
-            assert importing.localization_task(source) is True
+            assert localization.localization_task(source) is True
         assert not os.path.exists(source)
         assert os.path.exists(_rejected(app, basename))
     finally:
@@ -187,28 +193,29 @@ def test_an_outage_before_the_rewrite_keeps_a_library_file_for_the_in_place_swee
 
     from rq.registry import FailedJobRegistry
 
-    from app.media import importing
+    from app.media.importing import chain
+    from app.media.importing import sweep
     from app.pipeline import PipelineWorker
 
     basename = "Outage In Place (2001) - [WEBDL-1080p].mkv"
     source = _source_in(incoming_dir, basename, sample_mkv)
-    real_cataloged = importing.already_cataloged
-    monkeypatch.setattr(importing, "already_cataloged", _raiser(outage(2003)))
+    real_cataloged = chain.already_cataloged
+    monkeypatch.setattr(chain, "already_cataloged", _raiser(outage(2003)))
     queue = app.import_queue
-    job = queue.enqueue("app.media.importing.localization_task", source)
+    job = queue.enqueue("app.media.importing.localization.localization_task", source)
     try:
         PipelineWorker([queue], connection=app.redis).work(burst=True)
         assert job.id in FailedJobRegistry(queue=queue).get_job_ids()
         assert os.path.exists(source)
         assert not os.path.exists(_rejected(app, basename))
 
-        monkeypatch.setattr(importing, "already_cataloged", real_cataloged)
+        monkeypatch.setattr(chain, "already_cataloged", real_cataloged)
         with app.app_context():
-            importing._retry_failed_in_place_imports()
+            sweep._retry_failed_in_place_imports()
         queued = [
             queued
             for queued in queue.jobs
-            if queued.func_name == "app.media.importing.localization_task"
+            if queued.func_name == "app.media.importing.localization.localization_task"
             and queued.args == (source,)
         ]
         assert len(queued) == 1
@@ -228,19 +235,19 @@ def test_an_in_place_outage_keeps_the_source_only_before_the_rewrite(
 ):
     """A source processed in place can be rewritten from _localize on (#424)."""
 
-    from app.media import importing
+    from app.media.importing import localization
 
     basename = f"Outage {phase} (2003) - [DVD].mkv"
     source = _source_in(incoming_dir, basename, sample_mkv)
-    monkeypatch.setattr(importing, "_stage_source", lambda path, run: (path, False))
-    monkeypatch.setattr(importing, phase, _raiser(outage(2006, "gone away")))
+    monkeypatch.setattr(localization, "_stage_source", lambda path, run: (path, False))
+    monkeypatch.setattr(localization, phase, _raiser(outage(2006, "gone away")))
     try:
         with app.app_context():
             if kept:
                 with pytest.raises(sa_exc.OperationalError):
-                    importing.localization_task(source)
+                    localization.localization_task(source)
             else:
-                importing.localization_task(source)
+                localization.localization_task(source)
         assert os.path.exists(source) is kept
         assert os.path.exists(_rejected(app, basename)) is not kept
     finally:
@@ -290,7 +297,7 @@ def test_a_cataloging_whose_database_goes_away_keeps_the_source(
 ):
     """The commit fails with a 2006, and the rollback fails too. The source stays."""
 
-    import app.media.importing as importing
+    from app.media.importing import cataloging
     from app import db
 
     name = "Outage Catalog (2021) - [DVD].mkv"
@@ -308,7 +315,9 @@ def test_a_cataloging_whose_database_goes_away_keeps_the_source(
         "file_path": f"Movies/Outage Catalog (2021)/{name}",
         "media_library": "Movies",
     }
-    monkeypatch.setattr(importing, "_build_records", _raiser(outage(2006, "gone away")))
+    monkeypatch.setattr(
+        cataloging, "_build_records", _raiser(outage(2006, "gone away"))
+    )
     with app.app_context():
         real_rollback = db.session.rollback
         calls = []
@@ -322,7 +331,7 @@ def test_a_cataloging_whose_database_goes_away_keeps_the_source(
         monkeypatch.setattr(db.session, "rollback", rollback)
         lock = app.lock_manager.lock('{"title": "Outage Catalog"}', 60000)
         with pytest.raises(sa_exc.OperationalError):
-            importing.finalize_localization(
+            cataloging.finalize_localization(
                 str(source), details, lock, str(hidden), {}, staged_output=str(staged)
             )
         monkeypatch.undo()
@@ -340,7 +349,7 @@ def test_a_later_stage_rejects_a_source_that_no_sweep_finds(app, tmp_path, monke
     Thus, an outage in the cataloging rejects it with an ERROR, as before
     #681. A person then sees it on the Rejects page."""
 
-    import app.media.importing as importing
+    from app.media.importing import cataloging
 
     name = "Outage Library (2022) - [DVD].mkv"
     hidden = tmp_path / f".{name}"
@@ -355,13 +364,15 @@ def test_a_later_stage_rejects_a_source_that_no_sweep_finds(app, tmp_path, monke
         "media_library": "Movies",
     }
     monkeypatch.setitem(app.config, "IMPORT_DIR", str(tmp_path / "import"))
-    monkeypatch.setattr(importing, "_build_records", _raiser(outage(2006, "gone away")))
+    monkeypatch.setattr(
+        cataloging, "_build_records", _raiser(outage(2006, "gone away"))
+    )
     rejected = _rejected(app, name)
     with app.app_context():
         lock = app.lock_manager.lock('{"title": "Outage Library"}', 60000)
         try:
             assert (
-                importing.finalize_localization(
+                cataloging.finalize_localization(
                     str(source), details, lock, str(hidden), {}
                 )
                 is None
@@ -382,7 +393,7 @@ def _cataloging_over_the_source(
     of the source. upload holds the archive columns of the import.
     Return (source, rejected path, File id or None)."""
 
-    import app.media.importing as importing
+    from app.media.importing import cataloging
     from app import db
     from tests.factories import make_file
 
@@ -402,8 +413,8 @@ def _cataloging_over_the_source(
     }
     monkeypatch.setitem(app.config, "LIBRARY_DIR", str(tmp_path))
     monkeypatch.setitem(app.config, "IMPORT_DIR", str(tmp_path / "import"))
-    monkeypatch.setattr(importing, "_build_records", lambda *a, **k: (None,) * 5)
-    monkeypatch.setattr(importing, "_commit_records", _raiser(error))
+    monkeypatch.setattr(cataloging, "_build_records", lambda *a, **k: (None,) * 5)
+    monkeypatch.setattr(cataloging, "_commit_records", _raiser(error))
     with app.app_context():
         file_id = None
         if record:
@@ -412,14 +423,14 @@ def _cataloging_over_the_source(
         lock = app.lock_manager.lock(f'{{"title": "{name}"}}', 60000)
         if isinstance(error, Exception):
             assert (
-                importing.finalize_localization(
+                cataloging.finalize_localization(
                     str(source), details, lock, str(hidden), {}
                 )
                 is None
             )
         else:
             with pytest.raises(type(error)):
-                importing.finalize_localization(
+                cataloging.finalize_localization(
                     str(source), details, lock, str(hidden), {}
                 )
         assert app.redis.get(f'{{"title": "{name}"}}') is None
@@ -438,13 +449,13 @@ def test_a_file_that_its_record_points_to_stays_at_its_path(
     A stop signal is no fault of the import. Its record in the log is a
     warning."""
 
-    import app.media.importing as importing
+    from app.media.importing import cataloging
     from app import db
     from app.models import File
 
     scans = []
     monkeypatch.setattr(
-        importing,
+        cataloging,
         "_rescan_after_a_failed_edit",
         lambda file_id, name: scans.append(file_id),
     )
@@ -477,10 +488,10 @@ def _run_scoped_upload(name):
 def _discards(monkeypatch):
     """Record each run-scoped upload that the import deletes."""
 
-    import app.media.importing as importing
+    from app.media.importing import localization
 
     deleted = []
-    monkeypatch.setattr(importing, "discard_pending_archive", deleted.append)
+    monkeypatch.setattr(localization, "discard_pending_archive", deleted.append)
     return deleted
 
 
@@ -492,11 +503,11 @@ def test_the_record_takes_the_original_of_a_file_that_replaced_its_source(
     The import must not delete it. The record at the path claims it,
     and its archive is current."""
 
-    import app.media.importing as importing
+    from app.media.importing import cataloging
     from app import db
     from app.models import File
 
-    monkeypatch.setattr(importing, "_rescan_after_a_failed_edit", lambda *a: None)
+    monkeypatch.setattr(cataloging, "_rescan_after_a_failed_edit", lambda *a: None)
     deleted = _discards(monkeypatch)
     name = "Over Record Upload (2023) - [DVD].mkv"
     upload = _run_scoped_upload(name)
@@ -524,12 +535,12 @@ def test_the_record_that_takes_an_upload_takes_the_size_of_the_new_file(
     the localized file to the import as a new original. That import
     deleted the archive that the record had just taken."""
 
-    import app.media.importing as importing
+    from app.media.importing import cataloging
     from app import db
     from app.models import File
     from app.media.tracks import replaced_from_outside
 
-    monkeypatch.setattr(importing, "_rescan_after_a_failed_edit", lambda *a: None)
+    monkeypatch.setattr(cataloging, "_rescan_after_a_failed_edit", lambda *a: None)
     name = "Over Record Size (2023) - [DVD].mkv"
     source, rejected, file_id = _cataloging_over_the_source(
         app,
@@ -554,7 +565,7 @@ def test_an_adoption_with_no_size_sets_the_stale_flag(app, tmp_path):
     adoption sets the stale flag, and the scan of the repair stores the
     size."""
 
-    import app.media.importing as importing
+    from app.media.importing import cataloging
     from app import db
     from app.models import File
     from tests.factories import make_file
@@ -567,7 +578,7 @@ def test_an_adoption_with_no_size_sets_the_stale_flag(app, tmp_path):
         ).id
         db.session.commit()
         gone = str(tmp_path / "share away" / name)
-        assert importing._adopt_upload(file_id, upload, gone) is True
+        assert cataloging._adopt_upload(file_id, upload, gone) is True
         row = db.session.get(File, file_id)
         assert row.aws_key == upload["aws_key"]
         assert row.aws_stale is True
@@ -581,11 +592,11 @@ def test_the_record_takes_an_upload_at_the_normal_key(app, tmp_path, monkeypatch
     The record must take this upload too. An upload with no record is
     pruned after its grace."""
 
-    import app.media.importing as importing
+    from app.media.importing import cataloging
     from app import db
     from app.models import File
 
-    monkeypatch.setattr(importing, "_rescan_after_a_failed_edit", lambda *a: None)
+    monkeypatch.setattr(cataloging, "_rescan_after_a_failed_edit", lambda *a: None)
     name = "Over Record Normal Key (2023) - [DVD].mkv"
     upload = {**_run_scoped_upload(name), "aws_key": f"untouched/{name}"}
     source, rejected, file_id = _cataloging_over_the_source(
@@ -608,14 +619,15 @@ def test_an_adoption_ends_a_pending_restore_and_removes_the_old_archive(
 
     from datetime import datetime
 
-    import app.media.importing as importing
+    from app.media.importing import cataloging
+    from app.media.importing import follow_ups
     from app import db
     from app.models import File
 
-    monkeypatch.setattr(importing, "_rescan_after_a_failed_edit", lambda *a: None)
+    monkeypatch.setattr(cataloging, "_rescan_after_a_failed_edit", lambda *a: None)
     deleted = []
-    monkeypatch.setattr(importing, "_delete_replaced_archive", deleted.append)
-    real = importing._claim_at_path
+    monkeypatch.setattr(follow_ups, "_delete_replaced_archive", deleted.append)
+    real = cataloging._claim_at_path
 
     def claim_of_a_record_under_restore(library_file_path, output_file, upload=None):
         File.query.filter_by(file_path=library_file_path).update(
@@ -628,7 +640,7 @@ def test_an_adoption_ends_a_pending_restore_and_removes_the_old_archive(
         db.session.commit()
         return real(library_file_path, output_file, upload)
 
-    monkeypatch.setattr(importing, "_claim_at_path", claim_of_a_record_under_restore)
+    monkeypatch.setattr(cataloging, "_claim_at_path", claim_of_a_record_under_restore)
     name = "Over Restore (2023) - [DVD].mkv"
     upload = _run_scoped_upload(name)
     source, rejected, file_id = _cataloging_over_the_source(
@@ -649,13 +661,13 @@ def test_a_conversion_does_not_take_the_original_of_the_new_file(
     The repair does not rebuild it. The upload still stays, a warning
     names it, and the stale flag asks for the repair."""
 
-    import app.media.importing as importing
+    from app.media.importing import cataloging
     from app import db
     from app.models import File
 
-    monkeypatch.setattr(importing, "_rescan_after_a_failed_edit", lambda *a: None)
+    monkeypatch.setattr(cataloging, "_rescan_after_a_failed_edit", lambda *a: None)
     deleted = _discards(monkeypatch)
-    real = importing._claim_at_path
+    real = cataloging._claim_at_path
 
     def claim_of_a_conversion(library_file_path, output_file, upload=None):
         File.query.filter_by(file_path=library_file_path).update(
@@ -664,7 +676,7 @@ def test_a_conversion_does_not_take_the_original_of_the_new_file(
         db.session.commit()
         return real(library_file_path, output_file, upload)
 
-    monkeypatch.setattr(importing, "_claim_at_path", claim_of_a_conversion)
+    monkeypatch.setattr(cataloging, "_claim_at_path", claim_of_a_conversion)
     name = "Over Conversion (2023) - [DVD].mkv"
     upload = _run_scoped_upload(name)
     source, rejected, file_id = _cataloging_over_the_source(
@@ -687,11 +699,11 @@ def test_a_record_does_not_take_the_original_of_an_import_that_is_a_conversion(
     repair does not. Thus, the record keeps its archive and gets the
     stale flag, and a warning names the upload."""
 
-    import app.media.importing as importing
+    from app.media.importing import cataloging
     from app import db
     from app.models import File
 
-    monkeypatch.setattr(importing, "_rescan_after_a_failed_edit", lambda *a: None)
+    monkeypatch.setattr(cataloging, "_rescan_after_a_failed_edit", lambda *a: None)
     deleted = _discards(monkeypatch)
     name = "Converted Import (2023) - [DVD].mkv"
     upload = {**_run_scoped_upload(name), "converted_from_quality": "Remux-2160p"}
@@ -733,7 +745,7 @@ def test_a_failed_cataloging_deletes_the_upload_while_the_source_is_whole(
 ):
     """The source keeps its original bytes. Then the upload is a copy, and it goes."""
 
-    import app.media.importing as importing
+    from app.media.importing import cataloging
 
     deleted = _discards(monkeypatch)
     name = "Whole Source (2022) - [DVD].mkv"
@@ -750,12 +762,14 @@ def test_a_failed_cataloging_deletes_the_upload_while_the_source_is_whole(
         "media_library": "Movies",
         **upload,
     }
-    monkeypatch.setattr(importing, "_build_records", _raiser(RuntimeError("records")))
+    monkeypatch.setattr(cataloging, "_build_records", _raiser(RuntimeError("records")))
     rejected = _rejected(app, name)
     with app.app_context():
         lock = app.lock_manager.lock('{"title": "Whole Source"}', 60000)
         try:
-            importing.finalize_localization(str(source), details, lock, str(hidden), {})
+            cataloging.finalize_localization(
+                str(source), details, lock, str(hidden), {}
+            )
             assert os.path.exists(rejected)
         finally:
             _remove(rejected)
@@ -767,12 +781,12 @@ def test_a_fault_in_the_record_lookup_does_not_keep_the_title_lock(
 ):
     """The helper of the failure branch raises. The lock is free and the file stays."""
 
-    import app.media.importing as importing
+    from app.media.importing import cataloging
 
     def broken(library_file_path, output_file, upload=None):
         raise OSError("the repair failed")
 
-    monkeypatch.setattr(importing, "_claim_at_path", broken)
+    monkeypatch.setattr(cataloging, "_claim_at_path", broken)
     name = "Over Broken (2023) - [DVD].mkv"
     source, rejected, _ = _cataloging_over_the_source(
         app, tmp_path, monkeypatch, name, RuntimeError("commit"), record=False
@@ -806,7 +820,9 @@ def test_a_file_over_its_source_stays_when_the_record_lookup_fails(
 ):
     """A row can point to the path, and the database did not say. The file stays (#688)."""
 
-    import app.media.importing as importing
+    from app.media.importing import cataloging
+    from app.media.importing import chain
+    from app.media.importing import filenames
 
     class Unreadable:
         """A File model whose id column fails like a lost connection."""
@@ -815,7 +831,9 @@ def test_a_file_over_its_source_stays_when_the_record_lookup_fails(
         def id(self):
             raise outage(2013, "Lost connection")
 
-    monkeypatch.setattr(importing, "File", Unreadable())
+    monkeypatch.setattr(chain, "File", Unreadable())
+    monkeypatch.setattr(cataloging, "File", Unreadable())
+    monkeypatch.setattr(filenames, "File", Unreadable())
     name = "Over Unknown (2023) - [DVD].mkv"
     source, rejected, _ = _cataloging_over_the_source(
         app, tmp_path, monkeypatch, name, RuntimeError("commit"), record=False
@@ -832,12 +850,14 @@ def test_a_failed_record_lookup_books_the_repair_of_the_kept_file(
     Without it, the row keeps the size, the tracks and the archive of
     the old file, and nothing finds that later."""
 
-    import app.media.importing as importing
+    from app.media.importing import cataloging
+    from app.media.importing import chain
+    from app.media.importing import filenames
     from app import db
     from app.models import File
     from rq.registry import ScheduledJobRegistry
 
-    real_file = importing.File
+    real_file = chain.File
 
     class Unreadable:
         @property
@@ -845,7 +865,9 @@ def test_a_failed_record_lookup_books_the_repair_of_the_kept_file(
             raise outage(2013, "Lost connection")
 
     def lose_the_database(*args, **kwargs):
-        monkeypatch.setattr(importing, "File", Unreadable())
+        monkeypatch.setattr(chain, "File", Unreadable())
+        monkeypatch.setattr(cataloging, "File", Unreadable())
+        monkeypatch.setattr(filenames, "File", Unreadable())
         raise outage(2013, "Lost connection")
 
     monkeypatch.setattr(
@@ -858,23 +880,27 @@ def test_a_failed_record_lookup_books_the_repair_of_the_kept_file(
         app, tmp_path, monkeypatch, name, RuntimeError("unused"), True, upload
     )
     assert deleted == []
-    monkeypatch.setattr(importing, "File", real_file)
+    monkeypatch.setattr(chain, "File", real_file)
+    monkeypatch.setattr(cataloging, "File", real_file)
+    monkeypatch.setattr(filenames, "File", real_file)
     assert source.read_bytes() == b"library copy"
     assert not os.path.exists(rejected)
 
     scans, stale = [], []
     monkeypatch.setattr(
-        importing, "_rescan_after_a_failed_edit", lambda fid, label: scans.append(fid)
+        cataloging, "_rescan_after_a_failed_edit", lambda fid, label: scans.append(fid)
     )
     monkeypatch.setattr(
-        importing, "mark_archive_stale", lambda fid, **kwargs: stale.append(fid)
+        cataloging, "mark_archive_stale", lambda fid, **kwargs: stale.append(fid)
     )
     with app.app_context():
         registry = ScheduledJobRegistry(queue=app.sql_queue)
         booked = [
             job
             for job in map(app.sql_queue.fetch_job, registry.get_job_ids())
-            if job and job.func_name == "app.media.importing.repair_replaced_file_task"
+            if job
+            and job.func_name
+            == "app.media.importing.cataloging.repair_replaced_file_task"
         ]
         assert len(booked) == 1
         job = booked[0]
@@ -900,25 +926,27 @@ def test_a_failed_record_lookup_books_the_repair_of_the_kept_file(
 def test_the_repair_names_an_upload_that_no_record_took(app, tmp_path, caplog):
     """The booked repair finds no record. Its warning names the kept upload (#727)."""
 
-    import app.media.importing as importing
+    from app.media.importing import cataloging
 
     name = "No Record Upload (2023) - [DVD].mkv"
     output = tmp_path / name
     output.write_bytes(b"library copy")
     upload = {**_run_scoped_upload(name), "conversion": False}
     path = f"Movies/{name[:-4]}/{name}"
-    assert importing.repair_replaced_file_task(path, str(output), 1, upload) is False
+    assert cataloging.repair_replaced_file_task(path, str(output), 1, upload) is False
     assert any(upload["aws_key"] in r.getMessage() for r in caplog.records)
 
 
 def test_the_repair_of_a_kept_file_waits_for_the_database(app, tmp_path, monkeypatch):
     """The task books itself while the database is away, up to its maximum."""
 
-    import app.media.importing as importing
+    from app.media.importing import cataloging
+    from app.media.importing import chain
+    from app.media.importing import filenames
 
     booked = []
     monkeypatch.setattr(
-        importing,
+        cataloging,
         "_book_replaced_file_repair",
         lambda path, output, tries, upload=None: booked.append(tries),
     )
@@ -928,11 +956,13 @@ def test_the_repair_of_a_kept_file_waits_for_the_database(app, tmp_path, monkeyp
         def id(self):
             raise outage(2013, "Lost connection")
 
-    monkeypatch.setattr(importing, "File", Unreadable())
+    monkeypatch.setattr(chain, "File", Unreadable())
+    monkeypatch.setattr(cataloging, "File", Unreadable())
+    monkeypatch.setattr(filenames, "File", Unreadable())
     output = tmp_path / "Kept (2023) - [DVD].mkv"
     output.write_bytes(b"library copy")
     path = "Movies/Kept (2023)/Kept (2023) - [DVD].mkv"
-    last = importing.REPLACED_REPAIR_MAX_TRIES
-    assert importing.repair_replaced_file_task(path, str(output), 1) is False
-    assert importing.repair_replaced_file_task(path, str(output), last) is False
+    last = cataloging.REPLACED_REPAIR_MAX_TRIES
+    assert cataloging.repair_replaced_file_task(path, str(output), 1) is False
+    assert cataloging.repair_replaced_file_task(path, str(output), last) is False
     assert booked == [2]

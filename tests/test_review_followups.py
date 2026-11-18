@@ -10,27 +10,27 @@ from tests.fakes import ArchiveS3
 
 
 def test_a_cron_started_sync_holds_the_archive_move(app):
-    """The scheduler queues the function object. rq names the job app.archive.aws_storage (#456)."""
+    """The scheduler queues the function object. rq names the job app.archive.sync (#456)."""
 
     from rq.registry import StartedJobRegistry
 
-    from app.archive import aws_storage
-    from app.archive.aws_storage import sync_aws_s3_storage_task
+    from app.archive import moves
+    from app.archive.sync import sync_aws_s3_storage_task
 
     with app.app_context():
         job = app.maintenance_queue.enqueue(sync_aws_s3_storage_task)
-        assert job.func_name == "app.archive.aws_storage.sync_aws_s3_storage_task"
+        assert job.func_name == "app.archive.sync.sync_aws_s3_storage_task"
         registry = StartedJobRegistry(queue=app.maintenance_queue)
         app.maintenance_queue.remove(job)
         # StartedJobRegistry.add raises NotImplementedError in rq 2. Thus,
         # the test writes the sorted set of the registry directly.
         app.redis.zadd(registry.key, {job.id: int(time.time()) + 300})
         try:
-            assert aws_storage._sync_is_running() is True
+            assert moves._sync_is_running() is True
         finally:
             app.redis.zrem(registry.key, job.id)
             job.delete()
-        assert aws_storage._sync_is_running() is False
+        assert moves._sync_is_running() is False
 
 
 def _two_series(app, monkeypatch, episodes=20, cap=4):
@@ -132,10 +132,10 @@ def test_a_mid_window_drop_does_not_repeat_an_aired_episode(app, monkeypatch):
 
 
 def _lost_upload_row(app, monkeypatch, tmp_path, title):
-    from app.archive import aws_storage
+    from app.archive import aws_clients
 
     fake = ArchiveS3({})
-    monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kw: fake)
+    monkeypatch.setattr(aws_clients, "aws_s3_client", lambda **kw: fake)
     monkeypatch.setitem(app.config, "AWS_BUCKET", "test-bucket")
     monkeypatch.setitem(app.config, "LIBRARY_DIR", str(tmp_path))
     basename = f"{title} (2024) - [DVD].mkv"
@@ -153,7 +153,7 @@ def test_a_dead_library_volume_makes_the_lost_upload_move_wait(
 ):
     """The library file can come back. The move waits, and the target stays (follow-up #455)."""
 
-    from app.archive import aws_storage
+    from app.archive import moves
     from app.models import File
 
     monkeypatch.setattr(
@@ -161,41 +161,42 @@ def test_a_dead_library_volume_makes_the_lost_upload_move_wait(
     )
     with app.app_context():
         fake, file_id, key = _lost_upload_row(app, monkeypatch, tmp_path, "Dead Vol")
-        assert aws_storage.move_archive_object(file_id) == aws_storage.MOVE_WAITING
+        assert moves.move_archive_object(file_id) == moves.MOVE_WAITING
         db.session.expire_all()
         row = db.session.get(File, file_id)
         assert row.aws_key_target is not None
         assert fake.uploads == []
-        assert not app.redis.hexists(aws_storage.ARCHIVE_LOST_KEY, key)
+        assert not app.redis.hexists(moves.ARCHIVE_LOST_KEY, key)
 
 
 def test_a_lost_upload_is_reported_once_as_needing_a_re_rip(app, monkeypatch, tmp_path):
     from types import SimpleNamespace
 
-    from app.archive import aws_storage
+    from app.archive import moves
+    from app.archive import sync
 
     sent = []
     monkeypatch.setattr(
-        aws_storage, "notify_admin_text", lambda subject, *a: sent.append(subject)
+        sync, "notify_admin_text", lambda subject, *a: sent.append(subject)
     )
     with app.app_context():
         fake, file_id, key = _lost_upload_row(app, monkeypatch, tmp_path, "Lost Rip")
-        assert aws_storage.move_archive_object(file_id) is False
-        assert app.redis.hexists(aws_storage.ARCHIVE_LOST_KEY, key)
+        assert moves.move_archive_object(file_id) is False
+        assert app.redis.hexists(moves.ARCHIVE_LOST_KEY, key)
 
         listing = SimpleNamespace(keys=set())
-        aws_storage._report_dangling_claims(listing)
+        sync._report_dangling_claims(listing)
         assert "Rip archives lost before their move" in sent
         sent.clear()
-        aws_storage._report_dangling_claims(listing)
+        sync._report_dangling_claims(listing)
         assert "Rip archives lost before their move" not in sent
-        app.redis.delete(aws_storage.ARCHIVE_LOST_KEY)
+        app.redis.delete(moves.ARCHIVE_LOST_KEY)
 
 
 def test_a_resumed_download_renews_its_sidecar(app, monkeypatch, tmp_path):
     """The sweep reads the age of the sidecar. A 206 resume keeps it fresh (follow-up #457)."""
 
-    from app.archive import aws_storage
+    from app.archive import cdn
 
     class Response:
         status_code = 206
@@ -214,14 +215,14 @@ def test_a_resumed_download_renews_its_sidecar(app, monkeypatch, tmp_path):
     with open(destination, "wb") as f:
         f.write(b"ab")
     with app.app_context():
-        aws_storage._write_partial_etag(destination, "etag-1", 3)
+        cdn._write_partial_etag(destination, "etag-1", 3)
     old = time.time() - 8 * 86400
     os.utime(destination + ".etag", (old, old))
-    monkeypatch.setattr(aws_storage, "cdn_signed_url", lambda key: "https://cdn/x")
-    monkeypatch.setattr(aws_storage, "CDN_HTTP_GET", lambda *a, **k: Response())
+    monkeypatch.setattr(cdn, "cdn_signed_url", lambda key: "https://cdn/x")
+    monkeypatch.setattr(cdn, "CDN_HTTP_GET", lambda *a, **k: Response())
     with app.app_context():
-        monkeypatch.setattr(aws_storage, "_remove_partial_etag", lambda d: None)
-        aws_storage.cdn_download(
+        monkeypatch.setattr(cdn, "_remove_partial_etag", lambda d: None)
+        cdn.cdn_download(
             "untouched/Resume.mkv", destination, lambda n: None, 3, "etag-1"
         )
     assert os.path.getmtime(destination + ".etag") > old + 86400
@@ -229,7 +230,7 @@ def test_a_resumed_download_renews_its_sidecar(app, monkeypatch, tmp_path):
 
 def test_the_sweep_keeps_a_complete_copy_whose_sidecar_stayed(app, monkeypatch):
     import app.operations.maintenance as maintenance
-    from app.archive import aws_storage
+    from app.archive import cdn
 
     monkeypatch.setitem(app.config, "MAIL_SERVER", None)
     imports = app.config["IMPORT_DIR"]
@@ -238,7 +239,7 @@ def test_the_sweep_keeps_a_complete_copy_whose_sidecar_stayed(app, monkeypatch):
     with open(complete, "wb") as f:
         f.write(b"abc")
     with app.app_context():
-        aws_storage._write_partial_etag(complete, "etag-2", 3)
+        cdn._write_partial_etag(complete, "etag-2", 3)
     old = time.time() - 30 * 86400
     for path in (complete, complete + ".etag"):
         os.utime(path, (old, old))

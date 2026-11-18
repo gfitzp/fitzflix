@@ -526,7 +526,7 @@ def test_shared_untouched_key_is_never_deleted(app):
     it."""
 
     from app import db
-    from app.archive.aws_storage import untouched_key_still_claimed
+    from app.archive.archive_keys import untouched_key_still_claimed
     from tests.factories import make_movie, make_movie_file
 
     with app.app_context():
@@ -574,7 +574,7 @@ def test_cleanup_keeps_the_input_of_a_waiting_conversion(app, monkeypatch):
     )
     app.handoff_queue.enqueue_in(
         timedelta(minutes=30),
-        "app.media.importing.move_localized_file",
+        "app.media.importing.library_move.move_localized_file",
         "/import/Deferred (2020) - [DVD].mkv",
         {},
         None,
@@ -685,16 +685,20 @@ def test_cleanup_removes_dead_restore_partials(app, monkeypatch):
 def test_a_sync_defer_keeps_the_volume_drop_count(app, monkeypatch):
     """A busy queue books the retry with the count of the drops so far (#457)."""
 
-    from app.archive import aws_storage
+    from app.archive import downloads
+    from app.archive import moves
+    from app.archive import sync
 
     booked = []
+    monkeypatch.setattr(sync, "requeue", lambda name, **kwargs: booked.append(kwargs))
     monkeypatch.setattr(
-        aws_storage, "requeue", lambda name, **kwargs: booked.append(kwargs)
+        downloads, "requeue", lambda name, **kwargs: booked.append(kwargs)
     )
+    monkeypatch.setattr(moves, "requeue", lambda name, **kwargs: booked.append(kwargs))
     with app.app_context():
         app.maintenance_queue.enqueue("app.operations.maintenance.rotate_logs")
         try:
-            assert aws_storage._sync_deferred(None, volume_drops=5) is True
+            assert sync._sync_deferred(None, volume_drops=5) is True
         finally:
             app.maintenance_queue.empty()
     assert booked[0]["counters"] == {"volume_drops": 5}
@@ -782,7 +786,7 @@ def test_cleanup_removes_an_old_direct_restore_copy_with_no_owner(
     sidecar age shows that no chain owns the copy. An untouched/ copy
     waits for the admin and stays."""
 
-    from app.archive import aws_storage
+    from app.archive import cdn
 
     monkeypatch.setattr(maintenance, "task_send_email", lambda *a, **k: None)
     imports = app.config["IMPORT_DIR"]
@@ -792,7 +796,7 @@ def test_cleanup_removes_an_old_direct_restore_copy_with_no_owner(
     copies = (old_copy, fresh_copy, waiting)
     with app.app_context():
         for copy in copies:
-            aws_storage._write_partial_etag(copy, '"v1"', os.path.getsize(copy))
+            cdn._write_partial_etag(copy, '"v1"', os.path.getsize(copy))
     ages = {old_copy: 30, fresh_copy: 10, waiting: 30}
     for copy, age in ages.items():
         stamp = time.time() - age * 86400

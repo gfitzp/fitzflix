@@ -138,7 +138,7 @@ def test_tmdb_apply_rename_requests_no_archive_move(app):
         assert [
             job
             for job in app.file_queue.jobs
-            if job.func_name == "app.archive.aws_storage.move_archive_object"
+            if job.func_name == "app.archive.moves.move_archive_object"
         ] == []
 
     output = dry_run()
@@ -719,7 +719,7 @@ def test_an_apply_logs_the_old_and_the_new_name(app, caplog):
 def test_a_rename_writes_none_of_the_import_lines(app, caplog):
     """The rename path evaluates the name quietly. An import still logs (#590)."""
 
-    from app.media.importing import evaluate_filename, reconstruct_filename
+    from app.media.importing.filenames import evaluate_filename, reconstruct_filename
     from app.metadata.tmdb_refresh import _rename_movie_file
 
     with app.app_context():

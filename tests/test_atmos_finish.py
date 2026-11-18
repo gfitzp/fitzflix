@@ -521,7 +521,7 @@ def test_an_early_end_of_a_conversion_queues_its_archive(app, monkeypatch):
             j
             for queue in (app.file_queue, app.handoff_queue)
             for j in queue.jobs
-            if j.func_name == "app.archive.aws_storage.upload_task"
+            if j.func_name == "app.archive.uploads.upload_task"
         ]
         assert [j.args for j in uploads] == [(file.id,)]
 
@@ -531,7 +531,7 @@ def _uploads(app):
         j
         for queue in (app.file_queue, app.handoff_queue)
         for j in queue.jobs
-        if j.func_name == "app.archive.aws_storage.upload_task"
+        if j.func_name == "app.archive.uploads.upload_task"
     ]
 
 
@@ -554,7 +554,7 @@ def test_an_early_end_queues_its_archive_after_it_releases_the_lock(app, monkeyp
         real_enqueue = atmos.enqueue_task
 
         def enqueue(name, *args, **kwargs):
-            if name == "app.archive.aws_storage.upload_task":
+            if name == "app.archive.uploads.upload_task":
                 held_at_enqueue.append(bool(app.redis.exists(lock.resource)))
             return real_enqueue(name, *args, **kwargs)
 

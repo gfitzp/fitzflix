@@ -964,9 +964,9 @@ def test_the_maintenance_page_queues_the_sync_on_maintenance(app, admin_client):
         for job in queue.jobs
     ]
     assert [job.func_name for job in app.maintenance_queue.jobs] == [
-        "app.archive.aws_storage.sync_aws_s3_storage_task"
+        "app.archive.sync.sync_aws_s3_storage_task"
     ]
-    assert names.count("app.archive.aws_storage.sync_aws_s3_storage_task") == 1
+    assert names.count("app.archive.sync.sync_aws_s3_storage_task") == 1
 
 
 @pytest.mark.parametrize(
@@ -1166,7 +1166,7 @@ def test_file_activity_survives_a_retry_that_leaves_the_schedule(
 
     app.import_queue.enqueue_in(
         timedelta(minutes=5),
-        "app.media.importing.localization_task",
+        "app.media.importing.localization.localization_task",
         "/nowhere/Retry Me (2001) - [DVD].mkv",
         description="'Retry Me (2001) - [DVD].mkv' waits",
     )
@@ -1302,7 +1302,7 @@ def test_file_activity_cards_carry_the_retry_list_and_its_new_times(app, admin_c
     description = "'Retry Twice (2001) - [DVD].mkv' waits"
     app.import_queue.enqueue_in(
         timedelta(minutes=10),
-        "app.media.importing.localization_task",
+        "app.media.importing.localization.localization_task",
         "/nowhere/Retry Twice (2001) - [DVD].mkv",
         description=description,
     )
@@ -1333,7 +1333,7 @@ def test_file_activity_cards_carry_the_retry_list_and_its_new_times(app, admin_c
 
     app.import_queue.enqueue_in(
         timedelta(minutes=2),
-        "app.media.importing.localization_task",
+        "app.media.importing.localization.localization_task",
         "/nowhere/Retry Twice (2001) - [DVD].mkv",
         description=description,
     )

@@ -16,9 +16,10 @@ import re
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 # A task of a base module has 3 parts ("app.dvr.build_channel_lineups").
-# A task of a module in a package has 4 ("app.media.importing.localization_task").
+# A task of a module in a package has 4 ("app.media.tracks.mkvmerge_task").
+# A task of the import package has 5.
 
-TASK_NAME = re.compile(r"^app\.[a-z_]+\.[a-z_0-9]+(\.[a-z_0-9]+)?$")
+TASK_NAME = re.compile(r"^app\.[a-z_]+\.[a-z_0-9]+(\.[a-z_0-9]+){0,2}$")
 
 # These task parameters share a name with an option of enqueue_task. The
 # producers pass them by position. Then the option does not take them.
@@ -247,7 +248,7 @@ def test_enqueue_task_fills_the_spec_and_takes_overrides(app):
             job.delete()
 
         job = enqueue_task(
-            "app.archive.aws_storage.sync_aws_s3_storage_task",
+            "app.archive.sync.sync_aws_s3_storage_task",
             delay=timedelta(minutes=5),
             job_id="test-registry-delay",
         )
@@ -275,7 +276,7 @@ def test_a_job_in_the_dequeue_gap_is_live_for_every_reader(app):
     queue = app.maintenance_queue
     with app.app_context():
         job = queue.enqueue(
-            "app.archive.aws_storage.sync_aws_s3_storage_task", job_id="bulk-gap-test-1"
+            "app.archive.sync.sync_aws_s3_storage_task", job_id="bulk-gap-test-1"
         )
         app.redis.lrem(queue.key, 0, job.id)
         app.redis.rpush(queue.intermediate_queue.key, job.id)
@@ -283,8 +284,7 @@ def test_a_job_in_the_dequeue_gap_is_live_for_every_reader(app):
             assert job.id not in queue.job_ids
             assert job.id in live_job_ids("maintenance")
             assert (
-                live_task_job("app.archive.aws_storage.sync_aws_s3_storage_task").id
-                == job.id
+                live_task_job("app.archive.sync.sync_aws_s3_storage_task").id == job.id
             )
             assert bulk_run_pending(
                 "bulk-gap-test-", "app.operations.maintenance.health_probe"
@@ -292,7 +292,7 @@ def test_a_job_in_the_dequeue_gap_is_live_for_every_reader(app):
         finally:
             app.redis.delete(queue.intermediate_queue.key)
             job.delete()
-        assert live_task_job("app.archive.aws_storage.sync_aws_s3_storage_task") is None
+        assert live_task_job("app.archive.sync.sync_aws_s3_storage_task") is None
 
 
 def test_each_job_name_is_the_module_that_defines_the_function(app):
@@ -351,15 +351,18 @@ def test_the_shared_module_holds_no_task(app):
 def test_the_retired_task_signatures_are_gone(app):
     """The old jobs drained before the deploy. No code reads a retired signature (#622)."""
 
-    from app.archive import aws_storage
+    from app import archive
+    from tests.conftest import package_modules
+    from app.archive import downloads
     from app.tasks import TASKS
 
-    assert "app.archive.aws_storage.rearchive_untouched_object" not in TASKS
-    assert not hasattr(aws_storage, "rearchive_untouched_object")
+    assert not [name for name in TASKS if name.endswith(".rearchive_untouched_object")]
+    assert not any(
+        hasattr(module, "rearchive_untouched_object")
+        for module in package_modules(archive)
+    )
     kinds = {
         parameter.kind
-        for parameter in inspect.signature(
-            aws_storage.download_task
-        ).parameters.values()
+        for parameter in inspect.signature(downloads.download_task).parameters.values()
     }
     assert inspect.Parameter.VAR_KEYWORD not in kinds

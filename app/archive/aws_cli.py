@@ -33,7 +33,7 @@ def register_cli(app):
 
         from app.archive.aws_setup import StaleReadSuspected
         from app.archive.aws_setup import provision as provision_aws
-        from app.archive.aws_storage import aws_s3_client, aws_sqs_client
+        from app.archive.aws_clients import aws_s3_client, aws_sqs_client
 
         if not app.config["AWS_BUCKET"]:
             raise click.ClickException(
@@ -74,7 +74,7 @@ def register_cli(app):
         "untouched/Film (2021) - [Bluray-1080p].mkv". The settings
         CDN_DOMAIN, CDN_KEY_PAIR_ID, and CDN_PRIVATE_KEY must be set."""
 
-        from app.archive.aws_storage import cdn_signed_url, missing_cdn_settings
+        from app.archive.cdn import cdn_signed_url, missing_cdn_settings
 
         missing = missing_cdn_settings()
         if missing:
@@ -120,11 +120,8 @@ def register_cli(app):
         --again, the pending moves are requested again too."""
 
         from app import db
-        from app.archive.aws_storage import (
-            archive_drifts,
-            key_claims,
-            request_archive_move,
-        )
+        from app.archive.moves import archive_drifts, request_archive_move
+        from app.archive.archive_keys import key_claims
 
         claims = key_claims()
         drifted = archive_drifts(claims)

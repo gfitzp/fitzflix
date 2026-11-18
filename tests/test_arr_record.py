@@ -126,7 +126,7 @@ def test_a_renamed_episode_gets_its_release_data_back(
     """Sonarr rescans, then the record at the Fitzflix path gets the data."""
 
     import app.arr.sonarr_push as sonarr_push
-    from app.media.importing import _restore_arr_record
+    from app.media.importing.follow_ups import _restore_arr_record
 
     series, source = _tv_download(app, monkeypatch, tmp_path)
     with app.app_context():
@@ -171,7 +171,7 @@ def test_a_renamed_episode_gets_its_release_data_back(
 def test_an_unchanged_name_queues_nothing(app, client, monkeypatch, tmp_path):
     """The library file has the path that Sonarr gave. Sonarr keeps its record."""
 
-    from app.media.importing import _restore_arr_record
+    from app.media.importing.follow_ups import _restore_arr_record
 
     series, source = _tv_download(app, monkeypatch, tmp_path)
     with app.app_context():

@@ -57,16 +57,16 @@ def test_the_incomplete_download_mail_escapes_the_basename(app, monkeypatch, tmp
 def test_the_dangling_claims_mail_escapes_the_keys(app, monkeypatch):
     from types import SimpleNamespace
 
-    from app.archive import aws_storage
+    from app.archive import sync
 
-    sent = _collect(monkeypatch, "app.archive.aws_storage.notify_admin_text")
+    sent = _collect(monkeypatch, "app.archive.sync.notify_admin_text")
     with app.app_context():
         file = make_movie_file(make_movie("Claimed Escape", 1999), "DVD")
         file.aws_key = f"untouched/{NAME}.mkv"
         # A row that was never uploaded claims no object (#534)
         file.aws_date_uploaded = datetime.utcnow()
         db.session.commit()
-        aws_storage._report_dangling_claims(SimpleNamespace(keys=set()))
+        sync._report_dangling_claims(SimpleNamespace(keys=set()))
     _assert_escaped(sent[0])
 
 
