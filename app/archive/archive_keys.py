@@ -97,22 +97,22 @@ def _claimed_by_another(file, key, claims=None):
 def archive_key_for(file, prefix, claims=None):
     """Return the archive key of a file under prefix.
 
-    The key is the prefix and the sanitized untouched name of the file.
-    The untouched name holds the title of the film or the series. The
-    basename of an extra is not unique, because many films have a
-    "Trailer.mkv". A conversion keeps the quality of its original in its
-    untouched name. Its transcoded/ copy has the quality of its library
-    file. Thus, the tag changes for each prefix but untouched/.
+        The key is the prefix and the sanitized untouched name of the file.
+        The untouched name holds the title of the film or the series. The
+        basename of an extra is not unique, because many films have a
+        "Trailer.mkv". A conversion keeps the quality of its original in its
+        untouched name. Its transcoded/ copy has the quality of its library
+        file. Thus, the tag changes for each prefix but untouched/.
 
-    Invariant: the extension of a key tells the type of its object
-    (#778). An object in untouched/ is the file of the import, and it
-    keeps that name. An object in modified/ or transcoded/ is the
-    library file. The import changes an MP4 into a Matroska file. Thus,
-    such a key gets the extension of the library file.
+        Invariant: the extension of a key tells the type of its object.
+    An object in untouched/ is the file of the import, and it
+        keeps that name. An object in modified/ or transcoded/ is the
+        library file. The import changes an MP4 into a Matroska file. Thus,
+        such a key gets the extension of the library file.
 
-    A key that the file holds already is its own. If another record
-    claims the key, the record id goes into the name. claims is the
-    result of key_claims, for a pass over many rows."""
+        A key that the file holds already is its own. If another record
+        claims the key, the record id goes into the name. claims is the
+        result of key_claims, for a pass over many rows."""
 
     config = current_app.config
     name = aws_clients.sanitize_s3_key(file.untouched_basename or file.basename)
