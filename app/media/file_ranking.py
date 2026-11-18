@@ -7,7 +7,7 @@ The reads of the quality tiers are here too. The ranked_files reporting
 view of MariaDB ranks a film by the same rule. It ranks an episode file
 among the files with the same first episode (tv_file_rank). Thus, it
 does not see an episode inside a file of 2 or more episodes. Each page,
-the S3 sync, the inventory, the season grades and the DVR lineup use
+the S3 sync, the inventory and the season grades use
 best_episode_holders for that. The definition
 of the view is RANKED_FILES_VIEW below, and a test compiles the Python
 ranks and compares them with that definition."""

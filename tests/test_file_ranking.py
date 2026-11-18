@@ -42,7 +42,6 @@ def _episode_pair():
 def test_every_movie_best_copy_reader_prefers_the_real_rip(app, monkeypatch):
     """Each movie best-copy reader selects the real rip over the conversion."""
 
-    import app.dvr as dvr
     from app.frames import _best_file
     from app.main.movie_pages import _films_and_features
     from app.main.search import _movie_search_results
@@ -53,9 +52,6 @@ def test_every_movie_best_copy_reader_prefers_the_real_rip(app, monkeypatch):
         db.session.commit()
 
         assert _best_file(movie.id)[0].id == rip.id
-
-        monkeypatch.setattr(dvr, "_on_disk", lambda file: True)
-        assert dvr._best_files_by_movie()[movie.id][1].id == rip.id
 
         films, _ = _films_and_features(movie.id)
         assert [film.id for film in films] == [rip.id, conversion.id]
@@ -83,16 +79,12 @@ def test_the_movie_files_page_lists_the_real_rip_first(app, admin_client):
 def test_every_episode_best_copy_reader_prefers_the_real_rip(app, monkeypatch):
     """Each episode best-copy reader selects the real rip over the conversion."""
 
-    import app.dvr as dvr
     from app.main.tv_pages import _season_files
     from app.media.file_ranking import tv_best_holder_ids
 
     with app.app_context():
         series, rip, conversion = _episode_pair()
         db.session.commit()
-
-        monkeypatch.setattr(dvr, "_on_disk", lambda file: True)
-        assert [file.id for file in dvr._series_episodes(series.id)] == [rip.id]
 
         rows = _season_files(series.id, 1)
         assert [(row[0].id, row[3]) for row in rows] == [

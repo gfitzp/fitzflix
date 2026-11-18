@@ -417,7 +417,7 @@ def _movie_rating_key(movie):
     with another Plex title.
     """
 
-    # MOVIE_BEST_ORDER has no edition. The DVR and the frame game use it
+    # MOVIE_BEST_ORDER has no edition. The frame game uses it
     # as it is. Thus, only this query puts the plain cut before the file
     # id, its last key.
 

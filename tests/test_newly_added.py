@@ -8,7 +8,6 @@ import json
 
 from datetime import date, timedelta
 
-from tests.conftest import dvr_rebuild_jobs
 from tests.factories import make_movie, make_movie_file
 from tests.test_leaving_criterion import (
     FILM_PAGES,
@@ -161,9 +160,6 @@ def test_refresh_plants_first_then_stamps_and_prunes(app, monkeypatch):
     stored = json.loads(app.redis.get(key))
     assert [item["first_seen"] for item in stored["items"]] == [None]
     assert stored["items"][0]["scraped_title"] == "The Searchers"
-    # The first run stamps no new film. Thus, the DVR dial has nothing
-    # to learn.
-    assert dvr_rebuild_jobs(app) == []
 
     # The second run has 1 new film and 1 unmatched newcomer. The
     # earlier film keeps its null stamp, and the run does not match it
@@ -188,9 +184,6 @@ def test_refresh_plants_first_then_stamps_and_prunes(app, monkeypatch):
     assert by_title["Obscurity"]["tmdb_id"] is None
     assert by_title["Obscurity"]["director"] == "Jane Doe"
     assert match_calls == ["Love & Mercy", "Obscurity"]
-    # An OWNED new arrival joins the Criterion channel through the
-    # synthesized match. Thus, Fitzflix rebuilds the dial the same day.
-    assert len(dvr_rebuild_jobs(app)) == 1
 
     # In the third run, the planted film is gone. The run removes it.
     # The stamp of the kept film survives
@@ -214,7 +207,7 @@ def test_refresh_plants_first_then_stamps_and_prunes(app, monkeypatch):
 def test_a_match_without_a_payload_keeps_its_tmdb_id(app, monkeypatch):
     """A TMDB timeout must not drop the matched id from the store (#386).
 
-    The fold, the DVR and the shelves read the id. The next run gets the
+    The fold and the shelves read the id. The next run gets the
     payload and does not count the film as new again."""
 
     import app.availability.newly_added as newly_added
@@ -251,7 +244,6 @@ def test_a_match_without_a_payload_keeps_its_tmdb_id(app, monkeypatch):
     first_seen = item["first_seen"]
     with app.app_context():
         assert newly_added_since(3110, CRITERION_PROVIDER_ID) is not None
-    assert len(dvr_rebuild_jobs(app)) == 1
 
     payloads[3110] = shelf_item(3110, "The Searchers")
     assert refresh_newly_added() == (1, 0)
@@ -260,7 +252,6 @@ def test_a_match_without_a_payload_keeps_its_tmdb_id(app, monkeypatch):
     assert not item.get("payload_missing")
     assert item["title"] == "The Searchers"
     assert item["first_seen"] == first_seen
-    assert len(dvr_rebuild_jobs(app)) == 1
 
 
 def test_shelf_surfaces_recent_arrivals_and_excludes(app, admin_client):

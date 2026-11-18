@@ -182,9 +182,6 @@ TASKS = {
     "app.media.custom_artwork.restore_folder_poster": TaskSpec(
         "request", 600, "Restoring the custom poster of a library folder"
     ),
-    "app.dvr.build_channel_lineups": TaskSpec(
-        "maintenance", 3600, "Building virtual DVR channel lineups"
-    ),
     # Other maintenance work that the pages and the tasks queue.
     "app.availability.streaming.warm_title_availability": TaskSpec("maintenance", 1800),
     "app.criterion.criterion_now.poll_criterion_now": TaskSpec("maintenance", 300),

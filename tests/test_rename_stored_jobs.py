@@ -40,17 +40,17 @@ def test_the_report_changes_nothing_and_apply_renames_each_place(app):
     with app.app_context():
         job = app.maintenance_queue.enqueue(
             "app.settings.get_setting",
-            "DVR_TV_CHANNELS",
+            "PLEX_TRASH_LIMIT",
             meta={"func": "app.settings.get_setting"},
         )
-        other = app.maintenance_queue.enqueue("app.dvr.build_channel_lineups")
+        other = app.maintenance_queue.enqueue("app.frames.refresh_frame_pool_task")
         app.redis.hset(
             script.LATEST_KEY,
             "app.settings.get_setting|0 5 * * *",
             "2026-11-17T05:00:00",
         )
         app.redis.hset(
-            script.LATEST_KEY, "app.dvr.build_channel_lineups|30 6 * * *", "kept"
+            script.LATEST_KEY, "app.frames.refresh_frame_pool_task|30 6 * * *", "kept"
         )
 
         counts = script.rename_stored_jobs(app.redis, pairs)
@@ -66,18 +66,18 @@ def test_the_report_changes_nothing_and_apply_renames_each_place(app):
         assert script.rename_stored_jobs(app.redis, pairs, apply=True) == counts
         stored = Job.fetch(job.id, connection=app.redis)
         assert stored.func_name == "app.moved_settings.get_setting"
-        assert stored.args == ("DVR_TV_CHANNELS",)
+        assert stored.args == ("PLEX_TRASH_LIMIT",)
         assert stored.meta["func"] == "app.moved_settings.get_setting"
         assert stored.get_status().value == "queued"
 
         # A job and a record with an other name stay as they are.
 
         assert Job.fetch(other.id, connection=app.redis).func_name == (
-            "app.dvr.build_channel_lineups"
+            "app.frames.refresh_frame_pool_task"
         )
         assert app.redis.hgetall(script.LATEST_KEY) == {
             b"app.moved_settings.get_setting|0 5 * * *": b"2026-11-17T05:00:00",
-            b"app.dvr.build_channel_lineups|30 6 * * *": b"kept",
+            b"app.frames.refresh_frame_pool_task|30 6 * * *": b"kept",
         }
 
         # A second run finds nothing.

@@ -11,8 +11,8 @@ The log is access.log, next to the application log. The nightly
 rotate_logs task archives both files the same way.
 
 A token in a request path is a secret. The filter replaces it with
-"<token>" before the line reaches the file. The DVR, the Plex webhook,
-the password reset, and the game share routes carry one.
+"<token>" before the line reaches the file. The Plex webhook, the
+password reset, and the game share routes carry one.
 """
 
 import copy
@@ -27,7 +27,7 @@ ACCESS_LOG_NAME = "access.log"
 ACCESS_LOG_FORMAT = '%(t)s %(p)s %(h)s "%(r)s" %(s)s %(b)s %(L)s "%(a)s"'
 
 TOKEN_SEGMENT = re.compile(
-    r"(/(?:reset-password|plex/webhook|dvr|game/brag|game/frame)/)[^/\s?\"]+"
+    r"(/(?:reset-password|plex/webhook|game/brag|game/frame)/)[^/\s?\"]+"
 )
 
 

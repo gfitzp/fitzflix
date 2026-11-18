@@ -137,7 +137,6 @@ class TestConfig(Config):
     PLEX_URL = None
     PLEX_TOKEN = None
     PLEX_WEBHOOK_TOKEN = "plex-test-webhook-token"
-    DVR_TOKEN = "dvr-test-token"
     SONARR_URL = "http://127.0.0.1:1"
     SONARR_API_KEY = "sonarr-test-key"
     RADARR_URL = "http://127.0.0.1:1"
@@ -555,18 +554,6 @@ def log_capture(app):
     app.logger.addHandler(handler)
     yield handler.records
     app.logger.removeHandler(handler)
-
-
-def dvr_rebuild_jobs(app):
-    """Return the lineup rebuilds that wait on the maintenance queue.
-
-    The DVR editor and the Criterion scrapers enqueue these jobs."""
-
-    return [
-        job
-        for job in app.maintenance_queue.jobs
-        if job.func_name == "app.dvr.build_channel_lineups"
-    ]
 
 
 def page_with_scripts(client, path):

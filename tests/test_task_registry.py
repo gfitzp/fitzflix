@@ -15,7 +15,7 @@ import re
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 
-# A task of a base module has 3 parts ("app.dvr.build_channel_lineups").
+# A task of a base module has 3 parts ("app.frames.extract_frame_task").
 # A task of a module in a package has 4 ("app.media.tracks.edits.mkvmerge_task").
 # A task of the import package has 5.
 
@@ -170,7 +170,6 @@ def test_every_cron_row_is_registered(app):
         PLEX_TOKEN="token",
         RADARR_URL="radarr",
         RADARR_API_KEY="key",
-        DVR_TOKEN="dvr",
     )
     entries = cron_table(config)
     assert len(entries) >= 35

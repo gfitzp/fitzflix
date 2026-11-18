@@ -38,7 +38,7 @@ with app.app_context():
     jobs = []
     for key, queue in app.queues.items():
         job = queue.enqueue(
-            "app.settings.get_setting", "DVR_TV_CHANNELS", job_timeout=60
+            "app.settings.get_setting", "PLEX_TRASH_LIMIT", job_timeout=60
         )
         jobs.append((key, job))
 

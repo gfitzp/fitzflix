@@ -42,9 +42,7 @@ def register_cli(app):
         "--force",
         is_flag=True,
         help="Fetch the page also when the stored set is current. A cached "
-        "TMDB match of a film stays for 60 days. This option does not change it. "
-        "When the page gives the matched films and the departure of the stored "
-        "set, the DVR lineups are not built again.",
+        "TMDB match of a film stays for 60 days. This option does not change it.",
     )
     def leaving(force):
         """Run the daily refresh of the leaving-Criterion film set now.

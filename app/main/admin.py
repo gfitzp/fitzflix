@@ -624,7 +624,7 @@ def _in_page_range(name, value):
     """Return the value of a setting inside the limits of its page field.
 
     A limit can become smaller after a value was stored. For example,
-    an older version allowed 50 DVR genre channels. The page validates
+    a new version can lower the maximum of a field. The page validates
     each field on a save. Thus, a stored value outside the limits would
     block the save of every other setting. The field shows the nearest
     limit, and the next save stores it. The stored value stays until

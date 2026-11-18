@@ -58,7 +58,6 @@ from app.availability.availability_alerts import NEW_IN_LIBRARY_LABEL
 from app.availability.availability_alerts import recent_availability
 from app.criterion.leaving_criterion import leaving_departure
 from app.availability.streaming import user_provider_ids
-from app import dvr
 
 # The app instance of this process. Fitzflix resolves it lazily. Thus, the
 # nightly task can run on a worker without a second application.
@@ -136,8 +135,8 @@ def _stored_entry(film, tmdb_id, payload, first_seen):
     """Return the stored entry of one scraped film.
 
         A matched film keeps its TMDB id when its payload is not available.
-    A TMDB timeout or a cached 404 gives no payload. The fold,
-        the DVR and the shelves read the id. The entry then has the scraped
+    A TMDB timeout or a cached 404 gives no payload. The fold
+        and the shelves read the id. The entry then has the scraped
         fields and the payload_missing flag. The next run tries the payload
         again."""
 
@@ -179,7 +178,6 @@ def _refresh_feed(provider_id, feed):
     today = date.today().isoformat()
     items = []
     fresh = 0
-    arrived = []
     for film in films:
         prior = previous_items.get((film["title"].lower(), film["year"]))
         if prior is not None and prior.get("tmdb_id"):
@@ -216,11 +214,6 @@ def _refresh_feed(provider_id, feed):
         payload = enriched_movie(tmdb_id) if tmdb_id is not None else None
         if tmdb_id is not None and not payload and movie_gone(tmdb_id):
             tmdb_id = None
-        if previous is not None and tmdb_id is not None:
-            # The film is new to the page, or it was on the page but
-            # unmatched until this run. In both cases, the film counts
-            # as streaming here only from now.
-            arrived.append(tmdb_id)
         items.append(_stored_entry(film, tmdb_id, payload, first_seen))
 
     current_app.redis.set(
@@ -241,19 +234,6 @@ def _refresh_feed(provider_id, feed):
             else " (planted)"
         )
     )
-    # An owned day-one arrival joins the Criterion channel of the DVR
-    # through the synthesized match. Thus, the dial catches up the same
-    # day. The feed is stored before this step. Thus, a fault here gives a
-    # warning, and the feed counts as read. The nightly build of
-    # the lineups catches up.
-    if arrived and provider_id == CRITERION_PROVIDER_ID:
-
-        try:
-            dvr.enqueue_lineup_rebuild(
-                f"{len(arrived)} newly-added Criterion films", tmdb_ids=arrived
-            )
-        except Exception:
-            current_app.logger.warning(traceback.format_exc())
     return True
 
 

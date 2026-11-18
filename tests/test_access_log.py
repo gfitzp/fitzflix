@@ -22,9 +22,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 @pytest.mark.parametrize(
     "line",
     [
-        "GET /dvr/abc123/guide.xml HTTP/1.1",
-        "GET /dvr/abc123/stream/wgbh.ts HTTP/1.1",
-        "GET /dvr/abc123/playlist.m3u/lineup.json HTTP/1.1",
+        "GET /game/frame/abc123/wide.jpg HTTP/1.1",
         "POST /plex/webhook/abc123 HTTP/1.1",
         "GET /reset-password/abc123?next=%2F HTTP/1.1",
         "GET /game/brag/abc123 HTTP/1.1",
@@ -40,15 +38,15 @@ def test_redact_tokens_hides_each_route_token(line):
 
 
 def test_redact_tokens_leaves_other_lines_alone():
-    line = "GET /movie/123?next=/dvr HTTP/1.1"
+    line = "GET /movie/123?next=/game HTTP/1.1"
 
     assert redact_tokens(line) == line
 
 
 def test_token_filter_rewrites_the_request_atoms():
     atoms = {
-        "r": "GET /dvr/abc123/guide.xml HTTP/1.1",
-        "U": "/dvr/abc123/guide.xml",
+        "r": "GET /game/frame/abc123/wide.jpg HTTP/1.1",
+        "U": "/game/frame/abc123/wide.jpg",
         "s": "200",
     }
     record = logging.LogRecord(
@@ -56,8 +54,8 @@ def test_token_filter_rewrites_the_request_atoms():
     )
 
     assert TokenFilter().filter(record) is True
-    assert record.args["r"] == "GET /dvr/<token>/guide.xml HTTP/1.1"
-    assert record.args["U"] == "/dvr/<token>/guide.xml"
+    assert record.args["r"] == "GET /game/frame/<token>/wide.jpg HTTP/1.1"
+    assert record.args["U"] == "/game/frame/<token>/wide.jpg"
     assert record.args["s"] == "200"
 
 
@@ -108,7 +106,7 @@ def test_logconfig_writes_a_redacted_line_through_dict_config(tmp_path):
         "from app.operations.access_log import ACCESS_LOG_FORMAT, logconfig\n"
         f"dictConfig(logconfig({access_log!r}))\n"
         "atoms = {'t': '[30/Oct/2026:22:40:01 -0400]', 'p': '<1>', 'h': '10.0.0.2',"
-        " 'r': 'GET /dvr/abc123/guide.xml HTTP/1.1', 's': '200', 'b': '12',"
+        " 'r': 'GET /game/frame/abc123/wide.jpg HTTP/1.1', 's': '200', 'b': '12',"
         " 'L': '0.004210', 'a': 'curl'}\n"
         "logging.getLogger('gunicorn.access').info(ACCESS_LOG_FORMAT, atoms)\n"
         "logging.getLogger('gunicorn.error').info('Booting worker with pid: 1')\n"
@@ -121,7 +119,7 @@ def test_logconfig_writes_a_redacted_line_through_dict_config(tmp_path):
     with open(access_log) as f:
         lines = f.read().splitlines()
     assert lines == [
-        '[30/Oct/2026:22:40:01 -0400] <1> 10.0.0.2 "GET /dvr/<token>/guide.xml'
+        '[30/Oct/2026:22:40:01 -0400] <1> 10.0.0.2 "GET /game/frame/<token>/wide.jpg'
         ' HTTP/1.1" 200 12 0.004210 "curl"'
     ]
     assert "Booting worker" in result.stderr

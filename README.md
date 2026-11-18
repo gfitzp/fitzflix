@@ -5,7 +5,7 @@ Fitzflix is a media library manager. Its primary use cases are film library, sho
 
 Fitzflix receives the video files of movies and TV shows. It uploads each file to AWS S3 Glacier Deep Archive storage as a backup. It sorts the files into a folder hierarchy that Plex can read. It removes the audio tracks and the subtitle tracks that are not in your language, which decreases the file size. It shows the movies and the TV shows that are in your library, and the format of each file. This helps you to upgrade the quality of your library.
 
-Fitzflix also adds a personal discovery layer on top of the library. It makes a taste profile from your viewing diary. Each night, this profile makes new recommendation shelves. The layer also includes a watchlist, award data and streaming availability data for each film, and a virtual live-TV dial for Plex. Refer to [Discovery](#discovery-the-landing-page-and-the-recommendation-engine).
+Fitzflix also adds a personal discovery layer on top of the library. It makes a taste profile from your viewing diary. Each night, this profile makes new recommendation shelves. The layer also includes a watchlist, and award data and streaming availability data for each film. Refer to [Discovery](#discovery-the-landing-page-and-the-recommendation-engine).
 
 Fitzflix sorts files with these names:
 
@@ -287,7 +287,7 @@ Fitzflix copies and deletes only below the folders in `ARR_DOWNLOAD_FOLDERS` in 
 
 Fitzflix can record movie watches directly from Plex. Each watch increases the shopping-list priority of the movie for the full household. If a watcher is mapped to a Fitzflix account, Fitzflix also records the watch in the diary of that user as an unrated entry. If the user logged the film before, the entry gets the rewatch flag. Together with the Letterboxd RSS sync above, the full diary loop is automatic. Plex supplies the watch with its timestamp, the Letterboxd review supplies the rating, and the sync merges them into one row.
 
-Two sources send data to the same record logic, and the logic removes the duplicates between them. Thus, you can use the two sources together, and we recommend that you do. The webhook reports the watches immediately. The poller finds the watches that the webhook missed while Fitzflix was down. The two sources never record a Live TV play. A play on the [virtual DVR](#virtual-dvr-live-tv-channels-in-plex) is not a watch, whatever the quality of the Plex match.
+Two sources send data to the same record logic, and the logic removes the duplicates between them. Thus, you can use the two sources together, and we recommend that you do. The webhook reports the watches immediately. The poller finds the watches that the webhook missed while Fitzflix was down. The two sources never record a Live TV play.
 
 ### Webhook (real time; requires Plex Pass)
 
@@ -355,35 +355,6 @@ The rule: the selected audio stream is the default audio track of the file, or i
 
 It runs in three places. A rewrite of a library file applies the rule after the Plex analyze. A new import applies it two minutes after the `library.new` webhook of Plex. A nightly sweep at 03:45 applies it to both libraries, for each account. Thus, a switch to a commentary track in a Plex app does not outlive the night. Infuse selects tracks by its own rules. This changes what the Plex apps play.
 
-## Virtual DVR: live TV channels in Plex
-
-The library can broadcast itself. Fitzflix emulates a network tuner, and the Live TV & DVR function of Plex treats it as cable TV. The result is a dial of 24/7 channels with a full guide grid, streamed only from the files that you own. Fitzflix seeds the default dial on the first lineup build. The default dial contains these channels:
-
-- An all-library mix
-- The movie genres with the most films in the library
-- A **Criterion** channel of owned films that stream on the Criterion Channel now
-- A **Leaving Soon** channel of owned films in the leaving set of the month. Each guide entry starts with the departure date.
-- The TV genres with the most episodes in the library
-- Theme channels such as **Game Shows** and **British Sitcoms**
-
-After the first build, the dial is data. Edit it at **Admin → DVR Channels**. You can make, delete, renumber, or disable channels. You can match the members of a channel with rules. The rules include genres, TMDB keywords, the origin country of the network, title pins, the Criterion and leaving overlays, and movies or TV or both. A title pin is a substring match that adds a title before all other rules. You can also pin films or series by title, with suggestions as you type.
-
-A channel can mix the two libraries. The series air as blocks in broadcast sequence, in the style of syndication. The share of each series is proportional to its depth. The cursor of each series moves some episodes forward each day. The films space themselves through the episode cycle, as a nightly feature. The lineups rebuild each night, with rotation as on the landing shelves, and after each edit. After each build, Fitzflix asks Plex to fetch the guide again. Thus, the grid shows the new lineups within a minute.
-
-The schedule is deterministic, and it has no state. A channel is a stored program list and an epoch timestamp. The guide and the stream calculate the current program from the same arithmetic over the real container durations. Fitzflix probes each file with ffprobe one time and caches the duration. Thus, the guide and the stream always agree. Nothing runs when nobody watches. When Plex tunes a channel, ffmpeg opens the file at the offset of the schedule. It transcodes the video to H.264 with AC-3 audio in an MPEG-TS stream, in real time. When the file flags a default subtitle track in a bitmap format (PGS or VobSub), the stream burns that track into the picture. A text subtitle track (SubRip, ASS) does not air, because the ffmpeg of the host has no text renderer. On macOS, VideoToolbox accelerates the transcode. The cost is one hardware transcode for each tuned channel, and zero when idle. A channel play never goes into a diary (refer to [Tracking Plex watches](#tracking-plex-watches)).
-
-Setup (Plex Pass is required for Live TV & DVR):
-
-1. Set `DVR_TOKEN` in `.env` to a long random string. For example, use `python3 -c "import secrets; print(secrets.token_hex(16))"` to make one. Then restart. The token protects each DVR endpoint. The endpoints answer 404 to all other requests.
-2. If Plex runs on a different machine than Fitzflix, also set `DVR_TUNER_URL`. This is the address at which *Plex* reaches Fitzflix. The default is `http://127.0.0.1:8000`. The loopback default is important when a CDN is in front of the public hostname, because live streams must never go through the CDN.
-3. Open the **DVR Channels** admin page. It shows the two URLs that you must paste, with copy buttons.
-4. In Plex, open **Settings → Live TV & DVR → Set Up**. Enter the tuner address under *"Don't see your HDHomeRun device? Enter its network address manually"*. Plex has no native M3U support. Fitzflix answers the HDHomeRun HTTP protocol at that address, and the manual entry accepts it without network discovery.
-5. At the channel-setup step, enter the XMLTV guide URL (**Edit** under Country → **XMLTV**).
-6. If the tuner shows but does not add on the first attempt, close the setup dialog and do Set Up again. This is a known Plex problem.
-7. If Plex asks you to map the channels, map them. The channel numbers and the names of the tuner match the guide. Then let the guide download.
-
-These size settings are optional: `DVR_GENRE_CHANNELS` and `DVR_TV_CHANNELS` give the number of movie genre channels and TV genre channels that the first build seeds. `DVR_CHANNEL_FILMS` and `DVR_CHANNEL_EPISODES` give the number of programs in each lineup. `DVR_VIDEO_BITRATE_KBPS` gives the stream quality (default 8000).
-
 ## System requirements
 
 Fitzflix is developed and operated on macOS with [Homebrew](https://brew.sh). The default binary paths point to `/opt/homebrew/bin`. You can set each path below in the `.env` file. Thus, each platform that supplies these tools is applicable.
@@ -402,8 +373,8 @@ Fitzflix is developed and operated on macOS with [Homebrew](https://brew.sh). Th
 | [mkvmerge](https://mkvtoolnix.download) (MKVToolNix) | `MKVMERGE_BIN` | Remuxes Matroska files: removes the tracks that are not in your language and the empty tracks, puts a new default audio track in the first position, and converts other containers to Matroska |
 | [mkvpropedit](https://mkvtoolnix.download) (MKVToolNix) | `MKVPROPEDIT_LOCATION` | Edits Matroska properties in place: the default and forced track flags, and the track statistics |
 | [HandBrakeCLI](https://handbrake.fr) | `HANDBRAKE_BIN` | Converts HDR and BT.2020 imports to SDR (refer to `CONVERSION_PRESET`, `CONVERSION_PRESET_2160P`, and `HANDBRAKE_PRESET_FILE` for the presets) |
-| [ffmpeg](https://ffmpeg.org) | `FFMPEG_BIN` | Makes the FLAC twins, the triage aids, the Name That Frame frames, and the DVR streams |
-| [ffprobe](https://ffmpeg.org) | `FFPROBE_BIN` | Measures the durations and reads the streams for the triage aids, the frames, and the DVR lineups |
+| [ffmpeg](https://ffmpeg.org) | `FFMPEG_BIN` | Makes the FLAC twins, the triage aids, and the Name That Frame frames |
+| [ffprobe](https://ffmpeg.org) | `FFPROBE_BIN` | Measures the durations and reads the streams for the triage aids and the frames |
 | [mkvextract](https://mkvtoolnix.download) (MKVToolNix) | `MKVEXTRACT_BIN` | Extracts the TrueHD track for the E-AC-3 Atmos twin. It also copies the cover art into each audio remux that ffmpeg makes. Thus, Fitzflix needs it also without the Atmos twins. |
 | truehdd | `TRUEHDD_BIN` | Decodes a TrueHD Atmos track to the master that MediaConvert encodes. The default is `/Users/server/bin/truehdd`. Without it, a new import gets no Atmos twin. |
 | [AtomicParsley](https://github.com/wez/atomicparsley) | `ATOMICPARSLEY_BIN` | Removes the embedded metadata from MP4 files that Fitzflix cannot convert to Matroska |
@@ -464,7 +435,6 @@ TMDB_API_KEY=<your TMDB API key>
 | `PLEX_TRASH_LIMIT` | The Plex refresh empties the trash of each library each 15 minutes. It keeps the trash of a library when that trash holds more items than this value, and it makes a health issue. It also keeps the trash for one run after a share remount. A share that drops during a scan puts the whole share in the trash, and an empty deletes it. The default is 25. |
 | `PLEX_CRITERION_COLLECTION` | The name of the Plex collection that the Criterion sync keeps in each movie library. The default is `Criterion Collection Films`. |
 | `PLEX_PLAYER_SERVER_URI` | Remote playback. This is an HTTPS server address that the playback devices can reach. Each user selects a device on the Profile page (refer to [Playing films on an Apple TV](#playing-films-on-an-apple-tv)). |
-| `DVR_TOKEN`, `DVR_TUNER_URL` | Virtual DVR channels. The token protects the tuner, guide, and stream endpoints. If the token is not set, the function is disabled. The tuner URL is the Fitzflix origin as Plex reaches it (refer to [Virtual DVR](#virtual-dvr-live-tv-channels-in-plex)). |
 | `HANDBRAKE_PRESET_FILE` | The file of custom presets that you export from HandBrake. It can hold more than one preset, also in folders. The default file is `handbrake_presets.json` in the Fitzflix folder. The SDR conversion uses its `CONVERSION_PRESET` or its `CONVERSION_PRESET_2160P`. |
 | `MOVIE_LIBRARY`, `TV_LIBRARY` | The folders of the 2 libraries. The defaults are `Movies` and `TV Shows` in `LIBRARY_DIR`. Keep these names. The file paths in the database start with `Movies/` and `TV Shows/`. |
 | `CUSTOM_ARTWORK_DIR` | The folder of the custom posters. The default is `app/static/custom` in the Fitzflix folder. The pages get the posters at `/static/custom/`. Thus, a different folder needs a link with the name `custom` in `app/static`. |
@@ -491,7 +461,6 @@ Some settings can also change on the **Admin > Settings** page, without a restar
 - The Plex trash limit `PLEX_TRASH_LIMIT`.
 - The download labels `RADARR_WEBDL_MIN_SCORE` and `SONARR_WEBDL_MIN_SCORE`.
 - The media setting `EAC3_ATMOS_BITRATE`.
-- The DVR sizes `DVR_GENRE_CHANNELS`, `DVR_TV_CHANNELS`, `DVR_CHANNEL_FILMS`, and `DVR_CHANNEL_EPISODES`.
 
 `.env` has priority. A setting that `.env` sets is locked on the page, and its field shows "Set in .env". For an on/off setting, the name in `.env` sets it, with the value that the list above gives. For each other setting, a value that is not empty sets it. To control a locked setting from the page, remove it from `.env` and restart. A setting that is not in `.env` uses the page value. When the page has no value, the setting uses its default. The page shows the source of each value: `.env`, the page, or the default. **Reset to default** removes the page value. The page stores only the values that change, and the log records each change with the email of the admin.
 
@@ -617,7 +586,7 @@ Run these commands from the project root, with the venv active. Some commands pu
 | `flask refresh criterion` | Refreshes the Criterion Collection data from Wikidata. This also runs automatically on the 18th of each month, after the mid-month announcements of Criterion. |
 | `flask recs recompute` | Rebuilds the taste profile and the stored recommendations of each user now, and does not wait for the nightly run at 01:45 |
 | `flask recs streaming` | Rebuilds the streaming shelf now (otherwise each night at 02:15) |
-| `flask recs leaving` | Runs the refresh of the leaving-Criterion set now (otherwise each day at 06:00, and again at 08:00 on the 1st of each month). While the stored set is current and complete, it keeps the set and fetches nothing. `--force` fetches the page of this month again. It does not change a cached TMDB match, which stays for 60 days. When the page gives the matched films and the departure of the stored set, the DVR lineups are not built again. A page with no films keeps the stored set. The command says which of these occurred. |
+| `flask recs leaving` | Runs the refresh of the leaving-Criterion set now (otherwise each day at 06:00, and again at 08:00 on the 1st of each month). While the stored set is current and complete, it keeps the set and fetches nothing. `--force` fetches the page of this month again. It does not change a cached TMDB match, which stays for 60 days. A page with no films keeps the stored set. The command says which of these occurred. |
 | `flask recs awards` | Refreshes the Wikidata award records now, the film-item and the person-item craft awards together (otherwise each Monday) |
 | `flask recs copref <dataset-dir>` | Rebuilds the MovieLens co-preference table from an extracted ml-32m directory. This needs `numpy` and `scipy`. Do this only when you adopt a new snapshot. |
 | `flask recs evaluate` | Calculates the leave-one-out ranking metrics for the engine. This is the measure for each change to the scores. |
@@ -784,7 +753,7 @@ You can rebuild Fitzflix on a new machine from three items that you keep away fr
    Then run `flask db upgrade` to update the schema to the current code. If the code is not newer than the dump, this command changes nothing.
 5. **Restore the custom posters.** Copy the `custom-posters/` prefix of the bucket back to `app/static/custom/`. For example, run `aws s3 sync s3://<bucket>/custom-posters/ app/static/custom/`. The TMDB artwork does not need a restore. The pages link to the TMDB image CDN, and Fitzflix never stores the artwork locally.
 6. **Mount the NAS volumes.** The library shares are NFS exports (since August 2026). Put the NAS hostname in `/etc/hosts`, mount each share at its `/Volumes` name, and set `MOUNT_URLS` in `.env`. Then the health probe can remount a share that drops. Fitzflix makes the import, staging, rejects, and held directories again at the next startup.
-7. **Start the workers** with supervisor. Make sure that the health card on the System page is green. The scheduled jobs register themselves again at startup. Fitzflix does not back up Redis, and a new machine starts with an empty Redis. The recommendation rankings come back in one day, or immediately with `flask recs recompute`. The availability caches come back with the nightly refresh. Some data does not come back. The jobs that waited in the queues are lost, and so are the booked retries and the list of failed jobs. The hourly sweep finds a file in the import directory again. Only the weekly S3 sync finds a download that Sonarr or Radarr left in a library folder. The Newly added shelf stays empty until the Criterion Channel adds films. Name That Frame is empty until the frames of the next night, or until you run `flask frames refresh`. The DVR guide is empty until the next build, and each TV channel loses its position in its series. The warning mail for the watchlist films that leave the Criterion Channel goes out one more time. The trails of the File Activity page and the mode settings of the game are lost.
+7. **Start the workers** with supervisor. Make sure that the health card on the System page is green. The scheduled jobs register themselves again at startup. Fitzflix does not back up Redis, and a new machine starts with an empty Redis. The recommendation rankings come back in one day, or immediately with `flask recs recompute`. The availability caches come back with the nightly refresh. Some data does not come back. The jobs that waited in the queues are lost, and so are the booked retries and the list of failed jobs. The hourly sweep finds a file in the import directory again. Only the weekly S3 sync finds a download that Sonarr or Radarr left in a library folder. The Newly added shelf stays empty until the Criterion Channel adds films. Name That Frame is empty until the frames of the next night, or until you run `flask frames refresh`. The warning mail for the watchlist films that leave the Criterion Channel goes out one more time. The trails of the File Activity page and the mode settings of the game are lost.
 8. **Only if the NAS is also lost:** you can rebuild the library from the archives. The `modified/` and `transcoded/` objects go straight into place. The `untouched/` rips go through the import. The S3 sync task queues a Bulk restore for each rank-1 file that is not on the local disk. The file `inventory/rank_1.csv` in the bucket supports an S3 Batch Operations restore of all files at the same time.
 
 ## Logs and maintenance

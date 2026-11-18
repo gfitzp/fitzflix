@@ -57,10 +57,6 @@ PAGE_TUNABLES = (
     "RADARR_WEBDL_MIN_SCORE",
     "SONARR_WEBDL_MIN_SCORE",
     "EAC3_ATMOS_BITRATE",
-    "DVR_GENRE_CHANNELS",
-    "DVR_CHANNEL_FILMS",
-    "DVR_TV_CHANNELS",
-    "DVR_CHANNEL_EPISODES",
 )
 
 
@@ -400,21 +396,6 @@ class Config(object):
     # the Plex host does it by the id of the item.
     PLEX_SCANNER                        = os.environ.get("PLEX_SCANNER") or "/Applications/Plex Media Server.app/Contents/MacOS/Plex Media Scanner"
     PLEX_WEBHOOK_TOKEN                  = os.environ.get("PLEX_WEBHOOK_TOKEN") or None
-
-    # Virtual DVR channels. The token gates the M3U/XMLTV/stream
-    # endpoints. If the token is not set, the feature is off and every route
-    # returns 404. Plex tunes the playlist as an M3U tuner. The channel count
-    # and the channel size limit the ffprobe work of the nightly lineup
-    # build. DVR_TUNER_URL is the Fitzflix origin AS PLEX REACHES IT. Use
-    # loopback if Plex runs on the same machine. Then tuning never goes
-    # through the public host.
-    DVR_TOKEN                           = os.environ.get("DVR_TOKEN") or None
-    DVR_TUNER_URL                       = os.environ.get("DVR_TUNER_URL") or "http://127.0.0.1:8000"
-    DVR_GENRE_CHANNELS                  = int(os.environ.get("DVR_GENRE_CHANNELS") or 6)
-    DVR_CHANNEL_FILMS                   = int(os.environ.get("DVR_CHANNEL_FILMS") or 40)
-    DVR_TV_CHANNELS                     = int(os.environ.get("DVR_TV_CHANNELS") or 5)
-    DVR_CHANNEL_EPISODES                = int(os.environ.get("DVR_CHANNEL_EPISODES") or 60)
-    DVR_VIDEO_BITRATE_KBPS              = int(os.environ.get("DVR_VIDEO_BITRATE_KBPS") or 8000)
 
     # Remote playback through Plex Companion. This is the server address AS
     # THE PLAYERS REACH IT: an https URI that resolves from the networks of

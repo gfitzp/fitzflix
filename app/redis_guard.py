@@ -44,8 +44,7 @@ def nothing_stored(where, default=None):
 
     The rule holds only in a web request. A page shows nothing for 1
     render, and the next render reads again. A task goes on and writes
-    what it read: the DVR build deletes the lineup of a channel that got
-    no films, and the catalog check decides a film for good. Thus,
+    what it read: the catalog check decides a film for good. Thus,
     outside a request the fault goes to the caller, and the task fails."""
 
     def decorate(reader):

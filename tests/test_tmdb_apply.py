@@ -320,7 +320,6 @@ def test_a_merge_moves_the_watchlist_status_and_award_rows(app):
 
     from app.models import (
         ArchivedOriginal,
-        DVRChannel,
         MovieAward,
         User,
         UserMovieStatus,
@@ -332,11 +331,8 @@ def test_a_merge_moves_the_watchlist_status_and_award_rows(app):
         user = User.query.first()
         old = make_movie("Old Record", 2003)
         new = make_movie("New Record", 2003, tmdb_id=900)
-        channel = DVRChannel(number=310, name="Picks", slug="picks")
-        channel.movies.append(old)
         db.session.add_all(
             [
-                channel,
                 ArchivedOriginal(
                     media_library="Movies",
                     movie_id=old.id,
@@ -366,7 +362,6 @@ def test_a_merge_moves_the_watchlist_status_and_award_rows(app):
         assert UserWatchlist.query.filter_by(movie_id=new.id).count() == 1
         assert UserMovieStatus.query.filter_by(movie_id=new.id).count() == 1
         assert ArchivedOriginal.query.filter_by(movie_id=new.id).count() == 1
-        assert channel.movies.all() == [new]
 
 
 def test_a_refresh_that_tmdb_answers_with_nothing_says_so(app, monkeypatch):

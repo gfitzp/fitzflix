@@ -134,10 +134,10 @@ def test_flag_page_value_reaches_a_read_site(app):
 def test_page_value_that_does_not_parse_uses_the_default(app, monkeypatch):
     from app.settings import resolve
 
-    monkeypatch.setitem(app.config, "DVR_CHANNEL_FILMS", 40)
-    _store(app, "DVR_CHANNEL_FILMS", "forty")
+    monkeypatch.setitem(app.config, "LOG_DIGEST_THRESHOLD", 40)
+    _store(app, "LOG_DIGEST_THRESHOLD", "forty")
     with app.app_context():
-        assert resolve("DVR_CHANNEL_FILMS") == (40, "default")
+        assert resolve("LOG_DIGEST_THRESHOLD") == (40, "default")
 
 
 def test_cache_holds_for_some_seconds(app, monkeypatch):
@@ -227,13 +227,13 @@ def _form(app, client, **changes):
 
 
 def test_save_stores_only_the_changes_and_logs_them(app, admin_client, log_capture):
-    data = _form(app, admin_client, CREATE_ATMOS_TWINS=False, DVR_CHANNEL_FILMS=25)
+    data = _form(app, admin_client, CREATE_ATMOS_TWINS=False, LOG_DIGEST_THRESHOLD=25)
 
     response = admin_client.post("/settings", data=data)
 
     assert response.status_code == 302
     assert _stored(app, "CREATE_ATMOS_TWINS") == "0"
-    assert _stored(app, "DVR_CHANNEL_FILMS") == "25"
+    assert _stored(app, "LOG_DIGEST_THRESHOLD") == "25"
     assert _stored(app, "CREATE_FLAC_TWINS") is None
     assert _stored(app, "DISK_ALERT_FREE_GB") is None
     messages = [r.getMessage() for r in log_capture if r.levelno == logging.INFO]
@@ -246,38 +246,38 @@ def test_save_stores_only_the_changes_and_logs_them(app, admin_client, log_captu
 
     with app.app_context():
         assert get_setting("CREATE_ATMOS_TWINS") is False
-        assert get_setting("DVR_CHANNEL_FILMS") == 25
+        assert get_setting("LOG_DIGEST_THRESHOLD") == 25
 
 
 def test_a_stored_value_above_a_new_limit_does_not_block_a_save(
     app, admin_client, log_capture
 ):
-    """Test that a value stored before the DVR cap does not block the page (#397).
+    """Test that a value stored before a lower cap does not block the page (#397).
 
     The field shows the cap. A save of a different setting goes through,
     and it stores the cap."""
 
     import re
 
-    _store(app, "DVR_GENRE_CHANNELS", "50")
-    _store(app, "DVR_TV_CHANNELS", "50")
+    _store(app, "PLEX_TRASH_LIMIT", "200000")
+    _store(app, "DISK_ALERT_FREE_GB", "200000")
 
     page = admin_client.get("/settings").get_data(as_text=True)
     shown = {
         name: re.search(rf'name="{name}"[^>]*value="(\d+)"', page).group(1)
-        for name in ("DVR_GENRE_CHANNELS", "DVR_TV_CHANNELS")
+        for name in ("PLEX_TRASH_LIMIT", "DISK_ALERT_FREE_GB")
     }
-    assert shown == {"DVR_GENRE_CHANNELS": "39", "DVR_TV_CHANNELS": "40"}
+    assert shown == {"PLEX_TRASH_LIMIT": "100000", "DISK_ALERT_FREE_GB": "100000"}
     assert any("outside the page limits" in r.getMessage() for r in log_capture)
 
-    data = _form(app, admin_client, DVR_CHANNEL_FILMS=25)
+    data = _form(app, admin_client, LOG_DIGEST_THRESHOLD=25)
     data.update(shown)
     response = admin_client.post("/settings", data=data)
 
     assert response.status_code == 302
-    assert _stored(app, "DVR_CHANNEL_FILMS") == "25"
-    assert _stored(app, "DVR_GENRE_CHANNELS") == "39"
-    assert _stored(app, "DVR_TV_CHANNELS") == "40"
+    assert _stored(app, "LOG_DIGEST_THRESHOLD") == "25"
+    assert _stored(app, "PLEX_TRASH_LIMIT") == "100000"
+    assert _stored(app, "DISK_ALERT_FREE_GB") == "100000"
 
 
 def test_post_that_changes_a_locked_setting_is_refused(app, admin_client, monkeypatch):
@@ -430,8 +430,8 @@ def test_get_setting_works_outside_an_app_context(app):
 
     from app.settings import get_setting
 
-    _store(app, "DVR_CHANNEL_EPISODES", "12")
-    assert get_setting("DVR_CHANNEL_EPISODES") == 12
+    _store(app, "LOG_DIGEST_THRESHOLD", "12")
+    assert get_setting("LOG_DIGEST_THRESHOLD") == 12
 
 
 def test_the_startup_check_tests_each_configured_binary(app, monkeypatch, caplog):

@@ -382,17 +382,6 @@ def cron_table(config):
 
     table.append(("55 5 * * *", "app.media.custom_artwork.reconcile_library_posters"))
 
-    # Rebuild the virtual DVR channel lineups nightly. The task
-    # rotates them the same way as the landing-page shelves rotate. The
-    # per-file duration cache makes every build after the first
-    # appearance of a file almost free. The task runs after the 04:30
-    # availability refresh. Thus, the Criterion channel reads the cache
-    # of tonight, not of yesterday. It also runs after the 06:00
-    # leaving-Criterion attempt.
-
-    if config.get("DVR_TOKEN"):
-        table.append(("30 6 * * *", "app.dvr.build_channel_lineups"))
-
     # The queue, the timeout, the description and the CLI command of
     # each row come from the task registry. A third element in a row is
     # a description of its own.

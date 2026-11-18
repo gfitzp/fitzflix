@@ -65,8 +65,8 @@ def _fetch_provider_registry():
     """Fetch the provider registry from TMDB, for cached_fetch.
 
     Fitzflix remembers a failed fetch for a short time. Some callers
-    ask for each film (the rec-shelf pool, the DVR build, the
-    availability alerts). Thus, they pay 1 timeout for each outage,
+    ask for each film (the rec-shelf pool and the availability
+    alerts). Thus, they pay 1 timeout for each outage,
     not 1 for each film."""
 
     body = tmdb_json_or("/watch/providers/movie", {"watch_region": WATCH_REGION}, None)

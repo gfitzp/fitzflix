@@ -605,7 +605,7 @@ def test_the_gate_reads_page_text_messages_emails_and_markdown(tmp_path):
 def test_the_gate_reads_echo_text_and_flashed_helper_returns(tmp_path):
     """A helper that returns the flashed text is message prose (#528).
 
-    The DVR admin helpers returned an em dash that the gate did not see."""
+    Such a helper returned an em dash that the gate did not see."""
     (tmp_path / "tests").mkdir()
     (tmp_path / "README.md").write_text("Fine.\n")
     (tmp_path / "app").mkdir()

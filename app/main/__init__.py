@@ -11,8 +11,6 @@ from app.main import (  # noqa: E402
     admin,
     criterion_pages,
     discover,
-    dvr,
-    dvr_admin,
     file_pages,
     game,
     movie_pages,

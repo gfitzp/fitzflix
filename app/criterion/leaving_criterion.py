@@ -569,10 +569,8 @@ def refresh_leaving_criterion(force=False):
         payloads. It does nothing while the departure of the stored set is
         in the future, unless a TMDB failure left the set incomplete. With
         force, it fetches the page also then. A page with no films keeps
-        the stored set. A new set with the matched films and the departure
-        of the stored set queues no build of the DVR lineups. The daily
-        cadence exists to retry until Criterion publishes the page of the
-        new month. That page
+        the stored set. The daily cadence exists to retry until Criterion
+        publishes the page of the new month. That page
         appears at some time after the old set departs. The schedule is
         not known. The stored set has no TTL. The shelf hides after the
         departure date passes."""
@@ -659,35 +657,7 @@ def refresh_leaving_criterion(force=False):
                 else ""
             )
         )
-        # The Leaving Soon channel of the dial reads this set. Rebuild
-        # the same day when an owned film is on it. The Channel
-        # publishes the page of the new month on its own clock. On
-        # 2026-09-01, that was after the nightly build.
-        # Invariant: a set with the same matched films and the same
-        # departure as the stored set queues no rebuild. A
-        # rebuild gives each channel a new start and reloads the Plex
-        # guide. A forced run can store the same set again.
-        if stored is None or _set_identity(stored) != _set_identity(
-            {"departs": departs.isoformat(), "items": items}
-        ):
-            from app.dvr import enqueue_lineup_rebuild
-
-            enqueue_lineup_rebuild(
-                "new leaving-Criterion set",
-                tmdb_ids=[item["tmdb_id"] for item in items],
-            )
         return LeavingRefresh("stored", len(items), departs.isoformat(), source)
-
-
-def _set_identity(leaving_set):
-    """Return the departure date and the sorted matched TMDB ids of a set.
-
-    The dial reads only these 2 facts of the set (_leaving_set). Thus, 2
-    sets with the same value give the dial the same input."""
-
-    items = leaving_set.get("items") or []
-    ids = sorted({item["tmdb_id"] for item in items if item.get("tmdb_id")})
-    return leaving_set.get("departs"), ids
 
 
 def leaving_shelf(user):

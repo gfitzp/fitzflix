@@ -181,8 +181,7 @@ def move_movie_rows(old_movie_id, new_movie_id):
     """Move the per-movie rows of a merged movie record to the survivor.
 
     These are the watchlist rows, the status flags, the awards, the
-    archive-only originals, the reviews, the DVR channel picks, and the
-    custom poster. A row that the
+    archive-only originals, the reviews, and the custom poster. A row that the
     survivor already has stays behind. The delete of the
     old record removes it. Thus, no unique key fails. The values that a
     person set on the old record go to the survivor too. The old
@@ -207,16 +206,9 @@ def move_movie_rows(old_movie_id, new_movie_id):
                 row.movie_id = new_movie_id
                 kept.add(key)
 
-    # The DVR channel picks are link rows. The delete of the old record
-    # removes them.
-
     old_movie = db.session.get(Movie, old_movie_id)
     new_movie = db.session.get(Movie, new_movie_id)
     if old_movie is not None and new_movie is not None:
-        for channel in old_movie.dvr_channels.all():
-            if channel.movies.filter(Movie.id == new_movie_id).first() is None:
-                channel.movies.append(new_movie)
-
         # The custom poster goes to the survivor if it has none.
 
         move_movie_poster(db.session, old_movie, new_movie)

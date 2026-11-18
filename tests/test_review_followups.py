@@ -2,10 +2,10 @@
 
 import os
 import time
-from datetime import date, datetime, timedelta
+from datetime import datetime
 
 from app import db
-from tests.factories import make_movie, make_movie_file, make_tv_file, make_tv_series
+from tests.factories import make_movie, make_movie_file
 from tests.fakes import ArchiveS3
 
 
@@ -31,104 +31,6 @@ def test_a_cron_started_sync_holds_the_archive_move(app):
             app.redis.zrem(registry.key, job.id)
             job.delete()
         assert moves._sync_is_running() is False
-
-
-def _two_series(app, monkeypatch, episodes=20, cap=4):
-    from app import dvr
-
-    monkeypatch.setattr(dvr, "_on_disk", lambda file: True)
-    monkeypatch.setattr(dvr, "_library_online", lambda: True)
-
-    real_setting = dvr.get_setting
-    monkeypatch.setattr(
-        dvr,
-        "get_setting",
-        lambda name: cap if name == "DVR_CHANNEL_EPISODES" else real_setting(name),
-    )
-    from app.models import TMDBGenre
-
-    animation = TMDBGenre(id=16, name="Animation")
-    db.session.add(animation)
-    first = make_tv_series("Kappa Toons")
-    second = make_tv_series("Lambda Toons")
-    for series in (first, second):
-        series.genres.append(animation)
-        for episode in range(1, episodes + 1):
-            make_tv_file(series, 1, episode, "Bluray-1080p")
-    db.session.commit()
-    return first.id
-
-
-def _aired(app, title):
-    from app import dvr
-
-    programs = dvr.channel_lineup(app.redis, "tv-animation")["programs"]
-    return [p["episode_num"] for p in programs if p["title"] == title]
-
-
-def test_a_build_with_no_programs_keeps_the_cursors(app, monkeypatch):
-    """The probes all fail. The stored lineups and the cursors stay (follow-up #460)."""
-
-    from app import dvr
-
-    day = date(2026, 11, 3)
-    monkeypatch.setattr(dvr, "_probe_duration", lambda path: 1500.0)
-    with app.app_context():
-        _two_series(app, monkeypatch)
-        assert dvr.build_channel_lineups(day=day) is True
-        before = _aired(app, "Kappa Toons")
-        cursors = dvr.channel_lineup(app.redis, "tv-animation")["cursors"]
-        assert cursors
-
-        app.redis.delete(dvr.DURATIONS_KEY)
-        monkeypatch.setattr(dvr, "_probe_duration", lambda path: None)
-        assert dvr.build_channel_lineups(day=day + timedelta(days=1)) is True
-        assert dvr.channel_lineup(app.redis, "tv-animation")["cursors"] == cursors
-
-        # The next good build continues after the episodes that aired.
-        monkeypatch.setattr(dvr, "_probe_duration", lambda path: 1500.0)
-        assert dvr.build_channel_lineups(day=day + timedelta(days=2)) is True
-        after = _aired(app, "Kappa Toons")
-    last = int(before[-1][-2:])
-    assert after[0] == f"S01E{(last % 20) + 1:02d}"
-
-
-def test_a_mid_window_drop_does_not_repeat_an_aired_episode(app, monkeypatch):
-    """A probe fails in the middle of a window. The cursor passes the last aired episode (#474).
-
-    Each series has 4 slots. The second episode of the next window has no
-    duration. The episodes after it air. The next day starts after the
-    last of them, not on an episode that aired the day before."""
-
-    from app import dvr
-
-    day = date(2026, 11, 5)
-    monkeypatch.setattr(dvr, "_probe_duration", lambda path: 1500.0)
-    with app.app_context():
-        _two_series(app, monkeypatch, cap=8)
-        assert dvr.build_channel_lineups(day=day) is True
-        before = _aired(app, "Kappa Toons")
-        assert len(before) == 4
-        last = int(before[-1][-2:])
-
-        # The second episode of the next window has no duration.
-        dropped = f"S01E{(last + 1) % 20 + 1:02d}"
-        app.redis.delete(dvr.DURATIONS_KEY)
-        monkeypatch.setattr(
-            dvr,
-            "_probe_duration",
-            lambda path: None if f"{dropped}" in path else 1500.0,
-        )
-        assert dvr.build_channel_lineups(day=day + timedelta(days=1)) is True
-        middle = _aired(app, "Kappa Toons")
-        assert len(middle) == 3
-        assert dropped not in middle
-
-        monkeypatch.setattr(dvr, "_probe_duration", lambda path: 1500.0)
-        assert dvr.build_channel_lineups(day=day + timedelta(days=2)) is True
-        after = _aired(app, "Kappa Toons")
-    assert not set(after) & set(middle)
-    assert after[0] == f"S01E{int(middle[-1][-2:]) % 20 + 1:02d}"
 
 
 def _lost_upload_row(app, monkeypatch, tmp_path, title):

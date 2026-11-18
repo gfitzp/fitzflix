@@ -89,7 +89,6 @@ A script that is only for 1 page is a file whose name starts with `page_`. The r
 | `app/main/admin.py` | Queue, System, Settings, Rejects, the file list, and each Maintenance page |
 | `app/main/posters.py` | The poster picker |
 | `app/main/game.py` | Name That Frame |
-| `app/main/dvr.py` and `app/main/dvr_admin.py` | The DVR endpoints that Plex reads, and the channel editor |
 | `app/main/helpers.py` | Functions that 2 or more route modules use |
 | `app/main/forms.py` | Each form of the pages |
 | `app/auth/` | Sign-in, registration, password reset, and passkeys |
@@ -134,7 +133,7 @@ Each subject has a folder in `app/`. The files that all subjects use are in `app
 
 A file that ends in `_cli.py` holds the `flask` commands of its folder. The file `app/cli.py` holds the other commands.
 
-Two subjects have only 1 file each, and that file is in `app/` itself. The file `app/dvr.py` holds the channels and the schedules of the virtual DVR. The file `app/frames.py` holds the pictures for Name That Frame.
+One subject has only 1 file, and that file is in `app/` itself. The file `app/frames.py` holds the pictures for Name That Frame.
 
 ### `app/media/`: the media files
 

@@ -173,40 +173,6 @@ SETTINGS = {
             "choice",
             choices=EAC3_ATMOS_BITRATES,
         ),
-        Setting(
-            "DVR_GENRE_CHANNELS",
-            "DVR movie genre channels",
-            "The number of movie genre channels that the first DVR build adds "
-            "(39 or fewer).",
-            "int",
-            minimum=0,
-            maximum=39,
-        ),
-        Setting(
-            "DVR_TV_CHANNELS",
-            "DVR TV genre channels",
-            "The number of TV genre channels that the first DVR build adds "
-            "(40 or fewer).",
-            "int",
-            minimum=0,
-            maximum=40,
-        ),
-        Setting(
-            "DVR_CHANNEL_FILMS",
-            "DVR films for each channel",
-            "The maximum number of films in the lineup of a channel.",
-            "int",
-            minimum=1,
-            maximum=1000,
-        ),
-        Setting(
-            "DVR_CHANNEL_EPISODES",
-            "DVR episodes for each channel",
-            "The maximum number of episodes in the lineup of a channel.",
-            "int",
-            minimum=1,
-            maximum=1000,
-        ),
     )
 }
 
