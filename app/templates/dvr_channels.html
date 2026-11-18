@@ -95,18 +95,5 @@
 	{{ form.save_submit(class_="btn btn-sm btn-primary") }}
 </form>
 
-<script>
-// These are the copy buttons for the Plex setup URLs
-document.querySelectorAll(".dvr-copy").forEach(function (button) {
-	button.addEventListener("click", function () {
-		const input = button.parentElement.querySelector("input");
-		navigator.clipboard.writeText(input.value).then(function () {
-			button.textContent = "Copied";
-			setTimeout(function () { button.textContent = "Copy"; }, 1500);
-		}).catch(function () {
-			input.select();
-		});
-	});
-});
-</script>
+<script src="{{ url_for('static', filename='page_dvr_channels.js') }}"></script>
 {% endblock %}

@@ -8,40 +8,7 @@
 	{% include "_system_health.html" %}
 </div>
 <p class="small text-muted" id="system-health-stale" hidden>Live updates stopped. The data is from <span id="system-health-age"></span> ago.</p>
-<script>
-	// Poll the health fragment every 5 seconds while the page is visible
-	// (startPoll in live.js). Each poll waits for the answer. Thus, a
-	// slow response never stacks overlapping requests. For example, a
-	// dead network mount can hold system_health() for its 10-second
-	// probe timeout. A redirect means that the session or the admin gate
-	// lapsed. It is a failure, and the container keeps its data.
-	(function() {
-		var container = document.getElementById("system-health");
-		var stale = document.getElementById("system-health-stale");
-		var age = document.getElementById("system-health-age");
-		var lastSuccess = Date.now();
-
-		function markStaleness() {
-			var seconds = Math.round((Date.now() - lastSuccess) / 1000);
-			if (seconds >= 30) {
-				container.style.opacity = "0.5";
-				age.textContent = seconds < 120 ? seconds + " seconds" : Math.round(seconds / 60) + " minutes";
-				stale.hidden = false;
-			} else {
-				container.style.opacity = "";
-				stale.hidden = true;
-			}
-		}
-
-		// The script files of base.html load after this block.
-		document.addEventListener("DOMContentLoaded", function() {
-			startPoll("{{ url_for('main.system_metrics') }}", 5000, function(fragment) {
-				container.innerHTML = fragment;
-				lastSuccess = Date.now();
-			}, {fetchOptions: {cache: "no-store"}, after: markStaleness});
-		});
-	})();
-</script>
+<script src="{{ url_for('static', filename='page_system.js') }}" data-metrics-url="{{ url_for('main.system_metrics') }}"></script>
 {% if log_digest %}
 <hr>
 <h4 class="mt-3 mb-2">Repeated log warnings</h4>

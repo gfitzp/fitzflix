@@ -24,20 +24,7 @@
 		   more. pre-line keeps the paragraph breaks of TMDB. #}
 		<p class="small text-muted mt-2 mb-0" id="person-biography" style="white-space: pre-line; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden;">{{ bio.biography }}</p>
 		<button type="button" class="btn btn-link btn-sm p-0" id="person-biography-toggle" style="display: none;">Show more</button>
-		<script>
-			(function() {
-				var bio = document.getElementById("person-biography");
-				var toggle = document.getElementById("person-biography-toggle");
-				if (bio.scrollHeight > bio.clientHeight + 1) {
-					toggle.style.display = "inline";
-				}
-				toggle.addEventListener("click", function() {
-					var clamped = bio.style.webkitLineClamp !== "unset";
-					bio.style.webkitLineClamp = clamped ? "unset" : "4";
-					toggle.textContent = clamped ? "Show less" : "Show more";
-				});
-			})();
-		</script>
+		<script src="{{ url_for('static', filename='page_filmography.js') }}"></script>
 		{% endif %}
 	</div>
 </div>

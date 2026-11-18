@@ -109,8 +109,8 @@
 		setQueueCount(queue_details.count);
 		renderRunning(queue_details.running || []);
 
-		// A page can paint more from the same answer. queue.html
-		// paints its table, and file_activity.html fetches its
+		// A page can paint more from the same answer. page_queue.js
+		// paints its table, and page_file_activity.js fetches its
 		// cards. Each hook gets the answer. The next poll waits
 		// for the promise that a hook returns
 

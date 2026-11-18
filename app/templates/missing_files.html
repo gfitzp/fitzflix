@@ -61,14 +61,7 @@
 		{{ restore_form.missing_restore_submit(class_="btn btn-sm btn-success") }}
 	</div>
 </form>
-<script>
-	// The header checkbox selects or clears every archived row.
-	document.getElementById("missing-select-all").addEventListener("change", function (event) {
-		document.querySelectorAll("#missing-restore-form input[name=file_id]").forEach(function (box) {
-			box.checked = event.target.checked;
-		});
-	});
-</script>
+<script src="{{ url_for('static', filename='page_missing_files.js') }}"></script>
 {% else %}
 <p class="lead">Every best-quality file is on the library disk.</p>
 <p class="text-muted">{{ report.ranked }} titles scanned {{ moment(report.checked).fromNow() }}.</p>

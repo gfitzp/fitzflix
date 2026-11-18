@@ -267,8 +267,12 @@ def test_the_queue_tooltips_wait_for_moment(app, admin_client, tmp_path):
     app.import_queue.enqueue(
         "app.importing.localization_task", "/import/Tip (2001).mkv"
     )
-    body = admin_client.get("/queue").get_data(as_text=True)
-    assert body.index("scheduleFirstPaintTitles();") < body.index("libs/moment.js/")
+    body = page_with_scripts(admin_client, "/queue")
+
+    # The page loads its script before moment.js.
+
+    assert body.index("page_queue.js") < body.index("libs/moment.js/")
+    assert "scheduleFirstPaintTitles();" in body
     test_code = r"""
 document.readyState = "loading";
 const abbr = {
@@ -318,7 +322,12 @@ def test_an_unchanged_queue_answers_304_and_a_healed_chip_repaints(app, admin_cl
     assert first.status_code == 200
     assert 'class="queue-front"' in first.get_data(as_text=True)
     etag = first.headers["ETag"]
-    assert f"var rowsEtag = {json_module.dumps(etag)};" in page
+
+    # The page gives the ETag of its rows to its script on the script tag.
+
+    from markupsafe import escape
+
+    assert f'data-rows-etag="{escape(etag)}"' in page
 
     with admin_client.session_transaction() as session:
         session.pop("csrf_token", None)
@@ -473,9 +482,7 @@ refreshCards().then(() => refreshCards()).then(() => {
 
 
 def _template_source(name):
-    """Return the source of a template. Its script functions hold no Jinja.
-
-    For base.html, this is the source of the script files that it loads."""
+    """Return the source of a template, then of each script file that it loads."""
 
     import os
     import re
@@ -483,10 +490,9 @@ def _template_source(name):
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     with open(os.path.join(root, "app", "templates", name)) as template:
         source = template.read()
-    if name == "base.html":
-        for script in re.findall(r"filename='([a-z_]+[.]js)'", source):
-            with open(os.path.join(root, "app", "static", script)) as file:
-                source += "\n" + file.read()
+    for script in re.findall(r"filename='([a-z_]+[.]js)'", source):
+        with open(os.path.join(root, "app", "static", script)) as file:
+            source += "\n" + file.read()
     return source
 
 
@@ -808,11 +814,16 @@ def test_an_old_search_answer_does_not_paint_the_menu(admin_client, tmp_path):
     }
 
 
+# The script of the DVR channel page reads this address from its tag.
+
+DVR_TITLE_ADDRESS = 'const TITLE_URL = "/dvr/title-search.json";\n'
+
+
 def test_an_old_dvr_title_answer_does_not_paint_the_menu(tmp_path):
     """The title box of a DVR channel page has the same rule (#756)."""
 
     body = _template_source("dvr_channel.html")
-    test_code = SUGGESTION_FAKES + r"""
+    test_code = DVR_TITLE_ADDRESS + SUGGESTION_FAKES + r"""
 function render(results) {
     menu.children = results.map((item) => item.title + " — film");
     menu.shown = results.length > 0;
@@ -831,7 +842,7 @@ def test_escape_on_the_dvr_title_box_stops_an_answer_on_its_way(tmp_path):
     """Escape with no menu yet did nothing, and the answer then opened it (#756)."""
 
     body = _template_source("dvr_channel.html")
-    test_code = SUGGESTION_FAKES + r"""
+    test_code = DVR_TITLE_ADDRESS + SUGGESTION_FAKES + r"""
 menu.querySelectorAll = () => [];
 function render(results) { menu.shown = results.length > 0; }
 (async () => {

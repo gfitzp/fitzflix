@@ -70,7 +70,9 @@ The JavaScript that all pages share is in files of `app/static/`. The template `
 | `tiles.js` | The star row and the watchlist button of a poster, and the state that each poster gets after the page load |
 | `plex_play.js` | The buttons that start a film on the Apple TV |
 
-A script that is only for 1 page is in the template of that page.
+The template `bootstrap.html` loads `pull_to_refresh.js` before them. That template also holds 2 short scripts that must run before the first paint. They set the dark mode and the October font.
+
+A script that is only for 1 page is a file whose name starts with `page_`. The rest of the name is the name of the template, for example `page_queue.js` for `queue.html`. The template gives each address that the script needs as an attribute of the script tag.
 
 | Route module | Pages |
 | --- | --- |

@@ -285,17 +285,19 @@ def test_the_site_has_no_service_worker(client, admin_client):
 
 
 def test_each_page_script_gets_its_address_from_its_tag(admin_client, client):
-    """A script file holds no Jinja. base.html gives each address on the tag.
+    """A script file holds no Jinja. A template gives each address on the tag.
 
     A script that reads an attribute which its tag does not carry gets
     null, and its fetch goes to a wrong address. A visitor who is not
-    signed in gets only the script that needs no session."""
+    signed in gets only the scripts that need no session."""
 
+    import pathlib
     import re
 
     body = admin_client.get("/").get_data(as_text=True)
     tags = dict(re.findall(r'<script src="/static/([a-z_]+[.]js)"([^>]*)>', body))
     assert list(tags) == [
+        "pull_to_refresh.js",
         "passkeys.js",
         "site.js",
         "search.js",
@@ -308,22 +310,34 @@ def test_each_page_script_gets_its_address_from_its_tag(admin_client, client):
     assert 'data-search-url="/search.json"' in tags["search.js"]
     assert 'data-queue-url="/api/queue-details"' in tags["queue_badge.js"]
     assert 'data-states-url="/movie_states"' in tags["tiles.js"]
-    for name, attribute in (
-        ("search.js", "data-search-url"),
-        ("queue_badge.js", "data-queue-url"),
-        ("tiles.js", "data-states-url"),
-    ):
-        script = admin_client.get(f"/static/{name}")
-        source = script.get_data(as_text=True)
-        script.close()
-        assert f'document.currentScript.getAttribute("{attribute}")' in source
-        assert "{{" not in source and "{%" not in source
 
     anonymous = client.get("/auth/login").get_data(as_text=True)
     assert re.findall(r'<script src="/static/([a-z_]+[.]js)"', anonymous) == [
+        "pull_to_refresh.js",
         "passkeys.js",
         "site.js",
     ]
+
+    # Each script file: a template loads it, it holds no Jinja, and the
+    # tag of that template carries each attribute that the script reads.
+
+    root = pathlib.Path(__file__).resolve().parent.parent / "app"
+    loaded = {}
+    for template in sorted((root / "templates").rglob("*.html")):
+        for name, attributes in re.findall(
+            r"<script src=\"\{\{ url_for\('static', filename='([a-z_]+[.]js)'\) \}\}\"([^>]*)>",
+            template.read_text(),
+        ):
+            loaded[name] = attributes
+    scripts = sorted(path.name for path in (root / "static").glob("*.js"))
+    assert scripts == sorted(loaded)
+    for name in scripts:
+        source = (root / "static" / name).read_text()
+        assert "{{" not in source and "{%" not in source, name
+        for attribute in re.findall(
+            r'document[.]currentScript[.]getAttribute[(]"([a-z-]+)"[)]', source
+        ):
+            assert f'{attribute}="' in loaded[name], (name, attribute)
 
 
 def test_the_home_page_carries_the_search_and_the_poll_scripts(admin_client):
@@ -413,14 +427,15 @@ def test_file_activity_page_wires_the_live_dashboard(app, admin_client):
 
     page = admin_client.get("/file-activity").get_data(as_text=True)
     assert 'id="pipeline-files-section"' not in page
-    assert "window.fileActivityCardsUrl = " in page
+    assert "page_file_activity.js" in page
+    assert 'data-cards-url="/file-activity/cards"' in page
     assert re.search(
         rf'data-card-key="{file_id}" data-card-version="[0-9a-f]{{12}}"', page
     )
     assert "data-trail" in page
 
     deeper = admin_client.get("/file-activity?page=2").get_data(as_text=True)
-    assert "window.fileActivityCardsUrl = " not in deeper
+    assert "page_file_activity.js" not in deeper
 
 
 @pytest.mark.parametrize("path", ["/file-activity", "/file-activity/cards"])
@@ -1070,10 +1085,10 @@ def test_the_page_pollers_share_start_poll(app, admin_client):
 
     import pathlib
 
-    templates = pathlib.Path(__file__).resolve().parent.parent / "app" / "templates"
-    index = (templates / "index.html").read_text()
+    static = pathlib.Path(__file__).resolve().parent.parent / "app" / "static"
+    index = (static / "page_index.js").read_text()
     assert "startPoll(NOW_URL, nextDelay, paint, {" in index
-    recommendations = (templates / "recommendations.html").read_text()
+    recommendations = (static / "page_recommendations.js").read_text()
     assert "window.fitzflixHydrate([id], []);" in recommendations
     assert "STATES_URL" not in recommendations
 
