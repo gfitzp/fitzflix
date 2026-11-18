@@ -53,14 +53,14 @@ from app.main.forms import (
     RemovePasswordForm,
     SetPasswordEmailForm,
 )
-from app.infuse_player import (
+from app.playback.infuse_player import (
     COMPANION_PORT,
     pairing_outcome,
     pairing_pending,
     start_pairing,
     submit_pin,
 )
-from app.plex_player import (
+from app.playback.plex_player import (
     player_address,
     probe_player,
     remote_playback_configured,
@@ -82,18 +82,18 @@ from app.main.helpers import (
     decimal_id,
     ladder_payload,
 )
-from app.newly_added import poster_fold
-from app.recommendations import (
+from app.availability.newly_added import poster_fold
+from app.discovery.recommendations import (
     estimated_rating,
     resolved_score,
     stored_profile,
     stored_scores,
 )
 from app.email import task_send_email
-from app.streaming import (
+from app.availability.streaming import (
     provider_registry,
 )
-from app.diary import parse_letterboxd_export
+from app.viewing.diary import parse_letterboxd_export
 
 
 @bp.route("/review/<int:review_id>/edit", methods=["GET", "POST"])
@@ -419,7 +419,7 @@ def _review_upload_response(review_upload_form):
             return redirect(url_for("main.profile"))
         if films:
             enqueue_task(
-                "app.diary.letterboxd_import_task",
+                "app.viewing.diary.letterboxd_import_task",
                 current_user.id,
                 films,
                 description=f"Matching {len(films)} Letterboxd film(s)",
@@ -451,7 +451,7 @@ def _review_upload_response(review_upload_form):
         for name, rating in ratings:
             if rating >= 0:
                 enqueue_task(
-                    "app.diary.review_task",
+                    "app.viewing.diary.review_task",
                     current_user.id,
                     name,
                     rating,
@@ -1077,7 +1077,7 @@ def stats():
     current year if it has viewings. Otherwise it shows the newest year
     with viewings."""
 
-    from app.stats import diary_stats, watched_years
+    from app.viewing.stats import diary_stats, watched_years
 
     years = watched_years(int(current_user.id))
     requested = request.args.get("year")

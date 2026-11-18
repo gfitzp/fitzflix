@@ -122,7 +122,7 @@ def test_precedence_env_then_page_then_default(app, monkeypatch):
 
 
 def test_flag_page_value_reaches_a_read_site(app):
-    from app.aws_storage import cdn_download_enabled
+    from app.archive.aws_storage import cdn_download_enabled
 
     with app.app_context():
         assert cdn_download_enabled() is False

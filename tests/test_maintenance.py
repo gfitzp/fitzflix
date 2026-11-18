@@ -14,8 +14,8 @@ import time
 
 import pytest
 
-from app.access_log import access_log_path
-from app.maintenance import backup_database, rotate_logs
+from app.operations.access_log import access_log_path
+from app.operations.maintenance import backup_database, rotate_logs
 
 
 def set_age(path, days):
@@ -216,7 +216,8 @@ def test_backup_database_uploads_to_s3_and_prunes_remote(
             deleted.extend((o["Key"], o["VersionId"]) for o in Delete["Objects"])
 
     monkeypatch.setattr(
-        "app.aws_storage.aws_s3_client", lambda with_retries=False: FakeS3Client()
+        "app.archive.aws_storage.aws_s3_client",
+        lambda with_retries=False: FakeS3Client(),
     )
 
     # The poster mirror lists S3 through get_matching_s3_objects, not through the
@@ -224,7 +225,7 @@ def test_backup_database_uploads_to_s3_and_prunes_remote(
     # earlier posters test makes. An empty listing keeps it quiet
 
     monkeypatch.setattr(
-        "app.aws_storage.get_matching_s3_objects", lambda *args, **kwargs: []
+        "app.archive.aws_storage.get_matching_s3_objects", lambda *args, **kwargs: []
     )
 
     with app.app_context():
@@ -252,7 +253,7 @@ def test_backup_database_skips_s3_when_unconfigured(app, mysqldump_stub, monkeyp
     def explode(*args, **kwargs):
         raise AssertionError("S3 client should not be built")
 
-    monkeypatch.setattr("app.aws_storage.aws_s3_client", explode)
+    monkeypatch.setattr("app.archive.aws_storage.aws_s3_client", explode)
 
     with app.app_context():
         backup_database()
@@ -292,14 +293,14 @@ def test_backup_uploads_encrypted_env(app, mysqldump_stub, monkeypatch, tmp_path
             pass
 
     monkeypatch.setattr(
-        "app.aws_storage.aws_s3_client", lambda **kwargs: FakeS3Client()
+        "app.archive.aws_storage.aws_s3_client", lambda **kwargs: FakeS3Client()
     )
     monkeypatch.setattr(
-        "app.aws_storage.get_matching_s3_objects",
+        "app.archive.aws_storage.get_matching_s3_objects",
         lambda bucket, prefix="", suffix="": iter([]),
     )
 
-    import app.maintenance as maintenance
+    import app.operations.maintenance as maintenance
 
     kept = []
     real_prune = maintenance._prune_backup_versions
@@ -418,9 +419,9 @@ def test_backup_syncs_custom_posters(app, mysqldump_stub, monkeypatch):
             deletes.extend(o["Key"] for o in Delete["Objects"])
 
     monkeypatch.setattr(
-        "app.aws_storage.aws_s3_client", lambda **kwargs: FakeS3Client()
+        "app.archive.aws_storage.aws_s3_client", lambda **kwargs: FakeS3Client()
     )
-    monkeypatch.setattr("app.aws_storage.get_matching_s3_objects", fake_objects)
+    monkeypatch.setattr("app.archive.aws_storage.get_matching_s3_objects", fake_objects)
 
     try:
         with app.app_context():
@@ -439,7 +440,7 @@ def test_backup_syncs_custom_posters(app, mysqldump_stub, monkeypatch):
 def test_newest_backup_key_picks_latest_dump():
     from datetime import datetime, timezone
 
-    from app.maintenance import _newest_backup_key
+    from app.operations.maintenance import _newest_backup_key
 
     def at(day):
         return datetime(2026, 8, day, tzinfo=timezone.utc)
@@ -459,7 +460,7 @@ def test_newest_backup_key_picks_latest_dump():
 
 
 def test_restore_drill_skips_without_aws(app):
-    from app.maintenance import restore_drill
+    from app.operations.maintenance import restore_drill
 
     with app.app_context():
         assert restore_drill() is True
@@ -479,7 +480,7 @@ def drill(app, monkeypatch, tmp_path):
 
     import subprocess
 
-    import app.maintenance as maintenance
+    import app.operations.maintenance as maintenance
     from app import db
     from sqlalchemy import text
 
@@ -490,7 +491,8 @@ def drill(app, monkeypatch, tmp_path):
 
     key = "backup/fitzflix-2026-11-01.sql.gz"
     monkeypatch.setattr(
-        "app.aws_storage.get_matching_s3_objects", lambda bucket, prefix=None: []
+        "app.archive.aws_storage.get_matching_s3_objects",
+        lambda bucket, prefix=None: [],
     )
     monkeypatch.setattr(
         maintenance, "_newest_backup_key", lambda objects, database: key
@@ -505,7 +507,9 @@ def drill(app, monkeypatch, tmp_path):
             with gzip.open(path, "wb") as f:
                 f.write(b"-- dump\n")
 
-    monkeypatch.setattr("app.aws_storage.aws_s3_client", lambda **kwargs: Client())
+    monkeypatch.setattr(
+        "app.archive.aws_storage.aws_s3_client", lambda **kwargs: Client()
+    )
     state = {"on_drop": None, "calls": []}
 
     def fake_run(command, **kwargs):
@@ -539,7 +543,7 @@ def test_restore_drill_ends_its_read_transaction_before_the_drop(app, drill):
     """The DROP runs on another connection. No transaction of the drill is open."""
 
     from app import db
-    from app.maintenance import DROP_MYSQL_TIMEOUT, restore_drill
+    from app.operations.maintenance import DROP_MYSQL_TIMEOUT, restore_drill
 
     seen = []
     drill["on_drop"] = lambda: seen.append(db.session().in_transaction())
@@ -558,7 +562,7 @@ def test_restore_drill_ends_its_read_transaction_when_a_count_fails(
 ):
     """A failed count check raises. The DROP still runs with no open transaction."""
 
-    import app.maintenance as maintenance
+    import app.operations.maintenance as maintenance
     from app import db
 
     # The test users are rows. A tolerance above 1 makes each count fail.
@@ -579,7 +583,7 @@ def test_restore_drill_logs_a_drop_that_times_out(app, drill, caplog):
     import logging
     import subprocess
 
-    from app.maintenance import restore_drill
+    from app.operations.maintenance import restore_drill
 
     def time_out():
         """Act as a mysql program that waits past its limit."""
@@ -598,7 +602,7 @@ def test_restore_drill_lets_the_job_time_limit_through_the_drop(app, drill):
 
     from rq.timeouts import JobTimeoutException
 
-    from app.maintenance import restore_drill
+    from app.operations.maintenance import restore_drill
 
     def job_limit():
         """Act as the time limit of the job."""
@@ -624,7 +628,7 @@ def test_volume_alive_rejects_a_volumes_path_that_is_not_a_mountpoint(
     boot disk. The old probe reported that as alive. Then the Plex
     refresh would scan an empty tree and empty the trash behind it."""
 
-    import app.maintenance as maintenance
+    import app.operations.maintenance as maintenance
 
     volumes = tmp_path / "Volumes"
     leftover = volumes / "Movies"
@@ -641,7 +645,7 @@ def test_volume_alive_rejects_a_volumes_path_that_is_not_a_mountpoint(
 
 
 def test_volume_alive_accepts_a_mounted_volumes_path(monkeypatch, tmp_path):
-    import app.maintenance as maintenance
+    import app.operations.maintenance as maintenance
 
     volumes = tmp_path / "Volumes"
     mounted = volumes / "Movies"
@@ -660,7 +664,7 @@ def test_volume_alive_leaves_paths_outside_the_volumes_root_alone(
     Local directories were never expected to be mountpoints. The staging
     directory and the log directory are on the boot disk."""
 
-    import app.maintenance as maintenance
+    import app.operations.maintenance as maintenance
 
     monkeypatch.setattr(maintenance, "VOLUMES_ROOT", str(tmp_path / "Volumes"))
     local = tmp_path / "staging"
@@ -671,7 +675,7 @@ def test_volume_alive_leaves_paths_outside_the_volumes_root_alone(
 
 
 def test_volume_alive_is_false_for_a_path_that_isnt_there(tmp_path):
-    import app.maintenance as maintenance
+    import app.operations.maintenance as maintenance
 
     assert maintenance.volume_alive(str(tmp_path / "gone")) is False
 
@@ -688,7 +692,7 @@ def test_heal_mounts_doesnt_force_unmount_a_leftover_directory(
 
     import subprocess as subprocess_module
 
-    import app.maintenance as maintenance
+    import app.operations.maintenance as maintenance
 
     volumes = tmp_path / "Volumes"
     leftover = volumes / "Movies"
@@ -735,7 +739,7 @@ def test_share_mounted_elsewhere_finds_a_suffixed_duplicate(monkeypatch):
 
     import subprocess as subprocess_module
 
-    import app.maintenance as maintenance
+    import app.operations.maintenance as maintenance
 
     output = _mount_output(
         "/dev/disk3s1s1 on / (apfs, sealed, local, read-only)",
@@ -768,7 +772,7 @@ def test_share_mounted_elsewhere_leaves_local_disks_alone(monkeypatch):
 
     import subprocess as subprocess_module
 
-    import app.maintenance as maintenance
+    import app.operations.maintenance as maintenance
 
     output = _mount_output("/dev/disk7s2 on /Volumes/Movies-1 (apfs, local, nodev)")
     monkeypatch.setattr(
@@ -792,7 +796,7 @@ def test_heal_mounts_frees_a_duplicate_before_remounting(app, monkeypatch, tmp_p
 
     import subprocess as subprocess_module
 
-    import app.maintenance as maintenance
+    import app.operations.maintenance as maintenance
 
     volumes = tmp_path / "Volumes"
     stub = volumes / "TV Shows"
@@ -846,7 +850,7 @@ def test_heal_mounts_forces_a_duplicate_that_wont_unmount_cleanly(
 
     import subprocess as subprocess_module
 
-    import app.maintenance as maintenance
+    import app.operations.maintenance as maintenance
 
     volumes = tmp_path / "Volumes"
     stub = volumes / "Transcoded"
@@ -898,7 +902,7 @@ def test_heal_mounts_says_where_a_stranded_share_went(app, monkeypatch, tmp_path
 
     import subprocess as subprocess_module
 
-    import app.maintenance as maintenance
+    import app.operations.maintenance as maintenance
 
     volumes = tmp_path / "Volumes"
     stub = volumes / "Movies"
@@ -968,7 +972,7 @@ def test_heal_mounts_calls_out_a_share_missing_from_the_map(app, monkeypatch, tm
 
     import subprocess as subprocess_module
 
-    import app.maintenance as maintenance
+    import app.operations.maintenance as maintenance
 
     volumes = tmp_path / "Volumes"
     leftover = volumes / "Music"
@@ -1004,7 +1008,7 @@ def test_share_mounted_elsewhere_finds_an_nfs_duplicate(monkeypatch):
 
     import subprocess as subprocess_module
 
-    import app.maintenance as maintenance
+    import app.operations.maintenance as maintenance
 
     output = _mount_output(
         "/dev/disk3s1s1 on / (apfs, sealed, local, read-only)",
@@ -1036,7 +1040,7 @@ def test_heal_mounts_leaves_a_share_that_came_back_on_its_own(
 
     import subprocess as subprocess_module
 
-    import app.maintenance as maintenance
+    import app.operations.maintenance as maintenance
 
     monkeypatch.setitem(app.config, "MOUNT_URLS", {"Movies": "nfs://nas.test/Movies"})
     monkeypatch.setattr(maintenance, "volume_alive", lambda mount, timeout=10: True)
@@ -1066,7 +1070,7 @@ def test_heal_mounts_unmounts_a_dead_nfs_mount_that_lstat_cannot_read(
 
     import subprocess as subprocess_module
 
-    import app.maintenance as maintenance
+    import app.operations.maintenance as maintenance
 
     mount = "/Volumes/Movies"
     monkeypatch.setitem(app.config, "MOUNT_URLS", {"Movies": "nfs://nas.test/Movies"})
@@ -1124,7 +1128,7 @@ def test_a_remount_timeout_does_not_log_the_url(app, monkeypatch, tmp_path):
 
     import subprocess as subprocess_module
 
-    import app.maintenance as maintenance
+    import app.operations.maintenance as maintenance
 
     volumes = tmp_path / "Volumes"
     leftover = volumes / "Movies"

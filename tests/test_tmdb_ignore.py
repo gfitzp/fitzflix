@@ -138,7 +138,7 @@ def test_tv_clear_empties_fields_cast_and_episodes(app):
 
 
 def test_refresh_declines_an_ignored_movie(app):
-    from app.tmdb_refresh import refresh_tmdb_info
+    from app.metadata.tmdb_refresh import refresh_tmdb_info
 
     with app.app_context():
         movie = make_movie("1982 Glenn", 1982, tmdb_ignored=True)
@@ -150,7 +150,7 @@ def test_refresh_declines_an_ignored_movie(app):
 
 
 def test_refresh_declines_an_ignored_series(app):
-    from app.tmdb_refresh import refresh_tmdb_info
+    from app.metadata.tmdb_refresh import refresh_tmdb_info
 
     with app.app_context():
         series = make_tv_series("Baltimore Orioles", tmdb_ignored=True)
@@ -169,7 +169,7 @@ def test_apply_discards_a_payload_for_a_record_ignored_since_the_fetch(app):
     import json
     import zlib
 
-    from app.tmdb_refresh import apply_tmdb_refresh
+    from app.metadata.tmdb_refresh import apply_tmdb_refresh
 
     with app.app_context():
         series = make_tv_series("Comedy Central Stand Up Specials")
@@ -198,7 +198,7 @@ def test_apply_discards_a_payload_for_a_record_ignored_since_the_fetch(app):
 
 
 def test_nightly_sweep_skips_ignored_series(app):
-    from app.tmdb_refresh import refresh_in_production_tv
+    from app.metadata.tmdb_refresh import refresh_in_production_tv
 
     with app.app_context():
         make_tv_series("Star Trek", tmdb_id=253, tmdb_in_production=True)
@@ -236,7 +236,7 @@ def test_bulk_refresh_leaves_ignored_records_alone(app, admin_client):
     queued = [
         job.args
         for job in app.request_queue.jobs
-        if job.func_name == "app.tmdb_refresh.refresh_tmdb_info"
+        if job.func_name == "app.metadata.tmdb_refresh.refresh_tmdb_info"
     ]
     assert sorted(job[0] for job in queued) == ["Movies", "TV Shows"]
     assert {job[2] for job in queued} == {578, 253}
@@ -329,7 +329,7 @@ def test_entering_an_id_by_hand_reattaches_an_ignored_series(
     jobs = [
         job
         for job in app.sql_queue.jobs
-        if job.func_name == "app.tmdb_refresh.refresh_tmdb_info"
+        if job.func_name == "app.metadata.tmdb_refresh.refresh_tmdb_info"
     ]
     assert jobs and jobs[0].args == ("TV Shows", series_id, 110230)
     assert jobs[0].kwargs["rematch"] is True
@@ -339,14 +339,14 @@ def _run_rematch(app, monkeypatch, series_id, payload):
     """Run both phases of a hand-entered id refresh with a fake fetch."""
 
     from app.models import TVSeries as Series
-    from app.tmdb_refresh import apply_tmdb_refresh, refresh_tmdb_info
+    from app.metadata.tmdb_refresh import apply_tmdb_refresh, refresh_tmdb_info
 
     monkeypatch.setattr(Series, "tmdb_tv_fetch", lambda self, tmdb_id=None: payload)
     result = refresh_tmdb_info("TV Shows", series_id, 110230, rematch=True)
     applies = [
         job
         for job in app.sql_queue.jobs
-        if job.func_name == "app.tmdb_refresh.apply_tmdb_refresh"
+        if job.func_name == "app.metadata.tmdb_refresh.apply_tmdb_refresh"
     ]
     assert len(applies) == 1
     apply_tmdb_refresh(**applies[0].kwargs)
@@ -375,7 +375,7 @@ def test_a_hand_entered_id_with_no_match_stays_detached(app, monkeypatch):
     Before, the route cleared the flag before the fetch. Then the triage
     page and a later blank refresh treated the record as unmatched."""
 
-    from app.tmdb_refresh import TMDB_NO_MATCH
+    from app.metadata.tmdb_refresh import TMDB_NO_MATCH
 
     with app.app_context():
         series = make_tv_series("Rifftrax", tmdb_ignored=True)
@@ -438,7 +438,7 @@ def test_tv_clear_invalidates_the_people_ranking(app):
     rankings must go. The movie clear already deletes them the same
     way."""
 
-    from app.tmdb_apply import PEOPLE_RANKING_KEY
+    from app.metadata.tmdb_apply import PEOPLE_RANKING_KEY
 
     with app.app_context():
         series = enriched_series()
@@ -598,7 +598,7 @@ def test_fileless_record_locks_its_tmdb_id(app, admin_client, monkeypatch):
     jobs = [
         job
         for job in app.sql_queue.jobs
-        if job.func_name == "app.tmdb_refresh.refresh_tmdb_info"
+        if job.func_name == "app.metadata.tmdb_refresh.refresh_tmdb_info"
     ]
     assert jobs and jobs[0].args == ("Movies", movie_id, 52520)
 
@@ -772,8 +772,8 @@ def test_a_lock_busy_movie_rematch_keeps_the_hand_entered_id(app):
     import json
     import zlib
 
-    from app.tmdb_refresh import _movie_refresh_lock_resources
-    from app.tmdb_refresh import apply_tmdb_refresh
+    from app.metadata.tmdb_refresh import _movie_refresh_lock_resources
+    from app.metadata.tmdb_refresh import apply_tmdb_refresh
     from tests.test_scheduling import scheduled_jobs
 
     payload = zlib.compress(
@@ -803,7 +803,7 @@ def test_a_lock_busy_movie_rematch_keeps_the_hand_entered_id(app):
         (retry,) = [
             job
             for job in scheduled_jobs(app.sql_queue)
-            if job.func_name == "app.tmdb_refresh.apply_tmdb_refresh"
+            if job.func_name == "app.metadata.tmdb_refresh.apply_tmdb_refresh"
         ]
         assert retry.kwargs["rematch"] is True
         assert apply_tmdb_refresh(**retry.kwargs) is True

@@ -10,7 +10,7 @@ import time
 
 import pytest
 
-import app.maintenance as maintenance
+import app.operations.maintenance as maintenance
 
 
 @pytest.fixture(autouse=True)
@@ -398,7 +398,9 @@ def test_a_file_delete_is_refused_while_its_volume_is_not_mounted(
     monkeypatch.setattr(
         library, "_queue_archive_deletes", lambda keys: deletes.append(keys)
     )
-    monkeypatch.setattr("app.videos._dead_volumes", lambda paths: ["/Volumes/Movies"])
+    monkeypatch.setattr(
+        "app.media.videos._dead_volumes", lambda paths: ["/Volumes/Movies"]
+    )
     page = admin_client.post(
         f"/file/{file_id}",
         data={"csrf_token": token, "delete_submit": "Delete File"},
@@ -433,7 +435,9 @@ def test_a_series_delete_is_refused_while_its_volume_is_not_mounted(
     monkeypatch.setattr(
         library, "_queue_archive_deletes", lambda keys: deletes.append(keys)
     )
-    monkeypatch.setattr("app.videos._dead_volumes", lambda paths: ["/Volumes/TV Shows"])
+    monkeypatch.setattr(
+        "app.media.videos._dead_volumes", lambda paths: ["/Volumes/TV Shows"]
+    )
     page = admin_client.post(
         f"/tv/{series_id}/delete",
         data={"csrf_token": token, "delete_submit": "Delete Series"},
@@ -458,13 +462,13 @@ def test_a_missing_file_on_a_volume_that_is_not_mounted_is_not_gone(app, monkeyp
         seen.extend(paths)
         return ["/Volumes/Movies"]
 
-    monkeypatch.setattr("app.videos._dead_volumes", dead)
+    monkeypatch.setattr("app.media.videos._dead_volumes", dead)
     with app.app_context():
         assert File.delete_library_copy("Movies/Away (2001)/Away.mkv", 0) is False
         assert seen == [
             os.path.join(app.config["LIBRARY_DIR"], "Movies/Away (2001)/Away.mkv")
         ]
-        monkeypatch.setattr("app.videos._dead_volumes", lambda paths: [])
+        monkeypatch.setattr("app.media.videos._dead_volumes", lambda paths: [])
         assert File.delete_library_copy("Movies/Away (2001)/Away.mkv", 0) is True
 
 
@@ -522,7 +526,7 @@ def test_shared_untouched_key_is_never_deleted(app):
     it."""
 
     from app import db
-    from app.aws_storage import untouched_key_still_claimed
+    from app.archive.aws_storage import untouched_key_still_claimed
     from tests.factories import make_movie, make_movie_file
 
     with app.app_context():
@@ -561,7 +565,7 @@ def test_cleanup_keeps_the_input_of_a_waiting_conversion(app, monkeypatch):
     stray = plant(os.path.join(staging, ".Stray (2020) - [DVD].mkv"), 9)
     moving = plant(os.path.join(staging, ".Deferred (2020) - [DVD].mkv"), 9)
     app.transcode_queue.enqueue(
-        "app.sdr_conversion.convert_localized_file",
+        "app.media.sdr_conversion.convert_localized_file",
         "/import/Waiting (2020) - [Remux-2160p].mkv",
         {},
         None,
@@ -570,7 +574,7 @@ def test_cleanup_keeps_the_input_of_a_waiting_conversion(app, monkeypatch):
     )
     app.handoff_queue.enqueue_in(
         timedelta(minutes=30),
-        "app.importing.move_localized_file",
+        "app.media.importing.move_localized_file",
         "/import/Deferred (2020) - [DVD].mkv",
         {},
         None,
@@ -681,14 +685,14 @@ def test_cleanup_removes_dead_restore_partials(app, monkeypatch):
 def test_a_sync_defer_keeps_the_volume_drop_count(app, monkeypatch):
     """A busy queue books the retry with the count of the drops so far (#457)."""
 
-    from app import aws_storage
+    from app.archive import aws_storage
 
     booked = []
     monkeypatch.setattr(
         aws_storage, "requeue", lambda name, **kwargs: booked.append(kwargs)
     )
     with app.app_context():
-        app.maintenance_queue.enqueue("app.maintenance.rotate_logs")
+        app.maintenance_queue.enqueue("app.operations.maintenance.rotate_logs")
         try:
             assert aws_storage._sync_deferred(None, volume_drops=5) is True
         finally:
@@ -778,7 +782,7 @@ def test_cleanup_removes_an_old_direct_restore_copy_with_no_owner(
     sidecar age shows that no chain owns the copy. An untouched/ copy
     waits for the admin and stays."""
 
-    from app import aws_storage
+    from app.archive import aws_storage
 
     monkeypatch.setattr(maintenance, "task_send_email", lambda *a, **k: None)
     imports = app.config["IMPORT_DIR"]

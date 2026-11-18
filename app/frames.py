@@ -33,7 +33,7 @@ from werkzeug.local import LocalProxy
 
 from app.tasks import enqueue_task
 from app import db, get_app
-from app.file_ranking import MOVIE_BEST_ORDER
+from app.media.file_ranking import MOVIE_BEST_ORDER
 from app.models import File, Movie, RefQuality
 
 app = LocalProxy(get_app)

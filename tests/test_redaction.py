@@ -6,7 +6,7 @@ includes the rendered traceback of a record."""
 
 import logging
 
-from app.redaction import REDACTED, SecretRedactor, secret_values
+from app.operations.redaction import REDACTED, SecretRedactor, secret_values
 
 
 def test_secret_values_come_from_credential_settings_and_the_db_uri():
@@ -114,8 +114,8 @@ def test_a_message_cannot_start_a_second_log_entry(tmp_path):
 
     from datetime import datetime, timedelta
 
-    from app.log_digest import ENTRY_RE, read_entries
-    from app.logging_setup import LOG_FORMAT
+    from app.operations.log_digest import ENTRY_RE, read_entries
+    from app.operations.logging_setup import LOG_FORMAT
 
     log_file = tmp_path / "fitzflix.log"
     handler = logging.FileHandler(log_file)

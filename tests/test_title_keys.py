@@ -23,7 +23,7 @@ CORPUS = [
 
 
 def test_the_strict_key_of_the_criterion_match(app):
-    from app.title_keys import match_key
+    from app.media.title_keys import match_key
 
     assert [match_key(title) for title in CORPUS] == [
         "the searchers",
@@ -59,7 +59,7 @@ def test_the_fuzzy_key_of_the_frame_game(app):
 
 
 def test_the_enrichment_key_of_a_film_with_no_link(app):
-    from app.criterion_now import _enrichment_key
+    from app.criterion.criterion_now import _enrichment_key
 
     assert _enrichment_key("The Searchers", None) == "title:the searchers"
     assert _enrichment_key("Seven Samurai", "/films/seven-samurai") == (
@@ -68,7 +68,7 @@ def test_the_enrichment_key_of_a_film_with_no_link(app):
 
 
 def test_the_loose_key_folds_the_accents_the_case_and_the_ends(app):
-    from app.title_keys import title_key
+    from app.media.title_keys import title_key
 
     assert [title_key(title) for title in CORPUS] == [
         "the searchers",
@@ -91,7 +91,7 @@ def test_the_schedule_folds_the_accents_of_a_title(app):
     Before, it compared only the case. Now "Amélie" in the heading also
     finds an "Amelie" entry."""
 
-    from app.criterion_now import _current_slot, _enrichment_key
+    from app.criterion.criterion_now import _current_slot, _enrichment_key
 
     now = datetime(2026, 10, 25, 20, tzinfo=timezone.utc)
     entry = (now - timedelta(minutes=5), now + timedelta(hours=1), "Amelie", None)
@@ -100,7 +100,7 @@ def test_the_schedule_folds_the_accents_of_a_title(app):
 
 
 def test_the_current_slot_ignores_the_case_of_the_title(app):
-    from app.criterion_now import _current_slot
+    from app.criterion.criterion_now import _current_slot
 
     now = datetime(2026, 10, 25, 20, tzinfo=timezone.utc)
     entry = (now - timedelta(minutes=5), now + timedelta(hours=1), "Jaws", None)
@@ -115,14 +115,14 @@ def test_the_certification_sync_folds_the_case_of_a_stored_value(app, monkeypatc
     from app.models import RefTMDBCertification
     from tests.fakes import Response
 
-    import app.tmdb_refresh as tmdb_refresh
+    import app.metadata.tmdb_refresh as tmdb_refresh
 
     listing = {
         "certifications": {"FR": [{"certification": "TP", "meaning": "", "order": 1}]}
     }
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
     monkeypatch.setattr(
-        "app.tmdb_apply.tmdb_get", lambda url, **kwargs: Response(listing)
+        "app.metadata.tmdb_apply.tmdb_get", lambda url, **kwargs: Response(listing)
     )
     with app.app_context():
         db.session.add(RefTMDBCertification(country="FR", certification="tp"))

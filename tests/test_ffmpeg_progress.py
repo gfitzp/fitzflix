@@ -2,7 +2,7 @@
 
 
 def test_the_flac_progress_stops_at_99(app):
-    from app.tracks import ffmpeg_progress
+    from app.media.tracks import ffmpeg_progress
 
     line = "size=  1024kB time={} bitrate=1000.0kbits/s speed=10x"
     assert ffmpeg_progress(line.format("00:30:00"), 3600, 0) == 50
@@ -15,8 +15,8 @@ def test_the_flac_progress_stops_at_99(app):
 def test_the_supplement_task_reports_at_most_99(app, monkeypatch, tmp_path):
     """A time line past the duration reports 99, not 200, in the task itself (#388)."""
 
-    import app.tracks as tracks
-    import app.videos as videos
+    import app.media.tracks as tracks
+    import app.media.videos as videos
 
     source = tmp_path / "long.mkv"
     source.write_bytes(b"source")

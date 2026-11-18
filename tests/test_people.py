@@ -163,7 +163,7 @@ def test_a_file_commit_invalidates_the_people_ranking(app):
     delete move them in the same way as a credit write. A rollback
     leaves the ranking alone."""
 
-    from app.tmdb_apply import PEOPLE_RANKING_KEY
+    from app.metadata.tmdb_apply import PEOPLE_RANKING_KEY
 
     def prime():
         for role in ("cast", "crew", "all"):
@@ -410,7 +410,7 @@ def test_people_ranking_is_cached_until_a_credit_write(app, admin_client):
     each visit. A TMDB credit apply deletes the ranking. Thus, the people
     of a newly imported film appear on the next view."""
 
-    from app.tmdb_apply import PEOPLE_RANKING_KEY, invalidate_people_ranking
+    from app.metadata.tmdb_apply import PEOPLE_RANKING_KEY, invalidate_people_ranking
 
     with app.app_context():
         build_population(app)
@@ -451,7 +451,7 @@ def test_people_ranking_is_cached_until_a_credit_write(app, admin_client):
 def test_tmdb_apply_invalidates_the_people_ranking(app):
     """Clear the cached ranking of each role after a TMDB apply credit write."""
 
-    from app.tmdb_apply import PEOPLE_RANKING_KEY
+    from app.metadata.tmdb_apply import PEOPLE_RANKING_KEY
 
     with app.app_context():
         movie = make_movie("Apply Film", 1999, tmdb_id=960)

@@ -28,7 +28,7 @@ import requests
 from flask_login import login_required
 from werkzeug.datastructures import FileStorage
 
-from app.custom_artwork import (
+from app.media.custom_artwork import (
     custom_artwork_dir,
     remove_custom_artwork_after_commit,
     remove_episode_thumb_of,
@@ -49,8 +49,8 @@ from app.models import (
 )
 from app.main import bp
 from app.main.helpers import admin_required
-from app.plex_collections import enqueue_criterion_sync
-from app.tmdb_apply import tmdb_json_or
+from app.plex.plex_collections import enqueue_criterion_sync
+from app.metadata.tmdb_apply import tmdb_json_or
 
 # The TMDB poster gallery of a film, cached in Redis.
 

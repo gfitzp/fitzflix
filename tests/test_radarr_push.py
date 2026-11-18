@@ -67,14 +67,14 @@ def run_radarr_pushes(app):
 
     results = []
     for job in app.request_queue.jobs:
-        if job.func_name.startswith("app.radarr_push."):
+        if job.func_name.startswith("app.arr.radarr_push."):
             results.append(job.func(*job.args, **job.kwargs))
             app.request_queue.remove(job)
     return results
 
 
 def wire(app, monkeypatch):
-    import app.radarr_push as radarr_push
+    import app.arr.radarr_push as radarr_push
 
     fake = FakeRadarr()
     monkeypatch.setattr(radarr_push, "_radarr", fake.call)
@@ -125,7 +125,7 @@ def test_withdraw_deletes_keeping_files(app, monkeypatch):
     No page has a withdraw action. A TMDB refresh uses the function
     when a record moves to an other TMDB id."""
 
-    from app.radarr_push import withdraw_movie
+    from app.arr.radarr_push import withdraw_movie
 
     fake = wire(app, monkeypatch)
     fake.movies[8] = {
@@ -245,7 +245,7 @@ def refresh_rename_fixture(app, monkeypatch, title, year, tmdb_id, new_year):
 def test_refresh_rename_points_radarr_at_the_new_folder(app, monkeypatch):
     """A folder rename must reach Radarr, or Radarr downloads the film again."""
 
-    from app.tmdb_refresh import apply_tmdb_refresh
+    from app.metadata.tmdb_refresh import apply_tmdb_refresh
 
     fake = wire(app, monkeypatch)
     fake.movies[5] = {
@@ -287,7 +287,7 @@ def test_refresh_merge_withdraws_the_old_radarr_entry(app, monkeypatch):
     import os
     from datetime import date
 
-    from app.tmdb_refresh import apply_tmdb_refresh
+    from app.metadata.tmdb_refresh import apply_tmdb_refresh
     from tests.factories import make_movie, make_movie_file
 
     fake = wire(app, monkeypatch)
@@ -339,7 +339,7 @@ def test_a_merge_stops_when_the_files_do_not_move(app, monkeypatch):
     from sqlalchemy import inspect as sa_inspect
 
     from app.models import File, Movie
-    from app.tmdb_refresh import apply_tmdb_refresh
+    from app.metadata.tmdb_refresh import apply_tmdb_refresh
     from tests.factories import make_movie, make_movie_file
 
     wire(app, monkeypatch)
@@ -379,7 +379,7 @@ def test_a_merge_stops_when_the_files_do_not_move(app, monkeypatch):
 
 
 def test_refresh_rename_skips_a_film_radarr_lacks(app, monkeypatch):
-    from app.tmdb_refresh import apply_tmdb_refresh
+    from app.metadata.tmdb_refresh import apply_tmdb_refresh
 
     fake = wire(app, monkeypatch)
     with app.app_context():
@@ -405,8 +405,8 @@ def test_refresh_rename_skips_a_film_radarr_lacks(app, monkeypatch):
 def test_refresh_rename_survives_a_radarr_outage(app, monkeypatch):
     """A Radarr failure must not fail the refresh. The rename already happened."""
 
-    import app.radarr_push as radarr_push
-    from app.tmdb_refresh import apply_tmdb_refresh
+    import app.arr.radarr_push as radarr_push
+    from app.metadata.tmdb_refresh import apply_tmdb_refresh
 
     def down(*args, **kwargs):
         raise ConnectionError("radarr is down")
@@ -437,7 +437,7 @@ def test_movie_folder_gives_radarr_only_a_plain_folder(app):
     Radarr folder is thus at risk. A film with only an edition folder
     gives the plain name, which does not exist on disk."""
 
-    from app.tmdb_refresh import _movie_folder
+    from app.metadata.tmdb_refresh import _movie_folder
     from tests.factories import make_movie, make_movie_file
 
     with app.app_context():
@@ -465,7 +465,7 @@ def test_movie_folder_gives_radarr_only_a_plain_folder(app):
 def test_no_radarr_write_names_an_edition_folder(app, monkeypatch):
     """Each Radarr path write drops the edition tag of its folder (#670)."""
 
-    import app.radarr_push as radarr_push
+    import app.arr.radarr_push as radarr_push
 
     fake = wire(app, monkeypatch)
     fake.movies[6] = {"id": 6, "tmdbId": 11, "path": "/Volumes/Movies/Star Wars (1977)"}
@@ -499,7 +499,7 @@ def test_import_move_points_radarr_at_the_fitzflix_folder(app, monkeypatch, tmp_
 
     import os
 
-    from app.importing import _report_import_move_to_radarr
+    from app.media.importing import _report_import_move_to_radarr
 
     fake = wire(app, monkeypatch)
     source, output = import_move_fixture(
@@ -531,7 +531,7 @@ def test_import_into_an_edition_folder_keeps_radarr_on_the_plain_folder(
 
     import os
 
-    from app.importing import _report_import_move_to_radarr
+    from app.media.importing import _report_import_move_to_radarr
 
     fake = wire(app, monkeypatch)
     source, output = import_move_fixture(
@@ -549,7 +549,7 @@ def test_import_into_an_edition_folder_keeps_radarr_on_the_plain_folder(
 
 
 def test_import_in_place_leaves_radarr_alone(app, monkeypatch, tmp_path):
-    from app.importing import _report_import_move_to_radarr
+    from app.media.importing import _report_import_move_to_radarr
 
     fake = wire(app, monkeypatch)
     source, output = import_move_fixture(app, tmp_path, "Heat (1995)", "Heat (1995)")
@@ -567,7 +567,7 @@ def test_import_from_outside_radarr_roots_leaves_radarr_alone(
 ):
     """A file from the import directory was never a Radarr download."""
 
-    from app.importing import _report_import_move_to_radarr
+    from app.media.importing import _report_import_move_to_radarr
 
     fake = wire(app, monkeypatch)
     _, output = import_move_fixture(app, tmp_path, "Unused (2000)", "Heat (1995)")
@@ -580,8 +580,8 @@ def test_import_from_outside_radarr_roots_leaves_radarr_alone(
 
 
 def test_import_move_survives_a_radarr_outage(app, monkeypatch, tmp_path):
-    import app.radarr_push as radarr_push
-    from app.importing import _report_import_move_to_radarr
+    import app.arr.radarr_push as radarr_push
+    from app.media.importing import _report_import_move_to_radarr
 
     def down(*args, **kwargs):
         raise ConnectionError("radarr is down")
@@ -630,7 +630,7 @@ def test_path_check_repoints_an_entry_whose_folder_is_gone(
     for a rescan. A matching entry and a film that Fitzflix does not
     hold are left alone."""
 
-    import app.radarr_push as radarr_push
+    import app.arr.radarr_push as radarr_push
 
     fake = wire(app, monkeypatch)
     with app.app_context():
@@ -669,7 +669,7 @@ def test_path_check_moves_an_entry_off_an_edition_folder(
 
     import os
 
-    import app.radarr_push as radarr_push
+    import app.arr.radarr_push as radarr_push
 
     fake = wire(app, monkeypatch)
     library = app.config["MOVIE_LIBRARY"]
@@ -723,7 +723,7 @@ def test_path_check_leaves_two_existing_folders_for_review(
 
     import os
 
-    import app.radarr_push as radarr_push
+    import app.arr.radarr_push as radarr_push
 
     fake = wire(app, monkeypatch)
     with app.app_context():
@@ -747,7 +747,7 @@ def test_path_check_changes_nothing_over_the_limit(
 ):
     """Many missing folders point to a systemic cause. Change nothing."""
 
-    import app.radarr_push as radarr_push
+    import app.arr.radarr_push as radarr_push
 
     fake = wire(app, monkeypatch)
     monkeypatch.setattr(radarr_push, "MAX_PATH_FIXES", 1)
@@ -766,7 +766,7 @@ def test_path_check_changes_nothing_over_the_limit(
 
 
 def test_path_check_survives_a_radarr_outage(app, monkeypatch):
-    import app.radarr_push as radarr_push
+    import app.arr.radarr_push as radarr_push
 
     def down(*args, **kwargs):
         raise ConnectionError("Radarr is down")
@@ -781,7 +781,7 @@ def test_radarr_calls_fail_fast_on_connect(app, monkeypatch):
     A host that is down fails at the connect in 5 seconds. The read
     timeout stays long for the full movie list."""
 
-    import app.radarr_push as radarr_push
+    import app.arr.radarr_push as radarr_push
 
     seen = {}
 

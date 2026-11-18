@@ -1,0 +1,472 @@
+"""Send ad-hoc Radarr requests, one film at a time and never automatically.
+
+Glenn revised the original always-sync design. A push of every
+watchlist film to Radarr would queue hundreds of downloads and fill
+the volume. Thus, a request is a deliberate action for one film. The
+action is an entry on the Find menu of unowned movie pages and
+watchlist tiles. Fitzflix has no withdraw action for a person. The
+user removes films in Radarr itself. Thus, the cached badge set can
+show such a removal late, by up to its TTL of 1 hour.
+The root folder of Radarr is the library volume itself. Thus, a
+granted request downloads, renames, and comes back in through the
+existing Radarr webhook. No other connection is necessary.
+
+The shared root folder has one consequence. A TMDB refresh can rename
+a movie folder. Radarr then holds a path that no longer exists, sees
+no file, and downloads the film again. Thus, the refresh reports each
+rename to Radarr with follow_rename. On a change of the TMDB id, the
+refresh withdraws the entry of the old id with withdraw_movie.
+
+House settings (specified by Glenn): monitor the movie only, minimum
+availability Released, and the "Fitzflix" quality profile. Fitzflix
+finds the profile by name, never by a hardcoded id.
+"""
+
+import os
+import time
+
+import requests
+
+from flask import current_app
+
+from app.cache import cache_json, cached_fetch
+from app.arr.arr_client import (
+    RADARR,
+    RadarrError,
+    adopt_download,
+    arr_request,
+    configured,
+    fallback_rename,
+    restore_download_record,
+)
+from app.arr.arr_client import rename_download_locally as _rename_locally
+from app.media.naming import plain_movie_folder
+from app.tasks import enqueue_task
+
+# This is the set of TMDB ids that Radarr manages, cached for 1 hour,
+# for the request badges. Fitzflix refreshes the set immediately after
+# each push or withdrawal.
+
+RADARR_IDS_KEY = "fitzflix:radarr:tmdb_ids"
+RADARR_IDS_TTL = 3600
+
+QUALITY_PROFILE_NAME = "Fitzflix"
+
+# The longest wait for the RenameFiles command of Radarr, in seconds
+# (#288).
+
+RADARR_RENAME_WAIT = 120
+
+# fallback_rename and RadarrError live in app.arr.arr_client. These names
+# keep the old import paths. The rename wait sleeps through time, and
+# the tests patch radarr_push.time.sleep.
+
+__all__ = ["RadarrError", "fallback_rename", "time"]
+
+
+def radarr_configured():
+    """Return True if the ad-hoc push can work at all."""
+
+    return configured(RADARR)
+
+
+def _radarr(method, path, payload=None):
+    """Make one authenticated JSON call to the Radarr API."""
+
+    return arr_request(RADARR, method, path, payload)
+
+
+def radarr_tmdb_ids(refresh=False):
+    """Return the TMDB ids that Radarr manages now, cached for 1 hour.
+
+    If Fitzflix cannot reach Radarr, this function logs the error and
+    returns an empty set. The badges are then incomplete. The buttons
+    continue to work."""
+
+    def fetch():
+        try:
+            ids = {movie["tmdbId"] for movie in _radarr("GET", "/api/v3/movie")}
+        except Exception as e:
+            current_app.logger.warning(f"Radarr: couldn't list movies: {e}")
+            return None, False
+        return sorted(ids), True
+
+    if refresh:
+        ids, ok = fetch()
+        if ok:
+            cache_json(RADARR_IDS_KEY, ids, RADARR_IDS_TTL)
+    else:
+        ids = cached_fetch(RADARR_IDS_KEY, RADARR_IDS_TTL, fetch)
+    return set(ids or [])
+
+
+def request_movie(tmdb_id):
+    """Add one film to Radarr, monitored and searched immediately.
+
+    Radarr requires the full lookup object as the body of the add call.
+    It refuses a minimal payload. Thus, the flow is: look up the film,
+    add the house settings, then POST.
+    """
+
+    profiles = _radarr("GET", "/api/v3/qualityprofile")
+    profile = next(
+        (
+            p
+            for p in profiles
+            if (p.get("name") or "").lower() == QUALITY_PROFILE_NAME.lower()
+        ),
+        None,
+    )
+    if profile is None:
+        raise RadarrError(f"Radarr has no '{QUALITY_PROFILE_NAME}' quality profile")
+    roots = _radarr("GET", "/api/v3/rootfolder")
+    if not roots:
+        raise RadarrError("Radarr has no root folder configured")
+
+    movie = _radarr("GET", f"/api/v3/movie/lookup/tmdb?tmdbId={int(tmdb_id)}")
+    movie.update(
+        {
+            "qualityProfileId": profile["id"],
+            "rootFolderPath": roots[0]["path"],
+            "monitored": True,
+            "minimumAvailability": "released",
+            "addOptions": {"monitor": "movieOnly", "searchForMovie": True},
+        }
+    )
+    try:
+        _radarr("POST", "/api/v3/movie", movie)
+    except requests.HTTPError as e:
+        if e.response is not None and e.response.status_code == 400:
+            body = e.response.text or ""
+            if "already been added" in body:
+                raise RadarrError("Radarr already has this film") from e
+        raise
+    radarr_tmdb_ids(refresh=True)
+
+
+def withdraw_movie(tmdb_id):
+    """Remove one film from Radarr and keep its files on the disk."""
+
+    listing = _radarr("GET", f"/api/v3/movie?tmdbId={int(tmdb_id)}")
+    if not listing:
+        raise RadarrError("Radarr doesn't have this film")
+    _radarr(
+        "DELETE",
+        f"/api/v3/movie/{listing[0]['id']}"
+        "?deleteFiles=false&addImportExclusion=false",
+    )
+    radarr_tmdb_ids(refresh=True)
+
+
+def follow_rename(tmdb_id, new_folder):
+    """Point the Radarr movie at its renamed folder, then request a rescan.
+
+    Radarr matches the movie by TMDB id, its native key. The new path
+    keeps the parent of the old Radarr path. Thus, a Radarr host with a
+    different mount point still sees the correct folder. The PUT does
+    not move files. Fitzflix moved them already. The RefreshMovie
+    command makes Radarr adopt the renamed file at once. This function
+    returns True if Radarr manages the film."""
+
+    listing = _radarr("GET", f"/api/v3/movie?tmdbId={int(tmdb_id)}")
+    if not listing:
+        current_app.logger.info(
+            f"Radarr does not manage tmdb {tmdb_id}, no path to follow"
+        )
+        return False
+    return _point_entry_at(listing[0], new_folder)
+
+
+def follow_import_move(source_folder, new_folder):
+    """Point the Radarr movie that owns source_folder at new_folder.
+
+    An import takes the download out of the folder of Radarr and puts
+    the localized file at the Fitzflix path. Usually the 2 folders are
+    the same. They differ when the naming rules differ, for example a
+    slash or an accented letter in the title. Then Radarr sees an empty
+    folder and searches again. This function finds the Radarr movie by
+    the name of its folder. A TMDB id is not always known at import
+    time. This function returns True if Radarr manages the folder."""
+
+    wanted = os.path.basename(source_folder.rstrip("/"))
+    for entry in _radarr("GET", "/api/v3/movie"):
+        if os.path.basename((entry.get("path") or "").rstrip("/")) == wanted:
+            return _point_entry_at(entry, new_folder)
+    current_app.logger.info(f"Radarr does not manage folder {wanted!r}, skipping")
+    return False
+
+
+def enqueue_radarr_push(func, *args, description):
+    """Queue a Radarr push as its own job on the request queue (#268).
+
+    A TMDB refresh and an import run on the single sql worker. A push
+    there made that queue wait while Radarr did not answer. Now the
+    push runs after the commit, on its own. A failed push is logged.
+    The nightly path check repairs what it left behind."""
+
+    enqueue_task(func, *args, description=description, result_ttl=86400)
+
+
+def follow_rename_task(old_tmdb_id, new_tmdb_id, new_folder):
+    """Report a movie rename to Radarr. Log a failure. Do not raise.
+
+    This is a task. If the TMDB id changed, the file belongs to a
+    different film now. Thus, the entry of the old id leaves Radarr,
+    with its files kept on the disk. Then the entry of the new id, if
+    Radarr has one, points at the new folder."""
+
+    import traceback
+
+    from app import get_app
+
+    with get_app().app_context():
+        if not radarr_configured():
+            return False
+        if old_tmdb_id and old_tmdb_id != new_tmdb_id:
+            try:
+                withdraw_movie(old_tmdb_id)
+                current_app.logger.info(
+                    f"Radarr entry for tmdb {old_tmdb_id} withdrawn after the "
+                    f"record moved to tmdb {new_tmdb_id}"
+                )
+            except RadarrError:
+                pass
+            except Exception:
+                current_app.logger.warning(
+                    f"Radarr withdrawal of tmdb {old_tmdb_id} failed: "
+                    + traceback.format_exc()
+                )
+        if new_tmdb_id and new_folder:
+            try:
+                follow_rename(new_tmdb_id, new_folder)
+            except Exception:
+                current_app.logger.warning(
+                    f"Radarr path update for tmdb {new_tmdb_id} failed: "
+                    + traceback.format_exc()
+                )
+        return True
+
+
+def follow_import_move_task(source_folder, new_folder):
+    """Point the Radarr movie of an import at its Fitzflix folder.
+
+    This is a task. A failure is logged. It does not raise. The file is
+    already in place."""
+
+    import traceback
+
+    from app import get_app
+
+    with get_app().app_context():
+        try:
+            return follow_import_move(source_folder, new_folder)
+        except Exception:
+            current_app.logger.warning(
+                f"Radarr path update for {source_folder!r} failed: "
+                + traceback.format_exc()
+            )
+            return False
+
+
+def _set_entry_folder(entry, new_folder):
+    """Rewrite the path of one Radarr movie. Radarr moves no file.
+
+    Each path that Fitzflix writes to Radarr comes through here. Radarr
+    must never own a file that Fitzflix keeps as an edition (#670).
+    Radarr deletes its movie file on an upgrade. Thus, an edition folder
+    becomes its plain folder here, also when the plain folder does not
+    exist. Radarr then shows the film as missing."""
+
+    old_path = (entry.get("path") or "").rstrip("/")
+    new_path = os.path.join(os.path.dirname(old_path), plain_movie_folder(new_folder))
+    if old_path and old_path != new_path:
+        entry["path"] = new_path
+        _radarr("PUT", f"/api/v3/movie/{entry['id']}?moveFiles=false", entry)
+        current_app.logger.info(f"Radarr path {old_path!r} -> {new_path!r}")
+
+
+def _point_entry_at(entry, new_folder):
+    """Rewrite the path of one Radarr movie, then request a rescan."""
+
+    _set_entry_folder(entry, new_folder)
+    _radarr(
+        "POST", "/api/v3/command", {"name": "RefreshMovie", "movieIds": [entry["id"]]}
+    )
+    return True
+
+
+# The nightly path check changes at most this many Radarr entries. More
+# mismatches than this point to a systemic cause, for example a changed
+# mount or root folder. Then the check changes nothing and warns.
+
+MAX_PATH_FIXES = 20
+
+
+def reconcile_radarr_paths():
+    """Point each Radarr movie at the folder that Fitzflix holds for it (#266).
+
+    This is a task. It runs nightly. A rename or an import reports the
+    new folder to Radarr at once. If Radarr is down then, that push is
+    lost, and Radarr keeps a path that does not exist. It can then
+    download the film again. This check finds such an entry by TMDB id
+    and compares its folder with the folder that _movie_folder picks.
+
+    The check repoints an entry when the Fitzflix folder exists and the
+    Radarr folder does not. When both folders exist, it logs the case
+    and changes nothing. An entry on an edition folder always moves to
+    the plain folder, also when that folder does not exist (#670). An
+    other film that Fitzflix holds no file for is not checked. Radarr
+    can be downloading it."""
+
+    from app import get_app
+    from app.models import File, Movie
+    from app.metadata.tmdb_refresh import _movie_folder
+
+    with get_app().app_context():
+        if not radarr_configured():
+            return "Radarr is not configured"
+        library = current_app.config["MOVIE_LIBRARY"]
+        try:
+            entries = _radarr("GET", "/api/v3/movie")
+        except Exception as e:
+            current_app.logger.warning(f"Radarr path check: couldn't list movies: {e}")
+            return "Radarr unreachable"
+
+        files_by_tmdb = {}
+        for file, tmdb_id in (
+            File.query.join(Movie, Movie.id == File.movie_id)
+            .filter(Movie.tmdb_id.isnot(None))
+            .with_entities(File, Movie.tmdb_id)
+        ):
+            files_by_tmdb.setdefault(tmdb_id, []).append(file)
+
+        fixes = []
+        ambiguous = 0
+        for entry in entries:
+            held = os.path.basename((entry.get("path") or "").rstrip("/"))
+            on_edition = plain_movie_folder(held) != held
+            files = files_by_tmdb.get(entry.get("tmdbId"), [])
+            wanted = _movie_folder(files) or plain_movie_folder(held)
+            if not wanted or wanted == held:
+                continue
+            wanted_exists = os.path.isdir(os.path.join(library, wanted))
+            held_exists = bool(held) and os.path.isdir(os.path.join(library, held))
+            if on_edition or (wanted_exists and not held_exists):
+                fixes.append((entry, held, wanted))
+            else:
+                ambiguous += 1
+                current_app.logger.warning(
+                    f"Radarr path check: tmdb {entry.get('tmdbId')} is at "
+                    f"{held!r} in Radarr and at {wanted!r} in Fitzflix. Not "
+                    f"changed (Radarr folder exists: {held_exists}, Fitzflix "
+                    f"folder exists: {wanted_exists})"
+                )
+
+        if len(fixes) > MAX_PATH_FIXES:
+            current_app.logger.warning(
+                f"Radarr path check: {len(fixes)} entries point at missing "
+                f"folders, more than {MAX_PATH_FIXES}. Nothing changed. Check "
+                f"the Radarr root folder and the library mount"
+            )
+            return f"{len(fixes)} mismatches, over the limit"
+
+        fixed = 0
+        for entry, held, wanted in fixes:
+            try:
+                _point_entry_at(entry, wanted)
+                fixed += 1
+            except Exception as e:
+                current_app.logger.warning(
+                    f"Radarr path check: couldn't repoint tmdb "
+                    f"{entry.get('tmdbId')} from {held!r} to {wanted!r}: {e}"
+                )
+
+        current_app.logger.info(
+            f"Radarr path check: {len(entries)} Radarr movies, {fixed} repointed, "
+            f"{ambiguous} left for review"
+        )
+        return f"{fixed} repointed, {ambiguous} for review"
+
+
+def rename_download_locally(downloaded_path, new_path, movie_id):
+    """Rename a Radarr download in Fitzflix, then ask Radarr to rescan."""
+
+    _rename_locally(
+        RADARR,
+        downloaded_path,
+        new_path,
+        movie_id,
+        title=os.path.dirname(downloaded_path),
+    )
+
+
+def adopt_download_task(movie_id, movie_file_id, downloaded_path, new_path, quality):
+    """Give a Radarr download the quality of Fitzflix, then queue its import.
+
+    This is a task (#288). Radarr changes the quality of its file record
+    and renames the file. If Radarr cannot do it, Fitzflix renames the
+    file as before. In both cases the import of the file goes on the
+    queue after the rename. An import that stores the file under a
+    different name queues restore_download_record_task (#671)."""
+
+    from app import get_app
+
+    with get_app().app_context():
+        return adopt_download(
+            RADARR,
+            _radarr,
+            movie_id,
+            movie_file_id,
+            downloaded_path,
+            new_path,
+            quality,
+            RADARR_RENAME_WAIT,
+            lambda: rename_download_locally(downloaded_path, new_path, movie_id),
+        )
+
+
+def restore_download_record_task(
+    movie_id, library_path, scene_name, release_group, tries=1
+):
+    """Write the release data of a Radarr download onto its new file record (#671).
+
+    This is a task. The import stored the file under a different name.
+    Radarr then drops its record at the next scan, and it downloads the
+    same release again. Each try first points the movie at the folder
+    of the library file. Then the rescan finds the file. A file in an
+    edition folder is not a Radarr file (#670), and it gets nothing. A
+    try that writes nothing yet books the task again (#680). tries is
+    the number of this try. An unexpected failure is logged. It does not
+    raise. The file is already in place."""
+
+    import traceback
+
+    from app import get_app
+
+    with get_app().app_context():
+        folder = os.path.basename(os.path.dirname(library_path))
+        if plain_movie_folder(folder) != folder:
+            current_app.logger.info(
+                f"'{library_path}' is an edition. Radarr does not own it"
+            )
+            return False
+        try:
+            return restore_download_record(
+                RADARR,
+                _radarr,
+                movie_id,
+                library_path,
+                scene_name,
+                release_group,
+                RADARR_RENAME_WAIT,
+                tries=tries,
+                prepare=lambda: _set_entry_folder(
+                    _radarr("GET", f"/api/v3/movie/{int(movie_id)}"), folder
+                ),
+            )
+        except Exception:
+            current_app.logger.warning(
+                f"'{library_path}' The Radarr record update failed: "
+                + traceback.format_exc()
+            )
+            return False

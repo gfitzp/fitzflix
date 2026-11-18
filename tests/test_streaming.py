@@ -17,7 +17,7 @@ from tests.fakes import Response, tmdb_router
 def plant_registry(app, providers):
     """Store a fake provider registry in Redis, as the fetch does."""
 
-    from app.streaming import REGISTRY_KEY
+    from app.availability.streaming import REGISTRY_KEY
 
     app.redis.set(REGISTRY_KEY, json.dumps(providers))
 
@@ -25,7 +25,7 @@ def plant_registry(app, providers):
 def plant_availability(app, tmdb_id, payload):
     """Store a fake per-title availability payload in Redis."""
 
-    from app.streaming import AVAILABILITY_KEY
+    from app.availability.streaming import AVAILABILITY_KEY
 
     app.redis.set(AVAILABILITY_KEY.format(tmdb_id=tmdb_id), json.dumps(payload))
 
@@ -66,7 +66,7 @@ TUBI = {"provider_id": 73, "provider_name": "Tubi TV", "logo_path": "/tubi.jpg"}
 
 
 def test_provider_registry_fetches_once_and_sorts(app, monkeypatch):
-    import app.streaming as streaming
+    import app.availability.streaming as streaming
 
     calls = []
 
@@ -82,7 +82,7 @@ def test_provider_registry_fetches_once_and_sorts(app, monkeypatch):
         )
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
+    monkeypatch.setattr("app.metadata.tmdb_apply.tmdb_get", fake_tmdb_get)
 
     with app.app_context():
         first = streaming.provider_registry()
@@ -94,7 +94,7 @@ def test_provider_registry_fetches_once_and_sorts(app, monkeypatch):
 
 
 def test_title_availability_caches_even_when_empty(app, monkeypatch):
-    import app.streaming as streaming
+    import app.availability.streaming as streaming
 
     calls = []
 
@@ -103,7 +103,7 @@ def test_title_availability_caches_even_when_empty(app, monkeypatch):
         return Response({"results": {}})
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
+    monkeypatch.setattr("app.metadata.tmdb_apply.tmdb_get", fake_tmdb_get)
 
     with app.app_context():
         first = streaming.title_availability(603)
@@ -117,7 +117,7 @@ def test_title_availability_caches_even_when_empty(app, monkeypatch):
 
 
 def test_streaming_matches_only_subscription_kinds(app):
-    from app.streaming import streaming_matches
+    from app.availability.streaming import streaming_matches
 
     availability = {
         "link": "https://www.themoviedb.org/movie/603/watch",
@@ -147,7 +147,7 @@ CRITERION = {
 def plant_newly_added(app, tmdb_id, first_seen):
     """Store a scraped newly-added feed entry, as the diff does."""
 
-    from app.newly_added import NEWLY_ADDED_KEY
+    from app.availability.newly_added import NEWLY_ADDED_KEY
 
     app.redis.set(
         NEWLY_ADDED_KEY.format(provider_id=258),
@@ -173,7 +173,7 @@ def test_scraped_arrival_synthesizes_criterion_match(app, monkeypatch):
 
     from datetime import date
 
-    from app.streaming import streaming_matches
+    from app.availability.streaming import streaming_matches
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
     plant_registry(app, [CRITERION])
@@ -197,8 +197,8 @@ def test_leaving_set_synthesizes_criterion_match_even_unfetched(app):
     import calendar
     from datetime import date
 
-    from app.leaving_criterion import LEAVING_KEY
-    from app.streaming import streaming_matches
+    from app.criterion.leaving_criterion import LEAVING_KEY
+    from app.availability.streaming import streaming_matches
 
     today = date.today()
     departs = date(
@@ -223,7 +223,7 @@ def test_leaving_set_synthesizes_criterion_match_even_unfetched(app):
 def test_no_synthesis_when_tmdb_already_lists_criterion(app):
     from datetime import date
 
-    from app.streaming import streaming_matches
+    from app.availability.streaming import streaming_matches
 
     plant_newly_added(app, 22171, date.today())
     availability = {"link": None, "flatrate": [CRITERION], "ads": [], "rent": []}
@@ -238,7 +238,7 @@ def test_no_synthesis_when_tmdb_already_lists_criterion(app):
 def test_no_synthesis_without_criterion_subscription(app):
     from datetime import date
 
-    from app.streaming import streaming_matches
+    from app.availability.streaming import streaming_matches
 
     plant_newly_added(app, 22171, date.today())
 
@@ -436,7 +436,7 @@ def test_search_results_badge_unowned_matches(app, admin_client, monkeypatch):
     )
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
+    monkeypatch.setattr("app.metadata.tmdb_apply.tmdb_get", fake_tmdb_get)
 
     subscribe(app, 8, "Netflix")
     subscribe(app, 2, "Apple TV")
@@ -480,7 +480,7 @@ def test_search_results_without_matches_carry_no_attribution(
     )
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
+    monkeypatch.setattr("app.metadata.tmdb_apply.tmdb_get", fake_tmdb_get)
 
     subscribe(app, 8, "Netflix")
     plant_availability(
@@ -510,7 +510,7 @@ def test_review_tmdb_page_shows_rental_badge_for_your_stores(
         )
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
+    monkeypatch.setattr("app.metadata.tmdb_apply.tmdb_get", fake_tmdb_get)
 
     subscribe(app, 8, "Netflix")
     subscribe(app, 2, "Apple TV")
@@ -624,7 +624,7 @@ def test_title_availability_caches_a_404_as_empty(app, monkeypatch):
 
     import requests
 
-    import app.streaming as streaming
+    import app.availability.streaming as streaming
 
     calls = []
 
@@ -635,7 +635,7 @@ def test_title_availability_caches_a_404_as_empty(app, monkeypatch):
         raise requests.exceptions.HTTPError(response=response)
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
+    monkeypatch.setattr("app.metadata.tmdb_apply.tmdb_get", fake_tmdb_get)
 
     with app.app_context():
         first = streaming.title_availability(999999)
@@ -651,7 +651,7 @@ def test_batch_availability_mixes_cache_hits_and_fetches(app, monkeypatch):
     The helper reads the cached titles directly and fetches only the
     misses. The misses then go into the cache, as in a single lookup."""
 
-    import app.streaming as streaming
+    import app.availability.streaming as streaming
 
     calls = []
 
@@ -660,7 +660,7 @@ def test_batch_availability_mixes_cache_hits_and_fetches(app, monkeypatch):
         return Response({"results": {"US": {"flatrate": [NETFLIX]}}})
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
+    monkeypatch.setattr("app.metadata.tmdb_apply.tmdb_get", fake_tmdb_get)
 
     plant_availability(
         app,
@@ -747,7 +747,7 @@ def test_filmography_badges_unowned_films_on_your_services(
     )
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
+    monkeypatch.setattr("app.metadata.tmdb_apply.tmdb_get", fake_tmdb_get)
 
     subscribe(app, 8, "Netflix")
     subscribe(app, 2, "Apple TV")
@@ -785,7 +785,7 @@ def test_filmography_badges_unowned_films_on_your_services(
             }
         )
 
-    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_details_get)
+    monkeypatch.setattr("app.metadata.tmdb_apply.tmdb_get", fake_details_get)
     card = admin_client.get("/movie_card?tmdb_id=911").get_data(as_text=True)
     assert card.count('title="Streaming on Netflix"') == 1
     assert card.count("Apple TV (rent)") == 1
@@ -843,7 +843,7 @@ def test_filmography_defers_overflow_to_a_warm_task(app, admin_client, monkeypat
     )
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
+    monkeypatch.setattr("app.metadata.tmdb_apply.tmdb_get", fake_tmdb_get)
     monkeypatch.setattr(
         library, "batch_title_availability", lambda ids, **kw: ({}, [921])
     )
@@ -856,7 +856,7 @@ def test_filmography_defers_overflow_to_a_warm_task(app, admin_client, monkeypat
     warm_jobs = [
         job
         for job in app.maintenance_queue.jobs
-        if job.func_name == "app.streaming.warm_title_availability"
+        if job.func_name == "app.availability.streaming.warm_title_availability"
     ]
     assert len(warm_jobs) == 1
     assert warm_jobs[0].args == ([921],)
@@ -869,7 +869,7 @@ def test_batch_availability_reads_the_cache_in_one_call(app, monkeypatch):
     films paid 400 round trips. A refresh fetches every id again, live
     entries included."""
 
-    import app.streaming as streaming
+    import app.availability.streaming as streaming
 
     calls = []
 
@@ -878,7 +878,7 @@ def test_batch_availability_reads_the_cache_in_one_call(app, monkeypatch):
         return Response({"results": {"US": {"flatrate": [NETFLIX]}}})
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
+    monkeypatch.setattr("app.metadata.tmdb_apply.tmdb_get", fake_tmdb_get)
     for tmdb_id in (930, 931, 932):
         plant_availability(
             app,
@@ -924,7 +924,7 @@ def test_refresh_availability_covers_every_film_with_a_tmdb_id(app, monkeypatch)
     cache and never fetch inline. Thus, the cache must be full every
     morning."""
 
-    import app.streaming as streaming
+    import app.availability.streaming as streaming
 
     from app import db
 
@@ -945,7 +945,7 @@ def test_refresh_availability_covers_every_film_with_a_tmdb_id(app, monkeypatch)
         return Response({"results": {"US": {"flatrate": [NETFLIX]}}})
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
+    monkeypatch.setattr("app.metadata.tmdb_apply.tmdb_get", fake_tmdb_get)
 
     assert streaming.refresh_availability() is True
     assert sorted(calls) == [
@@ -990,7 +990,7 @@ def test_list_pages_never_fetch_availability_inline(app, admin_client, monkeypat
         return Response({"results": {"US": {"flatrate": [NETFLIX]}}})
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
+    monkeypatch.setattr("app.metadata.tmdb_apply.tmdb_get", fake_tmdb_get)
 
     page = admin_client.get("/watchlist?availability=services").get_data(as_text=True)
     assert "Inline Cached" in page
@@ -1001,7 +1001,7 @@ def test_list_pages_never_fetch_availability_inline(app, admin_client, monkeypat
     warm_jobs = [
         job
         for job in app.maintenance_queue.jobs
-        if job.func_name == "app.streaming.warm_title_availability"
+        if job.func_name == "app.availability.streaming.warm_title_availability"
     ]
     assert len(warm_jobs) == 1
     assert warm_jobs[0].args == ([951],)
@@ -1038,7 +1038,7 @@ def test_the_tmdb_search_never_fetches_availability_inline(
         return Response({"results": {"US": {"flatrate": [NETFLIX]}}})
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
+    monkeypatch.setattr("app.metadata.tmdb_apply.tmdb_get", fake_tmdb_get)
 
     page = admin_client.get("/search/tmdb?q=warm&type=movies").get_data(as_text=True)
     assert "Warm Cached" in page and "Warm Uncached" in page
@@ -1048,7 +1048,7 @@ def test_the_tmdb_search_never_fetches_availability_inline(
     warm_jobs = [
         job
         for job in app.maintenance_queue.jobs
-        if job.func_name == "app.streaming.warm_title_availability"
+        if job.func_name == "app.availability.streaming.warm_title_availability"
     ]
     assert len(warm_jobs) == 1
     assert warm_jobs[0].args == ([961],)
@@ -1061,7 +1061,7 @@ def test_synthesized_matches_read_the_registry_once(app, monkeypatch):
 
     from datetime import date
 
-    import app.streaming as streaming
+    import app.availability.streaming as streaming
 
     reads = []
 
@@ -1091,7 +1091,7 @@ def test_registry_stand_in_is_not_cached_across_a_recovery(app, monkeypatch):
 
     from datetime import date
 
-    import app.streaming as streaming
+    import app.availability.streaming as streaming
 
     answers = [[], [CRITERION]]
     monkeypatch.setattr(streaming, "provider_registry", lambda: answers.pop(0))
@@ -1108,7 +1108,7 @@ def test_registry_stand_in_is_not_cached_across_a_recovery(app, monkeypatch):
 def test_provider_registry_remembers_a_failed_fetch_briefly(app, monkeypatch):
     # Each outage costs 1 timeout, not 1 timeout for each film.
 
-    import app.streaming as streaming
+    import app.availability.streaming as streaming
 
     calls = []
 
@@ -1117,7 +1117,7 @@ def test_provider_registry_remembers_a_failed_fetch_briefly(app, monkeypatch):
         raise RuntimeError("down")
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr("app.tmdb_apply.tmdb_get", failing_tmdb_get)
+    monkeypatch.setattr("app.metadata.tmdb_apply.tmdb_get", failing_tmdb_get)
 
     with app.app_context():
         assert streaming.provider_registry() == []

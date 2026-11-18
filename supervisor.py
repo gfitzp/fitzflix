@@ -6,21 +6,15 @@ from redis import Redis
 # The task modules load here, before the first job. Thus, an import
 # error stops the worker at its start, not in the middle of a job.
 
-from app import (
-    aws_storage,
-    criterion_catalog,
-    db,
-    diary,
-    get_app,
-    importing,
-    sdr_conversion,
-    tmdb_refresh,
-    tracks,
-    videos,
-)
+from app import db, get_app
+from app.archive import aws_storage
+from app.criterion import criterion_catalog
+from app.media import importing, sdr_conversion, tracks, videos
+from app.metadata import tmdb_refresh
+from app.viewing import diary
 from app.pipeline import PipelineWorker
 from app.queues import QUEUE_NAME
-from app.worker_recovery import reclaim_dead_workers
+from app.media.worker_recovery import reclaim_dead_workers
 from config import Config
 
 qs = sys.argv[1:] or ["default"]
@@ -56,7 +50,7 @@ with flask_app.app_context():
     # An Atmos run that broke left its workspace on staging (#505).
 
     try:
-        from app.atmos import sweep_stale_atmos_workspaces
+        from app.media.atmos import sweep_stale_atmos_workspaces
 
         sweep_stale_atmos_workspaces()
     except Exception:

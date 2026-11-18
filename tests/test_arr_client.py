@@ -1,8 +1,8 @@
-"""Test the shared Radarr and Sonarr client of app/arr_client.py."""
+"""Test the shared Radarr and Sonarr client of app/arr/arr_client.py."""
 
 
 def test_the_rescan_command_of_each_app(app):
-    from app.arr_client import RADARR, SONARR, rescan_command
+    from app.arr.arr_client import RADARR, SONARR, rescan_command
 
     assert rescan_command(RADARR, "3") == {"name": "RefreshMovie", "movieIds": [3]}
     assert rescan_command(SONARR, 7) == {"name": "RescanSeries", "seriesId": 7}
@@ -11,13 +11,13 @@ def test_the_rescan_command_of_each_app(app):
 def test_the_wrappers_keep_the_old_names(app):
     """The stored rq job names and the old import paths still resolve."""
 
-    from app import arr_client, radarr_push, sonarr_push
+    from app.arr import arr_client, radarr_push, sonarr_push
 
     assert radarr_push.RadarrError is arr_client.RadarrError
     assert sonarr_push.SonarrError is arr_client.SonarrError
     assert radarr_push.fallback_rename is arr_client.fallback_rename
-    assert arr_client.RADARR.adopt_task == "app.radarr_push.adopt_download_task"
-    assert arr_client.SONARR.adopt_task == "app.sonarr_push.adopt_episode_task"
+    assert arr_client.RADARR.adopt_task == "app.arr.radarr_push.adopt_download_task"
+    assert arr_client.SONARR.adopt_task == "app.arr.sonarr_push.adopt_episode_task"
     assert callable(radarr_push.adopt_download_task)
     assert callable(sonarr_push.adopt_episode_task)
 
@@ -25,8 +25,8 @@ def test_the_wrappers_keep_the_old_names(app):
 def test_a_series_rename_points_sonarr_at_the_new_folder_and_rescans(app, monkeypatch):
     """The rename finds the series by tvdbId, PUTs the path, then rescans."""
 
-    from app import sonarr_push
-    from app.series_rename import _update_sonarr_path
+    from app.arr import sonarr_push
+    from app.media.series_rename import _update_sonarr_path
 
     calls = []
 
@@ -56,8 +56,8 @@ def test_a_series_rename_points_sonarr_at_the_new_folder_and_rescans(app, monkey
 
 
 def test_a_series_that_sonarr_does_not_manage_changes_nothing(app, monkeypatch):
-    from app import sonarr_push
-    from app.series_rename import _update_sonarr_path
+    from app.arr import sonarr_push
+    from app.media.series_rename import _update_sonarr_path
 
     calls = []
 
@@ -140,8 +140,8 @@ def test_only_a_sonarr_adopt_job_carries_the_queue_position(
 
     jobs = {job.func_name: job for job in app.request_queue.jobs}
     try:
-        radarr = jobs["app.radarr_push.adopt_download_task"]
-        sonarr = jobs["app.sonarr_push.adopt_episode_task"]
+        radarr = jobs["app.arr.radarr_push.adopt_download_task"]
+        sonarr = jobs["app.arr.sonarr_push.adopt_episode_task"]
         assert len(radarr.args) == 5 and radarr.args[4] == "WEBRip-1080p"
         assert len(sonarr.args) == 6 and sonarr.args[5] is True
     finally:

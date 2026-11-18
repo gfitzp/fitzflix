@@ -51,11 +51,11 @@ from app.models import (
     UserWatchlist,
     movie_genres,
 )
-from app.tmdb_apply import tmdb_json_or, us_certification_from
+from app.metadata.tmdb_apply import tmdb_json_or, us_certification_from
 from app.main import bp
 from app.main.shopping import watchlist_search_matcher
-from app.plex_player import remote_playback_configured
-from app.file_ranking import copy_upgradable
+from app.playback.plex_player import remote_playback_configured
+from app.media.file_ranking import copy_upgradable
 from app.main.helpers import (
     _hold_verdict_lock,
     apply_verdict,
@@ -76,8 +76,8 @@ from app.main.helpers import (
     admin_required,
     rejected_files,
 )
-from app.funnel import user_film_sets, user_film_sets_by_id
-from app.recommendations import (
+from app.discovery.funnel import user_film_sets, user_film_sets_by_id
+from app.discovery.recommendations import (
     TMDB_PATCH_SCORES_KEY,
     TOP_BILLING_CUTOFF,
     estimated_rating,
@@ -90,8 +90,11 @@ from app.recommendations import (
     stored_scores,
     watch_again_shelf,
 )
-from app.availability_alerts import NEW_IN_LIBRARY_LABEL, recent_availability
-from app.streaming import (
+from app.availability.availability_alerts import (
+    NEW_IN_LIBRARY_LABEL,
+    recent_availability,
+)
+from app.availability.streaming import (
     batch_title_availability,
     rental_matches,
     request_warm,
@@ -99,30 +102,30 @@ from app.streaming import (
     user_provider_ids,
     user_streaming,
 )
-from app.rec_shelves import build_shelves, parse_criteria, replacement_film
-from app.criterion_now import criterion_now_card, is_criterion_subscriber
-from app.radarr_push import (
+from app.discovery.rec_shelves import build_shelves, parse_criteria, replacement_film
+from app.criterion.criterion_now import criterion_now_card, is_criterion_subscriber
+from app.arr.radarr_push import (
     RadarrError,
     radarr_configured,
     radarr_tmdb_ids,
     request_movie,
 )
-from app.leaving_criterion import (
+from app.criterion.leaving_criterion import (
     CRITERION_PROVIDER_ID,
     leaving_departure,
     leaving_inventory,
     leaving_shelf,
 )
-from app.newly_added import (
+from app.availability.newly_added import (
     FEEDS as NEWLY_ADDED_FEEDS,
     newly_added_fold,
     newly_added_inventory,
     newly_added_shelves,
     poster_fold,
 )
-from app.streaming_rail import ENRICHED_KEY, enriched_movie, stored_rail
-from app.diary import clear_watchlist
-from app.tmdb_refresh import find_or_create_tmdb_movie
+from app.availability.streaming_rail import ENRICHED_KEY, enriched_movie, stored_rail
+from app.viewing.diary import clear_watchlist
+from app.metadata.tmdb_refresh import find_or_create_tmdb_movie
 from rq.registry import ScheduledJobRegistry
 
 # The top watchlist shelf is bigger than the 12-card discovery shelves
@@ -451,7 +454,7 @@ def index():
 
         _request_compute(
             RECS_REQUESTED_KEY,
-            "app.recommendations.recompute_recommendations",
+            "app.discovery.recommendations.recompute_recommendations",
             "Computing film recommendations",
         )
 
@@ -510,7 +513,7 @@ def index():
     ):
         _request_compute(
             RAIL_REQUESTED_KEY,
-            "app.streaming_rail.recompute_streaming_rail",
+            "app.availability.streaming_rail.recompute_streaming_rail",
             "Computing the streaming rail",
         )
 
@@ -800,7 +803,7 @@ def _native_language_keys():
     The card compares the key of each track. Thus, "deu" and "ger" are
     the same language there, as in the import (#443)."""
 
-    from app.tracks import language_key
+    from app.media.tracks import language_key
 
     return [language_key(current_app.config["NATIVE_LANGUAGE"]), "und", "zxx"]
 
@@ -858,7 +861,7 @@ def _import_activity():
     title. The rejects come from the rejects folder. The result is None
     when there is nothing to show."""
 
-    from app.queue_page import scheduled_entries
+    from app.operations.queue_page import scheduled_entries
 
     # Read the ids and their times in 1 call (#511)
 
@@ -866,7 +869,7 @@ def _import_activity():
     registry = ScheduledJobRegistry(queue=current_app.import_queue)
     for job_id, next_run in scheduled_entries(registry):
         job = current_app.import_queue.fetch_job(job_id)
-        if job is not None and job.func_name == "app.importing.localization_task":
+        if job is not None and job.func_name == "app.media.importing.localization_task":
             deferred.append(
                 {"description": job.description or job.id, "next_run": next_run}
             )
@@ -2221,7 +2224,7 @@ def review_tmdb(tmdb_id):
             db.session.rollback()
         if created:
             enqueue_task(
-                "app.tmdb_refresh.refresh_tmdb_info",
+                "app.metadata.tmdb_refresh.refresh_tmdb_info",
                 "Movies",
                 movie.id,
                 tmdb_id,
@@ -2260,7 +2263,7 @@ def review_tmdb(tmdb_id):
         )
         if created and outcome.kind in ("flagged", "corrected", "logged"):
             enqueue_task(
-                "app.tmdb_refresh.refresh_tmdb_info",
+                "app.metadata.tmdb_refresh.refresh_tmdb_info",
                 "Movies",
                 movie.id,
                 tmdb_id,

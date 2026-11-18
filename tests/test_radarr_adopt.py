@@ -83,7 +83,9 @@ def test_webhook_leaves_the_rename_to_radarr(app, client, tmp_path):
     assert (folder / ORIGINAL).exists()
     assert app.import_queue.job_ids == []
     jobs = app.request_queue.jobs
-    assert [job.func_name for job in jobs] == ["app.radarr_push.adopt_download_task"]
+    assert [job.func_name for job in jobs] == [
+        "app.arr.radarr_push.adopt_download_task"
+    ]
     assert jobs[0].args == (
         3,
         7,
@@ -96,7 +98,7 @@ def test_webhook_leaves_the_rename_to_radarr(app, client, tmp_path):
 def test_adopt_task_lets_radarr_rename_then_queues_the_import(
     app, monkeypatch, tmp_path
 ):
-    import app.radarr_push as radarr_push
+    import app.arr.radarr_push as radarr_push
 
     folder = _download(tmp_path)
     fake = FakeRadarr(folder)
@@ -117,7 +119,7 @@ def test_adopt_task_lets_radarr_rename_then_queues_the_import(
 def test_adopt_task_falls_back_to_a_fitzflix_rename(app, monkeypatch, tmp_path):
     """A failed Radarr rename leaves the file. Fitzflix renames it."""
 
-    import app.radarr_push as radarr_push
+    import app.arr.radarr_push as radarr_push
 
     folder = _download(tmp_path)
     fake = FakeRadarr(folder, rename_status="failed")
@@ -144,7 +146,7 @@ def test_a_local_rename_without_a_radarr_address_does_not_crash(
     """With no Radarr address, the rename must not try to send a rescan."""
 
     import app.api.arr as arr
-    from app.radarr_push import rename_download_locally
+    from app.arr.radarr_push import rename_download_locally
 
     monkeypatch.setitem(app.config, "RADARR_URL", "")
     sent = []
@@ -164,7 +166,7 @@ def test_a_late_radarr_rename_imports_the_radarr_file(app, monkeypatch, tmp_path
     The download is not at its old path. The task imports the file at the
     path of the Radarr record and does not crash in shutil.move."""
 
-    import app.radarr_push as radarr_push
+    import app.arr.radarr_push as radarr_push
 
     folder = _download(tmp_path)
     fake = FakeRadarr(folder, rename_status="started", renames=True)
@@ -182,7 +184,7 @@ def test_a_late_radarr_rename_imports_the_radarr_file(app, monkeypatch, tmp_path
 
 
 def test_a_lost_download_fails_the_task_and_queues_nothing(app, monkeypatch, tmp_path):
-    import app.radarr_push as radarr_push
+    import app.arr.radarr_push as radarr_push
 
     folder = _download(tmp_path)
     (folder / ORIGINAL).unlink()
@@ -208,7 +210,7 @@ def test_a_radarr_path_outside_the_root_is_not_imported(
     Radarr reports a file outside the root folders. Fitzflix renames the
     download itself and imports that file."""
 
-    import app.radarr_push as radarr_push
+    import app.arr.radarr_push as radarr_push
 
     folder = _download(tmp_path)
     monkeypatch.setitem(app.config, "RADARR_ROOT_FOLDERS", [str(folder)])
@@ -232,7 +234,7 @@ def test_a_radarr_path_outside_the_root_is_not_imported(
 
 
 def test_a_late_rename_outside_the_root_is_refused(app, monkeypatch, tmp_path, caplog):
-    from app.arr_client import fallback_rename
+    from app.arr.arr_client import fallback_rename
 
     folder = _download(tmp_path)
     (folder / ORIGINAL).unlink()

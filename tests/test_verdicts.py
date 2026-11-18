@@ -27,7 +27,7 @@ def _fake_tmdb(app, monkeypatch):
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
     monkeypatch.setattr(
-        "app.tmdb_apply.tmdb_get", lambda *a, **k: Response(JAWS_2_DETAILS)
+        "app.metadata.tmdb_apply.tmdb_get", lambda *a, **k: Response(JAWS_2_DETAILS)
     )
 
 
@@ -49,7 +49,7 @@ def test_a_tmdb_star_post_names_the_log_a_review(app, admin_client, monkeypatch)
 
 
 def test_a_tmdb_x_flags_without_steering_the_drive(app, admin_client, monkeypatch):
-    from app.elicitation import last_response
+    from app.discovery.elicitation import last_response
 
     _fake_tmdb(app, monkeypatch)
     response = _post_tmdb(admin_client, {"quick_rating": "0"})
@@ -85,7 +85,7 @@ def _todays_review(stars):
     """Make a Jaws 2 record with no TMDB id and a review of today."""
 
     from app.models import UserMovieReview
-    from app.diary import star_rating_fields
+    from app.viewing.diary import star_rating_fields
 
     movie = make_movie("Jaws 2", 1978)
     db.session.add(
@@ -123,7 +123,7 @@ def test_a_tmdb_star_on_todays_review_corrects_it(
 
 
 def test_a_movie_page_x_steers_the_drive(app, admin_client):
-    from app.elicitation import last_response
+    from app.discovery.elicitation import last_response
 
     with app.app_context():
         movie = make_movie("Steer Film", 1999)

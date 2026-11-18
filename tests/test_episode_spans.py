@@ -23,7 +23,7 @@ def _details(series, season, episode, last_episode, quality_title, dirname):
 
 
 def test_a_span_blocks_a_worse_or_equal_later_single(app):
-    from app.file_ranking import find_better_files
+    from app.media.file_ranking import find_better_files
 
     with app.app_context():
         series = make_tv_series("Top Gear (2002)")
@@ -48,7 +48,7 @@ def test_a_span_blocks_a_worse_or_equal_later_single(app):
 
 
 def test_a_span_removes_a_worse_later_single(app):
-    from app.file_ranking import find_worse_files
+    from app.media.file_ranking import find_worse_files
 
     with app.app_context():
         series = make_tv_series("The Golden Girls")
@@ -84,7 +84,7 @@ def test_the_library_page_and_the_shopping_list_agree_on_a_span_season(
         series, _, _ = _season_with_a_better_first_single(app, "DVD")
         series_id = series.id
 
-        from app.file_ranking import season_grades
+        from app.media.file_ranking import season_grades
 
         grade = season_grades([series_id])[(series_id, 1)]
         assert grade.quality_title == "DVD"
@@ -151,7 +151,7 @@ def test_the_season_page_badges_only_best_holders(app):
 
 
 def test_the_missing_best_scan_groups_by_episode_number(app):
-    from app.missing_files import ranked_file_rows
+    from app.media.missing_files import ranked_file_rows
 
     with app.app_context():
         series, span, single, other = _top_gear_season(app)
@@ -167,7 +167,7 @@ def test_the_missing_best_scan_groups_by_episode_number(app):
 def test_the_sync_restores_no_single_that_a_span_outranks(app, monkeypatch):
     """The paid Bulk restore takes only the best holders (follow-up #479)."""
 
-    from app import aws_storage
+    from app.archive import aws_storage
 
     restored = []
     monkeypatch.setattr(
@@ -197,7 +197,7 @@ def test_the_sync_restores_no_single_that_a_span_outranks(app, monkeypatch):
 def test_the_column_grade_equals_the_orm_grade(app):
     """season_grades reads columns. Its answer is the answer of ORM pairs (follow-up #479)."""
 
-    from app.file_ranking import best_episode_holders, season_grades
+    from app.media.file_ranking import best_episode_holders, season_grades
     from app.models import File, RefQuality
 
     with app.app_context():
@@ -241,7 +241,7 @@ def test_a_worse_copy_delete_removes_its_episode_thumb(app):
 
     import os
 
-    from app.importing import _delete_worse_copies
+    from app.media.importing import _delete_worse_copies
 
     with app.app_context():
         tv_dir = os.path.join(app.config["TV_LIBRARY"], "Thumb Delete", "Season 01")
@@ -278,7 +278,7 @@ def test_the_pages_use_the_best_copy_rule_of_the_sync(app, admin_client):
     restores."""
 
     from app import db
-    from app.file_ranking import tv_best_holder_ids
+    from app.media.file_ranking import tv_best_holder_ids
     from app.main.library import _is_best_copy
     from tests.factories import make_tv_file, make_tv_series
 

@@ -54,7 +54,7 @@ from app.frames import (
 from app.main import bp
 from app.main.forms import GuessFrameForm
 from app.main.helpers import decimal_id
-from app.title_keys import title_key
+from app.media.title_keys import title_key
 from app.models import (
     File,
     Movie,

@@ -98,7 +98,7 @@ def test_importing_has_no_inline_admin_lookup():
 
     import inspect
 
-    import app.importing as importing
+    import app.media.importing as importing
 
     source = inspect.getsource(importing)
     assert "User.admin" not in source
@@ -149,7 +149,7 @@ def no_admin(app, monkeypatch):
 
 def test_tmdb_refresh_without_an_admin_still_returns(app, no_admin):
     from app import db
-    from app.tmdb_refresh import apply_tmdb_refresh
+    from app.metadata.tmdb_refresh import apply_tmdb_refresh
     from tests.factories import make_movie
 
     with app.app_context():
@@ -163,7 +163,8 @@ def test_tmdb_refresh_without_an_admin_still_returns(app, no_admin):
 def test_aws_reports_without_an_admin_still_return(app, no_admin):
     from types import SimpleNamespace
 
-    from app import aws_storage, db
+    from app import db
+    from app.archive import aws_storage
     from tests.factories import make_movie, make_movie_file
 
     with app.app_context():
@@ -195,7 +196,7 @@ def test_incomplete_download_without_an_admin_still_returns(
 
 
 def test_manual_import_email_without_an_admin_still_returns(app, no_admin, monkeypatch):
-    from app.manual_imports import email_manual_import_needed
+    from app.media.manual_imports import email_manual_import_needed
 
     monkeypatch.setitem(app.config, "MAIL_SERVER", "smtp.test")
     with app.test_request_context():
@@ -215,7 +216,7 @@ def test_a_tmdb_not_found_email_without_an_admin_does_not_crash(app, monkeypatch
     sent = _collect(app, monkeypatch)
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "key")
     monkeypatch.setattr(
-        "app.tmdb_apply.tmdb_get", lambda url, **k: Response({}, status=404)
+        "app.metadata.tmdb_apply.tmdb_get", lambda url, **k: Response({}, status=404)
     )
 
     class NoAdmin:
@@ -276,7 +277,7 @@ def test_the_smtp_connection_has_a_timeout(app, monkeypatch):
     import smtplib
 
     from app import mail
-    from app.mail_timeout import TimeoutConnection
+    from app.operations.mail_timeout import TimeoutConnection
 
     opened = []
 

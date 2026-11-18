@@ -106,5 +106,9 @@ def test_refresh_criterion_runs_on_the_maintenance_queue(app, monkeypatch):
         for args, kwargs in queue.calls
     ]
     assert queued == [
-        ("maintenance", "app.criterion_catalog.refresh_criterion_collection_info", 3600)
+        (
+            "maintenance",
+            "app.criterion.criterion_catalog.refresh_criterion_collection_info",
+            3600,
+        )
     ]

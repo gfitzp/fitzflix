@@ -76,7 +76,7 @@ class FakePlex:
 
 
 def _wire(app, monkeypatch, fake, home=()):
-    import app.plex_selection as plex_selection
+    import app.plex.plex_selection as plex_selection
 
     monkeypatch.setitem(app.config, "PLEX_URL", "http://plex.test")
     monkeypatch.setitem(app.config, "PLEX_TOKEN", "owner-token")
@@ -87,7 +87,7 @@ def _wire(app, monkeypatch, fake, home=()):
 
 
 def test_the_file_asks_for_its_default_audio_and_subtitle():
-    import app.plex_selection as plex_selection
+    import app.plex.plex_selection as plex_selection
 
     part = _part(
         7,
@@ -259,7 +259,7 @@ def test_enqueue_align_waits_and_collapses_a_repeat(app, monkeypatch):
         job = app.maintenance_queue.fetch_job(
             plex_selection.safe_job_id("plex_select:218257")
         )
-        assert job.func_name == "app.plex_selection.align_plex_items"
+        assert job.func_name == "app.plex.plex_selection.align_plex_items"
         assert job.args == (["218257"],)
         assert job.id in registry.get_job_ids()
         due = registry.get_scheduled_time(job.id)

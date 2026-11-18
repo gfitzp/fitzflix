@@ -31,7 +31,7 @@ def file_size(size):
 def register_template_helpers(app):
     """Add the template filters and the csrf_token global to the Jinja environment of app."""
 
-    from app.richtext import review_html
+    from app.viewing.richtext import review_html
 
     app.jinja_env.filters["review_html"] = review_html
 
@@ -70,7 +70,7 @@ def register_template_helpers(app):
     def language_key_filter(code):
         """Return the language key of a track language for a template."""
 
-        from app.tracks import language_key
+        from app.media.tracks import language_key
 
         return language_key(code)
 

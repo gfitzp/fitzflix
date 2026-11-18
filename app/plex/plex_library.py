@@ -1,0 +1,820 @@
+"""Refresh the Plex libraries and empty their trash, safely.
+
+This module replaces the external cron. That cron ran curl for refresh
+and emptyTrash on hardcoded section ids. It checked one mount per
+section as a guard. The guard is the whole point. If the directory of a
+section is missing (for example, an SMB mount dropped), a scan marks
+every item as missing. Then the empty of the trash deletes the metadata
+of the library, with the watch states included. Plex rebuilds the
+library from zero when the mount returns.
+
+This version asks Plex for the OWN location paths of each movie and
+show section. It requires the MOUNT of every location to be alive
+before it touches that section. The old script checked one mount per
+section. But a section can have 2 roots on 2 volumes. The guard is
+at the mount level, not at the leaf level. A root can correctly have
+no subfolder for a title. A missing leaf on a healthy mount is safe to
+scan. The mount probes go through volume_alive. That function
+treats a hung SMB stat as dead. It does not hang the worker.
+
+The mount check cannot see a share that drops DURING the scan. The scan
+is asynchronous. Thus, the empty of the trash acts on the result of the
+previous scan. On 2026-10-15 the Movies share dropped for 1 second during
+a scan. Plex put 3,356 movies in the trash and deleted them (#280). Thus,
+the refresh keeps the trash in 2 cases. A mount of the section has a new
+device number since the previous run, which shows a remount. Or the trash
+holds more items than PLEX_TRASH_LIMIT. The second case also makes a
+health issue. The trash empties again on the first run that passes both
+checks.
+
+This module also owns the generic re-analyze. Every task that rewrites
+a library file IN PLACE calls enqueue_plex_analyze. Then Plex reads the
+file again immediately. It does not wait for its own scan and its
+overnight analysis pass. The manual analyze of Plex reads the streams
+again and regenerates the chapter thumbs. This takes approximately 2
+seconds on a 45 GB film (#194).
+
+An extra, for example a featurette under the folder of its film, is
+not in the item list of a section. Plex lists it only with its holder:
+the film, the season, or the show. Thus, the analyze asks the holder
+for its extras when no listed item holds the file (#651).
+
+This module does NOT touch the Media-level audioCodec and audioChannels
+summary. Plex shows that summary as the audio of an item. A measurement
+on 2026-08-24 over 3,153 films showed that the summary is the audio
+track of the file with the HIGHEST channel count. It matched that track
+100% of the time. It matched the first (default) track only 94.6% of
+the time, that is, only when the two were the same track. Thus, a
+supplemented film reads "FLAC 7.1" while its lossless twin outranks the
+DD+ Atmos 5.1. An analyze, by this task or by hand in Plex, does not
+change that.
+"""
+
+import os
+import subprocess
+import time
+import traceback
+from datetime import timedelta
+
+from flask import current_app
+from rq.registry import ScheduledJobRegistry
+from werkzeug.local import LocalProxy
+
+from app.tasks import enqueue_task, requeue
+from app import get_app, path_tag, safe_job_id
+from app.operations.maintenance import PLEX_TRASH_HELD_KEY, VOLUMES_ROOT, volume_alive
+from app.plex.plex_api import plex_command, plex_get
+from app.plex.plex_selection import align_plex_items
+from app.settings import get_setting
+
+app = LocalProxy(get_app)
+
+PAGE_SIZE = 1000
+
+# The device number of each mount that the previous refresh saw (#280).
+# Each new mount gets a new number. Thus, a changed number shows that the
+# share dropped and came back.
+
+MOUNT_IDS_KEY = "fitzflix:plex:mount-ids"
+
+# The item type to page for in each kind of section. In a movie section,
+# the items carry the files. In a show section, the episodes carry them.
+
+SECTION_ITEM_TYPE = {"movie": 1, "show": 4}
+
+# Plex cannot analyze a file that it has not scanned yet. To keep the
+# analyze, one deferred attempt follows the next quarter-hourly library
+# scan.
+
+ANALYZE_RETRY_MINUTES = 20
+ANALYZE_MAX_RETRIES = 1
+
+# An import that replaces the file of an item that Plex has gives Plex a
+# new part. Plex sends no `library.new` for it. The analyze then finds
+# the item by its path after the next scan, and it aligns the stream
+# selection of each account (#661).
+
+REPLACEMENT_ANALYZE_DELAY = timedelta(minutes=ANALYZE_RETRY_MINUTES)
+
+# Invariant (#775): each extra that the import puts in the library shows
+# in Plex under its film. The scan of Plex reads a film folder again only
+# when the list of that folder changes. That list holds its files and the
+# names of its subfolders. An extra that lands in an extras folder that exists
+# already changes no such list. A refresh of the film item reads the
+# extras folders again. The delay lets the extras of 1 disc that come in
+# a row share 1 refresh.
+
+FILM_REFRESH_DELAY = timedelta(minutes=2)
+
+# Plex answers 400 to an analyze request on a clip, that is, on an extra.
+# Its scanner analyzes one by the id of the item (#651). The scanner runs
+# on the Plex host, as the Plex user. PLEX_SCANNER names it. The analyze
+# of a 5 GB featurette takes some seconds.
+
+SCANNER_TIMEOUT = 600
+
+
+def _probe_target(path):
+    """Return the path to health-check for a section location.
+
+    This is the /Volumes mount that backs the location. If no volume
+    backs it, this is the path itself."""
+
+    if path.startswith(VOLUMES_ROOT + os.sep):
+        return "/".join(path.split("/")[:3])
+    return path
+
+
+def _section_locations(section):
+    """Return the paths that a section declares as its roots."""
+
+    return [
+        location.get("path")
+        for location in section.get("Location", []) or []
+        if location.get("path")
+    ]
+
+
+def _part_files(item):
+    """Yield every part file path that the media of an item declares."""
+
+    for media in item.get("Media", []) or []:
+        for part in media.get("Part", []) or []:
+            if part.get("file"):
+                yield part["file"]
+
+
+def _mount_ids(targets):
+    """Return {mount: device number} for each mount that stat can read."""
+
+    ids = {}
+    for target in targets:
+        try:
+            ids[target] = str(os.stat(target).st_dev)
+        except OSError:
+            pass
+    return ids
+
+
+def _trash_count(key, kind):
+    """Return the number of items in the trash of a section.
+
+    The trash filter of Plex also returns an item that keeps another file,
+    for example after an upgrade replaced one copy. Thus, the count can be
+    more than the number of items that an empty deletes. It is never less.
+    """
+
+    payload = plex_get(
+        f"/library/sections/{key}/all",
+        params={
+            "type": SECTION_ITEM_TYPE[kind],
+            "trash": 1,
+            "X-Plex-Container-Start": 0,
+            "X-Plex-Container-Size": 0,
+        },
+    )
+    return int(payload.get("MediaContainer", {}).get("totalSize") or 0)
+
+
+def refresh_plex_libraries():
+    """Scan each movie and show section for changes and empty its trash.
+
+    This is a queue task. It works per section. It touches a section only
+    when every location that the section declares is mounted and
+    present. It keeps the trash after a remount, and when the trash holds
+    more items than PLEX_TRASH_LIMIT (#280)."""
+
+    with app.app_context():
+        if not (
+            current_app.config.get("PLEX_URL") and current_app.config.get("PLEX_TOKEN")
+        ):
+            return True
+
+        try:
+            payload = plex_get("/library/sections")
+        except Exception:
+            current_app.logger.warning(traceback.format_exc())
+            return True
+
+        # The renamed titles of the previous run meet the result of the
+        # previous scan here, before the new scan request.
+
+        from app.plex.plex_rename import restore_add_dates
+
+        try:
+            restore_add_dates()
+        except Exception:
+            current_app.logger.warning(traceback.format_exc())
+
+        redis = current_app.redis
+        previous_ids = {
+            mount.decode(): device.decode()
+            for mount, device in redis.hgetall(MOUNT_IDS_KEY).items()
+        }
+        seen_ids = {}
+        unscanned = set()
+        titles = set()
+        limit = get_setting("PLEX_TRASH_LIMIT")
+
+        for section in payload.get("MediaContainer", {}).get("Directory", []) or []:
+            if section.get("type") not in ("movie", "show"):
+                continue
+            key = section.get("key")
+            title = section.get("title")
+            titles.add(title)
+            locations = _section_locations(section)
+
+            # A dead or hung mount makes a scan dangerous. Skip the whole
+            # section until the mount is back.
+
+            missing = [
+                path
+                for path in locations
+                if not volume_alive(_probe_target(path))
+                or not os.path.isdir(_probe_target(path))
+            ]
+            if missing or not locations:
+                current_app.logger.warning(
+                    f"Plex library '{title}': skipping refresh — mount(s) "
+                    f"unavailable for: {missing or 'no declared locations'}"
+                )
+                continue
+
+            # A mount whose device number changed since the previous run
+            # dropped and came back. A scan that ran during the drop put its
+            # items in the trash. The next scan restores them.
+
+            ids = _mount_ids(sorted({_probe_target(path) for path in locations}))
+            remounted = sorted(
+                mount
+                for mount, device in ids.items()
+                if previous_ids.get(mount) not in (None, device)
+            )
+
+            # The new device number of a mount is stored only after a scan
+            # request succeeded (#378). Else the next run sees no remount
+            # and empties the trash of the scan during the drop.
+
+            try:
+                plex_command("GET", f"/library/sections/{key}/refresh")
+            except Exception:
+                current_app.logger.warning(traceback.format_exc())
+                unscanned.update(ids)
+                continue
+            seen_ids.update(ids)
+
+            if remounted:
+                current_app.logger.warning(
+                    f"Plex library '{title}': scanned, trash kept because "
+                    f"{', '.join(remounted)} was remounted since the last refresh"
+                )
+                continue
+
+            try:
+                count = _trash_count(key, section["type"])
+            except Exception:
+                current_app.logger.warning(traceback.format_exc())
+                current_app.logger.warning(
+                    f"Plex library '{title}': scanned, trash kept because "
+                    f"the trash count is not available"
+                )
+                continue
+
+            if count > limit:
+                message = (
+                    f"Plex library '{title}' keeps its trash. It holds {count} "
+                    f"items, more than PLEX_TRASH_LIMIT ({limit}). A share that "
+                    f"drops during a scan causes this. If the deletions are "
+                    f"real, empty the trash in Plex."
+                )
+
+                # Log the first hold as a warning. The health check sends
+                # the alert and the daily reminder.
+
+                if redis.hset(PLEX_TRASH_HELD_KEY, title, message):
+                    current_app.logger.warning(message)
+                else:
+                    current_app.logger.info(message)
+                continue
+
+            try:
+                plex_command("PUT", f"/library/sections/{key}/emptyTrash")
+                redis.hdel(PLEX_TRASH_HELD_KEY, title)
+                current_app.logger.info(
+                    f"Plex library '{title}': scanned and emptied trash"
+                )
+            except Exception:
+                current_app.logger.warning(traceback.format_exc())
+
+        seen_ids = {
+            mount: device
+            for mount, device in seen_ids.items()
+            if mount not in unscanned
+        }
+        if seen_ids:
+            redis.hset(MOUNT_IDS_KEY, mapping=seen_ids)
+
+        # A deleted or renamed library must not keep its health issue.
+
+        for held in redis.hkeys(PLEX_TRASH_HELD_KEY):
+            if held.decode() not in titles:
+                redis.hdel(PLEX_TRASH_HELD_KEY, held)
+        return True
+
+
+def _sections_holding(sections, wanted):
+    """Return the sections that can hold these files.
+
+    A section owns a wanted path when one of its declared locations is a
+    parent of that path.
+
+    This filter prevents the analyze of a movie from paging the whole TV
+    section. Nothing matches when Plex mounts the library at paths that
+    this host does not share. Then this function returns every movie and
+    show section instead, because the part-file basenames can still
+    identify the items.
+    """
+
+    owning = [
+        section
+        for section in sections
+        if any(
+            path.startswith(location.rstrip("/") + os.sep)
+            for location in _section_locations(section)
+            for path in wanted
+        )
+    ]
+    return owning or sections
+
+
+def _tail(path, parts):
+    """Return the last `parts` components of a path, joined again."""
+
+    return os.sep.join(path.rstrip(os.sep).split(os.sep)[-parts:])
+
+
+def _remember_holders(folders, item, path):
+    """Record the items that can hold the extras found beside this part.
+
+    Plex lists an extra only under its holder, never in a section page.
+    A movie holds the extras under its own folder. A season holds the
+    extras under the season folder. A show holds the extras under the
+    show folder, one level above the season folders.
+    """
+
+    folder = os.path.dirname(path)
+    own = [item.get("ratingKey"), item.get("parentRatingKey")]
+    folders.setdefault(folder, []).extend(key for key in own if key)
+    if item.get("grandparentRatingKey"):
+        above = os.path.dirname(folder)
+        folders.setdefault(above, []).append(item["grandparentRatingKey"])
+
+
+def _holders_of(folders, target):
+    """Return the holder keys for an extra at this path, in order.
+
+    An extra lives in a subfolder of its holder's folder. The lookup uses
+    the full path of that folder. When Plex reaches the library through
+    a different mount path, the last two components of the folder
+    identify it: the parent folder and the folder of the title.
+    """
+
+    folder = os.path.dirname(os.path.dirname(target))
+    keys = list(folders.get(folder, []))
+    if not keys:
+        tail = _tail(folder, 2)
+        for known, held in folders.items():
+            if _tail(known, 2) == tail:
+                keys.extend(held)
+    seen = set()
+    return [key for key in keys if not (key in seen or seen.add(key))]
+
+
+def _analyze_clip(rating_key):
+    """Run the Plex scanner for the analyze of one clip.
+
+    Plex refuses the analyze of a clip over its API with a 400. The
+    scanner does it by the id of the item (#651). A failure raises."""
+
+    subprocess.run(
+        [current_app.config["PLEX_SCANNER"], "--analyze", "--item", str(rating_key)],
+        check=True,
+        capture_output=True,
+        timeout=SCANNER_TIMEOUT,
+    )
+
+
+def _analyze_extras(section, targets, folders, analyzed):
+    """Analyze the target files that are extras of the items in a section.
+
+    An extra never appears in a section page. It appears only in the
+    `Extras` of its holder (#651). This function asks each possible
+    holder for its extras, once, and runs the scanner for the extra
+    whose part file matches a target. A match is the full path, or the last three
+    components: the folder of the title, the folder of the extra type,
+    and the file name. An extra name alone, for example 'Trailer.mkv',
+    repeats across titles.
+    """
+
+    extras_of = {}
+    for target in sorted(targets - set(analyzed)):
+        tail = _tail(target, 3)
+        for holder in _holders_of(folders, target):
+            if holder not in extras_of:
+                try:
+                    payload = plex_get(
+                        f"/library/metadata/{holder}", params={"includeExtras": 1}
+                    )
+                except Exception:
+                    current_app.logger.warning(traceback.format_exc())
+                    extras_of[holder] = []
+                    continue
+                extras_of[holder] = [
+                    extra
+                    for meta in payload.get("MediaContainer", {}).get("Metadata", [])
+                    or []
+                    for extra in meta.get("Extras", {}).get("Metadata", []) or []
+                ]
+            match = next(
+                (
+                    extra
+                    for extra in extras_of[holder]
+                    if extra.get("ratingKey")
+                    and any(
+                        os.path.abspath(path) == target or _tail(path, 3) == tail
+                        for path in _part_files(extra)
+                    )
+                ),
+                None,
+            )
+            if match is None:
+                continue
+            scanner = current_app.config.get("PLEX_SCANNER")
+            if not scanner or not os.path.exists(scanner):
+                # Without the scanner, nothing analyzes the clip. A retry
+                # changes nothing. Thus, the target counts as done.
+
+                current_app.logger.warning(
+                    f"Plex analyze: '{os.path.basename(target)}' is an extra. "
+                    f"Plex analyzes an extra only through its scanner, and "
+                    f"PLEX_SCANNER ({scanner!r}) is not on this host. Plex keeps "
+                    f"its old track list"
+                )
+                analyzed[target] = None
+                break
+            _analyze_clip(match["ratingKey"])
+            analyzed[target] = match["ratingKey"]
+            current_app.logger.info(
+                f"Plex analyze: {match['ratingKey']} '{os.path.basename(target)}' "
+                f"re-analyzed by the scanner as an extra of {holder} in "
+                f"'{section.get('title')}'"
+            )
+            break
+
+
+def _analyze_section(section, targets, by_basename, analyzed):
+    """Analyze every target file that this section holds.
+
+    This function adds each matched file to `analyzed`, with the rating
+    key of the item that holds it. It matches a file on its full path. If Plex knows the library by a different
+    path, it matches the file on its basename. A target that no paged
+    item holds can be an extra. Then the function asks the items whose
+    folder holds the target for their extras."""
+
+    key = section.get("key")
+    folders = {}
+    start = 0
+    while True:
+        payload = plex_get(
+            f"/library/sections/{key}/all",
+            params={
+                "type": SECTION_ITEM_TYPE[section["type"]],
+                "X-Plex-Container-Start": start,
+                "X-Plex-Container-Size": PAGE_SIZE,
+            },
+        )
+        container = payload.get("MediaContainer", {})
+        page = container.get("Metadata", []) or []
+        for item in page:
+            rating_key = item.get("ratingKey")
+            if not rating_key:
+                continue
+            for path in _part_files(item):
+                _remember_holders(folders, item, path)
+                target = (
+                    os.path.abspath(path)
+                    if os.path.abspath(path) in targets
+                    else by_basename.get(os.path.basename(path))
+                )
+                if target is None or target in analyzed:
+                    continue
+                plex_command("PUT", f"/library/metadata/{rating_key}/analyze")
+                analyzed[target] = rating_key
+                current_app.logger.info(
+                    f"Plex analyze: {rating_key} '{os.path.basename(target)}' "
+                    f"re-analyzed in '{section.get('title')}'"
+                )
+        start += len(page)
+        if set(analyzed) == targets:
+            return
+        if not page or start >= container.get("totalSize", 0):
+            break
+
+    _analyze_extras(section, targets, folders, analyzed)
+
+
+def analyze_plex_media(file_paths, retries=0):
+    """Make Plex do its media analysis again for these library files.
+
+    This is a queue task. It is the generic answer to "this file was
+    rewritten in place". The item exists and its path is unchanged.
+    Thus, nothing tells Plex to look again until its next scan, and the
+    deep pass waits for the overnight maintenance. This task asks for
+    both now.
+
+    The task is best-effort by design, like every other Plex task here.
+    It returns True in all cases, because the rewrite before it has
+    already succeeded and committed. See the module docstring for what
+    an analyze does and does not correct.
+    """
+
+    with app.app_context():
+        if not (
+            current_app.config.get("PLEX_URL") and current_app.config.get("PLEX_TOKEN")
+        ):
+            return True
+
+        if isinstance(file_paths, str):
+            file_paths = [file_paths]
+        wanted = {os.path.abspath(path) for path in file_paths or [] if path}
+        if not wanted:
+            return True
+
+        # Guard the FILE, not the section. This is the analysis of one
+        # item. The important condition is that the copy on disk is
+        # readable. An analyze against a dropped mount makes Plex record
+        # the analysis of a file that it could not read. The section-wide
+        # guard belongs to the refresh. There, a dead mount plus
+        # emptyTrash deletes a library. That guard would also be the
+        # wrong test here. A Plex that reaches the library by its own
+        # mount paths declares locations that this host cannot see. The
+        # basename match below exists exactly for that case.
+
+        readable = set()
+        for path in sorted(wanted):
+            if not volume_alive(_probe_target(path)):
+                current_app.logger.warning(
+                    f"Plex analyze: '{os.path.basename(path)}' is on a dead or "
+                    f"hung mount — not analyzing it now"
+                )
+            elif not os.path.exists(path):
+                current_app.logger.warning(
+                    f"Plex analyze: '{os.path.basename(path)}' is no longer on "
+                    f"disk — not analyzing it now"
+                )
+            else:
+                readable.add(path)
+
+        # The basenames of the library carry the title, year, edition,
+        # and quality. Thus, a basename identifies a file on its own.
+        # plex_titles uses the same match. It is the fallback for a Plex
+        # that reaches the library by a different mount path.
+
+        by_basename = {os.path.basename(path): path for path in readable}
+
+        try:
+            payload = plex_get("/library/sections")
+        except Exception:
+            current_app.logger.warning(traceback.format_exc())
+            return True
+
+        sections = [
+            section
+            for section in payload.get("MediaContainer", {}).get("Directory", []) or []
+            if section.get("type") in SECTION_ITEM_TYPE
+        ]
+
+        analyzed = {}
+        candidates = _sections_holding(sections, readable) if readable else []
+        for section in candidates:
+            try:
+                _analyze_section(section, readable, by_basename, analyzed)
+            except Exception:
+                current_app.logger.warning(traceback.format_exc())
+            if set(analyzed) == readable:
+                break
+
+        # The analyzed items keep the selection rows of each account, but
+        # a new import has none yet. Make the selection match the file
+        # (#652). The alignment runs in this task, on the same worker.
+
+        items = sorted({key for key in analyzed.values() if key})
+        if items:
+            try:
+                align_plex_items(items)
+            except Exception:
+                current_app.logger.warning(traceback.format_exc())
+
+        unmatched = sorted(os.path.basename(path) for path in wanted - set(analyzed))
+        if not unmatched:
+            return True
+
+        # The files that remain: a file that Plex has not scanned since
+        # it appeared, or a file whose mount was down. The first is the
+        # usual case, and a first scan analyzes it anyway. The
+        # quarter-hourly scan resolves both. Thus, one deferred attempt
+        # follows that
+        # scan. Then the task drops the matter. It does not retry
+        # forever.
+
+        if retries < ANALYZE_MAX_RETRIES:
+            # The key is the whole batch, not its first basename (#242).
+            # Two different batches with the same first file must not
+            # collapse into one retry.
+
+            requeue(
+                "app.plex.plex_library.analyze_plex_media",
+                key="|".join(unmatched),
+                delay=timedelta(minutes=ANALYZE_RETRY_MINUTES),
+                reason=f"nothing analyzed for {unmatched}",
+                counters={"retries": retries + 1},
+                args=(sorted(wanted - set(analyzed)),),
+                description=f"Re-analyzing {len(unmatched)} file(s) in Plex",
+                level="info",
+            )
+        else:
+            current_app.logger.warning(
+                f"Plex analyze: gave up on {unmatched} — still unreadable, or "
+                f"no Plex item holds them"
+            )
+        return True
+
+
+def refresh_plex_film(film_folder):
+    """Make Plex refresh each film item with a part in this folder (#775).
+
+    This is a queue task. The refresh reads the extras folders of the
+    film again, and Plex adds the extras that its scan did not see. A
+    folder that no film item holds needs nothing. Its main file is not
+    in Plex yet. When that file comes, the folder list changes, and the
+    scan reads the extras too. The task returns True in all cases. The
+    import before it has already succeeded.
+    """
+
+    with app.app_context():
+        if not (
+            current_app.config.get("PLEX_URL") and current_app.config.get("PLEX_TOKEN")
+        ):
+            return True
+
+        # A refresh against a dropped mount makes Plex drop the extras
+        # that it cannot read.
+
+        if not volume_alive(_probe_target(film_folder)) or not os.path.isdir(
+            film_folder
+        ):
+            current_app.logger.warning(
+                f"Plex film refresh: '{os.path.basename(film_folder)}' is not "
+                f"readable now — not refreshing it"
+            )
+            return True
+
+        try:
+            payload = plex_get("/library/sections")
+            sections = [
+                section
+                for section in payload.get("MediaContainer", {}).get("Directory", [])
+                or []
+                if section.get("type") == "movie"
+            ]
+            rating_keys = _film_items_in(sections, film_folder)
+            for rating_key in rating_keys:
+                plex_command("PUT", f"/library/metadata/{rating_key}/refresh")
+                current_app.logger.info(
+                    f"Plex film refresh: {rating_key} "
+                    f"'{os.path.basename(film_folder)}' refreshed for its extras"
+                )
+        except Exception:
+            current_app.logger.warning(traceback.format_exc())
+            return True
+
+        if not rating_keys:
+            current_app.logger.info(
+                f"Plex film refresh: no Plex film is in "
+                f"'{os.path.basename(film_folder)}' yet. The scan adds its "
+                f"extras with the film"
+            )
+        return True
+
+
+def _film_items_in(sections, film_folder):
+    """Return the rating keys of the movie items with a part in film_folder.
+
+    The file filter of a section page is a text match, and Plex reads a
+    comma in the value as a list of words. Thus, this function compares
+    the folder of each part with the name of film_folder. The name of a
+    film folder is unique in a library, also when Plex reaches the
+    library by another mount."""
+
+    name = os.path.basename(film_folder.rstrip(os.sep))
+    rating_keys = []
+    for section in _sections_holding(sections, {film_folder}):
+        payload = plex_get(
+            f"/library/sections/{section['key']}/all",
+            params={"type": SECTION_ITEM_TYPE["movie"], "file": name},
+        )
+        for item in payload.get("MediaContainer", {}).get("Metadata", []) or []:
+            if item.get("ratingKey") in rating_keys:
+                continue
+            if any(
+                os.path.basename(os.path.dirname(part)) == name
+                for part in _part_files(item)
+            ):
+                rating_keys.append(item.get("ratingKey"))
+    return rating_keys
+
+
+def enqueue_plex_analyze(file_path, delay=None):
+    """Queue a new analyze for a library file that was rewritten in place.
+
+    Every in-place rewrite makes this call after its result is committed.
+    This function never raises and never blocks the caller. The file is
+    already correct on disk and in the database. Thus, an unreachable
+    Plex or a refused enqueue costs only a stale Plex analysis, not the
+    rewrite.
+
+    delay books the analyze ahead. An import that replaces a file waits
+    for the next scan of Plex (#661).
+    """
+
+    basename = os.path.basename(file_path)
+    # The path digest keeps apart 2 files with the same basename (#338)
+    return _book_plex_job(
+        "app.plex.plex_library.analyze_plex_media",
+        [file_path],
+        f"plex_analyze:{basename}:{path_tag(file_path)}",
+        f"Re-analyzing '{basename}' in Plex",
+        delay,
+    )
+
+
+def enqueue_plex_film_refresh(film_folder):
+    """Book a Plex refresh of the film whose folder this is (#775).
+
+    The import of an extra and the delete of an extra (#776) call this
+    after their commit. The function never raises and never blocks the
+    caller."""
+
+    return _book_plex_job(
+        "app.plex.plex_library.refresh_plex_film",
+        film_folder,
+        f"plex_film_refresh:{path_tag(film_folder)}",
+        f"Refreshing '{os.path.basename(film_folder)}' in Plex",
+        FILM_REFRESH_DELAY,
+    )
+
+
+def _book_plex_job(name, argument, job_id, description, delay):
+    """Book 1 Plex task that reads the library when it runs.
+
+    Return True if this call booked a job. A Plex task is best effort.
+    Thus, a server with no Plex, or a refused booking, gives False and a
+    warning, never an error."""
+
+    try:
+        if not (
+            current_app.config.get("PLEX_URL") and current_app.config.get("PLEX_TOKEN")
+        ):
+            return False
+        job_id = safe_job_id(job_id)
+        queue = current_app.maintenance_queue
+
+        # A second change while the first job waits needs no second job.
+        # The first job waits in the queue, or it is booked ahead (#757).
+        # It reads the library when it runs. A job that already RUNS is
+        # not a duplicate. It may have read the library before this
+        # change arrived. The new job gets an id of its own. Under the id
+        # of the job that runs, it would take the hash that the first job
+        # marks as finished at its end (#744).
+
+        waiting = list(queue.job_ids) + ScheduledJobRegistry(queue=queue).get_job_ids()
+        if any(
+            waiting_id == job_id or waiting_id.startswith(f"{job_id}_")
+            for waiting_id in waiting
+        ):
+            return False
+        running = queue.fetch_job(job_id)
+        if running is not None and running.get_status(refresh=False) == "started":
+            job_id = f"{job_id}_{int(time.time())}"
+        enqueue_task(
+            name,
+            argument,
+            delay=delay,
+            queue=queue,
+            description=description,
+            job_id=job_id,
+        )
+        return True
+    except Exception:
+        current_app.logger.warning(traceback.format_exc())
+        return False

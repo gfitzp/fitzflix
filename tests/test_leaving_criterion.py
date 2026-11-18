@@ -84,7 +84,7 @@ class FakeResponse:
 def test_leaving_page_is_the_page_of_this_month(app):
     """The task reads the page of this month only (#646)."""
 
-    from app.leaving_criterion import leaving_page
+    from app.criterion.leaving_criterion import leaving_page
 
     assert leaving_page(date(2026, 12, 15)) == (
         "https://www.criterionchannel.com/discover/leaving-december-31",
@@ -97,7 +97,7 @@ def test_leaving_page_is_the_page_of_this_month(app):
 
 
 def test_parse_collection_page_reads_the_playlist(app):
-    from app.leaving_criterion import parse_collection_page
+    from app.criterion.leaving_criterion import parse_collection_page
 
     films = parse_collection_page(LEAVING_HTML)
     assert films == [
@@ -118,7 +118,7 @@ def test_parse_collection_page_reads_the_playlist(app):
 
 
 def test_match_tmdb_id_searches_by_year_and_caches(app, monkeypatch):
-    import app.leaving_criterion as leaving_criterion
+    import app.criterion.leaving_criterion as leaving_criterion
 
     calls = []
 
@@ -129,7 +129,7 @@ def test_match_tmdb_id_searches_by_year_and_caches(app, monkeypatch):
         return FakeResponse(payload={"results": [{"id": 9999}]})
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
+    monkeypatch.setattr("app.metadata.tmdb_apply.tmdb_get", fake_tmdb_get)
 
     with app.app_context():
         assert leaving_criterion.match_tmdb_id("The Searchers", 1956) == 3110
@@ -151,7 +151,7 @@ def test_match_tmdb_id_verifies_the_director(app, monkeypatch):
     title and year. A director that TMDB cannot confirm leaves the film
     unmatched. The director-aware cache key is separate."""
 
-    import app.leaving_criterion as leaving_criterion
+    import app.criterion.leaving_criterion as leaving_criterion
 
     credits = {
         1083055: [{"name": "Jak Hutchcraft", "job": "Director"}],
@@ -252,7 +252,7 @@ def test_match_tmdb_id_verifies_the_director(app, monkeypatch):
         return FakeResponse(payload={})
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
+    monkeypatch.setattr("app.metadata.tmdb_apply.tmdb_get", fake_tmdb_get)
 
     with app.app_context():
         # The exact-title candidate comes first. Thus, only 1 credits call
@@ -311,7 +311,7 @@ def test_match_tmdb_id_accepts_a_differently_written_director(app, monkeypatch):
     films match. A candidate whose director agrees strictly still wins
     over a candidate that passes only the loose test."""
 
-    import app.leaving_criterion as leaving_criterion
+    import app.criterion.leaving_criterion as leaving_criterion
 
     searches = {
         "The Appointment": [
@@ -345,7 +345,7 @@ def test_match_tmdb_id_accepts_a_differently_written_director(app, monkeypatch):
         )
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
+    monkeypatch.setattr("app.metadata.tmdb_apply.tmdb_get", fake_tmdb_get)
 
     with app.app_context():
         match = leaving_criterion.match_tmdb_id
@@ -362,7 +362,7 @@ def test_match_tmdb_id_finds_a_retitled_film_through_its_director(app, monkeypat
     the director made near that year. A title that fits 2 films of the
     director stays unmatched."""
 
-    import app.leaving_criterion as leaving_criterion
+    import app.criterion.leaving_criterion as leaving_criterion
 
     crew = [
         {"id": 66061, "title": "Eyes of the Spider", "job": "Director"},
@@ -399,7 +399,7 @@ def test_match_tmdb_id_finds_a_retitled_film_through_its_director(app, monkeypat
         raise AssertionError(url)
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
+    monkeypatch.setattr("app.metadata.tmdb_apply.tmdb_get", fake_tmdb_get)
 
     with app.app_context():
         match = leaving_criterion.match_tmdb_id
@@ -409,7 +409,7 @@ def test_match_tmdb_id_finds_a_retitled_film_through_its_director(app, monkeypat
 
 
 def test_refresh_task_scrapes_matches_and_stores(app, monkeypatch):
-    import app.leaving_criterion as leaving_criterion
+    import app.criterion.leaving_criterion as leaving_criterion
 
     def fake_requests_get(url, timeout=None):
         if url in FILM_PAGES:
@@ -457,7 +457,7 @@ def test_refresh_task_scrapes_matches_and_stores(app, monkeypatch):
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
     monkeypatch.setattr(leaving_criterion.requests, "get", fake_requests_get)
-    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
+    monkeypatch.setattr("app.metadata.tmdb_apply.tmdb_get", fake_tmdb_get)
     from app import db
 
     with app.app_context():
@@ -495,7 +495,7 @@ def test_refresh_task_noops_while_stored_set_is_current(app, monkeypatch):
     # While the departure of the stored set is still ahead, the task
     # must not touch the network or the stored payload.
 
-    import app.leaving_criterion as leaving_criterion
+    import app.criterion.leaving_criterion as leaving_criterion
 
     planted = json.dumps({"departs": date.today().isoformat(), "items": []})
     app.redis.set(leaving_criterion.LEAVING_KEY, planted)
@@ -518,7 +518,7 @@ def test_refresh_task_noops_while_stored_set_is_current(app, monkeypatch):
 
 
 def test_refresh_task_retries_once_stored_set_has_departed(app, monkeypatch):
-    import app.leaving_criterion as leaving_criterion
+    import app.criterion.leaving_criterion as leaving_criterion
 
     app.redis.set(
         leaving_criterion.LEAVING_KEY,
@@ -542,7 +542,7 @@ def test_refresh_task_retries_once_stored_set_has_departed(app, monkeypatch):
 def test_a_tmdb_failure_is_not_cached_as_a_miss(app, monkeypatch):
     """A timeout must not hide the film for the 2 months of the match cache."""
 
-    import app.leaving_criterion as leaving_criterion
+    import app.criterion.leaving_criterion as leaving_criterion
 
     down = [True]
 
@@ -552,7 +552,7 @@ def test_a_tmdb_failure_is_not_cached_as_a_miss(app, monkeypatch):
         return FakeResponse(payload={"results": [{"id": 3110}]})
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
+    monkeypatch.setattr("app.metadata.tmdb_apply.tmdb_get", fake_tmdb_get)
 
     with app.app_context():
         failures = []
@@ -568,7 +568,7 @@ def test_a_tmdb_failure_is_not_cached_as_a_miss(app, monkeypatch):
 def test_refresh_task_retries_an_incomplete_set(app, monkeypatch):
     """A set that a TMDB failure left incomplete is matched again."""
 
-    import app.leaving_criterion as leaving_criterion
+    import app.criterion.leaving_criterion as leaving_criterion
 
     app.redis.set(
         leaving_criterion.LEAVING_KEY,
@@ -593,7 +593,7 @@ def test_an_empty_render_of_this_month_keeps_the_stored_set(app, monkeypatch, ca
 
     The task asks no other month. The next daily run tries again."""
 
-    import app.leaving_criterion as leaving_criterion
+    import app.criterion.leaving_criterion as leaving_criterion
 
     url, _ = leaving_criterion.leaving_page(date.today())
     planted = json.dumps(
@@ -622,7 +622,7 @@ def test_a_forced_store_of_the_same_set_builds_no_lineups(app, monkeypatch):
     A build gives each DVR channel a new start and reloads the Plex guide.
     --force can store the set of the page again while a person watches."""
 
-    import app.leaving_criterion as leaving_criterion
+    import app.criterion.leaving_criterion as leaving_criterion
     from app import db
 
     with app.app_context():
@@ -634,15 +634,15 @@ def test_a_forced_store_of_the_same_set_builds_no_lineups(app, monkeypatch):
     films = [{"title": "The Searchers", "year": 1956, "director": "John Ford"}]
     matches = {"The Searchers": 3110, "Rio Bravo": 301, "Love & Mercy": None}
     monkeypatch.setattr(
-        "app.leaving_criterion.fetch_leaving_films",
+        "app.criterion.leaving_criterion.fetch_leaving_films",
         lambda: (departs, "https://example.test/leaving", list(films)),
     )
     monkeypatch.setattr(
-        "app.leaving_criterion.match_tmdb_id",
+        "app.criterion.leaving_criterion.match_tmdb_id",
         lambda title, *args, **kwargs: matches[title],
     )
     monkeypatch.setattr(
-        "app.leaving_criterion.enriched_movie",
+        "app.criterion.leaving_criterion.enriched_movie",
         lambda tmdb_id: {"id": tmdb_id, "title": f"Film {tmdb_id}"},
     )
     app.redis.set(
@@ -680,11 +680,11 @@ def test_a_forced_run_replaces_a_stored_value_that_it_cannot_read(
     The daily run fails on such a value each day. A forced run that read
     the value first failed too, and the key then needed a hand delete."""
 
-    import app.leaving_criterion as leaving_criterion
+    import app.criterion.leaving_criterion as leaving_criterion
 
     departs = date.today()
     monkeypatch.setattr(
-        "app.leaving_criterion.fetch_leaving_films",
+        "app.criterion.leaving_criterion.fetch_leaving_films",
         lambda: (
             departs,
             "https://example.test/leaving",
@@ -692,7 +692,8 @@ def test_a_forced_run_replaces_a_stored_value_that_it_cannot_read(
         ),
     )
     monkeypatch.setattr(
-        "app.leaving_criterion.match_tmdb_id", lambda title, *args, **kwargs: None
+        "app.criterion.leaving_criterion.match_tmdb_id",
+        lambda title, *args, **kwargs: None,
     )
     app.redis.set(leaving_criterion.LEAVING_KEY, stored)
 
@@ -707,7 +708,7 @@ def test_a_forced_run_replaces_a_stored_value_that_it_cannot_read(
 def test_a_set_with_another_departure_builds_the_lineups(app, monkeypatch):
     """The same films with another departure date queue a build (#770)."""
 
-    import app.leaving_criterion as leaving_criterion
+    import app.criterion.leaving_criterion as leaving_criterion
     from app import db
 
     with app.app_context():
@@ -716,16 +717,19 @@ def test_a_set_with_another_departure_builds_the_lineups(app, monkeypatch):
 
     departs = date.today()
     monkeypatch.setattr(
-        "app.leaving_criterion.fetch_leaving_films",
+        "app.criterion.leaving_criterion.fetch_leaving_films",
         lambda: (
             departs,
             "https://example.test/leaving",
             [{"title": "The Searchers", "year": 1956, "director": "John Ford"}],
         ),
     )
-    monkeypatch.setattr("app.leaving_criterion.match_tmdb_id", lambda *a, **k: 3110)
     monkeypatch.setattr(
-        "app.leaving_criterion.enriched_movie", lambda tmdb_id: {"id": tmdb_id}
+        "app.criterion.leaving_criterion.match_tmdb_id", lambda *a, **k: 3110
+    )
+    monkeypatch.setattr(
+        "app.criterion.leaving_criterion.enriched_movie",
+        lambda tmdb_id: {"id": tmdb_id},
     )
     app.redis.set(
         leaving_criterion.LEAVING_KEY,
@@ -762,7 +766,7 @@ def shelf_item(tmdb_id, title, runtime=100, genre=(37, "Western")):
 def plant_shelf(app, items, departs=None):
     """Store a leaving set with a future departure date."""
 
-    from app.leaving_criterion import LEAVING_KEY
+    from app.criterion.leaving_criterion import LEAVING_KEY
 
     app.redis.set(
         LEAVING_KEY,
@@ -783,7 +787,7 @@ def subscribe_criterion(app):
     Also plant a taste profile that leans to Western."""
 
     from app import db
-    from app.leaving_criterion import CRITERION_PROVIDER_ID
+    from app.criterion.leaving_criterion import CRITERION_PROVIDER_ID
     from app.models import User, UserStreamingProvider
 
     with app.app_context():
@@ -821,7 +825,7 @@ def subscribe_criterion(app):
 def test_shelf_ranks_and_excludes(app, admin_client):
     from app import db
     from app.models import UserMovieReview, UserWatchlist
-    from app.diary import star_rating_fields
+    from app.viewing.diary import star_rating_fields
 
     user_id = subscribe_criterion(app)
 
@@ -907,9 +911,9 @@ def test_watchlist_shelf_leads_with_departures(app, admin_client):
     leaving shelf stays only discovery."""
 
     from app import db
-    from app.leaving_criterion import CRITERION_PROVIDER_ID
+    from app.criterion.leaving_criterion import CRITERION_PROVIDER_ID
     from app.models import UserWatchlist
-    from app.streaming import AVAILABILITY_KEY
+    from app.availability.streaming import AVAILABILITY_KEY
 
     user_id = subscribe_criterion(app)
     with app.app_context():
@@ -957,7 +961,7 @@ def test_page_never_repeats_a_film_across_shelves(app, admin_client):
     exactly 1 time on the page. The shelves claim their films from 1
     shared no-repeat pool, in an order that is stable for the day."""
 
-    from app.streaming_rail import RAIL_KEY
+    from app.availability.streaming_rail import RAIL_KEY
 
     user_id = subscribe_criterion(app)
     plant_shelf(
@@ -1030,7 +1034,7 @@ def test_leaving_page_lists_the_complete_inventory(app, admin_client):
 
     from app import db
     from app.models import UserMovieReview, UserWatchlist
-    from app.diary import star_rating_fields
+    from app.viewing.diary import star_rating_fields
 
     empty = admin_client.get("/leaving").get_data(as_text=True)
     assert "No film is scheduled to leave now." in empty
@@ -1139,7 +1143,7 @@ def test_leaving_film_lights_its_criterion_badge(app, admin_client, monkeypatch)
     The highlight clears after the departure date has passed."""
 
     from app import db
-    from app.leaving_criterion import CRITERION_PROVIDER_ID
+    from app.criterion.leaving_criterion import CRITERION_PROVIDER_ID
     from tests.test_streaming import plant_availability
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
@@ -1217,8 +1221,8 @@ def test_leaving_film_lights_its_criterion_badge(app, admin_client, monkeypatch)
 def test_a_film_that_tmdb_deleted_does_not_keep_the_set_incomplete(app, monkeypatch):
     """A cached 404 is not a failure. The set does not retry every day."""
 
-    import app.leaving_criterion as leaving_criterion
-    from app.streaming_rail import ENRICHED_KEY
+    import app.criterion.leaving_criterion as leaving_criterion
+    from app.availability.streaming_rail import ENRICHED_KEY
 
     monkeypatch.setattr(
         leaving_criterion,
@@ -1243,7 +1247,7 @@ def test_a_film_leaving_criterion_is_not_urgent_for_a_non_subscriber(app):
     from app import db
     from app.main.discover import watchlist_shelf_rows
     from app.models import User, UserStreamingProvider, UserWatchlist
-    from app.streaming import AVAILABILITY_KEY
+    from app.availability.streaming import AVAILABILITY_KEY
 
     max_provider = {"provider_id": 1899, "provider_name": "Max", "logo_path": "/m.jpg"}
     with app.app_context():
@@ -1277,14 +1281,14 @@ def test_a_film_leaving_criterion_is_not_urgent_for_a_non_subscriber(app):
 
 
 def _candidate(title, year, directors=None, tmdb_id=1):
-    from app.leaving_criterion import Candidate
-    from app.title_keys import match_key
+    from app.criterion.leaving_criterion import Candidate
+    from app.media.title_keys import match_key
 
     return Candidate(tmdb_id, match_key(title), str(year), directors)
 
 
 def test_rank_puts_the_exact_title_and_the_near_year_first(app):
-    from app.leaving_criterion import rank
+    from app.criterion.leaving_criterion import rank
 
     cases = [
         (("Here", 2023), (False, False)),
@@ -1300,7 +1304,7 @@ def test_rank_puts_the_exact_title_and_the_near_year_first(app):
 
 
 def test_director_matches_strictly_loosely_and_without_crew(app):
-    from app.leaving_criterion import director_matches
+    from app.criterion.leaving_criterion import director_matches
 
     vickers = _candidate("The Lodgers", 2021, ["lindsey c vickers"])
     assert not director_matches(vickers, "lindsey vickers")
@@ -1324,7 +1328,7 @@ def test_director_matches_strictly_loosely_and_without_crew(app):
 
 
 def test_unique_exact_passes_only_1_exact_title_and_year(app):
-    from app.leaving_criterion import exact_title_and_year, unique_exact
+    from app.criterion.leaving_criterion import exact_title_and_year, unique_exact
 
     soon = _candidate("Regarding Soon", 2004, tmdb_id=10)
     other_year = _candidate("Regarding Soon", 2005, tmdb_id=11)
@@ -1337,7 +1341,7 @@ def test_unique_exact_passes_only_1_exact_title_and_year(app):
 
 
 def test_filmography_hit_reads_the_words_of_the_title(app):
-    from app.leaving_criterion import _title_words, filmography_hit
+    from app.criterion.leaving_criterion import _title_words, filmography_hit
 
     wanted = _title_words("Spider’s Eyes")
     credit = {
@@ -1361,9 +1365,9 @@ def test_the_leaving_shelf_ranks_a_recorded_film_by_its_tile_number(app):
     from datetime import datetime
 
     from app import db
-    from app.leaving_criterion import LEAVING_KEY, leaving_shelf
+    from app.criterion.leaving_criterion import LEAVING_KEY, leaving_shelf
     from app.models import User
-    from app.recommendations import SCORES_KEY
+    from app.discovery.recommendations import SCORES_KEY
     from tests.factories import make_movie
 
     user_id = subscribe_criterion(app)
@@ -1406,7 +1410,7 @@ def test_a_failed_film_page_skips_the_match_and_retries_tomorrow(app, monkeypatc
     Without the director, the first search hit would win for 2 months.
     The film stays unmatched, and the set is incomplete."""
 
-    import app.leaving_criterion as leaving_criterion
+    import app.criterion.leaving_criterion as leaving_criterion
 
     for media_id in ("aaaa1111", "bbbb2222"):
         app.redis.delete(leaving_criterion.DIRECTOR_KEY.format(media_id=media_id))
@@ -1444,7 +1448,7 @@ def test_a_film_page_with_no_film_data_is_a_failed_fetch(app, monkeypatch):
     The None director was cached for 2 months, and the match ran with no
     director test."""
 
-    import app.leaving_criterion as leaving_criterion
+    import app.criterion.leaving_criterion as leaving_criterion
 
     url = "https://www.criterionchannel.com/films/dddd4444/a-shell"
     key = leaving_criterion.DIRECTOR_KEY.format(media_id="dddd4444")
@@ -1468,7 +1472,7 @@ def test_the_leaving_inventory_ranks_a_record_by_its_movie_lane(app, monkeypatch
     The popover shows the movie-lane number of a film with a record.
     The order now agrees with it."""
 
-    import app.leaving_criterion as leaving_criterion
+    import app.criterion.leaving_criterion as leaving_criterion
     from app.models import User
 
     stored = {
@@ -1505,10 +1509,10 @@ def test_the_leaving_inventory_ranks_a_record_by_its_movie_lane(app, monkeypatch
 def test_the_leaving_shelf_scores_only_the_films_that_it_shows(app, monkeypatch):
     """The lane scores ran for the logged and owned films too (#580)."""
 
-    import app.leaving_criterion as leaving_criterion
+    import app.criterion.leaving_criterion as leaving_criterion
     from app import db
     from app.models import User, UserMovieReview
-    from app.diary import star_rating_fields
+    from app.viewing.diary import star_rating_fields
 
     user_id = subscribe_criterion(app)
     with app.app_context():

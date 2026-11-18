@@ -54,7 +54,7 @@ def cdn(app, monkeypatch):
     Return a record of the signed keys and the queued responses. Each
     download attempt pops the next response."""
 
-    from app import aws_storage
+    from app.archive import aws_storage
 
     # A restored rip never replaces a file of its name in the import
     # directory (#433). An earlier test can leave x.mkv there.
@@ -87,7 +87,7 @@ def cdn(app, monkeypatch):
 
 
 def _wire(monkeypatch, s3, sqs):
-    from app import aws_storage
+    from app.archive import aws_storage
 
     monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kwargs: s3)
     monkeypatch.setattr(aws_storage, "aws_sqs_client", lambda: sqs)
@@ -99,7 +99,7 @@ def test_flag_off_keeps_the_s3_transport(app, monkeypatch):
     Without AWS_DOWNLOAD_VIA_CDN, download_file runs and no HTTP request
     goes out, even when the CDN settings are present."""
 
-    from app import aws_storage
+    from app.archive import aws_storage
 
     monkeypatch.setitem(app.config, "CDN_DOMAIN", "d1.cloudfront.net")
     requested = []
@@ -127,7 +127,7 @@ def test_flag_on_without_settings_gives_up(app, monkeypatch):
     False without a transfer, and the SQS message stays for a later
     delivery."""
 
-    from app import aws_storage
+    from app.archive import aws_storage
 
     monkeypatch.setitem(app.config, "AWS_DOWNLOAD_VIA_CDN", True)
     monkeypatch.setitem(app.config, "CDN_DOMAIN", "d1.cloudfront.net")
@@ -151,7 +151,7 @@ def test_cdn_download_lands_the_file(app, monkeypatch, cdn):
     The bytes land in the import directory under the final name, the
     SQS message goes away, and download_file never runs."""
 
-    from app import aws_storage
+    from app.archive import aws_storage
 
     cdn["responses"] = [_FakeResponse(200, b"cdn")]
     s3 = S3()
@@ -178,7 +178,7 @@ def test_cdn_retry_signs_a_new_url(app, monkeypatch, cdn):
     A 503 spends one retry. The second attempt must not reuse the first
     URL, because a short expiry can pass during the backoff."""
 
-    from app import aws_storage
+    from app.archive import aws_storage
 
     cdn["responses"] = [_FakeResponse(503), _FakeResponse(200, b"cdn")]
     _wire(monkeypatch, S3(), SQS())
@@ -196,7 +196,7 @@ def test_cdn_retry_signs_a_new_url(app, monkeypatch, cdn):
 def test_cdn_short_body_is_retried(app, monkeypatch, cdn):
     """Test that a body shorter than Content-Length spends a retry."""
 
-    from app import aws_storage
+    from app.archive import aws_storage
 
     short = _FakeResponse(200, b"cd")
     short.headers["Content-Length"] = "3"
@@ -221,7 +221,7 @@ def test_cdn_short_body_without_content_length_is_retried(app, monkeypatch, cdn)
     the size that the S3 HEAD reported. A short body spends a retry and
     never becomes a visible import."""
 
-    from app import aws_storage
+    from app.archive import aws_storage
 
     short = _FakeResponse(200, b"cd")
     del short.headers["Content-Length"]
@@ -245,7 +245,7 @@ def test_cdn_404_is_a_missing_object(app, monkeypatch, cdn):
     There is no retry. The SQS message goes away, and no partial file
     remains."""
 
-    from app import aws_storage
+    from app.archive import aws_storage
 
     cdn["responses"] = [_FakeResponse(404)]
     sqs = SQS()
@@ -269,7 +269,7 @@ def test_cdn_403_on_a_cold_object_requests_a_restore(app, monkeypatch, cdn):
     Restore header and a cold storage class. Thus, the function requests
     a new restore and drops the stale SQS message."""
 
-    from app import aws_storage
+    from app.archive import aws_storage
 
     cdn["responses"] = [_FakeResponse(403)]
     s3 = S3(head={"ContentLength": 3, "StorageClass": "DEEP_ARCHIVE"})
@@ -296,7 +296,7 @@ def test_cdn_403_during_a_restore_waits(app, monkeypatch, cdn):
     The HEAD shows an ongoing restore. The function requests no new
     restore. It drops the stale message and waits for the notification."""
 
-    from app import aws_storage
+    from app.archive import aws_storage
 
     cdn["responses"] = [_FakeResponse(403)]
     s3 = S3(
@@ -332,7 +332,7 @@ def test_cdn_403_on_an_expired_restore_requests_a_restore(app, monkeypatch, cdn)
     Without this, the message would come back each visibility timeout
     forever."""
 
-    from app import aws_storage
+    from app.archive import aws_storage
 
     cdn["responses"] = [_FakeResponse(403)]
     s3 = S3(
@@ -367,7 +367,7 @@ def test_cdn_403_on_a_readable_object_gives_up(app, monkeypatch, cdn):
     The function gives up, drops the SQS message, and removes the
     partial file."""
 
-    from app import aws_storage
+    from app.archive import aws_storage
 
     cdn["responses"] = [_FakeResponse(403)]
     s3 = S3(
@@ -402,7 +402,7 @@ def test_cdn_403_on_a_readable_object_gives_up(app, monkeypatch, cdn):
 def test_cdn_400_gives_up_without_retry(app, monkeypatch, cdn):
     """Test that a client error other than 403 and 404 is terminal."""
 
-    from app import aws_storage
+    from app.archive import aws_storage
 
     cdn["responses"] = [_FakeResponse(400)]
     _wire(monkeypatch, S3(), SQS())
@@ -429,8 +429,8 @@ def test_cdn_transport_error_spends_a_retry(app, monkeypatch, cdn, caplog):
 
     from urllib3.exceptions import MaxRetryError
 
-    from app import aws_storage
-    from app.redaction import REDACTED
+    from app.archive import aws_storage
+    from app.operations.redaction import REDACTED
 
     calls = []
 
@@ -461,7 +461,7 @@ def test_cdn_transport_error_spends_a_retry(app, monkeypatch, cdn, caplog):
 def test_object_is_readable():
     """Test the readable check for each restore state."""
 
-    from app.aws_storage import _object_is_readable
+    from app.archive.aws_storage import _object_is_readable
 
     assert _object_is_readable({})
     assert _object_is_readable({"StorageClass": "STANDARD"})
@@ -508,7 +508,7 @@ def test_cdn_signed_url_verifies_with_the_public_key(app, monkeypatch, tmp_path)
     from cryptography.hazmat.primitives import hashes, serialization
     from cryptography.hazmat.primitives.asymmetric import padding, rsa
 
-    from app import aws_storage
+    from app.archive import aws_storage
 
     private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     pem = tmp_path / "cf.pem"
@@ -563,7 +563,7 @@ def test_cdn_403_on_a_missing_object_is_a_missing_object(app, monkeypatch, cdn):
     The bucket policy grants no list right. Thus, S3 says 403 for a
     missing key, and CloudFront forwards it. The HEAD says 404."""
 
-    from app import aws_storage
+    from app.archive import aws_storage
 
     cdn["responses"] = [_FakeResponse(403)]
     sqs = SQS()
@@ -596,7 +596,7 @@ def test_early_return_removes_the_partial_file(app, monkeypatch, cdn):
     The first attempt drops mid-body and leaves bytes on disk. The second
     gets a 404. The partial dotfile must go with the message."""
 
-    from app import aws_storage
+    from app.archive import aws_storage
 
     cdn["responses"] = [_FakeResponse(200, b"cdn", fail_after=2), _FakeResponse(404)]
     _wire(monkeypatch, S3(), SQS())
@@ -616,7 +616,7 @@ def test_cdn_resumes_a_dropped_download_with_a_range(app, monkeypatch, cdn):
     The first attempt drops after 2 of 3 bytes. The second sends a Range
     header and gets a 206 with the last byte. The file is complete."""
 
-    from app import aws_storage
+    from app.archive import aws_storage
 
     rest = _FakeResponse(206, b"n")
     cdn["responses"] = [_FakeResponse(200, b"cdn", fail_after=2), rest]
@@ -641,7 +641,7 @@ def test_a_partial_of_an_older_version_starts_again(app, monkeypatch, cdn):
     A Range request would append the tail of version 2 to the head of
     version 1, at exactly the right size. The sidecar ETag stops it."""
 
-    from app import aws_storage
+    from app.archive import aws_storage
 
     s3 = S3({"ContentLength": 3, "ETag": '"v1"'})
     cdn["responses"] = [
@@ -676,7 +676,7 @@ def test_a_direct_restore_stages_under_its_key(app, monkeypatch, cdn):
     archives of a conversion, which share an untouched name, also get 2
     files."""
 
-    from app import aws_storage
+    from app.archive import aws_storage
 
     staged = []
     real_cdn_download = aws_storage.cdn_download
@@ -716,7 +716,7 @@ def test_cdn_body_with_no_known_size_is_not_trusted(app, monkeypatch, cdn):
     Neither guard can run. Thus, the attempt fails rather than rename
     an unchecked body into a visible import."""
 
-    from app import aws_storage
+    from app.archive import aws_storage
 
     responses = []
     for _ in range(aws_storage.MAX_DOWNLOAD_RETRIES):
@@ -743,7 +743,7 @@ def test_unreadable_private_key_fails_fast(app, monkeypatch, tmp_path):
 
     No HTTP request goes out, and the message names the setting."""
 
-    from app import aws_storage
+    from app.archive import aws_storage
 
     monkeypatch.setitem(app.config, "AWS_DOWNLOAD_VIA_CDN", True)
     monkeypatch.setitem(app.config, "CDN_DOMAIN", "d1.cloudfront.net")
@@ -773,7 +773,7 @@ def test_archive_rename_defers_on_an_expired_restore(app):
 
     A restored copy whose expiry date has passed is not copyable."""
 
-    from app.aws_storage import _object_is_readable
+    from app.archive.aws_storage import _object_is_readable
 
     head = {
         "StorageClass": "DEEP_ARCHIVE",
@@ -790,7 +790,7 @@ def test_a_retried_fault_writes_no_error_record(app, monkeypatch, cdn, caplog):
 
     import logging
 
-    from app import aws_storage
+    from app.archive import aws_storage
 
     cdn["responses"] = [
         _FakeResponse(503),
@@ -816,7 +816,7 @@ def test_the_give_up_writes_one_error_record(app, monkeypatch, cdn, caplog):
 
     import logging
 
-    from app import aws_storage
+    from app.archive import aws_storage
 
     cdn["responses"] = [
         _FakeResponse(503) for _ in range(aws_storage.MAX_DOWNLOAD_RETRIES)
@@ -851,7 +851,7 @@ def test_a_cached_older_version_of_the_same_length_is_refused(
     refused. A new signed URL reaches the same cached copy. Thus, the
     rest of the chain uses the S3 transfer (#607)."""
 
-    from app import aws_storage
+    from app.archive import aws_storage
 
     stale = _FakeResponse(200, b"old")
     stale.headers["ETag"] = served
@@ -877,7 +877,7 @@ def test_a_stale_copy_spends_no_retry_of_the_chain(app, monkeypatch, cdn, caplog
 
     import botocore.exceptions
 
-    from app import aws_storage
+    from app.archive import aws_storage
 
     stale = _FakeResponse(200, b"old")
     stale.headers["ETag"] = '"v0"'
@@ -902,7 +902,7 @@ def test_a_stale_copy_spends_no_retry_of_the_chain(app, monkeypatch, cdn, caplog
 def test_a_stale_resume_body_drops_the_partial(app, monkeypatch, cdn):
     """A 206 from a refreshed cache joined bytes of 2 versions (#599)."""
 
-    from app import aws_storage
+    from app.archive import aws_storage
 
     first = _FakeResponse(200, b"cdn", fail_after=2)
     first.headers["ETag"] = '"v1"'

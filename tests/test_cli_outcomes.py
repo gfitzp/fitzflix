@@ -45,7 +45,7 @@ def test_tv_rename_refuses_before_it_queues(app):
         return [
             job
             for job in app.file_queue.jobs
-            if job.func_name == "app.series_rename.rename_tv_series_task"
+            if job.func_name == "app.media.series_rename.rename_tv_series_task"
         ]
 
     with app.app_context():
@@ -85,7 +85,7 @@ def test_audio_atmos_says_why_it_skips(app):
     """The Atmos command names the real reason for a skip (#410)."""
 
     from app import db
-    from app.atmos import EAC3_ATMOS_CODEC, TRUEHD_ATMOS_CODEC
+    from app.media.atmos import EAC3_ATMOS_CODEC, TRUEHD_ATMOS_CODEC
     from app.models import FileAudioTrack
 
     with app.app_context():
@@ -123,7 +123,7 @@ def test_audio_atmos_says_why_it_skips(app):
 def _plant_current_leaving_set(app):
     """Store a leaving set that is current and complete. Return its JSON."""
 
-    from app.leaving_criterion import LEAVING_KEY
+    from app.criterion.leaving_criterion import LEAVING_KEY
 
     planted = json.dumps(
         {
@@ -139,12 +139,12 @@ def _plant_current_leaving_set(app):
 def test_recs_leaving_says_that_it_kept_a_current_set(app, monkeypatch):
     """A current stored set is kept, and the command says so (#770)."""
 
-    from app.leaving_criterion import LEAVING_KEY
+    from app.criterion.leaving_criterion import LEAVING_KEY
 
     planted = _plant_current_leaving_set(app)
     fetches = []
     monkeypatch.setattr(
-        "app.leaving_criterion.fetch_leaving_films",
+        "app.criterion.leaving_criterion.fetch_leaving_films",
         lambda: fetches.append(1) or (None, None, []),
     )
 
@@ -163,12 +163,12 @@ def test_recs_leaving_says_that_it_kept_a_current_set(app, monkeypatch):
 def test_recs_leaving_force_fetches_a_current_set(app, monkeypatch):
     """--force fetches the page also when the stored set is current (#770)."""
 
-    from app.leaving_criterion import LEAVING_KEY
+    from app.criterion.leaving_criterion import LEAVING_KEY
 
     _plant_current_leaving_set(app)
     departs = date.today()
     monkeypatch.setattr(
-        "app.leaving_criterion.fetch_leaving_films",
+        "app.criterion.leaving_criterion.fetch_leaving_films",
         lambda: (
             departs,
             "https://example.test/leaving",
@@ -178,7 +178,9 @@ def test_recs_leaving_force_fetches_a_current_set(app, monkeypatch):
             ],
         ),
     )
-    monkeypatch.setattr("app.leaving_criterion.match_tmdb_id", lambda *a, **k: None)
+    monkeypatch.setattr(
+        "app.criterion.leaving_criterion.match_tmdb_id", lambda *a, **k: None
+    )
 
     result = _runner(app).invoke(args=["recs", "leaving", "--force"])
     assert result.exit_code == 0, result.output
@@ -197,10 +199,10 @@ def test_recs_leaving_says_that_the_page_had_no_films(app, monkeypatch):
     kept. After --force over a current set, the daily run keeps that set
     and does not try again."""
 
-    from app.leaving_criterion import LEAVING_KEY
+    from app.criterion.leaving_criterion import LEAVING_KEY
 
     monkeypatch.setattr(
-        "app.leaving_criterion.fetch_leaving_films",
+        "app.criterion.leaving_criterion.fetch_leaving_films",
         lambda: (date.today(), "https://example.test/leaving", []),
     )
     runner = _runner(app)
@@ -231,8 +233,12 @@ def test_recs_newly_added_counts_the_feeds(app, monkeypatch):
     as failed, as a feed with no films does."""
 
     films = []
-    monkeypatch.setattr("app.newly_added.fetch_collection_films", lambda url: films)
-    monkeypatch.setattr("app.newly_added.match_tmdb_id", lambda *a, **k: None)
+    monkeypatch.setattr(
+        "app.availability.newly_added.fetch_collection_films", lambda url: films
+    )
+    monkeypatch.setattr(
+        "app.availability.newly_added.match_tmdb_id", lambda *a, **k: None
+    )
 
     runner = _runner(app)
     result = runner.invoke(args=["recs", "newly-added"])
@@ -249,7 +255,7 @@ def test_recs_newly_added_counts_the_feeds(app, monkeypatch):
         raise RuntimeError("TMDB is down")
 
     films.append({"title": "Other Arrival", "year": 1961, "director": None})
-    monkeypatch.setattr("app.newly_added.match_tmdb_id", broken_match)
+    monkeypatch.setattr("app.availability.newly_added.match_tmdb_id", broken_match)
     result = runner.invoke(args=["recs", "newly-added"])
     assert result.exit_code == 1, result.output
     assert "Read 0 newly-added feed(s). 1 failed." in result.output
@@ -259,7 +265,7 @@ def test_recs_newly_added_counts_the_feeds(app, monkeypatch):
 def test_recs_newly_added_exits_0_when_some_feeds_failed(app, monkeypatch):
     """A run with 1 read feed and 1 failed feed exits with code 0 (#770)."""
 
-    import app.newly_added as newly_added
+    import app.availability.newly_added as newly_added
 
     pages = {
         "https://example.test/read": [
@@ -275,8 +281,12 @@ def test_recs_newly_added_exits_0_when_some_feeds_failed(app, monkeypatch):
             9702: {"url": "https://example.test/empty"},
         },
     )
-    monkeypatch.setattr("app.newly_added.fetch_collection_films", pages.get)
-    monkeypatch.setattr("app.newly_added.match_tmdb_id", lambda *a, **k: None)
+    monkeypatch.setattr(
+        "app.availability.newly_added.fetch_collection_films", pages.get
+    )
+    monkeypatch.setattr(
+        "app.availability.newly_added.match_tmdb_id", lambda *a, **k: None
+    )
 
     result = _runner(app).invoke(args=["recs", "newly-added"])
     assert result.exit_code == 0, result.output
@@ -289,7 +299,7 @@ def test_a_stored_feed_counts_as_read_when_the_lineup_build_raises(
 ):
     """The queue fault after the store gives a warning, not a failed feed (#770)."""
 
-    import app.newly_added as newly_added
+    import app.availability.newly_added as newly_added
 
     def broken_rebuild(*args, **kwargs):
         raise RuntimeError("the queue is down")
@@ -301,12 +311,18 @@ def test_a_stored_feed_counts_as_read_when_the_lineup_build_raises(
         json.dumps({"items": []}),
     )
     monkeypatch.setattr(
-        "app.newly_added.fetch_collection_films",
+        "app.availability.newly_added.fetch_collection_films",
         lambda url: [{"title": "New Arrival", "year": 1960, "director": None}],
     )
-    monkeypatch.setattr("app.newly_added.match_tmdb_id", lambda *a, **k: 3110)
-    monkeypatch.setattr("app.newly_added.enriched_movie", lambda tmdb_id: None)
-    monkeypatch.setattr("app.newly_added.movie_gone", lambda tmdb_id: False)
+    monkeypatch.setattr(
+        "app.availability.newly_added.match_tmdb_id", lambda *a, **k: 3110
+    )
+    monkeypatch.setattr(
+        "app.availability.newly_added.enriched_movie", lambda tmdb_id: None
+    )
+    monkeypatch.setattr(
+        "app.availability.newly_added.movie_gone", lambda tmdb_id: False
+    )
     monkeypatch.setattr("app.dvr.enqueue_lineup_rebuild", broken_rebuild)
 
     with caplog.at_level("WARNING"):

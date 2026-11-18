@@ -7,8 +7,8 @@ import os
 
 
 def test_a_finished_import_leaves_no_staging_reservation(app, sample_mkv, incoming_dir):
-    from app import importing
-    from app.importing import STAGING_RESERVED_KEY
+    from app.media import importing
+    from app.media.importing import STAGING_RESERVED_KEY
 
     basename = "Released Stage (2021) - [DVD].mkv"
     source = os.path.join(incoming_dir, basename)
@@ -21,13 +21,13 @@ def test_a_finished_import_leaves_no_staging_reservation(app, sample_mkv, incomi
         (move_job,) = [
             job
             for job in app.handoff_queue.jobs
-            if job.func_name == "app.importing.move_localized_file"
+            if job.func_name == "app.media.importing.move_localized_file"
         ]
         assert importing.move_localized_file(*move_job.args) is True
         (finalize_job,) = [
             job
             for job in app.sql_queue.jobs
-            if job.func_name == "app.importing.finalize_localization"
+            if job.func_name == "app.media.importing.finalize_localization"
         ]
         importing.finalize_localization(*finalize_job.args)
 

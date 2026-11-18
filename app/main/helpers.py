@@ -33,15 +33,15 @@ from app.models import (
     UserMovieStatus,
     UserWatchlist,
 )
-from app.file_ranking import (
+from app.media.file_ranking import (
     MOVIE_BEST_ORDER,
     copy_upgradable,
     criterion_settled,
     season_grades,
     upgrade_threshold,
 )
-from app.elicitation import set_last_response
-from app.recommendations import (
+from app.discovery.elicitation import set_last_response
+from app.discovery.recommendations import (
     RECOMPUTE_QUEUED_KEY,
     RECOMPUTE_QUEUED_SECONDS,
     RECOMPUTE_TRAILING_KEY,
@@ -49,7 +49,7 @@ from app.recommendations import (
     resolved_score,
     stored_profile,
 )
-from app.diary import clear_not_interested, clear_watchlist, star_rating_fields
+from app.viewing.diary import clear_not_interested, clear_watchlist, star_rating_fields
 
 from collections import namedtuple
 from functools import wraps
@@ -119,7 +119,7 @@ def _enqueue_profile_recompute():
         ex=RECOMPUTE_QUEUED_SECONDS,
     ):
         enqueue_task(
-            "app.recommendations.recompute_recommendations",
+            "app.discovery.recommendations.recompute_recommendations",
             description="Recomputing film recommendations",
         )
     elif current_app.redis.set(
@@ -129,7 +129,7 @@ def _enqueue_profile_recompute():
         ex=RECOMPUTE_QUEUED_SECONDS,
     ):
         enqueue_task(
-            "app.recommendations.recompute_recommendations",
+            "app.discovery.recommendations.recompute_recommendations",
             delay=timedelta(seconds=300),
             description="Recomputing film recommendations",
         )

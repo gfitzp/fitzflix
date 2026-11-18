@@ -5,7 +5,7 @@ import os
 import pytest
 
 from app import db
-from app.file_ranking import (
+from app.media.file_ranking import (
     find_better_files,
     find_worse_files,
     movie_file_rank,
@@ -243,7 +243,7 @@ def test_a_file_from_details_keeps_only_the_columns(app):
 def test_a_widescreen_copy_blocks_a_full_screen_import(app):
     """A full screen file has the plex title and the edition of its widescreen copy."""
 
-    from app.importing import evaluate_filename
+    from app.media.importing import evaluate_filename
 
     with app.app_context():
         movie = make_movie("Kept Wide", 2001)
@@ -353,9 +353,9 @@ def test_a_movie_delete_removes_its_watchlist_rows(app):
 def test_the_orphans_are_gone(app):
     """Pin the deletions of the second simplification pass."""
 
-    import app.radarr_push as radarr_push
-    import app.sonarr_push as sonarr_push
-    import app.videos as videos
+    import app.arr.radarr_push as radarr_push
+    import app.arr.sonarr_push as sonarr_push
+    import app.media.videos as videos
     from app.models import Movie
 
     assert not hasattr(radarr_push, "_radarr_rename_to_quality")

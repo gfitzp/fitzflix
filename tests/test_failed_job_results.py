@@ -4,7 +4,7 @@ import pytest
 
 # A registered task. The tests queue it, but no worker runs it.
 
-TASK = "app.criterion_catalog.refresh_criterion_collection_info"
+TASK = "app.criterion.criterion_catalog.refresh_criterion_collection_info"
 
 
 def test_enqueue_task_sets_a_failure_ttl(app):

@@ -7,7 +7,7 @@ of each film. The badge color shows if the film is upgradable."""
 
 from app import db
 from app.models import Movie, MovieCrew, TMDBCredit, User, UserMovieReview
-from app.diary import star_rating_fields
+from app.viewing.diary import star_rating_fields
 from tests.factories import make_movie, make_movie_file, make_tv_file, make_tv_series
 from tests.factories import make_cast
 from tests.fakes import tmdb_router
@@ -134,7 +134,7 @@ def test_filmography_merges_full_tmdb_career(app, admin_client, monkeypatch):
     )
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
+    monkeypatch.setattr("app.metadata.tmdb_apply.tmdb_get", fake_tmdb_get)
 
     page = admin_client.get("/library/movie?credit=535353").get_data(as_text=True)
     assert "/w185/career.jpg" in page
@@ -226,7 +226,7 @@ def test_filmography_library_filter_keeps_only_owned_titles(
         default={"name": "Scoped Actor"},
     )
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
+    monkeypatch.setattr("app.metadata.tmdb_apply.tmdb_get", fake_tmdb_get)
 
     page = admin_client.get("/library/movie?credit=565656").get_data(as_text=True)
     assert 'id="filmography-filter-all" value="all" autocomplete="off" checked' in page
@@ -282,7 +282,7 @@ def test_filmography_badges_recommended_owned_films(app, admin_client, monkeypat
 
     import json
 
-    from app.recommendations import RECS_KEY
+    from app.discovery.recommendations import RECS_KEY
 
     with app.app_context():
         user_id = User.query.first().id
@@ -331,7 +331,7 @@ def test_filmography_badges_recommended_owned_films(app, admin_client, monkeypat
     )
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
+    monkeypatch.setattr("app.metadata.tmdb_apply.tmdb_get", fake_tmdb_get)
 
     # The badge goes with the anchor of the recommended film as a card
     # label (2026-08). One film has it, and that film is the ranked one
@@ -399,7 +399,7 @@ def test_filmography_owned_rows_show_seen_and_watchlist(app, admin_client, monke
     )
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
+    monkeypatch.setattr("app.metadata.tmdb_apply.tmdb_get", fake_tmdb_get)
 
     page = admin_client.get("/library/movie?credit=737373").get_data(as_text=True)
     assert 'title="In your Fitzflix library"' not in page
@@ -449,7 +449,7 @@ def test_filmography_serves_people_without_local_credit_rows(
     )
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
+    monkeypatch.setattr("app.metadata.tmdb_apply.tmdb_get", fake_tmdb_get)
 
     page = admin_client.get("/library/movie?credit=808080").get_data(as_text=True)
     assert "Uncredited Wanderer" in page
@@ -546,7 +546,7 @@ def test_filmography_includes_key_crew_credits(app, admin_client, monkeypatch):
     )
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
+    monkeypatch.setattr("app.metadata.tmdb_apply.tmdb_get", fake_tmdb_get)
 
     page = admin_client.get("/library/movie?credit=838383").get_data(as_text=True)
 
@@ -583,7 +583,7 @@ def test_filmography_person_unknown_to_tmdb_is_404(app, admin_client, monkeypatc
         raise requests.HTTPError("404 Client Error")
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr("app.tmdb_apply.tmdb_get", raising_tmdb_get)
+    monkeypatch.setattr("app.metadata.tmdb_apply.tmdb_get", raising_tmdb_get)
 
     assert admin_client.get("/library/movie?credit=888888888").status_code == 404
 

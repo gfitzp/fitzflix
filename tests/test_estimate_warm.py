@@ -91,7 +91,7 @@ def install_warm_fakes(app, monkeypatch, fetched):
         return Response({"results": []})
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
+    monkeypatch.setattr("app.metadata.tmdb_apply.tmdb_get", fake_tmdb_get)
 
 
 def plant_profile(app, user_id):
@@ -99,7 +99,7 @@ def plant_profile(app, user_id):
 
 
 def test_affinity_people_rank_and_dedupe(app):
-    from app.estimate_warm import _affinity_people
+    from app.discovery.estimate_warm import _affinity_people
 
     people = _affinity_people(NIGHTLY_PROFILE)
     assert people == [9001, 9002]
@@ -114,8 +114,8 @@ def test_warm_task_caches_scores_and_rolls_cursors(app, monkeypatch, admin_id):
     rolls the cursors. Thus, the next night continues further on."""
 
     from app import db
-    from app.estimate_warm import CURSORS_KEY, warm_estimates
-    from app.recommendations import TMDB_PATCH_SCORES_KEY
+    from app.discovery.estimate_warm import CURSORS_KEY, warm_estimates
+    from app.discovery.recommendations import TMDB_PATCH_SCORES_KEY
 
     user_id = admin_id
     plant_profile(app, user_id)
@@ -185,7 +185,7 @@ def test_warm_task_respects_the_fetch_budget(app, monkeypatch, admin_id):
 
     The candidates after the budget wait for the roll of the next night."""
 
-    import app.estimate_warm as estimate_warm
+    import app.discovery.estimate_warm as estimate_warm
 
     user_id = admin_id
     plant_profile(app, user_id)

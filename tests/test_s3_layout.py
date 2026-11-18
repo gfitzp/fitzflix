@@ -1,4 +1,4 @@
-"""Test the S3 prefix table of app/s3_layout.py.
+"""Test the S3 prefix table of app/archive/s3_layout.py.
 
 The bucket keeps versions. A prefix that has no lifecycle expiry and no
 delete by version id keeps every old version forever. That was #318:
@@ -15,7 +15,7 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 def test_every_prefix_frees_its_old_versions():
     """Each prefix has a lifecycle expiry or deletes by version id (#318)."""
 
-    from app.s3_layout import PREFIXES
+    from app.archive.s3_layout import PREFIXES
 
     for entry in PREFIXES:
         expires = entry.lifecycle is not None and entry.noncurrent_days
@@ -29,7 +29,7 @@ def test_every_prefix_frees_its_old_versions():
 def test_every_prefix_that_the_code_writes_to_is_in_the_table(app):
     """Each S3 prefix setting and each literal key of the code is a table prefix."""
 
-    from app.s3_layout import PREFIXES, prefix_of
+    from app.archive.s3_layout import PREFIXES, prefix_of
 
     config_keys = {entry.config_key for entry in PREFIXES if entry.config_key}
     used = set()
@@ -90,7 +90,7 @@ class FakeClient:
 
 
 def test_delete_applies_the_policy_of_the_prefix(app):
-    from app import s3_layout
+    from app.archive import s3_layout
 
     with app.app_context():
         # An archive prefix gets a plain delete. Its lifecycle rule
@@ -138,7 +138,7 @@ def test_delete_applies_the_policy_of_the_prefix(app):
 
 
 def test_prune_noncurrent_keeps_the_current_inventory(app):
-    from app import s3_layout
+    from app.archive import s3_layout
 
     with app.app_context():
         key = s3_layout.key_under("inventory", s3_layout.INVENTORY_BASENAME)
@@ -156,10 +156,10 @@ def test_prune_noncurrent_keeps_the_current_inventory(app):
 def test_provision_reads_its_rules_from_the_table(tmp_path):
     """Each lifecycle entry of the table gets its rules, by its rule ids."""
 
-    from app.s3_layout import PREFIXES
+    from app.archive.s3_layout import PREFIXES
     from tests.test_aws_provision import CONFIG, FakeS3, FakeSQS
 
-    from app.aws_setup import provision
+    from app.archive.aws_setup import provision
 
     s3 = FakeS3(exists=False)
     config = dict(CONFIG, LOG_FILE=str(tmp_path / "app.log"))

@@ -29,7 +29,7 @@ def _subtitle(language, elements, forced=False):
 def test_replace_track_rows_replaces_numbers_and_flags(app):
     from app import db
     from app.models import FileAudioTrack, FileSubtitleTrack
-    from app.tracks import replace_track_rows
+    from app.media.tracks import replace_track_rows
     from tests.factories import make_movie, make_movie_file
 
     with app.app_context():
@@ -75,9 +75,9 @@ def test_replace_track_rows_replaces_numbers_and_flags(app):
 def test_no_site_writes_the_track_rows_by_hand():
     import inspect
 
-    import app.atmos as atmos
-    import app.importing as importing
-    import app.tracks as tracks
+    import app.media.atmos as atmos
+    import app.media.importing as importing
+    import app.media.tracks as tracks
 
     for module in (atmos, importing, tracks):
         source = inspect.getsource(module)

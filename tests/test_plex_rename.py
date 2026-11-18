@@ -11,7 +11,7 @@ import time
 import pytest
 
 from app import db
-from app.plex_rename import (
+from app.plex.plex_rename import (
     PENDING_KEY,
     find_plex_item,
     remember_rename,
@@ -123,9 +123,9 @@ class FakePlex:
 
 @pytest.fixture
 def plex(app, monkeypatch, tmp_path):
-    """A fake Plex, wired into app.plex_rename, with Plex configured."""
+    """A fake Plex, wired into app.plex.plex_rename, with Plex configured."""
 
-    import app.plex_rename as plex_rename
+    import app.plex.plex_rename as plex_rename
 
     fake = FakePlex(str(tmp_path))
     monkeypatch.setitem(app.config, "PLEX_URL", "http://plex.test")
@@ -218,7 +218,7 @@ def test_a_title_that_plex_does_not_list_records_nothing(app, plex):
 
 
 def test_a_plex_fault_never_reaches_the_rename(app, plex, monkeypatch):
-    import app.plex_rename as plex_rename
+    import app.plex.plex_rename as plex_rename
 
     def refused(path, params=None, timeout=None):
         raise RuntimeError("Plex is down")
@@ -235,7 +235,7 @@ def test_nothing_happens_without_a_plex_server(app, monkeypatch):
     and raises nothing (#731). The record of an earlier run stays, and
     restore_add_dates does not read Plex for it."""
 
-    import app.plex_rename as plex_rename
+    import app.plex.plex_rename as plex_rename
 
     calls = []
     monkeypatch.setattr(
@@ -353,8 +353,8 @@ def test_a_show_is_found_through_its_episodes(app, plex):
 
 
 def test_the_movie_rename_keeps_the_main_feature_only(app, monkeypatch):
-    import app.plex_rename as plex_rename
-    from app.tmdb_refresh import _rename_movie_file
+    import app.plex.plex_rename as plex_rename
+    from app.metadata.tmdb_refresh import _rename_movie_file
 
     kept = []
     monkeypatch.setattr(
@@ -395,8 +395,8 @@ def test_the_movie_rename_keeps_the_main_feature_only(app, monkeypatch):
 
 
 def test_the_series_rename_keeps_the_show_folder(app, monkeypatch):
-    import app.series_rename as series_rename
-    from app.series_rename import rename_tv_series_task
+    import app.media.series_rename as series_rename
+    from app.media.series_rename import rename_tv_series_task
 
     kept = []
     monkeypatch.setattr(
@@ -430,8 +430,8 @@ def test_the_series_rename_keeps_the_show_folder(app, monkeypatch):
 
 
 def test_the_refresh_settles_the_records_before_its_scan(app, monkeypatch, tmp_path):
-    import app.plex_library as plex_library
-    import app.plex_rename as plex_rename
+    import app.plex.plex_library as plex_library
+    import app.plex.plex_rename as plex_rename
     from tests.test_plex_library import FakePlexServer
 
     present = tmp_path / "Movies"

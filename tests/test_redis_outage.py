@@ -114,7 +114,7 @@ def _member_with_a_watchlist(app):
     the Criterion Channel. Thus, the Criterion shelves and the card run."""
 
     from app import db
-    from app.leaving_criterion import CRITERION_PROVIDER_ID
+    from app.criterion.leaving_criterion import CRITERION_PROVIDER_ID
     from app.models import TMDBKeyword, User, UserStreamingProvider, UserWatchlist
     from tests.conftest import MEMBER_EMAIL
     from tests.factories import make_movie, make_movie_file
@@ -188,8 +188,8 @@ def test_a_task_does_not_read_a_redis_fault_as_nothing_stored(app, redis_down):
     catalog check would decide a film for good. Thus, a task fails as
     it did before the guard."""
 
-    from app.recommendations import stored_profile
-    from app.streaming import batch_title_availability
+    from app.discovery.recommendations import stored_profile
+    from app.availability.streaming import batch_title_availability
 
     with app.app_context():
         with pytest.raises(redis.exceptions.ConnectionError):

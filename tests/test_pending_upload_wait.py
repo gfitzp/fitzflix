@@ -20,7 +20,7 @@ def test_a_copy_that_waits_for_space_holds_its_pending_upload(
 ):
     """The waiting retry of the library copy holds the run-scoped key (#619)."""
 
-    from app import importing
+    from app.media import importing
 
     source = os.path.join(incoming_dir, BASENAME)
     with open(source, "wb") as f:
@@ -54,7 +54,7 @@ def test_the_prune_keeps_the_pending_upload_of_a_waiting_import(app, monkeypatch
 
     from rq.registry import ScheduledJobRegistry
 
-    from app import aws_storage
+    from app.archive import aws_storage
 
     old = datetime.now(timezone.utc) - timedelta(days=30)
     stray = "pending-untouched/run2/Old Stray (2020) - [DVD].mkv"
@@ -84,7 +84,7 @@ def test_the_prune_keeps_the_pending_upload_of_a_waiting_import(app, monkeypatch
     source = os.path.join(app.config["IMPORT_DIR"], BASENAME)
     retry = app.handoff_queue.enqueue_in(
         timedelta(minutes=30),
-        "app.importing.move_localized_file",
+        "app.media.importing.move_localized_file",
         source,
         {"basename": BASENAME, "aws_key": PENDING},
         None,
@@ -104,7 +104,8 @@ def test_a_move_whose_pending_upload_is_gone_archives_the_library_file(
 ):
     """The upload expired. The library file goes to modified/, and the row names it."""
 
-    from app import aws_storage, db
+    from app import db
+    from app.archive import aws_storage
     from app.models import File
 
     fake = ArchiveS3({})
@@ -138,7 +139,8 @@ def test_a_missing_pending_upload_with_no_library_file_stops_the_move(
 ):
     """Without a library file, the move stops as before, and the sync reports the key."""
 
-    from app import aws_storage, db
+    from app import db
+    from app.archive import aws_storage
     from app.models import File
 
     fake = ArchiveS3({})
@@ -166,7 +168,7 @@ def test_a_missing_pending_upload_with_no_library_file_stops_the_move(
 def test_the_prune_keeps_the_upload_of_a_scheduled_conversion_retry(app, monkeypatch):
     """A conversion retry has no marker. Its file_details key is safe (#493)."""
 
-    from app import aws_storage
+    from app.archive import aws_storage
 
     old = datetime.now(timezone.utc) - timedelta(days=30)
     parked = "pending-untouched/run3/Parked Rerip (2024) - [UHD].mkv"
@@ -197,7 +199,7 @@ def test_the_prune_keeps_the_upload_of_a_scheduled_conversion_retry(app, monkeyp
     with app.app_context():
         app.transcode_queue.enqueue_in(
             timedelta(minutes=30),
-            "app.sdr_conversion.convert_localized_file",
+            "app.media.sdr_conversion.convert_localized_file",
             "/import/Parked Rerip (2024) - [UHD].mkv",
             {"basename": "Parked Rerip (2024) - [UHD].mkv", "aws_key": parked},
             "lock",
@@ -212,7 +214,7 @@ def test_the_prune_keeps_the_upload_of_a_scheduled_conversion_retry(app, monkeyp
 def test_the_prune_keeps_the_untouched_upload_of_a_rejected_import(app, monkeypatch):
     """A failed in-place import keeps its direct untouched/ upload (#496)."""
 
-    from app import aws_storage
+    from app.archive import aws_storage
 
     old = datetime.now(timezone.utc) - timedelta(days=30)
     name = "Rejected In Place (2024) - [UHD].mkv"
@@ -253,7 +255,8 @@ def test_the_prune_keeps_the_untouched_upload_of_a_rejected_import(app, monkeypa
 def test_a_direct_restore_never_replaces_a_newer_library_file(app, monkeypatch):
     """A stale row keeps its library file. The restore stops (#496)."""
 
-    from app import aws_storage, db
+    from app import db
+    from app.archive import aws_storage
 
     with app.app_context():
         file = make_movie_file(

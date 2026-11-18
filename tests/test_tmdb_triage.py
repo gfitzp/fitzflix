@@ -211,7 +211,7 @@ def test_match_enqueues_the_refresh(app, admin_client, monkeypatch):
     jobs = [
         job.args
         for job in app.sql_queue.jobs
-        if job.func_name == "app.tmdb_refresh.refresh_tmdb_info"
+        if job.func_name == "app.metadata.tmdb_refresh.refresh_tmdb_info"
     ]
     assert ("Movies", movie_id, 265216) in jobs
     assert ("TV Shows", series_id, 13911) in jobs
@@ -219,7 +219,7 @@ def test_match_enqueues_the_refresh(app, admin_client, monkeypatch):
     assert all(
         job.kwargs.get("apply_at_front")
         for job in app.sql_queue.jobs
-        if job.func_name == "app.tmdb_refresh.refresh_tmdb_info"
+        if job.func_name == "app.metadata.tmdb_refresh.refresh_tmdb_info"
     )
 
 
@@ -243,7 +243,7 @@ def test_match_without_an_id_is_refused(app, admin_client):
     assert not [
         job
         for job in app.sql_queue.jobs
-        if job.func_name == "app.tmdb_refresh.refresh_tmdb_info"
+        if job.func_name == "app.metadata.tmdb_refresh.refresh_tmdb_info"
     ]
 
 

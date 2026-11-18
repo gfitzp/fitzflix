@@ -134,7 +134,7 @@ class FakePlex:
 
 
 def wire(app, monkeypatch, fake):
-    import app.plex_watchlist as plex_watchlist
+    import app.plex.plex_watchlist as plex_watchlist
 
     monkeypatch.setitem(app.config, "PLEX_TOKEN", "test-token")
     monkeypatch.setattr(plex_watchlist, "_plex_get", fake.get)
@@ -158,7 +158,7 @@ def setup_user(app):
 
 
 def test_first_run_is_a_full_union(app, monkeypatch):
-    import app.plex_watchlist as plex_watchlist
+    import app.plex.plex_watchlist as plex_watchlist
 
     with app.app_context():
         user_id = setup_user(app)
@@ -191,7 +191,7 @@ def test_first_run_is_a_full_union(app, monkeypatch):
         refreshes = [
             job
             for job in app.request_queue.jobs
-            if job.func_name == "app.tmdb_refresh.refresh_tmdb_info"
+            if job.func_name == "app.metadata.tmdb_refresh.refresh_tmdb_info"
             and job.args[1] == created.id
         ]
         assert len(refreshes) == 1
@@ -203,7 +203,7 @@ def test_first_run_is_a_full_union(app, monkeypatch):
 
 
 def test_incremental_reconciles_both_ways(app, monkeypatch):
-    import app.plex_watchlist as plex_watchlist
+    import app.plex.plex_watchlist as plex_watchlist
 
     with app.app_context():
         user_id = setup_user(app)
@@ -233,7 +233,7 @@ def test_incremental_reconciles_both_ways(app, monkeypatch):
 
 
 def test_push_failures_retry_instead_of_reading_as_removals(app, monkeypatch):
-    import app.plex_watchlist as plex_watchlist
+    import app.plex.plex_watchlist as plex_watchlist
 
     with app.app_context():
         user_id = setup_user(app)
@@ -261,7 +261,7 @@ def test_push_failures_retry_instead_of_reading_as_removals(app, monkeypatch):
 def test_a_failed_removal_retries_instead_of_coming_back(app, monkeypatch):
     """A Fitzflix removal that Plex refuses once must not undo the removal."""
 
-    import app.plex_watchlist as plex_watchlist
+    import app.plex.plex_watchlist as plex_watchlist
 
     with app.app_context():
         user_id = setup_user(app)
@@ -299,7 +299,7 @@ def test_composite_item_syncs_by_its_tracked_id_only(app, monkeypatch):
     compilation plus its segments). The id that Fitzflix tracks
     represents it. The sibling ids never go into the watchlist."""
 
-    import app.plex_watchlist as plex_watchlist
+    import app.plex.plex_watchlist as plex_watchlist
 
     with app.app_context():
         user_id = setup_user(app)
@@ -334,7 +334,7 @@ def test_phantom_add_goes_unsyncable_not_removed(app, monkeypatch):
     Loot). The film must stay on the Fitzflix watchlist and join the
     unsyncable set. It must never read as a removal on the Plex side."""
 
-    import app.plex_watchlist as plex_watchlist
+    import app.plex.plex_watchlist as plex_watchlist
 
     with app.app_context():
         user_id = setup_user(app)
@@ -366,7 +366,7 @@ def test_refused_add_goes_unsyncable_and_auth_errors_retry(app, monkeypatch):
     on each run. The film must stay on the Fitzflix watchlist and stop
     the retries. A 401 is about the token. Thus, the other film retries."""
 
-    import app.plex_watchlist as plex_watchlist
+    import app.plex.plex_watchlist as plex_watchlist
 
     with app.app_context():
         user_id = setup_user(app)
@@ -399,7 +399,7 @@ def test_tv_shows_on_the_plex_watchlist_are_ignored(app, monkeypatch):
     a bare Movie row on the Fitzflix watchlist (The Flight Attendant,
     Severance)."""
 
-    import app.plex_watchlist as plex_watchlist
+    import app.plex.plex_watchlist as plex_watchlist
 
     with app.app_context():
         user_id = setup_user(app)
@@ -425,7 +425,7 @@ def test_previously_leaked_shows_drop_off_without_touching_plex(app, monkeypatch
     it from the Fitzflix watchlist. The show stays as it is on the Plex
     side."""
 
-    import app.plex_watchlist as plex_watchlist
+    import app.plex.plex_watchlist as plex_watchlist
 
     with app.app_context():
         user_id = setup_user(app)
@@ -446,7 +446,7 @@ def test_previously_leaked_shows_drop_off_without_touching_plex(app, monkeypatch
 
 
 def test_empty_plex_response_never_mass_removes(app, monkeypatch):
-    import app.plex_watchlist as plex_watchlist
+    import app.plex.plex_watchlist as plex_watchlist
 
     with app.app_context():
         user_id = setup_user(app)
@@ -473,7 +473,7 @@ def test_lookup_client_error_retries_instead_of_quarantine(app, monkeypatch):
     That says nothing about the film. The film must retry on the next
     run and never go into the unsyncable set."""
 
-    import app.plex_watchlist as plex_watchlist
+    import app.plex.plex_watchlist as plex_watchlist
 
     with app.app_context():
         user_id = setup_user(app)
@@ -521,7 +521,7 @@ class FakeResponse:
 def wire_answers(app, monkeypatch, answers):
     """Make requests.get give the answers in sequence. Return the waits."""
 
-    import app.plex_watchlist as plex_watchlist
+    import app.plex.plex_watchlist as plex_watchlist
 
     waits = []
     answers = list(answers)
@@ -544,7 +544,7 @@ def test_get_tries_again_after_a_transient_failure(app, monkeypatch):
     Plex answers 1 page of a long watchlist with a 503 now and then. The
     same request succeeds a moment later."""
 
-    import app.plex_watchlist as plex_watchlist
+    import app.plex.plex_watchlist as plex_watchlist
 
     with app.app_context():
         waits = wire_answers(
@@ -566,7 +566,7 @@ def test_get_gives_up_after_the_last_wait(app, monkeypatch):
 
     import pytest
 
-    import app.plex_watchlist as plex_watchlist
+    import app.plex.plex_watchlist as plex_watchlist
 
     with app.app_context():
         tries = len(plex_watchlist.GET_RETRY_WAITS) + 1
@@ -584,7 +584,7 @@ def test_get_does_not_try_a_client_error_again(app, monkeypatch):
 
     import pytest
 
-    import app.plex_watchlist as plex_watchlist
+    import app.plex.plex_watchlist as plex_watchlist
 
     with app.app_context():
         waits = wire_answers(app, monkeypatch, [FakeResponse(404)])
@@ -599,7 +599,7 @@ def test_plex_outage_logs_one_line_and_keeps_the_snapshot(app, monkeypatch, capl
     The run must not change the watchlist or the snapshot. The log must
     not hold a traceback, because an outage is not a code fault."""
 
-    import app.plex_watchlist as plex_watchlist
+    import app.plex.plex_watchlist as plex_watchlist
 
     with app.app_context():
         user_id = setup_user(app)
@@ -639,7 +639,7 @@ def test_removing_one_of_two_films_of_a_shared_plex_item_keeps_the_other(
     A removal of A in Fitzflix must not remove X from Plex, and the next
     run must not delete the S1 row."""
 
-    import app.plex_watchlist as plex_watchlist
+    import app.plex.plex_watchlist as plex_watchlist
 
     with app.app_context():
         user_id = setup_user(app)
@@ -664,7 +664,7 @@ def test_removing_one_of_two_films_of_a_shared_plex_item_keeps_the_other(
 
 def test_a_short_page_skips_the_run_and_keeps_every_row(app, monkeypatch, caplog):
     """Test that an empty page before the totalSize stops the run (#484)."""
-    import app.plex_watchlist as plex_watchlist
+    import app.plex.plex_watchlist as plex_watchlist
 
     with app.app_context():
         user_id = setup_user(app)
@@ -697,7 +697,7 @@ def test_a_short_page_skips_the_run_and_keeps_every_row(app, monkeypatch, caplog
 
 def test_a_page_with_no_total_size_skips_the_run(app, monkeypatch):
     """Test that a first page with items and no totalSize stops the run."""
-    import app.plex_watchlist as plex_watchlist
+    import app.plex.plex_watchlist as plex_watchlist
 
     with app.app_context():
         user_id = setup_user(app)
@@ -725,7 +725,7 @@ def test_a_page_with_no_total_size_skips_the_run(app, monkeypatch):
 
 def test_a_listing_that_shifts_between_pages_is_read_again(app, monkeypatch):
     """Test that a Plex removal between 2 pages does not skip a film."""
-    import app.plex_watchlist as plex_watchlist
+    import app.plex.plex_watchlist as plex_watchlist
 
     with app.app_context():
         user_id = setup_user(app)
@@ -761,7 +761,7 @@ def test_a_listing_that_shifts_between_pages_is_read_again(app, monkeypatch):
 
 def test_a_listing_under_half_the_snapshot_needs_two_runs(app, monkeypatch):
     """Test that a short listing applies only when the next run repeats it."""
-    import app.plex_watchlist as plex_watchlist
+    import app.plex.plex_watchlist as plex_watchlist
 
     with app.app_context():
         user_id = setup_user(app)
@@ -801,7 +801,7 @@ def test_an_empty_listing_never_applies_on_any_run(app, monkeypatch):
 
     Each empty answer of Plex is the same listing. Thus, the two-run
     rule of a short listing cannot tell a glitch from a removal."""
-    import app.plex_watchlist as plex_watchlist
+    import app.plex.plex_watchlist as plex_watchlist
 
     with app.app_context():
         user_id = setup_user(app)
@@ -819,7 +819,7 @@ def test_an_empty_listing_never_applies_on_any_run(app, monkeypatch):
 
 def test_a_listing_of_5_of_20_films_applies_on_the_second_run(app, monkeypatch):
     """Test that a short listing that is not empty keeps the two-run rule."""
-    import app.plex_watchlist as plex_watchlist
+    import app.plex.plex_watchlist as plex_watchlist
 
     with app.app_context():
         user_id = setup_user(app)
@@ -839,7 +839,7 @@ def test_an_empty_read_after_the_pushes_marks_no_film_unsyncable(app, monkeypatc
 
     The pushed film must not go into the unsyncable set. It stays out
     of the snapshot, and the next run checks it again."""
-    import app.plex_watchlist as plex_watchlist
+    import app.plex.plex_watchlist as plex_watchlist
 
     with app.app_context():
         user_id = setup_user(app)
@@ -874,7 +874,7 @@ def test_an_empty_read_after_the_pushes_marks_no_film_unsyncable(app, monkeypatc
 
 def test_a_re_pointed_watchlist_film_gets_no_second_row(app, monkeypatch):
     """Test that a Plex add of a watchlisted film with no tmdb id adds no row (#485)."""
-    import app.plex_watchlist as plex_watchlist
+    import app.plex.plex_watchlist as plex_watchlist
 
     with app.app_context():
         user_id = setup_user(app)
@@ -896,7 +896,7 @@ def test_a_re_pointed_watchlist_film_gets_no_second_row(app, monkeypatch):
 
 def test_a_429_stops_the_pushes_and_honours_retry_after(app, monkeypatch):
     """Test that a rate limit stops the loop and holds off the next run (#486)."""
-    import app.plex_watchlist as plex_watchlist
+    import app.plex.plex_watchlist as plex_watchlist
 
     with app.app_context():
         user_id = setup_user(app)
@@ -934,7 +934,7 @@ def test_a_job_timeout_in_the_push_loop_is_not_swallowed(app, monkeypatch):
     import pytest
     from rq.timeouts import JobTimeoutException
 
-    import app.plex_watchlist as plex_watchlist
+    import app.plex.plex_watchlist as plex_watchlist
 
     with app.app_context():
         user_id = setup_user(app)
@@ -955,7 +955,7 @@ def test_a_job_timeout_in_the_push_loop_is_not_swallowed(app, monkeypatch):
 
 def test_an_unsyncable_film_seen_on_plex_leaves_the_set(app, monkeypatch):
     """Test that a listed unsyncable film can push again later (#486)."""
-    import app.plex_watchlist as plex_watchlist
+    import app.plex.plex_watchlist as plex_watchlist
 
     with app.app_context():
         setup_user(app)
@@ -974,7 +974,7 @@ def test_a_total_size_under_the_first_page_skips_the_run(app, monkeypatch):
 
     Page 1 held 3 items and claimed 2. The read stopped there, and the
     4th film became a removal."""
-    import app.plex_watchlist as plex_watchlist
+    import app.plex.plex_watchlist as plex_watchlist
 
     ids = [321, 322, 323, 324]
     with app.app_context():
@@ -1007,7 +1007,7 @@ def test_a_plex_film_with_no_year_does_not_stop_the_sync(app, monkeypatch):
 
     The film stays out of the snapshot. Thus, a later run does not read
     it as a removal on Plex."""
-    import app.plex_watchlist as plex_watchlist
+    import app.plex.plex_watchlist as plex_watchlist
 
     with app.app_context():
         user_id = setup_user(app)

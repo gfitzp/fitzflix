@@ -113,7 +113,7 @@ def test_search_badges_recommended_owned_films(app, admin_client):
 
     import json
 
-    from app.recommendations import RECS_KEY
+    from app.discovery.recommendations import RECS_KEY
 
     with app.app_context():
         recommended = make_movie("Jaws", 1975)
@@ -172,7 +172,7 @@ def test_search_funnel_badges_coexist_and_exclude(app, admin_client):
     import json
 
     from app.models import UserWatchlist
-    from app.recommendations import RECS_KEY
+    from app.discovery.recommendations import RECS_KEY
 
     with app.app_context():
         fresh = make_movie("Funnel Fresh Pick", 1990)
@@ -227,7 +227,7 @@ def test_search_tmdb_funnel_badges(app, admin_client, monkeypatch):
     import json
 
     from app.models import UserWatchlist
-    from app.recommendations import RECS_KEY
+    from app.discovery.recommendations import RECS_KEY
 
     with app.app_context():
         owned_seen = make_movie("Funnel Owned Seen", 1975, tmdb_id=678)
@@ -287,7 +287,7 @@ def test_search_tmdb_funnel_badges(app, admin_client, monkeypatch):
     )
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_get)
+    monkeypatch.setattr("app.metadata.tmdb_apply.tmdb_get", fake_get)
 
     page = admin_client.get("/search/tmdb?q=funnel").get_data(as_text=True)
     assert "TV shows on TMDB" in page
@@ -314,7 +314,7 @@ def test_search_tmdb_badges_recommended_owned_films(app, admin_client, monkeypat
 
     import json
 
-    from app.recommendations import RECS_KEY
+    from app.discovery.recommendations import RECS_KEY
 
     with app.app_context():
         recommended = make_movie("Jaws", 1975, tmdb_id=578)
@@ -349,7 +349,7 @@ def test_search_tmdb_badges_recommended_owned_films(app, admin_client, monkeypat
     )
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_get)
+    monkeypatch.setattr("app.metadata.tmdb_apply.tmdb_get", fake_get)
 
     page = admin_client.get("/search/tmdb?q=jaws").get_data(as_text=True)
     assert page.count("Might interest you") == 1
@@ -407,7 +407,7 @@ def test_tv_search_season_grade_is_the_shared_season_grade(app, admin_client):
     episode 13. Thus, the old single file does not pull the season down.
     The page and the type-ahead show the grade of season_grades."""
 
-    from app.file_ranking import season_grades
+    from app.media.file_ranking import season_grades
 
     with app.app_context():
         series = make_tv_series("Span Holder (1989)")
@@ -534,7 +534,7 @@ def test_search_tmdb_annotates_library_membership(app, admin_client, monkeypatch
     )
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_get)
+    monkeypatch.setattr("app.metadata.tmdb_apply.tmdb_get", fake_get)
 
     page = admin_client.get("/search/tmdb?q=jaws").get_data(as_text=True)
     assert "Jaws (1975)" in page
@@ -620,7 +620,7 @@ def test_search_tmdb_library_badges_wear_shopping_colors(
     )
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_get)
+    monkeypatch.setattr("app.metadata.tmdb_apply.tmdb_get", fake_get)
 
     page = admin_client.get("/search/tmdb?q=show").get_data(as_text=True)
 
@@ -810,7 +810,7 @@ def test_search_tmdb_rows_carry_the_star_ladder(app, admin_client, monkeypatch):
     )
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_get)
+    monkeypatch.setattr("app.metadata.tmdb_apply.tmdb_get", fake_get)
 
     page = admin_client.get("/search/tmdb?q=ladder").get_data(as_text=True)
     assert f'data-state-movie="{recorded_id}"' in page
@@ -886,7 +886,7 @@ def test_search_tmdb_watchlist_toggle(app, admin_client, monkeypatch):
             return fake_search(url, **kwargs)
         return fake_details(url, **kwargs)
 
-    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
+    monkeypatch.setattr("app.metadata.tmdb_apply.tmdb_get", fake_tmdb_get)
 
     page = admin_client.get("/search/tmdb?q=toggle").get_data(as_text=True)
 
@@ -991,7 +991,7 @@ def test_search_tmdb_movies_scope_skips_tv(app, admin_client, monkeypatch):
         )
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_get)
+    monkeypatch.setattr("app.metadata.tmdb_apply.tmdb_get", fake_get)
 
     page = admin_client.get("/search/tmdb?q=scoped&scope=movies").get_data(as_text=True)
     assert "Scoped Movie" in page
@@ -1112,7 +1112,7 @@ def test_search_tmdb_year_modifier(app, admin_client, monkeypatch):
         return Response({"results": []})
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_get)
+    monkeypatch.setattr("app.metadata.tmdb_apply.tmdb_get", fake_get)
 
     page = admin_client.get("/search/tmdb", query_string={"q": "jaws y:1975"}).get_data(
         as_text=True

@@ -37,7 +37,7 @@ def _lock_is_free(app, identifier):
 def test_a_scan_that_fails_before_the_hand_off_releases_the_lock(app, monkeypatch):
     """A Redis fault at the queue of the save left the title locked (#585)."""
 
-    import app.tracks as tracks
+    import app.media.tracks as tracks
 
     file_id, identifier, path = _library_row(app, "Scan Lock Leak")
     monkeypatch.setattr(
@@ -59,7 +59,7 @@ def test_a_scan_that_fails_before_the_hand_off_releases_the_lock(app, monkeypatc
 
 
 def test_a_handed_off_scan_keeps_the_lock_for_the_save(app, monkeypatch):
-    import app.tracks as tracks
+    import app.media.tracks as tracks
 
     file_id, identifier, path = _library_row(app, "Scan Hand Off")
     monkeypatch.setattr(
@@ -96,8 +96,8 @@ def test_a_scan_does_not_store_a_file_that_is_not_the_file_of_its_record(
     size as its own result and skipped the file. The scan now queues
     the import and stores nothing."""
 
-    import app.importing as importing
-    import app.tracks as tracks
+    import app.media.importing as importing
+    import app.media.tracks as tracks
 
     file_id, identifier, path = _library_row(app, "Scan An Upgrade")
     _set_size(app, file_id, 999)
@@ -128,8 +128,8 @@ def test_a_scan_stores_the_file_of_an_edit_that_did_not_store_its_size(
     An edit that failed after its write queues a scan. That scan must
     still read the file."""
 
-    import app.importing as importing
-    import app.tracks as tracks
+    import app.media.importing as importing
+    import app.media.tracks as tracks
 
     file_id, identifier, path = _library_row(app, "Scan An Edit")
     _set_size(app, file_id, 999, stale=True)
@@ -145,7 +145,7 @@ def test_a_scan_stores_the_file_of_an_edit_that_did_not_store_its_size(
     )
     try:
         assert tracks.track_metadata_scan_task(file_id) is True
-        assert saves == ["app.tracks.save_track_metadata"]
+        assert saves == ["app.media.tracks.save_track_metadata"]
         assert queued == []
     finally:
         os.remove(path)
@@ -157,7 +157,7 @@ def test_a_deferred_scan_of_a_library_run_keeps_the_run_prefix(
 ):
     """The lock-busy retry left the run. The scan button saw no run (#585)."""
 
-    import app.tracks as tracks
+    import app.media.tracks as tracks
     from app.tasks import bulk_job_id, bulk_run_pending
 
     file_id, identifier, path = _library_row(app, f"Scan Deferred {in_run}")
@@ -172,14 +172,14 @@ def test_a_deferred_scan_of_a_library_run_keeps_the_run_prefix(
             assert retry.id != job_id
         else:
             assert retry.id == requeue_id(
-                "app.tracks.track_metadata_scan_task", file_id
+                "app.media.tracks.track_metadata_scan_task", file_id
             )
         with app.app_context():
             assert (
                 bulk_run_pending(
                     "bulk-track-scan-",
-                    "app.tracks.track_metadata_scan_library",
-                    "app.tracks.track_metadata_scan_task",
+                    "app.media.tracks.track_metadata_scan_library",
+                    "app.media.tracks.track_metadata_scan_task",
                 )
                 is in_run
             )
@@ -196,7 +196,7 @@ def _failing_unlocked(error_number):
 
 
 def _scans(app, file_id):
-    wanted = requeue_id("app.tracks.track_metadata_scan_task", file_id)
+    wanted = requeue_id("app.media.tracks.track_metadata_scan_task", file_id)
     return [job for job in scheduled_jobs(app.file_queue) if job.id == wanted]
 
 
@@ -216,7 +216,7 @@ def test_any_raise_of_an_edit_queues_one_scan_and_frees_the_lock(
     A repeat of an edit reads the file again (#611). Thus, the wrapper
     queues a scan on each raise. The edit does not track if it wrote."""
 
-    from app import tracks
+    from app.media import tracks
 
     file_id, identifier, path = _library_row(app, f"Any Raise {task[:9]}")
     monkeypatch.setattr(tracks, body, _failing_unlocked(errno.EACCES))
@@ -233,7 +233,7 @@ def test_any_raise_of_an_edit_queues_one_scan_and_frees_the_lock(
 def test_a_safe_transient_retry_queues_no_scan(app, monkeypatch):
     """The retry repairs the rows. A scan is not needed before it."""
 
-    from app import tracks
+    from app.media import tracks
 
     file_id, identifier, path = _library_row(app, "Safe Retry No Scan")
     monkeypatch.setattr(tracks, "mkvpropedit_unlocked", _failing_unlocked(errno.EBADF))
@@ -252,7 +252,8 @@ def test_a_retry_that_a_pending_restore_refuses_queues_no_scan(app, monkeypatch)
 
     from datetime import datetime, timezone
 
-    from app import db, tracks
+    from app import db
+    from app.media import tracks
     from app.models import File
 
     file_id, identifier, path = _library_row(app, "Refused Retry")
@@ -278,9 +279,9 @@ def test_the_audio_plan_reserves_its_staging_space(app, monkeypatch):
 
     import shutil
 
-    import app.videos as videos
-    from app.importing import STAGING_RESERVED_KEY
-    from app.tracks import _remux_audio_plan_unlocked
+    import app.media.videos as videos
+    from app.media.importing import STAGING_RESERVED_KEY
+    from app.media.tracks import _remux_audio_plan_unlocked
 
     file_id, identifier, path = _library_row(app, "Plan Reservation")
     seen = []
@@ -318,8 +319,8 @@ def _fake_audio_plan(app, monkeypatch):
 
     import shutil
 
-    import app.videos as videos
-    from app import tracks
+    import app.media.videos as videos
+    from app.media import tracks
 
     audio = [{"format": "AC-3", "language": "eng", "language_name": "English"}]
 
@@ -356,7 +357,7 @@ def test_a_failed_audio_plan_commit_after_the_replace_queues_a_scan(app, monkeyp
     The function had only a finally. The rows kept the old layout, and
     no scan was queued."""
 
-    from app import tracks
+    from app.media import tracks
 
     file_id, identifier, path = _library_row(app, "Plan Commit Fails")
     _fake_audio_plan(app, monkeypatch)
@@ -378,8 +379,8 @@ def test_a_failed_audio_plan_commit_after_the_replace_queues_a_scan(app, monkeyp
 def test_a_failed_reservation_release_does_not_fail_a_committed_plan(app, monkeypatch):
     """A Redis fault in the release of the finally failed a done plan (#596)."""
 
-    import app.importing as importing
-    from app import tracks
+    import app.media.importing as importing
+    from app.media import tracks
 
     file_id, identifier, path = _library_row(app, "Plan Release Fails")
     _fake_audio_plan(app, monkeypatch)
@@ -395,9 +396,9 @@ def test_a_failed_reservation_release_does_not_fail_a_committed_plan(app, monkey
 
 
 def test_an_audio_plan_with_no_reserved_space_stops_before_the_copy(app, monkeypatch):
-    import app.importing as importing
-    import app.videos as videos
-    from app.tracks import _remux_audio_plan_unlocked
+    import app.media.importing as importing
+    import app.media.videos as videos
+    from app.media.tracks import _remux_audio_plan_unlocked
 
     file_id, identifier, path = _library_row(app, "Plan No Space")
     copies = []
@@ -419,7 +420,8 @@ def test_a_failed_reimport_commit_over_a_replaced_file_queues_a_scan(
     The new file replaced the file of the row, and the commit failed. No
     scan was queued, and the archive was not flagged stale."""
 
-    from app import db, importing
+    from app import db
+    from app.media import importing
     from app.models import File
     from tests.factories import make_movie, make_movie_file
     from tests.localization_helpers import run_full_chain
@@ -490,7 +492,7 @@ DEFERRED_EDITS = [
 
 @pytest.mark.parametrize("task, queue, edits", DEFERRED_EDITS)
 def test_two_different_deferred_edits_both_wait(app, held_lock, task, queue, edits):
-    from app import tracks
+    from app.media import tracks
 
     file_id, identifier, path = _library_row(app, f"Two Edits {task[:9]}")
     held_lock(identifier)
@@ -501,7 +503,7 @@ def test_two_different_deferred_edits_both_wait(app, held_lock, task, queue, edi
         jobs = [
             job
             for job in scheduled_jobs(getattr(app, queue))
-            if job.func_name == f"app.tracks.{task}"
+            if job.func_name == f"app.media.tracks.{task}"
         ]
         posted = sorted(repr(list(job.args[1 : 1 + len(edits[0])])) for job in jobs)
         assert posted == sorted(repr(list(edit)) for edit in edits)
@@ -510,7 +512,7 @@ def test_two_different_deferred_edits_both_wait(app, held_lock, task, queue, edi
 
 
 def test_a_repeat_deferral_of_one_edit_still_replaces_its_wait(app, held_lock):
-    from app import tracks
+    from app.media import tracks
 
     file_id, identifier, path = _library_row(app, "Repeat Edit")
     held_lock(identifier)
@@ -521,7 +523,7 @@ def test_a_repeat_deferral_of_one_edit_still_replaces_its_wait(app, held_lock):
         jobs = [
             job
             for job in scheduled_jobs(app.file_queue)
-            if job.func_name == "app.tracks.mkvpropedit_task"
+            if job.func_name == "app.media.tracks.mkvpropedit_task"
         ]
         assert len(jobs) == 1
     finally:
@@ -529,7 +531,7 @@ def test_a_repeat_deferral_of_one_edit_still_replaces_its_wait(app, held_lock):
 
 
 def test_two_transient_retries_of_different_edits_both_wait(app, monkeypatch):
-    from app import tracks
+    from app.media import tracks
 
     def flaky(*args, **kwargs):
         raise OSError(errno.EIO, "simulated share fault")
@@ -543,7 +545,7 @@ def test_two_transient_retries_of_different_edits_both_wait(app, monkeypatch):
         jobs = [
             job
             for job in scheduled_jobs(app.file_queue)
-            if job.func_name == "app.tracks.mkvpropedit_task"
+            if job.func_name == "app.media.tracks.mkvpropedit_task"
         ]
         assert sorted(job.args[1] for job in jobs) == ["111", "222"]
         assert all(job.kwargs == {"transient_retries": 1} for job in jobs)

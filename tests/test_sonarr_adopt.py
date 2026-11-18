@@ -86,7 +86,7 @@ def test_webhook_leaves_the_rename_to_sonarr(app, client, tmp_path):
     assert (season / ORIGINAL).exists()
     assert app.import_queue.job_ids == []
     jobs = app.request_queue.jobs
-    assert [job.func_name for job in jobs] == ["app.sonarr_push.adopt_episode_task"]
+    assert [job.func_name for job in jobs] == ["app.arr.sonarr_push.adopt_episode_task"]
 
     # The episode aired today. It keeps its place at the front.
     assert jobs[0].args == (
@@ -102,7 +102,7 @@ def test_webhook_leaves_the_rename_to_sonarr(app, client, tmp_path):
 def test_adopt_task_lets_sonarr_rename_then_queues_the_import(
     app, monkeypatch, tmp_path
 ):
-    import app.sonarr_push as sonarr_push
+    import app.arr.sonarr_push as sonarr_push
 
     _, season = _download(tmp_path)
     fake = FakeSonarr(season)
@@ -120,7 +120,7 @@ def test_adopt_task_lets_sonarr_rename_then_queues_the_import(
 
 
 def test_adopt_task_falls_back_to_a_fitzflix_rename(app, monkeypatch, tmp_path):
-    import app.sonarr_push as sonarr_push
+    import app.arr.sonarr_push as sonarr_push
 
     _, season = _download(tmp_path)
     refreshes = []
@@ -146,7 +146,7 @@ def test_a_local_rename_without_a_sonarr_address_does_not_crash(
     """With no Sonarr address, the rename must not try to send a rescan."""
 
     import app.api.arr as arr
-    from app.sonarr_push import rename_download_locally
+    from app.arr.sonarr_push import rename_download_locally
 
     monkeypatch.setitem(app.config, "SONARR_URL", "")
     sent = []
@@ -163,7 +163,7 @@ def test_a_local_rename_without_a_sonarr_address_does_not_crash(
 def test_a_late_sonarr_rename_imports_the_sonarr_file(app, monkeypatch, tmp_path):
     """Sonarr renames the file after the wait ends (#325)."""
 
-    import app.sonarr_push as sonarr_push
+    import app.arr.sonarr_push as sonarr_push
 
     _, season = _download(tmp_path)
     fake = FakeSonarr(season, rename_status="started", renames=True)
@@ -182,8 +182,8 @@ def test_a_late_sonarr_rename_imports_the_sonarr_file(app, monkeypatch, tmp_path
 def test_the_adopt_task_carries_the_kept_release_data(app, monkeypatch, tmp_path):
     """The import reads the renamed path. The webhook data moves there (#671)."""
 
-    import app.sonarr_push as sonarr_push
-    from app.arr_client import SONARR, remember_download, take_remembered_download
+    import app.arr.sonarr_push as sonarr_push
+    from app.arr.arr_client import SONARR, remember_download, take_remembered_download
 
     _, season = _download(tmp_path)
     monkeypatch.setattr(sonarr_push, "_sonarr", FakeSonarr(season))

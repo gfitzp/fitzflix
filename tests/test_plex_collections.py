@@ -107,8 +107,8 @@ class FakePlex:
 
 
 def _setup(app, monkeypatch, sections):
-    import app.plex_collections as plex_collections
-    import app.plex_player as plex_player
+    import app.plex.plex_collections as plex_collections
+    import app.playback.plex_player as plex_player
 
     fake = FakePlex(sections)
     monkeypatch.setitem(app.config, "PLEX_URL", "http://plex.test")
@@ -169,7 +169,7 @@ def test_the_rule_matches_the_view(app, monkeypatch):
     """Only the physical best copy of a unique spine with a poster qualifies."""
 
     paths = _library(app)
-    import app.plex_collections as plex_collections
+    import app.plex.plex_collections as plex_collections
 
     monkeypatch.setitem(app.config, "LIBRARY_DIR", LIBRARY)
     with app.app_context():
@@ -183,7 +183,7 @@ def test_a_catalog_record_with_no_files_makes_no_box_set(app, monkeypatch):
     record with the spine of an owned film and no files kept that film
     out of the main collection. 2 owned films with 1 spine stay out."""
 
-    import app.plex_collections as plex_collections
+    import app.plex.plex_collections as plex_collections
     from app import db
 
     paths = _library(app)
@@ -226,7 +226,7 @@ def test_a_film_with_no_disc_copy_makes_no_box_set(app, monkeypatch):
     it does not keep the other film of its spine out of the main
     collection."""
 
-    import app.plex_collections as plex_collections
+    import app.plex.plex_collections as plex_collections
     from app import db
 
     paths = _library(app)
@@ -300,7 +300,7 @@ def test_sync_removes_nothing_when_the_match_is_broken(app, monkeypatch):
 
 
 def test_sync_does_nothing_without_plex(app, monkeypatch):
-    import app.plex_collections as plex_collections
+    import app.plex.plex_collections as plex_collections
 
     monkeypatch.setitem(app.config, "PLEX_URL", None)
     assert plex_collections.sync_criterion_collection() is True
@@ -309,7 +309,7 @@ def test_sync_does_nothing_without_plex(app, monkeypatch):
 def test_enqueue_needs_plex(app, monkeypatch):
     """A poster change queues the sync only when Plex is configured."""
 
-    import app.plex_collections as plex_collections
+    import app.plex.plex_collections as plex_collections
 
     with app.app_context():
         monkeypatch.setitem(app.config, "PLEX_URL", None)
@@ -397,7 +397,7 @@ def _box_sets(app):
 def test_box_set_rule(app, monkeypatch):
     """A set film needs any main-feature file on disc. A set needs 2 films."""
 
-    import app.plex_collections as plex_collections
+    import app.plex.plex_collections as plex_collections
 
     paths = _box_sets(app)
     monkeypatch.setitem(app.config, "LIBRARY_DIR", LIBRARY)
@@ -415,7 +415,7 @@ def test_equal_set_titles_are_1_box_set(app, monkeypatch):
     The test database compares the titles exactly. Thus, the grouping
     rule is in Python."""
 
-    import app.plex_collections as plex_collections
+    import app.plex.plex_collections as plex_collections
     from app import db
     from app.models import Movie
 
@@ -527,7 +527,7 @@ def test_main_collection_takes_1_version_and_sets_take_all(app, monkeypatch):
     The version with no edition wins. Else the first edition by name. A
     box set takes every edition of its films (#286)."""
 
-    import app.plex_collections as plex_collections
+    import app.plex.plex_collections as plex_collections
 
     paths = _editions(app)
     monkeypatch.setitem(app.config, "LIBRARY_DIR", LIBRARY)
@@ -688,7 +688,7 @@ def test_a_corrected_set_title_moves_the_films_to_1_collection(app, monkeypatch)
     was in 2 collections."""
 
     from app import db
-    from app.criterion_catalog import record_set_title
+    from app.criterion.criterion_catalog import record_set_title
     from app.models import Movie
 
     paths = _box_sets(app)

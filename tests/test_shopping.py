@@ -6,7 +6,7 @@ candidates."""
 
 from app import db
 from app.models import Movie, User, UserMovieReview
-from app.diary import star_rating_fields
+from app.viewing.diary import star_rating_fields
 from tests.factories import make_movie, make_movie_file, make_tv_file, make_tv_series
 
 
@@ -449,7 +449,7 @@ def test_an_unknown_film_post_keeps_the_filters_of_the_list(app, admin_client):
 def test_quality_range_falls_back_and_collapses(app):
     """An unknown bound takes its fallback. An inverted range collapses (#306)."""
 
-    from app.file_ranking import quality_id
+    from app.media.file_ranking import quality_id
     from app.main.shopping import quality_range
 
     with app.app_context():

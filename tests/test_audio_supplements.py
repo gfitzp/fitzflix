@@ -35,7 +35,7 @@ def test_lossless_track_gains_a_leading_flac_twin(app):
 
     A lossy track keeps its position after the pair."""
 
-    from app.tracks import plan_audio_supplements
+    from app.media.tracks import plan_audio_supplements
 
     tracks = [
         track("MLP FBA", "Lossless"),
@@ -51,7 +51,7 @@ def test_lossless_track_gains_a_leading_flac_twin(app):
 def test_flac_and_pcm_originals_need_no_twin(app):
     """Plan no twin for FLAC and PCM. They already play natively."""
 
-    from app.tracks import plan_audio_supplements
+    from app.media.tracks import plan_audio_supplements
 
     tracks = [
         track("FLAC", "Lossless"),
@@ -71,7 +71,7 @@ def test_existing_twin_makes_the_pass_a_no_op(app):
     That rip already has a FLAC twin before the lossless original. Thus,
     a re-import never stacks twins."""
 
-    from app.tracks import plan_audio_supplements
+    from app.media.tracks import plan_audio_supplements
 
     tracks = [
         track("FLAC", "Lossless"),
@@ -91,7 +91,7 @@ def test_twins_match_count_wise_within_a_group(app):
     The second lossless track has no FLAC before it. Thus, it still gets
     its twin, in place."""
 
-    from app.tracks import plan_audio_supplements
+    from app.media.tracks import plan_audio_supplements
 
     tracks = [
         track("FLAC", "Lossless"),
@@ -115,7 +115,7 @@ def test_twins_match_by_language_not_channels(app):
     (and each FLAC decode of it) is 5.1. Thus, a channel-strict match
     would stack redundant twins on correct rips (the LOTR discs)."""
 
-    from app.tracks import plan_audio_supplements
+    from app.media.tracks import plan_audio_supplements
 
     tracks = [
         track("FLAC", "Lossless", language="fr"),
@@ -146,7 +146,7 @@ def test_builder_numbers_by_output_position(app):
     index. The first output is the default. The builder clears each
     different disposition."""
 
-    from app.tracks import build_supplement_args
+    from app.media.tracks import build_supplement_args
 
     plan = [("flac", 0), ("copy", 0), ("copy", 1)]
     assert build_supplement_args(plan) == [
@@ -176,7 +176,7 @@ def test_truehd_atmos_without_twin_is_a_candidate(app):
 
     Plain TrueHD and lossy tracks are never candidates."""
 
-    from app.atmos import TRUEHD_ATMOS_CODEC, atmos_supplement_candidates
+    from app.media.atmos import TRUEHD_ATMOS_CODEC, atmos_supplement_candidates
 
     tracks = [
         atmos_track(TRUEHD_ATMOS_CODEC),
@@ -191,7 +191,7 @@ def test_existing_eac3_atmos_twin_satisfies_the_source(app):
 
     The pass is idempotent across S3 re-downloads."""
 
-    from app.atmos import (
+    from app.media.atmos import (
         EAC3_ATMOS_CODEC,
         TRUEHD_ATMOS_CODEC,
         atmos_supplement_candidates,
@@ -210,7 +210,7 @@ def test_atmos_twins_match_per_language_and_count(app):
     A Japanese twin does not cover an English source. One twin cannot
     cover 2 same-language sources."""
 
-    from app.atmos import (
+    from app.media.atmos import (
         EAC3_ATMOS_CODEC,
         TRUEHD_ATMOS_CODEC,
         atmos_supplement_candidates,
@@ -232,7 +232,7 @@ def test_insertion_lands_ahead_of_the_flac_twin(app):
     source. If there is no FLAC twin, it goes directly before the
     source."""
 
-    from app.atmos import insertion_point
+    from app.media.atmos import insertion_point
 
     paired = [
         {"format": "FLAC", "language": "eng"},
@@ -255,7 +255,7 @@ def test_remux_command_orders_the_trio(app):
     explicit --track-order. That order puts each twin at its insertion
     position, with the video first and the subtitles last."""
 
-    from app.atmos import build_remux_command
+    from app.media.atmos import build_remux_command
 
     command = build_remux_command(
         "mkvmerge",
@@ -282,7 +282,7 @@ def test_mediaconvert_settings_match_the_validated_job(app):
     The shape is a RAW container, EAC3_ATMOS at 9.1.6, and the bitrate
     passed through."""
 
-    from app.atmos import mediaconvert_job_settings
+    from app.media.atmos import mediaconvert_job_settings
 
     settings = mediaconvert_job_settings("s3://b/in.atmos", "s3://b/out/x", 1024000)
     assert settings["Inputs"][0]["FileInput"] == "s3://b/in.atmos"
@@ -305,7 +305,7 @@ def test_trailing_flac_is_never_counted_as_a_twin(app):
     track gets a new twin before it. The unknown FLAC keeps its place.
     The planner does not judge its identity."""
 
-    from app.tracks import plan_audio_supplements
+    from app.media.tracks import plan_audio_supplements
 
     tracks = [
         track("DTS-HD Master Audio", "Lossless"),
@@ -339,7 +339,7 @@ def test_non_adjacent_flac_is_not_a_twin(app):
     not count. This is true even when the language and the channels
     match."""
 
-    from app.tracks import plan_audio_supplements
+    from app.media.tracks import plan_audio_supplements
 
     tracks = [
         track("FLAC", "Lossless"),
@@ -359,8 +359,8 @@ def test_a_failed_flac_pass_removes_its_partial_output(app, monkeypatch, tmp_pat
 
     import subprocess
 
-    import app.tracks as tracks
-    import app.videos as videos
+    import app.media.tracks as tracks
+    import app.media.videos as videos
 
     source = tmp_path / "film.mkv"
     source.write_bytes(b"source")
@@ -421,8 +421,8 @@ def test_the_flac_pass_keeps_the_attachments(app, monkeypatch, tmp_path):
 
     import subprocess
 
-    import app.tracks as tracks
-    import app.videos as videos
+    import app.media.tracks as tracks
+    import app.media.videos as videos
 
     source = tmp_path / "anime.mkv"
     source.write_bytes(b"source")
@@ -487,8 +487,8 @@ def test_a_truncated_matroska_without_a_duration_still_gets_its_twins(
     The FLAC pass must run without a progress percentage. It must not
     raise TypeError and send an imported file to rejects."""
 
-    import app.tracks as tracks
-    import app.videos as videos
+    import app.media.tracks as tracks
+    import app.media.videos as videos
 
     source = tmp_path / "truncated.mkv"
     source.write_bytes(b"source")
@@ -546,7 +546,7 @@ def test_the_cover_art_survives_the_ffmpeg_remux(app, tmp_path):
     import os
     import subprocess
 
-    from app.tracks import copy_image_attachments
+    from app.media.tracks import copy_image_attachments
 
     from tests.media import make_sample_mkv
 
@@ -606,7 +606,7 @@ def test_a_failed_ffmpeg_exit_never_replaces_the_source(app, monkeypatch, tmp_pa
 
     import pytest
 
-    import app.tracks as tracks
+    import app.media.tracks as tracks
 
     source = tmp_path / "broken.mkv"
     source.write_bytes(b"source")
@@ -671,7 +671,7 @@ def test_a_real_truncated_sample_gets_its_twin_with_real_mediainfo(
 
     from pymediainfo import MediaInfo
 
-    import app.tracks as tracks
+    import app.media.tracks as tracks
     from tests.media import make_sample_mkv
 
     path = make_sample_mkv(str(tmp_path / "cut.mkv"), duration=3, truncate=True)
@@ -696,7 +696,7 @@ def test_a_real_truncated_sample_gets_its_twin_with_real_mediainfo(
 def test_remux_command_leaves_out_the_empty_subtitles(app):
     """The mux selects the kept subtitles. No second remux runs (#518)."""
 
-    from app.atmos import build_remux_command
+    from app.media.atmos import build_remux_command
 
     def command(text_orders, dropped):
         return build_remux_command(
@@ -730,9 +730,9 @@ def test_two_same_named_audio_plans_stage_under_different_names(app, monkeypatch
 
     import pytest
 
-    import app.videos as videos
+    import app.media.videos as videos
     from app import db
-    from app.tracks import _remux_audio_plan_unlocked
+    from app.media.tracks import _remux_audio_plan_unlocked
     from tests.factories import make_movie, make_movie_file
 
     staged = []

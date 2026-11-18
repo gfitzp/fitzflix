@@ -132,11 +132,11 @@ def install_rail_fakes(app, monkeypatch, discover_calls=None):
         return Response({"results": []})
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
+    monkeypatch.setattr("app.metadata.tmdb_apply.tmdb_get", fake_tmdb_get)
 
 
 def test_provider_pool_queries_and_caches(app, monkeypatch):
-    from app import streaming_rail
+    from app.availability import streaming_rail
 
     calls = []
     install_rail_fakes(app, monkeypatch, discover_calls=calls)
@@ -182,7 +182,7 @@ def test_deleted_tmdb_id_caches_the_miss(app, monkeypatch):
     answers with 404. Fitzflix caches the miss as a null payload. Later
     calls answer None from Redis and do not ask TMDB again."""
 
-    from app import streaming_rail
+    from app.availability import streaming_rail
 
     calls = []
 
@@ -199,7 +199,7 @@ def test_deleted_tmdb_id_caches_the_miss(app, monkeypatch):
         return Gone()
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
+    monkeypatch.setattr("app.metadata.tmdb_apply.tmdb_get", fake_tmdb_get)
 
     with app.app_context():
         assert streaming_rail.enriched_movie(126678) is None
@@ -213,8 +213,8 @@ def test_deleted_tmdb_id_caches_the_miss(app, monkeypatch):
 def test_compute_user_rail_excludes_verifies_and_explains(app, monkeypatch):
     from app import db
     from app.models import User, UserMovieReview
-    from app.streaming_rail import compute_user_rail
-    from app.diary import star_rating_fields
+    from app.availability.streaming_rail import compute_user_rail
+    from app.viewing.diary import star_rating_fields
 
     user_id = subscribe(app, 8, "Netflix")
     plant_profile(app, user_id, COMEDY_PROFILE)
@@ -269,7 +269,7 @@ def test_compute_user_rail_excludes_verifies_and_explains(app, monkeypatch):
 
 
 def test_recompute_task_stores_rail_payloads(app, monkeypatch):
-    from app.streaming_rail import RAIL_KEY, recompute_streaming_rail
+    from app.availability.streaming_rail import RAIL_KEY, recompute_streaming_rail
 
     user_id = subscribe(app, 8, "Netflix")
     plant_profile(app, user_id, COMEDY_PROFILE)
@@ -294,7 +294,7 @@ def test_recompute_creates_records_for_recordless_rail_films(app, monkeypatch):
     state."""
 
     from app.models import Movie
-    from app.streaming_rail import recompute_streaming_rail
+    from app.availability.streaming_rail import recompute_streaming_rail
 
     user_id = subscribe(app, 8, "Netflix")
     plant_profile(app, user_id, COMEDY_PROFILE)
@@ -318,7 +318,7 @@ def test_recompute_creates_records_for_recordless_rail_films(app, monkeypatch):
         refresh_targets = {
             job.args[1]
             for job in app.maintenance_queue.jobs
-            if job.func_name == "app.tmdb_refresh.refresh_tmdb_info"
+            if job.func_name == "app.metadata.tmdb_refresh.refresh_tmdb_info"
         }
         assert {comedy.id, drama.id} <= refresh_targets
 
@@ -333,8 +333,8 @@ def test_recompute_creates_records_for_recordless_rail_films(app, monkeypatch):
 def test_landing_page_renders_the_rail(app, admin_client):
     from app import db
     from app.models import UserMovieReview, User
-    from app.streaming_rail import RAIL_KEY
-    from app.diary import star_rating_fields
+    from app.availability.streaming_rail import RAIL_KEY
+    from app.viewing.diary import star_rating_fields
 
     subscribe(app, 8, "Netflix")
     with app.app_context():
@@ -421,7 +421,7 @@ def test_landing_page_requests_rail_compute_once(app, admin_client):
     rail_jobs = [
         job
         for job in app.maintenance_queue.jobs
-        if job.func_name == "app.streaming_rail.recompute_streaming_rail"
+        if job.func_name == "app.availability.streaming_rail.recompute_streaming_rail"
     ]
     assert len(rail_jobs) == 1
 
@@ -440,7 +440,7 @@ def test_runtime_filter_trims_the_streaming_rail(app, admin_client):
     views."""
 
     from app.models import User
-    from app.streaming_rail import RAIL_KEY
+    from app.availability.streaming_rail import RAIL_KEY
 
     subscribe(app, 8, "Netflix")
 
@@ -492,7 +492,7 @@ def test_runtime_filter_says_when_the_rail_empties(app, admin_client):
     The rail keeps its heading and says why it is empty (GitHub #198)."""
 
     from app.models import User
-    from app.streaming_rail import RAIL_KEY
+    from app.availability.streaming_rail import RAIL_KEY
 
     subscribe(app, 8, "Netflix")
 
@@ -538,7 +538,7 @@ def test_genre_filter_trims_the_rail(app, admin_client):
 
     from app import db
     from app.models import TMDBGenre, User
-    from app.streaming_rail import RAIL_KEY
+    from app.availability.streaming_rail import RAIL_KEY
 
     subscribe(app, 8, "Netflix")
 
@@ -590,7 +590,7 @@ def test_a_user_with_no_services_has_no_rail(app, admin_client):
 
     from app import db
     from app.models import UserStreamingProvider
-    from app.streaming_rail import RAIL_KEY, recompute_streaming_rail
+    from app.availability.streaming_rail import RAIL_KEY, recompute_streaming_rail
 
     user_id = subscribe(app, 8, "Netflix")
     item = {
@@ -624,11 +624,11 @@ def test_the_rail_orders_by_the_number_that_its_tiles_show(app, monkeypatch):
     A strong co-preference lifts the drama above the comedy, as it does
     on the tiles. The stored score is the tmdb_taste_score number."""
 
-    import app.recommendations as recommendations
+    import app.discovery.recommendations as recommendations
 
     from app import db
     from app.models import User
-    from app.streaming_rail import compute_user_rail, enriched_movie
+    from app.availability.streaming_rail import compute_user_rail, enriched_movie
 
     user_id = subscribe(app, 8, "Netflix")
     plant_profile(app, user_id, COMEDY_PROFILE)
@@ -677,8 +677,8 @@ def test_a_rail_film_with_a_record_ranks_by_its_movie_lane_number(app, monkeypat
 
     from app import db
     from app.models import User
-    from app.recommendations import SCORES_KEY
-    from app.streaming_rail import compute_user_rail
+    from app.discovery.recommendations import SCORES_KEY
+    from app.availability.streaming_rail import compute_user_rail
 
     user_id = subscribe(app, 8, "Netflix")
     plant_profile(app, user_id, COMEDY_PROFILE)
@@ -710,7 +710,7 @@ def test_the_rail_gives_the_verified_films_to_the_lane_scores(app, monkeypatch):
     user_tmdb_weights keeps the weights on flask.g (#637). Thus, the
     rail passes only the ids."""
 
-    import app.streaming_rail as streaming_rail
+    import app.availability.streaming_rail as streaming_rail
     from app import db
     from app.models import User
 
@@ -734,7 +734,7 @@ def test_the_rail_gives_the_verified_films_to_the_lane_scores(app, monkeypatch):
 def _plant_stored_rail(app, user_id):
     """Store the rail of an earlier good run and return its bytes."""
 
-    from app.streaming_rail import RAIL_KEY
+    from app.availability.streaming_rail import RAIL_KEY
 
     item = {
         "tmdb_id": 6101,
@@ -768,17 +768,19 @@ def _run_with_tmdb(app, monkeypatch, routes, default):
 
     from tests.fakes import tmdb_router
 
-    from app.streaming_rail import recompute_streaming_rail
+    from app.availability.streaming_rail import recompute_streaming_rail
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr("app.tmdb_apply.tmdb_get", tmdb_router(routes, default))
+    monkeypatch.setattr(
+        "app.metadata.tmdb_apply.tmdb_get", tmdb_router(routes, default)
+    )
     assert recompute_streaming_rail() is True
 
 
 def test_a_run_with_no_answer_from_tmdb_keeps_the_stored_rail(app, monkeypatch, caplog):
     """Each discover call fails. The rail of the last good run stays (#698)."""
 
-    from app.streaming_rail import RAIL_KEY
+    from app.availability.streaming_rail import RAIL_KEY
 
     user_id = subscribe(app, 8, "Netflix")
     plant_profile(app, user_id, COMEDY_PROFILE)
@@ -798,7 +800,7 @@ def test_a_run_with_no_availability_answer_keeps_the_stored_rail(
     Then no candidate can be verified. That is no answer, not a rail
     with nothing that streams."""
 
-    from app.streaming_rail import RAIL_KEY
+    from app.availability.streaming_rail import RAIL_KEY
 
     user_id = subscribe(app, 8, "Netflix")
     plant_profile(app, user_id, COMEDY_PROFILE)
@@ -820,7 +822,7 @@ def test_a_run_with_no_enrichment_answer_keeps_the_stored_rail(
 ):
     """Each candidate streams, but each enrichment call fails (#698)."""
 
-    from app.streaming_rail import RAIL_KEY
+    from app.availability.streaming_rail import RAIL_KEY
 
     user_id = subscribe(app, 8, "Netflix")
     plant_profile(app, user_id, COMEDY_PROFILE)
@@ -844,7 +846,7 @@ def test_a_run_with_empty_answers_stores_the_empty_rail(app, monkeypatch, caplog
 
     That is an answer. The empty rail replaces the stored rail."""
 
-    from app.streaming_rail import RAIL_KEY
+    from app.availability.streaming_rail import RAIL_KEY
 
     user_id = subscribe(app, 8, "Netflix")
     plant_profile(app, user_id, COMEDY_PROFILE)
@@ -860,7 +862,7 @@ def test_a_run_with_empty_answers_stores_the_empty_rail(app, monkeypatch, caplog
 def test_a_run_with_nothing_that_streams_stores_the_empty_rail(app, monkeypatch):
     """Each availability lookup answers that the film does not stream (#698)."""
 
-    from app.streaming_rail import RAIL_KEY
+    from app.availability.streaming_rail import RAIL_KEY
 
     user_id = subscribe(app, 8, "Netflix")
     plant_profile(app, user_id, COMEDY_PROFILE)

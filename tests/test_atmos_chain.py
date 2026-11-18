@@ -79,7 +79,7 @@ def _setup(app, monkeypatch, title):
 
     import rq
 
-    import app.atmos as atmos
+    import app.media.atmos as atmos
     from app import db
     from app.models import FileAudioTrack
 
@@ -87,9 +87,11 @@ def _setup(app, monkeypatch, title):
     monkeypatch.setattr(atmos, "WORKSPACE_HEADROOM_BYTES", 0)
     monkeypatch.setattr(atmos, "_run_step", _fake_run_step)
     monkeypatch.setattr(atmos, "mediaconvert_client", lambda: mediaconvert)
-    monkeypatch.setattr("app.aws_storage.aws_s3_client", lambda *a, **k: _FakeS3())
     monkeypatch.setattr(
-        "app.tracks.get_audio_tracks_from_file",
+        "app.archive.aws_storage.aws_s3_client", lambda *a, **k: _FakeS3()
+    )
+    monkeypatch.setattr(
+        "app.media.tracks.get_audio_tracks_from_file",
         lambda path: [{"codec": ATMOS, "language": "eng", "streamorder": 1}],
     )
 
@@ -137,7 +139,7 @@ def _scheduled(app, func):
 def test_the_run_hands_off_around_the_mediaconvert_wait(app, admin_client, monkeypatch):
     """Submit, check, and finish in 3 jobs, on 1 row of chips."""
 
-    import app.atmos as atmos
+    import app.media.atmos as atmos
     from app.pipeline import (
         CONTINUES_KEY,
         _job_meta,
@@ -163,7 +165,7 @@ def test_the_run_hands_off_around_the_mediaconvert_wait(app, admin_client, monke
             ("Encoding E-AC-3 Atmos", "started"),
             ("Adding Atmos twin", "queued"),
         ]
-        (check,) = _scheduled(app, "app.atmos.atmos_check_task")
+        (check,) = _scheduled(app, "app.media.atmos.atmos_check_task")
         assert check.kwargs == {"checks": 0}
         assert check.meta["trail_job"] == job.id
 
@@ -195,7 +197,9 @@ def test_the_run_hands_off_around_the_mediaconvert_wait(app, admin_client, monke
 
         assert atmos.atmos_check_task(*check.args, **check.kwargs) is True
         (second,) = [
-            j for j in _scheduled(app, "app.atmos.atmos_check_task") if j.id != check.id
+            j
+            for j in _scheduled(app, "app.media.atmos.atmos_check_task")
+            if j.id != check.id
         ]
         assert second.kwargs == {"checks": 1}
         assert "(40%)" in second.description
@@ -204,7 +208,7 @@ def test_the_run_hands_off_around_the_mediaconvert_wait(app, admin_client, monke
 
         mediaconvert.fail_next_get = True
         assert atmos.atmos_check_task(*second.args, **second.kwargs) is True
-        assert len(_scheduled(app, "app.atmos.atmos_check_task")) == 3
+        assert len(_scheduled(app, "app.media.atmos.atmos_check_task")) == 3
 
         # The encode is complete. The check queues the finish job.
 
@@ -213,7 +217,7 @@ def test_the_run_hands_off_around_the_mediaconvert_wait(app, admin_client, monke
         (finish,) = [
             j
             for j in app.handoff_queue.jobs
-            if j.func_name == "app.atmos.atmos_finish_task"
+            if j.func_name == "app.media.atmos.atmos_finish_task"
         ]
         assert finish.meta["trail_job"] == job.id
 
@@ -256,14 +260,14 @@ def test_a_failed_encode_ends_the_run_and_releases_everything(app, monkeypatch):
 
     import pytest
 
-    import app.atmos as atmos
+    import app.media.atmos as atmos
     from app.pipeline import record_job_event
 
     with app.app_context():
         file, job, mediaconvert = _setup(app, monkeypatch, "Chain Fail")
         record_job_event(app.redis, job, "started")
         assert atmos.atmos_supplement_task(file.id) is True
-        (check,) = _scheduled(app, "app.atmos.atmos_check_task")
+        (check,) = _scheduled(app, "app.media.atmos.atmos_check_task")
 
         mediaconvert.status = {"Status": "ERROR", "ErrorCode": 1030}
         with pytest.raises(RuntimeError, match="ERROR"):
@@ -283,7 +287,7 @@ def test_a_failed_encode_ends_the_run_and_releases_everything(app, monkeypatch):
 def test_a_run_between_its_jobs_is_not_queued_again(app, monkeypatch):
     """Do not start a second run for a file while its encode is out."""
 
-    import app.atmos as atmos
+    import app.media.atmos as atmos
 
     with app.app_context():
         file, job, _ = _setup(app, monkeypatch, "Chain Once")
@@ -300,7 +304,7 @@ def test_the_import_queues_the_twin_on_the_handoff_queue(app, monkeypatch):
     hours). A library sweep stays on the import queue. A job on either
     queue stops a second job for the same file."""
 
-    import app.atmos as atmos
+    import app.media.atmos as atmos
 
     with app.app_context():
         from rq.job import JobStatus
@@ -317,7 +321,7 @@ def test_the_import_queues_the_twin_on_the_handoff_queue(app, monkeypatch):
             is True
         )
         (handoff,) = [j for j in app.handoff_queue.jobs if j.args == (file.id,)]
-        assert handoff.func_name == "app.atmos.atmos_supplement_task"
+        assert handoff.func_name == "app.media.atmos.atmos_supplement_task"
         assert atmos.maybe_enqueue_atmos_supplement(file.id) is False
         assert not [j for j in app.import_queue.jobs if j.args == (file.id,)]
         handoff.delete()
@@ -326,7 +330,7 @@ def test_the_import_queues_the_twin_on_the_handoff_queue(app, monkeypatch):
 def test_the_scratch_cleanup_deletes_every_version(app):
     """The bucket keeps versions. A plain delete only adds a delete marker."""
 
-    import app.atmos as atmos
+    import app.media.atmos as atmos
 
     class VersionedS3:
         def __init__(self):
@@ -364,7 +368,7 @@ def test_the_scratch_cleanup_deletes_every_version(app):
 def test_a_failed_encode_cancels_the_other_encodes(app, monkeypatch):
     """The other encodes of a failed run must not continue to bill."""
 
-    import app.atmos as atmos
+    import app.media.atmos as atmos
 
     class TwoJobs:
         canceled = []
@@ -404,7 +408,7 @@ class _NoPhases:
 def test_the_extract_step_accepts_a_mkvextract_warning(app, monkeypatch):
     """mkvextract exits 1 after a warning. The run continues (#518)."""
 
-    import app.atmos as atmos
+    import app.media.atmos as atmos
 
     with app.app_context():
         file, job, mediaconvert = _setup(app, monkeypatch, "Extract Warning")
@@ -427,7 +431,7 @@ def test_a_failed_first_check_booking_cleans_up_the_run(app, monkeypatch):
 
     import pytest
 
-    import app.atmos as atmos
+    import app.media.atmos as atmos
 
     with app.app_context():
         file, job, mediaconvert = _setup(app, monkeypatch, "Booking Fault")
@@ -464,16 +468,18 @@ def test_a_stop_after_the_atmos_rename_leaves_the_archive_stale(
     from app import db
     from app.models import File
 
-    import app.atmos as atmos
+    import app.media.atmos as atmos
 
     class Phases:
         def enter(self, name):
             pass
 
     monkeypatch.setitem(app.config, "ARCHIVE_ORIGINAL_MEDIA", True)
-    monkeypatch.setattr("app.aws_storage.aws_s3_client", lambda: None)
-    monkeypatch.setattr("app.tracks.get_audio_tracks_from_file", lambda path: [])
-    monkeypatch.setattr("app.tracks.get_subtitle_tracks_from_file", lambda path: [])
+    monkeypatch.setattr("app.archive.aws_storage.aws_s3_client", lambda: None)
+    monkeypatch.setattr("app.media.tracks.get_audio_tracks_from_file", lambda path: [])
+    monkeypatch.setattr(
+        "app.media.tracks.get_subtitle_tracks_from_file", lambda path: []
+    )
     with app.app_context():
         file = make_movie_file(make_movie("Atmos Stop", 2021), "Bluray-1080p")
         db.session.commit()

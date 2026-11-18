@@ -265,7 +265,7 @@ def test_the_queue_tooltips_wait_for_moment(app, admin_client, tmp_path):
     script runs, and it is defined before DOMContentLoaded."""
 
     app.import_queue.enqueue(
-        "app.importing.localization_task", "/import/Tip (2001).mkv"
+        "app.media.importing.localization_task", "/import/Tip (2001).mkv"
     )
     body = page_with_scripts(admin_client, "/queue")
 
@@ -312,9 +312,11 @@ def test_an_unchanged_queue_answers_304_and_a_healed_chip_repaints(app, admin_cl
 
     basename = "Etag Row (2001) - [DVD].mkv"
     with app.app_context():
-        app.import_queue.enqueue("app.importing.localization_task", "/import/Head.mkv")
         app.import_queue.enqueue(
-            "app.importing.localization_task", args=(f"/import/{basename}",)
+            "app.media.importing.localization_task", "/import/Head.mkv"
+        )
+        app.import_queue.enqueue(
+            "app.media.importing.localization_task", args=(f"/import/{basename}",)
         )
 
     page = admin_client.get("/queue").get_data(as_text=True)

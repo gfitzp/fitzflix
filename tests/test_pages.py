@@ -112,7 +112,7 @@ def test_system_metrics_returns_uncached_fragment(admin_client):
 def test_system_metrics_shows_queue_backlog(app, admin_client):
     with app.app_context():
         app.request_queue.enqueue(
-            "app.tmdb_refresh.refresh_tmdb_info",
+            "app.metadata.tmdb_refresh.refresh_tmdb_info",
             args=("Movies", 1, 1),
             description="Backlogged job",
         )
@@ -126,7 +126,7 @@ def test_system_metrics_shows_queue_backlog(app, admin_client):
 def test_system_metrics_lists_the_open_problems_of_the_health_probe(app, admin_client):
     """Each stored problem of health_probe shows 1 time, escaped (#767)."""
 
-    from app.maintenance import ISSUES_KEY
+    from app.operations.maintenance import ISSUES_KEY
 
     app.redis.hset(
         ISSUES_KEY,
@@ -964,9 +964,9 @@ def test_the_maintenance_page_queues_the_sync_on_maintenance(app, admin_client):
         for job in queue.jobs
     ]
     assert [job.func_name for job in app.maintenance_queue.jobs] == [
-        "app.aws_storage.sync_aws_s3_storage_task"
+        "app.archive.aws_storage.sync_aws_s3_storage_task"
     ]
-    assert names.count("app.aws_storage.sync_aws_s3_storage_task") == 1
+    assert names.count("app.archive.aws_storage.sync_aws_s3_storage_task") == 1
 
 
 @pytest.mark.parametrize(
@@ -1166,7 +1166,7 @@ def test_file_activity_survives_a_retry_that_leaves_the_schedule(
 
     app.import_queue.enqueue_in(
         timedelta(minutes=5),
-        "app.importing.localization_task",
+        "app.media.importing.localization_task",
         "/nowhere/Retry Me (2001) - [DVD].mkv",
         description="'Retry Me (2001) - [DVD].mkv' waits",
     )
@@ -1302,7 +1302,7 @@ def test_file_activity_cards_carry_the_retry_list_and_its_new_times(app, admin_c
     description = "'Retry Twice (2001) - [DVD].mkv' waits"
     app.import_queue.enqueue_in(
         timedelta(minutes=10),
-        "app.importing.localization_task",
+        "app.media.importing.localization_task",
         "/nowhere/Retry Twice (2001) - [DVD].mkv",
         description=description,
     )
@@ -1333,7 +1333,7 @@ def test_file_activity_cards_carry_the_retry_list_and_its_new_times(app, admin_c
 
     app.import_queue.enqueue_in(
         timedelta(minutes=2),
-        "app.importing.localization_task",
+        "app.media.importing.localization_task",
         "/nowhere/Retry Twice (2001) - [DVD].mkv",
         description=description,
     )

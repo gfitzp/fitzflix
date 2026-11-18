@@ -17,7 +17,7 @@ def test_the_stale_mark_survives_the_rollback_that_follows_it(app):
     removed the marker, the loss would stay hidden as before."""
 
     from app import db
-    from app.aws_storage import mark_archive_stale
+    from app.archive.aws_storage import mark_archive_stale
     from app.models import File
     from tests.factories import make_movie, make_movie_file
 
@@ -45,7 +45,7 @@ def test_a_successful_upload_clears_the_stale_mark(app, monkeypatch):
     from app.models import File
     from tests.factories import make_movie, make_movie_file
 
-    import app.aws_storage as aws_storage
+    import app.archive.aws_storage as aws_storage
 
     with app.app_context():
         movie = make_movie("Repaired", 2021)
@@ -78,7 +78,7 @@ def test_a_transient_mount_error_does_not_reject_the_file(app, tmp_path, monkeyp
     problem that clears on its own. This is exactly how the lost-handle
     state arrives: from inside the close of s3transfer."""
 
-    import app.aws_storage as aws_storage
+    import app.archive.aws_storage as aws_storage
 
     path = str(tmp_path / "transient.mkv")
     open(path, "wb").write(b"x")
@@ -117,7 +117,7 @@ def test_a_failed_upload_never_moves_the_file(app, monkeypatch, tmp_path, error)
     import boto3
     import botocore.exceptions
 
-    import app.aws_storage as aws_storage
+    import app.archive.aws_storage as aws_storage
 
     path = tmp_path / "library.mkv"
     path.write_bytes(b"x")
@@ -162,7 +162,7 @@ def test_the_etag_uses_the_part_size_of_the_upload(app, monkeypatch, tmp_path):
 
     from s3transfer.utils import ChunksizeAdjuster
 
-    import app.aws_storage as aws_storage
+    import app.archive.aws_storage as aws_storage
 
     mib = 1024 * 1024
     path = tmp_path / "large.mkv"
@@ -190,7 +190,7 @@ def _worker_upload(app, file_id):
     from app.pipeline import PipelineWorker, pipeline_trails
 
     with app.app_context():
-        job = app.file_queue.enqueue("app.aws_storage.upload_task", file_id)
+        job = app.file_queue.enqueue("app.archive.aws_storage.upload_task", file_id)
     PipelineWorker([app.file_queue], connection=app.redis).work(burst=True)
     (trail,) = pipeline_trails(app.redis)
     return job, [(entry["stage"], entry["status"]) for entry in trail["entries"]]
@@ -221,7 +221,7 @@ def test_a_good_upload_in_the_worker_stamps_its_chip_done(app, monkeypatch):
     from rq.job import JobStatus
 
     monkeypatch.setattr(
-        "app.aws_storage.aws_upload",
+        "app.archive.aws_storage.aws_upload",
         lambda *args, **kwargs: (
             "modified/Chip Good (2026) - [DVD].mkv",
             datetime.now(timezone.utc),
@@ -248,7 +248,7 @@ def test_an_upload_that_raises_fails_its_job_and_its_chip(app, monkeypatch):
     def failing_upload(*args, **kwargs):
         raise OSError("drill")
 
-    monkeypatch.setattr("app.aws_storage.aws_upload", failing_upload)
+    monkeypatch.setattr("app.archive.aws_storage.aws_upload", failing_upload)
     with app.app_context():
         file_id = _stale_file("Chip Raises")
 
@@ -273,7 +273,8 @@ def test_a_refused_upload_does_not_show_done(app, monkeypatch):
 
     uploads = []
     monkeypatch.setattr(
-        "app.aws_storage.aws_upload", lambda *args, **kwargs: uploads.append(args)
+        "app.archive.aws_storage.aws_upload",
+        lambda *args, **kwargs: uploads.append(args),
     )
     with app.app_context():
         file_id = _stale_file("Chip Refused", restore_requested_at=datetime.utcnow())
@@ -317,7 +318,7 @@ def test_a_second_upload_job_that_meets_the_lock_does_not_show_done(app, monkeyp
     from app import db
     from app.models import File
     from app.pipeline import PipelineWorker, pipeline_trails, retry_now
-    from app.videos import lock_wait_job_id
+    from app.media.videos import lock_wait_job_id
 
     uploads = []
 
@@ -325,12 +326,15 @@ def test_a_second_upload_job_that_meets_the_lock_does_not_show_done(app, monkeyp
         uploads.append(args)
         return "modified/Lock Wait (2026) - [DVD].mkv", datetime.now(timezone.utc), 1
 
-    monkeypatch.setattr("app.aws_storage.aws_upload", recorder)
+    monkeypatch.setattr("app.archive.aws_storage.aws_upload", recorder)
     with app.app_context():
         file_id = _stale_file("Lock Wait")
         file = db.session.get(File, file_id)
         wait_id = lock_wait_job_id(
-            "app.aws_storage.upload_task", f"'{file.basename}'", (file_id,), key=file_id
+            "app.archive.aws_storage.upload_task",
+            f"'{file.basename}'",
+            (file_id,),
+            key=file_id,
         )
         held = app.lock_manager.lock(file.file_identifier(), 600000)
         assert held
@@ -345,11 +349,11 @@ def test_a_second_upload_job_that_meets_the_lock_does_not_show_done(app, monkeyp
         return bool(meta.get("trail_skipped"))
 
     with app.app_context():
-        app.file_queue.enqueue("app.aws_storage.upload_task", file_id)
+        app.file_queue.enqueue("app.archive.aws_storage.upload_task", file_id)
     assert run() == [("scheduled", wait_id)]
 
     with app.app_context():
-        second = app.file_queue.enqueue("app.aws_storage.upload_task", file_id)
+        second = app.file_queue.enqueue("app.archive.aws_storage.upload_task", file_id)
     chips = run()
 
     # The second job did no work. The chip of the wait stands for the
@@ -393,10 +397,10 @@ def test_a_stale_skip_mark_on_a_booked_hash_does_not_hide_a_good_upload(
     from app import db
     from app.models import File
     from app.pipeline import PipelineWorker, pipeline_trails
-    from app.videos import lock_wait_job_id
+    from app.media.videos import lock_wait_job_id
 
     monkeypatch.setattr(
-        "app.aws_storage.aws_upload",
+        "app.archive.aws_storage.aws_upload",
         lambda *args, **kwargs: (
             "modified/Stale Mark (2026) - [DVD].mkv",
             datetime.now(timezone.utc),
@@ -407,10 +411,13 @@ def test_a_stale_skip_mark_on_a_booked_hash_does_not_hide_a_good_upload(
         file_id = _stale_file("Stale Mark")
         file = db.session.get(File, file_id)
         wait_id = lock_wait_job_id(
-            "app.aws_storage.upload_task", f"'{file.basename}'", (file_id,), key=file_id
+            "app.archive.aws_storage.upload_task",
+            f"'{file.basename}'",
+            (file_id,),
+            key=file_id,
         )
         job = app.file_queue.enqueue(
-            "app.aws_storage.upload_task", file_id, job_id=wait_id
+            "app.archive.aws_storage.upload_task", file_id, job_id=wait_id
         )
     job.meta["trail_skipped"] = True
     job.save_meta()

@@ -28,7 +28,7 @@ def sweep_with_feeds(app, monkeypatch, movie_pages=None, tv_pages=None):
     for every day slice. The id sets remove the duplicates. Return
     (result, requests seen)."""
 
-    import app.tmdb_changes as tc
+    import app.metadata.tmdb_changes as tc
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
     seen = []
@@ -42,7 +42,7 @@ def sweep_with_feeds(app, monkeypatch, movie_pages=None, tv_pages=None):
             return changes_page(pages[page - 1], total_pages=len(pages))
         return changes_page([], total_pages=len(pages))
 
-    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
+    monkeypatch.setattr("app.metadata.tmdb_apply.tmdb_get", fake_tmdb_get)
     return tc.refresh_changed_records(), seen
 
 
@@ -68,7 +68,7 @@ def test_only_changed_unignored_movies_are_queued(app, monkeypatch):
     assert [job.args for job in app.request_queue.jobs] == [("Movies", jaws_id, 578)]
     assert max(p["page"] for url, p in seen if "/movie/" in url) == 2
 
-    import app.tmdb_changes as tc
+    import app.metadata.tmdb_changes as tc
 
     assert app.redis.get(tc.LAST_RUN_KEY) is not None
 
@@ -111,7 +111,7 @@ def test_window_is_day_sliced_and_clamped_to_the_lookback(app, monkeypatch):
     the cap. Older edits are unknowable. The sweep enumerates the window
     in 1-day slices. Thus, no slice can approach the 500-page limit."""
 
-    import app.tmdb_changes as tc
+    import app.metadata.tmdb_changes as tc
 
     now = datetime.now(timezone.utc)
     app.redis.set(tc.LAST_RUN_KEY, (now - timedelta(days=30)).isoformat())
@@ -136,7 +136,7 @@ def test_failed_enumeration_keeps_the_watermark(app, monkeypatch):
     covers the window again. A title that is refreshed 2 times is
     harmless. A missed edit is not."""
 
-    import app.tmdb_changes as tc
+    import app.metadata.tmdb_changes as tc
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
     stamp = (datetime.now(timezone.utc) - timedelta(days=2)).isoformat()
@@ -145,14 +145,14 @@ def test_failed_enumeration_keeps_the_watermark(app, monkeypatch):
     def failing_tmdb_get(url, params=None, **kwargs):
         raise ConnectionError("TMDB unreachable")
 
-    monkeypatch.setattr("app.tmdb_apply.tmdb_get", failing_tmdb_get)
+    monkeypatch.setattr("app.metadata.tmdb_apply.tmdb_get", failing_tmdb_get)
 
     assert tc.refresh_changed_records() == 0
     assert app.redis.get(tc.LAST_RUN_KEY).decode() == stamp
 
 
 def test_sweep_without_an_api_key_is_a_noop(app):
-    import app.tmdb_changes as tc
+    import app.metadata.tmdb_changes as tc
 
     assert not app.config["TMDB_API_KEY"]
     assert tc.refresh_changed_records() == 0
@@ -171,6 +171,6 @@ def test_cron_table_sweeps_tmdb_changes_nightly(app):
     with app.app_context():
         entries = {entry["func"]: entry for entry in cron_table(app.config)}
 
-    entry = entries["app.tmdb_changes.refresh_changed_records"]
+    entry = entries["app.metadata.tmdb_changes.refresh_changed_records"]
     assert entry["cron"] == "35 3 * * *"
     assert entry["queue"] == "fitzflix-maintenance"

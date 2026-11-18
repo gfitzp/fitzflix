@@ -22,7 +22,7 @@ class _Answer:
 
 
 def test_tmdb_json_adds_the_url_and_the_key(app, monkeypatch):
-    from app.tmdb_apply import tmdb_json
+    from app.metadata.tmdb_apply import tmdb_json
 
     calls = []
 
@@ -31,7 +31,7 @@ def test_tmdb_json_adds_the_url_and_the_key(app, monkeypatch):
         return _Answer({"id": 603})
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "key")
-    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_get)
+    monkeypatch.setattr("app.metadata.tmdb_apply.tmdb_get", fake_get)
     with app.app_context():
         assert tmdb_json("/movie/603", {"append_to_response": "credits"}) == {"id": 603}
     url, kwargs = calls[0]
@@ -45,18 +45,22 @@ def test_tmdb_json_adds_the_url_and_the_key(app, monkeypatch):
 def test_tmdb_json_raises_the_http_error(app, monkeypatch):
     """A caller can tell a 404 from an outage."""
 
-    from app.tmdb_apply import tmdb_json
+    from app.metadata.tmdb_apply import tmdb_json
 
-    monkeypatch.setattr("app.tmdb_apply.tmdb_get", lambda url, **k: _Answer({}, 404))
+    monkeypatch.setattr(
+        "app.metadata.tmdb_apply.tmdb_get", lambda url, **k: _Answer({}, 404)
+    )
     with app.app_context(), pytest.raises(requests.exceptions.HTTPError) as error:
         tmdb_json("/movie/1")
     assert error.value.response.status_code == 404
 
 
 def test_tmdb_json_or_logs_and_returns_the_default(app, monkeypatch, log_capture):
-    from app.tmdb_apply import tmdb_json_or
+    from app.metadata.tmdb_apply import tmdb_json_or
 
-    monkeypatch.setattr("app.tmdb_apply.tmdb_get", lambda url, **k: _Answer({}, 503))
+    monkeypatch.setattr(
+        "app.metadata.tmdb_apply.tmdb_get", lambda url, **k: _Answer({}, 503)
+    )
     with app.app_context():
         assert tmdb_json_or("/movie/1", None, "fallback") == "fallback"
     assert any("503 error" in record.getMessage() for record in log_capture)

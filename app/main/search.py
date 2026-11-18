@@ -21,8 +21,8 @@ from flask_login import current_user, login_required
 from app import db
 from app.models import File, Movie, RefQuality, TMDBCredit, TVSeries, UserMovieReview
 from app.main import bp
-from app.file_ranking import MOVIE_BEST_ORDER, copy_upgradable, season_grades
-from app.tmdb_apply import tmdb_json
+from app.media.file_ranking import MOVIE_BEST_ORDER, copy_upgradable, season_grades
+from app.metadata.tmdb_apply import tmdb_json
 from app.main.helpers import (
     _upgrade_threshold,
     decimal_id,
@@ -30,14 +30,14 @@ from app.main.helpers import (
     series_upgradable,
 )
 from app.main.library import _credited_film_pairs, _dominant_roles
-from app.funnel import might_interest, user_film_sets_by_id
-from app.recommendations import (
+from app.discovery.funnel import might_interest, user_film_sets_by_id
+from app.discovery.recommendations import (
     coarse_interest_score,
     marker_bar,
     recommended_movie_ids,
     stored_profile,
 )
-from app.streaming import (
+from app.availability.streaming import (
     batch_title_availability,
     rental_matches,
     request_warm,

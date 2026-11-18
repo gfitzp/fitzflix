@@ -29,7 +29,7 @@ from rq.scheduler import RQScheduler
 from rq.utils import now
 
 from app import cron_table, get_app, next_cron_time
-from app.maintenance import keep_cron_registered
+from app.operations.maintenance import keep_cron_registered
 from app.queues import QUEUE_NAMES
 from app.tasks import FAILURE_TTL
 

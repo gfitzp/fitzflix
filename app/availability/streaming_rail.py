@@ -1,0 +1,655 @@
+"""The "Streaming on your services" rail of the landing page.
+
+The candidates come from the discover endpoint of TMDB. There are
+shared per-provider pools (popular, acclaimed, and newly streaming
+sorts). There are also taste-shaped queries built from the stored
+profile of each user. Thus, discover is a candidate generator, never
+the display truth. Its provider filters and monetization filters
+demonstrably contaminate each other. Thus, Fitzflix first verifies
+each film that it can show against the per-title watch-provider cache.
+The survivors are enriched with full credits. Then the crew features
+score too. Each recommendation carries its provenance (the named query
+that produced it) and its top contributing features.
+
+Films already in the library or in the diary of the user are excluded.
+The rail recommends what to watch on the services that the user
+already pays for. It never recommends what to buy (that preference is
+physical media). The discover data and the availability data come from
+JustWatch through TMDB. Thus, the rail shows the mandatory attribution
+wherever it renders.
+"""
+
+import json
+import traceback
+
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
+
+from flask import current_app
+from requests.exceptions import HTTPError
+from werkzeug.local import LocalProxy
+
+from app.cache import MISS, cache_json, cached_fetch, cached_json
+from app.redis_guard import nothing_stored
+from app.tasks import enqueue_task
+from app import db, get_app
+from app.models import File, Movie, User, UserMovieReview, UserMovieStatus
+from app.discovery.recommendations import (
+    CREW_ROLE_JOBS,
+    JOB_TO_CLASS,
+    TOP_BILLING_CUTOFF,
+    features_from_parts,
+    score_movie,
+    stored_profile,
+    record_lane_scores,
+    tmdb_taste_score,
+)
+from app.availability.streaming import (
+    batch_title_availability,
+    streaming_matches,
+    user_provider_ids,
+)
+from app.metadata.tmdb_apply import tmdb_json, tmdb_json_or
+
+# The app instance of this process. Fitzflix resolves it lazily. Thus,
+# the nightly task can run on a worker without a second application.
+
+app = LocalProxy(get_app)
+
+RAIL_KEY = "fitzflix:recs:streaming:{user_id}"
+POOL_KEY = "fitzflix:rail:pool:{provider_id}"
+POOL_CACHE_SECONDS = 86400
+ENRICHED_KEY = "fitzflix:tmdb:movie:{tmdb_id}:enriched"
+
+# The 1 cache life of an enriched payload. A fetch on demand and the
+# nightly warm (app.discovery.estimate_warm) both use it. The warm sets it again
+# on each tracked film before it expires.
+
+ENRICHED_CACHE_SECONDS = 30 * 86400
+
+# Shared per-provider pool queries: (provenance tag, sort_by, vote floor).
+# The acclaimed variant needs a real vote floor. If not, obscure
+# 10.0-rated shovelware tops the list. Each query also carries the base
+# hygiene floor and include_adult=false.
+
+POOL_SORTS = (
+    ("popular", "popularity.desc", 50),
+    ("acclaimed", "vote_average.desc", 200),
+    ("new", "primary_release_date.desc", 50),
+)
+POOL_PAGES = 3
+
+# Per-user taste-shaped queries that come from the profile
+
+TASTE_GENRE_PAGES = 2
+TASTE_PEOPLE_LIMIT = 3
+NEGATIVE_GENRE_THRESHOLD = -0.08
+
+# How deep the rail digs. Fitzflix verifies the coarse-ranked candidates
+# against the per-title availability cache. Then it enriches them with
+# credits. The depth feeds the runtime filter of the landing page. A
+# tight minute limit thins the rail. Thus, the rail stores many more
+# films than the 12 that it displays. The enrichment is cached for 30
+# days (ENRICHED_CACHE_SECONDS). Thus, the extra depth costs 1 burst on
+# the first night.
+
+VERIFY_DEPTH = 100
+ENRICH_DEPTH = 50
+STORED_RAIL_ITEMS = 50
+
+
+def _discover(params):
+    """Return the results of 1 discover page, or None when TMDB gave no answer.
+
+    An answer with no results is []. One failed page makes the rail less
+    deep. A run in which no page answered keeps the stored rail (#698)."""
+
+    body = tmdb_json_or("/discover/movie", params, None)
+    return None if body is None else body.get("results") or []
+
+
+def _base_params(provider_ids):
+    """Return the hygiene that each rail query carries.
+
+    That is US flatrate on the given providers, no adult titles, and a
+    vote floor against shovelware."""
+
+    return {
+        "watch_region": "US",
+        "with_watch_providers": "|".join(str(p) for p in sorted(provider_ids)),
+        "with_watch_monetization_types": "flatrate",
+        "include_adult": "false",
+        "vote_count.gte": 50,
+    }
+
+
+def _merge(pool, items, source):
+    """Fold the discover items into the candidate pool.
+
+    This function accumulates the provenance tags of each film."""
+
+    for item in items:
+        tmdb_id = item.get("id")
+        if tmdb_id is None:
+            continue
+        entry = pool.setdefault(tmdb_id, {"item": item, "sources": []})
+        if source not in entry["sources"]:
+            entry["sources"].append(source)
+
+
+def provider_pool(provider_id, provider_name):
+    """Return the shared candidate pool for one provider.
+
+    The pool holds the popular, acclaimed, and newly streaming pages.
+    Fitzflix caches it for 1 day. Thus, an on-demand rail compute does
+    not fetch again what the nightly run already pulled. The result is
+    None when TMDB gave no answer to any page (#698)."""
+
+    def fetch():
+        pool = {}
+        answered = False
+        for tag, sort_by, vote_floor in POOL_SORTS:
+            for page in range(1, POOL_PAGES + 1):
+                params = _base_params([provider_id])
+                params.update(
+                    {"sort_by": sort_by, "page": page, "vote_count.gte": vote_floor}
+                )
+                results = _discover(params)
+                if results is not None:
+                    answered = True
+                    _merge(pool, results, f"{tag} on {provider_name}")
+        # An empty pool is not cached. The next compute asks again
+        pool = {str(k): v for k, v in pool.items()}
+        return (pool if answered else None), bool(pool)
+
+    return cached_fetch(
+        POOL_KEY.format(provider_id=int(provider_id)), POOL_CACHE_SECONDS, fetch
+    )
+
+
+def _taste_queries(profile, provider_ids):
+    """Return (provenance tag, extra params, pages) tuples shaped by the profile.
+
+    The queries use the top genres of the user, the favorite decade,
+    and the people with the highest affinity. These queries give the
+    clearest explanations."""
+
+    affinities = profile.get("affinities", {})
+
+    def top(cls, count):
+        entries = [
+            (key, entry)
+            for key, entry in affinities.items()
+            if entry["class"] == cls and entry["score"] > 0
+        ]
+        entries.sort(key=lambda pair: pair[1]["score"], reverse=True)
+        return entries[:count]
+
+    negative_genres = [
+        key.split(":", 1)[1]
+        for key, entry in affinities.items()
+        if entry["class"] == "genre" and entry["score"] < NEGATIVE_GENRE_THRESHOLD
+    ]
+    exclusions = (
+        {"without_genres": ",".join(negative_genres)} if negative_genres else {}
+    )
+
+    queries = []
+
+    genres = top("genre", 2)
+    if genres:
+        labels = "/".join(entry["label"] for _, entry in genres)
+        genre_ids = "|".join(key.split(":", 1)[1] for key, _ in genres)
+        queries.append(
+            (
+                f"your taste in {labels}",
+                {"with_genres": genre_ids, "sort_by": "popularity.desc", **exclusions},
+                TASTE_GENRE_PAGES,
+            )
+        )
+
+    decades = top("decade", 1)
+    if decades:
+        decade = int(decades[0][0].split(":", 1)[1])
+        queries.append(
+            (
+                f"your affinity for the {decade}s",
+                {
+                    "primary_release_date.gte": f"{decade}-01-01",
+                    "primary_release_date.lte": f"{decade + 9}-12-31",
+                    "sort_by": "popularity.desc",
+                    **exclusions,
+                },
+                1,
+            )
+        )
+
+    people = [
+        (key, entry)
+        for cls in (
+            "director",
+            "actor",
+            *(c for c in CREW_ROLE_JOBS if c != "director"),
+        )
+        for key, entry in top(cls, TASTE_PEOPLE_LIMIT)
+    ]
+    people.sort(key=lambda pair: pair[1]["score"], reverse=True)
+    for key, entry in people[:TASTE_PEOPLE_LIMIT]:
+        person_id = key.split(":", 1)[1]
+        queries.append(
+            (
+                f"features {entry['label']}",
+                {"with_people": person_id, "sort_by": "popularity.desc"},
+                1,
+            )
+        )
+
+    return queries
+
+
+def _excluded_tmdb_ids(user_id):
+    """Return the TMDB ids that the rail must never recommend.
+
+    These are the films with a local main-feature file, and the films
+    already in the diary of this user (owned records and review-only
+    records). The films that the user dismissed are also here."""
+
+    owned = db.session.query(Movie.tmdb_id).filter(
+        Movie.tmdb_id.isnot(None),
+        Movie.files.any(File.feature_type_id.is_(None)),
+    )
+    logged = (
+        db.session.query(Movie.tmdb_id)
+        .join(UserMovieReview, UserMovieReview.movie_id == Movie.id)
+        .filter(Movie.tmdb_id.isnot(None))
+        .filter(UserMovieReview.user_id == int(user_id))
+    )
+    refused = (
+        db.session.query(Movie.tmdb_id)
+        .join(UserMovieStatus, UserMovieStatus.movie_id == Movie.id)
+        .filter(Movie.tmdb_id.isnot(None))
+        .filter(UserMovieStatus.user_id == int(user_id))
+        .filter(UserMovieStatus.kind == "not_interested")
+    )
+    return (
+        {tmdb_id for (tmdb_id,) in owned}
+        | {tmdb_id for (tmdb_id,) in logged}
+        | {tmdb_id for (tmdb_id,) in refused}
+    )
+
+
+def _discover_features(item):
+    """Return coarse feature tuples directly from a discover payload item.
+
+    The tuples hold the genre ids, the decade, and the language. They
+    serve the ranking before verification. Labels are not necessary at
+    this stage. The display pass scores the enriched payloads again."""
+
+    features = []
+    for genre_id in item.get("genre_ids") or []:
+        features.append(("genre", f"genre:{genre_id}", str(genre_id)))
+    release = item.get("release_date") or ""
+    if release[:4].isdigit():
+        decade = int(release[:4]) // 10 * 10
+        features.append(("decade", f"decade:{decade}", f"{decade}s"))
+    language = item.get("original_language")
+    if language:
+        features.append(
+            ("language", f"language:{language}", f"{language.upper()}-language")
+        )
+    return features
+
+
+def movie_gone(tmdb_id):
+    """Return True if TMDB answered 404 for this film, and the miss is cached.
+
+    A caller that retries after a TMDB failure must not retry a film
+    that TMDB deleted. That is not a failure."""
+
+    return enriched_movie_state(tmdb_id, fetch=False)[0] == "gone"
+
+
+def enriched_movie(tmdb_id):
+    """Return the trimmed movie payload that the rail scores and displays.
+
+    It holds the genres, keywords, top cast, role-mapped crew, and
+    runtime. Fitzflix caches it for 30 days (credits and runtimes are
+    stable). The result is None for a film that TMDB deleted and after
+    a transient error. enriched_movie_state tells the 2 apart."""
+
+    return enriched_movie_state(tmdb_id)[1]
+
+
+def enriched_movie_state(tmdb_id, fetch=True):
+    """Return (state, payload) for the enriched payload of a film.
+
+    The state is "hit" with a payload, "gone" for a film that TMDB
+    deleted, or "unknown". Unknown means a transient error, no TMDB key,
+    or no cached entry when fetch is False."""
+
+    cache_key = ENRICHED_KEY.format(tmdb_id=int(tmdb_id))
+    payload = cached_json(cache_key)
+    if payload is MISS:
+        if not fetch or not current_app.config["TMDB_API_KEY"]:
+            return "unknown", None
+        payload, ok = _fetch_enriched(tmdb_id)
+        if not ok:
+            return "unknown", None
+        cache_json(cache_key, payload, ENRICHED_CACHE_SECONDS)
+    return ("gone", None) if payload is None else ("hit", payload)
+
+
+def _fetch_enriched(tmdb_id):
+    """Fetch and trim the movie payload from TMDB. Return (payload, ok).
+
+    TMDB deletes films, but their credit rows stay on person pages.
+    Thus, a filmography can continue to offer an id that the movie
+    endpoint no longer answers. A 404 is (None, True). The cache keeps
+    that miss, and each render does not ask again. Any other error is
+    (None, False), and nothing is cached."""
+
+    try:
+        payload = (
+            tmdb_json(
+                f"/movie/{int(tmdb_id)}", {"append_to_response": "credits,keywords"}
+            )
+            or {}
+        )
+    except HTTPError as error:
+        if error.response is not None and error.response.status_code == 404:
+            current_app.logger.info(f"TMDB movie {int(tmdb_id)} is gone (404)")
+            return None, True
+        current_app.logger.warning(traceback.format_exc())
+        return None, False
+    except Exception:
+        current_app.logger.warning(traceback.format_exc())
+        return None, False
+
+    credits = payload.get("credits") or {}
+    trimmed = {
+        "tmdb_id": payload.get("id"),
+        "title": payload.get("title"),
+        "year": (payload.get("release_date") or "")[:4],
+        "poster_path": payload.get("poster_path"),
+        "runtime": payload.get("runtime"),
+        "overview": payload.get("overview"),
+        "original_language": payload.get("original_language"),
+        "genres": [
+            {"id": g.get("id"), "name": g.get("name")}
+            for g in payload.get("genres") or []
+        ],
+        "keywords": [
+            {"id": k.get("id"), "name": k.get("name")}
+            for k in (payload.get("keywords") or {}).get("keywords") or []
+        ],
+        "cast": [
+            {"id": c.get("id"), "name": c.get("name")}
+            for c in (credits.get("cast") or [])[:TOP_BILLING_CUTOFF]
+        ],
+        "crew": [
+            {"id": c.get("id"), "name": c.get("name"), "job": c.get("job")}
+            for c in credits.get("crew") or []
+            if c.get("job") in JOB_TO_CLASS
+        ],
+    }
+    return trimmed, True
+
+
+def _payload_features(payload):
+    """Return the full feature tuples from an enriched payload.
+
+    The tuples use the exact key space of the taste profile. Thus, the
+    library films and the streaming candidates score on the same
+    affinities, crew roles included."""
+
+    return features_from_parts(
+        [(genre["id"], genre["name"]) for genre in payload.get("genres") or []],
+        [(keyword["id"], keyword["name"]) for keyword in payload.get("keywords") or []],
+        [(actor["id"], actor["name"]) for actor in payload.get("cast") or []],
+        [
+            (person["id"], person["name"], person["job"])
+            for person in payload.get("crew") or []
+        ],
+        payload.get("year"),
+        payload.get("original_language"),
+    )
+
+
+def compute_user_rail(user):
+    """Return the ranked streaming rail for one user, or None.
+
+    The result is None when the user has no taste profile or no
+    provider picks. The pipeline has 4 steps. First, the shared
+    provider pools and the taste-shaped queries. Second, the coarse
+    affinity ranking. Third, the per-title availability verification
+    (discover lies, the watch-provider cache does not). Fourth, the
+    credits enrichment and the full-feature rescoring of the survivors.
+
+    The result is also None when a step got no answer: each call of the
+    discovery, of the verification or of the enrichment failed. The task
+    then keeps the stored rail of the last good run (#698). An empty
+    answer is an answer, and a cached answer of an earlier run is an
+    answer too. A step in which some calls answered gives a less deep
+    rail.
+    """
+
+    profile = stored_profile(current_app.redis, user.id)
+    provider_ids = user_provider_ids(user)
+    if not profile or not provider_ids:
+        return None
+
+    provider_names = {row.provider_id: row.name for row in user.streaming_providers}
+
+    pool = {}
+    answered = False
+    for provider_id in sorted(provider_ids):
+        shared = provider_pool(
+            provider_id, provider_names.get(provider_id) or f"provider {provider_id}"
+        )
+        if shared is None:
+            continue
+        answered = True
+        for tmdb_id, entry in shared.items():
+            _merge(pool, [entry["item"]], entry["sources"][0])
+            for source in entry["sources"][1:]:
+                _merge(pool, [entry["item"]], source)
+
+    for tag, extra_params, pages in _taste_queries(profile, provider_ids):
+        for page in range(1, pages + 1):
+            params = {**_base_params(provider_ids), **extra_params, "page": page}
+            results = _discover(params)
+            if results is not None:
+                answered = True
+                _merge(pool, results, tag)
+    if not answered:
+        return _no_answer(user, "discovery")
+
+    excluded = _excluded_tmdb_ids(user.id)
+    ranked = []
+    for tmdb_id, entry in pool.items():
+        tmdb_id = int(tmdb_id)
+        if tmdb_id in excluded:
+            continue
+        score, _ = score_movie(_discover_features(entry["item"]), profile)
+        popularity = entry["item"].get("popularity") or 0.0
+        ranked.append((score, popularity, tmdb_id, entry))
+    ranked.sort(key=lambda row: (row[0], row[1]), reverse=True)
+
+    # Verification. Only the films that really stream on the services
+    # of this user survive. The availability is cached per title and
+    # shared with the page views.
+
+    candidates = ranked[:VERIFY_DEPTH]
+    availability, _ = batch_title_availability(
+        [tmdb_id for _, _, tmdb_id, _ in candidates]
+    )
+    # A payload of None is no answer. A film that streams nowhere has an
+    # empty payload.
+    if candidates and all(
+        availability.get(tmdb_id) is None for _, _, tmdb_id, _ in candidates
+    ):
+        return _no_answer(user, "verification")
+    verified = []
+    for score, popularity, tmdb_id, entry in candidates:
+        matches = streaming_matches(
+            availability.get(tmdb_id), provider_ids, tmdb_id=tmdb_id
+        )
+        if matches:
+            verified.append((tmdb_id, entry, matches))
+        if len(verified) == ENRICH_DEPTH:
+            break
+
+    # Enrichment. The full credits let the crew affinities score. Then
+    # the final ranking gets human-readable explanations.
+
+    flask_app = current_app._get_current_object()
+
+    def enrich(tmdb_id):
+        """Return the state of one enriched payload under its own app context."""
+
+        with flask_app.app_context():
+            return tmdb_id, enriched_movie_state(tmdb_id)
+
+    payloads = {}
+    states = set()
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        for tmdb_id, (state, payload) in executor.map(
+            enrich, [tmdb_id for tmdb_id, _, _ in verified]
+        ):
+            states.add(state)
+            payloads[tmdb_id] = payload
+    if states == {"unknown"}:
+        return _no_answer(user, "enrichment")
+
+    # A film with a record shows the movie-id lane number on its tile.
+    # Thus, the rail ranks it by that number (#535).
+
+    recorded = record_lane_scores(
+        current_app.redis,
+        user.id,
+        [tmdb_id for tmdb_id, _, _ in verified],
+        profile,
+    )
+
+    items = []
+    for tmdb_id, entry, matches in verified:
+        payload = payloads.get(tmdb_id)
+        if not payload:
+            continue
+        # The rail orders by the TMDB-lane number, the same as the other
+        # discovery shelves. Taste alone disagreed with the estimates on
+        # the tiles, which add the co-preference (#420).
+
+        score, contributions = tmdb_taste_score(user.id, tmdb_id, payload, profile)
+        score = recorded.get(tmdb_id, score)
+        because = [entry["sources"][0]]
+        because += [
+            label for contribution, label in contributions[:3] if contribution > 0
+        ]
+        items.append(
+            {
+                "tmdb_id": tmdb_id,
+                "title": payload.get("title"),
+                "year": payload.get("year"),
+                "poster_path": payload.get("poster_path"),
+                "runtime": payload.get("runtime"),
+                "providers": matches,
+                "because": because[:4],
+                "score": round(score, 4),
+            }
+        )
+
+    items.sort(key=lambda item: item["score"], reverse=True)
+    return items[:STORED_RAIL_ITEMS]
+
+
+def _no_answer(user, step):
+    """Log that TMDB gave no answer to a step of the rail of user. Return None.
+
+    The task writes nothing for None. Thus, the rail of the last good
+    run stays (#698)."""
+
+    current_app.logger.warning(
+        f"Streaming rail: TMDB gave no answer to the {step} for user "
+        f"{user.id}. The stored rail stays"
+    )
+    return None
+
+
+def ensure_rail_records(items):
+    """Make sure that each rail film has a real movie record.
+
+    Then the shared score source can estimate them like any owned or
+    listed title. A rail film found only on TMDB had no record that
+    /movie_states could map its tile through. Thus, its ladder stayed
+    blank while the films with records showed estimates. Each film gets
+    a review-only record here. It goes through the same shared creation
+    door that the review and watchlist surfaces use. A film that the
+    standard TMDB refresh never stamped gets a refresh enqueued. After
+    that, the resolver scores it on the first tile view, and the
+    nightly recompute includes it."""
+
+    from app.metadata.tmdb_refresh import find_or_create_tmdb_movie
+
+    to_refresh = {}
+    for item in items:
+        year = str(item.get("year") or "")
+        if not item.get("title") or not year.isdigit():
+            continue
+        movie, _ = find_or_create_tmdb_movie(item["tmdb_id"], item["title"], int(year))
+        if movie is None:
+            continue
+        if movie.tmdb_data_as_of is None:
+            to_refresh[movie.id] = movie
+    db.session.commit()
+    for movie in to_refresh.values():
+        enqueue_task(
+            "app.metadata.tmdb_refresh.refresh_tmdb_info",
+            "Movies",
+            movie.id,
+            movie.tmdb_id,
+            # A bulk discovery refreshes on the maintenance queue. Thus,
+            # it does not crowd out the refreshes that a user asks for.
+            queue="maintenance",
+            description=f"Refreshing TMDB data for '{movie.title} ({movie.year})'",
+        )
+
+
+def recompute_streaming_rail():
+    """Rebuild the streaming rail for each user with a profile (nightly task).
+
+    The user must have a taste profile and provider picks. Fitzflix
+    stores the rail in Redis for the landing page."""
+
+    with app.app_context():
+        computed_at = datetime.now().strftime("%Y-%m-%d %H:%M")
+        rail_films = {}
+        for user in User.query.all():
+            # A user with no services has no rail. Remove the rail of an
+            # earlier run. Otherwise, the landing page shows it forever.
+
+            if not user.streaming_providers.count():
+                current_app.redis.delete(RAIL_KEY.format(user_id=user.id))
+                continue
+            items = compute_user_rail(user)
+            if items is None:
+                continue
+            current_app.redis.set(
+                RAIL_KEY.format(user_id=user.id),
+                json.dumps({"computed_at": computed_at, "items": items}),
+            )
+            current_app.logger.info(
+                f"Streaming rail: stored {len(items)} films for user {user.id}"
+            )
+            for item in items:
+                rail_films.setdefault(item["tmdb_id"], item)
+        ensure_rail_records(rail_films.values())
+        return True
+
+
+@nothing_stored("The streaming shelf")
+def stored_rail(redis, user_id):
+    """Return the stored rail of the nightly recompute for a user, or None."""
+
+    payload = redis.get(RAIL_KEY.format(user_id=int(user_id)))
+    return json.loads(payload) if payload else None

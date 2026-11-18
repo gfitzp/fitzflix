@@ -48,17 +48,19 @@ def _library_and_staged(app, title):
 def _no_network(monkeypatch):
     """Stop the Atmos job after its staging step, with no AWS calls."""
 
-    import app.atmos as atmos
+    import app.media.atmos as atmos
 
     monkeypatch.setattr(atmos, "STAGED_HANDOFF_RESERVE_BYTES", 0)
     monkeypatch.setattr(atmos, "WORKSPACE_HEADROOM_BYTES", 0)
     monkeypatch.setattr(atmos, "_cleanup_s3_prefix", lambda *args: None)
-    monkeypatch.setattr("app.aws_storage.aws_s3_client", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        "app.archive.aws_storage.aws_s3_client", lambda *args, **kwargs: None
+    )
 
     # The staged file has no Atmos track. Thus, the job ends right after
     # its staging step, which is the step under test.
 
-    monkeypatch.setattr("app.tracks.get_audio_tracks_from_file", lambda path: [])
+    monkeypatch.setattr("app.media.tracks.get_audio_tracks_from_file", lambda path: [])
 
 
 def test_the_import_keeps_the_staged_copy_only_for_an_atmos_candidate(app, monkeypatch):
@@ -68,8 +70,8 @@ def test_the_import_keeps_the_staged_copy_only_for_an_atmos_candidate(app, monke
     under the staging reserve logged that the Atmos job copies from the
     library. A PCM mono film with no job to come logged it too."""
 
-    import app.atmos as atmos
-    from app import importing
+    import app.media.atmos as atmos
+    from app.media import importing
 
     checked = []
     monkeypatch.setattr(
@@ -96,7 +98,7 @@ def test_a_staged_copy_matches_until_the_library_file_changes(app, monkeypatch):
     A track flag edit between the import and the Atmos run changes the
     library file. A start from the old staged copy would undo the edit."""
 
-    import app.atmos as atmos
+    import app.media.atmos as atmos
 
     monkeypatch.setattr(atmos, "STAGED_HANDOFF_RESERVE_BYTES", 0)
     with app.app_context():
@@ -114,8 +116,8 @@ def test_a_staged_copy_matches_until_the_library_file_changes(app, monkeypatch):
 def test_the_atmos_job_starts_from_the_staged_copy(app, monkeypatch):
     """Move the staged copy into the workspace. Do not read the NAS."""
 
-    import app.atmos as atmos
-    import app.videos as videos
+    import app.media.atmos as atmos
+    import app.media.videos as videos
 
     _no_network(monkeypatch)
 
@@ -142,8 +144,8 @@ def test_a_changed_library_file_is_copied_again(app, monkeypatch):
 
     import shutil
 
-    import app.atmos as atmos
-    import app.videos as videos
+    import app.media.atmos as atmos
+    import app.media.videos as videos
 
     _no_network(monkeypatch)
     copied = []
@@ -171,7 +173,7 @@ def test_a_deferred_atmos_job_keeps_its_staged_copy(app):
 
     from rq.registry import ScheduledJobRegistry
 
-    import app.atmos as atmos
+    import app.media.atmos as atmos
 
     with app.app_context():
         file, library, staged = _library_and_staged(app, "Handoff Defer")
@@ -181,7 +183,7 @@ def test_a_deferred_atmos_job_keeps_its_staged_copy(app):
             "mtime": os.stat(library).st_mtime,
         }
         app.request_queue.enqueue(
-            "app.tmdb_refresh.refresh_tmdb_info",
+            "app.metadata.tmdb_refresh.refresh_tmdb_info",
             args=("Movies", file.movie_id, None),
             description="Refreshing TMDB data for 'Handoff Defer (2021)'",
         )
@@ -203,13 +205,13 @@ def test_a_deferred_handoff_job_retries_on_the_handoff_queue(app, monkeypatch):
 
     from rq.registry import ScheduledJobRegistry
 
-    import app.atmos as atmos
+    import app.media.atmos as atmos
 
     with app.app_context():
         file, library, staged = _library_and_staged(app, "Handoff Origin")
         os.remove(staged)
         app.request_queue.enqueue(
-            "app.tmdb_refresh.refresh_tmdb_info",
+            "app.metadata.tmdb_refresh.refresh_tmdb_info",
             args=("Movies", file.movie_id, None),
             description="Refreshing TMDB data for 'Handoff Origin (2021)'",
         )
@@ -224,7 +226,7 @@ def test_a_deferred_handoff_job_retries_on_the_handoff_queue(app, monkeypatch):
 
         (job_id,) = ScheduledJobRegistry(queue=app.handoff_queue).get_job_ids()
         retry = app.handoff_queue.fetch_job(job_id)
-        assert retry.func_name == "app.atmos.atmos_supplement_task"
+        assert retry.func_name == "app.media.atmos.atmos_supplement_task"
         assert not ScheduledJobRegistry(queue=app.import_queue).get_job_ids()
         job.delete()
 
@@ -232,7 +234,7 @@ def test_a_deferred_handoff_job_retries_on_the_handoff_queue(app, monkeypatch):
 def test_a_gone_file_row_removes_the_staged_copy(app):
     """Remove the staged copy when the File row of the job is gone."""
 
-    import app.atmos as atmos
+    import app.media.atmos as atmos
 
     with app.app_context():
         os.makedirs(app.config["STAGING_DIR"], exist_ok=True)

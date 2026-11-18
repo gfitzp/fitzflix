@@ -34,7 +34,7 @@ def test_a_timeout_in_a_trail_function_propagates(app):
 def test_a_timeout_in_a_follow_up_step_propagates(app):
     from rq.timeouts import JobTimeoutException
 
-    from app.importing import _follow_up
+    from app.media.importing import _follow_up
 
     def step():
         raise JobTimeoutException("the job ran out of time")

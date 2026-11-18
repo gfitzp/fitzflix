@@ -58,7 +58,7 @@ def mariadb_collation():
 
 
 def test_a_case_or_space_match_returns_the_record_title(app, mariadb_collation):
-    from app.importing import _canonical_series_title
+    from app.media.importing import _canonical_series_title
 
     with app.app_context():
         make_tv_series("Monk")
@@ -77,7 +77,7 @@ def test_a_case_or_space_match_returns_the_record_title(app, mariadb_collation):
 
 
 def test_the_parse_uses_the_record_title_for_names_and_lock_key(app, mariadb_collation):
-    from app.importing import evaluate_filename, lock_key_for_details
+    from app.media.importing import evaluate_filename, lock_key_for_details
 
     with app.app_context():
         series = make_tv_series("Monk")
@@ -97,7 +97,7 @@ def test_the_parse_uses_the_record_title_for_names_and_lock_key(app, mariadb_col
 def test_a_reversed_span_is_rejected(app):
     """A span that ends before it starts is a bad name (#482)."""
 
-    from app.importing import FilenameRejection, evaluate_filename
+    from app.media.importing import FilenameRejection, evaluate_filename
 
     with app.app_context():
         details = evaluate_filename("Monk - S01E05-E03 - [DVD].mkv", log=False)

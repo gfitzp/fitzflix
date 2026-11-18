@@ -40,7 +40,7 @@ def poster_pipeline(monkeypatch):
     copies only an original on disk. Each library call records
     (directory, original)."""
 
-    import app.custom_artwork as custom_artwork
+    import app.media.custom_artwork as custom_artwork
     import app.main.posters as posters
 
     calls = {"saved": [], "library": []}
@@ -677,7 +677,7 @@ def test_an_archive_only_file_does_not_fail_the_upload(
 
 
 def test_a_failed_first_upload_leaves_no_tree(app, admin_client, tmp_path, monkeypatch):
-    import app.custom_artwork as custom_artwork
+    import app.media.custom_artwork as custom_artwork
     from app.models import Movie
 
     def broken_copy(*args):
@@ -762,7 +762,7 @@ def test_a_file_poster_remove_restores_the_sibling_file_poster(app, monkeypatch)
     The remove restored only the movie original, else it deleted the
     poster. The sibling file-scoped poster outranks the movie."""
 
-    import app.custom_artwork as custom_artwork
+    import app.media.custom_artwork as custom_artwork
     import app.main.posters as posters
 
     restored = []

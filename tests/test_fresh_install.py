@@ -20,7 +20,8 @@ def test_a_missing_library_folder_is_a_warning_not_an_error(
 
 
 def test_a_dead_share_is_still_an_error(app, monkeypatch, tmp_path, caplog):
-    from app import dvr, maintenance
+    from app import dvr
+    from app.operations import maintenance
 
     volumes = tmp_path / "Volumes"
     monkeypatch.setattr(maintenance, "VOLUMES_ROOT", str(volumes))
@@ -36,7 +37,7 @@ def test_a_dead_share_is_still_an_error(app, monkeypatch, tmp_path, caplog):
 
 
 def test_a_manual_layout_expects_only_one_worker_for_each_queue(app, monkeypatch):
-    from app import maintenance
+    from app.operations import maintenance
 
     monkeypatch.setattr(maintenance, "_supervisor_status", lambda config: None)
     expected = maintenance.expected_workers(app.config)

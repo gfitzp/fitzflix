@@ -80,7 +80,7 @@ def make_titled_file(basename, edition=None, season=0, episode=90001):
 
 
 def test_edition_titles_reach_plex_locked(app, monkeypatch):
-    import app.plex_titles as plex_titles
+    import app.plex.plex_titles as plex_titles
 
     with app.app_context():
         make_titled_file(
@@ -133,7 +133,7 @@ def test_edition_titles_reach_plex_locked(app, monkeypatch):
 
 
 def test_pagination_walks_every_episode(app, monkeypatch):
-    import app.plex_titles as plex_titles
+    import app.plex.plex_titles as plex_titles
 
     with app.app_context():
         make_titled_file(

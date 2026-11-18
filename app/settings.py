@@ -371,7 +371,7 @@ def value_problem(name, value, config=None):
                 f"Without them, each upload fails."
             )
     if name == "AWS_DOWNLOAD_VIA_CDN" and value:
-        from app.aws_storage import cdn_settings_problem
+        from app.archive.aws_storage import cdn_settings_problem
 
         problem = cdn_settings_problem()
         if problem:

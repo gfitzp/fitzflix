@@ -36,7 +36,7 @@ def test_refresh_parses_batches_and_replaces(app, monkeypatch):
     statements are removed. Label-service misses drop. When the response
     no longer lists a film, Fitzflix deletes its stale rows."""
 
-    import app.awards as awards
+    import app.metadata.awards as awards
 
     with app.app_context():
         by_imdb = make_movie("Awarded via IMDb", 1954, imdb_id="tt0047296")
@@ -120,7 +120,7 @@ def test_a_batch_joins_the_film_and_the_craft_awards(app, monkeypatch):
     TMDB fallback). A craft row that repeats a film row goes. The dated
     twin of an undated film row wins."""
 
-    import app.awards as awards
+    import app.metadata.awards as awards
 
     with app.app_context():
         waterfront = make_movie(
@@ -252,7 +252,7 @@ def test_award_prior_math(app):
     The prior weighs wins more than nominations, and it has a cap. The
     chip text prefers wins."""
 
-    from app.recommendations import (
+    from app.discovery.recommendations import (
         AWARD_PRIOR_CAP,
         award_label,
         award_prior,
@@ -273,7 +273,7 @@ def test_award_prior_reranks_and_explains(app, admin_id):
     film ranks first and says why. Awards alone never recommend a film
     that the profile scores at 0."""
 
-    from app.recommendations import compute_user_recommendations
+    from app.discovery.recommendations import compute_user_recommendations
 
     with app.app_context():
         user_id = admin_id
@@ -383,9 +383,9 @@ def test_sparql_client_honors_retry_after_on_429(app, monkeypatch):
     retries 1 time. The WDQS manual sets this condition for a client
     that does not get banned."""
 
-    import app.awards as awards
-    import app.criterion_catalog as criterion_catalog
-    from app.criterion_catalog import wikidata_retry_after_seconds
+    import app.metadata.awards as awards
+    import app.criterion.criterion_catalog as criterion_catalog
+    from app.criterion.criterion_catalog import wikidata_retry_after_seconds
 
     class FakeResponse:
         def __init__(self, status_code, headers=None, bindings=None):
@@ -443,7 +443,7 @@ def test_awards_refresh_aborts_after_consecutive_failures(app, monkeypatch):
 
     from tests.factories import make_movie
 
-    import app.awards as awards
+    import app.metadata.awards as awards
     from app import db
 
     with app.app_context():
@@ -526,7 +526,7 @@ def test_a_statement_with_and_without_its_date_gives_1_row(app):
 
     The Last Wave showed its AACTA badge 2 times: 1978 and NULL."""
 
-    from app.awards import _award_rows
+    from app.metadata.awards import _award_rows
 
     bindings = [
         binding("tt0076257", "Q1", "AACTA Award for Best Sound", "win", 1978),

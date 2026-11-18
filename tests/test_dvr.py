@@ -643,7 +643,7 @@ def test_criterion_channel_counts_scraped_arrivals(app, monkeypatch):
     Criterion channel before the payload of TMDB catches up."""
 
     from app import dvr
-    from app.newly_added import NEWLY_ADDED_KEY
+    from app.availability.newly_added import NEWLY_ADDED_KEY
 
     monkeypatch.setattr(dvr, "_probe_duration", lambda path: 3600.0)
     # A cache-only read answers for no film. The availability entries of
@@ -705,7 +705,7 @@ def test_build_keeps_stored_lineups_while_a_share_is_offline(app, monkeypatch):
 def test_the_library_check_asks_the_watchdog_for_each_library(app, monkeypatch):
     """Test that the build asks volume_alive for both libraries (#624).
 
-    The check uses the mount watchdog of app.maintenance. A dead TV
+    The check uses the mount watchdog of app.operations.maintenance. A dead TV
     library makes the whole library read as offline."""
 
     from app import dvr

@@ -57,7 +57,7 @@ def set_alert_flags(app, email, availability=False, rentals=False):
 def capture_mail(monkeypatch):
     """Redirect the digest sender into a list of {subject, ...} calls."""
 
-    import app.availability_alerts as alerts
+    import app.availability.availability_alerts as alerts
 
     sent = []
     monkeypatch.setattr(
@@ -75,7 +75,7 @@ def run_task(app, monkeypatch):
     The digest templates link back to the site."""
 
     monkeypatch.setitem(app.config, "SERVER_NAME", "fitzflix.test")
-    from app.availability_alerts import notify_watchlist_availability
+    from app.availability.availability_alerts import notify_watchlist_availability
 
     notify_watchlist_availability()
 
@@ -107,7 +107,7 @@ def test_first_run_only_plants_snapshots(app, monkeypatch):
 
         assert sent == []
         with app.app_context():
-            from app.availability_alerts import recent_availability
+            from app.availability.availability_alerts import recent_availability
             from app.models import User
 
             user = User.query.filter_by(email=MEMBER_EMAIL).one()
@@ -151,7 +151,7 @@ def test_streaming_debut_mails_once_and_badges(app, monkeypatch):
         assert poster_url not in sent[0]["text_body"]
 
         with app.app_context():
-            from app.availability_alerts import recent_availability
+            from app.availability.availability_alerts import recent_availability
             from app.models import User
 
             user = User.query.filter_by(email=MEMBER_EMAIL).one()
@@ -211,7 +211,7 @@ def test_local_arrival_notifies_but_upgrades_stay_silent(app, monkeypatch):
         assert len(sent) == 1
 
         with app.app_context():
-            from app.availability_alerts import recent_availability
+            from app.availability.availability_alerts import recent_availability
             from app.models import User
 
             user = User.query.filter_by(email=MEMBER_EMAIL).one()
@@ -280,7 +280,7 @@ def test_cache_gap_never_fakes_a_debut(app, monkeypatch):
     The film keeps its old snapshot entry. Thus, the payload that comes
     back reads as no change."""
 
-    from app.streaming import AVAILABILITY_KEY
+    from app.availability.streaming import AVAILABILITY_KEY
 
     sent = capture_mail(monkeypatch)
     set_alert_flags(app, MEMBER_EMAIL, availability=True)
@@ -335,7 +335,7 @@ def test_a_real_departure_and_return_still_notifies(app, monkeypatch):
 
     Then the empty state is real. A return after it is a new debut."""
 
-    from app.availability_alerts import EMPTY_RUNS_TO_ACCEPT
+    from app.availability.availability_alerts import EMPTY_RUNS_TO_ACCEPT
 
     sent = capture_mail(monkeypatch)
     set_alert_flags(app, MEMBER_EMAIL, availability=True)
@@ -366,7 +366,7 @@ def test_leaving_criterion_warning_fires_once_per_set(app, monkeypatch):
     time. The final-week marker covers the second send when the set
     arrives late."""
 
-    from app.leaving_criterion import LEAVING_KEY
+    from app.criterion.leaving_criterion import LEAVING_KEY
 
     sent = capture_mail(monkeypatch)
     set_alert_flags(app, MEMBER_EMAIL, availability=True)
@@ -404,7 +404,7 @@ def test_leaving_warning_needs_a_criterion_subscription(app, monkeypatch):
 
     They cannot watch the film there in any case."""
 
-    from app.leaving_criterion import LEAVING_KEY
+    from app.criterion.leaving_criterion import LEAVING_KEY
 
     sent = capture_mail(monkeypatch)
     set_alert_flags(app, MEMBER_EMAIL, availability=True)
@@ -435,7 +435,7 @@ def test_digest_stays_unsent_without_opt_in(app, monkeypatch):
 
     assert sent == []
     with app.app_context():
-        from app.availability_alerts import recent_availability
+        from app.availability.availability_alerts import recent_availability
         from app.models import User
 
         user = User.query.filter_by(email=MEMBER_EMAIL).one()
@@ -449,7 +449,7 @@ def test_movie_states_serves_recent_fold_and_prunes_stale(app, user_client):
     available in the last month. Older records answer None, and the
     store removes them on read."""
 
-    from app.availability_alerts import RECENT_KEY
+    from app.availability.availability_alerts import RECENT_KEY
 
     movie_id = watchlist_movie(app, "Badged", 9011)
     stale_id = watchlist_movie(app, "Stale", 9012)
@@ -491,7 +491,7 @@ def test_movie_states_serves_leaving_fold_to_subscribers_only(
     subscribers get it by movie id and by bare tmdb id. Non-subscribers
     get None."""
 
-    from app.leaving_criterion import LEAVING_KEY
+    from app.criterion.leaving_criterion import LEAVING_KEY
 
     movie_id = watchlist_movie(app, "Going Soon", 9013)
     subscribe(app, 258, "Criterion Channel", email=MEMBER_EMAIL)
@@ -568,7 +568,7 @@ def test_a_refused_mail_stops_no_other_digest_and_waits_for_the_next_run(
 ):
     """The snapshots move on before the mails. A refused mail must not lose the arrival (#377)."""
 
-    import app.availability_alerts as alerts
+    import app.availability.availability_alerts as alerts
 
     from app import db
     from app.models import User, UserWatchlist
@@ -600,7 +600,10 @@ def test_a_refused_mail_stops_no_other_digest_and_waits_for_the_next_run(
         assert refused
         assert [mail["recipients"] for mail in sent] == [[MEMBER_EMAIL]]
         with app.app_context():
-            from app.availability_alerts import SENT_KEY, recent_availability
+            from app.availability.availability_alerts import (
+                SENT_KEY,
+                recent_availability,
+            )
 
             admin = User.query.filter_by(email=ADMIN_EMAIL).one()
             marker = SENT_KEY.format(
@@ -626,7 +629,7 @@ def test_a_refused_mail_stops_no_other_digest_and_waits_for_the_next_run(
 def test_a_resent_digest_drops_a_film_that_left_the_watchlist(app, monkeypatch):
     """The stored events are checked again at the resend (#377 follow-up)."""
 
-    import app.availability_alerts as alerts
+    import app.availability.availability_alerts as alerts
 
     from app import db
     from app.models import User, UserWatchlist
@@ -662,7 +665,7 @@ def test_a_resent_digest_drops_a_film_that_left_the_watchlist(app, monkeypatch):
         assert "Kept Debut (2020)" in mail["text_body"]
         assert "Removed Debut" not in mail["text_body"]
         with app.app_context():
-            from app.availability_alerts import recent_availability
+            from app.availability.availability_alerts import recent_availability
 
             user = User.query.filter_by(email=MEMBER_EMAIL).one()
             # Both films got their badge at detection (#631).
@@ -674,7 +677,7 @@ def test_a_resent_digest_drops_a_film_that_left_the_watchlist(app, monkeypatch):
 def test_an_unsent_digest_goes_when_mail_goes_off(app, monkeypatch):
     """Test that a user who stops the mail loses the stored digest, not the marker (#631)."""
 
-    import app.availability_alerts as alerts
+    import app.availability.availability_alerts as alerts
 
     from app.models import User
 
@@ -691,7 +694,7 @@ def test_an_unsent_digest_goes_when_mail_goes_off(app, monkeypatch):
         plant_availability(app, 9051, {**EMPTY, "flatrate": [NETFLIX]})
         run_task(app, monkeypatch)
 
-        from app.availability_alerts import SENT_KEY, UNSENT_KEY
+        from app.availability.availability_alerts import SENT_KEY, UNSENT_KEY
 
         with app.app_context():
             user = User.query.filter_by(email=MEMBER_EMAIL).one()
@@ -713,7 +716,7 @@ def test_an_unsent_digest_goes_when_mail_goes_off(app, monkeypatch):
 def test_an_unsent_digest_that_expires_is_an_error(app, monkeypatch, caplog):
     """A digest that waited longer than UNSENT_SECONDS is lost, loudly (#377 follow-up)."""
 
-    from app.availability_alerts import UNSENT_KEY, _with_unsent
+    from app.availability.availability_alerts import UNSENT_KEY, _with_unsent
     from app.models import User
 
     with app.app_context():

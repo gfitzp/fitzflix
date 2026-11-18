@@ -41,9 +41,9 @@ def test_a_dead_conversion_is_failed_and_its_lock_and_reservation_go(app, tmp_pa
     from rq.job import JobStatus
     from rq.registry import FailedJobRegistry, StartedJobRegistry
 
-    from app.importing import STAGING_RESERVED_KEY
+    from app.media.importing import STAGING_RESERVED_KEY
     from app.pipeline import PipelineWorker
-    from app.worker_recovery import reclaim_dead_workers
+    from app.media.worker_recovery import reclaim_dead_workers
 
     source = tmp_path / "Dead Worker (2001) - [Remux-2160p].mkv"
     source.write_bytes(b"source")
@@ -55,7 +55,7 @@ def test_a_dead_conversion_is_failed_and_its_lock_and_reservation_go(app, tmp_pa
         worker, job = _plant_dead_worker(
             app,
             app.transcode_queue,
-            "app.sdr_conversion.convert_localized_file",
+            "app.media.sdr_conversion.convert_localized_file",
             (
                 str(source),
                 {
@@ -84,7 +84,7 @@ def test_a_dead_conversion_is_failed_and_its_lock_and_reservation_go(app, tmp_pa
 
 def test_a_dead_localization_releases_its_lock_and_its_work_files(app, tmp_path):
     from app.pipeline import PipelineWorker
-    from app.worker_recovery import note_job_state, reclaim_dead_workers
+    from app.media.worker_recovery import note_job_state, reclaim_dead_workers
 
     source = tmp_path / "Dead Import (2002) - [DVD].mkv"
     source.write_bytes(b"source")
@@ -95,7 +95,7 @@ def test_a_dead_localization_releases_its_lock_and_its_work_files(app, tmp_path)
         _, job = _plant_dead_worker(
             app,
             app.import_queue,
-            "app.importing.localization_task",
+            "app.media.importing.localization_task",
             (str(source),),
         )
         note_job_state(job.id, 600, lock=lock, strays=[str(staged)])
@@ -110,8 +110,8 @@ def test_the_localization_notes_its_lock_when_it_takes_it(app, monkeypatch):
     import json
     from types import SimpleNamespace
 
-    from app import importing
-    from app.worker_recovery import JOB_LOCK_KEY
+    from app.media import importing
+    from app.media.worker_recovery import JOB_LOCK_KEY
 
     with app.app_context():
         run = importing._LocalizationRun("/import/Noted (2001) - [DVD].mkv", {})
@@ -141,16 +141,16 @@ def _atmos_state(tmp_path, chain="c1"):
 
 
 def test_a_dead_atmos_finish_releases_its_lock_and_chain(app, tmp_path):
-    from app.atmos import CHAIN_KEY
+    from app.media.atmos import CHAIN_KEY
     from app.pipeline import PipelineWorker
-    from app.worker_recovery import reclaim_dead_workers
+    from app.media.worker_recovery import reclaim_dead_workers
 
     with app.app_context():
         lock = app.lock_manager.lock('{"title": "Dead Twin"}', 600000)
         state = _atmos_state(tmp_path)
         app.redis.set(CHAIN_KEY.format(file_id=77), "c1")
         _plant_dead_worker(
-            app, app.handoff_queue, "app.atmos.atmos_finish_task", (state, lock)
+            app, app.handoff_queue, "app.media.atmos.atmos_finish_task", (state, lock)
         )
         reclaim_dead_workers(app.redis, PipelineWorker)
         assert app.redis.get('{"title": "Dead Twin"}') is None
@@ -161,8 +161,8 @@ def test_a_dead_atmos_finish_releases_its_lock_and_chain(app, tmp_path):
 def test_the_first_atmos_job_notes_its_lock(app, monkeypatch):
     """The reclaim reads the lock of a dead job from its note (#733)."""
 
-    import app.atmos as atmos
-    from app.worker_recovery import _job_lock
+    import app.media.atmos as atmos
+    from app.media.worker_recovery import _job_lock
     from tests.test_atmos_chain import _setup
 
     seen = []
@@ -186,12 +186,12 @@ def test_a_dead_first_atmos_job_releases_its_lock(app):
     Without the release, the title is blocked for that time."""
 
     from app.pipeline import PipelineWorker
-    from app.worker_recovery import note_job_state, reclaim_dead_workers
+    from app.media.worker_recovery import note_job_state, reclaim_dead_workers
 
     with app.app_context():
         lock = app.lock_manager.lock('{"title": "Dead Start"}', 600000)
         _, job = _plant_dead_worker(
-            app, app.import_queue, "app.atmos.atmos_supplement_task", (77,)
+            app, app.import_queue, "app.media.atmos.atmos_supplement_task", (77,)
         )
         note_job_state(job.id, 600, lock=lock)
         reclaim_dead_workers(app.redis, PipelineWorker)
@@ -204,18 +204,18 @@ def test_a_dead_first_atmos_job_that_booked_its_check_releases_nothing(app, tmp_
     from datetime import timedelta
 
     from app.pipeline import PipelineWorker
-    from app.worker_recovery import note_job_state, reclaim_dead_workers
+    from app.media.worker_recovery import note_job_state, reclaim_dead_workers
 
     with app.app_context():
         lock = app.lock_manager.lock('{"title": "Dead Start"}', 600000)
         app.handoff_queue.enqueue_in(
             timedelta(minutes=2),
-            "app.atmos.atmos_check_task",
+            "app.media.atmos.atmos_check_task",
             _atmos_state(tmp_path),
             lock,
         )
         _, job = _plant_dead_worker(
-            app, app.import_queue, "app.atmos.atmos_supplement_task", (77,)
+            app, app.import_queue, "app.media.atmos.atmos_supplement_task", (77,)
         )
         note_job_state(job.id, 600, lock=lock)
         reclaim_dead_workers(app.redis, PipelineWorker)
@@ -226,19 +226,19 @@ def test_a_dead_first_atmos_job_that_booked_its_check_releases_nothing(app, tmp_
 def test_a_dead_atmos_check_with_a_booked_next_check_releases_nothing(app, tmp_path):
     from datetime import timedelta
 
-    from app.atmos import CHAIN_KEY
+    from app.media.atmos import CHAIN_KEY
     from app.pipeline import PipelineWorker
-    from app.worker_recovery import reclaim_dead_workers
+    from app.media.worker_recovery import reclaim_dead_workers
 
     with app.app_context():
         lock = app.lock_manager.lock('{"title": "Dead Twin"}', 600000)
         state = _atmos_state(tmp_path)
         app.redis.set(CHAIN_KEY.format(file_id=77), "c1")
         app.handoff_queue.enqueue_in(
-            timedelta(minutes=2), "app.atmos.atmos_check_task", state, lock
+            timedelta(minutes=2), "app.media.atmos.atmos_check_task", state, lock
         )
         _plant_dead_worker(
-            app, app.handoff_queue, "app.atmos.atmos_check_task", (state, lock)
+            app, app.handoff_queue, "app.media.atmos.atmos_check_task", (state, lock)
         )
         reclaim_dead_workers(app.redis, PipelineWorker)
         assert app.redis.get('{"title": "Dead Twin"}') is not None
@@ -248,7 +248,7 @@ def test_a_dead_atmos_check_with_a_booked_next_check_releases_nothing(app, tmp_p
 
 def test_a_live_worker_is_not_reclaimed(app):
     from app.pipeline import PipelineWorker
-    from app.worker_recovery import reclaim_dead_workers
+    from app.media.worker_recovery import reclaim_dead_workers
 
     with app.app_context():
         worker = PipelineWorker([app.import_queue], connection=app.redis)

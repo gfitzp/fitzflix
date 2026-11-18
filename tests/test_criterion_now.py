@@ -80,7 +80,7 @@ def subscribe_criterion(app):
     """Subscribe the admin user to the Criterion Channel."""
 
     from app import db
-    from app.leaving_criterion import CRITERION_PROVIDER_ID
+    from app.criterion.leaving_criterion import CRITERION_PROVIDER_ID
     from app.models import User, UserStreamingProvider
 
     with app.app_context():
@@ -98,7 +98,7 @@ def subscribe_criterion(app):
 
 
 def test_parse_whatson_page_reads_title_link_and_schedule(app):
-    from app.criterion_now import parse_watch_live_url, parse_whatson_page
+    from app.criterion.criterion_now import parse_watch_live_url, parse_whatson_page
 
     parsed = parse_whatson_page(WHATSON_HTML)
     assert parsed["title"] == "Shock Corridor"
@@ -178,7 +178,7 @@ def test_schedule_entries_without_a_guid_stay_separate(app):
     A regex over the escaped data ran the title of such an entry into
     the next entry. Then the next film dropped out of the schedule."""
 
-    from app.criterion_now import _schedule_entries, parse_whatson_page
+    from app.criterion.criterion_now import _schedule_entries, parse_whatson_page
 
     page = (
         whatson_html()
@@ -207,7 +207,7 @@ def test_stale_heading_keeps_the_stored_film_and_retries(app, monkeypatch):
     show that film. The poll must not store the old film with no end
     time. It tries again after STALE_RETRY."""
 
-    import app.criterion_now as criterion_now
+    import app.criterion.criterion_now as criterion_now
 
     # Black Girl ended 11 minutes ago. Shock Corridor is on.
     page = whatson_html(minutes_left=90).replace(
@@ -246,7 +246,7 @@ def test_stamps_are_utc(app):
     Redis holds UTC stamps. A local stamp repeats in the hour when the
     clocks go back. The schedule reader takes the same format (#628)."""
 
-    from app.criterion_now import _parse_stamp, _parse_utc, _stamp
+    from app.criterion.criterion_now import _parse_stamp, _parse_utc, _stamp
 
     moment = datetime(2026, 11, 1, 6, 10, tzinfo=timezone.utc)
     assert _stamp(moment) == "2026-11-01T06:10:00Z"
@@ -266,7 +266,7 @@ def test_parse_film_info_reads_the_schema_block(app):
     only in the VideoObject block. The Movie block has the date and the
     country. Each field takes the 1st block that has it."""
 
-    from app.criterion_now import parse_film_info
+    from app.criterion.criterion_now import parse_film_info
 
     info = parse_film_info(INFO_HTML)
     assert info == {
@@ -284,7 +284,7 @@ def test_parse_film_info_reads_the_schema_block(app):
 
 
 def test_parse_whatson_page_flattens_nonbreaking_spaces(app):
-    from app.criterion_now import parse_whatson_page
+    from app.criterion.criterion_now import parse_whatson_page
 
     parsed = parse_whatson_page(
         WHATSON_HTML.replace("Shock Corridor", "Shock&amp;nbsp;Corridor")
@@ -293,7 +293,7 @@ def test_parse_whatson_page_flattens_nonbreaking_spaces(app):
 
 
 def test_poller_stores_film_and_reschedules(app, monkeypatch):
-    import app.criterion_now as criterion_now
+    import app.criterion.criterion_now as criterion_now
 
     def fake_requests_get(url, timeout=None):
         class FakeResponse:
@@ -371,7 +371,7 @@ def test_heartbeat_skips_the_scrape_while_the_chain_is_alive(app, monkeypatch):
 
     from datetime import timedelta
 
-    import app.criterion_now as criterion_now
+    import app.criterion.criterion_now as criterion_now
 
     scrapes = []
     monkeypatch.setattr(
@@ -381,7 +381,7 @@ def test_heartbeat_skips_the_scrape_while_the_chain_is_alive(app, monkeypatch):
     with app.app_context():
         job = app.maintenance_queue.enqueue_in(
             timedelta(minutes=45),
-            "app.criterion_now.poll_criterion_now",
+            "app.criterion.criterion_now.poll_criterion_now",
             job_id=criterion_now.POLL_JOB_ID,
         )
 
@@ -411,7 +411,7 @@ def test_heartbeat_revives_a_dead_chain(app, monkeypatch):
     also occurs when the last run of the chain finished without a
     reschedule."""
 
-    import app.criterion_now as criterion_now
+    import app.criterion.criterion_now as criterion_now
 
     scrapes = []
     monkeypatch.setattr(
@@ -444,7 +444,7 @@ def test_director_mismatch_degrades_to_a_plain_card(app, monkeypatch):
     When the credited director from TMDB disagrees with the director from
     the Channel, Fitzflix stores the film as unmatched."""
 
-    import app.criterion_now as criterion_now
+    import app.criterion.criterion_now as criterion_now
 
     monkeypatch.setattr(
         criterion_now,
@@ -478,7 +478,7 @@ def test_director_match_survives_romanization_differences(app, monkeypatch):
     Channel says 'Mabel Cheung'. A longer romanization on either side, a
     reversed name order, or a hyphen difference must still match."""
 
-    import app.criterion_now as criterion_now
+    import app.criterion.criterion_now as criterion_now
 
     monkeypatch.setattr(
         criterion_now,
@@ -515,7 +515,7 @@ def test_person_matches_folds_accents():
     The old test compared the raw lowercase strings. The ñ broke the
     containment test and split the surname into two tokens."""
 
-    import app.criterion_now as criterion_now
+    import app.criterion.criterion_now as criterion_now
 
     assert criterion_now._person_matches("Luis Bunuel", "Luis Buñuel")
     assert criterion_now._person_matches("Luis Buñuel", "Luis Bunuel")
@@ -533,7 +533,7 @@ def test_starring_line_verifies_when_no_director_is_known(app, monkeypatch):
     a film with a director that agrees. The enriched cast is only the top
     billing."""
 
-    import app.criterion_now as criterion_now
+    import app.criterion.criterion_now as criterion_now
 
     payload = {
         "poster_path": "/autumn.jpg",
@@ -634,7 +634,7 @@ def plant_profile(app, user_id):
 
 
 def test_card_carries_the_estimate_and_linked_credits(app, admin_client, monkeypatch):
-    import app.criterion_now as criterion_now
+    import app.criterion.criterion_now as criterion_now
 
     # The TMDB log route fetches the film details first. Give it the film
     # on air. Thus, the first tap can create the record
@@ -659,7 +659,9 @@ def test_card_carries_the_estimate_and_linked_credits(app, admin_client, monkeyp
             }
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr("app.tmdb_apply.tmdb_get", lambda *a, **k: FakeDetails())
+    monkeypatch.setattr(
+        "app.metadata.tmdb_apply.tmdb_get", lambda *a, **k: FakeDetails()
+    )
 
     user_id = subscribe_criterion(app)
     plant_profile(app, user_id)
@@ -746,7 +748,7 @@ def test_card_carries_the_estimate_and_linked_credits(app, admin_client, monkeyp
 
 
 def test_card_gates_on_subscription_and_staleness(app, admin_client):
-    import app.criterion_now as criterion_now
+    import app.criterion.criterion_now as criterion_now
 
     def plant(ends_delta):
         app.redis.set(
@@ -809,7 +811,7 @@ def test_card_watchlist_toggle_and_minutes_in(app, admin_client):
 
     import re
 
-    import app.criterion_now as criterion_now
+    import app.criterion.criterion_now as criterion_now
 
     from app import db
     from app.models import UserWatchlist
@@ -895,7 +897,7 @@ def test_card_fragment_follows_the_feed(app, admin_client):
     page) when the card would hide. Thus, the container empties and does
     not freeze."""
 
-    import app.criterion_now as criterion_now
+    import app.criterion.criterion_now as criterion_now
 
     def plant(title, tmdb_id, minutes_left):
         app.redis.set(
@@ -964,7 +966,7 @@ def test_card_turns_over_from_the_stored_schedule(app, admin_client):
     entry after that 1 becomes the preview. A schedule older than
     SCHEDULE_TRUST is not used. Then the card hides, as before."""
 
-    import app.criterion_now as criterion_now
+    import app.criterion.criterion_now as criterion_now
 
     subscribe_criterion(app)
     stamp = "%Y-%m-%dT%H:%M:%SZ"
@@ -1043,7 +1045,7 @@ def test_turnover_prefers_the_film_that_is_on(app):
     The entry that ended within STALE_GRACE also meets the grace test.
     The entry whose window contains now must still win."""
 
-    from app.criterion_now import _stamp, _turned_over
+    from app.criterion.criterion_now import _stamp, _turned_over
 
     now = datetime.now(timezone.utc)
 
@@ -1104,7 +1106,7 @@ def test_poll_books_the_next_poll_before_the_lookups(app, monkeypatch):
     The next poll is booked for the end of the film before any film
     page is fetched. A failure after that point does not lose it."""
 
-    import app.criterion_now as criterion_now
+    import app.criterion.criterion_now as criterion_now
 
     fake_feed(monkeypatch, criterion_now, [])
     booked_first = []
@@ -1134,7 +1136,7 @@ def test_poll_reuses_the_enrichment_of_the_last_poll(app, monkeypatch):
     upcoming film. The second poll fetches none. A stored enrichment
     that holds nothing is tried again."""
 
-    import app.criterion_now as criterion_now
+    import app.criterion.criterion_now as criterion_now
 
     fetched = []
     fake_feed(monkeypatch, criterion_now, fetched)
@@ -1164,7 +1166,7 @@ def test_up_next_posters_carry_the_poster_popover(app, admin_client):
     film with no TMDB match keeps its plain link and its title. The live
     refresh closes an open card before it replaces the posters."""
 
-    import app.criterion_now as criterion_now
+    import app.criterion.criterion_now as criterion_now
 
     subscribe_criterion(app)
     now = datetime.now(timezone.utc)
@@ -1221,7 +1223,7 @@ def test_page_stale_past_the_grace_never_stores_the_old_film(app, monkeypatch):
     The poll keeps waiting, at the slower STALE_BACKOFF. A heading of a
     film that ended more than STALE_LIMIT ago is not read as stale."""
 
-    import app.criterion_now as criterion_now
+    import app.criterion.criterion_now as criterion_now
 
     # Black Girl ended 21 minutes ago. Shock Corridor is on.
     page = whatson_html(minutes_left=80).replace(
@@ -1265,7 +1267,7 @@ def test_failed_tmdb_call_is_enriched_again(app, monkeypatch):
     failed. The entry is marked retry. The next poll enriches it again
     and gets the poster."""
 
-    import app.criterion_now as criterion_now
+    import app.criterion.criterion_now as criterion_now
 
     fetched = []
     fake_feed(monkeypatch, criterion_now, fetched)
@@ -1316,7 +1318,7 @@ def test_a_missing_film_page_is_fetched_one_time(app, monkeypatch):
     The 2 entries share 1 film id. The first poll fetches 1 page. The
     next poll fetches none."""
 
-    import app.criterion_now as criterion_now
+    import app.criterion.criterion_now as criterion_now
 
     fetched = []
     series_feed(monkeypatch, criterion_now, fetched, 404)
@@ -1338,7 +1340,7 @@ def test_a_film_page_that_fails_with_no_404_is_fetched_again(app, monkeypatch):
 
     In 1 poll, the 2 entries that share 1 film id still cost 1 fetch."""
 
-    import app.criterion_now as criterion_now
+    import app.criterion.criterion_now as criterion_now
 
     fetched = []
     series_feed(monkeypatch, criterion_now, fetched, 503)
@@ -1354,7 +1356,7 @@ def test_a_film_page_that_fails_with_no_404_is_fetched_again(app, monkeypatch):
 def test_card_links_to_watch_live_when_the_film_page_is_missing(app, admin_client):
     """The title and the Up next tile do not link to a 404, and More is absent (#666)."""
 
-    import app.criterion_now as criterion_now
+    import app.criterion.criterion_now as criterion_now
 
     subscribe_criterion(app)
     now = datetime.now(timezone.utc)
@@ -1415,7 +1417,7 @@ def test_parse_the_watch_live_page_of_2026_10_20(app):
 
     The heading class is "epcjfa_title", with 1 underscore (#291)."""
 
-    from app.criterion_now import parse_watch_live_url, parse_whatson_page
+    from app.criterion.criterion_now import parse_watch_live_url, parse_whatson_page
 
     page = open(LIVE_FIXTURE).read()
     with app.app_context():
@@ -1437,7 +1439,7 @@ def test_parse_the_watch_live_page_of_2026_10_20(app):
 def test_a_page_without_a_heading_uses_the_schedule(app):
     """The schedule entry that plays now names the film (#291)."""
 
-    from app.criterion_now import parse_whatson_page
+    from app.criterion.criterion_now import parse_whatson_page
 
     page = re.sub(r"<h1[^>]*>.*?</h1>", "", open(LIVE_FIXTURE).read())
     with app.app_context():
@@ -1469,7 +1471,7 @@ def channel_heading_page():
 def test_a_heading_that_names_no_entry_is_not_the_title(app):
     """The schedule entry that plays now names the film (#663)."""
 
-    from app.criterion_now import parse_whatson_page
+    from app.criterion.criterion_now import parse_whatson_page
 
     with app.app_context():
         parsed = parse_whatson_page(channel_heading_page(), LIVE_NOW)
@@ -1489,7 +1491,7 @@ def test_a_heading_that_names_no_entry_with_no_film_on_is_stale(app, monkeypatch
     The schedule of the page of 2026-10-20 ends at 13:01:34 on the next
     day. A poll 5 minutes later finds no film on now."""
 
-    import app.criterion_now as criterion_now
+    import app.criterion.criterion_now as criterion_now
 
     last_end = datetime(2026, 10, 21, 13, 1, 34, tzinfo=timezone.utc)
     page = channel_heading_page()
@@ -1533,7 +1535,7 @@ def test_a_heading_that_names_no_entry_with_no_film_on_is_stale(app, monkeypatch
 
 
 def test_the_poller_reads_the_watch_live_page():
-    from app.criterion_now import WATCH_LIVE_URL, WHATSON_URL
+    from app.criterion.criterion_now import WATCH_LIVE_URL, WHATSON_URL
 
     assert WHATSON_URL == WATCH_LIVE_URL
     assert "whatsonnow" not in WHATSON_URL
@@ -1547,7 +1549,7 @@ def test_parse_film_info_reads_the_list_and_graph_forms(app):
 
     import json as json_module
 
-    from app.criterion_now import parse_film_info
+    from app.criterion.criterion_now import parse_film_info
 
     def page(data):
         return (

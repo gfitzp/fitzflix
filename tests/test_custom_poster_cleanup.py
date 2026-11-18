@@ -20,7 +20,7 @@ def _tree(app, scope, record_id, name="poster.jpg"):
 
 def test_a_merge_gives_the_custom_poster_to_the_survivor(app, monkeypatch, tmp_path):
     from app.models import Movie
-    from app.tmdb_refresh import move_movie_rows
+    from app.metadata.tmdb_refresh import move_movie_rows
 
     monkeypatch.setitem(app.config, "CUSTOM_ARTWORK_DIR", str(tmp_path))
     with app.app_context():
@@ -46,7 +46,7 @@ def test_a_merge_gives_the_custom_poster_to_the_survivor(app, monkeypatch, tmp_p
 
 def test_a_merge_keeps_the_poster_of_the_survivor(app, monkeypatch, tmp_path):
     from app.models import Movie
-    from app.tmdb_refresh import move_movie_rows
+    from app.metadata.tmdb_refresh import move_movie_rows
 
     monkeypatch.setitem(app.config, "CUSTOM_ARTWORK_DIR", str(tmp_path))
     with app.app_context():
@@ -70,7 +70,7 @@ def test_a_merge_keeps_the_poster_of_the_survivor(app, monkeypatch, tmp_path):
 
 
 def test_a_rolled_back_merge_keeps_the_old_tree(app, monkeypatch, tmp_path):
-    from app.tmdb_refresh import move_movie_rows
+    from app.metadata.tmdb_refresh import move_movie_rows
 
     monkeypatch.setitem(app.config, "CUSTOM_ARTWORK_DIR", str(tmp_path))
     with app.app_context():
@@ -136,7 +136,7 @@ def test_a_merge_rename_keeps_the_library_poster_of_the_survivor(
     import zlib
 
     from app.models import Movie
-    from app.tmdb_refresh import apply_tmdb_refresh
+    from app.metadata.tmdb_refresh import apply_tmdb_refresh
 
     monkeypatch.setitem(app.config, "CUSTOM_ARTWORK_DIR", str(tmp_path))
     library = app.config["LIBRARY_DIR"]
@@ -204,7 +204,7 @@ def test_a_rename_without_a_poster_keeps_the_poster_of_a_sibling(
     import shutil
     import zlib
 
-    from app.tmdb_refresh import apply_tmdb_refresh
+    from app.metadata.tmdb_refresh import apply_tmdb_refresh
 
     monkeypatch.setitem(app.config, "CUSTOM_ARTWORK_DIR", str(tmp_path))
     library = app.config["LIBRARY_DIR"]
@@ -254,7 +254,7 @@ def test_a_rename_without_a_poster_keeps_the_poster_of_a_sibling(
 def test_a_file_with_no_movie_has_no_folder_rule(app):
     """sync_folder_poster does nothing for a file that no movie owns."""
 
-    from app.custom_artwork import sync_folder_poster
+    from app.media.custom_artwork import sync_folder_poster
 
     with app.app_context():
         assert sync_folder_poster(None, "Nowhere (2020)") is None

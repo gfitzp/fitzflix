@@ -37,7 +37,7 @@ def _scheduled_jobs(app):
 
 
 def test_the_nightly_task_restores_a_lost_copy_and_leaves_the_rest(app):
-    from app.custom_artwork import reconcile_library_posters
+    from app.media.custom_artwork import reconcile_library_posters
 
     with app.app_context():
         lost_dirname, lost_dir = _folder_without_a_copy(app, "Lost Copy", 1999)
@@ -63,7 +63,7 @@ def test_the_nightly_task_restores_a_lost_copy_and_leaves_the_rest(app):
 
 
 def test_a_radarr_movie_file_delete_queues_the_restore(app, client, caplog):
-    from app.custom_artwork import POSTER_RESTORE_DELAY, restore_folder_poster
+    from app.media.custom_artwork import POSTER_RESTORE_DELAY, restore_folder_poster
 
     with app.app_context():
         dirname, library_dir = _folder_without_a_copy(app, "Deleted File", 1956)
@@ -86,7 +86,7 @@ def test_a_radarr_movie_file_delete_queues_the_restore(app, client, caplog):
 
     jobs = _scheduled_jobs(app)
     assert len(jobs) == 1
-    assert jobs[0].func_name == "app.custom_artwork.restore_folder_poster"
+    assert jobs[0].func_name == "app.media.custom_artwork.restore_folder_poster"
     assert jobs[0].args == (dirname,)
     assert f"returns in {POSTER_RESTORE_DELAY} s" in caplog.text
 
@@ -113,7 +113,7 @@ def test_a_folder_outside_the_roots_queues_nothing(app, client, caplog):
 
 
 def test_a_root_folder_outside_the_library_queues_nothing(app, monkeypatch, tmp_path):
-    from app.custom_artwork import queue_folder_poster_restore
+    from app.media.custom_artwork import queue_folder_poster_restore
 
     monkeypatch.setitem(app.config, "RADARR_ROOT_FOLDERS", [str(tmp_path)])
     with app.app_context():
@@ -129,7 +129,7 @@ def test_the_nightly_task_has_a_cron_row_and_the_restore_a_queue(app):
 
     with app.app_context():
         rows = cron_table(app.config)
-    name = "app.custom_artwork.reconcile_library_posters"
+    name = "app.media.custom_artwork.reconcile_library_posters"
     assert [row["cron"] for row in rows if row["func"] == name] == ["55 5 * * *"]
     assert TASKS[name].queue == "maintenance"
-    assert TASKS["app.custom_artwork.restore_folder_poster"].queue == "request"
+    assert TASKS["app.media.custom_artwork.restore_folder_poster"].queue == "request"

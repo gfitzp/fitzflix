@@ -11,10 +11,10 @@ import shutil
 import pytest
 
 
-from app import importing
+from app.media import importing
 
 from app.models import File
-from app.importing import finalize_localization, localization_task
+from app.media.importing import finalize_localization, localization_task
 
 from tests.localization_helpers import run_full_chain, separate_library_volume
 
@@ -46,7 +46,7 @@ def _roster_jobs(app, func_name):
 def _capture_emails(monkeypatch):
     """Record each admin email and each direct email of the importing module."""
 
-    from app import importing
+    from app.media import importing
 
     sent = []
     monkeypatch.setattr(
@@ -106,7 +106,7 @@ def test_a_physical_replacement_runs_every_follow_up(
             "Find and dispose of the media for 'Replacement Pin (2021) - [DVD].mkv'",
         ) in sent
         # The DVD import queued the first refresh, and the Blu-ray the second.
-        refreshes = _roster_jobs(app, "app.tmdb_refresh.refresh_tmdb_info")
+        refreshes = _roster_jobs(app, "app.metadata.tmdb_refresh.refresh_tmdb_info")
         movie_id = File.query.one().movie_id
         assert [job.args[:2] for job in refreshes] == [("Movies", movie_id)] * 2
         assert refreshes[1].kwargs == {"notify_if_missing": True}
@@ -129,7 +129,7 @@ def test_a_tv_import_creates_its_series_and_queues_its_refresh(
         file = File.query.filter_by(basename=basename).one()
         assert file.tv_series.title == "Pin Show"
         assert TVSeries.query.count() == 1
-        refreshes = _roster_jobs(app, "app.tmdb_refresh.refresh_tmdb_info")
+        refreshes = _roster_jobs(app, "app.metadata.tmdb_refresh.refresh_tmdb_info")
         assert [job.args[:2] for job in refreshes] == [("TV Shows", file.series_id)]
         output = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
     assert os.path.exists(output)
@@ -152,7 +152,7 @@ def test_finalize_gives_back_an_output_that_is_on_another_volume(
         (move,) = [
             job
             for job in app.handoff_queue.jobs
-            if job.func_name == "app.importing.move_localized_file"
+            if job.func_name == "app.media.importing.move_localized_file"
         ]
         move.delete()
         source_path, details, lock, hidden = move.args
@@ -165,7 +165,7 @@ def test_finalize_gives_back_an_output_that_is_on_another_volume(
         (again,) = [
             job
             for job in app.handoff_queue.jobs
-            if job.func_name == "app.importing.move_localized_file"
+            if job.func_name == "app.media.importing.move_localized_file"
         ]
         assert again.args[0] == source
         assert again.args[3] == hidden
@@ -233,7 +233,7 @@ def test_a_failed_follow_up_does_not_skip_the_next_ones(
     Before the phase split, the first failure skipped every later step:
     here the source removal and the TMDB refresh."""
 
-    from app import importing
+    from app.media import importing
 
     def broken(*args, **kwargs):
         raise RuntimeError("Redis is not reachable")
@@ -246,7 +246,7 @@ def test_a_failed_follow_up_does_not_skip_the_next_ones(
         output = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
         assert [
             job.args[:2]
-            for job in _roster_jobs(app, "app.tmdb_refresh.refresh_tmdb_info")
+            for job in _roster_jobs(app, "app.metadata.tmdb_refresh.refresh_tmdb_info")
         ] == [("Movies", file.movie_id)]
         lock = app.lock_manager.lock(file.file_identifier(), 1000)
         assert lock
@@ -282,7 +282,7 @@ def test_a_failed_follow_up_does_not_skip_the_next_ones(
 def test_audio_alerts(app, tracks, expected):
     """The foreign-audio, lossy-lead and Atmos-order flags of the import emails are pure."""
 
-    from app.importing import _audio_alerts
+    from app.media.importing import _audio_alerts
 
     assert _audio_alerts(tracks, "eng") == expected
 
@@ -331,7 +331,7 @@ def test_atmos_not_lead(app, codecs, expected):
 
     The position that the Atmos pipeline gives a twin is not flagged."""
 
-    from app.importing import _audio_alerts
+    from app.media.importing import _audio_alerts
 
     tracks = [
         _audio(*codec) if isinstance(codec, tuple) else _audio(codec)
@@ -371,7 +371,7 @@ def test_an_atmos_track_behind_the_lead_sends_its_email(
 
     from flask import render_template
 
-    from app import importing
+    from app.media import importing
 
     sent = []
     monkeypatch.setattr(
@@ -411,7 +411,7 @@ def test_a_coming_atmos_lead_sends_no_atmos_order_email(
 ):
     """The queued Atmos job puts its twin first. Without the job, the email goes out."""
 
-    from app import importing
+    from app.media import importing
 
     sent = _capture_emails(monkeypatch)
     monkeypatch.setattr(importing, "_atmos_handoff", lambda *args: None)
@@ -427,7 +427,7 @@ def test_a_coming_atmos_lead_sends_no_atmos_order_email(
 def test_an_atmos_twin_behind_another_track_does_not_lead(app):
     """A twin leads only if the insertion point of a source that wants it is 0."""
 
-    from app.importing import _atmos_twin_will_lead
+    from app.media.importing import _atmos_twin_will_lead
 
     assert _atmos_twin_will_lead([_audio(FLAC), _audio(TRUEHD_ATMOS)])
     assert _atmos_twin_will_lead([_audio(TRUEHD_ATMOS), _audio(AC3)])
@@ -442,7 +442,7 @@ def test_a_failed_radarr_report_does_not_skip_the_tmdb_refresh(
 ):
     """The movie_id read of the Radarr report runs inside its own guarded step."""
 
-    from app import importing
+    from app.media import importing
 
     def broken(*args, **kwargs):
         raise RuntimeError("Radarr is away")
@@ -453,7 +453,7 @@ def test_a_failed_radarr_report_does_not_skip_the_tmdb_refresh(
         _import(app, sample_mkv, incoming_dir, basename)
         file = File.query.filter_by(basename=basename).one()
         output = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
-        assert _roster_jobs(app, "app.tmdb_refresh.refresh_tmdb_info")
+        assert _roster_jobs(app, "app.metadata.tmdb_refresh.refresh_tmdb_info")
     assert os.listdir(app.config["STAGING_DIR"]) == []
     os.remove(output)
 
@@ -467,7 +467,7 @@ def _booked_analyzes(app):
     booked = {}
     for job_id in registry.get_job_ids():
         job = app.maintenance_queue.fetch_job(job_id)
-        if job and job.func_name == "app.plex_library.analyze_plex_media":
+        if job and job.func_name == "app.plex.plex_library.analyze_plex_media":
             booked[job.args[0][0]] = registry.get_scheduled_time(job_id)
     return booked
 
@@ -508,7 +508,7 @@ def test_a_replacement_import_books_the_plex_analyze_after_the_scan(
             assert not [
                 job
                 for job in app.maintenance_queue.jobs
-                if job.func_name == "app.plex_library.analyze_plex_media"
+                if job.func_name == "app.plex.plex_library.analyze_plex_media"
             ]
     finally:
         for job_id in registry.get_job_ids():
@@ -527,7 +527,7 @@ def _booked_film_refreshes(app):
     folders = []
     for job_id in registry.get_job_ids():
         job = app.maintenance_queue.fetch_job(job_id)
-        if job and job.func_name == "app.plex_library.refresh_plex_film":
+        if job and job.func_name == "app.plex.plex_library.refresh_plex_film":
             folders.append(job.args[0])
     return folders
 
@@ -582,7 +582,7 @@ def test_a_failed_booking_of_the_plex_analyze_keeps_the_import(
 
     import logging
 
-    from app import plex_library
+    from app.plex import plex_library
 
     monkeypatch.setitem(app.config, "PLEX_URL", "http://plex.test:32400")
     monkeypatch.setitem(app.config, "PLEX_TOKEN", "test-token")
@@ -639,7 +639,7 @@ class _Row:
 def _record_steps(monkeypatch):
     """Record the source steps and the arr record step of _after_commit."""
 
-    from app import importing
+    from app.media import importing
 
     calls = []
     monkeypatch.setattr(
@@ -666,7 +666,7 @@ def test_a_failed_first_read_after_the_commit_stops_no_later_follow_up(
     The state of the archive is not known. Thus, the source goes to
     rejects/unarchived, as a missing pending upload does."""
 
-    from app import importing
+    from app.media import importing
 
     calls = _record_steps(monkeypatch)
     source = str(tmp_path / "import" / "Follow Up.mkv")
@@ -697,7 +697,7 @@ def test_the_time_limit_of_rq_in_a_follow_up_ends_the_cataloging(
 
     from rq.timeouts import JobTimeoutException
 
-    from app import importing
+    from app.media import importing
 
     def hang(path, output):
         raise JobTimeoutException("Task exceeded maximum timeout value")
@@ -740,7 +740,7 @@ def test_a_failed_move_request_keeps_the_source_and_the_replaced_archive(
 ):
     """The row stays on its pending key. Nothing that it needs goes (#690)."""
 
-    from app import importing
+    from app.media import importing
 
     calls = _record_steps(monkeypatch)
     monkeypatch.setattr(importing, "ensure_pending_upload", lambda file, path: True)
@@ -780,7 +780,8 @@ def _record_with_other_spelling(app, monkeypatch, title):
     database does not. Thus, the lookup is given the record directly.
     Return (file id, old path, library path of the name in title case)."""
 
-    from app import db, importing
+    from app import db
+    from app.media import importing
     from tests.factories import make_movie, make_movie_file
 
     file = make_movie_file(make_movie(title, 1962), "DVD")
@@ -810,7 +811,8 @@ def test_a_record_with_an_other_letter_case_takes_the_path_of_the_new_file(
     and kept its old path, which named no file. The record must follow
     the file. The thumb of an episode moves with it, as in a rename."""
 
-    from app import db, importing
+    from app import db
+    from app.media import importing
 
     thumbs = []
     monkeypatch.setattr(
@@ -846,7 +848,8 @@ def test_a_file_at_the_other_spelling_makes_the_new_file_a_reject(
 
     from types import SimpleNamespace
 
-    from app import db, importing
+    from app import db
+    from app.media import importing
 
     rejected, released, mails = [], [], []
     monkeypatch.setattr(
@@ -909,13 +912,13 @@ def _chain_until_the_cataloging(app, source):
     (move,) = [
         job
         for job in app.handoff_queue.jobs
-        if job.func_name == "app.importing.move_localized_file"
+        if job.func_name == "app.media.importing.move_localized_file"
     ]
     assert importing.move_localized_file(*move.args) is True
     (finalize,) = [
         job
         for job in app.sql_queue.jobs
-        if job.func_name == "app.importing.finalize_localization"
+        if job.func_name == "app.media.importing.finalize_localization"
     ]
     return finalize
 
@@ -954,7 +957,7 @@ def test_a_second_download_during_an_in_place_import_is_not_replaced(app, sample
         assert [
             job.args
             for job in booked
-            if job.func_name == "app.importing.localization_task"
+            if job.func_name == "app.media.importing.localization_task"
         ] == [(source,)]
         for job in booked:
             registry.remove(job, delete_job=True)

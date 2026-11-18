@@ -89,7 +89,7 @@
 {# The server-rendered corner fold for a standalone poster (the large
    artwork of the movie and log pages). This is the same markup that the
    script tiles.js builds for gallery tiles. The route computes a
-   (kind, label) pair with app.newly_added.poster_fold. There is at most 1
+   (kind, label) pair with app.availability.newly_added.poster_fold. There is at most 1
    fold, top-right. Red leaving outranks green newly-added. #}
 {% macro poster_fold_overlay(fold) -%}
 {% if fold %}

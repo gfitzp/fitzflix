@@ -10,16 +10,16 @@ from tests.fakes import ArchiveS3
 
 
 def test_a_cron_started_sync_holds_the_archive_move(app):
-    """The scheduler queues the function object. rq names the job app.aws_storage (#456)."""
+    """The scheduler queues the function object. rq names the job app.archive.aws_storage (#456)."""
 
     from rq.registry import StartedJobRegistry
 
-    from app import aws_storage
-    from app.aws_storage import sync_aws_s3_storage_task
+    from app.archive import aws_storage
+    from app.archive.aws_storage import sync_aws_s3_storage_task
 
     with app.app_context():
         job = app.maintenance_queue.enqueue(sync_aws_s3_storage_task)
-        assert job.func_name == "app.aws_storage.sync_aws_s3_storage_task"
+        assert job.func_name == "app.archive.aws_storage.sync_aws_s3_storage_task"
         registry = StartedJobRegistry(queue=app.maintenance_queue)
         app.maintenance_queue.remove(job)
         # StartedJobRegistry.add raises NotImplementedError in rq 2. Thus,
@@ -132,7 +132,7 @@ def test_a_mid_window_drop_does_not_repeat_an_aired_episode(app, monkeypatch):
 
 
 def _lost_upload_row(app, monkeypatch, tmp_path, title):
-    from app import aws_storage
+    from app.archive import aws_storage
 
     fake = ArchiveS3({})
     monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kw: fake)
@@ -153,10 +153,12 @@ def test_a_dead_library_volume_makes_the_lost_upload_move_wait(
 ):
     """The library file can come back. The move waits, and the target stays (follow-up #455)."""
 
-    from app import aws_storage
+    from app.archive import aws_storage
     from app.models import File
 
-    monkeypatch.setattr("app.videos._dead_volumes", lambda paths: ["/Volumes/Movies"])
+    monkeypatch.setattr(
+        "app.media.videos._dead_volumes", lambda paths: ["/Volumes/Movies"]
+    )
     with app.app_context():
         fake, file_id, key = _lost_upload_row(app, monkeypatch, tmp_path, "Dead Vol")
         assert aws_storage.move_archive_object(file_id) == aws_storage.MOVE_WAITING
@@ -170,7 +172,7 @@ def test_a_dead_library_volume_makes_the_lost_upload_move_wait(
 def test_a_lost_upload_is_reported_once_as_needing_a_re_rip(app, monkeypatch, tmp_path):
     from types import SimpleNamespace
 
-    from app import aws_storage
+    from app.archive import aws_storage
 
     sent = []
     monkeypatch.setattr(
@@ -193,7 +195,7 @@ def test_a_lost_upload_is_reported_once_as_needing_a_re_rip(app, monkeypatch, tm
 def test_a_resumed_download_renews_its_sidecar(app, monkeypatch, tmp_path):
     """The sweep reads the age of the sidecar. A 206 resume keeps it fresh (follow-up #457)."""
 
-    from app import aws_storage
+    from app.archive import aws_storage
 
     class Response:
         status_code = 206
@@ -226,8 +228,8 @@ def test_a_resumed_download_renews_its_sidecar(app, monkeypatch, tmp_path):
 
 
 def test_the_sweep_keeps_a_complete_copy_whose_sidecar_stayed(app, monkeypatch):
-    import app.maintenance as maintenance
-    from app import aws_storage
+    import app.operations.maintenance as maintenance
+    from app.archive import aws_storage
 
     monkeypatch.setitem(app.config, "MAIL_SERVER", None)
     imports = app.config["IMPORT_DIR"]

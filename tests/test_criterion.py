@@ -9,12 +9,12 @@ import json
 
 from app import db
 from app.models import Movie
-from app.criterion_catalog import refresh_criterion_collection_info
+from app.criterion.criterion_catalog import refresh_criterion_collection_info
 
 from tests.factories import make_movie
 from tests.fakes import Response
 
-from app.criterion_catalog import CRITERION_CACHE_KEY
+from app.criterion.criterion_catalog import CRITERION_CACHE_KEY
 
 SPARQL_RESPONSE = {
     "results": {
@@ -65,7 +65,7 @@ SETS_RESPONSE = {
 
 def fake_sparql(monkeypatch, calls=None):
 
-    import app.criterion_catalog as criterion_catalog
+    import app.criterion.criterion_catalog as criterion_catalog
 
     def fake_get(url, params=None, headers=None, timeout=None):
         if calls is not None:
@@ -189,7 +189,7 @@ def test_single_movie_refresh_uses_cache(app, monkeypatch):
 def test_refresh_survives_wikidata_outage(app, monkeypatch):
     """Make sure a failed fetch rolls back and logs, and does not raise."""
 
-    import app.criterion_catalog as criterion_catalog
+    import app.criterion.criterion_catalog as criterion_catalog
 
     def explode(*args, **kwargs):
         raise OSError("connection refused")
@@ -216,7 +216,7 @@ def test_criterion_page_row_grammar_and_badges(app, admin_client):
     page also shows the personal funnel badges."""
 
     from app.models import User, UserMovieReview, UserWatchlist
-    from app.recommendations import RECS_KEY
+    from app.discovery.recommendations import RECS_KEY
     from tests.factories import make_movie_file, quality
 
     with app.app_context():
@@ -416,7 +416,7 @@ def test_criterion_page_shows_full_catalog(app, admin_client):
     films that stream."""
 
     from app.models import User, UserWatchlist
-    from app.streaming import AVAILABILITY_KEY
+    from app.availability.streaming import AVAILABILITY_KEY
     from tests.factories import make_movie_file, quality
 
     with app.app_context():
@@ -581,7 +581,7 @@ def test_criterion_page_streaming_filter(app, admin_client, monkeypatch):
     the user that it warms."""
 
     from app.models import User, UserStreamingProvider
-    from app.streaming import AVAILABILITY_KEY
+    from app.availability.streaming import AVAILABILITY_KEY
     from tests.factories import make_movie_file
 
     def streams_on(tmdb_id, provider_id, name):
@@ -668,7 +668,7 @@ def test_criterion_page_streaming_filter(app, admin_client, monkeypatch):
         warm_jobs = [
             job
             for job in app.maintenance_queue.jobs
-            if job.func_name == "app.streaming.warm_title_availability"
+            if job.func_name == "app.availability.streaming.warm_title_availability"
             and 556004 in job.args[0]
         ]
         assert len(warm_jobs) == 1
@@ -731,7 +731,7 @@ def test_full_refresh_creates_catalog_records(app, monkeypatch):
         refreshed_ids = {
             job.args[1]
             for job in jobs
-            if job.func_name == "app.tmdb_refresh.refresh_tmdb_info"
+            if job.func_name == "app.metadata.tmdb_refresh.refresh_tmdb_info"
         }
         assert refreshed_ids == {created.id, adoptee_id}
 
@@ -873,7 +873,7 @@ def test_box_set_members_get_set_spine_and_title(app, monkeypatch):
 def _no_wikidata(monkeypatch):
     """Make any Wikidata query fail the test."""
 
-    import app.criterion_catalog as criterion_catalog
+    import app.criterion.criterion_catalog as criterion_catalog
 
     def explode(*args, **kwargs):
         raise AssertionError("a reader queried Wikidata")
@@ -884,7 +884,7 @@ def _no_wikidata(monkeypatch):
 def test_stored_releases_never_query_wikidata(app, monkeypatch):
     """A reader gets the stored copy. Without one, it queues 1 refresh (#283)."""
 
-    import app.criterion_catalog as criterion_catalog
+    import app.criterion.criterion_catalog as criterion_catalog
 
     monkeypatch.setitem(app.config, "WIKIDATA_SPARQL_URL", "https://wikidata.test")
     _no_wikidata(monkeypatch)
@@ -893,7 +893,10 @@ def test_stored_releases_never_query_wikidata(app, monkeypatch):
         assert criterion_catalog.stored_criterion_releases() == []
         assert len(app.request_queue) == 1
         job = app.request_queue.jobs[0]
-        assert job.func_name == "app.criterion_catalog.refresh_criterion_releases"
+        assert (
+            job.func_name
+            == "app.criterion.criterion_catalog.refresh_criterion_releases"
+        )
         app.request_queue.empty()
 
         app.redis.set(CRITERION_CACHE_KEY, json.dumps([{"spine_number": 7}]))
@@ -903,7 +906,7 @@ def test_stored_releases_never_query_wikidata(app, monkeypatch):
 def test_refresh_stores_a_copy_with_no_expiry(app, monkeypatch):
     """The weekly task stores the releases with no TTL and a fetch time."""
 
-    import app.criterion_catalog as criterion_catalog
+    import app.criterion.criterion_catalog as criterion_catalog
 
     monkeypatch.setitem(app.config, "WIKIDATA_SPARQL_URL", "https://wikidata.test")
     fake_sparql(monkeypatch)
@@ -921,7 +924,7 @@ def test_refresh_stores_a_copy_with_no_expiry(app, monkeypatch):
 def test_failed_or_short_fetch_keeps_the_last_good_copy(app, monkeypatch):
     """An error, or a list under half of the stored size, keeps the old copy."""
 
-    import app.criterion_catalog as criterion_catalog
+    import app.criterion.criterion_catalog as criterion_catalog
 
     monkeypatch.setitem(app.config, "WIKIDATA_SPARQL_URL", "https://wikidata.test")
     good = json.dumps([{"spine_number": n} for n in range(10)])
@@ -1016,7 +1019,7 @@ def _apu_releases():
 def test_a_film_with_its_own_spine_also_gets_its_set_title(app):
     """Keep the standalone spine and take the set title of the set (#472)."""
 
-    from app.criterion_catalog import (
+    from app.criterion.criterion_catalog import (
         assign_criterion_release,
         criterion_release_lookups,
     )
@@ -1050,7 +1053,7 @@ def test_a_film_with_its_own_spine_also_gets_its_set_title(app):
 def test_a_wikidata_set_title_takes_the_spelling_of_its_set(app):
     """The Wikidata label of a set takes the stored spelling of the set (#697)."""
 
-    from app.criterion_catalog import (
+    from app.criterion.criterion_catalog import (
         assign_criterion_release,
         criterion_release_lookups,
     )
@@ -1067,7 +1070,7 @@ def test_a_wikidata_set_title_takes_the_spelling_of_its_set(app):
 def test_the_stored_releases_reassign_without_wikidata(app, monkeypatch):
     """Apply the set titles to existing records from the stored copy (#472)."""
 
-    from app.criterion_catalog import reassign_stored_criterion_releases
+    from app.criterion.criterion_catalog import reassign_stored_criterion_releases
 
     _no_wikidata(monkeypatch)
     with app.app_context():
@@ -1096,7 +1099,7 @@ def test_the_stored_releases_reassign_without_wikidata(app, monkeypatch):
 def test_an_item_id_label_is_not_a_title(app, monkeypatch):
     """Wikidata gives an item with no label its id. That is no title (#473)."""
 
-    from app.criterion_catalog import (
+    from app.criterion.criterion_catalog import (
         _parse_criterion_binding,
         create_criterion_catalog_records,
         criterion_release_lookups,
@@ -1120,7 +1123,7 @@ def test_an_item_id_label_is_not_a_title(app, monkeypatch):
     assert named["label"] == "Q Planes"
 
     monkeypatch.setattr(
-        "app.tmdb_refresh.find_or_create_tmdb_movie",
+        "app.metadata.tmdb_refresh.find_or_create_tmdb_movie",
         lambda *args: (_ for _ in ()).throw(AssertionError("created a record")),
     )
     with app.app_context():
@@ -1135,7 +1138,7 @@ def test_an_item_id_label_is_not_a_title(app, monkeypatch):
 def test_the_full_refresh_fetches_before_it_reads_the_movies(app, monkeypatch):
     """The movie read opens the snapshot after the slow fetch (#473)."""
 
-    import app.criterion_catalog as criterion_catalog
+    import app.criterion.criterion_catalog as criterion_catalog
 
     order = []
     real_fetch = criterion_catalog.get_criterion_collection_from_wikidata
@@ -1168,7 +1171,7 @@ def test_an_empty_box_set_answer_keeps_the_last_good_copy(app, monkeypatch):
     The standalone rows alone passed the rule on the sum. Then the new
     copy had no set titles until the next weekly fetch."""
 
-    import app.criterion_catalog as criterion_catalog
+    import app.criterion.criterion_catalog as criterion_catalog
 
     monkeypatch.setitem(app.config, "WIKIDATA_SPARQL_URL", "https://wikidata.test")
     good = json.dumps(
@@ -1195,7 +1198,7 @@ def test_a_set_with_no_label_gets_no_q_id_title(app, monkeypatch):
 
     import copy
 
-    import app.criterion_catalog as criterion_catalog
+    import app.criterion.criterion_catalog as criterion_catalog
 
     sets = copy.deepcopy(SETS_RESPONSE)
     sets["results"]["bindings"][0]["setLabel"] = {"value": "Q1234567"}

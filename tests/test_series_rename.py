@@ -11,7 +11,7 @@ from sqlalchemy import event
 
 from app import db
 from app.models import File
-from app.series_rename import rename_tv_series_task
+from app.media.series_rename import rename_tv_series_task
 
 from tests.factories import make_tv_file, make_tv_series
 
@@ -204,7 +204,7 @@ def test_an_accent_only_rename_moves_the_files(app):
 def test_rename_keeps_the_id_tag_of_the_folder(app, monkeypatch):
     """A tagged folder is the title and a tag. It must match (#317)."""
 
-    import app.series_rename as series_rename
+    import app.media.series_rename as series_rename
 
     sonarr = []
     monkeypatch.setattr(
@@ -231,7 +231,7 @@ def test_rename_keeps_the_id_tag_of_the_folder(app, monkeypatch):
 def test_rename_changes_nothing_when_a_file_does_not_match(app, monkeypatch):
     """A skipped file must not leave a new title and Sonarr path (#317)."""
 
-    import app.series_rename as series_rename
+    import app.media.series_rename as series_rename
 
     sonarr = []
     monkeypatch.setattr(
@@ -265,7 +265,7 @@ def test_rename_gives_the_untouched_names_the_new_title(app):
     The stored key stays. It names the real archived object. The other
     parts of an untouched name stay. A series id tag gets the TMDB id."""
 
-    from app.aws_storage import sanitize_s3_key
+    from app.archive.aws_storage import sanitize_s3_key
 
     old_key = "untouched/Batman - S01E01 - Fullscreen [Bluray-1080p].mkv"
     with app.app_context():
@@ -324,7 +324,7 @@ def test_rename_moves_the_trail_to_the_new_untouched_name(app):
         db.session.commit()
         _materialize(app, episode)
         job = app.import_queue.enqueue(
-            "app.importing.localization_task", args=(f"/import/{old}",)
+            "app.media.importing.localization_task", args=(f"/import/{old}",)
         )
         record_job_event(app.redis, job, "started")
         # The import is done. A rename waits for an import of the series
@@ -345,9 +345,9 @@ def test_rename_moves_the_trail_to_the_new_untouched_name(app):
 def test_a_rename_stopped_in_the_loop_completes_on_the_retry(app, monkeypatch):
     """Rows of an earlier run carry the new title. The retry treats them as done (#374)."""
 
-    import app.videos as videos
+    import app.media.videos as videos
 
-    from app.series_rename import fitzflix_folders
+    from app.media.series_rename import fitzflix_folders
 
     real_rename = videos._rename_with_retries
     calls = []
@@ -394,7 +394,7 @@ def test_the_rename_time_limit_grows_with_the_files(app, monkeypatch):
 
     from rq.registry import ScheduledJobRegistry
 
-    from app.series_rename import RENAME_SECONDS_PER_FILE, rename_timeout
+    from app.media.series_rename import RENAME_SECONDS_PER_FILE, rename_timeout
     from app.tasks import requeue_job_id
 
     monkeypatch.setitem(app.config, "SQL_TASK_TIMEOUT", 600)
@@ -410,11 +410,13 @@ def test_the_rename_time_limit_grows_with_the_files(app, monkeypatch):
 
         # A retry of the rename keeps the long limit.
         app.import_queue.enqueue(
-            "app.importing.localization_task",
+            "app.media.importing.localization_task",
             args=("/import/Batman - S01E41 - [WEBDL-1080p].mkv",),
         )
         assert rename_tv_series_task(series.id, "Batman (1966)") is False
-        retry_id = requeue_job_id("app.series_rename.rename_tv_series_task", series.id)
+        retry_id = requeue_job_id(
+            "app.media.series_rename.rename_tv_series_task", series.id
+        )
         assert retry_id in ScheduledJobRegistry(queue=app.file_queue).get_job_ids()
         assert app.file_queue.fetch_job(retry_id).timeout == 1200
 
@@ -434,11 +436,11 @@ def _imported(app, source, library_name):
     from app.pipeline import record_job_event
 
     job = app.import_queue.enqueue(
-        "app.importing.localization_task", args=(f"/import/{source}",)
+        "app.media.importing.localization_task", args=(f"/import/{source}",)
     )
     record_job_event(app.redis, job, "started")
     app.file_queue.enqueue(
-        "app.importing.move_localized_file",
+        "app.media.importing.move_localized_file",
         args=(
             f"/staging/.{library_name}",
             {"basename": library_name, "untouched_basename": source},
@@ -496,7 +498,7 @@ def test_the_episode_locks_last_as_long_as_the_job(app, monkeypatch):
 
     import rq
 
-    from app import series_rename
+    from app.media import series_rename
 
     class RunningJob:
         timeout = 5400
@@ -553,7 +555,7 @@ def test_a_dead_tv_library_defers_the_rename(app, monkeypatch):
     Each file would read as an archive-only record, and the rows would
     move with no file. The rename waits for the volume instead."""
 
-    import app.videos as videos
+    import app.media.videos as videos
     from app.models import TVSeries
     from tests.test_scheduling import scheduled_jobs
 
@@ -574,7 +576,7 @@ def test_a_dead_tv_library_defers_the_rename(app, monkeypatch):
             + scheduled_jobs(app.request_queue)
             + scheduled_jobs(app.maintenance_queue)
             + scheduled_jobs(app.sql_queue)
-            if job.func_name == "app.series_rename.rename_tv_series_task"
+            if job.func_name == "app.media.series_rename.rename_tv_series_task"
         ]
         assert [job.args for job in retries] == [
             (series_id, "Dropped Mount Show (2001)")
@@ -589,7 +591,7 @@ def test_a_tagged_episode_name_names_the_series_that_owns_the_id(app):
     Before, the helper gave "Doctor Who". That matched neither record.
     Thus, a rename of the 2005 series ran beside its import."""
 
-    from app.importing import _series_title_of_name, series_import_in_flight
+    from app.media.importing import _series_title_of_name, series_import_in_flight
 
     name = "Doctor Who {tmdb-57243} - S01E01 - [WEBDL-1080p].mkv"
     with app.app_context():
@@ -602,7 +604,7 @@ def test_a_tagged_episode_name_names_the_series_that_owns_the_id(app):
             == "Doctor Who"
         )
         path = os.path.join(app.config["IMPORT_DIR"], name)
-        app.import_queue.enqueue("app.importing.localization_task", path)
+        app.import_queue.enqueue("app.media.importing.localization_task", path)
         assert series_import_in_flight({"Doctor Who (2005)"}) == path
         assert series_import_in_flight({"Doctor Who (1963)"}) is None
 
@@ -613,7 +615,7 @@ def test_a_title_with_a_period_at_the_end_is_safe(app):
     sanitize_filename removes the period at the end. Thus, the test
     refused 5 live series titles as unsafe."""
 
-    from app.series_rename import _filesystem_safe
+    from app.media.series_rename import _filesystem_safe
 
     for title in (
         "James May: Our Man In.",
@@ -632,8 +634,8 @@ def test_a_title_with_a_period_at_the_end_is_safe(app):
 def test_the_sonarr_path_of_a_folder_with_a_slash_at_the_end(app, monkeypatch):
     """A Sonarr path with a slash at the end gets the right new folder (#554)."""
 
-    import app.sonarr_push as sonarr_push
-    from app.series_rename import _update_sonarr_path
+    import app.arr.sonarr_push as sonarr_push
+    from app.media.series_rename import _update_sonarr_path
 
     calls = []
 
@@ -689,7 +691,7 @@ def test_a_rename_never_replaces_a_file_at_the_target(app, monkeypatch):
             job
             for queue in (app.file_queue, app.request_queue, app.maintenance_queue)
             for job in scheduled_jobs(queue)
-            if job.func_name == "app.series_rename.rename_tv_series_task"
+            if job.func_name == "app.media.series_rename.rename_tv_series_task"
         ]
         assert retries == []
         assert sent == ["Rename collision needs triage"]
@@ -702,8 +704,8 @@ def test_a_series_rename_stops_after_the_volume_wait_limit(app, monkeypatch):
 
     import errno
 
-    import app.videos as videos
-    from app.tmdb_refresh import MAX_RENAME_VOLUME_WAITS
+    import app.media.videos as videos
+    from app.metadata.tmdb_refresh import MAX_RENAME_VOLUME_WAITS
     from tests.test_scheduling import scheduled_jobs
 
     def refused(src, dst):
@@ -722,7 +724,7 @@ def test_a_series_rename_stops_after_the_volume_wait_limit(app, monkeypatch):
                 job
                 for queue in (app.file_queue, app.request_queue, app.maintenance_queue)
                 for job in scheduled_jobs(queue)
-                if job.func_name == "app.series_rename.rename_tv_series_task"
+                if job.func_name == "app.media.series_rename.rename_tv_series_task"
             ]
 
         assert rename_tv_series_task(series_id, "Batman (1966)") is False
@@ -746,7 +748,7 @@ def test_a_share_that_drops_inside_the_loop_books_the_rename_again(app, monkeypa
 
     import errno
 
-    import app.videos as videos
+    import app.media.videos as videos
     from tests.test_scheduling import scheduled_jobs
 
     def dropped(src, dst, *args, **kwargs):
@@ -767,7 +769,7 @@ def test_a_share_that_drops_inside_the_loop_books_the_rename_again(app, monkeypa
             job
             for queue in (app.file_queue, app.request_queue, app.maintenance_queue)
             for job in scheduled_jobs(queue)
-            if job.func_name == "app.series_rename.rename_tv_series_task"
+            if job.func_name == "app.media.series_rename.rename_tv_series_task"
         ]
         assert retries
         for job in retries:

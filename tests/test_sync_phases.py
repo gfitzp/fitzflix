@@ -13,7 +13,7 @@ import pytest
 def _sync_env(app, monkeypatch, objects, fail_delete=None, fail_listing=False):
     """Patch the S3 side of the sync. Return the record of the calls."""
 
-    from app import aws_storage
+    from app.archive import aws_storage
 
     calls = {"deletes": [], "delete_options": [], "mails": [], "uncataloged": []}
 
@@ -66,7 +66,7 @@ def test_a_failed_prune_fails_the_job_and_still_reports(app, monkeypatch):
     The first delete is in the report mail, and the import of the
     uncataloged files still runs."""
 
-    from app import aws_storage
+    from app.archive import aws_storage
 
     calls = _sync_env(
         app,
@@ -96,7 +96,7 @@ def test_a_failed_prune_fails_the_job_and_still_reports(app, monkeypatch):
 
 
 def test_a_failed_listing_skips_the_prune_and_fails_the_job(app, monkeypatch):
-    from app import aws_storage
+    from app.archive import aws_storage
 
     calls = _sync_env(app, monkeypatch, {}, fail_listing=True)
 
@@ -110,7 +110,7 @@ def test_a_failed_listing_skips_the_prune_and_fails_the_job(app, monkeypatch):
 def test_a_failed_file_pass_skips_the_prune(app, monkeypatch):
     """The prune deletes objects. It runs only after a clean file pass."""
 
-    from app import aws_storage
+    from app.archive import aws_storage
 
     calls = _sync_env(app, monkeypatch, _strays("C Stray (2001) - [DVD].mkv"))
 
@@ -127,7 +127,7 @@ def test_a_failed_file_pass_skips_the_prune(app, monkeypatch):
 
 
 def test_a_clean_sync_returns_true(app, monkeypatch):
-    from app import aws_storage
+    from app.archive import aws_storage
 
     calls = _sync_env(app, monkeypatch, _strays("D Stray (2001) - [DVD].mkv"))
 
@@ -139,7 +139,8 @@ def test_a_clean_sync_returns_true(app, monkeypatch):
 def test_the_uncataloged_import_walks_each_root_once(app, monkeypatch, tmp_path):
     """The 2 identical walks of the movie and TV roots are 1 loop now."""
 
-    from app import aws_storage, importing
+    from app.archive import aws_storage
+    from app.media import importing
 
     movies = tmp_path / "Movies" / "Film (2001)"
     shows = tmp_path / "TV" / "Show" / "Season 01"
@@ -192,7 +193,8 @@ def test_the_walk_queues_a_library_file_that_is_not_the_file_of_its_record(
     The record has the path. Before, the walk asked only that. The file
     with the size of its record is not queued."""
 
-    from app import aws_storage, importing, tracks
+    from app.archive import aws_storage
+    from app.media import importing, tracks
 
     _, changed = _row_with_library_file(app, tmp_path, "Upgraded Here", 9, b"new file")
     _, same = _row_with_library_file(app, tmp_path, "Same Here", 4, b"same")
@@ -219,7 +221,8 @@ def test_the_walk_scans_a_changed_file_that_an_edit_of_fitzflix_wrote(
     That file is the file of its record. A scan stores its rows and its
     size. An import would make it a new original."""
 
-    from app import aws_storage, importing, tracks
+    from app.archive import aws_storage
+    from app.media import importing, tracks
 
     file_id, _ = _row_with_library_file(
         app, tmp_path, "Edit Died", 9, b"edited", aws_stale=True
@@ -248,7 +251,8 @@ def test_the_uncataloged_phase_never_enters_a_hidden_directory(
     The phase must not send it to the import. A metadata directory of
     the NAS is not a library folder either."""
 
-    from app import aws_storage, importing
+    from app.archive import aws_storage
+    from app.media import importing
 
     film = tmp_path / "Movies" / "Film (2002)"
     download = tmp_path / "Movies" / ".sabnzbd" / "Some.Film.1957.1080p.BluRay-GRP"
@@ -294,7 +298,7 @@ def _absent_archived_film(app, title, year):
 def test_a_volume_that_drops_in_the_file_pass_stops_the_restores(app, monkeypatch):
     """The volume dies after the idle check. The first absent file stops the pass (#431)."""
 
-    from app import aws_storage
+    from app.archive import aws_storage
 
     key = _absent_archived_film(app, "Dropped Mid Pass", 2001)
     calls = _sync_env(
@@ -317,7 +321,7 @@ def test_a_volume_that_drops_in_the_file_pass_stops_the_restores(app, monkeypatc
         checks.append(paths)
         return [] if len(checks) == 1 else ["/Volumes/Movies"]
 
-    monkeypatch.setattr("app.videos._dead_volumes", dead_after_the_idle_check)
+    monkeypatch.setattr("app.media.videos._dead_volumes", dead_after_the_idle_check)
     errors = []
     monkeypatch.setattr(app.logger, "error", lambda *a, **k: errors.append(a))
 
@@ -336,7 +340,7 @@ def test_a_volume_that_drops_in_the_file_pass_stops_the_restores(app, monkeypatc
     (retry,) = [
         job
         for job in scheduled_jobs(app.maintenance_queue)
-        if job.func_name == "app.aws_storage.sync_aws_s3_storage_task"
+        if job.func_name == "app.archive.aws_storage.sync_aws_s3_storage_task"
     ]
     assert retry.kwargs == {"volume_drops": 1}
 
@@ -344,7 +348,7 @@ def test_a_volume_that_drops_in_the_file_pass_stops_the_restores(app, monkeypatc
 def test_the_sixth_volume_drop_fails_the_sync(app, monkeypatch):
     """The retries have a limit. The last drop is an ERROR and fails the job (follow-up #431)."""
 
-    from app import aws_storage
+    from app.archive import aws_storage
 
     _absent_archived_film(app, "Dropped Six Times", 2003)
     _sync_env(app, monkeypatch, {})
@@ -354,7 +358,7 @@ def test_the_sixth_volume_drop_fails_the_sync(app, monkeypatch):
         checks.append(paths)
         return [] if len(checks) == 1 else ["/Volumes/Movies"]
 
-    monkeypatch.setattr("app.videos._dead_volumes", dead_after_the_idle_check)
+    monkeypatch.setattr("app.media.videos._dead_volumes", dead_after_the_idle_check)
     with app.app_context(), pytest.raises(aws_storage.LibraryVolumeDropped):
         aws_storage.sync_aws_s3_storage_task(
             volume_drops=aws_storage.MAX_SYNC_VOLUME_DROPS - 1
@@ -364,7 +368,7 @@ def test_the_sixth_volume_drop_fails_the_sync(app, monkeypatch):
 def test_a_remount_in_the_file_pass_fails_the_pass(app, monkeypatch):
     """A new device id of a library root abandons the result (#431)."""
 
-    from app import aws_storage
+    from app.archive import aws_storage
 
     _absent_archived_film(app, "Remounted Pass", 2002)
     seen = []
@@ -410,7 +414,7 @@ def _absent_archived_episode(app, title, tvdb_id):
 def _restores_of_the_file_pass(app, monkeypatch, keys):
     """Run the file pass over a listing of keys. Return the restore requests."""
 
-    from app import aws_storage
+    from app.archive import aws_storage
 
     restores = []
     monkeypatch.setattr(
@@ -449,7 +453,7 @@ def test_a_series_with_a_sonarr_conflict_gets_no_restore(app, monkeypatch, caplo
     for the series while its conflict marker stands. It writes 1 warning
     for the series. Other series and the films are not touched."""
 
-    from app.series_rename import SONARR_CONFLICT_KEY
+    from app.media.series_rename import SONARR_CONFLICT_KEY
 
     series_id, held = _absent_archived_episode(app, "Batman", 77871)
     _other_id, other = _absent_archived_episode(app, "Columbo", 78325)

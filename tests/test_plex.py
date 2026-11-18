@@ -15,7 +15,7 @@ import pytest
 
 from app import db
 from app.models import Movie, User, UserMovieReview
-from app.diary import apply_plex_watch, plex_history_poll
+from app.viewing.diary import apply_plex_watch, plex_history_poll
 from tests.conftest import ADMIN_EMAIL
 from tests.factories import make_movie
 
@@ -57,7 +57,7 @@ def plex_jobs(app):
     return [
         job
         for job in app.sql_queue.jobs
-        if job.func_name == "app.diary.apply_plex_watch"
+        if job.func_name == "app.viewing.diary.apply_plex_watch"
     ]
 
 
@@ -136,7 +136,7 @@ def test_a_failed_watch_write_lets_the_other_source_record_it(
 ):
     """A failed commit releases the dedup marker. The poller then records it."""
 
-    import app.diary as diary
+    import app.viewing.diary as diary
 
     with app.app_context():
         movie = make_movie("Failed Write", 1976, tmdb_id=579)
@@ -301,7 +301,7 @@ class FakePlexServer:
 
 @pytest.fixture
 def plex_server(app, monkeypatch):
-    from app import plex_api
+    from app.plex import plex_api
 
     server = FakePlexServer()
     monkeypatch.setitem(app.config, "PLEX_URL", "http://plex.test:32400")
@@ -330,7 +330,7 @@ def test_a_failed_lookup_holds_the_cursor_for_the_next_poll(
             raise TimeoutError("Plex is busy")
         return real_get(url, *args, **kwargs)
 
-    from app import plex_api
+    from app.plex import plex_api
 
     monkeypatch.setattr(plex_api.requests, "get", flaky_get)
 
@@ -359,7 +359,7 @@ def test_a_poll_that_cannot_reach_plex_logs_one_warning(
             "Max retries exceeded with url: /status?X-Plex-Token=plex-test-token"
         )
 
-    from app import plex_api
+    from app.plex import plex_api
 
     monkeypatch.setattr(plex_api.requests, "get", refused)
     with caplog.at_level(logging.WARNING, logger=app.logger.name):
@@ -529,7 +529,7 @@ def test_profile_maps_and_unmaps_plex_username(app, admin_client):
 
 
 def test_reviews_page_badges_rewatches(app, admin_client):
-    from app.diary import star_rating_fields
+    from app.viewing.diary import star_rating_fields
 
     with app.app_context():
         user_id = User.query.first().id
@@ -556,7 +556,7 @@ def test_letterboxd_import_merges_with_plex_timed_row(app):
     A Letterboxd entry for a date that already has a Plex watch (with a
     clock time) updates that row. It does not add a second row."""
 
-    from app.diary import apply_letterboxd_import, apply_plex_watch
+    from app.viewing.diary import apply_letterboxd_import, apply_plex_watch
 
     with app.app_context():
         user = User.query.first()
@@ -642,7 +642,7 @@ def test_a_reimport_finds_the_scrobble_that_the_feed_gave_to_the_day_before(app)
     gets a row of its own. Before #544, the 10-06 entry got a new row,
     and the 10-07 entry wrote over the scrobble of 10-06."""
 
-    from app.diary import apply_letterboxd_import
+    from app.viewing.diary import apply_letterboxd_import
 
     with app.app_context():
         user = User.query.first()
@@ -686,7 +686,7 @@ def test_a_scrobble_twin_goes_to_1_entry_of_an_import(app):
     The scrobble is the twin of 10-06 only. The 10-08 entry gets its own
     row, and it does not overwrite the verdict of 10-06."""
 
-    from app.diary import apply_letterboxd_import
+    from app.viewing.diary import apply_letterboxd_import
 
     with app.app_context():
         user = User.query.first()
@@ -725,7 +725,7 @@ def test_review_edit_preserves_plex_timestamp(app, admin_client):
 
     import re
 
-    from app.diary import star_rating_fields
+    from app.viewing.diary import star_rating_fields
 
     with app.app_context():
         user_id = User.query.first().id
@@ -785,7 +785,7 @@ def test_a_deleted_history_item_does_not_hold_the_cursor(app, plex_server, monke
 
     import requests
 
-    from app import plex_api
+    from app.plex import plex_api
 
     cursor = int(time.time()) - 3600
     app.redis.set("fitzflix:plex:history-cursor", cursor)
@@ -824,7 +824,7 @@ def test_an_item_that_comes_back_after_a_404_is_recorded(app, plex_server, monke
 
     import requests
 
-    from app import plex_api
+    from app.plex import plex_api
 
     cursor = int(time.time()) - 3600
     app.redis.set("fitzflix:plex:history-cursor", cursor)
@@ -857,7 +857,7 @@ def test_an_item_that_comes_back_after_a_404_is_recorded(app, plex_server, monke
 def test_a_history_watch_read_again_adds_to_the_priority_once(app):
     """The day marker lasts 30 days. A watch that the poll reads again later counts once (#379, #635)."""
 
-    from app.diary import PLEX_WATCH_KEY
+    from app.viewing.diary import PLEX_WATCH_KEY
 
     viewed_at = "2026-08-02T19:00:00+00:00"
     with app.app_context():
@@ -876,7 +876,7 @@ def test_a_history_watch_read_again_adds_to_the_priority_once(app):
 def test_a_failed_accounts_call_uses_the_last_names(app, plex_server, monkeypatch):
     """The username of the watch stays the name the webhook gives (#379)."""
 
-    from app import plex_api
+    from app.plex import plex_api
 
     cursor = int(time.time()) - 3600
     app.redis.set("fitzflix:plex:history-cursor", cursor)
@@ -913,7 +913,7 @@ def test_a_scrobble_after_midnight_joins_the_letterboxd_row_of_the_day_before(
     next day is the same viewing. A watch in the afternoon is a new
     viewing."""
 
-    from app.diary import star_rating_fields
+    from app.viewing.diary import star_rating_fields
 
     with app.app_context():
         movie = make_movie("Past Midnight", 1982, tmdb_id=4425)
@@ -985,7 +985,7 @@ def test_a_failed_lookup_in_the_cursor_second_queues_no_repeats(
     The cursor never goes back, and the seen set keeps the handled
     entries. Thus, the next polls read only the failed entry again."""
 
-    from app import plex_api
+    from app.plex import plex_api
 
     cursor = int(time.time()) - 3600
     app.redis.set("fitzflix:plex:history-cursor", cursor)
@@ -1087,6 +1087,6 @@ def test_webhook_library_new_queues_the_stream_selection(app, client, monkeypatc
 
         job = app.maintenance_queue.fetch_job(safe_job_id("plex_select:9001"))
         assert job is not None
-        assert job.func_name == "app.plex_selection.align_plex_items"
+        assert job.func_name == "app.plex.plex_selection.align_plex_items"
         assert job.args == (["9001"],)
         assert job.id in app.maintenance_queue.scheduled_job_registry.get_job_ids()

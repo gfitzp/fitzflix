@@ -66,7 +66,7 @@ def no_sleep(monkeypatch):
 
 
 def _kept(app, path):
-    from app.arr_client import DOWNLOAD_RECORD_KEY
+    from app.arr.arr_client import DOWNLOAD_RECORD_KEY
 
     return app.redis.get(DOWNLOAD_RECORD_KEY.format(path=path))
 
@@ -125,8 +125,8 @@ def test_a_renamed_episode_gets_its_release_data_back(
 ):
     """Sonarr rescans, then the record at the Fitzflix path gets the data."""
 
-    import app.sonarr_push as sonarr_push
-    from app.importing import _restore_arr_record
+    import app.arr.sonarr_push as sonarr_push
+    from app.media.importing import _restore_arr_record
 
     series, source = _tv_download(app, monkeypatch, tmp_path)
     with app.app_context():
@@ -171,7 +171,7 @@ def test_a_renamed_episode_gets_its_release_data_back(
 def test_an_unchanged_name_queues_nothing(app, client, monkeypatch, tmp_path):
     """The library file has the path that Sonarr gave. Sonarr keeps its record."""
 
-    from app.importing import _restore_arr_record
+    from app.media.importing import _restore_arr_record
 
     series, source = _tv_download(app, monkeypatch, tmp_path)
     with app.app_context():
@@ -211,10 +211,10 @@ def _booked_tries(app):
 def _assert_booked_once(app, library, tries):
     """The task is booked 1 time, 10 minutes ahead, with the same data."""
 
-    from app.arr_client import RESTORE_RETRY_DELAY
+    from app.arr.arr_client import RESTORE_RETRY_DELAY
 
     ((job, due),) = _booked_tries(app)
-    assert job.func_name == "app.sonarr_push.restore_download_record_task"
+    assert job.func_name == "app.arr.sonarr_push.restore_download_record_task"
     assert job.args == (4, library, SCENE, "GRP")
     assert job.kwargs == {"tries": tries}
     now = datetime.now(timezone.utc)
@@ -241,7 +241,7 @@ def test_a_failed_rescan_books_the_task_again_and_the_next_try_writes(
 
     import logging
 
-    import app.sonarr_push as sonarr_push
+    import app.arr.sonarr_push as sonarr_push
 
     library = _library_episode(app)
     fake = FakeArr("episodefile", status="failed")
@@ -263,8 +263,8 @@ def test_a_failed_rescan_books_the_task_again_and_the_next_try_writes(
 def test_a_rescan_that_does_not_end_in_time_books_the_task_again(app, monkeypatch):
     from types import SimpleNamespace
 
-    import app.arr_client as arr_client
-    import app.sonarr_push as sonarr_push
+    import app.arr.arr_client as arr_client
+    import app.arr.sonarr_push as sonarr_push
 
     ticks = iter(range(0, 10000, 50))
     monkeypatch.setattr(
@@ -289,7 +289,7 @@ def test_a_rescan_that_does_not_end_in_time_books_the_task_again(app, monkeypatc
 def test_no_record_at_the_new_path_books_the_task_again(app, monkeypatch):
     """The rescan can be an older one that runs already. The next try scans again."""
 
-    import app.sonarr_push as sonarr_push
+    import app.arr.sonarr_push as sonarr_push
 
     library = _library_episode(app)
     fake = FakeArr("episodefile", records=[{"id": 1, "path": "/tv/other.mkv"}])
@@ -308,8 +308,8 @@ def test_no_record_at_the_new_path_books_the_task_again(app, monkeypatch):
 
 
 def test_the_last_try_logs_one_warning_and_books_nothing(app, monkeypatch, caplog):
-    import app.sonarr_push as sonarr_push
-    from app.arr_client import RESTORE_MAX_TRIES
+    import app.arr.sonarr_push as sonarr_push
+    from app.arr.arr_client import RESTORE_MAX_TRIES
 
     library = _library_episode(app)
     fake = FakeArr("episodefile", records=[{"id": 1, "path": "/tv/other.mkv"}])
@@ -327,7 +327,7 @@ def test_the_last_try_logs_one_warning_and_books_nothing(app, monkeypatch, caplo
 
 
 def test_an_arr_that_is_down_books_the_task_again(app, monkeypatch, caplog):
-    import app.sonarr_push as sonarr_push
+    import app.arr.sonarr_push as sonarr_push
 
     library = _library_episode(app)
     monkeypatch.setattr(sonarr_push, "_sonarr", FakeArr("episodefile", down=True))
@@ -337,7 +337,7 @@ def test_an_arr_that_is_down_books_the_task_again(app, monkeypatch, caplog):
 
 
 def test_a_library_file_that_is_gone_stops_the_tries(app, monkeypatch):
-    import app.sonarr_push as sonarr_push
+    import app.arr.sonarr_push as sonarr_push
 
     fake = FakeArr("episodefile")
     monkeypatch.setattr(sonarr_push, "_sonarr", fake)
@@ -348,7 +348,7 @@ def test_a_library_file_that_is_gone_stops_the_tries(app, monkeypatch):
 
 
 def test_a_download_with_no_release_data_forgets_the_older_data_of_its_path(app):
-    from app.arr_client import SONARR, remember_download, take_remembered_download
+    from app.arr.arr_client import SONARR, remember_download, take_remembered_download
 
     with app.app_context():
         remember_download(SONARR, "/tv/a.mkv", 4, {"releaseGroup": "OLD"})
@@ -359,7 +359,7 @@ def test_a_download_with_no_release_data_forgets_the_older_data_of_its_path(app)
 def test_a_held_download_keeps_its_release_data_for_the_held_path(
     app, monkeypatch, tmp_path
 ):
-    from app.arr_client import (
+    from app.arr.arr_client import (
         DOWNLOAD_RECORD_KEY,
         RADARR,
         remember_download,
@@ -369,7 +369,7 @@ def test_a_held_download_keeps_its_release_data_for_the_held_path(
     held_dir = tmp_path / "held"
     monkeypatch.setitem(app.config, "HELD_DIR", str(held_dir))
     monkeypatch.setattr(
-        "app.sdr_conversion.makedirs_on_mounted_volume",
+        "app.media.sdr_conversion.makedirs_on_mounted_volume",
         lambda path: os.makedirs(path, exist_ok=True),
     )
     source = tmp_path / "Film (2020) - [WEBDL-2160p].mkv"
@@ -377,7 +377,7 @@ def test_a_held_download_keeps_its_release_data_for_the_held_path(
     with app.app_context():
         from app import db
         from app.models import HeldImport
-        from app.sdr_conversion import hold_import
+        from app.media.sdr_conversion import hold_import
 
         remember_download(RADARR, str(source), 7, {"releaseGroup": "GRP"})
         plan = {"max_height": 1080, "source_format": "HDR10"}
@@ -399,8 +399,8 @@ def test_an_mp4_film_stored_as_mkv_gets_its_release_data_back(
 
     The import itself runs in full. The kept data is gone after it."""
 
-    import app.radarr_push as radarr_push
-    from app.arr_client import RADARR, remember_download
+    import app.arr.radarr_push as radarr_push
+    from app.arr.arr_client import RADARR, remember_download
     from tests.localization_helpers import run_full_chain
 
     folder = os.path.join(app.config["MOVIE_LIBRARY"], "Mp4 Pin (2021)")
@@ -452,7 +452,7 @@ def test_an_mp4_film_stored_as_mkv_gets_its_release_data_back(
 def test_a_film_in_a_new_folder_is_repointed_before_the_lookup(app, monkeypatch):
     """The movie points at the new folder first. Then the rescan finds the file."""
 
-    import app.radarr_push as radarr_push
+    import app.arr.radarr_push as radarr_push
 
     library = os.path.join(
         app.config["MOVIE_LIBRARY"], "VictorVictoria (1982)", "VictorVictoria.mkv"
@@ -480,7 +480,7 @@ def test_a_film_in_a_new_folder_is_repointed_before_the_lookup(app, monkeypatch)
 def test_a_film_in_an_edition_folder_gets_nothing(app, monkeypatch):
     """Radarr does not own an edition file (#670). The task calls nothing."""
 
-    import app.radarr_push as radarr_push
+    import app.arr.radarr_push as radarr_push
 
     fake = FakeArr("moviefile")
     monkeypatch.setattr(radarr_push, "_radarr", fake)
@@ -494,7 +494,7 @@ def test_a_film_in_an_edition_folder_gets_nothing(app, monkeypatch):
 def test_the_release_data_outlives_the_longest_wait_of_an_import(app):
     """The key lives 30 days, and a carry gives it 30 days again (#687)."""
 
-    from app.arr_client import (
+    from app.arr.arr_client import (
         DOWNLOAD_RECORD_KEY,
         SONARR,
         carry_remembered_download,
@@ -514,7 +514,7 @@ def test_the_release_data_outlives_the_longest_wait_of_an_import(app):
 
 
 def test_an_arr_rename_carries_the_kept_data_to_the_new_path(app):
-    from app.arr_client import (
+    from app.arr.arr_client import (
         SONARR,
         carry_remembered_download,
         remember_download,
@@ -539,7 +539,7 @@ def test_an_arr_rename_carries_the_kept_data_to_the_new_path(app):
 def test_each_try_of_a_film_points_the_movie_at_its_folder(app, monkeypatch):
     """A failed rescan books the Radarr task again. The next try repoints first."""
 
-    import app.radarr_push as radarr_push
+    import app.arr.radarr_push as radarr_push
 
     library = os.path.join(
         app.config["MOVIE_LIBRARY"], "Retry Film (1990)", "Retry Film.mkv"
@@ -554,7 +554,7 @@ def test_each_try_of_a_film_points_the_movie_at_its_folder(app, monkeypatch):
     monkeypatch.setattr(radarr_push, "_radarr", fake)
     assert radarr_push.restore_download_record_task(3, library, None, "GRP") is False
     ((job, _),) = _booked_tries(app)
-    assert job.func_name == "app.radarr_push.restore_download_record_task"
+    assert job.func_name == "app.arr.radarr_push.restore_download_record_task"
     assert (job.args, job.kwargs) == ((3, library, None, "GRP"), {"tries": 2})
 
     fake.calls.clear()
@@ -568,8 +568,8 @@ def test_each_try_of_a_film_points_the_movie_at_its_folder(app, monkeypatch):
 def test_a_library_volume_that_does_not_answer_books_the_task_again(app, monkeypatch):
     """A dead mount shows no file. The file is not gone, and the data stays."""
 
-    import app.sonarr_push as sonarr_push
-    import app.videos as videos
+    import app.arr.sonarr_push as sonarr_push
+    import app.media.videos as videos
 
     library = _library_episode(app)
     os.remove(library)
@@ -584,7 +584,7 @@ def test_a_library_volume_that_does_not_answer_books_the_task_again(app, monkeyp
 def test_a_later_try_leaves_the_data_of_a_newer_download(app, monkeypatch):
     """A second download of the path wrote its data. The older chain must not replace it."""
 
-    import app.sonarr_push as sonarr_push
+    import app.arr.sonarr_push as sonarr_push
 
     library = _library_episode(app)
     record = {"id": 9, "path": library, "sceneName": "Newer.S01E01.1080p.WEB.h264-NEW"}

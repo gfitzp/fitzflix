@@ -38,7 +38,7 @@ from app.models import (
     sort_title,
     title_sort,
 )
-from app.streaming import (
+from app.availability.streaming import (
     batch_title_availability,
     rental_matches,
     streaming_matches,
@@ -46,7 +46,7 @@ from app.streaming import (
 )
 from app.main import bp
 from app.main.helpers import decimal_id
-from app.file_ranking import (
+from app.media.file_ranking import (
     lowest_physical_preference,
     quality_anchors,
     quality_id,

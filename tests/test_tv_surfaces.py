@@ -281,7 +281,9 @@ def test_tv_card_renders_an_unowned_series_from_tmdb(app, admin_client, monkeypa
             }
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr("app.tmdb_apply.tmdb_get", lambda *a, **k: FakeResponse())
+    monkeypatch.setattr(
+        "app.metadata.tmdb_apply.tmdb_get", lambda *a, **k: FakeResponse()
+    )
 
     page = admin_client.get("/tv_card?tmdb_id=999123").get_data(as_text=True)
     assert 'class="poster-card"' in page
@@ -454,7 +456,9 @@ def test_self_appearances_drop_but_selfridge_survives(app, admin_client, monkeyp
             def json(self):
                 return payload
 
-        monkeypatch.setattr("app.tmdb_apply.tmdb_get", lambda *a, **kw: FakeResponse())
+        monkeypatch.setattr(
+            "app.metadata.tmdb_apply.tmdb_get", lambda *a, **kw: FakeResponse()
+        )
 
     response = admin_client.get("/library/movie?credit=287")
     assert response.status_code == 200

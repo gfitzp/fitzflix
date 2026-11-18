@@ -44,7 +44,7 @@ def test_signature_ignores_the_variable_parts(app):
     The ids, the numbers, the quoted names, and the URL query vary. The
     source file and the message text stay."""
 
-    from app.log_digest import signature
+    from app.operations.log_digest import signature
 
     first = plex_line(NOW, 471036).split(": ", 1)[1].rstrip("\n")
     second = plex_line(NOW, 471038).split(": ", 1)[1].rstrip("\n")
@@ -60,7 +60,7 @@ def test_signature_ignores_the_variable_parts(app):
 
 
 def test_traceback_signature_is_its_exception(app):
-    from app.log_digest import signature
+    from app.operations.log_digest import signature
 
     extra = [
         '  File "/app/x.py", line 3, in run',
@@ -80,7 +80,7 @@ def test_digest_counts_the_window_and_flags_the_repeats(app, tmp_path, monkeypat
     current log. Entries outside it do not count. A health warning is
     skipped by the default ignore regex."""
 
-    from app.log_digest import build_digest
+    from app.operations.log_digest import build_digest
 
     before_window = NOW - timedelta(hours=25)
     archive = [plex_line(before_window, 1)] + [
@@ -114,7 +114,7 @@ def test_digest_counts_the_window_and_flags_the_repeats(app, tmp_path, monkeypat
 def test_system_page_shows_the_digest(app, admin_client):
     import json
 
-    from app.log_digest import DIGEST_KEY
+    from app.operations.log_digest import DIGEST_KEY
 
     item = {
         "key": "abc123",
@@ -150,7 +150,7 @@ def test_signature_keeps_apostrophes_inside_names(app):
     The old quote pattern paired the apostrophe of "Couldn't" with the
     quote around the name. Then each film got its own signature."""
 
-    from app.log_digest import signature
+    from app.operations.log_digest import signature
 
     def leftover(path):
         return (
@@ -173,7 +173,7 @@ def test_traceback_signatures_name_the_exception_and_the_source(app):
     traceback after it adds the exception type. Thus, 2 errors on 1
     route stay apart."""
 
-    from app.log_digest import signature
+    from app.operations.log_digest import signature
 
     extra = [
         '  File "/app/plex_library.py", line 3, in run',

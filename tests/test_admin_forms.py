@@ -286,7 +286,7 @@ def test_an_admin_lookup_of_a_known_id_goes_to_that_film(app, admin_client, no_w
     jobs = [
         job
         for job in app.sql_queue.jobs
-        if job.func_name == "app.tmdb_refresh.refresh_tmdb_info"
+        if job.func_name == "app.metadata.tmdb_refresh.refresh_tmdb_info"
     ]
     assert [job.args for job in jobs] == [("Movies", movie_id, 578)]
 

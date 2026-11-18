@@ -8,7 +8,7 @@ from tests.factories import make_movie, make_movie_file
 
 
 def test_parse_dolby_vision_profile_reads_mediainfo_strings(app):
-    from app.tracks import parse_dolby_vision_profile
+    from app.media.tracks import parse_dolby_vision_profile
 
     # Blu-ray dual-layer (profile 7).
     assert (
@@ -56,7 +56,7 @@ def test_parse_dolby_vision_profile_reads_mediainfo_strings(app):
 def test_track_metadata_writer_stores_and_clears_the_profile(app):
     from app import db
     from app.models import File
-    from app.tracks import save_track_metadata
+    from app.media.tracks import save_track_metadata
 
     with app.app_context():
         movie = make_movie("Dolby Suspect", 2023)

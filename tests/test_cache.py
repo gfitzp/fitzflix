@@ -64,7 +64,7 @@ def test_enriched_movie_states(app, monkeypatch):
 
     from requests.exceptions import HTTPError
 
-    from app import streaming_rail
+    from app.availability import streaming_rail
 
     class Response:
         def __init__(self, status):
@@ -82,7 +82,7 @@ def test_enriched_movie_states(app, monkeypatch):
     statuses = {991: 200, 992: 404, 993: 500}
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "key")
     monkeypatch.setattr(
-        "app.tmdb_apply.tmdb_get",
+        "app.metadata.tmdb_apply.tmdb_get",
         lambda url, **kwargs: Response(statuses[int(url.rsplit("/", 1)[1])]),
     )
     keys = [streaming_rail.ENRICHED_KEY.format(tmdb_id=tmdb_id) for tmdb_id in statuses]
@@ -104,7 +104,8 @@ def test_enriched_movie_states(app, monkeypatch):
 def test_a_legacy_plex_tmdb_entry_is_read_again(app, monkeypatch):
     """The old cache wrote "" for no guid. It now reads as MISS and refetches."""
 
-    from app import diary, plex_api
+    from app.plex import plex_api
+    from app.viewing import diary
 
     class Response:
         def raise_for_status(self):
@@ -126,7 +127,7 @@ def test_a_legacy_plex_tmdb_entry_is_read_again(app, monkeypatch):
 
 
 def test_request_warm_queues_one_warm_per_scope(app):
-    from app.streaming import WARM_KEY, request_warm
+    from app.availability.streaming import WARM_KEY, request_warm
 
     key = WARM_KEY.format(scope="test-scope")
     with app.app_context():
@@ -138,7 +139,7 @@ def test_request_warm_queues_one_warm_per_scope(app):
             jobs = [
                 job
                 for job in app.maintenance_queue.jobs
-                if job.func_name == "app.streaming.warm_title_availability"
+                if job.func_name == "app.availability.streaming.warm_title_availability"
             ]
             assert [job.args for job in jobs] == [([11, 12],)]
         finally:
@@ -176,23 +177,23 @@ class _Down:
 def test_a_cached_empty_registry_answers_without_tmdb(app, monkeypatch):
     """An empty list in the cache is an answer, not a miss."""
 
-    from app import streaming
+    from app.availability import streaming
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "key")
-    monkeypatch.setattr("app.tmdb_apply.tmdb_get", _Down())
+    monkeypatch.setattr("app.metadata.tmdb_apply.tmdb_get", _Down())
     with app.app_context():
         app.redis.set(streaming.REGISTRY_KEY, "[]", ex=60)
         assert streaming.provider_registry() == []
 
 
 def test_a_failed_registry_fetch_is_remembered_briefly(app, monkeypatch):
-    from app import streaming
+    from app.availability import streaming
 
     def down(*args, **kwargs):
         raise ConnectionError("TMDB is away")
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "key")
-    monkeypatch.setattr("app.tmdb_apply.tmdb_get", down)
+    monkeypatch.setattr("app.metadata.tmdb_apply.tmdb_get", down)
     with app.app_context():
         app.redis.delete(streaming.REGISTRY_KEY)
         assert streaming.provider_registry() == []
@@ -207,7 +208,7 @@ def test_a_cached_empty_gallery_answers_without_tmdb(app, monkeypatch):
     from app.main import posters
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "key")
-    monkeypatch.setattr("app.tmdb_apply.tmdb_get", _Down())
+    monkeypatch.setattr("app.metadata.tmdb_apply.tmdb_get", _Down())
     with app.app_context():
         app.redis.set(posters.POSTERS_KEY.format(tmdb_id=77), "[]", ex=60)
         assert posters._tmdb_poster_gallery(77) == []
@@ -218,7 +219,7 @@ def test_a_cached_empty_gallery_answers_without_tmdb(app, monkeypatch):
 
 
 def test_cached_radarr_ids_and_a_refresh_that_fails(app, monkeypatch):
-    from app import radarr_push
+    from app.arr import radarr_push
 
     def down(*args, **kwargs):
         raise ConnectionError("Radarr is away")
@@ -235,7 +236,7 @@ def test_cached_radarr_ids_and_a_refresh_that_fails(app, monkeypatch):
 
 
 def test_language_choices_read_back_as_tuples(app):
-    from app import tracks
+    from app.media import tracks
 
     with app.app_context():
         app.redis.delete(tracks.LANGUAGE_CHOICES_KEY)

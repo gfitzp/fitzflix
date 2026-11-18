@@ -183,33 +183,42 @@ def _basename_from_file_id(args, kwargs):
 # task that is not listed leaves no trail.
 
 STAGES = {
-    "app.importing.localization_task": ("Localizing", _basename_from_path),
-    "app.importing.move_localized_file": (
+    "app.media.importing.localization_task": ("Localizing", _basename_from_path),
+    "app.media.importing.move_localized_file": (
         "Moving into the library",
         _basename_from_details,
     ),
-    "app.sdr_conversion.convert_localized_file": (
+    "app.media.sdr_conversion.convert_localized_file": (
         "Converting to SDR",
         _basename_from_details,
     ),
-    "app.importing.finalize_localization": ("Cataloging", _basename_from_details),
-    "app.aws_storage.upload_task": ("Archiving to S3", _basename_from_file_id),
-    "app.aws_storage.move_archive_object": (
+    "app.media.importing.finalize_localization": ("Cataloging", _basename_from_details),
+    "app.archive.aws_storage.upload_task": ("Archiving to S3", _basename_from_file_id),
+    "app.archive.aws_storage.move_archive_object": (
         "Moving the S3 archive",
         _basename_from_file_id,
     ),
-    "app.tracks.track_metadata_scan_task": (
+    "app.media.tracks.track_metadata_scan_task": (
         "Scanning track metadata",
         _basename_from_file_id,
     ),
-    "app.tracks.mkvpropedit_task": ("Setting track flags", _basename_from_file_id),
-    "app.tracks.mkvmerge_task": ("Remuxing", _basename_from_file_id),
-    "app.tracks.remux_audio_plan_task": (
+    "app.media.tracks.mkvpropedit_task": (
+        "Setting track flags",
+        _basename_from_file_id,
+    ),
+    "app.media.tracks.mkvmerge_task": ("Remuxing", _basename_from_file_id),
+    "app.media.tracks.remux_audio_plan_task": (
         "Rebuilding audio",
         _basename_from_file_id,
     ),
-    "app.aws_storage.download_task": ("Restoring from S3", _basename_from_second_arg),
-    "app.atmos.atmos_supplement_task": ("Adding Atmos twin", _basename_from_file_id),
+    "app.archive.aws_storage.download_task": (
+        "Restoring from S3",
+        _basename_from_second_arg,
+    ),
+    "app.media.atmos.atmos_supplement_task": (
+        "Adding Atmos twin",
+        _basename_from_file_id,
+    ),
 }
 
 
@@ -230,8 +239,8 @@ def _basename_from_state(args, kwargs):
 
 
 CONTINUATIONS = {
-    "app.atmos.atmos_check_task": _basename_from_state,
-    "app.atmos.atmos_finish_task": _basename_from_state,
+    "app.media.atmos.atmos_check_task": _basename_from_state,
+    "app.media.atmos.atmos_finish_task": _basename_from_state,
 }
 
 

@@ -33,8 +33,8 @@ def scorer_that_likes_westerns(monkeypatch):
     estimates 2 stars. Thus, the test covers the bar logic without the
     real curve of the engine."""
 
-    import app.provider_catalog as pc
-    from app.streaming_rail import _payload_features
+    import app.availability.provider_catalog as pc
+    from app.availability.streaming_rail import _payload_features
 
     def score(redis, user_id, tmdb_id, profile):
         """Score a Western payload 1.0 and each different payload 0.0."""
@@ -49,7 +49,7 @@ def scorer_that_likes_westerns(monkeypatch):
 
 
 def test_enumeration_plants_then_queues_only_new(app, monkeypatch):
-    import app.provider_catalog as pc
+    import app.availability.provider_catalog as pc
 
     from app import db
     from app.models import UserStreamingProvider
@@ -78,7 +78,7 @@ def test_enumeration_plants_then_queues_only_new(app, monkeypatch):
             return catalog_page(pages[page - 1], total_pages=len(pages))
         return catalog_page([], total_pages=len(pages))
 
-    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
+    monkeypatch.setattr("app.metadata.tmdb_apply.tmdb_get", fake_tmdb_get)
     monkeypatch.setattr(pc, "_process_pending", lambda subscribed: 0)
 
     # The first run plants the ever-seen set. It queues nothing. A film
@@ -110,7 +110,7 @@ def test_enumeration_plants_then_queues_only_new(app, monkeypatch):
 
 
 def test_processing_verifies_scores_and_creates(app, monkeypatch):
-    import app.provider_catalog as pc
+    import app.availability.provider_catalog as pc
 
     from app import db
     from app.models import Movie
@@ -172,12 +172,12 @@ def test_processing_verifies_scores_and_creates(app, monkeypatch):
     # It consumes the batch. It drops the rejects permanently
 
     assert len(refreshes) == 1
-    assert refreshes[0][0][0] == "app.tmdb_refresh.refresh_tmdb_info"
+    assert refreshes[0][0][0] == "app.metadata.tmdb_refresh.refresh_tmdb_info"
     assert app.redis.scard(pc.PENDING_KEY) == 0
 
 
 def test_creation_cap_pushes_verified_films_back(app, monkeypatch):
-    import app.provider_catalog as pc
+    import app.availability.provider_catalog as pc
 
     from app.models import Movie
 
@@ -217,10 +217,10 @@ def test_the_bar_reads_the_shared_score(app, monkeypatch):
     The profile leans to Western, so a Drama scores 0 on taste only. The
     shared source has a higher score for the film. The film passes."""
 
-    import app.provider_catalog as pc
+    import app.availability.provider_catalog as pc
 
     from app.models import Movie
-    from app.recommendations import TMDB_PATCH_SCORES_KEY
+    from app.discovery.recommendations import TMDB_PATCH_SCORES_KEY
 
     user_id = subscribe_criterion(app)
     monkeypatch.setattr(
@@ -245,7 +245,7 @@ def test_the_bar_reads_the_shared_score(app, monkeypatch):
 def test_an_unknown_answer_keeps_the_id_pending(app, monkeypatch):
     """A TMDB failure must not drop a discovery for good (#304)."""
 
-    import app.provider_catalog as pc
+    import app.availability.provider_catalog as pc
 
     subscribe_criterion(app)
     scorer_that_likes_westerns(monkeypatch)
@@ -281,7 +281,7 @@ def test_an_unknown_answer_keeps_the_id_pending(app, monkeypatch):
 def _streaming_batch(app, monkeypatch, ids):
     """Make each id stream on the subscribed service with a Western payload."""
 
-    import app.provider_catalog as pc
+    import app.availability.provider_catalog as pc
 
     subscribe_criterion(app)
     scorer_that_likes_westerns(monkeypatch)
@@ -297,7 +297,7 @@ def _streaming_batch(app, monkeypatch, ids):
 def test_a_film_with_no_calibrated_estimate_stays_pending(app, monkeypatch):
     """No calibration curve is no verdict. The id waits (#537)."""
 
-    import app.provider_catalog as pc
+    import app.availability.provider_catalog as pc
 
     _streaming_batch(app, monkeypatch, [401])
     monkeypatch.setattr(pc, "estimated_rating", lambda profile, score: None)
@@ -309,7 +309,7 @@ def test_a_film_with_no_calibrated_estimate_stays_pending(app, monkeypatch):
 def test_an_id_stays_pending_until_its_verdict_commits(app, monkeypatch):
     """The batch reads the pending ids and removes only the decided ones (#636)."""
 
-    import app.provider_catalog as pc
+    import app.availability.provider_catalog as pc
 
     _streaming_batch(app, monkeypatch, [601, 602])
     payloads = {601: shelf_item(601, "Catalog Western 601")}
@@ -334,14 +334,14 @@ def test_a_raise_in_the_batch_removes_nothing(app, monkeypatch):
 
     import pytest
 
-    import app.provider_catalog as pc
+    import app.availability.provider_catalog as pc
 
     _streaming_batch(app, monkeypatch, [501, 502])
 
     def fault(*args, **kwargs):
         raise RuntimeError("Lock wait timeout exceeded")
 
-    monkeypatch.setattr("app.tmdb_refresh.find_or_create_tmdb_movie", fault)
+    monkeypatch.setattr("app.metadata.tmdb_refresh.find_or_create_tmdb_movie", fault)
     with app.app_context():
         with pytest.raises(RuntimeError):
             pc._process_pending({258})
@@ -351,8 +351,8 @@ def test_a_raise_in_the_batch_removes_nothing(app, monkeypatch):
 def test_the_catalog_run_reads_the_weights_1_time_per_profile(app, monkeypatch):
     """resolved_tmdb_score paid the weights query for each film (#580, #637)."""
 
-    import app.provider_catalog as pc
-    import app.recommendations as recommendations
+    import app.availability.provider_catalog as pc
+    import app.discovery.recommendations as recommendations
 
     subscribe_criterion(app)
     scorer_that_likes_westerns(monkeypatch)

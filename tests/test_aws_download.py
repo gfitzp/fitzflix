@@ -24,7 +24,7 @@ def test_download_transient_error_defers(app, monkeypatch):
 
     import errno
 
-    from app import aws_storage
+    from app.archive import aws_storage
 
     def flaky_download(key, basename, sqs_receipt_handle=None, **kwargs):
         raise OSError(errno.EBADF, "Bad file descriptor")
@@ -46,7 +46,7 @@ def test_download_transient_error_defers(app, monkeypatch):
     ]
     assert [job.id for job in retries] == [
         requeue_id(
-            "app.aws_storage.download_task",
+            "app.archive.aws_storage.download_task",
             "untouched/Thing (2021) - [DVD].mkv",
             {"transient_retries": 1, "volume_waits": 0},
         )
@@ -69,9 +69,9 @@ def test_download_gives_up_after_max_retries(app, monkeypatch):
 
     import errno
 
-    import app.videos as videos
+    import app.media.videos as videos
 
-    from app import aws_storage
+    from app.archive import aws_storage
 
     def flaky_download(key, basename, sqs_receipt_handle=None, **kwargs):
         raise OSError(errno.EBADF, "Bad file descriptor")
@@ -102,7 +102,7 @@ def test_aws_download_reraises_transient_volume_errors(app, monkeypatch):
 
     import errno
 
-    from app import aws_storage
+    from app.archive import aws_storage
 
     s3 = S3(
         head={"ContentLength": 100},
@@ -141,7 +141,7 @@ def test_aws_download_missing_object_is_not_retried(app, monkeypatch):
     download retries. The function deletes the SQS message. Thus, SQS
     cannot deliver it again. No partial file remains."""
 
-    from app import aws_storage
+    from app.archive import aws_storage
 
     s3 = S3(
         head=_client_error("404", 404, "HeadObject"),
@@ -175,7 +175,7 @@ def test_aws_download_expired_restore_requests_new_restore(app, monkeypatch):
     requests a new restore and deletes the stale SQS message. The
     completion notification of the restore starts the download again."""
 
-    from app import aws_storage
+    from app.archive import aws_storage
 
     # No Restore header. The object is back in cold storage
 
@@ -207,7 +207,7 @@ def test_aws_download_waits_for_restore_already_underway(app, monkeypatch):
     The function makes no duplicate restore request. It still deletes
     the stale SQS message."""
 
-    from app import aws_storage
+    from app.archive import aws_storage
 
     s3 = S3(
         head={"ContentLength": 100, "Restore": 'ongoing-request="true"'},
@@ -239,7 +239,7 @@ def test_aws_download_failed_status_check_spends_a_retry(app, monkeypatch):
     escape the loop. The function leaves the SQS message for
     redelivery."""
 
-    from app import aws_storage
+    from app.archive import aws_storage
 
     def head(call):
         # The odd calls come from the progress callback that sizes the
@@ -272,7 +272,7 @@ def test_aws_download_exhausted_retries_clean_up_partial_file(app, monkeypatch):
     complete retry budget must remove its partial file. If not, the
     file leaks and is invisible."""
 
-    from app import aws_storage
+    from app.archive import aws_storage
 
     s3 = S3(
         head={"ContentLength": 100},
@@ -301,7 +301,7 @@ def test_aws_download_backs_off_between_retries(app, monkeypatch):
     The retries back off exponentially, with a limit of 60 seconds.
     They do not hit S3 back-to-back. The final failure does not sleep."""
 
-    from app import aws_storage
+    from app.archive import aws_storage
 
     s3 = S3(head={"ContentLength": 100}, errors=RuntimeError("connection reset"))
     delays = []
@@ -326,7 +326,7 @@ def test_aws_download_gives_up_immediately_on_auth_errors(app, monkeypatch):
     attempt and no backoff. The function leaves the SQS message for
     redelivery after the operator repairs the account."""
 
-    from app import aws_storage
+    from app.archive import aws_storage
 
     s3 = S3(
         head={"ContentLength": 100},
@@ -356,7 +356,7 @@ def test_download_task_reports_download_outcome(app, monkeypatch):
     complete retry budget. A used budget is not a transient error.
     Thus, the task schedules no retry."""
 
-    from app import aws_storage
+    from app.archive import aws_storage
 
     monkeypatch.setattr(aws_storage, "aws_download", lambda *args, **kwargs: False)
 
@@ -436,7 +436,7 @@ def test_aws_restore_records_the_request_time(app, monkeypatch):
 
     from datetime import datetime
 
-    from app import aws_storage
+    from app.archive import aws_storage
 
     class FakeS3:
         def head_object(self, **kwargs):
@@ -461,7 +461,7 @@ def test_aws_restore_records_the_request_time(app, monkeypatch):
 def test_a_restore_of_an_archived_original_sets_no_row(app, monkeypatch):
     """A key with no File row (an ArchivedOriginal of #292) sets nothing (#610)."""
 
-    from app import aws_storage
+    from app.archive import aws_storage
     from app.models import File
 
     class FakeS3:
@@ -482,7 +482,7 @@ def test_a_readable_object_also_sets_the_pending_restore(app, monkeypatch):
 
     from datetime import datetime
 
-    from app import aws_storage
+    from app.archive import aws_storage
 
     class WarmS3:
         def head_object(self, **kwargs):
@@ -505,7 +505,7 @@ def test_download_task_skips_a_restore_that_an_import_overtook(app, monkeypatch)
 
     from datetime import datetime
 
-    from app import aws_storage
+    from app.archive import aws_storage
 
     downloads = []
     sqs = SQS()
@@ -532,7 +532,7 @@ def test_download_task_keeps_a_restore_of_a_file_imported_before(app, monkeypatc
 
     from datetime import datetime
 
-    from app import aws_storage
+    from app.archive import aws_storage
 
     downloads = []
     monkeypatch.setattr(
@@ -559,7 +559,7 @@ def test_download_task_keeps_a_restore_of_an_absent_file(app, monkeypatch):
 
     from datetime import datetime
 
-    from app import aws_storage
+    from app.archive import aws_storage
 
     downloads = []
     monkeypatch.setattr(
@@ -588,7 +588,7 @@ def test_two_restores_with_one_untouched_name_never_overwrite(app, monkeypatch):
     Before, both staged as the hidden untouched name, and the second
     rename replaced the first file before the import took it."""
 
-    from app import aws_storage
+    from app.archive import aws_storage
 
     name = "Shared Name (1999) - [DVD].mkv"
     import_dir = app.config["IMPORT_DIR"]
@@ -616,7 +616,7 @@ def test_two_restores_with_one_untouched_name_never_overwrite(app, monkeypatch):
             (job,) = [
                 job
                 for job in scheduled_jobs(app.file_queue)
-                if job.func_name == "app.aws_storage.place_restored_import_task"
+                if job.func_name == "app.archive.aws_storage.place_restored_import_task"
             ]
             assert job.args == (staged, name)
 
@@ -644,7 +644,7 @@ def test_a_restore_already_in_progress_still_records_the_request(app, monkeypatc
     import botocore.exceptions
 
     from app import db
-    from app import aws_storage
+    from app.archive import aws_storage
     from app.models import File
 
     class InProgressS3:
@@ -710,8 +710,8 @@ def test_a_direct_restore_waits_for_a_dead_library_volume(app, monkeypatch):
 
     The restore must not download into it or place a file there."""
 
-    import app.videos as videos
-    from app import aws_storage
+    import app.media.videos as videos
+    from app.archive import aws_storage
 
     key, library_path = _direct_restore_row(app, "Dead Share Before")
     downloads = []
@@ -730,8 +730,8 @@ def test_a_direct_restore_waits_for_a_dead_library_volume(app, monkeypatch):
 
 
 def test_a_volume_that_drops_during_the_download_defers_the_placement(app, monkeypatch):
-    import app.videos as videos
-    from app import aws_storage
+    import app.media.videos as videos
+    from app.archive import aws_storage
 
     key, library_path = _direct_restore_row(app, "Dead Share During")
     answers = [[], ["/Volumes/Movies"]]
@@ -759,7 +759,7 @@ def test_a_track_edit_during_the_download_refuses_the_placement(app, monkeypatch
 
     from app import db
     from app.models import File
-    from app import aws_storage
+    from app.archive import aws_storage
 
     key, library_path = _direct_restore_row(app, "Edited During")
     os.makedirs(os.path.dirname(library_path), exist_ok=True)
@@ -795,7 +795,7 @@ def test_a_deferred_placement_keeps_the_finished_download(app, monkeypatch):
     288 waits downloaded the whole object again. The next run places the
     kept file with no new download."""
 
-    from app import aws_storage
+    from app.archive import aws_storage
 
     s3 = S3(head={"ContentLength": 3, "ETag": '"v1"'})
     monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kwargs: s3)
@@ -839,8 +839,8 @@ def test_a_deferred_placement_keeps_the_finished_download(app, monkeypatch):
 def _place_with(app, monkeypatch, s3, key):
     """Run a direct restore of key through the real download and placement."""
 
-    import app.videos as videos
-    from app import aws_storage
+    import app.media.videos as videos
+    from app.archive import aws_storage
 
     monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kwargs: s3)
     monkeypatch.setattr(aws_storage, "aws_sqs_client", lambda: None)
@@ -923,7 +923,7 @@ def test_a_handle_that_arrives_during_the_download_deletes_the_message(
     site tested the original argument. Then the message came back and a
     second full download ran."""
 
-    from app import aws_storage
+    from app.archive import aws_storage
 
     s3 = S3()
     sqs = SQS()
@@ -956,7 +956,7 @@ def test_a_restore_of_a_missing_key_with_a_longer_sibling_does_nothing(
     HEAD of the missing key raised, or the shortcut read the storage
     class of the sibling. A HEAD of the key itself decides now."""
 
-    from app import aws_storage
+    from app.archive import aws_storage
     from tests.fakes import ArchiveS3
 
     key = "untouched/Sibling (1950) - [DVD].mkv"
@@ -970,7 +970,7 @@ def test_a_restore_of_a_missing_key_with_a_longer_sibling_does_nothing(
         assert not [
             job
             for job in app.file_queue.jobs
-            if job.func_name == "app.aws_storage.download_task"
+            if job.func_name == "app.archive.aws_storage.download_task"
         ]
 
 
@@ -1009,8 +1009,9 @@ def test_a_row_deleted_during_the_download_refuses_and_drops_the_message(
 
     The error was no PlacementRefused. The SQS message stayed."""
 
-    import app.videos as videos
-    from app import aws_storage, db
+    import app.media.videos as videos
+    from app import db
+    from app.archive import aws_storage
     from app.models import File
 
     key, library_path = _direct_restore_row(app, "Deleted During")
@@ -1043,7 +1044,7 @@ def test_a_transient_placement_fault_keeps_the_download_for_the_retry(app, monke
 
     import errno
 
-    from app import aws_storage
+    from app.archive import aws_storage
 
     s3 = S3()
     monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kwargs: s3)
@@ -1092,8 +1093,9 @@ def test_an_early_stop_removes_the_kept_download(app, monkeypatch, stop):
 
     The orphan sweep keeps a complete copy with its sidecar."""
 
-    import app.videos as videos
-    from app import aws_storage, db
+    import app.media.videos as videos
+    from app import db
+    from app.archive import aws_storage
     from app.models import File
 
     key, library_path = _direct_restore_row(app, f"Kept Copy {stop}")
@@ -1131,7 +1133,7 @@ def test_an_early_stop_removes_the_kept_download(app, monkeypatch, stop):
 def test_the_sqs_delete_lets_a_base_exception_through(app):
     """A bare except swallowed a shutdown during the delete (#588)."""
 
-    from app import aws_storage
+    from app.archive import aws_storage
 
     class Stopping:
         def delete_message(self, **kwargs):
@@ -1145,7 +1147,7 @@ def test_the_sqs_delete_lets_a_base_exception_through(app):
 def test_a_delivered_delete_clears_the_stored_handle_of_the_key(app):
     """The handle of a message lives under its S3 key until the delete (#587, #617)."""
 
-    from app import aws_storage
+    from app.archive import aws_storage
 
     sqs = SQS()
     key = "modified/Chain (2001) - [DVD].mkv"
@@ -1173,7 +1175,7 @@ def test_a_delivered_delete_clears_the_stored_handle_of_the_key(app):
 def test_a_sidecar_reads_as_the_etag_and_the_size(app, text, expected):
     """The sidecar has 2 lines (#610). The stat line of an older sidecar has no use."""
 
-    from app import aws_storage
+    from app.archive import aws_storage
 
     destination = os.path.join(app.config["IMPORT_DIR"], ".restore-modified-old.mkv")
     os.makedirs(os.path.dirname(destination), exist_ok=True)
@@ -1286,8 +1288,8 @@ def test_a_download_requeue_carries_the_newest_handle_of_the_key(
 
     import errno
 
-    import app.videos as videos
-    from app import aws_storage
+    import app.media.videos as videos
+    from app.archive import aws_storage
 
     key, library_path = _direct_restore_row(app, f"Carry Handle {fault}")
     handle_key = aws_storage.SQS_HANDLE_KEY.format(key=key)

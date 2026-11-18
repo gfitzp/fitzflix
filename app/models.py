@@ -102,16 +102,16 @@ tv_production_companies = db.Table(
 MOVIES = "Movies"
 TV_SHOWS = "TV Shows"
 
-# The TMDB fetch and apply half of the models lives in app.tmdb_apply.
+# The TMDB fetch and apply half of the models lives in app.metadata.tmdb_apply.
 # The models below use these 3 names. Import the other names of that
-# module from app.tmdb_apply (#644).
+# module from app.metadata.tmdb_apply (#644).
 
-from app.tmdb_apply import (  # noqa: E402
+from app.metadata.tmdb_apply import (  # noqa: E402
     TMDBAssociation,
     TMDBMixin,
     _movie_certifications,
 )
-from app import videos
+from app.media import videos
 
 
 @functools.lru_cache(maxsize=1)
@@ -398,7 +398,7 @@ class User(UserMixin, db.Model):
 
         from flask import g
 
-        from app.queue_page import queue_details
+        from app.operations.queue_page import queue_details
         from app.redis_guard import REDIS_DOWN_ERRORS, warn_redis_down
 
         # Each page renders this. A Redis outage gives an empty result,
@@ -987,7 +987,7 @@ IMPORT_DETAIL_KEYS = frozenset(
 def _remove_triage_aids(file_id):
     """Remove the triage inspection aids of a file row."""
 
-    from app.triage import remove_triage_snapshots
+    from app.media.triage import remove_triage_snapshots
 
     remove_triage_snapshots(file_id)
 
@@ -1130,7 +1130,7 @@ class File(db.Model):
     def needs_sdr_conversion(self):
         """Return True if this file has HDR or BT.2020 colors (#292)."""
 
-        from app.sdr_conversion import needs_conversion
+        from app.media.sdr_conversion import needs_conversion
 
         return needs_conversion(
             self.hdr_format, self.color_primaries, self.transfer_characteristics
@@ -1169,7 +1169,7 @@ class File(db.Model):
         The details also hold keys that are not File columns. The title
         and the year belong to the Movie or the TVSeries row, the quality
         title to the RefQuality row. The import flags stay in the dict.
-        The import rules of app.file_ranking read the dict, not a File."""
+        The import rules of app.media.file_ranking read the dict, not a File."""
 
         mapped = set(db.inspect(cls).attrs.keys())
         unexpected = set(details) - mapped - IMPORT_DETAIL_KEYS

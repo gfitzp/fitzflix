@@ -14,7 +14,7 @@ import shutil
 
 import pytest
 
-import app.manual_imports as manual_imports
+import app.media.manual_imports as manual_imports
 from app import safe_job_id
 from tests.test_webhooks import auth_header
 
@@ -392,7 +392,7 @@ def test_only_a_live_job_under_the_fixed_id_counts_as_started(app, status, live)
     with app.app_context():
         assert manual_imports.started(DOWNLOAD_ID) is False
         job = app.file_queue.enqueue(
-            "app.manual_imports.manual_import_task", job_id=job_id
+            "app.media.manual_imports.manual_import_task", job_id=job_id
         )
         try:
             job.set_status(JobStatus(status))
@@ -495,7 +495,7 @@ def test_a_retry_after_a_failure_leaves_the_failed_jobs(
     job_id = safe_job_id(f"manual-import:{DOWNLOAD_ID}")
     queue = app.file_queue
     registry = FailedJobRegistry(queue=queue)
-    old = queue.enqueue("app.manual_imports.manual_import_task", job_id=job_id)
+    old = queue.enqueue("app.media.manual_imports.manual_import_task", job_id=job_id)
     queue.remove(old)
     old.set_status(JobStatus.FAILED)
     registry.add(old, ttl=3600, exc_string="already exists in the import directory")
@@ -535,11 +535,16 @@ def test_a_live_job_under_the_fixed_id_is_not_replaced(app):
     job_id = safe_job_id("manual-import:live-test")
     with app.app_context():
         job = app.file_queue.enqueue(
-            "app.manual_imports.manual_import_task", job_id=job_id
+            "app.media.manual_imports.manual_import_task", job_id=job_id
         )
         try:
-            assert free_job_id("app.manual_imports.manual_import_task", job_id) is False
+            assert (
+                free_job_id("app.media.manual_imports.manual_import_task", job_id)
+                is False
+            )
             assert app.file_queue.fetch_job(job_id) is not None
         finally:
             job.delete()
-        assert free_job_id("app.manual_imports.manual_import_task", job_id) is True
+        assert (
+            free_job_id("app.media.manual_imports.manual_import_task", job_id) is True
+        )

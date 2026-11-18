@@ -11,7 +11,7 @@ import os
 
 
 def _reserved(app, basename):
-    from app.importing import STAGING_RESERVED_KEY
+    from app.media.importing import STAGING_RESERVED_KEY
 
     return app.redis.hexists(STAGING_RESERVED_KEY, basename)
 
@@ -19,7 +19,7 @@ def _reserved(app, basename):
 def test_a_failed_move_releases_the_staging_reservation(app, incoming_dir, monkeypatch):
     """A move that fails rejects the source and frees its staging space."""
 
-    from app import importing
+    from app.media import importing
     from tests.test_localization import rejected_files, space_move_fixture
 
     basename = "Failed Move Space (2021) - [DVD].mkv"
@@ -46,7 +46,7 @@ def test_a_failed_reject_still_releases_the_lock(app, incoming_dir, monkeypatch)
 
     A lock that stays held blocks the title for the whole lock TTL."""
 
-    from app import importing
+    from app.media import importing
 
     source = os.path.join(incoming_dir, "Reject Fails (2021) - [DVD].mkv")
     stray = os.path.join(app.config["STAGING_DIR"], "Reject Fails stray.mkv")
@@ -71,7 +71,7 @@ def test_a_failed_reject_still_releases_the_lock(app, incoming_dir, monkeypatch)
 def test_keep_source_leaves_the_source_for_the_next_sweep(app, incoming_dir):
     """A failed handoff keeps the source in the import directory (#340)."""
 
-    from app import importing
+    from app.media import importing
 
     source = os.path.join(incoming_dir, "Kept Source (2021) - [DVD].mkv")
     with open(source, "wb") as f:

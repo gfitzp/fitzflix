@@ -1,4 +1,4 @@
-"""Test app/plex_api.py, the client of the local Plex server."""
+"""Test app/plex/plex_api.py, the client of the local Plex server."""
 
 
 class _Answer:
@@ -14,7 +14,7 @@ class _Answer:
 
 
 def test_each_call_sends_the_token_as_a_parameter(app, monkeypatch):
-    from app import plex_api
+    from app.plex import plex_api
 
     calls = []
 

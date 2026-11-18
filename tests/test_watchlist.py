@@ -145,7 +145,7 @@ def test_movie_page_funnel_badges(app, admin_client, admin_id):
 
     from app import db
     from app.models import User, UserMovieReview, UserWatchlist
-    from app.recommendations import RECS_KEY
+    from app.discovery.recommendations import RECS_KEY
 
     user_id = admin_id
     with app.app_context():
@@ -227,7 +227,7 @@ def test_manual_log_clears_the_watchlist_entry(app, admin_client, admin_id):
 def test_plex_watch_clears_the_watchlist_entry(app):
     from app import db
     from app.models import User, UserWatchlist
-    from app.diary import apply_plex_watch
+    from app.viewing.diary import apply_plex_watch
 
     with app.app_context():
         user = User.query.filter_by(admin=True).first()
@@ -248,8 +248,8 @@ def test_letterboxd_watchlist_imports_and_watches_clear(app, admin_id):
     from app import db
     from app.models import UserMovieReview
     from app.models import UserWatchlist
-    from app.diary import apply_letterboxd_import
-    from app.diary import parse_letterboxd_export
+    from app.viewing.diary import apply_letterboxd_import
+    from app.viewing.diary import parse_letterboxd_export
 
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:
@@ -413,7 +413,7 @@ def test_review_tmdb_watchlist_add_creates_the_record(
         )
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
+    monkeypatch.setattr("app.metadata.tmdb_apply.tmdb_get", fake_tmdb_get)
 
     page = admin_client.get("/review/tmdb/9306").get_data(as_text=True)
     assert 'name="add_watchlist_submit"' in page
@@ -434,7 +434,7 @@ def test_review_tmdb_watchlist_add_creates_the_record(
         refresh_jobs = [
             job
             for job in app.request_queue.jobs
-            if job.func_name == "app.tmdb_refresh.refresh_tmdb_info"
+            if job.func_name == "app.metadata.tmdb_refresh.refresh_tmdb_info"
             and job.args[1] == movie.id
         ]
         assert len(refresh_jobs) == 1
@@ -464,7 +464,7 @@ def test_rail_excludes_watchlisted_films(app, admin_client, admin_id):
 
     from app import db
     from app.models import UserWatchlist
-    from app.streaming_rail import RAIL_KEY
+    from app.availability.streaming_rail import RAIL_KEY
     from tests.test_streaming_rail import subscribe
 
     user_id = admin_id
@@ -519,8 +519,8 @@ def test_watchlist_shelf_shows_streaming_watchlisted_films(app, admin_client, ad
 
     from app import db
     from app.models import UserWatchlist
-    from app.streaming import AVAILABILITY_KEY
-    from app.streaming_rail import RAIL_KEY
+    from app.availability.streaming import AVAILABILITY_KEY
+    from app.availability.streaming_rail import RAIL_KEY
 
     user_id = admin_id
     with app.app_context():
@@ -578,7 +578,7 @@ def test_watchlist_shelf_takes_the_wanted_films_whole(app, admin_client, admin_i
 
     from app import db
     from app.models import UserWatchlist
-    from app.recommendations import RECS_KEY
+    from app.discovery.recommendations import RECS_KEY
 
     user_id = admin_id
     rec_items = []
@@ -611,7 +611,7 @@ def test_watchlist_shelf_takes_the_wanted_films_whole(app, admin_client, admin_i
 def test_watchlist_feeds_the_taste_profile(app, admin_id):
     from app import db
     from app.models import UserWatchlist
-    from app.recommendations import WATCHLIST_WEIGHT, user_movie_weights
+    from app.discovery.recommendations import WATCHLIST_WEIGHT, user_movie_weights
 
     user_id = admin_id
     with app.app_context():
@@ -633,7 +633,7 @@ def test_library_rail_excludes_watchlisted_films(app, admin_client, admin_id):
 
     from app import db
     from app.models import UserWatchlist
-    from app.recommendations import RECS_KEY
+    from app.discovery.recommendations import RECS_KEY
 
     user_id = admin_id
     with app.app_context():
@@ -678,7 +678,7 @@ def test_watchlist_shelf_leads_the_page(app, admin_client, admin_id):
 
     from app import db
     from app.models import UserWatchlist
-    from app.recommendations import RECS_KEY
+    from app.discovery.recommendations import RECS_KEY
 
     user_id = admin_id
     rec_items = []
@@ -1434,7 +1434,7 @@ def test_a_racing_first_watchlist_add_on_the_tmdb_page_answers_added(
         raise IntegrityError("INSERT INTO movie", {}, Exception("Duplicate entry"))
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
+    monkeypatch.setattr("app.metadata.tmdb_apply.tmdb_get", fake_tmdb_get)
     page = admin_client.get("/review/tmdb/9307").get_data(as_text=True)
     monkeypatch.setattr(discover, "find_or_create_tmdb_movie", other_post_first)
 
@@ -1482,7 +1482,7 @@ def test_a_racing_first_log_on_the_tmdb_page_uses_the_other_record(
         raise IntegrityError("INSERT INTO movie", {}, Exception("Duplicate entry"))
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
+    monkeypatch.setattr("app.metadata.tmdb_apply.tmdb_get", fake_tmdb_get)
     page = admin_client.get("/review/tmdb/9308").get_data(as_text=True)
     monkeypatch.setattr(discover, "find_or_create_tmdb_movie", other_post_first)
 

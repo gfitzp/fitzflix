@@ -15,7 +15,7 @@ fi
 
 findings=$(venv/bin/python -m pyflakes "$@" 2>&1 \
     | grep -v "__init__\.py:.*imported but unused" \
-    | grep -v "supervisor\.py:.*'app\.[a-z_]*' imported but unused")
+    | grep -v "supervisor\.py:.*'app\.[a-z_.]*' imported but unused")
 
 if [ -n "$findings" ]; then
     echo "pyflakes found problems; commit blocked:"

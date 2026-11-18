@@ -34,7 +34,7 @@ def make_candidate(title, year, genre_row=None, director=None):
 
 
 def test_candidates_exclude_declared_states(app, admin_id):
-    from app.elicitation import elicitation_candidates
+    from app.discovery.elicitation import elicitation_candidates
     from app.models import UserMovieStatus
 
     with app.app_context():
@@ -65,7 +65,7 @@ def test_unseen_mark_expires_after_two_years(app, admin_id):
 
     from datetime import datetime, timedelta
 
-    from app.elicitation import (
+    from app.discovery.elicitation import (
         UNSEEN_RESURFACE_YEARS,
         elicitation_candidates,
     )
@@ -131,7 +131,7 @@ def test_movie_page_positive_rating_earns_suggestions(
 
     import json
 
-    from app.elicitation import last_response
+    from app.discovery.elicitation import last_response
 
     with app.app_context():
         user_id = admin_id
@@ -183,7 +183,7 @@ def test_movie_page_positive_rating_earns_suggestions(
     # Only the page of the anchor shows the strip. Another page does
     # not compute the suggestions at all (#705).
 
-    from app import elicitation
+    from app.discovery import elicitation
 
     feature_reads = []
     real_collect_features = elicitation.collect_features
@@ -264,7 +264,7 @@ def test_card_rating_on_suggestion_never_reanchors(app, admin_client, admin_id):
 
     import json
 
-    from app.elicitation import last_response
+    from app.discovery.elicitation import last_response
 
     with app.app_context():
         user_id = admin_id
@@ -397,7 +397,7 @@ def test_seen_films_cannot_be_flagged_and_hide_the_x(app, admin_client, admin_id
     that film is 1 star. The ladder does not offer the button."""
 
     from app.models import UserMovieStatus
-    from app.diary import star_rating_fields
+    from app.viewing.diary import star_rating_fields
 
     with app.app_context():
         user_id = admin_id
@@ -514,7 +514,7 @@ def test_same_star_tap_removes_the_rating(app, admin_client, admin_id):
     A bare row with no date disappears fully. A dated viewing loses
     only its stars."""
 
-    from app.diary import star_rating_fields
+    from app.viewing.diary import star_rating_fields
 
     with app.app_context():
         user_id = admin_id
@@ -663,7 +663,7 @@ def test_half_star_ratings_render_a_partial_fill(app, admin_client, admin_id):
     last star in the full gold. It does not round down to a whole star.
     A tap still submits only a whole value."""
 
-    from app.diary import star_rating_fields
+    from app.viewing.diary import star_rating_fields
 
     with app.app_context():
         user_id = admin_id
@@ -711,7 +711,9 @@ def test_a_rating_inside_the_recompute_window_books_a_trailing_recompute(
         return [
             job
             for job in jobs
-            if job and job.func_name == "app.recommendations.recompute_recommendations"
+            if job
+            and job.func_name
+            == "app.discovery.recommendations.recompute_recommendations"
         ]
 
     with app.app_context():

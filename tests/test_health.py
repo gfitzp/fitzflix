@@ -13,7 +13,7 @@ from types import SimpleNamespace
 
 import pytest
 
-import app.maintenance as maintenance
+import app.operations.maintenance as maintenance
 
 
 @pytest.fixture
@@ -174,7 +174,7 @@ def test_health_probe_reports_a_flagged_repeat_once(app, health_env, caplog):
 
     import json
 
-    from app.log_digest import DIGEST_KEY
+    from app.operations.log_digest import DIGEST_KEY
 
     digest = {
         "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -590,7 +590,7 @@ def test_health_probe_alerts_on_old_criterion_releases(health_env):
 
     import time
 
-    from app.criterion_catalog import CRITERION_FETCHED_KEY
+    from app.criterion.criterion_catalog import CRITERION_FETCHED_KEY
 
     health_env.redis.set(CRITERION_FETCHED_KEY, int(time.time()) - 20 * 86400)
     emails = health_env.run()
@@ -630,8 +630,8 @@ def test_health_probe_reports_each_collector_in_order(
     import json
     import time
 
-    from app.criterion_catalog import CRITERION_FETCHED_KEY
-    from app.log_digest import DIGEST_KEY
+    from app.criterion.criterion_catalog import CRITERION_FETCHED_KEY
+    from app.operations.log_digest import DIGEST_KEY
 
     monkeypatch.setitem(app.config, "DB_BACKUP_DIR", str(tmp_path))
     monkeypatch.setitem(app.config, "DISK_ALERT_FREE_GB", 10**6)
@@ -723,7 +723,9 @@ def test_health_probe_reports_a_stale_backup_and_probes_s3(
         def head_bucket(self, Bucket):
             probed.append(Bucket)
 
-    monkeypatch.setattr("app.aws_storage.aws_s3_client", lambda with_retries: FakeS3())
+    monkeypatch.setattr(
+        "app.archive.aws_storage.aws_s3_client", lambda with_retries: FakeS3()
+    )
     monkeypatch.setitem(app.config, "AWS_BUCKET", "bucket-test")
     monkeypatch.setitem(app.config, "AWS_ACCESS_KEY", "key-test")
     monkeypatch.setitem(app.config, "AWS_SECRET_KEY", "secret-test")
@@ -887,7 +889,7 @@ def test_the_error_mail_starts_tls_without_credentials(app, monkeypatch):
     import logging
     import smtplib
 
-    from app.logging_setup import ErrorMailHandler
+    from app.operations.logging_setup import ErrorMailHandler
 
     calls = []
 

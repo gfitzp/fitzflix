@@ -119,8 +119,8 @@ def test_a_poll_with_a_stale_handle_records_the_new_one(app, monkeypatch):
     The extension with the old handle fails as in SQS. The poll goes on,
     and the job gets the new handle of the message."""
 
-    import app.aws_storage as aws_storage
-    from app.aws_storage import SQS_HANDLE_KEY
+    import app.archive.aws_storage as aws_storage
+    from app.archive.aws_storage import SQS_HANDLE_KEY
 
     key = "untouched/Stale Handle (1999) - [DVD].mkv"
     body = json.dumps(
@@ -142,7 +142,7 @@ def test_a_poll_with_a_stale_handle_records_the_new_one(app, monkeypatch):
     monkeypatch.setattr(aws_storage, "aws_sqs_client", lambda: sqs)
     monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kwargs: FakeS3())
     job = app.file_queue.enqueue(
-        "app.aws_storage.download_task",
+        "app.archive.aws_storage.download_task",
         key,
         "Stale Handle (1999) - [DVD].mkv",
         stale,
@@ -165,9 +165,9 @@ def test_a_series_that_left_sonarr_before_the_put_is_not_repointed(app, monkeypa
     _update_sonarr_path raises, and the path check of the caller logs it
     and goes on."""
 
-    import app.sonarr_push as sonarr_push
+    import app.arr.sonarr_push as sonarr_push
     from app import db
-    from app.series_rename import _update_sonarr_path
+    from app.media.series_rename import _update_sonarr_path
     from tests.factories import make_tv_series
 
     fake = Sonarr(

@@ -10,7 +10,7 @@ LONG = "Night of the Day of the Dawn " * 8 + "Part 5"
 
 def test_a_long_tmdb_title_is_shortened_at_creation(app):
     from app.models import Movie
-    from app.tmdb_refresh import find_or_create_tmdb_movie
+    from app.metadata.tmdb_refresh import find_or_create_tmdb_movie
 
     length = Movie.__table__.c.title.type.length
     assert len(LONG) > length
@@ -32,7 +32,7 @@ def test_a_shortened_title_finds_the_same_record(app):
     """A row with the shortened title and no TMDB id gets the id, not a twin."""
 
     from app.models import Movie, clip_movie_title
-    from app.tmdb_refresh import find_or_create_tmdb_movie
+    from app.metadata.tmdb_refresh import find_or_create_tmdb_movie
 
     with app.app_context():
         existing = Movie(title=clip_movie_title(LONG), year=1992)

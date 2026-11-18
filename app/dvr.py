@@ -45,16 +45,16 @@ from werkzeug.local import LocalProxy
 
 from app.tasks import enqueue_task
 from app import db, get_app
-from app.availability_alerts import _leaving_set
+from app.availability.availability_alerts import _leaving_set
 from app.settings import get_setting
-from app.file_ranking import (
+from app.media.file_ranking import (
     MOVIE_BEST_ORDER,
     best_episode_holders,
     tv_rank_rows,
 )
-from app.leaving_criterion import CRITERION_PROVIDER_ID
-from app.maintenance import volume_alive
-from app.plex_api import plex_command, plex_get
+from app.criterion.leaving_criterion import CRITERION_PROVIDER_ID
+from app.operations.maintenance import volume_alive
+from app.plex.plex_api import plex_command, plex_get
 from app.models import (
     DVRChannel,
     File,
@@ -72,7 +72,7 @@ from app.models import (
     tv_keywords,
     tv_networks,
 )
-from app.streaming import batch_title_availability, streaming_matches
+from app.availability.streaming import batch_title_availability, streaming_matches
 
 # The app instance of this process. Fitzflix resolves it lazily. Thus,
 # the nightly task can run on a worker without a second application.
@@ -1039,7 +1039,7 @@ def build_channel_lineups(day=None):
             # A folder that was never made is not a dead share (#501). A
             # new install has no library folders yet. An ERROR each night
             # would mail the admin.
-            from app.maintenance import VOLUMES_ROOT
+            from app.operations.maintenance import VOLUMES_ROOT
 
             missing = [
                 current_app.config[key]

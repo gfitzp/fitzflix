@@ -8,7 +8,7 @@ import sys
 
 import pytest
 
-from app.access_log import (
+from app.operations.access_log import (
     ACCESS_LOG_FORMAT,
     TokenFilter,
     access_log_path,
@@ -105,7 +105,7 @@ def test_logconfig_writes_a_redacted_line_through_dict_config(tmp_path):
     code = (
         "import logging, sys\n"
         "from logging.config import dictConfig\n"
-        "from app.access_log import ACCESS_LOG_FORMAT, logconfig\n"
+        "from app.operations.access_log import ACCESS_LOG_FORMAT, logconfig\n"
         f"dictConfig(logconfig({access_log!r}))\n"
         "atoms = {'t': '[30/Oct/2026:22:40:01 -0400]', 'p': '<1>', 'h': '10.0.0.2',"
         " 'r': 'GET /dvr/abc123/guide.xml HTTP/1.1', 's': '200', 'b': '12',"

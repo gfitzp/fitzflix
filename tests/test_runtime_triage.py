@@ -10,7 +10,7 @@ import re
 
 from app import db
 from app.models import FileAudioTrack
-from app.triage import reset_triage_state, runtime_mismatch_candidates
+from app.media.triage import reset_triage_state, runtime_mismatch_candidates
 
 from tests.factories import make_movie, make_movie_file
 from tests.conftest import csrf_token_from

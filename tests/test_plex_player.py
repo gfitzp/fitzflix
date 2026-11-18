@@ -202,7 +202,7 @@ def member_device(app):
 
 
 def _wire(monkeypatch, fake):
-    import app.plex_player as plex_player
+    import app.playback.plex_player as plex_player
 
     monkeypatch.setattr(plex_player, "_plex_get", fake.get)
     monkeypatch.setattr(plex_player.requests, "post", fake.post)
@@ -455,7 +455,7 @@ def test_unreachable_player_blames_the_closed_app(app, monkeypatch, server_confi
 
 
 def test_unconfigured_server_short_circuits(app, monkeypatch):
-    import app.plex_player as plex_player
+    import app.playback.plex_player as plex_player
 
     with app.app_context():
         movie = jaws()
@@ -481,7 +481,7 @@ def test_user_without_device_is_pointed_at_their_profile(
 
 
 def test_probe_player_reads_the_machine_id(app, monkeypatch):
-    import app.plex_player as plex_player
+    import app.playback.plex_player as plex_player
 
     def resources(url, headers=None, timeout=None):
         assert url == "http://192.168.1.63:32500/resources"
@@ -503,7 +503,7 @@ def test_probe_player_reads_the_machine_id(app, monkeypatch):
 def test_probe_player_answers_none_when_nothing_listens(app, monkeypatch):
     import requests
 
-    import app.plex_player as plex_player
+    import app.playback.plex_player as plex_player
 
     def refuse(url, headers=None, timeout=None):
         raise requests.ConnectionError("no route")
@@ -810,7 +810,7 @@ def test_admin_keeps_the_owner_token(app, monkeypatch, server_config):
     ],
 )
 def test_player_address_accepts_only_private_literals(text, expected):
-    from app.plex_player import player_address
+    from app.playback.plex_player import player_address
 
     assert player_address(text) == expected
 
@@ -901,7 +901,7 @@ def test_remember_cookie_is_samesite_lax(app, client):
 def _home_users_calls(monkeypatch, fake):
     """Count the plex.tv Home-user list reads on top of the fake."""
 
-    import app.plex_player as plex_player
+    import app.playback.plex_player as plex_player
 
     calls = []
     original = fake.player_get

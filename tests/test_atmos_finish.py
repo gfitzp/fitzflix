@@ -36,7 +36,7 @@ class _Process:
 def _finish_fakes(monkeypatch):
     """Fake the remux tools. The output of mkvmerge is its -o argument."""
 
-    import app.atmos as atmos
+    import app.media.atmos as atmos
 
     def fake_popen(command, **kwargs):
         with open(command[command.index("-o") + 1], "wb") as f:
@@ -55,9 +55,13 @@ def _finish_fakes(monkeypatch):
 
     monkeypatch.setattr(atmos.MediaInfo, "parse", lambda path: _MediaInfo())
     monkeypatch.setattr(atmos.subprocess, "Popen", fake_popen)
-    monkeypatch.setattr("app.tracks.watch_mkvmerge_progress", lambda *a, **k: None)
-    monkeypatch.setattr("app.tracks.get_audio_tracks_from_file", tracks_of)
-    monkeypatch.setattr("app.tracks.get_subtitle_tracks_from_file", lambda path: [])
+    monkeypatch.setattr(
+        "app.media.tracks.watch_mkvmerge_progress", lambda *a, **k: None
+    )
+    monkeypatch.setattr("app.media.tracks.get_audio_tracks_from_file", tracks_of)
+    monkeypatch.setattr(
+        "app.media.tracks.get_subtitle_tracks_from_file", lambda path: []
+    )
     monkeypatch.setattr(atmos, "_run_step", lambda *a, **k: None)
     monkeypatch.setattr(atmos, "enqueue_plex_analyze", lambda path: None)
     monkeypatch.setattr(atmos, "get_setting", lambda name: False)
@@ -66,25 +70,25 @@ def _finish_fakes(monkeypatch):
 def _finish_job(app, monkeypatch, title):
     """Run the first job and a complete check. Return (file, finish job)."""
 
-    import app.atmos as atmos
+    import app.media.atmos as atmos
 
     file, job, mediaconvert = _setup(app, monkeypatch, title)
     assert atmos.atmos_supplement_task(file.id) is True
-    (check,) = _scheduled(app, "app.atmos.atmos_check_task")
+    (check,) = _scheduled(app, "app.media.atmos.atmos_check_task")
     mediaconvert.status = {"Status": "COMPLETE"}
     assert atmos.atmos_check_task(*check.args, **check.kwargs) is True
     (finish,) = [
         j
         for j in app.handoff_queue.jobs
-        if j.func_name == "app.atmos.atmos_finish_task"
+        if j.func_name == "app.media.atmos.atmos_finish_task"
     ]
     _finish_fakes(monkeypatch)
     return file, finish
 
 
 def test_a_copy_that_fails_once_books_the_finish_again(app, monkeypatch):
-    import app.atmos as atmos
-    import app.videos as videos
+    import app.media.atmos as atmos
+    import app.media.videos as videos
     from app import db
     from app.models import FileAudioTrack
 
@@ -108,7 +112,7 @@ def test_a_copy_that_fails_once_books_the_finish_again(app, monkeypatch):
         assert os.path.exists(state["workspace"])
         assert app.redis.exists(atmos.CHAIN_KEY.format(file_id=file.id))
         assert not app.lock_manager.lock(file.file_identifier(), 1000)
-        (retry,) = _scheduled(app, "app.atmos.atmos_finish_task")
+        (retry,) = _scheduled(app, "app.media.atmos.atmos_finish_task")
         assert retry.kwargs == {"finish_retries": 1}
         assert retry.args[0]["remuxed"] is True
 
@@ -137,7 +141,7 @@ def _replace_like_an_arr(library):
 
 
 def _assert_run_ended_with_no_replacement(app, file, finish, library):
-    import app.atmos as atmos
+    import app.media.atmos as atmos
     from app.models import FileAudioTrack
 
     assert open(library, "rb").read() == b"the newer release of the film"
@@ -159,7 +163,7 @@ def test_a_library_file_that_an_arr_replaced_during_the_encode_stays(app, monkey
     The title lock does not stop Radarr. The staged copy is the older
     release. The finish must not put it over the newer file."""
 
-    import app.atmos as atmos
+    import app.media.atmos as atmos
     from app import db
 
     with app.app_context():
@@ -176,8 +180,8 @@ def test_a_library_file_that_an_arr_replaced_during_the_encode_stays(app, monkey
 def test_a_library_file_that_changes_during_the_copy_back_stays(app, monkeypatch):
     """The copy to the library takes minutes. The check runs again before the rename (#732)."""
 
-    import app.atmos as atmos
-    import app.videos as videos
+    import app.media.atmos as atmos
+    import app.media.videos as videos
     from app import db
 
     with app.app_context():
@@ -205,7 +209,7 @@ def test_a_library_file_that_an_arr_removed_is_not_put_back(app, monkeypatch):
     put the old copy back at the deleted path, and it does not wait for
     3 retries with the title lock."""
 
-    import app.atmos as atmos
+    import app.media.atmos as atmos
     from app import db
 
     with app.app_context():
@@ -236,7 +240,7 @@ def test_a_finish_retry_scans_only_its_own_result(app, monkeypatch, found, scans
     file of an other program. A scan would store its size, and the
     import that waits would take the file as cataloged already."""
 
-    import app.atmos as atmos
+    import app.media.atmos as atmos
     from app import db
     from tests.test_default_audio_track import _scheduled_scans
 
@@ -273,7 +277,7 @@ def test_a_finish_retry_on_a_changed_file_puts_the_stale_flag_back(
     own result of the run keeps the flag. So does a record that was
     stale before the run."""
 
-    import app.atmos as atmos
+    import app.media.atmos as atmos
     from app import db
     from app.models import File
 
@@ -302,7 +306,7 @@ def test_a_finish_retry_on_a_changed_file_puts_the_stale_flag_back(
         db.session.rollback()
         assert db.session.get(File, file_id).aws_stale is True
 
-        (retry,) = _scheduled(app, "app.atmos.atmos_finish_task")
+        (retry,) = _scheduled(app, "app.media.atmos.atmos_finish_task")
         os.remove(library)
         with open(library, "wb") as f:
             f.write(found)
@@ -314,7 +318,7 @@ def test_a_finish_retry_on_a_changed_file_puts_the_stale_flag_back(
 def test_a_run_of_the_older_code_has_no_stamp_and_still_finishes(app, monkeypatch):
     """A run that waits through the deploy has no stamp in its state (#732)."""
 
-    import app.atmos as atmos
+    import app.media.atmos as atmos
     from app import db
 
     with app.app_context():
@@ -330,8 +334,8 @@ def test_a_run_of_the_older_code_has_no_stamp_and_still_finishes(app, monkeypatc
 
 
 def test_the_last_failed_retry_ends_the_run(app, monkeypatch):
-    import app.atmos as atmos
-    import app.videos as videos
+    import app.media.atmos as atmos
+    import app.media.videos as videos
 
     with app.app_context():
         file, finish = _finish_job(app, monkeypatch, "Finish Give Up")
@@ -356,8 +360,8 @@ def test_a_failed_row_commit_marks_the_archive_stale_and_queues_a_scan(
     The archive is stale. A scan reads the rows from the file. The finish
     has no second commit of its own (#614)."""
 
-    import app.atmos as atmos
-    import app.tracks as tracks
+    import app.media.atmos as atmos
+    import app.media.tracks as tracks
     from app import db
     from app.models import File
     from tests.test_scheduling import requeue_id, scheduled_jobs
@@ -374,7 +378,7 @@ def test_a_failed_row_commit_marks_the_archive_stale_and_queues_a_scan(
         with pytest.raises(RuntimeError):
             atmos.atmos_finish_task(*finish.args)
 
-        wanted = requeue_id("app.tracks.track_metadata_scan_task", file_id)
+        wanted = requeue_id("app.media.tracks.track_metadata_scan_task", file_id)
         assert [j.id for j in scheduled_jobs(app.file_queue) if j.id == wanted] == [
             wanted
         ]
@@ -385,19 +389,21 @@ def test_a_failed_row_commit_marks_the_archive_stale_and_queues_a_scan(
 def test_a_file_that_has_its_twins_gets_its_rows_back(app, monkeypatch):
     """The rows say no twin, the staged copy has it. The rows follow the file (#503)."""
 
-    import app.atmos as atmos
+    import app.media.atmos as atmos
     from app.models import FileAudioTrack
 
     with app.app_context():
         file, job, _ = _setup(app, monkeypatch, "Rows Back")
         monkeypatch.setattr(
-            "app.tracks.get_audio_tracks_from_file",
+            "app.media.tracks.get_audio_tracks_from_file",
             lambda path: [
                 {"codec": TWIN, "language": "eng", "language_name": "English"},
                 {"codec": ATMOS, "language": "eng", "language_name": "English"},
             ],
         )
-        monkeypatch.setattr("app.tracks.get_subtitle_tracks_from_file", lambda path: [])
+        monkeypatch.setattr(
+            "app.media.tracks.get_subtitle_tracks_from_file", lambda path: []
+        )
 
         assert atmos.atmos_supplement_task(file.id) is True
 
@@ -415,7 +421,7 @@ def test_a_finished_job_under_the_fixed_id_gives_no_expiry_to_the_new_one(
 ):
     """The fixed id is freed before the enqueue (#504)."""
 
-    import app.atmos as atmos
+    import app.media.atmos as atmos
     from rq.job import JobStatus
 
     with app.app_context():
@@ -431,7 +437,7 @@ def test_a_finished_job_under_the_fixed_id_gives_no_expiry_to_the_new_one(
 def test_a_failed_remove_after_the_submit_still_cancels_the_encode(app, monkeypatch):
     """The encode is in the list that the cleanup cancels (#504)."""
 
-    import app.atmos as atmos
+    import app.media.atmos as atmos
 
     with app.app_context():
         file, job, mediaconvert = _setup(app, monkeypatch, "Remove Fault")
@@ -451,12 +457,12 @@ def test_a_failed_remove_after_the_submit_still_cancels_the_encode(app, monkeypa
 def test_an_unexpected_fault_in_a_check_books_the_next_check(app, monkeypatch):
     """The chain keeps its owner after a fault in the check body (#505)."""
 
-    import app.atmos as atmos
+    import app.media.atmos as atmos
 
     with app.app_context():
         file, job, mediaconvert = _setup(app, monkeypatch, "Check Fault")
         assert atmos.atmos_supplement_task(file.id) is True
-        (check,) = _scheduled(app, "app.atmos.atmos_check_task")
+        (check,) = _scheduled(app, "app.media.atmos.atmos_check_task")
 
         def broken(*args, **kwargs):
             raise ConnectionError("redis blip")
@@ -464,14 +470,15 @@ def test_an_unexpected_fault_in_a_check_books_the_next_check(app, monkeypatch):
         monkeypatch.setattr(atmos, "_set_stage", broken)
         assert atmos.atmos_check_task(*check.args, **check.kwargs) is True
         checks = [
-            j.kwargs["checks"] for j in _scheduled(app, "app.atmos.atmos_check_task")
+            j.kwargs["checks"]
+            for j in _scheduled(app, "app.media.atmos.atmos_check_task")
         ]
         assert sorted(checks) == [0, 1]
         assert app.redis.exists(atmos.CHAIN_KEY.format(file_id=file.id))
 
 
 def test_the_sweep_removes_only_the_stale_workspaces(app, monkeypatch, tmp_path):
-    import app.atmos as atmos
+    import app.media.atmos as atmos
 
     monkeypatch.setitem(app.config, "STAGING_DIR", str(tmp_path))
     old = 1_000_000_000
@@ -495,7 +502,7 @@ def test_the_sweep_removes_only_the_stale_workspaces(app, monkeypatch, tmp_path)
 def test_an_early_end_of_a_conversion_queues_its_archive(app, monkeypatch):
     """A run that ends before its archive step queues upload_task (#505)."""
 
-    import app.atmos as atmos
+    import app.media.atmos as atmos
     from app import db
 
     with app.app_context():
@@ -504,7 +511,7 @@ def test_an_early_end_of_a_conversion_queues_its_archive(app, monkeypatch):
         db.session.commit()
         monkeypatch.setattr(atmos, "get_setting", lambda name: True)
         assert atmos.atmos_supplement_task(file.id) is True
-        (check,) = _scheduled(app, "app.atmos.atmos_check_task")
+        (check,) = _scheduled(app, "app.media.atmos.atmos_check_task")
 
         mediaconvert.status = {"Status": "ERROR", "ErrorCode": 1030}
         with pytest.raises(atmos.AtmosRunEnded):
@@ -514,7 +521,7 @@ def test_an_early_end_of_a_conversion_queues_its_archive(app, monkeypatch):
             j
             for queue in (app.file_queue, app.handoff_queue)
             for j in queue.jobs
-            if j.func_name == "app.aws_storage.upload_task"
+            if j.func_name == "app.archive.aws_storage.upload_task"
         ]
         assert [j.args for j in uploads] == [(file.id,)]
 
@@ -524,14 +531,14 @@ def _uploads(app):
         j
         for queue in (app.file_queue, app.handoff_queue)
         for j in queue.jobs
-        if j.func_name == "app.aws_storage.upload_task"
+        if j.func_name == "app.archive.aws_storage.upload_task"
     ]
 
 
 def test_an_early_end_queues_its_archive_after_it_releases_the_lock(app, monkeypatch):
     """The upload takes the title lock. Queued under it, it waits (#615 follow-up)."""
 
-    import app.atmos as atmos
+    import app.media.atmos as atmos
     from app import db
 
     with app.app_context():
@@ -540,14 +547,14 @@ def test_an_early_end_queues_its_archive_after_it_releases_the_lock(app, monkeyp
         db.session.commit()
         monkeypatch.setattr(atmos, "get_setting", lambda name: True)
         assert atmos.atmos_supplement_task(file.id) is True
-        (check,) = _scheduled(app, "app.atmos.atmos_check_task")
+        (check,) = _scheduled(app, "app.media.atmos.atmos_check_task")
         lock = check.args[1]
 
         held_at_enqueue = []
         real_enqueue = atmos.enqueue_task
 
         def enqueue(name, *args, **kwargs):
-            if name == "app.aws_storage.upload_task":
+            if name == "app.archive.aws_storage.upload_task":
                 held_at_enqueue.append(bool(app.redis.exists(lock.resource)))
             return real_enqueue(name, *args, **kwargs)
 
@@ -561,7 +568,7 @@ def test_an_early_end_queues_its_archive_after_it_releases_the_lock(app, monkeyp
 def test_no_local_copy_queues_no_archive(app, monkeypatch):
     """A run that ends on 'no local copy' uploads nothing (#505 follow-up)."""
 
-    import app.atmos as atmos
+    import app.media.atmos as atmos
     from app import db
 
     with app.app_context():
@@ -577,7 +584,7 @@ def test_no_local_copy_queues_no_archive(app, monkeypatch):
 def test_a_current_transcoded_archive_is_not_uploaded_again(app, monkeypatch):
     from datetime import datetime
 
-    import app.atmos as atmos
+    import app.media.atmos as atmos
     from app import db
 
     with app.app_context():
@@ -600,20 +607,22 @@ def test_a_current_transcoded_archive_is_not_uploaded_again(app, monkeypatch):
 def test_the_row_rebuild_of_a_twinned_file_starts_a_new_transaction(app, monkeypatch):
     """The rebuild after the long copy runs after a rollback (#503 follow-up)."""
 
-    import app.atmos as atmos
-    import app.tracks as tracks
+    import app.media.atmos as atmos
+    import app.media.tracks as tracks
     from app import db
 
     with app.app_context():
         file, job, _ = _setup(app, monkeypatch, "Fresh Snapshot")
         monkeypatch.setattr(
-            "app.tracks.get_audio_tracks_from_file",
+            "app.media.tracks.get_audio_tracks_from_file",
             lambda path: [
                 {"codec": TWIN, "language": "eng", "language_name": "English"},
                 {"codec": ATMOS, "language": "eng", "language_name": "English"},
             ],
         )
-        monkeypatch.setattr("app.tracks.get_subtitle_tracks_from_file", lambda path: [])
+        monkeypatch.setattr(
+            "app.media.tracks.get_subtitle_tracks_from_file", lambda path: []
+        )
         events = []
         real_rollback = db.session.rollback
         real_replace = tracks.replace_track_rows
@@ -638,7 +647,7 @@ def test_a_failed_remux_tool_ends_the_run_with_no_retry(app, monkeypatch):
 
     import subprocess
 
-    import app.atmos as atmos
+    import app.media.atmos as atmos
 
     with app.app_context():
         file, finish = _finish_job(app, monkeypatch, "Remux Error")
@@ -649,7 +658,7 @@ def test_a_failed_remux_tool_ends_the_run_with_no_retry(app, monkeypatch):
         monkeypatch.setattr(atmos, "_run_step", failing_step)
         with pytest.raises(subprocess.CalledProcessError):
             atmos.atmos_finish_task(*finish.args)
-        assert _scheduled(app, "app.atmos.atmos_finish_task") == []
+        assert _scheduled(app, "app.media.atmos.atmos_finish_task") == []
         assert not app.redis.exists(atmos.CHAIN_KEY.format(file_id=file.id))
 
 
@@ -657,7 +666,7 @@ def test_a_remux_tool_ended_by_sigterm_tries_again(app, monkeypatch):
     import signal
     import subprocess
 
-    import app.atmos as atmos
+    import app.media.atmos as atmos
 
     with app.app_context():
         file, finish = _finish_job(app, monkeypatch, "Remux Stopped")
@@ -667,7 +676,7 @@ def test_a_remux_tool_ended_by_sigterm_tries_again(app, monkeypatch):
 
         monkeypatch.setattr(atmos, "_run_step", stopped_step)
         assert atmos.atmos_finish_task(*finish.args) is False
-        assert len(_scheduled(app, "app.atmos.atmos_finish_task")) == 1
+        assert len(_scheduled(app, "app.media.atmos.atmos_finish_task")) == 1
 
 
 def test_the_finish_mux_drops_an_empty_subtitle_track(app, monkeypatch):
@@ -676,7 +685,7 @@ def test_the_finish_mux_drops_an_empty_subtitle_track(app, monkeypatch):
     Before, a second in-place remux removed it. That remux needed a
     third copy of space and could end the paid run with ENOSPC."""
 
-    import app.atmos as atmos
+    import app.media.atmos as atmos
 
     class _Text(_Track):
         def __init__(self, order, elements):
@@ -715,7 +724,7 @@ def test_a_lost_database_connection_at_the_stale_flag_is_transient(app):
 
     from sqlalchemy.exc import OperationalError
 
-    import app.atmos as atmos
+    import app.media.atmos as atmos
 
     with app.app_context():
         with pytest.raises(atmos.FinishInterrupted):

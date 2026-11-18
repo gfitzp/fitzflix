@@ -129,7 +129,7 @@ def test_dismiss_marks_the_file_reviewed(app, admin_client):
 
 
 def test_promote_enqueues_mkvpropedit_preserving_subtitle_flags(app, admin_client):
-    from app.tracks import mkvpropedit_task
+    from app.media.tracks import mkvpropedit_task
 
     with app.app_context():
         file, lossless = build_candidate()
@@ -188,7 +188,7 @@ def test_promote_enqueues_mkvpropedit_preserving_subtitle_flags(app, admin_clien
         jobs = [
             job
             for job in app.file_queue.jobs
-            if job.func_name == "app.tracks.mkvpropedit_task"
+            if job.func_name == "app.media.tracks.mkvpropedit_task"
         ]
         assert len(jobs) == 1
         # The lossless track becomes the default audio. The remux pass of
@@ -301,7 +301,7 @@ def test_generate_enqueues_the_comparison_task(app, admin_client):
         jobs = [
             job
             for job in app.transcode_queue.jobs
-            if job.func_name == "app.triage.generate_audio_comparison"
+            if job.func_name == "app.media.triage.generate_audio_comparison"
         ]
         assert len(jobs) == 1
         assert jobs[0].args == (file_id,)
@@ -310,7 +310,7 @@ def test_generate_enqueues_the_comparison_task(app, admin_client):
 
 
 def test_import_hook_queues_comparison_only_for_candidates(app):
-    from app.triage import maybe_enqueue_audio_comparison
+    from app.media.triage import maybe_enqueue_audio_comparison
 
     with app.app_context():
         file, _ = build_candidate()
@@ -326,7 +326,7 @@ def test_import_hook_queues_comparison_only_for_candidates(app):
         jobs = [
             job
             for job in app.transcode_queue.jobs
-            if job.func_name == "app.triage.generate_audio_comparison"
+            if job.func_name == "app.media.triage.generate_audio_comparison"
         ]
         assert [job.args for job in jobs] == [(file.id,)]
 
@@ -334,7 +334,7 @@ def test_import_hook_queues_comparison_only_for_candidates(app):
 def test_reimport_resets_the_reviewed_verdict(app):
     from datetime import datetime
 
-    from app.triage import reset_triage_state
+    from app.media.triage import reset_triage_state
 
     with app.app_context():
         file, _ = build_candidate()
@@ -347,7 +347,7 @@ def test_reimport_resets_the_reviewed_verdict(app):
 
 
 def test_presentation_renders_clocks_percentages_and_verdicts(app):
-    from app.triage import audio_comparison_dir, lossy_audio_presentation
+    from app.media.triage import audio_comparison_dir, lossy_audio_presentation
 
     with app.app_context():
         file, _ = build_candidate()
@@ -455,7 +455,7 @@ def test_envelope_correlation_separates_programme_from_commentary(app):
     import math
     import random
 
-    from app.triage import _envelope_correlation
+    from app.media.triage import _envelope_correlation
 
     rng = random.Random(212)
     programme = [abs(math.sin(i / 7.0)) * 800 + rng.random() * 40 for i in range(240)]

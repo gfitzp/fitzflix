@@ -20,7 +20,7 @@ These rules come from real failures. Each one cost a debugging session.
 
 ### The singleton of get_app
 
-`app.atmos` calls `get_app()` when it loads. The other task modules (`app.videos`, `app.triage`, and others) get the app later, through a `LocalProxy`. The first app of the process becomes that singleton. A test module that imports `app.atmos` at the top runs that call during the collection. That is before the test app exists. Then each task function of the suite uses the production database, Redis, and S3.
+`app.media.atmos` calls `get_app()` when it loads. The other task modules (`app.media.videos`, `app.media.triage`, and others) get the app later, through a `LocalProxy`. The first app of the process becomes that singleton. A test module that imports `app.media.atmos` at the top runs that call during the collection. That is before the test app exists. Then each task function of the suite uses the production database, Redis, and S3.
 
 Import the task modules inside the test functions. Give each test the `app` fixture, also a test of a pure function. The `app` fixture asserts that the singleton is the test app. Never weaken that assert.
 
@@ -64,7 +64,7 @@ The flash messages and the page text follow ASD-STE100. The tests assert on the 
 
 ### The network
 
-The test configuration makes TMDB unreachable. A test that needs TMDB patches the 1 getter, `app.tmdb_apply.tmdb_get`. The fetches of each module go through `tmdb_json` and that getter. Use `tmdb_router` from `fakes.py` for a fake that answers by the end of the URL. The `fake_tmdb` fixture answers each request with no match. The Plex fakes patch `plex_get`, `plex_write`, or `plex_command` in the module that calls them.
+The test configuration makes TMDB unreachable. A test that needs TMDB patches the 1 getter, `app.metadata.tmdb_apply.tmdb_get`. The fetches of each module go through `tmdb_json` and that getter. Use `tmdb_router` from `fakes.py` for a fake that answers by the end of the URL. The `fake_tmdb` fixture answers each request with no match. The Plex fakes patch `plex_get`, `plex_write`, or `plex_command` in the module that calls them.
 
 ### The clients and the forms
 

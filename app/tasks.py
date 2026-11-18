@@ -1,7 +1,7 @@
 """Hold the registry of the rq tasks that Fitzflix enqueues by name.
 
 rq stores the job name of each queued job in Redis as a string, for
-example "app.importing.localization_task". The key of TASKS is that
+example "app.media.importing.localization_task". The key of TASKS is that
 string. Its TaskSpec gives the default queue, timeout and description
 of the task. enqueue_task fills each one from the spec. Thus, a task
 gets the same queue and the same timeout from every producer. An
@@ -34,95 +34,95 @@ TaskSpec = namedtuple(
 TASKS = {
     # The recurring maintenance jobs of cron_table. Each one runs on the
     # maintenance queue.
-    "app.maintenance.rotate_logs": TaskSpec(
+    "app.operations.maintenance.rotate_logs": TaskSpec(
         "maintenance", 54000, "Rotating application logs"
     ),
-    "app.log_digest.log_digest_task": TaskSpec(
+    "app.operations.log_digest.log_digest_task": TaskSpec(
         "maintenance", 600, "Digesting repeated log warnings"
     ),
-    "app.maintenance.backup_database": TaskSpec(
+    "app.operations.maintenance.backup_database": TaskSpec(
         "maintenance", 3600, "Backing up the database"
     ),
-    "app.importing.manual_import_task": TaskSpec(
+    "app.media.importing.manual_import_task": TaskSpec(
         "maintenance",
         3600,
         "Scanning import directory for files",
         command="flask scan",
     ),
-    "app.maintenance.restore_drill": TaskSpec(
+    "app.operations.maintenance.restore_drill": TaskSpec(
         "maintenance", 3600, "Verifying the offsite database backup restores"
     ),
-    "app.criterion_catalog.refresh_criterion_collection_info": TaskSpec(
+    "app.criterion.criterion_catalog.refresh_criterion_collection_info": TaskSpec(
         "maintenance",
         3600,
         "Refreshing Criterion Collection information",
         command="flask refresh criterion",
     ),
-    "app.criterion_catalog.refresh_criterion_releases": TaskSpec(
+    "app.criterion.criterion_catalog.refresh_criterion_releases": TaskSpec(
         "maintenance",
         900,
         "Fetching the Criterion Collection releases from Wikidata",
     ),
-    "app.maintenance.cleanup_orphaned_files": TaskSpec(
+    "app.operations.maintenance.cleanup_orphaned_files": TaskSpec(
         "maintenance", 3600, "Cleaning up orphaned partial files"
     ),
-    "app.aws_storage.sync_aws_s3_storage_task": TaskSpec(
+    "app.archive.aws_storage.sync_aws_s3_storage_task": TaskSpec(
         "maintenance",
         86400,
         "Syncing files with AWS S3 storage",
         command="flask sync",
     ),
-    "app.maintenance.health_probe": TaskSpec(
+    "app.operations.maintenance.health_probe": TaskSpec(
         "maintenance", 600, "Probing system health"
     ),
-    "app.letterboxd.sync_letterboxd_feeds": TaskSpec(
+    "app.viewing.letterboxd.sync_letterboxd_feeds": TaskSpec(
         "maintenance", 900, "Syncing Letterboxd diaries"
     ),
-    "app.provider_catalog.refresh_provider_catalogs": TaskSpec(
+    "app.availability.provider_catalog.refresh_provider_catalogs": TaskSpec(
         "maintenance",
         3600,
         "Discovering provider-catalog films for recommendations",
     ),
-    "app.missing_files.missing_best_files_task": TaskSpec(
+    "app.media.missing_files.missing_best_files_task": TaskSpec(
         "maintenance", 1800, "Scanning for best files that have no local copy"
     ),
-    "app.recommendations.recompute_recommendations": TaskSpec(
+    "app.discovery.recommendations.recompute_recommendations": TaskSpec(
         "maintenance",
         3600,
         "Recomputing film recommendations",
         command="flask recs recompute",
     ),
-    "app.criterion_now.heartbeat_criterion_now": TaskSpec(
+    "app.criterion.criterion_now.heartbeat_criterion_now": TaskSpec(
         "maintenance", 300, "Checking the Criterion 24/7 poller's pulse"
     ),
-    "app.leaving_criterion.refresh_leaving_criterion": TaskSpec(
+    "app.criterion.leaving_criterion.refresh_leaving_criterion": TaskSpec(
         "maintenance",
         3600,
         "Refreshing the leaving-Criterion film set",
         command="flask recs leaving",
     ),
-    "app.newly_added.refresh_newly_added": TaskSpec(
+    "app.availability.newly_added.refresh_newly_added": TaskSpec(
         "maintenance",
         1800,
         "Refreshing the newly-added streaming feeds",
         command="flask recs newly-added",
     ),
-    "app.tmdb_refresh.sync_certification_list": TaskSpec(
+    "app.metadata.tmdb_refresh.sync_certification_list": TaskSpec(
         "maintenance", 600, "Syncing the TMDB certification list"
     ),
-    "app.awards.refresh_awards": TaskSpec(
+    "app.metadata.awards.refresh_awards": TaskSpec(
         "maintenance",
         7200,
         "Refreshing film awards from Wikidata",
         command="flask recs awards",
     ),
-    "app.streaming_rail.recompute_streaming_rail": TaskSpec(
+    "app.availability.streaming_rail.recompute_streaming_rail": TaskSpec(
         "maintenance",
         3600,
         "Recomputing the streaming rail",
         command="flask recs streaming",
     ),
-    "app.estimate_warm.warm_estimates": TaskSpec(
+    "app.discovery.estimate_warm.warm_estimates": TaskSpec(
         "maintenance", 3600, "Pre-warming estimate payloads"
     ),
     "app.frames.refresh_frame_pool_task": TaskSpec(
@@ -131,129 +131,147 @@ TASKS = {
         "Refreshing the Name That Frame pool",
         command="flask frames refresh",
     ),
-    "app.tmdb_changes.refresh_changed_records": TaskSpec(
+    "app.metadata.tmdb_changes.refresh_changed_records": TaskSpec(
         "maintenance", 1800, "Refreshing TMDB-changed records"
     ),
-    "app.tmdb_refresh.refresh_in_production_tv": TaskSpec(
+    "app.metadata.tmdb_refresh.refresh_in_production_tv": TaskSpec(
         "maintenance", 3600, "Refreshing in-production TV series"
     ),
-    "app.streaming.refresh_availability": TaskSpec(
+    "app.availability.streaming.refresh_availability": TaskSpec(
         "maintenance", 3600, "Refreshing streaming availability"
     ),
-    "app.availability_alerts.notify_watchlist_availability": TaskSpec(
+    "app.availability.availability_alerts.notify_watchlist_availability": TaskSpec(
         "maintenance",
         1800,
         "Checking watchlisted films for new availability",
         command="flask alerts availability",
     ),
-    "app.aws_storage.sqs_retrieve_task": TaskSpec(
+    "app.archive.aws_storage.sqs_retrieve_task": TaskSpec(
         "maintenance",
         7200,
         "Polling AWS SQS for files to download",
         command="flask sqs",
     ),
-    "app.diary.plex_history_poll": TaskSpec(
+    "app.viewing.diary.plex_history_poll": TaskSpec(
         "maintenance", 900, "Polling Plex for watch history"
     ),
-    "app.plex_titles.sync_plex_episode_titles": TaskSpec(
+    "app.plex.plex_titles.sync_plex_episode_titles": TaskSpec(
         "maintenance", 1800, "Syncing episode titles into Plex"
     ),
-    "app.plex_library.refresh_plex_libraries": TaskSpec(
+    "app.plex.plex_library.refresh_plex_libraries": TaskSpec(
         "maintenance", 600, "Refreshing Plex libraries"
     ),
-    "app.plex_collections.sync_criterion_collection": TaskSpec(
+    "app.plex.plex_collections.sync_criterion_collection": TaskSpec(
         "maintenance", 600, "Syncing the Criterion collections into Plex"
     ),
-    "app.plex_watchlist.sync_plex_watchlist": TaskSpec(
+    "app.plex.plex_watchlist.sync_plex_watchlist": TaskSpec(
         "maintenance", 900, "Syncing the Plex watchlist"
     ),
-    "app.radarr_push.reconcile_radarr_paths": TaskSpec(
+    "app.arr.radarr_push.reconcile_radarr_paths": TaskSpec(
         "maintenance", 900, "Checking the Radarr movie paths"
     ),
-    "app.series_rename.reconcile_sonarr_paths": TaskSpec(
+    "app.media.series_rename.reconcile_sonarr_paths": TaskSpec(
         "maintenance", 900, "Checking the Sonarr series paths"
     ),
-    "app.series_rename.reconcile_sonarr_series": TaskSpec(
+    "app.media.series_rename.reconcile_sonarr_series": TaskSpec(
         "maintenance", 900, "Checking the Sonarr path of a series"
     ),
-    "app.custom_artwork.reconcile_library_posters": TaskSpec(
+    "app.media.custom_artwork.reconcile_library_posters": TaskSpec(
         "maintenance", 1800, "Restoring the custom posters of the library folders"
     ),
-    "app.custom_artwork.restore_folder_poster": TaskSpec(
+    "app.media.custom_artwork.restore_folder_poster": TaskSpec(
         "request", 600, "Restoring the custom poster of a library folder"
     ),
     "app.dvr.build_channel_lineups": TaskSpec(
         "maintenance", 3600, "Building virtual DVR channel lineups"
     ),
     # Other maintenance work that the pages and the tasks queue.
-    "app.streaming.warm_title_availability": TaskSpec("maintenance", 1800),
-    "app.criterion_now.poll_criterion_now": TaskSpec("maintenance", 300),
-    "app.plex_library.analyze_plex_media": TaskSpec("maintenance", 1800),
-    "app.plex_library.refresh_plex_film": TaskSpec("maintenance", 600),
-    "app.plex_selection.sync_plex_stream_selections": TaskSpec(
+    "app.availability.streaming.warm_title_availability": TaskSpec("maintenance", 1800),
+    "app.criterion.criterion_now.poll_criterion_now": TaskSpec("maintenance", 300),
+    "app.plex.plex_library.analyze_plex_media": TaskSpec("maintenance", 1800),
+    "app.plex.plex_library.refresh_plex_film": TaskSpec("maintenance", 600),
+    "app.plex.plex_selection.sync_plex_stream_selections": TaskSpec(
         "maintenance", 7200, "Matching the Plex track selection to the files"
     ),
-    "app.plex_selection.align_plex_items": TaskSpec("maintenance", 1800),
+    "app.plex.plex_selection.align_plex_items": TaskSpec("maintenance", 1800),
     # The import pipeline.
-    "app.importing.localization_task": TaskSpec("import", "LOCALIZATION_TASK_TIMEOUT"),
-    "app.tracks.mkvmerge_task": TaskSpec("import", "LOCALIZATION_TASK_TIMEOUT"),
-    "app.atmos.atmos_supplement_task": TaskSpec("import", "TRANSCODE_TASK_TIMEOUT"),
-    "app.importing.move_localized_file": TaskSpec("handoff", "MOVE_TASK_TIMEOUT"),
-    "app.aws_storage.aws_delete": TaskSpec("handoff", "FILE_TASK_TIMEOUT"),
-    "app.atmos.atmos_check_task": TaskSpec("handoff", 600),
-    "app.atmos.atmos_finish_task": TaskSpec("handoff", "TRANSCODE_TASK_TIMEOUT"),
-    "app.sdr_conversion.convert_localized_file": TaskSpec(
+    "app.media.importing.localization_task": TaskSpec(
+        "import", "LOCALIZATION_TASK_TIMEOUT"
+    ),
+    "app.media.tracks.mkvmerge_task": TaskSpec("import", "LOCALIZATION_TASK_TIMEOUT"),
+    "app.media.atmos.atmos_supplement_task": TaskSpec(
+        "import", "TRANSCODE_TASK_TIMEOUT"
+    ),
+    "app.media.importing.move_localized_file": TaskSpec("handoff", "MOVE_TASK_TIMEOUT"),
+    "app.archive.aws_storage.aws_delete": TaskSpec("handoff", "FILE_TASK_TIMEOUT"),
+    "app.media.atmos.atmos_check_task": TaskSpec("handoff", 600),
+    "app.media.atmos.atmos_finish_task": TaskSpec("handoff", "TRANSCODE_TASK_TIMEOUT"),
+    "app.media.sdr_conversion.convert_localized_file": TaskSpec(
         "transcode", "TRANSCODE_TASK_TIMEOUT"
     ),
-    "app.tracks.remux_audio_plan_task": TaskSpec("transcode", "TRANSCODE_TASK_TIMEOUT"),
-    "app.triage.generate_triage_snapshots": TaskSpec("transcode", 7200),
-    "app.triage.generate_audio_comparison": TaskSpec("transcode", 7200),
+    "app.media.tracks.remux_audio_plan_task": TaskSpec(
+        "transcode", "TRANSCODE_TASK_TIMEOUT"
+    ),
+    "app.media.triage.generate_triage_snapshots": TaskSpec("transcode", 7200),
+    "app.media.triage.generate_audio_comparison": TaskSpec("transcode", 7200),
     "app.frames.extract_frame_task": TaskSpec("transcode", 600),
     "app.frames.replace_frame_task": TaskSpec("transcode", 600),
     # The file operations.
-    "app.aws_storage.upload_task": TaskSpec("file", "UPLOAD_TASK_TIMEOUT"),
+    "app.archive.aws_storage.upload_task": TaskSpec("file", "UPLOAD_TASK_TIMEOUT"),
     # A move is 1 server-side copy (#369). For 100 GiB, s3transfer sends
     # 6,400 UploadPartCopy requests of 16 MiB, 10 at a time. The estimate
     # at 50 MB/s for each request is 4 minutes. FILE_TASK_TIMEOUT
     # (10 minutes) leaves too small a margin for a slow region. Thus, the
     # move has the budget of an upload.
-    "app.aws_storage.move_archive_object": TaskSpec(
+    "app.archive.aws_storage.move_archive_object": TaskSpec(
         "file", "UPLOAD_TASK_TIMEOUT", "Moving an archive to its new key"
     ),
-    "app.sdr_conversion.archive_held_task": TaskSpec("file", "UPLOAD_TASK_TIMEOUT"),
-    "app.aws_storage.move_archive_to_modified_task": TaskSpec(
+    "app.media.sdr_conversion.archive_held_task": TaskSpec(
         "file", "UPLOAD_TASK_TIMEOUT"
     ),
-    "app.aws_storage.download_task": TaskSpec("file", "TRANSCODE_TASK_TIMEOUT"),
-    "app.aws_storage.place_restored_import_task": TaskSpec("file", "FILE_TASK_TIMEOUT"),
-    "app.tracks.mkvpropedit_task": TaskSpec("file", "MKVPROPEDIT_TASK_TIMEOUT"),
-    "app.tracks.track_metadata_scan_task": TaskSpec("file", "MKVPROPEDIT_TASK_TIMEOUT"),
-    "app.series_rename.rename_tv_series_task": TaskSpec("file", "SQL_TASK_TIMEOUT"),
-    "app.manual_imports.manual_import_task": TaskSpec(
+    "app.archive.aws_storage.move_archive_to_modified_task": TaskSpec(
+        "file", "UPLOAD_TASK_TIMEOUT"
+    ),
+    "app.archive.aws_storage.download_task": TaskSpec("file", "TRANSCODE_TASK_TIMEOUT"),
+    "app.archive.aws_storage.place_restored_import_task": TaskSpec(
+        "file", "FILE_TASK_TIMEOUT"
+    ),
+    "app.media.tracks.mkvpropedit_task": TaskSpec("file", "MKVPROPEDIT_TASK_TIMEOUT"),
+    "app.media.tracks.track_metadata_scan_task": TaskSpec(
+        "file", "MKVPROPEDIT_TASK_TIMEOUT"
+    ),
+    "app.media.series_rename.rename_tv_series_task": TaskSpec(
+        "file", "SQL_TASK_TIMEOUT"
+    ),
+    "app.media.manual_imports.manual_import_task": TaskSpec(
         "file", "LOCALIZATION_TASK_TIMEOUT"
     ),
     # The database writes.
-    "app.importing.finalize_localization": TaskSpec("sql", "SQL_TASK_TIMEOUT"),
-    "app.tmdb_refresh.apply_tmdb_refresh": TaskSpec("sql", "SQL_TASK_TIMEOUT"),
-    "app.diary.apply_plex_watch": TaskSpec("sql", "SQL_TASK_TIMEOUT"),
-    "app.diary.apply_letterboxd_import": TaskSpec("sql", "SQL_TASK_TIMEOUT"),
-    "app.tracks.save_track_metadata": TaskSpec("sql", "SQL_TASK_TIMEOUT"),
-    "app.tracks.track_metadata_scan_library": TaskSpec("sql", "SQL_TASK_TIMEOUT"),
-    "app.diary.review_task": TaskSpec("sql", "SQL_TASK_TIMEOUT"),
-    "app.importing.repair_replaced_file_task": TaskSpec("sql", "SQL_TASK_TIMEOUT"),
+    "app.media.importing.finalize_localization": TaskSpec("sql", "SQL_TASK_TIMEOUT"),
+    "app.metadata.tmdb_refresh.apply_tmdb_refresh": TaskSpec("sql", "SQL_TASK_TIMEOUT"),
+    "app.viewing.diary.apply_plex_watch": TaskSpec("sql", "SQL_TASK_TIMEOUT"),
+    "app.viewing.diary.apply_letterboxd_import": TaskSpec("sql", "SQL_TASK_TIMEOUT"),
+    "app.media.tracks.save_track_metadata": TaskSpec("sql", "SQL_TASK_TIMEOUT"),
+    "app.media.tracks.track_metadata_scan_library": TaskSpec("sql", "SQL_TASK_TIMEOUT"),
+    "app.viewing.diary.review_task": TaskSpec("sql", "SQL_TASK_TIMEOUT"),
+    "app.media.importing.repair_replaced_file_task": TaskSpec(
+        "sql", "SQL_TASK_TIMEOUT"
+    ),
     # The work that a user or an outside service asks for.
-    "app.tmdb_refresh.refresh_tmdb_info": TaskSpec("request", "SQL_TASK_TIMEOUT"),
-    "app.aws_storage.aws_restore": TaskSpec("request", "SQL_TASK_TIMEOUT"),
-    "app.diary.letterboxd_import_task": TaskSpec(
+    "app.metadata.tmdb_refresh.refresh_tmdb_info": TaskSpec(
+        "request", "SQL_TASK_TIMEOUT"
+    ),
+    "app.archive.aws_storage.aws_restore": TaskSpec("request", "SQL_TASK_TIMEOUT"),
+    "app.viewing.diary.letterboxd_import_task": TaskSpec(
         "request", "LOCALIZATION_TASK_TIMEOUT"
     ),
-    "app.infuse_player.pair_task": TaskSpec("request", 240),
-    "app.radarr_push.adopt_download_task": TaskSpec("request", 300),
-    "app.radarr_push.follow_import_move_task": TaskSpec("request", 300),
-    "app.radarr_push.follow_rename_task": TaskSpec("request", 300),
-    "app.sonarr_push.adopt_episode_task": TaskSpec("request", 300),
-    "app.radarr_push.restore_download_record_task": TaskSpec("request", 300),
-    "app.sonarr_push.restore_download_record_task": TaskSpec("request", 300),
+    "app.playback.infuse_player.pair_task": TaskSpec("request", 240),
+    "app.arr.radarr_push.adopt_download_task": TaskSpec("request", 300),
+    "app.arr.radarr_push.follow_import_move_task": TaskSpec("request", 300),
+    "app.arr.radarr_push.follow_rename_task": TaskSpec("request", 300),
+    "app.arr.sonarr_push.adopt_episode_task": TaskSpec("request", 300),
+    "app.arr.radarr_push.restore_download_record_task": TaskSpec("request", 300),
+    "app.arr.sonarr_push.restore_download_record_task": TaskSpec("request", 300),
 }
 
 

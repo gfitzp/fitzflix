@@ -106,7 +106,7 @@ def _wire(app, monkeypatch, fake, scanner=None):
     """Point the module at the fake. With `scanner`, a path that exists,
     the scanner run of a clip is recorded instead of executed."""
 
-    import app.plex_library as plex_library
+    import app.plex.plex_library as plex_library
 
     monkeypatch.setitem(app.config, "PLEX_URL", "http://plex.test")
     monkeypatch.setitem(app.config, "PLEX_TOKEN", "token")
@@ -207,7 +207,7 @@ def test_a_file_plex_hasnt_scanned_is_retried_once_then_dropped(
         job_ids = registry.get_job_ids()
         assert len(job_ids) == 1
         job = app.maintenance_queue.fetch_job(job_ids[0])
-        assert job.func_name == "app.plex_library.analyze_plex_media"
+        assert job.func_name == "app.plex.plex_library.analyze_plex_media"
         assert job.args[0] == [film]
         assert job.kwargs["retries"] == 1
 
@@ -225,7 +225,7 @@ def test_a_file_plex_hasnt_scanned_is_retried_once_then_dropped(
 
 
 def test_enqueue_is_a_no_op_without_a_plex_server(app, monkeypatch, tmp_path):
-    import app.plex_library as plex_library
+    import app.plex.plex_library as plex_library
 
     monkeypatch.setitem(app.config, "PLEX_URL", None)
     monkeypatch.setitem(app.config, "PLEX_TOKEN", None)
@@ -238,7 +238,7 @@ def test_enqueue_is_a_no_op_without_a_plex_server(app, monkeypatch, tmp_path):
 def test_enqueue_collapses_a_second_edit_onto_the_queued_analyze(
     app, monkeypatch, tmp_path
 ):
-    import app.plex_library as plex_library
+    import app.plex.plex_library as plex_library
 
     monkeypatch.setitem(app.config, "PLEX_URL", "http://plex.test")
     monkeypatch.setitem(app.config, "PLEX_TOKEN", "token")
@@ -254,7 +254,7 @@ def test_enqueue_collapses_a_second_edit_onto_the_queued_analyze(
 
         jobs = app.maintenance_queue.jobs
         assert len(jobs) == 1
-        assert jobs[0].func_name == "app.plex_library.analyze_plex_media"
+        assert jobs[0].func_name == "app.plex.plex_library.analyze_plex_media"
         assert jobs[0].args[0] == [path]
 
 

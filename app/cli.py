@@ -28,7 +28,7 @@ def register(app):
         # short for it.
 
         enqueue_task(
-            "app.criterion_catalog.refresh_criterion_collection_info",
+            "app.criterion.criterion_catalog.refresh_criterion_collection_info",
             description="Refreshing Criterion Collection information for all movies in library",
         )
         app.logger.info("Refreshing Criterion Collection information from Wikipedia")
@@ -76,7 +76,7 @@ def register(app):
         if movies:
             for movie in movies:
                 enqueue_task(
-                    "app.tmdb_refresh.refresh_tmdb_info",
+                    "app.metadata.tmdb_refresh.refresh_tmdb_info",
                     "Movies",
                     movie.id,
                     movie.tmdb_id,
@@ -89,7 +89,7 @@ def register(app):
         if tv_shows:
             for tv in tv_shows:
                 enqueue_task(
-                    "app.tmdb_refresh.refresh_tmdb_info",
+                    "app.metadata.tmdb_refresh.refresh_tmdb_info",
                     "TV Shows",
                     tv.id,
                     tv.tmdb_id,
@@ -109,7 +109,7 @@ def register(app):
             raise click.ClickException(f"No file has id {file_id}")
 
         enqueue_task(
-            "app.tracks.track_metadata_scan_task",
+            "app.media.tracks.track_metadata_scan_task",
             int(file_id),
             description=f"Refreshing metadata for file ID {file_id}",
         )
@@ -120,7 +120,7 @@ def register(app):
         """Sync the library with the AWS storage."""
 
         enqueue_task(
-            "app.aws_storage.sync_aws_s3_storage_task",
+            "app.archive.aws_storage.sync_aws_s3_storage_task",
             description="Syncing files with AWS S3 storage",
         )
         app.logger.info("Queueing the AWS S3 storage sync")
@@ -137,7 +137,7 @@ def register(app):
         """Check for restored files at AWS S3."""
 
         enqueue_task(
-            "app.aws_storage.sqs_retrieve_task",
+            "app.archive.aws_storage.sqs_retrieve_task",
             # The command asks for a poll now. Thus, it does not wait behind
             # the maintenance work of the hourly cron.
             queue="request",
@@ -158,7 +158,7 @@ def register(app):
         Do not wait for the nightly run. The first run only writes the
         snapshots."""
 
-        from app.availability_alerts import notify_watchlist_availability
+        from app.availability.availability_alerts import notify_watchlist_availability
 
         notify_watchlist_availability()
         click.echo("Watchlist availability checked")
@@ -196,7 +196,7 @@ def register(app):
         new title (#362). The archive keys do not change (#668)."""
 
         from app import db
-        from app.series_rename import rename_refusal, rename_timeout
+        from app.media.series_rename import rename_refusal, rename_timeout
 
         series = db.session.get(TVSeries, series_id)
         if series is None:
@@ -205,7 +205,7 @@ def register(app):
         if refusal:
             raise click.ClickException(f"Not renamed, because {refusal}")
         job = enqueue_task(
-            "app.series_rename.rename_tv_series_task",
+            "app.media.series_rename.rename_tv_series_task",
             series_id,
             new_title,
             description=f"Renaming TV series {series_id} to '{new_title}'",
@@ -229,8 +229,8 @@ def register(app):
         Those are real library data, not catalog junk."""
 
         from app import db
-        from app.aws_storage import untouched_key_still_claimed
-        from app.custom_artwork import remove_custom_artwork_after_commit
+        from app.archive.aws_storage import untouched_key_still_claimed
+        from app.media.custom_artwork import remove_custom_artwork_after_commit
         from app.models import (
             ArchivedOriginal,
             CatalogExclusion,
@@ -273,7 +273,7 @@ def register(app):
         for aws_key in original_keys:
             if not untouched_key_still_claimed(aws_key):
                 enqueue_task(
-                    "app.aws_storage.aws_delete",
+                    "app.archive.aws_storage.aws_delete",
                     aws_key,
                     only_if_unclaimed=True,
                     description=f"Deleting '{aws_key}' from AWS",
@@ -295,7 +295,7 @@ def register(app):
         Wikidata. It applies a change of the assignment rule to the
         existing records (#472)."""
 
-        from app.criterion_catalog import reassign_stored_criterion_releases
+        from app.criterion.criterion_catalog import reassign_stored_criterion_releases
 
         set_titles = reassign_stored_criterion_releases()
         if set_titles is None:
@@ -305,12 +305,9 @@ def register(app):
 
     # The groups that belong to 1 module each live next to that module.
 
-    from app import (
-        atmos_cli,
-        aws_cli,
-        recommendations_cli,
-        triage_cli,
-    )
+    from app.archive import aws_cli
+    from app.discovery import recommendations_cli
+    from app.media import atmos_cli, triage_cli
 
     for module in (
         aws_cli,

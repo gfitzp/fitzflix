@@ -40,7 +40,7 @@ PLAN = {
 
 
 def _convert_with_child(app, tmp_path, monkeypatch, returncode):
-    from app import sdr_conversion
+    from app.media import sdr_conversion
 
     hidden = tmp_path / ".Stopped (2001) - [Bluray-1080p].mkv"
     hidden.write_bytes(b"localized")
@@ -99,8 +99,8 @@ def test_a_second_sigterm_during_the_library_copy_cleans_up_and_goes_up(
     2 volumes. The volumes of the test decide which one runs. Exactly 1
     of them must run (#731)."""
 
-    from app import videos
-    from app import importing
+    from app.media import videos
+    from app.media import importing
 
     hidden = tmp_path / ".Copied (2001) - [DVD].mkv"
     hidden.write_bytes(b"localized")
@@ -134,7 +134,7 @@ def test_a_second_sigterm_during_the_library_copy_cleans_up_and_goes_up(
 
 
 def test_interrupted_knows_the_stop_signals(app):
-    from app.importing import interrupted
+    from app.media.importing import interrupted
 
     assert interrupted(subprocess.CalledProcessError(-signal.SIGTERM, ["x"]))
     assert interrupted(SystemExit(1))
@@ -144,7 +144,7 @@ def test_interrupted_knows_the_stop_signals(app):
 
 
 def test_abandon_import_releases_the_lock_before_the_slow_steps(app, monkeypatch):
-    from app import importing
+    from app.media import importing
 
     events = []
     with app.app_context():
@@ -192,7 +192,7 @@ class _WritingChild:
 def test_a_fault_in_the_atmos_step_loop_stops_the_child(app, monkeypatch):
     """A Redis fault in the progress write stops mkvextract or truehdd (#499)."""
 
-    import app.atmos as atmos
+    import app.media.atmos as atmos
 
     children = []
 
@@ -218,7 +218,7 @@ def test_a_fault_in_the_atmos_step_loop_stops_the_child(app, monkeypatch):
 def test_a_fault_in_the_atomicparsley_loop_stops_the_child(app, monkeypatch):
     """AtomicParsley rewrites the file in place. A fault stops it (#499)."""
 
-    from app import importing
+    from app.media import importing
 
     children = []
 
@@ -246,7 +246,7 @@ def test_a_fault_in_the_atomicparsley_loop_stops_the_child(app, monkeypatch):
 def _in_place_run(app, sample_mkv, incoming_dir, monkeypatch, failing_phase):
     """Run an in-place import whose failing_phase raises SystemExit."""
 
-    from app import importing
+    from app.media import importing
 
     basename = "In Place Stop (2003) - [DVD].mkv"
     os.makedirs(incoming_dir, exist_ok=True)

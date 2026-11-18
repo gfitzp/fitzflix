@@ -4,7 +4,7 @@ import json
 
 import botocore.exceptions
 
-import app.aws_storage as aws_storage
+import app.archive.aws_storage as aws_storage
 
 
 class FakeSQS:
@@ -68,7 +68,7 @@ def downloads(app):
     return [
         job.args[0]
         for job in app.file_queue.jobs
-        if job.func_name == "app.aws_storage.download_task"
+        if job.func_name == "app.archive.aws_storage.download_task"
     ]
 
 
@@ -103,7 +103,7 @@ def test_a_failed_extension_does_not_stop_the_poll(app, monkeypatch):
 
     with app.app_context():
         app.file_queue.enqueue(
-            "app.aws_storage.download_task",
+            "app.archive.aws_storage.download_task",
             args=("untouched/Old Film (2000) - [DVD].mkv", "Old Film.mkv", "old"),
             meta={"sqs_receipt_handle": "old"},
         )
@@ -123,7 +123,7 @@ def test_a_message_that_comes_back_gets_no_second_download(app, monkeypatch):
 
     with app.app_context():
         job = app.file_queue.enqueue(
-            "app.aws_storage.download_task",
+            "app.archive.aws_storage.download_task",
             args=(key, "Busy Film (2003) - [DVD].mkv", "old-handle"),
             meta={"sqs_receipt_handle": "old-handle"},
         )
@@ -178,7 +178,7 @@ def test_the_poll_renews_a_restore_for_the_full_days(app, monkeypatch):
 
     with app.app_context():
         app.file_queue.enqueue(
-            "app.aws_storage.download_task",
+            "app.archive.aws_storage.download_task",
             args=("untouched/Pending (2003) - [DVD].mkv", "Pending.mkv", "r9"),
             meta={"sqs_receipt_handle": "r9"},
         )

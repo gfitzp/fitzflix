@@ -30,7 +30,7 @@ def _deletes(app):
         job.args[0]
         for queue in (app.request_queue, app.handoff_queue, app.file_queue)
         for job in queue.jobs
-        if job.func_name == "app.aws_storage.aws_delete"
+        if job.func_name == "app.archive.aws_storage.aws_delete"
     ]
 
 
@@ -194,7 +194,7 @@ def test_a_wedged_share_at_the_unlink_still_queues_the_archive_deletes(
 def test_the_purge_delete_skips_a_key_with_no_object(app, monkeypatch):
     """A pending move target has no object. No delete marker goes there (follow-up #515)."""
 
-    from app import aws_storage
+    from app.archive import aws_storage
     from tests.fakes import ArchiveS3
 
     s3 = ArchiveS3(objects={"untouched/Here.mkv": {"ContentLength": 1}})
@@ -217,7 +217,7 @@ def test_a_queued_delete_keeps_a_key_that_a_record_claims_before_it_runs(
 
     import logging
 
-    from app import aws_storage
+    from app.archive import aws_storage
     from app.main.library import _queue_archive_deletes
     from tests.fakes import ArchiveS3
 
@@ -230,7 +230,7 @@ def test_a_queued_delete_keeps_a_key_that_a_record_claims_before_it_runs(
     jobs = [
         job
         for job in app.request_queue.jobs
-        if job.func_name == "app.aws_storage.aws_delete" and job.args == (key,)
+        if job.func_name == "app.archive.aws_storage.aws_delete" and job.args == (key,)
     ]
     assert len(jobs) == 1
 
@@ -252,7 +252,7 @@ def test_a_queued_delete_keeps_a_key_that_a_record_claims_before_it_runs(
 def test_a_delete_for_an_unclaimed_key_still_deletes(app, monkeypatch):
     """With no claim, the option deletes as before. only_if_present still works."""
 
-    from app import aws_storage
+    from app.archive import aws_storage
     from tests.fakes import ArchiveS3
 
     s3 = ArchiveS3(objects={"untouched/Nobody (1990).mkv": {"ContentLength": 1}})
@@ -272,7 +272,7 @@ def test_a_delete_for_an_unclaimed_key_still_deletes(app, monkeypatch):
 def test_a_delete_with_no_option_deletes_a_claimed_key_as_before(app, monkeypatch):
     """A job that the older code queued has no option. It deletes as before."""
 
-    from app import aws_storage
+    from app.archive import aws_storage
     from tests.fakes import ArchiveS3
 
     key = "untouched/Old Job (1991) - [DVD].mkv"
@@ -289,7 +289,7 @@ def test_a_delete_with_no_option_deletes_a_claimed_key_as_before(app, monkeypatc
 def test_a_delete_keeps_a_key_that_an_archived_original_claims(app, monkeypatch):
     """The task uses the same claim rule as the pages. An original counts."""
 
-    from app import aws_storage
+    from app.archive import aws_storage
     from tests.fakes import ArchiveS3
 
     with app.app_context():
@@ -312,7 +312,7 @@ def test_a_wedged_share_at_the_unlink_still_removes_the_triage_aids(app, monkeyp
     import os
 
     from app.models import File
-    from app.triage import triage_snapshot_dir
+    from app.media.triage import triage_snapshot_dir
 
     def wedged(path, *args, **kwargs):
         raise OSError(errno.EIO, "Input/output error", path)

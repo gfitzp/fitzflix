@@ -1,4 +1,4 @@
-"""Test the event handler of the import watch (app/import_watch.py) directly."""
+"""Test the event handler of the import watch (app/media/import_watch.py) directly."""
 
 import os
 
@@ -7,7 +7,7 @@ def test_the_handler_queues_new_and_renamed_files_only(app, incoming_dir):
     from watchdog.events import FileCreatedEvent, FileMovedEvent
 
     from app import safe_job_id
-    from app.import_watch import ImportEventHandler
+    from app.media.import_watch import ImportEventHandler
 
     handler = ImportEventHandler(app)
     visible = os.path.join(incoming_dir, "Handler Test (2021) - [DVD].mkv")
@@ -40,7 +40,7 @@ def test_the_keeper_sweep_works_without_an_app_context(app, monkeypatch):
 
     from flask import has_app_context
 
-    import app.import_watch as import_watch
+    import app.media.import_watch as import_watch
     from app.tasks import TASKS, TaskSpec
 
     class Observer:
@@ -62,7 +62,7 @@ def test_the_keeper_sweep_works_without_an_app_context(app, monkeypatch):
         def start(self):
             pass
 
-    name = "app.importing.manual_import_task"
+    name = "app.media.importing.manual_import_task"
     monkeypatch.setitem(TASKS, name, TaskSpec("maintenance", "SQL_TASK_TIMEOUT"))
     monkeypatch.setattr(import_watch, "PollingObserver", Observer)
     monkeypatch.setattr(threading, "Thread", Thread)
@@ -78,8 +78,8 @@ def test_a_blind_start_writes_no_heartbeat(app, monkeypatch):
 
     import threading
 
-    import app.import_watch as import_watch
-    from app.maintenance import OBSERVER_KEY_PREFIX
+    import app.media.import_watch as import_watch
+    from app.operations.maintenance import OBSERVER_KEY_PREFIX
 
     class Broken:
         emitters = ()
@@ -109,8 +109,8 @@ def test_a_failed_enqueue_releases_the_basename_lock(app, incoming_dir, monkeypa
 
     The exception killed the dispatch thread of watchdog."""
 
-    import app.importing as importing
-    from app.import_watch import ImportEventHandler
+    import app.media.importing as importing
+    from app.media.import_watch import ImportEventHandler
 
     def broken(path, **kwargs):
         raise ConnectionError("Redis went away")
@@ -126,7 +126,7 @@ def test_a_failed_enqueue_releases_the_basename_lock(app, incoming_dir, monkeypa
 def test_a_failed_basename_lock_does_not_raise(app, incoming_dir, monkeypatch):
     """A Redis fault at the lock call escaped the handler of #523 (#568)."""
 
-    from app.import_watch import ImportEventHandler
+    from app.media.import_watch import ImportEventHandler
 
     def broken(resource, ttl):
         raise ConnectionError("Redis went away")

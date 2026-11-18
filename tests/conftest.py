@@ -262,9 +262,9 @@ def app():
     )
 
     # The first app created in the process becomes the singleton of
-    # get_app(). app.atmos calls get_app() at import time. The other task
-    # modules (app.videos, app.triage, ...) get it later through a
-    # LocalProxy. A test module that imports app.atmos at TOP LEVEL runs
+    # get_app(). app.media.atmos calls get_app() at import time. The other task
+    # modules (app.media.videos, app.media.triage, ...) get it later through a
+    # LocalProxy. A test module that imports app.media.atmos at TOP LEVEL runs
     # that call during pytest collection, before this fixture. That creates a
     # real-config app. It silently points each task function in the
     # suite at production. Import the task modules inside the test
@@ -430,7 +430,7 @@ def no_growth_wait(app, monkeypatch):
     The wait is 5 seconds in production. Each localization test paid for
     it. A test of a growing file sets its own short wait."""
 
-    from app import importing
+    from app.media import importing
 
     monkeypatch.setattr(importing, "GROWTH_CHECK_SECONDS", 0)
 
@@ -528,13 +528,13 @@ def fake_tmdb(monkeypatch):
         def raise_for_status(self):
             pass
 
-    # The requests module that tmdb_get uses is in app.tmdb_apply. app.videos
+    # The requests module that tmdb_get uses is in app.metadata.tmdb_apply. app.media.videos
     # stopped importing requests when its network-facing parts moved out
 
-    import app.tmdb_apply
+    import app.metadata.tmdb_apply
 
     monkeypatch.setattr(
-        app.tmdb_apply.requests, "get", lambda *args, **kwargs: FakeResponse()
+        app.metadata.tmdb_apply.requests, "get", lambda *args, **kwargs: FakeResponse()
     )
 
 

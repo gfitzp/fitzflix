@@ -1,4 +1,4 @@
-"""Test app/file_ranking.py: the one best-copy rule and its readers (#361)."""
+"""Test app/media/file_ranking.py: the one best-copy rule and its readers (#361)."""
 
 import re
 
@@ -46,7 +46,7 @@ def test_every_movie_best_copy_reader_prefers_the_real_rip(app, monkeypatch):
     from app.frames import _best_file
     from app.main.library import _films_and_features
     from app.main.search import _movie_search_results
-    from app.file_ranking import ranked_movie_files
+    from app.media.file_ranking import ranked_movie_files
 
     with app.app_context():
         movie, rip, conversion = _movie_pair()
@@ -85,7 +85,7 @@ def test_every_episode_best_copy_reader_prefers_the_real_rip(app, monkeypatch):
 
     import app.dvr as dvr
     from app.main.library import _season_files
-    from app.file_ranking import tv_best_holder_ids
+    from app.media.file_ranking import tv_best_holder_ids
 
     with app.app_context():
         series, rip, conversion = _episode_pair()
@@ -106,7 +106,7 @@ def test_every_episode_best_copy_reader_prefers_the_real_rip(app, monkeypatch):
 def test_the_filmography_key_puts_widescreen_before_a_better_fullscreen(app):
     """best_copy_key has the fullscreen rule and the conversion rule."""
 
-    from app.file_ranking import best_copy_key
+    from app.media.file_ranking import best_copy_key
     from app.models import File, RefQuality
 
     with app.app_context():
@@ -144,7 +144,7 @@ def test_copy_upgradable(
 ):
     """The threshold is 18. A Criterion quality lowers the bar, never raises it."""
 
-    from app.file_ranking import copy_upgradable
+    from app.media.file_ranking import copy_upgradable
 
     assert (
         copy_upgradable(
@@ -155,7 +155,7 @@ def test_copy_upgradable(
 
 
 def test_quality_anchors_read_the_tiers(app):
-    from app.file_ranking import (
+    from app.media.file_ranking import (
         lowest_physical_preference,
         quality_id,
         quality_preference,
@@ -189,7 +189,7 @@ def test_the_view_ddl_has_the_order_of_the_python_ranks(app):
 
     from sqlalchemy.dialects import mysql
 
-    from app.file_ranking import RANKED_FILES_VIEW, movie_file_rank, tv_file_rank
+    from app.media.file_ranking import RANKED_FILES_VIEW, movie_file_rank, tv_file_rank
 
     view_windows = [
         _window(clause)
@@ -211,7 +211,7 @@ def test_the_view_ddl_is_the_definition_of_the_last_view_migration(app):
     import importlib.util
     import os
 
-    from app.file_ranking import RANKED_FILES_VIEW
+    from app.media.file_ranking import RANKED_FILES_VIEW
 
     path = os.path.join(
         os.path.dirname(os.path.dirname(__file__)),

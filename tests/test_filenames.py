@@ -11,7 +11,7 @@ import logging
 
 import pytest
 
-from app.importing import evaluate_filename
+from app.media.importing import evaluate_filename
 
 # The README examples: (filename, expected library file path)
 
@@ -203,7 +203,7 @@ def test_rejected_filenames(app, filename, detail):
     A reason of None keeps the generic reject: the "incorrect filename"
     folder, the log line, and the text of the filename tester."""
 
-    from app.importing import FilenameRejection
+    from app.media.importing import FilenameRejection
 
     with app.app_context():
         result = evaluate_filename(filename, log=False)
@@ -420,7 +420,7 @@ def test_unknown_tmdb_id_rejected_loudly(app, monkeypatch):
 
     import requests
 
-    import app.tmdb_apply as tmdb_apply
+    import app.metadata.tmdb_apply as tmdb_apply
 
     class NotFoundResponse:
         status_code = 404
@@ -495,7 +495,7 @@ def test_reconstruct_filename_carries_id_tag(app):
     Fitzflix reconstructs it. The tag is upgraded to the current tmdb id
     of the record (#155)."""
 
-    from app.importing import reconstruct_filename
+    from app.media.importing import reconstruct_filename
     from tests.factories import make_movie, make_movie_file
 
     with app.app_context():
@@ -622,7 +622,7 @@ def test_an_extra_of_an_edition_keeps_the_edition(app):
     """The Redux trailer must not replace the theatrical trailer, or leave its folder."""
 
     from app import db
-    from app.importing import reconstruct_filename
+    from app.media.importing import reconstruct_filename
     from tests.factories import feature_type, make_file, make_movie
 
     name = (
@@ -675,7 +675,7 @@ def test_reconstruct_filename_of_a_film_with_no_tmdb_date(app):
     """TMDB can send a title with no release date. The refresh must not crash."""
 
     from app import db
-    from app.importing import reconstruct_filename
+    from app.media.importing import reconstruct_filename
     from tests.factories import make_movie, make_movie_file
 
     with app.app_context():
@@ -693,13 +693,13 @@ def test_a_yearless_tagged_name_waits_out_a_tmdb_outage(app, monkeypatch):
 
     import requests
 
-    import app.importing as importing
+    import app.media.importing as importing
 
     def unreachable(*args, **kwargs):
         raise requests.ConnectionError("TMDB is down")
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr("app.tmdb_apply.tmdb_get", unreachable)
+    monkeypatch.setattr("app.metadata.tmdb_apply.tmdb_get", unreachable)
     with app.app_context():
         details = evaluate_filename("Unseen Film {tmdb-999123} - [DVD].mkv", log=False)
         assert not details
@@ -873,7 +873,7 @@ def test_a_title_search_names_the_film_as_tmdb_does(app, monkeypatch):
             }
         )
 
-    monkeypatch.setattr("app.tmdb_apply.tmdb_get", answer)
+    monkeypatch.setattr("app.metadata.tmdb_apply.tmdb_get", answer)
     with app.app_context():
         details = evaluate_filename(
             "A Fistful of Dynamite (1971) - [DVD].mkv", log=False
@@ -900,7 +900,7 @@ def test_a_tmdb_tag_with_no_record_reads_the_movie_object(app, monkeypatch):
             {"id": 556574, "title": "Hamilton", "release_date": "2020-07-03"}
         )
 
-    monkeypatch.setattr("app.tmdb_apply.tmdb_get", answer)
+    monkeypatch.setattr("app.metadata.tmdb_apply.tmdb_get", answer)
     with app.app_context():
         details = evaluate_filename("Hamilton {tmdb-556574} - [DVD].mkv", log=False)
     assert calls == [["movie", "556574"]]
@@ -915,7 +915,7 @@ def test_an_explicit_tmdb_id_outranks_the_tag(app, monkeypatch):
     from tests.factories import make_movie
 
     monkeypatch.setattr(
-        "app.tmdb_apply.tmdb_get",
+        "app.metadata.tmdb_apply.tmdb_get",
         lambda *args, **kwargs: pytest.fail("the record owns the id"),
     )
     with app.app_context():
@@ -928,7 +928,7 @@ def test_an_explicit_tmdb_id_outranks_the_tag(app, monkeypatch):
     assert details["dirname"] == "Movies/Ran (1985) {tmdb-11645}"
 
 
-# The round trip of app.naming (#362). Each name of the corpus above goes
+# The round trip of app.media.naming (#362). Each name of the corpus above goes
 # through evaluate_filename. Its parts then go through library_name, which
 # must give the same plex title and basename. The extra names cover the
 # shapes that the corpus does not hold.
@@ -959,7 +959,7 @@ def _library_name_parts(filename, details):
     They do not come from the plex title or the basename that the test
     compares."""
 
-    from app.importing import (
+    from app.media.importing import (
         MOVIE_NAME_RE,
         TV_NAME_RE,
         YEARLESS_MOVIE_NAME_RE,
@@ -1012,8 +1012,8 @@ def test_library_name_rebuilds_each_parsed_name(app, filename):
     from pathvalidate import sanitize_filename
     from unidecode import unidecode
 
-    from app.manual_imports import fitzflix_basename
-    from app.naming import library_name
+    from app.media.manual_imports import fitzflix_basename
+    from app.media.naming import library_name
 
     with app.app_context():
         details = evaluate_filename(filename, log=False)
@@ -1035,7 +1035,7 @@ def test_reconstruct_filename_of_each_film_shape(app):
     quality of its original (#292)."""
 
     from app import db
-    from app.importing import reconstruct_filename
+    from app.media.importing import reconstruct_filename
     from tests.factories import feature_type, make_file, make_movie, make_movie_file
 
     with app.app_context():
@@ -1082,7 +1082,7 @@ def test_reconstruct_filename_of_an_episode_takes_the_series_title(app):
 
     A name that does not parse stays as it is."""
 
-    from app.importing import reconstruct_filename
+    from app.media.importing import reconstruct_filename
     from tests.factories import make_tv_file, make_tv_series
 
     with app.app_context():
@@ -1133,7 +1133,7 @@ def test_a_library_name_never_starts_with_a_period(app, title):
 def test_an_extra_never_gets_a_hidden_name(app):
     """The name of an extra is the name of its file (#717)."""
 
-    from app.naming import library_name
+    from app.media.naming import library_name
 
     plex_title, basename = library_name(
         {
@@ -1180,7 +1180,7 @@ def test_the_sanitizer_cannot_put_the_periods_back(app, title):
 def test_a_title_of_only_periods_is_refused(app):
     """No name is left when each period goes. The import refuses the file (#722)."""
 
-    from app.naming import visible_name
+    from app.media.naming import visible_name
     from tests.factories import make_movie
 
     assert visible_name("...") == ""
@@ -1222,7 +1222,7 @@ def test_a_show_folder_never_starts_with_a_period(app):
 def test_a_show_named_with_characters_that_have_no_ascii_form_keeps_its_name(app):
     """A TV name gets no unidecode. Thus, such a show is visible on the disk (#722)."""
 
-    from app.naming import library_name, visible_name
+    from app.media.naming import library_name, visible_name
 
     assert visible_name("\U0001f600", sanitized=False) == "\U0001f600"
     assert visible_name("\U0001f600") == ""
@@ -1271,7 +1271,7 @@ def test_the_refresh_lock_of_a_film_is_the_lock_of_its_first_import(app):
     """The 2 keys must be the same text, also for a title with periods (#722)."""
 
     from app.models import MOVIES, title_lock_key
-    from app.tmdb_refresh import _movie_base_lock
+    from app.metadata.tmdb_refresh import _movie_base_lock
 
     assert _movie_base_lock("...And Justice for All", 1979) == title_lock_key(
         MOVIES,
@@ -1287,7 +1287,7 @@ def test_the_refresh_lock_of_a_film_is_the_lock_of_its_first_import(app):
 def test_an_s3_key_part_never_starts_with_a_period(app):
     """The key of an archive uses the same rule as the library name (#717)."""
 
-    from app.importing import sanitize_string
+    from app.media.importing import sanitize_string
 
     with app.app_context():
         assert sanitize_string("...And Justice for All") == "And Justice for All"

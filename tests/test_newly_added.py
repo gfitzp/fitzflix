@@ -35,8 +35,8 @@ def new_item(tmdb_id, title, first_seen=None, runtime=100, scraped_title=None):
 def plant_feed(app, items, provider_id=None):
     """Store a newly-added feed for a provider (default Criterion)."""
 
-    from app.leaving_criterion import CRITERION_PROVIDER_ID
-    from app.newly_added import NEWLY_ADDED_KEY
+    from app.criterion.leaving_criterion import CRITERION_PROVIDER_ID
+    from app.availability.newly_added import NEWLY_ADDED_KEY
 
     app.redis.set(
         NEWLY_ADDED_KEY.format(provider_id=provider_id or CRITERION_PROVIDER_ID),
@@ -57,7 +57,7 @@ def test_fetch_collection_films_reads_directors_and_dedupes(app, monkeypatch):
     takes the directors from the cache and reads only the collection
     page. A film that the playlist repeats shows 1 time."""
 
-    import app.leaving_criterion as leaving_criterion
+    import app.criterion.leaving_criterion as leaving_criterion
 
     from tests.test_leaving_criterion import collection_page
 
@@ -80,7 +80,7 @@ def test_fetch_collection_films_reads_directors_and_dedupes(app, monkeypatch):
     monkeypatch.setattr(leaving_criterion.requests, "get", fake_requests_get)
 
     with app.app_context():
-        from app.leaving_criterion import fetch_collection_films
+        from app.criterion.leaving_criterion import fetch_collection_films
 
         films = fetch_collection_films(source)
         assert films == [
@@ -98,7 +98,7 @@ def test_fetch_collection_films_survives_a_dead_page(app, monkeypatch):
     A dead collection page gives no films. A dead film page gives a
     film with no director."""
 
-    import app.leaving_criterion as leaving_criterion
+    import app.criterion.leaving_criterion as leaving_criterion
 
     source = "https://www.criterionchannel.com/discover/newly-added"
     pages = {source: FakeResponse(status_code=404)}
@@ -111,7 +111,7 @@ def test_fetch_collection_films_survives_a_dead_page(app, monkeypatch):
     monkeypatch.setattr(leaving_criterion.requests, "get", fake_requests_get)
 
     with app.app_context():
-        from app.leaving_criterion import fetch_collection_films
+        from app.criterion.leaving_criterion import fetch_collection_films
 
         assert fetch_collection_films(source) == []
 
@@ -133,7 +133,7 @@ def test_refresh_plants_first_then_stamps_and_prunes(app, monkeypatch):
     that left the page drop out. The run carries the matched films over
     and does not match them again."""
 
-    import app.newly_added as newly_added
+    import app.availability.newly_added as newly_added
 
     scraped = [{"title": "The Searchers", "director": "John Ford", "year": 1956}]
     matches = {"The Searchers": 3110, "Love & Mercy": 26302}
@@ -150,8 +150,8 @@ def test_refresh_plants_first_then_stamps_and_prunes(app, monkeypatch):
     monkeypatch.setattr(newly_added, "match_tmdb_id", fake_match)
     monkeypatch.setattr(newly_added, "enriched_movie", fake_enriched)
 
-    from app.leaving_criterion import CRITERION_PROVIDER_ID
-    from app.newly_added import NEWLY_ADDED_KEY, refresh_newly_added
+    from app.criterion.leaving_criterion import CRITERION_PROVIDER_ID
+    from app.availability.newly_added import NEWLY_ADDED_KEY, refresh_newly_added
 
     key = NEWLY_ADDED_KEY.format(provider_id=CRITERION_PROVIDER_ID)
 
@@ -217,7 +217,7 @@ def test_a_match_without_a_payload_keeps_its_tmdb_id(app, monkeypatch):
     The fold, the DVR and the shelves read the id. The next run gets the
     payload and does not count the film as new again."""
 
-    import app.newly_added as newly_added
+    import app.availability.newly_added as newly_added
 
     scraped = [{"title": "The Searchers", "director": "John Ford", "year": 1956}]
     payloads = {}
@@ -225,8 +225,12 @@ def test_a_match_without_a_payload_keeps_its_tmdb_id(app, monkeypatch):
     monkeypatch.setattr(newly_added, "match_tmdb_id", lambda *args: 3110)
     monkeypatch.setattr(newly_added, "enriched_movie", lambda i: payloads.get(i))
 
-    from app.leaving_criterion import CRITERION_PROVIDER_ID
-    from app.newly_added import NEWLY_ADDED_KEY, newly_added_since, refresh_newly_added
+    from app.criterion.leaving_criterion import CRITERION_PROVIDER_ID
+    from app.availability.newly_added import (
+        NEWLY_ADDED_KEY,
+        newly_added_since,
+        refresh_newly_added,
+    )
 
     from app import db
 
@@ -262,7 +266,7 @@ def test_a_match_without_a_payload_keeps_its_tmdb_id(app, monkeypatch):
 def test_shelf_surfaces_recent_arrivals_and_excludes(app, admin_client):
     from app import db
     from app.models import UserMovieReview, UserWatchlist
-    from app.diary import star_rating_fields
+    from app.viewing.diary import star_rating_fields
 
     user_id = subscribe_criterion(app)
     today = date.today().isoformat()
@@ -373,7 +377,7 @@ def test_new_arrival_lights_its_availability_badge(app, admin_client, monkeypatc
     on the shelf stays (decided by Glenn, 2026-08-27)."""
 
     from app import db
-    from app.leaving_criterion import CRITERION_PROVIDER_ID
+    from app.criterion.leaving_criterion import CRITERION_PROVIDER_ID
     from tests.test_leaving_criterion import plant_shelf
     from tests.test_streaming import plant_availability
 
@@ -443,7 +447,7 @@ def test_newly_added_page_lists_the_complete_inventory(app, admin_client):
 
     from app import db
     from app.models import UserMovieReview, UserWatchlist
-    from app.diary import star_rating_fields
+    from app.viewing.diary import star_rating_fields
 
     # A taste profile but no subscription. The page must still render
 
@@ -712,7 +716,7 @@ def test_log_page_poster_wears_the_fold(app, admin_client, monkeypatch):
             )
         return FakeResponse(payload={})
 
-    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
+    monkeypatch.setattr("app.metadata.tmdb_apply.tmdb_get", fake_tmdb_get)
     plant_availability(
         app, 9802, {"link": None, "flatrate": [], "ads": [], "rent": [], "buy": []}
     )
@@ -775,10 +779,10 @@ def test_a_film_without_its_payload_is_no_placeholder_card(app, admin_client):
 def test_a_film_that_tmdb_deleted_goes_back_to_unmatched(app, monkeypatch):
     """A cached TMDB 404 never gets a payload. The id goes away (#419)."""
 
-    import app.newly_added as newly_added
+    import app.availability.newly_added as newly_added
 
-    from app.leaving_criterion import CRITERION_PROVIDER_ID
-    from app.newly_added import NEWLY_ADDED_KEY, refresh_newly_added
+    from app.criterion.leaving_criterion import CRITERION_PROVIDER_ID
+    from app.availability.newly_added import NEWLY_ADDED_KEY, refresh_newly_added
 
     scraped = [
         {"title": "Gone Film", "director": "John Ford", "year": 1956},
@@ -826,8 +830,8 @@ def test_a_film_with_a_record_ranks_by_the_number_of_its_tile(app):
 
     from app import db
     from app.models import User
-    from app.newly_added import newly_added_shelves
-    from app.recommendations import SCORES_KEY
+    from app.availability.newly_added import newly_added_shelves
+    from app.discovery.recommendations import SCORES_KEY
 
     user_id = subscribe_criterion(app)
     today = date.today().isoformat()
@@ -861,8 +865,8 @@ def test_a_film_with_a_record_ranks_by_the_number_of_its_tile(app):
 def test_a_failed_film_page_leaves_the_arrival_unmatched_for_a_day(app, monkeypatch):
     """The newly-added feed skips the match of such a film too (#539)."""
 
-    import app.leaving_criterion as leaving_criterion
-    import app.newly_added as newly_added
+    import app.criterion.leaving_criterion as leaving_criterion
+    import app.availability.newly_added as newly_added
 
     for media_id in ("aaaa1111", "bbbb2222"):
         app.redis.delete(leaving_criterion.DIRECTOR_KEY.format(media_id=media_id))
@@ -900,8 +904,8 @@ def test_the_shelf_reads_the_weights_1_time_per_call(app, monkeypatch):
 
     from app import db
     from app.models import MovieCopref, User, UserMovieReview
-    from app.newly_added import newly_added_shelves
-    from app.diary import star_rating_fields
+    from app.availability.newly_added import newly_added_shelves
+    from app.viewing.diary import star_rating_fields
     from tests.test_tmdb_apply import _count_queries
 
     user_id = subscribe_criterion(app)
@@ -939,10 +943,10 @@ def test_the_shelf_scores_only_the_films_that_it_shows(app, monkeypatch):
     A logged film has no stored score. Each one cost a live score on the
     first landing render of the day."""
 
-    import app.newly_added as newly_added
+    import app.availability.newly_added as newly_added
     from app import db
     from app.models import User, UserMovieReview
-    from app.diary import star_rating_fields
+    from app.viewing.diary import star_rating_fields
 
     user_id = subscribe_criterion(app)
     today = date.today().isoformat()
@@ -975,7 +979,7 @@ def test_the_shelf_scores_only_the_films_that_it_shows(app, monkeypatch):
 def test_the_inventory_ranks_a_record_by_its_movie_lane(app, monkeypatch):
     """The /newly-added page ranked a record by the TMDB lane (#580)."""
 
-    import app.newly_added as newly_added
+    import app.availability.newly_added as newly_added
     from app import db
     from app.models import User
 

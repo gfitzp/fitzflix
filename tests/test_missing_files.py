@@ -28,7 +28,7 @@ def touch(app, file):
 
 
 def test_scan_reports_absent_best_files_with_fallbacks(app, monkeypatch):
-    from app import missing_files
+    from app.media import missing_files
 
     monkeypatch.setattr(missing_files, "missing_volumes", lambda config: [])
     with app.app_context():
@@ -65,7 +65,7 @@ def test_scan_reports_absent_best_files_with_fallbacks(app, monkeypatch):
 
 
 def test_scan_refuses_to_run_while_a_volume_is_down(app, monkeypatch, caplog):
-    from app import missing_files
+    from app.media import missing_files
 
     monkeypatch.setattr(missing_files, "missing_volumes", lambda config: ["/Volumes/x"])
     app.redis.set(missing_files.MISSING_KEY, json.dumps({"keep": True}))
@@ -83,7 +83,7 @@ def test_scan_abandons_the_result_when_a_volume_drops_mid_scan(
 ):
     """Test that a volume that drops during the stats keeps the old result (#396)."""
 
-    from app import missing_files
+    from app.media import missing_files
 
     answers = iter([[], ["/Volumes/TV Shows"]])
     monkeypatch.setattr(missing_files, "missing_volumes", lambda config: next(answers))
@@ -103,7 +103,7 @@ def test_scan_abandons_the_result_after_a_remount(app, monkeypatch, caplog):
     A quick remount answers again before the last check. The device id
     of the root shows the change."""
 
-    from app import missing_files
+    from app.media import missing_files
 
     monkeypatch.setattr(missing_files, "missing_volumes", lambda config: [])
     devices = iter([{"MOVIE_LIBRARY": 1, "TV_LIBRARY": 2}])
@@ -121,7 +121,7 @@ def test_scan_abandons_the_result_after_a_remount(app, monkeypatch, caplog):
 
 
 def test_task_stores_the_result_and_the_report_loads_the_rows(app, monkeypatch):
-    from app import missing_files
+    from app.media import missing_files
 
     monkeypatch.setattr(missing_files, "missing_volumes", lambda config: [])
     with app.app_context():
@@ -154,7 +154,7 @@ def test_task_stores_the_result_and_the_report_loads_the_rows(app, monkeypatch):
 
 
 def test_maintenance_pages_show_the_stored_scan(app, admin_client, monkeypatch):
-    from app import missing_files
+    from app.media import missing_files
 
     monkeypatch.setattr(missing_files, "missing_volumes", lambda config: [])
 
@@ -191,7 +191,7 @@ def test_maintenance_pages_show_the_stored_scan(app, admin_client, monkeypatch):
 def test_restore_button_enqueues_a_restore_per_selected_archived_file(
     app, admin_client, monkeypatch
 ):
-    from app import missing_files
+    from app.media import missing_files
 
     monkeypatch.setattr(missing_files, "missing_volumes", lambda config: [])
     with app.app_context():
@@ -238,7 +238,7 @@ def test_restore_button_enqueues_a_restore_per_selected_archived_file(
     assert "Requesting 2 files to be restored" in response.get_data(as_text=True)
     jobs = app.request_queue.jobs
     assert sorted(job.args[0] for job in jobs) == ["s.mkv", "w.mkv"]
-    assert {job.func_name for job in jobs} == {"app.aws_storage.aws_restore"}
+    assert {job.func_name for job in jobs} == {"app.archive.aws_storage.aws_restore"}
 
 
 def test_scan_button_enqueues_the_scan_task(app, admin_client):
@@ -251,7 +251,7 @@ def test_scan_button_enqueues_the_scan_task(app, admin_client):
     assert "Scanning the library" in response.get_data(as_text=True)
     jobs = app.maintenance_queue.jobs
     assert [job.func_name for job in jobs] == [
-        "app.missing_files.missing_best_files_task"
+        "app.media.missing_files.missing_best_files_task"
     ]
 
 
@@ -262,7 +262,7 @@ def test_restore_skips_a_file_that_is_back_since_the_scan(
 
     import os
 
-    from app import missing_files
+    from app.media import missing_files
 
     monkeypatch.setattr(missing_files, "missing_volumes", lambda config: [])
     with app.app_context():
@@ -307,7 +307,7 @@ def _restore_flashes(app, admin_client, monkeypatch, back, gone):
 
     back and gone are lists of titles. Each film has an archive."""
 
-    from app import missing_files
+    from app.media import missing_files
 
     monkeypatch.setattr(missing_files, "missing_volumes", lambda config: [])
     paths, ids = [], []
@@ -392,7 +392,7 @@ def test_scan_now_beside_the_running_cron_copy_queues_nothing(app, admin_client)
 
     A click while it runs queued the scan a second time, at the front."""
 
-    name = "app.missing_files.missing_best_files_task"
+    name = "app.media.missing_files.missing_best_files_task"
     app.maintenance_queue.enqueue(name, job_id="cron-missing-scan")
     page = admin_client.get("/maintenance/missing").get_data(as_text=True)
     response = admin_client.post(

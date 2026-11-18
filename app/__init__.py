@@ -15,7 +15,7 @@ from rq.job import Job
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 from config import Config, check_database_uri
-from app.mail_timeout import TimeoutMail
+from app.operations.mail_timeout import TimeoutMail
 from flask import Flask
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
@@ -118,7 +118,7 @@ def enqueue_import_scan(queue, description=None, at_front=False):
     from app.tasks import enqueue_task
 
     enqueue_task(
-        "app.importing.manual_import_task",
+        "app.media.importing.manual_import_task",
         queue=queue,
         description=description,
         at_front=at_front,
@@ -175,58 +175,61 @@ def cron_table(config):
 
     table = [
         # Rotate the application log daily at midnight.
-        ("0 0 * * *", "app.maintenance.rotate_logs"),
+        ("0 0 * * *", "app.operations.maintenance.rotate_logs"),
         # Digest the repeated warnings of the last 24 hours, after the
         # rotation (#265). The System page and the health probe read it.
-        ("15 0 * * *", "app.log_digest.log_digest_task"),
+        ("15 0 * * *", "app.operations.log_digest.log_digest_task"),
         # Back up the database nightly. The media files are archived at
         # AWS. But the database itself exists only on this machine. Thus,
         # the task also copies each dump to the S3 bucket.
-        ("30 0 * * *", "app.maintenance.backup_database"),
+        ("30 0 * * *", "app.operations.maintenance.backup_database"),
         # Sweep the import directory hourly as a safety net. The
         # filesystem observer can miss an arrival.
-        ("0 * * * *", "app.importing.manual_import_task"),
+        ("0 * * * *", "app.media.importing.manual_import_task"),
         # Monthly restore drill: prove that the newest offsite dump restores.
-        ("0 4 1 * *", "app.maintenance.restore_drill"),
+        ("0 4 1 * *", "app.operations.maintenance.restore_drill"),
         # Refresh the Criterion spine numbers from Wikidata monthly. The
         # 18th gives Wikidata time to catch up with the mid-month reveal.
-        ("0 3 18 * *", "app.criterion_catalog.refresh_criterion_collection_info"),
+        (
+            "0 3 18 * *",
+            "app.criterion.criterion_catalog.refresh_criterion_collection_info",
+        ),
         # Fetch the Criterion releases from Wikidata each Thursday (#283). The
         # page and the import read only this stored copy.
-        ("20 4 * * 4", "app.criterion_catalog.refresh_criterion_releases"),
+        ("20 4 * * 4", "app.criterion.criterion_catalog.refresh_criterion_releases"),
         # Sweep orphaned partial files weekly, after the backup window.
-        ("0 1 * * 0", "app.maintenance.cleanup_orphaned_files"),
+        ("0 1 * * 0", "app.operations.maintenance.cleanup_orphaned_files"),
         # Sync the library with the S3 archive weekly (#158). The task
         # uploads the missing archives, restores the missing best files,
         # reports the claims with no object, and prunes the objects that
         # no record claims. It waits until every queue is idle. It was out
         # of the table during the WEBDL rebuild.
-        ("0 2 * * 0", "app.aws_storage.sync_aws_s3_storage_task"),
-        ("*/10 * * * *", "app.maintenance.health_probe"),
+        ("0 2 * * 0", "app.archive.aws_storage.sync_aws_s3_storage_task"),
+        ("*/10 * * * *", "app.operations.maintenance.health_probe"),
         # Sync the Letterboxd diaries from the RSS feed of each user. The
         # task does nothing for the users without a configured username.
-        ("20,50 * * * *", "app.letterboxd.sync_letterboxd_feeds"),
+        ("20,50 * * * *", "app.viewing.letterboxd.sync_letterboxd_feeds"),
         # Discover provider-catalog films for the recommendation universe
         # (#250). The task lists the catalogs of the subscribed providers.
         # It compares them with the ever-seen sets. It turns a bounded
         # batch of verified, well-scoring arrivals into file-less
         # records. It runs at 00:45. Thus, the TMDB refreshes of the
         # records complete before the 01:45 recompute scores them.
-        ("45 0 * * *", "app.provider_catalog.refresh_provider_catalogs"),
+        ("45 0 * * *", "app.availability.provider_catalog.refresh_provider_catalogs"),
         # Find the best-quality files that have no local copy (#274). The
         # scan stats every best file over the NFS mount. Thus, it runs
         # nightly, after the backup window, and the pages read its stored
         # result.
-        ("15 1 * * *", "app.missing_files.missing_best_files_task"),
+        ("15 1 * * *", "app.media.missing_files.missing_best_files_task"),
         # Recompute the per-user film recommendations nightly, after the
         # log rotation and backup windows.
-        ("45 1 * * *", "app.recommendations.recompute_recommendations"),
+        ("45 1 * * *", "app.discovery.recommendations.recompute_recommendations"),
         # Criterion 24/7 now-playing heartbeat. The poller schedules
         # itself. It enqueues itself again at the end of each film under
         # a deterministic job id. Thus, the cron checks the pulse of the
         # chain and scrapes only when the chain has died. It never scans
         # the film that shows now again on the half hour.
-        ("7,37 * * * *", "app.criterion_now.heartbeat_criterion_now"),
+        ("7,37 * * * *", "app.criterion.criterion_now.heartbeat_criterion_now"),
         # Refresh the leaving-Criterion set. The task tries daily. But
         # it does nothing while the departure of the stored set is still
         # ahead. Thus, this is really a monthly scrape that retries each
@@ -234,14 +237,14 @@ def cron_table(config):
         # down server or an unpublished page. The page was not up on the
         # night before 2026-09-01. Thus, a single attempt in the small
         # hours of the 1st would empty the shelf for the whole month.
-        ("0 6 * * *", "app.leaving_criterion.refresh_leaving_criterion"),
+        ("0 6 * * *", "app.criterion.leaving_criterion.refresh_leaving_criterion"),
         # Scrape and compare the newly-added feed of each provider daily
         # (#246). The snapshot comparison stamps the first-seen dates
         # that the discovery shelves and the "added" badges read. Thus,
         # the daily cadence is what gives "newly added" a meaning. It
         # runs next to the 04:30 refresh. Thus, the TMDB-heavy window
         # stays contiguous.
-        ("0 5 * * *", "app.newly_added.refresh_newly_added"),
+        ("0 5 * * *", "app.availability.newly_added.refresh_newly_added"),
         # Month-start catch-up for both Criterion feeds. The Channel
         # publishes the pages of the new month at some time on the 1st.
         # On 2026-09-01, that was after the 05:00 and 06:00 morning runs
@@ -251,27 +254,27 @@ def cron_table(config):
         # free when the 06:00 run succeeded.
         (
             "0 8 1 * *",
-            "app.newly_added.refresh_newly_added",
+            "app.availability.newly_added.refresh_newly_added",
             "Month-start check of the newly-added streaming feeds",
         ),
         (
             "0 8 1 * *",
-            "app.leaving_criterion.refresh_leaving_criterion",
+            "app.criterion.leaving_criterion.refresh_leaving_criterion",
             "Month-start check of the leaving-Criterion film set",
         ),
         # Add the new official TMDB certifications weekly, before the
         # Monday refreshes. A rating with no row in the table never shows.
-        ("0 4 * * 1", "app.tmdb_refresh.sync_certification_list"),
+        ("0 4 * * 1", "app.metadata.tmdb_refresh.sync_certification_list"),
         # Refresh the film awards from Wikidata weekly, early on Monday.
-        ("15 4 * * 1", "app.awards.refresh_awards"),
+        ("15 4 * * 1", "app.metadata.awards.refresh_awards"),
         # Rebuild the streaming rail nightly, after the 01:45 profiles.
-        ("15 2 * * *", "app.streaming_rail.recompute_streaming_rail"),
+        ("15 2 * * *", "app.availability.streaming_rail.recompute_streaming_rail"),
         # Pre-warm the estimate payloads nightly. This runs after the
         # recompute dropped the overlays and the enrichments of the rail
         # are cached. The payloads are the careers of the affinity people
         # plus the TMDB charts. The task scores them into the tmdb
         # overlay. Thus, the tiles paint without a wait.
-        ("45 2 * * *", "app.estimate_warm.warm_estimates"),
+        ("45 2 * * *", "app.discovery.estimate_warm.warm_estimates"),
         # Fill and rotate the Name That Frame pool nightly. The
         # coordinator queues the per-film extractions on the serial
         # transcode lane. Thus, a big backfill cannot crowd out other
@@ -284,23 +287,26 @@ def cron_table(config):
         # 03:45 in-production sweep. It deliberately excludes the
         # coverage of that sweep. Thus, the TMDB-heavy window stays
         # contiguous.
-        ("35 3 * * *", "app.tmdb_changes.refresh_changed_records"),
+        ("35 3 * * *", "app.metadata.tmdb_changes.refresh_changed_records"),
         # Refresh the TMDB record of each in-production TV series again
         # nightly, clear of the 03:05 frame pool and 03:25 Plex title
         # windows.
-        ("45 3 * * *", "app.tmdb_refresh.refresh_in_production_tv"),
+        ("45 3 * * *", "app.metadata.tmdb_refresh.refresh_in_production_tv"),
         # Refresh the streaming availability of every film nightly, last
         # in the TMDB-heavy window. The watchlist, Criterion catalog, and
         # filmography pages render from this cache and never fetch
         # inline. Thus, the cache must be full before the day starts.
-        ("30 4 * * *", "app.streaming.refresh_availability"),
+        ("30 4 * * *", "app.availability.streaming.refresh_availability"),
         # Compare the availability of the watchlisted films with the
         # snapshot of the previous night. Then alert the watchers (#156
         # and #230). The task writes badge records for everyone and 1
         # digest email per opted-in user. It runs after the 04:30
         # refresh. Thus, the comparison reads the cache of tonight, not
         # of yesterday.
-        ("30 5 * * *", "app.availability_alerts.notify_watchlist_availability"),
+        (
+            "30 5 * * *",
+            "app.availability.availability_alerts.notify_watchlist_availability",
+        ),
     ]
 
     # Download the files restored from Glacier. Poll SQS hourly, offset
@@ -308,59 +314,65 @@ def cron_table(config):
     # both at one time.
 
     if config.get("AWS_SQS_URL"):
-        table.append(("30 * * * *", "app.aws_storage.sqs_retrieve_task"))
+        table.append(("30 * * * *", "app.archive.aws_storage.sqs_retrieve_task"))
 
     # Poll the Plex watch history every 15 minutes as the self-healing
     # backstop to the real-time webhook.
 
     if config.get("PLEX_URL") and config.get("PLEX_TOKEN"):
-        table.append(("*/15 * * * *", "app.diary.plex_history_poll"))
+        table.append(("*/15 * * * *", "app.viewing.diary.plex_history_poll"))
 
         # Title the Plex episodes from the titles in the filenames. This
         # replaces the external cron that wrote the SQLite of Plex
         # directly.
 
-        table.append(("25 3 * * *", "app.plex_titles.sync_plex_episode_titles"))
+        table.append(("25 3 * * *", "app.plex.plex_titles.sync_plex_episode_titles"))
 
         # Scan the Plex libraries and empty their trashes. A guard per
         # section requires that every declared location is mounted. This
         # replaces the external curl cron. A scan against a dropped mount
         # plus emptyTrash rebuilds the library from nothing.
 
-        table.append(("3,18,33,48 * * * *", "app.plex_library.refresh_plex_libraries"))
+        table.append(
+            ("3,18,33,48 * * * *", "app.plex.plex_library.refresh_plex_libraries")
+        )
 
         # Mirror the Criterion selections into the collections of each Plex
         # movie library (#281, #282). It runs after the TMDB renames and the
         # Radarr path check. Then the file paths match the paths of Plex.
 
-        table.append(("50 5 * * *", "app.plex_collections.sync_criterion_collection"))
+        table.append(
+            ("50 5 * * *", "app.plex.plex_collections.sync_criterion_collection")
+        )
 
         # Make the selected audio and subtitle streams of Plex match the
         # default tracks of each file, for the owner and each Home user
         # (#652). It runs after the episode titles, before the Plex
         # maintenance window ends.
 
-        table.append(("45 3 * * *", "app.plex_selection.sync_plex_stream_selections"))
+        table.append(
+            ("45 3 * * *", "app.plex.plex_selection.sync_plex_stream_selections")
+        )
 
     # Reconcile the Plex and Fitzflix watchlists in both directions. The
     # account-level discover API needs only the token, not the server.
 
     if config.get("PLEX_TOKEN"):
-        table.append(("10,40 * * * *", "app.plex_watchlist.sync_plex_watchlist"))
+        table.append(("10,40 * * * *", "app.plex.plex_watchlist.sync_plex_watchlist"))
 
     # Check the Radarr movie paths nightly (#266). A rename or an import
     # reports its new folder to Radarr at once. A push that fails while
     # Radarr is down is repaired here.
 
     if config.get("RADARR_URL") and config.get("RADARR_API_KEY"):
-        table.append(("40 5 * * *", "app.radarr_push.reconcile_radarr_paths"))
+        table.append(("40 5 * * *", "app.arr.radarr_push.reconcile_radarr_paths"))
 
     # Check the Sonarr series paths nightly (#370), 5 minutes after the
     # Radarr check. Sonarr sends no event for a folder move. Thus, a
     # series that Sonarr moved gets its new title here.
 
     if config.get("SONARR_URL") and config.get("SONARR_API_KEY"):
-        table.append(("45 5 * * *", "app.series_rename.reconcile_sonarr_paths"))
+        table.append(("45 5 * * *", "app.media.series_rename.reconcile_sonarr_paths"))
 
     # Restore the custom poster copy of every main-feature folder that
     # lost it (#654). Radarr deletes the copy with the movie file that
@@ -368,7 +380,7 @@ def cron_table(config):
     # restores a copy at once. This task is the backstop. It runs after
     # the 05:40 Radarr path check and the 05:45 Sonarr check.
 
-    table.append(("55 5 * * *", "app.custom_artwork.reconcile_library_posters"))
+    table.append(("55 5 * * *", "app.media.custom_artwork.reconcile_library_posters"))
 
     # Rebuild the virtual DVR channel lineups nightly (#182). The task
     # rotates them the same way as the landing-page shelves rotate. The
@@ -407,7 +419,7 @@ def get_app(watch_import_dir=False):
     Task modules resolve their app through this function instead of a
     call to create_app() at import time. Thus, an import of them from a
     process that already has an application does not build a second one.
-    An example is the web process that imports app.videos.
+    An example is the web process that imports app.media.videos.
     watch_import_dir is important only on the call that creates the
     instance. That is the eager startup call of supervisor.py.
     """
@@ -611,11 +623,11 @@ def create_app(config_class=Config, watch_import_dir=False):
     filesystem observer of the import directory. supervisor.py enables
     it for the import-program workers only. The template helpers, the
     log handlers, and the import watch are in app.templating,
-    app.logging_setup, and app.import_watch.
+    app.operations.logging_setup, and app.media.import_watch.
     """
 
-    from app.import_watch import start_import_watch
-    from app.logging_setup import configure_logging
+    from app.media.import_watch import start_import_watch
+    from app.operations.logging_setup import configure_logging
     from app.templating import register_template_helpers
 
     app = FitzflixFlask(__name__)

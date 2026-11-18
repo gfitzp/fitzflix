@@ -13,7 +13,7 @@ import json
 
 from datetime import date
 
-from app.recommendations import RECS_KEY, daily_shelf, frozen_shelf
+from app.discovery.recommendations import RECS_KEY, daily_shelf, frozen_shelf
 
 from tests.factories import make_movie, make_movie_file
 
@@ -242,7 +242,7 @@ def test_daily_shelf_freezes_the_day_and_varies_by_day(app):
 def test_landing_rail_is_stable_and_replaces_only_the_watched_slot(app, admin_client):
     from app import db
     from app.models import User, UserMovieReview
-    from app.diary import star_rating_fields
+    from app.viewing.diary import star_rating_fields
 
     with app.app_context():
         user_id = User.query.filter_by(admin=True).first().id

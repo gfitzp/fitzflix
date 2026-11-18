@@ -6,7 +6,7 @@ from types import SimpleNamespace
 def test_criterion_settled(app):
     """The disc must be owned and the copy must meet the release, capped at 18."""
 
-    from app.file_ranking import criterion_settled
+    from app.media.file_ranking import criterion_settled
 
     wide = SimpleNamespace(fullscreen=False)
     full = SimpleNamespace(fullscreen=True)
@@ -217,7 +217,7 @@ def test_set_title_key_follows_the_collation_of_the_database(app):
     The database compares each of these pairs as equal or as different.
     The pairs come from SELECT 'a' = 'b' on the production server."""
 
-    from app.criterion_catalog import set_title_key
+    from app.criterion.criterion_catalog import set_title_key
 
     equal = [
         ("Set", "set  "),

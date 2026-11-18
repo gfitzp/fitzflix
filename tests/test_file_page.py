@@ -85,7 +85,7 @@ def queued(monkeypatch):
     """Record each task that the page queues."""
 
     import app.main.library as library
-    from app import aws_storage
+    from app.archive import aws_storage
 
     calls = []
     for module in (library, aws_storage):
@@ -130,7 +130,7 @@ def test_the_scan_form_queues_one_scan(app, admin_client, monkeypatch):
     The job has the id of the lock-busy retry of the scan. Thus, a second
     click while the scan waits queues nothing new."""
 
-    import app.tracks as tracks
+    import app.media.tracks as tracks
     from app.tasks import requeue_job_id
 
     read = []
@@ -140,13 +140,13 @@ def test_the_scan_form_queues_one_scan(app, admin_client, monkeypatch):
         lambda *args, **kwargs: read.append(args) or {},
     )
     file_id = _file(app)
-    wanted = requeue_job_id("app.tracks.track_metadata_scan_task", file_id)
+    wanted = requeue_job_id("app.media.tracks.track_metadata_scan_task", file_id)
 
     page = _post(admin_client, file_id, {"scan_submit": "Scan"})
     assert "Queued a scan of the track metadata of" in page
     assert app.file_queue.job_ids == [wanted]
     job = app.file_queue.fetch_job(wanted)
-    assert job.func_name == "app.tracks.track_metadata_scan_task"
+    assert job.func_name == "app.media.tracks.track_metadata_scan_task"
     assert job.args == (file_id,)
 
     page = _post(admin_client, file_id, {"scan_submit": "Scan"})
@@ -163,7 +163,7 @@ def test_the_remux_form_queues_the_remux(app, admin_client, queued):
         file_id,
         {"audio_tracks": "9001", "subtitle_tracks": "9003", "mkvmerge_submit": "Remux"},
     )
-    assert queued == ["app.tracks.mkvmerge_task"]
+    assert queued == ["app.media.tracks.mkvmerge_task"]
     assert "Remuxing MKV file" in page
 
 
@@ -177,7 +177,7 @@ def test_the_remux_form_refuses_a_file_that_is_not_matroska(app, admin_client, q
 def test_the_upload_form_queues_the_upload(app, admin_client, queued):
     file_id = _file(app)
     page = _post(admin_client, file_id, {"s3_upload_submit": "Upload"})
-    assert queued == ["app.aws_storage.upload_task"]
+    assert queued == ["app.archive.aws_storage.upload_task"]
     assert "to AWS S3 storage" in page
 
 
@@ -207,7 +207,7 @@ def test_the_restore_form_checks_the_password_and_the_archive(
         archived_id,
         {"password": ADMIN_PASSWORD, "s3_download_submit": "Restore"},
     )
-    assert queued == ["app.aws_storage.aws_restore"]
+    assert queued == ["app.archive.aws_storage.aws_restore"]
     assert "to be restored from AWS" in page
 
 
@@ -306,12 +306,12 @@ def test_the_restore_form_refuses_to_replace_a_newer_local_file(
 
 TRACK_EDIT_POSTS = [
     (
-        "app.tracks.mkvpropedit_task",
+        "app.media.tracks.mkvpropedit_task",
         {"default_audio": "9002", "default_subtitle": "0", "mkvpropedit_submit": "Up"},
         ("9002", "0", []),
     ),
     (
-        "app.tracks.mkvmerge_task",
+        "app.media.tracks.mkvmerge_task",
         {"audio_tracks": "9002", "subtitle_tracks": "9003", "mkvmerge_submit": "Rx"},
         (["9002"], ["9003"]),
     ),
@@ -345,12 +345,12 @@ def test_a_track_edit_post_sends_the_track_uids(
 
 NO_UID_POSTS = [
     (
-        "app.tracks.mkvpropedit_task",
+        "app.media.tracks.mkvpropedit_task",
         {"default_audio": "None", "default_subtitle": "0", "mkvpropedit_submit": "Up"},
         ("None", "0", []),
     ),
     (
-        "app.tracks.mkvmerge_task",
+        "app.media.tracks.mkvmerge_task",
         {"audio_tracks": "None", "subtitle_tracks": "None", "mkvmerge_submit": "Rx"},
         (["None"], ["None"]),
     ),

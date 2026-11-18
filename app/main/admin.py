@@ -39,8 +39,8 @@ from app.tasks import (
     start_task_run,
 )
 from app import cron_table, db, enqueue_import_scan, local_path
-from app.aws_storage import refuse_while_restore_pending, request_restore
-from app.naming import hidden
+from app.archive.aws_storage import refuse_while_restore_pending, request_restore
+from app.media.naming import hidden
 from app.main.forms import (
     ArchivedRestoreForm,
     CriterionRefreshForm,
@@ -82,7 +82,7 @@ from app.models import (
     TVSeries,
     title_sort,
 )
-from app.file_ranking import ranked_movie_files, tv_best_holder_ids
+from app.media.file_ranking import ranked_movie_files, tv_best_holder_ids
 from app.auth.passkeys import identity_confirmed
 from app.main import bp
 from app.main.helpers import (
@@ -97,9 +97,9 @@ from app.main.library import (
     _wait_for_refresh,
     restore_cost_estimate,
 )
-from app.log_digest import stored_digest
-from app.maintenance import system_health
-from app.manual_imports import (
+from app.operations.log_digest import stored_digest
+from app.operations.maintenance import system_health
+from app.media.manual_imports import (
     PENDING_KEY,
     blocked_downloads,
     download_folders,
@@ -112,8 +112,8 @@ from app.manual_imports import (
     started,
     video_candidates,
 )
-from app.missing_files import missing_best_report, missing_best_summary
-from app.queue_page import listed_queues
+from app.media.missing_files import missing_best_report, missing_best_summary
+from app.operations.queue_page import listed_queues
 from app.queues import roster_queues
 from app.settings import (
     SETTINGS,
@@ -125,7 +125,7 @@ from app.settings import (
     set_setting,
     value_problem,
 )
-from app.triage import (
+from app.media.triage import (
     forced_subtitle_candidates,
     lossy_audio_candidates,
     lossy_audio_presentation,
@@ -134,7 +134,7 @@ from app.triage import (
     runtime_mismatch_candidates,
     triage_presentation,
 )
-from app.importing import evaluate_filename
+from app.media.importing import evaluate_filename
 from rq.cron import CronScheduler
 from rq.exceptions import NoSuchJobError
 from rq.job import Job
@@ -145,13 +145,13 @@ from rq.registry import FailedJobRegistry
 # not queue (#456). The S3 sync needs a proof of identity on the
 # Maintenance page: a passkey or the password.
 
-MAINTENANCE_PAGE_TASKS = frozenset({"app.aws_storage.sync_aws_s3_storage_task"})
+MAINTENANCE_PAGE_TASKS = frozenset({"app.archive.aws_storage.sync_aws_s3_storage_task"})
 
 # The Criterion refresh has a button on the Maintenance page too. Run
 # now calls the handler of that button. Thus, the 2 buttons have 1 gate
 # and 1 check, and a click on each of them queues 1 refresh.
 
-CRITERION_REFRESH = "app.criterion_catalog.refresh_criterion_collection_info"
+CRITERION_REFRESH = "app.criterion.criterion_catalog.refresh_criterion_collection_info"
 
 
 @bp.route("/system", methods=["GET", "POST"])
@@ -802,7 +802,7 @@ def _refresh_tmdb_post(form):
     of them would block the import work of the single sql worker for the
     whole run."""
 
-    if not start_bulk_run(TMDB_RUN, "app.tmdb_refresh.refresh_tmdb_info"):
+    if not start_bulk_run(TMDB_RUN, "app.metadata.tmdb_refresh.refresh_tmdb_info"):
         flash(ALREADY_QUEUED, "info")
         return
     movies = (
@@ -817,7 +817,7 @@ def _refresh_tmdb_post(form):
     )
     for movie in movies:
         enqueue_task(
-            "app.tmdb_refresh.refresh_tmdb_info",
+            "app.metadata.tmdb_refresh.refresh_tmdb_info",
             "Movies",
             movie.id,
             movie.tmdb_id,
@@ -826,7 +826,7 @@ def _refresh_tmdb_post(form):
         )
     for tv in tv_shows:
         enqueue_task(
-            "app.tmdb_refresh.refresh_tmdb_info",
+            "app.metadata.tmdb_refresh.refresh_tmdb_info",
             "TV Shows",
             tv.id,
             tv.tmdb_id,
@@ -846,7 +846,7 @@ def _sync_storage_post(form):
 
     if not identity_confirmed(form):
         return
-    name = "app.aws_storage.sync_aws_s3_storage_task"
+    name = "app.archive.aws_storage.sync_aws_s3_storage_task"
     # A sync that waits for idle queues books its retry under this id.
     if not start_bulk_run((SYNC_RUN, requeue_job_id(name)), name):
         flash(ALREADY_QUEUED, "info")
@@ -869,8 +869,8 @@ def _scan_library_post(form):
     """Queue a scan of the track metadata of each file of the library."""
 
     names = (
-        "app.tracks.track_metadata_scan_library",
-        "app.tracks.track_metadata_scan_task",
+        "app.media.tracks.track_metadata_scan_library",
+        "app.media.tracks.track_metadata_scan_task",
     )
     if not start_bulk_run(TRACK_SCAN_RUN, *names):
         flash(ALREADY_QUEUED, "info")
@@ -918,7 +918,7 @@ def _merge_movies_post(form):
     canonical = group[0]
     for duplicate in group[1:]:
         enqueue_task(
-            "app.tmdb_refresh.refresh_tmdb_info",
+            "app.metadata.tmdb_refresh.refresh_tmdb_info",
             "Movies",
             duplicate.id,
             merge_tmdb_id,
@@ -1024,7 +1024,7 @@ def missing_files():
 
     scan_form = MissingScanForm()
     if scan_form.missing_scan_submit.data and scan_form.validate_on_submit():
-        name = "app.missing_files.missing_best_files_task"
+        name = "app.media.missing_files.missing_best_files_task"
         if not start_bulk_run(MISSING_SCAN_RUN, name):
             flash(ALREADY_QUEUED, "info")
             return redirect(url_for("main.missing_files"))
@@ -1122,10 +1122,10 @@ def held_imports():
     originals in S3. A restore of one imports it again. If a real rip
     still exists, the import waits here again."""
 
-    from app.arr_client import take_remembered_download
-    from app.importing import enqueue_localization
-    from app.sdr_conversion import clear_stuck_decisions, prune_held_imports
-    from app.importing import move_to_rejects
+    from app.arr.arr_client import take_remembered_download
+    from app.media.importing import enqueue_localization
+    from app.media.sdr_conversion import clear_stuck_decisions, prune_held_imports
+    from app.media.importing import move_to_rejects
 
     form = HeldImportForm()
     if (
@@ -1181,7 +1181,9 @@ def held_imports():
             )
         else:
             enqueue_task(
-                "app.sdr_conversion.archive_held_task", held.id, description=f"'{name}'"
+                "app.media.sdr_conversion.archive_held_task",
+                held.id,
+                description=f"'{name}'",
             )
             flash(f"Archiving '{name}' to S3. The library does not change.", "info")
         current_app.logger.info(
@@ -1306,11 +1308,11 @@ def manual_imports():
         # "Forget" on the System page deletes the live retry (#438).
 
         job_id = manual_import_job_id(download_id)
-        if not free_job_id("app.manual_imports.manual_import_task", job_id):
+        if not free_job_id("app.media.manual_imports.manual_import_task", job_id):
             flash("That import is already queued.", "info")
             return redirect(url_for("main.manual_imports"))
         enqueue_task(
-            "app.manual_imports.manual_import_task",
+            "app.media.manual_imports.manual_import_task",
             service,
             download_id,
             entry["output_path"],
@@ -1455,7 +1457,7 @@ def tmdb_triage():
         # with that id that the query returns (#163)
 
         refresh_job = enqueue_task(
-            "app.tmdb_refresh.refresh_tmdb_info",
+            "app.metadata.tmdb_refresh.refresh_tmdb_info",
             library,
             record.id,
             form.tmdb_id.data,
@@ -1587,7 +1589,7 @@ def subtitle_triage(file_id):
         )
 
         enqueue_task(
-            "app.tracks.mkvpropedit_task",
+            "app.media.tracks.mkvpropedit_task",
             file.id,
             default_audio_track,
             default_subtitle_track,
@@ -1727,7 +1729,7 @@ def lossy_audio_triage(file_id):
         )
 
         enqueue_task(
-            "app.tracks.mkvpropedit_task",
+            "app.media.tracks.mkvpropedit_task",
             file.id,
             track.uid,
             default_subtitle_track,
@@ -1762,7 +1764,7 @@ def lossy_audio_triage(file_id):
             flash(f"'{file.basename}' is not present locally.", "warning")
             return stay()
         enqueue_task(
-            "app.triage.generate_audio_comparison",
+            "app.media.triage.generate_audio_comparison",
             file.id,
             description=f"Audio comparison for '{file.basename}'",
         )
@@ -2167,7 +2169,7 @@ def files():
     # The atmos import is lazy, like in its other callers. It resolves
     # the worker app singleton at module import time
 
-    from app.atmos import EAC3_ATMOS_CODEC
+    from app.media.atmos import EAC3_ATMOS_CODEC
 
     lossy_files = (
         db.session.query(FileAudioTrack.file_id)

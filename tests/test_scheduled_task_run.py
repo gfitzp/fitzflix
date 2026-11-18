@@ -8,7 +8,7 @@ that is outside the cron table.
 
 from tests.conftest import page_csrf_token
 
-IMPORT_SWEEP = "app.importing.manual_import_task"
+IMPORT_SWEEP = "app.media.importing.manual_import_task"
 HOURLY = "0 * * * *"
 
 
@@ -76,7 +76,7 @@ def test_scheduled_task_rows_show_the_command_and_a_run_button(app, admin_client
 
 def test_a_task_with_no_command_shows_a_dash(app, admin_client):
     with app.app_context():
-        register_cron_job(app, "app.maintenance.rotate_logs", "0 0 * * *")
+        register_cron_job(app, "app.operations.maintenance.rotate_logs", "0 0 * * *")
 
     body = admin_client.get("/system/metrics").get_data(as_text=True)
     assert "Rotating application logs" in body
@@ -117,7 +117,7 @@ def test_run_now_refuses_a_task_outside_the_cron_table(app, admin_client):
     The hidden field names a task. A hand-made post must not queue a
     pipeline task, for example a localization with made-up arguments."""
 
-    response = run_now(admin_client, "app.importing.localization_task")
+    response = run_now(admin_client, "app.media.importing.localization_task")
     assert "not a scheduled task" in response.get_data(as_text=True)
     with app.app_context():
         assert len(app.import_queue) == 0
@@ -156,7 +156,7 @@ def test_a_cron_job_of_the_task_blocks_run_now(app, admin_client):
     with app.app_context():
         register_cron_job(app, IMPORT_SWEEP)
         job = enqueue_like_the_scheduler(app, IMPORT_SWEEP)
-        assert job.func_name == "app.importing.manual_import_task"
+        assert job.func_name == "app.media.importing.manual_import_task"
 
     response = run_now(admin_client, IMPORT_SWEEP)
     assert "waits or runs already" in response.get_data(as_text=True)
@@ -194,7 +194,7 @@ def test_the_run_now_gate_stops_a_second_post_at_the_same_time(app):
 def test_the_sync_row_has_no_run_now_button(app, admin_client):
     """The S3 sync needs the password and the bulk gate of the Maintenance page."""
 
-    sync = "app.aws_storage.sync_aws_s3_storage_task"
+    sync = "app.archive.aws_storage.sync_aws_s3_storage_task"
     with app.app_context():
         register_cron_job(app, sync, "0 3 * * 0")
 
@@ -208,7 +208,7 @@ def test_the_sync_row_has_no_run_now_button(app, admin_client):
         assert len(app.maintenance_queue) == 0
 
 
-CRITERION = "app.criterion_catalog.refresh_criterion_collection_info"
+CRITERION = "app.criterion.criterion_catalog.refresh_criterion_collection_info"
 
 
 def test_run_now_queues_the_criterion_refresh_as_its_maintenance_button_does(
@@ -277,7 +277,7 @@ def test_the_sync_button_sees_a_cron_sync(app, admin_client):
 
     from tests.conftest import ADMIN_PASSWORD, csrf_token_from
 
-    sync = "app.aws_storage.sync_aws_s3_storage_task"
+    sync = "app.archive.aws_storage.sync_aws_s3_storage_task"
     with app.app_context():
         enqueue_like_the_scheduler(app, sync)
 
@@ -342,7 +342,7 @@ def test_a_stalled_cron_scheduler_registers_again(app):
 
     from rq.cron import CronScheduler
 
-    from app.maintenance import keep_cron_registered
+    from app.operations.maintenance import keep_cron_registered
 
     with app.app_context():
         scheduler = register_cron_job(app, IMPORT_SWEEP)

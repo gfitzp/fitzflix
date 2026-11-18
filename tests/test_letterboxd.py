@@ -72,14 +72,14 @@ def build_feed(*items):
 
 
 def run_sync(app, xml_text, monkeypatch):
-    import app.letterboxd as letterboxd
+    import app.viewing.letterboxd as letterboxd
 
     monkeypatch.setattr(letterboxd, "fetch_letterboxd_feed", lambda username: xml_text)
     letterboxd.sync_letterboxd_feeds()
 
 
 def test_parser_reads_fields_and_strips_boilerplate(app):
-    from app.letterboxd import parse_letterboxd_feed
+    from app.viewing.letterboxd import parse_letterboxd_feed
 
     xml = build_feed(
         feed_item(
@@ -112,7 +112,7 @@ def test_parser_reads_fields_and_strips_boilerplate(app):
 
 
 def test_parser_strips_spoiler_boilerplate_into_flag(app, monkeypatch):
-    from app.letterboxd import parse_letterboxd_feed
+    from app.viewing.letterboxd import parse_letterboxd_feed
 
     xml = build_feed(
         feed_item(
@@ -167,7 +167,7 @@ def test_parser_strips_spoiler_boilerplate_into_flag(app, monkeypatch):
 
 
 def test_parser_unescapes_html_entities_in_review_text(app):
-    from app.letterboxd import parse_letterboxd_feed
+    from app.viewing.letterboxd import parse_letterboxd_feed
 
     xml = build_feed(
         feed_item(
@@ -240,7 +240,7 @@ def test_sync_adds_rows_and_is_idempotent(app, monkeypatch):
 
 
 def test_sync_adopts_csv_twin_and_completes_plex_watch(app, monkeypatch):
-    from app.diary import star_rating_fields
+    from app.viewing.diary import star_rating_fields
 
     with app.app_context():
         user = User.query.first()
@@ -334,7 +334,7 @@ def test_sync_creates_missing_movie_records(app, monkeypatch):
         refreshes = [
             job
             for job in app.request_queue.jobs
-            if job.func_name == "app.tmdb_refresh.refresh_tmdb_info"
+            if job.func_name == "app.metadata.tmdb_refresh.refresh_tmdb_info"
             and job.args[1] == movie.id
         ]
         assert len(refreshes) == 1
@@ -368,7 +368,7 @@ def test_a_feed_entry_with_no_year_is_skipped(app, monkeypatch):
 
 
 def test_sync_corrects_drifted_dates_on_midnight_rows(app, monkeypatch):
-    from app.diary import star_rating_fields
+    from app.viewing.diary import star_rating_fields
 
     with app.app_context():
         user = User.query.first()
@@ -440,7 +440,7 @@ def test_a_clock_row_follows_a_feed_date_outside_the_midnight_window(
     app, monkeypatch, stamp, watched, expected
 ):
     """Test that a row with a clock time keeps it only across midnight."""
-    from app.diary import star_rating_fields
+    from app.viewing.diary import star_rating_fields
 
     with app.app_context():
         user = User.query.first()
@@ -471,7 +471,7 @@ def test_a_clock_row_follows_a_feed_date_outside_the_midnight_window(
 
 
 def test_feed_logged_at_is_local_wall_clock(app):
-    import app.letterboxd as letterboxd
+    import app.viewing.letterboxd as letterboxd
 
     # 02:55 UTC is the previous local evening in each US timezone. The
     # stored value must be the local clock, not naive UTC
@@ -664,7 +664,7 @@ def test_a_text_less_claim_keeps_the_spoiler_flag_of_the_kept_text(app):
 
     from types import SimpleNamespace
 
-    from app.letterboxd import _apply_entry_fields
+    from app.viewing.letterboxd import _apply_entry_fields
 
     row = SimpleNamespace(
         review="The twist is that he was dead.",

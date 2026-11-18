@@ -52,7 +52,7 @@ class FakePlexServer:
 
 
 def test_refresh_guards_every_declared_location(app, monkeypatch, tmp_path):
-    import app.plex_library as plex_library
+    import app.plex.plex_library as plex_library
 
     present = tmp_path / "Movies"
     present.mkdir()
@@ -88,7 +88,7 @@ def test_refresh_skips_sections_on_dead_mounts(app, monkeypatch, tmp_path):
 
     The refresh obeys the verdict of volume_alive."""
 
-    import app.plex_library as plex_library
+    import app.plex.plex_library as plex_library
 
     existing = tmp_path / "Movies"
     existing.mkdir()
@@ -107,7 +107,7 @@ def test_refresh_skips_sections_on_dead_mounts(app, monkeypatch, tmp_path):
 def _guarded_refresh(app, monkeypatch, tmp_path, trash=None):
     """Return the module and a fake server with 1 healthy Movies section."""
 
-    import app.plex_library as plex_library
+    import app.plex.plex_library as plex_library
 
     movies = tmp_path / "Movies"
     movies.mkdir(exist_ok=True)
@@ -125,7 +125,7 @@ def test_refresh_keeps_a_trash_over_the_limit(app, monkeypatch, tmp_path):
     The hold makes a health issue. The first run under the limit empties
     the trash and removes the issue."""
 
-    from app.maintenance import PLEX_TRASH_HELD_KEY
+    from app.operations.maintenance import PLEX_TRASH_HELD_KEY
 
     monkeypatch.setitem(app.config, "PLEX_TRASH_LIMIT", 25)
     plex_library, fake = _guarded_refresh(app, monkeypatch, tmp_path, trash={"5": 3356})
@@ -224,7 +224,7 @@ def test_refresh_keeps_the_trash_when_the_count_fails(app, monkeypatch, tmp_path
 def test_refresh_clears_the_issue_of_a_removed_library(app, monkeypatch, tmp_path):
     """A held trash of a library that no longer exists is not a health issue."""
 
-    from app.maintenance import PLEX_TRASH_HELD_KEY
+    from app.operations.maintenance import PLEX_TRASH_HELD_KEY
 
     app.redis.hset(PLEX_TRASH_HELD_KEY, "Old Movies", "held")
     plex_library, fake = _guarded_refresh(app, monkeypatch, tmp_path)

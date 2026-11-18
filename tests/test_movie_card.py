@@ -13,7 +13,7 @@ from datetime import datetime, timedelta
 
 from app import db
 from app.models import Movie, UserMovieReview, UserMovieStatus, UserWatchlist
-from app.diary import star_rating_fields
+from app.viewing.diary import star_rating_fields
 from tests.factories import make_movie, make_movie_file
 from tests.conftest import csrf_token_from
 from tests.test_elicitation import make_candidate
@@ -222,7 +222,7 @@ def test_movie_states_batch_hydration_payload(app, admin_client, admin_id):
     estimates, and watchlist faces. It answers tmdb ids under their own
     key. It maps a tmdb id through a local record when one exists."""
 
-    from app.recommendations import PROFILE_KEY, SCORES_KEY
+    from app.discovery.recommendations import PROFILE_KEY, SCORES_KEY
 
     with app.app_context():
         user_id = admin_id
@@ -294,7 +294,7 @@ def test_movie_states_estimates_record_less_tmdb_ids(app, admin_client, admin_id
     state."""
 
     from app.models import Movie
-    from app.recommendations import PROFILE_KEY
+    from app.discovery.recommendations import PROFILE_KEY
 
     with app.app_context():
         user_id = admin_id
@@ -360,7 +360,7 @@ def test_movie_states_live_scores_films_the_nightly_map_missed(
     was the So I Married an Axe Murderer bug: 3 stars on the page of the
     film, a blank ladder on the watchlist."""
 
-    from app.recommendations import PROFILE_KEY, stored_scores
+    from app.discovery.recommendations import PROFILE_KEY, stored_scores
 
     with app.app_context():
         user_id = admin_id
@@ -450,7 +450,7 @@ def test_movie_card_for_a_bare_tmdb_id(app, admin_client, monkeypatch):
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
     monkeypatch.setattr(
-        "app.tmdb_apply.tmdb_get", lambda *a, **k: Response(JAWS_2_DETAILS)
+        "app.metadata.tmdb_apply.tmdb_get", lambda *a, **k: Response(JAWS_2_DETAILS)
     )
 
     page = admin_client.get("/movie_card?tmdb_id=579").get_data(as_text=True)
@@ -556,7 +556,7 @@ def test_tile_watchlist_add_creates_the_record_for_a_tmdb_film(
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
     monkeypatch.setattr(
-        "app.tmdb_apply.tmdb_get", lambda *a, **k: Response(JAWS_2_DETAILS)
+        "app.metadata.tmdb_apply.tmdb_get", lambda *a, **k: Response(JAWS_2_DETAILS)
     )
 
     token = csrf_token_from(admin_client.get("/review/tmdb/579").get_data(as_text=True))
@@ -610,7 +610,7 @@ def test_movie_states_estimates_bare_unrated_watches(app, admin_client, admin_id
     The tile shows the guess until the stars of the user exist. Only a
     real rating (or the ✕) removes it."""
 
-    from app.recommendations import PROFILE_KEY
+    from app.discovery.recommendations import PROFILE_KEY
 
     with app.app_context():
         user_id = admin_id
@@ -651,7 +651,7 @@ def test_movie_states_fills_a_whole_page_in_one_pass(app, admin_client, admin_id
     Fitzflix never caps the cached payloads. Thus, a filmography fills on
     the first visit, not 20 films for each reload."""
 
-    from app.recommendations import PROFILE_KEY
+    from app.discovery.recommendations import PROFILE_KEY
 
     with app.app_context():
         user_id = admin_id
@@ -723,7 +723,7 @@ def career_page(app, admin_id, monkeypatch):
 
     from types import SimpleNamespace
 
-    from app.recommendations import PROFILE_KEY
+    from app.discovery.recommendations import PROFILE_KEY
 
     with app.app_context():
         listed = make_movie("Career Listed", 1990, tmdb_id=860000)
@@ -835,7 +835,9 @@ def test_the_live_tmdb_pages_take_the_theatrical_rating(app, admin_client, monke
         {"certification": "PG-13", "type": 3},
     ]
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr("app.tmdb_apply.tmdb_get", lambda *a, **k: Response(details))
+    monkeypatch.setattr(
+        "app.metadata.tmdb_apply.tmdb_get", lambda *a, **k: Response(details)
+    )
 
     card = admin_client.get("/movie_card?tmdb_id=579").get_data(as_text=True)
     page = admin_client.get("/review/tmdb/579").get_data(as_text=True)
@@ -882,7 +884,7 @@ def test_the_stored_us_certification_of_a_record(app):
 def test_an_unrated_theatrical_entry_does_not_hide_the_mpaa_mark():
     """An NR theatrical run with a rated disc entry still shows the mark."""
 
-    from app.tmdb_apply import us_certification_from
+    from app.metadata.tmdb_apply import us_certification_from
 
     details = {
         "release_dates": {

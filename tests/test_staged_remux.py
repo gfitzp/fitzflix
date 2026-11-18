@@ -6,9 +6,9 @@ import subprocess
 
 import pytest
 
-import app.importing as importing
-import app.tracks as tracks
-from app.importing import STAGING_RESERVED_KEY
+import app.media.importing as importing
+import app.media.tracks as tracks
+from app.media.importing import STAGING_RESERVED_KEY
 
 from tests.conftest import _TMP
 from tests.media import make_sample_mkv

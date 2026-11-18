@@ -61,7 +61,7 @@ def test_profile_refuses_a_letterboxd_username_with_a_slash(app):
 
 
 def test_letterboxd_feed_url_quotes_the_username(app, monkeypatch):
-    from app import letterboxd
+    from app.viewing import letterboxd
 
     urls = []
 

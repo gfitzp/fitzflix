@@ -9,7 +9,7 @@ from flask import current_app, jsonify, request
 from flask_login import current_user
 
 from app.tasks import enqueue_task
-from app.plex_selection import enqueue_align
+from app.plex.plex_selection import enqueue_align
 from app.api import bp
 
 
@@ -126,7 +126,7 @@ def plex_webhook(token):
     username = account.get("title") if isinstance(account, dict) else None
     username = username if isinstance(username, str) else ""
     enqueue_task(
-        "app.diary.apply_plex_watch",
+        "app.viewing.diary.apply_plex_watch",
         tmdb_id,
         username,
         datetime.now(timezone.utc).isoformat(),

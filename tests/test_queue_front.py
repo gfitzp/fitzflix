@@ -11,7 +11,7 @@ def _enqueue(app, title, queue=None):
 
     with app.app_context():
         return (queue or app.import_queue).enqueue(
-            "app.importing.localization_task",
+            "app.media.importing.localization_task",
             args=(f"/import/{title} - [DVD].mkv",),
             description=f"'{title} - [DVD].mkv'",
         )
@@ -197,7 +197,7 @@ def test_only_an_admin_sees_the_button_on_waiting_rows(app, admin_client, user_c
     with app.app_context():
         app.import_queue.enqueue_in(
             timedelta(minutes=10),
-            "app.importing.localization_task",
+            "app.media.importing.localization_task",
             args=("/import/Button Later (2001) - [DVD].mkv",),
             description="'Button Later (2001) - [DVD].mkv'",
         )
@@ -262,7 +262,7 @@ def test_the_criterion_refresh_button_uses_the_maintenance_queue(app, admin_clie
     )
     assert response.status_code == 302
 
-    func = "app.criterion_catalog.refresh_criterion_collection_info"
+    func = "app.criterion.criterion_catalog.refresh_criterion_collection_info"
     assert [job for job in app.request_queue.jobs if job.func_name == func] == []
     (job,) = [job for job in app.maintenance_queue.jobs if job.func_name == func]
     assert job.timeout == 3600
@@ -278,17 +278,17 @@ def test_the_badge_counts_a_seeded_queue_without_a_fetch_per_job(app, monkeypatc
     from rq.queue import Queue
 
     from app.pipeline import STAGES
-    from app.queue_page import listed_jobs
+    from app.operations.queue_page import listed_jobs
 
     for number in range(5):
         app.import_queue.enqueue(
-            "app.importing.localization_task", f"/import/file{number}.mkv"
+            "app.media.importing.localization_task", f"/import/file{number}.mkv"
         )
     stage = next(iter(STAGES))
     app.sql_queue.enqueue(stage, "/import/file0.mkv")
-    app.sql_queue.enqueue("app.tmdb_refresh.apply_tmdb_refresh", "Movies", 1)
+    app.sql_queue.enqueue("app.metadata.tmdb_refresh.apply_tmdb_refresh", "Movies", 1)
     gone = app.import_queue.enqueue(
-        "app.importing.localization_task", "/import/gone.mkv"
+        "app.media.importing.localization_task", "/import/gone.mkv"
     )
     app.redis.delete(gone.key)
 
@@ -314,7 +314,7 @@ def test_each_first_paint_tooltip_has_a_stamp_for_the_local_time(app, admin_clie
     from datetime import datetime
 
     app.import_queue.enqueue(
-        "app.importing.localization_task", "/import/Tip (2001).mkv"
+        "app.media.importing.localization_task", "/import/Tip (2001).mkv"
     )
     body = admin_client.get("/queue").get_data(as_text=True)
     abbrs = re.findall(r"<abbr [^>]*>.*?</abbr>", body, re.S)
@@ -339,16 +339,19 @@ def test_a_job_deleted_after_the_listing_does_not_break_the_page(app, monkeypatc
 
     from rq.queue import Queue
 
-    import app.queue_page as queue_page
+    import app.operations.queue_page as queue_page
 
     kept = app.import_queue.enqueue(
-        "app.importing.localization_task", "/import/kept.mkv"
+        "app.media.importing.localization_task", "/import/kept.mkv"
     )
     gone = app.import_queue.enqueue(
-        "app.importing.localization_task", "/import/gone.mkv"
+        "app.media.importing.localization_task", "/import/gone.mkv"
     )
     later = app.file_queue.enqueue_in(
-        timedelta(minutes=5), "app.aws_storage.download_task", "modified/x.mkv", "x.mkv"
+        timedelta(minutes=5),
+        "app.archive.aws_storage.download_task",
+        "modified/x.mkv",
+        "x.mkv",
     )
     real_listed_jobs = queue_page.listed_jobs
 
@@ -377,7 +380,7 @@ def test_a_page_reads_the_queue_one_time_for_each_request(
     The next request reads the queue again. Its answer does not come
     from the cache of the request before it."""
 
-    import app.queue_page as queue_page
+    import app.operations.queue_page as queue_page
 
     calls = []
     real = queue_page.queue_details

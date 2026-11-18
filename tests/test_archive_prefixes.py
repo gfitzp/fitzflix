@@ -5,7 +5,7 @@ from datetime import datetime
 
 import pytest
 
-import app.aws_storage as aws_storage
+import app.archive.aws_storage as aws_storage
 from app import db
 from app.models import File
 
@@ -30,7 +30,7 @@ def _deletes(app):
     return [
         job.args[0]
         for job in app.handoff_queue.jobs
-        if job.func_name == "app.aws_storage.aws_delete"
+        if job.func_name == "app.archive.aws_storage.aws_delete"
     ]
 
 
@@ -308,7 +308,7 @@ def test_the_sync_uploads_the_stale_transcoded_copy_again(app, monkeypatch):
         uploads = [
             job.args
             for job in app.file_queue.jobs
-            if job.func_name == "app.aws_storage.upload_task"
+            if job.func_name == "app.archive.aws_storage.upload_task"
         ]
         assert uploads == [(file_id,)]
 
@@ -383,7 +383,7 @@ def test_the_upload_waits_for_the_title_lock(app, monkeypatch, held_lock):
     (retry,) = [
         job
         for job in scheduled_jobs(app.file_queue)
-        if job.func_name == "app.aws_storage.upload_task"
+        if job.func_name == "app.archive.aws_storage.upload_task"
     ]
     assert retry.args == (file_id,)
 
@@ -417,7 +417,7 @@ class FakeArchiveS3:
 def backfill_file(app, monkeypatch):
     """A replaced untouched/ archive with a 12-byte library file."""
 
-    import app.videos as videos
+    import app.media.videos as videos
 
     monkeypatch.setattr(videos, "acquire_lock_or_defer", lambda *a, **k: "lock")
     monkeypatch.setattr(app.lock_manager, "unlock", lambda lock: None)
@@ -484,7 +484,7 @@ def test_the_backfill_keeps_an_archive_with_different_bytes(
 
 
 def test_a_scan_that_rewrites_the_file_queues_its_archive(app, monkeypatch):
-    import app.tracks as tracks
+    import app.media.tracks as tracks
 
     def removal(path, before_replace=None):
         # The real removal runs the flag right before its rename.
@@ -522,7 +522,7 @@ def test_a_scan_that_rewrites_the_file_queues_its_archive(app, monkeypatch):
         return [
             job.args
             for job in app.file_queue.jobs
-            if job.func_name == "app.aws_storage.upload_task"
+            if job.func_name == "app.archive.aws_storage.upload_task"
         ]
 
     # The upload waits for the save. Both write the same row. An upload
@@ -538,7 +538,7 @@ def test_a_scan_that_rewrites_the_file_queues_its_archive(app, monkeypatch):
         (save,) = [
             job
             for job in app.sql_queue.jobs
-            if job.func_name == "app.tracks.save_track_metadata"
+            if job.func_name == "app.media.tracks.save_track_metadata"
         ]
         assert save.args[0] == file_id and save.args[3] is True
     assert tracks.save_track_metadata(*save.args) is True
@@ -550,7 +550,7 @@ def test_a_scan_that_rewrites_the_file_queues_its_archive(app, monkeypatch):
 def test_the_save_queues_the_upload_after_it_releases_the_title_lock(app, monkeypatch):
     """The upload takes the title lock. Queued under it, it waits (#615 follow-up)."""
 
-    import app.tracks as tracks
+    import app.media.tracks as tracks
 
     held_at_enqueue = []
     monkeypatch.setattr(
@@ -572,7 +572,7 @@ def test_the_save_queues_the_upload_after_it_releases_the_title_lock(app, monkey
             "filesize_bytes": 1,
         }
         assert tracks.save_track_metadata(file.id, details, lock, True) is True
-    assert held_at_enqueue == [("app.aws_storage.upload_task", False)]
+    assert held_at_enqueue == [("app.archive.aws_storage.upload_task", False)]
 
 
 def test_the_prune_keeps_a_recent_unclaimed_upload(app, monkeypatch):
@@ -621,7 +621,7 @@ def test_the_prune_keeps_a_recent_unclaimed_upload(app, monkeypatch):
 def test_the_sync_waits_while_a_library_volume_is_dead(app, monkeypatch):
     """A dead share makes every file look missing. The sync must not restore them."""
 
-    import app.videos as videos
+    import app.media.videos as videos
 
     monkeypatch.setattr(videos, "_dead_volumes", lambda paths: ["/Volumes/Movies"])
     listed = []
@@ -639,7 +639,7 @@ def test_the_sync_waits_while_a_library_volume_is_dead(app, monkeypatch):
         assert [
             job.id
             for job in scheduled_jobs(app.maintenance_queue)
-            if job.func_name == "app.aws_storage.sync_aws_s3_storage_task"
+            if job.func_name == "app.archive.aws_storage.sync_aws_s3_storage_task"
         ]
 
 
@@ -685,7 +685,7 @@ def test_the_prune_keeps_the_upload_of_an_import_that_waits_for_space(app, monke
     source = os.path.join(app.config["IMPORT_DIR"], "Long Wait (2024) - [DVD].mkv")
     retry = app.import_queue.enqueue_in(
         timedelta(minutes=30),
-        "app.importing.localization_task",
+        "app.media.importing.localization_task",
         kwargs={"file_path": source, "space_waits": 4},
     )
     try:
@@ -843,7 +843,7 @@ def test_the_replaced_key_is_deleted_only_if_present(app, uploads):
 
     A plain delete wrote a delete marker at a key that never existed."""
 
-    from app.importing import _delete_replaced_archive
+    from app.media.importing import _delete_replaced_archive
 
     with app.app_context():
         file = make_movie_file(
@@ -857,7 +857,7 @@ def test_the_replaced_key_is_deleted_only_if_present(app, uploads):
     deletes = [
         job
         for job in app.handoff_queue.jobs
-        if job.func_name == "app.aws_storage.aws_delete"
+        if job.func_name == "app.archive.aws_storage.aws_delete"
     ]
     assert [job.args[0] for job in deletes] == [
         "untouched/Marker Archive (1998) - [DVD].mkv",

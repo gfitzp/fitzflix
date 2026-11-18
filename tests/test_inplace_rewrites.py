@@ -18,9 +18,9 @@ import os
 # analyzes the file
 
 IN_PLACE_REWRITES = [
-    ("app/atmos.py", "_atmos_finish"),
-    ("app/tracks.py", "mkvpropedit_unlocked"),
-    ("app/tracks.py", "_remux_audio_plan_unlocked"),
+    ("app/media/atmos.py", "_atmos_finish"),
+    ("app/media/tracks.py", "mkvpropedit_unlocked"),
+    ("app/media/tracks.py", "_remux_audio_plan_unlocked"),
 ]
 
 
@@ -62,7 +62,7 @@ def test_every_in_place_rewrite_records_the_new_filesize():
 
 
 def test_record_filesize_stores_the_size(app):
-    from app.tracks import record_filesize
+    from app.media.tracks import record_filesize
     from tests.factories import make_movie, make_movie_file
 
     with app.app_context():

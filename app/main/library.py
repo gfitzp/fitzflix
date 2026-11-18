@@ -33,7 +33,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.tasks import enqueue_task, free_job_id, requeue_job_id
 from app import db
-from app.aws_storage import (
+from app.archive.aws_storage import (
     refuse_while_restore_pending,
     request_restore,
     restore_would_replace_newer,
@@ -86,7 +86,7 @@ from app.models import (
 )
 from app.auth.passkeys import identity_confirmed
 from app.main import bp
-from app.file_ranking import (
+from app.media.file_ranking import (
     MOVIE_BEST_ORDER,
     TV_BEST_ORDER,
     best_copy_key,
@@ -98,10 +98,10 @@ from app.file_ranking import (
     ranked_movie_files,
     tv_best_holder_ids,
 )
-from app.newly_added import poster_fold
-from app.infuse_player import infuse_only_formats
-from app.infuse_player import play_movie as infuse_play_movie
-from app.plex_player import play_movie, remote_playback_configured
+from app.availability.newly_added import poster_fold
+from app.playback.infuse_player import infuse_only_formats
+from app.playback.infuse_player import play_movie as infuse_play_movie
+from app.playback.plex_player import play_movie, remote_playback_configured
 from app.main.helpers import (
     _hold_verdict_lock,
     apply_verdict,
@@ -121,10 +121,14 @@ from app.main.helpers import (
     tv_meta_line,
 )
 from app.cache import cached_fetch
-from app.custom_artwork import remove_custom_artwork
-from app.tmdb_apply import PEOPLE_RANKING_SECONDS, tmdb_json_or, PEOPLE_RANKING_KEY
-from app.funnel import might_interest, user_film_sets_by_id
-from app.recommendations import (
+from app.media.custom_artwork import remove_custom_artwork
+from app.metadata.tmdb_apply import (
+    PEOPLE_RANKING_SECONDS,
+    tmdb_json_or,
+    PEOPLE_RANKING_KEY,
+)
+from app.discovery.funnel import might_interest, user_film_sets_by_id
+from app.discovery.recommendations import (
     JOB_TO_CLASS,
     coarse_interest_score,
     credit_interest_markers,
@@ -134,7 +138,7 @@ from app.recommendations import (
     resolved_score,
     stored_profile,
 )
-from app.streaming import (
+from app.availability.streaming import (
     batch_title_availability,
     rental_matches,
     request_warm,
@@ -142,22 +146,29 @@ from app.streaming import (
     user_provider_ids,
     user_streaming,
 )
-from app.elicitation import suggestions_after_rating
-from app.radarr_push import (
+from app.discovery.elicitation import suggestions_after_rating
+from app.arr.radarr_push import (
     radarr_configured,
     radarr_tmdb_ids,
 )
-from app.triage import (
+from app.media.triage import (
     forced_subtitle_candidates,
     lossy_audio_candidates,
 )
-from app.tracks import pop_stopped_edit
-from app.criterion_catalog import record_set_title, set_title_key
-from app.aws_storage import untouched_key_still_claimed
-from app.criterion_catalog import criterion_release_lookups, stored_criterion_releases
-from app.diary import clear_watchlist
-from app.tracks import language_names, file_language_choices, resolve_language_code
-from app import videos
+from app.media.tracks import pop_stopped_edit
+from app.criterion.criterion_catalog import record_set_title, set_title_key
+from app.archive.aws_storage import untouched_key_still_claimed
+from app.criterion.criterion_catalog import (
+    criterion_release_lookups,
+    stored_criterion_releases,
+)
+from app.viewing.diary import clear_watchlist
+from app.media.tracks import (
+    language_names,
+    file_language_choices,
+    resolve_language_code,
+)
+from app.media import videos
 
 # The crew jobs that count as key roles for search and filmographies.
 # They are the same roles that the taste engine scores, labeled as
@@ -176,7 +187,7 @@ CLOSING_CREDIT_ORDER = ("Director", "Writer", "Cinematographer", "Editor", "Comp
 
 # The TMDB person details of the person pages, cached in Redis. The
 # movie and TV credits keys live with person_movie_credits and
-# person_tv_credits in app.estimate_warm.
+# person_tv_credits in app.discovery.estimate_warm.
 
 PERSON_DETAILS_KEY = "fitzflix:tmdb:person:{person_id}:details"
 
@@ -396,7 +407,7 @@ def _filmography(credit, library_only=False):
 
     tmdb_credits = None
     if current_app.config["TMDB_API_KEY"]:
-        from app.estimate_warm import person_movie_credits
+        from app.discovery.estimate_warm import person_movie_credits
 
         tmdb_credits = person_movie_credits(credit)
 
@@ -515,7 +526,7 @@ def _filmography(credit, library_only=False):
     tv_rows = {}
     tv_credits = None
     if current_app.config["TMDB_API_KEY"]:
-        from app.estimate_warm import person_tv_credits
+        from app.discovery.estimate_warm import person_tv_credits
 
         tv_credits = person_tv_credits(int(credit))
 
@@ -1127,7 +1138,7 @@ def _flash_tmdb_refresh(result, title, reload_url):
     None is a job that still runs. False is a failed fetch (#514). Then
     nothing is queued, and a reload shows no change."""
 
-    from app.tmdb_refresh import TMDB_NO_MATCH
+    from app.metadata.tmdb_refresh import TMDB_NO_MATCH
 
     if result == TMDB_NO_MATCH:
         flash(f"TMDB has no data for '{title}' with that ID.", "warning")
@@ -1431,7 +1442,7 @@ def movie(movie_id):
 
     tmdb_refresh_state = None
     if current_user.admin:
-        from app.tmdb_refresh import tmdb_refresh_status
+        from app.metadata.tmdb_refresh import tmdb_refresh_status
 
         tmdb_refresh_state = tmdb_refresh_status("Movies", movie.id)
 
@@ -1603,7 +1614,7 @@ def movie_tmdb(movie_id):
             )
             return redirect(url_for("main.movie", movie_id=movie.id))
         refresh_job = enqueue_task(
-            "app.tmdb_refresh.refresh_tmdb_info",
+            "app.metadata.tmdb_refresh.refresh_tmdb_info",
             "Movies",
             movie.id,
             movie.tmdb_id,
@@ -1649,7 +1660,7 @@ def movie_tmdb(movie_id):
     # it interactively.
 
     refresh_job = enqueue_task(
-        "app.tmdb_refresh.refresh_tmdb_info",
+        "app.metadata.tmdb_refresh.refresh_tmdb_info",
         "Movies",
         movie.id,
         tmdb_lookup_form.tmdb_id.data,
@@ -2067,7 +2078,7 @@ def tv(series_id):
 
     tmdb_refresh_state = None
     if current_user.admin:
-        from app.tmdb_refresh import tmdb_refresh_status
+        from app.metadata.tmdb_refresh import tmdb_refresh_status
 
         tmdb_refresh_state = tmdb_refresh_status("TV Shows", tv.id)
 
@@ -2353,7 +2364,7 @@ def _delete_series(tv, series_id, title):
     # leave husks for the weekly sweep. An explicit delete clears the
     # junk-only folders immediately.
 
-    from app.maintenance import clear_leftover_directory
+    from app.operations.maintenance import clear_leftover_directory
 
     for leftover_dir in sorted(leftover_dirs):
         _after_commit(clear_leftover_directory, leftover_dir)
@@ -2433,7 +2444,7 @@ def tv_tmdb(series_id):
     # it interactively.
 
     refresh_job = enqueue_task(
-        "app.tmdb_refresh.refresh_tmdb_info",
+        "app.metadata.tmdb_refresh.refresh_tmdb_info",
         "TV Shows",
         tv.id,
         tmdb_lookup_form.tmdb_id.data,
@@ -2604,7 +2615,7 @@ def _scan_file_post(file, form):
     job has the id of the lock-busy retry of the scan. Thus, a second
     click while a scan waits or runs queues nothing new."""
 
-    name = "app.tracks.track_metadata_scan_task"
+    name = "app.media.tracks.track_metadata_scan_task"
     job_id = requeue_job_id(name, int(file.id))
     if not free_job_id(name, job_id):
         flash(
@@ -2656,7 +2667,7 @@ def _propedit_post(audio_tracks, subtitle_tracks):
             )
             return None
         mkvpropedit_job = enqueue_task(
-            "app.tracks.mkvpropedit_task",
+            "app.media.tracks.mkvpropedit_task",
             file.id,
             default_audio_track,
             form.default_subtitle.data,
@@ -2683,7 +2694,7 @@ def _remux_post(file, form):
         )
         return
     mkvmerge_job = enqueue_task(
-        "app.tracks.mkvmerge_task",
+        "app.media.tracks.mkvmerge_task",
         file.id,
         form.audio_tracks.data,
         form.subtitle_tracks.data,
@@ -2699,7 +2710,7 @@ def _upload_post(file, form):
     """Queue an upload of the file to AWS S3 storage."""
 
     enqueue_task(
-        "app.aws_storage.upload_task",
+        "app.archive.aws_storage.upload_task",
         file.id,
         description=f"'{file.basename}'",
         at_front=True,
@@ -2836,7 +2847,7 @@ def _queue_archive_deletes(aws_keys):
         if untouched_key_still_claimed(aws_key):
             continue
         enqueue_task(
-            "app.aws_storage.aws_delete",
+            "app.archive.aws_storage.aws_delete",
             aws_key,
             only_if_present=True,
             only_if_unclaimed=True,
@@ -2918,7 +2929,7 @@ def _delete_file(file):
     # remain. A delete of the last file of a movie used to leave its
     # poster.jpg husk for the weekly sweep.
 
-    from app.maintenance import clear_leftover_directory
+    from app.operations.maintenance import clear_leftover_directory
 
     _after_commit(clear_leftover_directory, leftover_dir)
     _after_commit(remove_custom_artwork, "file", file_id)
@@ -2931,7 +2942,7 @@ def _delete_file(file):
     if file.movie_id and file.feature_type_id:
         film_folder = os.path.dirname(leftover_dir)
         if os.path.isdir(film_folder):
-            from app.plex_library import enqueue_plex_film_refresh
+            from app.plex.plex_library import enqueue_plex_film_refresh
 
             enqueue_plex_film_refresh(film_folder)
 

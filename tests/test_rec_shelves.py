@@ -74,7 +74,7 @@ def test_shelf_features_cover_awards_and_skip_language(app):
         db.session.add(nominated)
         db.session.commit()
 
-        from app.rec_shelves import shelf_features
+        from app.discovery.rec_shelves import shelf_features
 
         rows = shelf_features([movie.id])[movie.id]
         by_key = {key: (cls, label) for cls, key, label in rows}
@@ -142,7 +142,7 @@ def test_eligible_films_need_local_files_or_streaming(app):
             json.dumps({"flatrate": [{"provider_id": 8, "provider_name": "Netflix"}]}),
         )
 
-        from app.rec_shelves import eligible_films
+        from app.discovery.rec_shelves import eligible_films
 
         pool = set(eligible_films(user))
         assert owned.id in pool
@@ -181,7 +181,7 @@ def test_build_shelves_anchors_and_criteria_overlap(app):
         outsider_id = outsider.id
         anchor_ids = {anchor_a.id, anchor_b.id}
 
-        from app.rec_shelves import build_shelves
+        from app.discovery.rec_shelves import build_shelves
 
         shelves = build_shelves(user, rng=random.Random(7))
         assert shelves, "no shelf built from a clean Western overlap"
@@ -217,7 +217,7 @@ def test_single_holder_genre_or_decade_never_seeds(app):
             make_candidate(f"Lonely Pick {n}", 1965 + n, genre_row=western)
         db.session.commit()
 
-        from app.rec_shelves import build_shelves
+        from app.discovery.rec_shelves import build_shelves
 
         assert build_shelves(user, rng=random.Random(7)) == []
 
@@ -244,7 +244,7 @@ def test_single_anchor_criteria_shelf_from_specific_feature(app):
         pick_ids = {movie.id for movie in picks}
         outsider_id = outsider.id
 
-        from app.rec_shelves import build_shelves
+        from app.discovery.rec_shelves import build_shelves
 
         shelves = build_shelves(user, rng=random.Random(7))
         assert shelves, "no shelf from a single-holder director seed"
@@ -418,7 +418,7 @@ def test_reload_reshuffles_shelf_draw(app):
             make_candidate(f"Draw Pick D{n}", 1985 + n, genre_row=drama)
         db.session.commit()
 
-        from app.rec_shelves import build_shelves
+        from app.discovery.rec_shelves import build_shelves
 
         first = build_shelves(user, rng=random.Random(1))
         again = build_shelves(user, rng=random.Random(1))
@@ -483,7 +483,7 @@ def test_build_shelves_draws_a_copref_pair_shelf(app):
     with app.app_context():
         user, anchor_ids, candidate_ids = copref_fixture(app)
 
-        from app.rec_shelves import build_shelves
+        from app.discovery.rec_shelves import build_shelves
 
         shelves = build_shelves(user, rng=random.Random(3))
         copref = [s for s in shelves if s["kind"] == "copref"]
@@ -498,7 +498,7 @@ def test_build_shelves_draws_a_copref_pair_shelf(app):
 
 
 def test_parse_criteria_copref_key(app):
-    from app.rec_shelves import parse_criteria
+    from app.discovery.rec_shelves import parse_criteria
 
     assert parse_criteria("copref:501:502") == [("copref", (501, 502))]
     # This is the key of a single-anchor shelf (#249).
@@ -601,7 +601,7 @@ def test_single_anchor_copref_shelf_for_pairless_anchor(app):
     with app.app_context():
         user, anchor_ids, candidate_ids = copref_single_fixture(app, second_anchor=True)
 
-        from app.rec_shelves import build_shelves
+        from app.discovery.rec_shelves import build_shelves
 
         shelves = build_shelves(user, rng=random.Random(3))
         copref = [s for s in shelves if s["kind"] == "copref"]
@@ -637,7 +637,7 @@ def test_single_anchor_budget_spans_both_kinds(app):
             make_copref(501, movie.tmdb_id, 0.40 - n * 0.02)
         db.session.commit()
 
-        from app.rec_shelves import build_shelves
+        from app.discovery.rec_shelves import build_shelves
 
         shelves = build_shelves(user, rng=random.Random(3))
         singles = [s for s in shelves if len(s["anchor_ids"]) == 1]
@@ -712,7 +712,7 @@ def test_anchors_require_a_rated_or_liked_verdict(app):
             make_candidate(f"Verdict Pick {n}", 1965 + n, genre_row=western)
         db.session.commit()
 
-        from app.rec_shelves import build_shelves
+        from app.discovery.rec_shelves import build_shelves
 
         assert build_shelves(user, rng=random.Random(7)) == []
 
@@ -754,7 +754,7 @@ def test_keyword_display_name_learns_from_overviews(app):
         )
         db.session.commit()
 
-        from app.rec_shelves import keyword_display_name
+        from app.discovery.rec_shelves import keyword_display_name
 
         assert keyword_display_name("fbi") == "FBI"
         # "Poker" opens a sentence. Thus, it does not vote. The
@@ -800,7 +800,7 @@ def test_shelf_criteria_use_resolved_keyword_casing(app):
             movie.tmdb_overview = f"Crime in New York City, chapter {n}."
         db.session.commit()
 
-        from app.rec_shelves import build_shelves
+        from app.discovery.rec_shelves import build_shelves
 
         shelves = build_shelves(user, rng=random.Random(5))
         labels = [
@@ -831,7 +831,7 @@ def test_shelf_kinds_mix_positions_across_draws(app):
             make_candidate(f"Mix Pick {n}", 1965 + n, genre_row=western)
         db.session.commit()
 
-        from app.rec_shelves import build_shelves
+        from app.discovery.rec_shelves import build_shelves
 
         leaders = set()
         for seed in range(12):
@@ -859,7 +859,7 @@ def test_an_owned_film_with_no_tmdb_data_is_not_in_the_pool(app):
         make_movie_file(bare, "Bluray-1080p")
         db.session.commit()
 
-        from app.rec_shelves import eligible_films
+        from app.discovery.rec_shelves import eligible_films
 
         pool = set(eligible_films(user))
         assert owned.id in pool

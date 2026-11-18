@@ -28,13 +28,13 @@ def _movie_with_file(title="Jungle Cruise", year=2021):
 def test_pending_sees_a_queued_fetch(app):
     """Test that a queued fetch job on the request queue counts as pending."""
 
-    from app.tmdb_refresh import tmdb_refresh_pending
+    from app.metadata.tmdb_refresh import tmdb_refresh_pending
 
     with app.app_context():
         movie, _ = _movie_with_file()
         assert tmdb_refresh_pending("Movies", movie.id) is False
         app.request_queue.enqueue(
-            "app.tmdb_refresh.refresh_tmdb_info",
+            "app.metadata.tmdb_refresh.refresh_tmdb_info",
             args=("Movies", movie.id, None),
             kwargs={"notify_if_missing": True},
             description="Refreshing TMDB data for 'Jungle Cruise (2021)'",
@@ -49,13 +49,13 @@ def test_pending_sees_a_scheduled_apply_retry(app):
 
     The retry takes keyword arguments. The fetch takes positional ones."""
 
-    from app.tmdb_refresh import tmdb_refresh_pending
+    from app.metadata.tmdb_refresh import tmdb_refresh_pending
 
     with app.app_context():
         movie, _ = _movie_with_file()
         app.sql_queue.enqueue_in(
             timedelta(minutes=5),
-            "app.tmdb_refresh.apply_tmdb_refresh",
+            "app.metadata.tmdb_refresh.apply_tmdb_refresh",
             library="Movies",
             id=movie.id,
             tmdb_id=451048,
@@ -72,14 +72,14 @@ def test_atmos_task_defers_while_a_refresh_is_pending(app):
 
     from rq.registry import ScheduledJobRegistry
 
-    from app.atmos import atmos_supplement_task
+    from app.media.atmos import atmos_supplement_task
 
     with app.app_context():
         movie, file = _movie_with_file()
         file_id = file.id
         resource = file.file_identifier()
         app.request_queue.enqueue(
-            "app.tmdb_refresh.refresh_tmdb_info",
+            "app.metadata.tmdb_refresh.refresh_tmdb_info",
             args=("Movies", movie.id, None),
             description="Refreshing TMDB data for 'Jungle Cruise (2021)'",
         )
@@ -91,7 +91,7 @@ def test_atmos_task_defers_while_a_refresh_is_pending(app):
         job_ids = registry.get_job_ids()
         assert len(job_ids) == 1
         job = app.import_queue.fetch_job(job_ids[0])
-        assert job.func_name == "app.atmos.atmos_supplement_task"
+        assert job.func_name == "app.media.atmos.atmos_supplement_task"
         assert job.args == (file_id,)
         delay = registry.get_scheduled_time(job_ids[0]) - job.created_at.replace(
             tzinfo=registry.get_scheduled_time(job_ids[0]).tzinfo
@@ -122,7 +122,7 @@ def test_movie_page_shows_a_deferred_refresh(app, admin_client):
     with app.app_context():
         app.sql_queue.enqueue_in(
             timedelta(minutes=12),
-            "app.tmdb_refresh.apply_tmdb_refresh",
+            "app.metadata.tmdb_refresh.apply_tmdb_refresh",
             library="Movies",
             id=movie_id,
             tmdb_id=451048,
@@ -144,7 +144,7 @@ def test_movie_page_shows_a_queued_refresh(app, admin_client):
         movie, _ = _movie_with_file()
         movie_id = movie.id
         app.request_queue.enqueue(
-            "app.tmdb_refresh.refresh_tmdb_info",
+            "app.metadata.tmdb_refresh.refresh_tmdb_info",
             args=("Movies", movie_id, 451048),
             description="Refreshing TMDB data for 'Jungle Cruise (2021)'",
         )
@@ -170,7 +170,7 @@ def test_tv_page_shows_a_deferred_refresh(app, admin_client):
     with app.app_context():
         app.sql_queue.enqueue_in(
             timedelta(minutes=9),
-            "app.tmdb_refresh.apply_tmdb_refresh",
+            "app.metadata.tmdb_refresh.apply_tmdb_refresh",
             library="TV Shows",
             id=series_id,
             tmdb_id=253,
@@ -193,7 +193,7 @@ def test_a_fetch_on_the_maintenance_queue_is_a_pending_refresh(app):
     staged copy for hours."""
 
     from app import db
-    from app.tmdb_refresh import tmdb_refresh_pending, tmdb_refresh_status
+    from app.metadata.tmdb_refresh import tmdb_refresh_pending, tmdb_refresh_status
     from tests.factories import make_movie
 
     with app.app_context():
@@ -201,7 +201,7 @@ def test_a_fetch_on_the_maintenance_queue_is_a_pending_refresh(app):
         db.session.commit()
         assert tmdb_refresh_status("Movies", movie.id) is None
         app.maintenance_queue.enqueue(
-            "app.tmdb_refresh.refresh_tmdb_info", "Movies", movie.id, 740001
+            "app.metadata.tmdb_refresh.refresh_tmdb_info", "Movies", movie.id, 740001
         )
         assert tmdb_refresh_status("Movies", movie.id) == {"state": "pending"}
         assert tmdb_refresh_pending("Movies", movie.id) is False

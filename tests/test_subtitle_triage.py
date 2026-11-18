@@ -208,7 +208,7 @@ def test_per_file_page_shows_one_file_and_returns_to_origin(app, admin_client):
 
 
 def test_mark_forced_enqueues_mkvpropedit_preserving_settings(app, admin_client):
-    from app.tracks import mkvpropedit_task
+    from app.media.tracks import mkvpropedit_task
 
     with app.app_context():
         file, small = build_candidate()
@@ -252,7 +252,7 @@ def test_mark_forced_enqueues_mkvpropedit_preserving_settings(app, admin_client)
         jobs = [
             job
             for job in app.file_queue.jobs
-            if job.func_name == "app.tracks.mkvpropedit_task"
+            if job.func_name == "app.media.tracks.mkvpropedit_task"
         ]
         assert len(jobs) == 1
         # The task keeps the current defaults: audio track 1 and default
@@ -330,7 +330,7 @@ def test_multi_select_flags_all_chosen_tracks_in_one_task(app, admin_client):
         jobs = [
             job
             for job in app.file_queue.jobs
-            if job.func_name == "app.tracks.mkvpropedit_task"
+            if job.func_name == "app.media.tracks.mkvpropedit_task"
         ]
         assert len(jobs) == 1
         assert jobs[0].args == (file_id, None, "801", ["802", "803"])
@@ -341,7 +341,7 @@ def test_multi_select_flags_all_chosen_tracks_in_one_task(app, admin_client):
 def test_triage_actions_retire_the_inspection_aids(app, admin_client):
     """Test that a dismiss (or a flag) of a file deletes its snapshot directory."""
 
-    from app.triage import triage_snapshot_dir
+    from app.media.triage import triage_snapshot_dir
 
     with app.app_context():
         file, _ = build_candidate(title="Aids Cleanup", year=2012)
@@ -371,7 +371,7 @@ def test_generate_snapshots_and_render_the_aids(app, admin_client, monkeypatch):
     probes. The triage page renders the density strip, the cue bounds,
     and the snapshot thumbnails."""
 
-    import app.triage as triage
+    import app.media.triage as triage
 
     with app.app_context():
         file, small = build_candidate(title="Snapshot Subject", year=2013)
@@ -435,7 +435,7 @@ def test_import_candidates_enqueue_snapshot_generation(app):
 
     The hook does nothing for healthy files."""
 
-    from app.triage import maybe_enqueue_triage_snapshots
+    from app.media.triage import maybe_enqueue_triage_snapshots
 
     with app.app_context():
         file, _ = build_candidate(title="Enqueue Subject", year=2014)
@@ -451,7 +451,7 @@ def test_import_candidates_enqueue_snapshot_generation(app):
     jobs = [
         job
         for job in app.transcode_queue.jobs
-        if job.func_name == "app.triage.generate_triage_snapshots"
+        if job.func_name == "app.media.triage.generate_triage_snapshots"
     ]
     assert len(jobs) == 1
     assert jobs[0].args == (file_id,)
@@ -460,7 +460,7 @@ def test_import_candidates_enqueue_snapshot_generation(app):
 def test_deleting_the_local_file_removes_triage_aids(app):
     """Test that delete_library_copy removes the aids on deletion and replacement."""
 
-    from app.triage import triage_snapshot_dir
+    from app.media.triage import triage_snapshot_dir
 
     with app.app_context():
         file, _ = build_candidate(title="Delete Cleanup", year=2016)
@@ -482,7 +482,10 @@ def test_suspicious_first_track_is_a_candidate(app):
     The import hook now depends on this query. Thus, it generates the
     aids."""
 
-    from app.triage import forced_subtitle_candidates, maybe_enqueue_triage_snapshots
+    from app.media.triage import (
+        forced_subtitle_candidates,
+        maybe_enqueue_triage_snapshots,
+    )
 
     with app.app_context():
         file = make_movie_file(make_movie("First Track Suspect", 2017), "DVD")
@@ -507,7 +510,7 @@ def test_reset_triage_state_clears_verdict_and_aids(app):
 
     from datetime import datetime
 
-    from app.triage import reset_triage_state, triage_snapshot_dir
+    from app.media.triage import reset_triage_state, triage_snapshot_dir
 
     with app.app_context():
         file = make_movie_file(make_movie("Reset Subject", 1988), "DVD")
@@ -531,7 +534,7 @@ def test_a_text_track_snapshot_shows_its_caption(app, tmp_path):
 
     from PIL import Image
 
-    from app import triage
+    from app.media import triage
     from tests.media import make_sample_mkv
 
     srt = tmp_path / "subs.srt"
@@ -562,7 +565,7 @@ def test_the_clear_packets_of_a_pgs_track_are_not_cues(app, monkeypatch):
 
     from types import SimpleNamespace
 
-    from app import triage
+    from app.media import triage
 
     output = "37.955,14687\n41.625,30\n42.626,25274\n45.587,30\n"
     monkeypatch.setattr(
@@ -579,7 +582,7 @@ def test_the_backfill_ignores_the_audio_comparison_child(app, tmp_path):
     The backfill skipped a file whenever its directory existed. A file
     that was also a lossy-audio candidate was skipped for good."""
 
-    from app.triage_cli import _has_subtitle_aids
+    from app.media.triage_cli import _has_subtitle_aids
 
     snapshots = tmp_path / "77"
     assert not _has_subtitle_aids(str(snapshots))
@@ -592,7 +595,7 @@ def test_the_backfill_ignores_the_audio_comparison_child(app, tmp_path):
 def test_an_unreadable_aids_path_counts_as_no_aids(tmp_path):
     """Only a missing directory was caught (#568). A file in its place raised."""
 
-    from app.triage_cli import _has_subtitle_aids
+    from app.media.triage_cli import _has_subtitle_aids
 
     blocker = tmp_path / "12"
     blocker.write_text("not a directory")

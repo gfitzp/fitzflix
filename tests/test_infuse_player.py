@@ -47,7 +47,7 @@ class FakeAppleTV:
 
 
 def _wire_connect(monkeypatch, log, error=None):
-    import app.infuse_player as infuse_player
+    import app.playback.infuse_player as infuse_player
 
     async def connect(device, loop):
         if error is not None:
@@ -84,7 +84,7 @@ def test_play_launches_the_tmdb_deep_link(app, monkeypatch):
 
 
 def test_play_without_pairing_points_at_the_profile(app):
-    import app.infuse_player as infuse_player
+    import app.playback.infuse_player as infuse_player
 
     with app.app_context():
         movie = make_movie("Jaws", 1975, tmdb_id=578)
@@ -157,7 +157,7 @@ def _atmos_track(file):
 
 
 def test_infuse_only_formats_flags_dv8_and_ddp_atmos(app):
-    from app.infuse_player import infuse_only_formats
+    from app.playback.infuse_player import infuse_only_formats
 
     with app.app_context():
         movie = make_movie("Jaws", 1975, tmdb_id=578)
@@ -171,7 +171,7 @@ def test_infuse_only_formats_flags_dv8_and_ddp_atmos(app):
 
 
 def test_other_formats_recommend_nothing(app):
-    from app.infuse_player import infuse_only_formats
+    from app.playback.infuse_player import infuse_only_formats
 
     with app.app_context():
         movie = make_movie("Jaws", 1975, tmdb_id=578)
@@ -479,14 +479,14 @@ class FakePairing:
 def _current_attempt(app, user_id):
     """Store a pairing-attempt token for the user, as start_pairing does, and return it."""
 
-    from app.infuse_player import _attempt_key
+    from app.playback.infuse_player import _attempt_key
 
     app.redis.set(_attempt_key(user_id), "current", ex=300)
     return "current"
 
 
 def _run_pair(app, monkeypatch, user_id, accept=True, attempt=None):
-    import app.infuse_player as infuse_player
+    import app.playback.infuse_player as infuse_player
 
     if attempt is None:
         attempt = _current_attempt(app, user_id)
@@ -554,7 +554,7 @@ def test_pair_task_reports_a_refused_pin(app, monkeypatch):
 
 
 def test_pairing_outcome_reads_the_task_verdict(app):
-    from app.infuse_player import pairing_outcome
+    from app.playback.infuse_player import pairing_outcome
 
     with app.test_request_context():
         app.redis.set("fitzflix:infuse-pair:7:state", "ok", ex=300)
@@ -582,7 +582,7 @@ def test_pairing_outcome_reads_the_task_verdict(app):
 
 
 def test_start_pairing_refuses_while_an_attempt_awaits_its_pin(app):
-    from app.infuse_player import start_pairing
+    from app.playback.infuse_player import start_pairing
 
     with app.test_request_context():
         for state in ("queued", "show-pin"):
@@ -593,7 +593,7 @@ def test_start_pairing_refuses_while_an_attempt_awaits_its_pin(app):
 
 
 def test_start_pairing_after_an_error_starts_fresh(app):
-    from app.infuse_player import start_pairing
+    from app.playback.infuse_player import start_pairing
 
     with app.test_request_context():
         app.redis.set("fitzflix:infuse-pair:5:state", "error:whatever", ex=300)
@@ -632,7 +632,7 @@ def test_superseded_task_bows_out_without_touching_anything(app, monkeypatch):
 def test_a_task_with_no_attempt_token_does_not_pair(app, monkeypatch):
     """start_pairing always passes a token. A task with none owns no attempt (#628)."""
 
-    import app.infuse_player as infuse_player
+    import app.playback.infuse_player as infuse_player
 
     user_id = _member_id(app)
     app.redis.set(f"fitzflix:infuse-pair:{user_id}:pin", "1234", ex=300)
@@ -849,7 +849,7 @@ def test_play_refuses_a_stored_hostname(app, monkeypatch):
     """A row from before the address fence, or one edited outside the
     form, never reaches pyatv."""
 
-    from app import infuse_player
+    from app.playback import infuse_player
 
     launched = []
 
@@ -872,7 +872,7 @@ def test_pair_task_reports_an_apple_tv_that_never_answers(app, monkeypatch):
     The Profile page can then offer a retry. It does not wait for the
     PAIR_TTL of a state that stays at "queued"."""
 
-    import app.infuse_player as infuse_player
+    import app.playback.infuse_player as infuse_player
 
     user_id = _member_id(app)
     log = []
@@ -907,7 +907,7 @@ def test_a_pair_call_past_the_timeout_is_closed(app, monkeypatch):
 
     The page still gets the "Could not reach the Apple TV" error."""
 
-    import app.infuse_player as infuse_player
+    import app.playback.infuse_player as infuse_player
 
     user_id = _member_id(app)
     log = []

@@ -62,7 +62,7 @@ class FakePlex:
 
 
 def _wire(app, monkeypatch, fake):
-    import app.plex_library as plex_library
+    import app.plex.plex_library as plex_library
 
     monkeypatch.setitem(app.config, "PLEX_URL", "http://plex.test")
     monkeypatch.setitem(app.config, "PLEX_TOKEN", "token")
@@ -161,7 +161,7 @@ def test_a_plex_fault_does_not_fail_the_task(app, monkeypatch, tmp_path):
 
 
 def test_the_extras_of_one_disc_share_one_booked_refresh(app, monkeypatch, tmp_path):
-    import app.plex_library as plex_library
+    import app.plex.plex_library as plex_library
 
     monkeypatch.setitem(app.config, "PLEX_URL", "http://plex.test")
     monkeypatch.setitem(app.config, "PLEX_TOKEN", "token")
@@ -176,7 +176,7 @@ def test_the_extras_of_one_disc_share_one_booked_refresh(app, monkeypatch, tmp_p
             job_ids = registry.get_job_ids()
             assert len(job_ids) == 1
             job = app.maintenance_queue.fetch_job(job_ids[0])
-            assert job.func_name == "app.plex_library.refresh_plex_film"
+            assert job.func_name == "app.plex.plex_library.refresh_plex_film"
             assert job.args == (film,)
             assert app.maintenance_queue.jobs == []
     finally:
@@ -185,7 +185,7 @@ def test_the_extras_of_one_disc_share_one_booked_refresh(app, monkeypatch, tmp_p
 
 
 def test_no_refresh_is_booked_without_a_plex_server(app, monkeypatch, tmp_path):
-    import app.plex_library as plex_library
+    import app.plex.plex_library as plex_library
 
     monkeypatch.setitem(app.config, "PLEX_URL", None)
     monkeypatch.setitem(app.config, "PLEX_TOKEN", None)

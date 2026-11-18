@@ -20,7 +20,7 @@ def _move_retries(app):
     return [
         job
         for job in scheduled_jobs(app.handoff_queue)
-        if job.func_name == "app.importing.move_localized_file"
+        if job.func_name == "app.media.importing.move_localized_file"
     ]
 
 
@@ -40,8 +40,8 @@ def test_a_dead_volume_move_defer_keeps_every_counter(app, tmp_path, monkeypatch
     the retry lost lock_waits and space_waits. Then a later lock wait
     reused the id of a finished job."""
 
-    from app import videos
-    from app import importing
+    from app.media import videos
+    from app.media import importing
     from tests.test_localization import move_retry
 
     monkeypatch.setattr(videos, "_dead_volumes", lambda paths: ["/Volumes/Movies"])
@@ -80,7 +80,7 @@ def test_a_space_wait_that_lost_the_title_lock_waits_for_the_lock(
     because another task took the lock. The move must not book a space
     wait under a lock that it does not hold."""
 
-    from app import importing
+    from app.media import importing
     from tests.test_localization import move_retry, space_move_fixture
 
     basename = "Lost Lock Space (2021) - [DVD].mkv"
@@ -120,7 +120,7 @@ def test_requeue_merges_the_counters_and_takes_the_spec(app):
 
     with app.app_context():
         delay = requeue(
-            "app.aws_storage.download_task",
+            "app.archive.aws_storage.download_task",
             key="untouched/Requeue Test.mkv",
             delay=(5, 15),
             reason="test",
@@ -131,7 +131,7 @@ def test_requeue_merges_the_counters_and_takes_the_spec(app):
         )
         assert timedelta(minutes=5) <= delay <= timedelta(minutes=15)
         job_id = requeue_job_id(
-            "app.aws_storage.download_task",
+            "app.archive.aws_storage.download_task",
             "untouched/Requeue Test.mkv",
             {"transient_retries": 2},
         )
@@ -153,10 +153,10 @@ def test_requeue_merges_the_counters_and_takes_the_spec(app):
 
     with app.app_context():
         assert requeue_job_id(
-            "app.aws_storage.upload_task", 7, {"b": 1, "a": 2}
+            "app.archive.aws_storage.upload_task", 7, {"b": 1, "a": 2}
         ).endswith("_a_2_b_1")
         assert (
-            requeue_job_id("app.aws_storage.sync_aws_s3_storage_task")
+            requeue_job_id("app.archive.aws_storage.sync_aws_s3_storage_task")
             == "retry_sync_aws_s3_storage_task"
         )
 
@@ -166,7 +166,7 @@ def test_localization_pending_sees_a_requeued_retry(app, incoming_dir):
 
     from rq.registry import ScheduledJobRegistry
 
-    from app.importing import localization_pending
+    from app.media.importing import localization_pending
     from app.tasks import requeue, requeue_job_id
 
     path = os.path.join(incoming_dir, "Pending Requeue (2021) - [DVD].mkv")
@@ -179,7 +179,7 @@ def test_localization_pending_sees_a_requeued_retry(app, incoming_dir):
     with app.app_context():
         assert not localization_pending(path)
         requeue(
-            "app.importing.localization_task",
+            "app.media.importing.localization_task",
             key=path,
             delay=timedelta(minutes=1),
             reason="test",
@@ -196,7 +196,7 @@ def test_localization_pending_sees_a_requeued_retry(app, incoming_dir):
             assert not localization_pending(other)
         finally:
             ScheduledJobRegistry(queue=app.import_queue).remove(
-                requeue_job_id("app.importing.localization_task", path, counters),
+                requeue_job_id("app.media.importing.localization_task", path, counters),
                 delete_job=True,
             )
 
@@ -225,7 +225,7 @@ def test_no_producer_enqueues_a_task_name_by_hand():
 def _repair_booking(app, path):
     """Book the record repair of path and return the job under its id (#700)."""
 
-    from app.importing import _book_replaced_file_repair
+    from app.media.importing import _book_replaced_file_repair
 
     with app.app_context():
         _book_replaced_file_repair(path, path, 1)
@@ -237,7 +237,9 @@ def _repair_job_id(path):
 
     from app.tasks import requeue_job_id
 
-    return requeue_job_id("app.importing.repair_replaced_file_task", path, {"tries": 1})
+    return requeue_job_id(
+        "app.media.importing.repair_replaced_file_task", path, {"tries": 1}
+    )
 
 
 def _repair_queue(app):
@@ -246,7 +248,9 @@ def _repair_queue(app):
     from app.tasks import TASKS, resolve_queue
 
     with app.app_context():
-        return resolve_queue(TASKS["app.importing.repair_replaced_file_task"].queue)
+        return resolve_queue(
+            TASKS["app.media.importing.repair_replaced_file_task"].queue
+        )
 
 
 def _delete_job_id(app, queue, job_id):
@@ -324,7 +328,7 @@ def test_a_running_job_that_books_itself_under_its_own_id_keeps_the_booking(app)
 
     from app.tasks import TASKS, requeue, requeue_job_id, resolve_queue
 
-    name = "app.aws_storage.sync_aws_s3_storage_task"
+    name = "app.archive.aws_storage.sync_aws_s3_storage_task"
     with app.app_context():
         queue = resolve_queue(TASKS[name].queue)
         job_id = requeue_job_id(name)
@@ -363,7 +367,7 @@ def test_a_job_that_books_itself_keeps_the_booking_after_it_ends(app):
         resolve_queue,
     )
 
-    name = "app.tracks.track_metadata_scan_task"
+    name = "app.media.tracks.track_metadata_scan_task"
     with app.app_context():
         queue = resolve_queue(TASKS[name].queue)
         job_id = requeue_job_id(name, 77)
@@ -410,7 +414,7 @@ def test_a_fixed_job_id_does_not_take_the_expiry_of_a_finished_job(app):
 
     from app.tasks import enqueue_task
 
-    name = "app.plex_library.analyze_plex_media"
+    name = "app.plex.plex_library.analyze_plex_media"
     job_id = "plex_analyze_fixed-id-test"
     queue = app.maintenance_queue
     with app.app_context():
@@ -435,7 +439,7 @@ def test_an_analyze_beside_a_running_one_gets_its_own_job_id(app, monkeypatch):
     not a duplicate: the first job can have read the file before the
     second edit."""
 
-    from app.plex_library import enqueue_plex_analyze
+    from app.plex.plex_library import enqueue_plex_analyze
 
     monkeypatch.setitem(app.config, "PLEX_URL", "http://plex.test")
     monkeypatch.setitem(app.config, "PLEX_TOKEN", "token")
@@ -480,7 +484,7 @@ def test_an_analyze_beside_a_booked_one_adds_no_job(app, monkeypatch):
 
     from rq.registry import ScheduledJobRegistry
 
-    from app.plex_library import enqueue_plex_analyze
+    from app.plex.plex_library import enqueue_plex_analyze
 
     monkeypatch.setitem(app.config, "PLEX_URL", "http://plex.test")
     monkeypatch.setitem(app.config, "PLEX_TOKEN", "token")

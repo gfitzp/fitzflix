@@ -30,7 +30,7 @@ def _assert_escaped(html):
 
 
 def test_the_manual_import_mail_escapes_the_title_and_the_reason(app, monkeypatch):
-    from app.manual_imports import email_manual_import_needed
+    from app.media.manual_imports import email_manual_import_needed
 
     sent = _collect(monkeypatch, "app.email.notify_admin_text")
     monkeypatch.setitem(app.config, "MAIL_SERVER", "smtp.test")
@@ -57,9 +57,9 @@ def test_the_incomplete_download_mail_escapes_the_basename(app, monkeypatch, tmp
 def test_the_dangling_claims_mail_escapes_the_keys(app, monkeypatch):
     from types import SimpleNamespace
 
-    from app import aws_storage
+    from app.archive import aws_storage
 
-    sent = _collect(monkeypatch, "app.aws_storage.notify_admin_text")
+    sent = _collect(monkeypatch, "app.archive.aws_storage.notify_admin_text")
     with app.app_context():
         file = make_movie_file(make_movie("Claimed Escape", 1999), "DVD")
         file.aws_key = f"untouched/{NAME}.mkv"
@@ -71,9 +71,9 @@ def test_the_dangling_claims_mail_escapes_the_keys(app, monkeypatch):
 
 
 def test_the_rename_collision_mail_escapes_the_names(app, monkeypatch):
-    from app.tmdb_refresh import apply_tmdb_refresh
+    from app.metadata.tmdb_refresh import apply_tmdb_refresh
 
-    sent = _collect(monkeypatch, "app.tmdb_refresh.notify_admin_text")
+    sent = _collect(monkeypatch, "app.metadata.tmdb_refresh.notify_admin_text")
     with app.app_context():
         movie = make_movie("Old Escape", 1999)
         file = make_movie_file(movie, "DVD")

@@ -4,7 +4,7 @@ from flask import current_app
 
 from app.api import bp
 from app.api.arr import folder_under_roots, handle_import_event, import_event_webhook
-from app.arr_client import RADARR
+from app.arr.arr_client import RADARR
 
 
 def check_movie_file_delete(payload):
@@ -16,7 +16,7 @@ def check_movie_file_delete(payload):
     The event carries movie.folderPath. The folder must be below
     RADARR_ROOT_FOLDERS, as the folder of a download must be."""
 
-    from app.custom_artwork import queue_folder_poster_restore
+    from app.media.custom_artwork import queue_folder_poster_restore
 
     if payload.get("eventType") != "MovieFileDelete":
         return

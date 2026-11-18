@@ -76,7 +76,7 @@ def import_event_webhook(service, observe=None):
             # Record it for the Manual imports page (#276).
 
             if payload.get("eventType") == "ManualInteractionRequired":
-                from app.manual_imports import record_manual_interaction
+                from app.media.manual_imports import record_manual_interaction
 
                 record_manual_interaction(service, payload)
                 return response
@@ -280,7 +280,7 @@ def import_source_incomplete(file_path):
     truncation verdict counts. A file that the probe cannot read continues
     normally. The retries of the import pipeline then deal with it."""
 
-    from app.importing import probe_file_completeness
+    from app.media.importing import probe_file_completeness
 
     return probe_file_completeness(file_path) is False
 
@@ -406,13 +406,13 @@ def handle_import_event(arr, payload, priority=None):
     the import goes to the front of the queue. Only Sonarr gives it, for
     a recent episode."""
 
-    from app.arr_client import configured, rescan_command
-    from app.arr_client import (
+    from app.arr.arr_client import configured, rescan_command
+    from app.arr.arr_client import (
         carry_remembered_download,
         remember_download,
         rename_download_locally,
     )
-    from app.importing import enqueue_localization
+    from app.media.importing import enqueue_localization
     from app.settings import get_setting
     from app.tasks import enqueue_task
 
@@ -533,7 +533,7 @@ def handle_import_event(arr, payload, priority=None):
 def send_arr_command(service, url, api_key, body):
     """POST a command to a Sonarr/Radarr API. Log a failure. Do not raise.
 
-    This function uses urllib3. The docstring of app.arr_client records
+    This function uses urllib3. The docstring of app.arr.arr_client records
     the choice of the HTTP library."""
 
     try:

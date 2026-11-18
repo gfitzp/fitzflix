@@ -138,7 +138,7 @@ def test_cron_table_refreshes_streaming_availability_nightly(app):
     with app.app_context():
         entries = {entry["func"]: entry for entry in cron_table(app.config)}
 
-    entry = entries["app.streaming.refresh_availability"]
+    entry = entries["app.availability.streaming.refresh_availability"]
     assert entry["cron"] == "30 4 * * *"
     assert entry["timeout"] >= 3600
 
@@ -213,12 +213,12 @@ def test_the_sonarr_path_check_runs_after_the_radarr_check(app):
 
     from app.tasks import TASKS
 
-    name = "app.series_rename.reconcile_sonarr_paths"
+    name = "app.media.series_rename.reconcile_sonarr_paths"
     rows = cron_table({"SONARR_URL": "http://sonarr", "SONARR_API_KEY": "key"})
     assert [row["cron"] for row in rows if row["func"] == name] == ["45 5 * * *"]
     assert name not in {row["func"] for row in cron_table({"SONARR_URL": "x"})}
 
-    radarr = TASKS["app.radarr_push.reconcile_radarr_paths"]
-    for task in (name, "app.series_rename.reconcile_sonarr_series"):
+    radarr = TASKS["app.arr.radarr_push.reconcile_radarr_paths"]
+    for task in (name, "app.media.series_rename.reconcile_sonarr_series"):
         assert TASKS[task].queue == radarr.queue == "maintenance"
         assert TASKS[task].timeout == radarr.timeout

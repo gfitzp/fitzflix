@@ -20,9 +20,9 @@ from rq.exceptions import NoSuchJobError
 from rq.job import Job
 
 from app import safe_job_id
-from app.aws_storage import sync_aws_s3_storage_task
-from app.importing import localization_task
-from app.videos import acquire_lock_or_defer
+from app.archive.aws_storage import sync_aws_s3_storage_task
+from app.media.importing import localization_task
+from app.media.videos import acquire_lock_or_defer
 
 
 def requeue_id(*args, **kwargs):
@@ -66,7 +66,7 @@ def test_defer_uses_deterministic_id_and_replaces(app, held_lock):
                 "test-title-lock",
                 30000,
                 app.import_queue,
-                "app.importing.localization_task",
+                "app.media.importing.localization_task",
                 minutes=(45, 75),
                 timeout=3600,
                 description="'Jaws (1975) - [DVD].mkv'",
@@ -103,7 +103,7 @@ def test_defer_with_positional_args_binds(app, held_lock):
             "test-args-lock",
             30000,
             app.import_queue,
-            "app.importing.localization_task",
+            "app.media.importing.localization_task",
             minutes=(5, 15),
             timeout=3600,
             description="'args-form.mkv'",
@@ -123,7 +123,7 @@ def test_acquire_returns_lock_when_free(app):
             "test-free-lock",
             30000,
             app.import_queue,
-            "app.importing.localization_task",
+            "app.media.importing.localization_task",
             minutes=(5, 15),
             timeout=3600,
             description="'free.mkv'",
@@ -173,12 +173,14 @@ def test_localization_defers_while_title_is_locked(app, held_lock, incoming_dir)
             # The lock wait carries the source as its key. Thus, its id
             # starts with the requeue prefix of the file (#616).
 
-            from app.videos import lock_wait_job_id
+            from app.media.videos import lock_wait_job_id
 
-            prefix = requeue_id("app.importing.localization_task", file_path)
+            prefix = requeue_id("app.media.importing.localization_task", file_path)
             assert retries == [
                 lock_wait_job_id(
-                    "app.importing.localization_task", f"'{basename}'", key=file_path
+                    "app.media.importing.localization_task",
+                    f"'{basename}'",
+                    key=file_path,
                 )
             ]
             assert retries[0].startswith(prefix + "_")
@@ -187,7 +189,7 @@ def test_localization_defers_while_title_is_locked(app, held_lock, incoming_dir)
             # The waiting retry counts as pending. A sweep must not queue
             # the file again next to it.
 
-            from app.importing import localization_pending
+            from app.media.importing import localization_pending
 
             assert localization_pending(file_path)
     finally:
@@ -199,7 +201,7 @@ def test_localization_defers_while_file_is_growing(app, incoming_dir, monkeypatc
 
     The task does not process or reject the file."""
 
-    from app import importing
+    from app.media import importing
 
     # The writer adds bytes each 0.1 second. Thus, a wait of 1 second
     # always sees the file grow.
@@ -231,7 +233,7 @@ def test_localization_defers_while_file_is_growing(app, incoming_dir, monkeypatc
             ]
             assert retries == [
                 requeue_id(
-                    "app.importing.localization_task",
+                    "app.media.importing.localization_task",
                     file_path,
                     {
                         "transient_retries": 0,
@@ -258,7 +260,7 @@ def test_localization_defers_while_file_is_growing(app, incoming_dir, monkeypatc
 def test_sync_defers_while_queues_are_busy(app):
     with app.app_context():
         marker = app.file_queue.enqueue(
-            "app.importing.localization_task",
+            "app.media.importing.localization_task",
             args=("/nonexistent",),
             description="busy marker",
         )
@@ -307,7 +309,7 @@ def test_every_scheduled_job_binds(app, held_lock, incoming_dir):
             "catchall-lock",
             30000,
             app.file_queue,
-            "app.importing.localization_task",
+            "app.media.importing.localization_task",
             minutes=(5, 15),
             timeout=3600,
             description="'catchall.mkv'",
@@ -334,7 +336,7 @@ def test_mkvpropedit_transient_error_defers_and_releases_lock(app, monkeypatch):
 
     import errno
 
-    from app import tracks
+    from app.media import tracks
 
     from app import db
     from tests.factories import make_movie, make_movie_file
@@ -359,11 +361,11 @@ def test_mkvpropedit_transient_error_defers_and_releases_lock(app, monkeypatch):
             if job.id.startswith(safe_job_id("retry:mkvpropedit_task"))
         ]
         # The id holds a digest of the edit arguments (#595).
-        from app.videos import arguments_tag
+        from app.media.videos import arguments_tag
 
         assert [job.id for job in retries] == [
             requeue_id(
-                "app.tracks.mkvpropedit_task",
+                "app.media.tracks.mkvpropedit_task",
                 file_id,
                 {"transient_retries": 1},
                 tag=arguments_tag((file_id, "2", None, [], {"a1": "eng"})),

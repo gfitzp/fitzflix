@@ -6,8 +6,8 @@ import time
 
 import pytest
 
-from app import importing
-from app.importing import (
+from app.media import importing
+from app.media.importing import (
     STAGING_MARGIN,
     STAGING_RESERVED_KEY,
     release_staging_reservation,
@@ -171,7 +171,7 @@ def test_localization_waits_for_staging_space(
             waits = [job.id for job in scheduled_jobs(app.import_queue)]
             assert (
                 tasks.requeue_job_id(
-                    "app.importing.localization_task",
+                    "app.media.importing.localization_task",
                     source,
                     {
                         "transient_retries": 0,
@@ -194,7 +194,7 @@ def test_localization_waits_for_staging_space(
             (move_job,) = [
                 job
                 for job in app.handoff_queue.jobs
-                if job.func_name == "app.importing.move_localized_file"
+                if job.func_name == "app.media.importing.move_localized_file"
             ]
             hidden = move_job.args[3]
             assert hidden.startswith(staging)
@@ -263,7 +263,7 @@ def test_a_busy_staging_lock_is_not_a_space_wait(
             waits = [job.id for job in scheduled_jobs(app.import_queue)]
             assert (
                 tasks.requeue_job_id(
-                    "app.importing.localization_task",
+                    "app.media.importing.localization_task",
                     source,
                     {
                         "transient_retries": 0,

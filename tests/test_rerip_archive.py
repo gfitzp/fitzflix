@@ -15,7 +15,8 @@ KEY = f"untouched/{BASENAME}"
 def _claimed_rip(app, monkeypatch, title="Rerip Guard"):
     """Make a record that claims KEY, and a fake S3 that holds its old object."""
 
-    from app import aws_storage, db
+    from app import db
+    from app.archive import aws_storage
     from tests.factories import make_movie, make_movie_file
     from tests.fakes import ArchiveS3
 
@@ -62,7 +63,8 @@ def test_a_failed_rerip_leaves_the_claimed_archive_current(
 ):
     """The localization fails after the upload. The old rip stays the current object."""
 
-    from app import db, importing
+    from app import db
+    from app.media import importing
     from app.models import File
 
     fake, row_id = _claimed_rip(app, monkeypatch)
@@ -94,7 +96,8 @@ def test_a_finished_rerip_moves_its_upload_to_the_final_key(
 ):
     """The records commit with the run-scoped key. Then the move takes the final key."""
 
-    from app import aws_storage, db
+    from app import db
+    from app.archive import aws_storage
     from app.models import File
     from tests.localization_helpers import run_full_chain
 
@@ -115,7 +118,8 @@ def test_a_finished_rerip_moves_its_upload_to_the_final_key(
         assert not [
             job
             for job in app.handoff_queue.jobs
-            if job.func_name == "app.aws_storage.aws_delete" and job.args == (KEY,)
+            if job.func_name == "app.archive.aws_storage.aws_delete"
+            and job.args == (KEY,)
         ]
 
         # The upload stays in S3 Standard. The move needs no restore.
@@ -140,7 +144,7 @@ def test_an_unclaimed_key_with_other_bytes_is_replaced_in_place(
 ):
     """No record claims the key. Then the upload goes to the normal key, as before."""
 
-    from app import aws_storage
+    from app.archive import aws_storage
     from tests.fakes import ArchiveS3
 
     fake = ArchiveS3(
@@ -165,7 +169,7 @@ def test_a_held_archive_never_replaces_a_claimed_rip(app, monkeypatch, tmp_path)
 
     from app import db
     from app.models import ArchivedOriginal, HeldImport
-    from app.sdr_conversion import archive_held_task
+    from app.media.sdr_conversion import archive_held_task
 
     fake, _ = _claimed_rip(app, monkeypatch, title="Rerip Guard Held")
     held_path = tmp_path / BASENAME
@@ -200,7 +204,7 @@ def test_a_held_archive_never_replaces_a_claimed_rip(app, monkeypatch, tmp_path)
 def test_the_sync_warns_when_a_claimed_object_changed_after_its_upload(app, caplog):
     """A new size with a later object date keeps the recorded size and warns."""
 
-    from app.aws_storage import _replaced_after_upload
+    from app.archive.aws_storage import _replaced_after_upload
 
     class Row:
         aws_key = KEY
@@ -222,7 +226,7 @@ def test_the_pending_uploads_live_outside_untouched(app, monkeypatch):
     The weekly sync lists the prefix. Thus, it prunes a leftover upload
     with every version, and a claim on it does not read as dangling."""
 
-    from app import aws_storage, s3_layout
+    from app.archive import aws_storage, s3_layout
 
     with app.app_context():
         key = aws_storage.pending_archive_key(KEY, "run1")
@@ -247,7 +251,7 @@ def test_the_pending_uploads_live_outside_untouched(app, monkeypatch):
 def _drop_pending_before_the_follow_up(monkeypatch, fake):
     """Delete the run-scoped upload just before the pending upload check."""
 
-    from app import importing
+    from app.media import importing
 
     real = importing.ensure_pending_upload
 
@@ -314,7 +318,7 @@ def test_a_failed_move_request_after_a_failed_new_upload_keeps_the_source(
 ):
     """The move request raises after the check said False. The rip stays (#494)."""
 
-    from app import importing
+    from app.media import importing
     from tests.localization_helpers import run_full_chain
 
     _claimed_rip(app, monkeypatch)
@@ -336,7 +340,7 @@ def test_a_failed_move_request_after_a_failed_new_upload_keeps_the_source(
 def test_a_raising_pending_check_keeps_the_source(
     app, sample_mkv, incoming_dir, monkeypatch
 ):
-    from app import importing
+    from app.media import importing
     from tests.localization_helpers import run_full_chain
 
     _claimed_rip(app, monkeypatch)
@@ -380,7 +384,7 @@ def test_the_move_of_a_rerip_is_queued_after_the_title_lock(
         (job,) = [
             job
             for job in app.file_queue.jobs
-            if job.func_name == "app.aws_storage.move_archive_object"
+            if job.func_name == "app.archive.aws_storage.move_archive_object"
         ]
         assert job.args[0] == row_id
     assert seen == [(row_id, True)]
@@ -402,7 +406,8 @@ def _lagging_row(app, monkeypatch, sample_mkv, etag=None, present=True):
 
     import hashlib
 
-    from app import aws_storage, db
+    from app import db
+    from app.archive import aws_storage
     from tests.factories import make_movie, make_movie_file
     from tests.fakes import ArchiveS3
 
@@ -443,7 +448,7 @@ def _deletes_queued(app, key):
     return [
         job
         for job in app.handoff_queue.jobs
-        if job.func_name == "app.aws_storage.aws_delete" and job.args == (key,)
+        if job.func_name == "app.archive.aws_storage.aws_delete" and job.args == (key,)
     ]
 
 
@@ -515,7 +520,7 @@ def test_a_missing_lagging_object_uploads_as_before(
 def test_a_new_rip_with_no_record_uploads_as_before(app, monkeypatch, tmp_path):
     """No record has the untouched name. The rip uploads to the key of its name."""
 
-    from app import aws_storage
+    from app.archive import aws_storage
     from tests.fakes import ArchiveS3
 
     fake = ArchiveS3()
@@ -534,7 +539,7 @@ def test_a_new_rip_with_no_record_uploads_as_before(app, monkeypatch, tmp_path):
 def test_force_upload_never_takes_a_lagging_key(app, monkeypatch, sample_mkv, tmp_path):
     """FORCE_UPLOAD skips each comparison of bytes. Thus, it takes no other key."""
 
-    from app import aws_storage
+    from app.archive import aws_storage
 
     fake, _ = _lagging_row(app, monkeypatch, sample_mkv)
     monkeypatch.setitem(app.config, "FORCE_UPLOAD", True)
@@ -555,7 +560,8 @@ def test_a_restore_of_a_case_only_lag_keeps_its_key(
     The record of the old spelling claims the key of the new spelling.
     That key has no object. The import keeps the key of the record."""
 
-    from app import aws_storage, db
+    from app import db
+    from app.archive import aws_storage
     from app.models import File
 
     fake, row_id = _lagging_row(app, monkeypatch, sample_mkv)

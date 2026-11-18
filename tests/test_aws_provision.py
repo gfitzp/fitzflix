@@ -9,7 +9,7 @@ import json
 
 import botocore.exceptions
 
-from app.aws_setup import ABORT_RULE_ID, provision
+from app.archive.aws_setup import ABORT_RULE_ID, provision
 
 
 class FakeMeta:
@@ -370,7 +370,7 @@ def test_provision_refuses_a_suspected_stale_read(tmp_path):
 
     import pytest
 
-    from app.aws_setup import StaleReadSuspected
+    from app.archive.aws_setup import StaleReadSuspected
 
     config = dict(CONFIG, LOG_FILE=str(tmp_path / "app.log"))
     sqs = FakeSQS(
@@ -492,7 +492,7 @@ def test_provision_reads_every_valid_queue_policy_shape(tmp_path):
 def test_the_edition_rewrite_stops_at_its_own_parenthesis(app):
     """A later parenthesis in the name is not part of the edition (#534)."""
 
-    from app.aws_storage import brace_edition_tags
+    from app.archive.aws_storage import brace_edition_tags
 
     name = (
         "Zappa (2020) (edition-Official Movie Backer Edition) - Scenes - "

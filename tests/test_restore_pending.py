@@ -79,7 +79,10 @@ def test_the_refuse_helper_reads_the_database_not_the_loaded_row(app):
     from datetime import datetime
 
     from app import db
-    from app.aws_storage import RESTORE_PENDING_MESSAGE, refuse_while_restore_pending
+    from app.archive.aws_storage import (
+        RESTORE_PENDING_MESSAGE,
+        refuse_while_restore_pending,
+    )
     from app.models import File
 
     with app.app_context():
@@ -118,7 +121,7 @@ def _fieldset_of(page, field):
 def test_a_restore_request_sets_the_state_and_turns_off_the_forms(
     app, admin_client, monkeypatch
 ):
-    from app import aws_storage
+    from app.archive import aws_storage
 
     class FrozenS3:
         def head_object(self, **kwargs):
@@ -224,26 +227,26 @@ def _run_writer(app, writer, file_id, path):
     from app.models import File
 
     if writer == "mkvpropedit_task":
-        from app.tracks import mkvpropedit_task
+        from app.media.tracks import mkvpropedit_task
 
         return mkvpropedit_task(file_id, "1", "0", [])
     if writer == "mkvmerge_task":
-        from app.tracks import mkvmerge_task
+        from app.media.tracks import mkvmerge_task
 
         return mkvmerge_task(file_id, ["1"], [])
     if writer == "remux_audio_plan_task":
-        from app.tracks import remux_audio_plan_task
+        from app.media.tracks import remux_audio_plan_task
 
         return remux_audio_plan_task(file_id, [["copy", 1]])
     if writer == "atmos_supplement_task":
-        from app.atmos import atmos_supplement_task
+        from app.media.atmos import atmos_supplement_task
 
         return atmos_supplement_task(file_id)
     if writer == "move_archive_to_modified_task":
-        from app.aws_storage import move_archive_to_modified_task
+        from app.archive.aws_storage import move_archive_to_modified_task
 
         return move_archive_to_modified_task(file_id)
-    from app.aws_storage import archive_library_file
+    from app.archive.aws_storage import archive_library_file
 
     with app.app_context():
         return archive_library_file(db.session.get(File, file_id), path)
@@ -265,8 +268,9 @@ def test_each_writer_refuses_while_a_restore_is_pending(
 ):
     """A refusal changes nothing, and it releases the title lock."""
 
-    from app import aws_storage, db
-    from app.aws_storage import RESTORE_PENDING_MESSAGE
+    from app import db
+    from app.archive import aws_storage
+    from app.archive.aws_storage import RESTORE_PENDING_MESSAGE
     from app.models import File
 
     def no_upload(*args, **kwargs):
@@ -313,8 +317,8 @@ def _direct_row(app, title, requested=True):
 
 
 def _wire(monkeypatch, s3, sqs=None):
-    import app.videos as videos
-    from app import aws_storage
+    import app.media.videos as videos
+    from app.archive import aws_storage
 
     monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kwargs: s3)
     monkeypatch.setattr(aws_storage, "aws_sqs_client", lambda: sqs)
@@ -325,7 +329,8 @@ def _wire(monkeypatch, s3, sqs=None):
 def test_the_placement_copies_under_the_title_lock_and_then_clears_the_state(
     app, monkeypatch
 ):
-    from app import aws_storage, db
+    from app import db
+    from app.archive import aws_storage
     from app.models import File
 
     file_id, key, path = _direct_row(app, "Placed Clears")
@@ -361,7 +366,7 @@ def test_the_placement_copies_under_the_title_lock_and_then_clears_the_state(
 def test_a_busy_title_lock_defers_the_placement_and_keeps_the_copy(
     app, monkeypatch, held_lock
 ):
-    from app import aws_storage
+    from app.archive import aws_storage
     from app import db
     from app.models import File
     from tests.test_scheduling import scheduled_jobs
@@ -379,7 +384,7 @@ def test_a_busy_title_lock_defers_the_placement_and_keeps_the_copy(
         (retry,) = [
             job
             for job in scheduled_jobs(app.file_queue)
-            if job.func_name == "app.aws_storage.download_task"
+            if job.func_name == "app.archive.aws_storage.download_task"
         ]
         assert retry.kwargs == {"transient_retries": 0, "volume_waits": 1}
         retry.delete()
@@ -401,7 +406,7 @@ def _denied():
 
 @pytest.mark.parametrize("outcome", ["object missing", "access denied"])
 def test_each_terminal_download_outcome_clears_the_state(app, monkeypatch, outcome):
-    from app import aws_storage
+    from app.archive import aws_storage
 
     file_id, key, path = _direct_row(app, f"Terminal {outcome}")
     sqs = SQS()
@@ -447,7 +452,7 @@ def test_a_pending_restore_again_keeps_the_state(app, monkeypatch, deleted):
     A failed delete of the stale message does not end the state. The
     restore is on its way."""
 
-    from app import aws_storage
+    from app.archive import aws_storage
     from tests.test_aws_download import _client_error
 
     file_id, key, path = _direct_row(app, f"Restore Again {deleted}")
@@ -479,7 +484,7 @@ def test_a_pending_restore_again_keeps_the_state(app, monkeypatch, deleted):
 def test_a_refused_placement_clears_the_state(app, monkeypatch):
     """A refusal deletes the SQS message. Thus, the state ends."""
 
-    from app import aws_storage
+    from app.archive import aws_storage
 
     file_id, key, path = _direct_row(app, "Task Exit refused")
     _wire(monkeypatch, S3(), SQS())
@@ -500,7 +505,7 @@ def test_a_give_up_with_no_message_ends_the_state(app, monkeypatch, admin_client
     already. Its give-up clears the state, and the restore form works
     again."""
 
-    from app import aws_storage
+    from app.archive import aws_storage
 
     file_id, key, _path = _direct_row(app, "No Message Give Up")
     sqs = SQS()
@@ -531,8 +536,8 @@ def test_a_give_up_keeps_the_state_for_the_next_delivery(app, monkeypatch, give_
     places the file. Before the fix, the give-up cleared the state, and
     the next delivery was dropped as an ended restore."""
 
-    import app.videos as videos
-    from app import aws_storage
+    import app.media.videos as videos
+    from app.archive import aws_storage
 
     file_id, key, path = _direct_row(app, f"Give Up {give_up}")
     sqs = SQS()
@@ -590,7 +595,8 @@ def test_a_give_up_keeps_the_state_for_the_next_delivery(app, monkeypatch, give_
 def test_the_sweep_clears_a_state_older_than_14_days(app, monkeypatch):
     from datetime import datetime, timedelta, timezone
 
-    from app import db, maintenance
+    from app import db
+    from app.operations import maintenance
     from app.models import File
 
     monkeypatch.setattr(maintenance, "task_send_email", lambda *a, **k: None)
@@ -612,7 +618,7 @@ def test_the_s3_sync_requests_a_restore_and_keeps_its_key(app, monkeypatch):
 
     from datetime import datetime, timedelta, timezone
 
-    from app import aws_storage
+    from app.archive import aws_storage
 
     with app.app_context():
         file_id, key, path = _pending_file(
@@ -654,7 +660,7 @@ def test_the_s3_sync_requests_a_restore_and_keeps_its_key(app, monkeypatch):
 def test_an_old_sidecar_with_a_stat_line_still_resumes(app, monkeypatch):
     """A sidecar from before #610 has a third line. The ETag and the size still count."""
 
-    from app import aws_storage
+    from app.archive import aws_storage
 
     file_id, key, path = _direct_row(app, "Old Sidecar")
     staged = os.path.join(app.config["IMPORT_DIR"], f".restore-{key.replace('/', '-')}")
@@ -689,7 +695,7 @@ def test_a_move_during_the_download_still_ends_the_pending_restore(app, monkeypa
 
     import botocore.exceptions
 
-    from app import aws_storage
+    from app.archive import aws_storage
     from app import db
     from app.models import File
 
@@ -723,7 +729,7 @@ def test_a_move_during_the_download_still_ends_the_pending_restore(app, monkeypa
 def test_the_retry_after_a_busy_lock_places_the_kept_copy(app, monkeypatch, held_lock):
     """The retry places the kept download with no second download, then clears."""
 
-    from app import aws_storage
+    from app.archive import aws_storage
     from app import db
     from app.models import File
     from tests.test_scheduling import scheduled_jobs
@@ -742,7 +748,7 @@ def test_the_retry_after_a_busy_lock_places_the_kept_copy(app, monkeypatch, held
         (retry,) = [
             job
             for job in scheduled_jobs(app.file_queue)
-            if job.func_name == "app.aws_storage.download_task"
+            if job.func_name == "app.archive.aws_storage.download_task"
         ]
         with app.app_context():
             assert aws_storage.download_task(*retry.args, **retry.kwargs) is True
@@ -763,9 +769,10 @@ def test_the_placement_after_a_writer_that_began_first_ends_consistent(
     file, the pending state ends, and the stale mark of the write stays
     for the sync (#615)."""
 
-    from app import aws_storage, db
+    from app import db
+    from app.archive import aws_storage
     from app.models import File
-    from app.tracks import confirm_rewrite
+    from app.media.tracks import confirm_rewrite
     from tests.test_scheduling import scheduled_jobs
 
     monkeypatch.setitem(app.config, "ARCHIVE_ORIGINAL_MEDIA", True)
@@ -794,7 +801,7 @@ def test_the_placement_after_a_writer_that_began_first_ends_consistent(
         (retry,) = [
             job
             for job in scheduled_jobs(app.file_queue)
-            if job.func_name == "app.aws_storage.download_task"
+            if job.func_name == "app.archive.aws_storage.download_task"
         ]
         with app.app_context():
             aws_storage.download_task(*retry.args, **retry.kwargs)
@@ -817,7 +824,9 @@ def test_the_import_of_the_restored_rip_clears_the_stale_mark(app):
 
     from datetime import datetime
 
-    from app import aws_storage, db, importing
+    from app import db
+    from app.archive import aws_storage
+    from app.media import importing
     from app.models import File
 
     with app.app_context():
@@ -868,8 +877,9 @@ def test_a_new_localization_ends_the_pending_restore(app, monkeypatch, stage):
 
     from datetime import datetime
 
-    from app import aws_storage
-    from app import db, importing
+    from app.archive import aws_storage
+    from app import db
+    from app.media import importing
     from app.models import File
 
     file_id, key, path = _direct_row(app, f"Replaced {stage}")
@@ -933,7 +943,8 @@ def test_the_scan_does_not_rewrite_the_file_of_a_pending_restore(app, monkeypatc
     the rescan after a failed edit and the page scan all queue this task
     (#695)."""
 
-    from app import db, tracks
+    from app import db
+    from app.media import tracks
     from app.models import File
 
     with app.app_context():
@@ -977,7 +988,7 @@ def test_the_sweep_reads_a_naive_stamp_as_utc(app):
     from datetime import datetime, timedelta, timezone
 
     from app import db
-    from app.aws_storage import expire_restore_requests
+    from app.archive.aws_storage import expire_restore_requests
     from app.models import File
 
     with app.app_context():
@@ -994,7 +1005,7 @@ def test_a_fault_at_the_lock_release_still_ends_a_placed_restore(app, monkeypatc
 
     The copy is in place, and the state ends. The lock expires by itself."""
 
-    from app import aws_storage
+    from app.archive import aws_storage
 
     file_id, key, path = _direct_row(app, "Unlock Fault")
     _wire(monkeypatch, S3(), SQS())
@@ -1022,7 +1033,7 @@ def test_a_fault_at_the_lock_release_still_ends_a_placed_restore(app, monkeypatc
 def test_the_page_stamps_the_row_before_the_redirect(app, admin_client, monkeypatch):
     """The forms are disabled on the page the restore request redirects to (#613)."""
 
-    from app import aws_storage
+    from app.archive import aws_storage
     from tests.conftest import ADMIN_PASSWORD, csrf_token_from
 
     queued = []
@@ -1049,7 +1060,7 @@ def test_the_page_stamps_the_row_before_the_redirect(app, admin_client, monkeypa
         for field in ("s3_upload_submit", "s3_download_submit"):
             assert "disabled" in _fieldset_of(page, field)
         # The worker has not run. The page stamped the row itself.
-        assert queued == ["app.aws_storage.aws_restore"]
+        assert queued == ["app.archive.aws_storage.aws_restore"]
         with app.app_context():
             assert _pending(file_id) is not None
     finally:
@@ -1086,7 +1097,7 @@ class _RefusingS3:
 def test_a_request_that_cannot_be_made_clears_the_state(app, monkeypatch, fault):
     """A stamp from the page ends when S3 cannot take the request (#613)."""
 
-    from app import aws_storage
+    from app.archive import aws_storage
 
     monkeypatch.setattr(
         aws_storage, "aws_s3_client", lambda **kwargs: _RefusingS3(fault)
@@ -1109,7 +1120,7 @@ def test_a_request_that_cannot_be_made_clears_the_state(app, monkeypatch, fault)
 def test_a_move_request_that_cannot_be_made_keeps_the_rows(app, monkeypatch):
     """record_request=False never touches the state (#613)."""
 
-    from app import aws_storage
+    from app.archive import aws_storage
 
     monkeypatch.setattr(
         aws_storage, "aws_s3_client", lambda **kwargs: _RefusingS3("missing")

@@ -14,7 +14,7 @@ from tests.test_scheduling import scheduled_jobs
 
 
 from app.models import File
-from app.importing import finalize_localization, localization_task
+from app.media.importing import finalize_localization, localization_task
 
 from tests.localization_helpers import rejected_files, settle
 
@@ -69,7 +69,7 @@ def test_an_inferior_file_goes_to_rejects_and_frees_the_lock(
 ):
     """A better copy in the library rejects the import and emails the admin."""
 
-    from app import importing
+    from app.media import importing
 
     basename = "Inferior Copy (2021) - [DVD].mkv"
     source = os.path.join(incoming_dir, basename)
@@ -106,7 +106,7 @@ def test_a_file_too_big_for_staging_is_localized_beside_the_library(
     The hidden output goes straight to its library directory. The move
     finds it at its destination name already."""
 
-    from app import importing
+    from app.media import importing
 
     monkeypatch.setattr(importing, "reserve_staging", lambda *args: "too big")
     basename = "Too Big (2021) - [DVD].mkv"
@@ -119,7 +119,7 @@ def test_a_file_too_big_for_staging_is_localized_beside_the_library(
         (move,) = [
             job
             for job in app.handoff_queue.jobs
-            if job.func_name == "app.importing.move_localized_file"
+            if job.func_name == "app.media.importing.move_localized_file"
         ]
         hidden = move.args[3]
         directory = os.path.join(app.config["LIBRARY_DIR"], "Movies/Too Big (2021)")
@@ -129,7 +129,7 @@ def test_a_file_too_big_for_staging_is_localized_beside_the_library(
         (finalize,) = [
             job
             for job in app.sql_queue.jobs
-            if job.func_name == "app.importing.finalize_localization"
+            if job.func_name == "app.media.importing.finalize_localization"
         ]
         assert finalize.args[3] == hidden
         assert finalize.kwargs["staged_output"] is None
@@ -147,7 +147,7 @@ def test_an_unstaged_localization_that_fails_removes_its_partial_output(
 ):
     """Without staging, the partial output is a hidden library file (#389)."""
 
-    from app import importing
+    from app.media import importing
 
     monkeypatch.setattr(importing, "reserve_staging", lambda *args: "too big")
     basename = "Half Written (2021) - [DVD].mkv"
@@ -235,7 +235,7 @@ def test_the_mkvmerge_command_of_each_track_layout(
 ):
     """Pin the mkvmerge arguments that the localization builds for each layout."""
 
-    from app import importing
+    from app.media import importing
 
     monkeypatch.setitem(app.config, "NATIVE_LANGUAGE", native)
     monkeypatch.setattr(importing, "get_audio_tracks_from_file", lambda path: audio)
@@ -276,7 +276,7 @@ def test_the_mkvmerge_command_of_each_track_layout(
             (move,) = [
                 job
                 for job in app.handoff_queue.jobs
-                if job.func_name == "app.importing.move_localized_file"
+                if job.func_name == "app.media.importing.move_localized_file"
             ]
             hidden = move.args[3]
         (command,) = commands
@@ -298,7 +298,7 @@ def test_an_mp4_that_mkvmerge_cannot_carry_loses_its_metadata(
     Then the task copies it to its hidden output as it is. The job shows
     each step on the queue page."""
 
-    from app import importing
+    from app.media import importing
 
     monkeypatch.setattr(importing, "convert_to_matroska", lambda *args: False)
     monkeypatch.setitem(app.config, "ATOMICPARSLEY_BIN", "/bin/echo")
@@ -317,7 +317,7 @@ def test_an_mp4_that_mkvmerge_cannot_carry_loses_its_metadata(
             (move,) = [
                 job
                 for job in app.handoff_queue.jobs
-                if job.func_name == "app.importing.move_localized_file"
+                if job.func_name == "app.media.importing.move_localized_file"
             ]
             hidden = move.args[3]
         assert hidden.endswith(".mp4")
@@ -363,7 +363,7 @@ def test_an_mp4_that_mkvmerge_cannot_carry_loses_its_metadata(
 def test_build_localize_command(app, subtitles, foreign, expected):
     """The command builder is pure. It needs no file and no app context."""
 
-    from app.importing import build_localize_command
+    from app.media.importing import build_localize_command
 
     command = build_localize_command(
         "mkvmerge", "/in.mkv", "/out.mkv", "fre,eng", "eng", subtitles, foreign
@@ -378,7 +378,7 @@ def test_build_localize_command(app, subtitles, foreign, expected):
 def test_the_two_spellings_of_a_language_match():
     """The terminological and bibliographic codes name 1 language (#423)."""
 
-    from app.tracks import file_language_spelling, same_language
+    from app.media.tracks import file_language_spelling, same_language
 
     assert same_language("ger", "deu") and same_language("fra", "fre")
     assert same_language("ENG", "eng")

@@ -1,4 +1,4 @@
-"""Test app/funnel.py: the film sets of a user and the one marker rule.
+"""Test app/discovery/funnel.py: the film sets of a user and the one marker rule.
 
 Six routes built the sets by hand, and each decided the "Might
 interest you" marker on its own. The route tests in test_filmography,
@@ -16,7 +16,7 @@ from tests.test_recommendations import log_watch
 def test_the_two_set_builders_agree(app, admin_id):
     """The TMDB-id sets and the Movie-id sets name the same films."""
 
-    from app.funnel import user_film_sets, user_film_sets_by_id
+    from app.discovery.funnel import user_film_sets, user_film_sets_by_id
 
     with app.app_context():
         owned = make_movie("Owned Film", 2001, tmdb_id=9001)
@@ -86,6 +86,6 @@ def test_the_two_set_builders_agree(app, admin_id):
     ],
 )
 def test_might_interest(seen, refused, recommended, score, bar, expected):
-    from app.funnel import might_interest
+    from app.discovery.funnel import might_interest
 
     assert might_interest(seen, refused, recommended, score, bar) is expected

@@ -35,7 +35,7 @@ def log_watch(user_id, movie, rating=None, liked=False):
 
     from app import db
     from app.models import UserMovieReview
-    from app.diary import star_rating_fields
+    from app.viewing.diary import star_rating_fields
 
     row = UserMovieReview(
         user_id=user_id,
@@ -49,7 +49,7 @@ def log_watch(user_id, movie, rating=None, liked=False):
 
 
 def test_user_movie_weights_math(app, admin_id):
-    from app.recommendations import user_movie_weights
+    from app.discovery.recommendations import user_movie_weights
 
     with app.app_context():
         user_id = admin_id
@@ -86,8 +86,8 @@ def test_latest_rating_supersedes_earlier_ones(app, admin_id):
 
     from app import db
     from app.models import UserMovieReview
-    from app.recommendations import latest_ratings, user_movie_weights
-    from app.diary import star_rating_fields
+    from app.discovery.recommendations import latest_ratings, user_movie_weights
+    from app.viewing.diary import star_rating_fields
 
     with app.app_context():
         user_id = admin_id
@@ -133,7 +133,7 @@ def test_latest_rating_supersedes_earlier_ones(app, admin_id):
 
 
 def test_recommendations_prefer_matching_features_and_say_why(app, admin_id):
-    from app.recommendations import compute_user_recommendations
+    from app.discovery.recommendations import compute_user_recommendations
 
     with app.app_context():
         user_id = admin_id
@@ -172,7 +172,7 @@ def test_crew_roles_are_separate_feature_classes(app, admin_id):
 
     from app import db
     from app.models import MovieCrew
-    from app.recommendations import compute_user_recommendations
+    from app.discovery.recommendations import compute_user_recommendations
 
     with app.app_context():
         user_id = admin_id
@@ -203,7 +203,7 @@ def test_crew_roles_are_separate_feature_classes(app, admin_id):
 
 
 def test_seen_and_extras_only_films_are_not_candidates(app, admin_id):
-    from app.recommendations import local_candidates
+    from app.discovery.recommendations import local_candidates
 
     with app.app_context():
         user_id = admin_id
@@ -221,7 +221,11 @@ def test_seen_and_extras_only_films_are_not_candidates(app, admin_id):
 
 
 def test_recompute_task_stores_recs_and_profile(app, admin_id):
-    from app.recommendations import PROFILE_KEY, RECS_KEY, recompute_recommendations
+    from app.discovery.recommendations import (
+        PROFILE_KEY,
+        RECS_KEY,
+        recompute_recommendations,
+    )
 
     with app.app_context():
         user_id = admin_id
@@ -250,7 +254,7 @@ def test_recompute_task_stores_recs_and_profile(app, admin_id):
 
 
 def test_landing_page_shows_recommendations(app, admin_client, admin_id):
-    from app.recommendations import RECS_KEY
+    from app.discovery.recommendations import RECS_KEY
 
     with app.app_context():
         user_id = admin_id
@@ -302,7 +306,7 @@ def test_landing_page_requests_compute_once(app, admin_client, admin_id):
     recompute_jobs = [
         job
         for job in app.maintenance_queue.jobs
-        if job.func_name == "app.recommendations.recompute_recommendations"
+        if job.func_name == "app.discovery.recommendations.recompute_recommendations"
     ]
     assert len(recompute_jobs) == 1
 
@@ -312,7 +316,7 @@ def test_landing_page_requests_compute_once(app, admin_client, admin_id):
     recompute_jobs = [
         job
         for job in app.maintenance_queue.jobs
-        if job.func_name == "app.recommendations.recompute_recommendations"
+        if job.func_name == "app.discovery.recommendations.recompute_recommendations"
     ]
     assert len(recompute_jobs) == 1
 
@@ -347,7 +351,7 @@ def test_filmography_marks_films_that_might_interest(
     stored taste profile."""
 
     from app import db
-    from app.recommendations import PROFILE_KEY
+    from app.discovery.recommendations import PROFILE_KEY
 
     with app.app_context():
         user_id = admin_id
@@ -391,7 +395,7 @@ def test_filmography_marks_films_that_might_interest(
         return Response({"name": "Marker Actor"})
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
+    monkeypatch.setattr("app.metadata.tmdb_apply.tmdb_get", fake_tmdb_get)
 
     app.redis.set(
         PROFILE_KEY.format(user_id=user_id),
@@ -451,14 +455,14 @@ def test_no_markers_without_a_stored_profile(app, admin_client, monkeypatch):
         return Response({"name": "Profileless Actor"})
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
+    monkeypatch.setattr("app.metadata.tmdb_apply.tmdb_get", fake_tmdb_get)
 
     page = admin_client.get("/library/movie?credit=777002").get_data(as_text=True)
     assert "Might interest you" not in page
 
 
 def test_evaluate_user_reports_ranking_metrics(app, admin_id):
-    from app.recommendations import evaluate_user
+    from app.discovery.recommendations import evaluate_user
 
     with app.app_context():
         user_id = admin_id
@@ -487,7 +491,7 @@ def test_evaluate_applies_trial_class_weights(app, admin_id):
 
     Before, the trial weights did not reach the scorer."""
 
-    from app.recommendations import evaluate_user
+    from app.discovery.recommendations import evaluate_user
 
     with app.app_context():
         user_id = admin_id
@@ -532,7 +536,7 @@ def test_runtime_filter_trims_the_library_rail(app, admin_client):
     The default view ignores the length."""
 
     from app import db
-    from app.recommendations import RECS_KEY
+    from app.discovery.recommendations import RECS_KEY
     from app.models import User
 
     with app.app_context():
@@ -581,7 +585,7 @@ def test_runtime_filter_says_when_nothing_fits(app, admin_client):
     claim that the calculation is still in progress."""
 
     from app import db
-    from app.recommendations import RECS_KEY
+    from app.discovery.recommendations import RECS_KEY
     from app.models import User
 
     with app.app_context():
@@ -622,7 +626,7 @@ def test_runtime_filter_says_when_the_rewatch_shelf_empties(
 
     from app import db
     from app.models import UserMovieReview
-    from app.diary import star_rating_fields
+    from app.viewing.diary import star_rating_fields
 
     with app.app_context():
         user_id = admin_id
@@ -657,7 +661,7 @@ def test_search_results_mark_might_interest(app, admin_client, monkeypatch):
     off-profile film does not. An owned match never does."""
 
     from app import db
-    from app.recommendations import PROFILE_KEY
+    from app.discovery.recommendations import PROFILE_KEY
     from app.models import User
 
     with app.app_context():
@@ -724,7 +728,7 @@ def test_search_results_mark_might_interest(app, admin_client, monkeypatch):
         return Response({"results": []})
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
+    monkeypatch.setattr("app.metadata.tmdb_apply.tmdb_get", fake_tmdb_get)
 
     page = admin_client.get("/search/tmdb?q=search+marker").get_data(as_text=True)
     assert page.count("Might interest you") == 1
@@ -743,8 +747,8 @@ def test_watch_again_shelf_picks_stale_favorites(app, admin_id):
 
     from app import db
     from app.models import UserMovieReview
-    from app.recommendations import watch_again_shelf
-    from app.diary import star_rating_fields
+    from app.discovery.recommendations import watch_again_shelf
+    from app.viewing.diary import star_rating_fields
 
     with app.app_context():
         user_id = admin_id
@@ -807,7 +811,7 @@ def test_index_watch_again_shelf_renders(app, admin_client, admin_id):
 
     from app import db
     from app.models import UserMovieReview, UserWatchlist
-    from app.diary import star_rating_fields
+    from app.viewing.diary import star_rating_fields
 
     with app.app_context():
         user_id = admin_id
@@ -872,7 +876,7 @@ def test_copref_value_math(app):
     The average is over the K most similar neighbors. It obeys the
     exclusion that keeps leave-one-out pure."""
 
-    from app.recommendations import COPREF_WEIGHT, _copref_value
+    from app.discovery.recommendations import COPREF_WEIGHT, _copref_value
 
     entries = [(0.5, 101, 2.0), (0.3, 102, 1.0), (0.1, 103, -1.0)]
     expected = COPREF_WEIGHT * (0.5 * 2.0 + 0.3 * 1.0 + 0.1 * -1.0) / 0.9
@@ -893,7 +897,7 @@ def test_copref_reranks_and_explains(app, admin_id):
 
     from app import db
     from app.models import MovieCopref
-    from app.recommendations import compute_user_recommendations
+    from app.discovery.recommendations import compute_user_recommendations
 
     with app.app_context():
         user_id = admin_id
@@ -942,7 +946,7 @@ def test_evaluate_user_measures_copref(app, admin_id):
 
     from app import db
     from app.models import MovieCopref
-    from app.recommendations import evaluate_user
+    from app.discovery.recommendations import evaluate_user
 
     with app.app_context():
         user_id = admin_id
@@ -995,7 +999,7 @@ def test_not_interested_excludes_and_weighs(app, admin_id):
 
     from app import db
     from app.models import UserMovieStatus
-    from app.recommendations import (
+    from app.discovery.recommendations import (
         NOT_INTERESTED_WEIGHT,
         local_candidates,
         user_movie_weights,
@@ -1040,7 +1044,7 @@ def test_estimated_rating_quantile_math(app):
     result has full precision, because the widget fills partial stars.
     The result is clamped. Without a curve, there is no result."""
 
-    from app.recommendations import estimated_rating
+    from app.discovery.recommendations import estimated_rating
 
     profile = {
         "calibration": {
@@ -1074,7 +1078,7 @@ def test_compute_stores_calibration_curve(app, monkeypatch, admin_id):
     The curve exists when enough rated films exist. It is sorted, and
     it comes from the LOO run."""
 
-    import app.recommendations as recommendations
+    import app.discovery.recommendations as recommendations
 
     from app import db
 
@@ -1110,8 +1114,8 @@ def test_movie_page_shows_estimated_rating(app, admin_client, admin_id):
     import json as jsonlib
 
     from app import db
-    from app.recommendations import PROFILE_KEY, SCORES_KEY
-    from app.diary import star_rating_fields
+    from app.discovery.recommendations import PROFILE_KEY, SCORES_KEY
+    from app.viewing.diary import star_rating_fields
     from app.models import UserMovieReview
 
     with app.app_context():
@@ -1176,7 +1180,10 @@ def test_single_movie_score_matches_the_stored_recipe(app, admin_id):
 
     from app import db
     from app.models import MovieAward, MovieCopref
-    from app.recommendations import compute_user_recommendations, single_movie_score
+    from app.discovery.recommendations import (
+        compute_user_recommendations,
+        single_movie_score,
+    )
 
     with app.app_context():
         user_id = admin_id
@@ -1232,7 +1239,7 @@ def test_resolved_score_reads_and_patches_one_shared_source(app, admin_id):
     from datetime import datetime
 
     from app import db
-    from app.recommendations import (
+    from app.discovery.recommendations import (
         SCORES_KEY,
         compute_user_recommendations,
         resolved_score,
@@ -1282,7 +1289,7 @@ def test_resolved_tmdb_score_covers_record_less_films(app, admin_id):
 
     from app import db
     from app.models import Movie
-    from app.recommendations import (
+    from app.discovery.recommendations import (
         TMDB_PATCH_SCORES_KEY,
         compute_user_recommendations,
         resolved_score,
@@ -1350,7 +1357,7 @@ def test_recompute_drops_the_patch_overlay(app, admin_id):
     inputs. Thus, the store of the new map deletes the overlay in the
     same pipeline."""
 
-    from app.recommendations import (
+    from app.discovery.recommendations import (
         PATCH_SCORES_KEY,
         TMDB_PATCH_SCORES_KEY,
         recompute_recommendations,
@@ -1387,7 +1394,7 @@ def test_movie_page_estimates_films_outside_the_stored_ranking(
     from datetime import datetime
 
     from app import db
-    from app.recommendations import PROFILE_KEY, RECS_KEY
+    from app.discovery.recommendations import PROFILE_KEY, RECS_KEY
 
     with app.app_context():
         user_id = admin_id
@@ -1435,7 +1442,7 @@ def test_shuffle_daily_is_deterministic_per_seed(app):
     The result is a permutation. It is identical on reload. It is
     different on a different day."""
 
-    from app.recommendations import shuffle_daily
+    from app.discovery.recommendations import shuffle_daily
 
     items = list(range(12))
     today = shuffle_daily(items, "mix:recs:1:2026-08-12")
@@ -1454,7 +1461,7 @@ def test_stored_cut_deepens_by_watchlisted_candidates(app, admin_id):
 
     from app import db
     from app.models import UserWatchlist
-    from app.recommendations import compute_user_recommendations
+    from app.discovery.recommendations import compute_user_recommendations
 
     with app.app_context():
         user_id = admin_id
@@ -1487,7 +1494,7 @@ def test_rotate_partition_cycles_the_whole_set_without_repeats(app):
     There are no repeats until the whole set has shown. Each day mixes
     the qualities. The result is deterministic for each day."""
 
-    from app.recommendations import rotate_partition
+    from app.discovery.recommendations import rotate_partition
 
     items = list(range(372))  # 12 tiers x 31 films
 
@@ -1530,7 +1537,7 @@ def test_marker_bar_rides_with_the_profile(app, admin_id):
     The bar comes from the candidates of the user."""
 
     from app import db
-    from app.recommendations import PROFILE_KEY, recompute_recommendations
+    from app.discovery.recommendations import PROFILE_KEY, recompute_recommendations
 
     with app.app_context():
         user_id = admin_id
@@ -1554,7 +1561,7 @@ def test_search_markers_respect_the_stored_bar(app, admin_client, monkeypatch):
     A film must beat the baseline percentile of the user. A match on a
     liked genre alone is not enough."""
 
-    from app.recommendations import PROFILE_KEY
+    from app.discovery.recommendations import PROFILE_KEY
     from app.models import User
 
     with app.app_context():
@@ -1612,7 +1619,7 @@ def test_search_markers_respect_the_stored_bar(app, admin_client, monkeypatch):
         return Response({"results": []})
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr("app.tmdb_apply.tmdb_get", fake_tmdb_get)
+    monkeypatch.setattr("app.metadata.tmdb_apply.tmdb_get", fake_tmdb_get)
 
     page = admin_client.get("/search/tmdb?q=bar").get_data(as_text=True)
     assert page.count("Might interest you") == 1
@@ -1627,7 +1634,7 @@ def test_genre_filter_trims_the_library_rail(app, admin_client):
     runtime filter. The menu lists only the genres of films."""
 
     from app import db
-    from app.recommendations import RECS_KEY
+    from app.discovery.recommendations import RECS_KEY
     from app.models import TMDBGenre, User
 
     with app.app_context():
@@ -1694,7 +1701,7 @@ def test_job_to_class_is_the_one_crew_job_map():
     builder each built it. One constant beside CREW_ROLE_JOBS now."""
 
     from app.main.library import CREW_ROLE_LABELS
-    from app.recommendations import CREW_ROLE_JOBS, JOB_TO_CLASS
+    from app.discovery.recommendations import CREW_ROLE_JOBS, JOB_TO_CLASS
 
     expected = {}
     for cls, (jobs, _) in CREW_ROLE_JOBS.items():
@@ -1713,8 +1720,8 @@ def test_the_library_and_the_payload_give_1_film_the_same_features(app):
 
     from app import db
     from app.models import MovieCrew, TMDBKeyword
-    from app.recommendations import collect_features
-    from app.streaming_rail import _payload_features
+    from app.discovery.recommendations import collect_features
+    from app.availability.streaming_rail import _payload_features
 
     with app.app_context():
         movie = make_movie("Agreement Film", 1987, tmdb_original_language="fr")
@@ -1755,7 +1762,7 @@ def test_the_library_and_the_payload_give_1_film_the_same_features(app):
 
 
 def test_features_from_parts_skips_a_missing_year_and_an_unknown_job(app):
-    from app.recommendations import features_from_parts
+    from app.discovery.recommendations import features_from_parts
 
     features = features_from_parts(
         [], [], [(1, "A"), (1, "A")], [(2, "B", "Caterer")], None, None
@@ -1771,7 +1778,7 @@ def test_films_without_tmdb_data_stay_out_of_the_stored_map(app, admin_id):
     in the same decade stays in."""
 
     from app import db
-    from app.recommendations import compute_user_recommendations
+    from app.discovery.recommendations import compute_user_recommendations
 
     with app.app_context():
         user_id = admin_id
@@ -1806,7 +1813,7 @@ def test_resolved_score_ignores_a_map_entry_without_tmdb_data(app, admin_id):
     import json as jsonlib
 
     from app import db
-    from app.recommendations import (
+    from app.discovery.recommendations import (
         PATCH_SCORES_KEY,
         SCORES_KEY,
         compute_user_recommendations,
@@ -1843,8 +1850,8 @@ def test_the_weights_are_read_1_time_per_app_context(app, monkeypatch):
 
     from datetime import datetime
 
-    import app.recommendations as recommendations
-    import app.streaming_rail as streaming_rail
+    import app.discovery.recommendations as recommendations
+    import app.availability.streaming_rail as streaming_rail
     from app import db
     from app.models import MovieCopref
     from tests.factories import make_movie

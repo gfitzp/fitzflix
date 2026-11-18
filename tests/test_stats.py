@@ -73,7 +73,7 @@ def build_diary(app):
 
 
 def test_year_stats(app):
-    from app.stats import diary_stats, watched_years
+    from app.viewing.stats import diary_stats, watched_years
 
     user_id, _ = build_diary(app)
     with app.app_context():
@@ -121,7 +121,7 @@ def test_year_stats(app):
 def test_all_time_stats(app):
     from datetime import date
 
-    from app.stats import diary_stats
+    from app.viewing.stats import diary_stats
 
     user_id, a_id = build_diary(app)
     with app.app_context():
@@ -138,7 +138,7 @@ def test_all_time_stats(app):
 
 
 def test_star_label():
-    from app.stats import star_label
+    from app.viewing.stats import star_label
 
     assert [star_label(r) for r in (0.5, 1.0, 3.5, 5.0)] == ["½", "1", "3½", "5"]
 

@@ -15,12 +15,15 @@ import re
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 
-TASK_NAME = re.compile(r"^app\.[a-z_]+\.[a-z_0-9]+$")
+# A task of a base module has 3 parts ("app.dvr.build_channel_lineups").
+# A task of a module in a package has 4 ("app.media.importing.localization_task").
+
+TASK_NAME = re.compile(r"^app\.[a-z_]+\.[a-z_0-9]+(\.[a-z_0-9]+)?$")
 
 # These task parameters share a name with an option of enqueue_task. The
 # producers pass them by position. Then the option does not take them.
 
-POSITIONAL_ONLY_BY_CONVENTION = {"app.sonarr_push.adopt_episode_task": {"at_front"}}
+POSITIONAL_ONLY_BY_CONVENTION = {"app.arr.sonarr_push.adopt_episode_task": {"at_front"}}
 
 
 def _source_files():
@@ -80,7 +83,7 @@ def test_the_program_roster_matches_the_supervisor_programs(app):
 
     import configparser
 
-    from app.maintenance import PROGRAM_COUNTS, PROGRAM_QUEUES
+    from app.operations.maintenance import PROGRAM_COUNTS, PROGRAM_QUEUES
 
     ini = configparser.ConfigParser(interpolation=None)
     ini.read(ROOT / "fitzflix_supervisor.ini")
@@ -103,7 +106,7 @@ def test_the_program_roster_matches_the_supervisor_programs(app):
 def test_the_program_roster_uses_only_roster_queues(app):
     """Test that PROGRAM_QUEUES and EXPECTED_WORKERS name only roster queues."""
 
-    from app import maintenance
+    from app.operations import maintenance
     from app.queues import QUEUE_NAMES, ROSTER
 
     for queues in maintenance.PROGRAM_QUEUES.values():
@@ -217,7 +220,7 @@ def test_enqueue_task_fills_the_spec_and_takes_overrides(app):
     from app.tasks import enqueue_task
 
     with app.app_context():
-        job = enqueue_task("app.tmdb_refresh.refresh_tmdb_info", "Movies", 1)
+        job = enqueue_task("app.metadata.tmdb_refresh.refresh_tmdb_info", "Movies", 1)
         try:
             assert job.origin == "fitzflix-user-request"
             assert job.timeout == app.config["SQL_TASK_TIMEOUT"]
@@ -227,7 +230,7 @@ def test_enqueue_task_fills_the_spec_and_takes_overrides(app):
             job.delete()
 
         job = enqueue_task(
-            "app.tmdb_refresh.refresh_tmdb_info",
+            "app.metadata.tmdb_refresh.refresh_tmdb_info",
             "Movies",
             2,
             queue="sql",
@@ -244,7 +247,7 @@ def test_enqueue_task_fills_the_spec_and_takes_overrides(app):
             job.delete()
 
         job = enqueue_task(
-            "app.aws_storage.sync_aws_s3_storage_task",
+            "app.archive.aws_storage.sync_aws_s3_storage_task",
             delay=timedelta(minutes=5),
             job_id="test-registry-delay",
         )
@@ -272,7 +275,7 @@ def test_a_job_in_the_dequeue_gap_is_live_for_every_reader(app):
     queue = app.maintenance_queue
     with app.app_context():
         job = queue.enqueue(
-            "app.aws_storage.sync_aws_s3_storage_task", job_id="bulk-gap-test-1"
+            "app.archive.aws_storage.sync_aws_s3_storage_task", job_id="bulk-gap-test-1"
         )
         app.redis.lrem(queue.key, 0, job.id)
         app.redis.rpush(queue.intermediate_queue.key, job.id)
@@ -280,13 +283,16 @@ def test_a_job_in_the_dequeue_gap_is_live_for_every_reader(app):
             assert job.id not in queue.job_ids
             assert job.id in live_job_ids("maintenance")
             assert (
-                live_task_job("app.aws_storage.sync_aws_s3_storage_task").id == job.id
+                live_task_job("app.archive.aws_storage.sync_aws_s3_storage_task").id
+                == job.id
             )
-            assert bulk_run_pending("bulk-gap-test-", "app.maintenance.health_probe")
+            assert bulk_run_pending(
+                "bulk-gap-test-", "app.operations.maintenance.health_probe"
+            )
         finally:
             app.redis.delete(queue.intermediate_queue.key)
             job.delete()
-        assert live_task_job("app.aws_storage.sync_aws_s3_storage_task") is None
+        assert live_task_job("app.archive.aws_storage.sync_aws_s3_storage_task") is None
 
 
 def test_each_job_name_is_the_module_that_defines_the_function(app):
@@ -315,16 +321,17 @@ def test_each_job_name_is_the_module_that_defines_the_function(app):
 
 
 def test_the_shared_module_holds_no_task(app):
-    """app.videos holds the shared code only. No job name goes through it."""
+    """app.media.videos holds the shared code only. No job name goes through it."""
 
     import ast
     import inspect as std_inspect
 
-    from app import cron_table, videos
+    from app import cron_table
+    from app.media import videos
     from app.tasks import TASKS
 
     names = set(TASKS) | {entry["func"] for entry in cron_table(app.config)}
-    assert [name for name in names if name.startswith("app.videos.")] == []
+    assert [name for name in names if name.startswith("app.media.videos.")] == []
 
     # The module imports no name from the app that its own code does
     # not use. Thus, no caller can reach a task through it again.
@@ -344,10 +351,10 @@ def test_the_shared_module_holds_no_task(app):
 def test_the_retired_task_signatures_are_gone(app):
     """The old jobs drained before the deploy. No code reads a retired signature (#622)."""
 
-    from app import aws_storage
+    from app.archive import aws_storage
     from app.tasks import TASKS
 
-    assert "app.aws_storage.rearchive_untouched_object" not in TASKS
+    assert "app.archive.aws_storage.rearchive_untouched_object" not in TASKS
     assert not hasattr(aws_storage, "rearchive_untouched_object")
     kinds = {
         parameter.kind

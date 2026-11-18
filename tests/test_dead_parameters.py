@@ -16,7 +16,8 @@ def _params(function):
 
 
 def test_the_task_signatures_carry_only_live_parameters():
-    from app import aws_storage, importing
+    from app.archive import aws_storage
+    from app.media import importing
 
     assert _params(aws_storage.upload_task) == ["file_id"]
     assert _params(aws_storage.aws_restore) == ["key", "tier", "record_request"]
@@ -50,7 +51,7 @@ def test_every_upload_task_producer_passes_the_file_id_only():
                 and getattr(node.func, "id", None) == "enqueue_task"
                 and node.args
                 and getattr(node.args[0], "value", None)
-                == "app.aws_storage.upload_task"
+                == "app.archive.aws_storage.upload_task"
             ):
                 continue
             producers += 1
@@ -60,7 +61,7 @@ def test_every_upload_task_producer_passes_the_file_id_only():
 
 
 def test_the_import_requeues_carry_no_dead_flags():
-    from app import importing
+    from app.media import importing
 
     source = inspect.getsource(importing)
     assert "force_upload" not in source

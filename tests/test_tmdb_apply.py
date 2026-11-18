@@ -256,7 +256,7 @@ def test_the_clear_out_does_not_scan_unrelated_rows(app):
 def test_a_namesake_with_another_tmdb_id_is_not_adopted(app):
     """A review or a watchlist row must never go to a different film."""
 
-    from app.tmdb_refresh import find_or_create_tmdb_movie
+    from app.metadata.tmdb_refresh import find_or_create_tmdb_movie
 
     with app.app_context():
         namesake = make_movie("Same Name", 1999, tmdb_id=501)
@@ -274,7 +274,7 @@ def test_a_namesake_with_another_tmdb_id_is_not_adopted(app):
 def test_a_film_with_no_year_gets_no_record(app, caplog):
     """A record needs a year. A film with no year and no record is refused (#760)."""
 
-    from app.tmdb_refresh import find_or_create_tmdb_movie
+    from app.metadata.tmdb_refresh import find_or_create_tmdb_movie
 
     with app.app_context():
         held = make_movie("Held Film", 2001, tmdb_id=601)
@@ -326,7 +326,7 @@ def test_a_merge_moves_the_watchlist_status_and_award_rows(app):
         UserMovieStatus,
         UserWatchlist,
     )
-    from app.tmdb_refresh import move_movie_rows
+    from app.metadata.tmdb_refresh import move_movie_rows
 
     with app.app_context():
         user = User.query.first()
@@ -373,7 +373,7 @@ def test_a_refresh_that_tmdb_answers_with_nothing_says_so(app, monkeypatch):
     """The page must not report a match when TMDB sent no data."""
 
     from app.models import Movie
-    from app.tmdb_refresh import TMDB_NO_MATCH, refresh_tmdb_info
+    from app.metadata.tmdb_refresh import TMDB_NO_MATCH, refresh_tmdb_info
 
     with app.app_context():
         movie = make_movie("No Such Film", 1999)
@@ -388,7 +388,7 @@ def test_a_refresh_that_tmdb_answers_with_nothing_says_so(app, monkeypatch):
         (apply_job,) = [
             job
             for job in app.sql_queue.jobs
-            if job.func_name == "app.tmdb_refresh.apply_tmdb_refresh"
+            if job.func_name == "app.metadata.tmdb_refresh.apply_tmdb_refresh"
         ]
         assert apply_job.kwargs["tmdb_payload"] is None
 
@@ -444,7 +444,7 @@ def test_movie_apply_skips_the_blank_premiere_certification(app):
 def test_the_certification_sync_adds_the_missing_values(app, monkeypatch):
     """The 1-time seed had no US "NR". An NR film showed no rating (#303)."""
 
-    import app.tmdb_refresh as tmdb_refresh
+    import app.metadata.tmdb_refresh as tmdb_refresh
     from app.models import RefTMDBCertification
 
     class Answer:
@@ -463,7 +463,9 @@ def test_the_certification_sync_adds_the_missing_values(app, monkeypatch):
             }
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr("app.tmdb_apply.tmdb_get", lambda url, **kwargs: Answer())
+    monkeypatch.setattr(
+        "app.metadata.tmdb_apply.tmdb_get", lambda url, **kwargs: Answer()
+    )
     with app.app_context():
         db.session.add(RefTMDBCertification(country="US", certification="R"))
         movie = make_movie("Unrated Classic", 1951, tmdb_id=990030)
@@ -586,13 +588,15 @@ def test_a_tmdb_outage_sends_no_not_found_email(app, monkeypatch):
     Only a 404 means that the id does not exist. A 503 must not send the
     "TMDB ID not found" email, and the refresh queues no apply."""
 
-    from app.tmdb_refresh import refresh_tmdb_info
+    from app.metadata.tmdb_refresh import refresh_tmdb_info
 
     sent = []
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "key")
     monkeypatch.setattr("app.email.send_email", lambda *a, **k: sent.append(a))
     monkeypatch.setattr("app.email.render_template", lambda *a, **k: "")
-    monkeypatch.setattr("app.tmdb_apply.tmdb_get", lambda url, **k: _ErrorAnswer(503))
+    monkeypatch.setattr(
+        "app.metadata.tmdb_apply.tmdb_get", lambda url, **k: _ErrorAnswer(503)
+    )
     with app.app_context():
         movie = make_movie("Outage Film", 1999, tmdb_id=990021)
         db.session.commit()
@@ -603,12 +607,14 @@ def test_a_tmdb_outage_sends_no_not_found_email(app, monkeypatch):
     assert [
         job
         for job in app.sql_queue.jobs
-        if job.func_name == "app.tmdb_refresh.apply_tmdb_refresh"
+        if job.func_name == "app.metadata.tmdb_refresh.apply_tmdb_refresh"
     ] == []
 
     # A 404 still sends the email
 
-    monkeypatch.setattr("app.tmdb_apply.tmdb_get", lambda url, **k: _ErrorAnswer(404))
+    monkeypatch.setattr(
+        "app.metadata.tmdb_apply.tmdb_get", lambda url, **k: _ErrorAnswer(404)
+    )
     with app.app_context():
         assert db.session.get(Movie, movie_id).tmdb_movie_fetch(990021) is None
     assert len(sent) == 1
@@ -622,12 +628,14 @@ def test_a_tv_outage_raises_and_sends_no_not_found_email(app, monkeypatch):
 
     import pytest
 
-    from app.tmdb_apply import TMDBUnavailable
+    from app.metadata.tmdb_apply import TMDBUnavailable
 
     sent = []
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "key")
     monkeypatch.setattr("app.email.send_email", lambda *a, **k: sent.append(a))
-    monkeypatch.setattr("app.tmdb_apply.tmdb_get", lambda url, **k: _ErrorAnswer(503))
+    monkeypatch.setattr(
+        "app.metadata.tmdb_apply.tmdb_get", lambda url, **k: _ErrorAnswer(503)
+    )
     with app.app_context():
         series = make_tv_series("Outage Series")
         db.session.commit()
@@ -692,7 +700,7 @@ def test_a_merge_stamps_the_survivor(app):
     import json
     import zlib
 
-    from app.tmdb_refresh import apply_tmdb_refresh
+    from app.metadata.tmdb_refresh import apply_tmdb_refresh
     from tests.factories import make_movie_file
 
     with app.app_context():
@@ -734,7 +742,7 @@ def test_a_queued_refresh_does_not_put_an_old_tmdb_id_back(app, monkeypatch):
     of the old id runs."""
 
     from app.models import MOVIES
-    from app.tmdb_refresh import apply_tmdb_refresh, refresh_tmdb_info
+    from app.metadata.tmdb_refresh import apply_tmdb_refresh, refresh_tmdb_info
 
     fetched = []
     monkeypatch.setattr(
@@ -769,7 +777,7 @@ def test_a_queued_title_search_does_not_replace_an_id_that_came_later(app, monke
     must not put its first hit there."""
 
     from app.models import MOVIES
-    from app.tmdb_refresh import apply_tmdb_refresh, refresh_tmdb_info
+    from app.metadata.tmdb_refresh import apply_tmdb_refresh, refresh_tmdb_info
 
     fetched = []
     monkeypatch.setattr(
@@ -799,7 +807,7 @@ def test_an_id_that_a_person_typed_still_changes_the_record(app):
     """A rematch is the 1 refresh that gives a record an other TMDB id (#735)."""
 
     from app.models import MOVIES
-    from app.tmdb_refresh import apply_tmdb_refresh
+    from app.metadata.tmdb_refresh import apply_tmdb_refresh
 
     with app.app_context():
         movie = make_movie("Wrong Match Film", 2017, tmdb_id=735003)
@@ -827,7 +835,7 @@ def test_a_queued_series_refresh_does_not_put_an_old_tmdb_id_back(app):
     import zlib
 
     from app.models import TV_SHOWS
-    from app.tmdb_refresh import apply_tmdb_refresh
+    from app.metadata.tmdb_refresh import apply_tmdb_refresh
 
     with app.app_context():
         series = make_tv_series("Rematched Series", tmdb_id=735006)
@@ -850,7 +858,7 @@ def test_a_merge_keeps_the_values_that_a_person_set(app):
     survivor stays."""
 
     from app.models import RefQuality
-    from app.tmdb_refresh import move_movie_rows
+    from app.metadata.tmdb_refresh import move_movie_rows
 
     with app.app_context():
         quality = RefQuality.query.filter_by(quality_title="Bluray-1080p").one()
@@ -896,7 +904,7 @@ def test_each_column_of_a_film_has_a_merge_rule():
     the record itself, or another step moves them."""
 
     from app.models import Movie
-    from app.tmdb_refresh import NOT_CARRIED, PERSON_SET_COLUMNS
+    from app.metadata.tmdb_refresh import NOT_CARRIED, PERSON_SET_COLUMNS
 
     # tmdb_ignored is a choice of a person, not a value of TMDB.
 
@@ -917,7 +925,7 @@ def test_a_merge_after_a_new_tmdb_id_leaves_the_catalog_values_behind(app):
     survivor. The values of the disc do."""
 
     from app.models import RefQuality
-    from app.tmdb_refresh import move_movie_rows
+    from app.metadata.tmdb_refresh import move_movie_rows
 
     with app.app_context():
         quality = RefQuality.query.filter_by(quality_title="Bluray-1080p").one()
@@ -949,7 +957,7 @@ def test_a_merge_after_a_new_tmdb_id_leaves_the_catalog_values_behind(app):
 def test_a_merge_after_a_new_tmdb_id_keeps_a_typed_set_title(app):
     """The record that goes has no catalog entry. A person typed its set title (#719)."""
 
-    from app.tmdb_refresh import move_movie_rows
+    from app.metadata.tmdb_refresh import move_movie_rows
 
     with app.app_context():
         old = make_movie("Bonus Film", 2006, criterion_set_title="A Typed Box Set")
@@ -975,7 +983,7 @@ def test_a_refresh_merge_leaves_a_title_and_year_match_of_the_catalog_behind(app
     import json
     import zlib
 
-    from app.tmdb_refresh import apply_tmdb_refresh
+    from app.metadata.tmdb_refresh import apply_tmdb_refresh
 
     with app.app_context():
         older = make_movie("Film Of The Id", 2012, tmdb_id=729001)
@@ -1015,7 +1023,7 @@ def _store_catalog(app, *releases):
 
     import json
 
-    from app.criterion_catalog import CRITERION_CACHE_KEY
+    from app.criterion.criterion_catalog import CRITERION_CACHE_KEY
 
     app.redis.set(
         CRITERION_CACHE_KEY,
@@ -1042,7 +1050,7 @@ def test_a_merge_carries_a_typed_spine_of_a_record_with_no_tmdb_id(app):
     Then a person typed the spine of the record, and it goes to the
     survivor."""
 
-    from app.tmdb_refresh import move_movie_rows
+    from app.metadata.tmdb_refresh import move_movie_rows
 
     with app.app_context():
         _store_catalog(app, ("Typed Spine", 2013, 55), ("An Other Film", 2013, 1200))
@@ -1065,7 +1073,7 @@ def test_a_merge_leaves_a_title_and_year_match_with_no_film_id_behind(app):
     stays behind, as a match with a film id does. A typed set title of
     the record stays behind with it, because it names that release."""
 
-    from app.tmdb_refresh import move_movie_rows
+    from app.metadata.tmdb_refresh import move_movie_rows
 
     with app.app_context():
         _store_catalog(app, ("Catalog Name", 2015, 640))
@@ -1091,7 +1099,7 @@ def test_a_merge_leaves_a_title_and_year_match_with_no_film_id_behind(app):
 def test_a_merge_leaves_the_spine_of_an_other_tmdb_id_behind(app):
     """The catalog entry of an other TMDB id can have no film id (#729)."""
 
-    from app.tmdb_refresh import move_movie_rows
+    from app.metadata.tmdb_refresh import move_movie_rows
 
     with app.app_context():
         old = make_movie("Other Id", 2014, tmdb_id=729003, criterion_spine_number=88)
@@ -1110,7 +1118,7 @@ def test_a_merge_keeps_a_false_that_a_person_set_on_the_survivor(app):
 
     Only the disc-owned False of the Wikidata task gives way."""
 
-    from app.tmdb_refresh import move_movie_rows
+    from app.metadata.tmdb_refresh import move_movie_rows
 
     with app.app_context():
         old = make_movie(

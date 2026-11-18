@@ -11,7 +11,7 @@ import pytest
 def test_mkvmerge_track_ids_reads_the_uids_of_a_real_file(app, tmp_path):
     """mkvmerge -J and MediaInfo give the same UID for each track (#611)."""
 
-    from app.tracks import (
+    from app.media.tracks import (
         get_audio_tracks_from_file,
         get_subtitle_tracks_from_file,
         mkvmerge_track_ids,
@@ -37,7 +37,7 @@ def test_mkvmerge_track_ids_reads_the_uids_of_a_real_file(app, tmp_path):
 
 
 def test_a_non_matroska_track_has_no_uid():
-    from app.tracks import track_uid
+    from app.media.tracks import track_uid
 
     assert track_uid({}) is None
     assert track_uid({"unique_id": "1234"}) == "1234"
@@ -48,6 +48,6 @@ def test_a_non_matroska_track_has_no_uid():
 
 @pytest.mark.parametrize("value", ["", "abc", None])
 def test_a_track_uid_that_is_not_a_number_is_none(value):
-    from app.tracks import track_uid
+    from app.media.tracks import track_uid
 
     assert track_uid({"unique_id": value}) is None

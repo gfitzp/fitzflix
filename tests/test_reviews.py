@@ -60,7 +60,7 @@ SAMPLE_EXPORT = {
 
 
 def test_parse_letterboxd_export_merges_per_film(app):
-    from app.diary import parse_letterboxd_export
+    from app.viewing.diary import parse_letterboxd_export
 
     films = {
         (f["title"], f["year"]): f
@@ -114,7 +114,7 @@ def test_letterboxd_zip_upload_enqueues_match_task(app, admin_client):
     jobs = [
         job
         for job in app.request_queue.jobs
-        if job.func_name == "app.diary.letterboxd_import_task"
+        if job.func_name == "app.viewing.diary.letterboxd_import_task"
     ]
     assert len(jobs) == 1
     user_id, films = jobs[0].args
@@ -134,8 +134,8 @@ def test_match_task_resolves_library_films_and_hands_off(app):
     import does not fail."""
 
     from app import db
-    from app.diary import letterboxd_import_task
-    from app.diary import parse_letterboxd_export
+    from app.viewing.diary import letterboxd_import_task
+    from app.viewing.diary import parse_letterboxd_export
 
     with app.app_context():
         movie = make_movie("Jaws", 1975)
@@ -148,7 +148,7 @@ def test_match_task_resolves_library_films_and_hands_off(app):
         jobs = [
             job
             for job in app.sql_queue.jobs
-            if job.func_name == "app.diary.apply_letterboxd_import"
+            if job.func_name == "app.viewing.diary.apply_letterboxd_import"
         ]
         assert len(jobs) == 1
         user_id, resolved = jobs[0].args
@@ -161,8 +161,8 @@ def test_match_task_resolves_library_films_and_hands_off(app):
 def test_apply_letterboxd_import_loads_review_table(app, admin_client):
     from app import db
     from app.models import UserMovieReview
-    from app.diary import apply_letterboxd_import
-    from app.diary import parse_letterboxd_export
+    from app.viewing.diary import apply_letterboxd_import
+    from app.viewing.diary import parse_letterboxd_export
 
     with app.app_context():
         movie = make_movie("Jaws", 1975)
@@ -219,7 +219,7 @@ def test_apply_letterboxd_import_loads_review_table(app, admin_client):
 
 def test_apply_creates_missing_movie_and_enqueues_refresh(app):
     from app.models import Movie, UserMovieReview
-    from app.diary import apply_letterboxd_import
+    from app.viewing.diary import apply_letterboxd_import
 
     with app.app_context():
         film = {
@@ -248,7 +248,7 @@ def test_apply_creates_missing_movie_and_enqueues_refresh(app):
         refresh_jobs = [
             job
             for job in app.request_queue.jobs
-            if job.func_name == "app.tmdb_refresh.refresh_tmdb_info"
+            if job.func_name == "app.metadata.tmdb_refresh.refresh_tmdb_info"
             and job.args[1] == movie.id
         ]
         assert len(refresh_jobs) == 1
@@ -263,7 +263,7 @@ def test_a_letterboxd_namesake_with_another_tmdb_id_is_not_adopted(app):
 
     from app import db
     from app.models import Movie, UserMovieReview
-    from app.diary import apply_letterboxd_import
+    from app.viewing.diary import apply_letterboxd_import
 
     def film(title, tmdb_id):
         return {
@@ -315,7 +315,7 @@ def test_review_export_uses_letterboxd_import_format(app, admin_client, monkeypa
 
     from app import db
     from app.models import User, UserMovieReview
-    from app.diary import star_rating_fields
+    from app.viewing.diary import star_rating_fields
 
     with app.app_context():
         user_id = User.query.first().id
@@ -445,7 +445,7 @@ def test_incremental_export_covers_only_entries_since_last_export(
 
     from app import db
     from app.models import User, UserMovieReview
-    from app.diary import star_rating_fields
+    from app.viewing.diary import star_rating_fields
 
     with app.app_context():
         user = User.query.first()
@@ -530,7 +530,7 @@ def test_incremental_export_covers_only_entries_since_last_export(
 def test_full_export_checkbox_exports_everything(app, admin_client, monkeypatch):
     from app import db
     from app.models import User, UserMovieReview
-    from app.diary import star_rating_fields
+    from app.viewing.diary import star_rating_fields
 
     with app.app_context():
         user = User.query.first()
@@ -564,7 +564,7 @@ def test_incremental_export_with_nothing_new_sends_no_email(
 ):
     from app import db
     from app.models import User, UserMovieReview
-    from app.diary import star_rating_fields
+    from app.viewing.diary import star_rating_fields
 
     with app.app_context():
         user = User.query.first()
@@ -615,7 +615,7 @@ def test_an_export_whose_mail_fails_marks_no_entry_as_exported(
 
     import app.main.account as account
     from app import db
-    from app.diary import star_rating_fields
+    from app.viewing.diary import star_rating_fields
     from app.models import User, UserMovieReview
 
     with app.app_context():
@@ -672,7 +672,9 @@ def test_legacy_json_lines_upload_still_works(app, admin_client):
     assert response.status_code == 302
 
     jobs = [
-        job for job in app.sql_queue.jobs if job.func_name == "app.diary.review_task"
+        job
+        for job in app.sql_queue.jobs
+        if job.func_name == "app.viewing.diary.review_task"
     ]
     assert any(job.args[1] == "Old Import Film" for job in jobs)
 
@@ -685,7 +687,7 @@ def test_movie_page_renders_unrated_liked_review(app, admin_client):
 
     from app import db
     from app.models import User, UserMovieReview
-    from app.diary import star_rating_fields
+    from app.viewing.diary import star_rating_fields
 
     with app.app_context():
         user_id = User.query.first().id
@@ -870,7 +872,7 @@ def test_review_tmdb_renders_form_for_unowned_film(app, admin_client, monkeypatc
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
     monkeypatch.setattr(
-        "app.tmdb_apply.tmdb_get", lambda *a, **k: Response(JAWS_2_DETAILS)
+        "app.metadata.tmdb_apply.tmdb_get", lambda *a, **k: Response(JAWS_2_DETAILS)
     )
 
     from app import db
@@ -951,7 +953,9 @@ def test_review_tmdb_hides_the_chip_for_a_non_mpaa_rating(
         {"certification": ""},
     ]
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr("app.tmdb_apply.tmdb_get", lambda *a, **k: Response(details))
+    monkeypatch.setattr(
+        "app.metadata.tmdb_apply.tmdb_get", lambda *a, **k: Response(details)
+    )
 
     page = admin_client.get("/review/tmdb/579").get_data(as_text=True)
     assert "116&nbsp;minutes" in page
@@ -976,7 +980,7 @@ def test_review_tmdb_shows_estimate_and_interest_marker(app, admin_client, monke
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
     monkeypatch.setattr(
-        "app.tmdb_apply.tmdb_get", lambda *a, **k: Response(JAWS_2_DETAILS)
+        "app.metadata.tmdb_apply.tmdb_get", lambda *a, **k: Response(JAWS_2_DETAILS)
     )
 
     with app.app_context():
@@ -1003,7 +1007,7 @@ def test_review_tmdb_creates_movie_and_enqueues_refresh(app, admin_client, monke
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
     monkeypatch.setattr(
-        "app.tmdb_apply.tmdb_get", lambda *a, **k: Response(JAWS_2_DETAILS)
+        "app.metadata.tmdb_apply.tmdb_get", lambda *a, **k: Response(JAWS_2_DETAILS)
     )
 
     page = admin_client.get("/review/tmdb/579").get_data(as_text=True)
@@ -1036,7 +1040,7 @@ def test_review_tmdb_creates_movie_and_enqueues_refresh(app, admin_client, monke
         refresh_jobs = [
             job
             for job in app.request_queue.jobs
-            if job.func_name == "app.tmdb_refresh.refresh_tmdb_info"
+            if job.func_name == "app.metadata.tmdb_refresh.refresh_tmdb_info"
             and job.args[1] == movie.id
         ]
         assert len(refresh_jobs) == 1
@@ -1044,7 +1048,7 @@ def test_review_tmdb_creates_movie_and_enqueues_refresh(app, admin_client, monke
         # The positive log prepares the "since you liked…" strip on the
         # movie page that the redirect goes to
 
-        from app.elicitation import last_response
+        from app.discovery.elicitation import last_response
 
         state = last_response(app.redis, user_id)
         assert state["movie_id"] == movie.id
@@ -1070,7 +1074,7 @@ def test_review_tmdb_not_interested_creates_flagged_record(
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
     monkeypatch.setattr(
-        "app.tmdb_apply.tmdb_get", lambda *a, **k: Response(JAWS_2_DETAILS)
+        "app.metadata.tmdb_apply.tmdb_get", lambda *a, **k: Response(JAWS_2_DETAILS)
     )
 
     page = admin_client.get("/review/tmdb/579").get_data(as_text=True)
@@ -1118,7 +1122,7 @@ def test_reviews_page_renders_local_rating_distribution(app, admin_client):
 
     from app import db
     from app.models import User, UserMovieReview
-    from app.diary import star_rating_fields
+    from app.viewing.diary import star_rating_fields
 
     with app.app_context():
         user_id = User.query.first().id
@@ -1158,7 +1162,7 @@ def test_reviews_page_renders_local_rating_distribution(app, admin_client):
 def test_history_page_offers_per_viewing_edit_links(app, admin_client):
     from app import db
     from app.models import User, UserMovieReview
-    from app.diary import star_rating_fields
+    from app.viewing.diary import star_rating_fields
 
     with app.app_context():
         user_id = User.query.first().id
@@ -1192,7 +1196,7 @@ def test_history_page_offers_per_viewing_edit_links(app, admin_client):
 def test_review_edit_updates_the_viewing_in_place(app, admin_client):
     from app import db
     from app.models import User, UserMovieReview
-    from app.diary import star_rating_fields
+    from app.viewing.diary import star_rating_fields
 
     with app.app_context():
         user_id = User.query.first().id
@@ -1266,7 +1270,7 @@ def test_review_edit_updates_the_viewing_in_place(app, admin_client):
 def test_review_edit_adds_review_to_bare_plex_viewing(app, admin_client):
     from app import db
     from app.models import User, UserMovieReview
-    from app.diary import star_rating_fields
+    from app.viewing.diary import star_rating_fields
 
     with app.app_context():
         user_id = User.query.first().id
@@ -1313,7 +1317,7 @@ def test_stars_on_a_bare_rewatch_become_the_current_verdict(app, admin_client):
     from app import db
     from app.main.helpers import _latest_review_row
     from app.models import User, UserMovieReview
-    from app.diary import star_rating_fields
+    from app.viewing.diary import star_rating_fields
 
     with app.app_context():
         user_id = User.query.first().id
@@ -1369,7 +1373,7 @@ def test_stars_on_a_bare_rewatch_become_the_current_verdict(app, admin_client):
 def test_review_edit_accepts_clearing_to_a_bare_watch(app, admin_client):
     from app import db
     from app.models import User, UserMovieReview
-    from app.diary import star_rating_fields
+    from app.viewing.diary import star_rating_fields
 
     with app.app_context():
         user_id = User.query.first().id
@@ -1408,7 +1412,7 @@ def test_review_edit_accepts_clearing_to_a_bare_watch(app, admin_client):
 def test_review_edit_is_owner_only(app, admin_client, user_client):
     from app import db
     from app.models import User, UserMovieReview
-    from app.diary import star_rating_fields
+    from app.viewing.diary import star_rating_fields
 
     with app.app_context():
         admin_id = User.query.filter_by(admin=True).first().id
@@ -1431,7 +1435,7 @@ def test_review_edit_is_owner_only(app, admin_client, user_client):
 def test_review_edit_keeps_review_date_and_stamps_updated(app, admin_client):
     from app import db
     from app.models import User, UserMovieReview
-    from app.diary import star_rating_fields
+    from app.viewing.diary import star_rating_fields
 
     with app.app_context():
         user_id = User.query.first().id
@@ -1479,7 +1483,7 @@ def test_review_edit_keeps_review_date_and_stamps_updated(app, admin_client):
 def test_history_hides_update_date_from_the_same_day(app, admin_client):
     from app import db
     from app.models import User, UserMovieReview
-    from app.diary import star_rating_fields
+    from app.viewing.diary import star_rating_fields
 
     with app.app_context():
         user_id = User.query.first().id
@@ -1511,7 +1515,7 @@ def test_history_orders_by_watch_date_with_unreviewed_on_top(app, admin_client):
 
     from app import db
     from app.models import User, UserMovieReview
-    from app.diary import star_rating_fields
+    from app.viewing.diary import star_rating_fields
 
     with app.app_context():
         user_id = User.query.first().id
@@ -1563,7 +1567,7 @@ def test_history_row_star_tap_preserves_date_and_text(app, admin_client):
 
     from app import db
     from app.models import User, UserMovieReview
-    from app.diary import star_rating_fields
+    from app.viewing.diary import star_rating_fields
 
     with app.app_context():
         user = User.query.filter_by(admin=True).first()
@@ -1630,7 +1634,7 @@ def test_review_edit_redirects_back_to_the_history_page_it_came_from(app, admin_
 
     from app import db
     from app.models import User, UserMovieReview
-    from app.diary import star_rating_fields
+    from app.viewing.diary import star_rating_fields
 
     with app.app_context():
         user_id = User.query.first().id
@@ -1682,7 +1686,7 @@ def test_feed_created_rows_never_export_back_to_letterboxd(
 
     from app import db
     from app.models import User, UserMovieReview
-    from app.diary import star_rating_fields
+    from app.viewing.diary import star_rating_fields
 
     with app.app_context():
         user_id = User.query.first().id
@@ -1745,8 +1749,8 @@ def test_history_previews_estimates_for_unrated_viewings(app, admin_client):
 
     from app import db
     from app.models import User, UserMovieReview
-    from app.recommendations import PROFILE_KEY, SCORES_KEY
-    from app.diary import star_rating_fields
+    from app.discovery.recommendations import PROFILE_KEY, SCORES_KEY
+    from app.viewing.diary import star_rating_fields
 
     with app.app_context():
         user_id = User.query.first().id
@@ -1806,8 +1810,8 @@ def test_clearing_stars_repaints_back_to_the_estimate(app, admin_client):
 
     from app import db
     from app.models import User, UserMovieReview
-    from app.recommendations import PROFILE_KEY, SCORES_KEY
-    from app.diary import star_rating_fields
+    from app.discovery.recommendations import PROFILE_KEY, SCORES_KEY
+    from app.viewing.diary import star_rating_fields
 
     with app.app_context():
         user_id = User.query.first().id
@@ -1894,7 +1898,7 @@ def test_history_letterboxd_rows_edit_on_letterboxd(app, admin_client):
 
     from app import db
     from app.models import User, UserMovieReview
-    from app.diary import star_rating_fields
+    from app.viewing.diary import star_rating_fields
 
     with app.app_context():
         user_id = User.query.first().id
@@ -1939,7 +1943,7 @@ def test_review_edit_refuses_letterboxd_rows(app, admin_client):
 
     from app import db
     from app.models import User, UserMovieReview
-    from app.diary import star_rating_fields
+    from app.viewing.diary import star_rating_fields
 
     with app.app_context():
         user_id = User.query.first().id
@@ -1989,7 +1993,7 @@ def test_pick_tmdb_match_prefers_exact_title_in_year_results(app):
 
     TMDB ranks the featurette first in the year-filtered results."""
 
-    from app.diary import _pick_tmdb_match
+    from app.viewing.diary import _pick_tmdb_match
 
     year_filtered = [
         _result('The Digital Special Effects in "A Close Shave"', 1995),
@@ -2006,7 +2010,7 @@ def test_pick_tmdb_match_falls_through_year_junk_to_exact_title(app):
     wins, although its year is 2007. The match is never "My Poetic Works
     300 Yen"."""
 
-    from app.diary import _pick_tmdb_match
+    from app.viewing.diary import _pick_tmdb_match
 
     year_filtered = [_result("My Poetic Works 300 Yen", 2006)]
     title_only = [_result("300", 2007), _result("300: Rise of an Empire", 2014)]
@@ -2020,7 +2024,7 @@ def test_pick_tmdb_match_accepts_lone_exact_title_across_years(app):
 
     Fitzflix accepts a single exact-title match at any year distance."""
 
-    from app.diary import _pick_tmdb_match
+    from app.viewing.diary import _pick_tmdb_match
 
     title = "The Men Who Tread on the Tiger's Tail"
     title_only = [_result(title, 1952), _result("It Is Wonderful to Create", 2002)]
@@ -2031,7 +2035,7 @@ def test_pick_tmdb_match_accepts_lone_exact_title_across_years(app):
 def test_pick_tmdb_match_nearest_year_among_exact_titles(app):
     """Casino Royale (1967) selects the 1967 spoof, not the 2006 film."""
 
-    from app.diary import _pick_tmdb_match
+    from app.viewing.diary import _pick_tmdb_match
 
     title_only = [
         _result("Casino Royale", 2006),
@@ -2048,7 +2052,7 @@ def test_pick_tmdb_match_keeps_alternative_title_head(app):
 
     The first year-filtered result stays the fallback."""
 
-    from app.diary import _pick_tmdb_match
+    from app.viewing.diary import _pick_tmdb_match
 
     year_filtered = [_result("Waking Ned", 1998)]
     picked = _pick_tmdb_match("Waking Ned Devine", 1998, year_filtered, [])
@@ -2059,7 +2063,7 @@ def test_pick_tmdb_match_normalizes_dashes(app):
     """The en-dash Star Wars titles of Letterboxd equal the hyphens of
     TMDB."""
 
-    from app.diary import _normalize_title, _pick_tmdb_match
+    from app.viewing.diary import _normalize_title, _pick_tmdb_match
 
     lb = "Star Wars: Episode I – The Phantom Menace"
     tmdb = "Star Wars: Episode I - The Phantom Menace"
@@ -2071,7 +2075,7 @@ def test_pick_tmdb_match_normalizes_dashes(app):
 def test_pick_tmdb_match_skips_when_nothing_plausible(app):
     """TRIGUN (a TV series) matches nothing and stays unresolved."""
 
-    from app.diary import _pick_tmdb_match
+    from app.viewing.diary import _pick_tmdb_match
 
     assert (
         _pick_tmdb_match("TRIGUN", 1998, [], [_result("Trigun: Badlands Rumble", 2010)])
@@ -2171,7 +2175,7 @@ def _guid_row(app, title, tmdb_id, rating, date_watched, date_reviewed):
 
     from app import db
     from app.models import User, UserMovieReview
-    from app.diary import star_rating_fields
+    from app.viewing.diary import star_rating_fields
 
     with app.app_context():
         user_id = User.query.filter_by(admin=True).first().id
@@ -2347,7 +2351,7 @@ def test_tmdb_log_watch_with_a_future_date_says_why(app, admin_client, monkeypat
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
     monkeypatch.setattr(
-        "app.tmdb_apply.tmdb_get", lambda *a, **k: Response(JAWS_2_DETAILS)
+        "app.metadata.tmdb_apply.tmdb_get", lambda *a, **k: Response(JAWS_2_DETAILS)
     )
 
     token = csrf_token_from(admin_client.get("/review/tmdb/579").get_data(as_text=True))
@@ -2373,13 +2377,14 @@ def test_a_star_edit_on_history_queues_the_profile_recompute(app, admin_client):
 
     from app import db
     from app.models import User, UserMovieReview, UserWatchlist
-    from app.diary import star_rating_fields
+    from app.viewing.diary import star_rating_fields
 
     def recomputes():
         return [
             job
             for job in app.maintenance_queue.jobs
-            if job.func_name == "app.recommendations.recompute_recommendations"
+            if job.func_name
+            == "app.discovery.recommendations.recompute_recommendations"
         ]
 
     with app.app_context():
@@ -2462,7 +2467,7 @@ def test_the_legacy_ratings_import_is_idempotent(app):
 
     from app import db
     from app.models import User, UserMovieReview, UserMovieStatus
-    from app.diary import review_task
+    from app.viewing.diary import review_task
 
     with app.app_context():
         user_id = User.query.first().id
@@ -2527,7 +2532,7 @@ def test_a_star_edit_of_an_old_viewing_keeps_a_rewatch_entry(app, admin_client):
 
     from app import db
     from app.models import User, UserMovieReview, UserWatchlist
-    from app.diary import star_rating_fields
+    from app.viewing.diary import star_rating_fields
 
     with app.app_context():
         user_id = User.query.first().id
@@ -2589,7 +2594,7 @@ def test_a_star_edit_of_a_date_only_row_removes_a_same_day_add(app, admin_client
 
     from app import db
     from app.models import User, UserMovieReview, UserWatchlist
-    from app.diary import star_rating_fields
+    from app.viewing.diary import star_rating_fields
 
     with app.app_context():
         user_id = User.query.first().id
@@ -2676,7 +2681,7 @@ def test_enter_in_the_review_editor_saves_and_keeps_the_stars(app, admin_client)
 
     from app import db
     from app.models import User, UserMovieReview
-    from app.diary import star_rating_fields
+    from app.viewing.diary import star_rating_fields
 
     with app.app_context():
         user_id = User.query.first().id
@@ -2717,7 +2722,7 @@ def test_enter_in_the_review_editor_saves_and_keeps_the_stars(app, admin_client)
 def test_an_export_that_unpacks_too_large_is_refused(app, monkeypatch):
     import pytest
 
-    import app.diary as diary
+    import app.viewing.diary as diary
 
     monkeypatch.setattr(diary, "MAX_EXPORT_BYTES", 2000)
     rows = "Date,Name,Year,Letterboxd URI,Rating\n" + "2026-01-01,Jaws,1975,x,4\n" * 200
@@ -2728,7 +2733,7 @@ def test_an_export_that_unpacks_too_large_is_refused(app, monkeypatch):
 def test_an_export_with_a_field_that_is_too_long_is_refused(app):
     import pytest
 
-    from app.diary import parse_letterboxd_export
+    from app.viewing.diary import parse_letterboxd_export
 
     rows = (
         "Date,Name,Year,Letterboxd URI,Rating\n2026-01-01,"
@@ -2762,7 +2767,7 @@ def test_an_export_that_zipfile_cannot_read_is_refused(app):
 
     import pytest
 
-    from app.diary import parse_letterboxd_export
+    from app.viewing.diary import parse_letterboxd_export
 
     for broken in (_patched_zip(flag_bit=1), _patched_zip(method=99)):
         with pytest.raises((ValueError, zipfile.BadZipFile)):
