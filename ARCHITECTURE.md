@@ -1,0 +1,208 @@
+# The map of the Fitzflix code
+
+This file tells you where each part of Fitzflix lives. Read it before you open the code. The README tells you how to install and how to use the application. The file `tests/README.md` tells you how the tests work.
+
+The application has approximately 100 Python modules. You do not need to know all of them. Most changes touch 1 subject, and each subject has its own files. Find the subject in the tables below, then open only those files.
+
+## The programs that run
+
+Supervisor runs 11 processes from 8 programs. The file `fitzflix_supervisor.ini` lists them.
+
+| Program | Processes | Start file | Function |
+| --- | --- | --- | --- |
+| `fitzflix-web` | 1 | `fitzflix.py` | Serves the pages and receives the webhooks (gunicorn) |
+| `fitzflix-rqscheduler` | 1 | `scheduler.py` | Starts each scheduled job and each retry that waits |
+| `fitzflix-import` | 2 | `supervisor.py` | Workers for new files. They also watch the import directory |
+| `fitzflix-file-operation` | 2 | `supervisor.py` | Workers for uploads, downloads, and track edits |
+| `fitzflix-transcode` | 1 | `supervisor.py` | Worker for the conversions that use much CPU |
+| `fitzflix-sql` | 1 | `supervisor.py` | Worker for the database writes, 1 at a time |
+| `fitzflix-user-request` | 2 | `supervisor.py` | Workers for the jobs that a page or a command starts |
+| `fitzflix-maintenance` | 1 | `supervisor.py` | Worker for the scheduled maintenance |
+
+Each process builds the same application object with `create_app` in `app/__init__.py`.
+
+The web process does no slow work. A page puts a job on a queue in Redis, and a worker does the job. The README section "Worker queues" tells you what each of the 7 queues is for.
+
+Fitzflix keeps its data in 4 places:
+
+- MariaDB holds the records. The file `app/models.py` defines each table.
+- Redis holds the queues, the locks, the caches, and the trail of each file.
+- The disks hold the library, the import directory, and the staging area.
+- AWS S3 holds the archive copy of each file.
+
+## The base files
+
+Each other module uses these files. Read them first.
+
+| File | Contents |
+| --- | --- |
+| `config.py` | Each setting of the `.env` file, with its default value |
+| `app/__init__.py` | `create_app` builds the application. `cron_table` is the schedule of each recurring job |
+| `app/models.py` | All the database tables |
+| `app/tasks.py` | `TASKS` lists each background job with its queue and its time limit. `enqueue_task` starts a job. `requeue` books a retry |
+| `app/queues.py` | The list of the 7 queues |
+| `app/settings.py` | The settings that the Admin Settings page can change. `get_setting` reads one |
+| `app/videos.py` | The code that all file tasks share: the copy with progress, the title lock, and the control of the command-line tools |
+| `app/pipeline.py` | The trail of each file, which the Queue page shows |
+| `app/cache.py` and `app/redis_guard.py` | The cached values in Redis, and the pages that must work while Redis is down |
+| `app/email.py` | The mail to the users and to the admin |
+| `migrations/versions/` | 1 file for each change of the database structure |
+
+## The path of a page request
+
+1. Flask finds the function for the address in a route module. The table below lists the route modules.
+2. The function reads the records through the classes of `app/models.py`. It gets the larger answers from a subject module.
+3. The function renders a template of `app/templates/`. The template usually has the name of the page, for example `movie.html`.
+4. For slow work, the function calls `enqueue_task`. Then a worker does the work, and the page shows the progress.
+
+A template whose name starts with an underscore is a part that other templates include. The template `base.html` is the frame of each page. It also holds most of the JavaScript.
+
+| Route module | Pages |
+| --- | --- |
+| `app/main/discover.py` | The landing page, Recommendations, Watchlist, Newly added, Leaving, File Activity |
+| `app/main/library.py` | The movie and TV libraries, the film page, the series page, the file page, People, the Criterion Collection |
+| `app/main/shopping.py` | The 2 shopping lists |
+| `app/main/search.py` | The search of the library and of TMDB |
+| `app/main/account.py` | Profile, History, Stats, and the review editor |
+| `app/main/admin.py` | Queue, System, Settings, Rejects, the file list, and each Maintenance page |
+| `app/main/posters.py` | The poster picker |
+| `app/main/game.py` | Name That Frame |
+| `app/main/dvr.py` and `app/main/dvr_admin.py` | The DVR endpoints that Plex reads, and the channel editor |
+| `app/main/helpers.py` | Functions that 2 or more route modules use |
+| `app/main/forms.py` | Each form of the pages |
+| `app/auth/` | Sign-in, registration, password reset, and passkeys |
+| `app/api/` | The Sonarr, Radarr, and Plex webhooks |
+
+## The path of a new file
+
+This is the most important sequence of the application. Almost all of it is in `app/importing.py`.
+
+1. A file arrives through 1 of 3 doors. The doors are the watcher of the import directory (`app/import_watch.py`), a Sonarr or Radarr webhook (`app/api/arr.py`), and the hourly sweep (`manual_import_task`). Each door calls `enqueue_localization`.
+2. `localization_task` runs on the import queue. It reads the name of the file with `evaluate_filename`, and it takes the lock of the title. It checks the quality and the free space, then copies the file to the staging area. It uploads the untouched file to S3. Then it removes the audio and subtitle tracks that are not in your language.
+3. `convert_localized_file` runs on the transcode queue, only for an HDR file. It is in `app/sdr_conversion.py`.
+4. `move_localized_file` runs on the handoff queue. It copies the result into the library under a hidden name, and it reads the details of the media.
+5. `finalize_localization` runs on the sql queue. It writes the records, gives the hidden copy its final name, and commits. It also deletes the worse copies of the same title.
+6. The follow-up jobs start after the commit. Examples are the TMDB refresh, the Atmos audio twin, and the upload of a changed file to the archive.
+
+A file that fails goes to the rejects directory (`move_to_rejects`). The Rejects page lists these files. Each stage writes its status to the trail of the file. The Queue page shows the trail.
+
+Each step is a separate job. A job gives the file to the next job with `enqueue_task`. To follow the sequence in the code, search for the name of the next job.
+
+## Where each subject lives
+
+All paths below are in the `app/` folder.
+
+### The files of the library
+
+| Module | Subject |
+| --- | --- |
+| `importing.py` | The import sequence above, and the rules for filenames |
+| `import_watch.py` | The watcher of the import directory |
+| `manual_imports.py` | The downloads that Sonarr and Radarr cannot import |
+| `sdr_conversion.py` | The conversion of HDR files to SDR |
+| `tracks.py` | The audio and subtitle tracks of a file: the scan, the flags, the remux |
+| `atmos.py` | The second Atmos track that more players can decode |
+| `file_ranking.py` | The rule that selects the best copy of a title |
+| `naming.py` and `title_keys.py` | The names of the library files, and the keys that compare titles |
+| `series_rename.py` | The rename of a TV series on disk and in the database |
+| `missing_files.py` | The best files that have no local copy |
+| `custom_artwork.py` | The custom posters on disk |
+| `triage.py` | The clips and pictures that help you examine a doubtful track |
+| `worker_recovery.py` | The cleanup after a worker that died |
+
+### The archive in AWS
+
+| Module | Subject |
+| --- | --- |
+| `aws_storage.py` | Each S3 and SQS operation: uploads, restores, downloads, deletes, and the weekly audit |
+| `s3_layout.py` | The folders of the bucket |
+| `aws_setup.py` | The setup of the AWS components |
+
+### The data from other services
+
+| Module | Subject |
+| --- | --- |
+| `tmdb_refresh.py`, `tmdb_apply.py`, `tmdb_changes.py` | The film and series data from TMDB |
+| `awards.py` | The film awards from Wikidata |
+| `arr_client.py`, `radarr_push.py`, `sonarr_push.py` | The calls to Radarr and Sonarr |
+| `api/arr.py`, `api/radarr.py`, `api/sonarr.py` | The webhooks from Radarr and Sonarr |
+| `plex_api.py`, `plex_library.py`, `plex_rename.py` | The Plex library: refreshes and renames |
+| `plex_collections.py`, `plex_selection.py`, `plex_titles.py` | The Plex collections, selected tracks, and episode titles |
+| `plex_watchlist.py` | The sync of the 2 watchlists |
+| `plex_player.py` and `infuse_player.py` | The start of a film on an Apple TV |
+
+### The diary and the discovery pages
+
+| Module | Subject |
+| --- | --- |
+| `diary.py` | The diary: reviews, Plex watches, and the import of a Letterboxd export |
+| `letterboxd.py` and `richtext.py` | The sync with Letterboxd, and the text format of a review |
+| `stats.py` | The viewing statistics |
+| `recommendations.py`, `rec_shelves.py`, `copref.py` | The recommendation engine and its shelves |
+| `elicitation.py`, `estimate_warm.py`, `funnel.py` | The smaller parts of the recommendations |
+| `streaming.py`, `streaming_rail.py`, `availability_alerts.py` | Where a film streams, and the alerts for the watchlist |
+| `provider_catalog.py` and `newly_added.py` | The catalogs of the streaming services, and the films that they added |
+| `criterion_catalog.py`, `criterion_now.py`, `leaving_criterion.py` | The Criterion Collection and the Criterion Channel |
+| `frames.py` | The pictures for Name That Frame |
+| `dvr.py` | The channels and the schedules of the virtual DVR |
+
+### The operation of the application
+
+| Module | Subject |
+| --- | --- |
+| `maintenance.py` | Backups, log rotation, the health checks, and the cleanup jobs |
+| `queue_page.py` | The data of the Queue page |
+| `logging_setup.py`, `redaction.py`, `access_log.py`, `log_digest.py` | The logs |
+| `auth/passkeys.py` and `auth/throttle.py` | Passkeys, and the limit on failed sign-ins |
+| `templating.py` | The filters that the templates use |
+| `cli.py` and each file that ends in `_cli.py` | The `flask` commands |
+
+## Things that can surprise you
+
+- **The name of a job is not always its location**. A job name is a text string, for example `"app.videos.localization_task"`. Many of these functions moved out of `app/videos.py`, but the old names stay. Search for `def localization_task` to find the function.
+- **Many imports are inside functions**. This prevents import loops between the modules. It is normal in this code.
+- **A task that changes a title takes the lock of that title**. If another task has the lock, the task books itself for a later time. The function is `acquire_lock_or_defer` in `app/videos.py`.
+- **There are 2 sources of settings**. The `.env` file gives the settings through `config.py`. The Admin Settings page changes some of them through `app/settings.py`. A value in `.env` has priority.
+- **A number with a hash sign in a comment is a GitHub issue**. The issue tells you why the code has that rule.
+- **The web process reads a template when a page first needs it**. After you change a template, deploy, or the processes show different versions.
+- **The tests share 1 application object**. Read the section "The traps" of `tests/README.md` before you write a test.
+
+## How to find a thing
+
+The function of a page address:
+
+```
+grep -rn '"/watchlist' app/main app/auth app/api
+```
+
+The function of a job:
+
+```
+grep -rn 'def localization_task' app
+```
+
+Each place that starts a job:
+
+```
+grep -rn 'localization_task"' app
+```
+
+Each place that uses a setting:
+
+```
+grep -rn 'ARCHIVE_ORIGINAL_MEDIA' config.py app README.md
+```
+
+The schedule of a recurring job is in `cron_table` in `app/__init__.py`. The System page also shows the last run and the next run of each job.
+
+## How to change the code safely
+
+1. Make the change, and add a test for it.
+2. Run the tests:
+
+```
+venv/bin/python -m pytest -q -p no:cacheprovider
+```
+
+3. Commit. The commit hooks format the code and check the comments. The README section "Code formatting" tells you about them.
+4. Deploy with `scripts/deploy`. The README section "Updating" tells you about this script.

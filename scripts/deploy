@@ -1,0 +1,56 @@
+#!/bin/sh
+#
+# Put the code of this folder into service.
+#
+# The steps are:
+# 1. Stop here if a queue has a job that waits or runs. A restart ends a
+#    job that runs.
+# 2. Stop all the programs of the supervisor group.
+# 3. Apply the database migrations.
+# 4. Start the programs.
+# 5. Make sure that each program runs and that the web process answers.
+#
+# The check of step 1 does not see a page request that is in progress.
+# Do not deploy while a person changes or deletes files on the pages.
+#
+# Usage: scripts/deploy
+#
+# After the script, run: venv/bin/python scripts/drill_workers.py
+
+cd "$(dirname "$0")/.." || exit 1
+
+if ! venv/bin/python scripts/idle_check.py; then
+    echo "The queues are busy. Nothing was restarted."
+    exit 1
+fi
+
+# The quotes keep the shell from reading the star as a file pattern.
+
+supervisorctl stop 'fitzflix:*' || exit 1
+
+# New code on a database that is only partly migrated can write bad
+# rows. Thus, a failed migration leaves the programs stopped.
+
+if ! venv/bin/flask db upgrade; then
+    echo "The migration failed. The programs stay stopped."
+    echo "Correct the migration. Then run: supervisorctl start 'fitzflix:*'"
+    exit 1
+fi
+
+supervisorctl start 'fitzflix:*'
+
+# The web process needs some seconds before it answers.
+
+sleep 6
+
+programs=$(supervisorctl status 'fitzflix:*' | wc -l | tr -d ' ')
+running=$(supervisorctl status 'fitzflix:*' | grep -c RUNNING)
+answer=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/)
+
+echo "Programs that run: $running of $programs"
+echo "Answer of the web process: $answer (302 is correct)"
+
+# The root page sends a visitor who is not signed in to the sign-in
+# page. That redirect is the 302.
+
+[ "$running" = "$programs" ] && [ "$answer" = "302" ]

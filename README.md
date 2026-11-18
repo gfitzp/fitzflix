@@ -828,11 +828,32 @@ Fitzflix cannot import some files. The causes are a filename that Fitzflix canno
 ```
 git pull &&
 venv/bin/pip install -r requirements-dev.txt &&
-venv/bin/flask db upgrade &&
-supervisorctl restart "fitzflix:*"
+scripts/deploy
 ```
 
 The file `requirements-dev.txt` includes `requirements.txt`. A runtime-only installation can use `requirements.txt` alone.
+
+The script `scripts/deploy` puts the code of the folder into service. Use it after each change of the code or of a template. It does these steps:
+
+1. It runs `scripts/idle_check.py`. If a queue has a job that waits or runs, the script stops and restarts nothing. A restart ends a job that runs.
+2. It stops all the programs of the supervisor group.
+3. It applies the database migrations. If a migration fails, the programs stay stopped, and the script tells you the command that starts them.
+4. It starts the programs.
+5. It prints the number of programs that run, and the answer of the web process. The correct answer is 302.
+
+The idle check does not see a page request that is in progress. Do not deploy while a person changes or deletes files on the pages.
+
+After a deploy, run the drill:
+
+```
+venv/bin/python scripts/drill_workers.py
+```
+
+The drill puts 1 harmless job on each queue, and it queues the hourly SQS poll. Each line of its output must show the status "finished". A job that stays "queued" has no worker that runs.
+
+## The code
+
+The file [ARCHITECTURE.md](ARCHITECTURE.md) is the map of the code. It tells you which programs run, how a file moves through the import, and which module holds each subject. Read it before you change the code.
 
 ## Code formatting
 
