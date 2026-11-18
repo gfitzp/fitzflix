@@ -1114,7 +1114,52 @@ def test_a_selection_on_a_younger_record_goes_to_the_page_of_the_oldest(
     response = select(admin_client, younger_id, STREAMING)
     assert response.status_code == 302
     assert response.headers["Location"].endswith(f"/movie/{oldest_id}")
+    # The link of the message goes to the same record.
+    page = admin_client.get(f"/movie/{oldest_id}").get_data(as_text=True)
+    assert f"href=&#39;/movie/{oldest_id}&#39;" in page or (
+        f"href='/movie/{oldest_id}'" in page
+    )
+    assert f"href='/movie/{younger_id}'" not in page
     with app.app_context():
         assert [job.args for job in refresh_jobs(app)] == [
             ("Movies", younger_id, TMDB_ID)
         ]
+
+
+def test_a_long_title_that_the_record_has_gets_the_badge(app, admin_client, titles):
+    """The record holds a long title in its shortened form."""
+
+    from app.models import clip_movie_title
+
+    long_title = "Night of the Day of the Dawn " * 8 + "Part 5"
+    titles["payload"] = payload(title=long_title)
+    with app.app_context():
+        movie = film(title=clip_movie_title(long_title), chosen=None)
+        movie.tmdb_title = long_title
+        db.session.commit()
+        movie_id = movie.id
+
+    page = admin_client.get(f"/movie/{movie_id}/title").get_data(as_text=True)
+    assert page.count("Current</span>") == 1
+
+
+def test_the_file_name_of_a_selection_has_the_year_of_tmdb(app, monkeypatch):
+    """The untouched name has the year of the release date, as the rename gives it."""
+
+    from datetime import datetime
+
+    from app.media.importing import filenames
+
+    monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
+    monkeypatch.setattr(
+        filenames, "tmdb_json", lambda path, params=None, timeout=10: {"results": []}
+    )
+    with app.app_context():
+        movie = film(title="Record Title", chosen=STREAMING, year=2018)
+        movie.tmdb_title = STREAMING
+        movie.tmdb_release_date = datetime(2019, 7, 24)
+        db.session.commit()
+        details = filenames.evaluate_filename(
+            f"{STREAMING} (2019) - [Bluray-1080p].mkv", log=False
+        )
+        assert details["tmdb_id"] == TMDB_ID
