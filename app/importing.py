@@ -975,8 +975,8 @@ def localization_task(
 def _admission_gate(file_path, run):
     """Decide if an incoming file can start its import. Return "ok", "retry", or "stop".
 
-    "retry" means that the task is booked again (a dead volume, a file
-    that grows, or a file that is not complete yet). "stop" means that
+    "retry" means that the task is booked again (a dead volume, an empty
+    file, a file that grows, or a file that is not complete yet). "stop" means that
     the task ends with nothing to do, or after a reject."""
 
     from app.videos import _dead_volumes
@@ -1036,6 +1036,18 @@ def _admission_gate(file_path, run):
     # grows, check again in 1 minute.
 
     size_before = os.path.getsize(file_path)
+
+    # Invariant: an empty file is never imported (#777). The Finder
+    # copies files one at a time, and it makes an empty file for each
+    # one that waits. Such a file passed each check below: its size
+    # does not grow, MediaInfo cannot read it, and nothing writes to
+    # it. It waits as a file that grows does. No check is counted, so
+    # the completeness budget cannot import it.
+
+    if size_before == 0:
+        return run.retry(
+            timedelta(minutes=1), "is empty, its copy did not start", level="info"
+        )
     time.sleep(GROWTH_CHECK_SECONDS)
     if os.path.getsize(file_path) != size_before:
         return run.retry(timedelta(minutes=1), "is still being copied", level="info")

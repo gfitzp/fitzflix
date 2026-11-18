@@ -1208,6 +1208,45 @@ def test_unprobeable_fresh_file_waits_out_the_quiet_period(app, incoming_dir):
         os.remove(source)
 
 
+@pytest.mark.parametrize("checks_used", [0, "budget"])
+def test_an_empty_file_waits_and_is_never_imported(app, incoming_dir, checks_used):
+    """An empty file is the placeholder of a copy that did not start (#777).
+
+    The Finder copies files one at a time and makes an empty file for
+    each one that waits. Its size does not grow, MediaInfo cannot read
+    it, and nothing writes to it, so each completeness check passed. It
+    was imported with 0 bytes. It must wait, also when the completeness
+    budget is used up."""
+
+    basename = "Placeholder (2021) - [DVD].mkv"
+    source = os.path.join(incoming_dir, basename)
+    open(source, "wb").close()
+    settle(source)
+    if checks_used == "budget":
+        checks_used = importing.MAX_COMPLETENESS_RETRIES
+
+    try:
+        with app.app_context():
+            assert localization_task(source, completeness_retries=checks_used) is True
+
+        # The wait is the wait of a file that grows: no check is counted.
+
+        retries = [
+            job
+            for job in scheduled_jobs(app.import_queue)
+            if job.id.startswith("retry_")
+        ]
+        assert [job.id for job in retries] == [
+            loc_retry(source, completeness_retries=checks_used)
+        ]
+        assert os.path.getsize(source) == 0
+        assert os.listdir(app.config["STAGING_DIR"]) == []
+        assert basename not in rejected_files(app)
+        assert app.handoff_queue.jobs == []
+    finally:
+        os.remove(source)
+
+
 def test_completeness_budget_exhausted_imports_anyway(app, incoming_dir):
     """Import a file that never proves its completeness within the budget.
 
