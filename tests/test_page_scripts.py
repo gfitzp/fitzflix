@@ -12,6 +12,8 @@ import subprocess
 
 import pytest
 
+from tests.conftest import page_with_scripts
+
 
 def page_function(body, name):
     """Return the source of the JavaScript function called name in the page body."""
@@ -89,7 +91,7 @@ def test_the_queue_poll_stops_after_a_401(admin_client, tmp_path):
 
     The one timer is the abort timer of the request. The answer clears it."""
 
-    body = admin_client.get("/").get_data(as_text=True)
+    body = page_with_scripts(admin_client, "/")
     out = run_page_script(
         body,
         POLL_FUNCTIONS,
@@ -115,7 +117,7 @@ setImmediate(() => {
 def test_a_good_answer_arms_the_next_poll(admin_client, tmp_path):
     """The positive control of the test above: a good answer schedules the next poll."""
 
-    body = admin_client.get("/").get_data(as_text=True)
+    body = page_with_scripts(admin_client, "/")
     out = run_page_script(
         body,
         POLL_FUNCTIONS,
@@ -137,7 +139,7 @@ def test_a_503_is_one_bad_tick_and_the_poll_goes_on(admin_client, tmp_path):
     Before the fix, every answer that was not OK stopped the poll for
     good, and the page showed no change until a reload."""
 
-    body = admin_client.get("/").get_data(as_text=True)
+    body = page_with_scripts(admin_client, "/")
     out = run_page_script(
         body,
         POLL_FUNCTIONS,
@@ -159,7 +161,7 @@ setImmediate(() => { result = { payloads }; });
 def test_a_redirect_to_the_login_page_stops_the_poll(admin_client, tmp_path):
     """A redirected 200 is the login page, not page data. The poll stops (#348)."""
 
-    body = admin_client.get("/").get_data(as_text=True)
+    body = page_with_scripts(admin_client, "/")
     out = run_page_script(
         body,
         POLL_FUNCTIONS,
@@ -185,7 +187,7 @@ def test_a_request_that_never_settles_is_aborted_and_the_poll_goes_on(
     The fake fetch settles only through the abort signal. The test fires
     the one pending timer, which is the abort timer."""
 
-    body = admin_client.get("/").get_data(as_text=True)
+    body = page_with_scripts(admin_client, "/")
     out = run_page_script(
         body,
         POLL_FUNCTIONS,
@@ -214,7 +216,7 @@ setImmediate(() => { result = { aborted, armed }; });
 def test_a_second_tap_during_a_post_does_nothing(admin_client, tmp_path):
     """The in-flight guard of backgroundPost drops the second tap (#337)."""
 
-    body = admin_client.get("/").get_data(as_text=True)
+    body = page_with_scripts(admin_client, "/")
     out = run_page_script(
         body,
         ["postForState", "backgroundPost"],
@@ -234,7 +236,7 @@ result = { inFlight: form._postInFlight };
 def test_the_fallback_submission_carries_the_tapped_button(admin_client, tmp_path):
     """A failed post submits the form with the button as a hidden input (#406)."""
 
-    body = admin_client.get("/").get_data(as_text=True)
+    body = page_with_scripts(admin_client, "/")
     out = run_page_script(
         body,
         ["postForState", "backgroundPost"],
@@ -363,7 +365,7 @@ def test_a_poll_with_its_etag_in_the_query_string_gets_an_empty_answer(
 def test_the_rows_hook_swaps_only_on_a_new_answer(admin_client, tmp_path):
     """A 304 keeps the rows. A 200 swaps them and localizes the tooltips (#639, #547)."""
 
-    body = admin_client.get("/queue").get_data(as_text=True)
+    body = page_with_scripts(admin_client, "/queue")
     test_code = r"""
 const ROWS_URL = "/queue/rows";
 let rowsEtag = '"seed"';
@@ -435,7 +437,7 @@ def test_the_cards_hook_keeps_the_cards_of_an_answer_with_its_etag(
 ):
     """The File Activity poll sends its ETag as an argument too (#753)."""
 
-    body = admin_client.get("/file-activity").get_data(as_text=True)
+    body = page_with_scripts(admin_client, "/file-activity")
     test_code = r"""
 const window = { fileActivityCardsUrl: "/file-activity/cards" };
 let cardsEtag = null;
@@ -471,13 +473,21 @@ refreshCards().then(() => refreshCards()).then(() => {
 
 
 def _template_source(name):
-    """Return the source of a template. Its script functions hold no Jinja."""
+    """Return the source of a template. Its script functions hold no Jinja.
+
+    For base.html, this is the source of the script files that it loads."""
 
     import os
+    import re
 
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     with open(os.path.join(root, "app", "templates", name)) as template:
-        return template.read()
+        source = template.read()
+    if name == "base.html":
+        for script in re.findall(r"filename='([a-z_]+[.]js)'", source):
+            with open(os.path.join(root, "app", "static", script)) as file:
+                source += "\n" + file.read()
+    return source
 
 
 REPLACEMENT_FAKES = r"""
@@ -779,11 +789,15 @@ def test_an_old_search_answer_does_not_paint_the_menu(admin_client, tmp_path):
     The person typed more, cleared the box or closed the menu while the
     request was on its way. The old answer opened the menu."""
 
-    body = admin_client.get("/").get_data(as_text=True)
+    body = page_with_scripts(admin_client, "/")
+
+    # The script reads the address of the search from its tag.
+
+    address = 'const SEARCH_URL = "/search.json";\n'
     out = run_page_script(
         body,
         ["hide", "suggest", "typed"],
-        SUGGESTION_FAKES + SUGGESTION_STEPS,
+        address + SUGGESTION_FAKES + SUGGESTION_STEPS,
         tmp_path,
     )
     assert out["result"] == {

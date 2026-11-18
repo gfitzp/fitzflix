@@ -7,6 +7,7 @@ film run 1 at a time, on the server and in the page (#337)."""
 
 from tests.conftest import ADMIN_EMAIL
 from tests.factories import make_movie
+from tests.conftest import page_with_scripts
 
 LADDER = {"X-Requested-With": "ladder"}
 
@@ -122,7 +123,7 @@ def test_page_script_guards_posts_and_clears_watchlist_tiles(app, admin_client):
     The page tests cannot run the script. Thus, this checks that the
     handlers have the guard and the shared removal."""
 
-    body = admin_client.get("/").get_data(as_text=True)
+    body = page_with_scripts(admin_client, "/")
 
     # Both live handlers post through backgroundPost, which ignores a tap
     # while the post of its form is in flight

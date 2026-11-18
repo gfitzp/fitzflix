@@ -127,7 +127,7 @@
 
 		// The next poll lands some seconds after the end of the film. A
 		// hidden tab stops the polling fully. It polls immediately when
-		// the tab returns (startPoll in base.html).
+		// the tab returns (startPoll in live.js).
 		function nextDelay() {
 			var delay = POLL_MS;
 			var ends = endsOf(holder);
@@ -167,7 +167,7 @@
 			}
 		}
 
-		// The page script of base.html loads after this block.
+		// The script files of base.html load after this block.
 		document.addEventListener("DOMContentLoaded", function() {
 			startPoll(NOW_URL, nextDelay, paint, {
 				fetchOptions: {credentials: "same-origin", cache: "no-store"}

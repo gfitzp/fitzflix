@@ -3,7 +3,7 @@
    a meta line, the synopsis, and the at-a-glance badges. The meta line
    holds the runtime, the genres, and the US rating in its MPAA-style
    box. Thus, the card says at a glance what type of film it is. The
-   script in base.html fetches the card on hover (or on the first tap)
+   script in poster_card.js fetches the card on hover (or on the first tap)
    and injects it into a Bootstrap popover. The script finds the card
    by the shared .poster-card class (_tv_card.html is the series
    variant). Fitzflix serves the card for library records and for bare
@@ -21,7 +21,7 @@
    stretch it. The one action here is the Apple TV play button
    (requested by Glenn, 2026-08). The user can send an owned film to
    the living-room player from any poster, through the shared
-   data-plex-play handler in base.html. #}
+   data-plex-play handler in plex_play.js. #}
 {% from "_cert_chip.html" import cert_chip %}
 {% from "_availability_badges.html" import library_badge %}
 {% from "_streaming_strip.html" import streaming_strip %}
@@ -49,7 +49,7 @@
 	   bottom margin of an inline badge. The rule adds 4 px above and
 	   8 px below. Thus, the rule sits 8 px from the content on both
 	   sides. The badge line shows the watchlist badge and the labels
-	   of the tile. The script of base.html fills the labels after the
+	   of the tile. The script of poster_card.js fills the labels after the
 	   fetch. The stylesheet hides the whole block, rule included, while
 	   the line holds no badge #}
 	<div class="poster-card-labels">

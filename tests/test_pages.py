@@ -12,6 +12,7 @@ from wtforms.validators import ValidationError
 
 from tests.conftest import ADMIN_EMAIL
 from tests.conftest import csrf_token_from
+from tests.conftest import page_with_scripts
 
 
 def test_anonymous_user_is_redirected_to_login(client):
@@ -86,7 +87,7 @@ def test_next_run_never_renders_as_the_past():
 
 
 def test_system_page_includes_health_poller(admin_client):
-    body = admin_client.get("/system").get_data(as_text=True)
+    body = page_with_scripts(admin_client, "/system")
     assert 'id="system-health"' in body
     assert "/system/metrics" in body
     assert "visibilitychange" in body
@@ -272,8 +273,8 @@ def test_the_site_has_no_service_worker(client, admin_client):
     assert client.get("/sw.js").status_code == 404
 
     for body in (
-        client.get("/auth/login").get_data(as_text=True),
-        admin_client.get("/").get_data(as_text=True),
+        page_with_scripts(client, "/auth/login"),
+        page_with_scripts(admin_client, "/"),
     ):
         assert "serviceWorker.register(" not in body
         assert "serviceWorker.getRegistrations()" in body
@@ -283,8 +284,50 @@ def test_the_site_has_no_service_worker(client, admin_client):
         assert "site.webmanifest" in body
 
 
-def test_the_home_page_carries_the_search_and_the_poll_scripts(admin_client):
+def test_each_page_script_gets_its_address_from_its_tag(admin_client, client):
+    """A script file holds no Jinja. base.html gives each address on the tag.
+
+    A script that reads an attribute which its tag does not carry gets
+    null, and its fetch goes to a wrong address. A visitor who is not
+    signed in gets only the script that needs no session."""
+
+    import re
+
     body = admin_client.get("/").get_data(as_text=True)
+    tags = dict(re.findall(r'<script src="/static/([a-z_]+[.]js)"([^>]*)>', body))
+    assert list(tags) == [
+        "passkeys.js",
+        "site.js",
+        "search.js",
+        "live.js",
+        "queue_badge.js",
+        "poster_card.js",
+        "tiles.js",
+        "plex_play.js",
+    ]
+    assert 'data-search-url="/search.json"' in tags["search.js"]
+    assert 'data-queue-url="/api/queue-details"' in tags["queue_badge.js"]
+    assert 'data-states-url="/movie_states"' in tags["tiles.js"]
+    for name, attribute in (
+        ("search.js", "data-search-url"),
+        ("queue_badge.js", "data-queue-url"),
+        ("tiles.js", "data-states-url"),
+    ):
+        script = admin_client.get(f"/static/{name}")
+        source = script.get_data(as_text=True)
+        script.close()
+        assert f'document.currentScript.getAttribute("{attribute}")' in source
+        assert "{{" not in source and "{%" not in source
+
+    anonymous = client.get("/auth/login").get_data(as_text=True)
+    assert re.findall(r'<script src="/static/([a-z_]+[.]js)"', anonymous) == [
+        "passkeys.js",
+        "site.js",
+    ]
+
+
+def test_the_home_page_carries_the_search_and_the_poll_scripts(admin_client):
+    body = page_with_scripts(admin_client, "/")
 
     # The search type-ahead includes its keyboard navigation
 
@@ -990,7 +1033,7 @@ def test_the_queue_poll_stops_when_the_session_ends(admin_client):
     The poll must stop. Before the fix, .finally() armed the 5 s timer
     again after every 401."""
 
-    body = admin_client.get("/").get_data(as_text=True)
+    body = page_with_scripts(admin_client, "/")
 
     # The queue poll runs on the shared startPoll with stopOnFailure. A
     # stopped poll never schedules again, and the tab coming back does
@@ -1009,7 +1052,7 @@ def test_the_queue_poll_stops_when_the_session_ends(admin_client):
     assert "fetchWithTimeout(url, options.fetchOptions, POLL_TIMEOUT_MS)" in body
     assert "var POLL_TIMEOUT_MS = 20000;" in body
     for page in ("/queue", "/file-activity"):
-        assert "fetchWithTimeout(" in admin_client.get(page).get_data(as_text=True)
+        assert "fetchWithTimeout(" in page_with_scripts(admin_client, page)
 
 
 def test_the_page_pollers_share_start_poll(app, admin_client):
@@ -1019,7 +1062,7 @@ def test_the_page_pollers_share_start_poll(app, admin_client):
     script loads. The Recommendations refill paints a new tile through
     the shared window.fitzflixHydrate."""
 
-    system = admin_client.get("/system").get_data(as_text=True)
+    system = page_with_scripts(admin_client, "/system")
     assert "function startPoll(url, ms, onPayload, options) {" in system
     assert 'document.addEventListener("DOMContentLoaded", function() {' in system
     assert "after: markStaleness" in system

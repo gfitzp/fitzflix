@@ -10,7 +10,7 @@
 <p class="small text-muted" id="system-health-stale" hidden>Live updates stopped. The data is from <span id="system-health-age"></span> ago.</p>
 <script>
 	// Poll the health fragment every 5 seconds while the page is visible
-	// (startPoll in base.html). Each poll waits for the answer. Thus, a
+	// (startPoll in live.js). Each poll waits for the answer. Thus, a
 	// slow response never stacks overlapping requests. For example, a
 	// dead network mount can hold system_health() for its 10-second
 	// probe timeout. A redirect means that the session or the admin gate
@@ -33,7 +33,7 @@
 			}
 		}
 
-		// The page script of base.html loads after this block.
+		// The script files of base.html load after this block.
 		document.addEventListener("DOMContentLoaded", function() {
 			startPoll("{{ url_for('main.system_metrics') }}", 5000, function(fragment) {
 				container.innerHTML = fragment;

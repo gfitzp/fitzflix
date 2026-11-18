@@ -55,7 +55,22 @@ Each other module uses these files. Read them first.
 3. The function renders a template of `app/templates/`. The template usually has the name of the page, for example `movie.html`.
 4. For slow work, the function calls `enqueue_task`. Then a worker does the work, and the page shows the progress.
 
-A template whose name starts with an underscore is a part that other templates include. The template `base.html` is the frame of each page. It also holds most of the JavaScript.
+A template whose name starts with an underscore is a part that other templates include. The template `base.html` is the frame of each page.
+
+The JavaScript that all pages share is in files of `app/static/`. The template `base.html` loads them in this order:
+
+| Script | Subject |
+| --- | --- |
+| `passkeys.js` | The sign-in with a passkey |
+| `site.js` | The progress line at the top of the page. It loads for each visitor |
+| `search.js` | The suggestions of the search box |
+| `live.js` | The functions that the live parts share: the poll (`startPoll`) and the background post (`backgroundPost`) |
+| `queue_badge.js` | The queue badge and the progress of the tasks that run |
+| `poster_card.js` | The card that shows when the pointer is on a poster |
+| `tiles.js` | The star row and the watchlist button of a poster, and the state that each poster gets after the page load |
+| `plex_play.js` | The buttons that start a film on the Apple TV |
+
+A script that is only for 1 page is in the template of that page.
 
 | Route module | Pages |
 | --- | --- |

@@ -7,7 +7,7 @@
    with the pipeline trail of its file as stage chips. The server
    renders the rows (_queue_rows.html, from queue_rows in
    app/pipeline.py). Thus, the table is in place at the first paint.
-   The 5-second poll of base.html then calls refreshRows below through
+   The 5-second poll of queue_badge.js then calls refreshRows below through
    window.fitzflixQueueHooks. refreshRows fetches the same rows from
    /queue/rows (#639). A trail with no job left to list under shows as
    a trailing "no job in queue" row. #}

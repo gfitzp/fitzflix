@@ -129,13 +129,13 @@
 // Lookahead on the pick fields. The suggestions are the canonical strings
 // that the server-side resolvers parse. Thus, a picked title always resolves.
 // The debounce and dropdown interaction is the same as in the global
-// search in base.html.
+// search in search.js.
 document.querySelectorAll(".dvr-title-lookahead").forEach(function (input) {
 	const menu = input.parentElement.querySelector(".dropdown-menu");
 	let timer = null;
 	let active = -1;
 
-	// The text that the menu can open for, as in base.html (#756). An
+	// The text that the menu can open for, as in search.js (#756). An
 	// answer for an other text is old.
 	let wanted = null;
 

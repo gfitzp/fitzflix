@@ -9,6 +9,7 @@ from datetime import timedelta
 import pytest
 
 from tests.factories import make_movie, make_movie_file
+from tests.conftest import page_with_scripts
 
 
 def test_enqueue_leaves_a_queued_trail_entry(app):
@@ -1816,7 +1817,7 @@ def test_the_queue_poll_paints_each_page_through_its_hook(admin_client):
     cards. Each pushes a hook onto window.fitzflixQueueHooks, and the
     poll calls each hook with the answer."""
 
-    home = admin_client.get("/").get_data(as_text=True)
+    home = page_with_scripts(admin_client, "/")
     assert "var hooks = window.fitzflixQueueHooks || [];" in home
     assert "function renderRunning(running) {" in home
     for painter in ("function refreshRows(", "function refreshCards("):
@@ -1828,13 +1829,13 @@ def test_the_queue_poll_paints_each_page_through_its_hook(admin_client):
 
     assert "var rowsEtag" not in home
 
-    queue = admin_client.get("/queue").get_data(as_text=True)
+    queue = page_with_scripts(admin_client, "/queue")
     assert queue.count("var rowsEtag = ") == 1
     assert "function refreshRows() {" in queue
     assert "window.fitzflixQueueHooks.push(refreshRows);" in queue
     assert "function refreshCards(" not in queue
 
-    activity = admin_client.get("/file-activity").get_data(as_text=True)
+    activity = page_with_scripts(admin_client, "/file-activity")
     assert "function refreshCards() {" in activity
     assert "window.fitzflixQueueHooks.push(refreshCards);" in activity
     assert "function refreshRows(" not in activity

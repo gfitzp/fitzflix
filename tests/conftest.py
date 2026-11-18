@@ -570,6 +570,24 @@ def dvr_rebuild_jobs(app):
     ]
 
 
+def page_with_scripts(client, path):
+    """Return the text of a page, then the text of each script file that it loads.
+
+    The scripts of base.html are files of app/static. A test of a page
+    script reads the page with this function. Thus, it reads the code
+    that the browser runs for the page."""
+
+    import re
+
+    body = client.get(path).get_data(as_text=True)
+    for source in re.findall(r'<script src="(/static/[^"?]+[.]js)"', body):
+        response = client.get(source)
+        assert response.status_code == 200, source
+        body += "\n" + response.get_data(as_text=True)
+        response.close()
+    return body
+
+
 def csrf_token_from(page_html):
     """Return the csrf token that a rendered form carries."""
 

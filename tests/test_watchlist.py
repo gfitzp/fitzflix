@@ -15,6 +15,7 @@ from datetime import datetime
 from tests.factories import make_movie, make_movie_file
 from tests.conftest import csrf_token_from
 from tests.fakes import Response
+from tests.conftest import page_with_scripts
 
 NETFLIX = {"provider_id": 8, "provider_name": "Netflix", "logo_path": "/netflix.jpg"}
 
@@ -1307,12 +1308,12 @@ def test_last_tile_removal_reveals_the_empty_state(app, admin_client, admin_id):
         db.session.add(UserWatchlist(user_id=admin_id, movie_id=movie.id))
         db.session.commit()
 
-    page = admin_client.get("/watchlist").get_data(as_text=True)
+    page = page_with_scripts(admin_client, "/watchlist")
     assert re.search(
         r'<div data-watchlist-empty="filter" data-watchlist-total="1" hidden>', page
     )
     assert re.search(r'<div data-watchlist-empty="all" hidden>', page)
-    page = admin_client.get("/watchlist?q=zzzzzz").get_data(as_text=True)
+    page = page_with_scripts(admin_client, "/watchlist?q=zzzzzz")
     assert '<div data-watchlist-empty="filter" data-watchlist-total="1">' in page
 
     if shutil.which("node") is None:

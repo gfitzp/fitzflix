@@ -15,6 +15,7 @@ import pytest
 
 from datetime import datetime, timedelta, timezone
 from tests.conftest import csrf_token_from
+from tests.conftest import page_with_scripts
 
 
 def whatson_html(title="Shock Corridor", minutes_left=83, guid="8rWb21ax"):
@@ -1198,7 +1199,7 @@ def test_up_next_posters_carry_the_poster_popover(app, admin_client):
         json.dumps({"fetched_at": at(0), "upcoming": upcoming}),
     )
 
-    body = admin_client.get("/").get_data(as_text=True)
+    body = page_with_scripts(admin_client, "/")
     assert 'data-card-url="/movie_card?tmdb_id=995"' in body
     assert 'title="Stagecoach (1939)"' not in body
     # Stagecoach has no poster. The link still names the film.

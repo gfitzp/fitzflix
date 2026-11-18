@@ -187,7 +187,7 @@
 		   to a new page. Thus, a tap reads as registered while the server
 		   renders. Safari paints nothing of its own until the first
 		   bytes arrive, and a wait of 1 second looked like a missed tap.
-		   The handler in base.html sets nav-progress-active. The width
+		   The handler in site.js sets nav-progress-active. The width
 		   eases toward 90% and stays there until the next page replaces
 		   it */
 		#nav-progress { position: fixed; top: 0; left: 0; height: 3px; width: 0; background: var(--bs-primary); z-index: 2000; opacity: 0; pointer-events: none; transition: none; }
@@ -235,7 +235,7 @@
 		   to 4 lines, like the Criterion card. --bs-popover-max-width
 		   is the own design token of the tip. Thus, there is no cascade
 		   race with the CDN stylesheet. .poster-card is the contract
-		   that the base.html script looks for. The film card and the TV
+		   that the script poster_card.js looks for. The film card and the TV
 		   series card share it. Thus, both popovers are the same object
 		   with different facts inside */
 		.poster-card-pop { --bs-popover-max-width: min(22rem, calc(100vw - 1rem)); }

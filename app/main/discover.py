@@ -713,7 +713,7 @@ def file_activity():
     Activity trails (Glenn, 2026-08). A file that arrived renders as a
     full card here, with the trail chips of the file. A file still in
     flight shows as chips on the job rows of the queue page. On page 1,
-    the queue poll of base.html fetches /file-activity/cards. Thus, the
+    the queue poll of queue_badge.js fetches /file-activity/cards. Thus, the
     chips stay live, and the card of a new file appears in its place."""
 
     # paginate() reads a page below 1 as page 1. The page-1 checks below
@@ -968,7 +968,7 @@ def _trail_lookup(trails=None):
 def file_activity_cards():
     """Render the cards of page 1 of the File Activity dashboard.
 
-    The queue poll of base.html fetches this list on page 1. It sends
+    The queue poll of queue_badge.js fetches this list on page 1. It sends
     the ETag of its last list. If no card changed, the answer has no
     body (unchanged_poll_answer). Otherwise the poll keeps each card
     whose version did not change. It puts in the new cards in the order
