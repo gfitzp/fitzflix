@@ -812,6 +812,75 @@ def test_a_conversion_rename_moves_the_original_and_then_the_transcoded_copy(app
         )
 
 
+def test_a_library_archive_has_the_extension_of_the_library_file(app, monkeypatch):
+    """A modified/ or transcoded/ object is the library file (#778).
+
+    The import changes an MP4 into a Matroska file. The key of the
+    library archive has the extension of that file. The rip in
+    untouched/ keeps the name of its import."""
+
+    from app import db
+    from app.archive import archive_keys
+    from app.archive import uploads as archive_uploads
+
+    uploads = []
+
+    def fake_upload(path, key_prefix="", key_name=None, **kwargs):
+        uploads.append((key_prefix, key_name))
+        return os.path.join(key_prefix, key_name), datetime.utcnow(), 7
+
+    monkeypatch.setattr(archive_uploads, "aws_upload", fake_upload)
+    with app.app_context():
+        film = make_movie_file(make_movie("Remuxed Film", 2018), "WEBDL-1080p")
+        film.untouched_basename = "Remuxed Film (2018) - [WEBDL-1080p].mp4"
+        film.aws_key = "untouched/Remuxed Film (2018) - [WEBDL-1080p].mp4"
+        film.aws_date_uploaded = datetime(2026, 1, 1)
+        converted = make_movie_file(
+            make_movie("Remuxed Disc", 2019),
+            "Bluray-1080p",
+            converted_from_quality="Bluray-2160p",
+        )
+        converted.untouched_basename = "Remuxed Disc (2019) - [Bluray-2160p].m2ts"
+        db.session.commit()
+        assert film.basename == "Remuxed Film (2018) - [WEBDL-1080p].mkv"
+
+        assert archive_keys.archive_key_for(film, "untouched") == film.aws_key
+        assert archive_keys.archive_key_for(film, "modified") == (
+            "modified/Remuxed Film (2018) - [WEBDL-1080p].mkv"
+        )
+        assert archive_keys.archive_key_for(converted, "untouched") == (
+            "untouched/Remuxed Disc (2019) - [Bluray-2160p].m2ts"
+        )
+        assert archive_keys.archive_key_for(converted, "transcoded") == (
+            "transcoded/Remuxed Disc (2019) - [Bluray-1080p].mkv"
+        )
+
+        # An edit archives the library file with the extension of that file.
+        archive_uploads.archive_library_file(film, "/library/file.mkv")
+        assert uploads == [("modified", "Remuxed Film (2018) - [WEBDL-1080p].mkv")]
+        assert film.aws_key == "modified/Remuxed Film (2018) - [WEBDL-1080p].mkv"
+        assert archive_keys.archive_drift(film) is None
+
+
+def test_a_library_archive_with_the_extension_of_its_import_lags(app):
+    """A key from before #778 is drift. The converge run moves it."""
+
+    from app import db
+    from app.archive import archive_keys
+
+    with app.app_context():
+        film = make_movie_file(make_movie("Lagging Film", 2018), "WEBDL-1080p")
+        film.untouched_basename = "Lagging Film (2018) - [WEBDL-1080p].mp4"
+        film.aws_key = "modified/Lagging Film (2018) - [WEBDL-1080p].mp4"
+        film.aws_date_uploaded = datetime(2026, 1, 1)
+        db.session.commit()
+
+        assert archive_keys.archive_drift(film) == (
+            "modified/Lagging Film (2018) - [WEBDL-1080p].mp4",
+            "modified/Lagging Film (2018) - [WEBDL-1080p].mkv",
+        )
+
+
 def test_the_backfill_lists_the_drifted_rows_and_apply_requests_them(app):
     from app import db
     from app.cli import register
