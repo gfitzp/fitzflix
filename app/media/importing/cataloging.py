@@ -1,7 +1,6 @@
 """The third job of an import: write the records and give the file its final name."""
 
 import os
-import re
 import traceback
 from datetime import datetime, timedelta, timezone
 from functools import partial
@@ -45,7 +44,6 @@ from app.media.tracks.scan import replace_track_rows
 from app.media import videos
 from app.media.importing import chain, filenames, follow_ups, localization, space
 from app.media.triage import reset_triage_state
-from app.media.series_rename import series_for_import
 from app.plex.plex_library import REPLACEMENT_ANALYZE_DELAY
 from app.plex.plex_library import enqueue_plex_analyze
 from app.plex.plex_library import enqueue_plex_film_refresh
@@ -57,12 +55,6 @@ app = LocalProxy(get_app)
 # staging at most this many times. Then the import fails as before.
 
 MAX_VANISHED_RETRIES = 2
-
-# The wait of a cataloging for Sonarr, and the limit of the waits.
-# 12 waits of 5 minutes are 1 hour.
-
-SONARR_WAIT = timedelta(minutes=5)
-MAX_SONARR_WAITS = 12
 
 
 def _copy_vanished(hidden_output_file, staged_output, vanished_retries):
@@ -94,7 +86,6 @@ def finalize_localization(
     inspection,
     staged_output=None,
     vanished_retries=0,
-    sonarr_waits=0,
     lock_waits=0,
 ):
     """Add a localized file to the database and move it into position.
@@ -119,11 +110,6 @@ def finalize_localization(
     again from staged_output. MAX_VANISHED_RETRIES limits the returns.
     The task removes staged_output after the rename and the commit.
 
-    An episode finds its series first, before any record. When
-    Sonarr does not answer and a Sonarr rename can explain a new title,
-    the task waits SONARR_WAIT, up to MAX_SONARR_WAITS times. Then it
-    makes the new series.
-
     Each run first extends its title lock, as the move does. If
     another task took the lock meanwhile, the task waits for it. It
     writes no row and moves no file of the title until then.
@@ -144,7 +130,6 @@ def finalize_localization(
         )
         counters = {
             "vanished_retries": vanished_retries,
-            "sonarr_waits": sonarr_waits,
             "lock_waits": lock_waits,
         }
 
@@ -157,7 +142,7 @@ def finalize_localization(
 
         placement = None
         try:
-            # A dead volume, or a Sonarr wait, can requeue this task for
+            # A dead volume can requeue this task for
             # longer than the lock TTL. Then a new import of the same title
             # can take the lock. This check comes first. Thus, each retry
             # extends the lock, or waits for the other task. A Redis
@@ -193,8 +178,8 @@ def finalize_localization(
                     key=file_path,
                     delay=timedelta(minutes=5),
                     reason=f"Volumes unavailable ({', '.join(dead)}) for the cataloging",
-                    # The Sonarr wait count goes with the retry. Otherwise each
-                    # volume drop starts the limit of the waits again.
+                    # The wait counts go with the retry. Otherwise each
+                    # volume drop starts the limit of each wait again.
                     counters=counters,
                     args=(file_path, file_details, lock, hidden_output_file),
                     kwargs={"inspection": inspection, "staged_output": staged_output},
@@ -205,34 +190,10 @@ def finalize_localization(
             output_file = os.path.join(
                 current_app.config["LIBRARY_DIR"], file_details.get("file_path")
             )
-            series_id = None
-            if file_details.get("media_library") == TV_SHOWS:
-                verdict, series_id = resolve_import_series(file_details)
-                # End the read snapshot before the records. The Sonarr call
-                # stays out of the write transaction.
-                db.session.rollback()
-                if verdict == "wait" and sonarr_waits < MAX_SONARR_WAITS:
-                    localization.handoff(
-                        requeue,
-                        "app.media.importing.cataloging.finalize_localization",
-                        key=file_path,
-                        delay=SONARR_WAIT,
-                        reason="waits for Sonarr, because a Sonarr rename can "
-                        "own this series",
-                        counters={**counters, "sonarr_waits": sonarr_waits + 1},
-                        args=(file_path, file_details, lock, hidden_output_file),
-                        kwargs={
-                            "inspection": inspection,
-                            "staged_output": staged_output,
-                        },
-                        description=f"'{file_details.get('basename')}'",
-                    )
-                    return False
             records = _build_records(
                 file_details,
                 inspection,
                 os.path.basename(hidden_output_file),
-                series_id,
             )
             placement = _place_file(
                 file_path,
@@ -449,7 +410,7 @@ def _release_title_lock(lock):
     current_app.logger.info(f"Removed lock {lock}")
 
 
-def _build_records(file_details, inspection, output_name, series_id=None):
+def _build_records(file_details, inspection, output_name):
     """Write the records of a localized file to the session. Commit nothing.
 
     Return (file, worse_local_copies, worse_aws_keys, kept_archives,
@@ -457,9 +418,7 @@ def _build_records(file_details, inspection, output_name, series_id=None):
     worse library file. worse_aws_keys holds the archive keys to delete
     after the commit. kept_archives holds the archive-only originals to
     add with the commit. pending_emails holds the sends that wait for the
-    commit. This function reads no file. output_name is for the log.
-    series_id is the series of an episode that the cataloging found
-    before the records."""
+    commit. This function reads no file. output_name is for the log."""
 
     # Look for this File record in the database. If it does not exist,
     # make a new one. If it exists, update that record.
@@ -520,7 +479,7 @@ def _build_records(file_details, inspection, output_name, series_id=None):
     if file.media_library == MOVIES:
         _attach_movie(file, file_details)
     elif file.media_library == TV_SHOWS:
-        _attach_tv_series(file, file_details, series_id)
+        _attach_tv_series(file, file_details)
 
     # Set the file quality details.
 
@@ -716,75 +675,15 @@ def _existing_series(file_details):
     return tv_series
 
 
-def _show_folder(file_details):
-    """Return the show folder of the dirname of an episode, or None."""
-
-    parts = (file_details.get("dirname") or "").split("/")
-    return parts[1] if len(parts) > 1 and parts[0] == TV_SHOWS else None
-
-
-def _rename_plausible(title, folder):
-    """Return True if a Sonarr rename can explain a new series title.
-
-    The title has a year, a series with the bare title exists, and no
-    file of Fitzflix is in the show folder yet."""
-
-    year_form = re.fullmatch(r"(?P<base>.+) \((?P<year>\d{4})\)", title or "")
-    if not year_form or not folder:
-        return False
-    if TVSeries.query.filter_by(title=year_form.group("base")).first() is None:
-        return False
-    prefix = f"{TV_SHOWS}/{folder}"
-    return (
-        File.query.filter(
-            db.or_(File.dirname == prefix, File.dirname.like(f"{prefix}/%"))
-        ).first()
-        is None
-    )
-
-
-def resolve_import_series(file_details):
-    """Return (verdict, series id) for the series of an episode import.
-
-    The cataloging calls this function before it writes any record.
-    Thus, the Sonarr call does not hold the write transaction. The
-    verdict is "ok" with the id of the series, or with None for a new
-    series. A series that the name does not give can be the series of a
-    rename to the title that waits. It can be the series that Sonarr
-    keeps in the show folder of the file. The verdict is "wait" when
-    Sonarr did not answer and a Sonarr rename is possible. A new series
-    then would split the show."""
-
-    found = _existing_series(file_details)
-    title = file_details.get("title")
-    if found is not None or not title:
-        return "ok", found.id if found is not None else None
-    folder = _show_folder(file_details)
-    found, ok = series_for_import(title, folder)
-    if found is not None:
-        current_app.logger.info(
-            f"'{file_details.get('basename')}' The show folder {folder!r} "
-            f"belongs to {found}"
-        )
-        return "ok", found.id
-    if not ok and _rename_plausible(title, folder):
-        return "wait", None
-    return "ok", None
-
-
-def _attach_tv_series(file, file_details, series_id=None):
+def _attach_tv_series(file, file_details):
     """Find or make the TVSeries of an episode file and attach it.
 
-    series_id is the series that resolve_import_series found before the
-    records. Else the details name the series (_existing_series). Only
-    after that does the import make a new series. Else a Sonarr rename
-    that adds a year splits the show."""
+    The details name the series (_existing_series). Only after that
+    does the import make a new series."""
 
     title = file_details.get("title")
     current_app.logger.info(f"{file} Searching in TVSeries table using title='{title}")
-    tv_series = db.session.get(TVSeries, series_id) if series_id else None
-    if tv_series is None:
-        tv_series = _existing_series(file_details)
+    tv_series = _existing_series(file_details)
     if not tv_series:
         tv_series = TVSeries(title=file_details.get("title"))
         current_app.logger.info(f"{file} Creating {tv_series}")

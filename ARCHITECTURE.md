@@ -159,7 +159,7 @@ One subject has only 1 file, and that file is in `app/` itself. The file `app/fr
 | `videos.py` | The code that all file tasks share: the copy with progress, the title lock, and the control of the command-line tools |
 | `file_ranking.py` | The rule that selects the best copy of a title |
 | `naming.py` and `title_keys.py` | The names of the library files, and the keys that compare titles |
-| `series_rename.py` | The rename of a TV series on disk and in the database |
+| `series_rename.py` | The rename of a TV series on disk and in the database, and the nightly Sonarr path check |
 | `missing_files.py` | The best files that have no local copy |
 | `custom_artwork.py` | The custom posters on disk |
 | `triage.py` | The clips and pictures that help you examine a doubtful track |

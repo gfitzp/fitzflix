@@ -588,7 +588,7 @@ def test_finalize_defers_when_volumes_dead(app, monkeypatch):
         requeue_job_id(
             "app.media.importing.cataloging.finalize_localization",
             "/nonexistent/source.mkv",
-            {"vanished_retries": 0, "sonarr_waits": 0, "lock_waits": 0},
+            {"vanished_retries": 0, "lock_waits": 0},
         )
     ]
     # The retry keeps the inspection. It must not inspect again on the sql

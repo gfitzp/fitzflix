@@ -3,17 +3,16 @@
 This is the fix for Plex disambiguation (Batman becomes Batman (1966)).
 
 Fitzflix keeps its own TV naming. A series folder carries a year only
-when Glenn added one. Sonarr is where a series gets renamed. A
-rename in Sonarr carries over to Fitzflix: the title, the folder, the
-file rows, and the untouched names. The Sonarr path check
-(reconcile_sonarr_paths) does this nightly. The Sonarr webhook queues
-the check of one series when its folder differs. A Rename event of
-episode files in the same folder moves no video file. It changes the
-rows, and the episode thumbs and the trails follow. Sonarr sends a
-Rename event only when its On Rename trigger is on, and the set-up of
-the README does not turn it on. A series that Sonarr does not
-manage is not changed. Nothing
-adds a year to a series on its own.
+when Glenn added one. A person renames a series in Fitzflix, with the
+Rename Series form of the series page or with flask tv rename. The
+rename moves the folder and the files, changes the records, and gives
+Sonarr the new folder. Nothing adds a year to a series on its own.
+
+Fitzflix does not follow a rename that a person makes in Sonarr. The
+nightly Sonarr path check (reconcile_sonarr_paths) compares the 2
+folders of each series. It points Sonarr at the Fitzflix folder when
+the Sonarr folder is not there. Each other difference is a conflict.
+The check then changes nothing, and the admin gets a mail.
 
 A rename rewrites the untouched name of each file. It makes no request
 to S3. Each archive keeps its key, and the record keeps that key.
@@ -33,21 +32,19 @@ overlap the file pass of the sync.
 
 import os
 import shlex
-import re
-import time
 import traceback
 
 from datetime import datetime, timezone
 
-from flask import current_app, g
+from flask import current_app
 from pathvalidate import sanitize_filename
 from werkzeug.local import LocalProxy
 
 from app.media.custom_artwork import move_episode_thumb
-from app.tasks import delete_job, enqueue_task
+from app.tasks import enqueue_task
 from app.pipeline import migrate_renamed_file
 from app.plex.plex_rename import remember_rename
-from app import db, get_app, makedirs_on_mounted_volume, safe_job_id
+from app import db, get_app, makedirs_on_mounted_volume
 from app.models import TVSeries
 from app.media import videos
 from app.arr.arr_client import SONARR
@@ -62,13 +59,8 @@ from app import email
 from app.media.importing.filenames import reconstruct_filename
 from app.operations.maintenance import clear_leftover_directory
 from app.models import File
-from app.tasks import live_job_ids
 from app.tasks import TASKS
 from app.tasks import live_jobs
-from app.tasks import resolve_queue
-from app.tasks import requeue_job_id
-from app.media.importing import filenames
-from app import path_tag
 
 app = LocalProxy(get_app)
 
@@ -265,13 +257,20 @@ def rename_timeout(series):
     return max(floor, RENAME_SECONDS_PER_FILE * series.files.count())
 
 
+def series_with_a_rename():
+    """Return the ids of the series whose rename waits or runs."""
+
+    return {
+        job.args[0]
+        for job in live_jobs([TASKS[RENAME_TASK].queue])
+        if job.func_name == RENAME_TASK and job.args
+    }
+
+
 def rename_pending(series_id):
     """Return True if a rename of the series waits or runs."""
 
-    return any(
-        job.func_name == RENAME_TASK and job.args and job.args[0] == series_id
-        for job in live_jobs([TASKS[RENAME_TASK].queue])
-    )
+    return series_id in series_with_a_rename()
 
 
 def _take_series_locks(series, new_title, waits=None):
@@ -346,9 +345,9 @@ def _requeue_rename(series, new_title, reason, waits=None, counted=None):
             return False
         waits[counted] = done + 1
 
-    # The records can name a folder that Sonarr moved away while the
-    # rename waits. The marker holds the restores of the weekly sync for
-    # the series in that time, as it does after a refusal.
+    # While the rename waits, a record can name a path with no file.
+    # The marker holds the restores of the weekly sync for the series
+    # in that time, as it does after a refusal.
 
     _mark_conflict(series)
     counters = {name: count for name, count in waits.items() if count}
@@ -389,25 +388,17 @@ def _tell_admin_of_stray_files(series, new_title, stray, resumed=False):
 
     stray holds the paths, relative to LIBRARY_DIR, of the media files
     that belong to no record. A refusal mails 1 time for each life of
-    SONARR_STRAY_MAIL_KEY. Each refusal gives the marker a new life, as
-    the conflict marker gets each night. Thus, a refusal that comes back
-    each night sends 1 mail. A resumed rename (resumed=True) mails when
-    its waits are used up. That occurs 1 time for each rename. The
-    function never raises."""
+    SONARR_STRAY_MAIL_KEY (_first_refusal). A resumed rename
+    (resumed=True) mails when its waits are used up. That occurs 1 time
+    for each rename. The function never raises."""
 
     from markupsafe import escape
 
     try:
-        if not resumed:
-            key = SONARR_STRAY_MAIL_KEY.format(series_id=series.id)
-            try:
-                fresh = current_app.redis.set(key, "1", ex=SONARR_CONFLICT_TTL, nx=True)
-                if not fresh:
-                    current_app.redis.expire(key, SONARR_CONFLICT_TTL)
-                    return
-            except Exception:
-                # A Redis fault must not hide the refusal. Send the mail.
-                current_app.logger.warning(traceback.format_exc())
+        if not resumed and not _first_refusal(
+            SONARR_STRAY_MAIL_KEY.format(series_id=series.id)
+        ):
+            return
         names = sorted(stray)[:5]
         intro = (
             f"The series '{series.title}' is only partly renamed to "
@@ -425,10 +416,8 @@ def _tell_admin_of_stray_files(series, new_title, stray, resumed=False):
             "of its record again."
         )
         then = (
-            f"Then run flask tv rename {series.id} {shlex.quote(new_title)} again."
-            if resumed
-            else "After that, the nightly Sonarr check renames a series that "
-            "Sonarr moved."
+            f"Then rename the series to '{new_title}' again, with the form of "
+            f"its page or with flask tv rename {series.id} {shlex.quote(new_title)}."
         )
         listing = "\n".join(f"- {name}" for name in names)
         email.notify_admin_text(
@@ -551,8 +540,8 @@ def _move_series(series, new_title, waits=None):
     changes. A record whose file has its old basename in the new
     folder gets the file renamed to the planned name. A resumed rename
     whose rows changed already waits for the record of such a file. It
-    must not stop for good: the nightly check finds the new folder in
-    the rows and does not queue the rename again."""
+    must not stop for good, because the rows have the new folder
+    already."""
 
     if _tv_library_down():
         _requeue_rename(
@@ -592,9 +581,9 @@ def _move_series(series, new_title, waits=None):
         )
         return False
 
-    # The nightly check counted the files of the new folder. Sonarr can
-    # write there after the check, so the task counts them again before
-    # it changes a row.
+    # The new folder can exist already, for example after a rename in
+    # Sonarr. Each media file in it must belong to a record before a
+    # row changes.
 
     try:
         _claimed, unclaimed = _account_for_files(targets)
@@ -802,27 +791,19 @@ def _move_series(series, new_title, waits=None):
     return True
 
 
-# The Sonarr path check. Sonarr is where a series gets renamed.
-# Fitzflix keeps its own TV naming, so a folder carries a year only when
-# Glenn added one. The check finds the series whose Sonarr folder is not
-# the Fitzflix folder and carries the change over in one direction.
+# The Sonarr path check. A person renames a series in Fitzflix, and the
+# rename task gives Sonarr the new folder. The check finds the series
+# whose Sonarr folder is not the Fitzflix folder.
 
-# The nightly check changes at most this many series. More mismatches
-# than this point to a systemic cause, for example a changed mount or
-# root folder. Then the check changes nothing and warns.
+# The nightly check repoints at most this many series. More than this
+# point to a systemic cause, for example a changed mount or root
+# folder. Then the check changes nothing and warns.
 
 MAX_SONARR_FIXES = 20
 
-# The Sonarr events that carry series.path. The webhook compares the
-# folder of each one before it acknowledges the event.
-
-SONARR_SERIES_EVENTS = ("Rename", "Download", "SeriesAdd")
-
 # A series with a conflict gets this marker for 2 days. While it stands,
-# a Download event of the series queues no check. A Rename and a
-# SeriesAdd still do. Thus, a series that stays in conflict does not
-# write a warning for each episode. The weekly S3 sync requests no
-# restore of a file of a series with the marker.
+# the weekly S3 sync requests no restore of a file of the series. A
+# record of such a series can name a path that Sonarr moved away.
 # The nightly check sets the marker again each night at 05:45. A life
 # of 1 day ended at the next check, with no margin. A life of 2 days
 # keeps the marker through 1 night with no check. Then the marker of
@@ -831,17 +812,36 @@ SONARR_SERIES_EVENTS = ("Rename", "Download", "SeriesAdd")
 SONARR_CONFLICT_KEY = "fitzflix:sonarr:conflict:{series_id}"
 SONARR_CONFLICT_TTL = 2 * 86400
 
-# A refusal for media files with no record mails the admin 1 time for
-# each life of this marker. It has the life of the
-# conflict marker.
+# A refusal mails the admin 1 time for each life of its marker. The
+# first key is for a rename that media files with no record stop. The
+# second key is for a conflict of the path check. Each marker has the
+# life of the conflict marker.
 
 SONARR_STRAY_MAIL_KEY = "fitzflix:sonarr:stray-mail:{series_id}"
+SONARR_CONFLICT_MAIL_KEY = "fitzflix:sonarr:conflict-mail:{series_id}"
+
+
+def _first_refusal(key):
+    """Return True if no mail marker stands at key. Give the marker a new life.
+
+    Each refusal gives the marker a new life, as the conflict marker
+    gets each night. Thus, a refusal that comes back each night sends 1
+    mail. A Redis fault must not hide the refusal, and it returns True."""
+
+    try:
+        if current_app.redis.set(key, "1", ex=SONARR_CONFLICT_TTL, nx=True):
+            return True
+        current_app.redis.expire(key, SONARR_CONFLICT_TTL)
+        return False
+    except Exception:
+        current_app.logger.warning(traceback.format_exc())
+        return True
 
 
 def _summary(**counts):
     """Return the summary of a Sonarr path check, with each count at 0 first."""
 
-    summary = {"checked": 0, "renamed": 0, "repointed": 0, "conflicts": 0}
+    summary = {"checked": 0, "repointed": 0, "conflicts": 0}
     summary.update(counts)
     return summary
 
@@ -875,23 +875,6 @@ def _match_series(entry, lookup):
     return None
 
 
-def find_series(entry):
-    """Return the TV series of one Sonarr series, or None.
-
-    This is the match of _match_series, with 2 small queries in place of
-    the full lookup."""
-
-    lookup = ({}, {})
-    for index, column, key in (
-        (lookup[0], TVSeries.tvdb_id, entry.get("tvdbId")),
-        (lookup[1], TVSeries.tmdb_id, entry.get("tmdbId")),
-    ):
-        found = TVSeries.query.filter(column == key).limit(2).all() if key else []
-        if len(found) == 1:
-            index[key] = found[0]
-    return _match_series(entry, lookup)
-
-
 def sonarr_folder_of(entry):
     """Return the folder name at the end of the path of a Sonarr series."""
 
@@ -912,95 +895,6 @@ def fitzflix_folders(series):
     return folders
 
 
-def _unaccounted_reason(targets, titles):
-    """Return the reason that the Sonarr folder stops a rename, and the stray files.
-
-    targets holds (file, planned target) for each record. Each media file
-    of the Sonarr folder must belong to a record. At least 1 file
-    must be there. Otherwise the task moves nothing, and the records
-    point at a folder with no files. The reason is None when the rename
-    can go on. The stray files are the paths with no record when they
-    are the reason, else an empty set.
-
-    An import of the series that is not done is not a stray file.
-    Its record does not exist yet. titles holds the old and
-    the new title. When an import of either title is in flight and at
-    least 1 file is claimed, the rename goes on. The task waits for that
-    import in _take_series_locks and counts the files again under the
-    locks. Thus, a real stray file still stops it there."""
-
-    if any(target is None for _file, target in targets):
-        return "a file does not carry the series title", set()
-    try:
-        claimed, unclaimed = _account_for_files(targets)
-    except OSError as error:
-        return f"the Sonarr folder could not be read: {type(error).__name__}", set()
-    if unclaimed and not (claimed and _import_in_flight(titles)):
-        return (
-            f"{len(unclaimed)} media file(s) in the Sonarr folder belong to no "
-            f"record of the series: {sorted(unclaimed)[:5]}"
-        ), unclaimed
-    if not claimed:
-        return "no file of the series is in the Sonarr folder", set()
-    return None, set()
-
-
-def _import_in_flight(titles):
-    """Return True if an import of a series with one of these titles is not done."""
-
-    return chain.series_import_in_flight(titles) is not None
-
-
-def _rename_title(series, folder, sonarr_folder):
-    """Return the title that gives the series the Sonarr folder, or None.
-
-    The title goes through the checks of the rename task. The title must
-    be safe and free. The folder that the task makes from it must be the
-    Sonarr folder. Each media file of the Sonarr folder must belong to a
-    record of the series, and at least 1 file must be there. A
-    file of an import that is not done does not count. A refusal writes
-    one warning. A refusal for media files with no record also mails the
-    admin, 1 time for each life of SONARR_STRAY_MAIL_KEY."""
-
-    old_folder = _folder_title(series.title)
-    tail = folder[len(old_folder) :] if folder.startswith(old_folder) else None
-    title = sonarr_folder
-    if tail and sonarr_folder.endswith(tail):
-        title = sonarr_folder[: -len(tail)]
-
-    reason = None
-    stray = set()
-    if tail is None:
-        reason = f"the Fitzflix folder does not start with {old_folder!r}"
-    elif title == series.title:
-        reason = "the title does not change"
-    elif not _filesystem_safe(title):
-        reason = f"{title!r} is not safe as a folder name"
-    elif _renamed_folder(folder, old_folder, _folder_title(title)) != sonarr_folder:
-        reason = f"the title {title!r} does not give the folder {sonarr_folder!r}"
-    elif (
-        TVSeries.query.filter(TVSeries.title == title, TVSeries.id != series.id).first()
-        is not None
-    ):
-        reason = f"a series titled {title!r} exists"
-    else:
-        targets = [
-            (file, _planned_target(file, series.title, title))
-            for file in series.files.all()
-        ]
-        reason, stray = _unaccounted_reason(targets, {series.title, title})
-    if reason:
-        current_app.logger.warning(
-            f"Sonarr path check: {series.title!r} is at {sonarr_folder!r} in "
-            f"Sonarr and at {folder!r} in Fitzflix. Not renamed, because "
-            f"{reason}"
-        )
-        if stray:
-            _tell_admin_of_stray_files(series, title, stray)
-        return None
-    return title
-
-
 def _mark_conflict(series):
     """Mark the series as a Sonarr conflict for SONARR_CONFLICT_TTL.
 
@@ -1016,10 +910,42 @@ def _mark_conflict(series):
         current_app.logger.warning(traceback.format_exc())
 
 
-def _conflict(series):
-    """Return the conflict branch and mark the series for SONARR_CONFLICT_TTL."""
+def _tell_admin_of_conflict(series, detail):
+    """Mail the admin that the 2 folders of a series differ.
 
+    The mail goes out 1 time for each life of SONARR_CONFLICT_MAIL_KEY
+    (_first_refusal). The function never raises."""
+
+    from markupsafe import escape
+
+    try:
+        if not _first_refusal(SONARR_CONFLICT_MAIL_KEY.format(series_id=series.id)):
+            return
+        action = (
+            "Fitzflix changed nothing. If you renamed the series in Sonarr, "
+            "give it the same title in Fitzflix, with the Rename Series form "
+            "of its page. If you did not, give Sonarr the folder of Fitzflix "
+            "again. Until the 2 folders are the same, the weekly S3 sync "
+            "requests no restore for this series."
+        )
+        email.notify_admin_text(
+            "Sonarr folder needs triage",
+            f"{detail}.\n\n{action}",
+            f"<p>{escape(detail)}.</p><p>{escape(action)}</p>",
+        )
+    except Exception:
+        current_app.logger.error(traceback.format_exc())
+
+
+def _conflict(series, detail):
+    """Return the conflict branch of a series whose 2 folders differ.
+
+    detail says how they differ. The function writes one warning, marks
+    the series for SONARR_CONFLICT_TTL, and mails the admin."""
+
+    current_app.logger.warning(f"Sonarr path check: {detail}. Not changed")
     _mark_conflict(series)
+    _tell_admin_of_conflict(series, detail)
     return "conflict", None
 
 
@@ -1039,42 +965,31 @@ def series_in_sonarr_conflict(series_ids):
     return {series_id for series_id, value in zip(ids, values) if value is not None}
 
 
-def _sonarr_branch(series, entry):
+def _sonarr_branch(series, entry, renaming=()):
     """Compare the Sonarr folder of a series with its Fitzflix folder.
 
     Return the branch and its value. "no files" and "equal" change
-    nothing. "rename" gives the new title. "repoint" gives the Fitzflix
-    folder. "conflict" changes nothing and writes one warning. The
-    folders are compared after the Sonarr folder goes through the
-    checks of the rename task."""
+    nothing. "repoint" gives the Fitzflix folder. "conflict" changes
+    nothing. It writes one warning and mails the admin. renaming holds
+    the ids of the series whose rename waits or runs. The files of such
+    a series can be in 2 folders. It gets the marker and no mail."""
 
     sonarr_folder = sonarr_folder_of(entry)
     folders = fitzflix_folders(series)
     if not folders:
         return "no files", None
-
-    # An import can attach an episode in the Sonarr folder before the
-    # rename. Then the series has the Sonarr folder and 1 other
-    # folder. Only the rename branch can join them.
-
-    split = len(folders) == 2 and sonarr_folder in folders and None not in folders
-    if split:
-        folders = folders - {sonarr_folder}
-    elif len(folders) > 1 or None in folders:
-        current_app.logger.warning(
-            f"Sonarr path check: the files of {series.title!r} are in more "
-            f"than one show folder. Not changed"
+    if series.id in renaming:
+        _mark_conflict(series)
+        return "renaming", None
+    if len(folders) > 1 or None in folders:
+        return _conflict(
+            series, f"The files of {series.title!r} are in more than one show folder"
         )
-        return _conflict(series)
     (folder,) = folders
     if folder == sonarr_folder:
         return "equal", folder
     if not sonarr_folder:
-        current_app.logger.warning(
-            f"Sonarr path check: Sonarr gives no folder for {series.title!r}. "
-            f"Not changed"
-        )
-        return _conflict(series)
+        return _conflict(series, f"Sonarr gives no folder for {series.title!r}")
 
     # The check reads the folders under TV_LIBRARY, and a repoint keeps
     # the parent of the Sonarr path. Thus, a series on another Sonarr
@@ -1083,24 +998,25 @@ def _sonarr_branch(series, entry):
     library = current_app.config["TV_LIBRARY"]
     parent = os.path.dirname(os.path.normpath(entry.get("path") or "/"))
     if os.path.realpath(parent) != os.path.realpath(library):
-        current_app.logger.warning(
-            f"Sonarr path check: Sonarr holds {series.title!r} under "
-            f"{parent!r}, not under the TV library. Not changed"
+        return _conflict(
+            series,
+            f"Sonarr holds {series.title!r} under {parent!r}, not under the "
+            f"TV library",
         )
-        return _conflict(series)
     fitzflix_exists = os.path.isdir(os.path.join(library, folder))
     sonarr_exists = os.path.isdir(os.path.join(library, sonarr_folder))
-    if sonarr_exists and not fitzflix_exists:
-        title = _rename_title(series, folder, sonarr_folder)
-        return ("rename", title) if title else _conflict(series)
-    if fitzflix_exists and not sonarr_exists and not split:
+    if fitzflix_exists and not sonarr_exists:
         return "repoint", folder
-    current_app.logger.warning(
-        f"Sonarr path check: {series.title!r} is at {sonarr_folder!r} in "
-        f"Sonarr and at {folder!r} in Fitzflix. Not changed (Sonarr folder "
-        f"exists: {sonarr_exists}, Fitzflix folder exists: {fitzflix_exists})"
+    on_disk = {
+        (True, False): "Only the Sonarr folder is on the disk",
+        (True, True): "The 2 folders are on the disk",
+        (False, False): "No folder of the 2 is on the disk",
+    }[(sonarr_exists, fitzflix_exists)]
+    return _conflict(
+        series,
+        f"{series.title!r} is at {sonarr_folder!r} in Sonarr and at {folder!r} "
+        f"in Fitzflix. {on_disk}",
     )
-    return _conflict(series)
 
 
 def _tv_library_missing():
@@ -1115,116 +1031,6 @@ def _tv_library_missing():
         "Sonarr path check: the TV library is not mounted. Nothing changed"
     )
     return True
-
-
-def _job_pending(queue, *job_ids):
-    """Return True if a job with one of these ids waits, runs, or is scheduled.
-
-    An id with a time tag (the id, "_", and digits) counts as the id."""
-
-    return any(
-        found == job_id or re.fullmatch(re.escape(job_id) + r"_\d+", found)
-        for found in live_job_ids(queue)
-        for job_id in job_ids
-    )
-
-
-def _series_of_pending_rename(title):
-    """Return the series that a rename to this title waits for, or None."""
-
-    for job in live_jobs([TASKS[RENAME_TASK].queue]):
-        if job.func_name != RENAME_TASK or len(job.args) < 2:
-            continue
-        if job.args[1] == title:
-            series = db.session.get(TVSeries, job.args[0])
-            if series is not None:
-                return series
-    return None
-
-
-def _sonarr_series_list():
-    """Return the Sonarr series list, or None after a fault. Read it 1 time per app context.
-
-    The cataloging reads it before its records. Thus,
-    a slow Sonarr does not hold the open write transaction."""
-
-    if "sonarr_series" not in g:
-        try:
-            g.sonarr_series = sonarr_push._sonarr("GET", "/api/v3/series") or []
-        except Exception as e:
-            current_app.logger.warning(
-                f"Sonarr path check: couldn't list the Sonarr series: {e}"
-            )
-            g.sonarr_series = None
-    return g.sonarr_series
-
-
-def _series_of_sonarr_folder(folder):
-    """Return (series, ok) for the series that Sonarr keeps in a show folder.
-
-    The Sonarr series must match exactly 1 series by its ids. ok is
-    False when Sonarr is configured but did not answer."""
-
-    if not folder or not sonarr_push.sonarr_configured():
-        return None, True
-    entries = _sonarr_series_list()
-    if entries is None:
-        return None, False
-    library = os.path.realpath(current_app.config["TV_LIBRARY"])
-    found = set()
-    for entry in entries:
-        parent = os.path.dirname(os.path.normpath(entry.get("path") or "/"))
-        if sonarr_folder_of(entry) == folder and os.path.realpath(parent) == library:
-            series = find_series(entry)
-            if series is not None:
-                found.add(series)
-    return (found.pop() if len(found) == 1 else None), True
-
-
-def series_for_import(title, folder):
-    """Return (series, ok) for the series that a new episode title belongs to.
-
-    The import calls this function before it makes a new series. A
-    rename to the title can wait for the import. Then the episode goes
-    to the series of that rename. Else Sonarr can keep the show folder
-    of the file for a series. Sonarr renames a series folder, for
-    example "Batman" to "Batman (1966)", and the TMDB first-air year
-    cannot always confirm the year. The Sonarr ids can. ok is False
-    when Sonarr did not answer."""
-
-    series = _series_of_pending_rename(title)
-    if series is not None:
-        return series, True
-    return _series_of_sonarr_folder(folder)
-
-
-def _enqueue_once(name, job_id, *args, description, also=(), timeout=None):
-    """Queue a task with a fixed job id, once. Return the job, or None.
-
-    The function does nothing if the job, or a job with an id in also,
-    waits or runs. The finished job of the id is deleted first. Else the
-    new job keeps the expiry of the old hash and can vanish in the
-    queue. A failed job stays in the failed jobs for the sweep. Then the
-    new job gets the id with a time tag. A timeout replaces the timeout
-    of the task."""
-
-    from rq.exceptions import NoSuchJobError
-    from rq.job import Job
-
-    queue = resolve_queue(TASKS[name].queue)
-    if _job_pending(queue, job_id, *also):
-        return None
-    try:
-        old = Job.fetch(job_id, connection=queue.connection)
-    except NoSuchJobError:
-        old = None
-    if old is not None and old.is_failed:
-        job_id = f"{job_id}_{int(time.time())}"
-    elif old is not None:
-        delete_job(old)
-    return enqueue_task(
-        name, *args, description=description, job_id=job_id, timeout=timeout
-    )
 
 
 def _adopt_tvdb_id(series, entry):
@@ -1247,57 +1053,40 @@ def _adopt_tvdb_id(series, entry):
     )
 
 
-def _apply_branch(series, entry, branch, value):
-    """Carry out a rename or a repoint. Return True if it was done or queued."""
+def _repoint(series, entry, folder):
+    """Point the Sonarr series at the Fitzflix folder. Return True if it was done."""
 
     sonarr_folder = sonarr_folder_of(entry)
     _adopt_tvdb_id(series, entry)
-    if branch == "rename":
-        name = RENAME_TASK
-        job = _enqueue_once(
-            name,
-            safe_job_id(f"sonarr-rename:{series.id}"),
-            series.id,
-            value,
-            description=f"Renaming TV series {series.id} to '{value}' after Sonarr",
-            also=(requeue_job_id(name, series.id),),
-            timeout=rename_timeout(series),
-        )
-        current_app.logger.info(
-            f"Sonarr path check: Sonarr moved {series.title!r} to "
-            f"{sonarr_folder!r}. "
-            + ("Renaming the series" if job else "A rename is already queued")
-        )
-        return job is not None
     try:
-        done = _update_sonarr_path(series, sonarr_folder, value)
+        done = _update_sonarr_path(series, sonarr_folder, folder)
     except Exception as e:
         current_app.logger.warning(
             f"Sonarr path check: couldn't repoint {series.title!r} from "
-            f"{sonarr_folder!r} to {value!r}: {e}"
+            f"{sonarr_folder!r} to {folder!r}: {e}"
         )
         return False
     current_app.logger.info(
         f"Sonarr path check: Sonarr points {series.title!r} at the missing "
         f"folder {sonarr_folder!r}. "
-        + (f"Repointed at {value!r}" if done else "Sonarr did not take the path")
+        + (f"Repointed at {folder!r}" if done else "Sonarr did not take the path")
     )
     return done
 
 
 def reconcile_sonarr_paths():
-    """Carry each Sonarr series folder over to Fitzflix or back.
+    """Compare each Sonarr series folder with the Fitzflix folder of the series.
 
-    This is a task. It runs nightly. Sonarr sends no event for a folder
-    move. A push to Sonarr after a Fitzflix rename is lost when Sonarr
-    is down. This check finds both cases. It matches each Sonarr series
-    to a TV series by TheTVDB id and compares the 2 folders.
+    This is a task. It runs nightly. A push to Sonarr after a Fitzflix
+    rename is lost when Sonarr is down. A person can also move a series
+    folder in Sonarr, and Sonarr sends no event for that. This check
+    finds both cases. It matches each Sonarr series to a TV series by
+    TheTVDB id and compares the 2 folders.
 
-    If only the Sonarr folder exists, Sonarr moved the series, and the
-    rename task carries the new title over. If only the Fitzflix folder
-    exists, Sonarr is repointed at it. If both or neither exist, the
-    check writes a warning and changes nothing. A series that Sonarr
-    does not manage is not checked. Return the summary counts."""
+    If only the Fitzflix folder exists, Sonarr is repointed at it. Each
+    other difference is a conflict. The check then changes nothing,
+    writes a warning, and mails the admin. A series that Sonarr does
+    not manage is not checked. Return the summary counts."""
 
     with app.app_context():
         if not sonarr_push.sonarr_configured():
@@ -1311,252 +1100,37 @@ def reconcile_sonarr_paths():
             return _summary(error="Sonarr unreachable")
 
         lookup = _series_lookup()
+        renaming = series_with_a_rename()
         summary = _summary()
         fixes = []
         for entry in entries:
             series = _match_series(entry, lookup)
             if series is None:
                 continue
-            branch, value = _sonarr_branch(series, entry)
+            branch, value = _sonarr_branch(series, entry, renaming)
             if branch == "no files":
                 continue
             summary["checked"] += 1
             if branch == "conflict":
                 summary["conflicts"] += 1
-            elif branch in ("rename", "repoint"):
-                fixes.append((series, entry, branch, value))
+            elif branch == "repoint":
+                fixes.append((series, entry, value))
 
         if len(fixes) > MAX_SONARR_FIXES:
             current_app.logger.warning(
-                f"Sonarr path check: {len(fixes)} series have a different "
-                f"folder, more than {MAX_SONARR_FIXES}. Nothing changed. Check "
-                f"the Sonarr root folder and the library mount"
+                f"Sonarr path check: Sonarr points {len(fixes)} series at a "
+                f"missing folder, more than {MAX_SONARR_FIXES}. Nothing changed. "
+                f"Check the Sonarr root folder and the library mount"
             )
             return _summary(**summary, over_limit=len(fixes))
 
-        for series, entry, branch, value in fixes:
-            if _apply_branch(series, entry, branch, value):
-                summary["renamed" if branch == "rename" else "repointed"] += 1
+        for series, entry, folder in fixes:
+            if _repoint(series, entry, folder):
+                summary["repointed"] += 1
 
         current_app.logger.info(
             f"Sonarr path check: {len(entries)} Sonarr series, "
-            f"{summary['checked']} checked, {summary['renamed']} renamed, "
-            f"{summary['repointed']} repointed, {summary['conflicts']} left "
-            f"for review"
+            f"{summary['checked']} checked, {summary['repointed']} repointed, "
+            f"{summary['conflicts']} left for review"
         )
         return summary
-
-
-def _sonarr_entry(series):
-    """Return the Sonarr series of a TV series, or None."""
-
-    path = "/api/v3/series"
-    if series.tvdb_id:
-        path += f"?tvdbId={int(series.tvdb_id)}"
-    lookup = ({series.tvdb_id: series}, {series.tmdb_id: series})
-    return next(
-        (
-            item
-            for item in sonarr_push._sonarr("GET", path) or []
-            if _match_series(item, lookup)
-        ),
-        None,
-    )
-
-
-def _row_for_previous_path(series, previous_path):
-    """Return the File row of a series at a library path, or None."""
-
-    if not previous_path:
-        return None
-    library_dir = current_app.config["LIBRARY_DIR"]
-    relative = os.path.relpath(os.path.normpath(previous_path), library_dir)
-    if relative.startswith(os.pardir):
-        return None
-    return File.query.filter_by(file_path=relative, series_id=series.id).first()
-
-
-def _adoption_details(series, file, path):
-    """Return the parsed details of a renamed episode file and a refusal.
-
-    The refusal is None when the row can take the new path. The path
-    must be a file under the TV library. Its name must parse as the same
-    episode of the same series, with the same quality and screen format.
-    The name must give the exact path. The version text can change. No
-    other row can hold the path."""
-
-    from app.media.manual_imports import fitzflix_basename
-
-    library = os.path.realpath(current_app.config["TV_LIBRARY"])
-    real = os.path.realpath(path)
-    if os.path.commonpath([real, library]) != library:
-        return None, "it is outside the TV library"
-    if not os.path.isfile(real):
-        return None, "it does not exist"
-    if not fitzflix_basename(os.path.basename(real)):
-        return None, "its name is not in the Fitzflix form"
-    relative = os.path.relpath(
-        real, os.path.realpath(current_app.config["LIBRARY_DIR"])
-    )
-    details = filenames.evaluate_filename(real, log=False)
-    if not details or details["file_path"] != relative:
-        return None, "its name does not give this path"
-    wanted = {
-        "title": series.title,
-        "season": file.season,
-        "episode": file.episode,
-        "last_episode": file.last_episode,
-        "quality_title": file.quality.quality_title if file.quality else None,
-        "fullscreen": True if file.fullscreen else None,
-    }
-    changed = sorted(key for key, value in wanted.items() if details[key] != value)
-    if changed:
-        return None, f"its name changes the {', '.join(changed)}"
-    other = File.query.filter_by(file_path=relative).first()
-    if other is not None and other.id != file.id:
-        return None, "another record holds the path"
-    return details, None
-
-
-def _adopt_episode_paths(series, renamed_files):
-    """Point the File rows at the episode files that Sonarr renamed.
-
-    Nothing moves on the disk. Sonarr moved the files. The row takes the
-    new path, name and Plex title, and the version text of the new name.
-    The untouched name stays, and the archive key too. Each row changes
-    under the title lock of its episode, as an import or an edit of the
-    episode holds it. A file whose lock is held is skipped and logged.
-    Return the number of adopted rows."""
-
-    adopted = 0
-    for item in renamed_files:
-        previous, path = item.get("previousPath"), item.get("path")
-        file = _row_for_previous_path(series, previous)
-        if file is None or not path:
-            current_app.logger.info(
-                f"Sonarr rename: no record of {series.title!r} is at "
-                f"{previous!r}. Skipped"
-            )
-            continue
-        details, reason = _adoption_details(series, file, path)
-        if reason is None:
-            lock = current_app.lock_manager.lock(file.file_identifier(), 60000)
-            reason = None if lock else "another task holds its title lock"
-        if reason:
-            current_app.logger.warning(
-                f"Sonarr rename: {file.basename!r} not moved to {path!r}, "
-                f"because {reason}"
-            )
-            continue
-        old_basename = file.basename
-        old_names = (file.basename, file.untouched_basename)
-        old_video = os.path.join(current_app.config["LIBRARY_DIR"], file.file_path)
-        try:
-            for key in ("dirname", "basename", "file_path", "plex_title", "edition"):
-                setattr(file, key, details[key])
-            db.session.commit()
-            # The card of the new name keeps the chips of the file, as in
-            # the rename task. The untouched name stays.
-            migrate_renamed_file(
-                current_app.redis, old_names, (file.basename, file.untouched_basename)
-            )
-            # Sonarr moved the video. The episode thumb follows.
-            move_episode_thumb(
-                old_video,
-                os.path.join(current_app.config["LIBRARY_DIR"], file.file_path),
-            )
-        finally:
-            current_app.lock_manager.unlock(lock)
-        adopted += 1
-        current_app.logger.info(
-            f"Sonarr rename: {old_basename!r} is now {file.basename!r}"
-        )
-    return adopted
-
-
-def reconcile_sonarr_series(series_id, renamed_files=()):
-    """Run the Sonarr path check for one series, after a Sonarr event.
-
-    This is a task. The webhook queues it. renamed_files holds the
-    previousPath and path of each episode file of a Sonarr rename. The
-    series branch runs first. The rows follow the renamed episode files
-    only when the 2 folders are equal. A folder change goes through the
-    rename task, and the rows then hold the new folder."""
-
-    with app.app_context():
-        series = db.session.get(TVSeries, series_id)
-        if series is None or not sonarr_push.sonarr_configured():
-            return _summary(error="no series or Sonarr is not configured")
-        if _tv_library_missing():
-            return _summary(error="TV library not mounted")
-        try:
-            entry = _sonarr_entry(series)
-        except Exception as e:
-            current_app.logger.warning(
-                f"Sonarr path check: couldn't read {series.title!r}: {e}"
-            )
-            return _summary(error="Sonarr unreachable")
-        if entry is None:
-            current_app.logger.info(
-                f"Sonarr path check: Sonarr does not manage {series.title!r}"
-            )
-            return _summary(error="not in Sonarr")
-
-        branch, value = _sonarr_branch(series, entry)
-        summary = _summary(checked=int(branch != "no files"), adopted=0)
-        if branch == "conflict":
-            summary["conflicts"] = 1
-        elif branch in ("rename", "repoint"):
-            if _apply_branch(series, entry, branch, value):
-                summary["renamed" if branch == "rename" else "repointed"] = 1
-        if renamed_files and branch == "equal":
-            summary["adopted"] = _adopt_episode_paths(series, renamed_files)
-        elif renamed_files:
-            current_app.logger.info(
-                f"Sonarr rename: the folder of {series.title!r} changes first. "
-                f"The episode paths are not adopted"
-            )
-        return summary
-
-
-def queue_series_reconcile(event, sonarr_series, renamed_files=None):
-    """Queue the Sonarr path check of one series after a Sonarr event.
-
-    The webhook calls this function before it acknowledges the event.
-    The job goes on the queue when the 2 folders differ. It also goes on
-    the queue when a renamed episode file was at the path of a record.
-    The job id holds the series and the renamed files. Thus, a repeat of
-    the event adds no second job. Return the job, or None."""
-
-    series = find_series(sonarr_series)
-    if series is None:
-        return None
-    marker = SONARR_CONFLICT_KEY.format(series_id=series.id)
-    if event == "Download" and current_app.redis.exists(marker):
-        return None
-    folder = sonarr_folder_of(sonarr_series)
-    folders = fitzflix_folders(series)
-    renamed = [
-        {"previousPath": item.get("previousPath"), "path": item.get("path")}
-        for item in renamed_files or []
-        if isinstance(item, dict)
-        and _row_for_previous_path(series, item.get("previousPath")) is not None
-    ]
-    if (not folders or folders == {folder}) and not renamed:
-        return None
-
-    key = f"sonarr-reconcile:{series.id}"
-    if renamed:
-        key += ":" + path_tag(repr(renamed))
-    job = _enqueue_once(
-        "app.media.series_rename.reconcile_sonarr_series",
-        safe_job_id(key),
-        series.id,
-        renamed,
-        description=f"Checking the Sonarr path of '{series.title}'",
-    )
-    current_app.logger.info(
-        f"Sonarr {event}: {series.title!r} is at {folder!r} in Sonarr. "
-        + ("Checking the series" if job else "A check is already queued")
-    )
-    return job

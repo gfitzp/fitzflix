@@ -219,6 +219,5 @@ def test_the_sonarr_path_check_runs_after_the_radarr_check(app):
     assert name not in {row["func"] for row in cron_table({"SONARR_URL": "x"})}
 
     radarr = TASKS["app.arr.radarr_push.reconcile_radarr_paths"]
-    for task in (name, "app.media.series_rename.reconcile_sonarr_series"):
-        assert TASKS[task].queue == radarr.queue == "maintenance"
-        assert TASKS[task].timeout == radarr.timeout
+    assert TASKS[name].queue == radarr.queue == "maintenance"
+    assert TASKS[name].timeout == radarr.timeout

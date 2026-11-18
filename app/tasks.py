@@ -173,9 +173,6 @@ TASKS = {
     "app.media.series_rename.reconcile_sonarr_paths": TaskSpec(
         "maintenance", 900, "Checking the Sonarr series paths"
     ),
-    "app.media.series_rename.reconcile_sonarr_series": TaskSpec(
-        "maintenance", 900, "Checking the Sonarr path of a series"
-    ),
     "app.media.custom_artwork.reconcile_library_posters": TaskSpec(
         "maintenance", 1800, "Restoring the custom posters of the library folders"
     ),

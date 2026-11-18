@@ -289,10 +289,9 @@ def _reconcile_files(listing, job):
     The inventory lists the best files for a bulk restore.
 
     The pass requests no restore of a TV file whose series has the
-    Sonarr conflict marker. After a refused Sonarr
-    rename, the records name the folder that Sonarr moved away. Then
-    each best copy of the series looks absent, and the files are in the
-    Sonarr folder. The markers are read 1 time for the pass. A Redis
+    Sonarr conflict marker. After a rename in Sonarr, the records name
+    the folder that Sonarr moved away. Then each best copy of the series
+    looks absent, and the files are in the Sonarr folder. The markers are read 1 time for the pass. A Redis
     fault there holds the restore of each TV file for this run.
 
     A library volume can drop during the pass. Then each later

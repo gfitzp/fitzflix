@@ -266,33 +266,6 @@ def _assert_kept(app, lock, unlocked, source, hidden, staged):
     assert not hidden.exists() and not staged.exists()
 
 
-def test_a_failed_sonarr_wait_keeps_the_source(app, tmp_path, monkeypatch):
-    from app.media.importing import cataloging
-    from app.media.importing import chain
-    from app.media.importing import follow_ups
-    from app.media.importing import library_move
-    from app.media.importing import localization
-
-    monkeypatch.setattr(
-        cataloging, "resolve_import_series", lambda details: ("wait", None)
-    )
-    monkeypatch.setattr(chain, "requeue", _refuse)
-    monkeypatch.setattr(localization, "requeue", _refuse)
-    monkeypatch.setattr(library_move, "requeue", _refuse)
-    monkeypatch.setattr(cataloging, "requeue", _refuse)
-    monkeypatch.setattr(follow_ups, "requeue", _refuse)
-    unlocked = _lock_watch(app, monkeypatch)
-    with app.app_context():
-        source, hidden, staged, details, lock = _finalize_fixture(
-            app, tmp_path, "Sonarr Wait Fault - S01E01 - [HDTV-720p].mkv", "TV Shows"
-        )
-        result = cataloging.finalize_localization(
-            str(source), details, lock, str(hidden), {}, staged_output=str(staged)
-        )
-    assert result is False
-    _assert_kept(app, lock, unlocked, source, hidden, staged)
-
-
 def test_a_failed_vanished_copy_retry_keeps_the_source(app, tmp_path, monkeypatch):
     import errno
 
