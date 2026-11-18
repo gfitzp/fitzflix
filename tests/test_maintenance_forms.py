@@ -39,7 +39,7 @@ def _post(admin_client, data, follow=True):
 
 def test_the_scan_form_queues_the_library_scan(app, admin_client, queued):
     response = _post(admin_client, {"scan_submit": "Rescan"})
-    assert queued == ["app.media.tracks.track_metadata_scan_library"]
+    assert queued == ["app.media.tracks.scan.track_metadata_scan_library"]
     assert "Scanning track metadata for all files in the library" in (
         response.get_data(as_text=True)
     )
@@ -120,7 +120,7 @@ def _queued_names(app):
         ),
         ({"tmdb_refresh": "1"}, "app.metadata.tmdb_refresh.refresh_tmdb_info"),
         ({"sync_submit": "1"}, "app.archive.sync.sync_aws_s3_storage_task"),
-        ({"scan_submit": "1"}, "app.media.tracks.track_metadata_scan_library"),
+        ({"scan_submit": "1"}, "app.media.tracks.scan.track_metadata_scan_library"),
     ],
 )
 def test_a_second_bulk_post_queues_nothing(app, admin_client, data, name):
@@ -154,17 +154,17 @@ def test_the_library_scan_jobs_keep_a_new_scan_out(app, admin_client):
     """The per-file jobs of a scan count as the run (#439)."""
 
     from app.tasks import BULK_GATE_KEY, bulk_job_id, enqueue_task
-    from app.media.tracks import TRACK_SCAN_FILE_RUN
+    from app.media.tracks.scan import TRACK_SCAN_FILE_RUN
 
     with app.app_context():
         enqueue_task(
-            "app.media.tracks.track_metadata_scan_task",
+            "app.media.tracks.scan.track_metadata_scan_task",
             1,
             job_id=bulk_job_id(TRACK_SCAN_FILE_RUN),
         )
     body = _post(admin_client, {"scan_submit": "1"}).get_data(as_text=True)
     assert "already queued or running" in body
-    assert "app.media.tracks.track_metadata_scan_library" not in _queued_names(app)
+    assert "app.media.tracks.scan.track_metadata_scan_library" not in _queued_names(app)
     assert not list(app.redis.scan_iter(BULK_GATE_KEY.format("*")))
 
 
@@ -196,13 +196,16 @@ def test_a_run_that_failed_at_once_can_start_again(app, admin_client):
     (job,) = [
         job
         for job in app.sql_queue.jobs
-        if job.func_name == "app.media.tracks.track_metadata_scan_library"
+        if job.func_name == "app.media.tracks.scan.track_metadata_scan_library"
     ]
     job.delete()
 
     body = _post(admin_client, {"scan_submit": "1"}).get_data(as_text=True)
     assert "already queued or running" not in body
-    assert _queued_names(app).count("app.media.tracks.track_metadata_scan_library") == 1
+    assert (
+        _queued_names(app).count("app.media.tracks.scan.track_metadata_scan_library")
+        == 1
+    )
 
 
 def test_a_reimport_never_replaces_a_file_that_just_arrived(

@@ -21,7 +21,7 @@ def test_criterion_settled(app):
 
 
 def test_catalog_rows_for_skips_the_consumed_the_excluded_and_the_set_shells(app):
-    from app.main.library import catalog_rows_for
+    from app.main.criterion_pages import catalog_rows_for
 
     releases = [
         {
@@ -85,7 +85,7 @@ def test_catalog_rows_for_skips_the_consumed_the_excluded_and_the_set_shells(app
 def test_a_set_member_without_a_tmdb_id_does_not_repeat_a_release_with_one(app):
     """Wikidata holds Lonesome (1928) as #623 and in its collector's set (#382)."""
 
-    from app.main.library import catalog_rows_for
+    from app.main.criterion_pages import catalog_rows_for
 
     releases = [
         {
@@ -154,7 +154,7 @@ def test_a_set_member_without_a_tmdb_id_does_not_repeat_a_release_with_one(app):
 def test_a_set_member_first_in_the_cache_is_still_dropped(app):
     """The plain row comes before the release with a TMDB id (#382 follow-up)."""
 
-    from app.main.library import catalog_rows_for
+    from app.main.criterion_pages import catalog_rows_for
 
     releases = [
         {
@@ -178,7 +178,7 @@ def test_a_set_member_first_in_the_cache_is_still_dropped(app):
 
 
 def test_criterion_sort_key_puts_set_members_at_the_spine_of_their_set(app):
-    from app.main.library import criterion_sort_key
+    from app.main.criterion_pages import criterion_sort_key
 
     rows = [
         {"spine": None, "title": "No Spine", "year": 2000},
@@ -197,7 +197,7 @@ def test_criterion_sort_key_puts_set_members_at_the_spine_of_their_set(app):
 def test_criterion_sort_key_keeps_the_spellings_of_a_set_together(app):
     """2 spellings of 1 set title sort together (#697)."""
 
-    from app.main.library import criterion_sort_key
+    from app.main.criterion_pages import criterion_sort_key
 
     rows = [
         {"spine": 50, "title": "One", "year": 1960, "set_title": "Set"},
@@ -233,7 +233,7 @@ def test_set_title_key_follows_the_collation_of_the_database(app):
 
 
 def test_merge_credit_rows_folds_cast_and_crew_into_1_row(app):
-    from app.main.library import merge_credit_rows
+    from app.main.people_pages import merge_credit_rows
 
     credits = {
         "cast": [

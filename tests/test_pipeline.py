@@ -1610,7 +1610,7 @@ def test_the_queue_shows_only_the_newest_journey_of_a_file(app):
         record_job_event(app.redis, archive, "done")
 
         flags = app.file_queue.enqueue(
-            "app.media.tracks.mkvpropedit_task", args=(file.id,)
+            "app.media.tracks.edits.mkvpropedit_task", args=(file.id,)
         )
 
         def stages(trails):
@@ -1629,7 +1629,9 @@ def test_the_queue_shows_only_the_newest_journey_of_a_file(app):
 
         record_job_event(app.redis, flags, "started")
         record_job_event(app.redis, flags, "failed")
-        app.file_queue.enqueue("app.media.tracks.mkvpropedit_task", args=(file.id,))
+        app.file_queue.enqueue(
+            "app.media.tracks.edits.mkvpropedit_task", args=(file.id,)
+        )
         assert stages(pipeline_trails(app.redis, journey_only=True)) == [
             "Setting track flags",
             "Setting track flags",

@@ -406,7 +406,7 @@ def test_build_localize_command(app, subtitles, foreign, expected):
 def test_the_two_spellings_of_a_language_match():
     """The terminological and bibliographic codes name 1 language (#423)."""
 
-    from app.media.tracks import file_language_spelling, same_language
+    from app.media.tracks.languages import file_language_spelling, same_language
 
     assert same_language("ger", "deu") and same_language("fra", "fre")
     assert same_language("ENG", "eng")

@@ -35,7 +35,7 @@ def test_lossless_track_gains_a_leading_flac_twin(app):
 
     A lossy track keeps its position after the pair."""
 
-    from app.media.tracks import plan_audio_supplements
+    from app.media.tracks.audio_supplements import plan_audio_supplements
 
     tracks = [
         track("MLP FBA", "Lossless"),
@@ -51,7 +51,7 @@ def test_lossless_track_gains_a_leading_flac_twin(app):
 def test_flac_and_pcm_originals_need_no_twin(app):
     """Plan no twin for FLAC and PCM. They already play natively."""
 
-    from app.media.tracks import plan_audio_supplements
+    from app.media.tracks.audio_supplements import plan_audio_supplements
 
     tracks = [
         track("FLAC", "Lossless"),
@@ -71,7 +71,7 @@ def test_existing_twin_makes_the_pass_a_no_op(app):
     That rip already has a FLAC twin before the lossless original. Thus,
     a re-import never stacks twins."""
 
-    from app.media.tracks import plan_audio_supplements
+    from app.media.tracks.audio_supplements import plan_audio_supplements
 
     tracks = [
         track("FLAC", "Lossless"),
@@ -91,7 +91,7 @@ def test_twins_match_count_wise_within_a_group(app):
     The second lossless track has no FLAC before it. Thus, it still gets
     its twin, in place."""
 
-    from app.media.tracks import plan_audio_supplements
+    from app.media.tracks.audio_supplements import plan_audio_supplements
 
     tracks = [
         track("FLAC", "Lossless"),
@@ -115,7 +115,7 @@ def test_twins_match_by_language_not_channels(app):
     (and each FLAC decode of it) is 5.1. Thus, a channel-strict match
     would stack redundant twins on correct rips (the LOTR discs)."""
 
-    from app.media.tracks import plan_audio_supplements
+    from app.media.tracks.audio_supplements import plan_audio_supplements
 
     tracks = [
         track("FLAC", "Lossless", language="fr"),
@@ -146,7 +146,7 @@ def test_builder_numbers_by_output_position(app):
     index. The first output is the default. The builder clears each
     different disposition."""
 
-    from app.media.tracks import build_supplement_args
+    from app.media.tracks.audio_supplements import build_supplement_args
 
     plan = [("flac", 0), ("copy", 0), ("copy", 1)]
     assert build_supplement_args(plan) == [
@@ -305,7 +305,7 @@ def test_trailing_flac_is_never_counted_as_a_twin(app):
     track gets a new twin before it. The unknown FLAC keeps its place.
     The planner does not judge its identity."""
 
-    from app.media.tracks import plan_audio_supplements
+    from app.media.tracks.audio_supplements import plan_audio_supplements
 
     tracks = [
         track("DTS-HD Master Audio", "Lossless"),
@@ -339,7 +339,7 @@ def test_non_adjacent_flac_is_not_a_twin(app):
     not count. This is true even when the language and the channels
     match."""
 
-    from app.media.tracks import plan_audio_supplements
+    from app.media.tracks.audio_supplements import plan_audio_supplements
 
     tracks = [
         track("FLAC", "Lossless"),
@@ -359,7 +359,9 @@ def test_a_failed_flac_pass_removes_its_partial_output(app, monkeypatch, tmp_pat
 
     import subprocess
 
-    import app.media.tracks as tracks
+    from app.media.tracks import audio_supplements
+    from app.media.tracks import remux
+    from app.media.tracks import scan
     import app.media.videos as videos
 
     source = tmp_path / "film.mkv"
@@ -394,21 +396,23 @@ def test_a_failed_flac_pass_removes_its_partial_output(app, monkeypatch, tmp_pat
         raise subprocess.CalledProcessError(1, "ffmpeg")
 
     monkeypatch.setattr(
-        tracks,
+        scan,
         "get_audio_tracks_from_file",
         lambda path: [
             {"streamorder": 1, "format": "MLP FBA", "compression_mode": "Lossless"}
         ],
     )
-    monkeypatch.setattr(tracks, "plan_audio_supplements", lambda audio: [("flac", 1)])
-    monkeypatch.setattr(tracks, "build_supplement_args", lambda plan: [])
-    monkeypatch.setattr(tracks.MediaInfo, "parse", lambda path: Info())
-    monkeypatch.setattr(tracks.subprocess, "Popen", FakeProcess)
+    monkeypatch.setattr(
+        audio_supplements, "plan_audio_supplements", lambda audio: [("flac", 1)]
+    )
+    monkeypatch.setattr(audio_supplements, "build_supplement_args", lambda plan: [])
+    monkeypatch.setattr(scan.MediaInfo, "parse", lambda path: Info())
+    monkeypatch.setattr(remux.subprocess, "Popen", FakeProcess)
     monkeypatch.setattr(videos, "wait_for_subprocess", failing_wait)
 
     with app.app_context():
         try:
-            tracks.supplement_lossless_tracks(str(source))
+            audio_supplements.supplement_lossless_tracks(str(source))
         except subprocess.CalledProcessError:
             pass
 
@@ -421,7 +425,9 @@ def test_the_flac_pass_keeps_the_attachments(app, monkeypatch, tmp_path):
 
     import subprocess
 
-    import app.media.tracks as tracks
+    from app.media.tracks import audio_supplements
+    from app.media.tracks import remux
+    from app.media.tracks import scan
     import app.media.videos as videos
 
     source = tmp_path / "anime.mkv"
@@ -455,21 +461,23 @@ def test_the_flac_pass_keeps_the_attachments(app, monkeypatch, tmp_path):
         raise subprocess.CalledProcessError(1, "ffmpeg")
 
     monkeypatch.setattr(
-        tracks,
+        scan,
         "get_audio_tracks_from_file",
         lambda path: [
             {"streamorder": 1, "format": "MLP FBA", "compression_mode": "Lossless"}
         ],
     )
-    monkeypatch.setattr(tracks, "plan_audio_supplements", lambda audio: [("flac", 1)])
-    monkeypatch.setattr(tracks, "build_supplement_args", lambda plan: [])
-    monkeypatch.setattr(tracks.MediaInfo, "parse", lambda path: Info())
-    monkeypatch.setattr(tracks.subprocess, "Popen", FakeProcess)
+    monkeypatch.setattr(
+        audio_supplements, "plan_audio_supplements", lambda audio: [("flac", 1)]
+    )
+    monkeypatch.setattr(audio_supplements, "build_supplement_args", lambda plan: [])
+    monkeypatch.setattr(scan.MediaInfo, "parse", lambda path: Info())
+    monkeypatch.setattr(remux.subprocess, "Popen", FakeProcess)
     monkeypatch.setattr(videos, "wait_for_subprocess", failing_wait)
 
     with app.app_context():
         try:
-            tracks.supplement_lossless_tracks(str(source))
+            audio_supplements.supplement_lossless_tracks(str(source))
         except subprocess.CalledProcessError:
             pass
 
@@ -487,7 +495,9 @@ def test_a_truncated_matroska_without_a_duration_still_gets_its_twins(
     The FLAC pass must run without a progress percentage. It must not
     raise TypeError and send an imported file to rejects."""
 
-    import app.media.tracks as tracks
+    from app.media.tracks import audio_supplements
+    from app.media.tracks import remux
+    from app.media.tracks import scan
     import app.media.videos as videos
 
     source = tmp_path / "truncated.mkv"
@@ -519,21 +529,23 @@ def test_a_truncated_matroska_without_a_duration_still_gets_its_twins(
             pass
 
     monkeypatch.setattr(
-        tracks,
+        scan,
         "get_audio_tracks_from_file",
         lambda path: [
             {"streamorder": 1, "format": "MLP FBA", "compression_mode": "Lossless"}
         ],
     )
-    monkeypatch.setattr(tracks, "plan_audio_supplements", lambda audio: [("flac", 1)])
-    monkeypatch.setattr(tracks, "build_supplement_args", lambda plan: [])
-    monkeypatch.setattr(tracks.MediaInfo, "parse", lambda path: Info())
-    monkeypatch.setattr(tracks.subprocess, "Popen", FakeProcess)
+    monkeypatch.setattr(
+        audio_supplements, "plan_audio_supplements", lambda audio: [("flac", 1)]
+    )
+    monkeypatch.setattr(audio_supplements, "build_supplement_args", lambda plan: [])
+    monkeypatch.setattr(scan.MediaInfo, "parse", lambda path: Info())
+    monkeypatch.setattr(remux.subprocess, "Popen", FakeProcess)
     monkeypatch.setattr(videos, "wait_for_subprocess", lambda process, *a, **k: None)
-    monkeypatch.setattr(tracks, "copy_image_attachments", lambda *args: None)
+    monkeypatch.setattr(audio_supplements, "copy_image_attachments", lambda *args: None)
 
     with app.app_context():
-        tracks.supplement_lossless_tracks(str(source))
+        audio_supplements.supplement_lossless_tracks(str(source))
 
     assert len(commands) == 1
     assert source.read_bytes() == b"twin"
@@ -546,7 +558,7 @@ def test_the_cover_art_survives_the_ffmpeg_remux(app, tmp_path):
     import os
     import subprocess
 
-    from app.media.tracks import copy_image_attachments
+    from app.media.tracks.audio_supplements import copy_image_attachments
 
     from tests.media import make_sample_mkv
 
@@ -606,7 +618,9 @@ def test_a_failed_ffmpeg_exit_never_replaces_the_source(app, monkeypatch, tmp_pa
 
     import pytest
 
-    import app.media.tracks as tracks
+    from app.media.tracks import audio_supplements
+    from app.media.tracks import remux
+    from app.media.tracks import scan
 
     source = tmp_path / "broken.mkv"
     source.write_bytes(b"source")
@@ -642,20 +656,22 @@ def test_a_failed_ffmpeg_exit_never_replaces_the_source(app, monkeypatch, tmp_pa
             pass
 
     monkeypatch.setattr(
-        tracks,
+        scan,
         "get_audio_tracks_from_file",
         lambda path: [
             {"streamorder": 1, "format": "MLP FBA", "compression_mode": "Lossless"}
         ],
     )
-    monkeypatch.setattr(tracks, "plan_audio_supplements", lambda audio: [("flac", 1)])
-    monkeypatch.setattr(tracks, "build_supplement_args", lambda plan: [])
-    monkeypatch.setattr(tracks.MediaInfo, "parse", lambda path: Info())
-    monkeypatch.setattr(tracks.subprocess, "Popen", FailingProcess)
-    monkeypatch.setattr(tracks, "copy_image_attachments", lambda *args: None)
+    monkeypatch.setattr(
+        audio_supplements, "plan_audio_supplements", lambda audio: [("flac", 1)]
+    )
+    monkeypatch.setattr(audio_supplements, "build_supplement_args", lambda plan: [])
+    monkeypatch.setattr(scan.MediaInfo, "parse", lambda path: Info())
+    monkeypatch.setattr(remux.subprocess, "Popen", FailingProcess)
+    monkeypatch.setattr(audio_supplements, "copy_image_attachments", lambda *args: None)
 
     with app.app_context(), pytest.raises(subprocess.CalledProcessError):
-        tracks.supplement_lossless_tracks(str(source))
+        audio_supplements.supplement_lossless_tracks(str(source))
 
     assert source.read_bytes() == b"source"
     assert not twin.exists()
@@ -671,7 +687,7 @@ def test_a_real_truncated_sample_gets_its_twin_with_real_mediainfo(
 
     from pymediainfo import MediaInfo
 
-    import app.media.tracks as tracks
+    from app.media.tracks import audio_supplements
     from tests.media import make_sample_mkv
 
     path = make_sample_mkv(str(tmp_path / "cut.mkv"), duration=3, truncate=True)
@@ -681,11 +697,13 @@ def test_a_real_truncated_sample_gets_its_twin_with_real_mediainfo(
     # The sample has 1 AAC track. The plan treats it as lossless: a FLAC
     # twin first, then the original.
     monkeypatch.setattr(
-        tracks, "plan_audio_supplements", lambda audio: [("flac", 0), ("copy", 0)]
+        audio_supplements,
+        "plan_audio_supplements",
+        lambda audio: [("flac", 0), ("copy", 0)],
     )
-    monkeypatch.setattr(tracks, "copy_image_attachments", lambda *args: None)
+    monkeypatch.setattr(audio_supplements, "copy_image_attachments", lambda *args: None)
     with app.app_context():
-        assert tracks.supplement_lossless_tracks(path) is True
+        assert audio_supplements.supplement_lossless_tracks(path) is True
 
     formats = [
         t.format for t in MediaInfo.parse(path).tracks if t.track_type == "Audio"
@@ -732,7 +750,7 @@ def test_two_same_named_audio_plans_stage_under_different_names(app, monkeypatch
 
     import app.media.videos as videos
     from app import db
-    from app.media.tracks import _remux_audio_plan_unlocked
+    from app.media.tracks.audio_supplements import _remux_audio_plan_unlocked
     from tests.factories import make_movie, make_movie_file
 
     staged = []

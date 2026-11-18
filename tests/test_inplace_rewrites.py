@@ -19,13 +19,16 @@ import os
 
 IN_PLACE_REWRITES = [
     ("app/media/atmos.py", "_atmos_finish"),
-    ("app/media/tracks.py", "mkvpropedit_unlocked"),
-    ("app/media/tracks.py", "_remux_audio_plan_unlocked"),
+    ("app/media/tracks/edits.py", "mkvpropedit_unlocked"),
+    ("app/media/tracks/audio_supplements.py", "_remux_audio_plan_unlocked"),
 ]
 
 
 def _calls_in(path, function):
-    """Return the names of each plain function that one function calls."""
+    """Return the name of each function that one function calls.
+
+    A call through a module counts too, for example
+    rewrite_guard.record_filesize."""
 
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     tree = ast.parse(open(os.path.join(root, path)).read())
@@ -38,11 +41,17 @@ def _calls_in(path, function):
         None,
     )
     assert node is not None, f"{path}:{function} has moved"
-    return {
-        call.func.id
-        for call in ast.walk(node)
-        if isinstance(call, ast.Call) and isinstance(call.func, ast.Name)
-    }
+    names = set()
+    for call in ast.walk(node):
+        if not isinstance(call, ast.Call):
+            continue
+        if isinstance(call.func, ast.Name):
+            names.add(call.func.id)
+        elif isinstance(call.func, ast.Attribute) and isinstance(
+            call.func.value, ast.Name
+        ):
+            names.add(call.func.attr)
+    return names
 
 
 def test_every_in_place_rewrite_asks_plex_to_re_analyze():
@@ -62,7 +71,7 @@ def test_every_in_place_rewrite_records_the_new_filesize():
 
 
 def test_record_filesize_stores_the_size(app):
-    from app.media.tracks import record_filesize
+    from app.media.tracks.rewrite_guard import record_filesize
     from tests.factories import make_movie, make_movie_file
 
     with app.app_context():

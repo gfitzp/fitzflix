@@ -298,12 +298,12 @@ def test_remove_button_detaches_the_series(app, admin_client):
 def test_entering_an_id_by_hand_reattaches_an_ignored_series(
     app, admin_client, monkeypatch
 ):
-    import app.main.library as library
+    from app.main import movie_pages
 
     # The route waits 10 seconds for the refresh job. No worker runs in
     # the suite. Thus, the job never completes.
 
-    monkeypatch.setattr(library.time, "sleep", lambda seconds: None)
+    monkeypatch.setattr(movie_pages.time, "sleep", lambda seconds: None)
 
     with app.app_context():
         series = make_tv_series("Rifftrax", tmdb_ignored=True)
@@ -392,9 +392,9 @@ def test_a_hand_entered_id_with_no_match_stays_detached(app, monkeypatch):
 def test_a_failed_interactive_fetch_flashes_a_failure(app, admin_client, monkeypatch):
     """A fetch that returns False is a failure, not a refresh in flight (#514)."""
 
-    import app.main.library as library
+    from app.main import movie_pages
 
-    monkeypatch.setattr(library, "_wait_for_refresh", lambda job: False)
+    monkeypatch.setattr(movie_pages, "_wait_for_refresh", lambda job: False)
     with app.app_context():
         series = make_tv_series("Rifftrax", tmdb_id=110230)
         db.session.commit()
@@ -418,7 +418,7 @@ def test_a_failed_interactive_fetch_flashes_a_failure(app, admin_client, monkeyp
 def test_the_wait_reads_a_failed_job_as_false(app):
     """A refresh job that raised returns False at once (#514)."""
 
-    from app.main.library import _wait_for_refresh
+    from app.main.movie_pages import _wait_for_refresh
 
     class FailedJob:
         def get_status(self, refresh=True):
@@ -568,9 +568,9 @@ def test_fileless_record_locks_its_tmdb_id(app, admin_client, monkeypatch):
     route ignores a smuggled id in the post. Thus, the diary rows stay on
     the film that they were logged against."""
 
-    import app.main.library as library
+    from app.main import movie_pages
 
-    monkeypatch.setattr(library.time, "sleep", lambda seconds: None)
+    monkeypatch.setattr(movie_pages.time, "sleep", lambda seconds: None)
 
     with app.app_context():
         movie = make_movie("Logged Only Film", 2001, tmdb_id=52520)

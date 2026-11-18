@@ -39,13 +39,9 @@ from app.models import (
 )
 from app.media.sdr_conversion import archived_original_from_file
 from app.media.file_ranking import find_worse_files
-from app.media.tracks import (
-    LibraryFileChanged,
-    _rescan_after_a_failed_edit,
-    replace_track_rows,
-    record_filesize,
-    refuse_changed_library_file,
-)
+from app.media.tracks.remux import LibraryFileChanged, refuse_changed_library_file
+from app.media.tracks.rewrite_guard import _rescan_after_a_failed_edit, record_filesize
+from app.media.tracks.scan import replace_track_rows
 from app.media import videos
 from app.media.importing import chain, filenames, follow_ups, localization, space
 

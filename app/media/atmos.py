@@ -45,7 +45,7 @@ from app.models import File, FileAudioTrack
 from app.media.naming import hidden
 from app.settings import get_setting
 from app.pipeline import TaskPhases, close_trail, keep_trail_open
-from app.media.tracks import (
+from app.media.tracks.remux import (
     LibraryFileChanged,
     library_stamp,
     refuse_changed_library_file,
@@ -695,9 +695,9 @@ def _atmos_prepare(file_id, phases, staged_source=None):
     Thus, the workspace holds only the staged source during the encode.
     """
 
-    from app.media.tracks import replace_track_rows
+    from app.media.tracks.scan import replace_track_rows
     from app.archive.aws_clients import aws_s3_client
-    from app.media.tracks import (
+    from app.media.tracks.scan import (
         get_audio_tracks_from_file,
         get_subtitle_tracks_from_file,
     )
@@ -1254,7 +1254,7 @@ def atmos_finish_task(state, lock, finish_retries=0):
             # keeps the flag.
 
             if not own_result:
-                from app.media.tracks import put_stale_flag_back
+                from app.media.tracks.rewrite_guard import put_stale_flag_back
 
                 put_stale_flag_back(
                     int(state["file_id"]),
@@ -1265,7 +1265,7 @@ def atmos_finish_task(state, lock, finish_retries=0):
             phases.close("failed")
             _close_run(state, lock, ended_early=False)
             if own_result:
-                from app.media.tracks import _rescan_after_a_failed_edit
+                from app.media.tracks.rewrite_guard import _rescan_after_a_failed_edit
 
                 _rescan_after_a_failed_edit(state["file_id"], f"'{state['basename']}'")
             return False
@@ -1337,11 +1337,11 @@ def _remux_twins(state, phases, inserts, job):
     becomes True. A tool or I/O fault raises FinishInterrupted (#502). A
     failed verification raises RuntimeError."""
 
-    from app.media.tracks import (
+    from app.media.tracks.scan import (
         get_audio_tracks_from_file,
         get_subtitle_tracks_from_file,
-        watch_mkvmerge_progress,
     )
+    from app.media.tracks.remux import watch_mkvmerge_progress
 
     basename = state["basename"]
     workspace = state["workspace"]
@@ -1472,17 +1472,17 @@ def _atmos_finish(state, phases):
     The library share carries 1 write here: the verified result."""
 
     from app.archive.uploads import archive_library_file
-    from app.media.tracks import (
+    from app.media.tracks.rewrite_guard import (
         _rescan_after_a_failed_edit,
         confirm_rewrite,
-        replace_track_rows,
     )
+    from app.media.tracks.scan import replace_track_rows
     from app.archive.aws_clients import aws_s3_client
-    from app.media.tracks import (
+    from app.media.tracks.scan import (
         get_audio_tracks_from_file,
         get_subtitle_tracks_from_file,
-        record_filesize,
     )
+    from app.media.tracks.rewrite_guard import record_filesize
 
     job = get_current_job()
     file = db.session.get(File, int(state["file_id"]))

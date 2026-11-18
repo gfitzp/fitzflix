@@ -803,7 +803,7 @@ def _native_language_keys():
     The card compares the key of each track. Thus, "deu" and "ger" are
     the same language there, as in the import (#443)."""
 
-    from app.media.tracks import language_key
+    from app.media.tracks.languages import language_key
 
     return [language_key(current_app.config["NATIVE_LANGUAGE"]), "und", "zxx"]
 

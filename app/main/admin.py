@@ -92,11 +92,8 @@ from app.main.helpers import (
     rejected_files,
     unchanged_poll_answer,
 )
-from app.main.library import (
-    _flash_tmdb_refresh,
-    _wait_for_refresh,
-    restore_cost_estimate,
-)
+from app.main.movie_pages import _flash_tmdb_refresh, _wait_for_refresh
+from app.main.tv_pages import restore_cost_estimate
 from app.operations.log_digest import stored_digest
 from app.operations.maintenance import system_health
 from app.media.manual_imports import (
@@ -869,8 +866,8 @@ def _scan_library_post(form):
     """Queue a scan of the track metadata of each file of the library."""
 
     names = (
-        "app.media.tracks.track_metadata_scan_library",
-        "app.media.tracks.track_metadata_scan_task",
+        "app.media.tracks.scan.track_metadata_scan_library",
+        "app.media.tracks.scan.track_metadata_scan_task",
     )
     if not start_bulk_run(TRACK_SCAN_RUN, *names):
         flash(ALREADY_QUEUED, "info")
@@ -1589,7 +1586,7 @@ def subtitle_triage(file_id):
         )
 
         enqueue_task(
-            "app.media.tracks.mkvpropedit_task",
+            "app.media.tracks.edits.mkvpropedit_task",
             file.id,
             default_audio_track,
             default_subtitle_track,
@@ -1729,7 +1726,7 @@ def lossy_audio_triage(file_id):
         )
 
         enqueue_task(
-            "app.media.tracks.mkvpropedit_task",
+            "app.media.tracks.edits.mkvpropedit_task",
             file.id,
             track.uid,
             default_subtitle_track,

@@ -110,7 +110,7 @@ def test_the_badge_sees_the_worst_episode_of_a_span(app):
 def test_every_best_holder_of_an_episode_restores(app):
     """A span that alone holds E02 to E06 restores beside the better E01 single."""
 
-    from app.main.library import _season_files, _season_restorable, _series_restorable
+    from app.main.tv_pages import _season_files, _season_restorable, _series_restorable
 
     with app.app_context():
         series, single, span = _season_with_a_better_first_single(app, "WEBDL-480p")
@@ -142,7 +142,7 @@ def _top_gear_season(app):
 def test_the_season_page_badges_only_best_holders(app):
     """The later worse single is not "Best" beside the span (follow-up #479)."""
 
-    from app.main.library import _season_files
+    from app.main.tv_pages import _season_files
 
     with app.app_context():
         series, span, single, other = _top_gear_season(app)
@@ -279,7 +279,7 @@ def test_the_pages_use_the_best_copy_rule_of_the_sync(app, admin_client):
 
     from app import db
     from app.media.file_ranking import tv_best_holder_ids
-    from app.main.library import _is_best_copy
+    from app.main.file_pages import _is_best_copy
     from tests.factories import make_tv_file, make_tv_series
 
     with app.app_context():

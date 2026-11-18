@@ -91,7 +91,7 @@ def _setup(app, monkeypatch, title):
         "app.archive.aws_clients.aws_s3_client", lambda *a, **k: _FakeS3()
     )
     monkeypatch.setattr(
-        "app.media.tracks.get_audio_tracks_from_file",
+        "app.media.tracks.scan.get_audio_tracks_from_file",
         lambda path: [{"codec": ATMOS, "language": "eng", "streamorder": 1}],
     )
 
@@ -476,9 +476,11 @@ def test_a_stop_after_the_atmos_rename_leaves_the_archive_stale(
 
     monkeypatch.setitem(app.config, "ARCHIVE_ORIGINAL_MEDIA", True)
     monkeypatch.setattr("app.archive.aws_clients.aws_s3_client", lambda: None)
-    monkeypatch.setattr("app.media.tracks.get_audio_tracks_from_file", lambda path: [])
     monkeypatch.setattr(
-        "app.media.tracks.get_subtitle_tracks_from_file", lambda path: []
+        "app.media.tracks.scan.get_audio_tracks_from_file", lambda path: []
+    )
+    monkeypatch.setattr(
+        "app.media.tracks.scan.get_subtitle_tracks_from_file", lambda path: []
     )
     with app.app_context():
         file = make_movie_file(make_movie("Atmos Stop", 2021), "Bluray-1080p")

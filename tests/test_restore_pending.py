@@ -228,15 +228,15 @@ def _run_writer(app, writer, file_id, path):
     from app.models import File
 
     if writer == "mkvpropedit_task":
-        from app.media.tracks import mkvpropedit_task
+        from app.media.tracks.edits import mkvpropedit_task
 
         return mkvpropedit_task(file_id, "1", "0", [])
     if writer == "mkvmerge_task":
-        from app.media.tracks import mkvmerge_task
+        from app.media.tracks.edits import mkvmerge_task
 
         return mkvmerge_task(file_id, ["1"], [])
     if writer == "remux_audio_plan_task":
-        from app.media.tracks import remux_audio_plan_task
+        from app.media.tracks.audio_supplements import remux_audio_plan_task
 
         return remux_audio_plan_task(file_id, [["copy", 1]])
     if writer == "atmos_supplement_task":
@@ -772,7 +772,7 @@ def test_the_placement_after_a_writer_that_began_first_ends_consistent(
     from app.archive import restores as archive_restores
     from app.archive import uploads
     from app.models import File
-    from app.media.tracks import confirm_rewrite
+    from app.media.tracks.rewrite_guard import confirm_rewrite
     from tests.test_scheduling import scheduled_jobs
 
     monkeypatch.setitem(app.config, "ARCHIVE_ORIGINAL_MEDIA", True)
@@ -945,7 +945,8 @@ def test_the_scan_does_not_rewrite_the_file_of_a_pending_restore(app, monkeypatc
     (#695)."""
 
     from app import db
-    from app.media import tracks
+    from app.media.tracks import edits
+    from app.media.tracks import scan
     from app.models import File
 
     with app.app_context():
@@ -958,15 +959,15 @@ def test_the_scan_does_not_rewrite_the_file_of_a_pending_restore(app, monkeypatc
 
     rewrites = []
     saved = []
-    monkeypatch.setattr(tracks.MediaInfo, "parse", staticmethod(lambda path: Info()))
+    monkeypatch.setattr(scan.MediaInfo, "parse", staticmethod(lambda path: Info()))
     monkeypatch.setattr(
-        tracks,
+        edits,
         "remove_empty_subtitle_tracks",
         lambda path, before_replace=None: rewrites.append(path) or True,
     )
-    monkeypatch.setattr(tracks, "_extract_media_details", lambda path: {})
+    monkeypatch.setattr(scan, "_extract_media_details", lambda path: {})
     monkeypatch.setattr(
-        tracks,
+        scan,
         "enqueue_task",
         lambda name, file_id, details, lock, archive, **kwargs: saved.append(
             (file_id, archive)
@@ -975,7 +976,7 @@ def test_the_scan_does_not_rewrite_the_file_of_a_pending_restore(app, monkeypatc
 
     try:
         with app.app_context():
-            assert tracks.track_metadata_scan_task(file_id) is True
+            assert scan.track_metadata_scan_task(file_id) is True
             assert db.session.get(File, file_id).aws_stale is False
         assert rewrites == []
         assert saved == [(file_id, False)]

@@ -357,7 +357,7 @@ def test_a_role_with_2_job_names_counts_each_work_1_time(app, admin_client):
     same 2 works. The tie rule of ROLE_PRECEDENCE then gives Director,
     for the films and for the series."""
 
-    from app.main.library import _dominant_roles
+    from app.main.people_pages import _dominant_roles
     from app.models import TVCrew
     from tests.factories import make_tv_file, make_tv_series
 

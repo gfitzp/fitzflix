@@ -198,7 +198,9 @@ TASKS = {
     "app.media.importing.localization.localization_task": TaskSpec(
         "import", "LOCALIZATION_TASK_TIMEOUT"
     ),
-    "app.media.tracks.mkvmerge_task": TaskSpec("import", "LOCALIZATION_TASK_TIMEOUT"),
+    "app.media.tracks.edits.mkvmerge_task": TaskSpec(
+        "import", "LOCALIZATION_TASK_TIMEOUT"
+    ),
     "app.media.atmos.atmos_supplement_task": TaskSpec(
         "import", "TRANSCODE_TASK_TIMEOUT"
     ),
@@ -211,7 +213,7 @@ TASKS = {
     "app.media.sdr_conversion.convert_localized_file": TaskSpec(
         "transcode", "TRANSCODE_TASK_TIMEOUT"
     ),
-    "app.media.tracks.remux_audio_plan_task": TaskSpec(
+    "app.media.tracks.audio_supplements.remux_audio_plan_task": TaskSpec(
         "transcode", "TRANSCODE_TASK_TIMEOUT"
     ),
     "app.media.triage.generate_triage_snapshots": TaskSpec("transcode", 7200),
@@ -238,8 +240,10 @@ TASKS = {
     "app.archive.downloads.place_restored_import_task": TaskSpec(
         "file", "FILE_TASK_TIMEOUT"
     ),
-    "app.media.tracks.mkvpropedit_task": TaskSpec("file", "MKVPROPEDIT_TASK_TIMEOUT"),
-    "app.media.tracks.track_metadata_scan_task": TaskSpec(
+    "app.media.tracks.edits.mkvpropedit_task": TaskSpec(
+        "file", "MKVPROPEDIT_TASK_TIMEOUT"
+    ),
+    "app.media.tracks.scan.track_metadata_scan_task": TaskSpec(
         "file", "MKVPROPEDIT_TASK_TIMEOUT"
     ),
     "app.media.series_rename.rename_tv_series_task": TaskSpec(
@@ -255,8 +259,10 @@ TASKS = {
     "app.metadata.tmdb_refresh.apply_tmdb_refresh": TaskSpec("sql", "SQL_TASK_TIMEOUT"),
     "app.viewing.diary.apply_plex_watch": TaskSpec("sql", "SQL_TASK_TIMEOUT"),
     "app.viewing.diary.apply_letterboxd_import": TaskSpec("sql", "SQL_TASK_TIMEOUT"),
-    "app.media.tracks.save_track_metadata": TaskSpec("sql", "SQL_TASK_TIMEOUT"),
-    "app.media.tracks.track_metadata_scan_library": TaskSpec("sql", "SQL_TASK_TIMEOUT"),
+    "app.media.tracks.scan.save_track_metadata": TaskSpec("sql", "SQL_TASK_TIMEOUT"),
+    "app.media.tracks.scan.track_metadata_scan_library": TaskSpec(
+        "sql", "SQL_TASK_TIMEOUT"
+    ),
     "app.viewing.diary.review_task": TaskSpec("sql", "SQL_TASK_TIMEOUT"),
     "app.media.importing.cataloging.repair_replaced_file_task": TaskSpec(
         "sql", "SQL_TASK_TIMEOUT"

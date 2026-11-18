@@ -70,7 +70,7 @@ def register_template_helpers(app):
     def language_key_filter(code):
         """Return the language key of a track language for a template."""
 
-        from app.media.tracks import language_key
+        from app.media.tracks.languages import language_key
 
         return language_key(code)
 

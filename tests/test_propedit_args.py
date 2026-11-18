@@ -82,7 +82,7 @@ def test_build_propedit_args(
 ):
     """The edits address the tracks by UID, not by position (#611)."""
 
-    from app.media.tracks import build_propedit_args
+    from app.media.tracks.edits import build_propedit_args
 
     assert (
         build_propedit_args(
@@ -108,7 +108,7 @@ def test_missing_track_uids(
 ):
     """A selected UID that the file does not have stops the edit (#611)."""
 
-    from app.media.tracks import missing_track_uids
+    from app.media.tracks.edits import missing_track_uids
 
     assert (
         missing_track_uids(
@@ -124,7 +124,7 @@ def test_missing_track_uids(
 
 
 def test_a_track_with_no_uid_counts_as_missing(app):
-    from app.media.tracks import missing_track_uids
+    from app.media.tracks.edits import missing_track_uids
 
     assert missing_track_uids(_uids("71", None), [], "71", None, []) == ["no UID"]
 
@@ -159,6 +159,6 @@ def test_a_track_with_no_uid_counts_as_missing(app):
     ],
 )
 def test_track_order(app, tracks, expected):
-    from app.media.tracks import track_order
+    from app.media.tracks.edits import track_order
 
     assert track_order(tracks) == expected

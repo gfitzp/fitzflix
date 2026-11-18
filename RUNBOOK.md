@@ -158,7 +158,7 @@ The task that waits takes the lock at its next try. If `REDIS_URL` names a datab
 
 ## A change moved or renamed a task
 
-A task is a function that a worker runs as a job. Redis holds each job with the name of its function as text, for example `app.media.tracks.mkvmerge_task`. When you move the function to an other module, or give it an other name, the jobs in Redis keep the old name. A worker with the new code cannot find that name, and the job fails.
+A task is a function that a worker runs as a job. Redis holds each job with the name of its function as text, for example `app.media.tracks.edits.mkvmerge_task`. When you move the function to an other module, or give it an other name, the jobs in Redis keep the old name. A worker with the new code cannot find that name, and the job fails.
 
 In the code, change the name in each of these places. Search for the old name to find them:
 

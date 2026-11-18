@@ -32,16 +32,13 @@ from app.media.sdr_conversion import (
     hold_import,
 )
 from app.media.file_ranking import find_better_files, real_rips_blocking
-from app.media.tracks import (
-    file_language_spelling,
-    same_language,
+from app.media.tracks.languages import file_language_spelling, same_language
+from app.media.tracks.scan import (
     get_audio_tracks_from_file,
     get_subtitle_tracks_from_file,
-    library_stamp,
-    stop_process,
-    supplement_lossless_tracks,
-    watch_mkvmerge_progress,
 )
+from app.media.tracks.remux import library_stamp, stop_process, watch_mkvmerge_progress
+from app.media.tracks.audio_supplements import supplement_lossless_tracks
 from app.media import videos
 from app.media.importing import (
     cataloging,

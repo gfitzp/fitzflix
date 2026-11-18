@@ -538,7 +538,7 @@ def test_the_record_that_takes_an_upload_takes_the_size_of_the_new_file(
     from app.media.importing import cataloging
     from app import db
     from app.models import File
-    from app.media.tracks import replaced_from_outside
+    from app.media.tracks.rewrite_guard import replaced_from_outside
 
     monkeypatch.setattr(cataloging, "_rescan_after_a_failed_edit", lambda *a: None)
     name = "Over Record Size (2023) - [DVD].mkv"

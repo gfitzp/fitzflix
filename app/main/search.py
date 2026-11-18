@@ -29,7 +29,7 @@ from app.main.helpers import (
     library_upgradable,
     series_upgradable,
 )
-from app.main.library import _credited_film_pairs, _dominant_roles
+from app.main.people_pages import _credited_film_pairs, _dominant_roles
 from app.discovery.funnel import might_interest, user_film_sets_by_id
 from app.discovery.recommendations import (
     coarse_interest_score,

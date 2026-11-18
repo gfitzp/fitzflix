@@ -1700,7 +1700,7 @@ def test_job_to_class_is_the_one_crew_job_map():
     The rail, the warm estimate, the filmography labels and the feature
     builder each built it. One constant beside CREW_ROLE_JOBS now."""
 
-    from app.main.library import CREW_ROLE_LABELS
+    from app.main.people_pages import CREW_ROLE_LABELS
     from app.discovery.recommendations import CREW_ROLE_JOBS, JOB_TO_CLASS
 
     expected = {}

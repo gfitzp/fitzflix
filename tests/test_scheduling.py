@@ -338,7 +338,7 @@ def test_mkvpropedit_transient_error_defers_and_releases_lock(app, monkeypatch):
 
     import errno
 
-    from app.media import tracks
+    from app.media.tracks import edits
 
     from app import db
     from tests.factories import make_movie, make_movie_file
@@ -353,9 +353,9 @@ def test_mkvpropedit_transient_error_defers_and_releases_lock(app, monkeypatch):
         def flaky_unlocked(*args, **kwargs):
             raise OSError(errno.EBADF, "Bad file descriptor")
 
-        monkeypatch.setattr(tracks, "mkvpropedit_unlocked", flaky_unlocked)
+        monkeypatch.setattr(edits, "mkvpropedit_unlocked", flaky_unlocked)
 
-        assert tracks.mkvpropedit_task(file_id, "2", None, [], {"a1": "eng"}) is False
+        assert edits.mkvpropedit_task(file_id, "2", None, [], {"a1": "eng"}) is False
 
         retries = [
             job
@@ -367,7 +367,7 @@ def test_mkvpropedit_transient_error_defers_and_releases_lock(app, monkeypatch):
 
         assert [job.id for job in retries] == [
             requeue_id(
-                "app.media.tracks.mkvpropedit_task",
+                "app.media.tracks.edits.mkvpropedit_task",
                 file_id,
                 {"transient_retries": 1},
                 tag=arguments_tag((file_id, "2", None, [], {"a1": "eng"})),

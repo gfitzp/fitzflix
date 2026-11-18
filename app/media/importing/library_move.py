@@ -15,14 +15,14 @@ from app.settings import get_setting
 from app.email import notify_admin
 from app.media.naming import hidden
 from app.media.sdr_conversion import needs_placebo, plan_conversion
-from app.media.tracks import (
+from app.media.tracks.scan import (
     _extract_media_details,
-    same_language,
     get_audio_tracks_from_file,
     get_subtitle_tracks_from_file,
-    remove_empty_subtitle_tracks,
-    stop_process,
 )
+from app.media.tracks.languages import same_language
+from app.media.tracks.edits import remove_empty_subtitle_tracks
+from app.media.tracks.remux import stop_process
 from app.media import videos
 from app.media.importing import cataloging, chain, filenames, localization, space
 

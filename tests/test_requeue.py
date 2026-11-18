@@ -373,7 +373,7 @@ def test_a_job_that_books_itself_keeps_the_booking_after_it_ends(app):
         resolve_queue,
     )
 
-    name = "app.media.tracks.track_metadata_scan_task"
+    name = "app.media.tracks.scan.track_metadata_scan_task"
     with app.app_context():
         queue = resolve_queue(TASKS[name].queue)
         job_id = requeue_job_id(name, 77)

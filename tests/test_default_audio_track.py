@@ -41,7 +41,7 @@ def three_audio_mkv(app):
 def _audio(app, path):
     """Return (language, default) for each audio track, read the same way as the app."""
 
-    from app.media.tracks import get_audio_tracks_from_file
+    from app.media.tracks.scan import get_audio_tracks_from_file
 
     with app.app_context():
         return [
@@ -60,7 +60,7 @@ def _uids(file_id):
 
     from app import db
     from app.models import File
-    from app.media.tracks import get_audio_tracks_from_file
+    from app.media.tracks.scan import get_audio_tracks_from_file
 
     file = db.session.get(File, file_id)
     path = os.path.join(current_app.config["LIBRARY_DIR"], file.file_path)
@@ -114,7 +114,7 @@ def test_choosing_a_later_default_moves_it_to_the_front(app, three_audio_mkv):
     invariant."""
 
     from app import db
-    from app.media.tracks import mkvpropedit_unlocked
+    from app.media.tracks.edits import mkvpropedit_unlocked
     from tests.factories import make_movie, make_movie_file
 
     with app.app_context():
@@ -151,7 +151,7 @@ def test_the_stored_track_rows_follow_the_reordered_file(app, three_audio_mkv):
 
     from app import db
     from app.models import FileAudioTrack
-    from app.media.tracks import mkvpropedit_unlocked
+    from app.media.tracks.edits import mkvpropedit_unlocked
     from tests.factories import make_movie, make_movie_file
 
     with app.app_context():
@@ -233,7 +233,8 @@ def _stale_after_failed_commit(app, monkeypatch, three_audio_mkv, title, run):
 
     from app import db
     from app.models import File
-    import app.media.tracks as tracks
+    from app.media.tracks import edits
+    from app.media.tracks import rewrite_guard
     from tests.factories import make_movie, make_movie_file
 
     monkeypatch.setitem(app.config, "ARCHIVE_ORIGINAL_MEDIA", True)
@@ -253,9 +254,9 @@ def _stale_after_failed_commit(app, monkeypatch, three_audio_mkv, title, run):
 
     with app.app_context():
         with monkeypatch.context() as patch:
-            patch.setattr(tracks, "_fresh_file", lost_row)
+            patch.setattr(rewrite_guard, "_fresh_file", lost_row)
             with pytest.raises(RuntimeError):
-                run(tracks, file_id)
+                run(edits, file_id)
         # The remux renamed a new file over the old one.
         assert os.stat(library_path).st_ino != before
         return db.session.get(File, file_id).aws_stale
@@ -271,7 +272,7 @@ def test_a_reorder_that_fails_its_commit_marks_the_archive_stale(
         monkeypatch,
         three_audio_mkv,
         "Stale Reorder",
-        lambda tracks, file_id: tracks.mkvpropedit_unlocked(
+        lambda edits, file_id: edits.mkvpropedit_unlocked(
             file_id, _uid(file_id, 2), None, None
         ),
     )
@@ -285,7 +286,7 @@ def test_a_remux_that_fails_its_commit_marks_the_archive_stale(
         monkeypatch,
         three_audio_mkv,
         "Stale Remux",
-        lambda tracks, file_id: tracks.mkvmerge_unlocked(file_id, _uids(file_id), []),
+        lambda edits, file_id: edits.mkvmerge_unlocked(file_id, _uids(file_id), []),
     )
 
 
@@ -294,7 +295,8 @@ def test_the_scan_marks_the_archive_stale_before_its_remux(app, monkeypatch):
 
     from app import db
     from app.models import File
-    import app.media.tracks as tracks
+    from app.media.tracks import edits
+    from app.media.tracks import scan
     from tests.factories import make_movie, make_movie_file
 
     monkeypatch.setitem(app.config, "ARCHIVE_ORIGINAL_MEDIA", True)
@@ -315,13 +317,13 @@ def test_the_scan_marks_the_archive_stale_before_its_remux(app, monkeypatch):
         raise OSError("the volume went away")
 
     monkeypatch.setattr(
-        tracks.MediaInfo, "parse", lambda path: type("I", (), {"tracks": [Matroska]})
+        scan.MediaInfo, "parse", lambda path: type("I", (), {"tracks": [Matroska]})
     )
-    monkeypatch.setattr(tracks, "remove_empty_subtitle_tracks", remux)
-    monkeypatch.setattr(tracks, "_extract_media_details", unreadable)
+    monkeypatch.setattr(edits, "remove_empty_subtitle_tracks", remux)
+    monkeypatch.setattr(scan, "_extract_media_details", unreadable)
     with app.app_context():
         with pytest.raises(OSError):
-            tracks.extract_track_metadata(library_path, file_id)
+            scan.extract_track_metadata(library_path, file_id)
         assert db.session.get(File, file_id).aws_stale
 
 
@@ -353,7 +355,8 @@ def test_a_failed_flag_stops_mkvpropedit_before_it_starts(
 
     from app import db
     from app.models import File
-    import app.media.tracks as tracks
+    from app.media.tracks import edits
+    from app.media.tracks import rewrite_guard
 
     ran = tmp_path / "ran"
     spy = tmp_path / "mkvpropedit"
@@ -366,12 +369,12 @@ def test_a_failed_flag_stops_mkvpropedit_before_it_starts(
     def blip(file_id, file_path):
         raise sqlalchemy.exc.OperationalError("UPDATE", {}, Exception("gone away"))
 
-    monkeypatch.setattr(tracks, "confirm_rewrite", blip)
+    monkeypatch.setattr(rewrite_guard, "confirm_rewrite", blip)
     with open(library_path, "rb") as handle:
         before = handle.read()
     with app.app_context():
         with pytest.raises(sqlalchemy.exc.OperationalError):
-            tracks.mkvpropedit_unlocked(file_id, _uid(file_id, 2), None, None)
+            edits.mkvpropedit_unlocked(file_id, _uid(file_id, 2), None, None)
         db.session.expire_all()
         assert not db.session.get(File, file_id).aws_stale
     assert not ran.exists()
@@ -386,14 +389,14 @@ def test_a_mkvpropedit_that_cannot_start_leaves_a_stale_flag(
 
     from app import db
     from app.models import File
-    import app.media.tracks as tracks
+    from app.media.tracks import edits
 
     file_id, library_path = _propedit_fixture(
         app, monkeypatch, three_audio_mkv, "Absent Propedit", tmp_path / "absent"
     )
     with app.app_context():
         with pytest.raises(FileNotFoundError):
-            tracks.mkvpropedit_unlocked(file_id, _uid(file_id, 2), None, None)
+            edits.mkvpropedit_unlocked(file_id, _uid(file_id, 2), None, None)
         db.session.expire_all()
         assert db.session.get(File, file_id).aws_stale
     assert os.path.exists(library_path)
@@ -412,7 +415,7 @@ def test_a_failed_mkvpropedit_marks_the_archive_stale(
 
     from app import db
     from app.models import File
-    import app.media.tracks as tracks
+    from app.media.tracks import edits
 
     broken = tmp_path / "mkvpropedit"
     broken.write_text("#!/bin/sh\necho 'Error: the file is locked'\nexit 2\n")
@@ -422,7 +425,7 @@ def test_a_failed_mkvpropedit_marks_the_archive_stale(
     )
     with app.app_context():
         with pytest.raises(subprocess.CalledProcessError):
-            tracks.mkvpropedit_unlocked(file_id, _uid(file_id, 2), None, None)
+            edits.mkvpropedit_unlocked(file_id, _uid(file_id, 2), None, None)
         db.session.expire_all()
         assert db.session.get(File, file_id).aws_stale
 
@@ -435,7 +438,9 @@ def test_a_failed_stale_flag_stops_the_remux_before_the_rename(
     Before, the flag swallowed the fault and the rename went on. The
     same database fault then broke the commit after the rewrite."""
 
-    import app.media.tracks as tracks
+    from app.media.tracks import remux as track_remux
+    from app.media.tracks import rewrite_guard
+    from app.media.tracks import scan
 
     class LostConnection(Exception):
         pass
@@ -451,9 +456,9 @@ def test_a_failed_stale_flag_stops_the_remux_before_the_rename(
     monkeypatch.setitem(app.config, "STAGING_DIR", str(tmp_path / "staging"))
     os.makedirs(app.config["STAGING_DIR"], exist_ok=True)
     with app.app_context():
-        monkeypatch.setattr(tracks.db.session, "commit", lost)
+        monkeypatch.setattr(scan.db.session, "commit", lost)
         with pytest.raises(LostConnection):
-            tracks.remux_file(
+            track_remux.remux_file(
                 library_path,
                 lambda source, output: [
                     app.config["MKVMERGE_BIN"],
@@ -464,7 +469,9 @@ def test_a_failed_stale_flag_stops_the_remux_before_the_rename(
                 None,
                 os.path.basename(library_path),
                 "Remuxing",
-                before_replace=lambda: tracks.confirm_rewrite(file_id, library_path),
+                before_replace=lambda: rewrite_guard.confirm_rewrite(
+                    file_id, library_path
+                ),
             )
     with open(library_path, "rb") as handle:
         assert handle.read() == before
@@ -481,16 +488,16 @@ def _hidden_files(library_path):
     ]
 
 
-def _change_record_during_the_remux(monkeypatch, tracks, change):
+def _change_record_during_the_remux(monkeypatch, track_remux, change):
     """Make the mkvmerge step call change() after the tool is done."""
 
-    real = tracks._run_mkvmerge
+    real = track_remux._run_mkvmerge
 
     def run_then_change(*args, **kwargs):
         real(*args, **kwargs)
         change()
 
-    monkeypatch.setattr(tracks, "_run_mkvmerge", run_then_change)
+    monkeypatch.setattr(track_remux, "_run_mkvmerge", run_then_change)
 
 
 def test_an_edit_whose_record_is_deleted_puts_no_file_back(
@@ -503,7 +510,8 @@ def test_an_edit_whose_record_is_deleted_puts_no_file_back(
 
     from app import db
     from app.models import File
-    import app.media.tracks as tracks
+    from app.media.tracks import edits
+    from app.media.tracks import remux as track_remux
 
     file_id, library_path = _propedit_fixture(
         app,
@@ -520,11 +528,11 @@ def test_an_edit_whose_record_is_deleted_puts_no_file_back(
         db.session.commit()
         os.remove(library_path)
 
-    _change_record_during_the_remux(monkeypatch, tracks, delete_record_and_file)
+    _change_record_during_the_remux(monkeypatch, track_remux, delete_record_and_file)
     with app.app_context():
         # The file went from the path. That stops the edit first (#741).
-        with pytest.raises(tracks.LibraryFileChanged):
-            tracks.mkvmerge_unlocked(file_id, uids[:1], [])
+        with pytest.raises(track_remux.LibraryFileChanged):
+            edits.mkvmerge_unlocked(file_id, uids[:1], [])
     assert not os.path.exists(library_path)
     assert _hidden_files(library_path) == []
 
@@ -539,7 +547,8 @@ def test_an_edit_whose_record_moved_leaves_the_old_path_empty(
 
     from app import db
     from app.models import File
-    import app.media.tracks as tracks
+    from app.media.tracks import edits
+    from app.media.tracks import remux as track_remux
 
     file_id, library_path = _propedit_fixture(
         app, monkeypatch, three_audio_mkv, "Record Moved", app.config["MKVPROPEDIT_BIN"]
@@ -557,11 +566,11 @@ def test_an_edit_whose_record_moved_leaves_the_old_path_empty(
         )
         db.session.commit()
 
-    _change_record_during_the_remux(monkeypatch, tracks, rename_record_and_file)
+    _change_record_during_the_remux(monkeypatch, track_remux, rename_record_and_file)
     with app.app_context():
         # The file went from the path. That stops the edit first (#741).
-        with pytest.raises(tracks.LibraryFileChanged):
-            tracks.mkvmerge_unlocked(file_id, uids[:1], [])
+        with pytest.raises(track_remux.LibraryFileChanged):
+            edits.mkvmerge_unlocked(file_id, uids[:1], [])
     assert not os.path.exists(library_path)
     with open(new_path, "rb") as handle:
         assert handle.read() == before
@@ -578,7 +587,9 @@ def test_an_edit_whose_record_is_deleted_keeps_a_file_that_stays(
 
     from app import db
     from app.models import File
-    import app.media.tracks as tracks
+    from app.media.tracks import remux as track_remux
+    from app.media.tracks import edits
+    from app.media.tracks import rewrite_guard
 
     file_id, library_path = _propedit_fixture(
         app,
@@ -596,10 +607,10 @@ def test_an_edit_whose_record_is_deleted_keeps_a_file_that_stays(
         db.session.delete(db.session.get(File, file_id))
         db.session.commit()
 
-    _change_record_during_the_remux(monkeypatch, tracks, delete_record)
+    _change_record_during_the_remux(monkeypatch, track_remux, delete_record)
     with app.app_context():
-        with pytest.raises(tracks.RecordChanged):
-            tracks.mkvmerge_unlocked(file_id, uids[:1], [])
+        with pytest.raises(rewrite_guard.RecordChanged):
+            edits.mkvmerge_unlocked(file_id, uids[:1], [])
     with open(library_path, "rb") as handle:
         assert handle.read() == before
     assert _hidden_files(library_path) == []
@@ -626,7 +637,8 @@ def test_an_edit_does_not_replace_a_file_that_an_arr_upgraded(
 
     from app import db
     from app.models import File
-    import app.media.tracks as tracks
+    from app.media.tracks import remux as track_remux
+    from app.media.tracks import edits
 
     file_id, library_path = _propedit_fixture(
         app,
@@ -638,16 +650,16 @@ def test_an_edit_does_not_replace_a_file_that_an_arr_upgraded(
     if staged:
         monkeypatch.setitem(app.config, "STAGING_DIR", str(tmp_path / "staging"))
         os.makedirs(app.config["STAGING_DIR"], exist_ok=True)
-        monkeypatch.setattr(tracks, "_on_volume_of", lambda path, directory: False)
+        monkeypatch.setattr(track_remux, "_on_volume_of", lambda path, directory: False)
     with app.app_context():
         uids = _uids(file_id)
         size_before = db.session.get(File, file_id).filesize_bytes
     _change_record_during_the_remux(
-        monkeypatch, tracks, lambda: _replace_like_an_arr(library_path)
+        monkeypatch, track_remux, lambda: _replace_like_an_arr(library_path)
     )
     with app.app_context():
-        with pytest.raises(tracks.LibraryFileChanged):
-            tracks.mkvmerge_task(file_id, uids[:1], [])
+        with pytest.raises(track_remux.LibraryFileChanged):
+            edits.mkvmerge_task(file_id, uids[:1], [])
         db.session.rollback()
         row = db.session.get(File, file_id)
         assert row.filesize_bytes == size_before
@@ -674,7 +686,9 @@ def test_an_edit_that_stops_on_a_changed_file_puts_the_stale_flag_back(
     from app.media.importing import chain
     from app import db
     from app.models import File
-    import app.media.tracks as tracks
+    from app.media.tracks import remux as track_remux
+    from app.media.tracks import edits
+    from app.media.tracks import scan
 
     file_id, library_path = _propedit_fixture(
         app,
@@ -691,11 +705,11 @@ def test_an_edit_that_stops_on_a_changed_file_puts_the_stale_flag_back(
         db.session.commit()
         default = _uid(file_id, 2)
     _change_record_during_the_remux(
-        monkeypatch, tracks, lambda: _replace_like_an_arr(library_path)
+        monkeypatch, track_remux, lambda: _replace_like_an_arr(library_path)
     )
     with app.app_context():
-        with pytest.raises(tracks.LibraryFileChanged):
-            tracks.mkvpropedit_task(file_id, default, None, None)
+        with pytest.raises(track_remux.LibraryFileChanged):
+            edits.mkvpropedit_task(file_id, default, None, None)
         db.session.rollback()
         row = db.session.get(File, file_id)
         assert row.aws_stale is stale_before
@@ -708,8 +722,8 @@ def test_an_edit_that_stops_on_a_changed_file_puts_the_stale_flag_back(
     monkeypatch.setattr(
         chain, "enqueue_localization", lambda path: queued.append(path) or True
     )
-    monkeypatch.setattr(tracks, "enqueue_task", lambda *a, **k: saves.append(a[0]))
-    assert tracks.track_metadata_scan_task(file_id) is True
+    monkeypatch.setattr(scan, "enqueue_task", lambda *a, **k: saves.append(a[0]))
+    assert scan.track_metadata_scan_task(file_id) is True
     assert saves == [] and queued == [library_path]
     with app.app_context():
         assert db.session.get(File, file_id).filesize_bytes == size_before
@@ -727,7 +741,8 @@ def test_an_edit_that_fails_after_its_write_keeps_the_stale_flag(
 
     from app import db
     from app.models import File
-    import app.media.tracks as tracks
+    from app.media.tracks import edits
+    from app.media.tracks import remux as track_remux
 
     file_id, library_path = _propedit_fixture(
         app,
@@ -746,10 +761,10 @@ def test_an_edit_that_fails_after_its_write_keeps_the_stale_flag(
     def broken(*args, **kwargs):
         raise OSError("The remux failed")
 
-    monkeypatch.setattr(tracks, "_run_mkvmerge", broken)
+    monkeypatch.setattr(track_remux, "_run_mkvmerge", broken)
     with app.app_context():
         with pytest.raises(OSError, match="The remux failed"):
-            tracks.mkvpropedit_task(file_id, default, None, None)
+            edits.mkvpropedit_task(file_id, default, None, None)
         db.session.rollback()
         assert db.session.get(File, file_id).aws_stale is True
         assert len(_scheduled_scans(app, file_id)) == 1
@@ -758,7 +773,7 @@ def test_an_edit_that_fails_after_its_write_keeps_the_stale_flag(
 def test_a_record_check_does_not_need_the_archive_setting(app, three_audio_mkv):
     """The check of the record runs with ARCHIVE_ORIGINAL_MEDIA off too (#726)."""
 
-    import app.media.tracks as tracks
+    from app.media.tracks import rewrite_guard
     from app import db
     from tests.factories import make_movie, make_movie_file
 
@@ -767,9 +782,9 @@ def test_a_record_check_does_not_need_the_archive_setting(app, three_audio_mkv):
         db.session.commit()
         library_path = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
         assert not app.config["ARCHIVE_ORIGINAL_MEDIA"]
-        tracks.confirm_rewrite(file.id, library_path)
-        with pytest.raises(tracks.RecordChanged):
-            tracks.confirm_rewrite(file.id, library_path + ".other")
+        rewrite_guard.confirm_rewrite(file.id, library_path)
+        with pytest.raises(rewrite_guard.RecordChanged):
+            rewrite_guard.confirm_rewrite(file.id, library_path + ".other")
         assert not file.aws_stale
 
 
@@ -780,7 +795,7 @@ def _scheduled_scans(app, file_id):
 
     from app.tasks import requeue_job_id
 
-    wanted = requeue_job_id("app.media.tracks.track_metadata_scan_task", file_id)
+    wanted = requeue_job_id("app.media.tracks.scan.track_metadata_scan_task", file_id)
     return [
         job_id
         for job_id in ScheduledJobRegistry(queue=app.file_queue).get_job_ids()
@@ -793,13 +808,13 @@ def _scheduled_scans(app, file_id):
     [
         (
             "Rescan Reorder",
-            lambda tracks, file_id: tracks.mkvpropedit_task(
+            lambda edits, file_id: edits.mkvpropedit_task(
                 file_id, _uid(file_id, 2), None, None
             ),
         ),
         (
             "Rescan Remux",
-            lambda tracks, file_id: tracks.mkvmerge_task(file_id, _uids(file_id), []),
+            lambda edits, file_id: edits.mkvmerge_task(file_id, _uids(file_id), []),
         ),
     ],
 )
@@ -822,7 +837,7 @@ def test_a_fault_after_a_restructure_queues_a_track_scan(
     scans = _scheduled_scans(app, file_id)
     assert len(scans) == 1
     job = Job.fetch(scans[0], connection=app.redis)
-    assert job.func_name == "app.media.tracks.track_metadata_scan_task"
+    assert job.func_name == "app.media.tracks.scan.track_metadata_scan_task"
     assert job.kwargs == {"file_id": file_id}
 
 
@@ -830,7 +845,7 @@ def test_a_clean_edit_queues_no_track_scan(app, monkeypatch, three_audio_mkv):
     """A committed edit leaves the rows on the file layout. No scan is queued."""
 
     from app import db
-    from app.media.tracks import mkvpropedit_unlocked
+    from app.media.tracks.edits import mkvpropedit_unlocked
     from tests.factories import make_movie, make_movie_file
 
     with app.app_context():
@@ -856,7 +871,8 @@ def test_a_transient_upload_fault_after_a_restructure_retries_the_whole_edit(
 
     import errno
 
-    import app.media.tracks as tracks
+    from app.media.tracks import audio_supplements
+    from app.media.tracks import edits
     from tests.test_scheduling import scheduled_jobs
 
     file_id, library_path = _propedit_fixture(
@@ -868,10 +884,11 @@ def test_a_transient_upload_fault_after_a_restructure_retries_the_whole_edit(
         uploads.append(path)
         raise OSError(errno.EBADF, "Bad file descriptor")
 
-    monkeypatch.setattr(tracks, "archive_library_file", lost_handle)
+    monkeypatch.setattr(edits, "archive_library_file", lost_handle)
+    monkeypatch.setattr(audio_supplements, "archive_library_file", lost_handle)
     with app.app_context():
         french = _uid(file_id, 2)
-        assert tracks.mkvpropedit_task(file_id, french, None, None) is False
+        assert edits.mkvpropedit_task(file_id, french, None, None) is False
     assert _audio(app, library_path)[0] == ("fra", True)
     assert _scheduled_scans(app, file_id) == []
     (retry,) = [
@@ -883,10 +900,15 @@ def test_a_transient_upload_fault_after_a_restructure_retries_the_whole_edit(
     assert retry.kwargs["transient_retries"] == 1
 
     monkeypatch.setattr(
-        tracks, "archive_library_file", lambda file, path: uploads.append(path)
+        edits, "archive_library_file", lambda file, path: uploads.append(path)
+    )
+    monkeypatch.setattr(
+        audio_supplements,
+        "archive_library_file",
+        lambda file, path: uploads.append(path),
     )
     with app.app_context():
-        assert tracks.mkvpropedit_task(*retry.args, **retry.kwargs) is True
+        assert edits.mkvpropedit_task(*retry.args, **retry.kwargs) is True
     assert uploads == [library_path, library_path]
     assert _audio(app, library_path)[0] == ("fra", True)
     retry.delete()

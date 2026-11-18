@@ -167,7 +167,7 @@ def test_estimate_prefers_recorded_aws_size_over_padded_local_size(app):
 
     from types import SimpleNamespace
 
-    from app.main.library import restore_cost_estimate
+    from app.main.tv_pages import restore_cost_estimate
 
     files = [
         # The exact AWS size is recorded. Fitzflix uses it as it is and

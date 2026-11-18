@@ -14,11 +14,8 @@ from app.archive.archive_keys import is_pending_archive, untouched_key_still_cla
 from app.archive.moves import request_archive_move
 from app.settings import get_setting
 from app.email import notify_admin
-from app.media.tracks import (
-    LibraryFileChanged,
-    same_language,
-    refuse_changed_library_file,
-)
+from app.media.tracks.remux import LibraryFileChanged, refuse_changed_library_file
+from app.media.tracks.languages import same_language
 from app.media.importing import cataloging, filenames, library_move
 
 

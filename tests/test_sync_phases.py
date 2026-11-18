@@ -193,7 +193,7 @@ def test_the_walk_queues_a_library_file_that_is_not_the_file_of_its_record(
     with the size of its record is not queued."""
 
     from app.archive import sync
-    from app.media import tracks
+    from app.media.tracks import rewrite_guard
     from app.media.importing import chain
 
     _, changed = _row_with_library_file(app, tmp_path, "Upgraded Here", 9, b"new file")
@@ -203,7 +203,7 @@ def test_the_walk_queues_a_library_file_that_is_not_the_file_of_its_record(
         chain, "enqueue_localization", lambda path: queued.append(path) or True
     )
     monkeypatch.setattr(
-        tracks, "_rescan_after_a_failed_edit", lambda *a, **k: scans.append(a)
+        rewrite_guard, "_rescan_after_a_failed_edit", lambda *a, **k: scans.append(a)
     )
     monkeypatch.setitem(app.config, "LIBRARY_DIR", str(tmp_path))
     with app.app_context():
@@ -222,7 +222,7 @@ def test_the_walk_scans_a_changed_file_that_an_edit_of_fitzflix_wrote(
     size. An import would make it a new original."""
 
     from app.archive import sync
-    from app.media import tracks
+    from app.media.tracks import rewrite_guard
     from app.media.importing import chain
 
     file_id, _ = _row_with_library_file(
@@ -233,7 +233,7 @@ def test_the_walk_scans_a_changed_file_that_an_edit_of_fitzflix_wrote(
         chain, "enqueue_localization", lambda path: queued.append(path) or True
     )
     monkeypatch.setattr(
-        tracks, "_rescan_after_a_failed_edit", lambda *a, **k: scans.append(a[0])
+        rewrite_guard, "_rescan_after_a_failed_edit", lambda *a, **k: scans.append(a[0])
     )
     monkeypatch.setitem(app.config, "LIBRARY_DIR", str(tmp_path))
     with app.app_context():

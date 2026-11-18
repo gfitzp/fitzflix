@@ -1715,16 +1715,20 @@ def test_a_failure_in_the_mkvmerge_loop_kills_mkvmerge(app, monkeypatch):
 
     import pytest
 
-    import app.media.tracks as tracks
+    from app.media.tracks import audio_supplements
+    from app.media.tracks import edits
+    from app.media.tracks import remux
 
     process = _RunningProcess(["Progress: 5%\n"])
 
     def broken(*args, **kwargs):
         raise RuntimeError("redis down")
 
-    monkeypatch.setattr(tracks, "report_progress", broken)
+    monkeypatch.setattr(remux, "report_progress", broken)
+    monkeypatch.setattr(edits, "report_progress", broken)
+    monkeypatch.setattr(audio_supplements, "report_progress", broken)
     with app.app_context(), pytest.raises(RuntimeError):
-        tracks.watch_mkvmerge_progress(process, None, "Film.mkv", "Remuxing")
+        remux.watch_mkvmerge_progress(process, None, "Film.mkv", "Remuxing")
     assert process.killed and process.waited
 
 
@@ -1738,7 +1742,9 @@ def test_a_child_that_ignores_the_kill_does_not_hold_the_task(app, monkeypatch, 
 
     import pytest
 
-    import app.media.tracks as tracks
+    from app.media.tracks import audio_supplements
+    from app.media.tracks import edits
+    from app.media.tracks import remux
 
     class StuckProcess(_RunningProcess):
         pid = 4242
@@ -1755,11 +1761,13 @@ def test_a_child_that_ignores_the_kill_does_not_hold_the_task(app, monkeypatch, 
     def broken(*args, **kwargs):
         raise RuntimeError("redis down")
 
-    monkeypatch.setattr(tracks, "report_progress", broken)
+    monkeypatch.setattr(remux, "report_progress", broken)
+    monkeypatch.setattr(edits, "report_progress", broken)
+    monkeypatch.setattr(audio_supplements, "report_progress", broken)
     with app.app_context(), pytest.raises(RuntimeError, match="redis down"):
-        tracks.watch_mkvmerge_progress(process, None, "Film.mkv", "Remuxing")
+        remux.watch_mkvmerge_progress(process, None, "Film.mkv", "Remuxing")
     assert process.killed
-    assert process.timeout == tracks.STOP_PROCESS_WAIT_SECONDS
+    assert process.timeout == remux.STOP_PROCESS_WAIT_SECONDS
     assert "Process 4242 did not end" in caplog.text
 
 
@@ -1832,7 +1840,7 @@ def test_a_child_that_ignores_the_kill_does_not_hide_the_fault(
     import pytest
 
     import app.media.sdr_conversion as sdr_conversion
-    import app.media.tracks as tracks
+    from app.media.tracks import remux
 
     process = _RunningProcess(["Encoding: task 1 of 1, 5.00 %\n"], ignores_kill=True)
     monkeypatch.setattr(sdr_conversion.subprocess, "Popen", lambda *a, **k: process)
@@ -1844,7 +1852,7 @@ def test_a_child_that_ignores_the_kill_does_not_hide_the_fault(
     with app.app_context(), pytest.raises(RuntimeError, match="redis down"):
         sdr_conversion._run_encode(["HandBrakeCLI"], None, "Film.mkv", None, 100)
     assert process.killed
-    assert process.wait_timeouts == [tracks.STOP_PROCESS_WAIT_SECONDS]
+    assert process.wait_timeouts == [remux.STOP_PROCESS_WAIT_SECONDS]
     assert "Process 4242 did not end" in caplog.text
 
 

@@ -799,7 +799,8 @@ def test_filmography_defers_overflow_to_a_warm_task(app, admin_client, monkeypat
     When the bounded batch defers ids, 1 warm task goes into the
     maintenance queue. The marker stops reload storms."""
 
-    import app.main.library as library
+    from app.main import criterion_pages
+    from app.main import people_pages
 
     from app import db
     from app.models import MovieCast, TMDBCredit
@@ -845,7 +846,10 @@ def test_filmography_defers_overflow_to_a_warm_task(app, admin_client, monkeypat
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
     monkeypatch.setattr("app.metadata.tmdb_apply.tmdb_get", fake_tmdb_get)
     monkeypatch.setattr(
-        library, "batch_title_availability", lambda ids, **kw: ({}, [921])
+        people_pages, "batch_title_availability", lambda ids, **kw: ({}, [921])
+    )
+    monkeypatch.setattr(
+        criterion_pages, "batch_title_availability", lambda ids, **kw: ({}, [921])
     )
 
     subscribe(app, 8, "Netflix")

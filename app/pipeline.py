@@ -204,16 +204,16 @@ STAGES = {
         "Moving the S3 archive",
         _basename_from_file_id,
     ),
-    "app.media.tracks.track_metadata_scan_task": (
+    "app.media.tracks.scan.track_metadata_scan_task": (
         "Scanning track metadata",
         _basename_from_file_id,
     ),
-    "app.media.tracks.mkvpropedit_task": (
+    "app.media.tracks.edits.mkvpropedit_task": (
         "Setting track flags",
         _basename_from_file_id,
     ),
-    "app.media.tracks.mkvmerge_task": ("Remuxing", _basename_from_file_id),
-    "app.media.tracks.remux_audio_plan_task": (
+    "app.media.tracks.edits.mkvmerge_task": ("Remuxing", _basename_from_file_id),
+    "app.media.tracks.audio_supplements.remux_audio_plan_task": (
         "Rebuilding audio",
         _basename_from_file_id,
     ),

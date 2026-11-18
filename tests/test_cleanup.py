@@ -382,7 +382,7 @@ def test_a_file_delete_is_refused_while_its_volume_is_not_mounted(
     imported the file again. The delete must change nothing."""
 
     from app import db
-    from app.main import library
+    from app.main import file_pages
     from app.models import File
     from tests.factories import make_movie, make_movie_file
 
@@ -396,7 +396,7 @@ def test_a_file_delete_is_refused_while_its_volume_is_not_mounted(
     token = _admin_csrf_token(admin_client, f"/file/{file_id}")
     deletes = []
     monkeypatch.setattr(
-        library, "_queue_archive_deletes", lambda keys: deletes.append(keys)
+        file_pages, "_queue_archive_deletes", lambda keys: deletes.append(keys)
     )
     monkeypatch.setattr(
         "app.media.videos._dead_volumes", lambda paths: ["/Volumes/Movies"]
@@ -420,7 +420,7 @@ def test_a_series_delete_is_refused_while_its_volume_is_not_mounted(
     """Delete Series reads the volume of each file before it changes a record (#752)."""
 
     from app import db
-    from app.main import library
+    from app.main import file_pages
     from app.models import TVSeries
     from tests.factories import make_tv_file, make_tv_series
 
@@ -433,7 +433,7 @@ def test_a_series_delete_is_refused_while_its_volume_is_not_mounted(
     token = _admin_csrf_token(admin_client, f"/tv/{series_id}")
     deletes = []
     monkeypatch.setattr(
-        library, "_queue_archive_deletes", lambda keys: deletes.append(keys)
+        file_pages, "_queue_archive_deletes", lambda keys: deletes.append(keys)
     )
     monkeypatch.setattr(
         "app.media.videos._dead_volumes", lambda paths: ["/Volumes/TV Shows"]

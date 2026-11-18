@@ -84,11 +84,20 @@ def _file(
 def queued(monkeypatch):
     """Record each task that the page queues."""
 
-    import app.main.library as library
+    from app.main import file_pages, movie_pages, tv_pages
     from app.archive import downloads, moves, restores, sync, uploads
 
     calls = []
-    for module in (library, restores, sync, downloads, uploads, moves):
+    for module in (
+        movie_pages,
+        tv_pages,
+        file_pages,
+        restores,
+        sync,
+        downloads,
+        uploads,
+        moves,
+    ):
         monkeypatch.setattr(
             module, "enqueue_task", lambda name, *args, **kwargs: calls.append(name)
         )
@@ -130,23 +139,23 @@ def test_the_scan_form_queues_one_scan(app, admin_client, monkeypatch):
     The job has the id of the lock-busy retry of the scan. Thus, a second
     click while the scan waits queues nothing new."""
 
-    import app.media.tracks as tracks
+    from app.media.tracks import scan
     from app.tasks import requeue_job_id
 
     read = []
     monkeypatch.setattr(
-        tracks,
+        scan,
         "extract_track_metadata",
         lambda *args, **kwargs: read.append(args) or {},
     )
     file_id = _file(app)
-    wanted = requeue_job_id("app.media.tracks.track_metadata_scan_task", file_id)
+    wanted = requeue_job_id("app.media.tracks.scan.track_metadata_scan_task", file_id)
 
     page = _post(admin_client, file_id, {"scan_submit": "Scan"})
     assert "Queued a scan of the track metadata of" in page
     assert app.file_queue.job_ids == [wanted]
     job = app.file_queue.fetch_job(wanted)
-    assert job.func_name == "app.media.tracks.track_metadata_scan_task"
+    assert job.func_name == "app.media.tracks.scan.track_metadata_scan_task"
     assert job.args == (file_id,)
 
     page = _post(admin_client, file_id, {"scan_submit": "Scan"})
@@ -163,7 +172,7 @@ def test_the_remux_form_queues_the_remux(app, admin_client, queued):
         file_id,
         {"audio_tracks": "9001", "subtitle_tracks": "9003", "mkvmerge_submit": "Remux"},
     )
-    assert queued == ["app.media.tracks.mkvmerge_task"]
+    assert queued == ["app.media.tracks.edits.mkvmerge_task"]
     assert "Remuxing MKV file" in page
 
 
@@ -223,7 +232,7 @@ def test_changed_track_languages(app):
 
     from types import SimpleNamespace
 
-    from app.main.library import changed_track_languages
+    from app.main.file_pages import changed_track_languages
 
     audio = [
         SimpleNamespace(track=1, uid="71", language="und"),
@@ -306,12 +315,12 @@ def test_the_restore_form_refuses_to_replace_a_newer_local_file(
 
 TRACK_EDIT_POSTS = [
     (
-        "app.media.tracks.mkvpropedit_task",
+        "app.media.tracks.edits.mkvpropedit_task",
         {"default_audio": "9002", "default_subtitle": "0", "mkvpropedit_submit": "Up"},
         ("9002", "0", []),
     ),
     (
-        "app.media.tracks.mkvmerge_task",
+        "app.media.tracks.edits.mkvmerge_task",
         {"audio_tracks": "9002", "subtitle_tracks": "9003", "mkvmerge_submit": "Rx"},
         (["9002"], ["9003"]),
     ),
@@ -324,11 +333,23 @@ def test_a_track_edit_post_sends_the_track_uids(
 ):
     """The page posts the track UIDs, and the task gets them (#611)."""
 
-    import app.main.library as library
+    from app.main import file_pages
+    from app.main import movie_pages
+    from app.main import tv_pages
 
     calls = []
     monkeypatch.setattr(
-        library,
+        movie_pages,
+        "enqueue_task",
+        lambda name, *args, **kwargs: calls.append((name, args, kwargs)),
+    )
+    monkeypatch.setattr(
+        tv_pages,
+        "enqueue_task",
+        lambda name, *args, **kwargs: calls.append((name, args, kwargs)),
+    )
+    monkeypatch.setattr(
+        file_pages,
         "enqueue_task",
         lambda name, *args, **kwargs: calls.append((name, args, kwargs)),
     )
@@ -345,12 +366,12 @@ def test_a_track_edit_post_sends_the_track_uids(
 
 NO_UID_POSTS = [
     (
-        "app.media.tracks.mkvpropedit_task",
+        "app.media.tracks.edits.mkvpropedit_task",
         {"default_audio": "None", "default_subtitle": "0", "mkvpropedit_submit": "Up"},
         ("None", "0", []),
     ),
     (
-        "app.media.tracks.mkvmerge_task",
+        "app.media.tracks.edits.mkvmerge_task",
         {"audio_tracks": "None", "subtitle_tracks": "None", "mkvmerge_submit": "Rx"},
         (["None"], ["None"]),
     ),
@@ -366,11 +387,23 @@ def test_rows_with_no_uid_post_none_to_the_task(
     The file has no track with that UID. Thus, the task refuses the edit
     and queues a rescan (tests/test_track_uids.py)."""
 
-    import app.main.library as library
+    from app.main import file_pages
+    from app.main import movie_pages
+    from app.main import tv_pages
 
     calls = []
     monkeypatch.setattr(
-        library,
+        movie_pages,
+        "enqueue_task",
+        lambda name, *args, **kwargs: calls.append((name, args, kwargs)),
+    )
+    monkeypatch.setattr(
+        tv_pages,
+        "enqueue_task",
+        lambda name, *args, **kwargs: calls.append((name, args, kwargs)),
+    )
+    monkeypatch.setattr(
+        file_pages,
         "enqueue_task",
         lambda name, *args, **kwargs: calls.append((name, args, kwargs)),
     )

@@ -169,9 +169,9 @@ def test_flag_refuses_a_record_that_left_the_list(app, admin_client):
 
 
 def test_match_enqueues_the_refresh(app, admin_client, monkeypatch):
-    import app.main.library as library
+    from app.main import movie_pages
 
-    monkeypatch.setattr(library, "time", _InstantTime)
+    monkeypatch.setattr(movie_pages, "time", _InstantTime)
 
     with app.app_context():
         movie = make_movie("G.I. Joe- The Ernie Pyle Story", 1988)
@@ -255,7 +255,7 @@ def test_a_failed_match_fetch_flashes_a_failure(app, admin_client, monkeypatch):
     page waits and flashes through the helpers of the film page (#641)."""
 
     import app.main.admin as admin
-    import app.main.library as library
+    from app.main import movie_pages
 
     class FailedJob:
         def get_status(self, refresh=True):
@@ -264,7 +264,7 @@ def test_a_failed_match_fetch_flashes_a_failure(app, admin_client, monkeypatch):
         def return_value(self, refresh=False):
             return None
 
-    monkeypatch.setattr(library, "time", _InstantTime)
+    monkeypatch.setattr(movie_pages, "time", _InstantTime)
     monkeypatch.setattr(admin, "enqueue_task", lambda *args, **kwargs: FailedJob())
     with app.app_context():
         movie = make_movie("Failed Match", 1988)

@@ -60,7 +60,9 @@ def _no_network(monkeypatch):
     # The staged file has no Atmos track. Thus, the job ends right after
     # its staging step, which is the step under test.
 
-    monkeypatch.setattr("app.media.tracks.get_audio_tracks_from_file", lambda path: [])
+    monkeypatch.setattr(
+        "app.media.tracks.scan.get_audio_tracks_from_file", lambda path: []
+    )
 
 
 def test_the_import_keeps_the_staged_copy_only_for_an_atmos_candidate(app, monkeypatch):

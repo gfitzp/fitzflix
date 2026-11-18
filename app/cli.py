@@ -109,7 +109,7 @@ def register(app):
             raise click.ClickException(f"No file has id {file_id}")
 
         enqueue_task(
-            "app.media.tracks.track_metadata_scan_task",
+            "app.media.tracks.scan.track_metadata_scan_task",
             int(file_id),
             description=f"Refreshing metadata for file ID {file_id}",
         )

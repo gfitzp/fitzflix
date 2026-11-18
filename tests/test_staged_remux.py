@@ -7,7 +7,8 @@ import subprocess
 import pytest
 
 from app.media.importing import space
-import app.media.tracks as tracks
+from app.media.tracks import remux
+from app.media.tracks import scan
 from app.media.importing.space import STAGING_RESERVED_KEY
 
 from tests.conftest import _TMP
@@ -53,7 +54,7 @@ def _audio_count(app, path):
     """Return the number of audio tracks in a file."""
 
     with app.app_context():
-        return len(tracks.get_audio_tracks_from_file(path))
+        return len(scan.get_audio_tracks_from_file(path))
 
 
 def _drop_second_audio(app, seen):
@@ -65,11 +66,11 @@ def _drop_second_audio(app, seen):
 
 
 def test_a_library_file_is_remuxed_on_staging(app, library_file, staging, monkeypatch):
-    monkeypatch.setattr(tracks, "_on_volume_of", lambda path, directory: False)
+    monkeypatch.setattr(remux, "_on_volume_of", lambda path, directory: False)
     seen = []
     with app.app_context():
         assert _audio_count(app, library_file) == 2
-        tracks.remux_file(
+        remux.remux_file(
             library_file, _drop_second_audio(app, seen), None, "x", "Remuxing"
         )
         assert _audio_count(app, library_file) == 1
@@ -91,11 +92,11 @@ def test_a_library_file_is_remuxed_on_staging(app, library_file, staging, monkey
 def test_a_failed_remux_leaves_the_library_file_alone(
     app, library_file, staging, monkeypatch
 ):
-    monkeypatch.setattr(tracks, "_on_volume_of", lambda path, directory: False)
+    monkeypatch.setattr(remux, "_on_volume_of", lambda path, directory: False)
     before = os.path.getsize(library_file)
     with app.app_context():
         with pytest.raises(subprocess.CalledProcessError):
-            tracks.remux_file(
+            remux.remux_file(
                 library_file,
                 lambda source, output: [
                     app.config["MKVMERGE_BIN"],
@@ -124,11 +125,11 @@ def test_a_failed_remux_leaves_the_library_file_alone(
 def test_without_staging_space_the_remux_runs_in_place(
     app, library_file, staging, monkeypatch
 ):
-    monkeypatch.setattr(tracks, "_on_volume_of", lambda path, directory: False)
+    monkeypatch.setattr(remux, "_on_volume_of", lambda path, directory: False)
     monkeypatch.setattr(space, "reserve_staging", lambda *a, **k: "wait")
     seen = []
     with app.app_context():
-        tracks.remux_file(
+        remux.remux_file(
             library_file, _drop_second_audio(app, seen), None, "x", "Remuxing"
         )
     source, output = seen[0]
@@ -143,7 +144,7 @@ def test_a_file_on_staging_is_remuxed_in_place(app, two_audio_mkv, staging):
     shutil.copy(two_audio_mkv, path)
     seen = []
     with app.app_context():
-        tracks.remux_file(path, _drop_second_audio(app, seen), None, "x", "Remuxing")
+        remux.remux_file(path, _drop_second_audio(app, seen), None, "x", "Remuxing")
     source, output = seen[0]
     assert source == path
     assert os.path.dirname(output) == staging
@@ -156,7 +157,7 @@ def test_extras_with_the_same_name_get_their_own_staging_files(
 ):
     """Many films have a "Trailer.mkv". Their remuxes must not share files."""
 
-    monkeypatch.setattr(tracks, "_on_volume_of", lambda path, directory: False)
+    monkeypatch.setattr(remux, "_on_volume_of", lambda path, directory: False)
     paths = []
     for film in ("First Film (2001)", "Second Film (2002)"):
         directory = os.path.join(app.config["MOVIE_LIBRARY"], film, "Trailers")
@@ -168,7 +169,7 @@ def test_extras_with_the_same_name_get_their_own_staging_files(
     try:
         with app.app_context():
             for path in paths:
-                tracks.remux_file(
+                remux.remux_file(
                     path, _drop_second_audio(app, seen), None, "x", "Remuxing"
                 )
         (first_source, first_output), (second_source, second_output) = seen
@@ -187,14 +188,14 @@ def test_an_in_place_remux_checks_the_space_first(app, library_file, monkeypatch
     import errno
     from types import SimpleNamespace
 
-    monkeypatch.setattr(tracks, "_on_volume_of", lambda path, directory: True)
+    monkeypatch.setattr(remux, "_on_volume_of", lambda path, directory: True)
     monkeypatch.setattr(
-        tracks.shutil, "disk_usage", lambda path: SimpleNamespace(free=0)
+        remux.shutil, "disk_usage", lambda path: SimpleNamespace(free=0)
     )
     ran = []
     with app.app_context():
         with pytest.raises(OSError) as raised:
-            tracks.remux_file(
+            remux.remux_file(
                 library_file,
                 lambda source, output: ran.append(output) or ["true"],
                 None,
@@ -216,7 +217,7 @@ def test_a_busy_reservation_lock_tries_again_and_then_remuxes_in_place(
     it, so the job failed (#569 follow-up). Now the remux runs in place
     after the tries, as it does for a lack of space."""
 
-    monkeypatch.setattr(tracks, "_on_volume_of", lambda path, directory: False)
+    monkeypatch.setattr(remux, "_on_volume_of", lambda path, directory: False)
     answers = []
     monkeypatch.setattr(
         space,
@@ -225,10 +226,10 @@ def test_a_busy_reservation_lock_tries_again_and_then_remuxes_in_place(
     )
     seen = []
     with app.app_context():
-        tracks.remux_file(
+        remux.remux_file(
             library_file, _drop_second_audio(app, seen), None, "x", "Remuxing"
         )
-    assert answers == ["lock"] * tracks.REMUX_RESERVATION_TRIES
+    assert answers == ["lock"] * remux.REMUX_RESERVATION_TRIES
     source, output = seen[0]
     assert os.path.dirname(output) == os.path.dirname(library_file)
     assert _audio_count(app, library_file) == 1
@@ -238,7 +239,7 @@ def test_a_busy_reservation_lock_tries_again_and_then_remuxes_in_place(
 def test_a_reservation_lock_that_frees_up_remuxes_on_staging(
     app, library_file, staging, monkeypatch
 ):
-    monkeypatch.setattr(tracks, "_on_volume_of", lambda path, directory: False)
+    monkeypatch.setattr(remux, "_on_volume_of", lambda path, directory: False)
     real = space.reserve_staging
     answers = ["lock"]
     monkeypatch.setattr(
@@ -248,7 +249,7 @@ def test_a_reservation_lock_that_frees_up_remuxes_on_staging(
     )
     seen = []
     with app.app_context():
-        tracks.remux_file(
+        remux.remux_file(
             library_file, _drop_second_audio(app, seen), None, "x", "Remuxing"
         )
     source, output = seen[0]
@@ -265,7 +266,7 @@ def test_a_stray_that_stays_after_the_rename_does_not_fail_the_remux(
     read it as a fault before the restructure, and a retry with the old
     track numbers was then thought to be safe."""
 
-    monkeypatch.setattr(tracks, "_on_volume_of", lambda path, directory: False)
+    monkeypatch.setattr(remux, "_on_volume_of", lambda path, directory: False)
     real_remove = os.remove
 
     def stuck(path, *args, **kwargs):
@@ -276,8 +277,8 @@ def test_a_stray_that_stays_after_the_rename_does_not_fail_the_remux(
     seen = []
     with app.app_context():
         with monkeypatch.context() as patch:
-            patch.setattr(tracks.os, "remove", stuck)
-            tracks.remux_file(
+            patch.setattr(remux.os, "remove", stuck)
+            remux.remux_file(
                 library_file, _drop_second_audio(app, seen), None, "x", "Remuxing"
             )
         assert _audio_count(app, library_file) == 1
@@ -296,7 +297,7 @@ def test_a_failed_reservation_release_after_the_rename_does_not_fail_the_remux(
     Before, the fault reached the caller. The caller then did not know
     that the file changed, and it queued no scan."""
 
-    monkeypatch.setattr(tracks, "_on_volume_of", lambda path, directory: False)
+    monkeypatch.setattr(remux, "_on_volume_of", lambda path, directory: False)
 
     def lost(reservation):
         raise ConnectionError("Redis went away")
@@ -304,7 +305,7 @@ def test_a_failed_reservation_release_after_the_rename_does_not_fail_the_remux(
     monkeypatch.setattr(space, "release_staging_reservation", lost)
     seen = []
     with app.app_context():
-        tracks.remux_file(
+        remux.remux_file(
             library_file, _drop_second_audio(app, seen), None, "x", "Remuxing"
         )
         assert _audio_count(app, library_file) == 1

@@ -253,7 +253,7 @@ def _wire_route(monkeypatch, plex_result=(True, "Playing on your device.")):
 
     The fakes record which app the dispatch picked."""
 
-    import app.main.library as library
+    from app.main import movie_pages
 
     calls = []
 
@@ -265,8 +265,8 @@ def _wire_route(monkeypatch, plex_result=(True, "Playing on your device.")):
         calls.append("infuse")
         return True, "Opened in Infuse."
 
-    monkeypatch.setattr(library, "play_movie", fake_plex)
-    monkeypatch.setattr(library, "infuse_play_movie", fake_infuse)
+    monkeypatch.setattr(movie_pages, "play_movie", fake_plex)
+    monkeypatch.setattr(movie_pages, "infuse_play_movie", fake_infuse)
     return calls
 
 

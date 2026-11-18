@@ -43,7 +43,7 @@ def undetermined_mkv(app):
 def _audio_languages(app, path):
     """Return the language code of each audio track, read the same way as the app."""
 
-    from app.media.tracks import get_audio_tracks_from_file
+    from app.media.tracks.scan import get_audio_tracks_from_file
 
     with app.app_context():
         return [track["language"] for track in get_audio_tracks_from_file(path)]
@@ -55,7 +55,7 @@ def test_the_catalogue_is_the_codes_the_records_can_hold(app):
     That is the width of the column that stores the answer. The 3
     languages that this feature exists to move between are all there."""
 
-    from app.media.tracks import iso_639_2_languages
+    from app.media.tracks.languages import iso_639_2_languages
 
     with app.app_context():
         languages = iso_639_2_languages()
@@ -78,7 +78,7 @@ def test_a_typed_language_resolves_however_the_browser_filled_it_in(app):
     Browsers do not agree about the use of the label of a datalist option
     for matching."""
 
-    from app.media.tracks import resolve_language_code
+    from app.media.tracks.languages import resolve_language_code
 
     with app.app_context():
         assert resolve_language_code("eng") == "eng"
@@ -113,7 +113,8 @@ def test_the_edit_rewrites_the_languages_in_the_file(app, undetermined_mkv):
     new codes."""
 
     from app import db
-    from app.media.tracks import get_audio_tracks_from_file, mkvpropedit_unlocked
+    from app.media.tracks.scan import get_audio_tracks_from_file
+    from app.media.tracks.edits import mkvpropedit_unlocked
     from app.models import FileAudioTrack
     from tests.factories import make_movie, make_movie_file
 
@@ -309,7 +310,7 @@ def test_the_dropdown_offers_the_639_1_set_not_the_whole_iso_table(app, admin_cl
 
     from app import db
     from app.models import FileAudioTrack, FileSubtitleTrack
-    from app.media.tracks import (
+    from app.media.tracks.languages import (
         _language_table,
         iso_639_2_languages,
         library_language_choices,
@@ -486,7 +487,7 @@ def test_only_the_changed_languages_are_sent_to_the_edit(app, admin_client):
 
     import inspect
 
-    from app.media.tracks import mkvpropedit_task
+    from app.media.tracks.edits import mkvpropedit_task
     from tests.conftest import csrf_token_from
 
     file_id, library_path, page = _matroska_file_page(app, admin_client, subtitles=True)
@@ -508,7 +509,7 @@ def test_only_the_changed_languages_are_sent_to_the_edit(app, admin_client):
         jobs = [
             job
             for job in app.file_queue.jobs
-            if job.func_name == "app.media.tracks.mkvpropedit_task"
+            if job.func_name == "app.media.tracks.edits.mkvpropedit_task"
         ]
         assert len(jobs) == 1
         inspect.signature(mkvpropedit_task).bind(*jobs[0].args)
@@ -549,7 +550,7 @@ def test_an_unknown_language_refuses_the_whole_edit(app, admin_client):
         assert not [
             job
             for job in app.file_queue.jobs
-            if job.func_name == "app.media.tracks.mkvpropedit_task"
+            if job.func_name == "app.media.tracks.edits.mkvpropedit_task"
         ]
     finally:
         os.remove(library_path)
@@ -566,7 +567,7 @@ def test_a_terminologic_code_reads_as_a_name_and_is_not_a_change(app, admin_clie
 
     import inspect
 
-    from app.media.tracks import mkvpropedit_task
+    from app.media.tracks.edits import mkvpropedit_task
     from tests.conftest import csrf_token_from
 
     file_id, library_path, page = _matroska_file_page(
@@ -591,7 +592,7 @@ def test_a_terminologic_code_reads_as_a_name_and_is_not_a_change(app, admin_clie
         jobs = [
             job
             for job in app.file_queue.jobs
-            if job.func_name == "app.media.tracks.mkvpropedit_task"
+            if job.func_name == "app.media.tracks.edits.mkvpropedit_task"
         ]
         assert len(jobs) == 1
         inspect.signature(mkvpropedit_task).bind(*jobs[0].args)
@@ -603,7 +604,7 @@ def test_a_terminologic_code_reads_as_a_name_and_is_not_a_change(app, admin_clie
 def test_a_639_3_only_language_resolves(app):
     """Cantonese and Mandarin have no 639-2 code. A track can still hold them."""
 
-    from app.media.tracks import (
+    from app.media.tracks.languages import (
         iso_639_2_languages,
         language_names,
         resolve_language_code,
@@ -619,7 +620,7 @@ def test_a_639_3_only_language_resolves(app):
 def test_a_code_wins_over_the_name_of_a_different_language(app):
     """The language named "Lou" (loj) must not take the code "lou"."""
 
-    from app.media.tracks import language_names, resolve_language_code
+    from app.media.tracks.languages import language_names, resolve_language_code
 
     with app.app_context():
         assert resolve_language_code("lou") == "lou"
@@ -638,7 +639,7 @@ def test_a_language_new_to_the_cached_choices_stays_selected(app, admin_client):
 
     import json
 
-    from app.media.tracks import LANGUAGE_CHOICES_KEY
+    from app.media.tracks.languages import LANGUAGE_CHOICES_KEY
 
     app.redis.set(
         LANGUAGE_CHOICES_KEY,
@@ -693,7 +694,7 @@ def test_an_unresolvable_stored_language_does_not_block_the_edit(app, admin_clie
         assert [
             job
             for job in app.file_queue.jobs
-            if job.func_name == "app.media.tracks.mkvpropedit_task"
+            if job.func_name == "app.media.tracks.edits.mkvpropedit_task"
         ]
     finally:
         os.remove(library_path)

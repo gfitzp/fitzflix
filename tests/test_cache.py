@@ -236,17 +236,17 @@ def test_cached_radarr_ids_and_a_refresh_that_fails(app, monkeypatch):
 
 
 def test_language_choices_read_back_as_tuples(app):
-    from app.media import tracks
+    from app.media.tracks import languages
 
     with app.app_context():
-        app.redis.delete(tracks.LANGUAGE_CHOICES_KEY)
-        first = tracks.library_language_choices()
-        assert 0 < app.redis.ttl(tracks.LANGUAGE_CHOICES_KEY)
+        app.redis.delete(languages.LANGUAGE_CHOICES_KEY)
+        first = languages.library_language_choices()
+        assert 0 < app.redis.ttl(languages.LANGUAGE_CHOICES_KEY)
         assert (
-            app.redis.ttl(tracks.LANGUAGE_CHOICES_KEY)
-            <= tracks.LANGUAGE_CHOICES_SECONDS
+            app.redis.ttl(languages.LANGUAGE_CHOICES_KEY)
+            <= languages.LANGUAGE_CHOICES_SECONDS
         )
-        second = tracks.library_language_choices()
+        second = languages.library_language_choices()
         assert first == second
         assert all(isinstance(pair, tuple) for pair in second)
         assert ("eng", "English") in second

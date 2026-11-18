@@ -488,16 +488,19 @@ def test_the_backfill_keeps_an_archive_with_different_bytes(
 
 
 def test_a_scan_that_rewrites_the_file_queues_its_archive(app, monkeypatch):
-    import app.media.tracks as tracks
+    from app.media.tracks import audio_supplements
+    from app.media.tracks import edits
+    from app.media.tracks import rewrite_guard
+    from app.media.tracks import scan
 
     def removal(path, before_replace=None):
         # The real removal runs the flag right before its rename.
         before_replace()
         return True
 
-    monkeypatch.setattr(tracks, "remove_empty_subtitle_tracks", removal)
+    monkeypatch.setattr(edits, "remove_empty_subtitle_tracks", removal)
     monkeypatch.setattr(
-        tracks,
+        scan,
         "_extract_media_details",
         lambda path: {
             "video": {},
@@ -507,13 +510,26 @@ def test_a_scan_that_rewrites_the_file_queues_its_archive(app, monkeypatch):
         },
     )
     monkeypatch.setattr(
-        tracks, "get_setting", lambda name, *a, **k: name == "ARCHIVE_ORIGINAL_MEDIA"
+        scan, "get_setting", lambda name, *a, **k: name == "ARCHIVE_ORIGINAL_MEDIA"
+    )
+    monkeypatch.setattr(
+        rewrite_guard,
+        "get_setting",
+        lambda name, *a, **k: name == "ARCHIVE_ORIGINAL_MEDIA",
+    )
+    monkeypatch.setattr(
+        edits, "get_setting", lambda name, *a, **k: name == "ARCHIVE_ORIGINAL_MEDIA"
+    )
+    monkeypatch.setattr(
+        audio_supplements,
+        "get_setting",
+        lambda name, *a, **k: name == "ARCHIVE_ORIGINAL_MEDIA",
     )
 
     class Matroska:
         tracks = [type("T", (), {"track_type": "General", "format": "Matroska"})()]
 
-    monkeypatch.setattr(tracks.MediaInfo, "parse", lambda path: Matroska())
+    monkeypatch.setattr(scan.MediaInfo, "parse", lambda path: Matroska())
     with app.app_context():
         file = make_movie_file(make_movie("Scanned", 2006), "DVD")
         db.session.commit()
@@ -535,17 +551,17 @@ def test_a_scan_that_rewrites_the_file_queues_its_archive(app, monkeypatch):
     # The rewrite marks the archive stale before its rename (#517). Thus,
     # a failed save or upload leaves the repair to the weekly sync.
 
-    tracks.track_metadata_scan_task(file_id)
+    scan.track_metadata_scan_task(file_id)
     with app.app_context():
         assert db.session.get(File, file_id).aws_stale is True
         assert uploads() == []
         (save,) = [
             job
             for job in app.sql_queue.jobs
-            if job.func_name == "app.media.tracks.save_track_metadata"
+            if job.func_name == "app.media.tracks.scan.save_track_metadata"
         ]
         assert save.args[0] == file_id and save.args[3] is True
-    assert tracks.save_track_metadata(*save.args) is True
+    assert scan.save_track_metadata(*save.args) is True
     with app.app_context():
         assert uploads() == [(file_id,)]
     os.remove(path)
@@ -554,11 +570,11 @@ def test_a_scan_that_rewrites_the_file_queues_its_archive(app, monkeypatch):
 def test_the_save_queues_the_upload_after_it_releases_the_title_lock(app, monkeypatch):
     """The upload takes the title lock. Queued under it, it waits (#615 follow-up)."""
 
-    import app.media.tracks as tracks
+    from app.media.tracks import scan
 
     held_at_enqueue = []
     monkeypatch.setattr(
-        tracks,
+        scan,
         "enqueue_task",
         lambda name, *a, **k: held_at_enqueue.append(
             (name, bool(app.redis.exists(lock.resource)))
@@ -575,7 +591,7 @@ def test_the_save_queues_the_upload_after_it_releases_the_title_lock(app, monkey
             "subtitle_tracks": [],
             "filesize_bytes": 1,
         }
-        assert tracks.save_track_metadata(file.id, details, lock, True) is True
+        assert scan.save_track_metadata(file.id, details, lock, True) is True
     assert held_at_enqueue == [("app.archive.uploads.upload_task", False)]
 
 

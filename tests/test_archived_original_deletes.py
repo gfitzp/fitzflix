@@ -220,7 +220,7 @@ def test_a_queued_delete_keeps_a_key_that_a_record_claims_before_it_runs(
 
     from app.archive import aws_clients
     from app.archive import moves
-    from app.main.library import _queue_archive_deletes
+    from app.main.file_pages import _queue_archive_deletes
     from tests.fakes import ArchiveS3
 
     key = "untouched/Claimed Later (1997) - [Bluray-1080p].mkv"

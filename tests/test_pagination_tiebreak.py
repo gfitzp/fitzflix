@@ -17,7 +17,7 @@ def _order_columns(query):
 
 
 def test_the_people_search_ends_its_order_on_the_credit_id(app):
-    from app.main.library import _ranked_people_query
+    from app.main.people_pages import _ranked_people_query
 
     with app.app_context():
         query = _ranked_people_query("cast", "john", 1)

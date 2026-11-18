@@ -9,7 +9,8 @@ from redis import Redis
 from app import db, get_app
 from app.archive import downloads, moves, restores, sync, uploads
 from app.criterion import criterion_catalog
-from app.media import sdr_conversion, tracks, videos
+from app.media import sdr_conversion, videos
+from app.media.tracks import audio_supplements, edits, scan
 from app.media.importing import cataloging, library_move, localization, sweep
 from app.metadata import tmdb_refresh
 from app.viewing import diary

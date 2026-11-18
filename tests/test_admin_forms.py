@@ -25,9 +25,9 @@ ACTIONS = {
 def no_wait(monkeypatch):
     """Skip the 10 one-second waits for a TMDB refresh result."""
 
-    import app.main.library as library
+    from app.main import movie_pages
 
-    monkeypatch.setattr(library.time, "sleep", lambda seconds: None)
+    monkeypatch.setattr(movie_pages.time, "sleep", lambda seconds: None)
 
 
 def _film(title, year, **kwargs):

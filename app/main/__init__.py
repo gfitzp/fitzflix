@@ -9,13 +9,17 @@ bp = Blueprint("main", __name__)
 from app.main import (  # noqa: E402
     account,
     admin,
+    criterion_pages,
     discover,
     dvr,
     dvr_admin,
+    file_pages,
     game,
-    library,
+    movie_pages,
+    people_pages,
     posters,
     routes,
     search,
     shopping,
+    tv_pages,
 )

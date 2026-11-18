@@ -56,11 +56,11 @@ def _finish_fakes(monkeypatch):
     monkeypatch.setattr(atmos.MediaInfo, "parse", lambda path: _MediaInfo())
     monkeypatch.setattr(atmos.subprocess, "Popen", fake_popen)
     monkeypatch.setattr(
-        "app.media.tracks.watch_mkvmerge_progress", lambda *a, **k: None
+        "app.media.tracks.remux.watch_mkvmerge_progress", lambda *a, **k: None
     )
-    monkeypatch.setattr("app.media.tracks.get_audio_tracks_from_file", tracks_of)
+    monkeypatch.setattr("app.media.tracks.scan.get_audio_tracks_from_file", tracks_of)
     monkeypatch.setattr(
-        "app.media.tracks.get_subtitle_tracks_from_file", lambda path: []
+        "app.media.tracks.scan.get_subtitle_tracks_from_file", lambda path: []
     )
     monkeypatch.setattr(atmos, "_run_step", lambda *a, **k: None)
     monkeypatch.setattr(atmos, "enqueue_plex_analyze", lambda path: None)
@@ -361,7 +361,7 @@ def test_a_failed_row_commit_marks_the_archive_stale_and_queues_a_scan(
     has no second commit of its own (#614)."""
 
     import app.media.atmos as atmos
-    import app.media.tracks as tracks
+    from app.media.tracks import scan
     from app import db
     from app.models import File
     from tests.test_scheduling import requeue_id, scheduled_jobs
@@ -374,11 +374,11 @@ def test_a_failed_row_commit_marks_the_archive_stale_and_queues_a_scan(
         def always_fail(*args, **kwargs):
             raise RuntimeError("(1020, 'Record has changed since last read')")
 
-        monkeypatch.setattr(tracks, "replace_track_rows", always_fail)
+        monkeypatch.setattr(scan, "replace_track_rows", always_fail)
         with pytest.raises(RuntimeError):
             atmos.atmos_finish_task(*finish.args)
 
-        wanted = requeue_id("app.media.tracks.track_metadata_scan_task", file_id)
+        wanted = requeue_id("app.media.tracks.scan.track_metadata_scan_task", file_id)
         assert [j.id for j in scheduled_jobs(app.file_queue) if j.id == wanted] == [
             wanted
         ]
@@ -395,14 +395,14 @@ def test_a_file_that_has_its_twins_gets_its_rows_back(app, monkeypatch):
     with app.app_context():
         file, job, _ = _setup(app, monkeypatch, "Rows Back")
         monkeypatch.setattr(
-            "app.media.tracks.get_audio_tracks_from_file",
+            "app.media.tracks.scan.get_audio_tracks_from_file",
             lambda path: [
                 {"codec": TWIN, "language": "eng", "language_name": "English"},
                 {"codec": ATMOS, "language": "eng", "language_name": "English"},
             ],
         )
         monkeypatch.setattr(
-            "app.media.tracks.get_subtitle_tracks_from_file", lambda path: []
+            "app.media.tracks.scan.get_subtitle_tracks_from_file", lambda path: []
         )
 
         assert atmos.atmos_supplement_task(file.id) is True
@@ -608,24 +608,24 @@ def test_the_row_rebuild_of_a_twinned_file_starts_a_new_transaction(app, monkeyp
     """The rebuild after the long copy runs after a rollback (#503 follow-up)."""
 
     import app.media.atmos as atmos
-    import app.media.tracks as tracks
+    from app.media.tracks import scan
     from app import db
 
     with app.app_context():
         file, job, _ = _setup(app, monkeypatch, "Fresh Snapshot")
         monkeypatch.setattr(
-            "app.media.tracks.get_audio_tracks_from_file",
+            "app.media.tracks.scan.get_audio_tracks_from_file",
             lambda path: [
                 {"codec": TWIN, "language": "eng", "language_name": "English"},
                 {"codec": ATMOS, "language": "eng", "language_name": "English"},
             ],
         )
         monkeypatch.setattr(
-            "app.media.tracks.get_subtitle_tracks_from_file", lambda path: []
+            "app.media.tracks.scan.get_subtitle_tracks_from_file", lambda path: []
         )
         events = []
         real_rollback = db.session.rollback
-        real_replace = tracks.replace_track_rows
+        real_replace = scan.replace_track_rows
 
         def rollback():
             events.append("rollback")
@@ -636,7 +636,7 @@ def test_the_row_rebuild_of_a_twinned_file_starts_a_new_transaction(app, monkeyp
             return real_replace(*args, **kwargs)
 
         monkeypatch.setattr(db.session, "rollback", rollback)
-        monkeypatch.setattr(tracks, "replace_track_rows", replace)
+        monkeypatch.setattr(scan, "replace_track_rows", replace)
         assert atmos.atmos_supplement_task(file.id) is True
         assert "replace" in events
         assert events[events.index("replace") - 1] == "rollback"

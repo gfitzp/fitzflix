@@ -49,7 +49,7 @@ from flask import current_app
 from werkzeug.local import LocalProxy
 
 from app.tasks import enqueue_task, report_progress
-from app.media.tracks import stop_process
+from app.media.tracks.remux import stop_process
 from app import db, get_app, makedirs_on_mounted_volume
 from app.models import MOVIES
 from app.media.naming import hidden, retag_quality
@@ -127,7 +127,7 @@ def needs_conversion(hdr_format, color_primaries, transfer_characteristics):
 def describe_color(hdr_format, color_primaries, transfer_characteristics):
     """Return a short name for the color format of a video, for example "HDR10"."""
 
-    from app.media.tracks import parse_dolby_vision_profile
+    from app.media.tracks.scan import parse_dolby_vision_profile
 
     profile = parse_dolby_vision_profile(hdr_format)
     if profile:
@@ -216,7 +216,7 @@ def plan_conversion(file_path, file_details, max_height):
     does not exist."""
 
     from app.models import RefQuality
-    from app.media.tracks import parse_dolby_vision_profile
+    from app.media.tracks.scan import parse_dolby_vision_profile
 
     video = probe_video(file_path)
     if not video or not needs_conversion(

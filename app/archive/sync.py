@@ -989,7 +989,7 @@ def _queue_changed_library_file(row, library_file):
     exceptions). An edit that stops because an other program changed the
     file puts the flag back to its value before the edit (#762)."""
 
-    from app.media import tracks
+    from app.media.tracks import rewrite_guard
     from app.media.importing.chain import enqueue_localization
 
     def differs(record):
@@ -1021,7 +1021,7 @@ def _queue_changed_library_file(row, library_file):
             f"'{library_file}' has an other size than its record after an edit; "
             f"added to the track scans"
         )
-        tracks._rescan_after_a_failed_edit(
+        rewrite_guard._rescan_after_a_failed_edit(
             row.id, f"'{row.basename}'", reason="The S3 sync found a changed file"
         )
     elif enqueue_localization(library_file):

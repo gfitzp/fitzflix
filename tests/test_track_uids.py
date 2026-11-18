@@ -72,8 +72,8 @@ def _library_file(app, source, title):
     """Copy source into the library under a new movie row. Return (id, path)."""
 
     from app import db
-    from app.media.tracks import replace_track_rows
-    from app.media.tracks import (
+    from app.media.tracks.scan import replace_track_rows
+    from app.media.tracks.scan import (
         get_audio_tracks_from_file,
         get_subtitle_tracks_from_file,
     )
@@ -115,7 +115,7 @@ def _remux_away(app, path, keep_audio, keep_subtitles):
 def _scans(app, file_id):
     from tests.test_scheduling import requeue_id, scheduled_jobs
 
-    wanted = requeue_id("app.media.tracks.track_metadata_scan_task", file_id)
+    wanted = requeue_id("app.media.tracks.scan.track_metadata_scan_task", file_id)
     return [job for job in scheduled_jobs(app.file_queue) if job.id == wanted]
 
 
@@ -145,7 +145,7 @@ def test_a_flag_edit_survives_a_renumbering_before_the_job(app, two_by_two_mkv):
     saved UIDs reach the right tracks."""
 
     from app.models import FileAudioTrack, FileSubtitleTrack
-    from app.media.tracks import mkvpropedit_unlocked
+    from app.media.tracks.edits import mkvpropedit_unlocked
 
     file_id, path = _library_file(app, two_by_two_mkv, "UID Renumber")
     try:
@@ -194,7 +194,7 @@ def test_a_flag_edit_survives_a_renumbering_before_the_job(app, two_by_two_mkv):
 def test_a_remux_survives_a_renumbering_before_the_job(app, two_by_two_mkv):
     """The page kept audio 2 and subtitle 2. A remux dropped audio 1 first."""
 
-    from app.media.tracks import mkvmerge_unlocked
+    from app.media.tracks.edits import mkvmerge_unlocked
 
     file_id, path = _library_file(app, two_by_two_mkv, "UID Remux Renumber")
     try:
@@ -224,7 +224,7 @@ def test_an_edit_for_a_uid_that_is_gone_stops_and_queues_a_scan(
 ):
     """The file changed after the page load. The edit writes nothing (#611)."""
 
-    from app.media.tracks import mkvmerge_unlocked, mkvpropedit_unlocked
+    from app.media.tracks.edits import mkvmerge_unlocked, mkvpropedit_unlocked
 
     file_id, path = _library_file(app, two_by_two_mkv, f"UID Gone {task}")
     try:
@@ -251,11 +251,8 @@ def test_the_file_page_shows_once_that_a_stale_edit_stopped(
 ):
     """The route said that the edit was queued. The page says that it did not run (#606)."""
 
-    from app.media.tracks import (
-        STOPPED_EDIT_KEY,
-        mkvmerge_unlocked,
-        mkvpropedit_unlocked,
-    )
+    from app.media.tracks.rewrite_guard import STOPPED_EDIT_KEY
+    from app.media.tracks.edits import mkvmerge_unlocked, mkvpropedit_unlocked
 
     file_id, path = _library_file(app, two_by_two_mkv, f"Stale Note {task}")
     key = STOPPED_EDIT_KEY.format(file_id=file_id)
@@ -283,13 +280,13 @@ def test_the_task_refuses_a_uid_that_is_gone(app, two_by_two_mkv, uid):
     A row with no UID posts "None" (#611). The edit stops the same way,
     and the rescan fills the UIDs."""
 
-    from app.media import tracks
+    from app.media.tracks import edits
 
     file_id, path = _library_file(app, two_by_two_mkv, f"UID Gone Task {uid}")
     try:
         with app.app_context():
-            assert tracks.mkvpropedit_task(file_id, uid, None, []) is False
-            assert tracks.mkvmerge_task(file_id, [uid], []) is False
+            assert edits.mkvpropedit_task(file_id, uid, None, []) is False
+            assert edits.mkvmerge_task(file_id, [uid], []) is False
         assert len(_scans(app, file_id)) == 1
     finally:
         os.remove(path)

@@ -16,7 +16,7 @@ import re
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 # A task of a base module has 3 parts ("app.dvr.build_channel_lineups").
-# A task of a module in a package has 4 ("app.media.tracks.mkvmerge_task").
+# A task of a module in a package has 4 ("app.media.tracks.edits.mkvmerge_task").
 # A task of the import package has 5.
 
 TASK_NAME = re.compile(r"^app\.[a-z_]+\.[a-z_0-9]+(\.[a-z_0-9]+){0,2}$")

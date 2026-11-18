@@ -4,6 +4,7 @@ import os
 from flask import (
     abort,
     current_app,
+    render_template,
     request,
     send_from_directory,
 )
@@ -113,3 +114,10 @@ def favicon():
         "favicon.ico",
         mimetype="image/vnd.microsoft.icon",
     )
+
+
+@bp.route("/about")
+def about():
+    """Show general information about the Fitzflix application."""
+
+    return render_template("about.html")

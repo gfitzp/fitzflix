@@ -21,7 +21,7 @@ from tests.test_scheduling import scheduled_jobs
 from app import safe_job_id
 
 import app.media.videos as videos
-from app.media import tracks
+from app.media.tracks import scan
 from app.archive import aws_clients
 from app.media.importing import library_move
 from app.media.importing import localization
@@ -998,7 +998,7 @@ def test_save_track_metadata_writes_rows_and_releases_lock(app):
 
         lock = app.lock_manager.lock("save-metadata-test", 30000)
         assert lock
-        assert tracks.save_track_metadata(file.id, details, lock=lock) is True
+        assert scan.save_track_metadata(file.id, details, lock=lock) is True
 
         # The task wrote through its own session. Refresh the view of this
         # session
@@ -1092,7 +1092,7 @@ def test_same_named_files_keep_their_own_lock_retries(app, monkeypatch):
         for file_id in (101, 202):
             schedule_retry(
                 app.file_queue,
-                "app.media.tracks.mkvpropedit_task",
+                "app.media.tracks.edits.mkvpropedit_task",
                 (5, 15),
                 60,
                 "'Deleted Scenes.mkv'",

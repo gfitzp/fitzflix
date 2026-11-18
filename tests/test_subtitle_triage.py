@@ -208,7 +208,7 @@ def test_per_file_page_shows_one_file_and_returns_to_origin(app, admin_client):
 
 
 def test_mark_forced_enqueues_mkvpropedit_preserving_settings(app, admin_client):
-    from app.media.tracks import mkvpropedit_task
+    from app.media.tracks.edits import mkvpropedit_task
 
     with app.app_context():
         file, small = build_candidate()
@@ -252,7 +252,7 @@ def test_mark_forced_enqueues_mkvpropedit_preserving_settings(app, admin_client)
         jobs = [
             job
             for job in app.file_queue.jobs
-            if job.func_name == "app.media.tracks.mkvpropedit_task"
+            if job.func_name == "app.media.tracks.edits.mkvpropedit_task"
         ]
         assert len(jobs) == 1
         # The task keeps the current defaults: audio track 1 and default
@@ -330,7 +330,7 @@ def test_multi_select_flags_all_chosen_tracks_in_one_task(app, admin_client):
         jobs = [
             job
             for job in app.file_queue.jobs
-            if job.func_name == "app.media.tracks.mkvpropedit_task"
+            if job.func_name == "app.media.tracks.edits.mkvpropedit_task"
         ]
         assert len(jobs) == 1
         assert jobs[0].args == (file_id, None, "801", ["802", "803"])
