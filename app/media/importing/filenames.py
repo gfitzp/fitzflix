@@ -754,9 +754,9 @@ def _film_with_the_selected_name(title, year):
 
     A film with no selection that has exactly this title and year comes
     first. The title page refuses a selection with the file name of a
-    film that the library has. Thus, such a film came into the library
-    after the selection. The file goes through the TMDB search then, as
-    a file of a film with no selection does."""
+    film that the library has. But such a film can come into the
+    library after the selection. The file goes through the TMDB search
+    then, as a file of a film with no selection does."""
 
     exact = Movie.query.filter(
         Movie.title == title, Movie.year == year, Movie.chosen_title == None
