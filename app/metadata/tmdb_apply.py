@@ -179,8 +179,17 @@ def _tmdb_date(value):
     return datetime.strptime(value, "%Y-%m-%d") if value else None
 
 
+def _spelling_key(title):
+    """Return the key of 1 spelling of a title: no letter case, 1 space for each run.
+
+    The title page shows 1 entry for each key. A no-break space counts
+    as white space."""
+
+    return " ".join((title or "").split()).casefold()
+
+
 def _same_title_key(title):
-    """Return the key that says if 2 titles of TMDB are the same title.
+    """Return the key that says if 2 spellings are the same title.
 
     The key folds the accents and the letter case (title_key), and each
     run of white space is 1 space. An ellipsis character and 3 periods
@@ -189,14 +198,23 @@ def _same_title_key(title):
 
     from app.models import clip_movie_title
 
-    return " ".join(title_key(clip_movie_title(title)).split())
+    return " ".join(title_key(clip_movie_title(title or "")).split())
 
 
 def same_tmdb_title(first, second):
-    """Return True if 2 titles are the same title (_same_title_key)."""
+    """Return True if 2 titles have the same spelling (_spelling_key)."""
 
-    key = _same_title_key(first or "")
-    return bool(key) and key == _same_title_key(second or "")
+    key = _spelling_key(first)
+    return bool(key) and key == _spelling_key(second)
+
+
+def _alternative_titles(tmdb_info):
+    """Return the alternative titles of a film payload, or None with no such block."""
+
+    block = tmdb_info.get("alternative_titles")
+    if not isinstance(block, dict) or not isinstance(block.get("titles"), list):
+        return None
+    return [entry for entry in block["titles"] if isinstance(entry, dict)]
 
 
 def tmdb_title_choices(tmdb_info):
@@ -204,22 +222,22 @@ def tmdb_title_choices(tmdb_info):
 
     Each entry is {"title", "sources"}. The sources say where TMDB has
     the title: the main title, the original title, or an alternative
-    title with its country and its type. Two titles with the same key
-    (_same_title_key) are 1 entry, with the first spelling. The main
-    title comes first.
+    title with its country and its type. Two titles with the same
+    spelling (_spelling_key) are 1 entry. Each run of white space in a
+    title is 1 space, as in the title that an import reads from a file
+    name. The main title comes first.
 
     None means that the payload has no block of alternative titles.
-    Then the list is not complete. An empty block is complete: the film
-    has no alternative titles."""
+    Then the list is not complete."""
 
-    block = tmdb_info.get("alternative_titles")
-    if not isinstance(block, dict) or not isinstance(block.get("titles"), list):
+    alternatives = _alternative_titles(tmdb_info)
+    if alternatives is None:
         return None
     listed = [
         (tmdb_info.get("title"), "TMDB title"),
         (tmdb_info.get("original_title"), "Original title"),
     ]
-    for entry in block["titles"]:
+    for entry in alternatives:
         country = entry.get("iso_3166_1") or ""
         kind = entry.get("type") or ""
         source = ": ".join(part for part in (country, kind) if part)
@@ -229,7 +247,7 @@ def tmdb_title_choices(tmdb_info):
         if not isinstance(title, str) or not title.strip():
             continue
         choice = choices.setdefault(
-            _same_title_key(title), {"title": title.strip(), "sources": []}
+            _spelling_key(title), {"title": " ".join(title.split()), "sources": []}
         )
         if source not in choice["sources"]:
             choice["sources"].append(source)
@@ -244,7 +262,7 @@ def tmdb_titles(tmdb_info):
 
 
 def listed_tmdb_title(title, tmdb_info):
-    """Return the spelling of TMDB for a title that the payload lists, or None."""
+    """Return the title of the payload that has the spelling of title, or None."""
 
     for listed in tmdb_titles(tmdb_info) or []:
         if same_tmdb_title(listed, title):
@@ -257,15 +275,27 @@ def selected_title_stands(selected, tmdb_info):
 
     Invariant: a film keeps a selected title only while TMDB lists it.
     The main title, the original title and the alternative titles count.
-    Return False when the payload has the complete list and the title
-    is not in it. Return None when the payload has no block of
-    alternative titles. Then the payload cannot tell, and the selection
-    stays. A payload that waited in a queue or in a retry can be such a
-    payload."""
+    A difference of letter case, accents or white space does not end a
+    selection (_same_title_key).
 
-    if tmdb_titles(tmdb_info) is None:
-        return None
-    return listed_tmdb_title(selected, tmdb_info) is not None
+    Return False when the payload has alternative titles and the title
+    is not in the payload. Return None when the title is not in the
+    payload and the payload has no alternative title. Then the payload
+    cannot tell, and the selection stays. A payload that waited in a
+    queue has no such block. TMDB also sent whole payloads with an
+    empty list where the film has entries (the genre incident of
+    2026-08-07). An empty list must not rename a film."""
+
+    alternatives = _alternative_titles(tmdb_info)
+    listed = [tmdb_info.get("title"), tmdb_info.get("original_title")]
+    listed += [entry.get("title") for entry in alternatives or []]
+    wanted = _same_title_key(selected)
+    if any(
+        isinstance(title, str) and wanted and _same_title_key(title) == wanted
+        for title in listed
+    ):
+        return True
+    return False if alternatives else None
 
 
 def canonical_movie_name(tmdb_info, year, selected_title=None):

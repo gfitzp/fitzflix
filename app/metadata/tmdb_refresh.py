@@ -108,7 +108,6 @@ PERSON_SET_COLUMNS = (
     "shopping_list_exclude",
     "shopping_cart_add_date",
     "shopping_cart_priority",
-    "chosen_title",
 )
 
 # The Wikidata task writes these columns from the catalog entry of the
@@ -123,7 +122,9 @@ CATALOG_COLUMNS = (
 
 # These columns stay with their record. The survivor keeps its identity,
 # its dates and its own choice of "TMDB has no record of this film".
-# move_movie_poster moves the custom poster.
+# move_movie_poster moves the custom poster. The apply gives the survivor
+# the selected title of a record of the same film, before the merge
+# (_apply_movie_refresh).
 
 NOT_CARRIED = (
     "id",
@@ -134,6 +135,7 @@ NOT_CARRIED = (
     "imdb_id",
     "tmdb_ignored",
     "custom_poster",
+    "chosen_title",
 )
 
 
@@ -989,6 +991,19 @@ def _apply_movie_refresh(
     # Its lock goes in the list too.
 
     renamed_to = existing_movie or movie
+
+    # A merge of 2 records of the same film keeps the title that an
+    # admin selected. The survivor gets it before the apply. A record
+    # that goes with the id of an other film has a title of that other
+    # film, and its selection does not move.
+
+    if (
+        existing_movie is not None
+        and existing_movie.id != movie.id
+        and existing_movie.chosen_title is None
+        and movie.tmdb_id == existing_movie.tmdb_id
+    ):
+        existing_movie.chosen_title = movie.chosen_title
     names = (
         [canonical_movie_name(tmdb_info, renamed_to.year, renamed_to.chosen_title)]
         if tmdb_info
@@ -1159,6 +1174,24 @@ def _apply_movie_refresh(
 
         original_movie_record = Movie.query.filter_by(id=original_movie_id).first()
         db.session.delete(original_movie_record)
+
+        # The record that goes can hold the selected name until this
+        # delete. Then the survivor could not take the name in this
+        # apply. A second refresh gives it the name. Only a merge
+        # queues it, and a merge deletes 1 record. Thus, it cannot
+        # repeat.
+
+        if movie.chosen_title and movie.title != movie.chosen_title:
+            enqueue_task(
+                "app.metadata.tmdb_refresh.refresh_tmdb_info",
+                MOVIES,
+                movie.id,
+                movie.tmdb_id,
+                description=(
+                    f"Refreshing TMDB data for '{movie.title} ({movie.year})' "
+                    f"after its merge"
+                ),
+            )
 
     return True
 

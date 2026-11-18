@@ -714,6 +714,26 @@ def _resolve_movie_identity(basename, title, year, id_tag, tmdb_id, log):
 
     tmdb_result = None
     m = None
+    if not tmdb_id and id_tag is None and year:
+        # Invariant: a file with the title that an admin selected for a
+        # film belongs to that film. A restored rip has this name. The
+        # TMDB search finds a film by its main title first, and an other
+        # film of the year can have that name. Thus, the record with the
+        # selection gives the id, with no search.
+
+        selected = (
+            Movie.query.filter(
+                Movie.title == title,
+                Movie.year == year,
+                Movie.chosen_title != None,
+                Movie.tmdb_id != None,
+            )
+            .order_by(Movie.date_created.asc())
+            .first()
+        )
+        if selected is not None:
+            tmdb_id = selected.tmdb_id
+
     if tmdb_id:
         # A record that already owns this id has the canonical title and
         # year. The network is not necessary.

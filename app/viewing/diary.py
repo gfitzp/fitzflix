@@ -1089,7 +1089,15 @@ def review_task(user_id, title, rating):
                             # exist. Then attach the review to that movie. Do
                             # not violate the unique title + year constraint.
 
-                            movie = Movie.query.filter_by(
+                            # A film with a title that an admin selected
+                            # does not have the TMDB title. Its record has
+                            # the TMDB id.
+
+                            movie = (
+                                Movie.query.filter_by(tmdb_id=tmdb_id)
+                                .order_by(Movie.date_created.asc())
+                                .first()
+                            ) or Movie.query.filter_by(
                                 title=tmdb_title, year=tmdb_year
                             ).first()
 

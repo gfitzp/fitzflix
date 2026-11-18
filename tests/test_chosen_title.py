@@ -154,6 +154,43 @@ def test_a_payload_with_no_list_of_alternative_titles_keeps_the_selection(app):
         assert movie.chosen_title == STREAMING
 
 
+def test_an_empty_list_of_alternative_titles_keeps_the_selection(app):
+    """TMDB sent whole payloads with an empty list where the film has entries."""
+
+    with app.app_context():
+        movie = film()
+        movie.tmdb_movie_apply(payload(alternatives=()))
+        db.session.commit()
+        assert (movie.title, movie.tmdb_title) == (STREAMING, STREAMING)
+        assert movie.chosen_title == STREAMING
+
+
+def test_an_entry_that_is_not_an_object_does_not_stop_the_apply(app):
+    from app.metadata.tmdb_apply import tmdb_title_choices
+
+    details = payload()
+    details["alternative_titles"]["titles"] += ["a bare string", None, {"title": 5}]
+    with app.app_context():
+        assert [choice["title"] for choice in tmdb_title_choices(details)] == [
+            MAIN,
+            STREAMING,
+        ]
+        movie = film()
+        movie.tmdb_movie_apply(details)
+        db.session.commit()
+        assert movie.title == STREAMING
+
+
+def test_2_scripts_are_2_choices_and_white_space_is_1_space(app):
+    from app.metadata.tmdb_apply import tmdb_titles
+
+    details = payload(
+        title="Stalker", alternatives=("Сталкер", "Stalker\u00a0 II", "STALKER")
+    )
+    with app.app_context():
+        assert tmdb_titles(details) == ["Stalker", "Сталкер", "Stalker II"]
+
+
 def test_a_film_with_no_selection_follows_the_main_title(app):
     """An old title that TMDB lists as an alternative does not stay by itself."""
 
@@ -173,8 +210,10 @@ def test_the_canonical_name_of_a_selection_is_the_selected_title(app):
     with app.app_context():
         assert canonical_movie_name(payload(), 1999) == (MAIN, 2019)
         assert canonical_movie_name(payload(), 1999, STREAMING) == (STREAMING, 2019)
+        other = payload(alternatives=("Another Name",))
+        assert canonical_movie_name(other, 1999, STREAMING) == (MAIN, 2019)
         assert canonical_movie_name(payload(alternatives=()), 1999, STREAMING) == (
-            MAIN,
+            STREAMING,
             2019,
         )
         assert canonical_movie_name(payload(alternatives=None), 1999, STREAMING) == (
@@ -246,14 +285,163 @@ def test_a_selection_renames_the_folder_and_the_files(app):
         assert db.session.get(File, file_id).file_path == row.file_path
 
 
-def test_a_merge_carries_the_selection(app):
-    from app.metadata.tmdb_refresh import carry_person_set_values
+def on_disk(app, file):
+    """Give a file row its untouched name and a file in the library."""
+
+    file.untouched_basename = file.basename
+    db.session.commit()
+    path = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "wb") as handle:
+        handle.write(b"payload")
+    return path
+
+
+def test_a_merge_gives_the_survivor_the_selection(app):
+    """The record that goes holds the name until its delete. A second refresh ends the rename."""
+
+    from datetime import datetime
+
+    from app.metadata.tmdb_refresh import apply_tmdb_refresh
+    from app.models import File, Movie
 
     with app.app_context():
-        old = film()
-        new = make_movie("Survivor", 2019, tmdb_id=TMDB_ID)
-        carry_person_set_values(old, new)
-        assert new.chosen_title == STREAMING
+        survivor = make_movie(MAIN, 2019, tmdb_id=TMDB_ID)
+        survivor.tmdb_title = MAIN
+        survivor.date_created = datetime(2020, 1, 1)
+        newer = make_movie(STREAMING, 2019, tmdb_id=TMDB_ID, chosen_title=STREAMING)
+        newer.tmdb_title = STREAMING
+        newer.date_created = datetime(2024, 1, 1)
+        db.session.commit()
+        file = make_movie_file(newer, "Bluray-1080p")
+        path = on_disk(app, file)
+        survivor_id, newer_id, file_id = survivor.id, newer.id, file.id
+
+        assert (
+            apply_tmdb_refresh(
+                "Movies", newer_id, tmdb_id=TMDB_ID, tmdb_payload=packed(payload())
+            )
+            is True
+        )
+        db.session.expire_all()
+        assert db.session.get(Movie, newer_id) is None
+        kept = db.session.get(Movie, survivor_id)
+        assert kept.chosen_title == STREAMING
+        assert db.session.get(File, file_id).movie_id == survivor_id
+
+        def queued():
+            return [
+                job.args
+                for job in app.request_queue.jobs
+                if job.func_name == "app.metadata.tmdb_refresh.refresh_tmdb_info"
+            ]
+
+        assert queued() == [("Movies", survivor_id, TMDB_ID)]
+
+        assert (
+            apply_tmdb_refresh(
+                "Movies", survivor_id, tmdb_id=TMDB_ID, tmdb_payload=packed(payload())
+            )
+            is True
+        )
+        db.session.expire_all()
+        kept = db.session.get(Movie, survivor_id)
+        assert (kept.title, kept.tmdb_title, kept.chosen_title) == (STREAMING,) * 3
+        row = db.session.get(File, file_id)
+        assert row.file_path.startswith(f"Movies/{STREAMING} (2019)/")
+        assert os.path.exists(os.path.join(app.config["LIBRARY_DIR"], row.file_path))
+        assert not os.path.exists(path) or path.endswith(row.file_path)
+        # The second refresh is not a merge. It queues nothing more.
+        assert len(queued()) == 1
+
+
+def test_a_rematch_does_not_carry_the_selection_of_an_other_film(app):
+    from datetime import datetime
+
+    from app.metadata.tmdb_refresh import apply_tmdb_refresh
+    from app.models import Movie
+
+    with app.app_context():
+        target = make_movie(MAIN, 2019, tmdb_id=TMDB_ID)
+        target.tmdb_title = MAIN
+        target.date_created = datetime(2020, 1, 1)
+        other = make_movie("Gamma Alt", 1990, tmdb_id=77, chosen_title="Gamma Alt")
+        other.tmdb_title = "Gamma Alt"
+        other.date_created = datetime(2024, 1, 1)
+        db.session.commit()
+        on_disk(app, make_movie_file(other, "Bluray-1080p"))
+        target_id, other_id = target.id, other.id
+
+        assert (
+            apply_tmdb_refresh(
+                "Movies",
+                other_id,
+                tmdb_id=TMDB_ID,
+                tmdb_payload=packed(payload()),
+                rematch=True,
+            )
+            is True
+        )
+        db.session.expire_all()
+        assert db.session.get(Movie, other_id) is None
+        kept = db.session.get(Movie, target_id)
+        assert (kept.title, kept.chosen_title) == (MAIN, None)
+
+
+def test_a_file_with_the_selected_title_goes_to_the_film_with_the_selection(
+    app, monkeypatch
+):
+    """A restored rip has the selected title in its name, and no id tag."""
+
+    from app.media.importing import filenames
+
+    asked = []
+
+    def fake_json(path, params=None, timeout=10):
+        asked.append(path)
+        return {
+            "results": [{"id": 77, "title": STREAMING, "release_date": "2019-01-01"}]
+        }
+
+    monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
+    monkeypatch.setattr(filenames, "tmdb_json", fake_json)
+    with app.app_context():
+        film()
+        name = f"{STREAMING} (2019) - [Bluray-1080p].mkv"
+        details = filenames.evaluate_filename(name, log=False)
+        assert (details["title"], details["tmdb_id"]) == (STREAMING, TMDB_ID)
+        assert asked == []
+
+        # A film with no selection still goes through the TMDB search.
+        make_movie("Plain Title", 2001, tmdb_id=5)
+        db.session.commit()
+        filenames.evaluate_filename("Plain Title (2001) - [DVD].mkv", log=False)
+        assert asked == ["/search/movie"]
+
+
+def test_a_rating_import_finds_the_film_with_a_selection_by_its_tmdb_id(
+    app, monkeypatch
+):
+    """The export names the film with its TMDB title. No second record appears."""
+
+    from app.metadata import tmdb_apply
+    from app.models import Movie, User
+    from app.viewing import diary
+
+    def fake_json(path, params=None, timeout=10):
+        if path == "/search/movie":
+            return {"results": [{"id": TMDB_ID, "title": MAIN}]}
+        return payload()
+
+    monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
+    monkeypatch.setattr(diary, "tmdb_json", fake_json)
+    monkeypatch.setattr(tmdb_apply, "tmdb_json", fake_json)
+    with app.app_context():
+        movie_id = film().id
+        diary.review_task(User.query.first().id, MAIN, 4.0)
+        db.session.expire_all()
+        assert [row.id for row in Movie.query.filter_by(tmdb_id=TMDB_ID)] == [movie_id]
+        assert db.session.get(Movie, movie_id).ratings.count() == 1
 
 
 def test_a_film_that_is_detached_from_tmdb_loses_the_selection(app):
@@ -358,6 +546,39 @@ def test_the_main_title_ends_a_selection(app, admin_client, titles):
     with app.app_context():
         assert db.session.get(Movie, movie_id).chosen_title is None
         assert len(refresh_jobs(app)) == 1
+
+
+def test_the_stored_selection_has_1_space_for_each_run_of_white_space(
+    app, admin_client, titles
+):
+    """An import reads the title from a file name with each run as 1 space."""
+
+    from app.models import Movie
+
+    titles["payload"] = payload(alternatives=("Once  Upon a\u00a0Time in Hollywood",))
+    with app.app_context():
+        movie_id = film(title=MAIN, chosen=None).id
+
+    assert select(admin_client, movie_id, STREAMING).status_code == 302
+    with app.app_context():
+        assert db.session.get(Movie, movie_id).chosen_title == STREAMING
+
+
+@pytest.mark.parametrize("hidden", ["...", "?"])
+def test_a_title_that_leaves_no_name_for_the_folder_is_refused(
+    app, admin_client, titles, hidden
+):
+    from app.models import Movie
+
+    titles["payload"] = payload(alternatives=(hidden,))
+    with app.app_context():
+        movie_id = film(title=MAIN, chosen=None).id
+
+    response = select(admin_client, movie_id, hidden, follow_redirects=True)
+    assert "leaves no name for the folder" in response.get_data(as_text=True)
+    with app.app_context():
+        assert db.session.get(Movie, movie_id).chosen_title is None
+        assert refresh_jobs(app) == []
 
 
 def test_a_title_that_tmdb_does_not_list_is_refused(app, admin_client, titles):

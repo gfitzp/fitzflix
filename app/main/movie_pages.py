@@ -78,6 +78,7 @@ from app.arr.radarr_push import radarr_configured, radarr_tmdb_ids
 from app.criterion.criterion_catalog import record_set_title
 from app.viewing.diary import clear_watchlist
 from app.main import people_pages
+from app.media.naming import visible_name
 from app.metadata.tmdb_apply import (
     canonical_movie_name,
     listed_tmdb_title,
@@ -793,10 +794,7 @@ def _tmdb_title_payload(tmdb_id):
     """Return the TMDB details of a film with its alternative titles, or None."""
 
     return tmdb_json_or(
-        f"/movie/{int(tmdb_id)}",
-        {"append_to_response": "alternative_titles"},
-        None,
-        timeout=30,
+        f"/movie/{int(tmdb_id)}", {"append_to_response": "alternative_titles"}, None
     )
 
 
@@ -850,6 +848,17 @@ def movie_title(movie_id):
             None if same_tmdb_title(listed, main_title) else clip_movie_title(listed)
         )
         name = selected or main_title
+
+        # A title of only periods or question marks leaves no name that
+        # the disk shows. The import refuses each file of such a film.
+
+        if not name or not visible_name(name):
+            flash(
+                f"The title '{listed}' leaves no name for the folder of the "
+                f"film. Select a different title.",
+                "warning",
+            )
+            return redirect(page_url)
         holder = Movie.query.filter(
             Movie.title == name, Movie.year == year, Movie.id != movie.id
         ).first()
@@ -888,7 +897,10 @@ def movie_title(movie_id):
         flash_form_errors(title_form)
         return redirect(page_url)
 
-    current = movie.chosen_title or movie.tmdb_title or movie.title
+    # The title that the film has now. A selection that the refresh did
+    # not apply yet keeps its button.
+
+    current = movie.tmdb_title or movie.title
     return render_template(
         "movie_title.html",
         title=f'Title of "{title}"',
