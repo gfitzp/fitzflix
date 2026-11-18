@@ -9,7 +9,7 @@ import json
 
 from app import db
 from app.models import Movie
-from app.videos import refresh_criterion_collection_info
+from app.criterion_catalog import refresh_criterion_collection_info
 
 from tests.factories import make_movie
 from tests.fakes import Response
@@ -731,7 +731,7 @@ def test_full_refresh_creates_catalog_records(app, monkeypatch):
         refreshed_ids = {
             job.args[1]
             for job in jobs
-            if job.func_name == "app.videos.refresh_tmdb_info"
+            if job.func_name == "app.tmdb_refresh.refresh_tmdb_info"
         }
         assert refreshed_ids == {created.id, adoptee_id}
 

@@ -318,7 +318,7 @@ def test_recompute_creates_records_for_recordless_rail_films(app, monkeypatch):
         refresh_targets = {
             job.args[1]
             for job in app.maintenance_queue.jobs
-            if job.func_name == "app.videos.refresh_tmdb_info"
+            if job.func_name == "app.tmdb_refresh.refresh_tmdb_info"
         }
         assert {comedy.id, drama.id} <= refresh_targets
 

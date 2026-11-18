@@ -158,7 +158,7 @@ def refresh_changed_records():
             if tmdb_id not in changed_movies:
                 continue
             enqueue_task(
-                "app.videos.refresh_tmdb_info",
+                "app.tmdb_refresh.refresh_tmdb_info",
                 "Movies",
                 movie_id,
                 tmdb_id,
@@ -191,7 +191,7 @@ def refresh_changed_records():
             if tmdb_id not in changed_tv:
                 continue
             enqueue_task(
-                "app.videos.refresh_tmdb_info",
+                "app.tmdb_refresh.refresh_tmdb_info",
                 "TV Shows",
                 series_id,
                 tmdb_id,

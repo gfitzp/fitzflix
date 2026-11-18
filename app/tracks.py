@@ -1,4 +1,4 @@
-"""Read and rewrite the streams inside a media file (the split from app.videos).
+"""Read and rewrite the streams inside a media file.
 
 This module has the MediaInfo scan and the stored track metadata
 (this includes the Dolby Vision profile parse). It has the mkvpropedit
@@ -7,11 +7,10 @@ hold the locks. It has the subtitle inspection (possibly-forced flags,
 removal of empty tracks). It also has the planner and the remuxers for
 the lossless-audio supplements.
 
-app.videos exports each job name of this module again. Thus, the
-stored rq job strings ("app.videos.mkvmerge_task") continue to
-resolve. Each other name is imported from this module. The shared
-lock, subprocess, and copy code stays in app.videos. The functions
-here import it lazily.
+Each job of this module goes to the queue under its app.tracks name,
+for example "app.tracks.mkvmerge_task". The shared lock, subprocess,
+and copy code is in app.videos. The functions here import it inside
+functions.
 """
 
 import errno
@@ -469,7 +468,7 @@ def track_metadata_scan_library():
             files = File.query.all()
             for file in files:
                 enqueue_task(
-                    "app.videos.track_metadata_scan_task",
+                    "app.tracks.track_metadata_scan_task",
                     file.id,
                     description=f"{file.basename} – Scanning track metadata",
                     job_id=bulk_job_id(TRACK_SCAN_FILE_RUN),
@@ -532,7 +531,7 @@ def track_metadata_scan_task(file_id):
                 job = get_current_job()
                 in_run = job is not None and job.id.startswith(TRACK_SCAN_FILE_RUN)
                 requeue(
-                    "app.videos.track_metadata_scan_task",
+                    "app.tracks.track_metadata_scan_task",
                     key=int(file_id),
                     delay=(5, 15),
                     reason="Lock exists",
@@ -576,7 +575,7 @@ def track_metadata_scan_task(file_id):
             )
 
             enqueue_task(
-                "app.videos.save_track_metadata",
+                "app.tracks.save_track_metadata",
                 file_id,
                 details,
                 lock,
@@ -764,7 +763,7 @@ def _rescan_after_a_failed_edit(file_id, name, reason="Track edit failed"):
 
     try:
         requeue(
-            "app.videos.track_metadata_scan_task",
+            "app.tracks.track_metadata_scan_task",
             key=int(file_id),
             delay=(5, 15),
             reason=reason,
@@ -876,7 +875,9 @@ def save_track_metadata(file_id, details, lock=None, archive=False):
                 current_app.logger.info(f"Removed lock {lock}")
 
         if archive:
-            enqueue_task("app.videos.upload_task", file_id, description=f"'{basename}'")
+            enqueue_task(
+                "app.aws_storage.upload_task", file_id, description=f"'{basename}'"
+            )
         return True
 
 
@@ -1338,7 +1339,7 @@ def mkvpropedit_task(
             return False
         counters = {"transient_retries": transient_retries + 1}
         requeue(
-            "app.videos.mkvpropedit_task",
+            "app.tracks.mkvpropedit_task",
             key=int(file_id),
             delay=timedelta(minutes=5),
             reason=(
@@ -1350,7 +1351,7 @@ def mkvpropedit_task(
             args=edit_args,
             description=name,
             job_id=requeue_job_id(
-                "app.videos.mkvpropedit_task",
+                "app.tracks.mkvpropedit_task",
                 int(file_id),
                 counters,
                 tag=arguments_tag(edit_args),
@@ -1359,7 +1360,7 @@ def mkvpropedit_task(
         return True
 
     return _locked_edit(
-        "app.videos.mkvpropedit_task",
+        "app.tracks.mkvpropedit_task",
         file_id,
         edit_args,
         "file",
@@ -1691,7 +1692,7 @@ def mkvmerge_task(file_id, audio_tracks, subtitle_tracks):
     lock."""
 
     return _locked_edit(
-        "app.videos.mkvmerge_task",
+        "app.tracks.mkvmerge_task",
         file_id,
         (file_id, audio_tracks, subtitle_tracks),
         "import",
@@ -2430,7 +2431,7 @@ def remux_audio_plan_task(file_id, plan):
     """
 
     return _locked_edit(
-        "app.videos.remux_audio_plan_task",
+        "app.tracks.remux_audio_plan_task",
         file_id,
         (int(file_id), plan),
         "transcode",

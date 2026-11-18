@@ -142,7 +142,7 @@ def test_a_poll_with_a_stale_handle_records_the_new_one(app, monkeypatch):
     monkeypatch.setattr(aws_storage, "aws_sqs_client", lambda: sqs)
     monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kwargs: FakeS3())
     job = app.file_queue.enqueue(
-        "app.videos.download_task",
+        "app.aws_storage.download_task",
         key,
         "Stale Handle (1999) - [DVD].mkv",
         stale,

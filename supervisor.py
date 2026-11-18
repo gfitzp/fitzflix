@@ -3,9 +3,21 @@ import traceback
 
 from redis import Redis
 
-# The libraries to preload
+# The task modules load here, before the first job. Thus, an import
+# error stops the worker at its start, not in the middle of a job.
 
-from app import db, get_app, videos
+from app import (
+    aws_storage,
+    criterion_catalog,
+    db,
+    diary,
+    get_app,
+    importing,
+    sdr_conversion,
+    tmdb_refresh,
+    tracks,
+    videos,
+)
 from app.pipeline import PipelineWorker
 from app.queues import QUEUE_NAME
 from app.worker_recovery import reclaim_dead_workers

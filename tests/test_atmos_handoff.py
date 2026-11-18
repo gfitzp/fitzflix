@@ -181,7 +181,7 @@ def test_a_deferred_atmos_job_keeps_its_staged_copy(app):
             "mtime": os.stat(library).st_mtime,
         }
         app.request_queue.enqueue(
-            "app.videos.refresh_tmdb_info",
+            "app.tmdb_refresh.refresh_tmdb_info",
             args=("Movies", file.movie_id, None),
             description="Refreshing TMDB data for 'Handoff Defer (2021)'",
         )
@@ -209,7 +209,7 @@ def test_a_deferred_handoff_job_retries_on_the_handoff_queue(app, monkeypatch):
         file, library, staged = _library_and_staged(app, "Handoff Origin")
         os.remove(staged)
         app.request_queue.enqueue(
-            "app.videos.refresh_tmdb_info",
+            "app.tmdb_refresh.refresh_tmdb_info",
             args=("Movies", file.movie_id, None),
             description="Refreshing TMDB data for 'Handoff Origin (2021)'",
         )

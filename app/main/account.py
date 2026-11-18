@@ -419,7 +419,7 @@ def _review_upload_response(review_upload_form):
             return redirect(url_for("main.profile"))
         if films:
             enqueue_task(
-                "app.videos.letterboxd_import_task",
+                "app.diary.letterboxd_import_task",
                 current_user.id,
                 films,
                 description=f"Matching {len(films)} Letterboxd film(s)",
@@ -451,7 +451,7 @@ def _review_upload_response(review_upload_form):
         for name, rating in ratings:
             if rating >= 0:
                 enqueue_task(
-                    "app.videos.review_task",
+                    "app.diary.review_task",
                     current_user.id,
                     name,
                     rating,

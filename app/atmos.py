@@ -1038,7 +1038,7 @@ def archive_after_early_end(file_id):
             and get_setting("ARCHIVE_ORIGINAL_MEDIA")
         ):
             enqueue_task(
-                "app.videos.upload_task", file.id, description=f"'{file.basename}'"
+                "app.aws_storage.upload_task", file.id, description=f"'{file.basename}'"
             )
     except Exception:
         current_app.logger.error(traceback.format_exc())

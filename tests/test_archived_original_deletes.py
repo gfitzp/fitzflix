@@ -30,7 +30,7 @@ def _deletes(app):
         job.args[0]
         for queue in (app.request_queue, app.handoff_queue, app.file_queue)
         for job in queue.jobs
-        if job.func_name == "app.videos.aws_delete"
+        if job.func_name == "app.aws_storage.aws_delete"
     ]
 
 
@@ -230,7 +230,7 @@ def test_a_queued_delete_keeps_a_key_that_a_record_claims_before_it_runs(
     jobs = [
         job
         for job in app.request_queue.jobs
-        if job.func_name == "app.videos.aws_delete" and job.args == (key,)
+        if job.func_name == "app.aws_storage.aws_delete" and job.args == (key,)
     ]
     assert len(jobs) == 1
 

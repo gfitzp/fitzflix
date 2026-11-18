@@ -145,7 +145,7 @@ def test_a_scan_stores_the_file_of_an_edit_that_did_not_store_its_size(
     )
     try:
         assert tracks.track_metadata_scan_task(file_id) is True
-        assert saves == ["app.videos.save_track_metadata"]
+        assert saves == ["app.tracks.save_track_metadata"]
         assert queued == []
     finally:
         os.remove(path)
@@ -172,14 +172,14 @@ def test_a_deferred_scan_of_a_library_run_keeps_the_run_prefix(
             assert retry.id != job_id
         else:
             assert retry.id == requeue_id(
-                "app.videos.track_metadata_scan_task", file_id
+                "app.tracks.track_metadata_scan_task", file_id
             )
         with app.app_context():
             assert (
                 bulk_run_pending(
                     "bulk-track-scan-",
-                    "app.videos.track_metadata_scan_library",
-                    "app.videos.track_metadata_scan_task",
+                    "app.tracks.track_metadata_scan_library",
+                    "app.tracks.track_metadata_scan_task",
                 )
                 is in_run
             )
@@ -196,7 +196,7 @@ def _failing_unlocked(error_number):
 
 
 def _scans(app, file_id):
-    wanted = requeue_id("app.videos.track_metadata_scan_task", file_id)
+    wanted = requeue_id("app.tracks.track_metadata_scan_task", file_id)
     return [job for job in scheduled_jobs(app.file_queue) if job.id == wanted]
 
 
@@ -233,13 +233,12 @@ def test_any_raise_of_an_edit_queues_one_scan_and_frees_the_lock(
 def test_a_safe_transient_retry_queues_no_scan(app, monkeypatch):
     """The retry repairs the rows. A scan is not needed before it."""
 
-    import app.videos as videos
     from app import tracks
 
     file_id, identifier, path = _library_row(app, "Safe Retry No Scan")
     monkeypatch.setattr(tracks, "mkvpropedit_unlocked", _failing_unlocked(errno.EBADF))
     try:
-        assert videos.mkvpropedit_task(file_id, "2", None, []) is False
+        assert tracks.mkvpropedit_task(file_id, "2", None, []) is False
         assert _scans(app, file_id) == []
     finally:
         os.remove(path)
@@ -253,7 +252,6 @@ def test_a_retry_that_a_pending_restore_refuses_queues_no_scan(app, monkeypatch)
 
     from datetime import datetime, timezone
 
-    import app.videos as videos
     from app import db, tracks
     from app.models import File
 
@@ -265,7 +263,7 @@ def test_a_retry_that_a_pending_restore_refuses_queues_no_scan(app, monkeypatch)
     monkeypatch.setattr(tracks, "mkvpropedit_unlocked", lambda *a: ran.append(a))
     try:
         assert (
-            videos.mkvpropedit_task(file_id, "2", None, [], None, transient_retries=1)
+            tracks.mkvpropedit_task(file_id, "2", None, [], None, transient_retries=1)
             is False
         )
         assert ran == []
@@ -503,7 +501,7 @@ def test_two_different_deferred_edits_both_wait(app, held_lock, task, queue, edi
         jobs = [
             job
             for job in scheduled_jobs(getattr(app, queue))
-            if job.func_name == f"app.videos.{task}"
+            if job.func_name == f"app.tracks.{task}"
         ]
         posted = sorted(repr(list(job.args[1 : 1 + len(edits[0])])) for job in jobs)
         assert posted == sorted(repr(list(edit)) for edit in edits)
@@ -523,7 +521,7 @@ def test_a_repeat_deferral_of_one_edit_still_replaces_its_wait(app, held_lock):
         jobs = [
             job
             for job in scheduled_jobs(app.file_queue)
-            if job.func_name == "app.videos.mkvpropedit_task"
+            if job.func_name == "app.tracks.mkvpropedit_task"
         ]
         assert len(jobs) == 1
     finally:
@@ -545,7 +543,7 @@ def test_two_transient_retries_of_different_edits_both_wait(app, monkeypatch):
         jobs = [
             job
             for job in scheduled_jobs(app.file_queue)
-            if job.func_name == "app.videos.mkvpropedit_task"
+            if job.func_name == "app.tracks.mkvpropedit_task"
         ]
         assert sorted(job.args[1] for job in jobs) == ["111", "222"]
         assert all(job.kwargs == {"transient_retries": 1} for job in jobs)

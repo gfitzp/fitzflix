@@ -633,7 +633,7 @@ def sync_plex_watchlist():
 
         for movie_id, tmdb_id in created_movies:
             enqueue_task(
-                "app.videos.refresh_tmdb_info",
+                "app.tmdb_refresh.refresh_tmdb_info",
                 "Movies",
                 movie_id,
                 tmdb_id,

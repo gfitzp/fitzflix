@@ -34,7 +34,7 @@ def test_pending_sees_a_queued_fetch(app):
         movie, _ = _movie_with_file()
         assert tmdb_refresh_pending("Movies", movie.id) is False
         app.request_queue.enqueue(
-            "app.videos.refresh_tmdb_info",
+            "app.tmdb_refresh.refresh_tmdb_info",
             args=("Movies", movie.id, None),
             kwargs={"notify_if_missing": True},
             description="Refreshing TMDB data for 'Jungle Cruise (2021)'",
@@ -55,7 +55,7 @@ def test_pending_sees_a_scheduled_apply_retry(app):
         movie, _ = _movie_with_file()
         app.sql_queue.enqueue_in(
             timedelta(minutes=5),
-            "app.videos.apply_tmdb_refresh",
+            "app.tmdb_refresh.apply_tmdb_refresh",
             library="Movies",
             id=movie.id,
             tmdb_id=451048,
@@ -79,7 +79,7 @@ def test_atmos_task_defers_while_a_refresh_is_pending(app):
         file_id = file.id
         resource = file.file_identifier()
         app.request_queue.enqueue(
-            "app.videos.refresh_tmdb_info",
+            "app.tmdb_refresh.refresh_tmdb_info",
             args=("Movies", movie.id, None),
             description="Refreshing TMDB data for 'Jungle Cruise (2021)'",
         )
@@ -122,7 +122,7 @@ def test_movie_page_shows_a_deferred_refresh(app, admin_client):
     with app.app_context():
         app.sql_queue.enqueue_in(
             timedelta(minutes=12),
-            "app.videos.apply_tmdb_refresh",
+            "app.tmdb_refresh.apply_tmdb_refresh",
             library="Movies",
             id=movie_id,
             tmdb_id=451048,
@@ -144,7 +144,7 @@ def test_movie_page_shows_a_queued_refresh(app, admin_client):
         movie, _ = _movie_with_file()
         movie_id = movie.id
         app.request_queue.enqueue(
-            "app.videos.refresh_tmdb_info",
+            "app.tmdb_refresh.refresh_tmdb_info",
             args=("Movies", movie_id, 451048),
             description="Refreshing TMDB data for 'Jungle Cruise (2021)'",
         )
@@ -170,7 +170,7 @@ def test_tv_page_shows_a_deferred_refresh(app, admin_client):
     with app.app_context():
         app.sql_queue.enqueue_in(
             timedelta(minutes=9),
-            "app.videos.apply_tmdb_refresh",
+            "app.tmdb_refresh.apply_tmdb_refresh",
             library="TV Shows",
             id=series_id,
             tmdb_id=253,
@@ -201,7 +201,7 @@ def test_a_fetch_on_the_maintenance_queue_is_a_pending_refresh(app):
         db.session.commit()
         assert tmdb_refresh_status("Movies", movie.id) is None
         app.maintenance_queue.enqueue(
-            "app.videos.refresh_tmdb_info", "Movies", movie.id, 740001
+            "app.tmdb_refresh.refresh_tmdb_info", "Movies", movie.id, 740001
         )
         assert tmdb_refresh_status("Movies", movie.id) == {"state": "pending"}
         assert tmdb_refresh_pending("Movies", movie.id) is False

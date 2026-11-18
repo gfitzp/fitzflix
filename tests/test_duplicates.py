@@ -65,7 +65,7 @@ def test_merge_enqueues_refresh_for_each_duplicate(app, admin_client):
     jobs = [
         job
         for job in app.request_queue.jobs
-        if job.func_name == "app.videos.refresh_tmdb_info"
+        if job.func_name == "app.tmdb_refresh.refresh_tmdb_info"
     ]
     assert len(jobs) == 1
 

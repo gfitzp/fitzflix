@@ -183,32 +183,32 @@ def _basename_from_file_id(args, kwargs):
 # task that is not listed leaves no trail.
 
 STAGES = {
-    "app.videos.localization_task": ("Localizing", _basename_from_path),
-    "app.videos.move_localized_file": (
+    "app.importing.localization_task": ("Localizing", _basename_from_path),
+    "app.importing.move_localized_file": (
         "Moving into the library",
         _basename_from_details,
     ),
-    "app.videos.convert_localized_file": (
+    "app.sdr_conversion.convert_localized_file": (
         "Converting to SDR",
         _basename_from_details,
     ),
-    "app.videos.finalize_localization": ("Cataloging", _basename_from_details),
-    "app.videos.upload_task": ("Archiving to S3", _basename_from_file_id),
+    "app.importing.finalize_localization": ("Cataloging", _basename_from_details),
+    "app.aws_storage.upload_task": ("Archiving to S3", _basename_from_file_id),
     "app.aws_storage.move_archive_object": (
         "Moving the S3 archive",
         _basename_from_file_id,
     ),
-    "app.videos.track_metadata_scan_task": (
+    "app.tracks.track_metadata_scan_task": (
         "Scanning track metadata",
         _basename_from_file_id,
     ),
-    "app.videos.mkvpropedit_task": ("Setting track flags", _basename_from_file_id),
-    "app.videos.mkvmerge_task": ("Remuxing", _basename_from_file_id),
-    "app.videos.remux_audio_plan_task": (
+    "app.tracks.mkvpropedit_task": ("Setting track flags", _basename_from_file_id),
+    "app.tracks.mkvmerge_task": ("Remuxing", _basename_from_file_id),
+    "app.tracks.remux_audio_plan_task": (
         "Rebuilding audio",
         _basename_from_file_id,
     ),
-    "app.videos.download_task": ("Restoring from S3", _basename_from_second_arg),
+    "app.aws_storage.download_task": ("Restoring from S3", _basename_from_second_arg),
     "app.atmos.atmos_supplement_task": ("Adding Atmos twin", _basename_from_file_id),
 }
 

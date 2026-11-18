@@ -1,7 +1,6 @@
 """Keep the spine catalog of the Criterion Collection.
 
-This module is a strangler split from app.videos, made in the
-videos/routes split. Wikidata is the source. Two SPARQL queries, one
+Wikidata is the source. Two SPARQL queries, one
 for individual releases and one for collector sets, merge into one
 cached release list keyed by spine. The monthly refresh task applies
 the list to the library. It marks the releases of owned films. It
@@ -14,11 +13,10 @@ page and the import never query Wikidata. They read the stored copy
 through stored_criterion_releases. If there is no copy, they get an
 empty list, and 1 refresh goes on the user-request queue.
 
-app.videos exports every name in this module again. Thus, stored rq
-job strings ("app.videos.refresh_criterion_collection_info") and
-import sites continue to resolve. The record-creation path uses the
-TMDB helpers of app.videos through lazy imports. Thus, the module
-import direction stays one-way.
+The refresh job goes to the queue under the name
+"app.criterion_catalog.refresh_criterion_collection_info". The
+record-creation path imports the TMDB functions of app.tmdb_refresh
+inside functions.
 """
 
 import json
@@ -535,7 +533,7 @@ def create_criterion_catalog_records(criterion_collection, by_tmdb_id, by_title_
     db.session.commit()
     for movie in to_refresh:
         enqueue_task(
-            "app.videos.refresh_tmdb_info",
+            "app.tmdb_refresh.refresh_tmdb_info",
             "Movies",
             movie.id,
             movie.tmdb_id,

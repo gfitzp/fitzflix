@@ -9,7 +9,6 @@ import pytest
 
 import app.importing as importing
 import app.sdr_conversion as sdr_conversion
-import app.videos as videos
 from app import db
 from app.models import ArchivedOriginal, File, HeldImport, Movie, RefQuality, TVSeries
 from app.file_ranking import (
@@ -519,8 +518,10 @@ def test_an_hdr_import_becomes_a_1080p_sdr_conversion(
         assert importing.localization_task(source) is True
 
         # The conversion goes to the transcode queue, not straight to the move.
-        assert _jobs(app.handoff_queue, "app.videos.move_localized_file") == []
-        (convert_job,) = _jobs(app.transcode_queue, "app.videos.convert_localized_file")
+        assert _jobs(app.handoff_queue, "app.importing.move_localized_file") == []
+        (convert_job,) = _jobs(
+            app.transcode_queue, "app.sdr_conversion.convert_localized_file"
+        )
         details = convert_job.args[1]
         assert details["basename"] == "HDR Test (2020) - [Bluray-1080p].mkv"
         assert details["untouched_basename"] == basename
@@ -536,13 +537,13 @@ def test_an_hdr_import_becomes_a_1080p_sdr_conversion(
         entry = json.loads(app.redis.hget(STAGING_RESERVED_KEY, basename))
         assert entry["bytes"] == int(os.path.getsize(hidden) * 1.8)
 
-        assert videos.convert_localized_file(*convert_job.args) is True
+        assert sdr_conversion.convert_localized_file(*convert_job.args) is True
         entry = json.loads(app.redis.hget(STAGING_RESERVED_KEY, basename))
         assert entry["bytes"] == os.path.getsize(hidden)
-        (move_job,) = _jobs(app.handoff_queue, "app.videos.move_localized_file")
-        assert videos.move_localized_file(*move_job.args) is True
-        (finalize_job,) = _jobs(app.sql_queue, "app.videos.finalize_localization")
-        videos.finalize_localization(*finalize_job.args)
+        (move_job,) = _jobs(app.handoff_queue, "app.importing.move_localized_file")
+        assert importing.move_localized_file(*move_job.args) is True
+        (finalize_job,) = _jobs(app.sql_queue, "app.importing.finalize_localization")
+        importing.finalize_localization(*finalize_job.args)
 
         file = File.query.filter_by(basename=details["basename"]).one()
         assert file.quality.quality_title == "Bluray-1080p"
@@ -574,20 +575,22 @@ def test_an_hdr_import_becomes_a_4k_sdr_conversion_in_the_4k_mode(
     with app.app_context():
         source = _place(incoming_dir, hdr10_mkv, basename)
         assert importing.localization_task(source) is True
-        (convert_job,) = _jobs(app.transcode_queue, "app.videos.convert_localized_file")
+        (convert_job,) = _jobs(
+            app.transcode_queue, "app.sdr_conversion.convert_localized_file"
+        )
         details, plan = convert_job.args[1], convert_job.args[4]
         assert plan["max_height"] == 2160
         assert plan["target_quality"] == "Bluray-2160p"
         assert details["basename"] == basename
         assert details["converted_from_quality"] == "Bluray-2160p"
 
-        assert videos.convert_localized_file(*convert_job.args) is True
+        assert sdr_conversion.convert_localized_file(*convert_job.args) is True
         converted = sdr_conversion.probe_video(convert_job.args[3])
         assert (converted["width"], converted["height"]) == (640, 360)
-        (move_job,) = _jobs(app.handoff_queue, "app.videos.move_localized_file")
-        assert videos.move_localized_file(*move_job.args) is True
-        (finalize_job,) = _jobs(app.sql_queue, "app.videos.finalize_localization")
-        videos.finalize_localization(*finalize_job.args)
+        (move_job,) = _jobs(app.handoff_queue, "app.importing.move_localized_file")
+        assert importing.move_localized_file(*move_job.args) is True
+        (finalize_job,) = _jobs(app.sql_queue, "app.importing.finalize_localization")
+        importing.finalize_localization(*finalize_job.args)
 
         file = File.query.filter_by(basename=basename).one()
         assert file.quality.quality_title == "Bluray-2160p"
@@ -625,9 +628,11 @@ def test_the_check_of_the_result_reads_the_size_of_the_plan(
     with app.app_context():
         source = _place(incoming_dir, hdr10_mkv, basename)
         assert importing.localization_task(source) is True
-        (convert_job,) = _jobs(app.transcode_queue, "app.videos.convert_localized_file")
+        (convert_job,) = _jobs(
+            app.transcode_queue, "app.sdr_conversion.convert_localized_file"
+        )
         monkeypatch.setattr(sdr_conversion, "probe_video", probe)
-        assert videos.convert_localized_file(*convert_job.args) is passes
+        assert sdr_conversion.convert_localized_file(*convert_job.args) is passes
 
         refusals = [
             r.getMessage()
@@ -635,7 +640,7 @@ def test_the_check_of_the_result_reads_the_size_of_the_plan(
             if "larger than 1920x1080" in r.getMessage()
         ]
         assert bool(refusals) is not passes
-        move_jobs = _jobs(app.handoff_queue, "app.videos.move_localized_file")
+        move_jobs = _jobs(app.handoff_queue, "app.importing.move_localized_file")
         assert len(move_jobs) == (1 if passes else 0)
         for job in move_jobs:
             job.delete()
@@ -669,23 +674,25 @@ def test_the_import_queues_the_transcoded_archive_after_it_releases_the_lock(
     with app.app_context():
         source = _place(incoming_dir, hdr10_mkv, basename)
         assert importing.localization_task(source) is True
-        (convert_job,) = _jobs(app.transcode_queue, "app.videos.convert_localized_file")
-        assert videos.convert_localized_file(*convert_job.args) is True
-        (move_job,) = _jobs(app.handoff_queue, "app.videos.move_localized_file")
-        assert videos.move_localized_file(*move_job.args) is True
-        (finalize_job,) = _jobs(app.sql_queue, "app.videos.finalize_localization")
+        (convert_job,) = _jobs(
+            app.transcode_queue, "app.sdr_conversion.convert_localized_file"
+        )
+        assert sdr_conversion.convert_localized_file(*convert_job.args) is True
+        (move_job,) = _jobs(app.handoff_queue, "app.importing.move_localized_file")
+        assert importing.move_localized_file(*move_job.args) is True
+        (finalize_job,) = _jobs(app.sql_queue, "app.importing.finalize_localization")
         lock = finalize_job.args[2]
 
         held_at_enqueue = []
         real_enqueue = importing.enqueue_task
 
         def enqueue(name, *args, **kwargs):
-            if name == "app.videos.upload_task":
+            if name == "app.aws_storage.upload_task":
                 held_at_enqueue.append(bool(app.redis.exists(lock.resource)))
             return real_enqueue(name, *args, **kwargs)
 
         monkeypatch.setattr(importing, "enqueue_task", enqueue)
-        videos.finalize_localization(*finalize_job.args)
+        importing.finalize_localization(*finalize_job.args)
         assert held_at_enqueue == [False]
 
         file = File.query.filter_by(
@@ -713,7 +720,10 @@ def test_an_hdr_import_waits_when_a_real_rip_exists(
         held_path = os.path.join(app.config["HELD_DIR"], basename)
         assert os.path.exists(held_path)
         assert not os.path.exists(source)
-        assert _jobs(app.transcode_queue, "app.videos.convert_localized_file") == []
+        assert (
+            _jobs(app.transcode_queue, "app.sdr_conversion.convert_localized_file")
+            == []
+        )
         assert archive_on == []
 
         held = HeldImport.query.one()
@@ -732,7 +742,9 @@ def test_an_hdr_import_waits_when_a_real_rip_exists(
         held.decision = "import"
         db.session.commit()
         assert importing.localization_task(held_path) is True
-        (convert_job,) = _jobs(app.transcode_queue, "app.videos.convert_localized_file")
+        (convert_job,) = _jobs(
+            app.transcode_queue, "app.sdr_conversion.convert_localized_file"
+        )
         assert convert_job.args[1]["replace_existing"] is True
 
         for job in app.transcode_queue.jobs:
@@ -758,7 +770,10 @@ def test_a_conversion_needs_the_archive(app, hdr10_mkv, incoming_dir, monkeypatc
         source = _place(incoming_dir, hdr10_mkv, basename)
         assert importing.localization_task(source) is False
         assert not os.path.exists(source)
-        assert _jobs(app.transcode_queue, "app.videos.convert_localized_file") == []
+        assert (
+            _jobs(app.transcode_queue, "app.sdr_conversion.convert_localized_file")
+            == []
+        )
         rejected = os.path.join(
             app.config["REJECTS_DIR"], "conversion not possible", basename
         )
@@ -772,7 +787,7 @@ def test_the_keep_mode_imports_hdr_as_it_is(app, hdr10_mkv, incoming_dir, monkey
     with app.app_context():
         source = _place(incoming_dir, hdr10_mkv, basename)
         assert importing.localization_task(source) is True
-        (move_job,) = _jobs(app.handoff_queue, "app.videos.move_localized_file")
+        (move_job,) = _jobs(app.handoff_queue, "app.importing.move_localized_file")
         assert move_job.args[1]["basename"] == basename
         assert "converted_from_quality" not in move_job.args[1]
         move_job.delete()
@@ -833,7 +848,7 @@ def test_a_real_rip_keeps_the_original_of_the_conversion(app, monkeypatch):
             "filesize_bytes": 8,
         }
         lock = app.lock_manager.lock(json.dumps({"title": "Kept Original"}), 10000)
-        videos.finalize_localization(source, details, lock, hidden, inspection)
+        importing.finalize_localization(source, details, lock, hidden, inspection)
 
         db.session.expire_all()
         file = File.query.filter_by(file_path=conversion.file_path).one()
@@ -849,7 +864,7 @@ def test_a_real_rip_keeps_the_original_of_the_conversion(app, monkeypatch):
         assert archived.movie_id == movie.id
         assert archived.reason == "replaced by a real rip"
 
-        deletes = _jobs(app.handoff_queue, "app.videos.aws_delete")
+        deletes = _jobs(app.handoff_queue, "app.aws_storage.aws_delete")
         assert [job.args[0] for job in deletes] == []
         os.remove(os.path.join(app.config["LIBRARY_DIR"], file.file_path))
 
@@ -1055,7 +1070,7 @@ def test_import_sends_the_held_file_back_through_the_import(app, admin_client):
     assert "Import in progress" in body
     with app.app_context():
         assert db.session.get(HeldImport, held_id).decision == "import"
-        jobs = _jobs(app.import_queue, "app.videos.localization_task")
+        jobs = _jobs(app.import_queue, "app.importing.localization_task")
         assert [
             job.kwargs.get("file_path", job.args[0] if job.args else None)
             for job in jobs
@@ -1100,7 +1115,7 @@ def test_an_import_that_queues_nothing_keeps_no_decision(app, admin_client):
         held_id, path = _held_row(app, basename)
         retry = app.import_queue.enqueue_in(
             timedelta(minutes=30),
-            "app.videos.localization_task",
+            "app.importing.localization_task",
             kwargs={"file_path": path, "space_waits": 1},
         )
     try:
@@ -1109,7 +1124,7 @@ def test_an_import_that_queues_nothing_keeps_no_decision(app, admin_client):
         with app.app_context():
             held = db.session.get(HeldImport, held_id)
             assert held.decision is None and held.date_decided is None
-            assert _jobs(app.import_queue, "app.videos.localization_task") == []
+            assert _jobs(app.import_queue, "app.importing.localization_task") == []
     finally:
         ScheduledJobRegistry(queue=app.import_queue).remove(retry, delete_job=True)
         os.remove(path)
@@ -1121,7 +1136,7 @@ def test_archive_only_queues_the_upload(app, admin_client):
     body = _decide(admin_client, held_id, "archive_submit")
     assert "Archive in progress" in body
     with app.app_context():
-        (job,) = _jobs(app.file_queue, "app.videos.archive_held_task")
+        (job,) = _jobs(app.file_queue, "app.sdr_conversion.archive_held_task")
         assert job.args == (held_id,)
     os.remove(path)
 
@@ -1172,10 +1187,10 @@ def test_a_restore_needs_the_password(app, admin_client):
 
     assert "Incorrect password" in restore("wrong")
     with app.app_context():
-        assert _jobs(app.request_queue, "app.videos.aws_restore") == []
+        assert _jobs(app.request_queue, "app.aws_storage.aws_restore") == []
     assert "Requesting a restore" in restore(ADMIN_PASSWORD)
     with app.app_context():
-        (job,) = _jobs(app.request_queue, "app.videos.aws_restore")
+        (job,) = _jobs(app.request_queue, "app.aws_storage.aws_restore")
         assert job.args == ("untouched/Restore Test (1984) - [Bluray-2160p].mkv",)
 
 
@@ -1290,7 +1305,7 @@ def test_a_conversion_that_reuses_a_record_takes_the_untouched_name(app):
             "filesize_bytes": 10,
         }
         lock = app.lock_manager.lock(json.dumps({"title": "Reused Record"}), 10000)
-        videos.finalize_localization(source, details, lock, hidden, inspection)
+        importing.finalize_localization(source, details, lock, hidden, inspection)
 
         db.session.expire_all()
         file = File.query.filter_by(file_path=real.file_path).one()
@@ -1390,7 +1405,7 @@ def test_a_decision_with_no_job_is_cleared_on_the_page(
             )
         db.session.commit()
         live_path = str(held_dir / "Live Choice (2005) - [Bluray-2160p].mkv")
-        job = app.import_queue.enqueue("app.videos.localization_task", live_path)
+        job = app.import_queue.enqueue("app.importing.localization_task", live_path)
 
     try:
         page = admin_client.get("/maintenance/held-imports").get_data(as_text=True)
@@ -1456,11 +1471,14 @@ def test_a_conversion_waits_while_another_task_holds_the_title_lock(
     assert hidden.exists() and source.exists()
     assert app.redis.get(resource) == b"other-task-token"
     retries = [
-        job for job in _jobs(app.transcode_queue, "app.videos.convert_localized_file")
+        job
+        for job in _jobs(
+            app.transcode_queue, "app.sdr_conversion.convert_localized_file"
+        )
     ] + [
         job
         for job in scheduled_jobs(app.transcode_queue)
-        if job.func_name == "app.videos.convert_localized_file"
+        if job.func_name == "app.sdr_conversion.convert_localized_file"
     ]
     assert len(retries) == 1
     assert retries[0].kwargs == {"lock_waits": 1}
@@ -1500,7 +1518,7 @@ def test_a_conversion_that_loses_its_lock_keeps_the_localized_file(
     assert result is False
     assert hidden.exists() and source.exists()
     assert any(
-        job.func_name == "app.videos.convert_localized_file"
+        job.func_name == "app.sdr_conversion.convert_localized_file"
         for job in scheduled_jobs(app.transcode_queue)
     )
 
@@ -1535,14 +1553,13 @@ def test_the_encode_watch_stops_when_another_task_takes_the_lock(app, monkeypatc
 
 
 def test_a_move_waits_while_another_task_holds_the_title_lock(app, tmp_path):
-    import app.videos as videos
 
     hidden = tmp_path / ".Moved (2001) - [DVD].mkv"
     hidden.write_bytes(b"localized")
     resource = '{"title": "Locked Move"}'
     with app.app_context():
         lock = _foreign_lock(app, resource)
-        result = videos.move_localized_file(
+        result = importing.move_localized_file(
             "/import/Moved (2001) - [DVD].mkv",
             {"basename": "Moved (2001) - [DVD].mkv", "dirname": "Movies/Moved (2001)"},
             lock,
@@ -1554,7 +1571,7 @@ def test_a_move_waits_while_another_task_holds_the_title_lock(app, tmp_path):
     retries = [
         job
         for job in scheduled_jobs(app.handoff_queue)
-        if job.func_name == "app.videos.move_localized_file"
+        if job.func_name == "app.importing.move_localized_file"
     ]
     assert len(retries) == 1
     assert retries[0].kwargs["lock_waits"] == 1
@@ -1806,7 +1823,9 @@ def test_a_long_4k_conversion_is_queued_with_a_longer_timeout(
     with app.app_context():
         source = _place(incoming_dir, hdr10_mkv, basename)
         assert importing.localization_task(source) is True
-        (convert_job,) = _jobs(app.transcode_queue, "app.videos.convert_localized_file")
+        (convert_job,) = _jobs(
+            app.transcode_queue, "app.sdr_conversion.convert_localized_file"
+        )
         plan = convert_job.args[4]
         assert plan["duration"] and plan["frame_rate"]
         assert convert_job.timeout == sdr_conversion.conversion_timeout(plan)
@@ -1858,7 +1877,7 @@ def test_a_conversion_that_waits_for_its_lock_keeps_its_timeout(
     (retry,) = [
         job
         for job in scheduled_jobs(app.transcode_queue)
-        if job.func_name == "app.videos.convert_localized_file"
+        if job.func_name == "app.sdr_conversion.convert_localized_file"
     ]
     assert retry.timeout == expected > 48 * 3600
 
@@ -1895,17 +1914,19 @@ def test_import_on_a_held_file_ignores_a_change_to_the_keep_mode(
         assert real.converted_from_quality is None
         _set_mode(monkeypatch, "keep")
         assert importing.localization_task(held_path) is True
-        (convert_job,) = _jobs(app.transcode_queue, "app.videos.convert_localized_file")
+        (convert_job,) = _jobs(
+            app.transcode_queue, "app.sdr_conversion.convert_localized_file"
+        )
         details, plan = convert_job.args[1], convert_job.args[4]
         assert plan["max_height"] == 1080
         assert details["replace_existing"] is True
         assert details["basename"] == "Held Keep (2020) - [Bluray-1080p].mkv"
 
-        assert videos.convert_localized_file(*convert_job.args) is True
-        (move_job,) = _jobs(app.handoff_queue, "app.videos.move_localized_file")
-        assert videos.move_localized_file(*move_job.args) is True
-        (finalize_job,) = _jobs(app.sql_queue, "app.videos.finalize_localization")
-        videos.finalize_localization(*finalize_job.args)
+        assert sdr_conversion.convert_localized_file(*convert_job.args) is True
+        (move_job,) = _jobs(app.handoff_queue, "app.importing.move_localized_file")
+        assert importing.move_localized_file(*move_job.args) is True
+        (finalize_job,) = _jobs(app.sql_queue, "app.importing.finalize_localization")
+        importing.finalize_localization(*finalize_job.args)
 
         # The conversion replaces the real rip in the library.
         db.session.expire_all()
@@ -1933,7 +1954,9 @@ def test_import_on_a_held_file_keeps_the_stored_target_in_the_4k_mode(
         )
         _set_mode(monkeypatch, "sdr-2160p")
         assert importing.localization_task(held_path) is True
-        (convert_job,) = _jobs(app.transcode_queue, "app.videos.convert_localized_file")
+        (convert_job,) = _jobs(
+            app.transcode_queue, "app.sdr_conversion.convert_localized_file"
+        )
         details, plan = convert_job.args[1], convert_job.args[4]
         assert plan["max_height"] == 1080
         assert plan["target_quality"] == "Bluray-1080p"
@@ -1967,7 +1990,9 @@ def test_a_held_row_from_before_the_stored_height_falls_back(
         db.session.commit()
         _set_mode(monkeypatch, mode)
         assert importing.localization_task(held_path) is True
-        (convert_job,) = _jobs(app.transcode_queue, "app.videos.convert_localized_file")
+        (convert_job,) = _jobs(
+            app.transcode_queue, "app.sdr_conversion.convert_localized_file"
+        )
         assert convert_job.args[4]["max_height"] == height
 
         lock = convert_job.args[2]

@@ -28,7 +28,8 @@ The flow:
 An ArchivedOriginal row keeps an original in S3 that has no library
 file. The S3 sync counts its key as claimed.
 
-app.videos re-exports the task names. Thus, the rq job strings resolve.
+Each job of this module goes to the queue under its app.sdr_conversion
+name.
 """
 
 import json
@@ -641,7 +642,7 @@ def convert_localized_file(
 
         def defer():
             defer_for_title_lock(
-                "app.videos.convert_localized_file",
+                "app.sdr_conversion.convert_localized_file",
                 (source_path, file_details, lock, hidden_output_file, plan),
                 {"lock_waits": lock_waits},
                 source_path,
@@ -781,7 +782,7 @@ def convert_localized_file(
 
         try:
             enqueue_task(
-                "app.videos.move_localized_file",
+                "app.importing.move_localized_file",
                 source_path,
                 file_details,
                 lock,
@@ -990,13 +991,12 @@ def held_decision_has_job(held):
     then requeue it on the System page."""
 
     from app.importing import LATER_STAGES
-    from app.tasks import TASKS, resolve_queue, task_func_names
+    from app.tasks import TASKS, resolve_queue
 
     if held.decision == "archive":
-        name = "app.videos.archive_held_task"
-        names = task_func_names(name)
+        name = "app.sdr_conversion.archive_held_task"
         return any(
-            job.func_name in names and job.args and job.args[0] == held.id
+            job.func_name == name and job.args and job.args[0] == held.id
             for job in _jobs_of([resolve_queue(TASKS[name].queue)])
         )
 

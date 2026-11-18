@@ -36,7 +36,7 @@ def restore_jobs(app):
     jobs = [
         job
         for job in app.request_queue.jobs
-        if job.func_name == "app.videos.aws_restore"
+        if job.func_name == "app.aws_storage.aws_restore"
     ]
 
     # Fan-out restores must use the cheaper Bulk tier that the estimate

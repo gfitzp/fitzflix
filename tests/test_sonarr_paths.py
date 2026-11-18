@@ -1047,7 +1047,7 @@ def localizing(app, basename):
     """Queue a localization of an episode name. No worker runs it."""
 
     return app.import_queue.enqueue(
-        "app.videos.localization_task", args=(f"/import/{basename}",)
+        "app.importing.localization_task", args=(f"/import/{basename}",)
     )
 
 
@@ -1435,7 +1435,7 @@ def test_a_cataloging_waits_for_sonarr_before_it_splits_a_series(
 
     from app.models import TVSeries
     from app.tasks import requeue_job_id
-    from app.videos import finalize_localization
+    from app.importing import finalize_localization
 
     monkeypatch.setattr("app.videos._dead_volumes", lambda paths: [])
     sonarr(down=True)
@@ -1452,7 +1452,7 @@ def test_a_cataloging_waits_for_sonarr_before_it_splits_a_series(
 
     assert finalize_localization(source, details, None, "/hidden", {}) is False
     retry = requeue_job_id(
-        "app.videos.finalize_localization",
+        "app.importing.finalize_localization",
         source,
         {"vanished_retries": 0, "sonarr_waits": 1, "lock_waits": 0},
     )
@@ -1474,7 +1474,7 @@ def test_a_dead_volume_retry_keeps_the_sonarr_wait_count(app, monkeypatch):
     from rq.registry import ScheduledJobRegistry
 
     from app.tasks import requeue_job_id
-    from app.videos import finalize_localization
+    from app.importing import finalize_localization
 
     monkeypatch.setattr("app.videos._dead_volumes", lambda paths: ["/Volumes/TV"])
     source = "/import/Batman (1966) - S01E06 - [WEBDL-1080p].mkv"
@@ -1491,7 +1491,7 @@ def test_a_dead_volume_retry_keeps_the_sonarr_wait_count(app, monkeypatch):
         is False
     )
     retry = requeue_job_id(
-        "app.videos.finalize_localization",
+        "app.importing.finalize_localization",
         source,
         {"vanished_retries": 0, "sonarr_waits": 7, "lock_waits": 0},
     )
@@ -1601,7 +1601,7 @@ def test_an_adopted_rename_takes_the_trail_of_the_file(app, sonarr):
         old_basename = row.basename
         old_path = os.path.join(app.config["LIBRARY_DIR"], row.file_path)
         job = app.import_queue.enqueue(
-            "app.videos.localization_task", args=(f"/import/{old_basename}",)
+            "app.importing.localization_task", args=(f"/import/{old_basename}",)
         )
         record_job_event(app.redis, job, "done")
         job.delete()

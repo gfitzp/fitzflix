@@ -7,7 +7,7 @@ import os
 
 
 def test_a_finished_import_leaves_no_staging_reservation(app, sample_mkv, incoming_dir):
-    import app.videos as videos
+    from app import importing
     from app.importing import STAGING_RESERVED_KEY
 
     basename = "Released Stage (2021) - [DVD].mkv"
@@ -16,20 +16,20 @@ def test_a_finished_import_leaves_no_staging_reservation(app, sample_mkv, incomi
         f_out.write(f_in.read())
 
     with app.app_context():
-        assert videos.localization_task(source) is True
+        assert importing.localization_task(source) is True
         assert app.redis.hexists(STAGING_RESERVED_KEY, basename)
         (move_job,) = [
             job
             for job in app.handoff_queue.jobs
-            if job.func_name == "app.videos.move_localized_file"
+            if job.func_name == "app.importing.move_localized_file"
         ]
-        assert videos.move_localized_file(*move_job.args) is True
+        assert importing.move_localized_file(*move_job.args) is True
         (finalize_job,) = [
             job
             for job in app.sql_queue.jobs
-            if job.func_name == "app.videos.finalize_localization"
+            if job.func_name == "app.importing.finalize_localization"
         ]
-        videos.finalize_localization(*finalize_job.args)
+        importing.finalize_localization(*finalize_job.args)
 
         from app.models import File
 

@@ -56,7 +56,7 @@ def test_parse_dolby_vision_profile_reads_mediainfo_strings(app):
 def test_track_metadata_writer_stores_and_clears_the_profile(app):
     from app import db
     from app.models import File
-    from app.videos import save_track_metadata
+    from app.tracks import save_track_metadata
 
     with app.app_context():
         movie = make_movie("Dolby Suspect", 2023)

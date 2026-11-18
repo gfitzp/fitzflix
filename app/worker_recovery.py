@@ -54,9 +54,9 @@ JOB_LOCK_KEY = "fitzflix:worker-reclaim:lock:{job_id}"
 ATMOS_START_TASK = "app.atmos.atmos_supplement_task"
 ATMOS_CHAIN_TASKS = {"app.atmos.atmos_check_task", "app.atmos.atmos_finish_task"}
 LATER_STAGE_LOCK_ARGUMENT = {
-    "app.videos.convert_localized_file",
-    "app.videos.move_localized_file",
-    "app.videos.finalize_localization",
+    "app.sdr_conversion.convert_localized_file",
+    "app.importing.move_localized_file",
+    "app.importing.finalize_localization",
 }
 MANUAL_IMPORT_TASK = "app.manual_imports.manual_import_task"
 
@@ -176,7 +176,7 @@ def abandon_dead_job(job):
 
     if source and _next_stage_holds(job, source):
         return
-    if job.func_name == "app.videos.localization_task" and source:
+    if job.func_name == "app.importing.localization_task" and source:
         note = _job_note(job)
         abandon_import(
             source,
@@ -191,7 +191,7 @@ def abandon_dead_job(job):
 
     details = job.args[1] if len(job.args) > 1 else {}
     reservation = details.get("untouched_basename") or os.path.basename(source)
-    if job.func_name == "app.videos.finalize_localization":
+    if job.func_name == "app.importing.finalize_localization":
         current_app.logger.warning(
             f"'{os.path.basename(source)}' The cataloging died. Its files stay. "
             f"Check the record before the next sweep imports the source again"
@@ -200,9 +200,9 @@ def abandon_dead_job(job):
         return
 
     strays = [job.args[3]] if len(job.args) > 3 else []
-    if job.func_name == "app.videos.convert_localized_file" and strays:
+    if job.func_name == "app.sdr_conversion.convert_localized_file" and strays:
         strays += [f"{strays[0]}.sdr-video.mkv", f"{strays[0]}.sdr.mkv"]
-    if job.func_name == "app.videos.move_localized_file" and details.get("dirname"):
+    if job.func_name == "app.importing.move_localized_file" and details.get("dirname"):
         strays.append(
             hidden(
                 os.path.join(

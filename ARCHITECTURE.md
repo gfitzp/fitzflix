@@ -159,7 +159,7 @@ All paths below are in the `app/` folder.
 
 ## Things that can surprise you
 
-- **The name of a job is not always its location**. A job name is a text string, for example `"app.videos.localization_task"`. Many of these functions moved out of `app/videos.py`, but the old names stay. Search for `def localization_task` to find the function.
+- **A job starts through its name, not through a call**. A job name is a text string, for example `"app.importing.localization_task"`. The name gives the module and the function. An editor cannot follow such a string, so search for the text to find each place that starts the job.
 - **Many imports are inside functions**. This prevents import loops between the modules. It is normal in this code.
 - **A task that changes a title takes the lock of that title**. If another task has the lock, the task books itself for a later time. The function is `acquire_lock_or_defer` in `app/videos.py`.
 - **There are 2 sources of settings**. The `.env` file gives the settings through `config.py`. The Admin Settings page changes some of them through `app/settings.py`. A value in `.env` has priority.

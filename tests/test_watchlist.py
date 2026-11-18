@@ -226,7 +226,7 @@ def test_manual_log_clears_the_watchlist_entry(app, admin_client, admin_id):
 def test_plex_watch_clears_the_watchlist_entry(app):
     from app import db
     from app.models import User, UserWatchlist
-    from app.videos import apply_plex_watch
+    from app.diary import apply_plex_watch
 
     with app.app_context():
         user = User.query.filter_by(admin=True).first()
@@ -247,7 +247,7 @@ def test_letterboxd_watchlist_imports_and_watches_clear(app, admin_id):
     from app import db
     from app.models import UserMovieReview
     from app.models import UserWatchlist
-    from app.videos import apply_letterboxd_import
+    from app.diary import apply_letterboxd_import
     from app.diary import parse_letterboxd_export
 
     buf = io.BytesIO()
@@ -433,7 +433,7 @@ def test_review_tmdb_watchlist_add_creates_the_record(
         refresh_jobs = [
             job
             for job in app.request_queue.jobs
-            if job.func_name == "app.videos.refresh_tmdb_info"
+            if job.func_name == "app.tmdb_refresh.refresh_tmdb_info"
             and job.args[1] == movie.id
         ]
         assert len(refresh_jobs) == 1

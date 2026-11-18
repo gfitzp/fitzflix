@@ -194,7 +194,7 @@ def test_an_outage_before_the_rewrite_keeps_a_library_file_for_the_in_place_swee
     real_cataloged = importing.already_cataloged
     monkeypatch.setattr(importing, "already_cataloged", _raiser(outage(2003)))
     queue = app.import_queue
-    job = queue.enqueue("app.videos.localization_task", source)
+    job = queue.enqueue("app.importing.localization_task", source)
     try:
         PipelineWorker([queue], connection=app.redis).work(burst=True)
         assert job.id in FailedJobRegistry(queue=queue).get_job_ids()
@@ -207,7 +207,7 @@ def test_an_outage_before_the_rewrite_keeps_a_library_file_for_the_in_place_swee
         queued = [
             queued
             for queued in queue.jobs
-            if queued.func_name == "app.videos.localization_task"
+            if queued.func_name == "app.importing.localization_task"
             and queued.args == (source,)
         ]
         assert len(queued) == 1
@@ -290,7 +290,6 @@ def test_a_cataloging_whose_database_goes_away_keeps_the_source(
     """The commit fails with a 2006, and the rollback fails too. The source stays."""
 
     import app.importing as importing
-    import app.videos as videos
     from app import db
 
     name = "Outage Catalog (2021) - [DVD].mkv"
@@ -322,7 +321,7 @@ def test_a_cataloging_whose_database_goes_away_keeps_the_source(
         monkeypatch.setattr(db.session, "rollback", rollback)
         lock = app.lock_manager.lock('{"title": "Outage Catalog"}', 60000)
         with pytest.raises(sa_exc.OperationalError):
-            videos.finalize_localization(
+            importing.finalize_localization(
                 str(source), details, lock, str(hidden), {}, staged_output=str(staged)
             )
         monkeypatch.undo()
@@ -341,7 +340,6 @@ def test_a_later_stage_rejects_a_source_that_no_sweep_finds(app, tmp_path, monke
     #681. A person then sees it on the Rejects page."""
 
     import app.importing as importing
-    import app.videos as videos
 
     name = "Outage Library (2022) - [DVD].mkv"
     hidden = tmp_path / f".{name}"
@@ -362,7 +360,7 @@ def test_a_later_stage_rejects_a_source_that_no_sweep_finds(app, tmp_path, monke
         lock = app.lock_manager.lock('{"title": "Outage Library"}', 60000)
         try:
             assert (
-                videos.finalize_localization(
+                importing.finalize_localization(
                     str(source), details, lock, str(hidden), {}
                 )
                 is None
@@ -384,7 +382,6 @@ def _cataloging_over_the_source(
     Return (source, rejected path, File id or None)."""
 
     import app.importing as importing
-    import app.videos as videos
     from app import db
     from tests.factories import make_file
 
@@ -414,14 +411,14 @@ def _cataloging_over_the_source(
         lock = app.lock_manager.lock(f'{{"title": "{name}"}}', 60000)
         if isinstance(error, Exception):
             assert (
-                videos.finalize_localization(
+                importing.finalize_localization(
                     str(source), details, lock, str(hidden), {}
                 )
                 is None
             )
         else:
             with pytest.raises(type(error)):
-                videos.finalize_localization(
+                importing.finalize_localization(
                     str(source), details, lock, str(hidden), {}
                 )
         assert app.redis.get(f'{{"title": "{name}"}}') is None
@@ -736,7 +733,6 @@ def test_a_failed_cataloging_deletes_the_upload_while_the_source_is_whole(
     """The source keeps its original bytes. Then the upload is a copy, and it goes."""
 
     import app.importing as importing
-    import app.videos as videos
 
     deleted = _discards(monkeypatch)
     name = "Whole Source (2022) - [DVD].mkv"
@@ -758,7 +754,7 @@ def test_a_failed_cataloging_deletes_the_upload_while_the_source_is_whole(
     with app.app_context():
         lock = app.lock_manager.lock('{"title": "Whole Source"}', 60000)
         try:
-            videos.finalize_localization(str(source), details, lock, str(hidden), {})
+            importing.finalize_localization(str(source), details, lock, str(hidden), {})
             assert os.path.exists(rejected)
         finally:
             _remove(rejected)

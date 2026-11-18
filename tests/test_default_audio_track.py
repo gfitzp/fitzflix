@@ -780,7 +780,7 @@ def _scheduled_scans(app, file_id):
 
     from app.tasks import requeue_job_id
 
-    wanted = requeue_job_id("app.videos.track_metadata_scan_task", file_id)
+    wanted = requeue_job_id("app.tracks.track_metadata_scan_task", file_id)
     return [
         job_id
         for job_id in ScheduledJobRegistry(queue=app.file_queue).get_job_ids()
@@ -822,7 +822,7 @@ def test_a_fault_after_a_restructure_queues_a_track_scan(
     scans = _scheduled_scans(app, file_id)
     assert len(scans) == 1
     job = Job.fetch(scans[0], connection=app.redis)
-    assert job.func_name == "app.videos.track_metadata_scan_task"
+    assert job.func_name == "app.tracks.track_metadata_scan_task"
     assert job.kwargs == {"file_id": file_id}
 
 

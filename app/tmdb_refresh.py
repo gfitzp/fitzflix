@@ -1,4 +1,4 @@
-"""Run the TMDB refresh pair (the strangler split from app.videos).
+"""Run the TMDB refresh pair.
 
 refresh_tmdb_info fetches the canonical TMDB payload of a record on the
 request queue, the sql queue or the maintenance queue. apply_tmdb_refresh applies the payload on the
@@ -7,11 +7,10 @@ renames and the duplicate merges. It makes no request to S3 (#668).
 find_or_create_tmdb_movie is the shared record-creation door. Every
 review and watchlist surface goes through it.
 
-app.videos re-exports the 2 jobs of this pair. Thus, the stored rq job
-strings ("app.videos.refresh_tmdb_info") continue to resolve. The other
-jobs of this module go to the queue under their app.tmdb_refresh names.
-Each other name is imported from this module. The filename plumbing
-lives in app.importing. This module imports it lazily.
+Each job of this module goes to the queue under its app.tmdb_refresh
+name, for example "app.tmdb_refresh.refresh_tmdb_info". The filename
+functions are in app.importing. This module imports them inside
+functions.
 """
 
 import gzip
@@ -328,8 +327,8 @@ def _movie_refresh_lock_resources(*movies, names=()):
     return sorted(resources)
 
 
-REFRESH_FUNC = "app.videos.refresh_tmdb_info"
-APPLY_FUNC = "app.videos.apply_tmdb_refresh"
+REFRESH_FUNC = "app.tmdb_refresh.refresh_tmdb_info"
+APPLY_FUNC = "app.tmdb_refresh.apply_tmdb_refresh"
 
 
 def _refresh_job_target(job):
@@ -563,7 +562,7 @@ def refresh_tmdb_info(
                 tmdb_payload = zlib.compress(json.dumps(tmdb_info).encode("utf-8"))
 
             enqueue_task(
-                "app.videos.apply_tmdb_refresh",
+                "app.tmdb_refresh.apply_tmdb_refresh",
                 library=library,
                 id=id,
                 tmdb_id=tmdb_id,
@@ -933,7 +932,7 @@ def _requeue_for_the_volume(movie_id, tmdb_id, tmdb_payload, description, waits)
         return
     try:
         requeue(
-            "app.videos.apply_tmdb_refresh",
+            "app.tmdb_refresh.apply_tmdb_refresh",
             key=f"{MOVIES}:{movie_id}:volume",
             delay=timedelta(minutes=5),
             reason="The library volume is not available for the rename",
@@ -1011,7 +1010,7 @@ def _apply_movie_refresh(
                 current_app.lock_manager.unlock(held)
             locks.clear()
             requeue(
-                "app.videos.apply_tmdb_refresh",
+                "app.tmdb_refresh.apply_tmdb_refresh",
                 key=f"{MOVIES}:{original_movie_id}",
                 delay=(5, 15),
                 reason="A file is locked by another task",
@@ -1341,7 +1340,7 @@ def refresh_in_production_tv():
         )
         for tv in series:
             enqueue_task(
-                "app.videos.refresh_tmdb_info",
+                "app.tmdb_refresh.refresh_tmdb_info",
                 "TV Shows",
                 tv.id,
                 tv.tmdb_id,

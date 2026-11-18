@@ -33,7 +33,7 @@ def _incoming(sample_mkv, incoming_dir, basename):
 def test_a_failed_finalize_enqueue_releases_the_lock_and_the_copies(
     app, sample_mkv, incoming_dir, monkeypatch
 ):
-    import app.videos as videos
+    from app import importing
 
     basename = "Finalize Fault (2021) - [DVD].mkv"
     source = _incoming(sample_mkv, incoming_dir, basename)
@@ -44,14 +44,14 @@ def test_a_failed_finalize_enqueue_releases_the_lock_and_the_copies(
 
     try:
         with app.app_context():
-            assert videos.localization_task(source) is True
+            assert importing.localization_task(source) is True
             (move,) = [
                 job
                 for job in app.handoff_queue.jobs
-                if job.func_name == "app.videos.move_localized_file"
+                if job.func_name == "app.importing.move_localized_file"
             ]
             monkeypatch.setattr(app.sql_queue, "enqueue", refuse)
-            assert videos.move_localized_file(*move.args) is False
+            assert importing.move_localized_file(*move.args) is False
 
         title_locks = [lock for lock in unlocked if "Finalize Fault" in lock.resource]
         assert len(title_locks) == 1
@@ -87,7 +87,7 @@ def test_a_failed_dead_volume_retry_releases_the_lock(app, tmp_path, monkeypatch
     unlocked = _lock_watch(app, monkeypatch)
     with app.app_context():
         lock = app.lock_manager.lock('{"title": "Dead Retry"}', 60000)
-        result = videos.finalize_localization(
+        result = importing.finalize_localization(
             str(source),
             {"basename": source.name, "dirname": "Movies/Dead Retry (2021)"},
             lock,
@@ -116,7 +116,7 @@ def test_the_sweep_queues_a_failed_in_place_import_again(app, tmp_path):
     registry = FailedJobRegistry(queue=queue)
 
     def fail_once():
-        job = queue.enqueue("app.videos.localization_task", str(library_file))
+        job = queue.enqueue("app.importing.localization_task", str(library_file))
         queue.remove(job)
         job.set_status(JobStatus.FAILED)
         registry.add(job, ttl=3600, exc_string="Work-horse terminated")
@@ -126,7 +126,7 @@ def test_the_sweep_queues_a_failed_in_place_import_again(app, tmp_path):
         return [
             job
             for job in queue.jobs
-            if job.func_name == "app.videos.localization_task"
+            if job.func_name == "app.importing.localization_task"
             and job.args == (str(library_file),)
         ]
 
@@ -157,7 +157,7 @@ def test_an_in_place_retry_counts_only_a_queued_job_in_a_fixed_window(
     library_file = tmp_path / "Window In Place (2021) - [WEBDL-1080p].mkv"
     library_file.write_bytes(b"arr import")
     queue = app.import_queue
-    job = queue.enqueue("app.videos.localization_task", str(library_file))
+    job = queue.enqueue("app.importing.localization_task", str(library_file))
     queue.remove(job)
     job.set_status(JobStatus.FAILED)
     FailedJobRegistry(queue=queue).add(job, ttl=3600, exc_string="killed")
@@ -189,7 +189,7 @@ def test_an_in_place_path_gets_3_retries_in_each_window(app, tmp_path, monkeypat
     library_file = tmp_path / "Weekly In Place (2021) - [WEBDL-1080p].mkv"
     library_file.write_bytes(b"arr import")
     queue = app.import_queue
-    job = queue.enqueue("app.videos.localization_task", str(library_file))
+    job = queue.enqueue("app.importing.localization_task", str(library_file))
     queue.remove(job)
     job.set_status(JobStatus.FAILED)
     FailedJobRegistry(queue=queue).add(job, ttl=3600, exc_string="killed")
@@ -250,7 +250,6 @@ def _assert_kept(app, lock, unlocked, source, hidden, staged):
 
 def test_a_failed_sonarr_wait_keeps_the_source(app, tmp_path, monkeypatch):
     import app.importing as importing
-    import app.videos as videos
 
     monkeypatch.setattr(
         importing, "resolve_import_series", lambda details: ("wait", None)
@@ -261,7 +260,7 @@ def test_a_failed_sonarr_wait_keeps_the_source(app, tmp_path, monkeypatch):
         source, hidden, staged, details, lock = _finalize_fixture(
             app, tmp_path, "Sonarr Wait Fault - S01E01 - [HDTV-720p].mkv", "TV Shows"
         )
-        result = videos.finalize_localization(
+        result = importing.finalize_localization(
             str(source), details, lock, str(hidden), {}, staged_output=str(staged)
         )
     assert result is False
@@ -286,7 +285,7 @@ def test_a_failed_vanished_copy_retry_keeps_the_source(app, tmp_path, monkeypatc
             app, tmp_path, "Vanished Fault (2021) - [DVD].mkv"
         )
         hidden.unlink()
-        result = videos.finalize_localization(
+        result = importing.finalize_localization(
             str(source), details, lock, str(hidden), {}, staged_output=str(staged)
         )
     assert result is False
@@ -298,7 +297,6 @@ def test_a_failed_hand_off_to_the_move_keeps_the_source(app, tmp_path, monkeypat
     from types import SimpleNamespace
 
     import app.importing as importing
-    import app.videos as videos
 
     class OtherVolume:
         """Report the folder of the hidden copy on another volume."""
@@ -320,7 +318,7 @@ def test_a_failed_hand_off_to_the_move_keeps_the_source(app, tmp_path, monkeypat
         source, hidden, staged, details, lock = _finalize_fixture(
             app, tmp_path, "Hand Off Fault (2021) - [DVD].mkv"
         )
-        result = videos.finalize_localization(
+        result = importing.finalize_localization(
             str(source), details, lock, str(hidden), {}, staged_output=str(staged)
         )
     assert result is False
@@ -348,7 +346,7 @@ def test_a_failed_space_wait_inside_the_copy_keeps_the_source(
     try:
         with app.app_context():
             lock = app.lock_manager.lock('{"title": "Space Wait Fault"}', 60000)
-            assert videos.move_localized_file(source, details, lock, hidden) is False
+            assert importing.move_localized_file(source, details, lock, hidden) is False
         assert lock in unlocked
         assert os.path.exists(source)
         assert not os.path.exists(hidden)
@@ -382,7 +380,7 @@ def test_a_failed_dead_volume_retry_of_the_move_releases_the_lock(
     unlocked = _lock_watch(app, monkeypatch)
     with app.app_context():
         lock = app.lock_manager.lock('{"title": "Move Retry"}', 60000)
-        result = videos.move_localized_file(
+        result = importing.move_localized_file(
             str(source),
             {"basename": source.name, "dirname": "Movies/Move Retry (2021)"},
             lock,
@@ -443,7 +441,6 @@ def test_a_failed_lock_extension_of_the_cataloging_keeps_the_source(
     """A Redis fault while finalize extends its lock keeps the source (#568)."""
 
     import app.importing as importing
-    import app.videos as videos
 
     monkeypatch.setattr(importing, "_hold_title_lock", _refuse)
     unlocked = _lock_watch(app, monkeypatch)
@@ -451,7 +448,7 @@ def test_a_failed_lock_extension_of_the_cataloging_keeps_the_source(
         source, hidden, staged, details, lock = _finalize_fixture(
             app, tmp_path, "Extend Fault (2021) - [DVD].mkv"
         )
-        result = videos.finalize_localization(
+        result = importing.finalize_localization(
             str(source), details, lock, str(hidden), {}, staged_output=str(staged)
         )
     assert result is False
@@ -575,7 +572,7 @@ def test_the_move_has_one_cleanup_for_a_failed_booking(
     try:
         with app.app_context():
             lock = app.lock_manager.lock(f'{{"title": "One Cleanup {kept}"}}', 60000)
-            videos.move_localized_file(source, details, lock, hidden)
+            importing.move_localized_file(source, details, lock, hidden)
         assert lock in unlocked
         assert not os.path.exists(hidden)
         assert os.path.exists(source) is kept

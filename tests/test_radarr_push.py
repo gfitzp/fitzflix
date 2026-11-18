@@ -245,7 +245,7 @@ def refresh_rename_fixture(app, monkeypatch, title, year, tmdb_id, new_year):
 def test_refresh_rename_points_radarr_at_the_new_folder(app, monkeypatch):
     """A folder rename must reach Radarr, or Radarr downloads the film again."""
 
-    from app.videos import apply_tmdb_refresh
+    from app.tmdb_refresh import apply_tmdb_refresh
 
     fake = wire(app, monkeypatch)
     fake.movies[5] = {
@@ -287,7 +287,7 @@ def test_refresh_merge_withdraws_the_old_radarr_entry(app, monkeypatch):
     import os
     from datetime import date
 
-    from app.videos import apply_tmdb_refresh
+    from app.tmdb_refresh import apply_tmdb_refresh
     from tests.factories import make_movie, make_movie_file
 
     fake = wire(app, monkeypatch)
@@ -339,7 +339,7 @@ def test_a_merge_stops_when_the_files_do_not_move(app, monkeypatch):
     from sqlalchemy import inspect as sa_inspect
 
     from app.models import File, Movie
-    from app.videos import apply_tmdb_refresh
+    from app.tmdb_refresh import apply_tmdb_refresh
     from tests.factories import make_movie, make_movie_file
 
     wire(app, monkeypatch)
@@ -379,7 +379,7 @@ def test_a_merge_stops_when_the_files_do_not_move(app, monkeypatch):
 
 
 def test_refresh_rename_skips_a_film_radarr_lacks(app, monkeypatch):
-    from app.videos import apply_tmdb_refresh
+    from app.tmdb_refresh import apply_tmdb_refresh
 
     fake = wire(app, monkeypatch)
     with app.app_context():
@@ -406,7 +406,7 @@ def test_refresh_rename_survives_a_radarr_outage(app, monkeypatch):
     """A Radarr failure must not fail the refresh. The rename already happened."""
 
     import app.radarr_push as radarr_push
-    from app.videos import apply_tmdb_refresh
+    from app.tmdb_refresh import apply_tmdb_refresh
 
     def down(*args, **kwargs):
         raise ConnectionError("radarr is down")

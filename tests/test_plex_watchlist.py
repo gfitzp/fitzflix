@@ -191,7 +191,7 @@ def test_first_run_is_a_full_union(app, monkeypatch):
         refreshes = [
             job
             for job in app.request_queue.jobs
-            if job.func_name == "app.videos.refresh_tmdb_info"
+            if job.func_name == "app.tmdb_refresh.refresh_tmdb_info"
             and job.args[1] == created.id
         ]
         assert len(refreshes) == 1

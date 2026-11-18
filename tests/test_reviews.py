@@ -114,7 +114,7 @@ def test_letterboxd_zip_upload_enqueues_match_task(app, admin_client):
     jobs = [
         job
         for job in app.request_queue.jobs
-        if job.func_name == "app.videos.letterboxd_import_task"
+        if job.func_name == "app.diary.letterboxd_import_task"
     ]
     assert len(jobs) == 1
     user_id, films = jobs[0].args
@@ -134,7 +134,7 @@ def test_match_task_resolves_library_films_and_hands_off(app):
     import does not fail."""
 
     from app import db
-    from app.videos import letterboxd_import_task
+    from app.diary import letterboxd_import_task
     from app.diary import parse_letterboxd_export
 
     with app.app_context():
@@ -148,7 +148,7 @@ def test_match_task_resolves_library_films_and_hands_off(app):
         jobs = [
             job
             for job in app.sql_queue.jobs
-            if job.func_name == "app.videos.apply_letterboxd_import"
+            if job.func_name == "app.diary.apply_letterboxd_import"
         ]
         assert len(jobs) == 1
         user_id, resolved = jobs[0].args
@@ -161,7 +161,7 @@ def test_match_task_resolves_library_films_and_hands_off(app):
 def test_apply_letterboxd_import_loads_review_table(app, admin_client):
     from app import db
     from app.models import UserMovieReview
-    from app.videos import apply_letterboxd_import
+    from app.diary import apply_letterboxd_import
     from app.diary import parse_letterboxd_export
 
     with app.app_context():
@@ -219,7 +219,7 @@ def test_apply_letterboxd_import_loads_review_table(app, admin_client):
 
 def test_apply_creates_missing_movie_and_enqueues_refresh(app):
     from app.models import Movie, UserMovieReview
-    from app.videos import apply_letterboxd_import
+    from app.diary import apply_letterboxd_import
 
     with app.app_context():
         film = {
@@ -248,7 +248,7 @@ def test_apply_creates_missing_movie_and_enqueues_refresh(app):
         refresh_jobs = [
             job
             for job in app.request_queue.jobs
-            if job.func_name == "app.videos.refresh_tmdb_info"
+            if job.func_name == "app.tmdb_refresh.refresh_tmdb_info"
             and job.args[1] == movie.id
         ]
         assert len(refresh_jobs) == 1
@@ -263,7 +263,7 @@ def test_a_letterboxd_namesake_with_another_tmdb_id_is_not_adopted(app):
 
     from app import db
     from app.models import Movie, UserMovieReview
-    from app.videos import apply_letterboxd_import
+    from app.diary import apply_letterboxd_import
 
     def film(title, tmdb_id):
         return {
@@ -672,7 +672,7 @@ def test_legacy_json_lines_upload_still_works(app, admin_client):
     assert response.status_code == 302
 
     jobs = [
-        job for job in app.sql_queue.jobs if job.func_name == "app.videos.review_task"
+        job for job in app.sql_queue.jobs if job.func_name == "app.diary.review_task"
     ]
     assert any(job.args[1] == "Old Import Film" for job in jobs)
 
@@ -1036,7 +1036,7 @@ def test_review_tmdb_creates_movie_and_enqueues_refresh(app, admin_client, monke
         refresh_jobs = [
             job
             for job in app.request_queue.jobs
-            if job.func_name == "app.videos.refresh_tmdb_info"
+            if job.func_name == "app.tmdb_refresh.refresh_tmdb_info"
             and job.args[1] == movie.id
         ]
         assert len(refresh_jobs) == 1
@@ -2462,7 +2462,7 @@ def test_the_legacy_ratings_import_is_idempotent(app):
 
     from app import db
     from app.models import User, UserMovieReview, UserMovieStatus
-    from app.videos import review_task
+    from app.diary import review_task
 
     with app.app_context():
         user_id = User.query.first().id

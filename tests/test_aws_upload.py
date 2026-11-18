@@ -190,7 +190,7 @@ def _worker_upload(app, file_id):
     from app.pipeline import PipelineWorker, pipeline_trails
 
     with app.app_context():
-        job = app.file_queue.enqueue("app.videos.upload_task", file_id)
+        job = app.file_queue.enqueue("app.aws_storage.upload_task", file_id)
     PipelineWorker([app.file_queue], connection=app.redis).work(burst=True)
     (trail,) = pipeline_trails(app.redis)
     return job, [(entry["stage"], entry["status"]) for entry in trail["entries"]]
@@ -330,7 +330,7 @@ def test_a_second_upload_job_that_meets_the_lock_does_not_show_done(app, monkeyp
         file_id = _stale_file("Lock Wait")
         file = db.session.get(File, file_id)
         wait_id = lock_wait_job_id(
-            "app.videos.upload_task", f"'{file.basename}'", (file_id,), key=file_id
+            "app.aws_storage.upload_task", f"'{file.basename}'", (file_id,), key=file_id
         )
         held = app.lock_manager.lock(file.file_identifier(), 600000)
         assert held
@@ -345,11 +345,11 @@ def test_a_second_upload_job_that_meets_the_lock_does_not_show_done(app, monkeyp
         return bool(meta.get("trail_skipped"))
 
     with app.app_context():
-        app.file_queue.enqueue("app.videos.upload_task", file_id)
+        app.file_queue.enqueue("app.aws_storage.upload_task", file_id)
     assert run() == [("scheduled", wait_id)]
 
     with app.app_context():
-        second = app.file_queue.enqueue("app.videos.upload_task", file_id)
+        second = app.file_queue.enqueue("app.aws_storage.upload_task", file_id)
     chips = run()
 
     # The second job did no work. The chip of the wait stands for the
@@ -407,9 +407,11 @@ def test_a_stale_skip_mark_on_a_booked_hash_does_not_hide_a_good_upload(
         file_id = _stale_file("Stale Mark")
         file = db.session.get(File, file_id)
         wait_id = lock_wait_job_id(
-            "app.videos.upload_task", f"'{file.basename}'", (file_id,), key=file_id
+            "app.aws_storage.upload_task", f"'{file.basename}'", (file_id,), key=file_id
         )
-        job = app.file_queue.enqueue("app.videos.upload_task", file_id, job_id=wait_id)
+        job = app.file_queue.enqueue(
+            "app.aws_storage.upload_task", file_id, job_id=wait_id
+        )
     job.meta["trail_skipped"] = True
     job.save_meta()
 

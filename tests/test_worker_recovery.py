@@ -55,7 +55,7 @@ def test_a_dead_conversion_is_failed_and_its_lock_and_reservation_go(app, tmp_pa
         worker, job = _plant_dead_worker(
             app,
             app.transcode_queue,
-            "app.videos.convert_localized_file",
+            "app.sdr_conversion.convert_localized_file",
             (
                 str(source),
                 {
@@ -95,7 +95,7 @@ def test_a_dead_localization_releases_its_lock_and_its_work_files(app, tmp_path)
         _, job = _plant_dead_worker(
             app,
             app.import_queue,
-            "app.videos.localization_task",
+            "app.importing.localization_task",
             (str(source),),
         )
         note_job_state(job.id, 600, lock=lock, strays=[str(staged)])

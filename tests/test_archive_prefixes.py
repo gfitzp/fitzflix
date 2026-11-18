@@ -30,7 +30,7 @@ def _deletes(app):
     return [
         job.args[0]
         for job in app.handoff_queue.jobs
-        if job.func_name == "app.videos.aws_delete"
+        if job.func_name == "app.aws_storage.aws_delete"
     ]
 
 
@@ -308,7 +308,7 @@ def test_the_sync_uploads_the_stale_transcoded_copy_again(app, monkeypatch):
         uploads = [
             job.args
             for job in app.file_queue.jobs
-            if job.func_name == "app.videos.upload_task"
+            if job.func_name == "app.aws_storage.upload_task"
         ]
         assert uploads == [(file_id,)]
 
@@ -383,7 +383,7 @@ def test_the_upload_waits_for_the_title_lock(app, monkeypatch, held_lock):
     (retry,) = [
         job
         for job in scheduled_jobs(app.file_queue)
-        if job.func_name == "app.videos.upload_task"
+        if job.func_name == "app.aws_storage.upload_task"
     ]
     assert retry.args == (file_id,)
 
@@ -522,7 +522,7 @@ def test_a_scan_that_rewrites_the_file_queues_its_archive(app, monkeypatch):
         return [
             job.args
             for job in app.file_queue.jobs
-            if job.func_name == "app.videos.upload_task"
+            if job.func_name == "app.aws_storage.upload_task"
         ]
 
     # The upload waits for the save. Both write the same row. An upload
@@ -538,7 +538,7 @@ def test_a_scan_that_rewrites_the_file_queues_its_archive(app, monkeypatch):
         (save,) = [
             job
             for job in app.sql_queue.jobs
-            if job.func_name == "app.videos.save_track_metadata"
+            if job.func_name == "app.tracks.save_track_metadata"
         ]
         assert save.args[0] == file_id and save.args[3] is True
     assert tracks.save_track_metadata(*save.args) is True
@@ -572,7 +572,7 @@ def test_the_save_queues_the_upload_after_it_releases_the_title_lock(app, monkey
             "filesize_bytes": 1,
         }
         assert tracks.save_track_metadata(file.id, details, lock, True) is True
-    assert held_at_enqueue == [("app.videos.upload_task", False)]
+    assert held_at_enqueue == [("app.aws_storage.upload_task", False)]
 
 
 def test_the_prune_keeps_a_recent_unclaimed_upload(app, monkeypatch):
@@ -639,7 +639,7 @@ def test_the_sync_waits_while_a_library_volume_is_dead(app, monkeypatch):
         assert [
             job.id
             for job in scheduled_jobs(app.maintenance_queue)
-            if job.func_name == "app.videos.sync_aws_s3_storage_task"
+            if job.func_name == "app.aws_storage.sync_aws_s3_storage_task"
         ]
 
 
@@ -685,7 +685,7 @@ def test_the_prune_keeps_the_upload_of_an_import_that_waits_for_space(app, monke
     source = os.path.join(app.config["IMPORT_DIR"], "Long Wait (2024) - [DVD].mkv")
     retry = app.import_queue.enqueue_in(
         timedelta(minutes=30),
-        "app.videos.localization_task",
+        "app.importing.localization_task",
         kwargs={"file_path": source, "space_waits": 4},
     )
     try:
@@ -857,7 +857,7 @@ def test_the_replaced_key_is_deleted_only_if_present(app, uploads):
     deletes = [
         job
         for job in app.handoff_queue.jobs
-        if job.func_name == "app.videos.aws_delete"
+        if job.func_name == "app.aws_storage.aws_delete"
     ]
     assert [job.args[0] for job in deletes] == [
         "untouched/Marker Archive (1998) - [DVD].mkv",

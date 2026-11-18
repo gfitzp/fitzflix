@@ -172,7 +172,7 @@ def test_processing_verifies_scores_and_creates(app, monkeypatch):
     # It consumes the batch. It drops the rejects permanently
 
     assert len(refreshes) == 1
-    assert refreshes[0][0][0] == "app.videos.refresh_tmdb_info"
+    assert refreshes[0][0][0] == "app.tmdb_refresh.refresh_tmdb_info"
     assert app.redis.scard(pc.PENDING_KEY) == 0
 
 

@@ -62,7 +62,7 @@ def test_the_keeper_sweep_works_without_an_app_context(app, monkeypatch):
         def start(self):
             pass
 
-    name = "app.videos.manual_import_task"
+    name = "app.importing.manual_import_task"
     monkeypatch.setitem(TASKS, name, TaskSpec("maintenance", "SQL_TASK_TIMEOUT"))
     monkeypatch.setattr(import_watch, "PollingObserver", Observer)
     monkeypatch.setattr(threading, "Thread", Thread)

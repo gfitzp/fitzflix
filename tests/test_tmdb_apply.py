@@ -388,7 +388,7 @@ def test_a_refresh_that_tmdb_answers_with_nothing_says_so(app, monkeypatch):
         (apply_job,) = [
             job
             for job in app.sql_queue.jobs
-            if job.func_name == "app.videos.apply_tmdb_refresh"
+            if job.func_name == "app.tmdb_refresh.apply_tmdb_refresh"
         ]
         assert apply_job.kwargs["tmdb_payload"] is None
 
@@ -603,7 +603,7 @@ def test_a_tmdb_outage_sends_no_not_found_email(app, monkeypatch):
     assert [
         job
         for job in app.sql_queue.jobs
-        if job.func_name == "app.videos.apply_tmdb_refresh"
+        if job.func_name == "app.tmdb_refresh.apply_tmdb_refresh"
     ] == []
 
     # A 404 still sends the email

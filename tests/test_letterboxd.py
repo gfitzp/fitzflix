@@ -334,7 +334,7 @@ def test_sync_creates_missing_movie_records(app, monkeypatch):
         refreshes = [
             job
             for job in app.request_queue.jobs
-            if job.func_name == "app.videos.refresh_tmdb_info"
+            if job.func_name == "app.tmdb_refresh.refresh_tmdb_info"
             and job.args[1] == movie.id
         ]
         assert len(refreshes) == 1

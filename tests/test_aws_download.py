@@ -24,8 +24,6 @@ def test_download_transient_error_defers(app, monkeypatch):
 
     import errno
 
-    import app.videos as videos
-
     from app import aws_storage
 
     def flaky_download(key, basename, sqs_receipt_handle=None, **kwargs):
@@ -34,7 +32,7 @@ def test_download_transient_error_defers(app, monkeypatch):
     monkeypatch.setattr(aws_storage, "aws_download", flaky_download)
 
     with app.app_context():
-        result = videos.download_task(
+        result = aws_storage.download_task(
             "untouched/Thing (2021) - [DVD].mkv",
             "Thing (2021) - [DVD].mkv",
             "receipt-123",
@@ -48,7 +46,7 @@ def test_download_transient_error_defers(app, monkeypatch):
     ]
     assert [job.id for job in retries] == [
         requeue_id(
-            "app.videos.download_task",
+            "app.aws_storage.download_task",
             "untouched/Thing (2021) - [DVD].mkv",
             {"transient_retries": 1, "volume_waits": 0},
         )
@@ -81,7 +79,7 @@ def test_download_gives_up_after_max_retries(app, monkeypatch):
     monkeypatch.setattr(aws_storage, "aws_download", flaky_download)
 
     with app.app_context():
-        result = videos.download_task(
+        result = aws_storage.download_task(
             "untouched/Thing (2021) - [DVD].mkv",
             "Thing (2021) - [DVD].mkv",
             "receipt-123",
@@ -358,14 +356,12 @@ def test_download_task_reports_download_outcome(app, monkeypatch):
     complete retry budget. A used budget is not a transient error.
     Thus, the task schedules no retry."""
 
-    import app.videos as videos
-
     from app import aws_storage
 
     monkeypatch.setattr(aws_storage, "aws_download", lambda *args, **kwargs: False)
 
     with app.app_context():
-        result = videos.download_task(
+        result = aws_storage.download_task(
             "untouched/Thing (2021) - [DVD].mkv",
             "Thing (2021) - [DVD].mkv",
             "receipt-123",
@@ -389,7 +385,7 @@ def test_download_task_reports_download_outcome(app, monkeypatch):
         )
 
         with app.app_context():
-            result = videos.download_task(
+            result = aws_storage.download_task(
                 "untouched/Thing (2021) - [DVD].mkv",
                 "Thing (2021) - [DVD].mkv",
                 "receipt-123",
@@ -440,8 +436,6 @@ def test_aws_restore_records_the_request_time(app, monkeypatch):
 
     from datetime import datetime
 
-    import app.videos as videos
-
     from app import aws_storage
 
     class FakeS3:
@@ -457,10 +451,10 @@ def test_aws_restore_records_the_request_time(app, monkeypatch):
         key = _overtaken_fixture(
             app, "Recorded", datetime(2026, 10, 1), present=False, requested=first
         )
-        videos.aws_restore(key, record_request=False)
+        aws_storage.aws_restore(key, record_request=False)
         assert _pending_since(key) == first
 
-        videos.aws_restore(key)
+        aws_storage.aws_restore(key)
         assert _pending_since(key) > first
 
 
@@ -511,8 +505,6 @@ def test_download_task_skips_a_restore_that_an_import_overtook(app, monkeypatch)
 
     from datetime import datetime
 
-    import app.videos as videos
-
     from app import aws_storage
 
     downloads = []
@@ -523,7 +515,9 @@ def test_download_task_skips_a_restore_that_an_import_overtook(app, monkeypatch)
     monkeypatch.setattr(aws_storage, "aws_sqs_client", lambda: sqs)
     with app.app_context():
         key = _overtaken_fixture(app, "Overtaken", datetime(2026, 10, 20, 18, 0))
-        assert videos.download_task(key, os.path.basename(key), "receipt-1") is True
+        assert (
+            aws_storage.download_task(key, os.path.basename(key), "receipt-1") is True
+        )
         assert _pending_since(key) is None
 
     assert downloads == []
@@ -537,8 +531,6 @@ def test_download_task_keeps_a_restore_of_a_file_imported_before(app, monkeypatc
     operator replaces a bad local copy."""
 
     from datetime import datetime
-
-    import app.videos as videos
 
     from app import aws_storage
 
@@ -555,7 +547,9 @@ def test_download_task_keeps_a_restore_of_a_file_imported_before(app, monkeypatc
             datetime(2026, 10, 19, 18, 0),
             requested=datetime(2026, 10, 20, 13, 0),
         )
-        assert videos.download_task(key, os.path.basename(key), "receipt-2") is True
+        assert (
+            aws_storage.download_task(key, os.path.basename(key), "receipt-2") is True
+        )
 
     assert len(downloads) == 1
 
@@ -564,8 +558,6 @@ def test_download_task_keeps_a_restore_of_an_absent_file(app, monkeypatch):
     """Test that a restore continues when the library file is absent."""
 
     from datetime import datetime
-
-    import app.videos as videos
 
     from app import aws_storage
 
@@ -583,7 +575,9 @@ def test_download_task_keeps_a_restore_of_an_absent_file(app, monkeypatch):
             present=False,
             requested=datetime(2026, 10, 20, 13, 0),
         )
-        assert videos.download_task(key, os.path.basename(key), "receipt-3") is True
+        assert (
+            aws_storage.download_task(key, os.path.basename(key), "receipt-3") is True
+        )
 
     assert len(downloads) == 1
 
@@ -726,7 +720,9 @@ def test_a_direct_restore_waits_for_a_dead_library_volume(app, monkeypatch):
     )
     monkeypatch.setattr(videos, "_dead_volumes", lambda paths: ["/Volumes/Movies"])
     with app.app_context():
-        assert videos.download_task(key, os.path.basename(key), "receipt-1") is False
+        assert (
+            aws_storage.download_task(key, os.path.basename(key), "receipt-1") is False
+        )
     assert downloads == []
     (retry,) = _volume_retries(app)
     assert retry.kwargs == {"transient_retries": 0, "volume_waits": 1}
@@ -749,7 +745,9 @@ def test_a_volume_that_drops_during_the_download_defers_the_placement(app, monke
 
     monkeypatch.setattr(aws_storage, "aws_download", download)
     with app.app_context():
-        assert videos.download_task(key, os.path.basename(key), "receipt-2") is False
+        assert (
+            aws_storage.download_task(key, os.path.basename(key), "receipt-2") is False
+        )
     assert placed == []
     (retry,) = _volume_retries(app)
     assert retry.kwargs["volume_waits"] == 1
@@ -761,7 +759,6 @@ def test_a_track_edit_during_the_download_refuses_the_placement(app, monkeypatch
 
     from app import db
     from app.models import File
-    import app.videos as videos
     from app import aws_storage
 
     key, library_path = _direct_restore_row(app, "Edited During")
@@ -783,7 +780,7 @@ def test_a_track_edit_during_the_download_refuses_the_placement(app, monkeypatch
     monkeypatch.setattr(aws_storage, "aws_download", download)
     try:
         with app.app_context():
-            assert videos.download_task(key, os.path.basename(key)) is True
+            assert aws_storage.download_task(key, os.path.basename(key)) is True
         assert placed == []
         with open(library_path, "rb") as f:
             assert f.read() == b"newer library file"
@@ -849,7 +846,7 @@ def _place_with(app, monkeypatch, s3, key):
     monkeypatch.setattr(aws_storage, "aws_sqs_client", lambda: None)
     monkeypatch.setattr(videos, "_dead_volumes", lambda paths: [])
     with app.app_context():
-        return videos.download_task(key, os.path.basename(key))
+        return aws_storage.download_task(key, os.path.basename(key))
 
 
 def test_a_rename_during_the_download_places_at_the_new_path(app, monkeypatch):
@@ -973,7 +970,7 @@ def test_a_restore_of_a_missing_key_with_a_longer_sibling_does_nothing(
         assert not [
             job
             for job in app.file_queue.jobs
-            if job.func_name == "app.videos.download_task"
+            if job.func_name == "app.aws_storage.download_task"
         ]
 
 
@@ -1031,7 +1028,9 @@ def test_a_row_deleted_during_the_download_refuses_and_drops_the_message(
     monkeypatch.setattr(aws_storage, "aws_sqs_client", lambda: sqs)
     monkeypatch.setattr(videos, "_dead_volumes", lambda paths: [])
     with app.app_context():
-        assert videos.download_task(key, os.path.basename(key), "receipt-9") is True
+        assert (
+            aws_storage.download_task(key, os.path.basename(key), "receipt-9") is True
+        )
     assert sqs.deleted == ["receipt-9"]
     assert not os.path.exists(library_path)
 
@@ -1120,7 +1119,7 @@ def test_an_early_stop_removes_the_kept_download(app, monkeypatch, stop):
     monkeypatch.setattr(aws_storage, "aws_sqs_client", lambda: None)
     try:
         with app.app_context():
-            videos.download_task(key, os.path.basename(key), **kwargs)
+            aws_storage.download_task(key, os.path.basename(key), **kwargs)
         assert not os.path.exists(staged)
         assert not os.path.exists(f"{staged}.etag")
     finally:
@@ -1303,7 +1302,9 @@ def test_a_download_requeue_carries_the_newest_handle_of_the_key(
 
         monkeypatch.setattr(aws_storage, "aws_download", lost)
     with app.app_context():
-        assert videos.download_task(key, os.path.basename(key), "handle-1") is False
+        assert (
+            aws_storage.download_task(key, os.path.basename(key), "handle-1") is False
+        )
     (retry,) = [
         job
         for job in scheduled_jobs(app.file_queue)

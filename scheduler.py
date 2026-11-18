@@ -121,10 +121,8 @@ for entry in cron_table(app.config):
         queue_name=entry["queue"],
         cron=entry["cron"],
         job_timeout=entry["timeout"],
-        # The System page reads the name of the table from the meta. The
-        # func_name of rq is the module that defines the function. For a
-        # function that app.videos exports from another module, that is
-        # not the name of the table.
+        # The System page reads the description and the name of the
+        # table from the meta.
         meta={
             "cron_string": entry["cron"],
             "description": entry["description"],

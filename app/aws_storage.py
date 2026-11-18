@@ -1,4 +1,4 @@
-"""Talk to AWS storage. This is the first strangler slice out of videos.py.
+"""Talk to AWS storage.
 
 This module holds each function that talks to S3 and SQS. These are
 the untouched-original archive uploads, the restores, and the
@@ -6,15 +6,10 @@ downloads. They also include the weekly storage audit and the SQS
 restore-notification poller. The key functions (etags, key sanitizing,
 the untouched-key handoff guard) are here too.
 
-The rq job names are strings that live in Redis. Thus, app.videos
-exports again each job of this module that the stored jobs name as
-app.videos.X. The enqueue sites and the stored jobs continue to say
-"app.videos.upload_task", and they continue to resolve. The later jobs
-of this module go to the queue under their app.aws_storage names. Each
-other name is imported from this module. The names that still live in
-app.videos are imported lazily
-inside functions, never at module level. Thus, the import direction
-stays videos to aws_storage.
+Each job of this module goes to the queue under its app.aws_storage
+name, for example "app.aws_storage.upload_task". The shared lock and
+copy functions are in app.videos. This module imports them inside
+functions.
 """
 
 import csv
@@ -267,7 +262,7 @@ def request_restore(key, tier="Standard", description=None):
 
     mark_restore_pending(key)
     enqueue_task(
-        "app.videos.aws_restore",
+        "app.aws_storage.aws_restore",
         key,
         tier=tier,
         description=description or f"'{os.path.basename(key)}'",
@@ -526,7 +521,7 @@ def _sync_deferred(job, volume_drops=0):
 
     if busy:
         requeue(
-            "app.videos.sync_aws_s3_storage_task",
+            "app.aws_storage.sync_aws_s3_storage_task",
             key=None,
             delay=timedelta(minutes=5),
             reason=f"waits for the other tasks to finish ({', '.join(busy)})",
@@ -546,7 +541,7 @@ def _sync_deferred(job, volume_drops=0):
     )
     if dead:
         requeue(
-            "app.videos.sync_aws_s3_storage_task",
+            "app.aws_storage.sync_aws_s3_storage_task",
             key=None,
             delay=timedelta(minutes=30),
             reason=f"Library volume(s) unavailable ({', '.join(dead)})",
@@ -598,7 +593,7 @@ def _retry_after_volume_drop(error, volume_drops):
         )
         raise error
     requeue(
-        "app.videos.sync_aws_s3_storage_task",
+        "app.aws_storage.sync_aws_s3_storage_task",
         key=None,
         delay=SYNC_VOLUME_DROP_WAIT,
         reason=f"stopped its file pass ({error})",
@@ -727,7 +722,7 @@ def _reconcile_files(listing, job):
                 f"'{file.basename}' Queuing the transcoded copy for upload"
             )
             enqueue_task(
-                "app.videos.upload_task",
+                "app.aws_storage.upload_task",
                 file.id,
                 description=f"'{file.basename}'",
             )
@@ -777,7 +772,7 @@ def _reconcile_files(listing, job):
             current_app.logger.info(f"'{file.aws_key}' Queuing for upload to AWS")
 
             enqueue_task(
-                "app.videos.upload_task",
+                "app.aws_storage.upload_task",
                 file.id,
                 description=f"'{file.basename}'",
             )
@@ -1620,7 +1615,7 @@ def _download_task(
                 "volume_waits": volume_waits + 1,
             }
             requeue(
-                "app.videos.download_task",
+                "app.aws_storage.download_task",
                 key=key,
                 delay=timedelta(minutes=5),
                 reason=reason,
@@ -1794,7 +1789,7 @@ def _download_task(
                     "volume_waits": volume_waits,
                 }
                 requeue(
-                    "app.videos.download_task",
+                    "app.aws_storage.download_task",
                     key=key,
                     delay=timedelta(minutes=5),
                     reason=(
@@ -1854,7 +1849,7 @@ def sqs_retrieve_task():
 
         for job in live_jobs(["file"]):
             restore_key = None
-            if job.func_name == "app.videos.download_task" and job.args:
+            if job.func_name == "app.aws_storage.download_task" and job.args:
                 downloads_by_key[job.args[0]] = job
                 restore_key = job.args[0]
             elif job.func_name == "app.aws_storage.move_archive_object" and job.args:
@@ -1993,7 +1988,7 @@ def _route_restore(sqs_client, key, receipt_handle, downloads_by_key, moves_by_k
     if file is not None and file.aws_key_target and move_source(file) == key:
         if file.restore_requested_at is not None and not _download_job_for(key):
             downloads_by_key[key] = enqueue_task(
-                "app.videos.download_task",
+                "app.aws_storage.download_task",
                 key,
                 os.path.basename(key),
                 None,
@@ -2020,7 +2015,7 @@ def _route_restore(sqs_client, key, receipt_handle, downloads_by_key, moves_by_k
         delete_sqs_message(sqs_client, receipt_handle, note="message", key=key)
         return
     downloads_by_key[key] = enqueue_task(
-        "app.videos.download_task",
+        "app.aws_storage.download_task",
         key,
         os.path.basename(key),
         receipt_handle,
@@ -2067,7 +2062,7 @@ def upload_task(file_id):
             file.file_identifier(),
             config["UPLOAD_TASK_TIMEOUT"] * 1000,
             current_app.file_queue,
-            "app.videos.upload_task",
+            "app.aws_storage.upload_task",
             minutes=(5, 15),
             timeout=config["UPLOAD_TASK_TIMEOUT"],
             description=description,
@@ -2084,7 +2079,7 @@ def upload_task(file_id):
 
             job = get_current_job()
             wait_id = lock_wait_job_id(
-                "app.videos.upload_task", description, (file_id,), key=int(file_id)
+                "app.aws_storage.upload_task", description, (file_id,), key=int(file_id)
             )
             if job is not None and job.id != wait_id:
                 mark_job_skipped()
@@ -2667,7 +2662,7 @@ def archive_library_file(file, path, delete_replaced=True):
     for doomed_key in doomed:
         if delete_replaced and not untouched_key_still_claimed(doomed_key):
             enqueue_task(
-                "app.videos.aws_delete",
+                "app.aws_storage.aws_delete",
                 doomed_key,
                 only_if_present=True,
                 only_if_unclaimed=True,
@@ -2926,7 +2921,9 @@ def _download_job_for(key):
     """Return True if a download of key waits, runs, or waits for a retry."""
 
     return any(
-        job.func_name == "app.videos.download_task" and job.args and job.args[0] == key
+        job.func_name == "app.aws_storage.download_task"
+        and job.args
+        and job.args[0] == key
         for job in live_jobs(["file"])
     )
 
@@ -2952,7 +2949,7 @@ def _download_after_move(file, source, target):
         end_restore_request(file.id)
         return
     enqueue_task(
-        "app.videos.download_task",
+        "app.aws_storage.download_task",
         target,
         os.path.basename(target),
         description=f"'{os.path.basename(target)}' — Downloading from AWS",
@@ -3046,19 +3043,11 @@ def move_archive_object(file_id, sqs_receipt_handle=None):
 def _sync_is_running():
     """Return True if the weekly S3 sync job runs on the maintenance queue."""
 
-    from app.tasks import task_func_names
-
-    # The scheduler queues the function object. Then rq names the job
-    # after the defining module, app.aws_storage (follow-up #456).
-
-    name = "app.videos.sync_aws_s3_storage_task"
-    names = task_func_names(name)
+    name = "app.aws_storage.sync_aws_s3_storage_task"
     queue = current_app.maintenance_queue
     for job_id in StartedJobRegistry(queue=queue).get_job_ids():
         job = queue.fetch_job(job_id)
-        if job is None:
-            continue
-        if job.func_name in names or (job.meta or {}).get("func") == name:
+        if job is not None and job.func_name == name:
             return True
     return False
 
@@ -4369,7 +4358,7 @@ def aws_restore(key, tier="Standard", record_request=True):
                     if record_request:
                         mark_restore_pending(key)
                     enqueue_task(
-                        "app.videos.download_task",
+                        "app.aws_storage.download_task",
                         key,
                         os.path.basename(key),
                         description=f"'{os.path.basename(key)}'",

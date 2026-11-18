@@ -118,7 +118,7 @@ def enqueue_import_scan(queue, description=None, at_front=False):
     from app.tasks import enqueue_task
 
     enqueue_task(
-        "app.videos.manual_import_task",
+        "app.importing.manual_import_task",
         queue=queue,
         description=description,
         at_front=at_front,
@@ -185,12 +185,12 @@ def cron_table(config):
         ("30 0 * * *", "app.maintenance.backup_database"),
         # Sweep the import directory hourly as a safety net. The
         # filesystem observer can miss an arrival.
-        ("0 * * * *", "app.videos.manual_import_task"),
+        ("0 * * * *", "app.importing.manual_import_task"),
         # Monthly restore drill: prove that the newest offsite dump restores.
         ("0 4 1 * *", "app.maintenance.restore_drill"),
         # Refresh the Criterion spine numbers from Wikidata monthly. The
         # 18th gives Wikidata time to catch up with the mid-month reveal.
-        ("0 3 18 * *", "app.videos.refresh_criterion_collection_info"),
+        ("0 3 18 * *", "app.criterion_catalog.refresh_criterion_collection_info"),
         # Fetch the Criterion releases from Wikidata each Thursday (#283). The
         # page and the import read only this stored copy.
         ("20 4 * * 4", "app.criterion_catalog.refresh_criterion_releases"),
@@ -201,7 +201,7 @@ def cron_table(config):
         # reports the claims with no object, and prunes the objects that
         # no record claims. It waits until every queue is idle. It was out
         # of the table during the WEBDL rebuild.
-        ("0 2 * * 0", "app.videos.sync_aws_s3_storage_task"),
+        ("0 2 * * 0", "app.aws_storage.sync_aws_s3_storage_task"),
         ("*/10 * * * *", "app.maintenance.health_probe"),
         # Sync the Letterboxd diaries from the RSS feed of each user. The
         # task does nothing for the users without a configured username.
@@ -308,13 +308,13 @@ def cron_table(config):
     # both at one time.
 
     if config.get("AWS_SQS_URL"):
-        table.append(("30 * * * *", "app.videos.sqs_retrieve_task"))
+        table.append(("30 * * * *", "app.aws_storage.sqs_retrieve_task"))
 
     # Poll the Plex watch history every 15 minutes as the self-healing
     # backstop to the real-time webhook.
 
     if config.get("PLEX_URL") and config.get("PLEX_TOKEN"):
-        table.append(("*/15 * * * *", "app.videos.plex_history_poll"))
+        table.append(("*/15 * * * *", "app.diary.plex_history_poll"))
 
         # Title the Plex episodes from the titles in the filenames. This
         # replaces the external cron that wrote the SQLite of Plex

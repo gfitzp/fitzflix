@@ -19,7 +19,7 @@ def _reserved(app, basename):
 def test_a_failed_move_releases_the_staging_reservation(app, incoming_dir, monkeypatch):
     """A move that fails rejects the source and frees its staging space."""
 
-    from app import importing, videos
+    from app import importing
     from tests.test_localization import rejected_files, space_move_fixture
 
     basename = "Failed Move Space (2021) - [DVD].mkv"
@@ -32,7 +32,7 @@ def test_a_failed_move_releases_the_staging_reservation(app, incoming_dir, monke
     with app.app_context():
         importing.set_staging_reservation(basename, 1000, [basename])
         assert _reserved(app, basename)
-        videos.move_localized_file(source, details, None, hidden)
+        importing.move_localized_file(source, details, None, hidden)
 
         assert not _reserved(app, basename)
         assert not os.path.exists(hidden)

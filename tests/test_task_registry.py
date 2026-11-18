@@ -217,7 +217,7 @@ def test_enqueue_task_fills_the_spec_and_takes_overrides(app):
     from app.tasks import enqueue_task
 
     with app.app_context():
-        job = enqueue_task("app.videos.refresh_tmdb_info", "Movies", 1)
+        job = enqueue_task("app.tmdb_refresh.refresh_tmdb_info", "Movies", 1)
         try:
             assert job.origin == "fitzflix-user-request"
             assert job.timeout == app.config["SQL_TASK_TIMEOUT"]
@@ -227,7 +227,7 @@ def test_enqueue_task_fills_the_spec_and_takes_overrides(app):
             job.delete()
 
         job = enqueue_task(
-            "app.videos.refresh_tmdb_info",
+            "app.tmdb_refresh.refresh_tmdb_info",
             "Movies",
             2,
             queue="sql",
@@ -244,7 +244,7 @@ def test_enqueue_task_fills_the_spec_and_takes_overrides(app):
             job.delete()
 
         job = enqueue_task(
-            "app.videos.sync_aws_s3_storage_task",
+            "app.aws_storage.sync_aws_s3_storage_task",
             delay=timedelta(minutes=5),
             job_id="test-registry-delay",
         )
@@ -272,27 +272,50 @@ def test_a_job_in_the_dequeue_gap_is_live_for_every_reader(app):
     queue = app.maintenance_queue
     with app.app_context():
         job = queue.enqueue(
-            "app.videos.sync_aws_s3_storage_task", job_id="bulk-gap-test-1"
+            "app.aws_storage.sync_aws_s3_storage_task", job_id="bulk-gap-test-1"
         )
         app.redis.lrem(queue.key, 0, job.id)
         app.redis.rpush(queue.intermediate_queue.key, job.id)
         try:
             assert job.id not in queue.job_ids
             assert job.id in live_job_ids("maintenance")
-            assert live_task_job("app.videos.sync_aws_s3_storage_task").id == job.id
+            assert (
+                live_task_job("app.aws_storage.sync_aws_s3_storage_task").id == job.id
+            )
             assert bulk_run_pending("bulk-gap-test-", "app.maintenance.health_probe")
         finally:
             app.redis.delete(queue.intermediate_queue.key)
             job.delete()
-        assert live_task_job("app.videos.sync_aws_s3_storage_task") is None
+        assert live_task_job("app.aws_storage.sync_aws_s3_storage_task") is None
 
 
-def test_the_videos_shim_re_exports_only_the_job_names(app):
-    """app.videos re-exports a name only when a job string needs it (#724).
+def test_each_job_name_is_the_module_that_defines_the_function(app):
+    """The name of a job tells a reader where the function is.
 
-    A job name is a string in Redis and in the schedule, so
-    "app.videos.X" must resolve for it. Each other name comes from its
-    real module. A new re-export for a caller fails here."""
+    rq finds the function of a job through its name. A name that goes
+    through a second module also works, but then the reader looks in the
+    wrong file. The scheduler queues the function object, and rq then
+    names the job after the defining module. Thus, 1 task with 2 names
+    also hides a job from each reader that compares names."""
+
+    import importlib
+
+    from app import cron_table
+    from app.tasks import TASKS
+
+    names = set(TASKS) | {entry["func"] for entry in cron_table(app.config)}
+    wrong = []
+    for name in sorted(names):
+        module_name, attribute = name.rsplit(".", 1)
+        func = getattr(importlib.import_module(module_name), attribute)
+        defined = f"{func.__module__}.{func.__qualname__}"
+        if defined != name:
+            wrong.append((name, defined))
+    assert wrong == []
+
+
+def test_the_shared_module_holds_no_task(app):
+    """app.videos holds the shared code only. No job name goes through it."""
 
     import ast
     import inspect as std_inspect
@@ -301,13 +324,10 @@ def test_the_videos_shim_re_exports_only_the_job_names(app):
     from app.tasks import TASKS
 
     names = set(TASKS) | {entry["func"] for entry in cron_table(app.config)}
-    job_names = {
-        name.rsplit(".", 1)[1] for name in names if name.startswith("app.videos.")
-    }
-    assert set(videos.__all__) == job_names
+    assert [name for name in names if name.startswith("app.videos.")] == []
 
-    # The module imports no other name from the app, except the names
-    # that its own code uses.
+    # The module imports no name from the app that its own code does
+    # not use. Thus, no caller can reach a task through it again.
 
     tree = ast.parse(std_inspect.getsource(videos))
     imported = {
@@ -317,19 +337,22 @@ def test_the_videos_shim_re_exports_only_the_job_names(app):
         for alias in node.names
     }
     used = {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}
-    assert imported - job_names <= used
+    assert imported <= used
+    assert not hasattr(videos, "__all__")
 
 
 def test_the_retired_task_signatures_are_gone(app):
     """The old jobs drained before the deploy. No code reads a retired signature (#622)."""
 
-    from app import videos
+    from app import aws_storage
     from app.tasks import TASKS
 
-    assert "app.videos.rearchive_untouched_object" not in TASKS
-    assert not hasattr(videos, "rearchive_untouched_object")
+    assert "app.aws_storage.rearchive_untouched_object" not in TASKS
+    assert not hasattr(aws_storage, "rearchive_untouched_object")
     kinds = {
         parameter.kind
-        for parameter in inspect.signature(videos.download_task).parameters.values()
+        for parameter in inspect.signature(
+            aws_storage.download_task
+        ).parameters.values()
     }
     assert inspect.Parameter.VAR_KEYWORD not in kinds

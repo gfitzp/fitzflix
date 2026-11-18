@@ -21,11 +21,12 @@ from tests.test_scheduling import scheduled_jobs
 from app import safe_job_id
 
 import app.videos as videos
+from app import tracks
 from app import aws_storage, importing
 import app.maintenance as maintenance
 
 from app.models import File
-from app.videos import finalize_localization, localization_task
+from app.importing import finalize_localization, localization_task
 from app.importing import move_to_rejects
 
 from tests.localization_helpers import (
@@ -48,7 +49,7 @@ def loc_retry(source, **changes):
         "tmdb_retries": 0,
         **changes,
     }
-    return requeue_job_id("app.videos.localization_task", source, counters)
+    return requeue_job_id("app.importing.localization_task", source, counters)
 
 
 def move_retry(source, **changes):
@@ -63,7 +64,7 @@ def move_retry(source, **changes):
         "lock_waits": 0,
         **changes,
     }
-    return requeue_job_id("app.videos.move_localized_file", source, counters)
+    return requeue_job_id("app.importing.move_localized_file", source, counters)
 
 
 def requeue_job_id(*args, **kwargs):
@@ -89,7 +90,7 @@ def test_localization_end_to_end_through_staging(app, sample_mkv, incoming_dir):
         move_jobs = [
             job
             for job in app.handoff_queue.jobs
-            if job.func_name == "app.videos.move_localized_file"
+            if job.func_name == "app.importing.move_localized_file"
         ]
         assert len(move_jobs) == 1
         move_args = move_jobs[0].args
@@ -105,13 +106,13 @@ def test_localization_end_to_end_through_staging(app, sample_mkv, incoming_dir):
         # The move puts the file at a hidden destination name. It empties
         # staging. It enqueues the finalize on the sql queue
 
-        assert videos.move_localized_file(*move_args) is True
+        assert importing.move_localized_file(*move_args) is True
         assert os.listdir(app.config["STAGING_DIR"]) == []
 
         finalize_jobs = [
             job
             for job in app.sql_queue.jobs
-            if job.func_name == "app.videos.finalize_localization"
+            if job.func_name == "app.importing.finalize_localization"
         ]
         assert len(finalize_jobs) == 1
         job_args = finalize_jobs[0].args
@@ -469,7 +470,7 @@ def test_library_copy_transient_error_defers_and_keeps_lock(
     monkeypatch.setattr(videos, "_rename_with_retries", flaky_rename)
     try:
         with app.app_context():
-            result = videos.move_localized_file(
+            result = importing.move_localized_file(
                 source, file_details, "lock-sentinel", hidden
             )
         assert result is False
@@ -493,7 +494,7 @@ def test_library_copy_transient_error_defers_and_keeps_lock(
             "vanished_retries": 0,
             "lock_waits": 0,
         }
-        inspect.signature(videos.move_localized_file).bind(
+        inspect.signature(importing.move_localized_file).bind(
             *(job.args or ()), **(job.kwargs or {})
         )
 
@@ -537,7 +538,7 @@ def test_library_copy_rejects_after_max_retries(app, incoming_dir, monkeypatch):
     monkeypatch.setattr(videos, "_rename_with_retries", flaky_rename)
 
     with app.app_context():
-        videos.move_localized_file(
+        importing.move_localized_file(
             source,
             file_details,
             None,
@@ -578,7 +579,7 @@ def test_finalize_defers_when_volumes_dead(app, monkeypatch):
     ]
     assert [job.id for job in retries] == [
         requeue_job_id(
-            "app.videos.finalize_localization",
+            "app.importing.finalize_localization",
             "/nonexistent/source.mkv",
             {"vanished_retries": 0, "sonarr_waits": 0, "lock_waits": 0},
         )
@@ -988,7 +989,7 @@ def test_save_track_metadata_writes_rows_and_releases_lock(app):
 
         lock = app.lock_manager.lock("save-metadata-test", 30000)
         assert lock
-        assert videos.save_track_metadata(file.id, details, lock=lock) is True
+        assert tracks.save_track_metadata(file.id, details, lock=lock) is True
 
         # The task wrote through its own session. Refresh the view of this
         # session
@@ -1032,7 +1033,7 @@ def test_move_localized_file_defers_when_volumes_dead(app, tmp_path, monkeypatch
         "dirname": "Movies/Move Defer (2021)",
     }
     with app.app_context():
-        result = videos.move_localized_file(
+        result = importing.move_localized_file(
             "/nonexistent/source.mkv", file_details, None, str(tmp_path / ".hidden.mkv")
         )
     assert result is False
@@ -1058,7 +1059,7 @@ def test_same_named_extras_of_two_films_keep_their_own_move_retries(
     sources = ["/import/a/Theatrical Trailer.mkv", "/import/b/Theatrical Trailer.mkv"]
     with app.app_context():
         for source, film in zip(sources, ("Film A (2001)", "Film B (2002)")):
-            videos.move_localized_file(
+            importing.move_localized_file(
                 source,
                 {"basename": "Theatrical Trailer.mkv", "dirname": f"Movies/{film}"},
                 None,
@@ -1082,7 +1083,7 @@ def test_same_named_files_keep_their_own_lock_retries(app, monkeypatch):
         for file_id in (101, 202):
             schedule_retry(
                 app.file_queue,
-                "app.videos.mkvpropedit_task",
+                "app.tracks.mkvpropedit_task",
                 (5, 15),
                 60,
                 "'Deleted Scenes.mkv'",
@@ -1274,7 +1275,7 @@ def test_completeness_budget_exhausted_imports_anyway(app, incoming_dir):
         move_jobs = [
             job
             for job in app.handoff_queue.jobs
-            if job.func_name == "app.videos.move_localized_file"
+            if job.func_name == "app.importing.move_localized_file"
         ]
         assert len(move_jobs) == 1
 
@@ -1317,7 +1318,7 @@ def test_localization_waits_for_library_space(app, sample_mkv, incoming_dir, cap
             ]
             assert [job.id for job in waits] == [loc_retry(source, space_waits=1)]
             assert waits[0].kwargs["space_waits"] == 1
-            inspect.signature(videos.localization_task).bind(
+            inspect.signature(importing.localization_task).bind(
                 *(waits[0].args or ()), **(waits[0].kwargs or {})
             )
             assert "waiting for free space" in caplog.text
@@ -1358,7 +1359,7 @@ def test_localization_waits_for_library_space(app, sample_mkv, incoming_dir, cap
             move_jobs = [
                 job
                 for job in app.handoff_queue.jobs
-                if job.func_name == "app.videos.move_localized_file"
+                if job.func_name == "app.importing.move_localized_file"
             ]
             assert len(move_jobs) == 1
             os.remove(move_jobs[0].args[3])
@@ -1410,7 +1411,7 @@ def test_library_copy_waits_for_space_before_copying(app, incoming_dir, monkeypa
     monkeypatch.setattr(importing, "_free_bytes", lambda path: 0)
     try:
         with app.app_context():
-            result = videos.move_localized_file(
+            result = importing.move_localized_file(
                 source, details, "lock-sentinel", hidden
             )
         assert result is False
@@ -1429,7 +1430,7 @@ def test_library_copy_waits_for_space_before_copying(app, incoming_dir, monkeypa
             "vanished_retries": 0,
             "lock_waits": 0,
         }
-        inspect.signature(videos.move_localized_file).bind(
+        inspect.signature(importing.move_localized_file).bind(
             *(waits[0].args or ()), **(waits[0].kwargs or {})
         )
         assert os.path.exists(hidden) and os.path.exists(source)
@@ -1465,7 +1466,7 @@ def test_library_copy_out_of_space_mid_copy_waits(app, incoming_dir, monkeypatch
     monkeypatch.setattr(videos, "_rename_with_retries", full_during_copy)
     try:
         with app.app_context():
-            result = videos.move_localized_file(
+            result = importing.move_localized_file(
                 source, details, "lock-sentinel", hidden
             )
         assert result is False
@@ -1504,7 +1505,7 @@ def test_sweep_skips_a_file_that_waits_for_space(app):
         with app.app_context():
             retry = app.import_queue.enqueue_in(
                 timedelta(minutes=30),
-                "app.videos.localization_task",
+                "app.importing.localization_task",
                 kwargs={"file_path": path, "space_waits": 1},
             )
             importing.manual_import_task()
@@ -1559,18 +1560,18 @@ def test_waiting_copy_keeps_its_title_lock(app, incoming_dir, monkeypatch):
         with app.app_context():
             lock = app.lock_manager.lock("long-wait-title", 60000)
             assert app.redis.pttl("long-wait-title") <= 60000
-            videos.move_localized_file(source, details, lock, hidden)
+            importing.move_localized_file(source, details, lock, hidden)
             assert app.redis.pttl("long-wait-title") > day_ms - 60000
             assert importing.later_stage_holds(source)
 
             # An expired lock is taken again with the same token.
             app.redis.delete("long-wait-title")
-            videos.move_localized_file(source, details, lock, hidden, space_waits=1)
+            importing.move_localized_file(source, details, lock, hidden, space_waits=1)
             assert app.redis.get("long-wait-title") == lock.key
 
             # A lock that another task holds stays as it is.
             app.redis.set("long-wait-title", "someone-else", px=5000)
-            videos.move_localized_file(source, details, lock, hidden, space_waits=2)
+            importing.move_localized_file(source, details, lock, hidden, space_waits=2)
             assert app.redis.get("long-wait-title") == b"someone-else"
     finally:
         os.remove(source)
@@ -1585,7 +1586,7 @@ def test_trail_names_a_retry_that_passes_the_path_by_keyword(app):
     from app.pipeline import _stage_for
 
     job = SimpleNamespace(
-        func_name="app.videos.localization_task",
+        func_name="app.importing.localization_task",
         args=(),
         kwargs={"file_path": "/import/Waiting (2021) - [DVD].mkv", "space_waits": 1},
     )
@@ -1596,7 +1597,7 @@ def _finalize_jobs(app, vanished_retries):
     return [
         job
         for job in app.sql_queue.jobs
-        if job.func_name == "app.videos.finalize_localization"
+        if job.func_name == "app.importing.finalize_localization"
         and job.kwargs.get("vanished_retries") == vanished_retries
     ]
 
@@ -1623,10 +1624,10 @@ def test_a_vanished_library_copy_is_copied_again_from_staging(
         move = next(
             job
             for job in app.handoff_queue.jobs
-            if job.func_name == "app.videos.move_localized_file"
+            if job.func_name == "app.importing.move_localized_file"
         )
         staged = move.args[3]
-        assert videos.move_localized_file(*move.args) is True
+        assert importing.move_localized_file(*move.args) is True
 
         # The copy crossed volumes. The output stays on staging.
 
@@ -1655,7 +1656,7 @@ def test_a_vanished_library_copy_is_copied_again_from_staging(
         # The retry copies again, and the import completes. Staging is
         # empty after the rename.
 
-        assert videos.move_localized_file(*retry.args, **retry.kwargs) is True
+        assert importing.move_localized_file(*retry.args, **retry.kwargs) is True
         (second,) = _finalize_jobs(app, 1)
         finalize_localization(*second.args, **second.kwargs)
 
@@ -1690,10 +1691,10 @@ def test_a_library_copy_that_keeps_vanishing_fails_as_before(
         move = next(
             job
             for job in app.handoff_queue.jobs
-            if job.func_name == "app.videos.move_localized_file"
+            if job.func_name == "app.importing.move_localized_file"
         )
         staged = move.args[3]
-        assert videos.move_localized_file(*move.args) is True
+        assert importing.move_localized_file(*move.args) is True
         (job,) = _finalize_jobs(app, 0)
         os.remove(job.args[3])
 
@@ -1755,15 +1756,15 @@ def test_finalize_gives_the_staged_copy_to_the_atmos_job(
         move = next(
             job
             for job in app.handoff_queue.jobs
-            if job.func_name == "app.videos.move_localized_file"
+            if job.func_name == "app.importing.move_localized_file"
             and job.args[0] == source
         )
         staged = move.args[3]
-        assert videos.move_localized_file(*move.args) is True
+        assert importing.move_localized_file(*move.args) is True
         job = next(
             job
             for job in app.sql_queue.jobs
-            if job.func_name == "app.videos.finalize_localization"
+            if job.func_name == "app.importing.finalize_localization"
             and job.args[0] == source
         )
         args = list(job.args)
@@ -1814,7 +1815,7 @@ def test_create_flac_twins_off_turns_off_the_flac_step(
         move = next(
             job
             for job in app.handoff_queue.jobs
-            if job.func_name == "app.videos.move_localized_file"
+            if job.func_name == "app.importing.move_localized_file"
             and job.args[0] == source
         )
         staged = move.args[3]
@@ -1857,15 +1858,15 @@ def test_create_atmos_twins_off_turns_off_the_atmos_step(
         move = next(
             job
             for job in app.handoff_queue.jobs
-            if job.func_name == "app.videos.move_localized_file"
+            if job.func_name == "app.importing.move_localized_file"
             and job.args[0] == source
         )
         staged = move.args[3]
-        assert videos.move_localized_file(*move.args) is True
+        assert importing.move_localized_file(*move.args) is True
         job = next(
             job
             for job in app.sql_queue.jobs
-            if job.func_name == "app.videos.finalize_localization"
+            if job.func_name == "app.importing.finalize_localization"
             and job.args[0] == source
         )
         finalize_localization(*job.args, **job.kwargs)
@@ -1911,14 +1912,14 @@ def test_a_replaced_files_archive_is_deleted_from_the_handoff_queue(
         move = next(
             job
             for job in app.handoff_queue.jobs
-            if job.func_name == "app.videos.move_localized_file"
+            if job.func_name == "app.importing.move_localized_file"
             and job.args[0] == source
         )
-        assert videos.move_localized_file(*move.args) is True
+        assert importing.move_localized_file(*move.args) is True
         finalize = next(
             job
             for job in app.sql_queue.jobs
-            if job.func_name == "app.videos.finalize_localization"
+            if job.func_name == "app.importing.finalize_localization"
             and job.args[0] == source
         )
         finalize_localization(*finalize.args, **finalize.kwargs)
@@ -1927,7 +1928,7 @@ def test_a_replaced_files_archive_is_deleted_from_the_handoff_queue(
             return [
                 job.args
                 for job in queue.jobs
-                if job.func_name == "app.videos.aws_delete"
+                if job.func_name == "app.aws_storage.aws_delete"
             ]
 
         assert deletes(app.handoff_queue) == [(key,)]
@@ -1980,14 +1981,14 @@ def test_a_reused_records_old_archive_key_is_deleted(
         move = next(
             job
             for job in app.handoff_queue.jobs
-            if job.func_name == "app.videos.move_localized_file"
+            if job.func_name == "app.importing.move_localized_file"
             and job.args[0] == source
         )
-        assert videos.move_localized_file(*move.args) is True
+        assert importing.move_localized_file(*move.args) is True
         finalize = next(
             job
             for job in app.sql_queue.jobs
-            if job.func_name == "app.videos.finalize_localization"
+            if job.func_name == "app.importing.finalize_localization"
             and job.args[0] == source
         )
         finalize_localization(*finalize.args, **finalize.kwargs)
@@ -1996,7 +1997,7 @@ def test_a_reused_records_old_archive_key_is_deleted(
         deletes = [
             job.args
             for job in app.handoff_queue.jobs
-            if job.func_name == "app.videos.aws_delete"
+            if job.func_name == "app.aws_storage.aws_delete"
         ]
         assert deletes == [(old_key,)]
 
@@ -2032,9 +2033,9 @@ def test_a_lost_copy_keeps_the_file_of_the_worse_record(
         move = next(
             job
             for job in app.handoff_queue.jobs
-            if job.func_name == "app.videos.move_localized_file"
+            if job.func_name == "app.importing.move_localized_file"
         )
-        assert videos.move_localized_file(*move.args) is True
+        assert importing.move_localized_file(*move.args) is True
         (first,) = _finalize_jobs(app, 0)
         os.remove(first.args[3])
         assert finalize_localization(*first.args, **first.kwargs) is False
@@ -2072,9 +2073,9 @@ def test_a_failure_after_the_commit_keeps_the_imported_file(
         move = next(
             job
             for job in app.handoff_queue.jobs
-            if job.func_name == "app.videos.move_localized_file"
+            if job.func_name == "app.importing.move_localized_file"
         )
-        videos.move_localized_file(*move.args)
+        importing.move_localized_file(*move.args)
         (finalize,) = _finalize_jobs(app, 0)
         finalize_localization(*finalize.args, **finalize.kwargs)
         record = File.query.filter_by(basename=basename).one()
@@ -2109,7 +2110,7 @@ def test_a_staging_remux_short_of_space_waits_instead_of_rejecting(
     )
     try:
         with app.app_context():
-            result = videos.move_localized_file(
+            result = importing.move_localized_file(
                 source, details, "lock-sentinel", hidden
             )
         assert result is False
@@ -2152,7 +2153,7 @@ def test_a_tmdb_outage_retries_instead_of_rejecting(
             (retry,) = [
                 job
                 for job in scheduled_jobs(app.import_queue)
-                if job.func_name == "app.videos.localization_task"
+                if job.func_name == "app.importing.localization_task"
             ]
             assert retry.kwargs["tmdb_retries"] == 1
             assert retry.kwargs["transient_retries"] == 0
@@ -2202,13 +2203,13 @@ def test_a_failed_finalize_commit_leaves_no_library_copy(
         (move,) = [
             job
             for job in app.handoff_queue.jobs
-            if job.func_name == "app.videos.move_localized_file"
+            if job.func_name == "app.importing.move_localized_file"
         ]
-        assert videos.move_localized_file(*move.args) is True
+        assert importing.move_localized_file(*move.args) is True
         (finalize,) = [
             job
             for job in app.sql_queue.jobs
-            if job.func_name == "app.videos.finalize_localization"
+            if job.func_name == "app.importing.finalize_localization"
         ]
         # The localization reserved the space of its output. The failed
         # cataloging frees the reservation (abandon_import).

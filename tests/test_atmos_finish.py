@@ -374,7 +374,7 @@ def test_a_failed_row_commit_marks_the_archive_stale_and_queues_a_scan(
         with pytest.raises(RuntimeError):
             atmos.atmos_finish_task(*finish.args)
 
-        wanted = requeue_id("app.videos.track_metadata_scan_task", file_id)
+        wanted = requeue_id("app.tracks.track_metadata_scan_task", file_id)
         assert [j.id for j in scheduled_jobs(app.file_queue) if j.id == wanted] == [
             wanted
         ]
@@ -514,7 +514,7 @@ def test_an_early_end_of_a_conversion_queues_its_archive(app, monkeypatch):
             j
             for queue in (app.file_queue, app.handoff_queue)
             for j in queue.jobs
-            if j.func_name == "app.videos.upload_task"
+            if j.func_name == "app.aws_storage.upload_task"
         ]
         assert [j.args for j in uploads] == [(file.id,)]
 
@@ -524,7 +524,7 @@ def _uploads(app):
         j
         for queue in (app.file_queue, app.handoff_queue)
         for j in queue.jobs
-        if j.func_name == "app.videos.upload_task"
+        if j.func_name == "app.aws_storage.upload_task"
     ]
 
 
@@ -547,7 +547,7 @@ def test_an_early_end_queues_its_archive_after_it_releases_the_lock(app, monkeyp
         real_enqueue = atmos.enqueue_task
 
         def enqueue(name, *args, **kwargs):
-            if name == "app.videos.upload_task":
+            if name == "app.aws_storage.upload_task":
                 held_at_enqueue.append(bool(app.redis.exists(lock.resource)))
             return real_enqueue(name, *args, **kwargs)
 

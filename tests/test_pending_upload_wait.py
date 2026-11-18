@@ -20,7 +20,7 @@ def test_a_copy_that_waits_for_space_holds_its_pending_upload(
 ):
     """The waiting retry of the library copy holds the run-scoped key (#619)."""
 
-    from app import importing, videos
+    from app import importing
 
     source = os.path.join(incoming_dir, BASENAME)
     with open(source, "wb") as f:
@@ -40,7 +40,7 @@ def test_a_copy_that_waits_for_space_holds_its_pending_upload(
     try:
         with app.app_context():
             lock = app.lock_manager.lock("long-rerip-title", 60000)
-            videos.move_localized_file(source, details, lock, hidden)
+            importing.move_localized_file(source, details, lock, hidden)
             held = importing.keys_held_by_pipeline()
             assert PENDING in held
             assert f"untouched/{BASENAME}" in held
@@ -84,7 +84,7 @@ def test_the_prune_keeps_the_pending_upload_of_a_waiting_import(app, monkeypatch
     source = os.path.join(app.config["IMPORT_DIR"], BASENAME)
     retry = app.handoff_queue.enqueue_in(
         timedelta(minutes=30),
-        "app.videos.move_localized_file",
+        "app.importing.move_localized_file",
         source,
         {"basename": BASENAME, "aws_key": PENDING},
         None,
@@ -197,7 +197,7 @@ def test_the_prune_keeps_the_upload_of_a_scheduled_conversion_retry(app, monkeyp
     with app.app_context():
         app.transcode_queue.enqueue_in(
             timedelta(minutes=30),
-            "app.videos.convert_localized_file",
+            "app.sdr_conversion.convert_localized_file",
             "/import/Parked Rerip (2024) - [UHD].mkv",
             {"basename": "Parked Rerip (2024) - [UHD].mkv", "aws_key": parked},
             "lock",

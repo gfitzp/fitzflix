@@ -866,7 +866,7 @@ def _import_activity():
     registry = ScheduledJobRegistry(queue=current_app.import_queue)
     for job_id, next_run in scheduled_entries(registry):
         job = current_app.import_queue.fetch_job(job_id)
-        if job is not None and job.func_name == "app.videos.localization_task":
+        if job is not None and job.func_name == "app.importing.localization_task":
             deferred.append(
                 {"description": job.description or job.id, "next_run": next_run}
             )
@@ -2221,7 +2221,7 @@ def review_tmdb(tmdb_id):
             db.session.rollback()
         if created:
             enqueue_task(
-                "app.videos.refresh_tmdb_info",
+                "app.tmdb_refresh.refresh_tmdb_info",
                 "Movies",
                 movie.id,
                 tmdb_id,
@@ -2260,7 +2260,7 @@ def review_tmdb(tmdb_id):
         )
         if created and outcome.kind in ("flagged", "corrected", "logged"):
             enqueue_task(
-                "app.videos.refresh_tmdb_info",
+                "app.tmdb_refresh.refresh_tmdb_info",
                 "Movies",
                 movie.id,
                 tmdb_id,

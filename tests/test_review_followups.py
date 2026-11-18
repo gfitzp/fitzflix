@@ -15,7 +15,7 @@ def test_a_cron_started_sync_holds_the_archive_move(app):
     from rq.registry import StartedJobRegistry
 
     from app import aws_storage
-    from app.videos import sync_aws_s3_storage_task
+    from app.aws_storage import sync_aws_s3_storage_task
 
     with app.app_context():
         job = app.maintenance_queue.enqueue(sync_aws_s3_storage_task)

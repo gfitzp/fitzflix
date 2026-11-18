@@ -361,7 +361,7 @@ def test_the_orphans_are_gone(app):
     assert not hasattr(radarr_push, "_radarr_rename_to_quality")
     assert not hasattr(sonarr_push, "_sonarr_rename_to_quality")
     for name in ("_normalize_title", "_pick_tmdb_match", "_extract_media_details"):
-        assert name not in videos.__all__
+        assert not hasattr(videos, name)
     assert not hasattr(Movie, "sanitize_string")
     assert "Utilities" not in dir(__import__("app.models", fromlist=["x"]))
 

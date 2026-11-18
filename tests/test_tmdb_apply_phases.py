@@ -27,7 +27,7 @@ def test_tmdb_refresh_hands_off_to_sql_queue(app):
     sql queue. Thus, concurrent fetches cannot cause concurrent writes."""
 
     from app import db
-    from app.videos import refresh_tmdb_info
+    from app.tmdb_refresh import refresh_tmdb_info
     from tests.factories import make_movie
 
     with app.app_context():
@@ -46,7 +46,7 @@ def test_tmdb_refresh_hands_off_to_sql_queue(app):
         jobs = [
             job
             for job in app.sql_queue.jobs
-            if job.func_name == "app.videos.apply_tmdb_refresh"
+            if job.func_name == "app.tmdb_refresh.apply_tmdb_refresh"
             and job.kwargs.get("id") == movie_id
         ]
         assert len(jobs) == 1
@@ -65,7 +65,7 @@ def test_apply_tmdb_refresh_round_trips_payload(app):
 
     from app import db
     from app.models import TVSeries
-    from app.videos import apply_tmdb_refresh
+    from app.tmdb_refresh import apply_tmdb_refresh
     from tests.factories import make_tv_series
 
     with app.app_context():
@@ -96,7 +96,7 @@ def test_tmdb_apply_rename_requests_no_archive_move(app):
     from app import db
     from app.cli import register
     from app.models import File, Movie
-    from app.videos import apply_tmdb_refresh
+    from app.tmdb_refresh import apply_tmdb_refresh
     from tests.factories import make_movie, make_movie_file
 
     if "aws" not in app.cli.commands:
@@ -166,7 +166,7 @@ def test_tmdb_apply_defers_while_title_is_locked(app, held_lock):
     title."""
 
     from app import db
-    from app.videos import apply_tmdb_refresh
+    from app.tmdb_refresh import apply_tmdb_refresh
     from tests.factories import make_movie, make_movie_file
 
     with app.app_context():
@@ -185,7 +185,7 @@ def test_tmdb_apply_defers_while_title_is_locked(app, held_lock):
             if job.id.startswith("retry_apply_tmdb_refresh")
         ]
         assert [job.id for job in retries] == [
-            requeue_id("app.videos.apply_tmdb_refresh", f"Movies:{movie_id}")
+            requeue_id("app.tmdb_refresh.apply_tmdb_refresh", f"Movies:{movie_id}")
         ]
         job = retries[0]
         assert job.kwargs["library"] == "Movies"
@@ -201,7 +201,7 @@ def test_tmdb_apply_locks_the_merge_target_too(app, held_lock):
     apply."""
 
     from app import db
-    from app.videos import apply_tmdb_refresh
+    from app.tmdb_refresh import apply_tmdb_refresh
     from tests.factories import make_movie, make_movie_file
 
     with app.app_context():
@@ -216,14 +216,15 @@ def test_tmdb_apply_locks_the_merge_target_too(app, held_lock):
 
         assert apply_tmdb_refresh("Movies", source_id, tmdb_id=4242) is False
         assert any(
-            job.id == requeue_id("app.videos.apply_tmdb_refresh", f"Movies:{source_id}")
+            job.id
+            == requeue_id("app.tmdb_refresh.apply_tmdb_refresh", f"Movies:{source_id}")
             for job in scheduled_jobs(app.sql_queue)
         )
 
 
 def test_tmdb_apply_releases_locks_when_done(app):
     from app import db
-    from app.videos import apply_tmdb_refresh
+    from app.tmdb_refresh import apply_tmdb_refresh
     from tests.factories import make_movie, make_movie_file
 
     with app.app_context():
@@ -256,7 +257,7 @@ def test_apply_tmdb_refresh_saves_the_payload_when_apply_raises(app, monkeypatch
 
     from app import db
     from app.models import TVSeries
-    from app.videos import apply_tmdb_refresh
+    from app.tmdb_refresh import apply_tmdb_refresh
     from tests.factories import make_tv_series
 
     with app.app_context():
@@ -322,7 +323,7 @@ def test_a_series_refresh_works_on_the_record_that_owns_the_tmdb_id(app, monkeyp
     jobs = [
         job
         for job in app.sql_queue.jobs
-        if job.func_name == "app.videos.apply_tmdb_refresh"
+        if job.func_name == "app.tmdb_refresh.apply_tmdb_refresh"
     ]
     assert [job.description for job in jobs] == [
         "Updating 'Canonical Show' with TMDB data"
@@ -523,7 +524,7 @@ def test_a_movie_rename_on_a_dead_volume_books_the_apply_again(app, monkeypatch)
     the old title until TMDB changed the film again."""
 
     import app.videos as videos
-    from app.videos import apply_tmdb_refresh
+    from app.tmdb_refresh import apply_tmdb_refresh
 
     monkeypatch.setattr(videos, "_dead_volumes", lambda paths: ["/Volumes/Movies"])
     with app.app_context():
@@ -539,7 +540,7 @@ def test_a_movie_rename_on_a_dead_volume_books_the_apply_again(app, monkeypatch)
             job
             for queue in (app.sql_queue, app.request_queue, app.maintenance_queue)
             for job in scheduled_jobs(queue)
-            if job.func_name == "app.videos.apply_tmdb_refresh"
+            if job.func_name == "app.tmdb_refresh.apply_tmdb_refresh"
         ]
         assert [job.kwargs["volume_waits"] for job in retries] == [1]
         assert retries[0].kwargs["id"] == movie_id
@@ -655,7 +656,7 @@ def _put_on_disk(app, file):
 def test_an_apply_with_no_new_name_logs_1_summary_line(app, caplog):
     """An unchanged name gets no line. The apply writes 1 summary line (#590)."""
 
-    from app.videos import apply_tmdb_refresh, refresh_tmdb_info
+    from app.tmdb_refresh import apply_tmdb_refresh, refresh_tmdb_info
 
     with app.app_context():
         movie = make_movie("Steady Tune", 1950)
@@ -686,7 +687,7 @@ def test_an_apply_logs_the_old_and_the_new_name(app, caplog):
 
     from datetime import date
 
-    from app.videos import apply_tmdb_refresh
+    from app.tmdb_refresh import apply_tmdb_refresh
 
     with app.app_context():
         movie = make_movie("Desert Tune", 1943)
@@ -780,7 +781,7 @@ def test_tmdb_apply_locks_the_new_canonical_name(app, held_lock, title, year, pa
     It then ran in the folder that the renames of the refresh moved into."""
 
     from app.models import title_lock_key
-    from app.videos import apply_tmdb_refresh
+    from app.tmdb_refresh import apply_tmdb_refresh
 
     with app.app_context():
         movie = make_movie(title, year)
@@ -805,7 +806,8 @@ def test_tmdb_apply_locks_the_new_canonical_name(app, held_lock, title, year, pa
             is False
         )
         assert any(
-            job.id == requeue_id("app.videos.apply_tmdb_refresh", f"Movies:{movie_id}")
+            job.id
+            == requeue_id("app.tmdb_refresh.apply_tmdb_refresh", f"Movies:{movie_id}")
             for job in scheduled_jobs(app.sql_queue)
         )
 
@@ -913,7 +915,7 @@ def test_a_case_only_rename_onto_the_same_file_is_not_a_collision(app, monkeypat
 def test_a_payload_apply_logs_refreshed_after_the_commit(app, caplog, monkeypatch):
     """The summary said "refreshed" before a commit that can roll back (#605)."""
 
-    from app.videos import apply_tmdb_refresh
+    from app.tmdb_refresh import apply_tmdb_refresh
 
     with app.app_context():
         movie = make_movie("Summary Tune", 1950)

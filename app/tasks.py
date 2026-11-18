@@ -1,7 +1,7 @@
 """Hold the registry of the rq tasks that Fitzflix enqueues by name.
 
 rq stores the job name of each queued job in Redis as a string, for
-example "app.videos.localization_task". The key of TASKS is that
+example "app.importing.localization_task". The key of TASKS is that
 string. Its TaskSpec gives the default queue, timeout and description
 of the task. enqueue_task fills each one from the spec. Thus, a task
 gets the same queue and the same timeout from every producer. An
@@ -15,7 +15,6 @@ of a spec is the CLI command that does the same work, when there is
 one. The System page shows it next to the scheduled task.
 """
 
-import importlib
 import random
 import uuid
 
@@ -44,7 +43,7 @@ TASKS = {
     "app.maintenance.backup_database": TaskSpec(
         "maintenance", 3600, "Backing up the database"
     ),
-    "app.videos.manual_import_task": TaskSpec(
+    "app.importing.manual_import_task": TaskSpec(
         "maintenance",
         3600,
         "Scanning import directory for files",
@@ -53,7 +52,7 @@ TASKS = {
     "app.maintenance.restore_drill": TaskSpec(
         "maintenance", 3600, "Verifying the offsite database backup restores"
     ),
-    "app.videos.refresh_criterion_collection_info": TaskSpec(
+    "app.criterion_catalog.refresh_criterion_collection_info": TaskSpec(
         "maintenance",
         3600,
         "Refreshing Criterion Collection information",
@@ -67,7 +66,7 @@ TASKS = {
     "app.maintenance.cleanup_orphaned_files": TaskSpec(
         "maintenance", 3600, "Cleaning up orphaned partial files"
     ),
-    "app.videos.sync_aws_s3_storage_task": TaskSpec(
+    "app.aws_storage.sync_aws_s3_storage_task": TaskSpec(
         "maintenance",
         86400,
         "Syncing files with AWS S3 storage",
@@ -147,13 +146,13 @@ TASKS = {
         "Checking watchlisted films for new availability",
         command="flask alerts availability",
     ),
-    "app.videos.sqs_retrieve_task": TaskSpec(
+    "app.aws_storage.sqs_retrieve_task": TaskSpec(
         "maintenance",
         7200,
         "Polling AWS SQS for files to download",
         command="flask sqs",
     ),
-    "app.videos.plex_history_poll": TaskSpec(
+    "app.diary.plex_history_poll": TaskSpec(
         "maintenance", 900, "Polling Plex for watch history"
     ),
     "app.plex_titles.sync_plex_episode_titles": TaskSpec(
@@ -196,23 +195,23 @@ TASKS = {
     ),
     "app.plex_selection.align_plex_items": TaskSpec("maintenance", 1800),
     # The import pipeline.
-    "app.videos.localization_task": TaskSpec("import", "LOCALIZATION_TASK_TIMEOUT"),
-    "app.videos.mkvmerge_task": TaskSpec("import", "LOCALIZATION_TASK_TIMEOUT"),
+    "app.importing.localization_task": TaskSpec("import", "LOCALIZATION_TASK_TIMEOUT"),
+    "app.tracks.mkvmerge_task": TaskSpec("import", "LOCALIZATION_TASK_TIMEOUT"),
     "app.atmos.atmos_supplement_task": TaskSpec("import", "TRANSCODE_TASK_TIMEOUT"),
-    "app.videos.move_localized_file": TaskSpec("handoff", "MOVE_TASK_TIMEOUT"),
-    "app.videos.aws_delete": TaskSpec("handoff", "FILE_TASK_TIMEOUT"),
+    "app.importing.move_localized_file": TaskSpec("handoff", "MOVE_TASK_TIMEOUT"),
+    "app.aws_storage.aws_delete": TaskSpec("handoff", "FILE_TASK_TIMEOUT"),
     "app.atmos.atmos_check_task": TaskSpec("handoff", 600),
     "app.atmos.atmos_finish_task": TaskSpec("handoff", "TRANSCODE_TASK_TIMEOUT"),
-    "app.videos.convert_localized_file": TaskSpec(
+    "app.sdr_conversion.convert_localized_file": TaskSpec(
         "transcode", "TRANSCODE_TASK_TIMEOUT"
     ),
-    "app.videos.remux_audio_plan_task": TaskSpec("transcode", "TRANSCODE_TASK_TIMEOUT"),
+    "app.tracks.remux_audio_plan_task": TaskSpec("transcode", "TRANSCODE_TASK_TIMEOUT"),
     "app.triage.generate_triage_snapshots": TaskSpec("transcode", 7200),
     "app.triage.generate_audio_comparison": TaskSpec("transcode", 7200),
     "app.frames.extract_frame_task": TaskSpec("transcode", 600),
     "app.frames.replace_frame_task": TaskSpec("transcode", 600),
     # The file operations.
-    "app.videos.upload_task": TaskSpec("file", "UPLOAD_TASK_TIMEOUT"),
+    "app.aws_storage.upload_task": TaskSpec("file", "UPLOAD_TASK_TIMEOUT"),
     # A move is 1 server-side copy (#369). For 100 GiB, s3transfer sends
     # 6,400 UploadPartCopy requests of 16 MiB, 10 at a time. The estimate
     # at 50 MB/s for each request is 4 minutes. FILE_TASK_TIMEOUT
@@ -221,31 +220,31 @@ TASKS = {
     "app.aws_storage.move_archive_object": TaskSpec(
         "file", "UPLOAD_TASK_TIMEOUT", "Moving an archive to its new key"
     ),
-    "app.videos.archive_held_task": TaskSpec("file", "UPLOAD_TASK_TIMEOUT"),
+    "app.sdr_conversion.archive_held_task": TaskSpec("file", "UPLOAD_TASK_TIMEOUT"),
     "app.aws_storage.move_archive_to_modified_task": TaskSpec(
         "file", "UPLOAD_TASK_TIMEOUT"
     ),
-    "app.videos.download_task": TaskSpec("file", "TRANSCODE_TASK_TIMEOUT"),
+    "app.aws_storage.download_task": TaskSpec("file", "TRANSCODE_TASK_TIMEOUT"),
     "app.aws_storage.place_restored_import_task": TaskSpec("file", "FILE_TASK_TIMEOUT"),
-    "app.videos.mkvpropedit_task": TaskSpec("file", "MKVPROPEDIT_TASK_TIMEOUT"),
-    "app.videos.track_metadata_scan_task": TaskSpec("file", "MKVPROPEDIT_TASK_TIMEOUT"),
+    "app.tracks.mkvpropedit_task": TaskSpec("file", "MKVPROPEDIT_TASK_TIMEOUT"),
+    "app.tracks.track_metadata_scan_task": TaskSpec("file", "MKVPROPEDIT_TASK_TIMEOUT"),
     "app.series_rename.rename_tv_series_task": TaskSpec("file", "SQL_TASK_TIMEOUT"),
     "app.manual_imports.manual_import_task": TaskSpec(
         "file", "LOCALIZATION_TASK_TIMEOUT"
     ),
     # The database writes.
-    "app.videos.finalize_localization": TaskSpec("sql", "SQL_TASK_TIMEOUT"),
-    "app.videos.apply_tmdb_refresh": TaskSpec("sql", "SQL_TASK_TIMEOUT"),
-    "app.videos.apply_plex_watch": TaskSpec("sql", "SQL_TASK_TIMEOUT"),
-    "app.videos.apply_letterboxd_import": TaskSpec("sql", "SQL_TASK_TIMEOUT"),
-    "app.videos.save_track_metadata": TaskSpec("sql", "SQL_TASK_TIMEOUT"),
-    "app.videos.track_metadata_scan_library": TaskSpec("sql", "SQL_TASK_TIMEOUT"),
-    "app.videos.review_task": TaskSpec("sql", "SQL_TASK_TIMEOUT"),
+    "app.importing.finalize_localization": TaskSpec("sql", "SQL_TASK_TIMEOUT"),
+    "app.tmdb_refresh.apply_tmdb_refresh": TaskSpec("sql", "SQL_TASK_TIMEOUT"),
+    "app.diary.apply_plex_watch": TaskSpec("sql", "SQL_TASK_TIMEOUT"),
+    "app.diary.apply_letterboxd_import": TaskSpec("sql", "SQL_TASK_TIMEOUT"),
+    "app.tracks.save_track_metadata": TaskSpec("sql", "SQL_TASK_TIMEOUT"),
+    "app.tracks.track_metadata_scan_library": TaskSpec("sql", "SQL_TASK_TIMEOUT"),
+    "app.diary.review_task": TaskSpec("sql", "SQL_TASK_TIMEOUT"),
     "app.importing.repair_replaced_file_task": TaskSpec("sql", "SQL_TASK_TIMEOUT"),
     # The work that a user or an outside service asks for.
-    "app.videos.refresh_tmdb_info": TaskSpec("request", "SQL_TASK_TIMEOUT"),
-    "app.videos.aws_restore": TaskSpec("request", "SQL_TASK_TIMEOUT"),
-    "app.videos.letterboxd_import_task": TaskSpec(
+    "app.tmdb_refresh.refresh_tmdb_info": TaskSpec("request", "SQL_TASK_TIMEOUT"),
+    "app.aws_storage.aws_restore": TaskSpec("request", "SQL_TASK_TIMEOUT"),
+    "app.diary.letterboxd_import_task": TaskSpec(
         "request", "LOCALIZATION_TASK_TIMEOUT"
     ),
     "app.infuse_player.pair_task": TaskSpec("request", 240),
@@ -412,24 +411,6 @@ def delete_job(job):
 LIVE_JOB_STATES = ("queued", "started", "scheduled", "deferred")
 
 
-def task_func_names(name):
-    """Return each func_name that rq can give a job of the task called name (#456).
-
-    A job that enqueue_task queues has the name of the registry. The
-    scheduler queues the function object. Then rq names the job after
-    the module that defines the function. For a function that app.videos
-    exports from another module, that is a different name."""
-
-    names = {name}
-    module_name, attribute = name.rsplit(".", 1)
-    try:
-        func = getattr(importlib.import_module(module_name), attribute)
-    except (ImportError, AttributeError):
-        return names
-    names.add(f"{func.__module__}.{func.__qualname__}")
-    return names
-
-
 def live_job_ids(queue):
     """Return the ids of the jobs of a queue that wait or run (#616).
 
@@ -475,9 +456,8 @@ def live_task_job(name):
     scheduled task. A second copy of a maintenance task behind the first
     one does the same work 2 times (the import sweep, the S3 sync)."""
 
-    names = task_func_names(name)
     for job in live_jobs([TASKS[name].queue]):
-        if (job.meta or {}).get("func") == name or job.func_name in names:
+        if job.func_name == name:
             return job
     return None
 

@@ -129,7 +129,7 @@ def test_dismiss_marks_the_file_reviewed(app, admin_client):
 
 
 def test_promote_enqueues_mkvpropedit_preserving_subtitle_flags(app, admin_client):
-    from app.videos import mkvpropedit_task
+    from app.tracks import mkvpropedit_task
 
     with app.app_context():
         file, lossless = build_candidate()
@@ -188,7 +188,7 @@ def test_promote_enqueues_mkvpropedit_preserving_subtitle_flags(app, admin_clien
         jobs = [
             job
             for job in app.file_queue.jobs
-            if job.func_name == "app.videos.mkvpropedit_task"
+            if job.func_name == "app.tracks.mkvpropedit_task"
         ]
         assert len(jobs) == 1
         # The lossless track becomes the default audio. The remux pass of

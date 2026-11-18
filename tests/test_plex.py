@@ -15,7 +15,7 @@ import pytest
 
 from app import db
 from app.models import Movie, User, UserMovieReview
-from app.videos import apply_plex_watch, plex_history_poll
+from app.diary import apply_plex_watch, plex_history_poll
 from tests.conftest import ADMIN_EMAIL
 from tests.factories import make_movie
 
@@ -57,7 +57,7 @@ def plex_jobs(app):
     return [
         job
         for job in app.sql_queue.jobs
-        if job.func_name == "app.videos.apply_plex_watch"
+        if job.func_name == "app.diary.apply_plex_watch"
     ]
 
 
@@ -556,7 +556,7 @@ def test_letterboxd_import_merges_with_plex_timed_row(app):
     A Letterboxd entry for a date that already has a Plex watch (with a
     clock time) updates that row. It does not add a second row."""
 
-    from app.videos import apply_letterboxd_import, apply_plex_watch
+    from app.diary import apply_letterboxd_import, apply_plex_watch
 
     with app.app_context():
         user = User.query.first()
@@ -642,7 +642,7 @@ def test_a_reimport_finds_the_scrobble_that_the_feed_gave_to_the_day_before(app)
     gets a row of its own. Before #544, the 10-06 entry got a new row,
     and the 10-07 entry wrote over the scrobble of 10-06."""
 
-    from app.videos import apply_letterboxd_import
+    from app.diary import apply_letterboxd_import
 
     with app.app_context():
         user = User.query.first()
@@ -686,7 +686,7 @@ def test_a_scrobble_twin_goes_to_1_entry_of_an_import(app):
     The scrobble is the twin of 10-06 only. The 10-08 entry gets its own
     row, and it does not overwrite the verdict of 10-06."""
 
-    from app.videos import apply_letterboxd_import
+    from app.diary import apply_letterboxd_import
 
     with app.app_context():
         user = User.query.first()

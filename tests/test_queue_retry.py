@@ -17,7 +17,7 @@ def _book(app, title, minutes=10, queue=None):
     with app.app_context():
         return (queue or app.import_queue).enqueue_in(
             timedelta(minutes=minutes),
-            "app.videos.localization_task",
+            "app.importing.localization_task",
             args=(f"/import/{title} - [DVD].mkv",),
             description=f"'{title} - [DVD].mkv'",
         )
@@ -28,7 +28,7 @@ def _enqueue(app, title):
 
     with app.app_context():
         return app.import_queue.enqueue(
-            "app.videos.localization_task",
+            "app.importing.localization_task",
             args=(f"/import/{title} - [DVD].mkv",),
             description=f"'{title} - [DVD].mkv'",
         )

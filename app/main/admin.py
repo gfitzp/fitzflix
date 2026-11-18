@@ -145,13 +145,13 @@ from rq.registry import FailedJobRegistry
 # not queue (#456). The S3 sync needs a proof of identity on the
 # Maintenance page: a passkey or the password.
 
-MAINTENANCE_PAGE_TASKS = frozenset({"app.videos.sync_aws_s3_storage_task"})
+MAINTENANCE_PAGE_TASKS = frozenset({"app.aws_storage.sync_aws_s3_storage_task"})
 
 # The Criterion refresh has a button on the Maintenance page too. Run
 # now calls the handler of that button. Thus, the 2 buttons have 1 gate
 # and 1 check, and a click on each of them queues 1 refresh.
 
-CRITERION_REFRESH = "app.videos.refresh_criterion_collection_info"
+CRITERION_REFRESH = "app.criterion_catalog.refresh_criterion_collection_info"
 
 
 @bp.route("/system", methods=["GET", "POST"])
@@ -295,9 +295,8 @@ def _scheduled_tasks():
             meta = cron_job.job_options.get("meta") or {}
             cron_string = cron_job.cron or meta.get("cron_string", "")
             next_run = cron_job.next_enqueue_time or cron_job.get_next_enqueue_time()
-            # The func of the meta is the name of the cron table. The
-            # func_name of rq is the module that defines the function.
-            # The command comes from the task registry of this process,
+            # The func of the meta is the name of the cron table. It is
+            # also the func_name of rq. The command comes from the task registry of this process,
             # not from the job data of the scheduler. Thus, a new command
             # shows without a restart of the scheduler.
             func = meta.get("func") or cron_job.func_name
@@ -803,7 +802,7 @@ def _refresh_tmdb_post(form):
     of them would block the import work of the single sql worker for the
     whole run."""
 
-    if not start_bulk_run(TMDB_RUN, "app.videos.refresh_tmdb_info"):
+    if not start_bulk_run(TMDB_RUN, "app.tmdb_refresh.refresh_tmdb_info"):
         flash(ALREADY_QUEUED, "info")
         return
     movies = (
@@ -818,7 +817,7 @@ def _refresh_tmdb_post(form):
     )
     for movie in movies:
         enqueue_task(
-            "app.videos.refresh_tmdb_info",
+            "app.tmdb_refresh.refresh_tmdb_info",
             "Movies",
             movie.id,
             movie.tmdb_id,
@@ -827,7 +826,7 @@ def _refresh_tmdb_post(form):
         )
     for tv in tv_shows:
         enqueue_task(
-            "app.videos.refresh_tmdb_info",
+            "app.tmdb_refresh.refresh_tmdb_info",
             "TV Shows",
             tv.id,
             tv.tmdb_id,
@@ -847,7 +846,7 @@ def _sync_storage_post(form):
 
     if not identity_confirmed(form):
         return
-    name = "app.videos.sync_aws_s3_storage_task"
+    name = "app.aws_storage.sync_aws_s3_storage_task"
     # A sync that waits for idle queues books its retry under this id.
     if not start_bulk_run((SYNC_RUN, requeue_job_id(name)), name):
         flash(ALREADY_QUEUED, "info")
@@ -870,8 +869,8 @@ def _scan_library_post(form):
     """Queue a scan of the track metadata of each file of the library."""
 
     names = (
-        "app.videos.track_metadata_scan_library",
-        "app.videos.track_metadata_scan_task",
+        "app.tracks.track_metadata_scan_library",
+        "app.tracks.track_metadata_scan_task",
     )
     if not start_bulk_run(TRACK_SCAN_RUN, *names):
         flash(ALREADY_QUEUED, "info")
@@ -919,7 +918,7 @@ def _merge_movies_post(form):
     canonical = group[0]
     for duplicate in group[1:]:
         enqueue_task(
-            "app.videos.refresh_tmdb_info",
+            "app.tmdb_refresh.refresh_tmdb_info",
             "Movies",
             duplicate.id,
             merge_tmdb_id,
@@ -1182,7 +1181,7 @@ def held_imports():
             )
         else:
             enqueue_task(
-                "app.videos.archive_held_task", held.id, description=f"'{name}'"
+                "app.sdr_conversion.archive_held_task", held.id, description=f"'{name}'"
             )
             flash(f"Archiving '{name}' to S3. The library does not change.", "info")
         current_app.logger.info(
@@ -1456,7 +1455,7 @@ def tmdb_triage():
         # with that id that the query returns (#163)
 
         refresh_job = enqueue_task(
-            "app.videos.refresh_tmdb_info",
+            "app.tmdb_refresh.refresh_tmdb_info",
             library,
             record.id,
             form.tmdb_id.data,
@@ -1588,7 +1587,7 @@ def subtitle_triage(file_id):
         )
 
         enqueue_task(
-            "app.videos.mkvpropedit_task",
+            "app.tracks.mkvpropedit_task",
             file.id,
             default_audio_track,
             default_subtitle_track,
@@ -1728,7 +1727,7 @@ def lossy_audio_triage(file_id):
         )
 
         enqueue_task(
-            "app.videos.mkvpropedit_task",
+            "app.tracks.mkvpropedit_task",
             file.id,
             track.uid,
             default_subtitle_track,

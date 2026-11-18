@@ -486,7 +486,7 @@ def test_only_the_changed_languages_are_sent_to_the_edit(app, admin_client):
 
     import inspect
 
-    from app.videos import mkvpropedit_task
+    from app.tracks import mkvpropedit_task
     from tests.conftest import csrf_token_from
 
     file_id, library_path, page = _matroska_file_page(app, admin_client, subtitles=True)
@@ -508,7 +508,7 @@ def test_only_the_changed_languages_are_sent_to_the_edit(app, admin_client):
         jobs = [
             job
             for job in app.file_queue.jobs
-            if job.func_name == "app.videos.mkvpropedit_task"
+            if job.func_name == "app.tracks.mkvpropedit_task"
         ]
         assert len(jobs) == 1
         inspect.signature(mkvpropedit_task).bind(*jobs[0].args)
@@ -549,7 +549,7 @@ def test_an_unknown_language_refuses_the_whole_edit(app, admin_client):
         assert not [
             job
             for job in app.file_queue.jobs
-            if job.func_name == "app.videos.mkvpropedit_task"
+            if job.func_name == "app.tracks.mkvpropedit_task"
         ]
     finally:
         os.remove(library_path)
@@ -566,7 +566,7 @@ def test_a_terminologic_code_reads_as_a_name_and_is_not_a_change(app, admin_clie
 
     import inspect
 
-    from app.videos import mkvpropedit_task
+    from app.tracks import mkvpropedit_task
     from tests.conftest import csrf_token_from
 
     file_id, library_path, page = _matroska_file_page(
@@ -591,7 +591,7 @@ def test_a_terminologic_code_reads_as_a_name_and_is_not_a_change(app, admin_clie
         jobs = [
             job
             for job in app.file_queue.jobs
-            if job.func_name == "app.videos.mkvpropedit_task"
+            if job.func_name == "app.tracks.mkvpropedit_task"
         ]
         assert len(jobs) == 1
         inspect.signature(mkvpropedit_task).bind(*jobs[0].args)
@@ -689,7 +689,7 @@ def test_an_unresolvable_stored_language_does_not_block_the_edit(app, admin_clie
         assert [
             job
             for job in app.file_queue.jobs
-            if job.func_name == "app.videos.mkvpropedit_task"
+            if job.func_name == "app.tracks.mkvpropedit_task"
         ]
     finally:
         os.remove(library_path)

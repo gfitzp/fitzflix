@@ -11,11 +11,10 @@ import shutil
 import pytest
 
 
-import app.videos as videos
 from app import importing
 
 from app.models import File
-from app.videos import finalize_localization, localization_task
+from app.importing import finalize_localization, localization_task
 
 from tests.localization_helpers import run_full_chain, separate_library_volume
 
@@ -107,7 +106,7 @@ def test_a_physical_replacement_runs_every_follow_up(
             "Find and dispose of the media for 'Replacement Pin (2021) - [DVD].mkv'",
         ) in sent
         # The DVD import queued the first refresh, and the Blu-ray the second.
-        refreshes = _roster_jobs(app, "app.videos.refresh_tmdb_info")
+        refreshes = _roster_jobs(app, "app.tmdb_refresh.refresh_tmdb_info")
         movie_id = File.query.one().movie_id
         assert [job.args[:2] for job in refreshes] == [("Movies", movie_id)] * 2
         assert refreshes[1].kwargs == {"notify_if_missing": True}
@@ -130,7 +129,7 @@ def test_a_tv_import_creates_its_series_and_queues_its_refresh(
         file = File.query.filter_by(basename=basename).one()
         assert file.tv_series.title == "Pin Show"
         assert TVSeries.query.count() == 1
-        refreshes = _roster_jobs(app, "app.videos.refresh_tmdb_info")
+        refreshes = _roster_jobs(app, "app.tmdb_refresh.refresh_tmdb_info")
         assert [job.args[:2] for job in refreshes] == [("TV Shows", file.series_id)]
         output = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
     assert os.path.exists(output)
@@ -153,7 +152,7 @@ def test_finalize_gives_back_an_output_that_is_on_another_volume(
         (move,) = [
             job
             for job in app.handoff_queue.jobs
-            if job.func_name == "app.videos.move_localized_file"
+            if job.func_name == "app.importing.move_localized_file"
         ]
         move.delete()
         source_path, details, lock, hidden = move.args
@@ -166,7 +165,7 @@ def test_finalize_gives_back_an_output_that_is_on_another_volume(
         (again,) = [
             job
             for job in app.handoff_queue.jobs
-            if job.func_name == "app.videos.move_localized_file"
+            if job.func_name == "app.importing.move_localized_file"
         ]
         assert again.args[0] == source
         assert again.args[3] == hidden
@@ -193,7 +192,7 @@ def test_foreign_and_lossy_audio_send_their_emails(
     with app.app_context():
         assert localization_task(source) is True
         (move,) = list(app.handoff_queue.jobs)
-        assert videos.move_localized_file(*move.args) is True
+        assert importing.move_localized_file(*move.args) is True
         (finalize,) = list(app.sql_queue.jobs)
         args = list(finalize.args)
         inspection = copy.deepcopy(args[4])
@@ -246,7 +245,8 @@ def test_a_failed_follow_up_does_not_skip_the_next_ones(
         file = File.query.filter_by(basename=basename).one()
         output = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
         assert [
-            job.args[:2] for job in _roster_jobs(app, "app.videos.refresh_tmdb_info")
+            job.args[:2]
+            for job in _roster_jobs(app, "app.tmdb_refresh.refresh_tmdb_info")
         ] == [("Movies", file.movie_id)]
         lock = app.lock_manager.lock(file.file_identifier(), 1000)
         assert lock
@@ -350,7 +350,7 @@ def _finalize_with_audio(app, sample_mkv, incoming_dir, basename, tracks):
         f_out.write(f_in.read())
     assert localization_task(source) is True
     (move,) = list(app.handoff_queue.jobs)
-    assert videos.move_localized_file(*move.args) is True
+    assert importing.move_localized_file(*move.args) is True
     (finalize,) = list(app.sql_queue.jobs)
     args = list(finalize.args)
     inspection = copy.deepcopy(args[4])
@@ -453,7 +453,7 @@ def test_a_failed_radarr_report_does_not_skip_the_tmdb_refresh(
         _import(app, sample_mkv, incoming_dir, basename)
         file = File.query.filter_by(basename=basename).one()
         output = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
-        assert _roster_jobs(app, "app.videos.refresh_tmdb_info")
+        assert _roster_jobs(app, "app.tmdb_refresh.refresh_tmdb_info")
     assert os.listdir(app.config["STAGING_DIR"]) == []
     os.remove(output)
 
@@ -905,17 +905,17 @@ def test_a_file_at_the_other_spelling_makes_the_new_file_a_reject(
 def _chain_until_the_cataloging(app, source):
     """Run the localization and the move of a source. Return the cataloging job."""
 
-    assert videos.localization_task(source) is True
+    assert importing.localization_task(source) is True
     (move,) = [
         job
         for job in app.handoff_queue.jobs
-        if job.func_name == "app.videos.move_localized_file"
+        if job.func_name == "app.importing.move_localized_file"
     ]
-    assert videos.move_localized_file(*move.args) is True
+    assert importing.move_localized_file(*move.args) is True
     (finalize,) = [
         job
         for job in app.sql_queue.jobs
-        if job.func_name == "app.videos.finalize_localization"
+        if job.func_name == "app.importing.finalize_localization"
     ]
     return finalize
 
@@ -954,7 +954,7 @@ def test_a_second_download_during_an_in_place_import_is_not_replaced(app, sample
         assert [
             job.args
             for job in booked
-            if job.func_name == "app.videos.localization_task"
+            if job.func_name == "app.importing.localization_task"
         ] == [(source,)]
         for job in booked:
             registry.remove(job, delete_job=True)

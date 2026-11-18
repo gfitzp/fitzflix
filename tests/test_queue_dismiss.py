@@ -15,7 +15,7 @@ def _orphan_trail(app, title):
 
     with app.app_context():
         job = app.import_queue.enqueue(
-            "app.videos.localization_task",
+            "app.importing.localization_task",
             args=(f"/import/{title} - [DVD].mkv",),
         )
     app.import_queue.remove(job)
@@ -44,7 +44,7 @@ def test_a_row_with_a_live_job_stays(app, admin_client):
 
     with app.app_context():
         app.import_queue.enqueue(
-            "app.videos.localization_task",
+            "app.importing.localization_task",
             args=("/import/Still Waiting (2002) - [DVD].mkv",),
         )
     digest = _digest("Still Waiting (2002) - [DVD].mkv")
@@ -91,7 +91,7 @@ def test_only_an_admin_sees_the_dismiss_button(app, admin_client, user_client):
 
     with app.app_context():
         job = app.import_queue.enqueue(
-            "app.videos.localization_task",
+            "app.importing.localization_task",
             args=("/import/Button Row (2004) - [DVD].mkv",),
         )
     app.import_queue.remove(job)

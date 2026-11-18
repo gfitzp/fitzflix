@@ -17,24 +17,24 @@ def settle(path, age_seconds=3600):
 def run_full_chain(app, source):
     """Run localization -> move -> finalize. Return the enqueued finalize args."""
 
-    import app.videos as videos
+    from app import importing
 
-    assert videos.localization_task(source) is True
+    assert importing.localization_task(source) is True
     move_jobs = [
         job
         for job in app.handoff_queue.jobs
-        if job.func_name == "app.videos.move_localized_file"
+        if job.func_name == "app.importing.move_localized_file"
     ]
     assert len(move_jobs) == 1
-    assert videos.move_localized_file(*move_jobs[0].args) is True
+    assert importing.move_localized_file(*move_jobs[0].args) is True
 
     finalize_jobs = [
         job
         for job in app.sql_queue.jobs
-        if job.func_name == "app.videos.finalize_localization"
+        if job.func_name == "app.importing.finalize_localization"
     ]
     assert len(finalize_jobs) == 1
-    videos.finalize_localization(*finalize_jobs[0].args)
+    importing.finalize_localization(*finalize_jobs[0].args)
     return finalize_jobs[0].args
 
 

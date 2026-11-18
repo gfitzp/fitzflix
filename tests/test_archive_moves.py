@@ -338,7 +338,7 @@ def test_the_poll_routes_a_restored_key_with_a_target_to_the_move(app, s3, monke
         downloads = [
             job
             for job in app.file_queue.jobs
-            if job.func_name == "app.videos.download_task"
+            if job.func_name == "app.aws_storage.download_task"
         ]
         assert downloads == []
         (job,) = move_jobs(app)
@@ -410,7 +410,7 @@ def test_a_move_waits_for_a_download_of_the_old_key(app, s3):
         aws_storage.request_archive_move(file)
         db.session.commit()
         app.file_queue.enqueue(
-            "app.videos.download_task", args=(file.aws_key, "Busy (1959).mkv")
+            "app.aws_storage.download_task", args=(file.aws_key, "Busy (1959).mkv")
         )
         fake = s3({file.aws_key: readable()})
 
@@ -444,7 +444,7 @@ def test_a_download_that_starts_during_the_copy_keeps_the_old_key(app, s3):
                     {"id": file_id, "now": "2026-11-12 16:00:00"},
                 )
             app.file_queue.enqueue(
-                "app.videos.download_task", args=(old_key, "Late (1961).mkv")
+                "app.aws_storage.download_task", args=(old_key, "Late (1961).mkv")
             )
 
         fake = s3({old_key: readable()}, on_copy=restore_click)
@@ -462,7 +462,7 @@ def test_a_download_that_starts_during_the_copy_keeps_the_old_key(app, s3):
         downloads = [
             job.args[0]
             for job in app.file_queue.jobs
-            if job.func_name == "app.videos.download_task"
+            if job.func_name == "app.aws_storage.download_task"
         ]
         assert downloads == [old_key]
         assert len(_scheduled_moves(app)) == 1
@@ -577,7 +577,7 @@ def test_an_edit_during_an_untouched_move_goes_to_modified_under_the_new_name(
         assert [
             job.args[0]
             for job in app.handoff_queue.jobs
-            if job.func_name == "app.videos.aws_delete"
+            if job.func_name == "app.aws_storage.aws_delete"
         ] == [old_key]
 
 
@@ -607,7 +607,7 @@ def test_an_edit_during_a_modified_move_uploads_under_the_target(app, monkeypatc
         assert [
             job.args[0]
             for job in app.handoff_queue.jobs
-            if job.func_name == "app.videos.aws_delete"
+            if job.func_name == "app.aws_storage.aws_delete"
         ] == ["modified/Old Edited Name (1961).mkv"]
 
         # Without a pending move, a later edit overwrites the same key.
@@ -1058,9 +1058,11 @@ def test_the_sync_counts_live_jobs_but_not_other_scheduled_retries(app):
     from app import aws_storage
 
     with app.app_context():
-        app.file_queue.enqueue_in(timedelta(minutes=10), "app.videos.upload_task", 1)
+        app.file_queue.enqueue_in(
+            timedelta(minutes=10), "app.aws_storage.upload_task", 1
+        )
         assert aws_storage._sync_deferred(None) is False
-        app.file_queue.enqueue("app.videos.upload_task", 2)
+        app.file_queue.enqueue("app.aws_storage.upload_task", 2)
         assert aws_storage._sync_deferred(None) is True
 
 
@@ -1111,7 +1113,7 @@ def test_the_sync_does_not_upload_over_a_key_that_moved_after_the_listing(
         uploads = [
             job
             for job in app.file_queue.jobs
-            if job.func_name == "app.videos.upload_task"
+            if job.func_name == "app.aws_storage.upload_task"
         ]
         os.remove(path)
         assert uploads == []
@@ -1127,7 +1129,7 @@ def test_a_download_wait_keeps_the_receipt_handle(app, s3):
         aws_storage.request_archive_move(file)
         db.session.commit()
         app.file_queue.enqueue(
-            "app.videos.download_task", args=(file.aws_key, "Handle Kept Old.mkv")
+            "app.aws_storage.download_task", args=(file.aws_key, "Handle Kept Old.mkv")
         )
         s3({file.aws_key: readable()})
 
@@ -1227,7 +1229,7 @@ def test_a_move_waits_while_the_s3_sync_runs(app, s3, monkeypatch):
         old_key, target = file.aws_key, file.aws_key_target
         fake = s3({file.aws_key: readable()})
         sync = app.maintenance_queue.enqueue(
-            "app.videos.sync_aws_s3_storage_task",
+            "app.aws_storage.sync_aws_s3_storage_task",
             description="Syncing files with AWS S3 storage",
         )
         # StartedJobRegistry.add raises NotImplementedError in rq 2. Thus,
@@ -1295,7 +1297,7 @@ def test_a_restore_of_a_shared_key_goes_to_the_row_that_moves_it(app, s3):
         assert [
             job
             for job in app.file_queue.jobs
-            if job.func_name == "app.videos.download_task"
+            if job.func_name == "app.aws_storage.download_task"
         ] == []
 
 
@@ -1321,7 +1323,7 @@ def test_a_requested_download_of_a_shared_key_runs_beside_the_move(app, s3):
         (download,) = [
             job
             for job in app.file_queue.jobs
-            if job.func_name == "app.videos.download_task"
+            if job.func_name == "app.aws_storage.download_task"
         ]
         assert download.args == (key, os.path.basename(key), None)
         assert downloads[key].id == download.id
@@ -1471,7 +1473,7 @@ def test_a_move_wait_keeps_the_handle_record_of_its_key(app, s3, monkeypatch, wa
         old_key = file.aws_key
         if wait == "download":
             app.file_queue.enqueue(
-                "app.videos.download_task", args=(old_key, "Wait Handle Old.mkv")
+                "app.aws_storage.download_task", args=(old_key, "Wait Handle Old.mkv")
             )
         s3({old_key: readable()})
         aws_storage.record_receipt_handle(old_key, "handle-2")

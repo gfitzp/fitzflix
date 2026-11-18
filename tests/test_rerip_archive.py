@@ -115,7 +115,7 @@ def test_a_finished_rerip_moves_its_upload_to_the_final_key(
         assert not [
             job
             for job in app.handoff_queue.jobs
-            if job.func_name == "app.videos.aws_delete" and job.args == (KEY,)
+            if job.func_name == "app.aws_storage.aws_delete" and job.args == (KEY,)
         ]
 
         # The upload stays in S3 Standard. The move needs no restore.
@@ -443,7 +443,7 @@ def _deletes_queued(app, key):
     return [
         job
         for job in app.handoff_queue.jobs
-        if job.func_name == "app.videos.aws_delete" and job.args == (key,)
+        if job.func_name == "app.aws_storage.aws_delete" and job.args == (key,)
     ]
 
 

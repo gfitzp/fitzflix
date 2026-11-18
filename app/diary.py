@@ -1,4 +1,4 @@
-"""Write the diary. This module is the strangler split from app.videos.
+"""Write the diary.
 
 It holds each task that turns an outside signal into UserMovieReview
 rows and watchlist state. That includes the Letterboxd account-export
@@ -9,11 +9,9 @@ history poll, the API review task, and the shared verdict functions.
 Those are star_rating_fields and the watchlist and not-interested
 clearers that a new log always runs.
 
-app.videos exports each name here again. Thus, the stored rq job
-strings ("app.videos.letterboxd_import_task") and the import sites
-continue to resolve. Record creation uses the TMDB helpers of
-app.videos through lazy imports. Thus, the module import direction
-stays one-way.
+Each job of this module goes to the queue under its app.diary name,
+for example "app.diary.letterboxd_import_task". Record creation
+imports the TMDB functions of app.tmdb_refresh inside functions.
 """
 
 import csv
@@ -408,7 +406,7 @@ def letterboxd_import_task(user_id, films):
 
             if resolved:
                 enqueue_task(
-                    "app.videos.apply_letterboxd_import",
+                    "app.diary.apply_letterboxd_import",
                     user_id,
                     resolved,
                     description=f"Importing Letterboxd data for {len(resolved)} film(s)",
@@ -653,7 +651,7 @@ def apply_letterboxd_import(user_id, films):
             for movie_id in created_movie_ids:
                 movie = Movie.query.filter_by(id=movie_id).first()
                 enqueue_task(
-                    "app.videos.refresh_tmdb_info",
+                    "app.tmdb_refresh.refresh_tmdb_info",
                     "Movies",
                     movie_id,
                     movie.tmdb_id,
@@ -996,7 +994,7 @@ def plex_history_poll():
             account_id = entry.get("accountID")
             username = accounts.get(account_id) or f"account-{account_id}"
             enqueue_task(
-                "app.videos.apply_plex_watch",
+                "app.diary.apply_plex_watch",
                 tmdb_id,
                 username,
                 datetime.fromtimestamp(viewed_at, tz=timezone.utc).isoformat(),

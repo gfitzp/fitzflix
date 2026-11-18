@@ -20,7 +20,7 @@ def _move_retries(app):
     return [
         job
         for job in scheduled_jobs(app.handoff_queue)
-        if job.func_name == "app.videos.move_localized_file"
+        if job.func_name == "app.importing.move_localized_file"
     ]
 
 
@@ -41,6 +41,7 @@ def test_a_dead_volume_move_defer_keeps_every_counter(app, tmp_path, monkeypatch
     reused the id of a finished job."""
 
     from app import videos
+    from app import importing
     from tests.test_localization import move_retry
 
     monkeypatch.setattr(videos, "_dead_volumes", lambda paths: ["/Volumes/Movies"])
@@ -58,7 +59,7 @@ def test_a_dead_volume_move_defer_keeps_every_counter(app, tmp_path, monkeypatch
     try:
         with app.app_context():
             assert (
-                videos.move_localized_file(
+                importing.move_localized_file(
                     source, details, None, str(tmp_path / ".hidden.mkv"), **counters
                 )
                 is False
@@ -79,7 +80,7 @@ def test_a_space_wait_that_lost_the_title_lock_waits_for_the_lock(
     because another task took the lock. The move must not book a space
     wait under a lock that it does not hold."""
 
-    from app import importing, videos
+    from app import importing
     from tests.test_localization import move_retry, space_move_fixture
 
     basename = "Lost Lock Space (2021) - [DVD].mkv"
@@ -96,7 +97,7 @@ def test_a_space_wait_that_lost_the_title_lock_waits_for_the_lock(
     try:
         with app.app_context():
             assert (
-                videos.move_localized_file(source, details, "lock-sentinel", hidden)
+                importing.move_localized_file(source, details, "lock-sentinel", hidden)
                 is False
             )
         assert len(holds) == 2
@@ -119,7 +120,7 @@ def test_requeue_merges_the_counters_and_takes_the_spec(app):
 
     with app.app_context():
         delay = requeue(
-            "app.videos.download_task",
+            "app.aws_storage.download_task",
             key="untouched/Requeue Test.mkv",
             delay=(5, 15),
             reason="test",
@@ -130,7 +131,7 @@ def test_requeue_merges_the_counters_and_takes_the_spec(app):
         )
         assert timedelta(minutes=5) <= delay <= timedelta(minutes=15)
         job_id = requeue_job_id(
-            "app.videos.download_task",
+            "app.aws_storage.download_task",
             "untouched/Requeue Test.mkv",
             {"transient_retries": 2},
         )
@@ -151,11 +152,11 @@ def test_requeue_merges_the_counters_and_takes_the_spec(app):
     # no counters has a fixed id.
 
     with app.app_context():
-        assert requeue_job_id("app.videos.upload_task", 7, {"b": 1, "a": 2}).endswith(
-            "_a_2_b_1"
-        )
+        assert requeue_job_id(
+            "app.aws_storage.upload_task", 7, {"b": 1, "a": 2}
+        ).endswith("_a_2_b_1")
         assert (
-            requeue_job_id("app.videos.sync_aws_s3_storage_task")
+            requeue_job_id("app.aws_storage.sync_aws_s3_storage_task")
             == "retry_sync_aws_s3_storage_task"
         )
 
@@ -178,7 +179,7 @@ def test_localization_pending_sees_a_requeued_retry(app, incoming_dir):
     with app.app_context():
         assert not localization_pending(path)
         requeue(
-            "app.videos.localization_task",
+            "app.importing.localization_task",
             key=path,
             delay=timedelta(minutes=1),
             reason="test",
@@ -195,7 +196,7 @@ def test_localization_pending_sees_a_requeued_retry(app, incoming_dir):
             assert not localization_pending(other)
         finally:
             ScheduledJobRegistry(queue=app.import_queue).remove(
-                requeue_job_id("app.videos.localization_task", path, counters),
+                requeue_job_id("app.importing.localization_task", path, counters),
                 delete_job=True,
             )
 
@@ -323,7 +324,7 @@ def test_a_running_job_that_books_itself_under_its_own_id_keeps_the_booking(app)
 
     from app.tasks import TASKS, requeue, requeue_job_id, resolve_queue
 
-    name = "app.videos.sync_aws_s3_storage_task"
+    name = "app.aws_storage.sync_aws_s3_storage_task"
     with app.app_context():
         queue = resolve_queue(TASKS[name].queue)
         job_id = requeue_job_id(name)
@@ -362,7 +363,7 @@ def test_a_job_that_books_itself_keeps_the_booking_after_it_ends(app):
         resolve_queue,
     )
 
-    name = "app.videos.track_metadata_scan_task"
+    name = "app.tracks.track_metadata_scan_task"
     with app.app_context():
         queue = resolve_queue(TASKS[name].queue)
         job_id = requeue_job_id(name, 77)

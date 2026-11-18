@@ -307,7 +307,7 @@ def _process_pending(subscribed):
 
     for movie in to_refresh:
         enqueue_task(
-            "app.videos.refresh_tmdb_info",
+            "app.tmdb_refresh.refresh_tmdb_info",
             "Movies",
             movie.id,
             movie.tmdb_id,

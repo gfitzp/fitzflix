@@ -49,7 +49,8 @@ def test_every_upload_task_producer_passes_the_file_id_only():
                 isinstance(node, ast.Call)
                 and getattr(node.func, "id", None) == "enqueue_task"
                 and node.args
-                and getattr(node.args[0], "value", None) == "app.videos.upload_task"
+                and getattr(node.args[0], "value", None)
+                == "app.aws_storage.upload_task"
             ):
                 continue
             producers += 1

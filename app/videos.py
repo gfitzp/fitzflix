@@ -1,17 +1,12 @@
-"""The shared task plumbing and the compatibility shim.
+"""The code that the file tasks share.
 
-This module keeps the machinery that every pipeline module uses. That
-is the file copy with progress and retries after transient errors, and
-the acquire-or-defer sequence for the title lock. It is also the
-subprocess supervision and the dead-volume probe.
+This module has the file copy with progress and with retries after
+transient errors. It has the acquire-or-defer sequence for the title
+lock. It also has the control of the command-line tools and the probe
+for a dead volume.
 
-The other names are the task functions of the modules that the
-strangler split created (aws_storage, criterion_catalog, diary,
-importing, sdr_conversion, tmdb_refresh, tracks). The rq job names are
-strings stored in Redis, in cron tables, and in the pipeline trail
-registry. Thus, "app.videos.X" must resolve forever for each job name.
-This module re-exports only those names (#724). Each other name comes
-from its real module, in the app and in the tests.
+No task lives here. The name of a job is the module that defines its
+function, for example "app.importing.localization_task".
 """
 
 import errno
@@ -26,83 +21,6 @@ from werkzeug.local import LocalProxy
 from app import get_app, path_tag, safe_job_id
 from app.tasks import report_progress, requeue
 from app.maintenance import VOLUMES_ROOT, volume_alive
-
-# The AWS storage layer moved to app.aws_storage. These re-exports keep
-# each stored rq job string resolving through app.videos.
-
-from app.aws_storage import (
-    aws_delete,
-    aws_restore,
-    download_task,
-    sqs_retrieve_task,
-    sync_aws_s3_storage_task,
-    upload_task,
-)
-
-# The Criterion spine catalog moved to app.criterion_catalog. The diary
-# writers moved to app.diary. The re-export contract is the same as above.
-
-from app.criterion_catalog import refresh_criterion_collection_info
-from app.diary import (
-    apply_letterboxd_import,
-    apply_plex_watch,
-    letterboxd_import_task,
-    plex_history_poll,
-    review_task,
-)
-from app.importing import (
-    finalize_localization,
-    localization_task,
-    manual_import_task,
-    move_localized_file,
-)
-from app.sdr_conversion import archive_held_task, convert_localized_file
-from app.tmdb_refresh import (
-    apply_tmdb_refresh,
-    refresh_tmdb_info,
-)
-from app.tracks import (
-    mkvmerge_task,
-    mkvpropedit_task,
-    remux_audio_plan_task,
-    save_track_metadata,
-    track_metadata_scan_library,
-    track_metadata_scan_task,
-)
-
-# __all__ marks the re-exports as public on purpose. The rq job strings
-# resolve them through app.videos. It also tells pyflakes that they are
-# used. tests/test_task_registry.py pins the list to the job names.
-
-__all__ = [
-    "aws_delete",
-    "aws_restore",
-    "download_task",
-    "sqs_retrieve_task",
-    "sync_aws_s3_storage_task",
-    "upload_task",
-    "refresh_criterion_collection_info",
-    "apply_letterboxd_import",
-    "apply_plex_watch",
-    "letterboxd_import_task",
-    "plex_history_poll",
-    "review_task",
-    "mkvmerge_task",
-    "mkvpropedit_task",
-    "remux_audio_plan_task",
-    "save_track_metadata",
-    "track_metadata_scan_library",
-    "track_metadata_scan_task",
-    "finalize_localization",
-    "archive_held_task",
-    "convert_localized_file",
-    "localization_task",
-    "manual_import_task",
-    "move_localized_file",
-    "apply_tmdb_refresh",
-    "refresh_tmdb_info",
-]
-
 
 # These OSError numbers show a dropped or unstable network mount, not a
 # problem with the file itself. For example, macOS smbfs revokes the open

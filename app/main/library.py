@@ -1602,7 +1602,7 @@ def movie_tmdb(movie_id):
             )
             return redirect(url_for("main.movie", movie_id=movie.id))
         refresh_job = enqueue_task(
-            "app.videos.refresh_tmdb_info",
+            "app.tmdb_refresh.refresh_tmdb_info",
             "Movies",
             movie.id,
             movie.tmdb_id,
@@ -1648,7 +1648,7 @@ def movie_tmdb(movie_id):
     # it interactively.
 
     refresh_job = enqueue_task(
-        "app.videos.refresh_tmdb_info",
+        "app.tmdb_refresh.refresh_tmdb_info",
         "Movies",
         movie.id,
         tmdb_lookup_form.tmdb_id.data,
@@ -2432,7 +2432,7 @@ def tv_tmdb(series_id):
     # it interactively.
 
     refresh_job = enqueue_task(
-        "app.videos.refresh_tmdb_info",
+        "app.tmdb_refresh.refresh_tmdb_info",
         "TV Shows",
         tv.id,
         tmdb_lookup_form.tmdb_id.data,
@@ -2603,7 +2603,7 @@ def _scan_file_post(file, form):
     job has the id of the lock-busy retry of the scan. Thus, a second
     click while a scan waits or runs queues nothing new."""
 
-    name = "app.videos.track_metadata_scan_task"
+    name = "app.tracks.track_metadata_scan_task"
     job_id = requeue_job_id(name, int(file.id))
     if not free_job_id(name, job_id):
         flash(
@@ -2655,7 +2655,7 @@ def _propedit_post(audio_tracks, subtitle_tracks):
             )
             return None
         mkvpropedit_job = enqueue_task(
-            "app.videos.mkvpropedit_task",
+            "app.tracks.mkvpropedit_task",
             file.id,
             default_audio_track,
             form.default_subtitle.data,
@@ -2682,7 +2682,7 @@ def _remux_post(file, form):
         )
         return
     mkvmerge_job = enqueue_task(
-        "app.videos.mkvmerge_task",
+        "app.tracks.mkvmerge_task",
         file.id,
         form.audio_tracks.data,
         form.subtitle_tracks.data,
@@ -2698,7 +2698,7 @@ def _upload_post(file, form):
     """Queue an upload of the file to AWS S3 storage."""
 
     enqueue_task(
-        "app.videos.upload_task",
+        "app.aws_storage.upload_task",
         file.id,
         description=f"'{file.basename}'",
         at_front=True,
@@ -2835,7 +2835,7 @@ def _queue_archive_deletes(aws_keys):
         if untouched_key_still_claimed(aws_key):
             continue
         enqueue_task(
-            "app.videos.aws_delete",
+            "app.aws_storage.aws_delete",
             aws_key,
             only_if_present=True,
             only_if_unclaimed=True,

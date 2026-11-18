@@ -126,7 +126,7 @@ def plex_webhook(token):
     username = account.get("title") if isinstance(account, dict) else None
     username = username if isinstance(username, str) else ""
     enqueue_task(
-        "app.videos.apply_plex_watch",
+        "app.diary.apply_plex_watch",
         tmdb_id,
         username,
         datetime.now(timezone.utc).isoformat(),

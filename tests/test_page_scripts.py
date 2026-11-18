@@ -262,7 +262,9 @@ def test_the_queue_tooltips_wait_for_moment(app, admin_client, tmp_path):
     script of the queue page stopped. Here, moment is undefined when the
     script runs, and it is defined before DOMContentLoaded."""
 
-    app.import_queue.enqueue("app.videos.localization_task", "/import/Tip (2001).mkv")
+    app.import_queue.enqueue(
+        "app.importing.localization_task", "/import/Tip (2001).mkv"
+    )
     body = admin_client.get("/queue").get_data(as_text=True)
     assert body.index("scheduleFirstPaintTitles();") < body.index("libs/moment.js/")
     test_code = r"""
@@ -304,9 +306,9 @@ def test_an_unchanged_queue_answers_304_and_a_healed_chip_repaints(app, admin_cl
 
     basename = "Etag Row (2001) - [DVD].mkv"
     with app.app_context():
-        app.import_queue.enqueue("app.videos.localization_task", "/import/Head.mkv")
+        app.import_queue.enqueue("app.importing.localization_task", "/import/Head.mkv")
         app.import_queue.enqueue(
-            "app.videos.localization_task", args=(f"/import/{basename}",)
+            "app.importing.localization_task", args=(f"/import/{basename}",)
         )
 
     page = admin_client.get("/queue").get_data(as_text=True)

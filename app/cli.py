@@ -28,7 +28,7 @@ def register(app):
         # short for it.
 
         enqueue_task(
-            "app.videos.refresh_criterion_collection_info",
+            "app.criterion_catalog.refresh_criterion_collection_info",
             description="Refreshing Criterion Collection information for all movies in library",
         )
         app.logger.info("Refreshing Criterion Collection information from Wikipedia")
@@ -76,7 +76,7 @@ def register(app):
         if movies:
             for movie in movies:
                 enqueue_task(
-                    "app.videos.refresh_tmdb_info",
+                    "app.tmdb_refresh.refresh_tmdb_info",
                     "Movies",
                     movie.id,
                     movie.tmdb_id,
@@ -89,7 +89,7 @@ def register(app):
         if tv_shows:
             for tv in tv_shows:
                 enqueue_task(
-                    "app.videos.refresh_tmdb_info",
+                    "app.tmdb_refresh.refresh_tmdb_info",
                     "TV Shows",
                     tv.id,
                     tv.tmdb_id,
@@ -109,7 +109,7 @@ def register(app):
             raise click.ClickException(f"No file has id {file_id}")
 
         enqueue_task(
-            "app.videos.track_metadata_scan_task",
+            "app.tracks.track_metadata_scan_task",
             int(file_id),
             description=f"Refreshing metadata for file ID {file_id}",
         )
@@ -120,7 +120,7 @@ def register(app):
         """Sync the library with the AWS storage."""
 
         enqueue_task(
-            "app.videos.sync_aws_s3_storage_task",
+            "app.aws_storage.sync_aws_s3_storage_task",
             description="Syncing files with AWS S3 storage",
         )
         app.logger.info("Queueing the AWS S3 storage sync")
@@ -137,7 +137,7 @@ def register(app):
         """Check for restored files at AWS S3."""
 
         enqueue_task(
-            "app.videos.sqs_retrieve_task",
+            "app.aws_storage.sqs_retrieve_task",
             # The command asks for a poll now. Thus, it does not wait behind
             # the maintenance work of the hourly cron.
             queue="request",
@@ -273,7 +273,7 @@ def register(app):
         for aws_key in original_keys:
             if not untouched_key_still_claimed(aws_key):
                 enqueue_task(
-                    "app.videos.aws_delete",
+                    "app.aws_storage.aws_delete",
                     aws_key,
                     only_if_unclaimed=True,
                     description=f"Deleting '{aws_key}' from AWS",

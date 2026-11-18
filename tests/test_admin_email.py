@@ -149,7 +149,7 @@ def no_admin(app, monkeypatch):
 
 def test_tmdb_refresh_without_an_admin_still_returns(app, no_admin):
     from app import db
-    from app.videos import apply_tmdb_refresh
+    from app.tmdb_refresh import apply_tmdb_refresh
     from tests.factories import make_movie
 
     with app.app_context():

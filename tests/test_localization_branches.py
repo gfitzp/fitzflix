@@ -12,10 +12,9 @@ import pytest
 
 from tests.test_scheduling import scheduled_jobs
 
-import app.videos as videos
 
 from app.models import File
-from app.videos import finalize_localization, localization_task
+from app.importing import finalize_localization, localization_task
 
 from tests.localization_helpers import rejected_files, settle
 
@@ -120,17 +119,17 @@ def test_a_file_too_big_for_staging_is_localized_beside_the_library(
         (move,) = [
             job
             for job in app.handoff_queue.jobs
-            if job.func_name == "app.videos.move_localized_file"
+            if job.func_name == "app.importing.move_localized_file"
         ]
         hidden = move.args[3]
         directory = os.path.join(app.config["LIBRARY_DIR"], "Movies/Too Big (2021)")
         assert hidden == os.path.join(directory, f".{basename}")
         assert os.listdir(app.config["STAGING_DIR"]) == []
-        assert videos.move_localized_file(*move.args) is True
+        assert importing.move_localized_file(*move.args) is True
         (finalize,) = [
             job
             for job in app.sql_queue.jobs
-            if job.func_name == "app.videos.finalize_localization"
+            if job.func_name == "app.importing.finalize_localization"
         ]
         assert finalize.args[3] == hidden
         assert finalize.kwargs["staged_output"] is None
@@ -277,7 +276,7 @@ def test_the_mkvmerge_command_of_each_track_layout(
             (move,) = [
                 job
                 for job in app.handoff_queue.jobs
-                if job.func_name == "app.videos.move_localized_file"
+                if job.func_name == "app.importing.move_localized_file"
             ]
             hidden = move.args[3]
         (command,) = commands
@@ -318,7 +317,7 @@ def test_an_mp4_that_mkvmerge_cannot_carry_loses_its_metadata(
             (move,) = [
                 job
                 for job in app.handoff_queue.jobs
-                if job.func_name == "app.videos.move_localized_file"
+                if job.func_name == "app.importing.move_localized_file"
             ]
             hidden = move.args[3]
         assert hidden.endswith(".mp4")

@@ -324,7 +324,7 @@ def test_rename_moves_the_trail_to_the_new_untouched_name(app):
         db.session.commit()
         _materialize(app, episode)
         job = app.import_queue.enqueue(
-            "app.videos.localization_task", args=(f"/import/{old}",)
+            "app.importing.localization_task", args=(f"/import/{old}",)
         )
         record_job_event(app.redis, job, "started")
         # The import is done. A rename waits for an import of the series
@@ -410,7 +410,7 @@ def test_the_rename_time_limit_grows_with_the_files(app, monkeypatch):
 
         # A retry of the rename keeps the long limit.
         app.import_queue.enqueue(
-            "app.videos.localization_task",
+            "app.importing.localization_task",
             args=("/import/Batman - S01E41 - [WEBDL-1080p].mkv",),
         )
         assert rename_tv_series_task(series.id, "Batman (1966)") is False
@@ -434,11 +434,11 @@ def _imported(app, source, library_name):
     from app.pipeline import record_job_event
 
     job = app.import_queue.enqueue(
-        "app.videos.localization_task", args=(f"/import/{source}",)
+        "app.importing.localization_task", args=(f"/import/{source}",)
     )
     record_job_event(app.redis, job, "started")
     app.file_queue.enqueue(
-        "app.videos.move_localized_file",
+        "app.importing.move_localized_file",
         args=(
             f"/staging/.{library_name}",
             {"basename": library_name, "untouched_basename": source},
@@ -602,7 +602,7 @@ def test_a_tagged_episode_name_names_the_series_that_owns_the_id(app):
             == "Doctor Who"
         )
         path = os.path.join(app.config["IMPORT_DIR"], name)
-        app.import_queue.enqueue("app.videos.localization_task", path)
+        app.import_queue.enqueue("app.importing.localization_task", path)
         assert series_import_in_flight({"Doctor Who (2005)"}) == path
         assert series_import_in_flight({"Doctor Who (1963)"}) is None
 

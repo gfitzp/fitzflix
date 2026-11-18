@@ -238,7 +238,7 @@ def test_restore_button_enqueues_a_restore_per_selected_archived_file(
     assert "Requesting 2 files to be restored" in response.get_data(as_text=True)
     jobs = app.request_queue.jobs
     assert sorted(job.args[0] for job in jobs) == ["s.mkv", "w.mkv"]
-    assert {job.func_name for job in jobs} == {"app.videos.aws_restore"}
+    assert {job.func_name for job in jobs} == {"app.aws_storage.aws_restore"}
 
 
 def test_scan_button_enqueues_the_scan_task(app, admin_client):

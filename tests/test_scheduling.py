@@ -20,11 +20,9 @@ from rq.exceptions import NoSuchJobError
 from rq.job import Job
 
 from app import safe_job_id
-from app.videos import (
-    acquire_lock_or_defer,
-    localization_task,
-    sync_aws_s3_storage_task,
-)
+from app.aws_storage import sync_aws_s3_storage_task
+from app.importing import localization_task
+from app.videos import acquire_lock_or_defer
 
 
 def requeue_id(*args, **kwargs):
@@ -68,7 +66,7 @@ def test_defer_uses_deterministic_id_and_replaces(app, held_lock):
                 "test-title-lock",
                 30000,
                 app.import_queue,
-                "app.videos.localization_task",
+                "app.importing.localization_task",
                 minutes=(45, 75),
                 timeout=3600,
                 description="'Jaws (1975) - [DVD].mkv'",
@@ -105,7 +103,7 @@ def test_defer_with_positional_args_binds(app, held_lock):
             "test-args-lock",
             30000,
             app.import_queue,
-            "app.videos.localization_task",
+            "app.importing.localization_task",
             minutes=(5, 15),
             timeout=3600,
             description="'args-form.mkv'",
@@ -125,7 +123,7 @@ def test_acquire_returns_lock_when_free(app):
             "test-free-lock",
             30000,
             app.import_queue,
-            "app.videos.localization_task",
+            "app.importing.localization_task",
             minutes=(5, 15),
             timeout=3600,
             description="'free.mkv'",
@@ -177,10 +175,10 @@ def test_localization_defers_while_title_is_locked(app, held_lock, incoming_dir)
 
             from app.videos import lock_wait_job_id
 
-            prefix = requeue_id("app.videos.localization_task", file_path)
+            prefix = requeue_id("app.importing.localization_task", file_path)
             assert retries == [
                 lock_wait_job_id(
-                    "app.videos.localization_task", f"'{basename}'", key=file_path
+                    "app.importing.localization_task", f"'{basename}'", key=file_path
                 )
             ]
             assert retries[0].startswith(prefix + "_")
@@ -233,7 +231,7 @@ def test_localization_defers_while_file_is_growing(app, incoming_dir, monkeypatc
             ]
             assert retries == [
                 requeue_id(
-                    "app.videos.localization_task",
+                    "app.importing.localization_task",
                     file_path,
                     {
                         "transient_retries": 0,
@@ -260,7 +258,7 @@ def test_localization_defers_while_file_is_growing(app, incoming_dir, monkeypatc
 def test_sync_defers_while_queues_are_busy(app):
     with app.app_context():
         marker = app.file_queue.enqueue(
-            "app.videos.localization_task",
+            "app.importing.localization_task",
             args=("/nonexistent",),
             description="busy marker",
         )
@@ -309,7 +307,7 @@ def test_every_scheduled_job_binds(app, held_lock, incoming_dir):
             "catchall-lock",
             30000,
             app.file_queue,
-            "app.videos.localization_task",
+            "app.importing.localization_task",
             minutes=(5, 15),
             timeout=3600,
             description="'catchall.mkv'",
@@ -336,8 +334,6 @@ def test_mkvpropedit_transient_error_defers_and_releases_lock(app, monkeypatch):
 
     import errno
 
-    import app.videos as videos
-
     from app import tracks
 
     from app import db
@@ -355,7 +351,7 @@ def test_mkvpropedit_transient_error_defers_and_releases_lock(app, monkeypatch):
 
         monkeypatch.setattr(tracks, "mkvpropedit_unlocked", flaky_unlocked)
 
-        assert videos.mkvpropedit_task(file_id, "2", None, [], {"a1": "eng"}) is False
+        assert tracks.mkvpropedit_task(file_id, "2", None, [], {"a1": "eng"}) is False
 
         retries = [
             job
@@ -367,7 +363,7 @@ def test_mkvpropedit_transient_error_defers_and_releases_lock(app, monkeypatch):
 
         assert [job.id for job in retries] == [
             requeue_id(
-                "app.videos.mkvpropedit_task",
+                "app.tracks.mkvpropedit_task",
                 file_id,
                 {"transient_retries": 1},
                 tag=arguments_tag((file_id, "2", None, [], {"a1": "eng"})),

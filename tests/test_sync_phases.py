@@ -336,7 +336,7 @@ def test_a_volume_that_drops_in_the_file_pass_stops_the_restores(app, monkeypatc
     (retry,) = [
         job
         for job in scheduled_jobs(app.maintenance_queue)
-        if job.func_name == "app.videos.sync_aws_s3_storage_task"
+        if job.func_name == "app.aws_storage.sync_aws_s3_storage_task"
     ]
     assert retry.kwargs == {"volume_drops": 1}
 

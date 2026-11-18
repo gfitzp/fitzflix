@@ -112,7 +112,7 @@ def _remux_away(app, path, keep_audio, keep_subtitles):
 def _scans(app, file_id):
     from tests.test_scheduling import requeue_id, scheduled_jobs
 
-    wanted = requeue_id("app.videos.track_metadata_scan_task", file_id)
+    wanted = requeue_id("app.tracks.track_metadata_scan_task", file_id)
     return [job for job in scheduled_jobs(app.file_queue) if job.id == wanted]
 
 

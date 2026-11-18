@@ -525,7 +525,7 @@ def test_the_sync_form_takes_a_passkey_in_place_of_the_password(app, monkeypatch
         follow_redirects=True,
     )
     assert "Incorrect password" not in response.get_data(as_text=True)
-    assert calls == ["app.videos.sync_aws_s3_storage_task"]
+    assert calls == ["app.aws_storage.sync_aws_s3_storage_task"]
 
 
 def test_each_archived_restore_form_takes_a_passkey(app, monkeypatch):
@@ -710,12 +710,12 @@ def test_a_replayed_cookie_does_not_repeat_a_confirmation(app, admin_passkey):
     cookie = client.get_cookie("session").value
     answer = authenticator.sign(options)
     _sync_post(client, token, answer)
-    assert calls == ["app.videos.sync_aws_s3_storage_task"]
+    assert calls == ["app.aws_storage.sync_aws_s3_storage_task"]
 
     client.set_cookie("session", cookie, domain="localhost")
     response = _sync_post(client, token, answer)
     assert "The passkey request expired." in response.get_data(as_text=True)
-    assert calls == ["app.videos.sync_aws_s3_storage_task"]
+    assert calls == ["app.aws_storage.sync_aws_s3_storage_task"]
 
 
 def test_a_confirmation_for_one_form_fails_on_another(app, admin_passkey):

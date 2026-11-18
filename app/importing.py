@@ -1,4 +1,4 @@
-"""The import pipeline (the strangler split from app.videos).
+"""The import pipeline.
 
 This is the chain that a file follows from the import directory to the
 library. evaluate_filename parses and prices the name.
@@ -9,12 +9,9 @@ between them (app.sdr_conversion). manual_import_task is the hourly
 sweep. The rejects door, the language functions, and the
 filename sanitizers are also here.
 
-app.videos re-exports each job of this module that the stored rq job
-strings name as app.videos.X ("app.videos.localization_task"). Thus,
-those strings continue to resolve. A later job of this module goes to
-the queue under its app.importing name. Each other name is imported
-from this module. The shared lock, retry, and
-copy functions stay in app.videos. This module imports them lazily
+Each job of this module goes to the queue under its app.importing
+name, for example "app.importing.localization_task". The shared lock,
+retry, and copy functions are in app.videos. This module imports them
 inside functions. This module imports the track and S3 layers at its
 top. They import this module only inside functions.
 """
@@ -175,13 +172,13 @@ return 0
 ADOPT_EPISODE_TASK = "app.sonarr_push.adopt_episode_task"
 
 LATER_STAGES = {
-    "app.videos.convert_localized_file": "transcode_queue",
-    "app.videos.move_localized_file": "handoff_queue",
-    "app.videos.finalize_localization": "sql_queue",
+    "app.sdr_conversion.convert_localized_file": "transcode_queue",
+    "app.importing.move_localized_file": "handoff_queue",
+    "app.importing.finalize_localization": "sql_queue",
 }
 
 PIPELINE_TASKS = {
-    "app.videos.localization_task": "import_queue",
+    "app.importing.localization_task": "import_queue",
     ADOPT_EPISODE_TASK: "request_queue",
     **LATER_STAGES,
 }
@@ -224,7 +221,7 @@ def localization_pending(path):
 
     return any(
         _same_path(source, path)
-        for _, source in pipeline_jobs({"app.videos.localization_task"})
+        for _, source in pipeline_jobs({"app.importing.localization_task"})
     )
 
 
@@ -349,7 +346,7 @@ def enqueue_localization(path, at_front=False, quiet=False):
     else:
         delete_job(old)
     return enqueue_task(
-        "app.videos.localization_task",
+        "app.importing.localization_task",
         path,
         description=f"'{basename}'",
         at_front=at_front,
@@ -814,7 +811,7 @@ class _LocalizationRun:
 
         handoff(
             requeue,
-            "app.videos.localization_task",
+            "app.importing.localization_task",
             key=self.source_path,
             delay=delay,
             reason=reason,
@@ -1179,7 +1176,7 @@ def _take_title_lock(file_details, run):
         file_identifier,
         current_app.config["LOCALIZATION_TASK_TIMEOUT"] * 1000,
         current_app.import_queue,
-        "app.videos.localization_task",
+        "app.importing.localization_task",
         minutes=(45, 75),
         timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
         description=f"'{run.basename}'",
@@ -1785,7 +1782,7 @@ def _hand_off(run, work_path, file_details, hidden_output_file, staged, conversi
 
         if conversion:
             enqueue_task(
-                "app.videos.convert_localized_file",
+                "app.sdr_conversion.convert_localized_file",
                 source_path,
                 file_details,
                 lock,
@@ -1796,7 +1793,7 @@ def _hand_off(run, work_path, file_details, hidden_output_file, staged, conversi
             )
         else:
             enqueue_task(
-                "app.videos.move_localized_file",
+                "app.importing.move_localized_file",
                 source_path,
                 file_details,
                 lock,
@@ -2225,7 +2222,7 @@ def move_localized_file(
         def retry(delay, reason, level="warning", **changes):
             handoff(
                 requeue,
-                "app.videos.move_localized_file",
+                "app.importing.move_localized_file",
                 key=source_path,
                 delay=delay,
                 reason=reason,
@@ -2239,7 +2236,7 @@ def move_localized_file(
         def defer():
             handoff(
                 defer_for_title_lock,
-                "app.videos.move_localized_file",
+                "app.importing.move_localized_file",
                 move_args,
                 counters,
                 source_path,
@@ -2413,7 +2410,7 @@ def move_localized_file(
 
             handoff(
                 enqueue_task,
-                "app.videos.finalize_localization",
+                "app.importing.finalize_localization",
                 source_path,
                 file_details,
                 lock,
@@ -2605,7 +2602,7 @@ def finalize_localization(
             if not handoff(_hold_title_lock, lock, basename):
                 handoff(
                     defer_for_title_lock,
-                    "app.videos.finalize_localization",
+                    "app.importing.finalize_localization",
                     (
                         file_path,
                         file_details,
@@ -2628,7 +2625,7 @@ def finalize_localization(
             if dead:
                 handoff(
                     requeue,
-                    "app.videos.finalize_localization",
+                    "app.importing.finalize_localization",
                     key=file_path,
                     delay=timedelta(minutes=5),
                     reason=f"Volumes unavailable ({', '.join(dead)}) for the cataloging",
@@ -2653,7 +2650,7 @@ def finalize_localization(
                 if verdict == "wait" and sonarr_waits < MAX_SONARR_WAITS:
                     handoff(
                         requeue,
-                        "app.videos.finalize_localization",
+                        "app.importing.finalize_localization",
                         key=file_path,
                         delay=SONARR_WAIT,
                         reason="waits for Sonarr, because a Sonarr rename can "
@@ -2856,7 +2853,7 @@ def finalize_localization(
                 output_file,
                 "transcoded archive",
                 lambda: enqueue_task(
-                    "app.videos.upload_task",
+                    "app.aws_storage.upload_task",
                     file.id,
                     description=f"'{file.basename}'",
                 ),
@@ -3386,7 +3383,7 @@ def _place_file(
 
         handoff(
             enqueue_task,
-            "app.videos.move_localized_file",
+            "app.importing.move_localized_file",
             file_path,
             file_details,
             lock,
@@ -3421,7 +3418,7 @@ def _place_file(
 
         handoff(
             requeue,
-            "app.videos.move_localized_file",
+            "app.importing.move_localized_file",
             key=file_path,
             delay=timedelta(minutes=1),
             reason=(
@@ -4178,7 +4175,7 @@ def _delete_replaced_archive(worse_key):
     # then writes a marker at a key that never existed (#588).
 
     enqueue_task(
-        "app.videos.aws_delete",
+        "app.aws_storage.aws_delete",
         worse_key,
         only_if_present=True,
         only_if_unclaimed=True,
@@ -4241,7 +4238,7 @@ def _import_changed_source(file_path):
         return
     try:
         requeue(
-            "app.videos.localization_task",
+            "app.importing.localization_task",
             key=file_path,
             delay=CHANGED_SOURCE_DELAY,
             reason="An other program changed the file during its import",
@@ -4283,7 +4280,7 @@ def _enqueue_tmdb_enrichment(file, file_details):
     tv_series = file.tv_series
     if file.movie_id and movie.tmdb_id == None and not movie.tmdb_ignored:
         enqueue_task(
-            "app.videos.refresh_tmdb_info",
+            "app.tmdb_refresh.refresh_tmdb_info",
             "Movies",
             movie.id,
             file_details.get("tmdb_id"),
@@ -4292,7 +4289,7 @@ def _enqueue_tmdb_enrichment(file, file_details):
         )
     elif file.series_id and tv_series.tmdb_id == None and not tv_series.tmdb_ignored:
         enqueue_task(
-            "app.videos.refresh_tmdb_info",
+            "app.tmdb_refresh.refresh_tmdb_info",
             "TV Shows",
             tv_series.id,
             file_details.get("tmdb_id"),
@@ -4442,7 +4439,7 @@ def _retry_failed_in_place_imports():
     for job in Job.fetch_many(
         FailedJobRegistry(queue=queue).get_job_ids(), connection=redis
     ):
-        if job is None or job.func_name != "app.videos.localization_task":
+        if job is None or job.func_name != "app.importing.localization_task":
             continue
         path = job.args[0] if job.args else job.kwargs.get("file_path")
         if not path or os.path.abspath(os.path.dirname(path)) == import_dir:

@@ -40,7 +40,7 @@ def test_enqueue_skips_a_file_with_a_scheduled_retry(app, tmp_path):
     with app.app_context():
         retry = app.import_queue.enqueue_in(
             timedelta(minutes=5),
-            "app.videos.localization_task",
+            "app.importing.localization_task",
             args=(str(tmp_path / NAME),),
             job_id="any-retry-id",
         )
@@ -125,9 +125,9 @@ def test_enqueue_skips_a_source_that_a_later_stage_holds(app, tmp_path):
     details = {"basename": NAME}
     with app.app_context():
         for queue, func in (
-            (app.transcode_queue, "app.videos.convert_localized_file"),
-            (app.handoff_queue, "app.videos.move_localized_file"),
-            (app.sql_queue, "app.videos.finalize_localization"),
+            (app.transcode_queue, "app.sdr_conversion.convert_localized_file"),
+            (app.handoff_queue, "app.importing.move_localized_file"),
+            (app.sql_queue, "app.importing.finalize_localization"),
         ):
             job = queue.enqueue(func, args=(path, details, None, "/staging/x"))
             assert enqueue_localization(path) is None
@@ -137,7 +137,7 @@ def test_enqueue_skips_a_source_that_a_later_stage_holds(app, tmp_path):
         # A retry that waits in the scheduled registry holds the source too.
         retry = app.handoff_queue.enqueue_in(
             timedelta(minutes=5),
-            "app.videos.move_localized_file",
+            "app.importing.move_localized_file",
             path,
             details,
             None,
@@ -148,7 +148,8 @@ def test_enqueue_skips_a_source_that_a_later_stage_holds(app, tmp_path):
 
         # Another file is not held.
         app.transcode_queue.enqueue(
-            "app.videos.convert_localized_file", args=(other, details, None, "/x")
+            "app.sdr_conversion.convert_localized_file",
+            args=(other, details, None, "/x"),
         )
         assert enqueue_localization(path) is not None
 
@@ -205,7 +206,7 @@ def test_a_later_stage_in_the_dequeue_gap_holds_its_source(app, tmp_path):
     path = str(tmp_path / NAME)
     with app.app_context():
         job = app.handoff_queue.enqueue(
-            "app.videos.move_localized_file",
+            "app.importing.move_localized_file",
             args=(path, {"basename": NAME}, None, "/staging/x"),
         )
         app.redis.lrem(app.handoff_queue.key, 0, job.id)

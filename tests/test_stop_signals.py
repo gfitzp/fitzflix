@@ -100,6 +100,7 @@ def test_a_second_sigterm_during_the_library_copy_cleans_up_and_goes_up(
     of them must run (#731)."""
 
     from app import videos
+    from app import importing
 
     hidden = tmp_path / ".Copied (2001) - [DVD].mkv"
     hidden.write_bytes(b"localized")
@@ -116,7 +117,7 @@ def test_a_second_sigterm_during_the_library_copy_cleans_up_and_goes_up(
     with app.app_context():
         lock = app.lock_manager.lock('{"title": "Copied"}', 60000)
         with pytest.raises(SystemExit):
-            videos.move_localized_file(
+            importing.move_localized_file(
                 str(source),
                 {
                     "basename": "Copied (2001) - [DVD].mkv",

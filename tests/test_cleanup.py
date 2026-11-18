@@ -561,7 +561,7 @@ def test_cleanup_keeps_the_input_of_a_waiting_conversion(app, monkeypatch):
     stray = plant(os.path.join(staging, ".Stray (2020) - [DVD].mkv"), 9)
     moving = plant(os.path.join(staging, ".Deferred (2020) - [DVD].mkv"), 9)
     app.transcode_queue.enqueue(
-        "app.videos.convert_localized_file",
+        "app.sdr_conversion.convert_localized_file",
         "/import/Waiting (2020) - [Remux-2160p].mkv",
         {},
         None,
@@ -570,7 +570,7 @@ def test_cleanup_keeps_the_input_of_a_waiting_conversion(app, monkeypatch):
     )
     app.handoff_queue.enqueue_in(
         timedelta(minutes=30),
-        "app.videos.move_localized_file",
+        "app.importing.move_localized_file",
         "/import/Deferred (2020) - [DVD].mkv",
         {},
         None,
