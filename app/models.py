@@ -111,6 +111,7 @@ from app.tmdb_apply import (  # noqa: E402
     TMDBMixin,
     _movie_certifications,
 )
+from app import videos
 
 
 @functools.lru_cache(maxsize=1)
@@ -1197,14 +1198,12 @@ class File(db.Model):
         before they change a record. This check is for a share that
         goes away after that."""
 
-        from app.videos import _dead_volumes
-
         file_to_delete = os.path.join(current_app.config["LIBRARY_DIR"], file_path)
         try:
             os.remove(file_to_delete)
 
         except FileNotFoundError:
-            dead = _dead_volumes([file_to_delete])
+            dead = videos._dead_volumes([file_to_delete])
             if dead:
                 current_app.logger.warning(
                     f"Could not delete the local file '{file_to_delete}': the "

@@ -8,8 +8,7 @@ the untouched-key handoff guard) are here too.
 
 Each job of this module goes to the queue under its app.aws_storage
 name, for example "app.aws_storage.upload_task". The shared lock and
-copy functions are in app.videos. This module imports them inside
-functions.
+copy functions are in app.videos.
 """
 
 import csv
@@ -60,6 +59,7 @@ from app.queues import roster_queues
 from app.settings import get_setting
 from app.file_ranking import tv_best_holder_ids, ranked_movie_files
 from app.models import ArchivedOriginal, File, RefQuality
+from app import videos
 
 EIGHT_MEGABYTES = 8388608
 
@@ -534,9 +534,7 @@ def _sync_deferred(job, volume_drops=0):
     # The sync would then request a paid restore of each, and the direct
     # restores would overwrite the files after the remount.
 
-    from app.videos import _dead_volumes
-
-    dead = _dead_volumes(
+    dead = videos._dead_volumes(
         [current_app.config["MOVIE_LIBRARY"], current_app.config["TV_LIBRARY"]]
     )
     if dead:
@@ -621,10 +619,8 @@ def _check_library_volumes(devices_before):
     the root a new device id. In both cases, an absent file is not
     evidence. The sync must not restore it or report it as orphaned."""
 
-    from app.videos import _dead_volumes
-
     config = current_app.config
-    dead = _dead_volumes([config["MOVIE_LIBRARY"], config["TV_LIBRARY"]])
+    dead = videos._dead_volumes([config["MOVIE_LIBRARY"], config["TV_LIBRARY"]])
     if dead:
         reason = f"{', '.join(dead)} not mounted"
     elif _library_devices() != devices_before:
@@ -1531,11 +1527,6 @@ def _download_task(
     to booked. A give-up that leaves the SQS message returns
     DOWNLOAD_GAVE_UP (#658)."""
 
-    # The retry constants still live in app.videos. Import them lazily.
-    # Thus, the module import direction stays videos to aws_storage.
-
-    from app.videos import MAX_TRANSIENT_RETRIES, TRANSIENT_COPY_ERRNOS, _dead_volumes
-
     with app.app_context():
         job = get_current_job()
         file = db.session.get(File, file_id) if file_id is not None else None
@@ -1592,7 +1583,7 @@ def _download_task(
             paths = [current_app.config["IMPORT_DIR"]]
             if place_at:
                 paths.append(os.path.dirname(place_at))
-            return _dead_volumes(paths)
+            return videos._dead_volumes(paths)
 
         def wait_for_volumes(dead, reason=None):
             """Book the download again after 5 minutes, or give up.
@@ -1710,7 +1701,7 @@ def _download_task(
             held.append(lock)
             fresh = fresh_row()
             target = os.path.join(current_app.config["LIBRARY_DIR"], fresh.file_path)
-            dead = _dead_volumes(
+            dead = videos._dead_volumes(
                 [current_app.config["IMPORT_DIR"], os.path.dirname(target)]
             )
             if dead:
@@ -1774,8 +1765,8 @@ def _download_task(
 
         except OSError as e:
             if (
-                e.errno in TRANSIENT_COPY_ERRNOS
-                and transient_retries < MAX_TRANSIENT_RETRIES
+                e.errno in videos.TRANSIENT_COPY_ERRNOS
+                and transient_retries < videos.MAX_TRANSIENT_RETRIES
             ):
                 # The import volume had a fault during the download or the
                 # rename. The S3 object and the SQS message are not affected.
@@ -1794,7 +1785,7 @@ def _download_task(
                     delay=timedelta(minutes=5),
                     reason=(
                         f"Download failed with a transient I/O error ({e}) "
-                        f"(attempt {transient_retries + 1} of {MAX_TRANSIENT_RETRIES})"
+                        f"(attempt {transient_retries + 1} of {videos.MAX_TRANSIENT_RETRIES})"
                     ),
                     counters=counters,
                     args=(key, basename, sqs_receipt_handle),
@@ -2046,7 +2037,6 @@ def upload_task(file_id):
     the job hash while that hash exists."""
 
     from app.pipeline import clear_job_skipped, mark_job_skipped
-    from app.videos import acquire_lock_or_defer, lock_wait_job_id
 
     clear_job_skipped()
     with app.app_context():
@@ -2058,7 +2048,7 @@ def upload_task(file_id):
             return False
         config = current_app.config
         description = f"'{file.basename}'"
-        lock = acquire_lock_or_defer(
+        lock = videos.acquire_lock_or_defer(
             file.file_identifier(),
             config["UPLOAD_TASK_TIMEOUT"] * 1000,
             current_app.file_queue,
@@ -2078,7 +2068,7 @@ def upload_task(file_id):
             # itself.
 
             job = get_current_job()
-            wait_id = lock_wait_job_id(
+            wait_id = videos.lock_wait_job_id(
                 "app.aws_storage.upload_task", description, (file_id,), key=int(file_id)
             )
             if job is not None and job.id != wait_id:
@@ -2728,8 +2718,6 @@ def move_archive_to_modified_task(file_id):
     the file during the upload. Return True when the archive is in
     modified/."""
 
-    from app.videos import acquire_lock_or_defer
-
     with app.app_context():
         config = current_app.config
         file = db.session.get(File, int(file_id))
@@ -2738,7 +2726,7 @@ def move_archive_to_modified_task(file_id):
         if not _in_prefix(file.aws_key, config["AWS_UNTOUCHED_PREFIX"]):
             return _in_prefix(file.aws_key, config["AWS_MODIFIED_PREFIX"])
 
-        lock = acquire_lock_or_defer(
+        lock = videos.acquire_lock_or_defer(
             file.file_identifier(),
             config["UPLOAD_TASK_TIMEOUT"] * 1000,
             current_app.file_queue,
@@ -2981,8 +2969,6 @@ def move_archive_object(file_id, sqs_receipt_handle=None):
     is the restore notification that started the job. The job deletes it
     when the notification is handled."""
 
-    from app.videos import acquire_lock_or_defer
-
     with app.app_context():
         config = current_app.config
 
@@ -3015,7 +3001,7 @@ def move_archive_object(file_id, sqs_receipt_handle=None):
             )
             return True
 
-        lock = acquire_lock_or_defer(
+        lock = videos.acquire_lock_or_defer(
             file.file_identifier(),
             config["UPLOAD_TASK_TIMEOUT"] * 1000,
             current_app.file_queue,
@@ -3138,12 +3124,10 @@ def _archive_lost_upload(file, source, column):
     the move waits, because the file can come back (follow-up #455).
     Return False otherwise."""
 
-    from app.videos import _dead_volumes
-
     if column != "aws_key" or not is_pending_archive(source):
         return False
     path = os.path.join(current_app.config["LIBRARY_DIR"], file.file_path)
-    if _dead_volumes([path]):
+    if videos._dead_volumes([path]):
         return LOST_UPLOAD_WAIT
     if file.converted_from_quality:
         mark_archive_lost(file, source)
@@ -3920,7 +3904,6 @@ def place_in_library(downloaded, library_path, expected_size, name):
     record stay."""
 
     from app.plex_library import enqueue_plex_analyze
-    from app.videos import copy_with_progress
 
     size = os.path.getsize(downloaded)
     if expected_size is not None and size != expected_size:
@@ -3932,7 +3915,9 @@ def place_in_library(downloaded, library_path, expected_size, name):
     os.makedirs(directory, exist_ok=True)
     hidden = naming.hidden(library_path)
     try:
-        copy_with_progress(downloaded, hidden, None, name, "Moving into the library")
+        videos.copy_with_progress(
+            downloaded, hidden, None, name, "Moving into the library"
+        )
         os.replace(hidden, library_path)
     except BaseException:
         if os.path.exists(hidden):
@@ -4074,11 +4059,6 @@ def aws_download(
     propagates. The caller decides about the SQS message. If it returns
     a path, the placement goes there, not to place_at (#563).
     """
-
-    # The retry constants still live in app.videos. Import them lazily.
-    # Thus, the module import direction stays videos to aws_storage.
-
-    from app.videos import TRANSIENT_COPY_ERRNOS
 
     retry = MAX_DOWNLOAD_RETRIES
 
@@ -4252,7 +4232,7 @@ def aws_download(
             retry, last_fault = _spend_download_retry(retry, basename)
 
         except OSError as e:
-            if e.errno in TRANSIENT_COPY_ERRNOS:
+            if e.errno in videos.TRANSIENT_COPY_ERRNOS:
                 # A dead import volume fails immediately. Thus, the whole
                 # in-place retry budget would be wasted on it. Delete the
                 # partial download. Let the caller defer until the mount
@@ -4431,8 +4411,6 @@ def aws_upload(
 ):
     """Search for a file in AWS S3. Upload it if it is missing or different."""
 
-    from app.videos import TRANSIENT_COPY_ERRNOS
-
     if not os.path.isfile(file_path):
         current_app.logger.error(
             f"'{file_path}' can't be uploaded to AWS since it's not a file!"
@@ -4548,7 +4526,7 @@ def aws_upload(
         # stale for the S3 sync.
 
         except OSError as e:
-            if e.errno in TRANSIENT_COPY_ERRNOS:
+            if e.errno in videos.TRANSIENT_COPY_ERRNOS:
                 current_app.logger.error(
                     f"'{file_path}' The upload failed on a transient "
                     f"filesystem error ({e.strerror}). The upload does not "

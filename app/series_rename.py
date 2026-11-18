@@ -49,6 +49,7 @@ from app.pipeline import migrate_renamed_file
 from app.plex_rename import remember_rename
 from app import db, get_app, makedirs_on_mounted_volume, safe_job_id
 from app.models import TVSeries
+from app import videos
 
 app = LocalProxy(get_app)
 
@@ -520,10 +521,8 @@ def _tv_library_down():
     A dropped share hides each file of each series. Then a file with
     neither its old nor its new path reads as an archive-only record."""
 
-    from app.videos import _dead_volumes
-
     tv_library = current_app.config["TV_LIBRARY"]
-    return not os.path.isdir(tv_library) or bool(_dead_volumes([tv_library]))
+    return not os.path.isdir(tv_library) or bool(videos._dead_volumes([tv_library]))
 
 
 def _move_series(series, new_title, waits=None):
@@ -554,7 +553,6 @@ def _move_series(series, new_title, waits=None):
     new_prefix = f"{new_title} - "
 
     from app.importing import reconstruct_filename, series_import_in_flight
-    from app.videos import _rename_with_retries
 
     # Plan each file first. If 1 file does not carry the series title,
     # nothing changes. A partial rename gave the series a title and a
@@ -680,7 +678,7 @@ def _move_series(series, new_title, waits=None):
                 return False
             try:
                 makedirs_on_mounted_volume(os.path.dirname(dst))
-                _rename_with_retries(source, dst)
+                videos._rename_with_retries(source, dst)
             except OSError as error:
                 # The share dropped inside the loop (follow-up #551). The
                 # rows renamed so far are committed. The retry resumes.

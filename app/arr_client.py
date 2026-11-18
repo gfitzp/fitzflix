@@ -38,6 +38,7 @@ import requests
 from flask import current_app
 
 from app.cache import cache_json
+from app import videos
 
 # The connect and read timeouts of an arr call, in seconds. A host that
 # is down fails at the connect. Thus, it costs 5 seconds, not 30. The
@@ -324,10 +325,8 @@ def restore_download_record(
     books itself again. prepare runs first in each try. tries is the
     number of this try."""
 
-    from app.videos import _dead_volumes
-
     if not os.path.exists(library_path):
-        if not _dead_volumes([library_path]):
+        if not videos._dead_volumes([library_path]):
             current_app.logger.info(
                 f"'{library_path}' is not in the library. Its {arr.name} record "
                 f"gets no release data"

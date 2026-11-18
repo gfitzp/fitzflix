@@ -11,9 +11,9 @@ filename sanitizers are also here.
 
 Each job of this module goes to the queue under its app.importing
 name, for example "app.importing.localization_task". The shared lock,
-retry, and copy functions are in app.videos. This module imports them
-inside functions. This module imports the track and S3 layers at its
-top. They import this module only inside functions.
+retry, and copy functions are in app.videos. This module imports the
+track and S3 layers at its top. They import this module only inside
+functions.
 """
 
 import errno
@@ -127,6 +127,7 @@ from app.tracks import (
     supplement_lossless_tracks,
     watch_mkvmerge_progress,
 )
+from app import videos
 
 # An import waits for free space on the library volume. It is never
 # rejected for space (#262). The check asks for the size of the source
@@ -666,8 +667,6 @@ def convert_to_matroska(file_path, output_file, job, name):
     returns False. Then the caller can import the file as it is.
     """
 
-    from app.videos import wait_for_subprocess
-
     current_app.logger.info(f"'{name}' Converting to a Matroska container")
     process = subprocess.Popen(
         [current_app.config["MKVMERGE_BIN"], "-o", output_file, file_path],
@@ -678,7 +677,7 @@ def convert_to_matroska(file_path, output_file, job, name):
     )
     watch_mkvmerge_progress(process, job, name, "Converting to Matroska")
     try:
-        wait_for_subprocess(process, ok_returncodes=(0, 1))
+        videos.wait_for_subprocess(process, ok_returncodes=(0, 1))
     except subprocess.CalledProcessError:
         current_app.logger.warning(
             f"'{name}' mkvmerge could not convert this file to Matroska"
@@ -976,15 +975,13 @@ def _admission_gate(file_path, run):
     file, a file that grows, or a file that is not complete yet). "stop" means that
     the task ends with nothing to do, or after a reject."""
 
-    from app.videos import _dead_volumes
-
     basename = run.basename
     completeness_retries = run.counters["completeness_retries"]
 
     # Do not start if a necessary volume is dead. A mount that fails
     # during the task strands partial files. Thus, defer to a retry.
 
-    dead = _dead_volumes(
+    dead = videos._dead_volumes(
         [
             os.path.dirname(file_path),
             current_app.config["MOVIE_LIBRARY"],
@@ -1160,8 +1157,6 @@ def _take_title_lock(file_details, run):
     returns to the localization queue. The queue tries it again when the
     lock becomes available."""
 
-    from app.videos import acquire_lock_or_defer
-
     file_identifier = lock_key_for_details(file_details)
     current_app.logger.debug(f"'{run.basename}' Lock identifier: {file_identifier}")
 
@@ -1172,7 +1167,7 @@ def _take_title_lock(file_details, run):
     # (#559). The source is good, so the handler keeps it.
 
     lock = handoff(
-        acquire_lock_or_defer,
+        videos.acquire_lock_or_defer,
         file_identifier,
         current_app.config["LOCALIZATION_TASK_TIMEOUT"] * 1000,
         current_app.import_queue,
@@ -1298,12 +1293,6 @@ def _stage_source(file_path, run):
     title lock. Only a file that cannot fit on the staging volume at all
     is processed on its source volume. Then staged is False."""
 
-    from app.videos import (
-        MAX_TRANSIENT_RETRIES,
-        TRANSIENT_COPY_ERRNOS,
-        copy_with_progress,
-    )
-
     basename = run.basename
     space_waits = run.counters["space_waits"]
     transient_retries = run.counters["transient_retries"]
@@ -1349,14 +1338,14 @@ def _stage_source(file_path, run):
     run.strays.append(staged_path)
     record_task_stage("Copying to staging", "started")
     try:
-        copy_with_progress(
+        videos.copy_with_progress(
             file_path, staged_path, run.job, basename, "Copying to local staging"
         )
     except OSError as e:
         record_task_stage("Copying to staging", "failed")
         if (
-            e.errno not in TRANSIENT_COPY_ERRNOS
-            or transient_retries >= MAX_TRANSIENT_RETRIES
+            e.errno not in videos.TRANSIENT_COPY_ERRNOS
+            or transient_retries >= videos.MAX_TRANSIENT_RETRIES
         ):
             raise
 
@@ -1372,7 +1361,7 @@ def _stage_source(file_path, run):
         run.retry(
             timedelta(minutes=5),
             f"Staging copy failed with a transient I/O error ({e}) "
-            f"(attempt {transient_retries + 1} of {MAX_TRANSIENT_RETRIES})",
+            f"(attempt {transient_retries + 1} of {videos.MAX_TRANSIENT_RETRIES})",
             transient_retries=transient_retries + 1,
         )
         return None
@@ -1501,8 +1490,6 @@ def _localize(source_path, work_path, file_details, staged, job, strays):
 def _localize_matroska(work_path, hidden_output_file, output_directory, basename, job):
     """Write the localized Matroska output of work_path to hidden_output_file."""
 
-    from app.videos import wait_for_subprocess
-
     current_app.logger.info(f"'{basename}' Localizing as a Matroska file")
 
     # Give each lossless track that is not FLAC or PCM a FLAC twin
@@ -1539,7 +1526,7 @@ def _localize_matroska(work_path, hidden_output_file, output_directory, basename
     watch_mkvmerge_progress(
         statistics_tags_process, job, basename, "Adding track statistics tags"
     )
-    wait_for_subprocess(statistics_tags_process, ok_returncodes=(0, 1))
+    videos.wait_for_subprocess(statistics_tags_process, ok_returncodes=(0, 1))
 
     # Parse the file again, because it now has the track statistics tags.
 
@@ -1649,7 +1636,7 @@ def _localize_matroska(work_path, hidden_output_file, output_directory, basename
         bufsize=1,
     )
     watch_mkvmerge_progress(mkvmerge_process, job, basename, "Localizing")
-    wait_for_subprocess(mkvmerge_process, ok_returncodes=(0, 1))
+    videos.wait_for_subprocess(mkvmerge_process, ok_returncodes=(0, 1))
 
 
 def build_localize_command(
@@ -1701,8 +1688,6 @@ def _copy_as_is(
 
     An MPEG-4 file first loses its metadata through AtomicParsley."""
 
-    from app.videos import wait_for_subprocess
-
     if container == "MPEG-4":
         current_app.logger.info(f"'{basename}' Removing MPEG-4 metadata")
         atomicparsley_process = subprocess.Popen(
@@ -1730,7 +1715,7 @@ def _copy_as_is(
             stop_process(atomicparsley_process)
             raise
 
-        wait_for_subprocess(atomicparsley_process)
+        videos.wait_for_subprocess(atomicparsley_process)
 
         current_app.logger.info(f"'{basename}' Removed MPEG-4 metadata")
 
@@ -2062,8 +2047,6 @@ def inspect_localized_file(file_path, container, job=None):
     details that finalize_localization needs.
     """
 
-    from app.videos import wait_for_subprocess
-
     name = os.path.basename(file_path)
 
     if container == "Matroska":
@@ -2114,7 +2097,7 @@ def inspect_localized_file(file_path, container, job=None):
                 stop_process(mkvpropedit_process)
                 raise
 
-            wait_for_subprocess(mkvpropedit_process, ok_returncodes=(0, 1))
+            videos.wait_for_subprocess(mkvpropedit_process, ok_returncodes=(0, 1))
 
         # The 2 spellings of a dual-code language are the same language
         # (#423).
@@ -2154,7 +2137,7 @@ def inspect_localized_file(file_path, container, job=None):
             for line in mkvpropedit_process.stdout.splitlines():
                 current_app.logger.info(f"'{name}' {line.rstrip()}")
 
-            wait_for_subprocess(mkvpropedit_process, ok_returncodes=(0, 1))
+            videos.wait_for_subprocess(mkvpropedit_process, ok_returncodes=(0, 1))
 
         # Remove the subtitle tracks that have 0 elements.
 
@@ -2193,14 +2176,6 @@ def move_localized_file(
     If another task holds the title lock, the copy waits (#339). Then
     neither this task nor finalize writes the files of the title.
     """
-
-    from app.videos import (
-        MAX_TRANSIENT_RETRIES,
-        TRANSIENT_COPY_ERRNOS,
-        _dead_volumes,
-        _rename_with_retries,
-        copy_with_progress,
-    )
 
     with app.app_context():
         basename = file_details.get("basename")
@@ -2278,7 +2253,7 @@ def move_localized_file(
             # Defer if a necessary volume is dead. The task keeps the title lock
             # for the retry.
 
-            dead = _dead_volumes(
+            dead = videos._dead_volumes(
                 [
                     output_directory,
                     os.path.dirname(hidden_output_file),
@@ -2351,7 +2326,7 @@ def move_localized_file(
                     os.stat(os.path.dirname(hidden_output_file)).st_dev
                     == os.stat(output_directory).st_dev
                 ):
-                    _rename_with_retries(hidden_output_file, destination_hidden)
+                    videos._rename_with_retries(hidden_output_file, destination_hidden)
 
                 else:
                     # Keep the output on staging. finalize_localization
@@ -2359,7 +2334,7 @@ def move_localized_file(
                     # loses the copy first, finalize copies it again from
                     # here.
 
-                    copy_with_progress(
+                    videos.copy_with_progress(
                         hidden_output_file, destination_hidden, job, basename
                     )
                     staged_output = hidden_output_file
@@ -2382,8 +2357,8 @@ def move_localized_file(
                     )
 
                 if (
-                    e.errno not in TRANSIENT_COPY_ERRNOS
-                    or transient_retries >= MAX_TRANSIENT_RETRIES
+                    e.errno not in videos.TRANSIENT_COPY_ERRNOS
+                    or transient_retries >= videos.MAX_TRANSIENT_RETRIES
                 ):
                     raise
 
@@ -2400,7 +2375,7 @@ def move_localized_file(
                 return retry(
                     timedelta(minutes=5),
                     f"Library copy failed with a transient I/O error ({e}) "
-                    f"(attempt {transient_retries + 1} of {MAX_TRANSIENT_RETRIES})",
+                    f"(attempt {transient_retries + 1} of {videos.MAX_TRANSIENT_RETRIES})",
                     transient_retries=transient_retries + 1,
                 )
 
@@ -2562,8 +2537,6 @@ def finalize_localization(
     writes no row and moves no file of the title until then.
     """
 
-    from app.videos import _dead_volumes
-
     # The archive move of the import takes the title lock. Thus, it goes
     # to the queue after the release of the lock, as the upload does
     # (#664).
@@ -2621,7 +2594,7 @@ def finalize_localization(
             # records. Then the task keeps the title lock for the retry and
             # does not release it.
 
-            dead = _dead_volumes([output_directory, os.path.dirname(file_path)])
+            dead = videos._dead_volumes([output_directory, os.path.dirname(file_path)])
             if dead:
                 handoff(
                     requeue,
@@ -3364,8 +3337,6 @@ def _place_file(
     copy goes back to the file-operation queue. That is "handed_off".
     Long file work never runs on the sql queue."""
 
-    from app.videos import _rename_with_retries
-
     makedirs_on_mounted_volume(output_directory)
     if (
         os.stat(os.path.dirname(hidden_output_file)).st_dev
@@ -3401,7 +3372,7 @@ def _place_file(
 
     replaced_existing = os.path.exists(output_file)
     try:
-        _rename_with_retries(hidden_output_file, output_file)
+        videos._rename_with_retries(hidden_output_file, output_file)
     except OSError:
         if not _copy_vanished(hidden_output_file, staged_output, vanished_retries):
             raise

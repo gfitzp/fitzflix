@@ -157,6 +157,7 @@ from app.aws_storage import untouched_key_still_claimed
 from app.criterion_catalog import criterion_release_lookups, stored_criterion_releases
 from app.diary import clear_watchlist
 from app.tracks import language_names, file_language_choices, resolve_language_code
+from app import videos
 
 # The crew jobs that count as key roles for search and filmographies.
 # They are the same roles that the taste engine scores, labeled as
@@ -2854,10 +2855,8 @@ def _delete_refused_for_volumes(file_paths):
     "no such file", and the file is still on the NAS. The records and
     the archives went, and the weekly sync imported each file again."""
 
-    from app.videos import _dead_volumes
-
     library = current_app.config["LIBRARY_DIR"]
-    dead = _dead_volumes([os.path.join(library, path) for path in file_paths])
+    dead = videos._dead_volumes([os.path.join(library, path) for path in file_paths])
     if not dead:
         return None
     return (

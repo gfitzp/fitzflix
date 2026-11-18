@@ -54,6 +54,7 @@ from app import db, get_app, makedirs_on_mounted_volume
 from app.models import MOVIES
 from app.naming import hidden, retag_quality
 from app.email import notify_admin
+from app import videos
 
 app = LocalProxy(get_app)
 
@@ -541,8 +542,6 @@ def _run_encode(command, job, basename, lock, total_seconds):
     If another task took the title lock, the encode stops, and this
     raises TitleLockLost."""
 
-    from app.videos import wait_for_subprocess
-
     current_app.logger.info(f"'{basename}' {command}")
     process = subprocess.Popen(
         command,
@@ -559,7 +558,7 @@ def _run_encode(command, job, basename, lock, total_seconds):
         # an output that the cleanup unlinks (#424).
         stop_process(process)
         raise
-    wait_for_subprocess(process)
+    videos.wait_for_subprocess(process)
 
 
 def _watch_encode(process, job, basename, lock, total_seconds):
@@ -626,7 +625,6 @@ def convert_localized_file(
         set_staging_reservation,
     )
     from app.aws_storage import pending_archive_of
-    from app.videos import wait_for_subprocess
 
     with app.app_context():
         job = get_current_job()
@@ -699,7 +697,7 @@ def convert_localized_file(
                 # cleanup removes (#499).
                 stop_process(mux_process)
                 raise
-            wait_for_subprocess(mux_process, ok_returncodes=(0, 1))
+            videos.wait_for_subprocess(mux_process, ok_returncodes=(0, 1))
 
             # Make sure that the result is SDR, complete, and not larger
             # than the size of the plan.
@@ -1052,7 +1050,6 @@ def prune_held_imports():
     It also clears each decision that no job carries any more (#525)."""
 
     from app.models import HeldImport
-    from app.videos import _dead_volumes
 
     # A dropped volume makes each held file look gone. The prune then
     # deleted each row, and the files in held/ had no record when the
@@ -1061,7 +1058,7 @@ def prune_held_imports():
     # its file is not.
 
     held_dir = current_app.config["HELD_DIR"]
-    if _dead_volumes([held_dir]) or not os.path.isdir(held_dir):
+    if videos._dead_volumes([held_dir]) or not os.path.isdir(held_dir):
         current_app.logger.warning(
             f"'{held_dir}' is not available. The held imports stay as they are"
         )

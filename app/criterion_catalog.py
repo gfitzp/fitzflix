@@ -486,7 +486,7 @@ def create_criterion_catalog_records(criterion_collection, by_tmdb_id, by_title_
     function returns. Thus, the enqueued refreshes can see their rows.
     """
 
-    # The TMDB record functions stay in app.videos. The import is lazy.
+    # The TMDB record functions are in app.tmdb_refresh. The import is lazy.
     # Thus, the module import direction stays one-way.
 
     from app.tmdb_refresh import find_or_create_tmdb_movie

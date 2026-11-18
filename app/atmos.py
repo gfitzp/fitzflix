@@ -52,6 +52,7 @@ from app.tracks import (
     stop_process,
 )
 from app.plex_library import enqueue_plex_analyze
+from app import videos
 
 app = get_app()
 
@@ -339,8 +340,6 @@ def _run_step(command, job, basename, description, ok_returncodes=(0,)):
     percentage that the subprocess prints to the job card. One example
     is the "Progress: N%" lines of mkvextract."""
 
-    from app.videos import wait_for_subprocess
-
     current_app.logger.info(f"'{basename}' {description}: {command}")
     _set_stage(job, basename, description)
     process = subprocess.Popen(
@@ -369,7 +368,7 @@ def _run_step(command, job, basename, description, ok_returncodes=(0,)):
         # cleanup removes (#499).
         stop_process(process)
         raise
-    wait_for_subprocess(process, ok_returncodes=ok_returncodes)
+    videos.wait_for_subprocess(process, ok_returncodes=ok_returncodes)
 
 
 def _cleanup_s3_prefix(s3_client, bucket, prefix):
@@ -559,7 +558,6 @@ def atmos_supplement_task(file_id, staged_source=None):
 
     from app.aws_storage import refuse_while_restore_pending
     from app.tmdb_refresh import tmdb_refresh_pending
-    from app.videos import acquire_lock_or_defer, schedule_retry
 
     with app.app_context():
         file = db.session.get(File, int(file_id))
@@ -577,7 +575,7 @@ def atmos_supplement_task(file_id, staged_source=None):
         # is still on its way.
 
         if file.movie_id and tmdb_refresh_pending("Movies", file.movie_id):
-            schedule_retry(
+            videos.schedule_retry(
                 queue,
                 "app.atmos.atmos_supplement_task",
                 (1, 3),
@@ -593,7 +591,7 @@ def atmos_supplement_task(file_id, staged_source=None):
         # Serialize with the other tasks that rewrite the files or the
         # track records of this title.
 
-        lock = acquire_lock_or_defer(
+        lock = videos.acquire_lock_or_defer(
             file.file_identifier(),
             current_app.config["TRANSCODE_TASK_TIMEOUT"] * 1000,
             queue,
@@ -657,7 +655,7 @@ def atmos_supplement_task(file_id, staged_source=None):
             # More than 1 run can use staging now. Wait for space. Do not
             # give up on the twin.
 
-            schedule_retry(
+            videos.schedule_retry(
                 queue,
                 "app.atmos.atmos_supplement_task",
                 (15, 30),
@@ -698,7 +696,6 @@ def _atmos_prepare(file_id, phases, staged_source=None):
     """
 
     from app.tracks import replace_track_rows
-    from app.videos import copy_with_progress
     from app.aws_storage import aws_s3_client
     from app.tracks import get_audio_tracks_from_file, get_subtitle_tracks_from_file
 
@@ -782,7 +779,7 @@ def _atmos_prepare(file_id, phases, staged_source=None):
                 use_staged = False
         if not use_staged:
             phases.enter("Copying to staging")
-            copy_with_progress(
+            videos.copy_with_progress(
                 file_path, staging_source, job, basename, "Copying to local staging"
             )
 
@@ -1335,7 +1332,6 @@ def _remux_twins(state, phases, inserts, job):
     becomes True. A tool or I/O fault raises FinishInterrupted (#502). A
     failed verification raises RuntimeError."""
 
-    from app.videos import wait_for_subprocess
     from app.tracks import (
         get_audio_tracks_from_file,
         get_subtitle_tracks_from_file,
@@ -1404,7 +1400,7 @@ def _remux_twins(state, phases, inserts, job):
         watch_mkvmerge_progress(
             mkvmerge_process, job, basename, "Muxing E-AC-3 Atmos twin"
         )
-        wait_for_subprocess(mkvmerge_process, ok_returncodes=(0, 1))
+        videos.wait_for_subprocess(mkvmerge_process, ok_returncodes=(0, 1))
 
     # The first audio track gets the default flag. Each other track
     # has the flag cleared. This is the library convention. The
@@ -1476,7 +1472,6 @@ def _atmos_finish(state, phases):
         confirm_rewrite,
         replace_track_rows,
     )
-    from app.videos import copy_with_progress
     from app.aws_storage import aws_s3_client
     from app.tracks import (
         get_audio_tracks_from_file,
@@ -1558,7 +1553,7 @@ def _atmos_finish(state, phases):
                 # before the rename (#732).
 
                 refuse_changed_library_file(state.get("library"), file_path)
-                copy_with_progress(
+                videos.copy_with_progress(
                     final_staging,
                     hidden_output,
                     job,

@@ -9,8 +9,7 @@ the lossless-audio supplements.
 
 Each job of this module goes to the queue under its app.tracks name,
 for example "app.tracks.mkvmerge_task". The shared lock, subprocess,
-and copy code is in app.videos. The functions here import it inside
-functions.
+and copy code is in app.videos.
 """
 
 import errno
@@ -46,6 +45,7 @@ from app.naming import hidden
 from app.cache import cached_fetch
 from app.settings import get_setting
 from app.plex_library import enqueue_plex_analyze
+from app import videos
 
 # A staged remux holds the staged source and the output on the local
 # disk at the same time (#298).
@@ -69,8 +69,6 @@ def _on_volume_of(path, directory):
 def _run_mkvmerge(command, job, name, activity):
     """Run an mkvmerge command, show its progress, and raise if it fails."""
 
-    from app.videos import wait_for_subprocess
-
     current_app.logger.info(f"'{name}' Running mkvmerge: {command}")
     process = subprocess.Popen(
         command,
@@ -80,7 +78,7 @@ def _run_mkvmerge(command, job, name, activity):
         bufsize=1,
     )
     watch_mkvmerge_progress(process, job, name, activity)
-    wait_for_subprocess(process, ok_returncodes=(0, 1))
+    videos.wait_for_subprocess(process, ok_returncodes=(0, 1))
 
 
 class LibraryFileChanged(RuntimeError):
@@ -160,7 +158,6 @@ def remux_file(file_path, build_command, job, name, activity, before_replace=Non
     does not replace gets no stale flag."""
 
     from app.importing import release_staging_reservation, reserve_staging
-    from app.videos import copy_with_progress
 
     directory, basename = os.path.split(file_path)
     staging_dir = current_app.config["STAGING_DIR"]
@@ -231,7 +228,7 @@ def remux_file(file_path, build_command, job, name, activity, before_replace=Non
     staged_output = os.path.join(staging_dir, f".remux-{staged_name}")
     hidden_library = hidden(os.path.join(directory, basename))
     try:
-        copy_with_progress(
+        videos.copy_with_progress(
             file_path, staged_source, job, name, "Copying to local staging"
         )
         _run_mkvmerge(build_command(staged_source, staged_output), job, name, activity)
@@ -241,7 +238,7 @@ def remux_file(file_path, build_command, job, name, activity, before_replace=Non
         # before the rename (#741).
 
         refuse_changed_library_file(stamp, file_path)
-        copy_with_progress(
+        videos.copy_with_progress(
             staged_output, hidden_library, job, name, "Moving into the library"
         )
         refuse_changed_library_file(stamp, file_path)
@@ -1223,8 +1220,6 @@ def _locked_edit(
     the config setting of the lock TTL and of the job. kwargs go to the
     lock wait."""
 
-    from app.videos import acquire_lock_or_defer
-
     with app.app_context():
         file = db.session.get(File, int(file_id))
         if file is None:
@@ -1243,7 +1238,7 @@ def _locked_edit(
         # Serialize with the other tasks that rewrite the files or the
         # track records of this title.
 
-        lock = acquire_lock_or_defer(
+        lock = videos.acquire_lock_or_defer(
             file.file_identifier(),
             seconds * 1000,
             queue,
@@ -1307,11 +1302,6 @@ def mkvpropedit_task(
     None (or an empty mapping) changes no language.
     """
 
-    # The shared lock, retry, and copy code stays in app.videos. The import
-    # is lazy. Thus, the module import direction stays one-way
-
-    from app.videos import MAX_TRANSIENT_RETRIES, TRANSIENT_COPY_ERRNOS, arguments_tag
-
     edit_args = (
         file_id,
         default_audio_track,
@@ -1333,8 +1323,8 @@ def mkvpropedit_task(
 
         if not (
             isinstance(error, OSError)
-            and error.errno in TRANSIENT_COPY_ERRNOS
-            and transient_retries < MAX_TRANSIENT_RETRIES
+            and error.errno in videos.TRANSIENT_COPY_ERRNOS
+            and transient_retries < videos.MAX_TRANSIENT_RETRIES
         ):
             return False
         counters = {"transient_retries": transient_retries + 1}
@@ -1345,7 +1335,7 @@ def mkvpropedit_task(
             reason=(
                 f"MKV property edit failed with a transient I/O error "
                 f"({error}) (attempt {transient_retries + 1} of "
-                f"{MAX_TRANSIENT_RETRIES})"
+                f"{videos.MAX_TRANSIENT_RETRIES})"
             ),
             counters=counters,
             args=edit_args,
@@ -1354,7 +1344,7 @@ def mkvpropedit_task(
                 "app.tracks.mkvpropedit_task",
                 int(file_id),
                 counters,
-                tag=arguments_tag(edit_args),
+                tag=videos.arguments_tag(edit_args),
             ),
         )
         return True
@@ -1485,8 +1475,6 @@ def mkvpropedit_unlocked(
 
     A raise leaves the rescan to the caller (#614)."""
 
-    from app.videos import wait_for_subprocess
-
     with app.app_context():
         name = f"File {file_id}"
 
@@ -1565,7 +1553,7 @@ def mkvpropedit_unlocked(
                     stop_process(mkvpropedit_task)
                     raise
 
-                wait_for_subprocess(mkvpropedit_task, ok_returncodes=(0, 1))
+                videos.wait_for_subprocess(mkvpropedit_task, ok_returncodes=(0, 1))
 
                 # If the default audio track is not the first track, make a
                 # new file with the default audio track first. Then Plex
@@ -1659,14 +1647,12 @@ def mkvmerge_identify(file_path):
     mkvmerge -J reads only the headers. Thus, this is fast on a large
     file."""
 
-    from app.videos import wait_for_subprocess
-
     result = subprocess.run(
         [current_app.config["MKVMERGE_BIN"], "-J", file_path],
         capture_output=True,
         text=True,
     )
-    wait_for_subprocess(result, ok_returncodes=(0, 1))
+    videos.wait_for_subprocess(result, ok_returncodes=(0, 1))
     return json.loads(result.stdout).get("tracks") or []
 
 
@@ -2283,8 +2269,6 @@ def supplement_lossless_tracks(file_path):
     to repeat.
     """
 
-    from app.videos import wait_for_subprocess
-
     with app.app_context():
         temp_flac_file = None
         flac_track_process = None
@@ -2386,7 +2370,7 @@ def supplement_lossless_tracks(file_path):
                     job, basename, "Supplementing lossless tracks with FLAC", progress
                 )
 
-            wait_for_subprocess(flac_track_process)
+            videos.wait_for_subprocess(flac_track_process)
             copy_image_attachments(file_path, temp_flac_file)
 
             current_app.logger.info(f"'{basename}' Supplemented lossless tracks")
@@ -2449,7 +2433,6 @@ def _remux_audio_plan_unlocked(file_id, plan):
         reserve_staging,
         set_staging_reservation,
     )
-    from app.videos import copy_with_progress
 
     with app.app_context():
         job = get_current_job()
@@ -2496,7 +2479,7 @@ def _remux_audio_plan_unlocked(file_id, plan):
                 raise RuntimeError(f"'{basename}' not enough staging space")
 
             stamp = library_stamp(file_path)
-            copy_with_progress(
+            videos.copy_with_progress(
                 file_path, staging_source, job, basename, "Copying to local staging"
             )
 
@@ -2599,7 +2582,7 @@ def _remux_audio_plan_unlocked(file_id, plan):
             hidden_library = hidden(os.path.join(os.path.dirname(file_path), basename))
             try:
                 refuse_changed_library_file(stamp, file_path)
-                copy_with_progress(
+                videos.copy_with_progress(
                     final_staging,
                     hidden_library,
                     job,

@@ -58,6 +58,7 @@ from app.naming import (
     with_extension,
 )
 from app.title_keys import title_key
+from app import videos
 
 
 def library_name_details(file, file_details):
@@ -737,9 +738,7 @@ def _rename_movie_file(f, tmdb_id, probe=True):
     # that check. A row with no local copy on a live volume still gets
     # its new name.
 
-    from app.videos import _dead_volumes
-
-    if probe and _dead_volumes([new_directory, old_directory]):
+    if probe and videos._dead_volumes([new_directory, old_directory]):
         current_app.logger.warning(
             f"'{f.basename}' (file #{f.id}) not renamed to '{new_relative}': "
             f"the library volume does not answer"
@@ -1116,10 +1115,8 @@ def _apply_movie_refresh(
     # 1 volume probe for the apply, not 1 for each file while the title
     # locks are held (#575). The files of a movie share the library mount.
 
-    from app.videos import _dead_volumes
-
     volume_down = bool(files) and bool(
-        _dead_volumes(
+        videos._dead_volumes(
             [current_app.config["MOVIE_LIBRARY"]]
             + [
                 os.path.join(current_app.config["LIBRARY_DIR"], f.file_path)

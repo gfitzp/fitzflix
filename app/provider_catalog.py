@@ -199,7 +199,7 @@ def _process_pending(subscribed):
     number of records is capped. This function returns the number of
     records created."""
 
-    # The TMDB record code stays in app.videos. The import is lazy. Thus,
+    # The TMDB record code is in app.tmdb_refresh. The import is lazy. Thus,
     # the module import direction stays one-way
 
     from app.tmdb_refresh import find_or_create_tmdb_movie
