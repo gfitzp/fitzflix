@@ -843,6 +843,8 @@ The script `scripts/deploy` puts the code of the folder into service. Use it aft
 
 The idle check does not see a page request that is in progress. Do not deploy while a person changes or deletes files on the pages.
 
+The file [RUNBOOK.md](RUNBOOK.md) tells you what to do when a deploy or a task goes wrong.
+
 After a deploy, run the drill:
 
 ```

@@ -1,6 +1,6 @@
 # The map of the Fitzflix code
 
-This file tells you where each part of Fitzflix lives. Read it before you open the code. The README tells you how to install and how to use the application. The file `tests/README.md` tells you how the tests work.
+This file tells you where each part of Fitzflix lives. Read it before you open the code. The README tells you how to install and how to use the application. The file `tests/README.md` tells you how the tests work. The file `RUNBOOK.md` tells you what to do when the operation goes wrong.
 
 The application has approximately 100 Python modules. You do not need to know all of them. Most changes touch 1 subject, and each subject has its own folder. Find the subject in the tables below, then open only that folder.
 
@@ -256,4 +256,4 @@ venv/bin/python -m pytest -q -p no:cacheprovider
 ```
 
 3. Commit. The commit hooks format the code and check the comments. The README section "Code formatting" tells you about them.
-4. Deploy with `scripts/deploy`. The README section "Updating" tells you about this script.
+4. Deploy with `scripts/deploy`. The README section "Updating" tells you about this script. The file `RUNBOOK.md` tells you what to do when a deploy goes wrong.
