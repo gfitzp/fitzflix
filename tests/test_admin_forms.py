@@ -354,6 +354,11 @@ def _new_routes(movie_id, series_id):
             {"password": "wrong", "season_restore_submit": "Bulk restore"},
             f"/tv/{series_id}/1",
         ),
+        (
+            f"/tv/{series_id}/rename",
+            {"new_title": "", "rename_submit": "Rename Series"},
+            f"/tv/{series_id}",
+        ),
     ]
 
 
@@ -414,6 +419,7 @@ def test_the_admin_forms_post_to_their_routes(app, admin_client):
     assert tv_page.count(f'action="/tv/{series_id}/tmdb"') == 2
     assert f'action="/tv/{series_id}/restore"' in tv_page
     assert f'action="/tv/{series_id}/delete"' in tv_page
+    assert f'action="/tv/{series_id}/rename"' in tv_page
     assert 'action=""' not in tv_page
     season_page = admin_client.get(f"/tv/{series_id}/1").get_data(as_text=True)
     assert f'action="/tv/{series_id}/1/restore"' in season_page

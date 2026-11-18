@@ -265,6 +265,15 @@ def rename_timeout(series):
     return max(floor, RENAME_SECONDS_PER_FILE * series.files.count())
 
 
+def rename_pending(series_id):
+    """Return True if a rename of the series waits or runs."""
+
+    return any(
+        job.func_name == RENAME_TASK and job.args and job.args[0] == series_id
+        for job in live_jobs([TASKS[RENAME_TASK].queue])
+    )
+
+
 def _take_series_locks(series, new_title, waits=None):
     """Take the title lock of each episode of a series. Return the locks.
 

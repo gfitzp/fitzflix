@@ -778,3 +778,88 @@ def test_a_share_that_drops_inside_the_loop_books_the_rename_again(app, monkeypa
         assert retries
         for job in retries:
             job.delete()
+
+
+def _post_rename(admin_client, series_id, new_title):
+    """Post the rename form of a series page. Return the flashed messages."""
+
+    from tests.conftest import page_csrf_token
+
+    response = admin_client.post(
+        f"/tv/{series_id}/rename",
+        data={
+            "csrf_token": page_csrf_token(admin_client),
+            "new_title": new_title,
+            "rename_submit": "Rename Series",
+        },
+    )
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith(f"/tv/{series_id}")
+    with admin_client.session_transaction() as session:
+        return [text for _category, text in session.pop("_flashes", [])]
+
+
+def _rename_jobs(app):
+    return [
+        job
+        for job in app.queues["file"].jobs
+        if job.func_name == "app.media.series_rename.rename_tv_series_task"
+    ]
+
+
+def test_the_rename_form_queues_the_rename_task(app, admin_client):
+    """The form queues the task that `flask tv rename` queues."""
+
+    with app.app_context():
+        series = make_tv_series("Form Show")
+        make_tv_file(series, 1, 1, "Bluray-1080p")
+        db.session.commit()
+        series_id = series.id
+
+    page = admin_client.get(f"/tv/{series_id}").get_data(as_text=True)
+    assert 'name="new_title"' in page and 'value="Form Show"' in page
+
+    flashes = _post_rename(admin_client, series_id, "  Form Show (1966) ")
+
+    (job,) = _rename_jobs(app)
+    assert job.args == (series_id, "Form Show (1966)")
+    assert "is on the queue" in flashes[0]
+
+
+def test_the_rename_form_refuses_what_the_task_refuses(app, admin_client):
+    """A title that the task refuses queues no task."""
+
+    with app.app_context():
+        series = make_tv_series("Refused Show")
+        make_tv_series("Taken Show")
+        db.session.commit()
+        series_id = series.id
+
+    for title, reason in (
+        ("Refused Show", "the title does not change"),
+        ("Refused/Show", "is not safe as a folder name"),
+        ("Taken Show", "already exists"),
+    ):
+        (flash,) = _post_rename(admin_client, series_id, title)
+        assert "was not renamed" in flash and reason in flash
+    assert _rename_jobs(app) == []
+
+
+def test_the_rename_form_refuses_a_second_rename_of_a_series(app, admin_client):
+    """A rename that waits or runs stops a second one. An other series can go on."""
+
+    with app.app_context():
+        series = make_tv_series("Twice Show")
+        other = make_tv_series("Other Show")
+        db.session.commit()
+        series_id, other_id = series.id, other.id
+
+    _post_rename(admin_client, series_id, "Twice Show (1)")
+    (flash,) = _post_rename(admin_client, series_id, "Twice Show (2)")
+    assert "waits or runs already" in flash
+    _post_rename(admin_client, other_id, "Other Show (1)")
+
+    assert [job.args for job in _rename_jobs(app)] == [
+        (series_id, "Twice Show (1)"),
+        (other_id, "Other Show (1)"),
+    ]

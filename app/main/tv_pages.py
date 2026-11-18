@@ -11,6 +11,7 @@ from app.main.forms import (
     SeasonRestoreForm,
     SeriesRestoreForm,
     SeriesDeleteForm,
+    SeriesRenameForm,
     TMDBLookupForm,
     TMDBRemoveForm,
 )
@@ -40,6 +41,7 @@ from app.main.helpers import (
     tv_meta_line,
 )
 from app.media.custom_artwork import remove_custom_artwork
+from app.media import series_rename
 from app.main import file_pages, movie_pages
 from app.operations.maintenance import clear_leftover_directory
 from app.metadata.tmdb_refresh import tmdb_refresh_status
@@ -187,10 +189,10 @@ def tv(series_id):
 
     seasons = sorted(set(seasons))
 
-    # The series management forms (restore, delete, TMDB) are admin
-    # tools, like the Movie Data section of the movie page.
-    # The template hides them. They post to tv_restore,
-    # tv_delete, and tv_tmdb, which only admins can reach.
+    # The series management forms (restore, delete, TMDB, rename) are
+    # admin tools, like the Movie Data section of the movie page.
+    # The template hides them. They post to tv_restore, tv_delete,
+    # tv_tmdb, and tv_rename, which only admins can reach.
 
     # A restore costs real money. Thus, the page shows an estimate.
 
@@ -202,6 +204,7 @@ def tv(series_id):
     series_delete_form = SeriesDeleteForm()
     tmdb_remove_form = TMDBRemoveForm()
     tmdb_lookup_form = TMDBLookupForm()
+    series_rename_form = SeriesRenameForm()
 
     # The billed cast for the scroller, in aggregate billing order. The
     # list has a maximum. The aggregate cast of a long-running series
@@ -256,6 +259,7 @@ def tv(series_id):
         tmdb_lookup_form=tmdb_lookup_form,
         tmdb_remove_form=tmdb_remove_form,
         series_delete_form=series_delete_form,
+        series_rename_form=series_rename_form,
     )
 
 
@@ -623,6 +627,44 @@ def tv_tmdb(series_id):
         url_for("main.tv", series_id=tv_id),
     )
     return redirect(url_for("main.tv", series_id=tv_id))
+
+
+@bp.route("/tv/<int:series_id>/rename", methods=["POST"])
+@login_required
+@admin_required
+def tv_rename(series_id):
+    """Queue the rename of a series, for an admin.
+
+    The rename task moves the show folder and each file, and it changes
+    the records. This route only queues the task. It refuses a title
+    that the task refuses, and a second rename while one waits or runs."""
+
+    tv = TVSeries.query.filter_by(id=series_id).first_or_404()
+    series_rename_form = SeriesRenameForm()
+    if not series_rename_form.validate_on_submit():
+        flash_form_errors(series_rename_form)
+        return redirect(url_for("main.tv", series_id=tv.id))
+
+    new_title = series_rename_form.new_title.data.strip()
+    refusal = series_rename.rename_refusal(tv, new_title)
+    if refusal:
+        flash(f"'{tv.title}' was not renamed, because {refusal}", "warning")
+    elif series_rename.rename_pending(tv.id):
+        flash(f"A rename of '{tv.title}' waits or runs already", "warning")
+    else:
+        enqueue_task(
+            series_rename.RENAME_TASK,
+            tv.id,
+            new_title,
+            description=f"Renaming TV series {tv.id} to '{new_title}'",
+            timeout=series_rename.rename_timeout(tv),
+        )
+        flash(
+            f"The rename of '{tv.title}' to '{new_title}' is on the queue. "
+            f"This page shows the new title when the rename is done",
+            "success",
+        )
+    return redirect(url_for("main.tv", series_id=tv.id))
 
 
 @bp.route("/tv/<int:series_id>/<int:season>/restore", methods=["POST"])

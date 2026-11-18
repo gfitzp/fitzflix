@@ -594,7 +594,7 @@ Run these commands from the project root, with the venv active. Some commands pu
 | `flask recs catalog` | Lists the catalogs of the subscribed providers and processes the pending discoveries now (otherwise each night) |
 | `flask alerts availability` | Compares the availability of the watchlist films with the stored snapshot and sends the digests now. The first run only writes the snapshots. |
 | `flask frames refresh` | Prunes and fills the Name That Frame pool now (otherwise each night) |
-| `flask tv rename <series_id> <new_title>` | Renames a TV series on the disk and in the database. The untouched names follow. The archive keys stay until `flask aws converge-keys --apply`. |
+| `flask tv rename <series_id> <new_title>` | Renames a TV series on the disk and in the database. The untouched names follow. The archive keys stay until `flask aws converge-keys --apply`. The **Rename Series** form of the series page queues the same task. |
 | `flask catalog exclude <movie_id>` | Deletes a false catalog record and blocks its TMDB id from the catalog loads |
 | `flask catalog reassign` | Assigns the stored Criterion releases to each movie again, with no Wikidata query |
 | `flask audio atmos [<file_id>]` | Queues E-AC-3 Atmos twins for one file, or for each TrueHD Atmos file of the library that has no twin |

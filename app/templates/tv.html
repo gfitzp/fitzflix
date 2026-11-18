@@ -110,6 +110,16 @@
 		<hr class="d-block d-sm-none">
 	</div>
 	<div class="col-sm-4">
+		<form action="{{ url_for('main.tv_rename', series_id=tv.id) }}" method="post">
+			{{ series_rename_form.hidden_tag() }}
+			<div class="mb-3">
+				{{ series_rename_form.new_title.label }}
+				{{ series_rename_form.new_title(class_="form-control form-control-sm", value=tv.title) }}
+			</div>
+			{{ series_rename_form.rename_submit(class_="btn btn-sm btn-warning", onclick="return confirm('Rename this series? Fitzflix moves the show folder and each file.');") }}
+		</form>
+		<em class="small text-muted">The rename moves the show folder and each file. Sonarr gets the new folder.</em>
+		<hr class="d-block d-sm-none">
 	</div>
 	<div class="col-sm-4">
 	</div>

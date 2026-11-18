@@ -468,6 +468,18 @@ class SeriesDeleteForm(FlaskForm):
     delete_submit = SubmitField("Delete Series")
 
 
+class SeriesRenameForm(FlaskForm):
+    """Give the series a new title (series page).
+
+    The title is the name of the show folder. Each file name starts
+    with it."""
+
+    new_title = StringField(
+        "Title of the show folder", validators=[DataRequired(), Length(max=220)]
+    )
+    rename_submit = SubmitField("Rename Series")
+
+
 class TrackMetadataScanForm(FlaskForm):
     """Scan the track metadata again, per file or for the whole library."""
 
